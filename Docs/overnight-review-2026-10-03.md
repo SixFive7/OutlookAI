@@ -281,8 +281,9 @@ the new one searches the right root and returns none. Build VM: 3,408 / 0 / 0 on
 Merged as `a0f6310` (build VM: 3,456 / 0 / 0, 21 self-tests). The live proof is pending the first
 guest run with the new throwaway data file (runbook §8 item 25).
 - **D63 - After a failed creating call, compare the top-level folder lists before and after**, rather
-  than re-reading only the official Drafts/Deleted Items slot - it also catches a folder Outlook made
-  but did not register. Unreadable listings mean "unverified", never a claim.
+  than re-reading only the official Drafts/Deleted Items slot. Unreadable listings mean
+  "unverified", never a claim. *Refined by D81:* a new folder counts as created only if it now holds
+  the slot that was asked for; any other new folder is reported as "appeared".
 - **D64 - `createdFolders` is a list**, because a failed call can leave more than one folder.
 - **D65 - A failed Drafts lookup is outcome `unchanged`** (new tokens `DraftsFolderUnavailable`,
   `DraftsFolderCreationUnverified`, `DraftNotStarted`): no draft can exist before the compose step.
@@ -335,6 +336,27 @@ Built and checkpointed as `CP-16C-POPULATIONS-V2` (hub 68 = 56 + 12 undated cont
   (build about 2 h at the measured 19-24 items/s; the PST grows to about 8.6 GB). Guest one would
   otherwise sit idle while guest two's live run finds the fixes both guests need; running guest
   one's live run in parallel would fix the same failures twice.
+
+### D81-D87 - Q96's follow-ups, implemented
+Merged as `d62c15b` (build VM on the branch: 3,491 / 0 / 0, 21 self-tests; 16 of 16 mutants caught).
+- **D81 - "Created" means a new folder that now holds the asked-for slot**, judged by the same
+  non-creating lookup the discard and update checks use. Every other new folder is reported in a new
+  `appearedFolders` field and a separate sentence ("N folder(s) APPEARED while the call ran … NOT
+  claimed as created"). *Consequence until the item-25 run answers question 3:* in a data file with
+  no Inbox, a Drafts folder made by a FAILED call may be reported as appeared, not created.
+- **D82 - Appeared folders are not written to the audit line** - the server does not claim to have
+  made them; they still travel on the error raised when an audit line cannot be written.
+- **D83 - A discard that fails before its delete has a new reason, `outlook_failed_before_delete`**,
+  outcome `unchanged`: "the draft was NOT deleted". Failures from the delete on keep the UNKNOWN
+  answer.
+- **D84 - The live test's folder-list comparison FAILS the test** when a folder appeared that the call
+  did not report (Q85's "must report"), rather than only printing it.
+- **D85 - The test fake creates a folder only when one is missing**, as a real Outlook does.
+- **D86 - Question 3's instrumentation was added although "nothing to do now" was decided**: a
+  read-only test-side reader of where Outlook registers the Drafts folder, so the item-25 run can
+  actually answer the question. No product change.
+- **D87 - The Q96 CHANGELOG entry and the MCP server README were corrected** to the appeared/created
+  split.
 
 ## Open questions only you can answer
 
