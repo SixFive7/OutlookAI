@@ -108,15 +108,21 @@ $PrAdditionalRenEntryIds = 'http://schemas.microsoft.com/mapi/proptag/0x36D81102
 $ValidFolderBits = @{ 6 = 0x02; 3 = 0x08; 5 = 0x10 }
 $MapiNotFound = -2147221233   # 0x8004010F, MAPI_E_NOT_FOUND: the property is not there
 
+# Every one of these returns its value with the unary comma - "return , $x" - so PowerShell hands the
+# caller the COM object itself. A plain "return $x" ENUMERATES anything enumerable on the way out: the
+# Table's Columns collection reached the caller as an object[] of columns, and the first InvokeMember on
+# it - Columns.Count - failed with "Method 'System.Object[].Count' not found". Measured on
+# OutlookAI-Indexed, 2026-10-03, the first time this script ever ran; every Columns.Add before it had
+# failed the same way inside its try, silently, so no table would have been sorted either.
 function Invoke-Com {
     param($Target, [string] $Name, [System.Reflection.BindingFlags] $Flags, [object[]] $Arguments = @())
-    return $Target.GetType().InvokeMember($Name, $Flags, $null, $Target, $Arguments)
+    return , $Target.GetType().InvokeMember($Name, $Flags, $null, $Target, $Arguments)
 }
 function Get-ComProperty { param($Target, [string] $Name, [object[]] $Arguments = @())
-    return Invoke-Com -Target $Target -Name $Name -Flags ([System.Reflection.BindingFlags]::GetProperty) -Arguments $Arguments
+    return , (Invoke-Com -Target $Target -Name $Name -Flags ([System.Reflection.BindingFlags]::GetProperty) -Arguments $Arguments)
 }
 function Invoke-ComMethod { param($Target, [string] $Name, [object[]] $Arguments = @())
-    return Invoke-Com -Target $Target -Name $Name -Flags ([System.Reflection.BindingFlags]::InvokeMethod) -Arguments $Arguments
+    return , (Invoke-Com -Target $Target -Name $Name -Flags ([System.Reflection.BindingFlags]::InvokeMethod) -Arguments $Arguments)
 }
 
 function Write-Line { param([string] $Text)
