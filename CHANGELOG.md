@@ -679,6 +679,22 @@ its mailbox tests on, and change nothing you install.
   network clears the backoff and checks shortly after, and "Check for updates" always runs straight
   away.
 
+- ✅ **The Outlook test machines run every test at a frozen time, so their test mail never ages (Q130).**
+  Each machine rests on a checkpoint taken with Hyper-V's time synchronisation off, so every run
+  starts at the same instant just after its test data's date: `CP-20C-FROZEN-CLOCK` on the indexed
+  machine, `CP-14B-FROZEN-CLOCK` on the unindexed one. Before, the indexed machine's 160,000-item
+  measurement mailbox would have stopped every run after 2026-11-01 until a 1.5-hour rebuild, and
+  the hub mailbox aged out within days. A guard checks the clock before a run starts, a restart is
+  refused or re-frozen, and the 30-day timing check reads the 30 days before the measurement
+  mailbox's own date. Both machines passed their whole live tier from the frozen checkpoints, 127
+  of 127 and 81 of 81.
+
+- ✅ **The build machine runs the test suite in UTC, and refuses to run in any other time zone (Q126).**
+  GitHub's UTC runner used to catch time-zone bugs, the way the Q95 one was found, and it went with
+  the CI. `OutlookAI-Build` now rests on `CP-03-SDK-TEST-READY-UTC`, the runner refuses a guest in
+  any other zone, and the first runs passed 3,818 of 3,818 with no zone bug found. Tests that use
+  the machine's own zone as the other one now prove less; how to cover them is open (Q144).
+
 - ✅ **The indexed test machine's test mailboxes hold calendar entries, contacts and tasks again.**
   There are four of each in the hub and fourteen in the bystander, as the maintainer decided (D62
   (b)). The search index gives a contact no received date, so the contacts are the undated items the
