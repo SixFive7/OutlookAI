@@ -498,7 +498,7 @@ function Invoke-SelfTest {
     Check 'MEDIA.md names the SDK installer' $true $media.Contains($SdkInstallerName)
     Check 'MEDIA.md records its SHA-512' $true $media.ToUpperInvariant().Contains($SdkSha512.ToUpperInvariant())
     $filters = [System.IO.File]::ReadAllText((Join-Path $repo 'McpServer\OutlookAI.McpServer.Tests\T2\LiveRunFilters.cs'))
-    Check 'LiveRunFilters.Guest leaves out exactly DelegateStore and CachedExchange' $true $filters.Contains('WorkstationOnlyCapabilities { get; } = new[] { DelegateStore, CachedExchange }')
+    Check 'LiveRunFilters.Guest leaves out exactly DelegateStore and CachedExchange' $true $filters.Contains('ExchangeOnlyCapabilities { get; } = new[] { DelegateStore, CachedExchange }')
     Check 'LiveRunFilters.GuestUnindexed adds SearchIndex' $true $filters.Contains('GuestUnindexed { get; } = Guest + "&Requires!=" + SearchIndex')
     foreach ($name in @('Reset-HubPopulation.ps1')) {
         $text = [System.IO.File]::ReadAllText((Join-Path $repo "Testbed\guest\$name"))
