@@ -222,9 +222,10 @@ public sealed class LiveDisconnectRecoveryTests
             }
         }
 
-        // Whether the session holds D49's lifetime pin BEFORE the window is promoted - the fact the
-        // first guest live run needed and did not have (2026-10-03: Outlook exited when the promoted
-        // window closed). Diagnostic only; the assertion below is unchanged.
+        // Whether the session holds D49's lifetime pin around the promotion. Diagnostic only; the
+        // assertion below is unchanged. On the test guest (Office LTSC 2024, 16.0.17932) the second
+        // live run, 2026-10-03, logged pinned=True on both sides and Outlook STILL exited when the
+        // promoted window closed - so on that build the pin is held and does not hold Outlook.
         _output.WriteLine("lifetime pin before promotion: " + DescribePin(independentGateway));
 
         // Promote with ONE window of our own via the sanctioned goto surface (hub store).
