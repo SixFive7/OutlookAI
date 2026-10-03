@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
+using OutlookAI.McpServer.Tests.T2;
 
 namespace OutlookAI.McpServer.Tests.T3;
 
@@ -63,6 +64,16 @@ public sealed class McpStdioClient : IAsyncDisposable
     private readonly CancellationTokenSource _cts;
     private readonly Task<string> _stderrTask;
     private readonly bool _outlookReachingToolsAllowed;
+
+    /// <summary>
+    /// What this client may send (Q74 layer 3), decided once per process by
+    /// <see cref="LiveWriteAccess.CurrentStdioPosture"/> - never by the test that started it. On
+    /// the read-only machine every <c>tools/call</c> for a tool not classified read-only in
+    /// <see cref="McpToolWriteClassification"/> is refused before a byte reaches the server: the
+    /// server process writes through its OWN Outlook session, where the in-process
+    /// <see cref="StoreWriteAllowlist"/> cannot see it.
+    /// </summary>
+    private readonly StdioWritePosture _writePosture;
     private int _nextId;
     private JsonElement _initializeResult;
 
@@ -70,13 +81,33 @@ public sealed class McpStdioClient : IAsyncDisposable
         Process server,
         CancellationTokenSource cts,
         Task<string> stderrTask,
-        bool outlookReachingToolsAllowed)
+        bool outlookReachingToolsAllowed,
+        StdioWritePosture writePosture)
     {
         _server = server;
         _cts = cts;
         _stderrTask = stderrTask;
         _outlookReachingToolsAllowed = outlookReachingToolsAllowed;
+        _writePosture = writePosture;
     }
+
+    /// <summary>
+    /// A client whose server was never started, for T1 to drive the two gates in front of the
+    /// wire under a posture of its choosing. It cannot reach anything: a call that passes both
+    /// gates fails at the transport, because there is no process behind it.
+    /// </summary>
+    internal static McpStdioClient Unstarted(StdioWritePosture writePosture, bool outlookReachingToolsAllowed)
+    {
+        return new McpStdioClient(
+            new Process(),
+            new CancellationTokenSource(TimeSpan.FromSeconds(10)),
+            Task.FromResult(string.Empty),
+            outlookReachingToolsAllowed,
+            writePosture);
+    }
+
+    /// <summary>The posture this client was started under. For T1 and for a run's own output.</summary>
+    internal StdioWritePosture WritePosture => _writePosture;
 
     /// <summary>Path of the built server exe (baked into the test assembly at build time).</summary>
     public static string ServerExePath =>
@@ -116,6 +147,10 @@ public sealed class McpStdioClient : IAsyncDisposable
             throw new InvalidOperationException($"Server exe not found at '{exePath}' - build OutlookAI.McpServer first.");
         }
 
+        // Before the process exists, so a posture that cannot be decided never leaves a server
+        // running behind it. Never throws: undecidable is ReadOnly (LiveWriteAccess.StdioPostureFor).
+        StdioWritePosture writePosture = LiveWriteAccess.CurrentStdioPosture;
+
         var cts = new CancellationTokenSource(timeout ?? TimeSpan.FromSeconds(180));
         var utf8NoBom = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
         var psi = new ProcessStartInfo(exePath)
@@ -146,7 +181,8 @@ public sealed class McpStdioClient : IAsyncDisposable
             server,
             cts,
             stderrTask,
-            string.Equals(outlookReachingTools, OutlookReachingToolsAllowed, StringComparison.Ordinal));
+            string.Equals(outlookReachingTools, OutlookReachingToolsAllowed, StringComparison.Ordinal),
+            writePosture);
 
         JsonElement init = await client.RoundTripAsync("initialize", new
         {
@@ -188,6 +224,9 @@ public sealed class McpStdioClient : IAsyncDisposable
     /// <summary>Sends a JSON-RPC notification (no response expected).</summary>
     public async Task NotifyAsync(string method)
     {
+        // Through the same gates as a request: a "notification" named tools/call carries no tool
+        // name, which the read-only posture refuses as unclassified rather than letting through.
+        RefuseBeforeSending(method, null);
         await SendAsync(new { jsonrpc = "2.0", method });
     }
 
@@ -198,10 +237,7 @@ public sealed class McpStdioClient : IAsyncDisposable
         // the supervision and availability tests build their own tools/call envelopes and
         // send them straight through, so a check on the convenience helpers would leave the
         // two files that reach Outlook hardest unguarded.
-        if (string.Equals(method, "tools/call", StringComparison.Ordinal))
-        {
-            RefuseUndeclaredOutlookContact(parameters);
-        }
+        RefuseBeforeSending(method, parameters);
 
         int id = Interlocked.Increment(ref _nextId);
         await SendAsync(new { jsonrpc = "2.0", id, method, @params = parameters });
@@ -362,8 +398,33 @@ public sealed class McpStdioClient : IAsyncDisposable
     }
 
     /// <summary>
-    /// Fails the test rather than the mailbox: a <c>tools/call</c> naming a tool that always
-    /// reaches Outlook is refused unless the test declared it.
+    /// Both gates in front of the wire, in order, for one outgoing message. Only a
+    /// <c>tools/call</c> is judged; everything else - initialize, tools/list, notifications -
+    /// reaches no tool.
+    /// </summary>
+    private void RefuseBeforeSending(string method, object? parameters)
+    {
+        if (!string.Equals(method, "tools/call", StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        string? tool = ToolNameOf(parameters);
+
+        // First the machine's write posture (Q74 layer 3): on the read-only machine nothing that
+        // is not classified read-only leaves this process, whatever the test declared.
+        string? writeRefusal = McpToolWriteClassification.RefusalFor(_writePosture, tool);
+        if (writeRefusal != null)
+        {
+            throw new InvalidOperationException(writeRefusal);
+        }
+
+        // Then the test's own declaration of mailbox contact.
+        RefuseUndeclaredOutlookContact(tool);
+    }
+
+    /// <summary>
+    /// The tool a <c>tools/call</c>'s parameters name, or null.
     /// </summary>
     /// <remarks>
     /// The parameters are serialised to read the tool name because the callers pass
@@ -371,21 +432,32 @@ public sealed class McpStdioClient : IAsyncDisposable
     /// the property differently. Serialising is what goes on the wire anyway, so this reads
     /// exactly what the server would have been asked for.
     /// </remarks>
-    private void RefuseUndeclaredOutlookContact(object parameters)
+    private static string? ToolNameOf(object? parameters)
+    {
+        if (parameters == null)
+        {
+            return null;
+        }
+
+        JsonElement envelope = JsonSerializer.SerializeToElement(parameters);
+        return envelope.ValueKind == JsonValueKind.Object
+            && envelope.TryGetProperty("name", out JsonElement nameProperty)
+            && nameProperty.ValueKind == JsonValueKind.String
+                ? nameProperty.GetString()
+                : null;
+    }
+
+    /// <summary>
+    /// Fails the test rather than the mailbox: a <c>tools/call</c> naming a tool that always
+    /// reaches Outlook is refused unless the test declared it.
+    /// </summary>
+    private void RefuseUndeclaredOutlookContact(string? tool)
     {
         if (_outlookReachingToolsAllowed)
         {
             return;
         }
 
-        JsonElement envelope = JsonSerializer.SerializeToElement(parameters);
-        if (envelope.ValueKind != JsonValueKind.Object
-            || !envelope.TryGetProperty("name", out JsonElement nameProperty))
-        {
-            return;
-        }
-
-        string? tool = nameProperty.GetString();
         if (tool == null || Array.IndexOf(ToolsThatAlwaysReachOutlook, tool) < 0)
         {
             return;
