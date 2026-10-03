@@ -50,7 +50,12 @@
     typing a mailbox password into a VM nobody meant is the mistake it exists to make impossible.
 
 .PARAMETER Mode
-    NewProfile or Reauth.
+    NewProfile, Reauth or Preflight. Preflight types nothing: before every live run it brings Defender's
+    signatures up to date and waits for Security Center to say so - while they are stale, Outlook's
+    Object Model Guard puts an Allow/Deny prompt in front of every out-of-process address read, and a
+    run hangs on it (measured 2026-10-03: six stacked prompts, after a checkpoint restore brought back
+    year-old signatures) - and then reads whether the account is still signed in. Exit 0 when both
+    hold; when only the sign-in does not, run -Mode Reauth.
 
 .PARAMETER StartOutlook
     With -Mode NewProfile: start OUTLOOK.EXE in session 1, NOT elevated, before step 1.
@@ -65,7 +70,7 @@
 [CmdletBinding(DefaultParameterSetName = 'Run')]
 param(
     [Parameter(Mandatory = $true, ParameterSetName = 'Run')] [string] $VMName,
-    [Parameter(ParameterSetName = 'Run')] [ValidateSet('NewProfile', 'Reauth')] [string] $Mode = 'NewProfile',
+    [Parameter(ParameterSetName = 'Run')] [ValidateSet('NewProfile', 'Reauth', 'Preflight')] [string] $Mode = 'NewProfile',
     [Parameter(ParameterSetName = 'Run')] [switch] $StartOutlook,
     [Parameter(ParameterSetName = 'Run')] [string] $RepoRoot,
     [Parameter(ParameterSetName = 'Run')] [int] $PageWaitSeconds = 90,
@@ -243,6 +248,37 @@ try {
         if (-not (Test-Path -LiteralPath $key)) { New-Item -Path $key -Force | Out-Null }
         Set-ItemProperty -LiteralPath $key -Name DelegationConsole -Value '{B23D10C0-E52E-411E-9D5B-C09FDF709C7D}'
         Set-ItemProperty -LiteralPath $key -Name DelegationTerminal -Value '{B23D10C0-E52E-411E-9D5B-C09FDF709C7D}'
+    }
+
+    if ($Mode -eq 'Preflight') {
+        Say 'preflight 1: Defender signatures, so that Outlook''s Object Model Guard does not prompt'
+        $av = Invoke-Command -Session $session -ScriptBlock {
+            $updated = $true
+            try { Update-MpSignature -ErrorAction Stop } catch { $updated = $false }
+            $state = 0x10
+            $deadline = (Get-Date).AddMinutes(3)
+            do {
+                $product = Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntiVirusProduct | Where-Object { $_.displayName -eq 'Windows Defender' } | Select-Object -First 1
+                if ($null -ne $product) { $state = [int]$product.productState }
+                if (($state -band 0xFF) -eq 0) { break }
+                Start-Sleep -Seconds 10
+            } while ((Get-Date) -lt $deadline)
+            # Defender's WMI provider can be briefly unavailable right after an update ("Provider load
+            # failure", measured): the age is a detail, the Security Center state above is the answer.
+            $age = -1
+            try { $age = (Get-MpComputerStatus -ErrorAction Stop).AntivirusSignatureAge } catch { $age = -1 }
+            [pscustomobject]@{ Updated = $updated; State = $state; Age = $age }
+        }
+        if (($av.State -band 0xFF) -ne 0) {
+            Say ('  Security Center still reports the definitions out of date (0x{0:X6}, update ran: {1}) - a live run would meet the guard''s prompts' -f $av.State, $av.Updated)
+            exit 1
+        }
+        Say ('  up to date (productState 0x{0:X6}); signatures {1} day(s) old' -f $av.State, $av.Age)
+        Say 'preflight 2: is the account still signed in?'
+        $v = Invoke-GuestStep "-Step Verify -Account '$account' -WaitSeconds 60"
+        Say "  $($v.State) $($v.Detail -join ' | ')"
+        if ($v.State -ne 'SIGNED-IN') { Say '  not signed in - run this script with -Mode Reauth'; exit 1 }
+        exit 0
     }
 
     if ($Mode -eq 'NewProfile') {

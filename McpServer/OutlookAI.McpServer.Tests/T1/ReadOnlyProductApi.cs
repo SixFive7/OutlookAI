@@ -77,6 +77,7 @@ internal static class ReadOnlyProductApi
         ["OutlookAI.Core.Services.SearchRequest"] = Data,
         ["OutlookAI.Core.Services.SearchScopeInfo"] = Data,
         ["OutlookAI.Core.Services.StoreFoldersView"] = Data,
+        ["OutlookAI.Core.Services.StoreStaleness"] = Data,
         ["OutlookAI.Core.Services.StoreView"] = Data,
         ["OutlookAI.Core.Services.SweepInfo"] = Data,
         ["OutlookAI.Core.Services.ThreadOutcome"] = Data,

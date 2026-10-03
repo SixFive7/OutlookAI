@@ -264,17 +264,20 @@ public sealed class StoreWriteAllowlistTests
     }
 
     [Fact]
-    public void OnTheWorkstation_TheTripwirePolicesEveryStoreButTheHub()
+    public void OnTheReadOnlyWorkstation_TheTripwirePolicesEveryStore_TheHubIncluded()
     {
         // A consequence worth pinning, because it is a strengthening rather than a side effect: the
         // census used to treat the two other primaries as stores the suite "may still write to", so
-        // a change there could be the suite's own. Now nothing is writable, so they are policed.
+        // a change there could be the suite's own. Now nothing is writable, so they are policed - and
+        // since 2026-10-03 the hub too, which on a read-only machine nothing exempts
+        // (LiveStoreCountTripwire.ExemptHub). The workstation runs no live test since Q116 (a); the
+        // rule is the read-only machine's, and the Exchange VM is where it now matters.
         LiveTestSettings settings = Workstation();
         TripwireWatchReport report = TripwireWatchSoundness.Assess(
             LiveStoreCountTripwire.WatchedStores(settings), LiveStoreWriteGuard.Build(settings), settings.BystanderStoreDisplayNames);
 
         Assert.Empty(report.Writable);
-        Assert.Equal(new[] { Identity, SecondPrimary, DelegateStore, "Another Person" }, report.Policed);
+        Assert.Equal(new[] { Hub, Identity, SecondPrimary, DelegateStore, "Another Person" }, report.Policed);
         Assert.Null(report.Refusal());
     }
 }

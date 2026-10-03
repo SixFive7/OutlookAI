@@ -223,10 +223,11 @@
       "CP-01-WIN-CLEAN",
       "CP-02-OFFICE-INSTALLED",
       "CP-03-EXCHANGE-SIGNED-IN",
-      "CP-04-SUITE-READONLY-RUN"
+      "CP-04-SUITE-READONLY-RUN",
+      "CP-05-PREFLIGHT-READONLY-RUN"
     ],
     "_checkpoints": "All four taken RUNNING (Standard), so a restore resumes rather than boots; about 55 GB in the VM's own disk folder on 2026-10-03. CP-02 has Office and no profile - the start of a sign-in from nothing; CP-03 the account signed in and indexed; CP-04 the suite and the settings staged and the read-only runs done. A restore undoes nothing on the Exchange server, and a token inside a checkpoint may have lapsed: Testbed/guest/Connect-ExchangeAccount.ps1 -Step Verify, then Testbed/host/Invoke-ExchangeSignIn.ps1 -Mode Reauth.",
-    "readOnlyRuns": "2026-10-03 (Docs/live-tier-on-the-vm.md section 4.4): the cached-Exchange read-only filter passed the short-decoded-id check and Q113 (b)'s health row; T2/LiveExchangeHubArtifactTests found ONE item tagged OutlookAI-McpTest in Sent Items, a leftover from the workstation years (TODO.md); the Q99 follow-up's T2/LiveExchangeFolderPathTests passed. The count tripwire: 0 failures, 0 notes, every run.",
+    "readOnlyRuns": "2026-10-03 (Docs/live-tier-on-the-vm.md section 4.4): the cached-Exchange read-only filter passed the short-decoded-id check and Q113 (b)'s health row; T2/LiveExchangeHubArtifactTests found ONE item tagged OutlookAI-McpTest in Sent Items, a leftover from the workstation years (TODO.md); the Q99 follow-up's T2/LiveExchangeFolderPathTests passed. The count tripwire: 0 failures, 0 notes, every run. After a checkpoint restore two runs refused on a 300 s census timeout: Defender's year-old signatures had brought back Outlook's Object Model Guard, six prompts stacked; Update-MpSignature cleared it and the run passed again - Testbed/host/Invoke-ExchangeSignIn.ps1 -Mode Preflight does that before every run.",
     "q113b": "MEASURED 2026-10-03: outlook_health ties the cached Exchange store by storeHash, matchedInput profileMappingSignature (the profile's PR_MAPPING_SIGNATURE), index root telefonie@xxlnet.nl($65e0d53e), storesNotInProfile 0.",
     "phase2": "PROPOSED 2026-10-03, NOT APPROVED (Docs/live-tier-on-the-vm.md section 4.4): until the maintainer approves it the VM is read-only."
   },

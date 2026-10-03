@@ -3489,6 +3489,17 @@ item by item because the machine is read-only - and afterwards `0 failure(s), 0 
 | C | the Exchange VM's filter, with the two tests below added | 3 of 4: `T2/LiveExchangeStoreHashTests` and the short id pass; `T2/LiveExchangeHubArtifactTests` FAILS on one item tagged `[OutlookAI-McpTest]` in Sent Items |
 | Q99 | the same filter, on a LOCAL-ONLY merge of `q99-name-encoding-followup` (`a6f4371`) with this branch, which the one-mailbox VM needs to run at all | 3 of 4: `T2/LiveExchangeFolderPathTests` PASSES - 40 folders walked, 16 nested paths at depth 2 each resolved to itself, and a missing child answered NotFound with one place to build: Exchange answers a missing folder name with MAPI_E_NOT_FOUND. The gate for that branch holds. The artifact count fails as in C |
 
+**The Object Model Guard, met at 21:01.** After `CP-02`'s proof run the VM was restored to `CP-04`,
+and the next run from the branch's head refused twice: the baseline census timed out at 300 s with two
+folders measured. A COM read hung as well. Outlook's windows, read by title and class only: six
+"Microsoft Outlook" dialogs stacked on its disabled main window, each the guard's "A program is
+trying to access email address information stored in Outlook" - Defender's signatures were the
+image's, 381 days old, and Security Center reported them out of date (`productState` 0x061110).
+`Update-MpSignature` (26 s) brought it to 0x061100; the six prompts were answered Deny through their
+own `WM_COMMAND`, the hung calls failed, and the same run then passed as in C - 2 of 3, the leftover
+failing, the tripwire clean. `host/Invoke-ExchangeSignIn.ps1 -Mode Preflight` now does that before
+every run.
+
 **Q113 (b), measured:** `outlook_health`'s row for the cached Exchange store reads `matchedBy=storeHash
 matchedInput=profileMappingSignature inLocalIndex=True`, index root `telefonie@xxlnet.nl($65e0d53e)`,
 `storesNotInProfile` 0. Outlook hashes the profile's `PR_MAPPING_SIGNATURE`, as Microsoft documents,

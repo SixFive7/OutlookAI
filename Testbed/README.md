@@ -338,6 +338,7 @@ Everything else is the other guests' media, unchanged (`MEDIA.md`).
 | E8 | The suite | step 8b: `host/Publish-LiveTierPayload.ps1 -Ref <commit>`, `host/Copy-ToGuest.ps1`, then `guest/Install-DotnetSdk.ps1 -ExpectedSha512 <MEDIA.md's hash> -Execute` over PowerShell Direct | `TEST-READY` |
 | E9 | The settings | `host/New-LiveTestSettings.ps1 -VMName OutlookAI-Exchange`, then the `host/Copy-ToGuest.ps1` line it prints | `machineProfile` `ExchangeGuest`: read-only |
 | E10 | The read-only run | §4e; checkpoint `CP-04-SUITE-READONLY-RUN` | |
+| E11 | The branch's final commit staged, the preflight passed, the read-only run again | E8 and E9 again, `host/Invoke-ExchangeSignIn.ps1 -Mode Preflight`, §4e; checkpoint `CP-05-PREFLIGHT-READONLY-RUN`, then the VM saved | |
 
 **The sign-in, and where the secrets go.** The credential is the maintainer's
 `live-fixtures/exchange-credentials.json` (§4), read only by `host/Get-ExchangeCredential.ps1`, in
@@ -356,7 +357,7 @@ have expired or been rotated since: `guest/Connect-ExchangeAccount.ps1 -Step Ver
 says `SIGNED-IN` or `NOT-SIGNED-IN`, and `host/Invoke-ExchangeSignIn.ps1 -Mode Reauth` answers the
 sign-in Outlook raises. Measured 2026-10-03: `CP-04`, restored ten minutes after it was taken, read `SIGNED-IN`; how long a token inside a checkpoint stays good is not measured yet.
 
-**Three things this VM found about the guests' Windows**, worth knowing on any of them:
+**Four things this VM found about the guests' Windows**, worth knowing on any of them:
 
 1. **Windows Terminal is the default console host on this build, and it ignores `-WindowStyle
    Hidden`.** Every `guest/Register-InteractiveTask.ps1` job showed a visible terminal window and
@@ -370,6 +371,14 @@ sign-in Outlook raises. Measured 2026-10-03: `CP-04`, restored ten minutes after
    is invalid" - and each counts as a failed logon, against Windows 11's default lockout of 10 in 10
    minutes (five were counted in one afternoon). A host script that needs a second channel into the
    guest opens one session and runs the second thing as a job inside the guest.
+4. **Outlook's Object Model Guard comes back whenever Defender's signatures go stale - online or not.**
+   The image's signatures were a year old; Windows Update had not replaced them in the VM's first
+   hour, and after a checkpoint restore Security Center reported them out of date: the next run's
+   census met an Allow/Deny prompt on its first address read, and six stacked prompts later the run
+   had refused on a 300-second timeout, twice. `Update-MpSignature` cleared it in 26 s.
+   `host/Invoke-ExchangeSignIn.ps1 -Mode Preflight` does that before every run and waits for Security
+   Center to agree. Q80's auto-approve policy, which removes the dependency, is NOT applied here: it is
+   the offline guests' answer, and widening it is the maintainer's decision (`TODO.md`).
 
 ---
 
@@ -1108,9 +1117,10 @@ tripwire does not exempt the hub there: on a read-only machine the hub is census
 any store (`LiveStoreCountTripwire.ExemptHub`) - an arrival is noted, as real mail arrives; a
 departure fails.
 
-**The run** - with a lease (§5b), from a guest where `guest/Connect-ExchangeAccount.ps1 -Step Verify
--Account <the address>` says `SIGNED-IN` (if not: `host/Invoke-ExchangeSignIn.ps1 -Mode Reauth`), on
-the guest:
+**The run** - with a lease (§5b), once `host/Invoke-ExchangeSignIn.ps1 -VMName OutlookAI-Exchange
+-Mode Preflight -RepoRoot <main checkout>` has exited 0: Defender's signatures current, so the Object
+Model Guard does not stall the run (§1d, item 4), and the account still `SIGNED-IN` (if not:
+`-Mode Reauth`). Then, on the guest:
 
 ```powershell
 .\Register-InteractiveTask.ps1 -RunLevel Limited -TimeoutSeconds 3600 -Script @'
@@ -1203,7 +1213,7 @@ direction: an empty run. List first (`--list-tests`) and read the list.
 | `guest/New-TierProfile.ps1` | Creates the tier profile by importing that .prf, then reads the profile hive back and asserts whether Outlook honoured it. Modes: dry run, `-Execute`, `-Verify`, and (2026-09-24) `-SelfTest`. **RUN ON BOTH GUESTS 2026-09-15/16 AND IT WORKS** - first attempt on the second guest, from the committed scripts. Its `-Verify` had a bug worth knowing about: it read the legacy Windows Messaging Subsystem hive and so reported a WORKING route dead five times while its own dump contradicted it. Fixed. **2026-09-24:** the profile it built answered the `ImportPRF` question after the fact - set 19:54:37, gone ever since, Outlook removed it (§4b-i); `-Verify` now removes a lingering one naming the tier `.prf`, but only once the import has run; it carries the `vmadmin` guard it lacked (it writes the Setup key) and so needs `guest/OutlookMapiInterop.ps1` staged beside it; and its account check counts **mail** accounts, not every entry, and no longer fails the working `ForcePSTPath` route for having no `tier.pst`. **Later on 2026-09-24 it became the whole route rather than half of it:** the forcepst template is the default, `-Execute` writes `ForcePSTPath` (REG_EXPAND_SZ, read back) - which nothing under `Testbed/` set before; hand-run scratch did, and wiped part of the Outlook key doing it - a template naming a PST service or `DefaultStore` is refused before any write, and `-Verify` checks that the delivery store, read out of the account's own EntryID, is the one PST in the profile, under `ForcePSTPath`. Proven from `CP-02` in both orders, by the scripts alone (§1: tier first binds at the first start; corpus first left the account unbound until the next one, and `-Verify` said so). **And `-StoreSinkPassword` (2026-09-24):** with the sink up, Outlook holding no POP3 password PROMPTED at every start and never connected, so this seals one - `POP3 Password`, `0x02` plus a DPAPI blob of a NUL-terminated UTF-16LE value, the community-documented layout - into every account of the profile that polls the sink; proven by the sink's debug log (`read USER tier`, `read PASS any-value`, `Processing deletes mailbox=tier`) with no dialog left on screen, and `-Verify` now fails a sink account without one. `-SelfTest`: 55 assertions. See its banner and §5c. |
 | `guest/Set-AccountWizardClassic.ps1` | Restores Outlook's classic account wizard and stops AutoDiscover reaching the network. Prerequisite for the UI Automation route. **Guarded since 2026-09-24** (it wrote 18 HKCU values, half under Policies, on any machine). **The registry half ran on a guest the same day** - 18 values written and read back, idempotent, reverted - but **whether Outlook then shows the classic wizard is still unverified**: nobody has opened the Mail applet afterwards. |
 | `host/Get-ExchangeCredential.ps1` | **The Exchange VM's credential (Q108), and nothing else reads it.** Reads `live-fixtures/exchange-credentials.json` - the maintainer's, gitignored, DPAPI CurrentUser - in memory, at the moment of a sign-in: `-TotpCode` returns a fresh six-digit code (RFC 6238: HMAC-SHA1, 30 s, from .NET's own HMACSHA1) and never the secret; the default returns the account and the password as a SecureString. Refuses a URI asking for any other algorithm, digit count or period. `-SelfTest`: the RFC 4648, RFC 4226 and RFC 6238 test vectors, never a real secret. |
-| `host/Invoke-ExchangeSignIn.ps1` | **Signs the Exchange VM's Outlook in** - a new profile's first account (`-Mode NewProfile -StartOutlook`) or a lapsed token (`-Mode Reauth`) - by typing the address, the password and, if asked, a TOTP code through the VM's synthetic keyboard, only after the guest half reports the focus held on the right field (§1d). Declines device registration. Refuses any VM but `testbed.json`'s `exchangeVm`. RUN 2026-10-03: the account added from `CP-02` in 2 min 51 s, `SIGNED-IN`, cached. |
+| `host/Invoke-ExchangeSignIn.ps1` | **Signs the Exchange VM's Outlook in** - a new profile's first account (`-Mode NewProfile -StartOutlook`) or a lapsed token (`-Mode Reauth`) - by typing the address, the password and, if asked, a TOTP code through the VM's synthetic keyboard, only after the guest half reports the focus held on the right field (§1d). Declines device registration. `-Mode Preflight`, before every live run, types nothing: it brings Defender's signatures up to date - stale ones bring back Outlook's Object Model Guard prompts, which hang a run - and reads the sign-in back. Refuses any VM but `testbed.json`'s `exchangeVm`. RUN 2026-10-03: the account added from `CP-02` in 2 min 51 s, `SIGNED-IN`, cached; the preflight 0x061100, `SIGNED-IN`. |
 | `guest/Connect-ExchangeAccount.ps1` | The guest half of that sign-in, in session 1 at `-RunLevel Limited`: finds each page (Outlook's NetUI account setup through MSAA, the Microsoft sign-in's web page through UI Automation), focuses and HOLDS the one field the host types into, invokes a named control, and `-Step Verify` reads over COM whether the account is signed in and cached. Never receives, holds or writes a secret. `-Step Inspect` dumps the dialogs, never an Outlook window that can show mail. |
 ---
 

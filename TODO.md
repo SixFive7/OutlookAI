@@ -46,7 +46,12 @@
   syncs - and an unelevated Outlook cannot finish that reconcile at all (the open item above). Decide
   with that item.
 
-- [ ] **Three things the Exchange VM's first runs left open.** (1) The sign-in's verification-code
+- [ ] **Four things the Exchange VM's first runs left open.** (4) Outlook's Object Model Guard
+  stalls a run whenever Defender's signatures are stale (`Testbed/README.md` section 1d, item 4):
+  `host/Invoke-ExchangeSignIn.ps1 -Mode Preflight` updates them before every run. Decide whether the
+  VM also gets Q80's auto-approve policy (`guest/Set-OutlookProgrammaticAccess.ps1`), which removes
+  the dependency but lets any process on that online VM read addresses without a prompt - so far
+  only the offline guests have it. (1) The sign-in's verification-code
   step has never met a code page: Microsoft asked for no MFA code on either sign-in of 2026-10-03, so
   only the RFC test vectors stand behind the TOTP generator - the first code page will be its first
   real proof. (2) `T2/LiveHealthTests.Health_OnThisMachine_ReportsOkWithFullDetail` reads the add-in's

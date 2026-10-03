@@ -52,7 +52,7 @@ public sealed class ReadOnlyLiveTestTests
         Assert.True(
             problems.Count == 0,
             problems.Count + " way(s) a Writes=Nothing test can reach a write. Either the test writes - take the trait "
-            + "off, it cannot run on the read-only workstation - or it calls a product member nobody has listed as a "
+            + "off, it cannot run on a read-only machine - or it calls a product member nobody has listed as a "
             + "read: list it in ReadOnlyProductApi with its reason, and the in-product walk will check the claim.\n"
             + string.Join("\n", problems.Take(20)));
 
