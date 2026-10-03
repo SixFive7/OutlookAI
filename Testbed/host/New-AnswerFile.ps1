@@ -88,8 +88,8 @@
     refuses a credential pinned to a different VM, and used to name the ISO and derive the
     computer name.
 
-    NO DEFAULT, DELIBERATELY. THREE MACHINES COEXIST - OutlookAI-Indexed, OutlookAI-Unindexed
-    and OutlookAI-Build - and a default that silently picks one of three is the exact shape of
+    NO DEFAULT, DELIBERATELY. FOUR MACHINES COEXIST - OutlookAI-Indexed, OutlookAI-Unindexed,
+    OutlookAI-Build and OutlookAI-Exchange - and a default that silently picks one of four is the exact shape of
     mistake this testbed keeps making. Here it would be worse than usual: the name also decides
     the computer name baked into the answer file and the directory the ISO lands in, so a wrong
     default produces a guest that installs cleanly under somebody else's identity.

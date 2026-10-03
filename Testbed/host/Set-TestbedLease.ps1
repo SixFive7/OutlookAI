@@ -27,9 +27,9 @@
 
 .PARAMETER VMName
     MANDATORY, and always has been. The VM to lease. There is no default here for the same
-    reason there is none anywhere else in Testbed/host/: THREE MACHINES COEXIST -
-    OutlookAI-Indexed, OutlookAI-Unindexed and OutlookAI-Build - and a default that silently
-    picks one of three is the exact shape of mistake this testbed keeps making. A lease taken on
+    reason there is none anywhere else in Testbed/host/: FOUR MACHINES COEXIST -
+    OutlookAI-Indexed, OutlookAI-Unindexed, OutlookAI-Build and OutlookAI-Exchange - and a default that silently
+    picks one of four is the exact shape of mistake this testbed keeps making. A lease taken on
     the wrong machine protects nothing and reads, in the log, exactly like one that worked.
 
 .PARAMETER Minutes

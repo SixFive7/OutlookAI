@@ -124,7 +124,7 @@ public static class LiveRunOptIn
 
     /// <summary>
     /// What a refused run is told: what the opt-in is for, how to give it for a deliberate run on
-    /// a test guest, and that the maintainer's workstation is read-only for live tests. Pure, and
+    /// a test guest, and that the maintainer's workstation runs no live test (Q116 (a)). Pure, and
     /// public for T1.
     /// </summary>
     public static string DescribeRefusal(Verdict verdict, string machineName, string? processValue)
@@ -159,10 +159,11 @@ public static class LiveRunOptIn
             + "Testbed/guest/Register-InteractiveTask.ps1 (Testbed/README.md, section 4c)."
             + " The value must equal the computer name of the machine the run is on, so a value carried to another "
             + "machine opens nothing, and it must never be saved with setx or in the user or machine environment."
-            + " THE MAINTAINER'S WORKSTATION IS READ-ONLY FOR LIVE TESTS, ALWAYS (AGENTS.md, Mailbox Safety): this "
-            + "variable only says a run was intended - it makes no test read-only, and it must never be set there to "
-            + "run a test that can write. The workstation's one live run is the read-only one in Testbed/README.md, "
-            + "section 4d, with the filter " + LiveRunFilters.Workstation + ".";
+            + " THE MAINTAINER'S WORKSTATION RUNS NO LIVE TEST (AGENTS.md, Mailbox Safety; Q116 (a)): this variable only "
+            + "says a run was intended - it makes no test read-only - and it must never be set there; a run that set it "
+            + "would be refused anyway, by the workstation's own profile (Testbed/README.md, section 4d). The Exchange-only "
+            + "tests run on the Exchange test VM, with the filter " + LiveRunFilters.ExchangeGuest
+            + " (Testbed/README.md, section 4e).";
     }
 
     /// <summary>

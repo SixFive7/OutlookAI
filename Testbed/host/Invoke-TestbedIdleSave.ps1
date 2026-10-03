@@ -29,13 +29,13 @@
     entirely - this script must never be able to save a VM that is not part of the testbed.
 
     THIS ONE KEEPS ITS DEFAULT, AND IT IS THE ONLY ONE IN Testbed/host/ THAT DOES. Every other
-    script there now requires -VMName / -Name, because THREE MACHINES COEXIST (OutlookAI-Indexed,
-    OutlookAI-Unindexed and OutlookAI-Build) and a default that silently picks ONE OF THREE is
+    script there now requires -VMName / -Name, because FOUR MACHINES COEXIST (OutlookAI-Indexed,
+    OutlookAI-Unindexed, OutlookAI-Build and OutlookAI-Exchange) and a default that silently picks ONE OF FOUR is
     the exact shape of mistake this testbed keeps making. Two things make this parameter
     different:
 
       - It is an ALLOWLIST, not a target. It does not pick a machine to act on; it bounds the
-        set this script is permitted to touch at all. Naming all three is the whole intent -
+        set this script is permitted to touch at all. Naming all four is the whole intent -
         "save any testbed VM nobody is using" - not an unstated guess at one of them.
       - Its failure direction is the safe one. A wrong or stale entry makes this script do LESS:
         it skips a VM and the host keeps holding RAM, which is visible in Get-VM and fixed by
@@ -53,6 +53,9 @@
     OutlookAI-TestVM, the original guest, left it on 2026-10-03, the day it was deleted (Q105).
 
     OutlookAI-Build, the build-and-test VM, joined it the day it was built (2026-10-03, Q102).
+    OutlookAI-Exchange, the Exchange test VM, joined it the day it was built too (2026-10-03,
+    Q108) - in its own branch first, so until that merges and the main checkout the scheduled task
+    runs from is updated, nothing saves it but the agent using it.
     Testbed/host/Invoke-TestsOnBuildVm.ps1 leaves it saved after every run by restoring its base
     checkpoint, so this only ever finds it running when a run died part-way - and then saving it
     is right: the next run restores the checkpoint whatever state it finds.
@@ -72,7 +75,7 @@ param(
     # An allowlist, not a target - see .PARAMETER VMName. This is the one script in Testbed/host/
     # that keeps a default, because naming every known guest IS the intent here, and a name that
     # is wrong or stale makes it skip a VM rather than act on the wrong one.
-    [string[]] $VMName = @('OutlookAI-Indexed', 'OutlookAI-Unindexed', 'OutlookAI-Build'),
+    [string[]] $VMName = @('OutlookAI-Indexed', 'OutlookAI-Unindexed', 'OutlookAI-Build', 'OutlookAI-Exchange'),
     [int] $MinimumUptimeMinutes = 10
 )
 

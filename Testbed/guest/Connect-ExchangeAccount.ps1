@@ -36,6 +36,9 @@
       Address        Outlook's "Email Account Setup" dialog: focus the email address box.
       Password       the Microsoft sign-in page: a password field (IsPassword) in focus.
       Code           the verification-code page: the code field in focus.
+      Verify         over COM, content-free: an Exchange account whose SmtpAddress is -Account, in a cached
+                     mode that is connected (500, 600 or 700), whose delivery store is cached Exchange.
+                     SIGNED-IN or NOT-SIGNED-IN, with what was seen. Reads only.
       Choose         invoke ONE named control on the sign-in page or an Outlook setup dialog
                      (-ControlName): a "Next", "Use a verification code", "No, sign in to this
                      app only", "Done". Invoked through its InvokePattern - no keystroke.
@@ -64,8 +67,9 @@
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Inspect', 'Address', 'Password', 'Code', 'Choose')] [string] $Step = 'Inspect',
+    [ValidateSet('Inspect', 'Address', 'Password', 'Code', 'Choose', 'Verify')] [string] $Step = 'Inspect',
     [string] $ControlName,
+    [string] $Account,
     [int] $WaitSeconds = 90,
     [int] $HoldSeconds = 60,
     [string] $StatusDir = 'C:\OutlookAI-Q5\exchange\signin',
@@ -97,6 +101,36 @@ namespace OutlookAI {
         [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
         [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
         [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr hWnd, uint flags);
+        [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+        [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+        [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr hWnd);
+        [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
+        [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+
+        // Takes the foreground for hWnd from whichever thread holds it now, by attaching this thread's
+        // input to that one for the moment of the call - the documented condition SetForegroundWindow
+        // otherwise refuses a background process.
+        public static bool TakeForeground(IntPtr hWnd) {
+            IntPtr current = GetForegroundWindow();
+            if (current == hWnd) { return true; }
+            uint ignored;
+            uint holder = GetWindowThreadProcessId(current, out ignored);
+            uint self = GetCurrentThreadId();
+            bool attached = holder != 0 && holder != self && AttachThreadInput(self, holder, true);
+            try { BringWindowToTop(hWnd); return SetForegroundWindow(hWnd); }
+            finally { if (attached) { AttachThreadInput(self, holder, false); } }
+        }
+
+        public static uint ForegroundProcessId() {
+            uint pid;
+            GetWindowThreadProcessId(GetForegroundWindow(), out pid);
+            return pid;
+        }
+
+        public static void PressEscape() {
+            keybd_event(0x1B, 0, 0, UIntPtr.Zero);
+            keybd_event(0x1B, 0, 2, UIntPtr.Zero);
+        }
         [DllImport("oleacc.dll")] private static extern int AccessibleObjectFromWindow(IntPtr hwnd, uint id, ref Guid iid, [MarshalAs(UnmanagedType.IUnknown)] out object accessible);
         [DllImport("oleacc.dll")] private static extern int AccessibleChildren(IAccessible container, int start, int count, [Out] object[] children, out int obtained);
 
@@ -256,8 +290,16 @@ function Describe-Focus {
 
 function Bring-ToFront($Window) {
     $h = [IntPtr]$Window.Handle
+    # Measured 2026-10-03 on a fresh guest: the Start menu was open from the first logon, its search
+    # box held the focus, and SetForegroundWindow alone left it there. Escape is pressed ONLY when the
+    # foreground belongs to the shell's own Start/search hosts - never at a dialog, where it would cancel.
+    $holder = Get-ProcessName ([int][OutlookAI.SignInWindow]::ForegroundProcessId())
+    if (@('SearchHost', 'StartMenuExperienceHost', 'ShellExperienceHost') -contains $holder) {
+        [OutlookAI.SignInWindow]::PressEscape()
+        Start-Sleep -Milliseconds 700
+    }
     if ([OutlookAI.SignInWindow]::IsIconic($h)) { [void][OutlookAI.SignInWindow]::ShowWindow($h, 9) }
-    [void][OutlookAI.SignInWindow]::SetForegroundWindow($h)
+    [void][OutlookAI.SignInWindow]::TakeForeground($h)
     Start-Sleep -Milliseconds 400
 }
 
@@ -331,6 +373,41 @@ if ($Step -eq 'Inspect') {
     [IO.File]::WriteAllLines($out, $lines)
     Write-Status 'DONE' @("inspect: $($lines.Count) line(s) -> $out")
     exit 0
+}
+
+# ------------------------------------------------------------------------------------------------
+if ($Step -eq 'Verify') {
+    if (-not $Account) { Write-Status 'REFUSED' @('-Step Verify needs -Account'); exit 4 }
+    $deadline = (Get-Date).AddSeconds($WaitSeconds)
+    $seen = 'no Outlook to attach to'
+    while ((Get-Date) -lt $deadline) {
+        $app = $null
+        try { $app = [Runtime.InteropServices.Marshal]::GetActiveObject('Outlook.Application') } catch { $app = $null }
+        if ($null -ne $app) {
+            try {
+                $ns = $app.Session
+                $seen = "attached; $($ns.Accounts.Count) account(s), none is an Exchange account for $Account"
+                foreach ($a in $ns.Accounts) {
+                    if (-not [string]::Equals([string]$a.SmtpAddress, $Account, [StringComparison]::OrdinalIgnoreCase)) { continue }
+                    $mode = [int]$a.ExchangeConnectionMode
+                    $store = $a.DeliveryStore
+                    $cached = $false
+                    $storeName = ''
+                    if ($null -ne $store) { $cached = [bool]$store.IsCachedExchange; $storeName = [string]$store.DisplayName }
+                    $seen = ('account {0}: type {1}, ExchangeConnectionMode {2}, delivery store "{3}" cached={4}, profile "{5}"' -f $Account, [int]$a.AccountType, $mode, $storeName, $cached, $ns.CurrentProfileName)
+                    if ([int]$a.AccountType -eq 0 -and $cached -and @(500, 600, 700) -contains $mode) {
+                        Write-Status 'SIGNED-IN' @($seen)
+                        exit 0
+                    }
+                }
+            }
+            catch { $seen = "attached, but the read failed: $($_.Exception.Message)" }
+            finally { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($app) }
+        }
+        Start-Sleep -Seconds 5
+    }
+    Write-Status 'NOT-SIGNED-IN' @($seen)
+    exit 1
 }
 
 # ------------------------------------------------------------------------------------------------

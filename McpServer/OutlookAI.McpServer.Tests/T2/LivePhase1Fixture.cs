@@ -26,6 +26,13 @@ public enum LiveMachineProfile
     /// <see cref="LiveWriteAccess"/>, the one place that decides it. Being the default is what
     /// makes that fail safe: a settings file that declares no profile is read-only too.
     /// </para>
+    /// <para>
+    /// <b>And since Q116 (a), 2026-10-03, it runs no live test at all:</b>
+    /// <see cref="LiveTestSettings.Load"/> refuses a Production profile outright
+    /// (<see cref="LiveTestSettings.RefuseTheWorkstation"/>). Its Exchange-only tests moved to the
+    /// Exchange test VM (<see cref="ExchangeGuest"/>). The read-only rules above stay as the floor
+    /// beneath that refusal.
+    /// </para>
     /// </summary>
     Production = 0,
 
@@ -257,8 +264,38 @@ public sealed class LiveTestSettings
                 + "(account identifiers are never committed - v3.MD S6).");
         }
 
-        return Parse(File.ReadAllText(path));
+        LiveTestSettings settings = Parse(File.ReadAllText(path));
+        RefuseTheWorkstation(settings);
+        return settings;
     }
+
+    /// <summary>
+    /// The maintainer's workstation runs NO live test - decided by the maintainer 2026-10-03 (Q116 (a)),
+    /// once the Exchange test VM had run the Exchange tests green. Its settings declare no
+    /// <c>machineProfile</c>, which reads as <see cref="LiveMachineProfile.Production"/>, and a Production
+    /// machine is refused here, in <see cref="Load"/>, before any live fixture builds a census, attaches to
+    /// Outlook or starts an MCP server - so the refusal is in code, by the profile, and needs no edit to the
+    /// workstation's settings file. Until then it ran the Exchange-only tests read-only (Q72, Q74); those
+    /// run on the Exchange VM now (<see cref="LiveRunFilters.ExchangeGuest"/>).
+    /// </summary>
+    internal static void RefuseTheWorkstation(LiveTestSettings settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        if (settings.MachineProfile != LiveMachineProfile.Production)
+        {
+            return;
+        }
+
+        throw new InvalidOperationException(WorkstationRefusal);
+    }
+
+    /// <summary>What <see cref="RefuseTheWorkstation"/> says. One spelling, here; T1 pins it.</summary>
+    internal const string WorkstationRefusal =
+        "LIVE TEST REFUSED: these live-test settings declare machineProfile 'Production' - or none, which reads as "
+        + "Production - and Production is the maintainer's workstation, where NO live test runs, read-only or not "
+        + "(Q116 (a), decided 2026-10-03; AGENTS.md, Mailbox Safety). Live tests run on the test guests "
+        + "(Testbed/README.md section 4c) and on the Exchange test VM (section 4e), whose settings are rendered by "
+        + "Testbed/host/New-LiveTestSettings.ps1. Never re-declare this machine's profile to get past this.";
 
     /// <summary>
     /// Reads and validates settings from JSON text. Split out from <see cref="Load"/> so the

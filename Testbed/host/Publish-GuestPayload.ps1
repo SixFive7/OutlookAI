@@ -52,8 +52,8 @@
 .NOTES
     THIS SCRIPT TAKES NO -VMName, AND THAT IS CORRECT. It only builds on the host; nothing here
     touches a guest. The naming of a guest happens in the next command, Copy-ToGuest.ps1, where
-    -VMName is mandatory - THREE MACHINES COEXIST (OutlookAI-Indexed, OutlookAI-Unindexed and
-    OutlookAI-Build) and a default that silently picks one of three is the exact shape of
+    -VMName is mandatory - FOUR MACHINES COEXIST (OutlookAI-Indexed, OutlookAI-Unindexed, OutlookAI-Build
+    and OutlookAI-Exchange) and a default that silently picks one of four is the exact shape of
     mistake this testbed keeps making. One payload serves both Outlook guests; each copy-in says
     which machine it is for.
 

@@ -25,6 +25,35 @@
   Exchange tests stay disabled on the Exchange test VM. Once it does: enable them there, and move
   test writes from telefonie into the shared mailbox wherever a test allows it (Q110).
 
+- [ ] **Approve, amend or refuse the Exchange VM's Phase 2 write-safety design** (proposed
+  2026-10-03, `Docs/live-tier-on-the-vm.md` section 4.4). Until then `OutlookAI-Exchange` is
+  read-only - profile `ExchangeGuest` - and runs only `Writes=Nothing` tests (`Testbed/README.md`
+  section 4e). Nothing in the design is built.
+
+- [ ] **Decide how the one tagged leftover in telefonie's Sent Items goes.** The Exchange VM's
+  read-only count (`T2/LiveExchangeHubArtifactTests`) found one item whose subject carries
+  `OutlookAI-McpTest` in the mailbox's Sent Items on 2026-10-03 - from the workstation years, not from
+  the VM. It fails that test on every run until it is gone, and only a tested sweep on an approved
+  write run may remove it. Directions: (1) remove it with the existing tested sweep on the first
+  approved Phase 2 run - it carries the tag, so `DeleteTaggedArtifactsUntilStableZero` takes it, but
+  no run marker of a recorded run, so that would be a deletion by tag alone; (2) a one-off tested
+  helper that deletes exactly the one EntryID the maintainer confirms; (3) he deletes it himself in
+  Outlook on the web. Recommended: (3) - one item, his mailbox, and no deletion rule loosened for it.
+
+- [ ] **Decide whether the Exchange VM gets the add-in.** Not installed (Phase 1 needed no write to the
+  profile's configuration): `T2/LiveHealthTests` and the `AddInRegistry` tests need it, and on an
+  Exchange profile its tuning reconcile writes Cached Mode policy values that change how the mailbox
+  syncs - and an unelevated Outlook cannot finish that reconcile at all (the open item above). Decide
+  with that item.
+
+- [ ] **Three things the Exchange VM's first runs left open.** (1) The sign-in's verification-code
+  step has never met a code page: Microsoft asked for no MFA code on either sign-in of 2026-10-03, so
+  only the RFC test vectors stand behind the TOTP generator - the first code page will be its first
+  real proof. (2) `T2/LiveHealthTests.Health_OnThisMachine_ReportsOkWithFullDetail` reads the add-in's
+  tuning state without declaring `Requires=AddInRegistry`, so it fails on any machine without the add-in
+  instead of being filtered out. (3) The five `T2/LiveSearchInTests` throw NullReference when the
+  settings carry no `subjectOnlyProbe` instead of refusing with the remedy.
+
 - [ ] **Decide what the add-in's tuning reconcile does with the five Cached Mode values it writes
   under `HKCU\Software\Policies` (found 2026-10-03 by the first guest run of the two-phase add-in
   install).** `OutlookTuningService.Reconcile` writes D25's five `caching.policy.*` values there, and
@@ -69,16 +98,6 @@
   departed item is off by the UTC offset. Pass the spelling (`CensusColumnMap` knows the index, the
   names list the spelling) when the census is next touched.
 
-- [ ] **Read which store-hash input Outlook uses for a cached Exchange store - the one half of Q99
-  no test machine can measure.** The product now finds each store in the search index by Microsoft's
-  store hash (`McpServer/README.md` load-bearing fact 16). For a PST that is measured; for a cached
-  Exchange store Microsoft documents the input (the profile's `PR_MAPPING_SIGNATURE`) and the product
-  computes it, plus the store's own signature and the entry-ID-plus-`.ost` variant, but no guest can
-  have Exchange, and agents never query the maintainer's Outlook. His own first `outlook_health` on a
-  build with Q99 (a release, or a dev build put on through `Tools/Switch-AddInBuild.ps1` when he asks)
-  answers it, read-only: each Exchange row's `matchedBy` and `matchedInput`. `storeHash` with an input
-  settles which one; `displayName` means no documented input matched and the store is still found by
-  its name, exactly as before - then look at why. Delegate rows stay `delegateFolder` either way.
 
 - [ ] **Decide what an UNSCOPED search does with hits from another Outlook profile's stores (Q99
   finding).** One Windows user has one search index for all of their Outlook profiles, so a search
@@ -88,9 +107,10 @@
   section 8 item 24). Such a hit cannot be opened from the open profile. Unchanged by Q99, and harmless
   on a one-profile machine. Directions: (1) leave it, and document it; (2) FLAG such hits from the
   store map (a hit whose store root no store of this profile claimed); (3) DROP them; (4) scope an
-  unscoped search to this profile's roots. Recommended: (2) once the Exchange half above is measured -
-  until then a root the hash did not tie may still be this profile's own Exchange store, so (2), (3)
-  and (4) would misjudge exactly the stores whose input is unmeasured.
+  unscoped search to this profile's roots. Recommended: (2). The Exchange half it waited for is
+  measured (2026-10-03, Q113 (b), on the Exchange test VM): a cached Exchange mailbox is tied by its
+  store hash, input `profileMappingSignature`, so a root the hash did not tie is not this profile's own
+  cached Exchange store. Delegate roots stay `delegateFolder`; a delegate's row is not measured yet.
 
 - [ ] **Let a folder whose name holds `/` be named in a `folder` argument (Q99 folder finding,
   2026-10-03).** Outlook accepts `/` in a folder name and the index spells it `%2F`, so the folder is
