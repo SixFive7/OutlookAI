@@ -33,15 +33,23 @@ namespace OutlookAI.Core.Com
     ///     non-Exchange store without asking Outlook for it. D39 read the same property off the
     ///     STORE object (live probe: absent on all 5 cached Exchange stores), which the spec
     ///     does not name; that read is kept as a second source, never as proof of absence.
-    ///  3. NEVER by folder NAME - localization makes name guessing wrong by design.
+    ///  3. On a non-Exchange store, the Inbox's <c>PR_ADDITIONAL_REN_ENTRYIDS_EX</c> (0x36D90102,
+    ///     PersistData blocks per MS-OXOSFLD 2.2.4.1), block <see cref="SpecialFolders.ArchivePersistId"/>
+    ///     (0x800F). MEASURED 2026-10-03 on the first live run on a test guest: after
+    ///     archive_mail's <c>GetDefaultFolder(39)</c> made an <c>Archive</c> folder in a POP3 PST,
+    ///     PR_IPM_ARCHIVE_ENTRYID was on neither the Inbox nor the store, and this block named the
+    ///     new folder byte for byte - so without it the read-only lookup answered "no designated
+    ///     Archive folder" about the folder mail had just been archived into, and every sweep that
+    ///     resolves the Archive that way left that mail where it was.
+    ///  4. NEVER by folder NAME - localization makes name guessing wrong by design.
     ///
-    /// Researched-and-rejected carriers (documented so nobody re-walks this path):
-    /// PR_ADDITIONAL_REN_ENTRYIDS_EX (0x36D90102, PersistData blocks per MS-OXOSFLD) - the
-    /// documented PersistID list (RSF_PID_* up to 0x800B) has no archive value and the
-    /// property is absent from all 5 live stores; PR_ADDITIONAL_REN_ENTRYIDS (0x36D81102, on
-    /// the Inbox) - live-probed: carries exactly the classic 5 slots (Conflicts/Sync
-    /// Issues/Local Failures/Server Failures/Junk) plus one 4-byte non-EntryID trailer, no
-    /// archive slot.
+    /// Researched carriers, and what became of them: PR_ADDITIONAL_REN_ENTRYIDS_EX was REJECTED
+    /// on 2026-07-26 because the documented PersistID list (RSF_PID_* up to 0x800B) has no
+    /// archive value and the property is absent from all 5 live (Exchange) stores - both still
+    /// true, and the reason it is read on a non-Exchange store only, under a PersistID measured
+    /// rather than documented (item 3). PR_ADDITIONAL_REN_ENTRYIDS (0x36D81102, on the Inbox) -
+    /// live-probed: carries exactly the classic 5 slots (Conflicts/Sync Issues/Local
+    /// Failures/Server Failures/Junk) plus one 4-byte non-EntryID trailer, no archive slot.
     /// </summary>
     public static class ArchiveFolderResolution
     {
@@ -62,6 +70,20 @@ namespace OutlookAI.Core.Com
 
         /// <summary>Resolved from PR_IPM_ARCHIVE_ENTRYID on the Inbox (MS-OXOSFLD 2.2.3), without asking Outlook for the folder.</summary>
         public const string ViaInboxArchiveProperty = "inboxArchiveProperty";
+
+        /// <summary>
+        /// Resolved from the Inbox's PR_ADDITIONAL_REN_ENTRYIDS_EX block 0x800F - where Outlook
+        /// records the Archive folder it made on a PST (measured 2026-10-03) - without asking
+        /// Outlook for the folder.
+        /// </summary>
+        public const string ViaInboxPersistData = "inboxAdditionalRenEntryIdsEx";
+
+        /// <summary>
+        /// Resolved from PR_IPM_ARCHIVE_ENTRYID on the store's TRUE root folder (the parent of the
+        /// IPM subtree), where MS-OXOSFLD keeps special-folder ids beside the Inbox's - without
+        /// asking Outlook for the folder.
+        /// </summary>
+        public const string ViaRootArchiveProperty = "rootArchiveProperty";
 
         /// <summary>The store has no designated Archive folder, and nothing was created.</summary>
         public const string NoDesignatedArchiveFolder = "NoDesignatedArchiveFolder";
@@ -326,6 +348,10 @@ namespace OutlookAI.Core.Com
             {
                 case SpecialFolderSource.InboxDesignation:
                     return ViaInboxArchiveProperty;
+                case SpecialFolderSource.InboxPersistData:
+                    return ViaInboxPersistData;
+                case SpecialFolderSource.RootDesignation:
+                    return ViaRootArchiveProperty;
                 case SpecialFolderSource.StoreDesignation:
                     return ViaStoreArchiveProperty;
                 default:

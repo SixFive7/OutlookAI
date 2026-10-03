@@ -88,6 +88,21 @@ namespace OutlookAI.Core.Com
 
         /// <summary>The entry id designated on the store object itself, opened with <c>GetFolderFromID</c>.</summary>
         StoreDesignation = 3,
+
+        /// <summary>
+        /// The entry id in one PersistData block of the Inbox's <c>PR_ADDITIONAL_REN_ENTRYIDS_EX</c>
+        /// (MS-OXOSFLD 2.2.4.1), opened with <c>GetFolderFromID</c> - where Outlook records the
+        /// Archive folder it makes on a PST (measured 2026-10-03; <see cref="SpecialFolders.ArchivePersistId"/>).
+        /// </summary>
+        InboxPersistData = 4,
+
+        /// <summary>
+        /// From the store's TRUE root folder's designation (the parent of the IPM subtree, read
+        /// through its <c>PR_PARENT_ENTRYID</c>) - where Outlook records the Drafts folder it makes
+        /// in a data file with no Inbox (measured 2026-10-03), and where MS-OXOSFLD keeps the
+        /// special-folder ids beside the Inbox's.
+        /// </summary>
+        RootDesignation = 5,
     }
 
     /// <summary>
@@ -106,6 +121,13 @@ namespace OutlookAI.Core.Com
 
         /// <summary><c>Folder.PropertyAccessor.GetProperty</c> on a folder this store handed out.</summary>
         PropertyRead ReadFolderProperty(object folder, string schemaName);
+
+        /// <summary>
+        /// <c>Folder.PropertyAccessor.GetProperty</c> on the folder <c>Store.GetRootFolder</c> hands
+        /// out - the top of the visible (IPM) hierarchy, NOT the store's true root. Never creates
+        /// anything.
+        /// </summary>
+        PropertyRead ReadRootFolderProperty(string schemaName);
 
         /// <summary>
         /// <c>Store.GetDefaultFolder</c>. THE CREATING CALL: on a store that does not have the
@@ -232,6 +254,33 @@ namespace OutlookAI.Core.Com
 
         /// <summary>PR_ADDITIONAL_REN_ENTRYIDS (PidTagAdditionalRenEntryIds, 0x36D8, PT_MV_BINARY).</summary>
         public const string AdditionalRenEntryIdsSchema = "http://schemas.microsoft.com/mapi/proptag/0x36D81102";
+
+        /// <summary>PR_ADDITIONAL_REN_ENTRYIDS_EX (PidTagAdditionalRenEntryIdsEx, 0x36D9, PT_BINARY): PersistData blocks (MS-OXOSFLD 2.2.4.1).</summary>
+        public const string AdditionalRenEntryIdsExSchema = "http://schemas.microsoft.com/mapi/proptag/0x36D90102";
+
+        /// <summary>
+        /// The PersistID under which Outlook records the ARCHIVE folder in the Inbox's
+        /// <c>PR_ADDITIONAL_REN_ENTRYIDS_EX</c> on a PST. NOT in MS-OXOSFLD's list (which stops at
+        /// RSF_PID_BUDDYLIST_CONTACTS 0x800B) - MEASURED, the way <see cref="ArchiveFolderResolution.OlFolderArchive"/>
+        /// (39) is: on 2026-10-03, on the hub PST of the first live run on a test guest (POP3 PST,
+        /// Office LTSC 2024 16.0.17932), after archive_mail's <c>GetDefaultFolder(39)</c> had made an
+        /// <c>Archive</c> folder, the Inbox's blob held seven blocks - 0x8001, 0x8006, 0x8007, 0x8009,
+        /// 0x8002, 0x800F, 0x8004 - and the 0x800F block's entry id was that Archive folder's,
+        /// byte for byte, while <c>PR_IPM_ARCHIVE_ENTRYID</c> was on neither the Inbox nor the store.
+        /// It is read only as a DESIGNATION: what it names is opened with <c>GetFolderFromID</c> and
+        /// then verified like every other archive candidate.
+        /// </summary>
+        public const int ArchivePersistId = 0x800F;
+
+        /// <summary>RSF_ELID_ENTRYID (MS-OXOSFLD 2.2.4.1.1): the data element of a PersistData block that holds its entry id.</summary>
+        public const int PersistElementEntryId = 0x0001;
+
+        /// <summary>
+        /// PR_PARENT_ENTRYID (PidTagParentEntryId, 0x0E09, PT_BINARY). Read off the folder
+        /// <c>Store.GetRootFolder</c> returns - the IPM subtree - it names the store's TRUE root
+        /// folder, which the object model offers no other way to reach.
+        /// </summary>
+        public const string ParentEntryIdSchema = "http://schemas.microsoft.com/mapi/proptag/0x0E090102";
 
         /// <summary>FOLDER_IPM_INBOX_VALID (MAPIDefS.h).</summary>
         public const int FolderIpmInboxValid = 0x00000002;
@@ -417,6 +466,85 @@ namespace OutlookAI.Core.Com
                 default:
                     return DesignatedEntryId.Unrecognised;
             }
+        }
+
+        /// <summary>
+        /// Reads the entry id one PersistData block of a <c>PR_ADDITIONAL_REN_ENTRYIDS_EX</c> value
+        /// designates (MS-OXOSFLD 2.2.4.1): a run of blocks, each a little-endian PersistID and
+        /// DataElementsSize followed by that many bytes of elements - an ElementID, an
+        /// ElementDataSize and the data - and ended by a zero PersistID. The block asked for, holding
+        /// an RSF_ELID_ENTRYID element, designates that entry id. No value, no such block, or such a
+        /// block without an entry id designates nothing. A value that is not a byte array, or whose
+        /// lengths run past its end before the block is found, is unrecognised - a truncated blob
+        /// cannot be read as "not designated".
+        /// </summary>
+        public static DesignatedEntryId ReadPersistDataEntryId(object? value, int persistId)
+        {
+            if (value == null)
+            {
+                return DesignatedEntryId.None;
+            }
+
+            if (!(value is byte[] blob))
+            {
+                return DesignatedEntryId.Unrecognised;
+            }
+
+            int offset = 0;
+            while (offset + 4 <= blob.Length)
+            {
+                int id = blob[offset] | (blob[offset + 1] << 8);
+                int size = blob[offset + 2] | (blob[offset + 3] << 8);
+                if (id == 0)
+                {
+                    return DesignatedEntryId.None;
+                }
+
+                int dataStart = offset + 4;
+                if (dataStart + size > blob.Length)
+                {
+                    return DesignatedEntryId.Unrecognised;
+                }
+
+                if (id == persistId)
+                {
+                    int element = dataStart;
+                    while (element + 4 <= dataStart + size)
+                    {
+                        int elementId = blob[element] | (blob[element + 1] << 8);
+                        int elementSize = blob[element + 2] | (blob[element + 3] << 8);
+                        if (elementId == 0)
+                        {
+                            break;
+                        }
+
+                        if (element + 4 + elementSize > dataStart + size)
+                        {
+                            return DesignatedEntryId.Unrecognised;
+                        }
+
+                        if (elementId == PersistElementEntryId)
+                        {
+                            if (elementSize < 4)
+                            {
+                                return DesignatedEntryId.None;
+                            }
+
+                            byte[] entryId = new byte[elementSize];
+                            Array.Copy(blob, element + 4, entryId, 0, elementSize);
+                            return DesignatedEntryId.Of(ToHex(entryId));
+                        }
+
+                        element += 4 + elementSize;
+                    }
+
+                    return DesignatedEntryId.None;
+                }
+
+                offset = dataStart + size;
+            }
+
+            return offset == blob.Length ? DesignatedEntryId.None : DesignatedEntryId.Unrecognised;
         }
 
         /// <summary>
@@ -916,6 +1044,7 @@ namespace OutlookAI.Core.Com
             source = SpecialFolderSource.None;
             int? index = AdditionalRenIndex(olDefaultFolderId);
 
+            OutlookComSession.DefaultFolderResolution persisted = OutlookComSession.DefaultFolderResolution.Absent;
             OutlookComSession.DefaultFolderResolution primary =
                 ResolveByValidMask(store, OlFolderInbox, FolderIpmInboxValid, out object? inbox);
             if (primary == OutlookComSession.DefaultFolderResolution.Resolved)
@@ -923,6 +1052,19 @@ namespace OutlookAI.Core.Com
                 try
                 {
                     primary = OpenDesignated(store, store.ReadFolderProperty(inbox!, schema), index, out folder);
+
+                    // The Archive folder Outlook makes on a PST is designated NOT by
+                    // PR_IPM_ARCHIVE_ENTRYID but by a PersistData block of the same Inbox's
+                    // PR_ADDITIONAL_REN_ENTRYIDS_EX (ArchivePersistId, measured 2026-10-03): without
+                    // reading it, every read-only lookup - the sweeps, the census, the archive
+                    // tools' own read-back - answered "no designated Archive folder" about the
+                    // folder archive_mail had just moved mail into.
+                    if (primary != OutlookComSession.DefaultFolderResolution.Resolved
+                        && olDefaultFolderId == ArchiveFolderResolution.OlFolderArchive)
+                    {
+                        persisted = OpenPersistDataDesignated(
+                            store, store.ReadFolderProperty(inbox!, AdditionalRenEntryIdsExSchema), ArchivePersistId, out folder);
+                    }
                 }
                 finally
                 {
@@ -933,6 +1075,12 @@ namespace OutlookAI.Core.Com
                 {
                     source = SpecialFolderSource.InboxDesignation;
                     return primary;
+                }
+
+                if (persisted == OutlookComSession.DefaultFolderResolution.Resolved)
+                {
+                    source = SpecialFolderSource.InboxPersistData;
+                    return persisted;
                 }
             }
 
@@ -948,7 +1096,98 @@ namespace OutlookAI.Core.Com
                 return OutlookComSession.DefaultFolderResolution.Resolved;
             }
 
-            return primary;
+            // And on the store's TRUE root folder, the other place MS-OXOSFLD keeps these ids beside
+            // the Inbox. MEASURED 2026-10-03 on a test guest (Office LTSC 2024): the Drafts folder a
+            // reply made in a data file with no Inbox was designated there - PR_IPM_DRAFTS_ENTRYID on
+            // the root - and on neither the store object nor anything the object model hands out, so
+            // without this read the lookup answered "no Drafts folder" about the folder the reply had
+            // just been saved in, and discard_draft and update_draft refused every draft there.
+            OutlookComSession.DefaultFolderResolution rooted = OutlookComSession.DefaultFolderResolution.Absent;
+            if (!index.HasValue)
+            {
+                rooted = OpenRootDesignated(store, schema, out folder);
+                if (rooted == OutlookComSession.DefaultFolderResolution.Resolved)
+                {
+                    source = SpecialFolderSource.RootDesignation;
+                    return OutlookComSession.DefaultFolderResolution.Resolved;
+                }
+            }
+
+            // A PersistData blob or a root designation that could not be read proves nothing
+            // either way: never Absent.
+            return persisted == OutlookComSession.DefaultFolderResolution.Unreadable
+                    || rooted == OutlookComSession.DefaultFolderResolution.Unreadable
+                ? OutlookComSession.DefaultFolderResolution.Unreadable
+                : primary;
+        }
+
+        /// <summary>
+        /// Opens the folder the store's TRUE root folder designates under <paramref name="schema"/>.
+        /// The object model never hands that root out - <c>Store.GetRootFolder</c> is the IPM
+        /// subtree below it - so it is reached through the subtree's <c>PR_PARENT_ENTRYID</c> and
+        /// opened with <c>GetFolderFromID</c>, which creates nothing. A subtree that names no parent
+        /// leaves nothing to read (Absent); any read that fails, or a parent that will not open, is
+        /// Unreadable - never Absent.
+        /// </summary>
+        private static OutlookComSession.DefaultFolderResolution OpenRootDesignated(
+            ISpecialFolderStore store,
+            string schema,
+            out object? folder)
+        {
+            folder = null;
+            PropertyRead parent = store.ReadRootFolderProperty(ParentEntryIdSchema);
+            if (parent.Status == PropertyReadStatus.NotFound)
+            {
+                return OutlookComSession.DefaultFolderResolution.Absent;
+            }
+
+            string? rootEntryId = parent.Status == PropertyReadStatus.Found
+                ? ArchiveFolderResolution.TryReadEntryIdHex(parent.Value)
+                : null;
+            if (rootEntryId == null)
+            {
+                return OutlookComSession.DefaultFolderResolution.Unreadable;
+            }
+
+            object? root = null;
+            try
+            {
+                if (store.OpenFolder(rootEntryId, out root) != PropertyReadStatus.Found || root == null)
+                {
+                    return OutlookComSession.DefaultFolderResolution.Unreadable;
+                }
+
+                return OpenDesignated(store, store.ReadFolderProperty(root, schema), null, out folder);
+            }
+            finally
+            {
+                store.Release(root);
+            }
+        }
+
+        /// <summary>
+        /// Turns one <c>PR_ADDITIONAL_REN_ENTRYIDS_EX</c> read into the folder its
+        /// <paramref name="persistId"/> block designates - the same outcomes as
+        /// <see cref="OpenDesignated"/>, read through <see cref="ReadPersistDataEntryId"/>.
+        /// </summary>
+        private static OutlookComSession.DefaultFolderResolution OpenPersistDataDesignated(
+            ISpecialFolderStore store,
+            PropertyRead designation,
+            int persistId,
+            out object? folder)
+        {
+            folder = null;
+            if (designation.Status == PropertyReadStatus.NotFound)
+            {
+                return OutlookComSession.DefaultFolderResolution.Absent;
+            }
+
+            if (designation.Status != PropertyReadStatus.Found)
+            {
+                return OutlookComSession.DefaultFolderResolution.Unreadable;
+            }
+
+            return OpenEntryId(store, ReadPersistDataEntryId(designation.Value, persistId), out folder);
         }
 
         /// <summary>
@@ -977,6 +1216,20 @@ namespace OutlookAI.Core.Com
             DesignatedEntryId entryId = index.HasValue
                 ? ReadEntryIdAt(designation.Value, index.Value)
                 : ReadEntryId(designation.Value);
+            return OpenEntryId(store, entryId, out folder);
+        }
+
+        /// <summary>
+        /// Opens the folder one designation names. None: absent. Unrecognised: unreadable. An entry
+        /// id that no longer opens (<c>MAPI_E_NOT_FOUND</c>) names a folder that is gone, so absent
+        /// too; any other failure to open it is unreadable.
+        /// </summary>
+        private static OutlookComSession.DefaultFolderResolution OpenEntryId(
+            ISpecialFolderStore store,
+            DesignatedEntryId entryId,
+            out object? folder)
+        {
+            folder = null;
             if (entryId.Kind == DesignatedEntryIdKind.None)
             {
                 return OutlookComSession.DefaultFolderResolution.Absent;
@@ -1159,6 +1412,25 @@ namespace OutlookAI.Core.Com
         public PropertyRead ReadFolderProperty(object folder, string schemaName)
         {
             return ReadProperty(folder, schemaName);
+        }
+
+        /// <inheritdoc />
+        public PropertyRead ReadRootFolderProperty(string schemaName)
+        {
+            object? root = null;
+            try
+            {
+                root = ((dynamic)_store).GetRootFolder();
+                return root == null ? PropertyRead.Failure() : ReadProperty(root, schemaName);
+            }
+            catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+            {
+                return PropertyRead.Failure();
+            }
+            finally
+            {
+                OutlookComSession.Release(root);
+            }
         }
 
         /// <inheritdoc />

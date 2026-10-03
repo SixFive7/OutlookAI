@@ -353,6 +353,99 @@ namespace OutlookAI.Core.Com
             }
         }
 
+        /// <summary>
+        /// Adds the Explorer a show-me call puts on screen - and never hands back an Explorer that
+        /// already existed, a lifetime pin above all.
+        /// <para>
+        /// MEASURED on Office LTSC 2024 (16.0.17932, the unindexed test guest, 2026-10-03, D49 probe
+        /// v3): <c>Explorers.Add</c> on the folder a NON-DISPLAYED Explorer already shows returns THAT
+        /// Explorer - the same COM object, <c>Explorers.Count</c> unchanged - while an Add on any other
+        /// folder makes a new one, and the non-displayed Explorer then keeps Outlook running after the
+        /// new window is closed. The pin (<see cref="TryPinProcess"/>) is a non-displayed Explorer on
+        /// the default Inbox, so a show-me call for that Inbox was handed the pin, displayed it, and the
+        /// user's close took the pin - and Outlook - with it: the D49 regression the guest's live runs
+        /// reported while the session still said it was pinned.
+        /// </para>
+        /// <para>
+        /// So an Explorer that comes back as a pin, or without the count going up, is released -
+        /// never displayed, never closed - and the Explorer is added on <paramref name="alternateFolder"/>
+        /// instead; <paramref name="rerouted"/> tells the caller to navigate it to
+        /// <paramref name="folder"/> once it is on screen. The count is checked as well as the pin
+        /// registry because a pin another session made is reached through another apartment's proxy,
+        /// whose pointer the registry does not hold. When the alternate is unavailable or comes back
+        /// the same way, the answer is an error: an existing Explorer is never returned from here.
+        /// </para>
+        /// </summary>
+        /// <param name="add"><c>Explorers.Add(folder, olFolderDisplayNormal)</c>.</param>
+        /// <param name="countExplorers">A fresh <c>Explorers.Count</c>; negative when it cannot be read.</param>
+        /// <param name="folder">The folder the caller wants on screen.</param>
+        /// <param name="alternateFolder">Another folder to open the window on - the store's top folder. Called at most once; the result is released here.</param>
+        /// <param name="rerouted">True when the returned Explorer was added on the alternate folder.</param>
+        /// <param name="error">Content-free reason when nothing was returned.</param>
+        internal static object? AddShowMeExplorer(
+            Func<object, object?> add,
+            Func<int> countExplorers,
+            object folder,
+            Func<object?> alternateFolder,
+            out bool rerouted,
+            out string? error)
+        {
+            rerouted = false;
+            error = null;
+            int before = countExplorers();
+            object? explorer = add(folder);
+            if (!IsExistingExplorer(explorer, before, countExplorers))
+            {
+                return explorer;
+            }
+
+            OutlookComSession.Release(explorer);
+            object? alternate = null;
+            try
+            {
+                alternate = alternateFolder();
+                if (alternate == null)
+                {
+                    error = "Outlook handed back an Explorer that already existed - its hidden lifetime window - for this folder, "
+                        + "and no other folder was available to open a new window on.";
+                    return null;
+                }
+
+                before = countExplorers();
+                explorer = add(alternate);
+                if (IsExistingExplorer(explorer, before, countExplorers))
+                {
+                    OutlookComSession.Release(explorer);
+                    error = "Outlook handed back an Explorer that already existed for every folder tried, so no window was opened.";
+                    return null;
+                }
+
+                rerouted = true;
+                return explorer;
+            }
+            finally
+            {
+                OutlookComSession.Release(alternate);
+            }
+        }
+
+        /// <summary>An Explorer <c>Explorers.Add</c> did not create: a known pin, or the count did not go up.</summary>
+        private static bool IsExistingExplorer(object? explorer, int countBefore, Func<int> countExplorers)
+        {
+            if (explorer == null || IsPin(explorer))
+            {
+                return true;
+            }
+
+            if (countBefore < 0)
+            {
+                return false;
+            }
+
+            int after = countExplorers();
+            return after >= 0 && after <= countBefore;
+        }
+
         /// <summary>Every top-level window owned by the OUTLOOK.EXE processes.</summary>
         public static IReadOnlyList<WindowState> SnapshotOutlookWindows()
         {

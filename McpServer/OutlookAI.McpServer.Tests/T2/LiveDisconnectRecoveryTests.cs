@@ -222,6 +222,19 @@ public sealed class LiveDisconnectRecoveryTests
             }
         }
 
+        // Whether the session holds D49's lifetime pin around the promotion. Diagnostic only; the
+        // assertion below is unchanged. On the test guest (Office LTSC 2024, 16.0.17932) the live runs
+        // of 2026-10-03 logged pinned=True on both sides and Outlook STILL exited when the promoted
+        // window closed. The D49 probes measured why: on that build Explorers.Add on the folder the
+        // pin shows (the default Inbox - the hub's, here) hands back the pin itself, so the promotion
+        // displayed the pin and the close took it. ComposeSurface.AddShowMeExplorer now never returns
+        // an Explorer that already existed (T1 ShowMeExplorerPinTests).
+        _output.WriteLine("lifetime pin before promotion: " + DescribePin(independentGateway) + "; " + DescribeOutlookProcesses());
+
+        // Whether the session that promotes - and, after a re-autostart, also holds the pin - started
+        // this Outlook itself. It decides what the user's close may do (the decision below).
+        bool promoterStartedOutlook = independentGateway.Run(s => ((OutlookComSession)s).StartedOutlook);
+
         // Promote with ONE window of our own via the sanctioned goto surface (hub store).
         ComExplorerState? explorerState = clock.Step(
             "promote Outlook with one Explorer window (goto hub)",
@@ -232,6 +245,7 @@ public sealed class LiveDisconnectRecoveryTests
                 return state;
             }));
         _output.WriteLine($"promoted: explorer on '{explorerState!.CurrentFolderPath}'");
+        _output.WriteLine("lifetime pin after promotion: " + DescribePin(independentGateway) + "; " + DescribeOutlookProcesses());
 
         IntPtr ourWindow = IntPtr.Zero;
         IReadOnlyList<IntPtr> baseline = baselineWindows;
@@ -243,6 +257,15 @@ public sealed class LiveDisconnectRecoveryTests
                 return ourWindow != IntPtr.Zero;
             },
             TimeSpan.FromSeconds(15));
+
+        // D49 diagnostic (2026-10-03, after run 9 still saw Outlook exit with the fix in): how many
+        // Explorers Outlook holds once the promoted window is up. Two - the pin and a window of the
+        // show-me path's own - is what ComposeSurface.AddShowMeExplorer promises; one means the window
+        // on screen IS the pin. Read before WM_CLOSE only: a read afterwards could start the very
+        // Outlook this test is watching exit. Folder names only (S4). Diagnostic, never asserted.
+        _output.WriteLine("explorers once the promoted window is up: " + LiveOutlookTestMailer.DescribeExplorers());
+        _output.WriteLine("lifetime pin right before WM_CLOSE: " + DescribePin(independentGateway));
+        int? explorersBeforeClose = LiveOutlookTestMailer.CountExplorers();
 
         IReadOnlyList<IntPtr> beforeClose = WindowProbe.VisibleOutlookWindows();
         if (beforeClose.Count != 1)
@@ -274,19 +297,44 @@ public sealed class LiveDisconnectRecoveryTests
             () => WindowProbe.VisibleOutlookWindows().Count == 0,
             TimeSpan.FromSeconds(30));
         Thread.Sleep(3000); // well past the measured ~1-2 s forced-shutdown window
-        Assert.True(
-            Process.GetProcessesByName("OUTLOOK").Length > 0,
-            "D49 regression: Outlook exited when its last window closed - the compose-surface pin is not holding it");
-        _output.WriteLine(
-            "D49: Outlook survived losing its last window and is headless again "
-            + $"(session IsConnected={independentGateway.IsConnected} - passive flag, healed on the next call)");
+        bool survived = Process.GetProcessesByName("OUTLOOK").Length > 0;
+        if (survived)
+        {
+            _output.WriteLine(
+                "D49: Outlook survived losing its last window and is headless again "
+                + $"(session IsConnected={independentGateway.IsConnected} - passive flag, healed on the next call)");
 
-        // Now relinquish the pin, which is the ONLY thing still keeping Outlook alive -
-        // otherwise the disconnect scenario below cannot be staged at all any more.
-        int closedExplorers = clock.Step(
-            "release the lifetime pin so Outlook can exit",
-            () => independentGateway.Run(s => ((OutlookComSession)s).TryCloseInvisibleExplorers()));
-        _output.WriteLine($"released the lifetime pin ({closedExplorers} invisible Explorer(s) closed)");
+            // Now relinquish the pin, which is the ONLY thing still keeping Outlook alive -
+            // otherwise the disconnect scenario below cannot be staged at all any more.
+            int closedExplorers = clock.Step(
+                "release the lifetime pin so Outlook can exit",
+                () => independentGateway.Run(s => ((OutlookComSession)s).TryCloseInvisibleExplorers()));
+            _output.WriteLine($"released the lifetime pin ({closedExplorers} invisible Explorer(s) closed)");
+        }
+        else
+        {
+            // DECIDED 2026-10-03 (coordinator job 2, on the maintainer's behalf; QUESTIONS.md decision
+            // log), from what the guest measured. Office LTSC 2024 raises Application.Quit when the user
+            // closes the last VISIBLE window, even while a hidden Explorer would keep it running. The
+            // session hears it (SF-2), leaves, and - because it STARTED this Outlook - closes its pin on
+            // the way out ("leave Outlook as you found it"), which is also what lets the user's own Exit
+            // end an Outlook OutlookAI started. So when the promoting session started Outlook, the close
+            // ending Outlook is the user's quit honoured, and that alone is accepted here: the window must
+            // not have been the pin (two Explorers before the close), and the session must have been told
+            // by the quit event - a process exit first would be a crash. The reattach in (4) then proves
+            // the next call brings Outlook back headless.
+            string? gone = independentGateway.LastSessionGoneSignal;
+            Assert.True(
+                promoterStartedOutlook && explorersBeforeClose == 2 && gone == OutlookComSession.GoneByQuitEvent,
+                "D49 regression: Outlook exited when its last window closed - the compose-surface pin is not holding it "
+                + $"(promoting session started Outlook={promoterStartedOutlook}, Explorers before the close="
+                + (explorersBeforeClose?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "unreadable")
+                + $", what ended the session={gone ?? "nothing"})");
+            _output.WriteLine(
+                "D49 (Office raises Quit on the last window's close): the session that started Outlook heard the quit, "
+                + "closed its pin as it left, and Outlook ended as the user asked - the pin was not the window "
+                + $"({explorersBeforeClose} Explorers before the close); the reattach below must bring it back headless");
+        }
 
         // (1) Background release: the independent gateway receives NO calls - only the
         // process-exit watcher can flip IsConnected (the sharp SF-2 assert).
@@ -317,56 +365,71 @@ public sealed class LiveDisconnectRecoveryTests
         // mutex reason in the sweep error + freshness advice, and must NOT start
         // Outlook. The staleness block must report the post-sweep reality
         // (outlookRunning=false - the D34 snapshot fix).
-        using (var installerMutex = new System.Threading.Mutex(initiallyOwned: true, "OutlookAISetup", out bool createdNew))
+        //
+        // It needs index results to degrade TO. On a machine whose settings name no indexed store
+        // (the unindexed guest, 2026-10-03: the search failed there with 0x80041820, no catalog) the
+        // step can prove nothing, and says so in the repository's own idiom; on a Production profile
+        // the same emptiness refuses the run. The rest of the scenario runs either way.
+        IReadOnlyList<string> indexedForDegradedSearch = LivePopulationCoverage.Require(
+            _fixture.Settings,
+            _fixture.Settings.IndexedStores,
+            "indexed store",
+            "the degraded-search check (3b), which needs index results for the search to fall back to",
+            "Run it on a guest whose index holds the hub (OutlookAI-Indexed), where 'indexedStoreDisplayNames' names it.",
+            _output.WriteLine);
+        if (indexedForDegradedSearch.Count > 0)
         {
-            try
+            using (var installerMutex = new System.Threading.Mutex(initiallyOwned: true, "OutlookAISetup", out bool createdNew))
             {
-                if (!createdNew)
+                try
                 {
-                    // Step (3b) only - the scenario carries on to (4) on a machine where it stands aside.
-                    LivePopulationCoverage.StandAsideForAUser(
-                        _fixture.Settings,
-                        "a real OutlookAISetup mutex is already held (an add-in install or update is running)",
-                        "the degraded-search check (3b), which has to hold that mutex itself",
-                        InstallerMutexOnAnUnattendedMachine,
-                        _output.WriteLine);
-                }
-                else
-                {
-                    service.ClearSweepCache(); // A <10 s-old cached sweep would mask the degradation path.
-                    SearchOutcome degraded = clock.Step(
-                        "degraded search while the installer mutex is held (D34)",
-                        () => service.Search(new SearchRequest
-                        {
-                            Query = "oaimcpDegradationProbe" + _fixture.RunMarker,
-                            Store = _fixture.Hub,
-                            Top = 5,
-                            SnippetChars = 0,
-                        }));
+                    if (!createdNew)
+                    {
+                        // Step (3b) only - the scenario carries on to (4) on a machine where it stands aside.
+                        LivePopulationCoverage.StandAsideForAUser(
+                            _fixture.Settings,
+                            "a real OutlookAISetup mutex is already held (an add-in install or update is running)",
+                            "the degraded-search check (3b), which has to hold that mutex itself",
+                            InstallerMutexOnAnUnattendedMachine,
+                            _output.WriteLine);
+                    }
+                    else
+                    {
+                        service.ClearSweepCache(); // A <10 s-old cached sweep would mask the degradation path.
+                        SearchOutcome degraded = clock.Step(
+                            "degraded search while the installer mutex is held (D34)",
+                            () => service.Search(new SearchRequest
+                            {
+                                Query = "oaimcpDegradationProbe" + _fixture.RunMarker,
+                                Store = _fixture.Hub,
+                                Top = 5,
+                                SnippetChars = 0,
+                            }));
 
-                    Assert.NotNull(degraded.Sweep);
-                    Assert.False(degraded.Sweep!.Performed, "the sweep must degrade while the installer mutex is held");
-                    Assert.NotNull(degraded.Sweep.Error);
-                    Assert.Contains("mutex", degraded.Sweep.Error!, StringComparison.OrdinalIgnoreCase);
-                    Assert.NotNull(degraded.Advice);
-                    // Pins the CONTRACT of the not-run case - the advice must shout, and must name
-                    // the sweep as the thing that could not run - rather than a phrase. It used to
-                    // assert "Freshness sweep unavailable", which the shipped advice stopped saying
-                    // long before this line was last read, so the live tier carried a failure that
-                    // had nothing to do with the behaviour under test.
-                    Assert.Contains(degraded.Advice!, a => a.Contains("INCOMPLETE RESULTS - TELL THE USER", StringComparison.Ordinal));
-                    Assert.Contains(degraded.Advice!, a => a.Contains("live check against Outlook could not", StringComparison.OrdinalIgnoreCase));
-                    Assert.Contains(degraded.Advice!, a => a.Contains("add-in update", StringComparison.OrdinalIgnoreCase));
-                    Assert.False(degraded.Staleness.OutlookRunning, "staleness must reflect post-sweep reality (D34)");
-                    Assert.Empty(Process.GetProcessesByName("OUTLOOK"));
-                    _output.WriteLine("degradation proven: search returned index results with mutex-reason advice, no autostart");
+                        Assert.NotNull(degraded.Sweep);
+                        Assert.False(degraded.Sweep!.Performed, "the sweep must degrade while the installer mutex is held");
+                        Assert.NotNull(degraded.Sweep.Error);
+                        Assert.Contains("mutex", degraded.Sweep.Error!, StringComparison.OrdinalIgnoreCase);
+                        Assert.NotNull(degraded.Advice);
+                        // Pins the CONTRACT of the not-run case - the advice must shout, and must name
+                        // the sweep as the thing that could not run - rather than a phrase. It used to
+                        // assert "Freshness sweep unavailable", which the shipped advice stopped saying
+                        // long before this line was last read, so the live tier carried a failure that
+                        // had nothing to do with the behaviour under test.
+                        Assert.Contains(degraded.Advice!, a => a.Contains("INCOMPLETE RESULTS - TELL THE USER", StringComparison.Ordinal));
+                        Assert.Contains(degraded.Advice!, a => a.Contains("live check against Outlook could not", StringComparison.OrdinalIgnoreCase));
+                        Assert.Contains(degraded.Advice!, a => a.Contains("add-in update", StringComparison.OrdinalIgnoreCase));
+                        Assert.False(degraded.Staleness.OutlookRunning, "staleness must reflect post-sweep reality (D34)");
+                        Assert.Empty(Process.GetProcessesByName("OUTLOOK"));
+                        _output.WriteLine("degradation proven: search returned index results with mutex-reason advice, no autostart");
+                    }
                 }
-            }
-            finally
-            {
-                if (createdNew)
+                finally
                 {
-                    installerMutex.ReleaseMutex();
+                    if (createdNew)
+                    {
+                        installerMutex.ReleaseMutex();
+                    }
                 }
             }
         }
@@ -391,6 +454,60 @@ public sealed class LiveDisconnectRecoveryTests
     {
         return $"running={health.Outlook.Running} comConnected={health.Outlook.ComConnected} "
             + $"headless={health.Outlook.Headless?.ToString() ?? "null"}";
+    }
+
+    /// <summary>
+    /// Every OUTLOOK.EXE process by id and start time, for the log only - so a restart between two
+    /// steps shows as a new id (D49 diagnostic, 2026-10-03).
+    /// </summary>
+    private static string DescribeOutlookProcesses()
+    {
+        Process[] processes = Process.GetProcessesByName("OUTLOOK");
+        try
+        {
+            return "OUTLOOK.EXE " + (processes.Length == 0
+                ? "none"
+                : string.Join(", ", processes.Select(p =>
+                {
+                    string started;
+                    try
+                    {
+                        started = p.StartTime.ToString("HH:mm:ss.fff", System.Globalization.CultureInfo.InvariantCulture);
+                    }
+                    catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+                    {
+                        started = "?";
+                    }
+
+                    return "pid " + p.Id.ToString(System.Globalization.CultureInfo.InvariantCulture) + " started " + started;
+                })));
+        }
+        finally
+        {
+            foreach (Process p in processes)
+            {
+                p.Dispose();
+            }
+        }
+    }
+
+    /// <summary>The independent gateway session's D49 pin state, for the log only - never asserted.</summary>
+    private static string DescribePin(ComGateway gateway)
+    {
+        try
+        {
+            return gateway.Run(s =>
+            {
+                OutlookComSession session = (OutlookComSession)s;
+                return "pinned=" + session.ComposeSurfacePinned + " error=" + (session.ComposeSurfacePinError ?? "-")
+                    + " pinReference=" + session.DescribeLifetimePin()
+                    + " startedOutlook=" + session.StartedOutlook;
+            });
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            return "unreadable (" + ex.GetType().Name + ")";
+        }
     }
 
     /// <summary>

@@ -1,18 +1,30 @@
 # TODO
 
-- [ ] **After the created-folder proof's first live run (`Docs/live-tier-on-the-vm.md` section 8 item
-      25): finish Q96 questions 3 and 2.** Decided on the maintainer's behalf 2026-10-03. Question 3,
-      "(a) then (b)": the run's `designation:` line says where Outlook registers the Drafts folder it
-      made in a data file with no Inbox - store object, top folder or Inbox. If the non-creating lookup
-      is blind to it (the test fails at `after:`), widen `SpecialFolders.Resolve` to read that place,
-      which fixes `discard_draft` and `update_draft` refusing such drafts and lets a failed lookup's
-      re-check call that folder created; if no place the object model reaches names it, the
-      maintainer chooses among that question's other directions. Question 2 is "(c)", in the test
-      only: if a `top level of ...` line shows a folder the call did not report, the product needs the
-      top-level comparison on success too - that question's (b), the maintainer's call. Until then, a
-      Drafts folder Outlook makes in such a data file during a call that FAILS is reported as having
-      appeared, not as created (question 1 (b)) - true, and less specific than it can be once the
-      lookup sees it.
+- [ ] **Recognise ANOTHER server session's lifetime pin on the show-me path's `ActiveExplorer()`
+  branch (D49, found 2026-10-03, not measured).** `EnsureVisibleExplorer` refuses to display an
+  Explorer `ActiveExplorer()` hands back only when `ComposeSurface.IsPin` knows it, and the pin
+  registry holds IUnknown pointers - which for an out-of-process server are per-apartment proxies, so
+  a pin another session made on another STA thread is very likely not recognised, whatever the
+  registry's remarks say about being process-wide. The `Explorers.Add` branch no longer depends on it
+  (the count check in `ComposeSurface.AddShowMeExplorer`, after the D49 probes of 2026-10-03), but if
+  `ActiveExplorer()` can return a hidden Explorer at all, a second session would display that pin and
+  the user's close would end Outlook again. Directions: (1) measure on a guest whether
+  `ActiveExplorer()` ever returns a non-displayed Explorer; (2) if it does, recognise a pin by its
+  window instead (`IOleWindow`, `IsWindowVisible`); (3) keep one pin per process, owned by the
+  gateway rather than by a session. Recommended: (1) first - it is one probe on a guest.
+
+- [ ] **Run the PST half of Q74 C3 on the indexed guest.** `LiveDecodeVerifyTests.ShortDecodedId_OpensAsTheItemItself_OnAPstStore`
+  carries `Requires=SearchIndex`, so `OutlookAI-Unindexed`'s filter never selects it and the first
+  guest live runs (2026-10-03) could not confirm it. It needs `OutlookAI-Indexed`, which was busy with
+  Q99 that night.
+
+- [ ] **Let the count tripwire's census read a table date by its column spelling too.**
+  `CensusTableRow.ReadUtc` still calls the one-argument `ComDateValue.FromTableValue`, which takes every
+  value as UTC; Q11's measurement (2026-10-03) showed the explicit `ReceivedTime` column - the census's
+  first spelling - reports LOCAL time. The census only compares its own readings with each other, so
+  the fingerprints stay consistent and nothing is mis-judged; only the instant it would print beside a
+  departed item is off by the UTC offset. Pass the spelling (`CensusColumnMap` knows the index, the
+  names list the spelling) when the census is next touched.
 
 - [ ] **Read which store-hash input Outlook uses for a cached Exchange store - the one half of Q99
   no test machine can measure.** The product now finds each store in the search index by Microsoft's
@@ -836,23 +848,6 @@
       gets the generator's bystander population (next item). Adding it by script has been permitted
       on a guest since 2026-09-15, and attaching it to the second profile while still empty since
       2026-09-24 - `Docs/live-tier-on-the-vm.md` §2.6 draws both lines.
-
-- [ ] **Put a few hundred items in the SECOND store, not the corpus, or the identity half of the
-      count tripwire is never exercised.** The identity budget is 500 items per folder and 3,000
-      per store, so a small store is walked item by item and a corpus is not: all four populated
-      corpus folders (Inbox 10,912 / Sent 4,964 / Deleted 2,467 / Junk 1,663) are above the
-      per-folder limit and fall back to counts. Note also that the corpus store must be the HUB -
-      the scans and sweeps that need nothing but an Outlook all target the hub and take a "corpus
-      too small" early return against an empty one - so the second store is the only one the
-      tripwire can watch anyway.
-      **What is left is a live run whose census reads the bystander item by item.** The items are
-      there: `corpus-build --population bystander` puts 300 tagged, deterministic items in the
-      bystander - every folder inside the identity budget, two of them populated subfolders of the
-      folder its received mail is filed in - and both guests have carried them since 2026-10-03
-      (runbook §4.1d, `CP-12B-POPULATIONS-V2`; §4.2c, `CP-16C-POPULATIONS-V2`, where the bystander
-      also holds 42 undated contacts). `--population hub` gives the hub a population of its own, so
-      the "corpus too small" early returns above no longer need the corpus to be the hub.
-      `Docs/live-tier-on-the-vm.md` §3b is the procedure.
 
 - [ ] **Make `corpus-teardown` drain the folders it created, as it drains the items: in a PST its
       `Folder.Delete()` MOVES them into Deleted Items, so every hub rebuild leaves two more empty

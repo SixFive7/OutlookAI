@@ -694,10 +694,15 @@ public static class OutlookTools
         + "A folder that only appeared while a failed Drafts lookup ran is listed in appearedFolders instead - not claimed "
         + "as created.";
 
+    // The conversationId sentence is a decision (2026-10-03, QUESTIONS.md decision log): measured on a
+    // POP3 data file under Office LTSC 2024, Outlook gives a renamed reply the id it derives from the kept
+    // topic rather than the original's, and refuses a write to it. Exchange keeps the original's.
     private const string DerivedSubjectHint = "Replacement subject line. Omit to keep Outlook's own RE:/FW: subject, which is "
         + "the safe default. The draft keeps threading either way (its ConversationIndex still extends the original and the "
         + "original conversation topic is carried over, reported as conversationTopicPreserved), but a changed subject is what "
-        + "the recipient sees, so only override when the user asked to rename the thread. Max 255 characters.";
+        + "the recipient sees, so only override when the user asked to rename the thread. In an Exchange or Microsoft 365 "
+        + "mailbox the renamed draft also keeps the original's conversationId; in a POP3/IMAP mailbox or data file Outlook "
+        + "derives it from the kept topic instead, so there it differs from the original's. Max 255 characters.";
 
     [McpServerTool(Name = "new_draft")]
     [Description("Create a NEW email draft for the user - saved into the chosen account's Drafts folder with that account's "

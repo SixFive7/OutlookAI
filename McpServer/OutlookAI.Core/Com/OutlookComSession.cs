@@ -163,6 +163,39 @@ namespace OutlookAI.Core.Com
         public string? ComposeSurfacePinError { get; private set; }
 
         /// <summary>
+        /// D49 diagnostic for the live tests (2026-10-03): whether this session's lifetime pin is
+        /// still a USABLE reference, which <see cref="ComposeSurfacePinned"/> - a flag set once - cannot
+        /// say. "none"; "held" (its Caption read back); "separated" (the wrapper was released to zero
+        /// under the session, so Outlook's Explorer has lost this reference); or "unreachable (...)".
+        /// Read-only; nothing in the product decides by it.
+        /// </summary>
+        public string DescribeLifetimePin()
+        {
+            EnsureNotDisposed();
+            return _runner.Run(() =>
+            {
+                if (_composeSurfacePin == null)
+                {
+                    return "none";
+                }
+
+                try
+                {
+                    _ = (string?)((dynamic)_composeSurfacePin).Caption;
+                    return "held";
+                }
+                catch (InvalidComObjectException)
+                {
+                    return "separated";
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                    return "unreachable (" + ex.GetType().Name + ")";
+                }
+            });
+        }
+
+        /// <summary>
         /// D49: relinquishes the lifetime pin - closes every Explorer when NONE of them
         /// has a visible window, i.e. when the only thing keeping Outlook alive is the
         /// invisible surface this server holds. Returns how many were closed.
@@ -356,7 +389,7 @@ namespace OutlookAI.Core.Com
                     // the event, at near-zero cost. Best-effort either way.
                     try
                     {
-                        session._quitSink = new OutlookQuitSink(session.SignalOutlookGone);
+                        session._quitSink = new OutlookQuitSink(() => session.SignalOutlookGone(GoneByQuitEvent));
                         session._quitSinkRegistration = OutlookQuitSink.TryAdvise(session._application, session._quitSink);
                         session.QuitSinkActive = session._quitSinkRegistration != null;
                     }
@@ -413,7 +446,7 @@ namespace OutlookAI.Core.Com
                 {
                     // Died between attach and wiring - Exited may already have fired
                     // before the handler was added; signal explicitly (idempotent).
-                    SignalOutlookGone();
+                    SignalOutlookGone(GoneByProcessExit);
                 }
             }
             catch (Exception ex) when (!(ex is OutOfMemoryException))
@@ -425,21 +458,37 @@ namespace OutlookAI.Core.Com
 
         private void OnWatchedProcessExited(object? sender, EventArgs e)
         {
-            SignalOutlookGone();
+            SignalOutlookGone(GoneByProcessExit);
         }
+
+        /// <summary><see cref="GoneSignal"/> when the Application Quit event arrived first.</summary>
+        public const string GoneByQuitEvent = "quit event";
+
+        /// <summary><see cref="GoneSignal"/> when the OUTLOOK.EXE process exit was seen first.</summary>
+        public const string GoneByProcessExit = "process exit";
+
+        /// <summary>
+        /// Which signal told this session its Outlook was going - <see cref="GoneByQuitEvent"/> or
+        /// <see cref="GoneByProcessExit"/> - or null while neither has. A diagnostic surface: on Office
+        /// LTSC 2024 the Quit event arrives when the user closes the last visible window even though a
+        /// hidden Explorer would keep Outlook running (measured 2026-10-03), and the live tests tell that
+        /// apart from a crash by it.
+        /// </summary>
+        public string? GoneSignal { get; private set; }
 
         /// <summary>
         /// Signals (once) that the attached Outlook is quitting or gone. Runs the
         /// gateway-provided callback on a worker thread; the callback disposes this
         /// session, which releases all COM refs on the STA.
         /// </summary>
-        private void SignalOutlookGone()
+        private void SignalOutlookGone(string signal)
         {
             if (System.Threading.Interlocked.Exchange(ref _outlookGoneSignaled, 1) != 0)
             {
                 return;
             }
 
+            GoneSignal = signal;
             Action<OutlookComSession>? callback = _onOutlookGone;
             if (callback == null)
             {
@@ -3359,6 +3408,44 @@ namespace OutlookAI.Core.Com
             }
         }
 
+        /// <summary>STA-side: a fresh <c>Explorers.Count</c>, or -1 when it cannot be read.</summary>
+        private static int CountExplorers(object app)
+        {
+            object? explorers = null;
+            try
+            {
+                explorers = ((dynamic)app).Explorers;
+                return (int)((dynamic)explorers!).Count;
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+                return -1;
+            }
+            finally
+            {
+                Release(explorers);
+            }
+        }
+
+        /// <summary>STA-side: the top folder of the store <paramref name="folder"/> is in, or null. Creates nothing.</summary>
+        private static object? TryGetStoreRootFolder(object folder)
+        {
+            object? store = null;
+            try
+            {
+                store = ((dynamic)folder).Store;
+                return ((dynamic)store!).GetRootFolder();
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+                return null;
+            }
+            finally
+            {
+                Release(store);
+            }
+        }
+
         /// <summary>
         /// STA-side: returns the active Explorer, creating and displaying one (on
         /// <paramref name="preferredFolder"/>, else the default Inbox) when Outlook runs
@@ -3406,8 +3493,31 @@ namespace OutlookAI.Core.Com
                     }
 
                     explorers = app.Explorers;
-                    explorer = ((dynamic)explorers!).Add(folderToShow, 0); // 0 = olFolderDisplayNormal
+                    object collection = explorers!;
+                    object target = folderToShow!;
+
+                    // D49 on Office LTSC 2024 (measured 2026-10-03): Explorers.Add on the folder the
+                    // lifetime pin shows hands back the PIN itself, and displaying it made the pin the
+                    // user's window. AddShowMeExplorer never returns an Explorer that already existed;
+                    // when it had to open the window on another folder, it is navigated back here.
+                    explorer = ComposeSurface.AddShowMeExplorer(
+                        f => ((dynamic)collection).Add(f, 0), // 0 = olFolderDisplayNormal
+                        () => CountExplorers((object)app),
+                        target,
+                        () => TryGetStoreRootFolder(target),
+                        out bool rerouted,
+                        out string? addError);
+                    if (explorer == null)
+                    {
+                        error = addError;
+                        return null;
+                    }
+
                     ((dynamic)explorer!).Display();
+                    if (rerouted)
+                    {
+                        ((dynamic)explorer!).CurrentFolder = target;
+                    }
                 }
                 catch (Exception ex) when (IsComCallFailure(ex))
                 {
@@ -5491,12 +5601,21 @@ namespace OutlookAI.Core.Com
                     // item's Parent is the target, not the source).
                     string? deletedItemsName = null;
                     string? deletedItemsEntryId = null;
+                    bool exchangeStore = true; // unknown reads as Exchange: the re-locate then behaves exactly as before
                     parent = ((dynamic)item!).Parent;
                     if (parent != null)
                     {
                         parentStore = ((dynamic)parent!).Store;
                         if (parentStore != null)
                         {
+                            try
+                            {
+                                exchangeStore = SpecialFolders.IsExchangeStore((int)((dynamic)parentStore!).ExchangeStoreType);
+                            }
+                            catch (Exception ex) when (IsComCallFailure(ex))
+                            {
+                            }
+
                             object? deleted = null;
                             try
                             {
@@ -5543,7 +5662,7 @@ namespace OutlookAI.Core.Com
 
                     string? newEntryId = deletedItemsEntryId == null
                         ? null
-                        : TryFindDiscardedCopy(deletedItemsEntryId, info.Subject, info.EntryId);
+                        : TryFindDiscardedCopy(deletedItemsEntryId, info.Subject, info.EntryId, exchangeStore);
 
                     return new ComDraftDiscardResult(
                         info.EntryId,
@@ -6199,13 +6318,62 @@ namespace OutlookAI.Core.Com
         }
 
         /// <summary>
+        /// <paramref name="entryId"/> when it still opens AS an item whose parent folder is
+        /// <paramref name="folderEntryId"/>, else null - the one-call answer for a store that keeps
+        /// an item's EntryID across a soft delete (a PST, seen 2026-10-03). Read-only and
+        /// failure-tolerant: an id that no longer opens is simply not kept.
+        /// </summary>
+        private string? TryKeptEntryIdInFolder(string entryId, string folderEntryId)
+        {
+            object? item = null;
+            object? parent = null;
+            try
+            {
+                item = ((dynamic)_namespace!).GetItemFromID(entryId);
+                parent = item == null ? null : ((dynamic)item).Parent;
+                string? parentId = parent == null ? null : TryGetString(() => (string?)((dynamic)parent).EntryID);
+                return parentId != null && string.Equals(parentId, folderEntryId, StringComparison.OrdinalIgnoreCase)
+                    ? entryId
+                    : null;
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+                return null;
+            }
+            finally
+            {
+                Release(parent);
+                Release(item);
+            }
+        }
+
+        /// <summary>
         /// Best-effort re-locate of a just-discarded draft inside Deleted Items so the
-        /// outcome can carry a usable newEntryId (EntryIDs change on ANY move). Read-only
+        /// outcome can carry a usable newEntryId - a NEW one where the store changes EntryIDs
+        /// on a move (Exchange), the SAME one where it keeps them (a PST). Read-only
         /// and failure-tolerant: nothing depends on finding it, and Deleted Items contents
         /// are never modified.
         /// </summary>
-        private string? TryFindDiscardedCopy(string deletedItemsEntryId, string? subject, string oldEntryId)
+        private string? TryFindDiscardedCopy(string deletedItemsEntryId, string? subject, string oldEntryId, bool exchangeStore)
         {
+            // A store that KEEPS an item's EntryID across a soft delete answers in one call: the old
+            // id opens as the item now in Deleted Items. A PST does - measured on a test guest
+            // (2026-10-03): after the discard the draft's old id opened with Deleted Items as its
+            // parent, and this re-locate returned that same id. The scan below excludes the old
+            // id, so on such a store it finds no
+            // re-located copy at all, or, with an older discarded draft of the same subject in the
+            // folder, re-locates the WRONG item. Never asked of an Exchange store, which mints a new
+            // id on the move and may briefly keep answering the old one: there the scan, exactly as
+            // before, is the answer.
+            if (!exchangeStore)
+            {
+                string? kept = TryKeptEntryIdInFolder(oldEntryId, deletedItemsEntryId);
+                if (kept != null)
+                {
+                    return kept;
+                }
+            }
+
             object? folder = null;
             object? items = null;
             try
@@ -6588,13 +6756,18 @@ namespace OutlookAI.Core.Com
                 // Recreate the marker over the inserted content so Outlook (and the
                 // add-in's draft/signature/quote split) keep working on this draft.
                 object? newRange = null;
+                object? newMark = null;
                 try
                 {
                     newRange = doc.Range(insertAt, newEnd);
-                    bm.Add("_MailAutoSig", newRange);
+
+                    // Bookmarks.Add hands back the Bookmark it made: released here, while the
+                    // document is still open, never by the garbage collector after it closed.
+                    newMark = bm.Add("_MailAutoSig", newRange);
                 }
                 finally
                 {
+                    Release(newMark);
                     Release(newRange);
                 }
 
@@ -6830,13 +7003,15 @@ namespace OutlookAI.Core.Com
                     }
 
                     object? restoreRange = null;
+                    object? restoredMark = null;
                     try
                     {
                         restoreRange = doc.Range(writtenEnd, shifted);
-                        bm.Add(boundary, restoreRange);
+                        restoredMark = bm.Add(boundary, restoreRange);
                     }
                     finally
                     {
+                        Release(restoredMark);
                         Release(restoreRange);
                     }
                 }
@@ -6976,6 +7151,8 @@ namespace OutlookAI.Core.Com
             }
 
             object? range = null;
+            object? parentDoc = null;
+            object? restored = null;
             try
             {
                 dynamic bm = (dynamic)bookmarksObject;
@@ -6984,16 +7161,18 @@ namespace OutlookAI.Core.Com
                     return;
                 }
 
-                dynamic parentDoc = bm.Parent;
-                range = parentDoc.Range(start, end);
-                bm.Add(name, range);
+                parentDoc = bm.Parent;
+                range = ((dynamic)parentDoc!).Range(start, end);
+                restored = bm.Add(name, range);
             }
             catch (Exception ex) when (IsComCallFailure(ex))
             {
             }
             finally
             {
+                Release(restored);
                 Release(range);
+                Release(parentDoc);
             }
         }
 
@@ -8473,7 +8652,7 @@ namespace OutlookAI.Core.Com
                 // column, so a resumed page without it is not obviously the same table, and
                 // the watermark would fail on every resume for a reason that is this code's
                 // own doing rather than the provider's.
-                int dateIndex = TryAddDateColumn(t);
+                int dateIndex = TryAddDateColumn(t, out string? dateProperty);
                 bool sorted = plan.MaySort && dateIndex >= 0 && TrySortNewestFirst(t);
 
                 int entryIdIndex = FindTableColumn(t, "EntryID");
@@ -8485,7 +8664,7 @@ namespace OutlookAI.Core.Com
 
                 if (dateIndex < 0)
                 {
-                    dateIndex = FindDateColumn(t);
+                    dateIndex = FindDateColumn(t, out dateProperty);
                 }
 
                 bool ordinalPositionHeld = false;
@@ -8565,7 +8744,7 @@ namespace OutlookAI.Core.Com
                             continue;
                         }
 
-                        DateTime? received = ReadRowDate(values, dateIndex);
+                        DateTime? received = ReadRowDate(values, dateIndex, dateProperty);
 
                         try
                         {
@@ -8632,15 +8811,20 @@ namespace OutlookAI.Core.Com
         /// failed - which is precisely the fact needed to explain why its sort has never
         /// applied.
         /// </summary>
-        private int TryAddDateColumn(dynamic table)
+        private int TryAddDateColumn(dynamic table, out string? property)
         {
+            property = null;
             for (int i = 0; i < DateSortProperties.Length; i++)
             {
                 object? columns = null;
+                object? column = null;
                 try
                 {
                     columns = table.Columns;
-                    ((dynamic)columns!).Add(DateSortProperties[i]);
+
+                    // Columns.Add hands back the Column it made: released here, with its parent,
+                    // never left for the garbage collector to release after the table is gone.
+                    column = ((dynamic)columns!).Add(DateSortProperties[i]);
                 }
                 catch (Exception ex) when (IsComCallFailure(ex))
                 {
@@ -8648,12 +8832,16 @@ namespace OutlookAI.Core.Com
                 }
                 finally
                 {
+                    Release(column);
                     Release(columns);
                 }
 
                 int index = FindTableColumn(table, DateSortProperties[i]);
                 if (index >= 0)
                 {
+                    // The spelling travels with the index: it decides the zone the column's values
+                    // are in (ComDateValue.FromTableValue, Q11, measured 2026-10-03).
+                    property = DateSortProperties[i];
                     return index;
                 }
             }
@@ -8692,10 +8880,11 @@ namespace OutlookAI.Core.Com
             for (int i = 0; i < properties.Count; i++)
             {
                 object? columns = null;
+                object? column = null;
                 try
                 {
                     columns = table.Columns;
-                    ((dynamic)columns!).Add(properties[i]);
+                    column = ((dynamic)columns!).Add(properties[i]);
                 }
                 catch (Exception ex) when (IsComCallFailure(ex))
                 {
@@ -8705,6 +8894,7 @@ namespace OutlookAI.Core.Com
                 }
                 finally
                 {
+                    Release(column);
                     Release(columns);
                 }
 
@@ -8724,14 +8914,16 @@ namespace OutlookAI.Core.Com
             }
         }
 
-        /// <summary>The date column's position when it is already on the table, or -1.</summary>
-        private int FindDateColumn(dynamic table)
+        /// <summary>The date column's position when it is already on the table, or -1, and the spelling it is under.</summary>
+        private int FindDateColumn(dynamic table, out string? property)
         {
+            property = null;
             for (int i = 0; i < DateSortProperties.Length; i++)
             {
                 int index = FindTableColumn(table, DateSortProperties[i]);
                 if (index >= 0)
                 {
+                    property = DateSortProperties[i];
                     return index;
                 }
             }
@@ -8821,23 +9013,32 @@ namespace OutlookAI.Core.Com
         /// Reads a row's received date as UTC, or null when the column is absent or
         /// unusable. The BOUNDS check is the only decision left here.
         /// <para>
-        /// The time-zone reading moved to <see cref="ComDateValue.FromTableValue"/> because
-        /// this method and the live tripwire census used to derive the same table value in
-        /// OPPOSITE directions - one treating an unspecified kind as local, the other as UTC
+        /// The time-zone reading lives in <see cref="ComDateValue.FromTableValue(object?, string)"/>
+        /// because this method and the live tripwire census used to derive the same table value
+        /// in OPPOSITE directions - one treating an unspecified kind as local, the other as UTC
         /// - and neither could see the other. This value becomes a resumed exhaustive scan's
         /// inclusive "at or before" bound, so a reading one offset too early skips the mail
         /// in that window and reports the scan complete, in the one mode a caller picks
         /// because completeness matters.
         /// </para>
+        /// <para>
+        /// <b>The column's spelling is part of the reading</b> (Q11, measured 2026-10-03 on the
+        /// first guest live run): under the explicit name <c>ReceivedTime</c> - the spelling the
+        /// scan adds first - a table reports LOCAL wall time, and under the namespace reference
+        /// UTC. Read as UTC regardless, the scan's cursor sat one offset late at UTC+2 and the
+        /// next page re-admitted a row: a duplicate the acceptance test caught.
+        /// </para>
         /// </summary>
-        private static DateTime? ReadRowDate(object[] values, int dateIndex)
+        private static DateTime? ReadRowDate(object[] values, int dateIndex, string? dateProperty)
         {
             if (dateIndex < 0 || dateIndex >= values.Length)
             {
                 return null;
             }
 
-            return ComDateValue.FromTableValue(values[dateIndex]);
+            return dateProperty == null
+                ? ComDateValue.FromTableValue(values[dateIndex])
+                : ComDateValue.FromTableValue(values[dateIndex], dateProperty);
         }
 
         /// <summary>What a folder's resume state says to do when its turn comes.</summary>
@@ -10636,10 +10837,11 @@ namespace OutlookAI.Core.Com
                 if (sortProperty != null)
                 {
                     object? columns = null;
+                    object? column = null;
                     try
                     {
                         columns = t.Columns;
-                        ((dynamic)columns!).Add(sortProperty);
+                        column = ((dynamic)columns!).Add(sortProperty);
                         columnAdded = true;
                     }
                     catch (Exception ex) when (IsComCallFailure(ex))
@@ -10648,6 +10850,7 @@ namespace OutlookAI.Core.Com
                     }
                     finally
                     {
+                        Release(column);
                         Release(columns);
                     }
 
@@ -10663,7 +10866,7 @@ namespace OutlookAI.Core.Com
                 }
 
                 int entryIdIndex = FindTableColumn(t, "EntryID");
-                int dateIndex = FindDateColumn(t);
+                int dateIndex = FindDateColumn(t, out string? dateProperty);
                 if (!(bool)t.EndOfTable)
                 {
                     object? row = null;
@@ -10676,7 +10879,7 @@ namespace OutlookAI.Core.Com
                             firstRowEntryId = values[entryIdIndex] as string;
                         }
 
-                        firstRowUtc = ReadRowDate(values, dateIndex);
+                        firstRowUtc = ReadRowDate(values, dateIndex, dateProperty);
                     }
                     finally
                     {
@@ -10809,7 +11012,7 @@ namespace OutlookAI.Core.Com
                     table = folder.GetTable(filter);
                     dynamic t = (dynamic)table!;
 
-                    int dateIndex = TryAddDateColumn(t);
+                    int dateIndex = TryAddDateColumn(t, out string? dateProperty);
                     int entryIdIndex = FindTableColumn(t, "EntryID");
                     if (dateIndex < 0 || entryIdIndex < 0)
                     {
@@ -10841,7 +11044,7 @@ namespace OutlookAI.Core.Com
 
                             return ReadItemBothWays(
                                 storeDisplayName, folderLabel, storeId, entryId, rawTableValue,
-                                ReadRowDate(values, dateIndex), examined);
+                                ReadRowDate(values, dateIndex, dateProperty), examined);
                         }
                         finally
                         {

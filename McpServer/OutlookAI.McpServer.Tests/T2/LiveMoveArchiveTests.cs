@@ -85,10 +85,18 @@ public sealed class LiveMoveArchiveTests
             }
             else
             {
-                // Found from the store's own designation, never by asking Outlook for the folder.
+                // Found from the store's own designation, never by asking Outlook for the folder. On a
+                // PST that is the Inbox's PR_ADDITIONAL_REN_ENTRYIDS_EX block 0x800F, where Outlook
+                // records the Archive folder it made (measured 2026-10-03).
                 Assert.Contains(
                     archive.Via,
-                    new[] { ArchiveFolderResolution.ViaInboxArchiveProperty, ArchiveFolderResolution.ViaStoreArchiveProperty });
+                    new[]
+                    {
+                        ArchiveFolderResolution.ViaInboxArchiveProperty,
+                        ArchiveFolderResolution.ViaInboxPersistData,
+                        ArchiveFolderResolution.ViaStoreArchiveProperty,
+                        ArchiveFolderResolution.ViaRootArchiveProperty,
+                    });
             }
 
             Assert.False(string.IsNullOrEmpty(archive.Name));

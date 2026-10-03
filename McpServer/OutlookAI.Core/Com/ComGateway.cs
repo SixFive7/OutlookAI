@@ -346,9 +346,20 @@ namespace OutlookAI.Core.Com
         /// </summary>
         private void HandleSessionGone(OutlookComSession session)
         {
+            LastSessionGoneSignal = session.GoneSignal;
             Invalidate(session);
             OutlookGone?.Invoke();
         }
+
+        /// <summary>
+        /// What ended this gateway's last session on its own - <see cref="OutlookComSession.GoneByQuitEvent"/>
+        /// or <see cref="OutlookComSession.GoneByProcessExit"/> - or null while none has. Diagnostic
+        /// surface for tests, like <see cref="QuitSinkActive"/>: on Office LTSC 2024 the user closing the
+        /// last visible window raises Quit (measured 2026-10-03), and a session that started Outlook then
+        /// closes its lifetime pin as it leaves, so Outlook ends as the user asked - which the D49 live
+        /// test tells apart from a crash by this.
+        /// </summary>
+        public string? LastSessionGoneSignal { get; private set; }
 
         private void Invalidate(OutlookComSession session)
         {

@@ -2,8 +2,10 @@
 <#
     ============================================================================================
     HAS RENDERED ONE REAL GUEST'S FILE - OutlookAI-Unindexed's, on 2026-09-24, 2026-09-27 AND
-    2026-10-03, each copied into that guest (Docs/live-tier-on-the-vm.md sections 4.1 step 8,
-    4.1a and 4.1d). THE LIVE TIER HAS NOT YET STARTED ON ANY RENDERED FILE.
+    2026-10-03 (twice: the second with the throwaway key), each copied into that guest
+    (Docs/live-tier-on-the-vm.md sections 4.1 step 8, 4.1a, 4.1d and 4.1e). THE LIVE TIER HAS RUN ON
+    IT: four full runs of the unindexed filter there on 2026-10-03, the loader admitting the file
+    every time (section 4.1e).
     ============================================================================================
 
     Corrected 2026-10-03: the lines below were written on 2026-09-24, before any guest's values

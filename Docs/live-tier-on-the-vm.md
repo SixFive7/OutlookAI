@@ -2683,6 +2683,148 @@ master before the run (`Testbed/README.md` step 8b). The one live check that rea
 population's plan - the frontier test's `LiveHubPopulationFreshness` - judges the newest DATED item,
 which is the same with or without the undated items, so the old suite would not misread this hub.
 
+### 4.1e The live tier's first runs - `OutlookAI-Unindexed`, 2026-10-03
+
+**Why this section exists.** The first time the VM bucket ran end to end anywhere (section 9 said
+nobody had). From `CP-12B-POPULATIONS-V2` (section 4.1d), on this guest only, by the route section 4
+and `Testbed/README.md` section 4c give: `Restart-Guest.ps1 -Execute`, the hub rebuild
+(`Reset-HubPopulation.ps1 -Execute`, default level), from run 2 the throwaway data file
+(`Reset-ThrowawayStore.ps1 -Execute`, `-RunLevel Limited` - merged from master that morning), then
+the suite through `Register-InteractiveTask.ps1 -RunLevel Limited` with `OUTLOOKAI_LIVE_OPT_IN =
+'OAI-UNINDEXED'` set inside the task's script and
+`dotnet test ... -c Release --filter "Category=Live&Requires!=DelegateStore&Requires!=CachedExchange&Requires!=SearchIndex"`,
+plus a TRX logger, the console logger at `detailed` and `--diag`; the results came back through
+`Copy-FromGuest.ps1`. Every fix went in on the host first with T1 tests, proven on the build VM
+(`Invoke-TestsOnBuildVm.ps1`: 3,478 of 3,478 and every self-test at `67c4afb`, `1059f4a` and `0f4bbfa`), and before runs 2 to 5
+the guest was restored to `CP-12B` and restaged from the new commit (`Publish-GuestPayload.ps1`,
+`Publish-LiveTierPayload.ps1`, `Install-DotnetSdk.ps1 -Execute`, `-Verify`: TEST-READY each time), the
+settings re-rendered once for the throwaway key (SHA-256 `43A77749...`). Raw logs, TRX files and
+console captures: `.work\g2-live-green\` in worktree `agent-a634a99d582147265`.
+
+| Run | Revision | Total | Passed | Failed | Skipped | Suite time |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | `3e7b861` (master) | 80 | 66 | 14 | 0 | 17.6 min |
+| 2 | `3a0fb05` (fixes F1-F7, F9; master `cd8a984` merged) | 80 | 77 | 3 | 0 | 7.1 min |
+| 3 | `67c4afb` (F10; F9's change reverted) | 80 | 78 | 2 | 0 | 7.3 min |
+| 4 | `1059f4a` (F8 second attempt) | 80 | 77 | 3 | 0 | 7.1 min |
+| 5 | `0f4bbfa` (F8 third attempt) | 80 | 78 | 2 | 0 | 7.2 min |
+| 6 | `f0cc4a2` (this branch + master `21bbdfd` merged) | 80 | 72 | 8 | 0 | 7.1 min |
+| 7 | `f0cc4a2` again, no restore | 80 | 71 | 9 | 0 | 6.7 min |
+| 8 | master `21bbdfd` alone, for isolation | 81 | 67 | 14 | 0 | 14.3 min |
+
+**Runs 6 to 8: merging master `21bbdfd` made OUTLOOK.EXE crash.** With master's twenty newer commits
+merged in (`f0cc4a2`, kept on branch `a634-merge-21bbdfd-outlook-crash`; the non-live suite passed it,
+3,513 of 3,513), Outlook crashed in the Phase-4 collection in both runs - the guest's Application log:
+`Faulting application name: OUTLOOK.EXE, version: 16.0.17932.20996 ... Faulting module name: ntdll.dll
+... Exception code: 0xc0000005 Fault offset: 0x0000000000078cad`, and every Phase-4 test after it failed
+with `RPC_S_SERVER_UNAVAILABLE`. Run 6 crashed just after `LiveDraftTests.IdentityDrafts` passed, run 7
+inside its `new_draft` into `identity@vm.invalid`; that test took 7.4 s and 4.5 s there against 0.28 to
+0.38 s in every other run. Neither half crashes alone: this branch before the merge ran four times
+without it (runs 2 to 5), and master alone (run 8, from a separate worktree, restored `CP-12B`) ran
+`IdentityDrafts` in 0.28 s with no crash and no `APPCRASH` - its 14 failures are run 1's kinds again,
+F1 to F10, which confirms each of those diagnoses a second time. So the crash comes from the
+two together, and the branch tip was put back to `c1b67d9`, the last state the guest ran clean; the
+merge needs that interaction found before it lands (`TODO.md`).
+
+**The crash, found (same day, later runs; every one from `CP-12B`, restaged).**
+
+| Run | Revision | Total | Passed | Failed | Outlook |
+| --- | --- | --- | --- | --- | --- |
+| E1 | `f0cc4a2` + timing diagnostics, `LiveDraftTests` only | 5 | 5 | 0 | no crash |
+| E2 | the same, whole filter | 80 | 69 | 11 | crashed (`IdentityDrafts`) |
+| E3 | without the true-root read (`5ac1d85`) | 80 | 51 | 29 | crashed, `OLMAPI32.DLL` `0x2e411` (`NewDraft_WithAttachments`) |
+| E4b | without the snapshot's `PR_CONVERSATION_INDEX_TRACKING` read | 80 | 76 | 4 | no crash |
+| 9 | `5d94851` - master `60fba07` merged, tracking read removed (`3f8cfc3`) | 80 | 54 | 26 | crashed, `OLMAPI32.DLL` `0x2e411` |
+| 10 | `c1b67d9` - the branch alone, a control | 80 | 78 | 2 | no crash |
+| 11b | `e0cbe0a` - merged, after the host's restart | 80 | 72 | 8 | crashed, `OUTLOOK.EXE` `0x1571e5` |
+| 13 | `ace09f9` - merged, COM child objects released (`9664aa0`) | 80 | 79 | 1 | no crash |
+
+E4b's one clean run made the tracking read look like the trigger, and `3f8cfc3` took it out; run 9
+crashed anyway, so it was not. The control (run 10, the branch alone, after the host had been
+restarted) made it five clean runs of five without master and six crashes in seven with it - and
+master's whole product delta since `cd8a984` (`59fad08`, Q96's follow-ups) adds no COM call on any
+path that succeeds: it was compared line by line, and the hub rebuild's logs were identical. **What
+differs between two builds whose COM calls are identical is when the .NET garbage collector runs**, and
+three things in this process were left for it to release: the `Column` that `Table.Columns.Add`
+returns (the scan's and the sweep's date columns, and the tripwire census's - which runs first, on 30
+folders), the `Bookmark` that `Bookmarks.Add` returns in the compose paths (and a `bm.Parent` document
+reference), and the `Attachment` that `Attachments.Add` returns in the test mailer - each released,
+whenever a collection happened, after the table, the document or the mail it belongs to was gone,
+inside Outlook. The faults moved with every run (`ntdll.dll`, `OLMAPI32.DLL`, `OUTLOOK.EXE` itself),
+which is what a damaged heap looks like. `9664aa0` holds and releases every one of them and
+`T1/ComChildObjectReleaseTests` pins it from the sources. **Run 13 was the first merged run without a
+crash**, and the next two were clean too:
+
+| Run | Revision | Total | Passed | Failed | Outlook | Suite time |
+| --- | --- | --- | --- | --- | --- | --- |
+| 13 | `ace09f9` | 80 | 79 | 1 (D49, before its decision) | no crash | 7.9 min |
+| 18 | `fd2c58b` | 80 | 80 | 0 | no crash | 7.5 min |
+| 19 | `c1a72f1` (`585a9f6` + this record) | 80 | 80 | 0 | no crash | 7.2 min |
+
+Three clean merged runs of three after `9664aa0`, against six crashes in seven before it. The mechanism
+is inferred from that and from the code - no crash dump was taken (no debugger on the guests, by the
+dependency rule) - so it is the strongest available reading, not an observed one. In between, D49
+was found and decided (F9 below) with Explorer-only probes and a ninety-second subset run (the
+show-me tests plus `LiveDisconnectRecoveryTests`, no hub rebuild) that reproduced the full suite's
+failure where five probe designs had not. **`CP-13B-LIVE-GREEN` was taken** right after run 18
+(16:49 local, a standard checkpoint, parent `CP-12B-POPULATIONS-V2`): `fd2c58b` staged, the hub as
+that run left it, Outlook not running. Run 19 ran from `CP-12B` as every run does.
+
+**Every run, the guards.** The sink probe answered from run 2 on (`[sink] submission 127.0.0.1:25 and
+retrieval 127.0.0.1:110 both answering` - run 1 never armed it, F1). The count tripwire's baseline:
+`3 stores, 30 mail folders, identified 11 folder(s)/308 item(s)` - the bystander's 300 items read item by
+item in 4 folders, the identity store's 8 in 7; its post-run census: `0 failure(s), 1 note(s)`, the note
+the hub's `Archive` folder the move tests make (`folder newly enumerated`). `post-suite: 0 tagged
+artifacts (incl. Archive), 0 test folders` from run 2 on; no fixture clean-up failed, so the signature
+snapshots of the Phase-4 and signature-management fixtures held. **Run 1 did not end clean:** two
+tagged move seeds stayed in the hub's `Archive` (the sweeps could not find a PST's Archive folder, F2)
+and one tagged send round-trip stayed undelivered in the sink; the restore to `CP-12B` before run 2
+removed both. One `PROVED NOTHING` line every run, the same one:
+`OutlookAvailabilityLiveTests.ATransientOutlookState_AnswersFastAndCarriesRetryGuidance` - "the
+retry-guidance check iterated nothing - this machine has no a transient Outlook state (starting, not
+responding or unavailable) for list_accounts to report".
+
+**What failed, and what each was.**
+
+| # | Failing test(s) | Cause | Kind | Fix |
+| --- | --- | --- | --- | --- |
+| F1 | `LiveSweepScopeTests.ControlledCorpus`, `LiveDraftOptionsTests.ForwardDraft`, `Phase5LiveMcpToolShapeTests.SendTool` | the sink probe, the Outbox check and the corpus freshness check were armed only by `LivePhase1Fixture`, which this guest's filter never selects - so no arrival wait nudged Outlook, and the sink's log shows the POP3 fetch closing before the SMTP submission was stored; two of the three waited through private, non-nudging copies of the wait | harness | `f290845` - armed in `LiveStoreCountTripwire.EnsureBaseline`, every sender waits through `LiveInboxArrival` |
+| F2 | `LiveMoveArchiveTests.MoveChain`, `MoveArchiveLiveMcpToolTests`, `LiveFolderScopeTests` x2 (and run 1's two left-behind seeds) | a PST's Archive folder, made by `GetDefaultFolder(39)`, is designated in block `0x800F` of the Inbox's `PR_ADDITIONAL_REN_ENTRYIDS_EX` - undocumented, measured byte for byte - and not in `PR_IPM_ARCHIVE_ENTRYID` | product | `5a2f9da` |
+| F3 | `LiveResumableScanTests.APagedScan` | Q11 measured: a `Table` column added by its explicit name reports LOCAL time, by its namespace reference UTC; the scan read both as UTC, so its cursor sat one offset late and re-admitted ordinal 24 | product | `b09041b` |
+| F4 | `LiveExhaustiveSearchTests.Exhaustive_FolderBounded` | asked for "exactly that folder" without `IncludeSubfolders=false`: 3 folders scanned, 42 hits against 24 | test | `7bb4626` - asks for the folder alone, and checks the default against the subtree's own ground truth |
+| F5 | `LiveSweepCacheTests.RapidSearches` | the sweep cache is keyed on the index frontier, so with no indexed mail it never hits - by design (`T1/SweepCacheKeyTests`) | test trait | `7bb4626` - `Requires=SearchIndex` |
+| F6 | `OutlookHealthLiveToolShapeTests.CarriesTheFreshnessBlock` | required advice whenever the index is reachable; a reachable index with no mail is reported as a problem | test | `7bb4626` |
+| F7 | `LiveUpdateDiscardTests.DiscardDraft` | a PST keeps a draft's EntryID across the soft delete (run 2: `parent='Deleted Items', re-located id is the same id`); the re-locate scan excluded the old id | product | `593e668` |
+| F8 | `LiveDraftOptionsTests.DerivedDrafts` | the renamed reply's ConversationId differs from the seed's and the plain reply's. Measured in E4b (`T2/ConversationIdHashes`): it is MD5 over the upper-cased KEPT topic in UTF-16LE - not a hash of the new subject - while the seed's and the plain reply's are their index header's GUID; `PR_CONVERSATION_ID` refuses a write | product, decided | three attempts were taken out again first (`67c4afb`, `6bd9d60`, `0f4bbfa`). DECIDED (coordinator, on the maintainer's behalf; `QUESTIONS.md`): the same-id promise is Exchange's; elsewhere the test holds the renamed reply - and now the renamed forward - to the kept topic's hash, and the subject hint says so (`b4aa28f`). Passed from run 13 on |
+| F9 | `LiveDisconnectRecoveryTests` | "D49 regression: Outlook exited when its last window closed". Two causes, measured with Explorer-only probes and a 90-second subset run: Office 2024's `Explorers.Add` on the folder the hidden lifetime pin shows hands back THE PIN, so the promotion displayed it (`explorers=1`); and Office 2024 raises `Application.Quit` when the user closes the last visible window, so a session that started Outlook drops and closes its pin as it leaves (two scratch builds: without the Quit sink the test passed, with only the first fix it failed) | product, Office LTSC 2024; decided | `ffc6529` - the show-me path never returns an Explorer that already existed (`T1/ShowMeExplorerPinTests`); DECIDED for the Quit (`QUESTIONS.md`): keep honouring it - it is what lets the user's own Exit end an Outlook OutlookAI started - and `fd2c58b` holds the test to exactly that: an exit passes only if the promoting session started Outlook, two Explorers stood before the close and the quit event, not a process exit, ended the session; the reattach must still work. The earlier attempt (`01d81ec`) stays reverted |
+| F11 | (none - the hub rebuild before run 11, and E4's first attempt) | `corpus-teardown` finished cleanly, then the move of its manifest into `hub-history\` met "being used by another process"; the run stopped with the hub torn down | test bed | `292dbd8` - the move is retried for up to 60 s on a sharing or lock violation only |
+| F12 | `LiveDisconnectRecoveryTests`, step 3b (first reached in a D49-only run) | the degraded-search check needs index results to fall back to; with no catalog the search failed with `0x80041820` | test | `58d3707` - the step goes through `LivePopulationCoverage.Require` over the indexed stores: `PROVED NOTHING` here, refused on a Production profile, unchanged where the hub is indexed |
+| F10 | `LiveCreatedFolderTests` (run 2, its first run anywhere) | the Drafts folder a reply made in the throwaway data file is designated in `PR_IPM_DRAFTS_ENTRYID` on the store's TRUE root folder (NID `0x122`, the parent of the IPM subtree) and nowhere the lookup read | product | `5ac1d85` - passed in run 3 |
+
+**Section 8 item 25, the created-folder proof's first runs.** `Reset-ThrowawayStore.ps1 -Execute`,
+every run: `verify : 1 store(s) named 'throwaway@vm.invalid', file
+C:\OutlookAI-Tier\Throwaway\throwaway-<stamp>.pst, Drafts designation NotFound, top-level folders [Deleted
+Items]`, and `detach : none` - each run started from `CP-12B`, which has no throwaway. Run 3's four lines:
+`before: 'throwaway@vm.invalid' Drafts=DefaultFolderAbsent`, `reply_draft: store='throwaway@vm.invalid'
+folder='Drafts' createdFolders=[throwaway@vm.invalid/Drafts]`, `after: the non-creating lookup sees
+Drafts='Drafts'`, `discard_draft: discarded=True to='Deleted Items' createdFolders=[]`. Run 2's `after:`
+line was `DefaultFolderAbsent` - Q85's open question answered: Outlook designates a Drafts folder it
+makes in a data file with no Inbox on that file's true root folder (F10). A read-only probe after run 2
+found the throwaway's Drafts and Deleted Items empty and nothing tagged in it. **The second run's
+detach**, read after run 5 without a restore (Outlook first started on the tier profile with
+`Start-OutlookUnelevated.ps1`, because the suite's lifecycle tests end with Outlook closed and the
+script refuses to start one): `detach : 'throwaway@vm.invalid' <- ...\throwaway-20261003T081352Z.pst`,
+`attach : ...\throwaway-20261003T082322Z.pst`, the same `verify` line, then `delete :
+...\throwaway-20261003T081352Z.pst` - the freshly started Outlook did not hold the old file, so it went.
+
+**What stayed red.** Nothing, from run 18 on. F8 and F9 were decided rather than loosened - each
+test now holds its store kind or its Office build to what was measured, and says so in its output -
+and two checks print `PROVED NOTHING` every run on this guest, by design: the retry-guidance check
+(no transient Outlook state to report) and D49's step 3b (no index to degrade to). Q74 C3's PST half
+(`ShortDecodedId_OpensAsTheItemItself_OnAPstStore`) carries `Requires=SearchIndex`, so this guest's
+filter never selects it. Q101's Inspector/Outbox ordering in `LiveDisconnectRecoveryTests` never bit:
+every run read `no inspectors, outbox empty` before it closed the parked window.
+
 ### 4.2 The indexed guest's build-out - `OutlookAI-Indexed`, 2026-09-24 and 2026-09-27
 
 **Why this section exists.** The same build-out as section 4.1, on the guest that must stay
@@ -3855,7 +3997,10 @@ unrecorded or unverified.
       not openable from this profile. Whether to drop or flag such hits is open (`TODO.md`); doing
       either from the map alone would also catch an Exchange store the hash did not decide.
 
-25. **PENDING - the created-folder proof has never run on a guest (Q96 (iv), built 2026-10-03).**
+25. **RAN on `OutlookAI-Unindexed`, 2026-10-03 (section 4.1e) - its first run failed by design and
+    answered Q85's open question; the fix (`5ac1d85`) passed the next runs. Every point below is
+    recorded there, the second run's detach included.** The original brief, kept for the record:
+    **the created-folder proof has never run on a guest (Q96 (iv), built 2026-10-03).**
     What exists is proven only off the guests: `Testbed/guest/Reset-ThrowawayStore.ps1 -SelfTest`
     (its decisions and its own source), the settings, the renderer and the write allowlist by
     `T1/ThrowawayStoreTests` and `T1/LiveTestSettingsTemplateTests`, and every verdict of the live
@@ -3896,6 +4041,15 @@ unrecorded or unverified.
       check that walks the profile's stores - the table probes, `outlook_health`, `list_accounts` -
       now meets one more; on the code as it stands each either names its stores or tolerates one it
       cannot probe. A run that says otherwise belongs here.
+    **Both of Q96's remaining questions answered by the merged runs (2026-10-03, section 4.1e).**
+    The bisect run E4b - the first run of master's version of this test - printed `designation: ...
+    store object = not set; top folder = not set; Inbox = no such folder in this store`, the three
+    places the object model hands out; since `5d94851` the record reads the TRUE root too, and run 13
+    printed `... true root = THE CREATED DRAFTS FOLDER` beside `after: the non-creating lookup sees
+    Drafts='Drafts'` - question 3, answered where F10 (`5ac1d85`) had already widened the lookup. And
+    both `top level of ...` lines came back as expected in every run since: `appeared [Drafts]` with
+    `reported created [throwaway@vm.invalid/Drafts]` around the reply, nothing around the discard -
+    question 2: nothing appeared that the call did not report, so its (b) is not needed.
 26. **MEASURED 2026-10-03 (the Q99 folder finding) - how the index spells a FOLDER name holding
     `% / \ * ?`, and what a folder-scoped search does with it.** Microsoft documents those five as
     percent-encoded "if they are in the store or folder display name" (*About MAPI URLs for
@@ -3974,9 +4128,14 @@ unrecorded or unverified.
   the thing to check when host and guest disagree about something that should not depend on the
   toolchain.
 
-* **Nobody has yet run the VM bucket end to end anywhere.** The 121 read as runnable there; that
-  is not the same as having run there. The count moved from 31 to 121 by re-reading what each
-  test needs method by method - no test was changed to make it fit.
+* **The VM bucket has run end to end on ONE guest, `OutlookAI-Unindexed`, on 2026-10-03 (section
+  4.1e) - the unindexed filter, 80 or 81 tests a run - and is GREEN there: 80 of 80 in runs 18 and 19,
+  checkpoint `CP-13B-LIVE-GREEN`.** Green includes two decisions taken on the maintainer's behalf, each
+  in `QUESTIONS.md`: a renamed derived draft's ConversationId is held to Exchange's promise on Exchange
+  and to the kept topic's hash elsewhere (F8), and on Office LTSC 2024 the user's close of the last
+  window may end an Outlook OutlookAI started (F9). The index tier (`Requires=SearchIndex`) has not run
+  on a guest yet; `OutlookAI-Indexed` is where it can. The count moved from 31 to 121 by re-reading what
+  each test needs method by method - no test was changed to make it fit.
 
 * **The VM runs a different Office from the maintainer's machine, by 3,598 builds, and that is
   accepted rather than fixed.** Measured 2026-09-15: the guest is `ProPlus2024Volume` on

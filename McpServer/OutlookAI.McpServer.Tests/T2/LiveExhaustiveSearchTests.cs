@@ -160,7 +160,38 @@ public sealed class LiveExhaustiveSearchTests
         string folderPath = byFolder[0].Key;
         var expected = new HashSet<string>(byFolder[0].Select(i => i.EntryId), StringComparer.OrdinalIgnoreCase);
 
+        // EXACTLY that folder means include_subfolders=false, asked for explicitly. The request used
+        // to leave it at its default - which has been TRUE since soak fix 15 (a user decision: a
+        // folder covers its subtree in every tier) - so the "exactly that folder" ground truth was
+        // compared against a subtree scan. Nothing noticed until a hub whose busiest folder HAS
+        // subfolders: the first guest live run (2026-10-03) scanned 3 folders - Inbox and its two
+        // population subfolders - for 42 hits against 24 expected, 18 extra and none missing.
         SearchOutcome outcome = Service.Search(new SearchRequest
+        {
+            Exhaustive = true,
+            Store = Hub,
+            Folder = folderPath,
+            IncludeSubfolders = false,
+            Query = term,
+            Top = 100,
+        });
+
+        Assert.NotNull(outcome.Exhaustive);
+        HashSet<string> actual = ExhaustiveEntryIds(outcome);
+        _output.WriteLine($"folder-bounded term '{term}': folderDepth={folderPath.Split('/').Length} "
+            + $"expected={expected.Count} actual={actual.Count} scanMs={outcome.Exhaustive!.ElapsedMs} "
+            + $"folders={outcome.Exhaustive.FoldersScanned} engine={outcome.Exhaustive.Engine}");
+        AssertSetsEqual(expected, actual, term, "folderGroundTruth", "exhaustive");
+
+        // And the DEFAULT - the subtree - against the subtree's own ground truth, so the default
+        // the tool description promises is held to an answer too rather than merely tolerated.
+        var expectedSubtree = new HashSet<string>(
+            corpus.Where(i => word.IsMatch(HubCorpus.TextOf(i))
+                    && (string.Equals(i.FolderPath, folderPath, StringComparison.OrdinalIgnoreCase)
+                        || (i.FolderPath ?? string.Empty).StartsWith(folderPath + "/", StringComparison.OrdinalIgnoreCase)))
+                .Select(i => i.EntryId),
+            StringComparer.OrdinalIgnoreCase);
+        SearchOutcome subtreeOutcome = Service.Search(new SearchRequest
         {
             Exhaustive = true,
             Store = Hub,
@@ -168,18 +199,22 @@ public sealed class LiveExhaustiveSearchTests
             Query = term,
             Top = 100,
         });
+        Assert.NotNull(subtreeOutcome.Exhaustive);
+        HashSet<string> subtreeActual = ExhaustiveEntryIds(subtreeOutcome);
+        _output.WriteLine($"folder-bounded term '{term}' with its subtree (the default): expected={expectedSubtree.Count} "
+            + $"actual={subtreeActual.Count} folders={subtreeOutcome.Exhaustive!.FoldersScanned}");
+        AssertSetsEqual(expectedSubtree, subtreeActual, term, "subtreeGroundTruth", "exhaustive(default)");
+    }
 
-        Assert.NotNull(outcome.Exhaustive);
-        var actual = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    private HashSet<string> ExhaustiveEntryIds(SearchOutcome outcome)
+    {
+        var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (HitSummary hit in outcome.Hits.Where(h => !HubCorpus.IsTestArtifact(h.Subject)))
         {
-            actual.Add(Service.Read(hit.Id, maxBodyChars: 0).EntryId);
+            ids.Add(Service.Read(hit.Id, maxBodyChars: 0).EntryId);
         }
 
-        _output.WriteLine($"folder-bounded term '{term}': folderDepth={folderPath.Split('/').Length} "
-            + $"expected={expected.Count} actual={actual.Count} scanMs={outcome.Exhaustive!.ElapsedMs} "
-            + $"folders={outcome.Exhaustive.FoldersScanned} engine={outcome.Exhaustive.Engine}");
-        AssertSetsEqual(expected, actual, term, "folderGroundTruth", "exhaustive");
+        return ids;
     }
 
     private static void AssertSetsEqual(HashSet<string> left, HashSet<string> right, string term, string leftName, string rightName)

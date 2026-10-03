@@ -142,6 +142,18 @@ public static class LiveStoreCountTripwire
             // and Outlook can wedge mid-suite as easily as before it.
             LiveOutlookPreflight.Require();
 
+            // The two machine guards that need no COM, armed HERE because this is the one
+            // funnel every guarded collection passes (2026-10-03, first guest live run). They
+            // used to be armed only by LivePhase1Fixture, so a run selecting no Phase-1 test -
+            // the unindexed guest's whole filter, since every Phase-1 test needs the index -
+            // never probed its sink, never checked its corpus, and never switched on the
+            // arrival waits' delivery nudge: three self-sent seeds then sat in the sink while
+            // their tests timed out, because one SendAndReceive had fetched before the
+            // submission landed and nothing asked again. Both are once per process, so a
+            // second fixture pays nothing.
+            LiveCorpusFreshness.EnsureFresh(settings);
+            LiveMailSink.EnsureReachable(settings);
+
             if (_baseline != null)
             {
                 return;
@@ -172,6 +184,23 @@ public static class LiveStoreCountTripwire
                 throw new InvalidOperationException(
                     "REFUSING to run the live tier: Outlook could not be reached for the count tripwire ("
                     + ex.GetType().Name + ").", ex);
+            }
+
+            // Mail left queued by an earlier run is indistinguishable, at teardown, from mail
+            // this run failed to clean up - so the Outbox is asked about at the first moment COM
+            // is available, which is here, before any collection has sent anything. It used to be
+            // asked by LivePhase1Fixture's session, i.e. only on a run that selected a Phase-1
+            // test, and then only when that collection's turn came - after the alphabetically
+            // earlier collections had already sent mail of their own.
+            try
+            {
+                LiveMailSink.EnsureOutboxDrained(_keepAlive!, settings);
+            }
+            catch
+            {
+                _keepAlive?.Dispose();
+                _keepAlive = null;
+                throw;
             }
 
             Stopwatch stopwatch = Stopwatch.StartNew();

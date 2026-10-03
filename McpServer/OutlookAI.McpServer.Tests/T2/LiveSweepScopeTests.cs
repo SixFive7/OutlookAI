@@ -102,8 +102,8 @@ public sealed class LiveSweepScopeTests
         string? entryId = null;
         try
         {
-            LiveOutlookTestMailer.SendSelfMail(Hub, seedSubject, seedBody, null);
-            entryId = WaitForInboxSeed(seedSubject);
+            DateTime sentUtc = LiveOutlookTestMailer.SendSelfMail(Hub, seedSubject, seedBody, null);
+            entryId = LiveInboxArrival.WaitFor(_fixture.VerifySession, Hub, seedSubject, sentUtc).EntryId;
             _output.WriteLine("seed arrived in hub Inbox (subject term and body term are disjoint)");
 
             // --- fix 1, end to end: both terms together match, either part alone does not.
@@ -353,35 +353,11 @@ public sealed class LiveSweepScopeTests
             Hub, Marker, folderIds: LiveOutlookTestMailer.HubSweepFolderIdsWithArchive);
     }
 
-    /// <summary>
-    /// Waits for the self-send's Inbox copy (index-independent hub walk). The bound is
-    /// generous on purpose: delivery is a real round trip through the mail server and a
-    /// slow one must not fail an unattended suite (measured typical: 6-40 s).
-    /// </summary>
-    private string WaitForInboxSeed(string seedSubject)
-    {
-        const int DeadlineSeconds = 240;
-        LiveWaitBudget wait = LiveWaitBudget.OfSeconds(DeadlineSeconds);
-        while (wait.HasTimeLeft)
-        {
-            ComWalkedItem? seed = _fixture.VerifySession.WalkStoreMailItems(Hub).FirstOrDefault(i =>
-                i.Subject == seedSubject
-                && string.Equals(i.FolderPath, "Inbox", StringComparison.OrdinalIgnoreCase));
-            if (seed != null)
-            {
-                return seed.EntryId;
-            }
-
-            Thread.Sleep(3000);
-        }
-
-        // The bound and the number in the message come from one constant on purpose: this
-        // said "within 120 s" while waiting 240, so anyone reading the failure was told the
-        // wrong thing about the only fact the failure carried.
-        throw new TimeoutException(
-            $"Seed mail '{seedSubject}' did not arrive in the hub Inbox within {DeadlineSeconds} s "
-            + "(index-independent COM walk of the hub store).");
-    }
+    // The seed's arrival wait is LiveInboxArrival.WaitFor (2026-10-03). This file kept a SEVENTH
+    // copy of that loop, which walked the hub every three seconds and never asked Outlook to
+    // deliver - so on the first guest live run, where one SendAndReceive had fetched from the
+    // local sink before the submission landed, the seed sat in the sink for the whole 240 s and
+    // the test failed for the mail server's sake. The shared wait nudges delivery as it polls.
 
     private static string Stem(string term)
     {

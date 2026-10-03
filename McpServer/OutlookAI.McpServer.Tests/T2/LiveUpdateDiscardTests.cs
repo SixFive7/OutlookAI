@@ -330,9 +330,23 @@ public sealed class LiveUpdateDiscardTests
             Assert.Equal(draftsFolder, discarded.FromFolder);
             Assert.False(string.IsNullOrEmpty(discarded.ToFolder), "the Deleted Items folder must be named");
 
-            // GONE from Drafts: the old EntryID no longer opens.
-            Assert.Null(_fixture.VerifySession.TryGetMailInfo(entryId, _fixture.GetStoreId(Hub), out string? goneError));
-            _output.WriteLine($"C2 old id no longer opens: {goneError ?? "-"}");
+            // GONE from Drafts. Where the store mints a new EntryID on a move (Exchange) the old id
+            // stops opening. Where it KEEPS the id across a soft delete - a PST, measured on the first
+            // guest live run (2026-10-03), where this asserted "no longer opens" and failed - the old
+            // id opens AS the item now in Deleted Items, and the discard's re-locate must name exactly
+            // that id. Either way it can never open as anything still in Drafts.
+            ComDraftInfo? stillOpens = _fixture.VerifySession.TryGetMailInfo(entryId, _fixture.GetStoreId(Hub), out string? goneError);
+            if (stillOpens == null)
+            {
+                _output.WriteLine($"C2 old id no longer opens: {goneError ?? "-"}");
+            }
+            else
+            {
+                _output.WriteLine($"C2 old id still opens - the store kept the EntryID across the soft delete: "
+                    + $"parent='{stillOpens.ParentFolderName}', re-located id {(string.Equals(discarded.NewEntryId, entryId, StringComparison.OrdinalIgnoreCase) ? "is the same id" : "DIFFERS")}");
+                Assert.Equal(discarded.ToFolder, stillOpens.ParentFolderName);
+                Assert.Equal(entryId, discarded.NewEntryId, ignoreCase: true);
+            }
 
             // PRESENT in Deleted Items: the re-located copy opens and is the same mail.
             Assert.False(string.IsNullOrEmpty(discarded.NewEntryId), "the discarded draft must be re-located in Deleted Items");

@@ -654,21 +654,11 @@ public sealed class LivePhase1Fixture : IDisposable
         Settings = LiveTestSettings.Load();
 
         // Fail-closed per-store count tripwire: no census, no live tier. Cheap after
-        // the first fixture (one process-wide baseline).
+        // the first fixture (one process-wide baseline). It is also the funnel that arms the
+        // corpus freshness check, the mail-sink probe and the Outbox-drained check (2026-10-03):
+        // they were armed HERE until the first guest live run showed that a run selecting no
+        // Phase-1 test never armed them at all - see LiveStoreCountTripwire.EnsureBaseline.
         LiveStoreCountTripwire.EnsureBaseline(Settings);
-
-        // Fail-closed corpus freshness: a corpus whose measurement windows have emptied is
-        // worse than no corpus, because every test asking about those windows still passes.
-        // Checked here rather than per test, and BEFORE anything reads the store, for the
-        // same reason as the tripwire above: it is a property of the machine, and a machine
-        // that cannot answer must not be measured.
-        LiveCorpusFreshness.EnsureFresh(Settings);
-
-        // And, on a machine whose transport is a local sink, that the sink is answering
-        // before anything is sent into it. TCP only - it must be answerable before Outlook
-        // has been started, because a sink that is down looks exactly like a code fault once
-        // the mail is sitting in the Outbox.
-        LiveMailSink.EnsureReachable(Settings);
         Service = IndexSearchService.CreateDefault(out string providerReport);
         ProviderReport = providerReport;
 
@@ -694,19 +684,12 @@ public sealed class LivePhase1Fixture : IDisposable
 
         StoreScopes = scopes;
 
+        // The Outbox-drained check that used to run when this session first connected now runs
+        // in LiveStoreCountTripwire.EnsureBaseline, at the first COM moment of the RUN rather
+        // than of this collection - which, alphabetically after LiveMoveArchive, came after mail
+        // had already been sent.
         _session = new Lazy<OutlookComSession>(
-            () =>
-            {
-                OutlookComSession connected = OutlookComSession.Connect(allowStartingOutlook: true);
-
-                // The first moment COM is available is the first moment this can be asked,
-                // and it has to be asked BEFORE anything sends: mail left queued by an
-                // earlier run is indistinguishable, at teardown, from mail this run failed
-                // to clean up. Checked here rather than in the constructor so it does not
-                // force Outlook to start before a test that needs no Outlook at all.
-                LiveMailSink.EnsureOutboxDrained(connected, Settings);
-                return connected;
-            },
+            () => OutlookComSession.Connect(allowStartingOutlook: true),
             LazyThreadSafetyMode.ExecutionAndPublication);
         _comStores = new Lazy<IReadOnlyList<ComStoreInfo>>(
             () => Session.GetStores(),

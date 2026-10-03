@@ -232,6 +232,16 @@ $script:ManifestLeafPattern = '(?i)^corpus-(?<id>[A-Za-z0-9_-]+)\.jsonl$'
 # which Copy-FromGuest.ps1 collects as a live manifest.
 $script:HistoryDirectoryName = 'hub-history'
 
+# How long the move into hub-history\ keeps trying while the manifest is still held by something
+# else (Test-ManifestMoveRetryable): twice on OAI-UNINDEXED, 2026-10-03, the move straight after the
+# teardown met "being used by another process" and the run stopped with its hub torn down.
+$script:ManifestMoveSeconds = 60
+
+# The two IOException results that mean "held by another process for now": ERROR_SHARING_VIOLATION
+# (0x80070020) and ERROR_LOCK_VIOLATION (0x80070021).
+$script:SharingViolationHResult = -2147024864
+$script:LockViolationHResult = -2147024863
+
 # What a hub population's shape key carries (CorpusPopulation.ShapeKeySuffixFor): '|p:hub:v<N>|o:...'.
 $script:HubShapeMarker = '|p:hub:v'
 
@@ -623,6 +633,26 @@ function Get-FrontierWindow {
     }
 }
 
+<#
+    Whether a failed move of the torn-down manifest into hub-history\ is worth another try: only a
+    SHARING or LOCK violation - the file still held for a moment by whatever touched it last - and
+    only before the deadline. Anything else, or the deadline passed, is not: the move then throws as
+    it always did, with the manifest where it was. PowerShell hands a .NET method's IOException over
+    wrapped in a MethodInvocationException, so the chain is walked.
+#>
+function Test-ManifestMoveRetryable {
+    param([System.Exception] $Exception, [datetime] $NowUtc, [datetime] $DeadlineUtc)
+    if ($NowUtc -ge $DeadlineUtc) { return $false }
+    $current = $Exception
+    while ($null -ne $current) {
+        if ($current -is [System.IO.IOException]) {
+            return ($current.HResult -eq $script:SharingViolationHResult -or $current.HResult -eq $script:LockViolationHResult)
+        }
+        $current = $current.InnerException
+    }
+    return $false
+}
+
 <# The newest received instant off a plan sheet's "received range : A .. B" line, or $null. #>
 function Get-NewestFromPlanText {
     param([string] $Text)
@@ -789,6 +819,18 @@ function Invoke-SelfTest {
     $historyName = Format-HubHistoryName -CorpusId 'hub-indexed' -AnchorText '2026-09-24T08:00:00Z'
     Test-Case 'a torn-down manifest is kept as <id>.<anchor>.jsonl' 'hub-indexed.20260924T080000Z.jsonl' $historyName
     Test-Case 'which Copy-FromGuest.ps1 never takes for a live manifest' $false ($historyName.StartsWith('corpus-', [System.StringComparison]::OrdinalIgnoreCase))
+
+    Write-Host ''
+    Write-Host '== moving the torn-down manifest - held for a moment is retried, nothing else =='
+    $soon = $now.AddSeconds(60)
+    $held = [System.IO.IOException]::new('The process cannot access the file because it is being used by another process.', $script:SharingViolationHResult)
+    Test-Case 'a sharing violation before the deadline is tried again' $true (Test-ManifestMoveRetryable -Exception $held -NowUtc $now -DeadlineUtc $soon)
+    Test-Case 'and so is a lock violation' $true (Test-ManifestMoveRetryable -Exception ([System.IO.IOException]::new('locked', $script:LockViolationHResult)) -NowUtc $now -DeadlineUtc $soon)
+    Test-Case 'as PowerShell hands it over - wrapped in a MethodInvocationException' $true (Test-ManifestMoveRetryable -Exception ([System.Management.Automation.MethodInvocationException]::new('Exception calling "Move" with "2" argument(s)', $held)) -NowUtc $now -DeadlineUtc $soon)
+    Test-Case 'not once the deadline has passed' $false (Test-ManifestMoveRetryable -Exception $held -NowUtc $soon -DeadlineUtc $soon)
+    Test-Case 'a target that already exists is not retried' $false (Test-ManifestMoveRetryable -Exception ([System.IO.IOException]::new('exists', -2147024713)) -NowUtc $now -DeadlineUtc $soon)
+    Test-Case 'nor a missing manifest' $false (Test-ManifestMoveRetryable -Exception ([System.IO.FileNotFoundException]::new('gone')) -NowUtc $now -DeadlineUtc $soon)
+    Test-Case 'nor anything that is not an I/O failure' $false (Test-ManifestMoveRetryable -Exception ([System.UnauthorizedAccessException]::new('denied')) -NowUtc $now -DeadlineUtc $soon)
 
     Write-Host ''
     Write-Host '== the corpus tool''s arguments =='
@@ -977,6 +1019,28 @@ function Read-ImportPrfReading {
         $readings += [pscustomobject]@{ Path = $setup; Value = $value }
     }
     return , $readings
+}
+
+<#
+    Moves the torn-down manifest into hub-history\, trying again every half second for up to
+    -Seconds while Test-ManifestMoveRetryable says the file is only held for now; returns the try
+    it took. Any other failure throws at once, with the manifest where it was.
+#>
+function Move-HubManifest {
+    param([string] $From, [string] $To, [int] $Seconds)
+    $deadline = [datetime]::UtcNow.AddSeconds($Seconds)
+    $tries = 0
+    while ($true) {
+        $tries++
+        try {
+            [System.IO.File]::Move($From, $To)
+            return $tries
+        }
+        catch {
+            if (-not (Test-ManifestMoveRetryable -Exception $_.Exception -NowUtc ([datetime]::UtcNow) -DeadlineUtc $deadline)) { throw }
+            Start-Sleep -Milliseconds 500
+        }
+    }
 }
 
 function Read-FirstLine {
@@ -1304,8 +1368,8 @@ if ($plan.Rebuild) {
             $historyPath = Join-Path $historyDirectory ((Format-HubHistoryName -CorpusId $plan.CorpusId -AnchorText $plan.TeardownAnchor) + '.' + $suffix)
             $suffix++
         }
-        [System.IO.File]::Move($plan.ManifestPath, $historyPath)
-        Write-Line "  torn-down manifest kept as $historyPath"
+        $moveTries = Move-HubManifest -From $plan.ManifestPath -To $historyPath -Seconds $script:ManifestMoveSeconds
+        Write-Line "  torn-down manifest kept as $historyPath$(if ($moveTries -gt 1) { " (moved on try $moveTries - the file was still held by another process for a moment after the teardown)" })"
     }
 
     # The anchor is taken NOW - after the warm-up and the teardown - so the newest item is as young

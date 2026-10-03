@@ -57,8 +57,13 @@ public sealed class LiveFreshModeTests
             bool sentCopySeen = false;
             int lastLoggedMatches = -1;
 
+            int polls = 0;
             while (overall.Elapsed < ArrivalTimeout)
             {
+                // A local sink delivers only when Outlook is asked to fetch (2026-10-03): the
+                // one SendAndReceive at send time can fetch before the submission is stored.
+                LiveInboxArrival.NudgeIfDue(polls++);
+
                 // D34: the sweep cache would blind rapid re-polls for its ~10 s TTL by
                 // design - this test measures RAW sweep arrival latency, so it clears
                 // the cache before each poll (dedicated cache behavior test:

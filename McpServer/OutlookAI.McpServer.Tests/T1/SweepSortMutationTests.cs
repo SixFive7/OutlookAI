@@ -241,9 +241,34 @@ public sealed class SweepSortMutationTests
         Assert.Equal(unspecified.Ticks, read.Value.Ticks);
     }
 
+    /// <summary>
+    /// The column's SPELLING reaches the helper (Q11, measured 2026-10-03 on the first guest live
+    /// run): the scan adds <c>ReceivedTime</c> first, whose values are LOCAL wall time, and reading
+    /// them as UTC put a resumed page's bound one offset late at UTC+2 - a duplicate row - and would
+    /// put it one offset EARLY west of UTC, skipping mail. Compared through the helper rather than
+    /// against a number, so the assertion holds in every zone the suite runs in; the zone-held
+    /// readings themselves are pinned in <c>ComDateValueTests</c>.
+    /// </summary>
+    [Fact]
+    public void ARowDate_IsReadInTheZoneItsColumnSpellingReportsIn()
+    {
+        DateTime unspecified = new DateTime(2026, 9, 30, 13, 29, 46, DateTimeKind.Unspecified);
+        object[] row = { "AAA", unspecified };
+
+        Assert.Equal(
+            ComDateValue.FromTableValue(unspecified, "ReceivedTime"),
+            ReadRowDate(row, 1, "ReceivedTime"));
+        Assert.Equal(
+            ComDateValue.FromTableValue(unspecified),
+            ReadRowDate(row, 1, "urn:schemas:httpmail:datereceived"));
+        Assert.Equal(
+            ComDateValue.FromItemValue(unspecified),
+            ReadRowDate(row, 1, "ReceivedTime"));
+    }
+
     // ================================================================== harness
 
-    private static DateTime? ReadRowDate(object[] values, int dateIndex)
+    private static DateTime? ReadRowDate(object[] values, int dateIndex, string? dateProperty = null)
     {
         MethodInfo method =
             typeof(OutlookComSession).GetMethod("ReadRowDate", BindingFlags.NonPublic | BindingFlags.Static)
@@ -251,7 +276,7 @@ public sealed class SweepSortMutationTests
                 "OutlookComSession.ReadRowDate is gone or renamed. It turns a swept or scanned row's date column "
                 + "into the UTC instant a resumed scan bounds itself by; if it moved, move this test with it.");
 
-        return (DateTime?)method.Invoke(null, new object?[] { values, dateIndex });
+        return (DateTime?)method.Invoke(null, new object?[] { values, dateIndex, dateProperty });
     }
 
     private static ComSweepResult SweepResult(int sortRefusedFolders)
@@ -350,7 +375,26 @@ public sealed class SweepSortMutationTests
         /// <summary>Binds this collection to the table recording the calls.</summary>
         public StandInColumns(StandInTable table) => _table = table;
 
-        /// <summary>Puts a spelling on the table, or refuses it.</summary>
-        public void Add(string property) => _table.Add(property);
+        /// <summary>
+        /// Puts a spelling on the table, or refuses it - and, like Outlook's <c>Columns.Add</c>, hands
+        /// back the column it made, which the product now holds and releases (2026-10-03). A
+        /// <c>void</c> here would make every rung look refused: binding a void result is a
+        /// <c>RuntimeBinderException</c>, which <c>IsComCallFailure</c> admits.
+        /// </summary>
+        public object Add(string property)
+        {
+            _table.Add(property);
+            return new StandInColumn(property);
+        }
+    }
+
+    /// <summary>The column <see cref="StandInColumns.Add"/> hands back. Public for the reason given on <see cref="StandInTable"/>.</summary>
+    public sealed class StandInColumn
+    {
+        /// <summary>Names the column.</summary>
+        public StandInColumn(string name) => Name = name;
+
+        /// <summary>The spelling it was added under.</summary>
+        public string Name { get; }
     }
 }

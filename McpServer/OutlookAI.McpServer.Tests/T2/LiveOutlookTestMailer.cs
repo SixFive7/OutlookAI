@@ -180,7 +180,10 @@ public static class LiveOutlookTestMailer
                         {
                             foreach (string attachmentPath in attachmentPaths)
                             {
-                                attachments.Add(attachmentPath);
+                                // Attachments.Add hands back the Attachment it made: released
+                                // here, never by the garbage collector after the mail was sent.
+                                object? added = attachments.Add(attachmentPath);
+                                Release(added);
                             }
                         }
                         finally
@@ -790,7 +793,8 @@ public static class LiveOutlookTestMailer
                 {
                     foreach (string path in attachmentPaths)
                     {
-                        attachments.Add(path);
+                        object? added = attachments.Add(path);
+                        Release(added);
                     }
                 }
                 finally
@@ -1088,9 +1092,11 @@ public static class LiveOutlookTestMailer
 
     /// <summary>
     /// READ-ONLY: where a store says which folder is its Drafts - <c>PR_IPM_DRAFTS_ENTRYID</c> read
-    /// at the three places the object model can reach: the store object and the Inbox (where the
-    /// product's non-creating lookup reads it) and the store's top folder (where it does not) -
-    /// beside the EntryID of the folder <paramref name="draftEntryId"/> sits in. For the
+    /// at the three places the object model hands out: the store object and the Inbox (where the
+    /// product's non-creating lookup reads it) and the store's top folder (where it does not) - and,
+    /// since the first guest runs (2026-10-03, F10), at the store's TRUE root folder, which the
+    /// object model never hands out and the lookup now reads too - beside the EntryID of the folder
+    /// <paramref name="draftEntryId"/> sits in. For the
     /// created-folder proof's record (Q96 question 3, 2026-10-03): where Outlook registers a Drafts
     /// folder it makes in a data file with no Inbox, which decides whether and where the lookup is
     /// widened. Reads through the product's own <see cref="ComSpecialFolderStore"/>, opens the
@@ -1107,6 +1113,7 @@ public static class LiveOutlookTestMailer
             dynamic? store = null;
             object? root = null;
             object? inbox = null;
+            object? trueRoot = null;
             dynamic? draft = null;
             dynamic? parent = null;
             dynamic? parentStore = null;
@@ -1159,10 +1166,37 @@ public static class LiveOutlookTestMailer
                         null));
                 }
 
+                // The store's TRUE root folder (MS-PST NID 0x122), the parent of the top folder: where the
+                // first guest runs found Outlook registering the Drafts folder it made in a data file with no
+                // Inbox (runbook 4.1e, F10), and where the product's lookup reads it since 5ac1d85. Reached
+                // the way the product reaches it - the top folder's PR_PARENT_ENTRYID, opened with
+                // GetFolderFromID - so nothing is created. Status null: the top folder names no parent.
+                PropertyRead parentOfTop = special.ReadFolderProperty(root!, SpecialFolders.ParentEntryIdSchema);
+                string? trueRootId = parentOfTop.Status == PropertyReadStatus.Found
+                    ? ArchiveFolderResolution.TryReadEntryIdHex(parentOfTop.Value)
+                    : null;
+                if (trueRootId == null)
+                {
+                    reads.Add(new DesignationRead(
+                        "true root",
+                        parentOfTop.Status == PropertyReadStatus.NotFound ? null : PropertyReadStatus.Failed,
+                        null));
+                }
+                else if (special.OpenFolder(trueRootId, out trueRoot) == PropertyReadStatus.Found && trueRoot != null)
+                {
+                    PropertyRead onTrueRoot = special.ReadFolderProperty(trueRoot, SpecialFolders.DraftsEntryIdSchema);
+                    reads.Add(new DesignationRead("true root", onTrueRoot.Status, onTrueRoot.Value));
+                }
+                else
+                {
+                    reads.Add(new DesignationRead("true root", PropertyReadStatus.Failed, null));
+                }
+
                 return new DraftsDesignationReading(draftsFolderEntryId, reads);
             }
             finally
             {
+                Release(trueRoot);
                 Release(inbox);
                 Release(root);
                 Release(parentStore);
@@ -1537,10 +1571,14 @@ public static class LiveOutlookTestMailer
         foreach (string spelling in spellings)
         {
             dynamic? columns = null;
+            object? column = null;
             try
             {
                 columns = table.Columns;
-                columns!.Add(spelling);
+
+                // Columns.Add hands back the Column it made: released here, with its table,
+                // never by the garbage collector after the census released the table.
+                column = columns!.Add(spelling);
                 return;
             }
             catch (Exception ex) when (OutlookAI.Core.Com.OutlookComSession.IsComCallFailure(ex))
@@ -1548,6 +1586,7 @@ public static class LiveOutlookTestMailer
             }
             finally
             {
+                Release(column);
                 Release(columns);
             }
         }
@@ -1649,10 +1688,17 @@ public static class LiveOutlookTestMailer
                 foreach ((string entryId, string _, int _) in all)
                 {
                     dynamic? folder = null;
+                    dynamic? folderItems = null;
+                    dynamic? subfolders = null;
                     try
                     {
                         folder = ns.GetFolderFromID(entryId);
-                        bool empty = (int)folder.Items.Count == 0 && (int)folder.Folders.Count == 0;
+
+                        // Each collection is held and released here, never left inline in a chain
+                        // for the garbage collector to release after the folder is gone.
+                        folderItems = folder.Items;
+                        subfolders = folder.Folders;
+                        bool empty = (int)folderItems.Count == 0 && (int)subfolders.Count == 0;
                         if (deletedIds.Contains(entryId) && empty)
                         {
                             wedged++;
@@ -1668,6 +1714,8 @@ public static class LiveOutlookTestMailer
                     }
                     finally
                     {
+                        Release(subfolders);
+                        Release(folderItems);
                         Release(folder);
                     }
                 }
@@ -2235,6 +2283,106 @@ public static class LiveOutlookTestMailer
             + "not be proven to exist without asking Outlook for it, which on this kind of store would CREATE it (Q84). "
             + "The zero-artifact sweep refuses to call a folder it could not look in empty - the store's PR_VALID_FOLDER_MASK "
             + "or its Inbox designations did not read here, which is what the Q84 guest verification exists to find.";
+    }
+
+    /// <summary>
+    /// READ-ONLY, for diagnostics: how many Explorers the RUNNING Outlook holds and the folder each
+    /// shows - for D49 on Office LTSC 2024, where <c>Explorers.Add</c> on the folder the lifetime pin
+    /// shows hands back the pin itself (the D49 probes, 2026-10-03). Never starts an Outlook: with none
+    /// running it says so and asks nothing - but it attaches through the class factory, so a caller must
+    /// not use it while the Outlook it watches may be exiting. Folder names only (S4); a failure is a
+    /// sentence, never an exception.
+    /// </summary>
+    public static string DescribeExplorers()
+    {
+        if (!OutlookComSession.IsOutlookProcessRunning())
+        {
+            return "no OUTLOOK.EXE running - nothing asked";
+        }
+
+        try
+        {
+            return RunSta(() =>
+            {
+                dynamic? app = null;
+                dynamic? explorers = null;
+                try
+                {
+                    app = CreateOutlookApplication();
+                    explorers = app.Explorers;
+                    int count = (int)explorers.Count;
+                    List<string> folders = new List<string>(count);
+                    for (int i = 1; i <= count; i++)
+                    {
+                        dynamic? explorer = null;
+                        dynamic? folder = null;
+                        try
+                        {
+                            explorer = explorers.Item(i);
+                            folder = explorer.CurrentFolder;
+                            folders.Add(folder == null ? "-" : (string)folder.Name);
+                        }
+                        catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+                        {
+                            folders.Add("?");
+                        }
+                        finally
+                        {
+                            Release(folder);
+                            Release(explorer);
+                        }
+                    }
+
+                    return "explorers=" + count.ToString(CultureInfo.InvariantCulture) + " [" + string.Join(", ", folders) + "]";
+                }
+                finally
+                {
+                    Release(explorers);
+                    Release(app);
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            return "unreadable (" + ex.GetType().Name + ")";
+        }
+    }
+
+    /// <summary>
+    /// READ-ONLY, for diagnostics: <c>Explorers.Count</c> of the RUNNING Outlook, or null when none is
+    /// running or it will not read. Never starts an Outlook, with the same caveat as
+    /// <see cref="DescribeExplorers"/>: not while the Outlook it watches may be exiting.
+    /// </summary>
+    public static int? CountExplorers()
+    {
+        if (!OutlookComSession.IsOutlookProcessRunning())
+        {
+            return null;
+        }
+
+        try
+        {
+            return RunSta<int?>(() =>
+            {
+                dynamic? app = null;
+                dynamic? explorers = null;
+                try
+                {
+                    app = CreateOutlookApplication();
+                    explorers = app.Explorers;
+                    return (int)explorers.Count;
+                }
+                finally
+                {
+                    Release(explorers);
+                    Release(app);
+                }
+            });
+        }
+        catch (Exception)
+        {
+            return null;
+        }
     }
 
     private static dynamic CreateOutlookApplication()

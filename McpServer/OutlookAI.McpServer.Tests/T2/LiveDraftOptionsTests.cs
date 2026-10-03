@@ -247,10 +247,41 @@ public sealed class LiveDraftOptionsTests
             Assert.True(
                 renamedInfo.ConversationIndex!.Length > seedInfo.ConversationIndex!.Length,
                 "the renamed draft's ConversationIndex must still be a CHILD of the source's");
-            Assert.Equal(seedInfo.ConversationId, renamedInfo.ConversationId);
+
+            // Diagnostic (2026-10-03): on the first guest live run - a PST - the renamed draft's
+            // ConversationId differed from the seed's while its topic and index both held. Whether
+            // a PLAIN reply keeps the seed's id there says whether that is the override path's doing
+            // or how a PST computes the id at all. Ids and index lengths only (S4).
+            _output.WriteLine(
+                $"A3 conversation ids: seed={seedInfo.ConversationId ?? "-"} plain={plainInfo.ConversationId ?? "-"} "
+                + $"renamed={renamedInfo.ConversationId ?? "-"} (index len seed={seedInfo.ConversationIndex!.Length} "
+                + $"plain={plainInfo.ConversationIndex?.Length.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "-"} "
+                + $"renamed={renamedInfo.ConversationIndex!.Length})");
+
+            // Which of MS-OXOMSG's two derivations each id came from: the GUID in the index header
+            // (bytes 6-21) or a hash of the topic. Ids, index headers and booleans only (S4).
+            _output.WriteLine(
+                $"A3 id from index GUID: seed={IdIsIndexGuid(seedInfo)} plain={IdIsIndexGuid(plainInfo)} renamed={IdIsIndexGuid(renamedInfo)}; "
+                + $"index headers seed={IndexHeader(seedInfo)} plain={IndexHeader(plainInfo)} renamed={IndexHeader(renamedInfo)}");
+
+            // Q-coordinator job 3 (2026-10-03): is the renamed reply's id a HASH of a string - the new
+            // subject, or the topic it keeps? MD5 over each candidate, UTF-16LE and UTF-8, as written and
+            // upper-cased. Which candidate matched, by label only (S4).
+            _output.WriteLine(
+                "A3 renamed id is a hash of: "
+                + ConversationIdHashes.Describe(
+                    renamedInfo.ConversationId,
+                    ("newSubject", overriddenSubject),
+                    ("renamedSubjectAsStored", renamedInfo.Subject),
+                    ("keptTopic", renamedInfo.ConversationTopic),
+                    ("seedTopic", seedInfo.ConversationTopic))
+                + "; seed id is a hash of: "
+                + ConversationIdHashes.Describe(seedInfo.ConversationId, ("seedTopic", seedInfo.ConversationTopic)));
+
+            string idPromise = AssertRenamedConversationId(seedInfo, renamedInfo);
             _output.WriteLine(
                 $"A3: subjectOverridden=true topicPreserved=true indexExtends=true "
-                + $"(len {seedInfo.ConversationIndex!.Length} -> {renamedInfo.ConversationIndex!.Length}) conversationIdSame=true");
+                + $"(len {seedInfo.ConversationIndex!.Length} -> {renamedInfo.ConversationIndex!.Length}) {idPromise}");
         }
         finally
         {
@@ -304,12 +335,22 @@ public sealed class LiveDraftOptionsTests
             Assert.Equal(seedInfo.ConversationTopic, info.ConversationTopic);
             Assert.StartsWith(seedInfo.ConversationIndex!, info.ConversationIndex!, StringComparison.OrdinalIgnoreCase);
 
+            // The conversation id, by the same decision as the renamed reply's (2026-10-03). Which
+            // derivation it came from, by label only (S4).
+            _output.WriteLine(
+                $"A3[forward] id from index GUID: seed={IdIsIndexGuid(seedInfo)} forward={IdIsIndexGuid(info)}; forward id is a hash of: "
+                + ConversationIdHashes.Describe(
+                    info.ConversationId,
+                    ("newSubject", overriddenSubject),
+                    ("keptTopic", info.ConversationTopic)));
+            string idPromise = AssertRenamedConversationId(seedInfo, info);
+
             ReadOutcome read = Service.Read(forward.EntryId, maxBodyChars: 100000);
             int agentAt = read.Body.IndexOf(agentText, StringComparison.Ordinal);
             int quoteAt = read.Body.IndexOf(quoteToken, StringComparison.Ordinal);
             Assert.True(agentAt >= 0, "agent text must be present");
             Assert.True(quoteAt > agentAt, $"forwarded content must stay BELOW the agent text (agent@{agentAt} quote@{quoteAt})");
-            _output.WriteLine($"A2/A3[forward]: subjectOverridden=true topicPreserved=true agent@{agentAt} quote@{quoteAt}");
+            _output.WriteLine($"A2/A3[forward]: subjectOverridden=true topicPreserved=true {idPromise} agent@{agentAt} quote@{quoteAt}");
         }
         finally
         {
@@ -407,11 +448,73 @@ public sealed class LiveDraftOptionsTests
         return LiveInboxArrival.WaitFor(_fixture.VerifySession, Hub, seedSubject, sentUtc);
     }
 
+    /// <summary>
+    /// What a derived draft renamed by a subject override promises about its conversation id - DECIDED
+    /// 2026-10-03 (coordinator job 3, on the maintainer's behalf; QUESTIONS.md decision log), from what
+    /// the first guest runs measured. In a local data file Outlook gives a renamed reply the id it
+    /// DERIVES FROM THE TOPIC - MD5 over the upper-cased topic in UTF-16LE - where the original and a
+    /// plain reply carry the GUID of their conversation index, and it refuses a write to the id. The
+    /// override keeps that topic and the index thread (asserted by the callers), so on a non-Exchange
+    /// store the promise is exactly that: the id is the KEPT TOPIC's, not the original's. On Exchange
+    /// it stays what it always was - the original's id. A store whose type cannot be read is held to
+    /// the Exchange promise, the stricter one.
+    /// </summary>
+    private string AssertRenamedConversationId(ComDraftInfo seedInfo, ComDraftInfo renamedInfo)
+    {
+        if (IsExchangeStore(Hub))
+        {
+            Assert.Equal(seedInfo.ConversationId, renamedInfo.ConversationId);
+            return "conversationIdSame=true";
+        }
+
+        Assert.False(string.IsNullOrEmpty(renamedInfo.ConversationTopic), "the renamed draft must carry its kept topic");
+        Assert.Equal(
+            ConversationIdHashes.Md5Hex(renamedInfo.ConversationTopic!, "utf16-upper"),
+            renamedInfo.ConversationId,
+            ignoreCase: true);
+        return "conversationId=keptTopicHash (non-Exchange store)";
+    }
+
+    /// <summary>True when the named store is an Exchange store (ExchangeStoreType other than olNotExchange); an unreadable type counts as Exchange.</summary>
+    private bool IsExchangeStore(string storeDisplayName)
+    {
+        ComStoreDetail? detail = _fixture.VerifySession.GetStoreDetails()
+            .FirstOrDefault(s => string.Equals(s.DisplayName, storeDisplayName, StringComparison.OrdinalIgnoreCase));
+        return detail?.ExchangeStoreType is not int type || OutlookAI.Core.Com.SpecialFolders.IsExchangeStore(type);
+    }
+
     private ComDraftInfo RequireMailInfo(string entryId, string? storeId)
     {
         ComDraftInfo? info = _fixture.VerifySession.TryGetMailInfo(entryId, storeId, out string? error);
         Assert.True(info != null, $"mail info unavailable: {error}");
         return info!;
+    }
+
+    /// <summary>
+    /// The 22-byte header of a ConversationIndex as hex (reserved byte, FILETIME bytes, GUID), or
+    /// "-": an opaque id, never content (S4). Diagnostic only.
+    /// </summary>
+    private static string IndexHeader(ComDraftInfo info)
+    {
+        string? index = info.ConversationIndex;
+        return index != null && index.Length >= 44 ? index.Substring(0, 44) : "-";
+    }
+
+    /// <summary>
+    /// Whether the ConversationId is the GUID in the index header (bytes 6-21) - MS-OXOMSG's
+    /// derivation when PR_CONVERSATION_INDEX_TRACKING is set - rather than a hash of the topic.
+    /// "?" when either is missing. Diagnostic only.
+    /// </summary>
+    private static string IdIsIndexGuid(ComDraftInfo info)
+    {
+        string? index = info.ConversationIndex;
+        string? id = info.ConversationId;
+        if (index == null || index.Length < 44 || string.IsNullOrEmpty(id))
+        {
+            return "?";
+        }
+
+        return string.Equals(index.Substring(12, 32), id, StringComparison.OrdinalIgnoreCase) ? "yes" : "no";
     }
 
     private void CleanupDraft(string store, string entryId)

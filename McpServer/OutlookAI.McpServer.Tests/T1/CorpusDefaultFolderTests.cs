@@ -277,6 +277,9 @@ public sealed class CorpusDefaultFolderTests
                 ? read
                 : PropertyRead.Missing();
 
+        // No true root is modelled here: the IPM subtree names no parent, so the root carrier adds nothing.
+        public PropertyRead ReadRootFolderProperty(string schemaName) => PropertyRead.Missing();
+
         public object? GetDefaultFolder(int olDefaultFolderId)
         {
             GetDefaultFolderCalls.Add(olDefaultFolderId);

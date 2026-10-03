@@ -362,7 +362,131 @@ settles the `Table.Sort` question.
 **Default if nobody answers.** Both stay as they are. The census is safe; the scan carries an
 unquantified resume gap of at most one UTC offset.
 
+**ANSWERED 2026-10-03 by measurement - option (a), and the answer is "it depends on the column's
+spelling".** See the decision log below.
+
 ## Decision log
+
+### 2026-10-03, autonomous - D49 on Office LTSC 2024: the show-me window was the lifetime pin itself
+
+**Primer.** D49: a live session holds a non-displayed Explorer - the lifetime pin - so that an
+Outlook OutlookAI started without a window does not exit when the last window closes. On the test
+guest (Office LTSC 2024, 16.0.17932) `LiveDisconnectRecoveryTests` failed in every run (runbook 4.1e,
+F9): Outlook started headless, `goto_folder` put one window on screen, the window was closed, and
+Outlook exited, with the session still reporting itself pinned. The question set: which kinds of
+window Office 2024 counts as keeping Outlook open - then fix, or scope the test to what is measured.
+
+**Measured** (two probes on the guest, Explorer windows only, nothing in any mailbox touched; the
+maintainer's own Office was not touched). Probe v2: whatever was kept open first - nothing, a hidden
+Explorer, a displayed Explorer parked off-screen and hidden - closing the shown window ended Outlook;
+but `Explorers.Count` stayed 1 after a second Explorer was added, and with a first Explorer on
+screen no second window appeared at all - a confound. Probe v3 resolved it: `Explorers.Add` on the
+folder a non-displayed Explorer already shows returns THAT Explorer (the same COM object, the count
+unchanged); on another folder it makes a new one; and closing the new window leaves Outlook running,
+held by the non-displayed Explorer, even after the client released every reference. So the pin
+works on Office 2024 - and the show-me path was displaying the pin itself, because the pin sits on
+the default Inbox and `goto_folder` on that Inbox was handed the pin by `Explorers.Add`.
+
+**Options.** *(a)* Never let the show-me path return an Explorer that already existed: when `Add`
+hands one back, open the window on the store's top folder and navigate it to the folder asked for.
+*(b)* Pin on a folder no show-me call asks for. *(c)* Accept that Outlook ends with the window on
+Office 2024, scope the test to that and rely on the re-attach. *(d)* Re-pin after every show-me call.
+
+**Decided: (a)** - a fix, because the measurement shows Office 2024 can keep the promise. It changes
+nothing where `Add` makes a new Explorer, as the maintainer's older Office presumably does (T1 pins
+both shapes), and it does not depend on which folder a caller asks for, as *(b)* would; *(c)* would
+drop a promise the build can keep, and *(d)* would still have shown the pin. An Explorer counts as
+existing when it is a registered pin OR the count did not go up, because a pin another session made
+is reached through another apartment's proxy, which the registry does not hold. `LiveDisconnectRecoveryTests`
+is unchanged. **Not measured:** the maintainer's Office build, and whether `ActiveExplorer()` can
+return another session's hidden pin (`TODO.md`). **Undo:** revert the commit.
+
+**Then measured, and decided a second time (same day).** With the fix in, the test still failed in
+every full-suite run - two Explorers present, the pin's reference held - and passed when run alone.
+Five more probes never reproduced the exit; a ninety-second subset run (the show-me tests plus this
+one) did, and two scratch builds bisected it: without the session's Application Quit sink the test
+passed, with it it failed. **Office LTSC 2024 raises `Quit` when the user closes the last VISIBLE
+window, even though the hidden Explorer then keeps Outlook running.** The session hears it (SF-2),
+the gateway drops it, and its `Dispose` - because that session STARTED this Outlook - closes the pin
+("leave Outlook as you found it"), so Outlook ends. Alone, the test's pin belonged to another session,
+which kept it; in the suite the session that re-started Outlook pinned and promoted itself.
+*Options:* (i) keep honouring Quit - the user closing Outlook's last window is quitting it on Office
+2024, and closing the pin on Quit is also the only thing that lets the user's own Exit end an Outlook
+OutlookAI started (a pin left in place keeps it running, measured for the D49 dispose rule); (ii)
+treat Quit as a hint and keep the pin until the process really exits - then the user's Exit would
+leave Outlook running headless for as long as the server lives; (iii) drop the Quit sink - the same
+cost as (ii) on Exit, plus SF-2's early release. **Decided: (i)**, and the test is scoped to it, not
+loosened: when Outlook ends on the close, it passes only if the promoting session started Outlook,
+the window was not the pin (two Explorers before the close), and the session was ended by the QUIT
+EVENT - a process exit first would be a crash; the reattach that follows must still bring Outlook back
+headless. Otherwise Outlook must survive, as before. Made observable by `OutlookComSession.GoneSignal`
+and `ComGateway.LastSessionGoneSignal` (diagnostics, like `QuitSinkActive`). **What a user sees:**
+closing the window OutlookAI showed ends an Outlook that OutlookAI itself started, as closing Outlook
+would; OutlookAI starts it again, without a window, on its next request. **Undo:** revert the scoping
+commit; the test then holds every build to "survives" and fails on Office 2024 when OutlookAI started
+Outlook.
+
+### 2026-10-03, autonomous - a subject override's conversation id outside Exchange: the promise is scoped, not dropped
+
+**Primer.** `reply_draft`, `replyall_draft` and `forward_draft` take a `subject` override. Assigning
+a subject makes Outlook regenerate the draft's conversation index, so since A3 the product restores
+the child index and the source's topic after the rename (`conversationTopicPreserved`), and
+`T2/LiveDraftOptionsTests` also held the renamed reply to its SOURCE's ConversationId. On the first
+guest runs - a POP3 data file under Office LTSC 2024 - that one assertion failed every time (runbook
+4.1e, F8), and three attempts to make the product keep the id were taken out again: restoring the
+index-tracking flag, writing `PR_CONVERSATION_ID` back (refused: "does not support this operation")
+and setting the subject as `PR_SUBJECT`.
+
+**The measurement** (bisect run E4b, 2026-10-03, through `T2/ConversationIdHashes`): the renamed
+reply's id is MD5 over the upper-cased KEPT topic in UTF-16LE - and not a hash of the new subject in
+any of the four encodings tried; the seed's and the plain reply's ids are their index header's GUID
+(bytes 6-21). So outside Exchange it is the topic the product restores that decides the id: the
+override does not start a conversation of its own, and it does not keep the original's either.
+
+**Options.** *(a)* Scope the same-id promise to Exchange and hold every other store to the measured
+derivation. *(b)* Drop the id promise everywhere. *(c)* Keep it everywhere and leave the test red on
+every data-file store. *(d)* Refuse the override outside Exchange.
+
+**Decided: (a)**, by the coordinator on the maintainer's behalf. The id is the hash of the topic the
+product keeps, not of the new subject, so outside Exchange the promise is not void - it is a
+different, exact one, and *(b)* would throw away an assertion that pins it. **What changes for a
+user** of a POP3/IMAP mailbox or a data file: a renamed derived draft keeps its index thread
+(recipients' clients thread it as before) and its topic, but its `conversationId` is not its
+source's, so a lookup by the source's id does not find it. The subject hint of the three tools says
+so; Exchange is unchanged - its half was proven on the maintainer's workstation and no test guest can
+re-measure it, so a store whose type cannot be read is held to that stricter promise.
+
+**What was done** (on the maintainer's behalf, for review): `DerivedSubjectHint`, the result models'
+comments and `McpServer/README.md` state it; `LiveDraftOptionsTests` asserts per store kind - the
+source's id on Exchange, the kept topic's hash elsewhere - for the renamed reply and, newly, the
+renamed forward. **Not measured:** `update_draft` renaming a reply draft takes the same restore path,
+but no live test renames a derived draft through it. **Undo:** revert the commit; the test goes back to
+one promise for every store and is red again on the guests.
+
+### 2026-10-03, autonomous - Q11 ANSWERED by measurement: a table reports a date in the zone its column spelling asks for
+
+**The measurement.** The first live runs on a test guest (`OutlookAI-Unindexed`, Office LTSC 2024
+16.0.17932, W. Europe at UTC+2) ran `T2/LiveTableSortProbeTests`, which reads the same rows through a
+table and through the opened items. Under the EXPLICIT built-in name `ReceivedTime` the raw table
+value equalled the opened item's own LOCAL `ReceivedTime` (13:44:18 for an item received 11:44:18Z),
+on both stores read; under the NAMESPACE reference `urn:schemas:httpmail:datereceived` the same
+folder's rows read in UTC. So neither "UTC" nor "local" was right for every column.
+
+**What it cost.** The exhaustive scan adds the explicit name first, and `ComDateValue.FromTableValue`
+took every table value as UTC, so its resume cursor sat one offset LATE at UTC+2: run 1's
+`LiveResumableScanTests.APagedScan` got ordinal 24 again on a page after one that had ended at
+ordinal 7. West of UTC the same misreading moves the cursor EARLY, which skips mail and reports the
+scan complete - the failure the question was raised about.
+
+**What was done** (commit `b09041b`, on the maintainer's behalf, for review):
+`ComDateValue.FromTableValue(value, columnProperty)` decides by the spelling - a namespace reference
+(`urn:`, `http://`, `https://`) reads as UTC, an explicit name converts as an item value - and the
+scan, the sort probe and the date-kind probe pass the spelling they added. The census
+(`CensusTableRow.ReadUtc`) still reads every value as UTC: it compares its own readings with each
+other, so a fingerprint taken through the explicit column is offset but consistent, and only the
+instant it would print is wrong (`TODO.md`). Undo: revert `b09041b`; the old one-argument reading is
+still there for namespace columns.
+
 
 Answers move here with the date and the reasoning, so a future reader sees not just what was chosen
 but why, and what the alternative was.

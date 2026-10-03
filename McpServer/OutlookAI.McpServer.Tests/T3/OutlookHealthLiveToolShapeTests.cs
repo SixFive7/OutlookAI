@@ -47,8 +47,14 @@ public sealed class OutlookHealthLiveToolShapeTests
         JsonElement result = await client.CallToolAsync("outlook_health", new { });
 
         // Environment-tolerant: where the SystemIndex is unreachable the provider reports
-        // 'unavailable: ...' and advice is then optional; on a machine with an index it
+        // 'unavailable: ...' and advice is then optional; on a machine whose index holds mail it
         // reports OleDb/AdodbCom plus advice.
+        //
+        // A REACHABLE index holding NO mail is the third state, and it is a PROBLEM, not advice
+        // (MailService.Health, IndexCurrency.NoMailAtAll: it used to say "Index is current" over an
+        // empty index). This test required advice there too and failed on the first guest it ran
+        // on (2026-10-03, the unindexed guest, whose index excludes Outlook by design) - so that
+        // state is now held to what the tool actually promises: the "holds NO mail" problem line.
         JsonElement index = result.GetProperty("index");
         string provider = index.GetProperty("provider").GetString()!;
         Assert.False(string.IsNullOrWhiteSpace(provider));
@@ -57,7 +63,19 @@ public sealed class OutlookHealthLiveToolShapeTests
         Assert.True(outlook.TryGetProperty("installerMutexHeld", out _));
         if (!provider.StartsWith("unavailable", StringComparison.Ordinal))
         {
-            Assert.True(result.GetProperty("advice").GetArrayLength() >= 1);
+            bool indexHoldsMail = index.TryGetProperty("newestIndexedUtc", out JsonElement newest)
+                && newest.ValueKind is not JsonValueKind.Null;
+            if (indexHoldsMail)
+            {
+                Assert.True(result.GetProperty("advice").GetArrayLength() >= 1);
+            }
+            else
+            {
+                Assert.Equal("degraded", result.GetProperty("status").GetString());
+                Assert.Contains(
+                    result.GetProperty("problems").EnumerateArray(),
+                    p => p.GetString()?.Contains("holds NO mail", StringComparison.Ordinal) == true);
+            }
         }
     }
 
