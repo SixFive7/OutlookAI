@@ -1,5 +1,23 @@
 # TODO
 
+- [ ] **Decide what the add-in's tuning reconcile does with the five Cached Mode values it writes
+  under `HKCU\Software\Policies` (found 2026-10-03 by the first guest run of the two-phase add-in
+  install).** `OutlookTuningService.Reconcile` writes D25's five `caching.policy.*` values there, and
+  that key is read-only to a NOT elevated token - so in the Outlook a user runs, the first of them
+  throws, the reconcile's catch-all swallows it, and nothing after it runs: not the two user Cached
+  Mode values, not the two OST size values, not `LastReconcileUtc` (`outlook_health` then reports
+  `tuning.lastReconcileUtc` null). Only a machine where an administrator, a GPO or an earlier
+  elevated Outlook already set the five values escapes it; the maintainer's workstation is one.
+  Measured, with a control that isolates it, in `Docs/live-tier-on-the-vm.md` section 2.3. Until it
+  is decided, a guest rebuilt by `Testbed/README.md` section 1 stops at step 7c `BROKEN`, where
+  `T2/LiveHealthTests` would fail. Directions: (1) walk on past a value that cannot be written,
+  record it - in `PolicyConflicts`, or a new "needs an administrator" list the settings dialog and
+  `outlook_health` show - and always write `LastReconcileUtc`; (2) stop writing the Policies hive and
+  keep only the user-hive values; (3) write the policy values from an elevated step - the installer,
+  per-user today, or a one-time elevated helper; (4) change nothing in the product and set the five
+  values in the testbed's elevated install phase, which hides the defect the way the old elevated
+  `-Execute` did. Recommended: (1), then the proof again from `CP-08`, for `ADDIN-READY` with no
+  control.
 - [ ] **Recognise ANOTHER server session's lifetime pin on the show-me path's `ActiveExplorer()`
   branch (D49, found 2026-10-03, not measured).** `EnsureVisibleExplorer` refuses to display an
   Explorer `ActiveExplorer()` hands back only when `ComposeSurface.IsPin` knows it, and the pin
@@ -111,14 +129,6 @@
         are different facts and only the second happened: the per-account index assumption was NOT
         disproved - the design stopped depending on it, which also retired the riskiest unverified
         assumption in the whole layout.
-  - [ ] **Run the two-phase add-in install on a guest (Q100, decided 2026-10-03).**
-        `Testbed/guest/Install-OutlookAIAddIn.ps1` is now `-Phase Install` (elevated, never starts
-        Outlook) and `-Phase FirstRun` (`-RunLevel Limited`, reads the started Outlook's token);
-        proven on the host only - `-SelfTest` 168/0 under 5.1 and 7, eleven mutants caught. Both
-        guests were busy when it was split, so it waits for the next guest rebuild or a free slot,
-        from a checkpoint with the add-in NOT installed. `Docs/live-tier-on-the-vm.md` section 2.3,
-        "The two phases have NOT run on a guest", lists what the run must record; replace that
-        paragraph and the script's banner with what it did.
   - [ ] **Run `Testbed/guest/Measure-SweepCost.ps1` once.** It is the reconstruction of
         `Docs/v3-probes/soakfix13-probe-sweep-cost.ps1`, which is gitignored and gone with its
         scratch directory. Written from the shipped `SweepFolder` source, read-only by

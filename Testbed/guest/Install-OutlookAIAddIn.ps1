@@ -1,7 +1,61 @@
 #Requires -Version 5.1
 <#
     ============================================================================================
-    SPLIT INTO TWO PHASES 2026-10-03 (Q100, option 3). THE SPLIT HAS NOT RUN ON A GUEST YET.
+    RUN ON OutlookAI-Unindexed 2026-10-03, FROM CP-08 (NO ADD-IN): THE TWO PHASES WORK AS DESIGNED.
+    THEIR FIRST RUN FOUND A PRODUCT DEFECT: IN A NOT ELEVATED OUTLOOK THE ADD-IN'S TUNING RECONCILE
+    NEVER FINISHES, SO A FRESH GUEST ENDS BROKEN, NOT ADDIN-READY. Docs/live-tier-on-the-vm.md
+    section 2.3 has the record; the split itself is described under the next heading.
+    ============================================================================================
+
+    The payload was built on the host from 883ec5f by Testbed/host/Publish-AddInPayload.ps1 (guard
+    3 UNCHANGED over 305 host lines). Every phase ran through Register-InteractiveTask.ps1 in
+    session 1, and a read-only poller in session 0 sampled OUTLOOK.EXE every 0.5 s throughout -
+    its token, command line, parent and modules.
+
+      -Verify          NOT-INSTALLED, exit 3. v4R absent, v4 10.0.60910.
+      -Execute alone   REFUSED from the default task, exit 1, naming both phases. Nothing installed.
+      Install          INSTALLED-NEVER-RAN, exit 2, in 66 s: the runtime installed (v4R 10.0.60917,
+                       35 s), the installer 14 s, the trust entry and the install record written.
+                       No OUTLOOK.EXE at any sample, none after. -Verify: INSTALLED-NEVER-RAN, 2.
+      wrong tokens     FirstRun from the default (elevated) task REFUSED, exit 1, and Install from a
+                       Limited task REFUSED, exit 1 - each before it started or wrote anything.
+      FirstRun         BROKEN, exit 1. Outlook started over COM in 3.5 s; "OUTLOOK.EXE pid 9064:
+                       token NOT elevated", and the poller agreed (TokenElevationType Limited, Medium
+                       integrity, OUTLOOK.EXE -Embedding under DcomLaunch); the add-in loaded,
+                       connected, answering GetRestartNeeded(). It wrote Tuning\Initialized and
+                       Enabled - and no LastReconcileUtc in 240 s. THE DEFECT: OutlookTuningService
+                       .Reconcile writes D25's five Cached Mode values under HKCU\Software\Policies,
+                       where the user holds ReadKey only; the first write throws, the reconcile
+                       swallows it, and nothing after it runs (Tuning\Applied: 4 of 13). The single
+                       elevated -Execute this replaced hid it: that Outlook COULD write there, and
+                       every later start found the values in sync.
+      -Verify          then said INSTALLED-NEVER-RAN - wrong: the add-in had run. Fixed; see below.
+      control          those five values written from session 0, elevated, as a GPO would, and the
+                       SAME FirstRun: ADDIN-READY, exit 0, in 8.4 s - LastReconcileUtc 2.1 s in, 13 of
+                       13 applied, token NOT elevated. -Verify: ADDIN-READY, exit 0.
+      Install again    over that valid state: INSTALLED-NEVER-RAN, exit 2 - runtime and trust entry
+                       kept, record rewritten; -Verify INSTALLED-NEVER-RAN; FirstRun ADDIN-READY again.
+      after it         a graceful restart, then Set-OutlookIndexingDisabled.ps1 -Verify: UNINDEXED,
+                       two readings 10 minutes apart, no Outlook row - after three NOT elevated
+                       Outlook starts, under CP-08's policy-only exclusion.
+
+    FIXED FROM THAT RUN, THE SAME DAY: -Verify judged "has it run since the install" by the tuning
+    state alone, so an add-in that started and never finished its tuning reconcile read as
+    INSTALLED-NEVER-RAN. It now also reads the add-in's second startup marker - Mcp\LastReconcileUtc,
+    written at every start, failed or not - and calls that case BROKEN, with when the add-in started
+    and how far its walk got (Tuning\Applied against Tuning\Desired, printed as "tuning walk").
+    FirstRun watches the same marker during its wait, so when no tuning state comes it says which
+    failure it was - and its timing is no longer read after the 240 s wait. On the guest the fixed
+    script then said BROKEN with the reason from -Verify, and from a FirstRun "tuning state ...
+    written NEVER, in 240 s; registration reconcile ... written after 2.4 s". -SelfTest: 151
+    assertions, 0 failures there (the contract section needs the repository).
+
+    NOT SETTLED BY IT: the defect - a product decision, open in TODO.md; the indexed guest, whose
+    index an unelevated first run feeds; and -Verify -WithOutlook, whose Outlook had closed by itself
+    before the attach was tried. No checkpoint was kept: the guest went back to CP-13B-LIVE-GREEN.
+
+    ============================================================================================
+    SPLIT INTO TWO PHASES 2026-10-03 (Q100, option 3).
     ============================================================================================
 
     -Execute used to install AND start Outlook from one elevated task, so its first-run Outlook was
@@ -28,8 +82,8 @@
     reads exactly as before. The record is the one new write: install-addin-record.json beside the
     log.
 
-    PROOF SO FAR, ALL ON THE HOST: -SelfTest, 168 assertions, 0 failures, under Windows PowerShell
-    5.1 and PowerShell 7 (115 before the split). Seven of them read this file's own syntax tree:
+    THE PROOF BEFORE THE GUEST RUN ABOVE, ALL ON THE HOST: -SelfTest, 168 assertions, 0 failures,
+    under Windows PowerShell 5.1 and PowerShell 7 (115 before the split). Seven of them read this file's own syntax tree:
     the install phase reaches no Outlook start, COM attach or first-run job; the first-run phase,
     and the job it starts, reach no installer and no registry, environment or file write; each
     phase's first command refuses the wrong token; and two controls show the first two are not
@@ -39,10 +93,9 @@
     -Execute alone accepted; the install record ignored; the Limited run level dropped; an
     untrusted add-in started - and -SelfTest failed on each. Plus the four .github/scripts guards,
     under both shells. That an unelevated token can read every HKLM key the first run reads (the
-    crawl-scope rules, the Search policy, VSTO Runtime Setup) was measured on the host's Windows 11,
-    not on a guest. THE GUEST PROOF IS PENDING, for the next guest rebuild or a free slot:
-    Docs/live-tier-on-the-vm.md section 2.3 says what it must record. Every run recorded below is
-    of the single -Execute this replaced.
+    crawl-scope rules, the Search policy, VSTO Runtime Setup) was measured on the host's Windows 11
+    - and on the guest since: every FirstRun above read them at Limited, and an unreadable key
+    throws there. Every run recorded below is of the single -Execute this replaced.
 
     ============================================================================================
     RUN ON OutlookAI-Unindexed 2026-09-24 (FROM CP-08): ADDIN-READY, TWICE.
@@ -271,9 +324,11 @@
                             the state the tests read is valid - and, under -Phase FirstRun, written
                             by THIS start. Only FirstRun and -Verify can say it. exit 0.
       INSTALLED-NEVER-RAN   everything in place, but the installed build has not written its state
-                            yet: no state at all, or only one older than the last -Phase Install.
-                            What -Phase Install ends with. A real state, not a fault: run
-                            -Phase FirstRun. exit 2.
+                            yet: no state at all, or only one older than the last -Phase Install -
+                            and no sign the build has started since either (Mcp\LastReconcileUtc,
+                            which it writes at every start; one that started and never finished its
+                            tuning reconcile is BROKEN). What -Phase Install ends with. A real state,
+                            not a fault: run -Phase FirstRun. exit 2.
       NOT-INSTALLED         no add-in here. exit 3.
       BROKEN                something that should hold does not; every reason is printed. exit 1.
 
@@ -373,7 +428,10 @@ $LogAlertsName           = 'VSTO_LOGALERTS'
 $PhaseInstall            = 'Install'                                              # elevated; never starts Outlook
 $PhaseFirstRun           = 'FirstRun'                                             # NOT elevated; the one Outlook start
 $TuningKey               = 'Software\OutlookAI\Tuning'                            # the ADD-IN writes; this reads
+$TuningDesiredKey        = 'Software\OutlookAI\Tuning\Desired'                    # the ADD-IN writes; this reads
+$TuningAppliedKey        = 'Software\OutlookAI\Tuning\Applied'                    # the ADD-IN writes; this reads
 $McpKey                  = 'Software\OutlookAI\Mcp'                               # the ADD-IN writes; this reads
+$McpReconcileValue       = 'LastReconcileUtc'                                     # under $McpKey: written at EVERY start
 $VstoRuntimeKey          = 'SOFTWARE\Microsoft\VSTO Runtime Setup\v4R'            # HKLM, 32-bit view, as Installer.iss reads it
 $VstoRuntimeKeyV4        = 'SOFTWARE\Microsoft\VSTO Runtime Setup\v4'
 $VstoRuntimeBytes        = 41828424
@@ -747,7 +805,10 @@ function Get-AddInVerdict {
     $notes += @($Facts.Notes)
 
     $readProblems = @(Get-TestReadProblems $Facts.Tuning)
-    $notSinceInstall = ($Facts.RanSinceInstall -eq $false)
+    # Started since the install and never finished a tuning reconcile is a build that RAN and failed.
+    $unfinished = Get-UnfinishedReconcileProblem $Facts
+    if ($unfinished) { $problems += $unfinished }
+    $notSinceInstall = ($Facts.RanSinceInstall -eq $false) -and -not $unfinished
     $neverRan = (-not $Facts.Tuning.KeyPresent) -or $notSinceInstall
     if (-not $neverRan) { $problems += $readProblems }
     if ($Facts.RequireFresh -and -not $Facts.Fresh) { $problems += $Facts.FreshReason }
@@ -845,6 +906,40 @@ function ConvertFrom-InstallRecord {
     return [pscustomobject]@{ Problem = $null; Record = [pscustomobject]@{ Commit = [string]$o.commit; Version = [string]$o.version; InstalledUtc = $when; InstallDir = [string]$o.installDir } }
 }
 
+# The add-in's tuning reconcile (OutlookTuningService.Reconcile) walks its catalog in order, records
+# each value it applies under Tuning\Applied, and writes LastReconcileUtc LAST. A write that throws
+# ends the walk: the reconcile catches the exception, logs it to the debugger and writes nothing more.
+# So the Desired values with no Applied record say where a walk stopped - in Desired's own order,
+# which is the catalog's (the first run writes every Desired value, in catalog order).
+function Get-UnappliedTuning {
+    param([string[]] $Desired, [string[]] $Applied)
+    return @($Desired | Where-Object { $_ -and ($Applied -notcontains $_) })
+}
+
+# Has the build -Phase Install put here STARTED since, while its tuning reconcile has not finished
+# since? The add-in has two startup markers: Tuning\LastReconcileUtc, the tuning reconcile's last
+# write, and Mcp\LastReconcileUtc, which its registration reconcile writes at every start, failed or
+# not (McpRegistrationService.Reconcile). The second newer than the install and the first not means
+# the build RAN and its tuning reconcile stopped part-way - BROKEN, never INSTALLED-NEVER-RAN, which
+# is what -Verify said when it read the tuning marker alone. MEASURED 2026-10-03 on
+# OutlookAI-Unindexed (the first guest run of the two phases): a NOT elevated Outlook loaded the
+# add-in, connected and answering, and its reconcile stopped at the first value under
+# HKCU\Software\Policies - a key only an elevated token may write. Returns the problem, or $null.
+function Get-UnfinishedReconcileProblem {
+    param($Facts)
+    if ($Facts.RanSinceInstall -ne $false -or $Facts.StartedSinceInstall -ne $true) { return $null }
+    $tuningMarker = 'is absent'
+    if ($Facts.Tuning -and $Facts.Tuning.LastReconcileUtc) { $tuningMarker = "is '$($Facts.Tuning.LastReconcileUtc)', from before the install" }
+    $where = ''
+    $unapplied = @($Facts.TuningUnapplied | Where-Object { $_ })
+    if ($Facts.TuningDesiredCount -gt 0 -and $unapplied.Count -gt 0) {
+        $where = " Tuning\Applied records $($Facts.TuningDesiredCount - $unapplied.Count) of the $($Facts.TuningDesiredCount) Desired values; the walk stopped at or before '$($unapplied[0])'."
+    }
+    return ("the add-in HAS run since -Phase $PhaseInstall installed it - its registration reconcile wrote HKCU\$McpKey\$McpReconcileValue at $($Facts.StartedSinceInstallAt) - " +
+            "but its tuning reconcile has not finished since: HKCU\$TuningKey\LastReconcileUtc $tuningMarker. OutlookTuningService.Reconcile swallows the exception that stops it.$where " +
+            "The one time this was measured, the stop was a value under HKCU\Software\Policies, which only an elevated token may write (Docs/live-tier-on-the-vm.md section 2.3).")
+}
+
 # Has the add-in written its state since the last -Phase Install? The same comparison as freshness,
 # against the install's time instead of an Outlook start's.
 function Test-RanSinceInstall {
@@ -889,6 +984,12 @@ function Get-ContractChecks {
         @{ File = 'Services\AddInServerContract.cs'; Needle = 'internal const string TuningPolicyConflictsValueName = "PolicyConflicts";'; Why = 'PolicyConflicts is reported' }
         @{ File = 'Services\AddInServerContract.cs'; Needle = 'internal const string McpKeyPath = @"Software\OutlookAI\Mcp";'; Why = 'the registration status is read here' }
         @{ File = 'Services\AddInServerContract.cs'; Needle = 'internal const string McpStatusValueName = "Status";'; Why = 'awaiting_choice is read from Status' }
+        @{ File = 'Services\AddInServerContract.cs'; Needle = 'internal const string McpLastReconcileUtcValueName = "LastReconcileUtc";'; Why = 'the add-in''s second startup marker, Mcp\LastReconcileUtc' }
+        @{ File = 'Services\McpRegistrationService.cs'; Needle = 'snap.LastReconcileUtc = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture);'; Why = 'written at every reconcile, failed or not, as a round-trip UTC time' }
+        @{ File = 'ThisAddIn.cs'; Needle = 'try { McpRegistrationService.Reconcile(); }'; Why = 'and that reconcile runs at every startup' }
+        @{ File = 'Services\OutlookTuningService.cs'; Needle = 'private const string DesiredKeyPath = TuningKeyPath + @"\Desired";'; Why = 'the tuning walk is read from Tuning\Desired' }
+        @{ File = 'Services\OutlookTuningService.cs'; Needle = 'private const string AppliedKeyPath = TuningKeyPath + @"\Applied";'; Why = 'and Tuning\Applied' }
+        @{ File = 'Services\OutlookTuningService.cs'; Needle = 'System.Diagnostics.Debug.WriteLine("Tuning reconcile failed: " + ex.Message);'; Why = 'a write that throws ends the tuning walk with nothing more written - what an unfinished reconcile is reported as' }
         @{ File = 'McpServer\OutlookAI.Core\Services\HealthReporting.cs'; Needle = 'if (value is int number)'; Why = 'only a REG_DWORD counts as a bool' }
         @{ File = 'McpServer\OutlookAI.Core\Services\HealthReporting.cs'; Needle = 'if (AsBool(readValue(Contract.TuningInitializedValueName)) != true)'; Why = 'managed rests on Initialized alone' }
         @{ File = 'McpServer\OutlookAI.Core\Services\HealthReporting.cs'; Needle = 'LastReconcileUtc = readValue(Contract.TuningLastReconcileUtcValueName) as string,'; Why = 'LastReconcileUtc must be a string' }
@@ -938,6 +1039,14 @@ function Read-RegistryValues {
 }
 
 function Get-HkcuValues { param([string] $Path) return (Read-RegistryValues -BaseKey ([Microsoft.Win32.Registry]::CurrentUser) -Path $Path) }
+
+# Value NAMES in the key's own order, which a hashtable would lose - Get-UnappliedTuning needs it.
+function Get-HkcuValueNames {
+    param([string] $Path)
+    $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($Path, $false)
+    if ($null -eq $key) { return @() }
+    try { return @($key.GetValueNames()) } finally { $key.Close() }
+}
 
 function Get-SubKeyNames {
     param([Microsoft.Win32.RegistryKey] $BaseKey, [string] $Path)
@@ -1374,6 +1483,36 @@ AwQ=</Modulus><Exponent>AQAB</Exponent></RSAKeyValue></KeyValue></KeyInfo></Sign
     Test-Case '-Phase Install with anything wrong is BROKEN' $VerdictBroken (Get-AddInVerdict ([pscustomobject]$f)).Verdict
     $f = $installedFacts.Clone(); $f.InstallRecordProblem = 'the install record is unreadable'
     Test-Case 'an unreadable install record is BROKEN' $VerdictBroken (Get-AddInVerdict ([pscustomobject]$f)).Verdict
+    # MEASURED 2026-10-03, the first guest run of the two phases: the add-in started in a NOT elevated
+    # Outlook - its registration reconcile wrote Mcp\LastReconcileUtc - and its tuning reconcile
+    # stopped part-way, leaving Initialized and no LastReconcileUtc. -Verify said NEVER-RAN.
+    $noReconcile = $good.Clone(); $noReconcile.Remove('LastReconcileUtc')
+    $f = $installedFacts.Clone(); $f.Tuning = (Get-TuningView $noReconcile); $f.RanSinceInstall = $false; $f.RanSinceInstallReason = 'not since the install'
+    $f.StartedSinceInstall = $true; $f.StartedSinceInstallAt = '2026-10-03T16:01:28.0000000Z'; $f.TuningDesiredCount = 13
+    $f.TuningUnapplied = @('caching.policy.SyncWindowSetting', 'caching.policy.SyncWindowSettingDays')
+    $r = Get-AddInVerdict ([pscustomobject]$f)
+    Test-Case 'started since the install, tuning reconcile never finished: BROKEN, not NEVER-RAN' $VerdictBroken $r.Verdict
+    Test-Case 'and exits 1' 1 $r.ExitCode
+    $x = ($r.Problems -join ' ')
+    Test-Case 'saying it HAS run, when, and where its walk stopped' $true ($x.Contains('HAS run since') -and $x.Contains('2026-10-03T16:01:28') -and $x.Contains("records 11 of the 13 Desired values; the walk stopped at or before 'caching.policy.SyncWindowSetting'"))
+    Test-Case 'and that the test-read problem is reported too' $true $x.Contains('tuning.lastReconcileUtc is null')
+    $f.Tuning = (Get-TuningView $good)
+    Test-Case 'the same with an OLDER valid state - one an earlier build left - is BROKEN too' $VerdictBroken (Get-AddInVerdict ([pscustomobject]$f)).Verdict
+    Test-Case 'and names that older time' $true ((Get-AddInVerdict ([pscustomobject]$f)).Problems -join ' ').Contains("is '2026-09-24T12:00:00.0000000Z', from before the install")
+    $f.StartedSinceInstall = $false
+    Test-Case 'neither marker since the install is still NEVER-RAN' $VerdictNeverRan (Get-AddInVerdict ([pscustomobject]$f)).Verdict
+    $f.StartedSinceInstall = $true; $f.RanSinceInstall = $true
+    Test-Case 'both markers since the install is READY' $VerdictReady (Get-AddInVerdict ([pscustomobject]$f)).Verdict
+    $f.RanSinceInstall = $null
+    Test-Case 'no install record ignores the second marker, as before the split' $VerdictReady (Get-AddInVerdict ([pscustomobject]$f)).Verdict
+    $f = $installedFacts.Clone(); $f.ForbidReady = $true; $f.RanSinceInstall = $false; $f.StartedSinceInstall = $false
+    Test-Case '-Phase Install over a state that ran, both markers now older than its record: NEVER-RAN' $VerdictNeverRan (Get-AddInVerdict ([pscustomobject]$f)).Verdict
+
+    Write-Host ''
+    Write-Host '== how far the add-in''s tuning walk got =='
+    Test-Case 'Desired minus Applied, in Desired''s order' 'c.p.a | c.p.b | o.c' (Get-UnappliedTuning -Desired @('s.a', 's.b', 'c.p.a', 'c.p.b', 'o.c') -Applied @('s.b', 's.a'))
+    Test-Case 'everything applied is nothing' '' (Get-UnappliedTuning -Desired @('s.a', 's.b') -Applied @('s.a', 's.b', 'x'))
+    Test-Case 'no Desired values is nothing' '' (Get-UnappliedTuning -Desired @() -Applied @('s.a'))
 
     Write-Host ''
     Write-Host '== the two phases: which one runs, and how each is started =='
@@ -1545,17 +1684,19 @@ AwQ=</Modulus><Exponent>AQAB</Exponent></RSAKeyValue></KeyValue></KeyInfo></Sign
     Write-Host "$($script:Checks) assertion(s), $($script:Failures.Count) failure(s)."
     Write-Host ''
     Write-Host 'NOT COVERED HERE. Only a guest can settle these, and nothing above stands in for them.'
-    Write-Host 'Settled by the guest runs of the single -Execute this split (its banner), for the install half:'
+    Write-Host 'Settled on OutlookAI-Unindexed, 2026-10-03, by the two phases (the banner):'
     Write-Host '  * vstor_redist.exe /q /norestart installs silently from an elevated interactive task, the'
     Write-Host '    installer /VERYSILENT installs for vmadmin, and the written inclusion entry retires the'
-    Write-Host '    trust prompt for the build''s key'
-    Write-Host 'NOT YET RUN - the split itself (Q100, 2026-10-03), pending a guest rebuild or a free slot:'
-    Write-Host '  * that -Phase Install, with no Outlook start, ends INSTALLED-NEVER-RAN - on a fresh guest and'
-    Write-Host '    over an install that has run'
-    Write-Host '  * that -Phase FirstRun from a RunLevel Limited task starts an Outlook whose token reads NOT'
-    Write-Host '    elevated, which loads the add-in and writes its tuning state: ADDIN-READY'
-    Write-Host '  * that this start leaves the unindexed guest UNINDEXED (its exclusion in place) and the'
-    Write-Host '    indexed one INDEXED - Set-OutlookIndexingDisabled.ps1 -Verify on each, afterwards'
+    Write-Host '    trust prompt for the build''s key - and none of it starts Outlook'
+    Write-Host '  * -Phase Install ends INSTALLED-NEVER-RAN on a fresh guest and over an install that has run'
+    Write-Host '  * -Phase FirstRun from a RunLevel Limited task starts an Outlook whose token reads NOT'
+    Write-Host '    elevated, and the add-in loads in it, connected and answering'
+    Write-Host '  * the unindexed guest is still UNINDEXED after it'
+    Write-Host 'NOT SETTLED:'
+    Write-Host '  * ADDIN-READY on a fresh guest. There the add-in''s tuning reconcile cannot finish NOT'
+    Write-Host '    elevated - it writes under HKCU\Software\Policies - so FirstRun ends BROKEN: a product'
+    Write-Host '    defect, open in TODO.md. ADDIN-READY came only with those values set first, as a GPO would'
+    Write-Host '  * that the indexed guest stays INDEXED, its index taking the first run''s Outlook'
     Write-Host '  * that the two live tests then pass on BOTH guests, which is the claim all of this is for'
 
     if ($script:Failures.Count -gt 0) {
@@ -1578,6 +1719,7 @@ function Get-AddInFacts {
         ContractProblems = @(); DisabledItemHit = $false; McpProblem = $null; ComProblems = @(); Notes = @()
         Tuning = $null; RequireFresh = $RequireFresh; Fresh = $false; FreshReason = ''
         InstallRecordProblem = $InstallRecordProblem; RanSinceInstall = $null; RanSinceInstallReason = ''; ForbidReady = $false
+        StartedSinceInstall = $null; StartedSinceInstallAt = ''; TuningDesiredCount = 0; TuningUnapplied = @()
     }
 
     $installDir = Get-InstallDir
@@ -1661,7 +1803,9 @@ function Get-AddInFacts {
     $mcp = Get-HkcuValues $McpKey
     $mcpStatus = $null
     if ($mcp -and $mcp['Status']) { $mcpStatus = [string]$mcp['Status'].Data }
-    Say "  registration question status: $mcpStatus"
+    $mcpReconciled = ''
+    if ($mcp -and $mcp[$McpReconcileValue]) { $mcpReconciled = [string]$mcp[$McpReconcileValue].Data }
+    Say "  registration question status: $mcpStatus  (its reconcile, at every start: $mcpReconciled)"
     $facts.McpProblem = Get-McpStatusProblem $mcpStatus
 
     # The Search POLICY value that leaves LiveUiSearchBackendTests nothing to flip.
@@ -1672,6 +1816,15 @@ function Get-AddInFacts {
 
     # The state the tests read.
     $facts.Tuning = Get-TuningView (Get-HkcuValues $TuningKey)
+    # And how far the add-in's last tuning walk got - which says where one that never finished stopped.
+    $desiredNames = @(Get-HkcuValueNames $TuningDesiredKey)
+    $facts.TuningDesiredCount = $desiredNames.Count
+    $facts.TuningUnapplied = @(Get-UnappliedTuning -Desired $desiredNames -Applied @(Get-HkcuValueNames $TuningAppliedKey))
+    if ($desiredNames.Count -gt 0) {
+        $walk = "  tuning walk   : Tuning\Applied records {0} of the {1} Tuning\Desired values" -f ($desiredNames.Count - $facts.TuningUnapplied.Count), $desiredNames.Count
+        if ($facts.TuningUnapplied.Count -gt 0) { $walk += '; never applied: ' + ($facts.TuningUnapplied -join ', ') }
+        Say $walk
+    }
     if ($RequireFresh) {
         $fresh = Test-ReconcileFresh ([string]$facts.Tuning.LastReconcileUtc) $StartedUtc
         $facts.Fresh = $fresh.Fresh
@@ -1682,8 +1835,12 @@ function Get-AddInFacts {
         $since = Test-RanSinceInstall -LastReconcileUtc ([string]$facts.Tuning.LastReconcileUtc) -InstalledUtc $InstallRecord.InstalledUtc
         $facts.RanSinceInstall = $since.Ran
         $facts.RanSinceInstallReason = $since.Reason
+        # The add-in's other startup marker: did this build START since, whatever its tuning did?
+        $facts.StartedSinceInstall = (Test-ReconcileFresh $mcpReconciled $InstallRecord.InstalledUtc).Fresh
+        $facts.StartedSinceInstallAt = $mcpReconciled
         $ranText = 'has run since'
         if (-not $since.Ran) { $ranText = 'has NOT run since' }
+        if (-not $since.Ran -and $facts.StartedSinceInstall) { $ranText = 'has STARTED since, and its tuning reconcile has NOT finished since' }
         Say ("  install record: commit {0}, installed {1:o} - the add-in {2}" -f $InstallRecord.Commit, $InstallRecord.InstalledUtc, $ranText)
         if ($Payload -and $InstallRecord.Commit -ne [string]$Payload.commit) {
             $facts.Notes += "the install record names commit $($InstallRecord.Commit), and the payload staged now is $($Payload.commit): -Phase $PhaseInstall has not installed this payload yet."
@@ -1955,11 +2112,21 @@ function Invoke-FirstRunPhase {
     $comProblems = @()
     if ($null -eq $first) { $comProblems += 'the first run did not finish; see above.' }
     else {
+        $tuningAfter = "NEVER, in $FirstRunTimeoutSeconds s"
+        if ($null -ne $first.TuningAfterSeconds) { $tuningAfter = "after $($first.TuningAfterSeconds) s" }
+        $mcpAfter = "NEVER, in $($FirstRunTimeoutSeconds + 30) s"
+        if ($null -ne $first.McpAfterSeconds) { $mcpAfter = "after $($first.McpAfterSeconds) s" }
         Say "  COM start $($first.ComSeconds) s; MAPI $($first.MapiInit)"
-        Say "  tuning state written after $($first.TuningAfterSeconds)s; registration reconcile after $($first.McpAfterSeconds)s"
+        Say "  tuning state (Tuning\LastReconcileUtc) written $tuningAfter; registration reconcile (Mcp\$McpReconcileValue) written $mcpAfter"
         Say "  COMAddIns('$AddinName').Connect = $($first.Connect); the add-in answered GetRestartNeeded() = $($first.RestartNeeded)"
         if ($first.Error) { $comProblems += "the first run reported: $($first.Error)" }
-        if ($null -eq $first.TuningAfterSeconds) { $comProblems += "the add-in did not write HKCU\$TuningKey within $FirstRunTimeoutSeconds s of Outlook starting." }
+        if ($null -eq $first.TuningAfterSeconds) {
+            $noTuning = "the add-in did not write HKCU\$TuningKey\LastReconcileUtc - its tuning reconcile's LAST write - within $FirstRunTimeoutSeconds s of Outlook starting."
+            if ($null -ne $first.McpAfterSeconds) {
+                $noTuning += " It DID start: its registration reconcile wrote HKCU\$McpKey\$McpReconcileValue $($first.McpAfterSeconds) s in. So its tuning reconcile started and stopped part-way - OutlookTuningService.Reconcile swallows the exception that stops it, and the 'tuning walk' line above says how far it got. The one time this was measured, the stop was a value under HKCU\Software\Policies, which only an elevated token may write (Docs/live-tier-on-the-vm.md section 2.3)."
+            }
+            $comProblems += $noTuning
+        }
         if ($first.Connect -ne $true) { $comProblems += "Outlook reports the add-in as NOT connected." }
         if (-not $first.AutomationAnswered) { $comProblems += 'the add-in did not answer a call into it (COMAddIn.Object.GetRestartNeeded), so it is not demonstrably running.' }
         # The point of this phase: the Outlook it started is NOT elevated. Read, not assumed.
@@ -2043,9 +2210,13 @@ $FirstRunJob = {
         try { $ns = $app.GetNamespace('MAPI'); $null = $ns.GetDefaultFolder(6); $r.MapiInit = 'ok' }
         catch { $r.MapiInit = $_.Exception.Message }
         # The tuning state is what the tests read, so it gets the whole deadline. The registration
-        # reconcile runs on a worker thread and is only reported, so it gets 30 s more at most.
+        # reconcile runs on a worker thread and is only reported, so it gets 30 s more at most. It
+        # is watched DURING the tuning wait too: it is the add-in's other startup marker, so it
+        # says whether a tuning state that never comes is an add-in that never started or one that
+        # started and stopped part-way - and its time is only meaningful if it is read as it lands.
         $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
         while ([DateTime]::UtcNow -lt $deadline -and $null -eq $r.TuningAfterSeconds) {
+            if ($null -eq $r.McpAfterSeconds -and (Get-Fresh $McpKey)) { $r.McpAfterSeconds = [Math]::Round($sw.Elapsed.TotalSeconds, 1) }
             if (Get-Fresh $TuningKey) { $r.TuningAfterSeconds = [Math]::Round($sw.Elapsed.TotalSeconds, 1) }
             else { Start-Sleep -Seconds 2 }
         }
