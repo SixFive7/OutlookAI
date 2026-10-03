@@ -104,16 +104,16 @@
     before you run it, and run it with -Execute only once you have.
 
 .PARAMETER Name
-    MANDATORY. The VM name to create. There is no default: THREE MACHINES COEXIST during the
-    changeover - OutlookAI-Indexed, OutlookAI-Unindexed and the outgoing OutlookAI-TestVM - and a
-    default that silently picks one of three is the exact shape of mistake this testbed keeps
-    making. This script also derives the VHD path and the spec file from the name, so a wrong
-    default is a new disk in somebody else's directory, or a refusal on top of a VM that already
-    exists.
+    MANDATORY. The VM name to create. There is no default: THREE MACHINES COEXIST -
+    OutlookAI-Indexed, OutlookAI-Unindexed and OutlookAI-Build - and a default that silently
+    picks one of three is the exact shape of mistake this testbed keeps making. This script also
+    derives the VHD path and the spec file from the name, so a wrong default is a new disk in
+    somebody else's directory, or a refusal on top of a VM that already exists.
 
-    `OutlookAI-TestVM` is the OLD guest, the one being replaced; Docs/live-tier-on-the-vm.md and
-    Testbed/testbed.json still name it because they describe the machine the published
-    measurements were taken on. It is not a name to build under.
+    `OutlookAI-TestVM` was the ORIGINAL guest, retired and deleted on 2026-10-03 (Q105);
+    Docs/live-tier-on-the-vm.md and Testbed/testbed.json still name it because they describe the
+    machine the published measurements were taken on. It is not a name to build under: a new VM
+    called that would make their record ambiguous.
 
 .PARAMETER IsoPath
     Windows 11 installation ISO. You supply this; see Testbed/README.md section 6.
@@ -688,8 +688,12 @@ $newVmArgs = @{
 if ($SwitchName) { $newVmArgs['SwitchName'] = $SwitchName }
 New-VM @newVmArgs | Out-Null
 
+# Never started with the host, and SAVED - not shut down - when the host stops. The maintainer's
+# rule of 2026-10-03: test VMs stay off, saved to disk, unless something is using them. With the
+# old StartIfRunning + ShutDown pair, his restart at 12:06Z that day booted both Outlook guests
+# again and left them holding his RAM; with these two, a restart leaves every VM saved.
 Set-VM -Name $Name -ProcessorCount $ProcessorCount -CheckpointType $CheckpointType `
-    -AutomaticCheckpointsEnabled $false -AutomaticStopAction ShutDown
+    -AutomaticCheckpointsEnabled $false -AutomaticStartAction Nothing -AutomaticStopAction Save
 
 if ($StaticMemory) {
     Set-VMMemory -VMName $Name -DynamicMemoryEnabled $false -StartupBytes $MemoryStartupBytes

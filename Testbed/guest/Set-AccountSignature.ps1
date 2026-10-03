@@ -165,7 +165,7 @@ The guest has no .NET SDK, so nothing can be built here. Publish on the host and
     pwsh -File Testbed/host/Publish-GuestPayload.ps1
     pwsh -File Testbed/host/Copy-ToGuest.ps1 -VMName <the guest> -Path .work\testbed-payload\McpServer.zip -Destination C:\OutlookAI-Q5\McpServer.zip
 then on the guest: Expand-Archive C:\OutlookAI-Q5\McpServer.zip -DestinationPath C:\OutlookAI-Q5\server -Force
--VMName is mandatory: three guests coexist during the changeover and nothing guesses which.
+-VMName is mandatory: several testbed VMs coexist and nothing guesses which.
 "@
 }
 

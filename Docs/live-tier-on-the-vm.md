@@ -332,8 +332,13 @@ redoing the step above it.
 
 ### 2.1 The hypervisor and the guest
 
-* Hyper-V guest, named `OutlookAI-TestVM` by convention. Generation, firmware, vCPU, RAM and
-  disk size are **not recorded anywhere and are yours to choose**; see section 8.
+* Hyper-V guests, named `OutlookAI-Indexed` and `OutlookAI-Unindexed`; the build VM, which has no
+  Outlook, is `OutlookAI-Build` (`Testbed/README.md` section 1c). Every host script takes the name
+  explicitly and none defaults to one (`Testbed/README.md` section 4a). `OutlookAI-TestVM` was the
+  original, hand-built guest - retired and deleted on 2026-10-03 (Q105 (a)) - and stays in
+  `Testbed/testbed.json` only as the provenance of the published measurements: do not build under
+  that name. Generation, firmware, vCPU, RAM and disk size are **not recorded anywhere and are
+  yours to choose**; see section 8.
 * Windows 11. The edition, image and locale the guests are built to **are** recorded, in
   `Testbed/MEDIA.md` (see section 8, item 6); the exact build of whatever you install is still
   yours to record beside the VM. **An Outlook build difference is the first thing to suspect when
@@ -553,9 +558,9 @@ created by the answer file, and index state is a property of the **machine** rat
 account - see 1.1a. Creating a second account, and installing the repository, the SDK and a built
 server exe under it, is work with nothing behind it.
 
-The original text is kept below because it explains a design somebody may meet in the old guest,
-and because if the two-guest arrangement is ever collapsed back to one machine this is what it
-would have to become again.
+The original text is kept below because it explains a design the old guest, `OutlookAI-TestVM`,
+was built towards (it was retired and deleted on 2026-10-03), and because if the two-guest
+arrangement is ever collapsed back to one machine this is what it would have to become again.
 
 ---
 
@@ -1541,7 +1546,8 @@ want.
 
 **One corpus id per guest, and the ids are assigned, not invented at the keyboard**:
 `vm-indexed` on `OutlookAI-Indexed`, `vm-unindexed` on `OutlookAI-Unindexed`, and `vm2` stays
-`vm2` on the outgoing guest. The manifest is `corpus-<corpusId>.jsonl`, so `--corpus-id` and
+`vm2`, reserved, although that corpus is gone - deleted with its guest, `OutlookAI-TestVM`, on
+2026-10-03. The manifest is `corpus-<corpusId>.jsonl`, so `--corpus-id` and
 `--manifest` change together, always. `Testbed/host/Copy-FromGuest.ps1` pulls every guest's
 manifest into one shared directory - on purpose, so a reused id still collides where a human can
 see it - so two guests sharing an id means the second pull replaces the first's manifest, and that
@@ -3550,8 +3556,9 @@ unrecorded or unverified.
    `Testbed/guest/autounattend.template.xml`'s `<ComputerName>`; the guests report `OAI-INDEXED`
    and `OAI-UNINDEXED`, and the first-logon script refuses a guest named otherwise
    (`Testbed/README.md` section 1b). It is still unrecorded for the original guest,
-   `OutlookAI-TestVM`. Defender exclusions stay open on every guest: no script here adds one, and
-   none has been read off a guest - README section 6 item 2.)*
+   `OutlookAI-TestVM`, and stays so: that guest was retired and deleted on 2026-10-03. Defender
+   exclusions stay open on every guest: no script here adds one, and none has been read off a
+   guest - README section 6 item 2.)*
 7. ~~Office version, channel, bitness, install method~~ - **RECORDED in `Testbed/MEDIA.md`**:
    Office Deployment Tool with `ProPlus2024Volume` on `PerpetualVL2024`, 64-bit, and
    **`ExcludeApp OutlookForWindows`, which is load-bearing** - it suppresses the new Outlook,

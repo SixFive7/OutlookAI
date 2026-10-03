@@ -116,6 +116,24 @@ So no `dotnet test` runs a test on the workstation except that last live run, an
 `dotnet test --list-tests`, which builds and discovers and executes no test, stays usable here -
 it is how a workstation live run's selection is checked before it starts.
 
+## Test VMs stay saved unless in use
+
+**Every test VM is saved to disk whenever nothing is using it - never left running, never
+paused.** Decided by the maintainer 2026-10-03, in his words: *"Keep them off (and saved to disk
+not standby in ram) if you do not need them. Make sure they are off when we end this session or
+I will forget and lose performance the coming months."*
+
+- Take a lease (`Testbed/host/Set-TestbedLease.ps1`) before starting or using a VM, and hold it
+  for as long as you use it.
+- `Save-VM` it when more than about ten minutes without guest work lie ahead, and when your task
+  ends - then release the lease.
+- Before a session ends, every test VM is saved: `Get-VM OutlookAI-*` shows none running unless
+  a live lease says something is still using it.
+- Two backstops, not a licence to leave one running: the `OutlookAI-TestbedIdleSave` task saves
+  any running testbed VM that has no live lease and has been up ten minutes, every fifteen
+  minutes (`Testbed/README.md` section 5b); and no test VM starts with the host
+  (`AutomaticStartAction Nothing`, `AutomaticStopAction Save`).
+
 ## Dependencies
 
 **No external applications and no licensed components. Ever.** Decided 2026-09-15, standing.

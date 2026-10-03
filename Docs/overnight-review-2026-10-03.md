@@ -443,6 +443,67 @@ rebuilt). Merged as `2ff64e2` (build VM on the branch: 3,491 / 0 / 0, 21 self-te
   not retaken - `CP-17C-CORPUS-160K` still holds the old 7/30/60 settings file, so whoever reverts
   to it re-stages the settings file (runbook §4.2d). *Undo:* revert `b4bec51` and re-stage.
 
+### D104-D108 - Folder names holding `% / \ * ?` (a Q99 finding), fixed
+Measured on guest one with one new live test, run alone (1 passed, tripwire clean, zero
+artifacts): Outlook accepts all five characters in a folder name, and the index percent-encodes
+each in its URLs exactly as Microsoft documents (`50% off` is filed as `50%25 off`, `a/b` as
+`a%2Fb`); display paths hold the real names. The old folder scope matched 0 rows for every such
+name, so a folder search there answered from the recent-mail sweep alone. Folder scopes now spell
+names the way the index does, and every index URL is decoded back to names - hits show the real
+folder name, open directly, and are no longer listed twice when the index and the sweep both find
+them. Merged as `60fba07` (build VM: 3,568 / 0 / 0, 21 self-tests); guest one was restored to
+`CP-17C-CORPUS-160K` with the 30/60 settings file re-staged.
+- **D104 - A folder with `/` in its name stays reachable only through its parent**, because the
+  `folder` argument splits on `/`: asked for by name, the search says the path matched nothing.
+  *Alternatives:* an escape inside `folder`; a segment-array argument; resolving the path against
+  the folders' real names. Reworked with three requirements set on the maintainer's behalf: a
+  folder path the product itself prints is accepted back verbatim; every input that resolves today
+  resolves the same way; an input that could mean two folders is refused, naming both. *Superseded
+  by D109* once that branch is merged.
+- **D105 - Store names are decoded too**, in hit names, name lookups and derived display paths.
+  The display-path half is inferred from the folder measurement: no guest store currently has
+  such a name. *Undo:* remove the decode in `MapiItemUrl.SplitStoreSegment`.
+- **D106 - A delegate mailbox's name is encoded in its `/1/<name>` scope** by Microsoft's
+  documentation and the measured primary-store spelling; Exchange cannot be measured on a guest.
+  *Undo:* revert `MailService.DelegateScope` to plain concatenation.
+- **D107 - The decoder undoes only the five documented escapes** (either hex case) and leaves any
+  other `%` alone, rather than general percent-decoding.
+- **D108 - A new guarded test helper, `LiveOutlookTestMailer.FileTaggedItemInNewTestFolder`**, the
+  only way a test can make a folder whose name holds `/`: it creates folders only inside an
+  existing test folder, requires the tag and the run marker, and its guard is pinned in T1.
+
+### D109-D114 - The rest of the name-encoding subject: `/` in folder names, attachment and store names
+Branch `q99-name-encoding-followup` (`dda955a`): build VM 3,609 / 0 / 0 and 21 self-tests; on guest
+one 5 of 5 live tests, tripwire clean, zero artifacts, guest left on `CP-17C-CORPUS-160K` plus the
+30/60 settings and saved. **Not merged yet: under an independent code review first**, because it
+changes how `move_mail` - a write - resolves its target folder. Measured on master's code first:
+three printed forms could not be passed back to `folder` even for ordinary names (`read` printed
+Outlook's `\\store\...` path; exhaustive, sweep and conversation hits printed only the folder's own
+name; `move_mail` kept Outlook's escapes, breaking its documented undo for such names).
+- **D109 - One printed form, one reader.** Every folder path is printed as names from the top of
+  the store joined by `/` (as `list_folders` already printed), and one shared resolver reads it:
+  split on `/`, and at each level every run of the remaining parts joined by `/` is tried against
+  the real child folders - one reading resolves, two or more are refused naming each, none falls
+  back to the plain split so a missing folder fails exactly as before. *Alternatives:* an escape
+  inside `folder` (changes what a literal `\` or `%2F` means); a segment-array argument (an agent
+  copies a printed string, not an array); accepting Outlook's `\\store\...` form as a second syntax;
+  retrying joins only after a failed split. *Undo:* revert the resolver calls to the plain split.
+- **D110 - Refusing ambiguity outranks "resolves as before"**: a path naming both a `/`-named folder
+  and a nested twin used to reach the twin and is now refused - the only input whose result changed.
+- **D111 - A search that cannot reach Outlook reads a multi-part path the old way**, and its advice
+  says so, rather than refusing; a single-part path costs no lookup.
+- **D112 - Left as they are:** `explorerFolderPath` keeps Outlook's spelling (it reports the window,
+  store included); delegate index hits still name their folder flat (Exchange, untestable here);
+  `read`'s last-resort locate fallback still splits on `/` (the URL route opens these items first).
+- **D113 - Attachment names are not decoded**: the index writes them as they are (measured:
+  `OutlookAI 50% off.txt`, `OutlookAI %2A look-alike.txt`), so decoding would corrupt the second.
+  `/ \ * ?` in an attachment name cannot be produced through any route Outlook leaves open; that
+  half stays open in `TODO.md`, recommended next step a raw-MIME route through a guest's mail sink.
+- **D114 - Store names in display paths, measured** through the tested route (the throwaway store
+  rendered with the name `q99 throwaway 50% off*?x`): the URL encodes, the display path does not,
+  folder searches find the item - D105 stands. Guest one's throwaway keeps its ordinary name in
+  `testbed.json`; *alternative:* give it such a name so every run re-measures D105.
+
 ## Open questions only you can answer
 
 ### Q104 - Seven tagged test leftovers in your workstation's hub mailbox
@@ -454,6 +515,41 @@ rebuilt). Merged as `2ff64e2` (build VM on the branch: 3,491 / 0 / 0, 21 self-te
   which seven before deciding.
 - **Recommendation.** (c) then (a). Nothing can be done here on your behalf: it is your real
   mailbox. The `TODO.md` item was corrected to say so.
+- **Answered:** leave them be, and find out why your own search showed one item, not seven.
+  Checked read-only through the installed server: the hub's Drafts and Outbox are both EMPTY - the
+  seven recorded on 2026-08-18 are gone, removed by something not recorded, most likely the sweep
+  of the next full run before Q72. Nothing anywhere carries the tag in its subject. The tag survives
+  only in the BODY of twelve "Synchronization Log" messages that Outlook itself wrote into the hub's
+  Sync Issues folder in late July, and "OutlookAI" in the body of two items in its Deleted Items -
+  so what your search showed is one of those, depending on the folder it ran in. The `TODO.md`
+  item is deleted, and its two lessons moved into `Testbed/README.md` section 4c.
+
+### Q105 - Delete the old `OutlookAI-TestVM` now? *Answered (a) - deleted at about 13:40Z*
+- **Primer.** The original single test VM, unused since the two Outlook guests and the build VM
+  took over. It holds 120 GB on E: (10 checkpoints); E: had 122 GB free, and guest work stops at a
+  60 GB floor.
+- **Directions.** (a) Delete it now; (b) keep it until the Q61 rebuild; (c) export it elsewhere,
+  then delete.
+- **Recommendation.** (a): nothing uses it, and the Q61 rebuild deletes it anyway.
+- **Answered (a); done at about 13:40Z.** No other VM's disk chain referenced its files; the VM
+  and its folder are gone, and E: went from 114 to 292 GB free. The repository no longer offers it
+  as a machine - the idle-saver's allowlist and the scripts' help name the three VMs in use - and
+  `Testbed/testbed.json` keeps its record, marked retired, as the provenance of the published
+  measurements.
+
+### Q106 - Register the testbed idle-save task? *Answered 12:53Z by your VM rule*
+Registered, with every test VM set never to start with the host and to be saved when it stops;
+the rule is in `AGENTS.md`. *Undo:* `Testbed/host/Register-IdleSaveTask.ps1 -Unregister`.
+
+### Q107 - Correct two facts in your global CLAUDE.md
+- **Primer.** It says background commands the main session starts are uncapped and that the
+  heartbeat Monitor runs `persistent`. In this version (VS Code extension 2.1.288) the former were
+  killed at exactly 30 minutes, and Monitors expire after at most 30 minutes, so the heartbeat had
+  to be re-armed every half hour. The session-only watchdog cron also died with every restart.
+- **Directions.** (a) Update its sections 3 and 4 with these measurements, version-tagged, after
+  saving the current file beside it as its section 8 asks; (b) leave it.
+- **Recommendation.** (a).
+- **Withdrawn:** your system-level Claude settings are out of scope for this project.
 
 ## Deviations from the plan
 
@@ -529,6 +625,16 @@ lost while it was stopped (the folder was left without its `.git` file; its bran
 A fresh agent restarted that run from `CP-12B-POPULATIONS-V2`, restaging from master. The orphaned
 folder `.claude/worktrees/agent-a87151b711b18a939` is left in place for now; it holds only scratch.
 
+### V8b - The host restart at 12:06Z stopped everything; work resumed at 12:16Z
+The workstation was restarted at 12:06:02Z from the Start menu, under your account (System log,
+event 1074; no agent initiated it). The restart ended this session's process, both running
+agents (the live run on guest two, the folder-path follow-up on guest one), every background
+command and the session-only watchdog. Hyper-V shut both Outlook guests down cleanly and booted
+them again at about 12:08Z; the build VM stayed saved. At 12:16Z the watchdog was re-created (now
+`1db82c81`), the heartbeat re-armed, and both agents resumed with their context intact. Each was
+told to restore its guest's checkpoint before its next run. The command cut off was the guest-two
+agent staging a control build.
+
 ### V9 - Q100: README rows
 The brief said the add-in step was README rows 8b and 8c; it is row 5b (8b and 8c do not mention
 the add-in and were left unchanged). The split adds a new row 7c for the first run.
@@ -572,6 +678,26 @@ self-test on the workstation before the build-VM rule reached it.
 - For D103, a new T1 pin was added (nothing existed to update), and the checkpoint was not retaken
   because the staged settings file is the guest's only change.
 
+### V14 - The folder-name measurement: four small departures
+- Guest one's settings file was re-rendered from the fix's branch, so its hash (`2AF2C186…`)
+  differs from the D103 restage (`688FDB99…`) in the provenance line only; the windows are 30 and
+  60 and `corpus-verify` says OK.
+- The hub rebuild and the throwaway-store reset (runbook steps 9a and 9a-ii) were skipped for the
+  one-class run: the class reads neither, and nothing refused.
+- The "before" evidence is the old scope run as a statement directly against the index, not the
+  old server end to end.
+- A process-scoped `Set-ExecutionPolicy Bypass` was used in the guest's PowerShell Direct sessions;
+  the first staging attempt had stopped on the guest's Restricted policy after its source was
+  swapped, and only the SDK steps were re-run.
+
+### V15 - The name-encoding follow-up: four small departures
+- An extra guest phase was needed: Outlook refused the first attachment helper's write.
+- The new live tests ran against master's code first, on purpose, as the "before" evidence.
+- Master was merged into the branch to settle a CHANGELOG conflict; that merge also put back on its
+  own line an entry an earlier commit of the branch had run into another.
+- The now-false last sentence of the first folder-name CHANGELOG entry ("can still only be
+  searched through the folder above it") was removed.
+
 ## Notes (no decision needed)
 
 - **Script self-tests now run only under Windows PowerShell 5.1** (on the build VM), so nothing
@@ -586,8 +712,10 @@ self-test on the workstation before the build-VM rule reached it.
   not say so (read only, nothing changed).
 - **`measurement-gate.ps1` misreads a duration like "2 m 10 s" as 120 s.** Found by the build-VM
   agent; documented, not yet fixed.
-- **No idle-save scheduled task is registered on the workstation**, so the Outlook guests are never
-  saved when idle either; registering one is a machine-wide change left for you.
+- **No idle-save scheduled task was registered on the workstation** overnight, so the Outlook guests
+  were never saved when idle either. *Settled 12:53Z by your rule "keep them saved unless needed"*
+  (Q106): the task is registered, every test VM is set never to start with the host and to be
+  saved when it stops, and `AGENTS.md` carries the rule.
 
 - **The "other checkout" writing test noise into your audit log was ours.** Q86's agent saw non-live
   runs from worktree `agent-a23f7465...`; that was a helper the Q74 agent started for D1, since
@@ -623,3 +751,7 @@ self-test on the workstation before the build-VM rule reached it.
   plan.** The freshness verdict still holds; not yet looked into.
 - **`Build-Corpus.ps1` shows no progress during a long build**: it holds each step's output until
   the step ends. The manifest is written item by item, so its line count is the progress to watch.
+
+- **Two index oddities on folder rows that no search returns:** the `back\slash` folder's own row
+  gives its display name as `slash`, and the `a/b` folder's parent path is cut at the `/`. Every
+  item in those folders was still found, and reported under its folder's real name.
