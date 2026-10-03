@@ -55,8 +55,21 @@
     under %SystemDrive%\OutlookAI-Testbed\build-vm\ (machine-wide, beside the leases). A second
     caller waits in the queue, printing who holds the VM every minute, for up to
     -QueueTimeoutMinutes. The lock is an open file handle, so a caller that dies - killed, crashed,
-    its terminal closed - releases it with its process; the next run restores the checkpoint anyway,
-    so a VM left mid-run costs nothing. A LEASE someone else holds on the VM (Set-TestbedLease.ps1,
+    its terminal closed - releases it with its process, and the next run restores the checkpoint
+    whatever state it finds.
+
+    A CALLER THAT DIES DOES NOT LEAVE THE VM HOLDING ITS RAM. Measured 2026-10-03: a run stopped
+    part-way left the VM running, 6 GB held, for three hours, until the next run came - nothing on
+    this host saves it, the idle-saver's task not being registered here, and an agent's tool call is
+    exactly the kind of caller that gets stopped on a time limit. So every run, once it holds the
+    lock, starts a JANITOR: this same file with -JanitorForPid, launched through WMI's
+    Win32_Process.Create so that it is no child of the caller and outlives whatever stops it - a
+    killed process tree, a closed terminal - and hidden. It waits for the run's process to end. A
+    run that finished wrote its end line to runs.log, and the janitor just exits; one that did not
+    is put right: the janitor takes the lock (behind any run that took over first, which restores
+    the checkpoint itself), restores the base checkpoint, saves the VM and releases the dead run's
+    lease, and says so in janitor.log beside the lock. It never touches the VM without the lock.
+    A LEASE someone else holds on the VM (Set-TestbedLease.ps1,
     for maintenance by hand) also holds runs back until it is released or expires. Running several
     VMs in parallel was not chosen: the suite runs its collections one at a time and finishes in
     minutes, and a second VM would double what the host keeps on disk for a queue that is rarely
@@ -120,6 +133,13 @@
     Leave the VM running after the run, with its state, for inspection over PowerShell Direct.
     The next run restores the checkpoint regardless; release nothing by hand.
 
+.PARAMETER JanitorForPid
+    Internal: what a run starts its janitor with (see A CALLER THAT DIES). The process id of the
+    run to watch. Not for use by hand.
+
+.PARAMETER JanitorRunId
+    Internal: the id of the run the janitor watches.
+
 .PARAMETER SelfTest
     Pure. The run-id format, the TRX reader, the verdict table, the VM-name allowlist, that every
     Hyper-V call targets the build VM's variables and none stops, removes or checkpoints a VM, and
@@ -151,6 +171,8 @@ param(
     [Parameter(ParameterSetName = 'Run')] [int]      $QueueTimeoutMinutes = 120,
     [Parameter(ParameterSetName = 'Run')] [int]      $RunTimeoutMinutes = 60,
     [Parameter(ParameterSetName = 'Run')] [switch]   $KeepVmRunning,
+    [Parameter(Mandatory = $true, ParameterSetName = 'Janitor')] [int]    $JanitorForPid,
+    [Parameter(Mandatory = $true, ParameterSetName = 'Janitor')] [string] $JanitorRunId,
     [Parameter(Mandatory = $true, ParameterSetName = 'SelfTest')] [switch] $SelfTest
 )
 
@@ -218,6 +240,23 @@ function New-RunId {
     param([DateTime] $When, [string] $Sha)
     if ($Sha -notmatch '^[0-9a-f]{12,40}$') { throw "Not a commit id: '$Sha'." }
     return ('{0:yyyyMMdd-HHmmss}-{1}' -f $When, $Sha.Substring(0, 12))
+}
+
+# Whether a string is a run id New-RunId could have made - what the janitor is handed on its
+# command line, and what it then searches runs.log for, so nothing else is accepted.
+function Test-IsRunId {
+    param([string] $Text)
+    return ([string]$Text) -cmatch '^\d{8}-\d{6}-[0-9a-f]{12}$'
+}
+
+# Whether runs.log says a run finished: its own end line, written after the lock is released and
+# the summary is written - the one thing a janitor needs to know to stand down.
+function Test-RunEnded {
+    param([string] $History, [string] $RunId)
+    foreach ($line in ([string]$History -split "`r?`n")) {
+        if ($line -cmatch ('^\S+ \S+  end    ' + [regex]::Escape($RunId) + '  ')) { return $true }
+    }
+    return $false
 }
 
 # What a TRX file says. Outcomes are counted from the results themselves, and the file's own
@@ -330,6 +369,17 @@ function Invoke-SelfTest {
     $threw = $false
     try { [void](New-RunId -When (Get-Date) -Sha 'HEAD') } catch { $threw = $true }
     Check 'a ref that is not a commit id is refused' $true $threw
+    Check 'a run id New-RunId makes is one the janitor accepts' $true (Test-IsRunId (New-RunId -When (Get-Date) -Sha 'ea40cc831e68ae3e4f09602309bbc98569394979'))
+    Check 'the janitor accepts nothing else' $false (Test-IsRunId '20261003-041500-ea40cc831e68; Remove-Item')
+    Check 'not an upper-case one either' $false (Test-IsRunId '20261003-041500-EA40CC831E68')
+    $history = @(
+        '2026-10-03 04:19:17  start  20261003-041915-ff55a603e9c2  HEAD  C:\x'
+        '2026-10-03 04:23:15  end    20261003-041915-ff55a603e9c2  PASS  3 m 59 s'
+        '2026-10-03 04:34:54  start  20261003-043453-01058213466b  HEAD  C:\x'
+    ) -join "`r`n"
+    Check 'a run with its end line has ended' $true (Test-RunEnded -History $history -RunId '20261003-041915-ff55a603e9c2')
+    Check 'a run with only its start line has not' $false (Test-RunEnded -History $history -RunId '20261003-043453-01058213466b')
+    Check 'a run the log never mentions has not' $false (Test-RunEnded -History $history -RunId '20261003-050000-0123456789ab')
 
     Write-Host ''
     Write-Host '== the TRX reader =='
@@ -441,11 +491,154 @@ Expected: 1</Message></ErrorInfo></Output></UnitTestResult>
 if ($SelfTest) { exit (Invoke-SelfTest) }
 
 # =============================================================================================
+# SHARED BY A RUN AND ITS JANITOR: the lock, the history, and the VM.
+# =============================================================================================
+. (Join-Path $PSScriptRoot 'TestbedLeasePath.ps1')
+$lockDir = Join-Path $env:SystemDrive 'OutlookAI-Testbed\build-vm'
+New-Item -ItemType Directory -Force -Path $lockDir | Out-Null
+$lockPath = Join-Path $lockDir 'runner.lock'
+$ownerPath = Join-Path $lockDir 'runner.owner.json'
+$historyPath = Join-Path $lockDir 'runs.log'
+$vm = $null
+$checkpoint = $null
+
+function Say([string] $m) { Write-Host ("[{0:HH:mm:ss}] {1}" -f (Get-Date), $m) }
+
+function Enter-RunnerLock([int] $TimeoutMinutes) {
+    $deadline = (Get-Date).AddMinutes($TimeoutMinutes)
+    $lastSaid = [DateTime]::MinValue
+    $queued = $false
+    while ($true) {
+        try {
+            return [System.IO.File]::Open($lockPath, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+        }
+        catch [System.IO.IOException] {
+            if ((Get-Date) -ge $deadline) { return $null }
+            if (((Get-Date) - $lastSaid).TotalSeconds -ge 60) {
+                $who = 'another run'
+                try {
+                    $o = [System.IO.File]::ReadAllText($ownerPath) | ConvertFrom-Json
+                    $who = "run $($o.runId) (pid $($o.pid), $($o.ref) in $($o.repo), started $($o.startedLocal))"
+                }
+                catch { }
+                if (-not $queued) { Say "queued: the build VM is busy with $who" } else { Say "  still waiting for $who" }
+                $queued = $true
+                $lastSaid = Get-Date
+            }
+            Start-Sleep -Seconds 5
+        }
+    }
+}
+
+function Write-History([string] $Line) {
+    try { Add-Content -LiteralPath $historyPath -Value ("{0:yyyy-MM-dd HH:mm:ss}  {1}" -f (Get-Date), $Line) -Encoding UTF8 } catch { }
+}
+
+function Get-BuildVm {
+    $found = @(Get-VM -Name $BuildVmName -ErrorAction SilentlyContinue)
+    if ($found.Count -ne 1) { throw "expected one VM named '$BuildVmName' on this host and found $($found.Count). Testbed/README.md section 1c builds it." }
+    if (-not (Test-IsBuildVmName $found[0].Name)) { throw "Hyper-V returned '$($found[0].Name)' for '$BuildVmName'. Refusing to act on it." }
+    return $found[0]
+}
+
+function Get-BaseCheckpoint {
+    $found = @(Get-VMSnapshot -VM $vm -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq $BaseCheckpointName })
+    if ($found.Count -ne 1) { throw "'$BuildVmName' has $($found.Count) checkpoint(s) named '$BaseCheckpointName', not one. Testbed/README.md section 1c takes it." }
+    return $found[0]
+}
+
+# The VM's state, read afresh each time: a VirtualMachine object keeps the state it was read with
+# and has no Refresh(), so a loop over one object would wait for ever on a stale value.
+function Wait-VmSettled([int] $Seconds) {
+    $deadline = (Get-Date).AddSeconds($Seconds)
+    while ((Get-Date) -lt $deadline) {
+        $state = [string](Get-BuildVm).State
+        if (@('Running', 'Off', 'Saved', 'Paused') -contains $state) { return $state }
+        Start-Sleep -Seconds 2
+    }
+    return [string](Get-BuildVm).State
+}
+
+function Restore-Base {
+    $state = Wait-VmSettled 120
+    if (@('Running', 'Off', 'Saved', 'Paused') -notcontains $state) { throw "the VM stayed '$state' for two minutes; not restoring a checkpoint over a VM in transition." }
+    Restore-VMSnapshot -VMSnapshot $checkpoint -Confirm:$false
+    return (Wait-VmSettled 60)
+}
+
+# Restores the base checkpoint and leaves the VM saved: restored over a running VM, the base
+# resumes at once, so it is saved - the BASE, not the run - which is what gives the host its RAM back.
+function Restore-BaseAndSave {
+    $final = Restore-Base
+    if ($final -eq 'Running') {
+        Save-VM -VM $vm
+        $final = Wait-VmSettled 120
+    }
+    return $final
+}
+
+# =============================================================================================
+# THE JANITOR - A CALLER THAT DIES in the banner. Started hidden by a run, through WMI, so that it
+# is no child of the caller; it never touches the VM without the lock.
+# =============================================================================================
+if ($PSCmdlet.ParameterSetName -eq 'Janitor') {
+    $janitorLog = Join-Path $lockDir 'janitor.log'
+    function Write-JanitorLine([string] $Text) {
+        try { Add-Content -LiteralPath $janitorLog -Value ("{0:yyyy-MM-dd HH:mm:ss}  {1}  {2}" -f (Get-Date), $JanitorRunId, $Text) -Encoding UTF8 } catch { }
+    }
+    if (-not (Test-IsRunId $JanitorRunId)) { exit $ExitCodes['REFUSED'] }
+
+    # The run's process, pinned by its start time as well, so a process id reused after it ends
+    # is not mistaken for it.
+    $watched = Get-Process -Id $JanitorForPid -ErrorAction SilentlyContinue
+    $watchedStart = $null
+    if ($null -ne $watched) { $watchedStart = $watched.StartTime }
+    $giveUp = (Get-Date).AddHours(6)
+    while ($null -ne $watched) {
+        if ((Get-Date) -ge $giveUp) { Write-JanitorLine 'the run is still going after six hours; leaving it'; exit 0 }
+        Start-Sleep -Seconds 10
+        $watched = Get-Process -Id $JanitorForPid -ErrorAction SilentlyContinue
+        if ($null -ne $watched -and $watched.StartTime -ne $watchedStart) { $watched = $null }
+    }
+
+    $history = ''
+    try { $history = [System.IO.File]::ReadAllText($historyPath) } catch { }
+    if (Test-RunEnded -History $history -RunId $JanitorRunId) { exit 0 }
+
+    Write-JanitorLine 'the run ended without finishing - its caller was stopped - so the janitor puts the VM back'
+    $janitorLock = Enter-RunnerLock -TimeoutMinutes 10
+    if ($null -eq $janitorLock) { Write-JanitorLine 'another run held the VM for ten minutes; it restores the checkpoint itself'; exit 0 }
+    try {
+        [ordered]@{ runId = "janitor for $JanitorRunId"; pid = $PID; ref = '-'; sha = '-'; repo = '-'; startedLocal = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss') } |
+            ConvertTo-Json | Set-Content -LiteralPath $ownerPath -Encoding UTF8
+        $vm = Get-BuildVm
+        $checkpoint = Get-BaseCheckpoint
+        $state = Wait-VmSettled 120
+        if ($state -eq 'Saved' -or $state -eq 'Off') { Write-JanitorLine "the VM is already $state - nothing to put back" }
+        else {
+            $final = Restore-BaseAndSave
+            Write-JanitorLine "restored '$BaseCheckpointName' over the dead run's VM ($state); it is now $final"
+        }
+        $lease = Get-TestbedLease -VMName $BuildVmName
+        if ($null -ne $lease -and ([string]$lease.reason) -eq "$LeaseReasonPrefix $JanitorRunId") {
+            & (Join-Path $PSScriptRoot 'Set-TestbedLease.ps1') -VMName $BuildVmName -Release | Out-Null
+            Write-JanitorLine 'released the dead run''s lease'
+        }
+        Write-History "janitor $JanitorRunId  its caller stopped part-way; the janitor put the VM back"
+    }
+    catch { Write-JanitorLine "FAILED: $($_.Exception.Message)" }
+    finally {
+        try { Remove-Item -LiteralPath $ownerPath -Force -ErrorAction SilentlyContinue } catch { }
+        $janitorLock.Dispose()
+    }
+    exit 0
+}
+
+# =============================================================================================
 # A RUN.
 # =============================================================================================
 $tStart = Get-Date
 $timings = [ordered]@{}
-function Say([string] $m) { Write-Host ("[{0:HH:mm:ss}] {1}" -f (Get-Date), $m) }
 function Stop-Refused([string] $Why) {
     Say "REFUSED: $Why"
     exit $ExitCodes['REFUSED']
@@ -514,45 +707,8 @@ $requestPath = Join-Path $runDir 'request.json'
 ($request | ConvertTo-Json -Depth 5) | Set-Content -LiteralPath $requestPath -Encoding UTF8
 
 # ---- the lock ---------------------------------------------------------------------------------
-. (Join-Path $PSScriptRoot 'TestbedLeasePath.ps1')
-$lockDir = Join-Path $env:SystemDrive 'OutlookAI-Testbed\build-vm'
-New-Item -ItemType Directory -Force -Path $lockDir | Out-Null
-$lockPath = Join-Path $lockDir 'runner.lock'
-$ownerPath = Join-Path $lockDir 'runner.owner.json'
-$historyPath = Join-Path $lockDir 'runs.log'
-
-function Enter-RunnerLock {
-    $deadline = (Get-Date).AddMinutes($QueueTimeoutMinutes)
-    $lastSaid = [DateTime]::MinValue
-    $queued = $false
-    while ($true) {
-        try {
-            return [System.IO.File]::Open($lockPath, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
-        }
-        catch [System.IO.IOException] {
-            if ((Get-Date) -ge $deadline) { return $null }
-            if (((Get-Date) - $lastSaid).TotalSeconds -ge 60) {
-                $who = 'another run'
-                try {
-                    $o = [System.IO.File]::ReadAllText($ownerPath) | ConvertFrom-Json
-                    $who = "run $($o.runId) (pid $($o.pid), $($o.ref) in $($o.repo), started $($o.startedLocal))"
-                }
-                catch { }
-                if (-not $queued) { Say "queued: the build VM is busy with $who" } else { Say "  still waiting for $who" }
-                $queued = $true
-                $lastSaid = Get-Date
-            }
-            Start-Sleep -Seconds 5
-        }
-    }
-}
-
-function Write-History([string] $Line) {
-    try { Add-Content -LiteralPath $historyPath -Value ("{0:yyyy-MM-dd HH:mm:ss}  {1}" -f (Get-Date), $Line) -Encoding UTF8 } catch { }
-}
-
 $t0 = Get-Date
-$lock = Enter-RunnerLock
+$lock = Enter-RunnerLock -TimeoutMinutes $QueueTimeoutMinutes
 Measure-Phase 'queue' $t0
 if ($null -eq $lock) {
     Say "INFRA: the build VM stayed busy for $QueueTimeoutMinutes minute(s); this run did not start. Nothing on the VM was touched."
@@ -563,42 +719,29 @@ if ($null -eq $lock) {
 if ($timings['queue'] -ge 5) { Say "the build VM is ours after $(Format-Seconds $timings['queue']) in the queue" }
 Write-History "start  $runId  $Ref  $repo"
 
+# The janitor, for the case this process is stopped part-way (the banner). Through WMI, so it is
+# no child of this process and survives whatever stops it; hidden, so no console appears. A run
+# that cannot start one still runs, and says so.
+if (-not $KeepVmRunning) {
+    try {
+        $shellExe = (Get-Process -Id $PID).Path
+        $janitorCommand = '"{0}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "{1}" -JanitorForPid {2} -JanitorRunId {3}' -f $shellExe, $PSCommandPath, $PID, $runId
+        $hidden = New-CimInstance -CimClass (Get-CimClass -ClassName Win32_ProcessStartup) -Property @{ ShowWindow = [uint16]0 } -ClientOnly
+        $created = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $janitorCommand; ProcessStartupInformation = $hidden }
+        if ($created.ReturnValue -ne 0) { Say "janitor: Win32_Process.Create returned $($created.ReturnValue) - this run has none, and if it is stopped part-way the VM stays running until the next run" }
+        else { Write-Verbose "janitor pid $($created.ProcessId)" }
+    }
+    catch { Say "janitor: not started ($($_.Exception.Message)) - if this run is stopped part-way the VM stays running until the next run" }
+}
+
 # ---- everything that touches the VM, with the lock held --------------------------------------
 $infraError = ''
 $guestVerdict = ''
 $session = $null
-$vm = $null
-$checkpoint = $null
 $leaseTaken = $false
 $packagesStaged = $false
 $guestStdout = Join-Path $GuestRunRoot 'guest.out.txt'
 $guestStderr = Join-Path $GuestRunRoot 'guest.err.txt'
-
-function Get-BuildVm {
-    $found = @(Get-VM -Name $BuildVmName -ErrorAction SilentlyContinue)
-    if ($found.Count -ne 1) { throw "expected one VM named '$BuildVmName' on this host and found $($found.Count). Testbed/README.md section 1c builds it." }
-    if (-not (Test-IsBuildVmName $found[0].Name)) { throw "Hyper-V returned '$($found[0].Name)' for '$BuildVmName'. Refusing to act on it." }
-    return $found[0]
-}
-
-# The VM's state, read afresh each time: a VirtualMachine object keeps the state it was read with
-# and has no Refresh(), so a loop over one object would wait for ever on a stale value.
-function Wait-VmSettled([int] $Seconds) {
-    $deadline = (Get-Date).AddSeconds($Seconds)
-    while ((Get-Date) -lt $deadline) {
-        $state = [string](Get-BuildVm).State
-        if (@('Running', 'Off', 'Saved', 'Paused') -contains $state) { return $state }
-        Start-Sleep -Seconds 2
-    }
-    return [string](Get-BuildVm).State
-}
-
-function Restore-Base {
-    $state = Wait-VmSettled 120
-    if (@('Running', 'Off', 'Saved', 'Paused') -notcontains $state) { throw "the VM stayed '$state' for two minutes; not restoring a checkpoint over a VM in transition." }
-    Restore-VMSnapshot -VMSnapshot $checkpoint -Confirm:$false
-    return (Wait-VmSettled 60)
-}
 
 function Invoke-InGuest([scriptblock] $Block, [object[]] $ArgumentList = @()) {
     Invoke-Command -Session $session -ScriptBlock $Block -ArgumentList $ArgumentList -ErrorAction Stop
@@ -686,9 +829,7 @@ try {
     # The VM, from its base checkpoint.
     $t0 = Get-Date
     $vm = Get-BuildVm
-    $checkpoints = @(Get-VMSnapshot -VM $vm -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq $BaseCheckpointName })
-    if ($checkpoints.Count -ne 1) { throw "'$BuildVmName' has $($checkpoints.Count) checkpoint(s) named '$BaseCheckpointName', not one. Testbed/README.md section 1c takes it." }
-    $checkpoint = $checkpoints[0]
+    $checkpoint = Get-BaseCheckpoint
     $stateBefore = [string]$vm.State
     $stateAfter = Restore-Base
     Say "VM: restored '$BaseCheckpointName' ($stateBefore -> $stateAfter)"
@@ -837,13 +978,7 @@ finally {
         if ($KeepVmRunning) { Say "VM: left running as the run left it (-KeepVmRunning). The next run restores '$BaseCheckpointName' anyway." }
         else {
             try {
-                $final = Restore-Base
-                # Restored over a running VM, the base resumes at once - so save it, which is what
-                # gives the host its RAM back until the next run. Saving the BASE, not the run.
-                if ($final -eq 'Running') {
-                    Save-VM -VM $vm
-                    $final = Wait-VmSettled 120
-                }
+                $final = Restore-BaseAndSave
                 if ($final -eq 'Saved' -or $final -eq 'Off') { Say "VM: restored '$BaseCheckpointName' again and $($final.ToLowerInvariant()) - no RAM held until the next run" }
                 else { Say "VM: restored '$BaseCheckpointName' again, but it is $final rather than saved" }
             }
