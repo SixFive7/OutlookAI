@@ -95,6 +95,7 @@ public sealed class LiveMoveArchiveTests
                         ArchiveFolderResolution.ViaInboxArchiveProperty,
                         ArchiveFolderResolution.ViaInboxPersistData,
                         ArchiveFolderResolution.ViaStoreArchiveProperty,
+                        ArchiveFolderResolution.ViaRootArchiveProperty,
                     });
             }
 

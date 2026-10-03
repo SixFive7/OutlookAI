@@ -327,6 +327,63 @@ public sealed class ReadOnlyFolderLookupTests
         Assert.Equal(pst.EntryIdOfSpecial(ArchiveFolderResolution.OlFolderArchive), pst.EntryIdOf(folder!));
     }
 
+    // ------------------------------------------------------------------ the true root: a data file with no Inbox
+
+    [Fact]
+    public void ADraftsFolderAReplyMadeInADataFileWithNoInbox_IsFoundOnTheTrueRoot_WithoutAskingForIt()
+    {
+        // The guest's sequence (second live run, 2026-10-03), replayed: a reply into a data file that
+        // has Deleted Items and nothing else makes Outlook create Drafts and designate it on the
+        // store's TRUE root - not on the store object, and there is no Inbox. Before the root was
+        // read, the non-creating lookup answered "no Drafts folder" about the folder the reply had
+        // just been saved in, and discard_draft and update_draft refused every draft there.
+        FakeStore dataFile = FakeStore.NonDeliveryPst();
+        dataFile.DesignatesOnTrueRoot = true;
+
+        Assert.Equal(
+            OutlookComSession.DefaultFolderResolution.Absent,
+            SpecialFolders.Resolve(dataFile, SpecialFolders.OlFolderDrafts, out _, out _));
+
+        CreatingLookupReport report = new CreatingLookupReport();
+        object? made = SpecialFolders.GetDefaultFolderReportingCreation(dataFile, SpecialFolders.OlFolderDrafts, report);
+        Assert.NotNull(made);
+        Assert.True(report.Created);
+        int callsAfterTheReply = dataFile.GetDefaultFolderCalls.Count;
+
+        OutlookComSession.DefaultFolderResolution after =
+            SpecialFolders.Resolve(dataFile, SpecialFolders.OlFolderDrafts, out object? drafts, out SpecialFolderSource source);
+
+        Assert.Equal(OutlookComSession.DefaultFolderResolution.Resolved, after);
+        Assert.Equal(SpecialFolderSource.RootDesignation, source);
+        Assert.Equal(dataFile.EntryIdOfSpecial(SpecialFolders.OlFolderDrafts), dataFile.EntryIdOf(drafts!));
+        Assert.Equal(callsAfterTheReply, dataFile.GetDefaultFolderCalls.Count); // found without asking for it
+
+        // And the gate discard_draft and update_draft pass through now lets a draft there through.
+        string draftsId = dataFile.EntryIdOfSpecial(SpecialFolders.OlFolderDrafts)!;
+        Assert.Null(SpecialFolderGuards.DraftsFolderRefusal(dataFile, id => string.Equals(id, draftsId, StringComparison.OrdinalIgnoreCase)));
+        Assert.Equal(new[] { SpecialFolders.OlFolderDrafts }, dataFile.Created);
+    }
+
+    [Fact]
+    public void ATrueRootThatCannotBeRead_IsNeverReadAsNoDraftsFolder()
+    {
+        // The root is the last carrier read; when it will not say where it is, absence is not proven.
+        FakeStore dataFile = FakeStore.NonDeliveryPst();
+        dataFile.DesignatesOnTrueRoot = true;
+        dataFile.TrueRootParentRead = PropertyReadStatus.Failed;
+
+        Assert.Equal(
+            OutlookComSession.DefaultFolderResolution.Unreadable,
+            SpecialFolders.Resolve(dataFile, SpecialFolders.OlFolderDrafts, out _, out _));
+        Assert.Empty(dataFile.GetDefaultFolderCalls);
+
+        // A subtree that names no parent leaves nothing to read: the earlier answer stands.
+        dataFile.TrueRootParentRead = PropertyReadStatus.NotFound;
+        Assert.Equal(
+            OutlookComSession.DefaultFolderResolution.Absent,
+            SpecialFolders.Resolve(dataFile, SpecialFolders.OlFolderDrafts, out _, out _));
+    }
+
     // ------------------------------------------------------------------ the move path: may create, must say so
 
     [Fact]
@@ -2003,7 +2060,9 @@ public sealed class ReadOnlyFolderLookupTests
         private readonly Dictionary<string, FakeFolder> _byEntryId = new Dictionary<string, FakeFolder>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<int, string> _inboxDesignations = new Dictionary<int, string>();
         private readonly Dictionary<int, string> _persistData = new Dictionary<int, string>();
+        private readonly Dictionary<int, string> _rootDesignations = new Dictionary<int, string>();
         private readonly List<string> _rootChildren = new List<string>();
+        private FakeFolder? _trueRoot;
         private readonly HashSet<string> _wontOpen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private int _nextId = 0x100;
         private bool _creatingCallMade;
@@ -2031,6 +2090,20 @@ public sealed class ReadOnlyFolderLookupTests
         /// keeps exactly the store it was written against.
         /// </summary>
         internal bool ArchiveDesignatedInPersistData { get; set; }
+
+        /// <summary>
+        /// The store's TRUE root folder - the parent of the IPM subtree, named by the subtree's
+        /// PR_PARENT_ENTRYID - is reachable, and a Drafts or Archive folder made in the store is
+        /// designated ON IT: what Outlook did on the guest's data file with no Inbox (measured
+        /// 2026-10-03; designated on the Inbox as well when the store has one). Off by default, so
+        /// every test written against the earlier model keeps exactly the store it was written against.
+        /// </summary>
+        internal bool DesignatesOnTrueRoot { get; set; }
+
+        /// <summary>How the IPM subtree's PR_PARENT_ENTRYID reads when <see cref="DesignatesOnTrueRoot"/> is set.</summary>
+        internal PropertyReadStatus TrueRootParentRead { get; set; } = PropertyReadStatus.Found;
+
+        internal const string TrueRootEntryId = "0000000038A1BB1005E5101AA1BB08002B2A56C222010000";
 
         internal bool ArchiveCallAddsUnreturnedRootFolder { get; set; }
 
@@ -2171,7 +2244,15 @@ public sealed class ReadOnlyFolderLookupTests
             }
             else if (SpecialFolders.ValidFolderBit(folderId) == null)
             {
-                _inboxDesignations[folderId] = folder.EntryId;
+                if (DesignatesOnTrueRoot && SpecialFolders.AdditionalRenIndex(folderId) == null)
+                {
+                    _rootDesignations[folderId] = folder.EntryId;
+                }
+
+                if (!DesignatesOnTrueRoot || _special.ContainsKey(SpecialFolders.OlFolderInbox))
+                {
+                    _inboxDesignations[folderId] = folder.EntryId;
+                }
             }
 
             return folder;
@@ -2260,9 +2341,34 @@ public sealed class ReadOnlyFolderLookupTests
             return PropertyRead.Missing();
         }
 
+        public PropertyRead ReadRootFolderProperty(string schemaName)
+        {
+            PropertyReads++;
+            if (!DesignatesOnTrueRoot || schemaName != SpecialFolders.ParentEntryIdSchema || TrueRootParentRead == PropertyReadStatus.NotFound)
+            {
+                return PropertyRead.Missing();
+            }
+
+            return TrueRootParentRead == PropertyReadStatus.Failed
+                ? PropertyRead.Failure()
+                : PropertyRead.Found(Convert.FromHexString(TrueRootEntryId));
+        }
+
         public PropertyRead ReadFolderProperty(object folder, string schemaName)
         {
             PropertyReads++;
+            if (_trueRoot != null && ReferenceEquals(folder, _trueRoot))
+            {
+                int? rootFolderId = schemaName == SpecialFolders.DraftsEntryIdSchema
+                    ? SpecialFolders.OlFolderDrafts
+                    : schemaName == ArchiveFolderResolution.ArchiveEntryIdPropertySchema
+                        ? ArchiveFolderResolution.OlFolderArchive
+                        : null;
+                return rootFolderId.HasValue && _rootDesignations.TryGetValue(rootFolderId.Value, out string? onRoot)
+                    ? PropertyRead.Found(Convert.FromHexString(onRoot))
+                    : PropertyRead.Missing();
+            }
+
             if (!_special.TryGetValue(SpecialFolders.OlFolderInbox, out FakeFolder? inbox) || !ReferenceEquals(folder, inbox))
             {
                 return PropertyRead.Missing();
@@ -2380,6 +2486,14 @@ public sealed class ReadOnlyFolderLookupTests
 
         public PropertyReadStatus OpenFolder(string entryIdHex, out object? folder)
         {
+            if (DesignatesOnTrueRoot && string.Equals(entryIdHex, TrueRootEntryId, StringComparison.OrdinalIgnoreCase))
+            {
+                // The true root is no top-level folder: it is not listed, counted or walked.
+                _trueRoot ??= new FakeFolder(TrueRootEntryId, string.Empty, "\\\\" + _displayName, 0);
+                folder = _trueRoot;
+                return PropertyReadStatus.Found;
+            }
+
             if (_byEntryId.TryGetValue(entryIdHex, out FakeFolder? found) && !_wontOpen.Contains(entryIdHex))
             {
                 folder = found;

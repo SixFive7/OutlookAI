@@ -78,6 +78,13 @@ namespace OutlookAI.Core.Com
         /// </summary>
         public const string ViaInboxPersistData = "inboxAdditionalRenEntryIdsEx";
 
+        /// <summary>
+        /// Resolved from PR_IPM_ARCHIVE_ENTRYID on the store's TRUE root folder (the parent of the
+        /// IPM subtree), where MS-OXOSFLD keeps special-folder ids beside the Inbox's - without
+        /// asking Outlook for the folder.
+        /// </summary>
+        public const string ViaRootArchiveProperty = "rootArchiveProperty";
+
         /// <summary>The store has no designated Archive folder, and nothing was created.</summary>
         public const string NoDesignatedArchiveFolder = "NoDesignatedArchiveFolder";
 
@@ -343,6 +350,8 @@ namespace OutlookAI.Core.Com
                     return ViaInboxArchiveProperty;
                 case SpecialFolderSource.InboxPersistData:
                     return ViaInboxPersistData;
+                case SpecialFolderSource.RootDesignation:
+                    return ViaRootArchiveProperty;
                 case SpecialFolderSource.StoreDesignation:
                     return ViaStoreArchiveProperty;
                 default:

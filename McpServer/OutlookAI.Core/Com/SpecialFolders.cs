@@ -95,6 +95,14 @@ namespace OutlookAI.Core.Com
         /// Archive folder it makes on a PST (measured 2026-10-03; <see cref="SpecialFolders.ArchivePersistId"/>).
         /// </summary>
         InboxPersistData = 4,
+
+        /// <summary>
+        /// From the store's TRUE root folder's designation (the parent of the IPM subtree, read
+        /// through its <c>PR_PARENT_ENTRYID</c>) - where Outlook records the Drafts folder it makes
+        /// in a data file with no Inbox (measured 2026-10-03), and where MS-OXOSFLD keeps the
+        /// special-folder ids beside the Inbox's.
+        /// </summary>
+        RootDesignation = 5,
     }
 
     /// <summary>
@@ -113,6 +121,13 @@ namespace OutlookAI.Core.Com
 
         /// <summary><c>Folder.PropertyAccessor.GetProperty</c> on a folder this store handed out.</summary>
         PropertyRead ReadFolderProperty(object folder, string schemaName);
+
+        /// <summary>
+        /// <c>Folder.PropertyAccessor.GetProperty</c> on the folder <c>Store.GetRootFolder</c> hands
+        /// out - the top of the visible (IPM) hierarchy, NOT the store's true root. Never creates
+        /// anything.
+        /// </summary>
+        PropertyRead ReadRootFolderProperty(string schemaName);
 
         /// <summary>
         /// <c>Store.GetDefaultFolder</c>. THE CREATING CALL: on a store that does not have the
@@ -259,6 +274,13 @@ namespace OutlookAI.Core.Com
 
         /// <summary>RSF_ELID_ENTRYID (MS-OXOSFLD 2.2.4.1.1): the data element of a PersistData block that holds its entry id.</summary>
         public const int PersistElementEntryId = 0x0001;
+
+        /// <summary>
+        /// PR_PARENT_ENTRYID (PidTagParentEntryId, 0x0E09, PT_BINARY). Read off the folder
+        /// <c>Store.GetRootFolder</c> returns - the IPM subtree - it names the store's TRUE root
+        /// folder, which the object model offers no other way to reach.
+        /// </summary>
+        public const string ParentEntryIdSchema = "http://schemas.microsoft.com/mapi/proptag/0x0E090102";
 
         /// <summary>FOLDER_IPM_INBOX_VALID (MAPIDefS.h).</summary>
         public const int FolderIpmInboxValid = 0x00000002;
@@ -992,10 +1014,73 @@ namespace OutlookAI.Core.Com
                 return OutlookComSession.DefaultFolderResolution.Resolved;
             }
 
-            // A PersistData blob that could not be read proves nothing either way: never Absent.
+            // And on the store's TRUE root folder, the other place MS-OXOSFLD keeps these ids beside
+            // the Inbox. MEASURED 2026-10-03 on a test guest (Office LTSC 2024): the Drafts folder a
+            // reply made in a data file with no Inbox was designated there - PR_IPM_DRAFTS_ENTRYID on
+            // the root - and on neither the store object nor anything the object model hands out, so
+            // without this read the lookup answered "no Drafts folder" about the folder the reply had
+            // just been saved in, and discard_draft and update_draft refused every draft there.
+            OutlookComSession.DefaultFolderResolution rooted = OutlookComSession.DefaultFolderResolution.Absent;
+            if (!index.HasValue)
+            {
+                rooted = OpenRootDesignated(store, schema, out folder);
+                if (rooted == OutlookComSession.DefaultFolderResolution.Resolved)
+                {
+                    source = SpecialFolderSource.RootDesignation;
+                    return OutlookComSession.DefaultFolderResolution.Resolved;
+                }
+            }
+
+            // A PersistData blob or a root designation that could not be read proves nothing
+            // either way: never Absent.
             return persisted == OutlookComSession.DefaultFolderResolution.Unreadable
+                    || rooted == OutlookComSession.DefaultFolderResolution.Unreadable
                 ? OutlookComSession.DefaultFolderResolution.Unreadable
                 : primary;
+        }
+
+        /// <summary>
+        /// Opens the folder the store's TRUE root folder designates under <paramref name="schema"/>.
+        /// The object model never hands that root out - <c>Store.GetRootFolder</c> is the IPM
+        /// subtree below it - so it is reached through the subtree's <c>PR_PARENT_ENTRYID</c> and
+        /// opened with <c>GetFolderFromID</c>, which creates nothing. A subtree that names no parent
+        /// leaves nothing to read (Absent); any read that fails, or a parent that will not open, is
+        /// Unreadable - never Absent.
+        /// </summary>
+        private static OutlookComSession.DefaultFolderResolution OpenRootDesignated(
+            ISpecialFolderStore store,
+            string schema,
+            out object? folder)
+        {
+            folder = null;
+            PropertyRead parent = store.ReadRootFolderProperty(ParentEntryIdSchema);
+            if (parent.Status == PropertyReadStatus.NotFound)
+            {
+                return OutlookComSession.DefaultFolderResolution.Absent;
+            }
+
+            string? rootEntryId = parent.Status == PropertyReadStatus.Found
+                ? ArchiveFolderResolution.TryReadEntryIdHex(parent.Value)
+                : null;
+            if (rootEntryId == null)
+            {
+                return OutlookComSession.DefaultFolderResolution.Unreadable;
+            }
+
+            object? root = null;
+            try
+            {
+                if (store.OpenFolder(rootEntryId, out root) != PropertyReadStatus.Found || root == null)
+                {
+                    return OutlookComSession.DefaultFolderResolution.Unreadable;
+                }
+
+                return OpenDesignated(store, store.ReadFolderProperty(root, schema), null, out folder);
+            }
+            finally
+            {
+                store.Release(root);
+            }
         }
 
         /// <summary>
@@ -1230,6 +1315,25 @@ namespace OutlookAI.Core.Com
         public PropertyRead ReadFolderProperty(object folder, string schemaName)
         {
             return ReadProperty(folder, schemaName);
+        }
+
+        /// <inheritdoc />
+        public PropertyRead ReadRootFolderProperty(string schemaName)
+        {
+            object? root = null;
+            try
+            {
+                root = ((dynamic)_store).GetRootFolder();
+                return root == null ? PropertyRead.Failure() : ReadProperty(root, schemaName);
+            }
+            catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+            {
+                return PropertyRead.Failure();
+            }
+            finally
+            {
+                OutlookComSession.Release(root);
+            }
         }
 
         /// <inheritdoc />
