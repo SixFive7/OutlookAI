@@ -35,14 +35,14 @@ public sealed class AuditLogCiToolShapeTests
     }
 
     [Fact]
-    public async Task AuditLog_Schema_TakesTheFiveFilters_NoneRequired()
+    public async Task AuditLog_Schema_TakesTheFiveFilters_AndTheResumeToken_NoneRequired()
     {
         await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();
 
         JsonElement schema = (await GetToolAsync(client, "audit_log")).GetProperty("inputSchema");
         string[] properties = schema.GetProperty("properties").EnumerateObject().Select(p => p.Name).OrderBy(n => n, StringComparer.Ordinal).ToArray();
 
-        Assert.Equal(new[] { "after", "before", "entry_id", "operation", "top" }, properties);
+        Assert.Equal(new[] { "after", "before", "entry_id", "operation", "resume_token", "top" }, properties);
         if (schema.TryGetProperty("required", out JsonElement required))
         {
             Assert.Empty(required.EnumerateArray());

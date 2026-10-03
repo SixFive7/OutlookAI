@@ -2522,6 +2522,20 @@ namespace OutlookAI.Core.Services
 
         /// <summary>Content-free failure reason when not writable.</summary>
         public string? Error { get; set; }
+
+        /// <summary>
+        /// Appends by THIS server process that waited the full writer-lock timeout and wrote without the
+        /// lock (Q117). Such a line is still whole - only its place in the order is not guaranteed - and
+        /// says so itself (lock="timeout"). Anything above 0 means another writer held the lock for
+        /// seconds, i.e. is stuck.
+        /// </summary>
+        public long LockTimeouts { get; set; }
+
+        /// <summary>Appends by this process that could not create or open the writer lock at all (null when none).</summary>
+        public long? LockUnavailable { get; set; }
+
+        /// <summary>Appends by this process that inherited the lock from a writer that died holding it (null when none).</summary>
+        public long? LockAbandoned { get; set; }
     }
 
     /// <summary>
@@ -2643,6 +2657,12 @@ namespace OutlookAI.Core.Services
         public string Operation { get; set; } = string.Empty;
 
         /// <summary>
+        /// The process that wrote the line - one per agent session's server, so lines with the same pid
+        /// come from the same session. Null on a line from before lines recorded it.
+        /// </summary>
+        public int? Pid { get; set; }
+
+        /// <summary>
         /// The line's fields, names exactly as written (entryId, store, account, reason...) and
         /// values unescaped. Metadata only - the log never holds a subject or a body.
         /// </summary>
@@ -2664,14 +2684,39 @@ namespace OutlookAI.Core.Services
         /// <summary>How many entries matched in all; more than <see cref="Returned"/> exactly when <see cref="Truncated"/>.</summary>
         public int Matched { get; set; }
 
-        /// <summary>True when older entries matched beyond top - narrow the filters rather than raise top.</summary>
+        /// <summary>True when older matching entries remain beyond this page - exactly when <see cref="NextToken"/> is present.</summary>
         public bool Truncated { get; set; }
+
+        /// <summary>How many matching entries are older than this page (null when none).</summary>
+        public long? OlderMatches { get; set; }
+
+        /// <summary>
+        /// Pass back as resume_token, with the same filters, for the next older page (Q119). Absent on the
+        /// last page - the only signal that the listing is complete. Opaque, and it outlives this server
+        /// process: it names a byte position in the live log, checked against the file when it is used.
+        /// </summary>
+        public string? NextToken { get; set; }
 
         /// <summary>Complete lines read from the log, malformed ones included.</summary>
         public long LinesScanned { get; set; }
 
         /// <summary>Lines that are not in the format this server writes, skipped and never returned (null when none).</summary>
         public long? MalformedLines { get; set; }
+
+        /// <summary>Of the malformed lines, those in the writer's format whose checksum failed - damaged, not merely old (null when none).</summary>
+        public long? DamagedLines { get; set; }
+
+        /// <summary>Lines missing by the writers' own per-file numbering - lost, not merely filtered out (null when none).</summary>
+        public long? MissingLines { get; set; }
+
+        /// <summary>Which writer's which numbers are missing, one run per string (null when none).</summary>
+        public IReadOnlyList<string>? SequenceGaps { get; set; }
+
+        /// <summary>Lines from before lines carried a checksum, returned unverified (null when none).</summary>
+        public long? UnverifiedLines { get; set; }
+
+        /// <summary>Lines written without the writers' lock - whole, but not guaranteed in order (null when none).</summary>
+        public long? LinesWithoutWriterLock { get; set; }
 
         /// <summary>True when the last line was still being written as it was read and was left out (null otherwise).</summary>
         public bool? IncompleteLastLine { get; set; }

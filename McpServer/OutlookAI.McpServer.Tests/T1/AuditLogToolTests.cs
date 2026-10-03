@@ -253,15 +253,143 @@ public sealed class AuditLogToolTests
         Assert.Contains(outcome.Advice!, a => a.Contains("still being written", StringComparison.Ordinal));
     }
 
+    // ================================================================== paging (Q119)
+
+    [Fact]
+    public async Task TheToolPages_ThroughEveryEntryOnce_UntilNextTokenIsAbsent()
+    {
+        RequireIsolation();
+        string id = RandomEntryId();
+        for (int i = 0; i < 7; i++)
+        {
+            // Appended in a tight loop, so several share a millisecond - which paging must not care about.
+            AuditLog.Append("update_draft", ("entryId", id), ("n", i.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+        }
+
+        List<string> seen = new();
+        List<bool> truncated = new();
+        string? token = null;
+        string[] lastAdvice = Array.Empty<string>();
+        do
+        {
+            using JsonDocument page = await CallToolAsync(entry_id: id, top: 3, resume_token: token);
+            JsonElement root = page.RootElement;
+            seen.AddRange(root.GetProperty("entries").EnumerateArray()
+                .Select(e => e.GetProperty("fields").GetProperty("n").GetString()!));
+            truncated.Add(root.GetProperty("truncated").GetBoolean());
+            Assert.Equal(7, root.GetProperty("matched").GetInt32());
+            token = root.TryGetProperty("nextToken", out JsonElement next) ? next.GetString() : null;
+            Assert.Equal(truncated[truncated.Count - 1], token != null);
+            Assert.True(root.GetProperty("entries")[0].GetProperty("pid").GetInt32() > 0);
+            lastAdvice = Advice(root);
+        }
+        while (token != null);
+
+        Assert.Equal(new[] { "6", "5", "4", "3", "2", "1", "0" }, seen);
+        Assert.Equal(new[] { true, true, false }, truncated);
+        Assert.Contains(lastAdvice, a => a.Contains("last page", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task AResumeTokenUsedWithOtherFilters_IsRefused_NamingWhatChanged()
+    {
+        RequireIsolation();
+        string id = RandomEntryId();
+        for (int i = 0; i < 3; i++)
+        {
+            AuditLog.Append("update_draft", ("entryId", id));
+        }
+
+        using JsonDocument first = await CallToolAsync(entry_id: id, operation: "update_draft", top: 1);
+        string token = first.RootElement.GetProperty("nextToken").GetString()!;
+
+        // The same filters in another spelling are the same question.
+        using JsonDocument same = await CallToolAsync(entry_id: id.ToLowerInvariant(), operation: "UPDATE_DRAFT", top: 2, resume_token: token);
+        Assert.Equal(2, same.RootElement.GetProperty("returned").GetInt32());
+
+        CallToolResult changed = await OutlookTools.AuditLog(entry_id: id, operation: "update_draft,send", top: 1, resume_token: token);
+        Assert.True(changed.IsError);
+        using JsonDocument error = JsonDocument.Parse(Text(changed));
+        string message = error.RootElement.GetProperty("error").GetProperty("message").GetString()!;
+        Assert.Equal("InvalidArgument", error.RootElement.GetProperty("error").GetProperty("type").GetString());
+        Assert.Contains("operation changed", message, StringComparison.Ordinal);
+        Assert.DoesNotContain("entry_id", message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("scan-0123456789abcdef0123456789abcdef", "another tool")]
+    [InlineData("not a token", "not a token audit_log issued")]
+    [InlineData("pg1.AAAA.00000000", "not a token audit_log issued")]
+    public void AResumeTokenAuditLogDidNotIssue_IsRefusedBeforeTheLogIsOpened(string token, string expected)
+    {
+        using (LockTheThrowawayLog())
+        {
+            ArgumentException refused = Assert.Throws<ArgumentException>(() => MailService.ReadAuditLog(resumeToken: token));
+            Assert.Contains(expected, refused.Message, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void AnotherToolsPagingToken_IsRefusedAsAnotherTools()
+    {
+        string foreign = Paging.IssueToken("list_folders", new PagingFingerprint().ToString(), new[] { "5" });
+        ArgumentException refused = Assert.Throws<ArgumentException>(() => MailService.ReadAuditLog(resumeToken: foreign));
+        Assert.Contains("another tool", refused.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(AuditLogResumeStatus.FileMissing, "archived")]
+    [InlineData(AuditLogResumeStatus.FileReplaced, "archived or replaced")]
+    [InlineData(AuditLogResumeStatus.PositionNotFound, "truncated or edited")]
+    public void ATokenTheLogNoLongerFits_IsRefusedSayingWhyAndWhatToDo(AuditLogResumeStatus status, string why)
+    {
+        string message = MailService.DescribeAuditResumeRefusal(status);
+        Assert.Contains(why, message, StringComparison.Ordinal);
+        Assert.Contains("Leave resume_token out", message, StringComparison.Ordinal);
+    }
+
+    // ================================================================== integrity in the answer (Q117)
+
+    [Fact]
+    public void DamagedMissingAndUnverifiedLines_AreReportedInFieldsAndInWords()
+    {
+        AuditLogScan scan = new()
+        {
+            FileFound = true,
+            LinesScanned = 40,
+            MalformedLines = 3,
+            ChecksumFailures = 2,
+            MissingLines = 5,
+            UnverifiedLines = 4,
+            LinesWithoutWriterLock = 1,
+            Gaps = new[] { new AuditLogGap(4242, "0a1b2c3d", 3, 6), new AuditLogGap(77, "ffffffff", 1, 1) },
+        };
+
+        AuditLogOutcome outcome = MailService.DescribeAuditLogScan("x", scan, 25, operationFiltered: false);
+
+        Assert.Equal(3, outcome.MalformedLines);
+        Assert.Equal(2, outcome.DamagedLines);
+        Assert.Equal(5, outcome.MissingLines);
+        Assert.Equal(4, outcome.UnverifiedLines);
+        Assert.Equal(1, outcome.LinesWithoutWriterLock);
+        Assert.Equal(new[] { "pid 4242 run 0a1b2c3d: seq 3-6 (4 lines)", "pid 77 run ffffffff: seq 1 (1 line)" }, outcome.SequenceGaps);
+        Assert.Contains(outcome.Advice!, a => a.StartsWith("1 line(s) of the log are not in the format", StringComparison.Ordinal));
+        Assert.Contains(outcome.Advice!, a => a.StartsWith("2 line(s) failed their checksum", StringComparison.Ordinal));
+        Assert.Contains(outcome.Advice!, a => a.StartsWith("5 line(s) are MISSING", StringComparison.Ordinal));
+        Assert.Contains(outcome.Advice!, a => a.StartsWith("4 line(s) were written before lines carried a checksum", StringComparison.Ordinal));
+        Assert.Contains(outcome.Advice!, a => a.StartsWith("1 line(s) were written without the writers' lock", StringComparison.Ordinal));
+    }
+
     // ================================================================== helpers
 
     private static MethodInfo ToolMethod() =>
         typeof(OutlookTools).GetMethods(BindingFlags.Public | BindingFlags.Static)
             .Single(m => m.GetCustomAttribute<McpServerToolAttribute>()?.Name == "audit_log");
 
-    private static async Task<JsonDocument> CallToolAsync(string? entry_id = null, string? operation = null, int top = 25)
+    private static async Task<JsonDocument> CallToolAsync(
+        string? entry_id = null, string? operation = null, int top = 25, string? resume_token = null)
     {
-        CallToolResult result = await OutlookTools.AuditLog(operation: operation, entry_id: entry_id, top: top);
+        CallToolResult result = await OutlookTools.AuditLog(operation: operation, entry_id: entry_id, top: top, resume_token: resume_token);
         Assert.True(result.IsError != true, "audit_log failed: " + Text(result));
         return JsonDocument.Parse(Text(result));
     }

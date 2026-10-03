@@ -254,49 +254,32 @@ namespace OutlookAI.Core.Services
                 throw new ArgumentNullException(nameof(request));
             }
 
-            StringBuilder canonical = new StringBuilder(256);
-            AppendList(canonical, "terms", terms);
-            Append(canonical, "searchIn", request.SearchIn.ToString());
-            Append(canonical, "store", request.Store);
-            Append(canonical, "folder", request.Folder);
-            Append(canonical, "includeSubfolders", request.IncludeSubfolders ? "1" : "0");
-            Append(canonical, "after", FormatInstant(request.AfterUtc));
-            Append(canonical, "before", FormatInstant(request.BeforeUtc));
-            Append(canonical, "from", request.From);
-            Append(canonical, "unreadOnly", request.UnreadOnly?.ToString());
-            Append(canonical, "hasAttachments", request.HasAttachments?.ToString());
-            Append(canonical, "orderBySize", request.OrderBySizeDescending ? "1" : "0");
-            return canonical.ToString();
+            // The builder is the shared one (Q119), so audit_log's continuation refuses a changed
+            // request in exactly the same shape this one does.
+            return new PagingFingerprint()
+                .AddList("terms", terms)
+                .Add("searchIn", request.SearchIn.ToString())
+                .Add("store", request.Store)
+                .Add("folder", request.Folder)
+                .Add("includeSubfolders", request.IncludeSubfolders ? "1" : "0")
+                .Add("after", FormatInstant(request.AfterUtc))
+                .Add("before", FormatInstant(request.BeforeUtc))
+                .Add("from", request.From)
+                .Add("unreadOnly", request.UnreadOnly?.ToString())
+                .Add("hasAttachments", request.HasAttachments?.ToString())
+                .Add("orderBySize", request.OrderBySizeDescending ? "1" : "0")
+                .ToString();
         }
 
         /// <summary>
         /// The argument labels two fingerprints disagree on, in fingerprint order. Empty when
         /// they agree. It is what lets a refusal name the thing the caller changed instead of
-        /// asserting, unhelpfully, that something did.
+        /// asserting, unhelpfully, that something did. Shared with every paged tool
+        /// (<see cref="PagingFingerprint.DifferingArguments"/>).
         /// </summary>
         public static IReadOnlyList<string> DifferingArguments(string expected, string actual)
         {
-            string[] left = (expected ?? string.Empty).Split('\n');
-            string[] right = (actual ?? string.Empty).Split('\n');
-            List<string> changed = new List<string>();
-            int max = left.Length > right.Length ? left.Length : right.Length;
-            for (int i = 0; i < max; i++)
-            {
-                string a = i < left.Length ? left[i] : string.Empty;
-                string b = i < right.Length ? right[i] : string.Empty;
-                if (string.Equals(a, b, StringComparison.Ordinal))
-                {
-                    continue;
-                }
-
-                string label = LabelOf(a.Length > 0 ? a : b);
-                if (label.Length > 0 && !changed.Contains(label))
-                {
-                    changed.Add(label);
-                }
-            }
-
-            return changed;
+            return PagingFingerprint.DifferingArguments(expected, actual);
         }
 
         /// <summary>
@@ -534,37 +517,6 @@ namespace OutlookAI.Core.Services
             return value.HasValue
                 ? value.Value.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture)
                 : null!;
-        }
-
-        private static string LabelOf(string canonicalLine)
-        {
-            int equals = canonicalLine.IndexOf('=');
-            return equals > 0 ? canonicalLine.Substring(0, equals) : string.Empty;
-        }
-
-        private static void Append(StringBuilder canonical, string label, string? value)
-        {
-            _ = canonical.Append(label).Append('=');
-            _ = value == null ? canonical.Append('0') : canonical.Append('1').Append('|').Append(value);
-            _ = canonical.Append('\n');
-        }
-
-        private static void AppendList(StringBuilder canonical, string label, IReadOnlyList<string>? values)
-        {
-            if (values == null)
-            {
-                _ = canonical.Append(label).Append("=0").Append('\n');
-                return;
-            }
-
-            _ = canonical.Append(label).Append("=1|")
-                .Append(values.Count.ToString(CultureInfo.InvariantCulture));
-            for (int i = 0; i < values.Count; i++)
-            {
-                _ = canonical.Append('|').Append(values[i] ?? string.Empty);
-            }
-
-            _ = canonical.Append('\n');
         }
 
         private static string NewRandomHex(int byteCount)
