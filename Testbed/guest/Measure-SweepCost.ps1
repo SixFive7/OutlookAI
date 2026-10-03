@@ -85,12 +85,28 @@ Assert-TestbedGuest -ExpectedUser $ExpectedUser
 
 # Folder ids the shipped sweep covers. Drafts is deliberately absent: the sweep does not cover
 # it, which is why a corpus accidentally filed as drafts measured as an empty store.
+# StandIn is the folder the corpus builder makes at the store root when the store HAS no such
+# default folder (CorpusFolderIds.StandInName) - Corpus A on OutlookAI-Indexed has three (D101).
 $folderKinds = @(
-    @{ Id = 6;  Name = 'Inbox';         Sort = @('ReceivedTime', 'urn:schemas:httpmail:datereceived') }
-    @{ Id = 5;  Name = 'Sent Items';    Sort = @('SentOn', 'ReceivedTime', 'urn:schemas:httpmail:date', 'urn:schemas:httpmail:datereceived') }
-    @{ Id = 3;  Name = 'Deleted Items'; Sort = @('ReceivedTime', 'urn:schemas:httpmail:datereceived') }
-    @{ Id = 23; Name = 'Junk Email';    Sort = @('ReceivedTime', 'urn:schemas:httpmail:datereceived') }
+    @{ Id = 6;  Name = 'Inbox';         StandIn = 'OutlookAI-Corpus-Folder-6';    Sort = @('ReceivedTime', 'urn:schemas:httpmail:datereceived') }
+    @{ Id = 5;  Name = 'Sent Items';    StandIn = 'OutlookAI-Corpus-Folder-5';    Sort = @('SentOn', 'ReceivedTime', 'urn:schemas:httpmail:date', 'urn:schemas:httpmail:datereceived') }
+    @{ Id = 3;  Name = 'Deleted Items'; StandIn = 'OutlookAI-Corpus-Folder-3';    Sort = @('ReceivedTime', 'urn:schemas:httpmail:datereceived') }
+    @{ Id = 23; Name = 'Junk Email';    StandIn = 'OutlookAI-Corpus-Folder-Junk'; Sort = @('ReceivedTime', 'urn:schemas:httpmail:datereceived') }
 )
+
+# NEVER THE CREATING LOOKUP (added 2026-10-03, D101 follow-up). Store.GetDefaultFolder on a PST
+# that lacks the folder CREATES it - measured on a POP3 PST for Junk Email and Archive - or hands
+# back the store's nameless non-IPM root for an Inbox it does not have (OAI-UNINDEXED, 2026-09-24).
+# So a "read-only" measurement that called it could add a folder to a store the count tripwire
+# watches, and would time the wrong folder. This resolves a default folder the way the shipped
+# sweep does (SpecialFolders.Resolve, Q84): on a store that is not Exchange, Inbox, Sent Items and
+# Deleted Items only when the store's PR_VALID_FOLDER_MASK says it has them, Junk Email only from
+# its designation on the Inbox (PR_ADDITIONAL_REN_ENTRYIDS, index 4), opened by entry id - and
+# nothing at all when a designation will not read, which is reported, never guessed.
+$PrValidFolderMask = 'http://schemas.microsoft.com/mapi/proptag/0x35DF0003'
+$PrAdditionalRenEntryIds = 'http://schemas.microsoft.com/mapi/proptag/0x36D81102'
+$ValidFolderBits = @{ 6 = 0x02; 3 = 0x08; 5 = 0x10 }
+$MapiNotFound = -2147221233   # 0x8004010F, MAPI_E_NOT_FOUND: the property is not there
 
 function Invoke-Com {
     param($Target, [string] $Name, [System.Reflection.BindingFlags] $Flags, [object[]] $Arguments = @())
@@ -106,6 +122,83 @@ function Invoke-ComMethod { param($Target, [string] $Name, [object[]] $Arguments
 function Write-Line { param([string] $Text)
     Write-Host $Text
     Add-Content -LiteralPath $OutFile -Value $Text
+}
+
+<# PropertyAccessor.GetProperty through InvokeMember (detail 3). Throws what Outlook throws. #>
+function Get-MapiProperty { param($Target, [string] $Schema)
+    $accessor = Get-ComProperty -Target $Target -Name 'PropertyAccessor'
+    try { return Invoke-ComMethod -Target $accessor -Name 'GetProperty' -Arguments @($Schema) }
+    finally { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($accessor) }
+}
+
+<# Whether an exception thrown through InvokeMember is MAPI_E_NOT_FOUND - "not there", not "would not read". #>
+function Test-MapiNotFound { param($ErrorRecord)
+    $e = $ErrorRecord.Exception
+    while ($null -ne $e) { if ($e.HResult -eq $MapiNotFound) { return $true }; $e = $e.InnerException }
+    return $false
+}
+
+<#
+    One default folder, WITHOUT ever creating it (see the comment at $PrValidFolderMask). Returns
+    @{ Folder; State = 'resolved' | 'absent' | 'unreadable'; Why }. Folder is set only when resolved.
+#>
+function Resolve-DefaultFolderReadOnly {
+    param($TargetStore, $Namespace, [string] $StoreEntryId, [int] $Id)
+    $exchangeType = $null
+    try { $exchangeType = [int](Get-ComProperty -Target $TargetStore -Name 'ExchangeStoreType') } catch { }
+    if ($null -ne $exchangeType -and $exchangeType -ne 3) {
+        # An Exchange mailbox: its default folders are the server's, and the shipped sweep asks for them.
+        try { return @{ Folder = $TargetStore.GetDefaultFolder($Id); State = 'resolved'; Why = 'Exchange server default folder' } }
+        catch { return @{ Folder = $null; State = 'unreadable'; Why = "GetDefaultFolder failed: $($_.Exception.Message)" } }
+    }
+
+    if ($Id -eq 23) {
+        $inbox = Resolve-DefaultFolderReadOnly -TargetStore $TargetStore -Namespace $Namespace -StoreEntryId $StoreEntryId -Id 6
+        if ($inbox.State -ne 'resolved') {
+            return @{ Folder = $null; State = $inbox.State; Why = "Junk Email is designated on the Inbox, which is $($inbox.State)" }
+        }
+        $ids = $null
+        try { $ids = Get-MapiProperty -Target $inbox.Folder -Schema $PrAdditionalRenEntryIds }
+        catch {
+            if (Test-MapiNotFound $_) { return @{ Folder = $null; State = 'absent'; Why = 'the Inbox designates no Junk Email' } }
+            return @{ Folder = $null; State = 'unreadable'; Why = "the Inbox's designations would not read: $($_.Exception.Message)" }
+        }
+        finally { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($inbox.Folder) }
+        $entries = @($ids)
+        if ($entries.Count -le 4 -or $null -eq $entries[4] -or @($entries[4]).Count -eq 0) {
+            return @{ Folder = $null; State = 'absent'; Why = 'the Inbox designates no Junk Email' }
+        }
+        $hex = ([BitConverter]::ToString([byte[]]$entries[4])) -replace '-', ''
+        try { return @{ Folder = $Namespace.GetFolderFromID($hex, $StoreEntryId); State = 'resolved'; Why = 'designated on the Inbox' } }
+        catch { return @{ Folder = $null; State = 'unreadable'; Why = "its designated entry id would not open: $($_.Exception.Message)" } }
+    }
+
+    $mask = $null
+    try { $mask = [int](Get-MapiProperty -Target $TargetStore -Schema $PrValidFolderMask) }
+    catch { return @{ Folder = $null; State = 'unreadable'; Why = "the store's PR_VALID_FOLDER_MASK would not read: $($_.Exception.Message)" } }
+    if (($mask -band $ValidFolderBits[$Id]) -eq 0) {
+        return @{ Folder = $null; State = 'absent'; Why = ('PR_VALID_FOLDER_MASK 0x{0:X2} has no bit for it' -f $mask) }
+    }
+    # The bit is set, so the folder is there and GetDefaultFolder returns it rather than making one.
+    try { return @{ Folder = $TargetStore.GetDefaultFolder($Id); State = 'resolved'; Why = ('PR_VALID_FOLDER_MASK 0x{0:X2}' -f $mask) } }
+    catch { return @{ Folder = $null; State = 'unreadable'; Why = "GetDefaultFolder failed: $($_.Exception.Message)" } }
+}
+
+<# The corpus builder's stand-in for a default folder: a folder of that name at the store's root, or $null. #>
+function Find-StandInFolder { param($TargetStore, [string] $Name)
+    $root = $TargetStore.GetRootFolder()
+    $children = $root.Folders
+    try {
+        foreach ($child in $children) {
+            if ([string]::Equals([string]$child.Name, $Name, [System.StringComparison]::Ordinal)) { return $child }
+            [void][Runtime.InteropServices.Marshal]::ReleaseComObject($child)
+        }
+        return $null
+    }
+    finally {
+        [void][Runtime.InteropServices.Marshal]::ReleaseComObject($children)
+        [void][Runtime.InteropServices.Marshal]::ReleaseComObject($root)
+    }
 }
 
 Remove-Item -LiteralPath $OutFile -Force -ErrorAction SilentlyContinue
@@ -135,15 +228,33 @@ if ($null -eq $target) {
 }
 $storeId = $target.StoreID
 
-Write-Line ("{0,-16} {1,5} {2,8} {3,10} {4,8} {5,10}" -f 'folder', 'pass', 'rows', 'ms', 'sorted', 'ms/row')
-
+# What gets timed: each default folder the shipped sweep would walk, resolved without creating it,
+# and - when the store has one - the corpus builder's stand-in for it, LABELLED as such: the shipped
+# sweep never walks a stand-in, so its rows say what a folder of that size costs, not what the
+# product's sweep of this store costs. Every skip is said, with its reason.
+$targets = New-Object System.Collections.Generic.List[object]
 foreach ($kind in $folderKinds) {
-    $folder = $null
-    try { $folder = $target.GetDefaultFolder($kind.Id) } catch { }
-    if ($null -eq $folder) {
-        Write-Line ("{0,-16} {1}" -f $kind.Name, 'no such default folder in this store - skipped')
-        continue
+    $resolved = Resolve-DefaultFolderReadOnly -TargetStore $target -Namespace $ns -StoreEntryId $storeId -Id $kind.Id
+    if ($resolved.State -eq 'resolved') {
+        $targets.Add(@{ Label = $kind.Name; Folder = $resolved.Folder; Sort = $kind.Sort })
+        Write-Line ("{0,-22} {1}" -f $kind.Name, "the store's own default folder ($($resolved.Why)) - the shipped sweep walks it")
     }
+    else {
+        Write-Line ("{0,-22} {1}" -f $kind.Name, "$($resolved.State.ToUpperInvariant()) ($($resolved.Why)) - the shipped sweep skips it, and so does this")
+    }
+    $standIn = Find-StandInFolder -TargetStore $target -Name $kind.StandIn
+    if ($null -ne $standIn) {
+        $targets.Add(@{ Label = "$($kind.Name) stand-in"; Folder = $standIn; Sort = $kind.Sort })
+        Write-Line ("{0,-22} {1}" -f "$($kind.Name) stand-in", "$($kind.StandIn) at the store root - the corpus builder's, NOT walked by the shipped sweep")
+    }
+}
+Write-Line ''
+
+Write-Line ("{0,-22} {1,5} {2,8} {3,10} {4,8} {5,10}" -f 'folder', 'pass', 'rows', 'ms', 'sorted', 'ms/row')
+
+foreach ($entry in $targets) {
+    $kind = @{ Name = $entry.Label; Sort = $entry.Sort }
+    $folder = $entry.Folder
 
     for ($pass = 1; $pass -le $Repeat; $pass++) {
         $sw = [Diagnostics.Stopwatch]::StartNew()
@@ -199,8 +310,8 @@ foreach ($kind in $folderKinds) {
         $sw.Stop()
         $perRow = 0
         if ($rows -gt 0) { $perRow = [math]::Round($sw.Elapsed.TotalMilliseconds / $rows, 2) }
-        Write-Line ("{0,-16} {1,5} {2,8} {3,10} {4,8} {5,10}" -f $kind.Name, $pass, $rows, $sw.ElapsedMilliseconds, $sorted, $perRow)
-        if ($unreadable -gt 0) { Write-Line ("{0,-16} {1}" -f '', "$unreadable row(s) named no item") }
+        Write-Line ("{0,-22} {1,5} {2,8} {3,10} {4,8} {5,10}" -f $kind.Name, $pass, $rows, $sw.ElapsedMilliseconds, $sorted, $perRow)
+        if ($unreadable -gt 0) { Write-Line ("{0,-22} {1}" -f '', "$unreadable row(s) named no item") }
     }
 }
 
