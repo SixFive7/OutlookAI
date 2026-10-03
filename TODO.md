@@ -1,5 +1,23 @@
 # TODO
 
+- [ ] **Three decided jobs, held until the agents now running have merged (decided by the
+  maintainer 2026-10-03).** Each one touches files every open branch also touches, or stops the
+  build VM they all share, so each waits for a quiet moment.
+  - **Q123 - release notes in BrowserAI's style.** Copy the release-notes style, system and rules
+    from the BrowserAI repository (`C:\Source\SixFive7\BrowserAI`) into this one: `CHANGELOG.md`
+    conventions, `AGENTS.md` rules, and `Tools/Publish-Release.ps1`. The current Unreleased section
+    (about 152,000 characters) is over GitHub's 125,000-character limit for a release body, so the
+    next release cannot publish until this lands. Do it last, because it rewrites the Unreleased
+    section every branch adds to.
+  - **Q125 - security scanning without GitHub.** (b) Turn on the security analysers that ship with
+    the .NET SDK in the builds, and triage what they find. Plus an exception to the Dependencies rule,
+    granted by the maintainer: CodeQL may be run locally. Record the exception in `AGENTS.md` beside
+    Q71/Q111, pin the CodeQL bundle by version and published hash, and add a script to run it.
+  - **Q126 - the build VM in UTC.** Set `OutlookAI-Build` to UTC and take a new base checkpoint, so
+    the non-live suite runs in a zone other than the workstation's - GitHub's runner used to catch
+    zone bugs that way (Q95). Update the runner, its records and its pins. Hold the build VM's lease
+    while switching.
+
 - [ ] **On or after 2026-10-05, ask the maintainer whether the shared test mailbox exists (Q109).**
   He requested a free shared mailbox in his Microsoft 365 tenant on 2026-10-03 (for example
   `outlookai-test@xxlnet.nl`, with full access for `telefonie@xxlnet.nl`); creating it takes a few
