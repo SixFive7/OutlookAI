@@ -25,7 +25,7 @@ namespace OutlookAI.McpServer.Tests.T1;
 public sealed class CorpusUndatedWritePathTests
 {
     private const string CreateSignature =
-        "private static (string EntryId, string? SavedStoreId, string? RemovalRefused) CreateUndatedItem(";
+        "private static (string EntryId, string? SavedStoreId, string? RemovalRefused, DateTime? DeliveryReadBackUtc, string? DeliveryRefused) CreateUndatedItem(";
 
     [Fact]
     public void TheUndatedWritePath_TriesTheRemoval_AfterItsFirstSave_WithTheEntryIdAlreadyInHand()
@@ -91,6 +91,39 @@ public sealed class CorpusUndatedWritePathTests
         Assert.True(
             refuse > record,
             "the build must RECORD the item before refusing it - an unrecorded item is one teardown can never delete");
+    }
+
+    [Fact]
+    public void APlannedDeliveryTime_IsWrittenAfterTheFirstSave_ReadBack_AndJudgedOnlyAfterTheItemIsRecorded()
+    {
+        // D62 (b), 2026-10-03: an all-kinds appointment or task is DATED by the plan. Its delivery time goes on
+        // after the first save - with the EntryID in hand, like the removal - is read back from the store, and
+        // a refusal is returned, not thrown; the build records the item before it judges the read-back, so a
+        // refused one is still one teardown can delete.
+        string source = Source();
+        string body = MethodBody(source, CreateSignature);
+        int entryId = body.IndexOf("string entryId = (string)item!.EntryID;", StringComparison.Ordinal);
+        int write = body.IndexOf("WritePlannedDeliveryTime(", StringComparison.Ordinal);
+        Assert.True(write > entryId, "the planned delivery time must be written after the EntryID is read");
+        Assert.True(write < body.IndexOf("return (", StringComparison.Ordinal), "and before the item is handed back");
+        Assert.Contains("detail.DeliveryUtc is DateTime planned", body, StringComparison.Ordinal);
+
+        string writer = MethodBody(source, "private static (DateTime? ReadBackUtc, string? Refused) WritePlannedDeliveryTime(");
+        Assert.Contains("SetProperty(PrMessageDeliveryTime, DateTime.SpecifyKind(deliveryUtc, DateTimeKind.Utc))", writer, StringComparison.Ordinal);
+        Assert.Contains("item.Save();", writer, StringComparison.Ordinal);
+        Assert.Contains("ReadDeliveryTime(item)", writer, StringComparison.Ordinal);
+        Assert.Contains("catch (Exception ex) when (IsUndatedWriteRefusal(ex))", writer, StringComparison.Ordinal);
+        Assert.DoesNotContain("PrClientSubmitTime", writer, StringComparison.Ordinal);
+        Assert.DoesNotContain("PrMessageFlags", writer, StringComparison.Ordinal);
+
+        int create = source.IndexOf("CreateUndatedItem((object)undatedItems!", StringComparison.Ordinal);
+        int record = source.IndexOf("record(undatedLine);", create, StringComparison.Ordinal);
+        int judge = source.IndexOf("RequirePlannedDeliveryTime(ordinal, undatedDetail.DeliveryUtc, deliveryReadBack, deliveryRefused);", create, StringComparison.Ordinal);
+        Assert.True(judge > record, "the build must RECORD the item before it judges its planned delivery time");
+
+        // The probe writes the same way, and judges the item it RE-OPENED - what the store holds.
+        string probe = MethodBody(source, "private static CorpusUndatedProbe RunOneUndatedProbe(");
+        Assert.Contains("DeliveryReadBackUtc = plannedDeliveryUtc == null ? deliveryReadBack : ReadDeliveryTime(item!)", probe, StringComparison.Ordinal);
     }
 
     [Fact]
