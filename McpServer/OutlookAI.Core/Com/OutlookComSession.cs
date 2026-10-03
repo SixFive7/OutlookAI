@@ -112,6 +112,17 @@ namespace OutlookAI.Core.Com
         private const string ConversationTopicDasl = "http://schemas.microsoft.com/mapi/proptag/0x0070001F";
 
         /// <summary>
+        /// PR_CONVERSATION_INDEX_TRACKING (PidTagConversationIndexTracking, 0x3016, PT_BOOLEAN):
+        /// whether an item's ConversationId is the GUID in its conversation-index header (TRUE) or
+        /// is computed from its conversation topic instead (MS-OXOMSG). A subject override that
+        /// changed it would leave the draft with the source's index and topic and still give it a
+        /// different ConversationId - which is what a PST showed on 2026-10-03 (seed and plain
+        /// reply equal, renamed reply different); whether this flag is why is what the next
+        /// guest run reads.
+        /// </summary>
+        private const string ConversationIndexTrackingDasl = "http://schemas.microsoft.com/mapi/proptag/0x3016000B";
+
+        /// <summary>
         /// PR_CONVERSATION_INDEX (PT_BINARY). LIVE-PROVEN on this build (batch A - A3):
         /// assigning <c>MailItem.Subject</c> on a derived draft makes Outlook REGENERATE
         /// the conversation index header, which detaches the draft from its thread. The
@@ -3890,6 +3901,7 @@ namespace OutlookAI.Core.Com
                         string? sourceTopic = TryGetString(() => (string?)sourceItem.ConversationTopic)
                             ?? TryGetPropertyString(sourceItem, ConversationTopicDasl);
                         string? childIndex = TryGetString(() => (string?)draft.ConversationIndex);
+                        bool? trackingBefore = TryGetPropertyBool(draft, ConversationIndexTrackingDasl);
 
                         draft.Subject = options!.SubjectOverride;
 
@@ -3900,7 +3912,21 @@ namespace OutlookAI.Core.Com
                             && TrySetPropertyBinary(draft, ConversationIndexDasl, indexBytes);
                         bool topicRestored = !string.IsNullOrEmpty(sourceTopic)
                             && TrySetPropertyString(draft, ConversationTopicDasl, sourceTopic!);
-                        topicPreserved = indexRestored && topicRestored;
+
+                        // And which of the two the ConversationId is computed from: the draft's
+                        // own PR_CONVERSATION_INDEX_TRACKING as Reply()/Forward() left it, put
+                        // back only if the subject write changed it. On a PST (2026-10-03) the
+                        // renamed reply kept the child index and the source topic and still got a
+                        // different ConversationId from its plain twin; a flag the subject write
+                        // cleared is one way that happens. Not readable before: left alone.
+                        bool trackingKept = true;
+                        if (trackingBefore.HasValue
+                            && TryGetPropertyBool(draft, ConversationIndexTrackingDasl) != trackingBefore)
+                        {
+                            trackingKept = TrySetProperty(draft, ConversationIndexTrackingDasl, trackingBefore.Value);
+                        }
+
+                        topicPreserved = indexRestored && topicRestored && trackingKept;
                     }
 
                     // Attachments AFTER the composition closed the inspector (D46/C3).
@@ -6192,10 +6218,10 @@ namespace OutlookAI.Core.Com
         private string? TryFindDiscardedCopy(string deletedItemsEntryId, string? subject, string oldEntryId, bool exchangeStore)
         {
             // A store that KEEPS an item's EntryID across a soft delete answers in one call: the old
-            // id opens as the item now in Deleted Items. A PST does: on the first live run on a test
-            // guest (2026-10-03) the discarded draft's old id still opened after a discard that
-            // reported Deleted Items as its destination, and LiveUpdateDiscardTests now logs the
-            // folder it opens in. The scan below excludes the old id, so on such a store it finds no
+            // id opens as the item now in Deleted Items. A PST does - measured on a test guest
+            // (2026-10-03): after the discard the draft's old id opened with Deleted Items as its
+            // parent, and this re-locate returned that same id. The scan below excludes the old
+            // id, so on such a store it finds no
             // re-located copy at all, or, with an older discarded draft of the same subject in the
             // folder, re-locates the WRONG item. Never asked of an Exchange store, which mints a new
             // id on the move and may briefly keep answering the old one: there the scan, exactly as
@@ -7659,7 +7685,8 @@ namespace OutlookAI.Core.Com
                 recipients,
                 conversationTopic,
                 importance,
-                readReceiptRequested);
+                readReceiptRequested,
+                TryGetPropertyBool(item, ConversationIndexTrackingDasl));
         }
 
         /// <summary>STA-side: the profile account with the given SmtpAddress (caller releases), or null.</summary>
@@ -10280,6 +10307,30 @@ namespace OutlookAI.Core.Com
                 return hex.ToString();
             }
             catch (Exception ex) when (IsComCallFailure(ex))
+            {
+                return null;
+            }
+            finally
+            {
+                Release(accessor);
+            }
+        }
+
+        /// <summary>PropertyAccessor read of a PT_BOOLEAN MAPI property, or null when absent or unreadable.</summary>
+        private static bool? TryGetPropertyBool(dynamic comObject, string schemaName)
+        {
+            object? accessor = null;
+            try
+            {
+                accessor = comObject.PropertyAccessor;
+                object? value = ((dynamic)accessor!).GetProperty(schemaName);
+                return value is bool flag ? flag : (bool?)null;
+            }
+            catch (COMException)
+            {
+                return null;
+            }
+            catch (Microsoft.CSharp.RuntimeBinder.RuntimeBinderException)
             {
                 return null;
             }

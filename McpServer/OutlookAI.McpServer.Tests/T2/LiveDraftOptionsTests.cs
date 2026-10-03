@@ -257,6 +257,14 @@ public sealed class LiveDraftOptionsTests
                 + $"renamed={renamedInfo.ConversationId ?? "-"} (index len seed={seedInfo.ConversationIndex!.Length} "
                 + $"plain={plainInfo.ConversationIndex?.Length.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "-"} "
                 + $"renamed={renamedInfo.ConversationIndex!.Length})");
+
+            // Which of MS-OXOMSG's two derivations each id came from: the GUID in the index header
+            // (bytes 6-21, when PR_CONVERSATION_INDEX_TRACKING is set) or a hash of the topic. Ids,
+            // index headers and booleans only (S4).
+            _output.WriteLine(
+                $"A3 id from index GUID: seed={IdIsIndexGuid(seedInfo)} plain={IdIsIndexGuid(plainInfo)} renamed={IdIsIndexGuid(renamedInfo)}; "
+                + $"index tracking seed={Tracking(seedInfo)} plain={Tracking(plainInfo)} renamed={Tracking(renamedInfo)}; "
+                + $"index headers seed={IndexHeader(seedInfo)} plain={IndexHeader(plainInfo)} renamed={IndexHeader(renamedInfo)}");
             Assert.Equal(seedInfo.ConversationId, renamedInfo.ConversationId);
             _output.WriteLine(
                 $"A3: subjectOverridden=true topicPreserved=true indexExtends=true "
@@ -422,6 +430,39 @@ public sealed class LiveDraftOptionsTests
         ComDraftInfo? info = _fixture.VerifySession.TryGetMailInfo(entryId, storeId, out string? error);
         Assert.True(info != null, $"mail info unavailable: {error}");
         return info!;
+    }
+
+    /// <summary>PR_CONVERSATION_INDEX_TRACKING as read, "-" when absent. Diagnostic only.</summary>
+    private static string Tracking(ComDraftInfo info)
+    {
+        return info.ConversationIndexTracking.HasValue ? (info.ConversationIndexTracking.Value ? "true" : "false") : "-";
+    }
+
+    /// <summary>
+    /// The 22-byte header of a ConversationIndex as hex (reserved byte, FILETIME bytes, GUID), or
+    /// "-": an opaque id, never content (S4). Diagnostic only.
+    /// </summary>
+    private static string IndexHeader(ComDraftInfo info)
+    {
+        string? index = info.ConversationIndex;
+        return index != null && index.Length >= 44 ? index.Substring(0, 44) : "-";
+    }
+
+    /// <summary>
+    /// Whether the ConversationId is the GUID in the index header (bytes 6-21) - MS-OXOMSG's
+    /// derivation when PR_CONVERSATION_INDEX_TRACKING is set - rather than a hash of the topic.
+    /// "?" when either is missing. Diagnostic only.
+    /// </summary>
+    private static string IdIsIndexGuid(ComDraftInfo info)
+    {
+        string? index = info.ConversationIndex;
+        string? id = info.ConversationId;
+        if (index == null || index.Length < 44 || string.IsNullOrEmpty(id))
+        {
+            return "?";
+        }
+
+        return string.Equals(index.Substring(12, 32), id, StringComparison.OrdinalIgnoreCase) ? "yes" : "no";
     }
 
     private void CleanupDraft(string store, string entryId)
