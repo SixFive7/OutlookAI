@@ -229,7 +229,7 @@ public sealed class LiveDisconnectRecoveryTests
         // pin shows (the default Inbox - the hub's, here) hands back the pin itself, so the promotion
         // displayed the pin and the close took it. ComposeSurface.AddShowMeExplorer now never returns
         // an Explorer that already existed (T1 ShowMeExplorerPinTests).
-        _output.WriteLine("lifetime pin before promotion: " + DescribePin(independentGateway));
+        _output.WriteLine("lifetime pin before promotion: " + DescribePin(independentGateway) + "; " + DescribeOutlookProcesses());
 
         // Promote with ONE window of our own via the sanctioned goto surface (hub store).
         ComExplorerState? explorerState = clock.Step(
@@ -241,7 +241,7 @@ public sealed class LiveDisconnectRecoveryTests
                 return state;
             }));
         _output.WriteLine($"promoted: explorer on '{explorerState!.CurrentFolderPath}'");
-        _output.WriteLine("lifetime pin after promotion: " + DescribePin(independentGateway));
+        _output.WriteLine("lifetime pin after promotion: " + DescribePin(independentGateway) + "; " + DescribeOutlookProcesses());
 
         IntPtr ourWindow = IntPtr.Zero;
         IReadOnlyList<IntPtr> baseline = baselineWindows;
@@ -253,6 +253,13 @@ public sealed class LiveDisconnectRecoveryTests
                 return ourWindow != IntPtr.Zero;
             },
             TimeSpan.FromSeconds(15));
+
+        // D49 diagnostic (2026-10-03, after run 9 still saw Outlook exit with the fix in): how many
+        // Explorers Outlook holds once the promoted window is up. Two - the pin and a window of the
+        // show-me path's own - is what ComposeSurface.AddShowMeExplorer promises; one means the window
+        // on screen IS the pin. Read before WM_CLOSE only: a read afterwards could start the very
+        // Outlook this test is watching exit. Folder names only (S4). Diagnostic, never asserted.
+        _output.WriteLine("explorers once the promoted window is up: " + LiveOutlookTestMailer.DescribeExplorers());
 
         IReadOnlyList<IntPtr> beforeClose = WindowProbe.VisibleOutlookWindows();
         if (beforeClose.Count != 1)
@@ -401,6 +408,41 @@ public sealed class LiveDisconnectRecoveryTests
     {
         return $"running={health.Outlook.Running} comConnected={health.Outlook.ComConnected} "
             + $"headless={health.Outlook.Headless?.ToString() ?? "null"}";
+    }
+
+    /// <summary>
+    /// Every OUTLOOK.EXE process by id and start time, for the log only - so a restart between two
+    /// steps shows as a new id (D49 diagnostic, 2026-10-03).
+    /// </summary>
+    private static string DescribeOutlookProcesses()
+    {
+        Process[] processes = Process.GetProcessesByName("OUTLOOK");
+        try
+        {
+            return "OUTLOOK.EXE " + (processes.Length == 0
+                ? "none"
+                : string.Join(", ", processes.Select(p =>
+                {
+                    string started;
+                    try
+                    {
+                        started = p.StartTime.ToString("HH:mm:ss.fff", System.Globalization.CultureInfo.InvariantCulture);
+                    }
+                    catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+                    {
+                        started = "?";
+                    }
+
+                    return "pid " + p.Id.ToString(System.Globalization.CultureInfo.InvariantCulture) + " started " + started;
+                })));
+        }
+        finally
+        {
+            foreach (Process p in processes)
+            {
+                p.Dispose();
+            }
+        }
     }
 
     /// <summary>The independent gateway session's D49 pin state, for the log only - never asserted.</summary>

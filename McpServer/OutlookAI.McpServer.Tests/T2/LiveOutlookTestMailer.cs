@@ -2267,6 +2267,69 @@ public static class LiveOutlookTestMailer
             + "or its Inbox designations did not read here, which is what the Q84 guest verification exists to find.";
     }
 
+    /// <summary>
+    /// READ-ONLY, for diagnostics: how many Explorers the RUNNING Outlook holds and the folder each
+    /// shows - for D49 on Office LTSC 2024, where <c>Explorers.Add</c> on the folder the lifetime pin
+    /// shows hands back the pin itself (the D49 probes, 2026-10-03). Never starts an Outlook: with none
+    /// running it says so and asks nothing - but it attaches through the class factory, so a caller must
+    /// not use it while the Outlook it watches may be exiting. Folder names only (S4); a failure is a
+    /// sentence, never an exception.
+    /// </summary>
+    public static string DescribeExplorers()
+    {
+        if (!OutlookComSession.IsOutlookProcessRunning())
+        {
+            return "no OUTLOOK.EXE running - nothing asked";
+        }
+
+        try
+        {
+            return RunSta(() =>
+            {
+                dynamic? app = null;
+                dynamic? explorers = null;
+                try
+                {
+                    app = CreateOutlookApplication();
+                    explorers = app.Explorers;
+                    int count = (int)explorers.Count;
+                    List<string> folders = new List<string>(count);
+                    for (int i = 1; i <= count; i++)
+                    {
+                        dynamic? explorer = null;
+                        dynamic? folder = null;
+                        try
+                        {
+                            explorer = explorers.Item(i);
+                            folder = explorer.CurrentFolder;
+                            folders.Add(folder == null ? "-" : (string)folder.Name);
+                        }
+                        catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+                        {
+                            folders.Add("?");
+                        }
+                        finally
+                        {
+                            Release(folder);
+                            Release(explorer);
+                        }
+                    }
+
+                    return "explorers=" + count.ToString(CultureInfo.InvariantCulture) + " [" + string.Join(", ", folders) + "]";
+                }
+                finally
+                {
+                    Release(explorers);
+                    Release(app);
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            return "unreadable (" + ex.GetType().Name + ")";
+        }
+    }
+
     private static dynamic CreateOutlookApplication()
     {
         Type progIdType = Type.GetTypeFromProgID("Outlook.Application")
