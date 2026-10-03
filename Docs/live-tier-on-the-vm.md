@@ -2994,11 +2994,13 @@ until the corpus was rebuilt, every week. A rebuild is the teardown of 160,000 i
 and about 1 h 35 min of `Build-Corpus.ps1`.
 
 **Decided the same day, on the maintainer's behalf: this guest declares the 30- and 60-day windows
-only** (the option recommended above; `Docs/overnight-review-2026-10-03.md`). No live test asks this
-corpus a question by window - it is the largest indexed store the latency bounds are timed against,
-and a bystander the count tripwire censuses; `Settings.Corpus` is read only by the freshness check -
-and the step-10 measurement scripts take their own window per run, so their 7-day default does not
-bind the tier. **The corpus is now fresh until 2026-11-01 23:59:16 UTC**, when its newest item leaves
+only** (D103 of `Docs/overnight-review-2026-10-03.md`, the option recommended above). No live test asks
+this corpus a question by window - it is the largest indexed store the latency bounds are timed
+against, and a bystander the count tripwire censuses; `Settings.Corpus` is read only by the freshness
+check - and the step-10 measurement scripts take their own window per run, so their 7-day default does
+not bind the tier. (It does bind them: `Testbed/guest/Measure-SweepCost.ps1` measures the last 7 days
+unless told otherwise, and after 2026-10-09 that window of this corpus is empty - on this guest, pass
+`-WindowDays` explicitly.) **The corpus is now fresh until 2026-11-01 23:59:16 UTC**, when its newest item leaves
 the 30-day window; after that the tier refuses on this guest until it is rebuilt. `Testbed/testbed.json`
 records the windows and the date in the guest's corpus block, and `T1/LiveTestSettingsTemplateTests`
 pins both: the windows `[30, 60]`, and the freshness check's own verdict on the committed seed, anchor

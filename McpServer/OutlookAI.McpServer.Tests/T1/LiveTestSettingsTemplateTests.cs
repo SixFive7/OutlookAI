@@ -674,7 +674,7 @@ public sealed class LiveTestSettingsTemplateTests
     [Fact]
     public void TheIndexedGuestsCorpus_DeclaresOnlyThe30And60DayWindows_AndStaysFreshUntilTheDateItsNoteGives()
     {
-        // Decided on the maintainer's behalf 2026-10-03 (Docs/overnight-review-2026-10-03.md;
+        // Decided on the maintainer's behalf 2026-10-03 (D103 of Docs/overnight-review-2026-10-03.md;
         // Docs/live-tier-on-the-vm.md section 4.2d): the indexed guest's 160,000-item corpus declares
         // the 30- and 60-day windows, not the example's 7, 30 and 60. No live test asks that corpus a
         // question by window, and a declared 7-day window made T2/LiveCorpusFreshness refuse the whole
