@@ -3339,6 +3339,18 @@ namespace OutlookAI.Core.Com
         {
             error = null;
             dynamic app = _application!;
+
+            // D49, re-ensured HERE as every compose path already does: a window this call creates on
+            // a headless Outlook must never become the one thing keeping Outlook alive, or the user
+            // closing it ends the instance. Seen 2026-10-03 on the first guest live run: Outlook was
+            // started headless through COM, a show-me window was promoted two seconds later, and
+            // closing that window took OUTLOOK.EXE down with it. A Connect on a cold start is the
+            // known way to end up unpinned (EnsureComposeSurfacePin), and nothing re-tried the pin
+            // on this path; LiveDisconnectRecoveryTests now logs the pin state on either side of the
+            // promotion to confirm that was the cause. Idempotent, and creates nothing when any
+            // Explorer already exists (the user's own window, or a pin).
+            EnsureComposeSurfacePin();
+
             object? explorer = null;
             try
             {

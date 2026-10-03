@@ -141,4 +141,47 @@ public class ComposeSurfaceTests
             }
         }
     }
+
+    /// <summary>
+    /// D49 on the show-me path. On the first live run on a test guest (2026-10-03) Outlook was
+    /// started headless through COM, a show-me window was promoted two seconds later, and closing
+    /// that window took OUTLOOK.EXE down with it. Every compose path re-ensures the lifetime pin
+    /// before it opens a window, because a Connect on a cold start can leave a session unpinned;
+    /// <c>EnsureVisibleExplorer</c> - the path goto_folder and show_search_results open their window
+    /// through - did not. Read out of the source, because the path needs a real Outlook.
+    /// </summary>
+    [Fact]
+    public void TheShowMeWindow_IsOpenedOnlyAfterTheLifetimePinIsReEnsured()
+    {
+        string body = CoreMemberBody("OutlookComSession.cs", "private object? EnsureVisibleExplorer(");
+
+        int pin = body.IndexOf("EnsureComposeSurfacePin();", StringComparison.Ordinal);
+        int active = body.IndexOf("ActiveExplorer()", StringComparison.Ordinal);
+        int add = body.IndexOf(".Add(", StringComparison.Ordinal);
+
+        Assert.True(active >= 0 && add >= 0, "EnsureVisibleExplorer no longer fetches or creates an Explorer the way this test reads it - it has stopped proving anything");
+        Assert.True(pin >= 0, "EnsureVisibleExplorer no longer re-ensures the D49 lifetime pin");
+        Assert.True(pin < active && pin < add, "the lifetime pin must be re-ensured before an Explorer is fetched or created");
+    }
+
+    private static string CoreMemberBody(string comFile, string declarationStart)
+    {
+        string testProjectDir = typeof(ComposeSurfaceTests).Assembly
+                .GetCustomAttributes(typeof(System.Reflection.AssemblyMetadataAttribute), false)
+                .Cast<System.Reflection.AssemblyMetadataAttribute>()
+                .FirstOrDefault(a => a.Key == "TestProjectDir")?.Value
+            ?? throw new InvalidOperationException("AssemblyMetadata 'TestProjectDir' is missing.");
+
+        // <repo>/McpServer/OutlookAI.McpServer.Tests/ -> <repo>/McpServer/OutlookAI.Core/Com/<file>
+        string path = System.IO.Path.GetFullPath(
+            System.IO.Path.Combine(testProjectDir, "..", "OutlookAI.Core", "Com", comFile));
+        string[] lines = System.IO.File.ReadAllText(path)
+            .Split('\n').Select(l => l.TrimEnd('\r')).ToArray();
+        int declaration = Array.FindIndex(lines, l => l.TrimStart().StartsWith(declarationStart, StringComparison.Ordinal));
+        Assert.True(declaration >= 0, declarationStart + " was not found in " + comFile + " - this test has stopped proving anything");
+        int open = Array.FindIndex(lines, declaration, l => string.Equals(l, "        {", StringComparison.Ordinal));
+        int close = open < 0 ? -1 : Array.FindIndex(lines, open + 1, l => string.Equals(l, "        }", StringComparison.Ordinal));
+        Assert.True(open > declaration && close > open, "could not find the body of " + declarationStart + " in " + comFile);
+        return string.Join("\n", lines[(open + 1)..close]);
+    }
 }

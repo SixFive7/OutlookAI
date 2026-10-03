@@ -222,6 +222,11 @@ public sealed class LiveDisconnectRecoveryTests
             }
         }
 
+        // Whether the session holds D49's lifetime pin BEFORE the window is promoted - the fact the
+        // first guest live run needed and did not have (2026-10-03: Outlook exited when the promoted
+        // window closed). Diagnostic only; the assertion below is unchanged.
+        _output.WriteLine("lifetime pin before promotion: " + DescribePin(independentGateway));
+
         // Promote with ONE window of our own via the sanctioned goto surface (hub store).
         ComExplorerState? explorerState = clock.Step(
             "promote Outlook with one Explorer window (goto hub)",
@@ -232,6 +237,7 @@ public sealed class LiveDisconnectRecoveryTests
                 return state;
             }));
         _output.WriteLine($"promoted: explorer on '{explorerState!.CurrentFolderPath}'");
+        _output.WriteLine("lifetime pin after promotion: " + DescribePin(independentGateway));
 
         IntPtr ourWindow = IntPtr.Zero;
         IReadOnlyList<IntPtr> baseline = baselineWindows;
@@ -391,6 +397,23 @@ public sealed class LiveDisconnectRecoveryTests
     {
         return $"running={health.Outlook.Running} comConnected={health.Outlook.ComConnected} "
             + $"headless={health.Outlook.Headless?.ToString() ?? "null"}";
+    }
+
+    /// <summary>The independent gateway session's D49 pin state, for the log only - never asserted.</summary>
+    private static string DescribePin(ComGateway gateway)
+    {
+        try
+        {
+            return gateway.Run(s =>
+            {
+                OutlookComSession session = (OutlookComSession)s;
+                return "pinned=" + session.ComposeSurfacePinned + " error=" + (session.ComposeSurfacePinError ?? "-");
+            });
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            return "unreadable (" + ex.GetType().Name + ")";
+        }
     }
 
     /// <summary>
