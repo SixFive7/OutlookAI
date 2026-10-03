@@ -367,6 +367,43 @@ spelling".** See the decision log below.
 
 ## Decision log
 
+### 2026-10-03, autonomous - a subject override's conversation id outside Exchange: the promise is scoped, not dropped
+
+**Primer.** `reply_draft`, `replyall_draft` and `forward_draft` take a `subject` override. Assigning
+a subject makes Outlook regenerate the draft's conversation index, so since A3 the product restores
+the child index and the source's topic after the rename (`conversationTopicPreserved`), and
+`T2/LiveDraftOptionsTests` also held the renamed reply to its SOURCE's ConversationId. On the first
+guest runs - a POP3 data file under Office LTSC 2024 - that one assertion failed every time (runbook
+4.1e, F8), and three attempts to make the product keep the id were taken out again: restoring the
+index-tracking flag, writing `PR_CONVERSATION_ID` back (refused: "does not support this operation")
+and setting the subject as `PR_SUBJECT`.
+
+**The measurement** (bisect run E4b, 2026-10-03, through `T2/ConversationIdHashes`): the renamed
+reply's id is MD5 over the upper-cased KEPT topic in UTF-16LE - and not a hash of the new subject in
+any of the four encodings tried; the seed's and the plain reply's ids are their index header's GUID
+(bytes 6-21). So outside Exchange it is the topic the product restores that decides the id: the
+override does not start a conversation of its own, and it does not keep the original's either.
+
+**Options.** *(a)* Scope the same-id promise to Exchange and hold every other store to the measured
+derivation. *(b)* Drop the id promise everywhere. *(c)* Keep it everywhere and leave the test red on
+every data-file store. *(d)* Refuse the override outside Exchange.
+
+**Decided: (a)**, by the coordinator on the maintainer's behalf. The id is the hash of the topic the
+product keeps, not of the new subject, so outside Exchange the promise is not void - it is a
+different, exact one, and *(b)* would throw away an assertion that pins it. **What changes for a
+user** of a POP3/IMAP mailbox or a data file: a renamed derived draft keeps its index thread
+(recipients' clients thread it as before) and its topic, but its `conversationId` is not its
+source's, so a lookup by the source's id does not find it. The subject hint of the three tools says
+so; Exchange is unchanged - its half was proven on the maintainer's workstation and no test guest can
+re-measure it, so a store whose type cannot be read is held to that stricter promise.
+
+**What was done** (on the maintainer's behalf, for review): `DerivedSubjectHint`, the result models'
+comments and `McpServer/README.md` state it; `LiveDraftOptionsTests` asserts per store kind - the
+source's id on Exchange, the kept topic's hash elsewhere - for the renamed reply and, newly, the
+renamed forward. **Not measured:** `update_draft` renaming a reply draft takes the same restore path,
+but no live test renames a derived draft through it. **Undo:** revert the commit; the test goes back to
+one promise for every store and is red again on the guests.
+
 ### 2026-10-03, autonomous - Q11 ANSWERED by measurement: a table reports a date in the zone its column spelling asks for
 
 **The measurement.** The first live runs on a test guest (`OutlookAI-Unindexed`, Office LTSC 2024

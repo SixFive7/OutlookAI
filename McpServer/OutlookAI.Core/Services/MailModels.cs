@@ -2060,7 +2060,10 @@ namespace OutlookAI.Core.Services
         /// <summary>True when the draft was opened in an Outlook window for the user (D4 default).</summary>
         public bool Displayed { get; set; }
 
-        /// <summary>Conversation id (derived drafts thread with their source).</summary>
+        /// <summary>
+        /// Conversation id (derived drafts thread with their source). With a subject override in a non-Exchange
+        /// store it is the id Outlook derives from the kept topic, not the source's (decision 2026-10-03).
+        /// </summary>
         public string? ConversationId { get; set; }
 
         /// <summary>Recipients currently on the draft (capped - check RecipientsTruncated).</summary>
@@ -2230,7 +2233,11 @@ namespace OutlookAI.Core.Services
         /// <summary>True when the revised draft was (re)opened in an Outlook window.</summary>
         public bool Displayed { get; set; }
 
-        /// <summary>Conversation id after the update (unchanged by a subject rewrite - A3).</summary>
+        /// <summary>
+        /// Conversation id after the update. A subject rewrite keeps it on Exchange (A3); in a non-Exchange store
+        /// Outlook derives a renamed derived draft's id from the kept topic instead (measured on a renamed reply,
+        /// 2026-10-03 - QUESTIONS.md decision log).
+        /// </summary>
         public string? ConversationId { get; set; }
 
         /// <summary>Recipients on the draft AFTER the update (capped).</summary>
