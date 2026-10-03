@@ -215,8 +215,12 @@ $ReleaseBodyLimit = 125000
 # The palette an entry opens with, in the order the legend lists it: BrowserAI's, which the maintainer
 # approved there (its Q192b). This list is the DECISION and the legend at the top of CHANGELOG.md is the
 # PUBLICATION; step 3 holds the two identical. The icons are written as themselves, which is why this
-# file carries a byte order mark (Q78). The self-test holds each one to its code points, so an editor
-# that drops a variation selector is caught.
+# file carries a byte order mark (Q78), and the self-test holds each one to its code points, so an
+# editor that drops a variation selector is caught. DO NOT BUILD THEM FROM NUMBERS: the first draft
+# (2026-10-04) made them at run time from hex strings - split, [Convert]::ToInt32, [char], join - and
+# the build VM's antivirus refused to load the whole script (ScriptContainedMaliciousContent). That
+# shape is how obfuscated scripts hide text, which is the likely reason; it was not isolated, because
+# the same draft also started git through a raw ProcessStartInfo, and neither is used now.
 $ChangelogPalette = @(
     [pscustomobject]@{ Icon = '✨'; Means = 'new capability' },
     [pscustomobject]@{ Icon = '🐛'; Means = 'fix' },
