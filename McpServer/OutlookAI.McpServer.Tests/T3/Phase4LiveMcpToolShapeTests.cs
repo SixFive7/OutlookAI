@@ -230,6 +230,9 @@ public sealed class Phase4LiveMcpToolShapeTests
         return entryId;
     }
 
+    // The REAL log, deliberately: the lines asserted here are written by the server CHILD process,
+    // which this test process's audit redirect (AuditIsolation, Q86) cannot reach - nothing may
+    // redirect a shipped process. This class runs only in the live tier, on a test machine.
     private static int CountAuditLines()
     {
         string path = AuditLog.DefaultLogPath;

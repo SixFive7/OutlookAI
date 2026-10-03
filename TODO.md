@@ -119,7 +119,11 @@
           as `outcome: applied`) needs `AuditLog.Append` to FAIL, and it writes to
           `%LOCALAPPDATA%\OutlookAI` through a path that is not injectable. `AppendTo` takes a
           directory and is used by `AuditLogTests`; wiring the service layer to it would make this
-          reachable, and is a bigger change than the row it guards.
+          reachable, and is a bigger change than the row it guards. (2026-10-03: no wiring is
+          needed any more. Since Q86 every test process appends to its own throwaway log,
+          `AuditLog.EffectiveLogPath`, so a T1 test can make `Append` fail by holding that file
+          open without sharing for the duration of the call - `T1/AuditLogToolTests` already
+          locks it that way.)
         - **The supervisor's own wiring for the interrupted-request outcome** needs a child that
           dies while holding a request. Both ends are pinned separately - the value
           (`MutationOutcome.ForInterrupted`) and the carrier
@@ -145,7 +149,9 @@
         tier is where it is exercised, which is the tier that had no budget at all until this
         pass. Options: accept and rely on T2; add `InternalsVisibleTo` to `OutlookAI.Core` and
         pin the wiring through an internal seam; or a structural IL assertion, which is
-        fragile and unlike anything else here.
+        fragile and unlike anything else here. (2026-10-03: the `InternalsVisibleTo` now
+        exists - Q86 added it for the audit-log redirect - so the second option costs only
+        the seam.)
   - [ ] **The grace values themselves are unmeasured.** `CleanExitGraceMilliseconds` (250)
         and `ShutdownExitGraceMilliseconds` (2000) are judgements: nobody has timed how long
         `OutlookComSession.Dispose` takes against a real Outlook, so nobody knows whether
