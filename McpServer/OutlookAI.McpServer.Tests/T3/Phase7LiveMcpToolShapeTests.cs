@@ -17,6 +17,7 @@ public sealed class Phase7LiveMcpToolShapeTests
 {
     [Fact]
     [Trait("Requires", "SmallHubStore")]
+    [Trait("Writes", "Nothing")]
     public async Task Search_TopOne_OnHubStore_SetsTruncated_AndTopHundredDoesNot()
     {
         LiveTestSettings settings = LiveTestSettings.Load();
@@ -53,6 +54,7 @@ public sealed class Phase7LiveMcpToolShapeTests
 
     [Fact]
     [Trait("Requires", "AddInRegistry")]
+    [Trait("Writes", "Nothing")]
     public async Task Health_OverStdio_OnThisMachine_HasOutlookVersionAndTuning()
     {
         await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync(

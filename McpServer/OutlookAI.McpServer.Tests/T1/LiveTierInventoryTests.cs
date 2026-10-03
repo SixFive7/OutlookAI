@@ -120,25 +120,26 @@ public sealed class LiveTierInventoryTests
         // A hand-curated population named in the gitignored live-test settings.
         "ProbePopulation",
 
-        // The one capability a dedicated test machine cannot be given.
+        // The two capabilities a dedicated test machine cannot be given - an Exchange profile.
         DelegateStore,
+        CachedExchange,
     };
 
     /// <summary>
     /// The capabilities no dedicated test machine can be given by configuration - the whole
-    /// definition of the production-only bucket.
+    /// definition of the production-only bucket, and of the tests the maintainer's read-only
+    /// workstation runs. Read from <see cref="LiveRunFilters.WorkstationOnlyCapabilities"/>, which
+    /// the run filters are derived from, so this pin and the filters cannot name different sets.
     /// <para>
-    /// One entry, and it is not an oversight. A delegate/shared mailbox is indexed with its
-    /// folder hierarchy FLATTENED, which is not a property a local PST can be made to have;
-    /// simulating it would produce a green test about a shape the real thing does not have.
-    /// Every other capability the VM can be built to provide, so a test naming one of those is
-    /// a VM test even if it has only ever run on the maintainer's machine.
+    /// Two entries, and both are Exchange. A delegate/shared mailbox is indexed with its folder
+    /// hierarchy FLATTENED, which is not a property a local PST can be made to have; and a cached
+    /// Exchange mailbox hands out 70-byte Exchange entry ids, which a PST does not (Q74 C1, for the
+    /// short-decoded-id check). Simulating either would produce a green test about a shape the real
+    /// thing does not have. Every other capability the VM can be built to provide, so a test naming
+    /// one of those is a VM test even if it has only ever run on the maintainer's machine.
     /// </para>
     /// </summary>
-    private static readonly string[] ProductionOnlyCapabilities =
-    {
-        DelegateStore,
-    };
+    private static readonly string[] ProductionOnlyCapabilities = LiveRunFilters.WorkstationOnlyCapabilities.ToArray();
 
     /// <summary>An Outlook to attach to, and nothing more specific than that.</summary>
     /// <remarks>
@@ -150,6 +151,9 @@ public sealed class LiveTierInventoryTests
 
     /// <summary>A delegate/shared mailbox, whose index namespace drops every intermediate folder.</summary>
     private const string DelegateStore = "DelegateStore";
+
+    /// <summary>A cached Exchange mailbox, whose entry ids are Exchange's 70-byte form (Q74 C1).</summary>
+    private const string CachedExchange = "CachedExchange";
 
     /// <summary>The trait names this suite used to carry and must never carry again.</summary>
     private static readonly string[] RetiredTraits = { "LiveTier" };
@@ -274,6 +278,226 @@ public sealed class LiveTierInventoryTests
         Assert.True(
             ProductionOnlyCapabilities.Length < AllCapabilities.Length,
             "every capability is production-only, which would mean the VM can run nothing");
+    }
+
+    [Fact]
+    public void TheGuestFilters_AreDerivedFromTheVocabulary()
+    {
+        // Literals on purpose: deriving the expected value the same way the code does would pass for
+        // any derivation. These are the strings a guest run types (Testbed/README.md section 4c).
+        Assert.Equal("Category=Live&Requires!=DelegateStore&Requires!=CachedExchange", LiveRunFilters.Guest);
+        Assert.Equal(
+            "Category=Live&Requires!=DelegateStore&Requires!=CachedExchange&Requires!=SearchIndex",
+            LiveRunFilters.GuestUnindexed);
+
+        // And every name the filters exclude is a real capability, so no exclusion is a typo.
+        Assert.Contains(LiveRunFilters.SearchIndex, AllCapabilities);
+        Assert.All(LiveRunFilters.WorkstationOnlyCapabilities, c => Assert.Contains(c, AllCapabilities));
+    }
+
+    [Fact]
+    public void EveryQuotedGuestFilter_IsTheDerivedOne()
+    {
+        // The guest filter is quoted where people and scripts read it. A copy that still says only
+        // Requires!=DelegateStore would schedule the cached-Exchange half of the short-id check on a
+        // guest, where it fails by design (Q74 C1) - so no copy may stop short of the derived one.
+        string[] quoting =
+        {
+            "Testbed/README.md",
+            "Docs/live-tier-on-the-vm.md",
+            "Testbed/guest/Reset-HubPopulation.ps1",
+        };
+
+        List<string> problems = new();
+        foreach (string file in quoting)
+        {
+            string text = File.ReadAllText(Path.Combine(RepoRoot(), file));
+            if (!text.Contains(LiveRunFilters.Guest, StringComparison.Ordinal))
+            {
+                problems.Add(file + " never quotes the guest filter " + LiveRunFilters.Guest);
+            }
+
+            int from = 0;
+            const string Head = "Category=Live&Requires!=DelegateStore";
+            for (int at = text.IndexOf(Head, from, StringComparison.Ordinal); at >= 0;
+                 at = text.IndexOf(Head, from, StringComparison.Ordinal))
+            {
+                if (string.CompareOrdinal(text, at, LiveRunFilters.Guest, 0, LiveRunFilters.Guest.Length) != 0)
+                {
+                    problems.Add(file + " quotes a guest filter that stops short of " + LiveRunFilters.Guest
+                        + " at offset " + at);
+                }
+
+                from = at + Head.Length;
+            }
+        }
+
+        string script = File.ReadAllText(Path.Combine(RepoRoot(), "Testbed", "guest", "Reset-HubPopulation.ps1"));
+        if (!script.Contains("'" + LiveRunFilters.GuestUnindexed + "'", StringComparison.Ordinal))
+        {
+            problems.Add("Testbed/guest/Reset-HubPopulation.ps1 does not print the unindexed guest's filter " + LiveRunFilters.GuestUnindexed);
+        }
+
+        // The opt-in refusal names the guest run too.
+        if (!LiveRunOptIn.DescribeRefusal(LiveRunOptIn.Verdict.Missing, "M", null).Contains(LiveRunFilters.Guest, StringComparison.Ordinal))
+        {
+            problems.Add("LiveRunOptIn.DescribeRefusal does not quote " + LiveRunFilters.Guest);
+        }
+
+        Assert.Empty(problems);
+    }
+
+    // ------------------------------------------------------------------ Q74 layer 1: the Writes trait
+
+    [Fact]
+    public void TheWritesTrait_HasOneValue_IsDeclaredPerMethod_AndOnlyOnLiveTests()
+    {
+        // The same discipline as Requires: per METHOD, from a closed vocabulary - here one value - and
+        // only where it means something. Whether a carrier really writes nothing is
+        // ReadOnlyLiveTestTests' question; this one keeps the trait itself honest.
+        List<string> problems = new();
+        int carriers = 0;
+        foreach (Type type in TestClasses())
+        {
+            foreach (string classLevel in TraitValues(type, LiveRunFilters.WritesTrait))
+            {
+                problems.Add(type.Name + ": class-level " + LiveRunFilters.WritesTrait + "='" + classLevel
+                    + "'. It is declared per METHOD - a class-level claim would cover a method added later that writes.");
+            }
+
+            bool liveClass = TraitValues(type, "Category").Contains("Live");
+            foreach (MethodInfo method in TestMethodsOf(type))
+            {
+                List<string> values = MethodTraitValues(method, LiveRunFilters.WritesTrait);
+                if (values.Count == 0)
+                {
+                    continue;
+                }
+
+                carriers++;
+                foreach (string value in values.Where(v => !string.Equals(v, LiveRunFilters.WritesNothing, StringComparison.Ordinal)))
+                {
+                    problems.Add(Name(method) + ": unknown " + LiveRunFilters.WritesTrait + " value '" + value
+                        + "' - the one value is '" + LiveRunFilters.WritesNothing + "', and absence means the test may write.");
+                }
+
+                if (values.Count > 1)
+                {
+                    problems.Add(Name(method) + ": declares " + LiveRunFilters.WritesTrait + " " + values.Count + " times");
+                }
+
+                if (!liveClass && !MethodTraitValues(method, "Category").Contains("Live"))
+                {
+                    problems.Add(Name(method) + ": " + LiveRunFilters.WritesTrait + "=" + LiveRunFilters.WritesNothing
+                        + " on a test that is not Category=Live, where it selects nothing and means nothing.");
+                }
+            }
+        }
+
+        Assert.Empty(problems);
+        Assert.True(carriers > 0, "no test carries " + LiveRunFilters.WritesTrait + " - the workstation filter would select nothing");
+    }
+
+    [Fact]
+    public void EveryTestOnlyTheWorkstationCanRun_DeclaresWritesNothing()
+    {
+        // Since Q72 the maintainer's workstation runs only tests that write nothing, and no test guest
+        // can be given an Exchange profile. A test that needs one and may write could therefore run
+        // NOWHERE: it is either read-only and says so, or it is a test nobody can run, which is a
+        // decision to make out loud rather than a test to keep. Control: before Q74 none of the seven
+        // carried the trait.
+        List<string> problems = new();
+        foreach (MethodInfo method in LiveTestMethods())
+        {
+            List<string> blocking = MethodTraitValues(method, "Requires").Where(ProductionOnlyCapabilities.Contains).ToList();
+            if (blocking.Count > 0 && !MethodTraitValues(method, LiveRunFilters.WritesTrait).Contains(LiveRunFilters.WritesNothing))
+            {
+                problems.Add(Name(method) + " (Requires " + string.Join(", ", blocking) + ") does not declare "
+                    + LiveRunFilters.WritesTrait + "=" + LiveRunFilters.WritesNothing
+                    + ": no guest can run it and the read-only workstation may not");
+            }
+        }
+
+        Assert.Empty(problems);
+    }
+
+    [Fact]
+    public void TheWorkstationFilter_IsDerivedFromTheVocabulary()
+    {
+        Assert.Equal(
+            "Category=Live&Writes=Nothing&(Requires=DelegateStore|Requires=CachedExchange)",
+            LiveRunFilters.Workstation);
+    }
+
+    [Fact]
+    public void EveryTraitKeyTheRunFiltersUse_IsCarriedByALiveTest()
+    {
+        // A key no test carries makes its clause select NOTHING (measured 2026-10-03:
+        // `Category=Live&Bogus=Thing` lists no test) - the safe direction, but a filter that has
+        // silently become an empty run proves nothing on the machine it is meant for. Every key the
+        // derived filters use must therefore be carried by at least one live test.
+        HashSet<string> carried = new(
+            LiveTestMethods().SelectMany(m => m.GetCustomAttributesData().Concat(m.DeclaringType!.GetCustomAttributesData()))
+                .Where(a => a.AttributeType == typeof(TraitAttribute) && a.ConstructorArguments.Count == 2)
+                .Select(a => (string)a.ConstructorArguments[0].Value!),
+            StringComparer.Ordinal);
+
+        foreach (string filter in new[] { LiveRunFilters.Guest, LiveRunFilters.GuestUnindexed, LiveRunFilters.Workstation })
+        {
+            foreach (string key in System.Text.RegularExpressions.Regex.Matches(filter, @"([A-Za-z]+)!?=").Select(m => m.Groups[1].Value))
+            {
+                Assert.True(carried.Contains(key), "the run filter " + filter + " uses the trait key '" + key
+                    + "', which no live test carries - that clause selects nothing, and the run is empty");
+            }
+        }
+    }
+
+    [Fact]
+    public void NoTraitValueAndNoRunFilter_UsesTheWordNone()
+    {
+        // To the VSTest filter a test that does NOT carry a trait has the value `None` for it (measured
+        // 2026-10-03: `Requires=None` lists all 3,144 tests without a Requires, `Bogus=None` every test).
+        // A positive clause `Key=None` therefore selects every test that never declared the key - which
+        // is how the Writes trait, first spelt `Writes=None`, selected all 128 live tests instead of its
+        // 54 carriers until a --list-tests count showed it. Control: with that spelling every assertion
+        // below fails.
+        Assert.False(
+            string.Equals(LiveRunFilters.WritesNothing, "None", StringComparison.OrdinalIgnoreCase),
+            "the Writes trait's value is 'None', which VSTest also gives every test that lacks the trait");
+        Assert.DoesNotContain(AllCapabilities, c => string.Equals(c, "None", StringComparison.OrdinalIgnoreCase));
+
+        foreach (string filter in new[] { LiveRunFilters.Guest, LiveRunFilters.GuestUnindexed, LiveRunFilters.Workstation })
+        {
+            Assert.False(
+                System.Text.RegularExpressions.Regex.IsMatch(filter, @"!?=None\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase),
+                "the run filter " + filter + " compares a trait with None, which every test lacking that trait matches");
+        }
+    }
+
+    [Fact]
+    public void EveryQuotedWorkstationFilter_IsTheDerivedOne()
+    {
+        // The two places a person reads the workstation run from. A copy that drifted from the derived
+        // string - a key misspelt, a capability dropped - is exactly the hand-kept filter Q74 retired.
+        List<string> problems = new();
+        foreach (string file in new[] { "Testbed/README.md", "Docs/live-tier-on-the-vm.md" })
+        {
+            string text = File.ReadAllText(Path.Combine(RepoRoot(), file));
+            if (!text.Contains(LiveRunFilters.Workstation, StringComparison.Ordinal))
+            {
+                problems.Add(file + " never quotes the workstation filter " + LiveRunFilters.Workstation);
+            }
+
+            foreach (System.Text.RegularExpressions.Match quoted in System.Text.RegularExpressions.Regex.Matches(text, @"Category=Live&Writes=[^\s`""']*"))
+            {
+                if (!string.Equals(quoted.Value, LiveRunFilters.Workstation, StringComparison.Ordinal))
+                {
+                    problems.Add(file + " quotes '" + quoted.Value + "', not the derived " + LiveRunFilters.Workstation);
+                }
+            }
+        }
+
+        Assert.Empty(problems);
     }
 
     [Fact]
@@ -721,5 +945,16 @@ public sealed class LiveTierInventoryTests
     private static string Name(MethodInfo method)
     {
         return method.DeclaringType!.Name + "." + method.Name;
+    }
+
+    private static string RepoRoot()
+    {
+        string testProjectDir = typeof(LiveTierInventoryTests).Assembly
+                .GetCustomAttributes<AssemblyMetadataAttribute>()
+                .FirstOrDefault(a => a.Key == "TestProjectDir")?.Value
+            ?? throw new InvalidOperationException("AssemblyMetadata 'TestProjectDir' is missing.");
+
+        // <repo>/McpServer/OutlookAI.McpServer.Tests/ -> <repo>
+        return Path.GetFullPath(Path.Combine(testProjectDir, "..", ".."));
     }
 }

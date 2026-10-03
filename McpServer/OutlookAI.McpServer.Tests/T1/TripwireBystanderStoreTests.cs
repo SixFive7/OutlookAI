@@ -124,19 +124,22 @@ public sealed class TripwireBystanderStoreTests
     [Fact]
     public void WithNoBystanderDeclaredTheIdentityAccountsAreUnchanged()
     {
-        // The grant is NOT narrowed by this work: two live tests
+        // The grant is NOT narrowed by the bystander work: two live tests
         // (LiveDraftTests.IdentityDrafts_..., LiveDraftOptionsTests.NewDraft_BusinessAccounts_...)
         // create one tagged, never-displayed draft per business account and delete it, and a
-        // Production profile declares no bystanders at all.
-        LiveTestSettings production = new()
+        // machine that declares no bystander keeps every non-hub primary in the grant. That
+        // machine is a test guest: since Q74 a Production profile - the read-only workstation -
+        // grants nothing at all (StoreWriteAllowlistTests pins that half).
+        LiveTestSettings guest = new()
         {
+            MachineProfile = LiveMachineProfile.Portable,
             TestHubStoreDisplayName = Hub,
             ExpectedStoreDisplayNames = new List<string> { Hub, Identity, "third@example.test" },
             ExpectedDelegateStoreDisplayNames = new List<string> { DelegateStore },
         };
 
-        IReadOnlyList<string> accounts = LiveStoreWriteGuard.Build(production)
-            .IdentityAccountsAmong(production.ExpectedStoreDisplayNames);
+        IReadOnlyList<string> accounts = LiveStoreWriteGuard.Build(guest)
+            .IdentityAccountsAmong(guest.ExpectedStoreDisplayNames);
 
         Assert.Equal(new[] { Identity, "third@example.test" }, accounts);
     }
@@ -223,6 +226,7 @@ public sealed class TripwireBystanderStoreTests
         // restating the list it was built from.
         LiveTestSettings settings = new()
         {
+            MachineProfile = LiveMachineProfile.Portable,
             TestHubStoreDisplayName = Hub,
             ExpectedStoreDisplayNames = new List<string> { Hub },
             BystanderStoreDisplayNames = new List<string> { Hub },
@@ -234,6 +238,31 @@ public sealed class TripwireBystanderStoreTests
             () => TripwireWatchSoundness.Require(
                 LiveStoreCountTripwire.WatchedStores(settings), allowlist, settings.BystanderStoreDisplayNames));
         Assert.Contains("designated test hub", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheHubDeclaredItsOwnBystander_IsStillRefused_OnAReadOnlyMachine()
+    {
+        // Q74 made the allowlist refuse every write on the workstation, so "the allowlist still
+        // permits a write on a bystander" can no longer catch the hub named as its own bystander
+        // there. The contradiction does not go away with the writes - the census exempts the hub,
+        // so such a bystander is checked by nothing - so it is asked on its own. Control: without
+        // that second question this configuration came back Sound.
+        LiveTestSettings settings = new()
+        {
+            TestHubStoreDisplayName = Hub,
+            ExpectedStoreDisplayNames = new List<string> { Hub, Identity },
+            BystanderStoreDisplayNames = new List<string> { Hub },
+        };
+        StoreWriteAllowlist allowlist = LiveStoreWriteGuard.Build(settings);
+        Assert.True(allowlist.RefusesEveryWrite);
+
+        TripwireWatchReport report = TripwireWatchSoundness.Assess(
+            LiveStoreCountTripwire.WatchedStores(settings), allowlist, settings.BystanderStoreDisplayNames);
+
+        Assert.False(report.Sound);
+        Assert.Contains(report.Violations, v => v.Contains("census exempts", StringComparison.Ordinal));
+        Assert.Contains("designated test hub", report.Refusal(), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -255,7 +284,8 @@ public sealed class TripwireBystanderStoreTests
     public void ADelegateMailboxIsABystanderInFactWithoutBeingDeclared()
     {
         // A Production profile needs no declaration: its delegate/shared mailboxes are already
-        // denied and already watched, which is the whole property.
+        // denied and already watched, which is the whole property. Since Q74 its other primaries
+        // are too - the read-only machine grants nothing - so they are policed beside them.
         LiveTestSettings production = new()
         {
             TestHubStoreDisplayName = Hub,
@@ -269,8 +299,8 @@ public sealed class TripwireBystanderStoreTests
             production.BystanderStoreDisplayNames);
 
         Assert.Empty(report.Bystanders);
-        Assert.Equal(new[] { DelegateStore }, report.Policed);
-        Assert.Equal(new[] { Identity }, report.Writable);
+        Assert.Equal(new[] { Identity, DelegateStore }, report.Policed);
+        Assert.Empty(report.Writable);
         Assert.False(report.ProvesNothing);
     }
 

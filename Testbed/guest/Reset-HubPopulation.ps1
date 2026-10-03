@@ -1244,8 +1244,10 @@ elseif ($window.MinutesLeft -le 0) {
 }
 else {
     Write-Line "The frontier test can catch a local-time misreading until $($window.DeadlineUtc.ToString($script:UtcFormat, $script:Invariant)) - $($window.MinutesLeft) min from now ($($window.MarginMinutes) min on this guest's UTC offset of $offset). START THE RUN NOW, by Testbed/README.md section 4c, with:"
-    $filter = 'Category=Live&Requires!=DelegateStore'
-    if (-not $plan.Indexed) { $filter = 'Category=Live&Requires!=DelegateStore&Requires!=SearchIndex' }
+    # The guest filters are derived in LiveRunFilters (T2) and pinned there: everything live except the
+    # tests naming a capability only an Exchange profile has (DelegateStore, CachedExchange - Q74 C1).
+    $filter = 'Category=Live&Requires!=DelegateStore&Requires!=CachedExchange'
+    if (-not $plan.Indexed) { $filter = 'Category=Live&Requires!=DelegateStore&Requires!=CachedExchange&Requires!=SearchIndex' }
     Write-Line "  the opt-in   `$env:OUTLOOKAI_LIVE_OPT_IN = '$env:COMPUTERNAME'"
     Write-Line "  the filter   --filter `"$filter`""
 }

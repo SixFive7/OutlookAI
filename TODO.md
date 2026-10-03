@@ -1,19 +1,13 @@
 # TODO
 
-- [ ] **ENFORCE, IN CODE, THAT THE WORKSTATION IS READ-ONLY FOR LIVE TESTS (Q72 decided; Q74 is how).**
-  The maintainer decided 2026-09-24: live tests on his workstation run read-only, always, and only
-  the fundamentally immovable ones - the Exchange-only tests - run there at all. `AGENTS.md` now
-  says so, but today nothing but the run filter enforces it, and the retirement review found two
-  gaps a filter cannot close. First, tests that write through the MCP server process (the stdio,
-  tier-3 tests) bypass the in-process `StoreWriteAllowlist` entirely. Second, a hand-kept filter
-  string is exactly what this repository's history shows drifting. The recommended shape
-  (Q74 a+c+d): a trait marking tests that never write, pinned by CI; a workstation machine profile
-  whose write allowlist refuses EVERY store, hub included, so an in-process write throws; the test
-  client refusing to call any write-capable MCP tool under that profile, so an out-of-process write
-  is refused before it is sent; and per-population declarations replacing Production/Portable.
-  **Waiting on:** the store-list split and the other Q69 work landing, since they touch the same
-  test infrastructure, and the maintainer's go on Q74. Until then no write-capable live test may be
-  started on the workstation at all.
+- [ ] **Put a release candidate's MCP server in front of one session on the workstation, without installing it.**
+  The manual pre-release checks (`Docs/release-manual-checks.md`, Q74 D2) exercise the Exchange-only
+  write paths through the MCP server, by hand, on the maintainer's own profile - and nothing can put a
+  candidate's server there today: `Tools/Switch-AddInBuild.ps1` copies and registers the ADD-IN only and
+  never touches the server. Until this exists the list runs right after a release is installed, with the
+  previous installer kept for rollback. Recommended shape: the same copy-then-register discipline as
+  Q81 - a server build copied out of any build folder and registered for one Claude Code session, never
+  globally - so it can never become the server every other session starts.
 
 - [ ] **What still stops a rebuilder rebuilding the test VM from this repository alone.**
   `Testbed/` is the entry point and holds the runnable half - parameter set, host and guest
@@ -237,11 +231,16 @@
   **State left on the machine:** 7 items tagged `[OutlookAI-McpTest]` remain in the
   `telefonie@xxlnet.nl` hub - **6 in Drafts, 1 in Outbox** - found by a read-only `search` after
   the run was stopped. They are inert: drafts sit there, and the Outbox item is a self-addressed
-  test seed, so the worst case is a test mail arriving in the test mailbox. **The next successful
-  live run's post-run sweep covers Drafts and Outbox and will delete them** - that is the
-  sanctioned cleanup path and it needs no special handling. They were NOT removed by hand: the
-  shipped tools cannot (`discard_draft` only touches drafts from its own session, `move_mail`
-  refuses Outbox and Deleted Items), and the safety envelope forbids ad-hoc deletion.
+  test seed, so the worst case is a test mail arriving in the test mailbox. They were NOT removed by
+  hand: the shipped tools cannot (`discard_draft` only touches drafts from its own session,
+  `move_mail` refuses Outbox and Deleted Items), and the safety envelope forbids ad-hoc deletion.
+  **The cleanup path this entry used to name is gone (Q74, 2026-10-03).** It said the next
+  successful live run's post-run sweep would delete them. That hub is on the maintainer's
+  workstation, which is read-only for live tests since Q72 and enforced in code since Q74: no live
+  run there may delete anything, the test hub included, and the artifact sweep now only COUNTS
+  on that machine - so nothing automated will ever remove these seven. Removing them is the
+  maintainer's call and his hand (in Outlook, by the tag), or they stay, inert; an agent does
+  neither.
 
   **What happened.** `LiveDisconnectRecoveryTests.OutlookExit_ReleasesHeldRefsInBackground_
   HealthProbes_GatewayReattaches` ran for **22.5 minutes** and was still going. Outlook had been

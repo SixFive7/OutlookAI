@@ -32,8 +32,9 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// <para>
 /// <b>WHAT IT IS NOT.</b> It says only that a live run was meant. It does not make any test
 /// read-only, and it does not decide which machine may run which test. The maintainer's
-/// workstation is read-only for live tests, always (AGENTS.md, Mailbox Safety); how that rule is
-/// enforced in code is the maintainer's open decision (Q74), and nothing here pre-empts it.
+/// workstation is read-only for live tests, always (AGENTS.md, Mailbox Safety), and since Q74
+/// (2026-10-03) that is enforced in code by the machine's declared profile, not by this variable:
+/// see <see cref="LiveWriteAccess"/>.
 /// </para>
 /// </summary>
 public static class LiveRunOptIn
@@ -84,6 +85,21 @@ public static class LiveRunOptIn
         return string.Equals(processValue.Trim(), machineName, StringComparison.OrdinalIgnoreCase)
             ? Verdict.Open
             : Verdict.OtherMachine;
+    }
+
+    /// <summary>
+    /// What <see cref="Evaluate"/> decides for THIS process, without throwing. For a caller that has
+    /// to know whether a live run is happening at all before it decides anything else - the
+    /// test-side MCP client's write posture (<see cref="LiveWriteAccess.StdioPostureFor"/>) - and
+    /// must not read a settings file when it is not.
+    /// </summary>
+    public static Verdict CurrentVerdict()
+    {
+        return Evaluate(
+            Environment.GetEnvironmentVariable(Variable, EnvironmentVariableTarget.Process),
+            ReadSaved(EnvironmentVariableTarget.User),
+            ReadSaved(EnvironmentVariableTarget.Machine),
+            Environment.MachineName);
     }
 
     /// <summary>
@@ -139,13 +155,14 @@ public static class LiveRunOptIn
             + "PowerShell session and for that run only, and start the run from there:"
             + " $env:" + Variable + " = '<the guest's computer name; $env:COMPUTERNAME prints it>'"
             + " then dotnet test McpServer\\OutlookAI.McpServer.Tests\\OutlookAI.McpServer.Tests.csproj -c Release --filter "
-            + "\"Category=Live&Requires!=DelegateStore\" - on a guest both lines go into the -Script of "
+            + "\"" + LiveRunFilters.Guest + "\" - on a guest both lines go into the -Script of "
             + "Testbed/guest/Register-InteractiveTask.ps1 (Testbed/README.md, section 4c)."
             + " The value must equal the computer name of the machine the run is on, so a value carried to another "
             + "machine opens nothing, and it must never be saved with setx or in the user or machine environment."
             + " THE MAINTAINER'S WORKSTATION IS READ-ONLY FOR LIVE TESTS, ALWAYS (AGENTS.md, Mailbox Safety): this "
             + "variable only says a run was intended - it makes no test read-only, and it must never be set there to "
-            + "run a test that can write.";
+            + "run a test that can write. The workstation's one live run is the read-only one in Testbed/README.md, "
+            + "section 4d, with the filter " + LiveRunFilters.Workstation + ".";
     }
 
     /// <summary>
