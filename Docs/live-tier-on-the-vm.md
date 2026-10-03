@@ -3636,8 +3636,8 @@ never had. The cost is the 14 to 18 minutes already on each hub, which the 90-mi
   `Testbed/host/Set-GuestClockFrozen.ps1 -VMName <guest> -Verify` (exit 0 `FROZEN` or no suite), Outlook started
   NOT elevated on the tier profile (`Testbed/guest/Start-OutlookUnelevated.ps1`), the suite, rest. No restart and
   no hub rebuild after the restore: the restore puts the hub back as it was built and wipes every artifact, which
-  is why the per-run rebuild (section 3b) goes. The Outlook start is what step 9a used to leave the suite besides
-  its rebuild, and it was learnt the hard way - section 5's runner run 1 below.
+  is why the per-run rebuild (section 3b) goes. The Outlook start is the other thing step 9a used to hand the
+  suite, besides its rebuild; section 5 says why it is there.
 * **The guard**, `-Verify`, read-only: time sync off, the guest restored from the recorded checkpoint, and its
   clock no more than 2 minutes before the frozen instant and no more than 45 minutes after it. A restart or cold
   boot after the restore, time sync turned back on, or a hand-set clock each fail it, naming the cause.
@@ -3658,33 +3658,60 @@ never had. The cost is the 14 to 18 minutes already on each hub, which the 90-mi
 * **`Testbed/host/Invoke-LiveTierOnGuest.ps1`**, the guest runner (merged from the guest-one work at `3e0ad4f`,
   while this was being done): its default start and resting checkpoints are now the frozen ones, and its
   `-SelfTest` holds them to `frozenClocks`; a start checkpoint whose time sync is off - read off the checkpoint
-  itself - makes its PREPARE step the clock guard alone: no `Restart-Guest.ps1`, no hub rebuild, and
-  `Set-GuestClockFrozen.ps1 -Verify` must say `FROZEN` or the run stops as not tested; `-RestOnGreen` from a
+  itself - makes its PREPARE step the clock guard and the Outlook start alone: no `Restart-Guest.ps1`, no hub
+  rebuild, and `Set-GuestClockFrozen.ps1 -Verify` must say `FROZEN` or the run stops as not tested; it reads the
+  guest's crash events from the guest's own clock (section 5 says why); `-RestOnGreen` from a
   frozen checkpoint is refused, because a green checkpoint stands a run later than the recorded instant; and
   `-Checkpoint` with an unfrozen checkpoint still runs the old way, restart and step 9a included. Had it run a
   frozen checkpoint unchanged, its PREPARE's restart would have been refused (exit 2) and the run stopped -
   loudly, not on a moved clock.
 
-**5. The first runs from the frozen checkpoints** - this branch's suite (`3fb921e` on guest two, `a6e90de` on
-guest one), staged and run in README section 4c's order by a scratch driver that does what the runner's STAGE
-and RUN do, with the guard between them and no PREPARE:
+**5. The first runs from the frozen checkpoints** - this branch's suite, first (`3fb921e` on guest two, `a6e90de`
+on guest one) staged and run in README section 4c's order by a scratch driver that does what the runner's STAGE and
+RUN do, with the guard between them; then, once the runner was merged, through `Invoke-LiveTierOnGuest.ps1` with the
+section 4 changes (`1b5da1e`, `af3ba68`, `2f42c74`) - from the second on with `-RestingCheckpoint` naming the
+guest's unfrozen resting checkpoint, which stays the resting one until this work is merged;
+and X and Y, the scratch driver again, to compare the frozen and the real clock on one commit:
 
 | Guest | Run | Guard before the suite | Suite | Safety |
 | --- | --- | --- | --- | --- |
 | `OutlookAI-Unindexed` | 1 | `FROZEN`, 110 s after the instant | 79: 54 passed, 25 failed - OUTLOOK.EXE crashed 3.5 min in (`OLMAPI32.DLL`, `0xc0000005`) and every later compose test met `RPC server is unavailable` | 0 tagged artifacts (2 late sent copies purged); tripwire 0 failures, 0 notes |
 | `OutlookAI-Unindexed` | 2 | `FROZEN` | **79 of 79 passed**, no crash | 0 tagged artifacts; tripwire 0 failures, 0 notes |
 | `OutlookAI-Indexed` | 1 (`a6e90de`, before master's guest-one fixes) | `FROZEN`, 2 min after the instant | 122: 101 passed, 21 failed - 13 `Store 'Corpus A' not found among 3 discovered index scopes` (and one `store scope not discoverable`), 7 `0x80041607` (`QUERY_E_TIMEDOUT`) on folder-scoped searches and `Search_TopOne` at exactly 100: the failures section 4.2e met on the real clock and master fixed at `3e0ad4f` (section 4.2f) - none a date check, and none `RPC server is unavailable`. The frontier test passed - `Hub population fresh ... its newest item is 26 min old ... under 115 min` - the corpus gate said `Freshness: OK`, and the date-range test asked for `the 30 days before corpus 'vm-indexed''s anchor`, 10 rows in 208 ms | 0 tagged artifacts; tripwire 0 failures, 0 notes |
-RUNNER_ROWS
+| `OutlookAI-Unindexed` | runner A (`1b5da1e`, master merged; Outlook not started before the suite) | `FROZEN`, 99 s after the instant | 81: 55 passed, 26 failed - Outlook lost from `UpdateDraft_AddsAndRemovesAttachments` on, every later compose test `RPC server is unavailable`; the runner counted 0 crashes because it searched the guest's log from the HOST's clock (fixed, below) | 0 tagged artifacts; tripwire 0 failures |
+| `OutlookAI-Unindexed` | runner B (`af3ba68`, Outlook started NOT elevated before the suite) | `FROZEN` | 81: 55 passed, 26 failed - the same, from the same test | 0 tagged artifacts; tripwire 0 failures |
+| `OutlookAI-Unindexed` | X (`af3ba68`, the scratch driver, Outlook started, the guest's events read before the rest) | `FROZEN` | **81 of 81**, no crash event | 0 tagged artifacts; tripwire 0 failures |
+| `OutlookAI-Unindexed` | Y (`af3ba68`, the same state on the REAL clock: `CP-13B-LIVE-GREEN`, time sync on, no restart, no rebuild, Outlook started) | - | **81 of 81** | 0 tagged artifacts; tripwire 0 failures |
+| `OutlookAI-Indexed` | runner (`af3ba68`) | `FROZEN`, 85 s after | 127: 114 passed, 13 failed - 12 compose tests on `RPC server is unavailable`, and `LiveFolderIdentityTests.FolderId_Survives...` (a moved folder not yet found under its new parent - COM folder calls, no clock in them) | 0 tagged artifacts; tripwire 0 failures; frontier `24 min old`, corpus `OK` |
+| `OutlookAI-Indexed` | runner (`2f42c74`), alone on the host | `FROZEN`, 77 s after | **127 of 127**, 0 crashes searched from the guest's clock | 0 tagged artifacts; tripwire 0 failures, 0 notes; frontier `24 min old ... under 115 min`, corpus `Freshness: OK`, the window from the data, 10 rows in 42 ms |
+| `OutlookAI-Unindexed` | runner (`2f42c74`), alone on the host | `FROZEN`, 77 s after | **81 of 81**, 0 crashes searched from the guest's clock; the two `PROVED NOTHING` lines this guest always prints | 0 tagged artifacts; tripwire 0 failures |
 
-**Run 1's crash is not the clock's:** the other agent's runner, on master with the hub rebuilt and the real clock
-(`20261003-202603-indexed-dc1b5c5d51cd`, guest one from `CP-18C-ALL-KINDS`, the same hour), crashed OUTLOOK.EXE
-in the same compose collection with the same `RPC server is unavailable` failures, and run 2 from the same frozen
-checkpoint was green. The two clean dumps that would tell the cause need a debugger the guests cannot have; the
-crash is recorded in `TODO.md` with that run.
+**The compose failures are intermittent, and nothing ties them to the clock.** The same commit failed through the
+runner from the frozen checkpoint (B) and passed 81 of 81 from it 25 minutes later (X), and 81 of 81 on the real clock
+from the same disk state (Y); on guest one one frozen run failed and the next was 127 of 127; and the runner's run of
+master on guest one on the real clock with the hub rebuilt, the same hour (`20261003-202603-indexed-dc1b5c5d51cd`,
+section 4.2f), failed the same way with an OUTLOOK.EXE crash. In every failing run Outlook went away mid-compose; in
+run 1 the guest's log recorded the crash (`OLMAPI32.DLL`, `0xc0000005`). Neither host load nor the runner separates
+the failing runs from the green ones. Its rate is not measured; `TODO.md` carries it.
+
+**Two things the first runner runs taught, both fixed here.** (1) On a frozen guest the runner's crash count was
+blind: it searched the guest's Application log from the HOST's clock, hours ahead of every event the guest wrote -
+`Get-CrashEventsSince` now reads the guest's own clock before the suite, and `-SelfTest` pins it. Any other script
+that hands a host instant to a frozen guest has the same trap; none does today. (2) A frozen start must still hand
+the suite the state step 9a used to: Outlook running NOT elevated on the tier profile, its window up - the frozen
+checkpoint holds Outlook closed so that staging can swap the commit in, and the suite then started Outlook itself, by
+COM and without a window. The runner now starts it with `Testbed/guest/Start-OutlookUnelevated.ps1` after the guard.
+(It did not stop runner B's failure; it restores the established hand-over, which every green run before Q130 had.)
+
+**MSBuild with files the host dated after the guest's clock** - the other unmeasured item of section 4.1f: every run
+above staged the commit's source with the host's file times, hours after the frozen clock, and every one built it,
+proved it `TEST-READY` and ran it. Whether `dotnet test` then rebuilds every run - its outputs can never be newer
+than those inputs - was not read off a build log, and the suite times do not say (7 min 37 s to 8 min 56 s frozen,
+7 min 55 s on the real clock).
 
 **6. Q130 (b), the window.** `LiveIndexSearchTests.ProbeParity_DateRangeQuery_HitsUnder2s` now asks for the 30
 days BEFORE the declared corpus's anchor - `[2026-09-03, 2026-10-03)` for Corpus A, which select the same 24,596
-of its items on every run - and only with no corpus declared for the last 30 days of the clock
+of its items on every run - and, only where no corpus is declared, the last 30 days of the clock
 (`T2/LiveDataWindow.cs`; `T1/LiveDataWindowTests` pins both branches, the 24,596, and from the compiled IL that the
 test computes no window of its own). On a frozen guest the two coincide; on a real clock the test now keeps timing
 a date predicate over the big store after 2026-11-01.

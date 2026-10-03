@@ -52,7 +52,10 @@
   unavailable`) and the runner's run of the same hour on guest one on the real clock
   (`20261003-202603-indexed-dc1b5c5d51cd`, section 4.2f: three `LiveDraftOptionsTests` failing the same
   way). The next run from the same frozen checkpoint was green, 79 of 79, so it is intermittent, and it
-  is not the clock. Section 4.1e's crashes were heap damage from COM children left unreleased (`9664aa0`).
+  is not the clock: later the same evening `af3ba68` failed the same way through the runner from the
+  frozen checkpoint, then passed 81 of 81 from it and 81 of 81 on the real clock from the same disk state,
+  and guest one failed once frozen and then passed 127 of 127 (section 4.4 has the runs). Section 4.1e's
+  crashes were heap damage from COM children left unreleased (`9664aa0`).
   Directions: (1) count it - the frozen checkpoints make every run start identical, so N runs of the
   compose collection alone give a rate; (2) bisect `fd2c58b` (80 of 80 three times) to `af1fd3f` with
   that rate; (3) a crash dump - excluded: no debugger on the guests (Dependencies). Recommended: (1),
