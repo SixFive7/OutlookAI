@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
     ============================================================================================
     WRITTEN 2026-10-03, WHEN THE GITHUB CI WAS REMOVED. DRY-RUN ON THE MAINTAINER'S WORKSTATION.
@@ -113,8 +113,11 @@
     only one it had and this machine can hold more; the signature and the stamp diff are read
     back; the tag targets the exact commit that was pushed.
 
-    WINDOWS POWERSHELL 5.1 AND POWERSHELL 7 BOTH. No ternary, no `??`, ASCII only. It needs both
-    installed all the same: step 5 runs the guards under each.
+    WINDOWS POWERSHELL 5.1 AND POWERSHELL 7 BOTH. No ternary, no `??`, and ASCII apart from the
+    changelog palette's twelve icons, which is why the file is saved as UTF-8 WITH a byte order mark:
+    without one, Windows PowerShell 5.1 reads it in the ANSI code page (Tools/Checks/
+    check-powershell-51.ps1, check 2). It needs both installed all the same: step 5 runs the guards
+    under each.
 
 .PARAMETER VersionBump
     major.minor.patch, as the workflow's version_bump input: 0.0.1 a patch, 0.1.0 a minor, 1.0.0 a
@@ -211,17 +214,23 @@ $ReleaseBodyLimit = 125000
 #
 # The palette an entry opens with, in the order the legend lists it: BrowserAI's, which the maintainer
 # approved there (its Q192b). This list is the DECISION and the legend at the top of CHANGELOG.md is the
-# PUBLICATION; step 3 holds the two identical. Code points, because this file is ASCII (Q78).
+# PUBLICATION; step 3 holds the two identical. The icons are written as themselves, which is why this
+# file carries a byte order mark (Q78). The self-test holds each one to its code points, so an editor
+# that drops a variation selector is caught.
 $ChangelogPalette = @(
-    '2728|new capability', '1F41B|fix', '1F527|behaviour or configuration change',
-    '1F512|security or permissions', '1F5D1 FE0F|removal or deprecation', '1F4A5|breaking, or the reader must act',
-    '1F4DD|documentation', '2705|tests and the gate', '1F4E6|packaging, installer, release pipeline',
-    '26A1|performance', '267B FE0F|refactor with no behaviour change', '2B06 FE0F|dependency move'
-) | ForEach-Object {
-    $paletteParts = $_ -split '\|', 2
-    $paletteIcon = (($paletteParts[0] -split ' ') | ForEach-Object { [char]::ConvertFromUtf32([Convert]::ToInt32($_, 16)) }) -join ''
-    [pscustomobject]@{ Icon = $paletteIcon; Means = $paletteParts[1]; CodePoints = $paletteParts[0] }
-}
+    [pscustomobject]@{ Icon = '✨'; Means = 'new capability' },
+    [pscustomobject]@{ Icon = '🐛'; Means = 'fix' },
+    [pscustomobject]@{ Icon = '🔧'; Means = 'behaviour or configuration change' },
+    [pscustomobject]@{ Icon = '🔒'; Means = 'security or permissions' },
+    [pscustomobject]@{ Icon = '🗑️'; Means = 'removal or deprecation' },
+    [pscustomobject]@{ Icon = '💥'; Means = 'breaking, or the reader must act' },
+    [pscustomobject]@{ Icon = '📝'; Means = 'documentation' },
+    [pscustomobject]@{ Icon = '✅'; Means = 'tests and the gate' },
+    [pscustomobject]@{ Icon = '📦'; Means = 'packaging, installer, release pipeline' },
+    [pscustomobject]@{ Icon = '⚡'; Means = 'performance' },
+    [pscustomobject]@{ Icon = '♻️'; Means = 'refactor with no behaviour change' },
+    [pscustomobject]@{ Icon = '⬆️'; Means = 'dependency move' }
+)
 # Keep a Changelog's groups, in the order that format fixes them; each at most once in a section.
 $ChangelogGroups = @('Added', 'Changed', 'Deprecated', 'Removed', 'Fixed', 'Security')
 # The longest a headline may be, its full stop included. BrowserAI's budget, CHOSEN and not measured:
@@ -234,15 +243,17 @@ $RestatementBudget = 4
 # The eight characters a person typing into a text box does not produce, refused in everything the
 # release page shows - the preamble, every headline, the legend and the body's own words. A backticked
 # code span is exempt: it quotes something that exists.
+# Written as [char] numbers, never as themselves: PowerShell's parser reads a curly quote as a quote and
+# a dash as a hyphen, so the characters cannot sit in this file's own string literals.
 $UntypedCharacters = @(
-    '2014|an em dash (U+2014); write a hyphen, a comma or two sentences',
-    '2013|an en dash (U+2013); write a hyphen or the word "to"',
-    '2018|a curly opening quote (U+2018); write a straight apostrophe',
-    '2019|a curly closing quote (U+2019); write a straight apostrophe',
-    '201C|a curly opening double quote (U+201C); write a straight double quote',
-    '201D|a curly closing double quote (U+201D); write a straight double quote',
-    '2026|an ellipsis character (U+2026); write three full stops',
-    '00A0|a non-breaking space (U+00A0); write an ordinary space'
+    [pscustomobject]@{ Character = [char]0x2014; Says = 'an em dash (U+2014); write a hyphen, a comma or two sentences' },
+    [pscustomobject]@{ Character = [char]0x2013; Says = 'an en dash (U+2013); write a hyphen or the word "to"' },
+    [pscustomobject]@{ Character = [char]0x2018; Says = 'a curly opening quote (U+2018); write a straight apostrophe' },
+    [pscustomobject]@{ Character = [char]0x2019; Says = 'a curly closing quote (U+2019); write a straight apostrophe' },
+    [pscustomobject]@{ Character = [char]0x201C; Says = 'a curly opening double quote (U+201C); write a straight double quote' },
+    [pscustomobject]@{ Character = [char]0x201D; Says = 'a curly closing double quote (U+201D); write a straight double quote' },
+    [pscustomobject]@{ Character = [char]0x2026; Says = 'an ellipsis character (U+2026); write three full stops' },
+    [pscustomobject]@{ Character = [char]0x00A0; Says = 'a non-breaking space (U+00A0); write an ordinary space' }
 )
 # Where -CheckChangelog writes the body it would publish.
 $ChangelogCheckDirectory = 'changelog-check'
@@ -711,9 +722,7 @@ function Get-UntypedCharacterProblems {
     $plain = [regex]::Replace($Text, '`[^`]*`', '')
     $problems = @()
     foreach ($u in $UntypedCharacters) {
-        $parts = $u -split '\|', 2
-        $character = [string][char][Convert]::ToInt32($parts[0], 16)
-        if ($plain.IndexOf($character, [StringComparison]::Ordinal) -ge 0) { $problems += "$Where carries $($parts[1])." }
+        if ($plain.IndexOf([string]$u.Character, [StringComparison]::Ordinal) -ge 0) { $problems += "$Where carries $($u.Says)." }
     }
     return $problems
 }
@@ -1060,8 +1069,7 @@ function Invoke-SelfTest {
     }
     $palette = @($ChangelogPalette)
     Test-Case 'the palette is twelve icons' 12 $palette.Count
-    Test-Case 'in the approved order' '2728|1F41B|1F527|1F512|1F5D1 FE0F|1F4A5|1F4DD|2705|1F4E6|26A1|267B FE0F|2B06 FE0F' (@($palette | ForEach-Object { $_.CodePoints }) -join '|')
-    Test-Case 'each icon is exactly its code points' (@($palette | ForEach-Object { $_.CodePoints }) -join '|') (@($palette | ForEach-Object { Get-CodePointText $_.Icon }) -join '|')
+    Test-Case 'exactly these code points, in the approved order' '2728|1F41B|1F527|1F512|1F5D1 FE0F|1F4A5|1F4DD|2705|1F4E6|26A1|267B FE0F|2B06 FE0F' (@($palette | ForEach-Object { Get-CodePointText $_.Icon }) -join '|')
     Test-Case 'each with its meaning, the first and the last' 'new capability|dependency move' ($palette[0].Means + '|' + $palette[11].Means)
     $icon = @{}
     foreach ($p in $palette) { $icon[$p.Means] = $p.Icon }
@@ -1083,7 +1091,7 @@ function Invoke-SelfTest {
     Test-Case 'and its preamble is the prose above the first group' "This release does two things.`nIt wraps.`n`nA second paragraph." $clean.Preamble
     $broken = @(
         @('an entry with no icon', "- $fixIcon **A fixed thing.**", '- **A fixed thing.**', 'not in the shape'),
-        @('an icon the palette does not have', "- $fixIcon **A fixed thing.**", ('- ' + [char]::ConvertFromUtf32(0x1F389) + ' **A fixed thing.**'), 'twelve icons'),
+        @('an icon the palette does not have', "- $fixIcon **A fixed thing.**", '- 🎉 **A fixed thing.**', 'twelve icons'),
         @('a headline nobody made bold', "- $fixIcon **A fixed thing.**", "- $fixIcon A fixed thing.", 'not in the shape'),
         @('a headline of two sentences', "- $fixIcon **A fixed thing.**", "- $fixIcon **Two sentences. That is one too many.**", 'more than one sentence'),
         @('a headline with no full stop', "- $fixIcon **A fixed thing.**", "- $fixIcon **A fixed thing**", 'full stop'),
@@ -1258,23 +1266,17 @@ function Invoke-Gh {
     return [pscustomobject]@{ ExitCode = $LASTEXITCODE; Lines = $out; Text = (($out | Out-String).Trim()) }
 }
 
-# One file as a revision holds it, decoded as the UTF-8 it is - or $null when git cannot produce it.
-# Not through Invoke-Git: a PowerShell pipe decodes a program's output in the console's code page, and
+# One file as a revision holds it, read as the UTF-8 it is - or $null when git cannot produce it. Not
+# through Invoke-Git: a PowerShell pipe decodes a program's output in the console's code page, and
 # CHANGELOG.md carries emoji and dashes that would arrive garbled and compare unequal to themselves.
+# Invoke-Logged hands git a FILE for its output, so the bytes land as git wrote them.
 function Get-GitFileText {
-    param([string] $Revision, [string] $Path)
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName = 'git'
-    $psi.Arguments = '-C "' + $RepoRoot + '" show "' + $Revision + ':' + $Path + '"'
-    $psi.UseShellExecute = $false
-    $psi.CreateNoWindow = $true
-    $psi.RedirectStandardOutput = $true
-    $psi.StandardOutputEncoding = New-Object System.Text.UTF8Encoding($false)
-    $p = [System.Diagnostics.Process]::Start($psi)
-    $text = $p.StandardOutput.ReadToEnd()
-    $p.WaitForExit()
-    if ($p.ExitCode -ne 0) { return $null }
-    return $text.TrimStart([char]0xFEFF)
+    param([string] $Revision, [string] $Path, [string] $ScratchDirectory)
+    New-Item -ItemType Directory -Force -Path $ScratchDirectory | Out-Null
+    $stem = Join-Path $ScratchDirectory ('git-show-' + ($Revision -replace '[^A-Za-z0-9.]', '_'))
+    $r = Invoke-Logged -FilePath 'git' -ArgumentList @('-C', (Format-Argument $RepoRoot), 'show', ($Revision + ':' + $Path)) -LogStem $stem -TimeoutMinutes 2
+    if ($r.TimedOut -or $r.ExitCode -ne 0) { return $null }
+    return [System.IO.File]::ReadAllText($r.Out, (New-Object System.Text.UTF8Encoding($false))).TrimStart([char]0xFEFF)
 }
 
 function Resolve-ShellExe([string] $Edition) {
@@ -1319,7 +1321,7 @@ function Invoke-ChangelogCheck {
     if ($check.Entries -gt 0 -and -not $check.Preamble) { Write-Host '  NOTE no preamble yet: a release with -Execute refuses until the section opens with one.' }
     $tag = Invoke-Git -Arguments @('describe', '--tags', '--abbrev=0', '--match', 'v*', 'HEAD') -AllowFailure
     if ($tag.ExitCode -eq 0 -and $tag.Text) {
-        $tagged = Get-GitFileText -Revision $tag.Text -Path 'CHANGELOG.md'
+        $tagged = Get-GitFileText -Revision $tag.Text -Path 'CHANGELOG.md' -ScratchDirectory (Join-Path $WorkRoot $ChangelogCheckDirectory)
         if ($null -eq $tagged) { $problems += "git could not read CHANGELOG.md at $($tag.Text)." }
         else {
             $moved = Test-ReleasedSectionsUnchanged -ChangelogText $text -TaggedText $tagged -Tag $tag.Text
@@ -1459,7 +1461,7 @@ if ($preambleVerdict.Problem) { throw "REFUSING: $($preambleVerdict.Problem)" }
 if ($preambleVerdict.Note) { Say "  NOTE $($preambleVerdict.Note)" }
 if ($latestTag) {
     $null = Invoke-Git -Arguments @('fetch', '--quiet', '--no-tags', $Remote, "+refs/tags/${latestTag}:refs/tags/${latestTag}")
-    $taggedChangelog = Get-GitFileText -Revision "refs/tags/$latestTag" -Path 'CHANGELOG.md'
+    $taggedChangelog = Get-GitFileText -Revision "refs/tags/$latestTag" -Path 'CHANGELOG.md' -ScratchDirectory $logDir
     if ($null -eq $taggedChangelog) { throw "REFUSING: git could not read CHANGELOG.md at $latestTag, the latest release, so nothing shows its released sections are unchanged." }
     $moved = Test-ReleasedSectionsUnchanged -ChangelogText $changelogText -TaggedText $taggedChangelog -Tag $latestTag
     if ($moved) { throw "REFUSING: $moved" }
@@ -1649,7 +1651,7 @@ $stampCommit = (Invoke-Git -Arguments @('commit-tree', $tree, '-p', $head, '-m',
 $diffProblem = Test-StampDiff -NumstatLines @((Invoke-Git -Arguments @('diff', '--numstat', $head, $stampCommit)).Lines)
 if ($diffProblem) { throw "REFUSING: $diffProblem" }
 # Read back: the release body's line ranges were computed from $stampedText and are true of no other text.
-$committedChangelog = Get-GitFileText -Revision $stampCommit -Path 'CHANGELOG.md'
+$committedChangelog = Get-GitFileText -Revision $stampCommit -Path 'CHANGELOG.md' -ScratchDirectory $logDir
 if ($null -eq $committedChangelog -or -not [string]::Equals((ConvertTo-LfText $committedChangelog), (ConvertTo-LfText $stampedText), [StringComparison]::Ordinal)) {
     throw "REFUSING: CHANGELOG.md in the stamp commit $stampCommit is not the text the release body's line ranges were computed from."
 }
