@@ -120,48 +120,6 @@ namespace OutlookAI.Core.Com
         /// </summary>
         private const string ConversationIndexTrackingDasl = "http://schemas.microsoft.com/mapi/proptag/0x3016000B";
 
-        /// <summary>PR_SUBJECT (PidTagSubject, 0x0037, PT_UNICODE).</summary>
-        private const string SubjectDasl = "http://schemas.microsoft.com/mapi/proptag/0x0037001F";
-
-        /// <summary>
-        /// True for an Exchange store, and for one whose <c>ExchangeStoreType</c> will not read - the
-        /// fail-safe side for a path only a non-Exchange store may take.
-        /// </summary>
-        private static bool IsExchangeStoreOrUnknown(object? store)
-        {
-            if (store == null)
-            {
-                return true;
-            }
-
-            try
-            {
-                return SpecialFolders.IsExchangeStore((int)((dynamic)store).ExchangeStoreType);
-            }
-            catch (Exception ex) when (IsComCallFailure(ex))
-            {
-                return true;
-            }
-        }
-
-        /// <summary>
-        /// Writes PR_SUBJECT through the PropertyAccessor and reports whether it took. Unlike
-        /// <see cref="TrySetProperty"/> it also absorbs the <see cref="UnauthorizedAccessException"/> a
-        /// refused property write raises ("does not support this operation", measured 2026-10-03), so
-        /// the caller can fall back instead of failing the draft.
-        /// </summary>
-        private static bool TryWriteSubjectProperty(dynamic item, string subject)
-        {
-            try
-            {
-                return TrySetPropertyString(item, SubjectDasl, subject);
-            }
-            catch (UnauthorizedAccessException)
-            {
-                return false;
-            }
-        }
-
         /// <summary>
         /// PR_CONVERSATION_INDEX (PT_BINARY). LIVE-PROVEN on this build (batch A - A3):
         /// assigning <c>MailItem.Subject</c> on a derived draft makes Outlook REGENERATE
@@ -3942,20 +3900,7 @@ namespace OutlookAI.Core.Com
                             ?? TryGetPropertyString(sourceItem, ConversationTopicDasl);
                         string? childIndex = TryGetString(() => (string?)draft.ConversationIndex);
 
-                        // On a store that is not Exchange the subject goes in as PR_SUBJECT, past
-                        // the object model's Subject setter. MEASURED on a PST (guest live runs 3
-                        // and 4, 2026-10-03): after MailItem.Subject the renamed reply kept index
-                        // tracking, the child index and the source topic once they were written
-                        // back, and still had a ConversationId that was not its index GUID - the
-                        // one the setter's regenerated header gave it - and that id refuses a write
-                        // ("does not support this operation"). Exchange computes the id on the
-                        // server and keeps the setter exactly as before; a store whose kind will not
-                        // read counts as Exchange, and a refused direct write falls back to it.
-                        if (IsExchangeStoreOrUnknown(sourceStore)
-                            || !TryWriteSubjectProperty(draft, options!.SubjectOverride!))
-                        {
-                            draft.Subject = options!.SubjectOverride;
-                        }
+                        draft.Subject = options!.SubjectOverride;
 
                         // Order matters: index first (it carries the GUID the desktop
                         // groups by), topic second (the fallback grouping key).
