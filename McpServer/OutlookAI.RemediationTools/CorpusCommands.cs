@@ -587,13 +587,20 @@ public static class CorpusCommands
         }
 
         output.WriteLine("== undated probe ==");
+        DateTime? plannedDelivery = criterion == CorpusUndatedCriterion.IndexDatesAsPlanned
+            ? DateTime.SpecifyKind(plan.Options.AnchorUtc, DateTimeKind.Utc).AddSeconds(-(plan.Population!.OldestDatedAgeSeconds + 86_400L))
+            : null;
         Action<CorpusItemKind, string>? whileHeld = null;
         TimeSpan holdBudget = TimeSpan.Zero;
         if (options.UndatedIndexWaitSeconds > 0)
         {
             output.WriteLine("  each item is held for up to " + options.UndatedIndexWaitSeconds.ToString(CultureInfo.InvariantCulture)
-                + " s for the index to take it in, and the index's columns are printed before it is deleted (--undated-index-wait)");
-            whileHeld = CorpusUndatedIndex.CreateReader(output, TimeSpan.FromSeconds(options.UndatedIndexWaitSeconds));
+                + " s for the index to take it in, and the index's columns are printed before it is deleted (--undated-index-wait)"
+                + (plannedDelivery == null ? string.Empty : "; an appointment or a task until the index dates it as written"));
+            whileHeld = CorpusUndatedIndex.CreateReader(
+                output,
+                TimeSpan.FromSeconds(options.UndatedIndexWaitSeconds),
+                written: kind => kind is CorpusItemKind.Appointment or CorpusItemKind.Task ? plannedDelivery : null);
             holdBudget = TimeSpan.FromSeconds((double)options.UndatedIndexWaitSeconds * kinds.Count);
         }
 
@@ -606,13 +613,10 @@ public static class CorpusCommands
         }
 
         // All three kinds the indexed guest's way (D62 (b)): the appointment and the task are given a delivery
-        // time the way the build gives each one its planned instant - the oldest kind of instant the plan uses -
-        // and must read it back; the contact is written as under IndexHoldsNoDate.
-        DateTime? plannedDelivery = null;
-        if (criterion == CorpusUndatedCriterion.IndexDatesAsPlanned)
+        // time the way the build gives each one its planned instant - the youngest instant the plan uses - and
+        // must read it back; the contact is written as under IndexHoldsNoDate.
+        if (plannedDelivery != null)
         {
-            plannedDelivery = DateTime.SpecifyKind(plan.Options.AnchorUtc, DateTimeKind.Utc)
-                .AddSeconds(-(plan.Population!.OldestDatedAgeSeconds + 86_400L));
             output.WriteLine("  held to the INDEX kind by kind (D62 (b)): the appointment and the task are DATED "
                 + CorpusManifest.FormatUtc(plannedDelivery.Value) + " after their first save and read back; the contact keeps the "
                 + "store's delivery time, unjudged - corpus-indexed checks both in the index");

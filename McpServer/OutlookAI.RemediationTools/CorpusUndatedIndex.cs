@@ -209,12 +209,22 @@ public static class CorpusUndatedIndex
     /// <param name="client">The index client; null opens the default one on first use.</param>
     /// <param name="elapsed">A monotonic clock reading for one wait (tests inject one).</param>
     /// <param name="sleep">How a poll interval passes (tests inject one).</param>
+    /// <param name="written">
+    /// The delivery time the probe WROTE on an item of this kind, or null - an all-kinds appointment or
+    /// task (D62 (b), 2026-10-03). When there is one the reader does not stop at the first row: the index
+    /// takes the item's FIRST save first, dated at its creation, so it keeps asking until the row's
+    /// <c>System.Message.DateReceived</c> - read the way the product reads it - is the written instant, and
+    /// says whether it got there and when. That is the measurement D62 (b) rests on: whether the index
+    /// dates these kinds by their delivery time, which the plan can choose, or by their creation, which it
+    /// cannot.
+    /// </param>
     public static Action<CorpusItemKind, string> CreateReader(
         TextWriter output,
         TimeSpan wait,
         IIndexClient? client = null,
         Func<Func<TimeSpan>>? elapsed = null,
-        Action<TimeSpan>? sleep = null)
+        Action<TimeSpan>? sleep = null,
+        Func<CorpusItemKind, DateTime?>? written = null)
     {
         ArgumentNullException.ThrowIfNull(output);
         Func<Func<TimeSpan>> startClock = elapsed ?? (() =>
@@ -237,6 +247,8 @@ public static class CorpusUndatedIndex
                 }
 
                 Func<TimeSpan> clock = startClock();
+                DateTime? expected = written?.Invoke(kind);
+                IReadOnlyDictionary<string, object?>? firstSeen = null;
                 while (true)
                 {
                     foreach (string sql in Statements())
@@ -259,14 +271,47 @@ public static class CorpusUndatedIndex
                         IReadOnlyDictionary<string, object?>? match = rows.FirstOrDefault(r => IsRowFor(r, subject, kind));
                         if (match != null)
                         {
-                            output.WriteLine(Describe(kind, match, clock()));
-                            return;
+                            if (expected == null)
+                            {
+                                output.WriteLine(Describe(kind, match, clock()));
+                                return;
+                            }
+
+                            if (firstSeen == null)
+                            {
+                                firstSeen = match;
+                                output.WriteLine(Describe(kind, match, clock()));
+                            }
+
+                            DateTime? indexed = IndexRowMapper.Map(match).DateReceivedUtc;
+                            if (indexed != null && Math.Abs((indexed.Value - expected.Value).TotalSeconds) <= 2)
+                            {
+                                output.WriteLine("  " + kind.ToString().ToLowerInvariant() + ": DATED AS WRITTEN after "
+                                    + ((int)clock().TotalSeconds).ToString(CultureInfo.InvariantCulture) + " s - System.Message.DateReceived "
+                                    + indexed.Value.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture)
+                                    + " is the delivery time the probe wrote, so the index dates this kind by its delivery time");
+                                return;
+                            }
+
+                            break;
                         }
                     }
 
                     TimeSpan left = wait - clock();
                     if (left <= TimeSpan.Zero)
                     {
+                        if (firstSeen != null && expected != null)
+                        {
+                            DateTime? last = IndexRowMapper.Map(firstSeen).DateReceivedUtc;
+                            output.WriteLine("  " + kind.ToString().ToLowerInvariant() + ": NOT DATED AS WRITTEN after "
+                                + ((int)wait.TotalSeconds).ToString(CultureInfo.InvariantCulture) + " s - the probe wrote "
+                                + expected.Value.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture)
+                                + " and the index still says "
+                                + (last == null ? "<null>" : last.Value.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture))
+                                + " (its first row); it may date this kind by something other than the delivery time");
+                            return;
+                        }
+
                         output.WriteLine("  " + kind.ToString().ToLowerInvariant() + ": NOT in the index after "
                             + ((int)wait.TotalSeconds).ToString(CultureInfo.InvariantCulture)
                             + " s - is a NOT elevated Outlook running on the profile that mounts this store?");
