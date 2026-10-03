@@ -116,7 +116,7 @@
     refuses on its own (its census does not find the tier profile's stores as named), and the
     frontier test refuses a stale hub - but do not rely on that: re-run this script.
 
-    TIMING. Two Outlook starts at 180 s each, a teardown and a build of 68 items with their probes,
+    TIMING. Two Outlook starts at 180 s each, a teardown and a build of 56 items with their probes,
     one quit, and the indexer's crawl - budget 15 to 25 minutes, hence -TimeoutSeconds 3600 on the
     interactive task. The frontier test must then run within the margin this script prints at the
     end - 55 minutes after the newest item in a W. Europe winter - or it refuses the run as STALE.
@@ -750,8 +750,8 @@ function Invoke-SelfTest {
     Test-Case 'in summer: 115' 115 (Get-FrontierWindow -NewestUtc $newest -UtcOffset ([timespan]::FromHours(2)) -NowUtc $newest).MarginMinutes
     Test-Case 'west of UTC the size of the offset counts, not its sign' 295 (Get-FrontierWindow -NewestUtc $newest -UtcOffset ([timespan]::FromHours(-5)) -NowUtc $newest).MarginMinutes
     Test-Case 'on UTC it cannot tell at all' $false (Get-FrontierWindow -NewestUtc $newest -UtcOffset ([timespan]::Zero) -NowUtc $newest).Discriminates
-    Test-Case 'the newest item comes off the plan sheet' '2026-09-24T09:14:42Z' (Get-NewestFromPlanText "  items                 : 68`r`n  received range        : 2024-10-02T11:00:00Z .. 2026-09-24T09:14:42Z`r`n")
-    Test-Case 'and a sheet without one gives nothing' '<null>' (Get-NewestFromPlanText 'items : 68')
+    Test-Case 'the newest item comes off the plan sheet' '2026-09-24T09:14:42Z' (Get-NewestFromPlanText "  items                 : 56`r`n  received range        : 2024-10-02T11:00:00Z .. 2026-09-24T09:14:42Z`r`n")
+    Test-Case 'and a sheet without one gives nothing' '<null>' (Get-NewestFromPlanText 'items : 56')
 
     Write-Host ''
     Write-Host '== what it says when Outlook is in the way =='

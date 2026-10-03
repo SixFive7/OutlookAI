@@ -123,8 +123,8 @@ Everything below describes that final shape.
 
 | Store | Named | Watched | Indexed list | What is in it |
 | --- | --- | --- | --- | --- |
-| Hub | as its account's address, e.g. `tier@vm.invalid` | yes | **first**, on the indexed guest | the **hub population** (68 items since generator v2 - 56 dated, 12 undated; section 3b) plus whatever a run is writing |
-| Bystander | as an address, e.g. `bystander@vm.invalid` | yes, and a **declared bystander** | **second**, on the indexed guest | the **bystander population** (342 items - 300 dated, 42 undated; section 3b) - never written by a test. It has **no Inbox and no Sent Items**, on purpose (below) |
+| Hub | as its account's address, e.g. `tier@vm.invalid` | yes | **first**, on the indexed guest | the **hub population** (56 items - generator v2 with its 12 undated items switched off, Q98 (a) 2026-10-03; section 3b) plus whatever a run is writing |
+| Bystander | as an address, e.g. `bystander@vm.invalid` | yes, and a **declared bystander** | **second**, on the indexed guest | the **bystander population** (300 items - its 42 undated items switched off, Q98 (a); section 3b) - never written by a test. It has **no Inbox and no Sent Items**, on purpose (below) |
 | Corpus A / Corpus B | anything - `Corpus A` in the examples | yes, and a **declared bystander** | **last**, on the indexed guest | the measurement corpus: at least **160,000** items on the indexed guest (`minimumItemCount` in `Testbed/testbed.json`); no minimum is recorded for the unindexed guest's |
 
 These three are the floor, and the shape of the committed example (section 2.8b says why the table
@@ -186,7 +186,8 @@ over nothing. A corpus is the wrong shape for that: the identity budget is 500 i
 
 **It is populated by the generator** (`corpus-build --population bystander`, section 3b) - 300 dated
 items in four mail folders, every one inside the identity budget, two of them subfolders of the one
-the "Inbox" items go into, plus, since generator v2, 42 undated appointments, contacts and tasks. The
+the "Inbox" items go into. (Generator v2 also defines 42 undated appointments, contacts and tasks for it;
+they are switched off since 2026-10-03 - Q98 (a), section 3b.) The
 earlier objection that "the generator tags everything it creates, and the bystander's whole job is to
 be untouched" does not hold: the tag is the CORPUS tag, which no artifact sweep can select, and no test
 writes to the store either way.
@@ -198,8 +199,9 @@ Inbox, Sent Items, Drafts, Junk Email, Calendar, Contacts or Tasks - measured on
 CREATED Drafts and Junk Email in it, and for its Inbox got the PST's hidden root, where 172 items then
 sat out of sight (section 4.1, step 6). Since generator v2 no lookup creates a folder, and a folder the
 store lacks is replaced by a visible **stand-in** under the store's root - `OutlookAI-Corpus-Folder-6`
-for the Inbox items and its two subfolders, `-5` for Sent Items, `-9`/`-10`/`-13` (typed Calendar,
-Contacts and Tasks folders) for the undated kinds - recorded in the manifest, so teardown removes it.
+for the Inbox items and its two subfolders, `-5` for Sent Items, and `-9`/`-10`/`-13` (typed Calendar,
+Contacts and Tasks folders) for the undated kinds while those are switched on, which since 2026-10-03
+they are not - recorded in the manifest, so teardown removes it.
 None is a default folder, so the store still has no arrival folders. Whether any TEST needed the
 bystander's Inbox was checked, test by test, before deciding to keep this shape: section 3b.
 
@@ -1721,7 +1723,7 @@ what v2 fixes - "What v2 changed", below. On 2026-09-27 v2 probed the hub and th
 same guest (section 4.1a): placement, dates and enrichment verified on both, and **the undated items
 refused on both** - an appointment, a contact or a task saved into a PST is DATED, and Outlook will not
 remove the date. That is open, for the maintainer - "The undated kinds are dated in a PST", below.
-The generator half is pinned on the host - `T1/CorpusPopulationTests` (77 cases), `T1/CorpusDefaultFolderTests`
+The generator half is pinned on the host - `T1/CorpusPopulationTests` (79 cases), `T1/CorpusDefaultFolderTests`
 (16), the placement cases of `T1/CorpusGeneratorTests`, `T1/CorpusProbeResidueCensusTests`,
 `T1/CorpusUndatedTableTests` and `T1/CorpusUndatedWritePathTests`, no Outlook - and every step below
 that opens a store is guest-only. "What only a guest can answer" lists what the probes settled.
@@ -1737,9 +1739,9 @@ to or sent from the store's owner, which is what lets the index find a small sto
 
 | Population | Built into | Items | What it carries, and for whom |
 | --- | --- | --- | --- |
-| `hub` | the hub, `testHubStoreDisplayName` | 68 | Four conversations of four, alternating Inbox and Sent Items, whose newest member is the newest item in the store - one minute before the anchor. Sixteen received and six sent singles; six items in `Inbox/OutlookAI-Corpus-Folder-Projects`. Eleven attachments - PNG, `.ics`, `.eml` and text, and one mail carrying three - with the probe term `invoice` in one text attachment and in its parent's body. Read and unread mail. The SF-6 subject-only population: twelve items in `Inbox/OutlookAI-Corpus-Folder-Notices`, all from `Noticebot Relay <noticebot@alerts.invalid>` and nobody else, `bulletin` in every subject and in no body. And, since v2, **twelve UNDATED items** - four appointments in the Calendar, four contacts, four tasks, none with a delivery time. For the tests that read, page, cap or walk the hub; the index tests that read the first indexed store; SF-6; the attachment-kind recall; the conversation walk; the staleness frontier; the order-key collation. |
-| `bystander` | the plain bystander | 342 | Six conversations of three; 160 received and 50 sent singles spread over two years, one in eight received with an attachment; two populated subfolders, `-Projects` (40) and `-Suppliers` (32), of the folder its received mail is filed in. Every folder inside the census identity budget. And, since v2, **42 undated items**, fourteen each of appointments, contacts and tasks - the volume the order-key refetch needs (below). It has no Inbox, Sent Items, Calendar, Contacts or Tasks and gets none: each of those folders is a visible **stand-in** under the store root (`OutlookAI-Corpus-Folder-6`, `-5`, `-9`, `-10`, `-13`). For the count tripwire's item-by-item path and the exclude-subfolders measurement. |
-| `identity` | the identity account's delivery store (section 2.8b) | 8 | Five received, three sent, all to or from its owner - so the index knows the store exists and `outlook_health` does not report it missing. **Waits on the store's Inbox** - below. |
+| `hub` | the hub, `testHubStoreDisplayName` | 56 | Four conversations of four, alternating Inbox and Sent Items, whose newest member is the newest item in the store - one minute before the anchor. Sixteen received and six sent singles; six items in `Inbox/OutlookAI-Corpus-Folder-Projects`. Eleven attachments - PNG, `.ics`, `.eml` and text, and one mail carrying three - with the probe term `invoice` in one text attachment and in its parent's body. Read and unread mail. The SF-6 subject-only population: twelve items in `Inbox/OutlookAI-Corpus-Folder-Notices`, all from `Noticebot Relay <noticebot@alerts.invalid>` and nobody else, `bulletin` in every subject and in no body. (Generator v2 also defines **twelve UNDATED items** for it - four appointments in the Calendar, four contacts, four tasks, ordinals 57-68 - **switched off since 2026-10-03**, Q98 (a), below.) For the tests that read, page, cap or walk the hub; the index tests that read the first indexed store; SF-6; the attachment-kind recall; the conversation walk; the staleness frontier. |
+| `bystander` | the plain bystander | 300 | Six conversations of three; 160 received and 50 sent singles spread over two years, one in eight received with an attachment; two populated subfolders, `-Projects` (40) and `-Suppliers` (32), of the folder its received mail is filed in. Every folder inside the census identity budget. (Generator v2 also defines **42 undated items** for it, fourteen each of appointments, contacts and tasks, ordinals 301-342 - switched off, Q98 (a).) It has no Inbox, Sent Items, Calendar, Contacts or Tasks and gets none: each folder it is built into is a visible **stand-in** under the store root - `OutlookAI-Corpus-Folder-6` and `-5`, and `-9`, `-10`, `-13` only while the undated items are switched on. For the count tripwire's item-by-item path and the exclude-subfolders measurement. |
+| `identity` | the identity account's delivery store (section 2.8b) | 8 | Five received, three sent, all to or from its owner - so the index knows the store exists and `outlook_health` does not report it missing. Its received items go into the store's real Inbox, since the store is minted (Q87 (a), 2026-09-27). |
 
 **The undated items (decided 2026-09-24, question A, option (a)).** The index tier sorts by
 `System.Message.DateReceived DESC`, and a store-scoped search admits every item class since gap B3, so
@@ -1756,8 +1758,17 @@ save stayed in the target store before any is built. **The deviation is accepted
 (Q89 (a)): no drafts among the undated items, and nothing changed in the code.**
 
 **And the three kinds turned out not to be undated in a PST** - measured on `OutlookAI-Unindexed`,
-2026-09-27; "The undated kinds are dated in a PST", below, has the lines and the question it leaves
-open.
+2026-09-27; "The undated kinds are dated in a PST", below, has the lines. **So they are switched off -
+decided 2026-10-03 (Q98 (a)):** the populations are built without them, behind one plan parameter,
+`CorpusPlanOptions.IncludeUndatedItems`, which defaults to off and which no command-line option sets.
+The undated items are each population's LAST ordinals and every other item is the same either way, so
+a population without them is a prefix of one with them, under the same shape key - T1 pins both, and
+keeps the undated probe, the census's undated checks and their tests running on plans that switch
+them on. They come back only if the measurement on the indexed guest - Q98 (f) - says it is worth it.
+Until then the three `LiveOrderKeyCollationTests` are where they were before v2: on a guest every
+store prints `verdict=no-undated-rows-in-sample` (or `undated=0`), then `coverage: 0 ... on this
+machine` and a `PROVED NOTHING:` line naming Q98 - green on a Portable profile, a refusal on a
+Production one, exactly as before.
 
 **It costs nothing to look at one.** `corpus-plan` is pure - no Outlook, runnable on the host - and
 for a hub population it also prints the values a settings file must carry:
@@ -1821,10 +1832,11 @@ the addition written out there). So the order is:
    * the date probe verified;
    * **`== enrichment probe ==` reporting sender, recipients, attachment and conversation index all
      written** - and the recipient it checks is now the store's OWNER, the one v1 left unresolved;
-   * `== undated probe ==` (hub and bystander): each kind `inFolder=True`, `undated=True`,
-     `tableUndated=True`, `inTargetStore=True`, and no `removalRefused=`. **On a PST no kind gets
-     there** (measured 2026-09-27, below), so today this line refuses every population that carries
-     undated items.
+   * the undated probe: with the undated items switched off (Q98 (a)) it probes nothing and prints
+     `Undated probe: this population carries no undated item; nothing to probe.` With them switched
+     on, an `== undated probe ==` block where each kind must show `inFolder=True`, `undated=True`,
+     `tableUndated=True`, `inTargetStore=True`, and no `removalRefused=` - which on a PST no kind
+     does (measured 2026-09-27, below).
 
    A population is built only where one throwaway item proved every write it depends on, with no
    override. After the build, the census reads every item back - sender, recipients (the owner
@@ -1945,11 +1957,17 @@ The bystander's role is the count tripwire's watched store AND the absent-arriva
 * **The count tripwire** censuses every mail folder of the store, stand-ins included; it needs items
   inside the identity budget, not an Inbox.
 * **`LiveOrderKeyCollationTests`** read the bystander's undated rows through a store-scoped index
-  query; no folder is named.
+  query; no folder is named. (Since Q98 (a) there are none to read on a guest - above.)
 
 No test needed the bystander's Inbox, so none was moved and none was weakened.
 
-### The undated kinds are dated in a PST - OPEN, for the maintainer
+### The undated kinds are dated in a PST - DECIDED 2026-10-03 (Q98): (a) now, then (f)
+
+**Decided by the maintainer 2026-10-03: (a) now, then (f).** The populations are built WITHOUT the
+undated items now - `CorpusPlanOptions.IncludeUndatedItems`, off (above). (f), added to the directions
+below by the decision: another agent measures on the indexed guest whether the index dates those kinds;
+they come back only if that says it is worth it. The question, the guest's lines and the directions
+stay below as the record.
 
 **The question.** The hub's 12 and the bystander's 42 undated items exist so the three
 `LiveOrderKeyCollationTests` have index rows with NO `System.Message.DateReceived` to measure (question
@@ -1991,8 +2009,9 @@ stand-ins `-9`, `-10` and `-13`, printed the same three lines):
 **Recommended: (a) now, and (e) as the follow-up that decides whether (b) is worth building.** The NULL
 collation is a cost question, not a correctness one: `IndexOrderGuard` is sound under any collation by
 construction (QUESTIONS.md, 2026-08-18), so nothing the product guarantees waits on it - while every v2
-population and the per-run hub rebuild do. Nothing is changed until this is decided; the probes refuse,
-as designed, and `CP-14A-POPULATIONS-V2-PROBED` holds the probed guest.
+population and the per-run hub rebuild do. ~~Nothing is changed until this is decided; the probes refuse,
+as designed, and `CP-14A-POPULATIONS-V2-PROBED` holds the probed guest.~~ Decided: (a), then (f) - the
+top of this subsection.
 
 ### The identity store has no Inbox - DECIDED (a) 2026-09-27 (Q87), MEASURED AND BUILT
 
