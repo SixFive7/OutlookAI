@@ -443,6 +443,35 @@ rebuilt). Merged as `2ff64e2` (build VM on the branch: 3,491 / 0 / 0, 21 self-te
   not retaken - `CP-17C-CORPUS-160K` still holds the old 7/30/60 settings file, so whoever reverts
   to it re-stages the settings file (runbook §4.2d). *Undo:* revert `b4bec51` and re-stage.
 
+### D104-D108 - Folder names holding `% / \ * ?` (a Q99 finding), fixed
+Measured on guest one with one new live test, run alone (1 passed, tripwire clean, zero
+artifacts): Outlook accepts all five characters in a folder name, and the index percent-encodes
+each in its URLs exactly as Microsoft documents (`50% off` is filed as `50%25 off`, `a/b` as
+`a%2Fb`); display paths hold the real names. The old folder scope matched 0 rows for every such
+name, so a folder search there answered from the recent-mail sweep alone. Folder scopes now spell
+names the way the index does, and every index URL is decoded back to names - hits show the real
+folder name, open directly, and are no longer listed twice when the index and the sweep both find
+them. Merged as `60fba07` (build VM: 3,568 / 0 / 0, 21 self-tests); guest one was restored to
+`CP-17C-CORPUS-160K` with the 30/60 settings file re-staged.
+- **D104 - A folder with `/` in its name stays reachable only through its parent**, because the
+  `folder` argument splits on `/`: asked for by name, the search says the path matched nothing.
+  *Alternatives:* an escape inside `folder`; a segment-array argument; resolving the path against
+  the folders' real names. Being reworked overnight, with three requirements set on the
+  maintainer's behalf: a folder path the product itself prints is accepted back verbatim; every
+  input that resolves today resolves the same way; an input that could mean two folders is
+  refused, naming both.
+- **D105 - Store names are decoded too**, in hit names, name lookups and derived display paths.
+  The display-path half is inferred from the folder measurement: no guest store currently has
+  such a name. *Undo:* remove the decode in `MapiItemUrl.SplitStoreSegment`.
+- **D106 - A delegate mailbox's name is encoded in its `/1/<name>` scope** by Microsoft's
+  documentation and the measured primary-store spelling; Exchange cannot be measured on a guest.
+  *Undo:* revert `MailService.DelegateScope` to plain concatenation.
+- **D107 - The decoder undoes only the five documented escapes** (either hex case) and leaves any
+  other `%` alone, rather than general percent-decoding.
+- **D108 - A new guarded test helper, `LiveOutlookTestMailer.FileTaggedItemInNewTestFolder`**, the
+  only way a test can make a folder whose name holds `/`: it creates folders only inside an
+  existing test folder, requires the tag and the run marker, and its guard is pinned in T1.
+
 ## Open questions only you can answer
 
 ### Q104 - Seven tagged test leftovers in your workstation's hub mailbox
@@ -572,6 +601,18 @@ self-test on the workstation before the build-VM rule reached it.
 - For D103, a new T1 pin was added (nothing existed to update), and the checkpoint was not retaken
   because the staged settings file is the guest's only change.
 
+### V14 - The folder-name measurement: four small departures
+- Guest one's settings file was re-rendered from the fix's branch, so its hash (`2AF2C186…`)
+  differs from the D103 restage (`688FDB99…`) in the provenance line only; the windows are 30 and
+  60 and `corpus-verify` says OK.
+- The hub rebuild and the throwaway-store reset (runbook steps 9a and 9a-ii) were skipped for the
+  one-class run: the class reads neither, and nothing refused.
+- The "before" evidence is the old scope run as a statement directly against the index, not the
+  old server end to end.
+- A process-scoped `Set-ExecutionPolicy Bypass` was used in the guest's PowerShell Direct sessions;
+  the first staging attempt had stopped on the guest's Restricted policy after its source was
+  swapped, and only the SDK steps were re-run.
+
 ## Notes (no decision needed)
 
 - **Script self-tests now run only under Windows PowerShell 5.1** (on the build VM), so nothing
@@ -623,3 +664,7 @@ self-test on the workstation before the build-VM rule reached it.
   plan.** The freshness verdict still holds; not yet looked into.
 - **`Build-Corpus.ps1` shows no progress during a long build**: it holds each step's output until
   the step ends. The manifest is written item by item, so its line count is the progress to watch.
+
+- **Two index oddities on folder rows that no search returns:** the `back\slash` folder's own row
+  gives its display name as `slash`, and the `a/b` folder's parent path is cut at the `/`. Every
+  item in those folders was still found, and reported under its folder's real name.
