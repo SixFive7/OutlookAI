@@ -258,6 +258,15 @@
     </Content>
   </ItemGroup>
   <PropertyGroup>
+    <!-- MSB3178, "Assembly 'PolicyWriter\bin\Release\OutlookAI.PolicyWriter.exe' is incorrectly
+         specified as a file": ClickOnce's manifest resolution noticing that the helper is a .NET
+         assembly listed as a plain file. It is one on purpose. The add-in never loads it, so it is no
+         dependency of the add-in's, and as a <file> it is still hashed, SHA-256, into the signed
+         OutlookAI.dll.manifest - measured 2026-10-03 in the payload build of the commit that added it.
+         A message, not a warning, so a build log with a real warning in it still stands out. -->
+    <MSBuildWarningsAsMessages>$(MSBuildWarningsAsMessages);MSB3178</MSBuildWarningsAsMessages>
+  </PropertyGroup>
+  <PropertyGroup>
     <VisualStudioVersion Condition="'$(VisualStudioVersion)' == ''">17.0</VisualStudioVersion>
     <VSToolsPath Condition="'$(VSToolsPath)' == ''">$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)</VSToolsPath>
   </PropertyGroup>
