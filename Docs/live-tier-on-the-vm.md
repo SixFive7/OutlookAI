@@ -530,21 +530,88 @@ the same day and again on 2026-09-27 (section 4.2 step 4, section 4.2b step 4.4)
 first, then `ADDIN-READY` twice each time, the trust entry kept on the second run, and the index
 exclusion state unchanged by it.
 
-**The two phases have NOT run on a guest - PENDING (Q100, 2026-10-03).** Their proof so far is the
-script's `-SelfTest` on the host - 168 assertions under Windows PowerShell 5.1 and PowerShell 7, seven
-of them reading the script's own syntax tree (the install phase reaches no Outlook start, the first
-run no installer and no registry, environment or file write, and each refuses the wrong token
-first), and eleven rules broken on purpose in scratch copies, each caught - and the four
-`Tools/Checks` guards. Both guests were busy when it was written, so the guest proof waits for the
-next guest rebuild or a free slot. On a guest, from a checkpoint with the add-in NOT installed, it
-must record: `-Verify` `NOT-INSTALLED`; `-Phase Install -Execute` from the default task ending
-`INSTALLED-NEVER-RAN` with no OUTLOOK.EXE started (the task's job output, and `Get-Process` after it)
-and the install record written; `-Verify` then `INSTALLED-NEVER-RAN` too; `-Phase FirstRun -Execute`
-at `-RunLevel Limited` printing `token NOT elevated` for its OUTLOOK.EXE and `ADDIN-READY`; a second
-`-Phase Install` over that, `INSTALLED-NEVER-RAN` again although a valid state is there; and after
-a graceful restart `Set-OutlookIndexingDisabled.ps1 -Verify` - `UNINDEXED` on the unindexed guest,
-`INDEXED` with its count unchanged on the indexed one. Also worth one look: that FirstRun refuses
-from the default (elevated) task, exit 1, before it starts anything.
+**The two phases RAN on a guest - `OutlookAI-Unindexed`, 2026-10-03 - and work as designed. Their
+first run found a PRODUCT DEFECT: in a NOT elevated Outlook the add-in's tuning reconcile never
+finishes, so on a fresh guest step 7c ends `BROKEN`, not `ADDIN-READY` (below; open in `TODO.md`).**
+Until that day their proof was the host's: `-SelfTest`, 168 assertions under Windows PowerShell 5.1
+and PowerShell 7 - seven reading the script's own syntax tree - eleven rules broken on purpose in
+scratch copies, each caught, and the four `Tools/Checks` guards.
+
+*The run.* The guest restored to `CP-08-MAIL-SINK` - the checkpoint before `CP-09-ADDIN-READY`: no
+add-in, no VSTO `v4R`, the tier profile the default with its POP3 password stored, the Q80 policy in,
+the index excluded by the POLICY alone (that line predates the scope rule), Outlook not running. The
+payload built on the host from `883ec5f` by `Testbed/host/Publish-AddInPayload.ps1` (guard 3
+`UNCHANGED` over 305 host lines), staged with the pinned `vstor_redist.exe` and `883ec5f`'s guest
+scripts. Every phase through `Register-InteractiveTask.ps1` in session 1 and every plain `-Verify`
+over PowerShell Direct, while a READ-ONLY poller in session 0 sampled OUTLOOK.EXE every 0.5 s: its token
+(TokenElevation, TokenElevationType, integrity level), command line, parent and modules. Raw logs,
+one file per step below, the poller and both build-VM runs: `.work\q100-proof\` in the main checkout.
+
+| # | What ran | Verdict, exit code, and what else was seen |
+| --- | --- | --- |
+| 1 | `-SelfTest` (guest), `-Verify` | 138 assertions, 0 failures (the contract section SKIPs off the repository); `NOT-INSTALLED`, 3 - `v4R` absent, `v4` 10.0.60910 |
+| 2 | `-Execute` with no `-Phase`, default task | refused, 1: `REFUSING: -Execute needs -Phase since 2026-10-03 (Q100)`, both phase commands printed; nothing installed, no record |
+| 3 | `-Phase Install -Execute`, default task (elevated) | **`INSTALLED-NEVER-RAN`, 2**, 66 s: the runtime installed (`v4R` 10.0.60917, 35 s), the installer 14 s, the trust entry and `install-addin-record.json` written, the exclusion state `UNCHANGED`. **No OUTLOOK.EXE at any sample, and none after** |
+| 4 | `-Verify` | `INSTALLED-NEVER-RAN`, 2 - "the add-in has NOT run since" |
+| 5 | `-Phase FirstRun -Execute` from the DEFAULT task; `-Phase Install -Execute` at `-RunLevel Limited` | both refused, 1, in under 4 s - `REFUSING TO RUN -Phase FirstRun: this session is ELEVATED` and `REFUSING TO RUN -Phase Install: this session is NOT elevated` - no Outlook, the record untouched |
+| 6 | `-Phase FirstRun -Execute`, `-RunLevel Limited` | **`BROKEN`, 1**, 253 s. COM start 3.5 s, MAPI ok; `OUTLOOK.EXE pid 9064: token NOT elevated`; `Connect = True`, the add-in answered `GetRestartNeeded()`; `Initialized` and `Enabled` written - and **no `LastReconcileUtc` in 240 s**. Exclusion `UNCHANGED`. Outlook left running headless; it had closed by itself 3.5 minutes later |
+| 7 | `-Verify -WithOutlook` at Limited, then `-Verify` | `INSTALLED-NEVER-RAN`, 2, both - Outlook had closed, so the COM half was not checked. **Wrong: the add-in had run.** Fixed in the script (below) |
+| 8 | the fixed script: `-SelfTest`, `-Verify`, then FirstRun again | 151, 0 failures; `BROKEN`, 1 - "the add-in HAS run since ... registration reconcile wrote ...Mcp\LastReconcileUtc at 16:01:25Z ... Tuning\Applied records 4 of the 13 Desired values"; FirstRun `BROKEN`, 1: "tuning state (Tuning\LastReconcileUtc) written NEVER, in 240 s; registration reconcile (Mcp\LastReconcileUtc) written after 2.4 s" |
+| 9 | **Control:** the five Cached Mode policy values written from session 0, elevated, equal to `Tuning\Desired` - as a GPO would set them | - |
+| 10 | `-Phase FirstRun -Execute`, Limited | **`ADDIN-READY`, 0**, 8.4 s: COM 2 s, `LastReconcileUtc` 2.1 s in, `tuning walk: ... 13 of the 13`, `token NOT elevated`, `GetRestartNeeded() = True`, exclusion `UNCHANGED` |
+| 11 | `-Verify` | `ADDIN-READY`, 0 - "the add-in has run since" |
+| 12 | `-Phase Install -Execute` again, default task | **`INSTALLED-NEVER-RAN`, 2, over that valid state**, 12 s: "already registered: v4R 10.0.60917 - not reinstalling", "kept the existing entry ... same URL, same key", the record rewritten; no OUTLOOK.EXE |
+| 13 | `-Verify`; FirstRun, Limited | `INSTALLED-NEVER-RAN`, 2 - "LastReconcileUtc '...16:20:11Z' is from before" the install at 16:20:55Z; then `ADDIN-READY`, 0, 5.7 s, `GetRestartNeeded() = False` |
+| 14 | `Testbed/host/Restart-Guest.ps1 -Execute`, then `Set-OutlookIndexingDisabled.ps1 -Verify` | restarted in 22 s (Outlook had closed by itself); **`UNINDEXED`**: two readings 10 minutes apart, `mapiRows=0 outlookRowsTotal=0`, the catalog `IDLE` with 430 other items - after three NOT elevated Outlook starts, with the policy-only caveat that line carries |
+| 15 | `Restore-VMSnapshot CP-13B-LIVE-GREEN`, saved, lease released | no checkpoint kept from this run |
+
+*That the add-in loaded in the NOT elevated Outlook, independently of the script.* For each of the four
+FirstRun starts the poller read OUTLOOK.EXE as `TokenElevation=0 TokenElevationType=3` (Limited) at
+integrity `0x2000` (Medium), command line `OUTLOOK.EXE -Embedding`, parent `svchost.exe -k DcomLaunch` -
+started by COM, not by the task - with `VSTOLoader.dll` and `vstoee.dll` mapped into it within 0.8 s.
+`Addins\OutlookAI\LoadBehavior` stayed 3 after every run (Outlook sets 2 on a load that fails), and
+Outlook's own `...\16.0\Outlook\AddInLoadTimes` gained an `OutlookAI` value at the first start and then
+recorded loads of 829 ms and 625 ms. `OutlookAI.dll` itself never appeared in the module list; a
+managed assembly need not.
+
+*The defect, read on the guest and in the source.* `OutlookTuningService.Reconcile` walks its catalog
+in order: four `search.*` values in Outlook's user Search key, then D25's five `caching.policy.*`
+values under `HKCU\Software\Policies\Microsoft\Office\16.0\Outlook\Cached Mode`, then two user Cached
+Mode values and two PST size values, and `LastReconcileUtc` last. `HKCU\Software\Policies` grants the
+user ReadKey only - Administrators and SYSTEM hold FullControl, and a filtered token does not use the
+Administrators group (its ACL read on the guest; the maintainer's workstation's has the same shape).
+So in a NOT elevated Outlook the first policy write throws, the reconcile's catch-all swallows it to
+the debugger, and nothing after it runs: `Tuning\Applied` held the four search values and nothing
+else, the policy key and the user Cached Mode key were absent, and the reconcile's own bookkeeping -
+updating `RestartNeeded`, writing `PolicyConflicts` and `LastReconcileUtc` - never ran. The class's own summary says "Everything is
+HKCU - no elevation is ever required"; for the Policies hive that is not so. **What hid it:** the
+single elevated `-Execute` this split replaced - its Outlook could write there, and every later
+start, elevated or not, found the five values in sync. Both live guests were installed by that
+`-Execute`, so they should carry the five values too - not read on them in this run. **What it means for users:** the installer is
+per-user and Outlook runs NOT elevated, so on any machine where an administrator, a GPO or an earlier
+elevated Outlook has not already set those five values, the reconcile never completes - the user
+Cached Mode and OST size values never apply either, and `outlook_health` reports
+`tuning.lastReconcileUtc` null. The maintainer's workstation carries the five values and a fresh
+`LastReconcileUtc` (read 2026-10-03), so it is not affected; who set them there is not recorded.
+**The control (step 9) isolates it:** the same build, guest, token level and command, and only the
+five values differ - `BROKEN` without them, `ADDIN-READY` with them. It is a control, not a build
+step: setting them in the testbed would hide the defect exactly as the elevated `-Execute` did.
+
+*The script, fixed from this run (step 8).* `-Verify` judged "run since the install" by the tuning
+state alone. It now also reads the add-in's second startup marker, `Mcp\LastReconcileUtc` - written by
+the registration reconcile at every start, failed or not - and an add-in that started since the
+install without finishing a tuning reconcile is `BROKEN`, with when it started and how far its walk
+got (`Tuning\Applied` against `Tuning\Desired`, printed as `tuning walk`). FirstRun watches that marker
+during its wait, so a tuning state that never comes says which failure it was, and its timing is no
+longer read after the 240 s wait (step 6 printed "registration reconcile after 245.4s"). `-SelfTest`:
+187 assertions, 0 failures, on the build VM under Windows PowerShell 5.1, with all 21 scripts'
+self-tests passing (`Testbed/host/Invoke-TestsOnBuildVm.ps1 9bfc135 -SkipSuite`); 151 on the guest,
+whose copy has no repository for the contract section.
+
+**Not settled by it:** `ADDIN-READY` on a fresh guest, which waits on the defect; the indexed guest -
+that an unelevated first run there feeds the index and leaves it `INDEXED`; `-Verify -WithOutlook`
+against a running Outlook, which had closed each time before the attach was tried; and the two live
+tests on a guest installed this way.
 
 **Checkpoint `CP-03-OUTLOOKAI-INSTALLED` once `-Phase FirstRun` prints `ADDIN-READY`.** `CP-05-ADDIN-TRUSTED`
 is no longer a separate manual step - the trust entry is part of the scripted install - and the name
