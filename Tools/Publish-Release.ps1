@@ -49,8 +49,9 @@
           server published into the payload, the VSTO runtime compiled in.
        8. SIZE AND SIGNATURE (release.yml's size gate and "Sign installer"): signtool with the
           pinned certificate BY THUMBPRINT and an RFC 3161 timestamp from the first server that
-          answers; the signature read back; and the signed file no larger than the updater's
-          50 MB cap.
+          answers; the signature read back the way the shipped updater reads it (WinVerifyTrust,
+          accepting the self-signed key's untrusted root, and the signer's thumbprint pinned); and
+          the signed file no larger than the updater's 50 MB cap.
        9. TESTS: Testbed/host/Invoke-TestsOnBuildVm.ps1 <HEAD> - the whole non-live suite and
           every script self-test, on the build VM. Anything but exit 0 refuses. Last before the
           stamp because it is the slow one: the cheap failures come first.
@@ -158,6 +159,88 @@ $InstallerCapMB = 50
 # RFC 3161 timestamp servers, tried in order, so one server's outage does not fail a release.
 $TimestampServers = @('http://timestamp.digicert.com', 'http://timestamp.sectigo.com')
 $CertificateWarnDays = 30
+
+# CERT_E_UNTRUSTEDROOT, 0x800B0109. The certificate is SELF-SIGNED (CN=OutlookAI), so WinVerifyTrust
+# ends a perfectly good signature in an untrusted root, and the shipped updater accepts exactly that
+# result and 0, then pins the signer (Services/UpdateService.cs, VerifySignature). So does step 8.
+$CertEUntrustedRoot = [int]-2146762487
+
+# The updater's WinVerifyTrust call (Services/UpdateService.cs, WinVerifyTrustFile), restated in the
+# C# that Windows PowerShell 5.1's Add-Type compiles: the same action, the same flags - no UI, no
+# revocation check, WTD_SAFER_FLAG - so step 8 asks the question every installed copy will ask.
+$InstallerTrustSource = @'
+using System;
+using System.Runtime.InteropServices;
+
+namespace OutlookAIRelease
+{
+    public static class InstallerTrust
+    {
+        public static int Verify(string path)
+        {
+            WINTRUST_FILE_INFO fileInfo = new WINTRUST_FILE_INFO();
+            fileInfo.cbStruct = (uint)Marshal.SizeOf(typeof(WINTRUST_FILE_INFO));
+            fileInfo.pcwszFilePath = path;
+            fileInfo.hFile = IntPtr.Zero;
+            fileInfo.pgKnownSubject = IntPtr.Zero;
+            IntPtr pFile = Marshal.AllocHGlobal(Marshal.SizeOf(typeof(WINTRUST_FILE_INFO)));
+            IntPtr pData = IntPtr.Zero;
+            try
+            {
+                Marshal.StructureToPtr(fileInfo, pFile, false);
+                WINTRUST_DATA data = new WINTRUST_DATA();
+                data.cbStruct = (uint)Marshal.SizeOf(typeof(WINTRUST_DATA));
+                data.dwUIChoice = 2;              // WTD_UI_NONE
+                data.fdwRevocationChecks = 0;     // WTD_REVOKE_NONE
+                data.dwUnionChoice = 1;           // WTD_CHOICE_FILE
+                data.pFile = pFile;
+                data.dwStateAction = 0;           // WTD_STATEACTION_IGNORE
+                data.dwProvFlags = 0x00000100;    // WTD_SAFER_FLAG
+                data.dwUIContext = 0;
+                pData = Marshal.AllocHGlobal(Marshal.SizeOf(typeof(WINTRUST_DATA)));
+                Marshal.StructureToPtr(data, pData, false);
+                return WinVerifyTrust(IntPtr.Zero, new Guid("00AAC56B-CD44-11D0-8CC2-00C04FC295EE"), pData);
+            }
+            finally
+            {
+                if (pData != IntPtr.Zero) Marshal.FreeHGlobal(pData);
+                Marshal.DestroyStructure(pFile, typeof(WINTRUST_FILE_INFO));
+                Marshal.FreeHGlobal(pFile);
+            }
+        }
+
+        [DllImport("wintrust.dll", ExactSpelling = true, CharSet = CharSet.Unicode)]
+        private static extern int WinVerifyTrust(IntPtr hwnd, [MarshalAs(UnmanagedType.LPStruct)] Guid pgActionID, IntPtr pWVTData);
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private struct WINTRUST_FILE_INFO
+        {
+            public uint cbStruct;
+            [MarshalAs(UnmanagedType.LPWStr)] public string pcwszFilePath;
+            public IntPtr hFile;
+            public IntPtr pgKnownSubject;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct WINTRUST_DATA
+        {
+            public uint cbStruct;
+            public IntPtr pPolicyCallbackData;
+            public IntPtr pSIPClientData;
+            public uint dwUIChoice;
+            public uint fdwRevocationChecks;
+            public uint dwUnionChoice;
+            public IntPtr pFile;
+            public uint dwStateAction;
+            public IntPtr hWVTStateData;
+            public IntPtr pwszURLReference;
+            public uint dwProvFlags;
+            public uint dwUIContext;
+            public IntPtr pSignatureSettings;
+        }
+    }
+}
+'@
 
 # The guards, and the two read-only comparisons D7 (c) runs here.
 $GuardDirectory = 'Tools\Checks'
@@ -344,6 +427,19 @@ function Test-InstallerSize {
     return $null
 }
 
+# The updater's acceptance rule, restated: WinVerifyTrust 0 or CERT_E_UNTRUSTEDROOT, and the signer
+# pinned. Plus a timestamp, without which the signature would die with the certificate. $null when
+# every installed copy would accept the installer.
+function Get-SignatureVerdict {
+    param([int] $TrustResult, [string] $SignerThumbprint, [string] $PinnedThumbprint, [bool] $Timestamped)
+    if ($TrustResult -ne 0 -and $TrustResult -ne $CertEUntrustedRoot) {
+        return ('WinVerifyTrust answers 0x{0:X8}: the signature is invalid or missing, and every installed copy would refuse this installer.' -f $TrustResult)
+    }
+    if ($SignerThumbprint -ne $PinnedThumbprint) { return "the installer is signed by '$SignerThumbprint', not the pinned $PinnedThumbprint - every installed copy would refuse it." }
+    if (-not $Timestamped) { return 'the signature carries no timestamp, so it would stop being valid when the certificate expires.' }
+    return $null
+}
+
 # signtool, by thumbprint - never /a, which picks whichever certificate it likes best in the store.
 function Get-SignToolArgumentList {
     param([string] $Thumbprint, [string] $TimestampUrl, [string] $File)
@@ -478,6 +574,17 @@ function Invoke-SelfTest {
     Test-Case 'an expired one refuses' $true ([string](Get-CertificateVerdict ([datetime]'2026-10-01') $now).Problem).Contains('EXPIRED')
     Test-Case 'an installer at the cap passes' $true ($null -eq (Test-InstallerSize (50MB) 50))
     Test-Case 'one byte over it refuses' $true ([string](Test-InstallerSize (50MB + 1) 50)).Contains('over the auto-updater')
+    Test-Case 'CERT_E_UNTRUSTEDROOT is 0x800B0109' '800B0109' ('{0:X8}' -f $CertEUntrustedRoot)
+    $pin = '2578F7B869383572E751DD6B61B5374C55C6E995'
+    Test-Case 'a trusted signature by the pinned key is accepted' $true ($null -eq (Get-SignatureVerdict 0 $pin $pin $true))
+    Test-Case 'so is the self-signed key''s untrusted root - as the updater accepts it' $true ($null -eq (Get-SignatureVerdict $CertEUntrustedRoot $pin.ToLowerInvariant() $pin $true))
+    Test-Case 'a bad digest is refused' $true ([string](Get-SignatureVerdict ([int]-2146869232) $pin $pin $true)).Contains('0x80096010')
+    Test-Case 'no signature is refused' $true ([string](Get-SignatureVerdict ([int]-2146762496) $pin $pin $true)).Contains('0x800B0100')
+    Test-Case 'another signer is refused' $true ([string](Get-SignatureVerdict 0 ('A' * 40) $pin $true)).Contains('not the pinned')
+    Test-Case 'no timestamp is refused' $true ([string](Get-SignatureVerdict $CertEUntrustedRoot $pin $pin $false)).Contains('no timestamp')
+    Add-Type -TypeDefinition $InstallerTrustSource
+    $selfTrust = [OutlookAIRelease.InstallerTrust]::Verify($PSCommandPath)
+    Test-Case 'the WinVerifyTrust interop compiles and refuses this unsigned script' $true ($null -ne (Get-SignatureVerdict $selfTrust $pin $pin $true))
     $sign = Get-SignToolArgumentList -Thumbprint 'ABCDEF' -TimestampUrl 'http://ts' -File 'C:\r\.work\release\v1\OutlookAI-v1.exe'
     Test-Case 'signtool signs by thumbprint, SHA-256, RFC 3161' 'sign /sha1 ABCDEF /fd SHA256 /tr http://ts /td SHA256 C:\r\.work\release\v1\OutlookAI-v1.exe' ($sign -join ' ')
     Test-Case 'and never with /a' $false ($sign -contains '/a')
@@ -766,18 +873,21 @@ foreach ($ts in $TimestampServers) {
     Start-Sleep -Seconds 5
 }
 if (-not $signed) { throw 'REFUSING: signing failed with every timestamp server.' }
+Add-Type -TypeDefinition $InstallerTrustSource
+$trust = [OutlookAIRelease.InstallerTrust]::Verify($installer)
+$signer = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 ([System.Security.Cryptography.X509Certificates.X509Certificate]::CreateFromSignedFile($installer))
 $sig = Get-AuthenticodeSignature -LiteralPath $installer
-if ($sig.Status -ne 'Valid') { throw "REFUSING: the signed installer's signature is $($sig.Status): $($sig.StatusMessage)" }
-if ($sig.SignerCertificate.Thumbprint -ne $thumb) { throw "REFUSING: the installer was signed by $($sig.SignerCertificate.Thumbprint), not the pinned $thumb." }
-if (-not $sig.TimeStamperCertificate) { throw 'REFUSING: the signature carries no timestamp, so it would die with the certificate.' }
+$signatureProblem = Get-SignatureVerdict -TrustResult $trust -SignerThumbprint $signer.Thumbprint -PinnedThumbprint $thumb -Timestamped ($null -ne $sig.TimeStamperCertificate)
+if ($signatureProblem) { throw "REFUSING: $signatureProblem" }
 $installerItem = Get-Item -LiteralPath $installer
 $sizeProblem = Test-InstallerSize -Bytes $installerItem.Length -CapMB $InstallerCapMB
 if ($sizeProblem) { throw "REFUSING: $sizeProblem" }
 $installerHash = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash
 Say "  $installer"
-Say "  signed by $($sig.SignerCertificate.Subject) ($thumb), timestamped by $($sig.TimeStamperCertificate.Subject) via $usedServer"
+Say "  signed by $($signer.Subject) ($thumb), timestamped by $($sig.TimeStamperCertificate.Subject) via $usedServer"
+Say ("  WinVerifyTrust 0x{0:X8}, the result the shipped updater accepts, and the signer it pins" -f $trust)
 Say "  $([math]::Round($installerItem.Length / 1MB, 2)) MB of the $InstallerCapMB MB cap; sha256 $installerHash"
-$record.installer = [ordered]@{ file = $installer; bytes = $installerItem.Length; sha256 = $installerHash; signer = $sig.SignerCertificate.Subject; timestampServer = $usedServer }
+$record.installer = [ordered]@{ file = $installer; bytes = $installerItem.Length; sha256 = $installerHash; signer = $signer.Subject; winVerifyTrust = ('0x{0:X8}' -f $trust); timestampServer = $usedServer }
 
 # ---------------------------------------------------------------------------------------------
 Say ''
