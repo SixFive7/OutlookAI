@@ -1,237 +1,2065 @@
 # Changelog
 
+Everything notable that has happened to OutlookAI, newest first. The format is
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+
+**A version here is a release tag, and nothing else.** `Tools/Publish-Release.ps1` derives it when a
+release is cut: the latest release's major, minor and patch plus the bump asked for, then the
+commit count. It stamps that version and the date on the section below `## Unreleased`, as
+`## v<version> - <date>`. No version is typed into a project file, into this file or anywhere else.
+
+**Entries are written as the work lands, never reconstructed at release time.** The release script
+refuses a release while `## Unreleased` holds no entries.
+
+**Every entry opens with one icon from a fixed palette, then a bold one-sentence headline, then the
+whole of what happened.** The icon says what the entry *is*, not which group it sits under, so a fix
+to a test carries the test icon and a fix that removes something carries the removal icon. The
+groups are Keep a Changelog's: Added, Changed, Deprecated, Removed, Fixed and Security, in that
+order, each at most once in a release. `Tools/Publish-Release.ps1` turns each headline into one line
+of the GitHub release, with a *read more* link to that entry's lines in this file, and refuses an
+entry that is not in this shape. The releases up to v3.1.0.325 were written one line per change,
+before this format, and stay as they were published.
+
+| Icon | Meaning | Icon | Meaning |
+|---|---|---|---|
+| ✨ | new capability | 🐛 | fix |
+| 🔧 | behaviour or configuration change | 🔒 | security or permissions |
+| 🗑️ | removal or deprecation | 💥 | breaking, or the reader must act |
+| 📝 | documentation | ✅ | tests and the gate |
+| 📦 | packaging, installer, release pipeline | ⚡ | performance |
+| ♻️ | refactor with no behaviour change | ⬆️ | dependency move |
+
 ## Unreleased
 
-- Make the two Outlook test machines keep a full crash dump whenever Outlook crashes during a live test run, and bring every dump back with the run's results. The one-call runner switches this on at every run, using only Windows' own error reporting, and reads each dump with Windows' own debugging library. Its summary names the fault, the code it struck in, the faulting thread's call stack, and the kinds of object that thread was handling.
-- Fix a search of a mailbox or folder returning the folders themselves as results. Where Windows Search indexes the mailbox, a search with no search words listed one "hit" for every folder - Calendar, Quick Step Settings, the mailbox's top level, emptied folders in Deleted Items - beside the mail, and none of them could be opened. On the test machine they were 21 of the first 100 results.
-- Add a one-call runner for the live tests on the two test machines. It builds the chosen commit, waits its turn for the machine, prepares it, runs the tests the safe way, reads the suite's own safety checks as part of the verdict, and always puts the machine back to rest and saves it - so a test run no longer depends on someone repeating dozens of manual steps correctly. Nothing that ships to users is affected.
-- Make the live tests find a mail store's place in the Windows search index even when no sample of indexed mail reaches it and no address names it, the way the server itself does. On the test machine with the 160,000-item measurement store, thirteen tests stopped before measuring anything because of this. Nothing that ships to users is affected.
-- Give the indexed test machine's hub and bystander mailboxes all three kinds of non-mail item again - calendar entries, contacts and tasks, four of each in the hub and fourteen in the bystander - as the maintainer decided (D62 (b)). The search index gives a contact no received date, so the contacts are the undated items the search-order checks measure; it dates a calendar entry or a task like mail, so those are now dated by the mailbox's own plan, older than every mail item in it, instead of by the moment they were built - they can never become the newest item a check reads, and where each one sorts is the same on every rebuild. Building one refuses if Outlook will not keep the date written to it, and the wait for the search index refuses until the index dates every one where the plan does. The per-run hub rebuild now builds the decided set on that machine whatever the previous hub held.
-- Make the check that undated items can never push mail out of a search decide by arithmetic instead of by a safety margin (D74). It used to search for 25 results and rely on the bystander mailbox holding 42 undated items, seven more than the 35 spare results such a search fetches - true only while three unrelated numbers stayed put. It now counts the undated items a mailbox holds and sizes its search so that they always out-number the spare results, runs the same search without the safeguard to see whether the safeguard decided the answer, says so, and fails if two otherwise identical searches disagree about where undated items sort.
-- Stop the test machines' sweep-cost measurement script asking Outlook for a data file's standard folders in a way that creates the missing ones, and timing the wrong folder (D101). The measurement mailbox on the indexed test machine has no Inbox, Sent Items or Junk Email of its own - its mail sits in stand-in folders - and the way the script asked Outlook for them is the way that, on the test machines' other data files, created a missing Junk Email folder and answered an Inbox request with the file's hidden root. The script now finds folders the way OutlookAI's own sweep does, says which ones that sweep skips, and times the stand-ins separately, labelled as folders the sweep never reads; the other measurement script can be pointed at a stand-in folder. The script had never run: its first run, against that mailbox, also found that it could not walk a single folder - PowerShell turned every Outlook collection it handed on into a plain list - which is fixed too. OutlookAI's own sweep was measured against the same mailbox and was right: it reads the one standard folder the file has, Deleted Items, and does not count the three it lacks as gaps.
-- Let audit_log page through any number of entries: when more match than fit on one page, the answer carries nextToken, and passing it back as resume_token returns the next older page, until no nextToken comes back. Entries recorded in the same millisecond are no longer skipped, which paging by time could not avoid, and a token is refused with a clear reason if the log was archived or edited in between.
-- Correct what the draft tools say they can reach: update_draft can revise any unsent draft in a Drafts folder, including one you wrote yourself, and a draft it revised can then be discarded by the same session. The descriptions used to say OutlookAI could only ever change or delete drafts it had made itself.
-- Fix OutlookAI's Outlook tuning stopping halfway on a computer where Outlook runs without administrator rights - which is how almost everyone runs it. Five of the Cached Mode settings OutlookAI keeps applied are Outlook *policy* settings, which Windows lets you read but only an administrator change, and the first of them stopped the whole run: the Cached Mode and mailbox-size settings after it were never applied, and the mail server's health report said the tuning had never run. OutlookAI now skips a setting it may not change, applies everything else, always records when it ran, and reports the skipped settings as needing an administrator - in OutlookAI Settings and in the health report.
-- Show Outlook's five Cached Mode policy settings in OutlookAI Settings - each with its current value, the value OutlookAI wants, and whether it is in effect or needs an administrator - and let you change them. **Apply as administrator** writes the ones that need it through one Windows administrator prompt. A small helper installed with OutlookAI does the writing; it accepts those five settings and nothing else, and always writes them for you, also when an administrator types their own password into the prompt. Cancelling the prompt changes nothing and says so.
-- Fix building the add-in for the test machines, which stopped at once after the release script arrived, saying Visual Studio's Office build files were missing when they were not.
-- Build, test, sign and publish releases on the maintainer's own computer instead of on GitHub's servers. Installers are signed with the same OutlookAI certificate as before, so installing and updating work exactly as they did; what goes is the GitHub build-provenance attestation that releases used to carry, which only GitHub's own build service can make.
-- Release the Outlook objects OutlookAI adds - a column it adds to one of Outlook's tables while it searches, a bookmark it places in a draft while it writes - as soon as it has added them. They used to be left for .NET's garbage collector, which releases them at a moment nobody chooses: after the table or the draft they belong to has already gone, inside Outlook. The project's own mailbox checks did the same with the attachments they add and the folder collections they count. Found while chasing Outlook crashes on a test machine.
-- Make the test machines' hub rebuild wait, for up to a minute, for a list file that another program still holds for a moment after the rebuild's first step, instead of stopping with the test mailbox emptied and the test run lost. It happened twice in a day. Nothing that ships to users is affected.
-- Fix the window OutlookAI opens to show you a folder or search results being, on Office LTSC 2024, the invisible window OutlookAI keeps open so that Outlook stays running for it. Asked for a new window on the same folder - your Inbox - Office 2024 hands that invisible window back instead of making a new one, so OutlookAI showed it, and closing it took away what kept Outlook running. OutlookAI now always opens a window of its own and moves it to the folder you asked for. Closing it still ends Outlook when OutlookAI had started Outlook itself: Office 2024 treats closing its last window as quitting, and OutlookAI lets it quit - as it must, or your own Exit could not close an Outlook that OutlookAI started - and starts it again, without a window, the next time it needs it. Measured on a test machine with Office LTSC 2024; on Office builds that make a new window every time, nothing changes.
-- Say what renaming a reply or forward does to its conversation in a POP3 or IMAP mailbox or a local data file (.pst). When you give a reply or forward its own subject, OutlookAI keeps the draft in its conversation by restoring the conversation details Outlook resets when a subject changes, and in an Exchange or Microsoft 365 mailbox the draft also keeps the original's conversation id. A test machine measured that a data file differs: there Outlook gives the renamed draft a conversation id worked out from the conversation's topic rather than the original's, and refuses to let it be changed - so the draft still threads for its recipients and keeps its topic, but a lookup by the original's conversation id does not find it. The subject option's description now says so, and the check that runs against a real Outlook holds each kind of mailbox to what it actually does.
-- Fix discarding or revising a draft OutlookAI saved in a data file that has no Inbox. Replying to a message in such a data file makes Outlook create a Drafts folder there, but Outlook records that folder only in the data file's hidden top folder, which OutlookAI did not read, so it then answered that the data file had no Drafts folder and refused to discard or revise the draft it had just saved. Found on a test machine.
-- Correct three mailbox checks the first full run on a test machine found asking the wrong question. The check that a complete search of one folder returns exactly that folder's mail never said "this folder only", so since folders came to include their subfolders by default it compared a whole subtree against one folder's mail; it now asks for the folder alone and, separately, checks the default against the subtree. The check that repeated searches are answered from memory now runs only where the search index holds mail, because without one every search is meant to look afresh. And the health check's test now expects what the tool says when the search index is reachable but holds no mail - a problem, not advice.
-- Fix discarding a draft in a local data file (.pst), such as a POP3 account's, reporting no id - or the id of an older discarded draft with the same subject - for the draft it had just moved to Deleted Items. A data file keeps a message's id when the message is deleted, and OutlookAI only looked for a new one, as an Exchange mailbox hands out; on any mailbox that is not Exchange it now first checks whether the old id opens in Deleted Items.
-- Fix a complete search handed out one page at a time repeating a message on a later page - or, on a computer west of UTC, skipping mail and still calling itself complete. Outlook reports a message's received time in local time under the column name OutlookAI asks for first, and in UTC only under a second spelling of the same column; OutlookAI read both as UTC, so where each page stopped was off by the computer's distance from UTC. Measured on the first full run on a test machine, which settles an open question about the zone those columns report in (Q11).
-- Find the Archive folder of a local data file (.pst) without asking Outlook for it, once Outlook has made one there. When mail is archived in a POP3, IMAP or data-file mailbox that has no Archive folder, Outlook creates one and records it in a place OutlookAI did not read, so OutlookAI's read-only lookup kept answering "no Archive folder" about the folder the mail had just been archived into. The first full run on a test machine found it: the mailbox checks that look for the Archive folder that way expected a new one on every archive, and their clean-up never reached the test mail inside it. The place Outlook uses is not in Microsoft's documentation; it was measured on that machine and is read only on non-Exchange mailboxes.
-- Fix the mailbox checks on a test machine that runs none of the search-index checks: the check that the local mail server answers, the check that no mail is left queued from an earlier run, and the nudge that asks Outlook to fetch mail while a check waits for it now switch on for every run, not only when an index check happens to be selected - and every check that sends itself mail now waits through that nudging helper. On the first full run on a test machine, three checks timed out with their mail sitting on the local mail server, because Outlook's one fetch had finished a moment before the mail arrived and nothing asked again. Nothing that ships to users is affected.
-- Keep the test machines switched off unless they are in use: new ones no longer start with the computer, and are saved to disk rather than shut down when it stops, so a restart leaves them using no memory.
-- Fix a search limited to one folder finding nothing in the Windows search index when the folder's name contains `%`, `*`, `?` or `\` (Q99 finding). Windows writes those characters - and `/` - as codes in the index's address for a folder, so a folder called `50% off` is filed as `50%25 off`, and OutlookAI looked for the name as written: the index answered nothing, and only the last few days' mail came back. OutlookAI now spells folder names the way the index does, measured on a test machine for all five characters. Results from such folders now also show the folder's real name instead of the coded one, open directly, and are no longer listed twice when the index and OutlookAI's check of recent mail both find them. A folder whose name contains `/` can still only be searched through the folder above it, because folder paths use `/` to separate folders.
-- Say that a draft was NOT deleted when discarding it failed before the delete was even attempted - while Outlook was still reading the draft and its folder - instead of saying that whether it was deleted is unknown and sending you to look in Deleted Items. Only a failure during the delete itself still says the outcome is unknown.
-- Find each of your mail files in the Windows search index by its identity instead of its name (Q99). Windows files every Outlook mail file in its index under the file's own name plus a number Outlook computes from the file's identity - Microsoft documents the formula - and OutlookAI now computes that number too. A search limited to one data file (.pst) therefore searches that file and nothing else: also when the file's own name differs from the name Outlook shows for it, as it can for a file named only in the Outlook profile or for an older-format file, and never another file that shares its name - one in another Outlook profile, or a copy at another location. A data file the index does not hold is now said to be unindexed instead of being searched through a same-named stranger, and search results name the mail file the way Outlook does, the name the other tools accept. `outlook_health` now says for every mail file how it was found in the index (`matchedBy`), under which index name, and lists the indexed mail files that belong to none of this profile's. Exchange, IMAP and Outlook.com mailboxes, whose numbers could not be tested here, are found the same way when the number fits and otherwise exactly as before, as are shared and delegate mailboxes.
-- Match each mail file to the Windows search index by its own name and its identity number together, never by a guess (Q113). The index's address for a mail file carries both, so a file is now matched only where both are its own: a renamed data file is no longer searched through the entry the index still keeps under its old name, and two files that share a number are told apart by their names. Where the index itself cannot tell two of your mail files apart - they share both name and number - OutlookAI no longer picks one: a search limited to either is refused with the reason, a search across all your mail leaves that index entry out and names the two files (`index.storesUnmatched`) instead of mixing their mail in, and `outlook_health` marks them `ambiguous`. A search limited to a name two of your mail files share is refused the same way, and so is a search limited to a data file while the index's list of mail files cannot be read. IMAP and Outlook.com mail files are held to the same rule instead of falling back to their names, and `outlook_health` now reports such a match as `nameAndHash` (it said `storeHash`). Exchange mailboxes keep their current matching - by number, or else by name - until it has been measured on an Exchange test machine.
-- Measure which date the Windows search index gives appointments, contacts and tasks saved in a data file (Q98): appointments and tasks get a received date - their creation time - so they sort and filter like mail, and contacts get none. The test machines' measurement-mailbox tool can now hold each probe item until the index has it and record every column a search sorts by, and the script that adds a data file to a test machine can create an older-format (ANSI) one. Nothing that ships to users is affected.
-- Add a third test machine - a small virtual machine with no Office, no mailbox and no network - and one script that runs the project's non-mailbox tests and every test-machine script's self-check on it, so that none of them has to run on the maintainer's own computer any more. The script tests a named commit or branch - an agent's unfinished work included, once committed - on a machine put back to the same saved state before and after every run, so no run can inherit anything from the one before; callers queue and run one at a time, each gets back a summary, the full test results and every log, and a caller stopped part-way leaves nothing running: a watcher it starts puts the machine back and saves it. Its runs reproduced the main branch's passing tests exactly - 3,005, and 3,346 at a later commit - in about four minutes each. Building it also found two faults in the step that finishes a test machine's Windows install - it checked its own work a moment too early, saw the install discs still attached and the first checkpoint not yet there, and stopped - and one in the step that creates a machine, which recorded a fixed memory size for machines that in fact had memory growing on demand up to a terabyte; all three are fixed. Nothing that ships to users is affected.
-- Install the OutlookAI add-in on the test machines in two steps (Q100): the installation itself with administrator rights, then Outlook's first start with the add-in - the start that proves it runs - without them. The first start used to inherit the installer's administrator rights, and an Outlook started that way never adds mail to Windows Search, so on the test machine whose mail must stay searchable it broke the rule that Outlook only ever starts as an ordinary user. The installation step now never starts Outlook and always reports that the add-in has not run yet; the first-start step checks that Outlook really started without administrator rights and is the only one that can report the add-in ready; and the old one-step command is refused instead of silently doing half the job. Checked on the developer's machine only so far - not yet run on a test machine.
-- Stop telling you a draft may have been saved when none can have been. A new draft whose Drafts folder could not be opened, and a new draft, reply or forward that failed before Outlook was given anything to save, now say that no draft was created and that retrying cannot leave a second one, instead of sending you to look for one in Drafts.
-- Stop the remaining mailbox checks that could report success having checked nothing, as the maintainer decided them one by one. The check that a search always answers passed on any error at all - the very failure it exists to catch - and now fails on every error except the one where the machine's search index cannot be reached. That case, and the checks that Outlook says when to retry while it is starting or not responding, that the helper process Outlook work runs in never outlives the server, that Outlook's search setting can be switched both ways, and that reading a message and following its conversation open no window, now say when there was nothing to check, the way the project's other mailbox checks already do: on the project's reference machine they fail, and on a test machine they print a PROVED NOTHING line naming what was missing - so on the reference machine the retry check now fails whenever Outlook is healthy, by design. The check that Outlook recovers after it exits used to stand aside, green, whenever a person might be using the computer; it still does on the maintainer's own machine, with a line saying so, but on a test machine, where nobody is at the keyboard, the same situation now fails - and it now checks for unsent mail and open compose windows before making Outlook exit even when no Outlook window was open, which it used to skip. The check that a shared mailbox's messages open from a folder the search index lists flat now waits up to five minutes for Exchange to finish listing that folder before it gives up. Pinned by new checks that need no mailbox, with a control that fails against the old code and a check for each safeguard that fails when it is removed. Nothing that ships to users is affected.
-- Fix lines going missing from OutlookAI's audit log when two assistant sessions record a change at the same moment, and make the log impossible to garble. Every session runs its own copy of the mail server, and when two of them added a line at the same instant, one line could overwrite the other without any error - measured, two copies writing 3,000 lines each at once kept 5,883 of the 6,000. Every line is now added in one write that Windows itself places at the end of the file, so no copy can overwrite another's line, even one that cannot wait its turn; the copies still take turns, so the log stays in time order. Each line also records which process wrote it, that writer's own line number and a checksum, and reading the log back reports any line that was damaged and any line missing by those numbers, instead of answering as if the log were complete. A line left unfinished by a crash no longer swallows the next one, and outlook_health counts how often this server had to write without waiting its turn.
-- Let your AI assistant read OutlookAI's audit log, so it can tell you what it did. The new `audit_log` tool returns the record OutlookAI keeps of every change it makes - drafts created, revised and discarded, attachments saved, mail moved or archived, each step of a send, signature changes, mails opened on screen - newest first, from every session on this computer. It can narrow that to a time window, to particular kinds of change, or to one message, following the message through a move even though moving changes its id; that also lets it check whether a request whose outcome was reported as unknown actually took effect. It only reads: it never changes the log, never gets in the way of OutlookAI adding to it, never starts or touches Outlook, works with Outlook closed, and reads only the current log - never an older copy that has been renamed or archived. What it returns is the log's own metadata, never a subject or a message body, and lines it cannot read (such as the log's oldest lines, from before it had its current format) are counted rather than guessed at. The tool is marked read-only in the information it gives the assistant, so tools that sort read-only from write-capable actions can recognise it.
-- Stop the project's own tests writing into your real OutlookAI audit log. The audit log (`%LOCALAPPDATA%\OutlookAI\audit.log`) is OutlookAI's record of every draft, saved attachment, move, archive, send and signature change it makes, and a draft or send whose line cannot be written is reported as an error - but the project's automated checks drive those same paths with stand-in mail, and every one of them added a line to the real log of the computer that ran them: when it was last counted, almost two lines in three were test noise. Every test run now writes its audit lines to a throwaway folder of its own under the temporary folder, deleted when the run ends, and a test run can no longer write the real log at all - anywhere outside the temporary folder is refused before anything is created. One check went further and made the mail server itself write a line to the real log on every run; it now runs inside the test process, and the checks that talk to the mail server refuse to ask it for that kind of call. All of this is proven without opening the real log, which your own OutlookAI may be writing to while the tests run, and the proof was shown to fail on the old code. Where the log lives, what OutlookAI writes to it and what it reports about it are unchanged; lines already in the log are left as they are.
-- Mark every mailbox check that changes nothing as such, and prove it when the project is built (Q74). Fifty-four of the checks that run against a real Outlook now carry a "writes nothing" label; the build reads their compiled code - including everything that runs before and after them - and fails if any of them could create, change, move, send or delete anything, or reach a part of the product nobody has shown to be read-only. The maintainer's own machine runs only the seven labelled checks that need an Exchange mailbox, selected by a filter computed from those labels rather than typed by hand, and the instructions for that run, the test-machine run book and the project rules now describe it. A short list of manual checks before a release covers the Exchange-only writes no automated check can reach. Nothing that ships to users is affected.
-- Add automated checks for sending on behalf of another mailbox and for drafts and replies in shared or delegate Exchange mailboxes (Q74). No mailbox check that runs against a real Outlook can reach these any more - the test machines have no Exchange, and the maintainer's own machine is read-only - so the decisions behind them (which account a mail goes out from, which on-behalf name it carries, when a send is refused) now have checks that need no mailbox at all. How the product behaves is unchanged.
-- Split the check that an item id read from the search index cannot be opened directly into its two real halves (Q74). On an Exchange mailbox such an id is refused, as recorded in 2026-07; on a local mailbox file the same id is the item's own id and should open - so the old single check failed on every test machine and could only run on the maintainer's own. The Exchange half now runs only where there is an Exchange mailbox, and a new half asserts the local-file behaviour on the test machines; that half follows from how the id is built and is confirmed or refuted by its first run there. The run lines for the test machines exclude Exchange-only checks by a name that is computed, not typed, and the build fails if a written copy stops matching it. Nothing that ships to users is affected.
-- Move the two checks that a delegate mailbox's folders can still be searched into a group of mailbox checks that writes nothing (Q74). They can only run on the maintainer's own machine, which is now read-only, and the group they were in creates and removes test folders when it starts - so on that machine they would have failed before they began. What they check is unchanged. Nothing that ships to users is affected.
-- Close the second way a mailbox check could still write on the maintainer's own machine (Q74). The checks that talk to a real copy of the server over its standard connection now refuse, before anything is sent, every tool that is not known to be read-only - drafting, sending, moving, archiving, signatures, saving attachments and opening windows - whenever the machine is the read-only one. A tool nobody has classified is refused the same way, so a new tool has to be classified on purpose before such a check may use it there. Nothing that ships to users is affected.
-- Stop the mail-loss guard from re-running other mailbox checks on the maintainer's own machine (Q74). When it suspects mail went missing it still counts the mailboxes again twice before deciding, but it no longer starts a second run of every check that had just run - which ignored the original selection, included checks that write, and could never have turned the failure into a pass anyway. Nothing that ships to users is affected.
-- Make the maintainer's own machine read-only for the mailbox checks that run against a real Outlook, in code rather than by convention (Q74). A machine whose test settings declare it the reference machine - or declare nothing, as his do - now refuses every write a check attempts, his designated test mailbox included, and the permission that let two checks create and delete a draft in his other business mailboxes is gone. Only a dedicated test machine may still write, to its own test mailbox. Nothing that ships to users is affected.
-- Correct the test machines' record, which still said neither machine's 20,000-item measurement mailbox had been built. Both were built in mid-September, as the notes on building the machines record; the record now says so and cites where, and notes that the indexed machine's is still below the 160,000 items decided for it. The tool that writes each test machine's settings no longer calls such a mailbox "not built" just because its build parameters have not been copied into the record yet. Nothing that ships to users is affected.
-- Stop three of the mailbox checks that run against a real Outlook reporting success when they had checked nothing. The checks that a search of the whole test mailbox handed out one page at a time returns exactly what a single search does - no message skipped, none twice - and that a continued search refuses a changed or outdated continuation all need the test mailbox to hold more than a page of mail; on a smaller one three of them quietly ended green, and the fourth compared two one-page answers that could not disagree. The check that a delegate mailbox's messages still open from a folder the search index lists flat did the same whenever Outlook had not yet listed that folder. Each now says so, the way the project's other mailbox checks already did: on the project's reference machine it fails, because there it means something has drifted, and on a test machine it prints a PROVED NOTHING line naming what was missing and how to supply it. The check that Outlook recovers cleanly after it exits used to skip, green, whenever anything was waiting in the Outbox; it now fails on every machine instead - it cannot run without closing Outlook, which is never done while mail is queued, and on a test machine nothing but a test ever queues mail, so a full Outbox there is a stuck send or a previous run's leftovers that should not exist. Pinned by 32 new checks that need no mailbox, with a control that fails against the old code and a check for each safeguard that fails when that safeguard is removed. Nothing that ships to users is affected.
-- Add a read-only listing of a test machine's mailbox folders to the test-mailbox tool, so what a build or a clean-up left behind - folders Outlook was asked to create, emptied folders moved to Deleted Items - can be checked with the project's own guarded tool instead of an improvised script.
-- Stop the test machines' session runner reporting success for work that exited with a failure code. Work handed to it as a piece of script text used to be pasted into the runner's own script, so a deliberate exit with an error code ended the runner itself and the result it recorded was success; and text with a syntax error left no result at all, so whoever started it waited out the whole time limit. That work now runs as a script of its own, the way work handed over as a file always has, so its exit code, its errors and its syntax errors all come back as they are, and work handed over as a file behaves exactly as before. Shown on the maintainer's machine under both versions of PowerShell, with the old runner alongside as the control; the same check on a test machine is recorded as still to do.
-- Run the mailbox test suite on the test machines without administrator rights, as the product itself is built to run, and give the second test machine a real exclusion from the search index. The tool that runs work in a test machine's logged-in session could only start it with administrator rights, and an Outlook started that way never uses Windows Search - so on the machine meant to have an index, nothing a test created would ever have been found, and the suite would have read that as a slow indexer. That tool now takes a run level: administrator rights stay the default, because the installers that go through it need them, and the suite now runs without them. It warns when an Outlook is already running at the other level, which the work could not talk to, and work asked to run without administrator rights refuses to start at all if it gets them anyway. Every test and helper the suite runs was checked, and none needs administrator rights. The machine meant to have no index was also taken back to its last clean saved state and given the exclusion rule that Windows Search itself reports, instead of relying only on a policy setting that turned out not to be an exclusion at all; it then verified as not indexed, for that reason, and was saved in that state. Nothing that ships to users is affected.
-- Stop a build of the Outlook add-in outside Visual Studio from quietly switching the builder's own Outlook over to that build. Every build used to register itself with the Outlook on the machine that built it and mark itself as trusted, so a developer's Outlook ended up loading whichever build folder had been built last - and cleaning a build removed the add-in from Outlook altogether, installed copy included. Building inside Visual Studio still registers, because debugging needs it. A new developer script puts a build on your own Outlook only when you ask for one - copied out of the build folder first, so later builds cannot change it underneath you - takes it off again by putting the installed release back, and reports which build Outlook will load at its next start.
-- Fix four faults the first real build of the test machines' small mailboxes found. The mailbox owner was never a proper recipient of the mail addressed to them, because Outlook refused the form their address was written in; mail meant for a data file's Inbox was filed in a hidden folder nobody could see, because such a data file has no Inbox and Outlook handed back its hidden top instead; trial items the builder writes and deletes before a build were left in a different mailbox nobody had allowed, because Outlook files a new unsent mail in the default mailbox's Drafts; and asking Outlook for standard folders created ones the mailbox was meant not to have. The builder now writes the owner in a form Outlook accepts and checks exactly that before building, files mail only into folders Outlook shows (a visible stand-in folder where a data file has none), writes mail into a mailbox that is not the default one only in the one way a test machine showed stays in it, checks where every first save landed and removes it there, clears its own trial items from every other mailbox before and after, and never makes Outlook create a folder. The unindexed test machine's trial runs confirmed each fix; the mailboxes themselves are not built yet (see the entry on undated items).
-- Give the test machines' hub and bystander mailboxes calendar entries, contacts and tasks meant to carry no received date - 12 in the hub, 42 in the bystander - so the three checks of how the search index sorts undated items against mail can measure something, instead of passing on mailboxes that held none. Unsent drafts were left out on purpose: Outlook would first write each one into a different mailbox. The first trial on a test machine found that Outlook gives every such entry a received date when it is saved into a data file, and refuses to remove it; so they are left out for now - the hub and bystander mailboxes are built with their mail alone, 56 and 300 items - and they come back only if a measurement shows the search index treats those entries as undated after all. The measurement found that it does for contacts alone - calendar entries and tasks get a received date in the index, contacts get none - so the test machine with a search index now carries 12 undated contacts in its hub and 42 in its bystander, and the three checks measure them there; the other test machine, where those checks do not run, keeps its mailboxes without them.
-- Rebuild the test machines' hub mailbox before every test run with one script, and make the time-zone check fail - naming that script - on a machine whose hub was not rebuilt, instead of passing without proving anything. The check that the search index reports its newest mail at the right time can only catch a time-zone mistake while that mail is under an hour or two old. The settings file now names the mailbox the hub is rebuilt from, and the settings script refuses a test machine whose settings do not.
-- Time the search-index speed checks against the largest indexed mailbox on the machine rather than the first one listed. On a test machine the first is a mailbox of a few dozen mails, where a two-second limit is met by construction; the indexed test machine's measurement mailbox stays at 160,000 items so the limit means what it does on a real one. That mailbox now exists: 160,000 items, built into a new data file on the indexed test machine in under an hour and a half, and every one of them in its search index. It stays usable for a month between rebuilds rather than a week: that machine's tests now check only its 30- and 60-day spans of mail for staleness, because none of them asks it about the last seven days. The script that checks a test machine's index state now gives an index of that size the time it needs to be counted, instead of giving up after 30 seconds and reporting the index as missing.
-- Give the test machines' identity account a real Inbox, instead of tying it to a hidden folder. Its data file used to be created empty and attached, and such a file has no Inbox, so the account's mail would have gone where Outlook shows nothing. Outlook now makes that data file itself, as the default data file of a throwaway profile - which gives it every standard folder - and the setup checks it has a real Inbox and holds nothing before it is named, attached, and made the account's delivery folder. The setup script also refuses a data file with no real Inbox, checks the delivery folder when it verifies the account, and no longer creates a Drafts folder while it is only meant to be reading. Built this way on both test machines, where the account now delivers into its own Inbox: on the unindexed one first, then on the indexed one, rebuilt from a checkpoint taken before its old account and taken through the rest of its setup again - the search index, the local mail server, the add-in, the signature and the test suite - each proven again, with its mail searchable throughout. The search index there now files that account's mail file under the account's address, instead of under the generic name another mail file on the machine also had. The rebuild also showed that the test machines' automatic approval of Outlook's security prompt must be in place before this setup runs, not after: without it, one of the setup's reads stopped on the prompt about two minutes after a restart, although Windows reported the antivirus as up to date, so the build instructions now put that step first.
+OutlookAI is an Outlook add-in with an AI writing sidebar. It also installs a local mail server that
+lets an AI assistant such as Claude Code search and read your mail and prepare drafts for you to
+send.
 
-- Make every run of the mailbox tests that act on a real Outlook profile ask for an explicit go-ahead, given for that run and that computer only. A test selection that merely happened to include one of those tests could reach a real mailbox by accident - and nearly did: a run meant for a handful of offline checks picked up three of them, stopped only because that copy of the project had no mailbox settings in it. Those tests now refuse to start, before touching anything, unless the run sets `OUTLOOKAI_LIVE_OPT_IN` to the name of the computer it is running on; a value saved permanently in the environment, or naming another computer, is refused as well. The refusal says what the setting is for, how to give it on a test machine, and that the maintainer's own computer is read-only for these tests; a new check proves from the compiled tests that none of them can start any other way. Nothing that ships to users is affected.
-- Stop the mailbox tests themselves adding folders to the test machines' mailboxes. The check that every test run leaves each mailbox as it found it, and the clean-up that removes the tests' own messages, asked Outlook for each mailbox's standard folders in the same way the product used to - the way that makes Outlook create any that are missing. On a test machine that added a "Junk Email" folder to mailboxes the tests are never allowed to change, before the check had even recorded what it would compare against. Both now look folders up without ever creating one, exactly as the product itself does since this release's fix for POP3, IMAP and data-file mailboxes; a folder they cannot confirm exists makes the leftover-message count fail loudly rather than count it as empty; the read-only archive test now also proves that no mailbox's folder list changed; and the two archiving tests expect the Archive folder to be created, and reported, exactly when a test machine's mailbox had none. Nothing that ships to users is affected.
-- Fix OutlookAI putting a default signature on the wrong entry of the Outlook profile and telling you it had worked. Outlook names a POP3 or IMAP account's data file after its email address by default, and making a signature the default for that address could write it onto the data file instead of the account: the account was left with no default signature, yet both the tool's answer and the signature list reported it as set, because the check that read it back looked in the same wrong place. It was found on a test machine whose account had a name of its own. A default is now written only onto the mail account whose address matches exactly - never a data file or address book, whatever it is called - it is refused rather than guessed when no account or more than one has that address, and it is read back from that account before success is reported. The signature list now shows each account's own defaults, including accounts whose name in Outlook is not their address, which it used to leave out. A default an earlier version put on a data file is left where it is; setting the default again puts it on the account.
-- Refuse, on the developer's machine, to build a test machine's install disc with a computer name the test machine would later refuse to run under. The first-logon script now checks it is on a test machine by its name, and a disc naming anything else produced a machine that stopped partway through an unattended install about seven minutes in. Nothing that ships to users is affected.
-- Close the last two gaps in how the project's test machines protect the computers around them. First, four test-machine scripts still changed whatever computer ran them without checking that it was a test machine: the one that builds the 20,000-item measurement mailbox, the one that times a sweep of it, the one that finishes a freshly installed machine's language, regional and power settings, and the one every Outlook step on a test machine runs through, which installs a scheduled task. All four now refuse to run anywhere but a test machine, before they touch anything - even when only asked what they would do - and the project's automated checks now fail the build if any of them loses that check; the list of scripts excused from it is empty. The first-logon script travels alone on the installation disc and cannot borrow the shared check, so it carries its own, matched to the account and machine names the test machines are built with. Each refusal was proven on the maintainer's own computer with every command that could change something replaced by a tripwire: every script refused, nothing reached a tripwire, and every setting each would have touched read back unchanged. Second, building a test machine from scratch left its password on disk in plain text for good: the disc image that installs Windows carries it, and the machine's first checkpoint was taken with that disc still in, so the checkpoint depended on the file and it could never be deleted. The build now ends with a step that waits for Windows to finish setting itself up, takes both discs out, takes that first checkpoint without them, and only then deletes the password-carrying image - and refuses to delete it while anything on the computer still depends on it. The two existing test machines were built before this, so their images stay until those machines are rebuilt, and the image builder now refuses to overwrite one by accident. The new finishing step has not yet run against a real machine; the parts that make its decisions are tested without one.
+Most of the changes since v3.1.0.325 are in that server. When it cannot finish something, it now
+says what it did and whether your mail changed. It works on POP3, IMAP and local data-file (.pst)
+mailboxes without creating folders in them, and it no longer hangs when Outlook stops answering. The
+assistant can now read OutlookAI's audit log and continue an exhaustive search where it stopped.
 
-- Fix OutlookAI adding folders you never asked for to a POP3, IMAP or local data-file (.pst) mailbox. Finding out where such a mailbox keeps its Archive folder, and checking that it was the right folder, asked Outlook for the mailbox's standard folders in a way that makes Outlook create any that are missing: measured on a POP3 test mailbox, one lookup added an "Archive" folder and a "Junk Email" folder to a mailbox that had neither - and every search asked for Junk Email the same way. Looking things up now never creates anything: OutlookAI first checks the mailbox's own record of which standard folders it has, and a folder that is not there is reported as not there. Archiving mail is the one action that may still create the Archive folder, because you asked for mail to be moved into it, and it now tells you when it did instead of promising that nothing is ever created. Checking that a message is still a draft before revising or discarding it, and that a move is not into Deleted Items or the Outbox, now looks those folders up the same way; if such a check cannot be made, on any kind of mailbox, the change is refused and says why - a move used to go ahead unchecked. Microsoft 365 and Exchange mailboxes, which always have these folders, otherwise work exactly as before.
-- Build out the unindexed test machine towards its full design, one scripted step at a time, each proven on the machine and saved as a checkpoint. The test machines now answer Outlook's "a program is trying to access email address information" security prompt by themselves: they have no network, so their antivirus is permanently out of date, and Outlook then stops every outside program that reads an address, a message body or a recipient on an Allow/Deny prompt that nobody is there to click - which would hang the mailbox tests. A documented Outlook security policy now approves those reads on the test machines only, and its check does what the tests do - it reads an account's address - and fails if the prompt appears; with the policy absent the same check caught the prompt within a second, so the check is known to work. The three Outlook settings that keep the classic, scriptable Outlook in place, lost on that machine by an earlier hand-run script, are restored and stay put across Outlook restarts. And the rebuild instructions no longer tell anyone to restart a test machine with a plain `shutdown /r`, which force-closes Outlook exactly as killing it would; they give the graceful route that was used instead. The machine's local mail server was installed and proved itself on the first attempt, including starting on its own after a restart - and settling the question of whether Outlook logs in to it without a stored password showed that it does not: Outlook asks for one before it ever connects, so mail would never have been collected. The test machines' account setup now stores a password (any value; the local server compares it with nothing), and the server's own log shows Outlook logging in with it. The OutlookAI add-in was installed on the machine from the same commit as the tests, trusted without a prompt, and confirmed running inside Outlook, twice; its installer's self-check no longer crashes when it is copied to the machine on its own. The machine's second mail account - the one the tests use to check that a draft is written from the right account, into that account's own mailbox - was added and verified there too, surviving an Outlook restart; it also asked for a password until one was stored, so the setup steps now store it for every test account. Setting up that account's signature exposed a real defect in the signature tool: asked to make a signature the default for an account, it can attach it to a mail file that merely carries the account's address as its name, then report success. That is recorded for a fix rather than worked around. The first build of the small test mailboxes the tests read from worked for the main test mailbox but exposed four defects in the test-data generator and the account setup, all recorded for their owners rather than patched around: received test messages are never addressed to a resolved mailbox owner; a mail file added to a profile after the fact has no Inbox, so the messages meant for it landed in a hidden folder no one can see; its throwaway test items could be left behind in a different mail file than the one it was told it may touch; and the second account's incoming mail would be filed in that same hidden folder. The machine can now build and run the test suite by itself - installed from the staged media with no network, proven by discovering all 2,794 tests and running a sample, twice - and its settings file, generated from the recorded store names rather than typed, is in place and accepted by the suite's own loader. The first live run on it is deliberately held back until a defect in the tests' own safety census, which can create folders in the mail files it is meant only to count, is fixed.
-- Build out the indexed test machine the same way, one scripted and checkpointed step at a time, keeping its mail searchable throughout: its lost Outlook settings restored, Outlook's security prompt approved automatically, the local mail server installed with both test accounts logging in to it, and the add-in installed from the current code and confirmed running twice - with the search index checked unchanged after every step that started Outlook. Outlook on that machine has to run without administrator rights for its mail to be searchable, so every check that talks to it now runs without them as well. Its second test account now has its own default signature, set by the corrected signature tool on the account itself and read back from there rather than from a mail file carrying the same name, and the machine's copy of the test suite was brought up to date and proven to build and run.
-- Make the project's own tooling actually run on the version of PowerShell that ships with Windows, so the test machines never need anything extra installed. Ten scripts declared they worked on it and did not: they worked out where the project lives in a way that version leaves blank at that moment, so they failed before doing anything - including three of the checks the project's build runs on every change. They now run under both that version and the newer one, verified by running each under both. A second, quieter failure is fixed as well: when a script ran another program and captured that program's error output, the older version stopped the whole script at the first line the program wrote there - even a progress report - before the script could see whether the program had succeeded. The tool that makes a test machine's install disk did exactly that on its own "0% complete", and the measurement-mailbox builder would have lost its tool's real exit code and message the first time the tool printed a warning. Six scripts now read that output safely under both versions and still stop on a real failure exactly as before; the privacy check and the pre-release measurement gate no longer need the newer PowerShell installed to run their own sub-checks; and one character the older version would have misread was replaced. A new build check fails on all three kinds of mistake in any script, and the build now runs every one of its checks under the version that ships with Windows as well as the newer one, so none of this can quietly come back. Nothing that ships to users is affected.
-- Add a mail server to the test machines, so the thirteen mailbox tests that need mail to really travel - the product's own send tool among them - can run there exactly as written. The test machines have no network, so the server runs on each machine itself: it accepts what Outlook sends and hands it straight back when Outlook collects its mail. It is Inbucket, a small free open-source program under the MIT licence, used as it comes rather than written here, at the maintainer's request and as the one deliberate exception to the project's rule against external applications. It was chosen over the two usual alternatives for two reasons that matter on an unattended machine: it lets Outlook collect mail without a stored password, where the others refuse one and a password prompt nobody can answer would stall the machine; and it keeps each test account's mail separate, where the others would let two accounts take each other's mail at random. It is never downloaded on a test machine: a new script fetches the pinned release on the maintainer's computer and accepts it only when its fingerprint matches both the one its makers publish and the one recorded in this project, and the installer on the test machine refuses any copy that does not match. The installer starts the server whenever the machine starts, and then proves it works by sending test messages through it and reading them back - lines that start with a full stop, an attachment, deletion, a restart, and one mailbox unable to see another's mail - instead of only checking that something is listening. The test suite itself now also refuses to start when the mail server's ports answer in the wrong language, which would otherwise show up minutes later as mail that never arrived. None of this has run on a test machine yet, and one question can only be answered there: whether Outlook collects mail without asking for a password it does not have. The documentation says how to find out without sending a single message, and what to change if it does ask.
-- The test machines can now be given the OutlookAI add-in itself, as a scripted step of building them from scratch, so the mailbox tests that check what the add-in sets up in Outlook can run there instead of failing. Two of those tests read settings only the add-in writes the first time it runs, and the test machines had never had it - nothing in their build installed it, and one of the two runs on both machines. A new script on the maintainer's machine builds the add-in from a named, committed version of the project - the same version the test suite on the machine is built from, so the tests check the add-in they are meant to check rather than whatever was last released - and wraps it in the product's own installer. A second script on the test machine installs it silently, trusts it without the security prompt that would otherwise freeze an unattended machine, starts Outlook once, and then checks the exact settings the tests read, down to their type, and that the add-in wrote them during that start and answers when called. **Building the add-in turned out to register it on the machine doing the building**, quietly pointing that machine's own Outlook at the fresh build; on the maintainer's machine that is the Outlook he works in. The build script stops that three separate ways and compares the machine before and after, and three builds left it exactly as it was - the first also caught, and removed, a certificate the signing step had left behind in a place nobody expected. The add-in writes nothing that affects which mailboxes are searchable or what is in them, so the machine kept deliberately out of the search index stays that way. The install has not yet run on a test machine.
-- Close two holes in how the project's test machines are built, both found while rehearsing a rebuild from nothing. First, three of the test-machine setup scripts changed a computer's settings without checking that it was a test machine. One of them renames a data file in whatever Outlook profile is open, and its own description claimed it checked when it did not, so run by mistake on the maintainer's own computer it would have renamed a real mailbox. All three now refuse to run anywhere but a test machine. That was proven on the maintainer's computer: each refused, and every setting it would have touched read back unchanged. The project's automated checks now fail the build if any test-machine script that changes something stops checking first, or checks only after it has already changed something; four older scripts that still do not check are named in that check, each with its reason, until they are fixed. Second, the test machine's mail profile could not actually be rebuilt from the project's scripts. The one setting that makes its test mail account usable had only ever been set by hand, and the scripts still defaulted to a version of the profile known to leave that account unusable. The scripts now set it themselves and refuse the broken version, and the profile part of a rebuild was run twice from a freshly installed Office, once in each possible order. That showed the order matters: the profile with the mail account has to be created at Outlook's very first start, or its account stays unusable until Outlook is started again. The rebuild instructions are corrected to match. The runs also found that the hand-made setup had quietly deleted three of the settings meant to keep the old-style Outlook in place, and answered an open question for one mailbox test: a plain Outlook data file has no archive folder until the product asks for one, and asking creates it.
-- Give the test machines' small mailboxes real, reproducible contents, so that 36 mailbox checks that could never run on a test machine - because the mailboxes they read were empty, or held no attachments, senders or conversations - are no longer stopped by that, and 4 that ran but proved little should now prove what they claim. Three of the 36 will run but still say nothing about items with no received date, such as appointments, which these contents leave out; whether to add some is an open question. The project's measurement-mailbox builder can now also build three small, fixed sets of made-up mail: 56 messages for the mailbox the tests write to, 300 for the mailbox no test may ever touch, and 8 for the second account's mailbox. Unlike the large measurement mailbox they carry what the checks actually read - senders and recipients, attachments of the kinds search used to drop (pictures, calendar invites, forwarded messages) as well as plain documents, conversations with several replies, read and unread mail, folders inside folders, and a folder of notices whose search word appears only in the subject. Each set is rebuilt identically from a recorded number, is tagged like the measurement mailbox so no test clean-up can ever select it, and is removed by the same two-key teardown. Before building, the builder proves on one throwaway message that every kind of write it needs actually lands, and refuses otherwise; after building, it reads every message back and fails if anything differs from the plan. The settings file's single list of mailboxes, which meant both "watch these for lost mail" and "measure search on these", is split into two lists, because the second account's mailbox has to be watched but holds too little to measure search on; a settings file written before the split behaves exactly as it did, and search checks on a machine with nothing indexed now refuse instead of passing having looked at nothing. The indexed test machine's measurement mailbox must now be built at the size of a real mailbox, 160,000 messages, before its settings will be produced, so the search speed limits are real tests there rather than formalities. The documents now say what the suite actually refuses about the untouchable mailbox, answering the question the previous entry left open: the documents were wrong, not the suite. The build also fails if the example settings file ever contains an email address that could belong to someone, as this repository is public. **None of this has run on a test machine yet**: the new contents are built and checked on the host without Outlook, and the first build on each machine is what settles the handful of open questions the setup guide lists.
-- Get the test machine that is meant to have its mail in Windows Search actually indexed, find out why it never was, and make taking the other test machine's mail out of the index real rather than nominal. The machine had never held a single one of its 20,000 test mails in its search index, and the reason turned out to be the way every tool on the test machines starts Outlook: with administrator rights. Outlook started like that quietly switches its Windows Search integration off - no error, no prompt, no log entry, and Outlook's own "is search working" flag simply reads false - while the same Outlook started the ordinary way registers itself with Windows Search within seconds and had the whole test mailbox indexed in under ten minutes; that was shown on one machine, from one saved starting point, changing nothing but how Outlook was launched. The fix has two parts. Whether a test machine's mail belongs in the index is now set through the documented Windows interface the Indexing Options window itself uses - reached through hand-written declarations of that interface, checked against Microsoft's own definition line by line and held in place by two independent checks, each shown to fail when a single declaration is moved or altered. And the mail is then indexed by starting Outlook the ordinary way, which a new script does, because the setting on its own indexes nothing: Windows Search only takes in what a running, non-elevated Outlook hands it. The check that reports a machine's index state now asks Windows Search itself whether the mail is in or out and why, counts the indexed mail per mailbox, only calls a machine indexed once indexing has actually finished rather than merely started, and no longer reports a working index as missing when it runs in the first seconds after a restart. Taking mail out of the index now actually does so, in an order that was measured rather than assumed: the Windows policy setting the old script relied on turned out not to remove anything - Windows Search still counts the mail as included - so the script now writes the same kind of exclusion rule the Indexing Options window writes, waits while Windows Search deletes the mail it had already indexed (about four and a half minutes for 20,000 mails), and only then applies the policy and restarts the search service, because restarting it during that wait was found to make Windows Search drop the deletion - the mail was all still there after a reboot. An Outlook started on top of the exclusion left it in place, and on a machine that was never indexed the policy on its own did keep Outlook from adding itself. Test machines are also now restarted gracefully: the restarts on record used a Windows command that, as Microsoft documents, force-closes every open program whenever it is given a delay - and most were given one - so any Outlook still running was shut down with its mail files open. A new script closes Outlook the way the project's mailbox-safety rules require - refusing while a draft, a dialog or an unsent message is open, and never killing it - and only then restarts the machine without force. Nothing that ships to users is affected.
-- The settings file the project's mailbox test suite needs on each test machine is now produced by a script instead of being written by hand, which removes the last manual step between the test machines and the suite's first-ever run on one of them. That file names every mailbox on the machine and says which one the tests may write to and which they must never touch; without it the suite refuses to start, and because it names real mailboxes it can never be committed as it stands. So the project now keeps a template of it that holds nothing but placeholders, beside a per-machine list of each test machine's own mailbox names, and a new script puts the two together for one named machine: it refuses outright while any value is still unknown, naming every one; checks the result against the same rules the suite applies before it touches a mailbox, plus the documented ones the suite does not check itself; writes it to scratch space; and prints the exact command that copies it onto that machine. **It will not write anywhere the maintainer's own hand-written settings file lives, however the path is spelled** - relative paths, forward slashes, junctions and short names included - and that was proved against the real file, which was left byte-for-byte unchanged. The template cannot quietly drift either: the build now fails if its fields stop matching the documented example's, and a new check feeds it, filled with made-up values, through the suite's own settings loader, alongside deliberately broken versions the loader must reject. The test machines' real mailbox names have not been filled in yet - they have to be read off each machine - and until they are, the script says exactly which ones are missing. One documented rule turned out to be enforced less strictly by the suite than the documentation says: a mailbox declared untouchable but left off the list of mailboxes to watch is watched anyway, not refused; the new script applies the stricter reading, and which of the two should change is an open question.
-- Run the four scripts that build a test machine's Outlook profiles and its measurement mailbox on a real test machine for the first time since they were rewritten, fix what that found, and settle the open question about Outlook's profile-import setting: Outlook clears it itself, and it is now cleared regardless. Each script ran from the same saved starting point, restored fresh before every one. The script that switches the default profile worked end to end - including refusing a profile that does not exist without touching anything, which was shown rather than assumed - and Outlook then opened the chosen profile with no prompt. The script that adds a named data file to a profile worked on every path, and the stall its notes warned about never happened. The profile-creation script's import worked too, but three things were wrong with it. Its check-up mode crashed on its very first line, because a loop variable shared its name with one of the script's own settings and PowerShell silently turned every data file it checked into plain text; its self-check now reads the script's own source for exactly that mistake. Its search for stray data files could not see the folder these machines actually put them in. And - the one that matters - a profile with no mail account, built from a profile file, stops on Outlook's "set up your email" window at every single start, so no unattended tool can ever use it; the script now refuses to build one unless someone will be at the screen to click through, and points at the route that needs no one - Outlook's own no-email mode followed by the data-file script - which was run end to end on the same machine the same day and verified clean. The measurement-mailbox builder's up-front check turned out to refuse the machine's real, correct profile, because it counted the profile's own data file and address book as mail accounts; it now counts only mail accounts. With that fixed, a full run from the same starting point passed its checks and confirmed all 20,000 items of that machine's measurement mailbox present, each exactly once and in the folder it belongs in. Whether Outlook leaves its "import this profile file" setting behind - which would rebuild the profile at a later start and cut the measurement mailbox out of it - is now measured rather than feared: Outlook removes it within five seconds of acting on it. It is removed anyway: the step that checks an import now clears a leftover one, but only once the import has really happened, never before; and the measurement-mailbox builder refuses to start while one is set, a check its bypass switch deliberately cannot skip. The tier-profile script, which uses the same setting, gained the same clean-up, the guard against being run anywhere but a test machine that the other profile scripts already had, and fixes to four of its checks that were failing the one tier profile that works. Two things found along the way are recorded for whoever runs the mailbox tests next: the tier profile raises a password prompt at every start, and on these offline machines reading an email address through Outlook's programming interface can raise Outlook's security prompt, which waits for a click that never comes - the saved starting point already has one on screen. Nothing that ships to users is affected.
+In the add-in, OutlookAI Settings has tabs, and you can edit every prompt and quick button. You can
+also pick the Claude model, check for updates yourself, and set Outlook's Cached Mode policy
+settings through one administrator prompt.
 
-- Settle three open questions about the test machines by running them, and correct what the notes had got wrong about each. The Windows mail component that the profile scripts were abandoned for on these machines' version of Office was never broken: the scripts had asked it for an interface under the wrong identifier, and asking under the right one works - recorded as knowledge, with nothing rebuilt on it. The script that takes a test machine's mail out of Windows Search had one half that could never have worked, because Windows does not let even an administrator change the setting it was writing, so on the first machine where that setting existed the script would have stopped halfway; it now only reads that setting and reports it, and a self-check proves it never writes it again. Exercising it also showed that the test machine meant to have its mail INDEXED never has - Outlook never put itself into Windows Search there, not even with its window open - so the check now names that state instead of telling you to wait for a search index that will never fill, and the earlier "unindexed" result on the other machine is now reported as proving less than it seemed. And the second mail account the test machine needs, the one that lets two account-specific draft checks prove something, is now built by a script with its own data file, where the notes said no free way existed; one step writes a setting Microsoft does not document, and the script and the notes say exactly which. Two side findings are recorded for the next step: Outlook clears its one-shot profile-import setting by itself, and the test machines' out-of-date antivirus makes Outlook stop and ask permission when a program reads account details, which the mailbox test run will need an answer to.
-- The project's mailbox test suite can now actually be run on a test machine, which it never could before. The two scripts written for it were run for the first time: one packed up the project's source and every component the build needs into a form a machine with no internet can build from, and proved that pack was complete before shipping it; the other installed the development tools on the test machine and then demonstrated the result by building and running part of the suite there - finding all 2,698 checks and executing a sample of them with no network at all. The installer got it wrong the first time in an instructive way: everything had in fact worked, but it read the installer's result code as blank rather than as success and declared the machine broken, while the tool it had just installed was reporting its own version two lines further down. It now distinguishes 'this failed' from 'I could not tell', because those are not the same and only one of them is worth worrying about. Running the mailbox checks themselves still needs a per-machine settings file that names real mailboxes, which no script can write.
-- Fix the last two test-machine scripts that could not work, so that building a test machine from nothing is possible again. They create the Outlook mail profile the project's measurement mailbox lives in, and the data files inside it, and both were built on the same Windows component that the profile switcher had already found unusable on these machines' version of Office - so a rebuild from scratch would have failed at its first step, and rebuilding from scratch is precisely how these machines are meant to be proved. Both now use routes that have been measured working on the machines themselves: the profile and its data files come from a settings file Outlook reads once when it starts, which is the same mechanism that already builds the project's other test profile; and a data file added to a profile that already exists is attached first and given its exact name afterwards, by renaming it - which was measured to work and settles a question four rounds of research could not answer either way. The unusable component and the several hundred lines of glue around it are deleted outright rather than kept as a fallback nobody exercises, because an unexercised second route is the defect that caused all of this; it remains in the project's history, and the note left behind records the best current guess at why it fails and the small experiment that would confirm it, while saying plainly that nobody has run that experiment. One diagnostic mode went with it - it asked whether Outlook tolerates an "@" in a data file's name, which has since been answered twice over by measurement, and it needed to delete a throwaway profile, which nothing can do any more; that missing ability is written down as a gap rather than quietly dropped, and nothing in the build needs it. Both scripts can now check their own decision-making on any machine without touching Outlook at all, a hundred and forty checks between them, and each prints the list of things only a real test machine can settle so that a clean run is not mistaken for proof. **One hazard travels with the new route and is worth knowing about**: the setting that tells Outlook to read that profile file is consulted at every start, and whether Outlook clears it afterwards is unknown - if it does not, every later start rebuilds the profile and would detach a measurement mailbox that had since been filled, costing a thirteen-minute rebuild of twenty thousand items. The remedy is a single command, it is now a numbered step in the build order rather than a footnote, and the scripts warn by name while the setting is still there. The three documents that describe all of this have been brought back into line with it, including several places that had gone on recommending the route that does not work, or restating as unanswered a question that had been measured and answered elsewhere in the same file.
-- Replace the test-machine script that switches Outlook's default mail profile, because the way it worked did not. The first time it was ever run it failed outright on the test machine's version of Office - the component it asks Windows for exists and answers, but refuses to hand back the interface the script needs, and why is still unknown. It now sets the default the plain documented way instead, which is measured working on the same machine the same day, and it refuses to name a profile that does not exist: that write would have succeeded, and a default pointing at a profile nobody created surfaces much later looking like an entirely different fault. Two sibling scripts are on the same broken route and are marked as expected to fail until they are fixed.
-- Make the measurement-mailbox builder refuse up front when it cannot possibly succeed. It needs two things that nothing checked: the default mail profile must be the one with no mail account in it, and Outlook must already be running and warmed up. The only build that ever worked satisfied both by accident, which is why it looked repeatable and was not - and why five consecutive attempts failed for two different reasons that looked alike. It now checks both before touching anything, reports every failing condition rather than the first, and prints the four-step recipe that works. It deliberately does not fix either one: quietly rewriting which profile is the default would change the machine out from under whatever runs next.
-- Make a timed-out mailbox operation actually stop, instead of giving up on it and leaving it running. The tools that build the project's measurement mailbox drive Outlook on a dedicated worker, under a time limit. When that limit ran out the tool reported failure and returned - but the worker carried on, still holding Outlook and still working, until the whole program exited. For a read that wasted effort; for anything that WRITES it meant an abandoned session still changing the mailbox after the caller had been told it had stopped, and the obvious next move - run it again - would then have put two writers on the same mailbox. The worker is now asked to stop at a safe point, the tool waits for it, and it reports which of two things happened: it stopped cleanly, and how far it got; or it did not answer, in which case it says so loudly and says not to re-run. Those are different situations inviting opposite responses, and they now also produce different exit codes, so a script can tell them apart. The check that makes this work is built into the loops themselves rather than added alongside them, so the mistake cannot quietly return. Separately, the time limit was being spent on starting Outlook before any work began - which is what actually ran out on the test machine twice - so starting up now has its own allowance, and the limit on the work itself only counts time in which nothing progressed. Nothing that ships to users is affected.
-- Say which mail profile the measurement tools actually used when they refuse. They refuse to write into a mailbox they cannot vouch for, which is right, but the refusal named only the mailbox - and the tools pick their profile themselves rather than using whichever Outlook happens to be open, so the useful fact was the missing one. It cost five failed attempts to work that out by elimination. Both the refusal and the success now name the profile and say where it came from.
-- Make it possible to run the project's mailbox test suite on a test machine at all. The test machines are built from scripts and are deliberately bare: no development tools, no copy of the project, and no network connection. The suite needs all three, so it had never been run on one - which is why twenty-odd checks that need a real mailbox have been waiting. There are now two scripts for it. One runs on the developer's machine and packs up everything the test machine cannot fetch for itself: the project's source taken from a named point in its history rather than from whatever is lying around, and every third-party component the build needs, gathered into a folder the test machine can build from offline. It then rehearses the whole build against that folder before shipping it, so a missing component is found in seconds on the fast machine instead of after a slow copy onto the slow one. The other installs the development tools on the test machine from a copy staged beforehand, checks the installer is the exact file expected, and then proves the result by actually building and running part of the suite - rather than concluding from an installer exiting quietly that anything works. It reports one of four outcomes and only one of them counts as ready. Neither has been run yet, and both say so. Nothing that ships to users is affected.
-- Stop a mailbox check from reporting success when it never managed to ask the question. One live check seeds a mail, waits for the machine's search index to notice it, and then asks the index whether it has - and each of those questions is given a time limit, because a question that runs too long says more about the machine being busy than about the feature. If every question ran out of time, the index was never actually asked anything, and the check still passed - printing a line saying it had proved nothing, and passing anyway. On the machine the project treats as its reference machine, that now FAILS instead, because a green result there means the machine is as expected and this one could not have known. On a laptop or a spare machine, where a saturated indexer is ordinary, it still passes and says the same thing just as loudly - the finding is identical, only whether it should stop the run differs. The message also now explains what a genuinely slow indexer looks like instead, since that is the thing it is most likely to be mistaken for: the questions COMPLETE and simply keep coming back empty. Same treatment two other checks in this suite already had. Nothing that ships to users is affected.
-- Stop the measurement-corpus builder failing every build over the litter its own preparation leaves behind, and stop its self-check calling that litter a corrupt corpus. Before writing anything the builder runs two short trials against the target data file - one to find out where that file will really file mail, one to find out whether it will accept back-dated mail - and each trial creates a throwaway mail and deletes it again. But deleting mail in Outlook does not remove it, it moves it to Deleted Items; so every one of those throwaway items stayed in the data file permanently, under an identity nothing had written down. One build left six to eight of them, and building the documented way left twelve to sixteen, because that route runs the trials twice. The self-check at the end of the build then counted them as corpus mail and announced that the corpus held an item more than once and that twelve items were in the wrong folder - the sentence that means every measurement taken against that corpus is worthless - about a corpus that was in fact perfect. That check had never once managed to run, because it tripped over its own file lock, and the moment that was fixed the builder started failing on every successful build and the corpus could not be rebuilt at all. Three things are fixed. The trials now clear up after themselves, both after each item and once before they start, so a data file carrying residue from an older version is cleaned by the next run that touches it. The identity of each throwaway item is now recorded the instant the item exists rather than three steps later, closing the window in which an interruption left one that nothing could ever remove. And the self-check counts them separately and names them for what they are, which gives the duplicate warning back the only meaning it was ever written for: a build interrupted so late that it created the same mail twice. The rule deciding which mail the clean-up may touch is pinned by ten new tests that need no mailbox at all - it deletes mail, so what chooses its targets has to be checkable on a machine that has none - and the two tests that used to pin the wrong behaviour now pin the right one, with the faulty report they were written from kept beside them as evidence. Nothing that ships to users is affected.
-- Fix the measurement-corpus builder failing at the very end of a run that had in fact succeeded, and restore the self-check it was skipping. The builder writes a corpus of test mail into a test machine's data file, records every item in a manifest file as it goes, and then reads that manifest back to check what it actually produced - the check that exists because an early run once created every single item in the wrong folder and reported success. It could never do it: it was still holding the manifest open for writing when it tried to read it, and Windows refuses that combination outright. So a complete, correct build ended in a file-in-use error and reported failure, and the self-check that was supposed to decide whether the corpus is usable had never once run. Both halves are fixed - the reader now tolerates a file someone else is writing, and the builder closes the manifest before checking itself - and three tests pin it, including one that deliberately reproduces the refusal so the fix cannot be quietly undone. Nothing that ships to users is affected.
-- Add a test-machine script that takes a machine's mailbox out of Windows Search - the only thing that makes the second test machine different from the first. The test setup is two machines, one whose mail is indexed and one whose is not, and half the mailbox checks depend on that difference being real; but both are built from the same file and both come up indexed, so nothing had yet made the second one different and both halves would have been measuring the same machine without anyone noticing. The obvious shortcut - switching the whole Windows search service off - turns out to be the wrong answer and the script refuses it: that produces a machine with no search at all rather than a mailbox search has not been told about, which the product handles down a completely different and untested path, and it removes the very report the setup notes say to read to check the machine was built right. One existing check would simply have failed on such a machine. So the script takes the mailbox out of what Windows Search looks at and leaves the indexer running, and then proves the result by asking the index itself - twice, minutes apart, so "not indexed" can be told apart from "not indexed yet" - instead of reading back the settings it wrote. It gives four answers, two of which say in plain words that no answer has been reached yet, because a machine believed unindexed while it is quietly still indexing produces measurements that look fine and mean nothing. It has deliberately never been run. Nothing that ships to users is affected.
-- Settle whether the test machine's mail server can do the job it was picked for, and add a script that installs it and proves it. The test machine's mail account was pointed at a local mail server that nobody had checked could hand mail back - the project's own notes flagged that the chosen server may only speak the other retrieval protocol, and that if so the whole design was unbuildable. It can: the feature was turned down in 2019 and added anyway five years later, so there is a version to fix on and the notes now say which. Three instructions for installing it were wrong, including one command that cannot work at all, and are corrected. Reading the server's own source also found two places where it departs from the mail standard, and one collision nobody had noticed: it refuses a blank password, while the test machine's account is set up with none - so one password has to be typed by hand, once, when the machine is built. The new script installs the server from a copy staged beforehand rather than downloading anything, checks the file is the exact one expected, and then actually sends a message and fetches it back instead of merely checking that something is listening - including the awkward cases that break mail servers quietly. It has deliberately never been run, and two of its checks are expected to fail, which is why they are checks. Nothing that ships to users is affected.
-- Fix four mailbox tests that could report success having checked nothing. Each walks a list the machine supplies - the shared mailboxes it opens, the mail accounts its signature settings name, the mail it holds carrying an attachment - and an empty list meant the loop body never ran, or the check ran over no items at all, and the test still passed. On a machine that is supposed to have those things an empty list means the machine or its settings have drifted, so the run now refuses; on a machine that genuinely has none it prints a line saying in plain words that nothing was verified and what a green result there does and does not mean. Same treatment two other tests already had. Every run now also prints how much each of these actually covered, so a pass says what it looked at instead of leaving it to be guessed from the test's name.
-- Check every mailbox the test run watches for mail the tests left behind, including the shared ones, and stop pointing a delete at mailboxes no test may touch. After every run against real mailboxes the suite proves that no test-created mail remains anywhere. It only ever looked in the mailboxes tests are allowed to write to - while the separate guard that watches for mail going MISSING watches those plus every shared mailbox and every reference mailbox the profile opens. So a stray test mail landing in somebody else's mailbox was invisible to both: one of them only looks for mail disappearing, and this would be mail appearing. The check now visits exactly the same set. In any mailbox no test may write to it counts and reports rather than deleting, and a count above zero fails the run naming the mailbox and saying why nothing else would have told you - because a delete aimed at those is the shape that once came within one count of destroying twenty thousand items of reference mail. Nothing that ships to users is affected.
-- Stop one mailbox test blaming Windows Search for its own query running out of time. The test creates a mail with three kinds of attachment and then waits up to 90 seconds for Windows to index it, asking every 5 seconds - but each question was allowed to take 60 of those 90 seconds, so a single slow one consumed most of the wait and the test then reported that the indexer had not got round to the mail. Each question is now bounded at 15 seconds; one that runs out costs a single missed attempt rather than failing the run, and the run reports how many attempts it actually got. A real failure of the search provider still fails the test, told apart from a question that simply ran long. And if every attempt is lost the test says in plain words that it proved nothing, instead of stating something about the indexer it never measured. Nothing that ships to users is affected.
-- Make the guard that watches for lost mail explain itself instead of guessing. It counts every folder of every mailbox before and after a test run, and walks the smaller ones item by item so it can tell a mail that was FILED from a mail that was DELETED. When it cannot afford the item-by-item reading it falls back to counting - and every failure message then blamed the same cause, "folder above the identity budget", which is right in one case out of six and sends the reader to the wrong remedy in the other five. The reason is now carried with the reading and named in the message. It also says, for the first time, when the reading taken AFTER a run was weaker than the one taken before it: that is the case where the same untouched mailbox can be reported as a loss on one pass and as ordinary filing on the next, and it used to be indistinguishable from a real deletion. Which runs fail is unchanged.
+Releases are now built and signed on the maintainer's own computer, so they no longer carry GitHub's
+build-provenance attestation. Many of the entries are about the test machines the project now runs
+its mailbox tests on, and change nothing you install.
 
-- Add draft scripts that build a test machine's Outlook profiles, data files and default-profile switch without anyone clicking through the Mail control panel - the part of rebuilding the test machine that was still done by hand, once at considerable cost by driving the screen with a vision model. Four of the five things a test machine needs can be scripted: a profile with no mail accounts, a data file carrying an exact name, the switch between profiles with no prompt, and the identity signature. The fifth cannot: **nothing free can create a mail account**, for three unrelated reasons, so adding the two test accounts stays a manual step - now a precisely bounded one, taken once per machine and preserved by a checkpoint. The scripts have deliberately **never been run**: they were written on a machine with a real mailbox on it, so they were checked by reading rather than by trying, and each says so at the top and refuses to run on any machine that is not a test guest. Nothing that ships to users is affected.
-- Add three test-machine scripts that try to build the mail account the test machine has been missing, and say honestly that none of them has been run yet. Setting up that account by hand is the one step of the rebuild nothing could automate, and the only off-the-shelf component that can do it is one this project will not take. Two free routes remain - describing the account in a file Outlook reads at startup, or driving the setup window the way a screen reader does - and there is now a script for each, plus one that answers in two minutes whether the second route is possible at all. Each checks its own result and fails loudly rather than reporting a success it did not verify, and each says in its own header what it expects the machine to look like first.
-- Record that the test machine needs far less than was thought. The notes said the whole draft, revise, discard and send families were out of reach without a working mail server on the machine; read against the tests themselves, one ordinary mail account of any kind reaches 26 of those 34 checks, and only one single check anywhere genuinely needs a mail to travel and arrive. The note claiming six checks needed real delivery was counting files rather than checks - the real figure is 13 - and 12 checks are labelled as needing a mail server when they never send anything.
-- Simplify how the test suite says which machine a test needs, from three overlapping labels to two. A test now carries one flag meaning "this needs a mailbox" and one short list of what it needs of that machine, written on the test itself rather than on the file it sits in. The third label was a summary of the other two, kept up to date by hand, and it disagreed with them: it reported that 96 of the mailbox tests could never run anywhere but the maintainer's own PC. Read properly, the real figure is six - the ones that need a shared mailbox belonging to somebody else, which no test machine can be given. Nothing about any test changed; only what it says about itself.
-- Fix three mailbox tests that could not have run at all. A safety check added earlier makes the test client refuse to call the tools that always reach Outlook unless the test has declared that it means to - and three tests that do mean to never made the declaration, so they would have failed on their first call. They are in the tier that no automated run executes, which is why nobody found out. Fixed, and the check that catches the opposite mistake now catches this one too.
-- Fix the check for new mail returning an ARBITRARY 200 mails per folder instead of the newest 200 - on every account, for every user, since the feature shipped. When a folder holds more just-arrived mail than one pass reads, the check keeps 200 of it, and the whole design rests on those being the newest 200: that is what makes "the oldest of this window is what is missing" true, and it is what makes a tier that exists to find mail too new to be indexed worth having. It asked Outlook to sort the folder by date first, in a form Outlook does not accept for sorting, and the refusal was ignored - so the sort never happened and the 200 kept were whatever order the folder came back in. Measured against a real mailbox across five accounts: the accepted form sorts on all five and puts today's mail first, while the shipped form was refused on all five and started at mail years old. Both forms are still tried, the accepted one first.
-- Sort a Sent Items folder by when mail was SENT rather than by when it was received. Mail you sent was never received, so a sent copy may carry no delivery time at all - and those sorted below everything else, which made them the first thing the 200-mail limit dropped. That is exactly backwards for a check whose purpose is finding the newest.
-- Stop a continued exhaustive search from being able to skip mail. Each page reports the date the next one resumes from, and that date was being worked out two different ways in two different places - one of which shifted it by your machine's time-zone offset. Shifted the wrong way it makes the next page start past mail that was never returned, and the scan still reports itself complete, in the one search mode you choose because completeness matters. Both places now read the date through one piece of code, and that code takes the reading which can only ever re-read mail, never skip it. There was a second copy of the same mistake in the same place: when a mail's date could not be read from the folder listing, the value taken from the mail itself was used without converting it at all.
+### Added
 
-- Stop telling you nothing happened when something may have. Every message this product produces about a failure was checked - all thirty-one of them - and sixteen were claiming, or implying, that your mail was untouched when the code could not know that. The pattern was always the same: a sentence written for the checks that run BEFORE anything is changed had been attached to the catch-all that runs after everything. So a draft revision interrupted half-way said "Nothing was changed or deleted", a discard that failed during the delete said "Nothing was changed", a move that failed said "retry", and a reply that was refused because the answer was too big to return said the work had succeeded and nothing had been changed in the same breath. Each of those now says what is actually known, and says what to do about it - look in Deleted Items, look in Drafts, find the item before moving it again.
-- Add a plain outcome value to every failure, so an assistant can act on it without reading the wording: "unchanged" (your mail is exactly as it was), "applied" (it DID happen - only the reporting failed) or "unknown" (nobody can say; look before repeating the call). It is the only way to state the middle case at all: a move that succeeded and could not be written to the audit log was being reported as a move that failed, because the only field available was a yes/no.
-- Stop a failed draft creation leaving a draft nothing can clean up. Creating a draft saves it and then does several more things to it - closing the editor, filing it in Drafts, opening it on screen - and if any of those failed you were told the draft could not be created, while the draft itself sat in your mailbox. Worse, the assistant never learned its identity, so the one tool that could have thrown it away was structurally unable to reach it. The identity is now recorded the moment the draft exists, the failure message names it, and discarding it works.
-- Report folders that were created before a move was refused. Asking to move mail into a new folder creates that folder first and checks the destination second, so a move into Deleted Items created the folder and then refused with no mention of it anywhere. Any folders created are now named in the failure and listed in the result. This server cannot delete folders, so an unwanted one still has to be removed in Outlook.
-- Stop a failed attachment save hiding the file it left behind. If saving an attachment failed part-way, a partial file was left on disk at a name you were never told - the name is chosen by the server and gets a numeric suffix when it clashes. The failure now names the exact path. Separately, a save that COMPLETED could be reported as a failure because reading the finished file's size failed; measuring the file is no longer allowed to fail the save.
-- Admit that a failed "show me this mail" may have shown it anyway. Opening a mail in Outlook is the last step of the sequence, so a failure reported over it can arrive after the window opened and the mail was marked read. The same applies to navigating to a folder or driving Outlook's search box: the window may have moved even though the call failed.
-- Say that an aborted send has changed the draft. When sending is stopped because the account could not be verified, nothing is sent - that was and remains true - but the attempt writes the sending account onto the draft first and does not put it back. The message now says so, instead of implying the draft is as you left it.
-- Warn that discarding a draft is not guaranteed to be a clean no-op when it fails. The tool description said any refusal comes back as a clear error and it never silently does nothing, which is true of refusals and was silently untrue of failures: if Outlook fails during the delete itself, whether the draft was deleted is unknown.
-- Name the half-written backup a failed signature change can leave behind. Every signature update or delete copies the whole signature aside first, and if that copy fails the operation is abandoned with your signatures untouched - that part was already true. What it did not say is that the backup folder itself may already have been created and partly filled. It is now named in the message when one exists, so there is nothing to discover later.
+- ✨ **`audit_log` pages through any number of entries.**
+  When more match than fit on one page, the answer carries nextToken, and passing it back as
+  resume_token returns the next older page, until no nextToken comes back. Entries recorded in the
+  same millisecond are no longer skipped, which paging by time could not avoid, and a token is
+  refused with a clear reason if the log was archived or edited in between.
 
-- Let an exhaustive search be CONTINUED instead of merely being cut short. That mode reads your folders through Outlook directly, and it stops when it hits its ten-minute allowance or its hundred-result limit - on a real mailbox with a 108,000-item archive it reached three folders out of thirty-two before the clock ran out. Until now the answer said so honestly and there was nothing you could do about it: raising the result limit is capped, and running the same search again re-walks the same folders and stops in the same place. Every scan that stops early now hands back a short continuation handle; passing it back to the same search picks up exactly where it left off, and you repeat that until the handle stops coming, which is the signal that the whole scope really was covered. It is not a shortcut: each page is still reported as incomplete, because the page in your hand is not the whole answer.
-- Walk the folders of an exhaustive search in a stated order, the same one the folder listing already promises. Outlook does not define what order it hands folders back in, so a search that stopped part-way through was missing whole folders chosen at random - and stopping in a reproducible place is what makes continuing from it mean anything.
-- Say WHICH limit stopped an exhaustive search, because the two need different answers. Running out of time means continuing is the only route to the rest; running out of result slots means continuing works but narrowing the folder or date range is cheaper. Both could be true at once and the answer never distinguished them, so half the advice an assistant gave about it was the wrong half.
-- Report how far a continued scan has got in terms you can act on WITHOUT the handle: which folder it stops in, how many folders of the total are finished, how many results the whole chain has returned so far, and the date it will resume from. If the handle expires or the server restarts, that is enough to carry on by hand with the ordinary folder and date arguments, so nothing already paid for is thrown away.
-- Refuse a continuation whose search has changed rather than quietly answering a different question. Change the terms, the account, the folder, a date bound or a filter and the call is refused with the changed argument named; the page size may still differ from page to page. A handle that has expired, been superseded by a later page, or was never issued by this server each get their own explanation and their own way back.
-- Tell you when the folder tree moved underneath a continued scan - folders added, renamed, moved or deleted between pages. Folders that appeared are scanned rather than skipped, folders that left had already been covered, and the one case that really does lose mail, the folder the scan was part-way through disappearing, is named as such instead of passing silently.
-- Report whether Outlook actually refused to SORT a folder when checking for new mail, separately from the column being unavailable. The two failures were caught together, so the flag that decides whether "the oldest mail is what is missing" is true could not say which had happened. They are now told apart and counted, which is what will settle whether that sentence has ever been true.
-- Make revising a draft safe to retry when Outlook is interrupted. Editing a draft is not one instruction to Outlook but about twenty in a row, and if the connection is restarted part-way through - the same time limit that protects you from a wedged Outlook - the draft could be left half-changed. The worst of that was real loss: replacing an attachment removes the old file and then adds the new one, so an interruption between the two took your file off the draft and put nothing back. Now the request is written down before anything is touched, so repeating the identical call FINISHES it instead of doing it again: a file already attached is not attached twice, a file already removed stays removed, and the draft's place in its conversation is put back from what was recorded rather than from what the interrupted attempt left behind. The failure message says so - it used to tell you not to retry, because retrying was the thing that made it worse.
-- Attach the new file before deleting the old one when replacing an attachment. The order was the other way round, so the moment of danger was a draft that had lost your file and not yet gained its replacement. Now the worst an interruption can leave is a duplicate, which you can see and undo.
-- Stop a draft revision that failed part-way through claiming nothing was changed. Only some failures prove that, and this was not one of them: it is the one raised when Outlook fails somewhere inside the sequence, possibly after the text was already rewritten. It now says the outcome is unknown and that repeating the same call will finish it.
-- Record an interrupted draft revision in the audit log, so an outcome nobody can state leaves a line saying so rather than a gap where a line should be.
-- Fix the mail server's shared library failing to build for the older .NET Framework target that exists so the Outlook add-in can reuse it. Two pieces of code added the day before used APIs that target does not have. Nothing you can see changes; the build gate that exists to catch exactly this had caught it.
-- Give Outlook far more time to answer, so slow work finishes instead of failing. Every mail operation now has minutes rather than seconds: a search of your whole mailbox can spend up to a minute in Windows Search and ten minutes checking Outlook for new mail, an exhaustive scan can run for ten minutes, and an ordinary operation has five minutes before the connection to Outlook is considered stuck. The reason is measured, not guessed - on a mailbox of this size one ordinary check for new mail across five accounts takes about a minute, which the previous thirty-second limit could not hold, so it failed on real searches and restarted the connection to Outlook every time. Slower answers are the deliberate trade: when you ask an assistant to do this work you are not sitting watching it, and a complete answer that took two minutes beats a partial one that took ten seconds.
-- Let an exhaustive search take the time it needs without slowing down everything else. It used to share one limit with every other operation, so giving the scan ten minutes would also have meant waiting ten minutes to notice that Outlook had stopped responding to a simple read. The scan now has a limit of its own, and everything else keeps a much shorter one.
-- Let the check for new mail run for ten minutes instead of three, without slowing down anything else. That check is the part of every search that asks Outlook directly about mail too new to be indexed, and on a large mailbox three minutes was not enough to finish it - so a search quietly came back having covered only some of your accounts. It now has a time limit of its own, so raising it does not raise the time every other tool waits before deciding Outlook is stuck: reading a mail, moving mail, creating a draft and listing folders are all unchanged at five minutes. The same ten minutes applies to fetching a conversation, which does the same kind of live check. The old three minutes came from a measurement taken while the sort defect above was still present, so it described the wrong work; ten minutes is a deliberate ceiling until the real cost has been measured, on the principle that a complete answer you waited for beats a fast answer with holes in it.
-- Stop a slow check for new mail from being mistaken for a broken Outlook. The safeguard that trips when Outlook stops responding compares how long a request asked for against the limit for that kind of request, and with the check for new mail now allowed ten minutes it would have looked like a stuck Outlook every time it ran long - taking the product offline for thirty seconds for no reason. It is judged against its own limit now.
-- Stop the check for new mail throwing away everything it found when it runs out of time. It used to fail outright, which also restarted the connection to Outlook - so on a large mailbox a search lost the whole freshness check rather than getting part of it, and the results already gathered were discarded. It now stops at the next folder, hands back the folders it did cover, and says plainly that it ran out of time, which accounts it did not reach, and that naming an account or a folder will let it finish.
-- Stop two ordinary slow searches making every following request fail instantly for half a minute. The safeguard that trips when Outlook stops responding counted a search running past its own time allowance as evidence that Outlook was broken - so on a big mailbox the product could take itself offline for thirty seconds with nothing wrong at all. Running past a time allowance the search itself chose is no longer treated as Outlook failing to answer; the safeguard still trips on a genuinely unresponsive Outlook exactly as before.
-- Say what may have happened to a mail when sending is interrupted. If Outlook does not answer within its time limit while sending, the connection is restarted - and the message may already have gone out or be sitting in the Outbox. That case used to report only that Outlook had not responded, which reads like nothing happened and invites sending again. It now says the outcome is unknown, tells you to look in Sent Items and the Outbox before doing anything else, and records the unknown outcome in the audit log so the gap is visible afterwards rather than merely being a missing line.
-- Stop telling an assistant to retry something that changes mail after the connection to Outlook was restarted underneath it. When one request wedges, the others in flight fail with it - and they were all told "this was not your fault, retry it", which is right for a search and wrong for a move, a draft edit or a send, any of which may already have taken effect. Reads are still told retrying is safe; anything that changes mail is now told the outcome is unknown and to check before repeating it.
-- Bound a move or archive batch properly. The limit on a whole batch was the same as the limit on a single item, so a batch could start one more item just under the wire and run for twice as long as its own limit allowed. Each item now runs on what is left of the batch's time, and an item interrupted by that limit is reported individually - saying that whether it moved is unknown - instead of failing the whole call.
-- Make Outlook's health check keep the promise printed in its own description. It says it gives up after five seconds, but on a cold start it could spend ten seconds setting up the connection before its own clock even started - so the one tool meant to answer when Outlook is wedged had the longest wait in the product. A tool that asks for a short time limit now gets one.
-- Give the Outlook helper process a moment to close itself cleanly before it is terminated. It always had a clean shutdown path; the termination followed so closely that the path was never actually used, so its own cleanup never ran.
-- Apply the same time limits to the live test suite that the product uses. Those tests ran against a code path where none of the limits existed, which is both a coverage hole and the likely reason a live test run once hung with nothing to stop it.
-- Confirmed working against a purpose-built 20,000-item mailbox: when Outlook refuses to sort a folder, the check for new mail correctly reports that the mail it could not cover is unknown rather than claiming the oldest mail is what is missing.
-- Stop the check for new mail from ever building an answer too big for the connection to Outlook to carry. That check reads the FULL text of every mail it finds, and until now nothing limited how much of it crossed - so on an account Windows Search has not indexed, where the check reads a whole week of mail, one answer could grow past what the connection can send and the search would come back with nothing from Outlook at all. Each mail's text is now cut at 500,000 characters, and one round of checking will not carry more than 32 MB of message text in total. Both limits are far beyond ordinary mail and are unreachable in normal use. Because that text is what brand-new mail is searched against, a cut is never silent: the answer says how many mails were cut, how many of those did not match your terms - the only ones where a word further down could have been missed - and what to do about it, and the search is marked as possibly incomplete only in that case. A cut copy is never mistaken for the whole mail: reading the mail itself still returns all of it.
-- Stop a draft hiding recipients that could not be looked up. When more than 20 of the addresses on a draft fail to resolve, only the first 20 were listed and nothing said the list had been cut - so an assistant told "these 20 addresses did not resolve" out of 27 reported a complete-looking list, and the seven it never saw were never raised with you. Every one of them stays on the draft and fails on send. The answer now says how many really failed, that the list was cut, and how to see the rest.
-- Say when a conversation may be missing part of itself because one of your accounts is not indexed. Outlook can only follow a conversation inside a single account, so members in another account come from the search index - and an account Windows Search has never indexed (a local data file or archive, typically) is covered by neither. That was reported only when the index happened to hold something for the other account, which on exactly the profiles at risk it does not. Fetching a conversation now names the accounts that are outside both checks, marks the answer incomplete, and says how to check them: it is careful to say that whether the conversation reaches into them is unknown, not that it does not.
-- Stop an exhaustive search from taking the Outlook connection down on a damaged folder tree. That mode walked folders without any depth limit, so a looping or absurdly deep tree ended the helper that talks to Outlook and your assistant was told only that Outlook had gone away. It now stops at the same 64-level limit the other folder walks use, keeps scanning everything else, and reports plainly that folders below that depth were never opened - so a scan that skipped part of the tree can no longer read as a complete one.
-- Make the breadth of the new-mail check something an assistant can act on rather than read. Unless you name a folder, the check covers Inbox, Sent Items, Deleted Items and Junk Email only, and not their subfolders - so mail a server-side rule files elsewhere is invisible until the index catches up. That was stated only as a sentence in the answer; it is now also a plain value beside it, so an assistant can notice the limit and search the folder directly instead of assuming it looked everywhere.
-- Stop the check for new mail telling you the wrong mail is missing. When a folder holds more new mail than one pass reads, the answer says which folder was cut short and that the OLDEST mail there is the part not covered - advice you act on by narrowing the date range. That sentence assumed Outlook had sorted the folder newest-first, and when Outlook refused to sort it the failure was ignored: the cut was then arbitrary, so the missing mail could be anything, and the answer still said it was the oldest. Both cases are now told apart and reported separately, and the arbitrary one says plainly that which mail is missing is unknown, so nothing sends you looking in the wrong place.
-- Say when a search of a named folder found nothing in the index because the index cannot see that folder at all - a renamed or localised folder, typically. The answer already checked for this, but only when it came back completely empty, so a single just-arrived mail from the live check hid it entirely: the search then looked like a thin result rather than one where everything older than the last few minutes was never searched. It is now reported whenever the index contributes nothing for the folder, in a field as well as in words.
-- Say that a search did not look inside attachments for mail that arrived in the last few minutes. Text inside attachments is only searchable once Windows Search has indexed the mail; the live check reads subject and body only. A search that asked for an attachment-only match already said so, but the ordinary case said nothing and reported results as up to date - so a word inside a PDF that arrived moments ago was simply absent from an answer that looked complete. The answer now says so whenever there is new mail it could apply to.
-- Explain why an exhaustive search returned two results and still said there were more. That mode stops after a fixed number of matching mails, and any `from`, unread or has-attachments filter you passed is applied afterwards - so a scan can stop at 25 candidates, discard 24 of them, and hand back one result while thousands more match further on. The answer now says the limit counted candidates rather than results, how many were discarded, and that the way to narrow it is a tighter folder or date bound rather than a filter that runs after the limit.
+- ✨ **OutlookAI Settings shows Outlook's five Cached Mode policy settings and can change them.**
+  Each shows its current value, the value OutlookAI wants, and whether it is in effect or needs an
+  administrator. **Apply as administrator** writes the ones that need it through one Windows
+  administrator prompt. A small helper installed with OutlookAI does the writing; it accepts those
+  five settings and nothing else, and always writes them for you, also when an administrator types
+  their own password into the prompt. Cancelling the prompt changes nothing and says so.
 
-- Stop an account Outlook cannot name from disappearing out of the folder list and out of the check for new mail. If Outlook refuses to report an account's display name - a damaged profile entry, a data file that will not open cleanly - that account used to vanish: its whole folder tree was missing from the folder listing with nothing saying so, and the check for new mail abandoned it, so recent mail sitting in it was invisible to every search. It is now listed and searched under a clearly marked placeholder like `(unnamed store 2)`, the answer says how many accounts are in that state, and asking about that placeholder by name gets an explanation instead of a "no such account" that would have sent you hunting for a typo. Asking for an account that really is absent now also says when the profile holds unnameable accounts it could not rule out.
-- Say when the folder listing is not the whole tree. Walking the folders stops at built-in safety limits (10,000 folders, 64 levels deep) and the answer used to report itself as complete anyway, because "is there more" was worked out from the already-shortened list. It now reports that the listing is short, which limit stopped it, and that paging cannot reach the rest - list one account at a time instead.
-- Say when a search of a shared or delegate mailbox was narrowed by an incomplete folder list. Folder scopes in those mailboxes can only be matched by folder NAME, so if the folder walk behind them stopped early, folders were searched by nothing at all while the answer looked complete. Such a search is now marked as covering less than it was asked to, and says how to get the rest.
-- Fix a search for older mail reporting itself as complete while quietly skipping an account Windows Search has not indexed - typically a local data file or archive, which is where older mail actually lives. When the requested period ended before the live check would even start, the search answered from the index alone and said results were up to date, naming nothing. It now names the account the index holds nothing for and marks the answer incomplete, whichever way the live check ended: not needed, refused because of the filters you used, or failed outright. Previously only a search whose live check ran said so, and only on a profile where nothing at all was indexed.
-- Stop an over-large answer from Outlook taking the whole mail connection down with it. When a request produced more data than the connection to Outlook can carry in one piece - most likely on an account Windows Search has not indexed, where the check for new mail reads a week of mail with full message text - the helper that talks to Outlook exited, every request in flight failed, and your assistant was told only that Outlook had gone away. That single request is now refused with an explanation naming what was asked for and by how much it was too big, the connection stays up, and the assistant is told to ask for less rather than to try the same thing again.
-- Report how big the largest answer from Outlook has actually been in `outlook_health`, next to the size limit it has to fit under and a count of anything refused for exceeding it - so a limit that was set by estimate can be judged against what really happens on your mailbox.
-- Fix searching one specific account failing outright whenever Windows Search has not indexed it - a local Outlook data file (.pst), an archive, a fresh install, or a machine where indexing is switched off, excluded by policy or still catching up. Naming that account in a search returned "Store 'X' was not found in the local index. Known stores: " - an empty list, whose suggested fix was to look up the account name, which gave back the same name that had just failed. Searching without naming an account already worked on the very same profile, and so did an exhaustive search of that account, so the failure hit the ordinary case only. The account name is now checked against the accounts Outlook actually has: an account you have searches normally - the index contributes nothing, the live check covers it, and the answer says so and points at the exhaustive search for full coverage - while a name you do not have is still refused, now listing the accounts you DO have. A name that does not resolve is never quietly widened to your whole profile.
-- Fix reading, saving an attachment, opening, sending or archiving a mail being retried against every other account in your profile when the failure had nothing to do with which account it was in. Only a mail that genuinely was not found where the assistant looked is now searched for elsewhere. Two of those retries were not free: a mail Outlook refused to display could open a window in every account before the call reported failure, and a failed attachment save could write a file per account. The same tightening was already made for drafts; this completes it.
-- Name the actual failure when the mail server meets one it does not recognise. An unexpected error from Outlook reached your assistant labelled with the name of the internal connection it had crossed rather than with what went wrong, so a missing file and a refused operation read identically. The failure now arrives under its own name.
-- Fix a search asked to order by size being re-sorted by date before you saw it: the request reached the index correctly and was then undone one layer later. Size ordering is not reachable from the mail tools today, so no answer you have had was affected.
-- Stop calendar and contact entries taking places away from real mail in a search. Now that a search no longer excludes items by type, an appointment or a contact can turn up among the results - but those carry no received date, so nothing decided where they belonged in a list sorted newest first. On a mailbox with a big calendar they could in principle have filled the whole list and left no mail in it at all, with nothing in the answer to say mail was missing. An entry with no date can now never take a place from one that has a date, and when that cannot be ruled out the search asks the index again for the dated mail rather than handing back a short answer.
-- Stop mail searches losing bounce messages, read receipts and meeting requests. Which of those you got back used to depend on which engine answered your search - the exhaustive scan could not see any of them, the index could not see meeting requests, and the check for brand-new mail returned all of them - so the same search gave different answers at different times and nothing said so. All three now return everything: "did my mail bounce?" is answerable, and a meeting request found today no longer disappears once it is indexed.
-- Say what a search result actually is when it is not an ordinary mail: bounce reports, read receipts, meeting requests, responses, posts and sharing invitations now come back labelled, and the answer says how many of its hits are not plain mail - so the assistant does not tell you "you have four mails about the invoice" when one of them is a delivery receipt.
-- Report what the index left out of a search: the number of rows it looked at, the number it refused, and - this one matters - whether it ran out of candidates while filtering, which is the one way a search list can be short of matches without saying so. That last fact was previously buried in a sentence rather than being something the assistant could act on.
-- Say how far behind the WORST account's index is, not just the newest moment anything was indexed. On a profile where one account lags hours behind another, the single figure hid exactly the account whose recent mail was at risk.
-- Cap the list of accounts a search reports as missing from the index, and say when it was capped. It was the one list in the mail server with no limit, so a profile with many local data files would have printed the whole list twice over in every search answer.
-- Say when a mail search silently left something out. Three holes could not be seen from the answer at all: mail the check found but could not open, mail dropped because a filter you asked for could not be read on it, and mail skipped by an exhaustive scan. All three are now counted in the answer, and where a filter is the cause the answer names which of your own search options failed to apply - so the assistant can re-run without it instead of reporting an incomplete answer as a complete one. A folder in which every mail failed to open used to report as fully checked with nothing in it.
-- Fix asking for the folders of an account that does not exist - a typo in the name - answering with an empty folder list instead of saying the account was not found. It now says so and lists the accounts you do have.
-- Fix a failed reply, forward or new-draft-from-mail being retried against every other account in your profile, which could leave a stray draft in each one that the assistant never learns about. It now only retries when the original mail genuinely was not in the account it looked in.
-- Fix editing or discarding a draft that lives outside your main account failing with a raw Outlook error code: the recovery that was supposed to look in your other accounts never ran.
-- Fix mail tools reporting every problem as the same unhelpful sentence: an error raised while talking to Outlook - a folder that does not exist, an argument the tool rejected, a real Outlook failure with its own error code - reached your AI assistant as "Exception has been thrown by the target of an invocation." The assistant could not tell one cause from another, so it retried blindly instead of doing the obvious thing, like listing the folders. Errors now arrive with their own type and message. The same defect had quietly disabled the mail server's recovery from Outlook dropping out, which had therefore never once run.
-- Fix a send confirmation token outliving its two-minute limit when the computer's clock moves backwards - a time sync, a daylight-saving change or a virtual machine resuming. The token's expiry, and every other timer inside the mail server, is now measured with a clock that only moves forward.
-- Fix mail searches quietly answering about the wrong dates: date limits were written into Outlook's query language in US month-first order, while Outlook reads them in your own Windows date format. On a day-first machine every date whose day number is 12 or lower - roughly 12 days in every month - had its day and month swapped, so a search bounded to 1-5 August returned 158 mails received between January and June and not one from August, while the same search for 13-15 August was correct. The check for brand-new mail was hit hardest and least visibly: its window could land in the future, so it looked at nothing at all and still reported that it had checked every folder and that results were up to date. Dates are now written year-first, which no regional setting can misread, and the same limits now return exactly the mail inside them.
-- Fix a search of one account being flagged as possibly incomplete because a different account had a folder Outlook would not open: the freshness check now reports its coverage per account instead of pooling every account's problems into one answer.
-- Fix a search deliberately bounded to older mail being reported as possibly missing recent mail: when the requested period ends before anything new could exist, the freshness check is now recorded as unnecessary rather than as failed.
-- Measure how far behind the index is per account rather than across your whole profile: a busy account no longer hides how stale a quiet account is, so searches in a quiet account now check the right stretch of time for new mail instead of a window sized by your busiest one.
-- Make every AI instruction your own: OutlookAI Settings now has Prompts and Buttons tabs. Rename the sidebar's quick buttons, rewrite the instruction behind any of them, reorder them, delete the ones you never use and add your own; edit the four prompts that wrap every request; and reset a single button, a single prompt, or the whole button set back to how it shipped. A button is its name, so renaming a shipped button gives you a custom one. Only what you actually change is stored, which means anything you leave alone keeps following the built-in default and still improves with updates, while anything you edit stays exactly as you wrote it. Changes apply to your next action without restarting Outlook, and every open compose window picks them up at once.
-- Warn before you weaken a prompt: if an edited preamble no longer tells the AI to ignore instructions hidden inside an email you received, or no longer demands plain text with no markdown or HTML, the editor says so next to the text. It is advice and never blocks a save - the first protects you from a malicious email steering the assistant, the second is what keeps code fences and stray tags out of your mail.
-- Put every setting in one window: OutlookAI Settings is now resizable with tabs - Outlook, Claude Code, Prompts, Buttons, Updates - instead of one tall fixed dialog, so it stops running out of room and nothing is cut off at any display scale.
-- Choose which Claude model writes your mail: OutlookAI Settings has a Model group on the Claude Code tab. By default OutlookAI now chooses nothing and lets Claude Code decide, following your own model setting and picking up new models without an update - where before it was locked to one model that would have stopped working when that model retired. You can pin a family instead (opus, sonnet, haiku, fable), or type a specific model id. If Claude Code rejects your choice it quietly answers on its own default; OutlookAI now tells you when that happens instead of letting a substituted model pass unnoticed.
-- Fix the sidebar reading the Office colour theme from the wrong Office version on machines that have had more than one Office installed, and fall back to the Windows light/dark setting when no Office is detected.
-- Fix searches calling themselves incomplete when an account simply has no Junk Email or Deleted Items folder: a folder an account does not have is no longer counted as a folder the freshness check failed to look in.
-- Say when a mail search only partly checked for new mail: if the live check ran but could not cover everything it was asked to - a folder it could not read, a folder with more new mail than it reads in one pass, or simply running out of time - the answer now says so in a way your AI assistant can act on, instead of looking complete unless it happened to read the explanation. It already said so in words; now it says so in a form software notices.
-- Explain an over-long subject well enough to fix itself: a draft with a subject past Outlook's limit now comes back saying the limit, how long the subject actually was, and that nothing was created - so the assistant shortens it and retries rather than reporting a failure to you.
-- Let the AI see everyone a mail is addressed to when it picks a signature: it was previously told only about the first 20 recipients, with nothing to say the list had been cut, so it could pick a signature for the wrong audience.
-- Fix "checked 4 minutes ago" going wrong after a clock change: the update line measured elapsed time against the wall clock, so putting the clock back, a daylight-saving change or a time sync could make it read as hours ago or freeze at "just now".
-- Show update progress the moment it changes: starting a check in OutlookAI Settings now updates the sidebar immediately and vice versa, instead of both places noticing within a second by checking over and over.
-- Make the tuning and mail-server status in `outlook_health` harder to get wrong: the add-in and the server now share one definition of every registry key and configuration name they exchange, so renaming one can no longer leave the report quietly describing something that no longer exists.
-- Fix Outlook tuning silently doing nothing on Outlook 2013 and on future Outlook versions: the settings were written to a location only Outlook 2016 and later read, so on other versions the dialog showed "(not set)" forever and the restart notice never cleared. OutlookAI now works out which Office version is actually installed, rather than assuming, and the mail server does the same - it reports the version it found in its health check, so an Office it does not support says so plainly instead of looking like an empty mailbox.
-- Fix the writing sidebar staying 280 pixels wide at 125% and 150% display scaling while its contents grew.
-- Improve update downloads: a stalled download now gives up and says so, instead of leaving the version line on "checking..." for the rest of the session. Setup also no longer hangs indefinitely when Windows or a download server stops responding.
-- Make searching more reliable when Outlook is slow to start: the first search after Outlook launches is given the time it needs instead of failing, and an exhaustive search that runs long now returns the results it found with a note, rather than timing out and taking the connection down with it.
-- Make AI assistants write mail your way too: when an assistant drafts a reply or a new mail through the mail tools, it is now handed your own writing prompt - the same text the sidebar uses, exactly as you edited it - and asked to compose the body again to follow it. This happens once per session and again whenever you change your rules, so an edit takes effect immediately instead of waiting for the next session. Your rules can be as long as you like and are never copied into the tool definitions, so nothing gets silently cut.
-- Fix half the mail-search instructions never reaching your AI assistant: the guidance the search tool sends was nearly twice the size Claude Code accepts, so it was silently cut in the middle - losing, among other things, the rule that tells the assistant to warn you when search results are incomplete. It now fits, with the detail moved onto the individual search options, where it arrives in full.
-- Keep your settings when you uninstall: your prompts, quick buttons, Outlook tuning preferences and mail-server registration state now stay in the registry instead of being removed, so reinstalling picks up where you left off. This deliberately reverses the cleanup added in v3.1.0 - prompt text you wrote yourself is worth keeping, and nothing exports it.
-- Stop drafts reading like AI wrote them: every writing action in the sidebar now carries the rule "Ensure there is no trace of AI both in wording and character use." It sits in the always-sent prompt, so it applies to every button and every instruction you type, and you can edit or remove it like any other rule.
-- Check for a new version yourself instead of waiting for OutlookAI to get round to it: there is now a "check for updates" link under the version in the writing sidebar, and a "Check for updates" button in OutlookAI Settings, so you no longer have to wait up to ten minutes for the next automatic check. Both say "checking…" while one is running - including one started from the other place - and go quiet again when it finishes.
-- Show the version and update state in OutlookAI Settings: a new "Version and updates" section tells you which version you are running and when OutlookAI last managed to look for a newer one, the same as the writing sidebar has always shown. When a check fails, the reason is written out in full here rather than hidden behind a link. Both indicators now take their wording from one place, so they cannot disagree.
+- ✨ **Your AI assistant can read OutlookAI's audit log, so it can tell you what it did.**
+  The new `audit_log` tool returns the record OutlookAI keeps of every change it makes - drafts
+  created, revised and discarded, attachments saved, mail moved or archived, each step of a send,
+  signature changes, mails opened on screen - newest first, from every session on this computer. It
+  can narrow that to a time window, to particular kinds of change, or to one message, following the
+  message through a move even though moving changes its id; that also lets it check whether a
+  request whose outcome was reported as unknown actually took effect. It only reads: it never
+  changes the log, never gets in the way of OutlookAI adding to it, never starts or touches Outlook,
+  works with Outlook closed, and reads only the current log - never an older copy that has been
+  renamed or archived. What it returns is the log's own metadata, never a subject or a message body,
+  and lines it cannot read (such as the log's oldest lines, from before it had its current format)
+  are counted rather than guessed at. The tool is marked read-only in the information it gives the
+  assistant, so tools that sort read-only from write-capable actions can recognise it.
 
-- Fix text being cut off in OutlookAI Settings: the explanation under "Make available in all my Claude Code projects" lost its last words, and on a display scaled above 100% several other lines in the dialog were cut off too. Every wrapped line is now measured against the font actually in use and the dialog grows to fit it, so nothing is clipped at any display scale, and if it ever grew taller than your screen it scrolls instead of hiding the bottom. The dialog is also a little shorter, because space that was permanently reserved for two notices that are almost never shown is now only taken when they appear.
-- Fix mail tools hanging forever with no answer when Outlook stops responding: if Outlook got into a state where it accepted requests but never replied, every mail tool - search, read, drafts, and even the health check meant to diagnose it - would wait silently until your AI assistant gave up half an hour later, and the server stayed stuck that way until it was restarted. Outlook is now driven from a separate helper process that the server can restart, so a stuck Outlook produces a clear, quick error naming what happened instead of silence, and the very next request starts from a clean slate. Searches still return your indexed mail while Outlook is unavailable.
-- Report failures as real errors: mail tools that fail now mark the response as an error rather than returning a normal-looking result that merely contained an error message inside it. Assistants that did not know OutlookAI's particular convention could previously mistake a failure for a successful answer.
-- Notice a stuck or starting Outlook instantly instead of waiting to find out: the server now asks Windows directly whether Outlook is responding - which costs nothing and cannot itself get stuck - before trying to use it. A stuck Outlook is reported in a fraction of a second rather than after a long wait, and a search returns your indexed mail immediately instead of stalling first.
-- Stop making you wait while Outlook starts up: if Outlook is closed or still starting, mail tools now answer straight away saying so and roughly how many seconds to wait, instead of blocking for up to a minute and a half. Outlook is started in the background meanwhile, and searches keep working from the index.
-- Say clearly when search results are incomplete: when the live check against Outlook cannot run, results are marked as incomplete and the assistant is told in plain words to pass that on, so an answer missing the last few minutes of mail can no longer look like a complete one.
-- Stop restarting Outlook repeatedly in the background: the server could previously start Outlook again moments after a previous copy began shutting down, which appears to be what left Outlook stuck and unresponsive in the first place. It now waits before starting Outlook again.
-- Stop every mail request paying the full wait once Outlook is known to be stuck: previously each request discovered the problem on its own, so a stuck Outlook made every search and every account listing take up to two minutes, over and over. After two failures in a row the server answers straight away instead, and quietly re-checks Outlook every half minute so it recovers on its own the moment Outlook responds again - restarting Outlook still fixes it instantly. In this state a search returns your indexed mail in a fraction of a second, and tells you the live check was skipped.
-- Make the health check answer quickly even when Outlook is not responding: checking Outlook's health could itself take over two minutes on a machine where Outlook had stopped answering - the one moment the check is worth running. It now reports in about five seconds, says plainly that Outlook did not answer, and still gives you everything that does not depend on Outlook.
-- Stop leaving stray OutlookAI processes behind: server and helper processes now shut down with the program that started them instead of accumulating in the background - 18 had built up on one machine, one of them stuck holding Outlook open.
+- ✨ **Every failure carries a plain outcome value an assistant can act on without reading the wording.**
+  The values are "unchanged" (your mail is exactly as it was), "applied" (it DID happen - only the
+  reporting failed) or "unknown" (nobody can say; look before repeating the call). It is the only
+  way to state the middle case at all: a move that succeeded and could not be written to the audit
+  log was being reported as a move that failed, because the only field available was a yes/no.
 
-- Say when fetching a conversation quietly looked in only one of your accounts. Asking for a thread narrows the lookup to a single account for speed - and it does that even when you did not ask it to, deriving the account from whichever mail you pointed at. That narrowing was invisible, and worse, it silenced the very warning that exists to say a conversation reaches further than the answer does: the warning is worked out from what the search index returns, and narrowing the lookup narrows that too. So a reply sitting in your second mailbox was both missing from the answer and unmentioned by it. The answer now names the account it was narrowed to, lists the accounts nobody asked about, marks the result incomplete, and gives the fix that clears it - drop the account you named.
-- Say when a search reused a check for new mail it made a few seconds ago instead of making a fresh one. Repeat searches share one live check of Outlook for up to ten seconds so that refining a search stays fast; mail arriving inside those seconds is in neither the index nor the reused check. The answer always carried how old the reused check was - sitting next to the word that says results are fully up to date. It now says the result is incomplete, states how wide the gap is in seconds, and says it closes by itself.
-- Say what "search the body" actually means in each of the three ways this product searches, because it means three different things. The index covers the body plus the text inside attachments; the live check for new mail reads the body as Outlook renders it; an exhaustive search reads the stored plain-text body only. Each now states its own answer in the result. The one that can cost you mail is the last: an exhaustive search is the mode you pick BECAUSE it is thorough, and it is the only one that cannot see inside attachments at all, and may not match a mail whose body exists only as HTML. It now says both, and says the remedy is the counter-intuitive one - search again WITHOUT the exhaustive option.
-- Say whether each part of a search matched whole words or fragments. The index matches whole words; the live check for new mail matches fragments, so it returns slightly more. That is the safe direction, and it is also why a just-arrived mail can appear in a search and then drop out of the identical search once it has been indexed - which now has an answer in the result instead of looking like a bug.
-- Stop silently shortening the snippet length you asked for. Asking for more context than the limit allows gave you the limit's worth with no mention of it, so a snippet that had been cut read like a whole one - and judging a mail irrelevant from it is a decision made on text nobody said was truncated. Both directions are now reported. An exhaustive search does not shorten this setting but drops it entirely, which was equally silent and is now said plainly.
-- Fetch the WHOLE of a conversation when you ask for one by mail, instead of only the account that mail happens to sit in. Asking for a thread with just a mail's id - the shape an assistant reaches for straight out of a search - made this product quietly narrow the lookup to that mail's account, so replies filed in a second account were missing from an answer that presents itself as the full conversation. Nobody asked for that narrowing; it was taken because the mail had to be opened anyway. It is gone: a lookup you did not scope now covers every account. Naming an account yourself still narrows it, because that is a choice you made and can drop, and the answer still says what the choice cost. The side effect is that the warning about members in an account that was never looked at now fires only when you really did narrow the search, and the stronger warning - "this conversation demonstrably continues in another account" - can finally be raised, because the evidence for it is no longer being filtered away.
-- Say when fetching a conversation found an account it could have narrowed to and deliberately did not. The field that used to report "the product chose this narrowing, you did not" had nothing left to describe once the product stopped narrowing on its own, so it now reports the decision that replaced it: you pointed at a mail, the account that mail sits in was there to be used, and the lookup covered your whole profile anyway. Nothing is missing because of it and there is nothing to do about it - it is there to explain replies coming back from accounts other than the one you pointed at, and to say where the narrowing went if you wanted it (name an account yourself). The advice attached to the old meaning went with it: a lookup you narrowed yourself is still told to drop the account, and the second remedy - which existed only to escape a narrowing nobody had asked for - would now name an argument that changes nothing.
-- Stop every whole-mailbox search paying for a fresh check of Outlook it could have reused. Repeat searches are meant to share one live check for up to ten seconds, so that refining a query runs at index speed - but that sharing only ever worked when you named an account. A search across the whole mailbox worked out what it recognises the check by from the clock, on every call, so two identical searches a second apart never matched and each of them walked your folders again, which is the slowest part of a search. Whole-mailbox searches now reuse the check exactly as account-scoped ones always did. Nothing about what is searched changes, and the check is still thrown away the moment Windows Search takes in new mail, so a reused answer can never be older than the index it stands in for.
-- Stop the add-in checking for updates during Outlook's own startup, and stop an offline machine asking for ever. The first check used to fire the instant the add-in loaded, which is the busiest moment Outlook has - it is opening your mailbox and starting every other add-in at the same time - so it now waits half a minute. And a machine that cannot reach the update server used to keep asking every ten minutes indefinitely: after three failures in a row the wait doubles each time, up to two hours, which takes a disconnected machine from 144 requests a day to twelve. Nothing changes on a machine that can reach the server. Recovery is immediate rather than delayed: reconnecting to a network clears the backoff and checks shortly after, and "Check for updates" always runs straight away.
+- ✨ **An exhaustive search can be continued where it stopped.**
+  That mode reads your folders through Outlook directly, and it stops when it hits its ten-minute
+  allowance or its hundred-result limit - on a real mailbox with a 108,000-item archive it reached
+  three folders out of thirty-two before the clock ran out. Until now the answer said so honestly
+  and there was nothing you could do about it: raising the result limit is capped, and running the
+  same search again re-walks the same folders and stops in the same place. Every scan that stops
+  early now hands back a short continuation handle; passing it back to the same search picks up
+  exactly where it left off, and you repeat that until the handle stops coming, which is the signal
+  that the whole scope really was covered. It is not a shortcut: each page is still reported as
+  incomplete, because the page in your hand is not the whole answer.
 
-- Stop the test-machine scripts guessing which machine you mean. Three test guests exist side by side while the old one is replaced, and the scripts that build, copy into and reach into a guest each quietly assumed one of them - so a command aimed at a new guest was refused before it started, by a stored credential still pinned to the machine being retired. Naming the guest is now required everywhere, the stored credential no longer pins itself to one machine, and the recorded name in the parameter file is labelled as the guest the published measurements were taken on rather than a guest to build. The one script that sweeps every guest to reclaim the host's memory keeps its list of all three, because sweeping all of them is the point.
-- Correct where the Office installation media is recorded as living. The rebuild notes pointed at the maintainer's Downloads folder, which was purged without warning once already; the media is in the repository's own scratch directory, which nothing outside this project prunes. The notes now say so, and say plainly that it is a precondition someone has to put back if that directory is ever cleaned.
-- Add a test-machine Office configuration of its own, narrower than the workstation one it came from: Outlook and the rest of Office, without Visio, Project or the proofing tools a test guest never uses. It carries a licence key, so it stays in the scratch directory and never reaches the repository; what it contains is written down in the rebuild notes so it can be reconstructed from the key alone.
+- ✨ **A continued scan reports how far it has got in terms you can act on without the handle.**
+  It reports which folder it stops in, how many folders of the total are finished, how many results
+  the whole chain has returned so far, and the date it will resume from. If the handle expires or
+  the server restarts, that is enough to carry on by hand with the ordinary folder and date
+  arguments, so nothing already paid for is thrown away.
 
-- Stop the mailbox test suite's final cleanup pointing a delete at accounts no test is allowed to write to. That cleanup walks every account the run watches and deletes anything left carrying the suite's own tag - and the list it walks deliberately includes the 20,000-item measurement mailbox and the untouched account the suite watches as its evidence that nothing strayed, because an account has to be on that list to be counted at all. Those two carry a different tag now, so nothing matches; what kept them safe was the data rather than the code. They are counted and never deleted from, every run states in writing which accounts it left alone, and a tagged item found in one fails the run naming the account and how many - which nothing else would have reported, because the guard that watches for lost mail only fires when items disappear and this is items appearing.
-- Let a test machine say whether it has a second mail account the identity checks can create a draft in, so a machine without one can leave those checks out of a run instead of running them to be told they proved nothing. What such a run says is unchanged: a machine that runs them anyway and still finds no account to use says so in the log rather than passing quietly.
-- Warn that leaving the identity checks out of a run on a machine that cannot pass them also deletes the only record that they were never run. Those checks can now be excluded by name, and on a machine with no second mail account the line they print - saying in writing that nothing about that path was verified there - is the one place the gap is written down anywhere. The rebuild notes now say this beside the command they would be excluded from, and say that the label exists for machines that have the account rather than as a way to quieten one that does not.
-- Add giving the test machine a second mail account to the build instructions instead of leaving it as work for later. The machines are about to be created from scratch, where it is one more account and one more data file; adding it afterwards means editing a profile, restarting Outlook and changing a settings file on a machine whose saved snapshots no longer describe it. The instructions now say what the account has to be, read off the two checks that need it rather than guessed: a real account and not a bare data file, named after its own address, delivering into its own data file, with a signature configured, and deliberately left off the list of accounts nothing may write to.
-- Give each test machine its own name for the synthetic mail population built on it, so two machines stop overwriting each other's record of one. That record is the only thing that can remove such a population from a real mailbox afterwards, and it is also what says whether the population is still recent enough to measure against - yet every machine's results are collected into one shared folder, under a file name taken from the population rather than from the machine. With one machine that was harmless; with two, the second collection silently replaced the first. The two machines being built now have distinct names chosen to say which is which, and the collection step refuses to replace an existing record whose contents differ unless explicitly told to, explaining what it is protecting instead of stopping without a reason.
+- ✨ **A continued scan tells you when the folder tree moved underneath it between pages.**
+  That covers folders added, renamed, moved or deleted. Folders that appeared are scanned rather
+  than skipped, folders that left had already been covered, and the one case that really does lose
+  mail, the folder the scan was part-way through disappearing, is named as such instead of passing
+  silently.
 
-- Correct what the test-machine notes say happens when the test machine's Office licence runs out. They claimed Office drops into "reduced functionality" - a term that does not exist for this edition of Office, borrowed from a much older product and from a different kind of licence entirely, and one whose view-and-print restriction has never applied to Outlook. Measured on the test machine a week after its licence expired: Outlook still runs and everything this project asks of it still works. What actually happens is nagging and a red title bar. The correction matters because the false version made a monthly rebuild look like a hard deadline. The notes now record the real reason to check the licence before a long test run - it is a one-off quarter-second question worth asking, and the one genuinely unknown risk, whether an activation prompt can hang Outlook as it starts, is written down as unknown rather than guessed at. The exact way to read the licence state is recorded too, including the three easy ways to get it wrong.
-- Record that the test machine runs a newer Office than the maintainer's own machine - about 3,600 builds newer - and that this is accepted rather than fixed. The test machines otherwise copy the maintainer's setup deliberately, so this is an exception and is now written down as one, together with its practical consequence: a difference in Outlook's version is the first thing to suspect when a test behaves differently on the test machine than on the maintainer's. Also recorded: the monthly rebuild the test machine needs comes from how that one machine was licensed, and is not something anyone using this product experiences.
+- ✨ **The breadth of the new-mail check is a plain value an assistant can act on.**
+  Unless you name a folder, the check covers Inbox, Sent Items, Deleted Items and Junk Email only,
+  and not their subfolders - so mail a server-side rule files elsewhere is invisible until the index
+  catches up. That was stated only as a sentence in the answer; it is now also a plain value beside
+  it, so an assistant can notice the limit and search the folder directly instead of assuming it
+  looked everywhere.
 
-- Let go of Outlook properly when the assistant's connection to it closes. This product talks to Outlook through a small helper program, and until now that helper was always ended the abrupt way - even when nothing was wrong and your session was simply finishing. An abrupt ending runs none of its own tidying up, and one of the things it leaves behind is a hidden Outlook window the helper opens when it has to start Outlook for you. Outlook counts that window even though you can never see it, so it accumulates, and a window Outlook thinks is open is a reason for Outlook not to close when you tell it to. The helper is now asked to leave and given a moment to do so, which is when it closes that window and hands back everything it was holding; if it does not go within two seconds it is still ended the old way, so nothing can make closing slower than it was. To be clear about what this is NOT: leftovers from the abrupt route were measured against a real Outlook and did not make Outlook slow or unusable for anything that came next - the cost was the accumulating hidden window, not a broken Outlook. This also cannot help when the assistant kills the helper outright, which is what happens when Outlook has genuinely stopped responding and when a session ends abruptly.
-- Give each test machine its own folder for the measurements and logs collected off it, so a second machine's results stop silently replacing the first's. Comparing the two machines is the entire reason there are two, and those files had fixed names in one shared folder, so every second collection overwrote the first and the loss looked like nothing at all. The record that can remove a synthetic mail population deliberately stays in the shared folder: it is named after the population rather than the machine, and keeping it there is what makes two populations wrongly given the same name collide where a person can see it. Collecting now also refuses to replace ANY file whose contents differ, not just that one, and says which kind of loss it is preventing. Files left in the old shared folder by an earlier collection are named on every run and never moved, because which machine produced them was never recorded and a guess would be worse than a gap.
+- ✨ **`outlook_health` reports the largest answer from Outlook so far, beside its size limit.**
+  It also counts anything refused for exceeding that limit, so a limit that was set by estimate can
+  be judged against what really happens on your mailbox.
+
+- ✨ **A search result that is not an ordinary mail says what it is.**
+  Bounce reports, read receipts, meeting requests, responses, posts and sharing invitations now come
+  back labelled, and the answer says how many of its hits are not plain mail - so the assistant does
+  not tell you "you have four mails about the invoice" when one of them is a delivery receipt.
+
+- ✨ **A search reports what the index left out of it.**
+  It gives the number of rows it looked at, the number it refused, and - this one matters - whether
+  it ran out of candidates while filtering, which is the one way a search list can be short of
+  matches without saying so. That last fact was previously buried in a sentence rather than being
+  something the assistant could act on.
+
+- ✨ **Every AI instruction can be your own, in new Prompts and Buttons tabs in OutlookAI Settings.**
+  Rename the sidebar's quick buttons, rewrite the instruction behind any of them, reorder them,
+  delete the ones you never use and add your own; edit the four prompts that wrap every request; and
+  reset a single button, a single prompt, or the whole button set back to how it shipped. A button
+  is its name, so renaming a shipped button gives you a custom one. Only what you actually change is
+  stored, which means anything you leave alone keeps following the built-in default and still
+  improves with updates, while anything you edit stays exactly as you wrote it. Changes apply to
+  your next action without restarting Outlook, and every open compose window picks them up at once.
+
+- 🔒 **The prompt editor warns before you weaken a prompt.**
+  If an edited preamble no longer tells the AI to ignore instructions hidden inside an email you
+  received, or no longer demands plain text with no markdown or HTML, the editor says so next to the
+  text. It is advice and never blocks a save - the first protects you from a malicious email
+  steering the assistant, the second is what keeps code fences and stray tags out of your mail.
+
+- ✨ **You choose which Claude model writes your mail, in a Model group on the Claude Code tab.**
+  By default OutlookAI now chooses nothing and lets Claude Code decide, following your own model
+  setting and picking up new models without an update - where before it was locked to one model that
+  would have stopped working when that model retired. You can pin a family instead (opus, sonnet,
+  haiku, fable), or type a specific model id. If Claude Code rejects your choice it quietly answers
+  on its own default; OutlookAI now tells you when that happens instead of letting a substituted
+  model pass unnoticed.
+
+- ✨ **AI assistants drafting through the mail tools write mail your way too.**
+  When an assistant drafts a reply or a new mail through the mail tools, it is now handed your own
+  writing prompt - the same text the sidebar uses, exactly as you edited it - and asked to compose
+  the body again to follow it. This happens once per session and again whenever you change your
+  rules, so an edit takes effect immediately instead of waiting for the next session. Your rules can
+  be as long as you like and are never copied into the tool definitions, so nothing gets silently
+  cut.
+
+- ✨ **You can check for a new version yourself, from the sidebar or OutlookAI Settings.**
+  There is now a "check for updates" link under the version in the writing sidebar, and a "Check for
+  updates" button in OutlookAI Settings, so you no longer have to wait up to ten minutes for the
+  next automatic check. Both say "checking…" while one is running - including one started from the
+  other place - and go quiet again when it finishes.
+
+- ✨ **OutlookAI Settings shows the version and update state, as the sidebar does.**
+  A new "Version and updates" section tells you which version you are running and when OutlookAI
+  last managed to look for a newer one, the same as the writing sidebar has always shown. When a
+  check fails, the reason is written out in full here rather than hidden behind a link. Both
+  indicators now take their wording from one place, so they cannot disagree.
+
+- ✅ **The Outlook test machines keep a full crash dump whenever Outlook crashes in a live run.**
+  The one-call runner switches Windows Error Reporting's own crash dumps on at every run, on the
+  frozen checkpoints as they are, brings every dump back with the run's results, and reads each one
+  with Windows' own debugging library: its summary names the fault, the code it struck in, the
+  faulting thread's call stack and the classes of the objects that thread was handling. Nothing is
+  installed on the machines and no checkpoint changed.
+
+- ✅ **A one-call runner runs the live tests on the two test machines.**
+  It builds the chosen commit, waits its turn for the machine, prepares it, runs the tests the safe
+  way, reads the suite's own safety checks as part of the verdict, and always puts the machine back
+  to rest and saves it - so a test run no longer depends on someone repeating dozens of manual steps
+  correctly. Nothing that ships to users is affected.
+
+- ✅ **Which date the search index gives appointments, contacts and tasks in a data file is measured (Q98).**
+  Appointments and tasks get a received date - their creation time - so they sort and filter like
+  mail, and contacts get none. The test machines' measurement-mailbox tool can now hold each probe
+  item until the index has it and record every column a search sorts by, and the script that adds a
+  data file to a test machine can create an older-format (ANSI) one. Nothing that ships to users is
+  affected.
+
+- ✅ **A third test machine runs the non-mailbox tests and every self-check, off the maintainer's computer.**
+  It is a small virtual machine with no Office, no mailbox and no network, driven by one script. The
+  script tests a named commit or branch - an agent's unfinished work included, once committed - on a
+  machine put back to the same saved state before and after every run, so no run can inherit
+  anything from the one before; callers queue and run one at a time, each gets back a summary, the
+  full test results and every log, and a caller stopped part-way leaves nothing running: a watcher
+  it starts puts the machine back and saves it. Its runs reproduced the main branch's passing tests
+  exactly - 3,005, and 3,346 at a later commit - in about four minutes each. Building it also found
+  two faults in the step that finishes a test machine's Windows install - it checked its own work a
+  moment too early, saw the install discs still attached and the first checkpoint not yet there, and
+  stopped - and one in the step that creates a machine, which recorded a fixed memory size for
+  machines that in fact had memory growing on demand up to a terabyte; all three are fixed. Nothing
+  that ships to users is affected.
+
+- ✅ **Every mailbox check that changes nothing is labelled, and the build proves it (Q74).**
+  Fifty-four of the checks that run against a real Outlook now carry a "writes nothing" label; the
+  build reads their compiled code - including everything that runs before and after them - and fails
+  if any of them could create, change, move, send or delete anything, or reach a part of the product
+  nobody has shown to be read-only. The maintainer's own machine runs only the seven labelled checks
+  that need an Exchange mailbox, selected by a filter computed from those labels rather than typed
+  by hand, and the instructions for that run, the test-machine run book and the project rules now
+  describe it. A short list of manual checks before a release covers the Exchange-only writes no
+  automated check can reach. Nothing that ships to users is affected.
+
+- ✅ **On-behalf sends and shared or delegate Exchange drafts get checks that need no mailbox (Q74).**
+  The drafts include replies. No mailbox check that runs against a real Outlook can reach these any
+  more - the test machines have no Exchange, and the maintainer's own machine is read-only - so the
+  decisions behind them (which account a mail goes out from, which on-behalf name it carries, when a
+  send is refused) now have checks that need no mailbox at all. How the product behaves is
+  unchanged.
+
+- ✅ **The test-mailbox tool lists a test machine's mailbox folders, read-only.**
+  So what a build or a clean-up left behind - folders Outlook was asked to create, emptied folders
+  moved to Deleted Items - can be checked with the project's own guarded tool instead of an
+  improvised script.
+
+- ✅ **The unindexed test machine is built out towards its full design, one checkpointed step at a time.**
+  Each step is scripted and proven on the machine. The test machines now answer Outlook's "a program
+  is trying to access email address information" security prompt by themselves: they have no
+  network, so their antivirus is permanently out of date, and Outlook then stops every outside
+  program that reads an address, a message body or a recipient on an Allow/Deny prompt that nobody
+  is there to click - which would hang the mailbox tests. A documented Outlook security policy now
+  approves those reads on the test machines only, and its check does what the tests do - it reads an
+  account's address - and fails if the prompt appears; with the policy absent the same check caught
+  the prompt within a second, so the check is known to work. The three Outlook settings that keep
+  the classic, scriptable Outlook in place, lost on that machine by an earlier hand-run script, are
+  restored and stay put across Outlook restarts. And the rebuild instructions no longer tell anyone
+  to restart a test machine with a plain `shutdown /r`, which force-closes Outlook exactly as
+  killing it would; they give the graceful route that was used instead. The machine's local mail
+  server was installed and proved itself on the first attempt, including starting on its own after a
+  restart - and settling the question of whether Outlook logs in to it without a stored password
+  showed that it does not: Outlook asks for one before it ever connects, so mail would never have
+  been collected. The test machines' account setup now stores a password (any value; the local
+  server compares it with nothing), and the server's own log shows Outlook logging in with it. The
+  OutlookAI add-in was installed on the machine from the same commit as the tests, trusted without a
+  prompt, and confirmed running inside Outlook, twice; its installer's self-check no longer crashes
+  when it is copied to the machine on its own. The machine's second mail account - the one the tests
+  use to check that a draft is written from the right account, into that account's own mailbox - was
+  added and verified there too, surviving an Outlook restart; it also asked for a password until one
+  was stored, so the setup steps now store it for every test account. Setting up that account's
+  signature exposed a real defect in the signature tool: asked to make a signature the default for
+  an account, it can attach it to a mail file that merely carries the account's address as its name,
+  then report success. That is recorded for a fix rather than worked around. The first build of the
+  small test mailboxes the tests read from worked for the main test mailbox but exposed four defects
+  in the test-data generator and the account setup, all recorded for their owners rather than
+  patched around: received test messages are never addressed to a resolved mailbox owner; a mail
+  file added to a profile after the fact has no Inbox, so the messages meant for it landed in a
+  hidden folder no one can see; its throwaway test items could be left behind in a different mail
+  file than the one it was told it may touch; and the second account's incoming mail would be filed
+  in that same hidden folder. The machine can now build and run the test suite by itself - installed
+  from the staged media with no network, proven by discovering all 2,794 tests and running a sample,
+  twice - and its settings file, generated from the recorded store names rather than typed, is in
+  place and accepted by the suite's own loader. The first live run on it is deliberately held back
+  until a defect in the tests' own safety census, which can create folders in the mail files it is
+  meant only to count, is fixed.
+
+- ✅ **The indexed test machine is built out the same way, with its mail searchable throughout.**
+  Each step is scripted and checkpointed: its lost Outlook settings restored, Outlook's security
+  prompt approved automatically, the local mail server installed with both test accounts logging in
+  to it, and the add-in installed from the current code and confirmed running twice - with the
+  search index checked unchanged after every step that started Outlook. Outlook on that machine has
+  to run without administrator rights for its mail to be searchable, so every check that talks to it
+  now runs without them as well. Its second test account now has its own default signature, set by
+  the corrected signature tool on the account itself and read back from there rather than from a
+  mail file carrying the same name, and the machine's copy of the test suite was brought up to date
+  and proven to build and run.
+
+- ✅ **The test machines get a local mail server, so the thirteen tests that send mail run as written.**
+  The product's own send tool is among those tests. The test machines have no network, so the server
+  runs on each machine itself: it accepts what Outlook sends and hands it straight back when Outlook
+  collects its mail. It is Inbucket, a small free open-source program under the MIT licence, used as
+  it comes rather than written here, at the maintainer's request and as the one deliberate exception
+  to the project's rule against external applications. It was chosen over the two usual alternatives
+  for two reasons that matter on an unattended machine: it lets Outlook collect mail without a
+  stored password, where the others refuse one and a password prompt nobody can answer would stall
+  the machine; and it keeps each test account's mail separate, where the others would let two
+  accounts take each other's mail at random. It is never downloaded on a test machine: a new script
+  fetches the pinned release on the maintainer's computer and accepts it only when its fingerprint
+  matches both the one its makers publish and the one recorded in this project, and the installer on
+  the test machine refuses any copy that does not match. The installer starts the server whenever
+  the machine starts, and then proves it works by sending test messages through it and reading them
+  back - lines that start with a full stop, an attachment, deletion, a restart, and one mailbox
+  unable to see another's mail - instead of only checking that something is listening. The test
+  suite itself now also refuses to start when the mail server's ports answer in the wrong language,
+  which would otherwise show up minutes later as mail that never arrived. None of this has run on a
+  test machine yet, and one question can only be answered there: whether Outlook collects mail
+  without asking for a password it does not have. The documentation says how to find out without
+  sending a single message, and what to change if it does ask.
+
+- ✅ **The test machines can be given the OutlookAI add-in, as a scripted step of building them.**
+  The mailbox tests that check what the add-in sets up in Outlook can then run there instead of
+  failing. Two of those tests read settings only the add-in writes the first time it runs, and the
+  test machines had never had it - nothing in their build installed it, and one of the two runs on
+  both machines. A new script on the maintainer's machine builds the add-in from a named, committed
+  version of the project - the same version the test suite on the machine is built from, so the
+  tests check the add-in they are meant to check rather than whatever was last released - and wraps
+  it in the product's own installer. A second script on the test machine installs it silently,
+  trusts it without the security prompt that would otherwise freeze an unattended machine, starts
+  Outlook once, and then checks the exact settings the tests read, down to their type, and that the
+  add-in wrote them during that start and answers when called. **Building the add-in turned out to
+  register it on the machine doing the building**, quietly pointing that machine's own Outlook at
+  the fresh build; on the maintainer's machine that is the Outlook he works in. The build script
+  stops that three separate ways and compares the machine before and after, and three builds left it
+  exactly as it was - the first also caught, and removed, a certificate the signing step had left
+  behind in a place nobody expected. The add-in writes nothing that affects which mailboxes are
+  searchable or what is in them, so the machine kept deliberately out of the search index stays that
+  way. The install has not yet run on a test machine.
+
+- ✅ **The test machines' small mailboxes get real, reproducible contents, so 36 more checks can run there.**
+  Those 36 could never run on a test machine, because the mailboxes they read were empty, or held no
+  attachments, senders or conversations; and 4 that ran but proved little should now prove what they
+  claim. Three of the 36 will run but still say nothing about items with no received date, such as
+  appointments, which these contents leave out; whether to add some is an open question. The
+  project's measurement-mailbox builder can now also build three small, fixed sets of made-up mail:
+  56 messages for the mailbox the tests write to, 300 for the mailbox no test may ever touch, and 8
+  for the second account's mailbox. Unlike the large measurement mailbox they carry what the checks
+  actually read - senders and recipients, attachments of the kinds search used to drop (pictures,
+  calendar invites, forwarded messages) as well as plain documents, conversations with several
+  replies, read and unread mail, folders inside folders, and a folder of notices whose search word
+  appears only in the subject. Each set is rebuilt identically from a recorded number, is tagged
+  like the measurement mailbox so no test clean-up can ever select it, and is removed by the same
+  two-key teardown. Before building, the builder proves on one throwaway message that every kind of
+  write it needs actually lands, and refuses otherwise; after building, it reads every message back
+  and fails if anything differs from the plan. The settings file's single list of mailboxes, which
+  meant both "watch these for lost mail" and "measure search on these", is split into two lists,
+  because the second account's mailbox has to be watched but holds too little to measure search on;
+  a settings file written before the split behaves exactly as it did, and search checks on a machine
+  with nothing indexed now refuse instead of passing having looked at nothing. The indexed test
+  machine's measurement mailbox must now be built at the size of a real mailbox, 160,000 messages,
+  before its settings will be produced, so the search speed limits are real tests there rather than
+  formalities. The documents now say what the suite actually refuses about the untouchable mailbox,
+  answering the question the previous entry left open: the documents were wrong, not the suite. The
+  build also fails if the example settings file ever contains an email address that could belong to
+  someone, as this repository is public. **None of this has run on a test machine yet**: the new
+  contents are built and checked on the host without Outlook, and the first build on each machine is
+  what settles the handful of open questions the setup guide lists.
+
+- ✅ **A script produces each test machine's suite settings file, no longer written by hand.**
+  That removes the last manual step between the test machines and the suite's first-ever run on one
+  of them. That file names every mailbox on the machine and says which one the tests may write to
+  and which they must never touch; without it the suite refuses to start, and because it names real
+  mailboxes it can never be committed as it stands. So the project now keeps a template of it that
+  holds nothing but placeholders, beside a per-machine list of each test machine's own mailbox
+  names, and a new script puts the two together for one named machine: it refuses outright while any
+  value is still unknown, naming every one; checks the result against the same rules the suite
+  applies before it touches a mailbox, plus the documented ones the suite does not check itself;
+  writes it to scratch space; and prints the exact command that copies it onto that machine. **It
+  will not write anywhere the maintainer's own hand-written settings file lives, however the path is
+  spelled** - relative paths, forward slashes, junctions and short names included - and that was
+  proved against the real file, which was left byte-for-byte unchanged. The template cannot quietly
+  drift either: the build now fails if its fields stop matching the documented example's, and a new
+  check feeds it, filled with made-up values, through the suite's own settings loader, alongside
+  deliberately broken versions the loader must reject. The test machines' real mailbox names have
+  not been filled in yet - they have to be read off each machine - and until they are, the script
+  says exactly which ones are missing. One documented rule turned out to be enforced less strictly
+  by the suite than the documentation says: a mailbox declared untouchable but left off the list of
+  mailboxes to watch is watched anyway, not refused; the new script applies the stricter reading,
+  and which of the two should change is an open question.
+
+- ✅ **The mailbox test suite can be run on a test machine, which it never could before.**
+  The two scripts written for it were run for the first time: one packed up the project's source and
+  every component the build needs into a form a machine with no internet can build from, and proved
+  that pack was complete before shipping it; the other installed the development tools on the test
+  machine and then demonstrated the result by building and running part of the suite there - finding
+  all 2,698 checks and executing a sample of them with no network at all. The installer got it wrong
+  the first time in an instructive way: everything had in fact worked, but it read the installer's
+  result code as blank rather than as success and declared the machine broken, while the tool it had
+  just installed was reporting its own version two lines further down. It now distinguishes 'this
+  failed' from 'I could not tell', because those are not the same and only one of them is worth
+  worrying about. Running the mailbox checks themselves still needs a per-machine settings file that
+  names real mailboxes, which no script can write.
+
+- ✅ **Two scripts bring the mailbox test suite to the bare, offline test machines.**
+  The test machines are built from scripts and are deliberately bare: no development tools, no copy
+  of the project, and no network connection. The suite needs all three, so it had never been run on
+  one - which is why twenty-odd checks that need a real mailbox have been waiting. There are now two
+  scripts for it. One runs on the developer's machine and packs up everything the test machine
+  cannot fetch for itself: the project's source taken from a named point in its history rather than
+  from whatever is lying around, and every third-party component the build needs, gathered into a
+  folder the test machine can build from offline. It then rehearses the whole build against that
+  folder before shipping it, so a missing component is found in seconds on the fast machine instead
+  of after a slow copy onto the slow one. The other installs the development tools on the test
+  machine from a copy staged beforehand, checks the installer is the exact file expected, and then
+  proves the result by actually building and running part of the suite - rather than concluding from
+  an installer exiting quietly that anything works. It reports one of four outcomes and only one of
+  them counts as ready. Neither has been run yet, and both say so. Nothing that ships to users is
+  affected.
+
+- ✅ **A test-machine script takes a machine's mailbox out of Windows Search.**
+  That is the only thing that makes the second test machine different from the first. The test setup
+  is two machines, one whose mail is indexed and one whose is not, and half the mailbox checks
+  depend on that difference being real; but both are built from the same file and both come up
+  indexed, so nothing had yet made the second one different and both halves would have been
+  measuring the same machine without anyone noticing. The obvious shortcut - switching the whole
+  Windows search service off - turns out to be the wrong answer and the script refuses it: that
+  produces a machine with no search at all rather than a mailbox search has not been told about,
+  which the product handles down a completely different and untested path, and it removes the very
+  report the setup notes say to read to check the machine was built right. One existing check would
+  simply have failed on such a machine. So the script takes the mailbox out of what Windows Search
+  looks at and leaves the indexer running, and then proves the result by asking the index itself -
+  twice, minutes apart, so "not indexed" can be told apart from "not indexed yet" - instead of
+  reading back the settings it wrote. It gives four answers, two of which say in plain words that no
+  answer has been reached yet, because a machine believed unindexed while it is quietly still
+  indexing produces measurements that look fine and mean nothing. It has deliberately never been
+  run. Nothing that ships to users is affected.
+
+- ✅ **The test machine's mail server is fit for the job, and a script installs it and proves it.**
+  The test machine's mail account was pointed at a local mail server that nobody had checked could
+  hand mail back - the project's own notes flagged that the chosen server may only speak the other
+  retrieval protocol, and that if so the whole design was unbuildable. It can: the feature was
+  turned down in 2019 and added anyway five years later, so there is a version to fix on and the
+  notes now say which. Three instructions for installing it were wrong, including one command that
+  cannot work at all, and are corrected. Reading the server's own source also found two places where
+  it departs from the mail standard, and one collision nobody had noticed: it refuses a blank
+  password, while the test machine's account is set up with none - so one password has to be typed
+  by hand, once, when the machine is built. The new script installs the server from a copy staged
+  beforehand rather than downloading anything, checks the file is the exact one expected, and then
+  actually sends a message and fetches it back instead of merely checking that something is
+  listening - including the awkward cases that break mail servers quietly. It has deliberately never
+  been run, and two of its checks are expected to fail, which is why they are checks. Nothing that
+  ships to users is affected.
+
+- ✅ **Draft scripts build a test machine's Outlook profiles and data files without the Mail control panel.**
+  They also switch the default profile. That part of rebuilding the test machine was still done by
+  hand, once at considerable cost by driving the screen with a vision model. Four of the five things
+  a test machine needs can be scripted: a profile with no mail accounts, a data file carrying an
+  exact name, the switch between profiles with no prompt, and the identity signature. The fifth
+  cannot: **nothing free can create a mail account**, for three unrelated reasons, so adding the two
+  test accounts stays a manual step - now a precisely bounded one, taken once per machine and
+  preserved by a checkpoint. The scripts have deliberately **never been run**: they were written on
+  a machine with a real mailbox on it, so they were checked by reading rather than by trying, and
+  each says so at the top and refuses to run on any machine that is not a test guest. Nothing that
+  ships to users is affected.
+
+- ✅ **Three test-machine scripts try to build the missing mail account, and none has been run yet.**
+  Setting up that account by hand is the one step of the rebuild nothing could automate, and the
+  only off-the-shelf component that can do it is one this project will not take. Two free routes
+  remain - describing the account in a file Outlook reads at startup, or driving the setup window
+  the way a screen reader does - and there is now a script for each, plus one that answers in two
+  minutes whether the second route is possible at all. Each checks its own result and fails loudly
+  rather than reporting a success it did not verify, and each says in its own header what it expects
+  the machine to look like first.
+
+- ✅ **The test machines get an Office configuration of their own, narrower than the workstation's.**
+  It installs Outlook and the rest of Office, without Visio, Project or the proofing tools a test
+  guest never uses. It carries a licence key, so it stays in the scratch directory and never reaches
+  the repository; what it contains is written down in the rebuild notes so it can be reconstructed
+  from the key alone.
+
+- ✅ **A test machine can say whether it has a second mail account for the identity checks.**
+  That account is one the identity checks can create a draft in, so a machine without one can leave
+  those checks out of a run instead of running them to be told they proved nothing. What such a run
+  says is unchanged: a machine that runs them anyway and still finds no account to use says so in
+  the log rather than passing quietly.
+
+### Changed
+
+- 📦 **The release page lists each change's icon and headline, linked to its full entry (Q123).**
+  The maintainer decided it on 2026-10-03, in his words: *"copy the release notes style and system
+  and rules from the BrowserAI repo"*. Every changelog entry now opens with one of twelve icons,
+  then a bold one-sentence headline, then the whole of what happened, under Keep a Changelog's
+  groups. The GitHub release no longer pastes the section: `Tools/Publish-Release.ps1` makes the
+  body from each entry's icon and headline, with a *read more* link to that entry's own lines in the
+  tagged changelog, so a release page stays readable however much a release holds. On the day of
+  the change this release's section was 157,366 characters, over the 125,000 GitHub accepts for a
+  release body; its body is about 43,000. The script refuses an entry, a group or a legend that
+  breaks the rules, a released section that changed, and a character on the release page that a
+  person does not type, such as an em dash; `-CheckChangelog` checks the changelog on its own, and the
+  build VM checks it on every run. The 216 entries written since v3.1.0.325 were converted: each
+  one's opening sentence became its headline, and the rest of its text was kept word for word.
+
+- 📦 **Releases are built, tested, signed and published on the maintainer's own computer.**
+  GitHub's servers no longer build them. Installers are signed with the same OutlookAI certificate
+  as before, so installing and updating work exactly as they did; what goes is the GitHub
+  build-provenance attestation that releases used to carry, which only GitHub's own build service
+  can make.
+
+- 📝 **The subject option says how a renamed reply or forward threads in POP3, IMAP and .pst mailboxes.**
+  When you give a reply or forward its own subject, OutlookAI keeps the draft in its conversation by
+  restoring the conversation details Outlook resets when a subject changes, and in an Exchange or
+  Microsoft 365 mailbox the draft also keeps the original's conversation id. A test machine measured
+  that a data file differs: there Outlook gives the renamed draft a conversation id worked out from
+  the conversation's topic rather than the original's, and refuses to let it be changed - so the
+  draft still threads for its recipients and keeps its topic, but a lookup by the original's
+  conversation id does not find it. The subject option's description now says so, and the check that
+  runs against a real Outlook holds each kind of mailbox to what it actually does.
+
+- 🔧 **Each mail file is found in the Windows search index by its identity, not its name (Q99).**
+  Windows files every Outlook mail file in its index under the file's own name plus a number Outlook
+  computes from the file's identity - Microsoft documents the formula - and OutlookAI now computes
+  that number too. A search limited to one data file (.pst) therefore searches that file and nothing
+  else: also when the file's own name differs from the name Outlook shows for it, as it can for a
+  file named only in the Outlook profile or for an older-format file, and never another file that
+  shares its name - one in another Outlook profile, or a copy at another location. A data file the
+  index does not hold is now said to be unindexed instead of being searched through a same-named
+  stranger, and search results name the mail file the way Outlook does, the name the other tools
+  accept. `outlook_health` now says for every mail file how it was found in the index (`matchedBy`),
+  under which index name, and lists the indexed mail files that belong to none of this profile's.
+  Exchange, IMAP and Outlook.com mailboxes, whose numbers could not be tested here, are found the
+  same way when the number fits and otherwise exactly as before, as are shared and delegate
+  mailboxes.
+
+- 🔧 **Each mail file is matched to the search index by its name and identity number together (Q113).**
+  It is never matched by a guess. The index's address for a mail file carries both, so a file is now
+  matched only where both are its own: a renamed data file is no longer searched through the entry
+  the index still keeps under its old name, and two files that share a number are told apart by
+  their names. Where the index itself cannot tell two of your mail files apart - they share both
+  name and number - OutlookAI no longer picks one: a search limited to either is refused with the
+  reason, a search across all your mail leaves that index entry out and names the two files
+  (`index.storesUnmatched`) instead of mixing their mail in, and `outlook_health` marks them
+  `ambiguous`. A search limited to a name two of your mail files share is refused the same way, and
+  so is a search limited to a data file while the index's list of mail files cannot be read. IMAP
+  and Outlook.com mail files are held to the same rule instead of falling back to their names, and
+  `outlook_health` now reports such a match as `nameAndHash` (it said `storeHash`). Exchange
+  mailboxes keep their current matching - by number, or else by name - until it has been measured on
+  an Exchange test machine.
+
+- 🔧 **An exhaustive search walks folders in a stated order, the one the folder listing promises.**
+  Outlook does not define what order it hands folders back in, so a search that stopped part-way
+  through was missing whole folders chosen at random - and stopping in a reproducible place is what
+  makes continuing from it mean anything.
+
+- 🔧 **An exhaustive search says which limit stopped it, because the two need different answers.**
+  Running out of time means continuing is the only route to the rest; running out of result slots
+  means continuing works but narrowing the folder or date range is cheaper. Both could be true at
+  once and the answer never distinguished them, so half the advice an assistant gave about it was
+  the wrong half.
+
+- 🔧 **A continuation whose search has changed is refused, and no longer answers a different question.**
+  Change the terms, the account, the folder, a date bound or a filter and the call is refused with
+  the changed argument named; the page size may still differ from page to page. A handle that has
+  expired, been superseded by a later page, or was never issued by this server each get their own
+  explanation and their own way back.
+
+- 🔧 **The check for new mail reports a refused sort apart from an unavailable column.**
+  The two failures were caught together, so the flag that decides whether "the oldest mail is what
+  is missing" is true could not say which had happened. They are now told apart and counted, which
+  is what will settle whether that sentence has ever been true.
+
+- 🔧 **An interrupted draft revision is recorded in the audit log.**
+  That way an outcome nobody can state leaves a line saying so rather than a gap where a line should
+  be.
+
+- 🔧 **Outlook gets far more time to answer, so slow work finishes instead of failing.**
+  Every mail operation now has minutes rather than seconds: a search of your whole mailbox can spend
+  up to a minute in Windows Search and ten minutes checking Outlook for new mail, an exhaustive scan
+  can run for ten minutes, and an ordinary operation has five minutes before the connection to
+  Outlook is considered stuck. The reason is measured, not guessed - on a mailbox of this size one
+  ordinary check for new mail across five accounts takes about a minute, which the previous
+  thirty-second limit could not hold, so it failed on real searches and restarted the connection to
+  Outlook every time. Slower answers are the deliberate trade: when you ask an assistant to do this
+  work you are not sitting watching it, and a complete answer that took two minutes beats a partial
+  one that took ten seconds.
+
+- 🔧 **An exhaustive search has a time limit of its own, without slowing down everything else.**
+  It used to share one limit with every other operation, so giving the scan ten minutes would also
+  have meant waiting ten minutes to notice that Outlook had stopped responding to a simple read. The
+  scan now has a limit of its own, and everything else keeps a much shorter one.
+
+- 🔧 **The check for new mail may run for ten minutes, up from three, without slowing down anything else.**
+  That check is the part of every search that asks Outlook directly about mail too new to be
+  indexed, and on a large mailbox three minutes was not enough to finish it - so a search quietly
+  came back having covered only some of your accounts. It now has a time limit of its own, so
+  raising it does not raise the time every other tool waits before deciding Outlook is stuck:
+  reading a mail, moving mail, creating a draft and listing folders are all unchanged at five
+  minutes. The same ten minutes applies to fetching a conversation, which does the same kind of live
+  check. The old three minutes came from a measurement taken while the sort defect above was still
+  present, so it described the wrong work; ten minutes is a deliberate ceiling until the real cost
+  has been measured, on the principle that a complete answer you waited for beats a fast answer with
+  holes in it.
+
+- 🔧 **An exhaustive search explains why it returned two results and still said there were more.**
+  That mode stops after a fixed number of matching mails, and any `from`, unread or has-attachments
+  filter you passed is applied afterwards - so a scan can stop at 25 candidates, discard 24 of them,
+  and hand back one result while thousands more match further on. The answer now says the limit
+  counted candidates rather than results, how many were discarded, and that the way to narrow it is
+  a tighter folder or date bound rather than a filter that runs after the limit.
+
+- 🔧 **Index freshness is reported for the worst account, not just the newest moment anything was indexed.**
+  On a profile where one account lags hours behind another, the single figure hid exactly the
+  account whose recent mail was at risk.
+
+- 🔧 **The list of accounts a search reports as missing from the index is capped, and says so.**
+  It was the one list in the mail server with no limit, so a profile with many local data files
+  would have printed the whole list twice over in every search answer.
+
+- 🔧 **How far behind the index is gets measured per account, not across your whole profile.**
+  A busy account no longer hides how stale a quiet account is, so searches in a quiet account now
+  check the right stretch of time for new mail instead of a window sized by your busiest one.
+
+- 🔧 **Every setting is in one resizable OutlookAI Settings window with tabs.**
+  OutlookAI Settings is now resizable with tabs - Outlook, Claude Code, Prompts, Buttons, Updates -
+  instead of one tall fixed dialog, so it stops running out of room and nothing is cut off at any
+  display scale.
+
+- 🔧 **A mail search that only partly checked for new mail says so in a form software notices.**
+  If the live check ran but could not cover everything it was asked to - a folder it could not read,
+  a folder with more new mail than it reads in one pass, or simply running out of time - the answer
+  now says so in a way your AI assistant can act on, instead of looking complete unless it happened
+  to read the explanation. It already said so in words; now it says so in a form software notices.
+
+- 🔧 **A draft with an over-long subject explains itself well enough for the assistant to fix it.**
+  A draft with a subject past Outlook's limit now comes back saying the limit, how long the subject
+  actually was, and that nothing was created - so the assistant shortens it and retries rather than
+  reporting a failure to you.
+
+- 🔧 **Update progress shows the moment it changes, in OutlookAI Settings and the sidebar alike.**
+  Starting a check in OutlookAI Settings now updates the sidebar immediately and vice versa, instead
+  of both places noticing within a second by checking over and over.
+
+- 🔧 **Uninstalling OutlookAI keeps your settings in the registry.**
+  Your prompts, quick buttons, Outlook tuning preferences and mail-server registration state now
+  stay in the registry instead of being removed, so reinstalling picks up where you left off. This
+  deliberately reverses the cleanup added in v3.1.0 - prompt text you wrote yourself is worth
+  keeping, and nothing exports it.
+
+- 🔧 **Every sidebar writing action carries a rule against drafts that read like AI wrote them.**
+  Every writing action in the sidebar now carries the rule "Ensure there is no trace of AI both in
+  wording and character use." It sits in the always-sent prompt, so it applies to every button and
+  every instruction you type, and you can edit or remove it like any other rule.
+
+- ⚡ **A stuck or starting Outlook is noticed at once, by asking Windows whether it responds.**
+  The server now asks Windows directly whether Outlook is responding - which costs nothing and
+  cannot itself get stuck - before trying to use it. A stuck Outlook is reported in a fraction of a
+  second rather than after a long wait, and a search returns your indexed mail immediately instead
+  of stalling first.
+
+- ⚡ **Mail tools answer at once while Outlook starts up, saying roughly how long to wait.**
+  If Outlook is closed or still starting, mail tools now answer straight away saying so and roughly
+  how many seconds to wait, instead of blocking for up to a minute and a half. Outlook is started in
+  the background meanwhile, and searches keep working from the index.
+
+- ⚡ **Once Outlook is known to be stuck, mail requests answer at once instead of each paying the wait.**
+  Previously each request discovered the problem on its own, so a stuck Outlook made every search
+  and every account listing take up to two minutes, over and over. After two failures in a row the
+  server answers straight away instead, and quietly re-checks Outlook every half minute so it
+  recovers on its own the moment Outlook responds again - restarting Outlook still fixes it
+  instantly. In this state a search returns your indexed mail in a fraction of a second, and tells
+  you the live check was skipped.
+
+- 🔧 **Each of the three search paths says what "search the body" means for it.**
+  The index covers the body plus the text inside attachments; the live check for new mail reads the
+  body as Outlook renders it; an exhaustive search reads the stored plain-text body only. Each now
+  states its own answer in the result. The one that can cost you mail is the last: an exhaustive
+  search is the mode you pick BECAUSE it is thorough, and it is the only one that cannot see inside
+  attachments at all, and may not match a mail whose body exists only as HTML. It now says both, and
+  says the remedy is the counter-intuitive one - search again WITHOUT the exhaustive option.
+
+- 🔧 **Each part of a search says whether it matched whole words or fragments.**
+  The index matches whole words; the live check for new mail matches fragments, so it returns
+  slightly more. That is the safe direction, and it is also why a just-arrived mail can appear in a
+  search and then drop out of the identical search once it has been indexed - which now has an
+  answer in the result instead of looking like a bug.
+
+- 🔧 **A conversation fetch says when it could have narrowed to one account and did not.**
+  The field that used to report "the product chose this narrowing, you did not" had nothing left to
+  describe once the product stopped narrowing on its own, so it now reports the decision that
+  replaced it: you pointed at a mail, the account that mail sits in was there to be used, and the
+  lookup covered your whole profile anyway. Nothing is missing because of it and there is nothing to
+  do about it - it is there to explain replies coming back from accounts other than the one you
+  pointed at, and to say where the narrowing went if you wanted it (name an account yourself). The
+  advice attached to the old meaning went with it: a lookup you narrowed yourself is still told to
+  drop the account, and the second remedy - which existed only to escape a narrowing nobody had
+  asked for - would now name an argument that changes nothing.
+
+- 🔧 **The update check waits out Outlook's startup, and an offline machine backs off.**
+  The first check used to fire the instant the add-in loaded, which is the busiest moment Outlook
+  has - it is opening your mailbox and starting every other add-in at the same time - so it now
+  waits half a minute. And a machine that cannot reach the update server used to keep asking every
+  ten minutes indefinitely: after three failures in a row the wait doubles each time, up to two
+  hours, which takes a disconnected machine from 144 requests a day to twelve. Nothing changes on a
+  machine that can reach the server. Recovery is immediate rather than delayed: reconnecting to a
+  network clears the backoff and checks shortly after, and "Check for updates" always runs straight
+  away.
+
+- ✅ **The Outlook test machines run every test at a frozen time, so their test mail never ages (Q130).**
+  Each machine rests on a checkpoint taken with Hyper-V's time synchronisation off, so every run
+  starts at the same instant just after its test data's date: `CP-20C-FROZEN-CLOCK` on the indexed
+  machine, `CP-14B-FROZEN-CLOCK` on the unindexed one. Before, the indexed machine's 160,000-item
+  measurement mailbox would have stopped every run after 2026-11-01 until a 1.5-hour rebuild, and
+  the hub mailbox aged out within days. A guard checks the clock before a run starts, a restart is
+  refused or re-frozen, and the 30-day timing check reads the 30 days before the measurement
+  mailbox's own date. Both machines passed their whole live tier from the frozen checkpoints, 127
+  of 127 and 81 of 81.
+
+- ✅ **The build machine runs the test suite in UTC, and refuses to run in any other time zone (Q126).**
+  GitHub's UTC runner used to catch time-zone bugs, the way the Q95 one was found, and it went with
+  the CI. `OutlookAI-Build` now rests on `CP-03-SDK-TEST-READY-UTC`, the runner refuses a guest in
+  any other zone, and the first runs passed 3,818 of 3,818 with no zone bug found. Tests that use
+  the machine's own zone as the other one now prove less; how to cover them is open (Q144).
+
+- ✅ **The indexed test machine's test mailboxes hold calendar entries, contacts and tasks again.**
+  There are four of each in the hub and fourteen in the bystander, as the maintainer decided (D62
+  (b)). The search index gives a contact no received date, so the contacts are the undated items the
+  search-order checks measure; it dates a calendar entry or a task like mail, so those are now dated
+  by the mailbox's own plan, older than every mail item in it, instead of by the moment they were
+  built - they can never become the newest item a check reads, and where each one sorts is the same
+  on every rebuild. Building one refuses if Outlook will not keep the date written to it, and the
+  wait for the search index refuses until the index dates every one where the plan does. The per-run
+  hub rebuild now builds the decided set on that machine whatever the previous hub held.
+
+- ✅ **The check that undated items cannot push mail out of a search decides by arithmetic (D74).**
+  It used to search for 25 results and rely on the bystander mailbox holding 42 undated items, seven
+  more than the 35 spare results such a search fetches - true only while three unrelated numbers
+  stayed put. It now counts the undated items a mailbox holds and sizes its search so that they
+  always out-number the spare results, runs the same search without the safeguard to see whether the
+  safeguard decided the answer, says so, and fails if two otherwise identical searches disagree
+  about where undated items sort.
+
+- ✅ **The test machines stay switched off unless they are in use.**
+  New ones no longer start with the computer, and are saved to disk rather than shut down when it
+  stops, so a restart leaves them using no memory.
+
+- ✅ **The test machines install the add-in in two steps, so Outlook's first start is not elevated (Q100).**
+  The installation itself with administrator rights, then Outlook's first start with the add-in -
+  the start that proves it runs - without them. The first start used to inherit the installer's
+  administrator rights, and an Outlook started that way never adds mail to Windows Search, so on the
+  test machine whose mail must stay searchable it broke the rule that Outlook only ever starts as an
+  ordinary user. The installation step now never starts Outlook and always reports that the add-in
+  has not run yet; the first-start step checks that Outlook really started without administrator
+  rights and is the only one that can report the add-in ready; and the old one-step command is
+  refused instead of silently doing half the job. Checked on the developer's machine only so far -
+  not yet run on a test machine.
+
+- ✅ **The check that a search-index item id cannot be opened directly is split into its two halves (Q74).**
+  On an Exchange mailbox such an id is refused, as recorded in 2026-07; on a local mailbox file the
+  same id is the item's own id and should open - so the old single check failed on every test
+  machine and could only run on the maintainer's own. The Exchange half now runs only where there is
+  an Exchange mailbox, and a new half asserts the local-file behaviour on the test machines; that
+  half follows from how the id is built and is confirmed or refuted by its first run there. The run
+  lines for the test machines exclude Exchange-only checks by a name that is computed, not typed,
+  and the build fails if a written copy stops matching it. Nothing that ships to users is affected.
+
+- ✅ **The two delegate-folder search checks move into a group of mailbox checks that writes nothing (Q74).**
+  They can only run on the maintainer's own machine, which is now read-only, and the group they were
+  in creates and removes test folders when it starts - so on that machine they would have failed
+  before they began. What they check is unchanged. Nothing that ships to users is affected.
+
+- ✅ **Mailbox checks on the maintainer's machine refuse every tool not known to be read-only (Q74).**
+  That closes the second way such a check could still write there. The checks that talk to a real
+  copy of the server over its standard connection now refuse, before anything is sent, every tool
+  that is not known to be read-only - drafting, sending, moving, archiving, signatures, saving
+  attachments and opening windows - whenever the machine is the read-only one. A tool nobody has
+  classified is refused the same way, so a new tool has to be classified on purpose before such a
+  check may use it there. Nothing that ships to users is affected.
+
+- ✅ **The mail-loss guard no longer re-runs other mailbox checks on the maintainer's machine (Q74).**
+  When it suspects mail went missing it still counts the mailboxes again twice before deciding, but
+  it no longer starts a second run of every check that had just run - which ignored the original
+  selection, included checks that write, and could never have turned the failure into a pass anyway.
+  Nothing that ships to users is affected.
+
+- ✅ **The maintainer's machine is read-only for mailbox checks against a real Outlook, in code (Q74).**
+  Until now that was a convention. A machine whose test settings declare it the reference machine -
+  or declare nothing, as his do - now refuses every write a check attempts, his designated test
+  mailbox included, and the permission that let two checks create and delete a draft in his other
+  business mailboxes is gone. Only a dedicated test machine may still write, to its own test
+  mailbox. Nothing that ships to users is affected.
+
+- ✅ **The mailbox test suite runs on the test machines without administrator rights.**
+  That is how the product itself is built to run. The second test machine also gets a real exclusion
+  from the search index. The tool that runs work in a test machine's logged-in session could only
+  start it with administrator rights, and an Outlook started that way never uses Windows Search - so
+  on the machine meant to have an index, nothing a test created would ever have been found, and the
+  suite would have read that as a slow indexer. That tool now takes a run level: administrator
+  rights stay the default, because the installers that go through it need them, and the suite now
+  runs without them. It warns when an Outlook is already running at the other level, which the work
+  could not talk to, and work asked to run without administrator rights refuses to start at all if
+  it gets them anyway. Every test and helper the suite runs was checked, and none needs
+  administrator rights. The machine meant to have no index was also taken back to its last clean
+  saved state and given the exclusion rule that Windows Search itself reports, instead of relying
+  only on a policy setting that turned out not to be an exclusion at all; it then verified as not
+  indexed, for that reason, and was saved in that state. Nothing that ships to users is affected.
+
+- ✅ **The undated-item checks measure real undated contacts in the indexed test machine's mailboxes.**
+  The plan gave the test machines' hub and bystander mailboxes calendar entries, contacts and tasks
+  meant to carry no received date - 12 in the hub, 42 in the bystander - so the three checks of how
+  the search index sorts undated items against mail can measure something, instead of passing on
+  mailboxes that held none. Unsent drafts were left out on purpose: Outlook would first write each
+  one into a different mailbox. The first trial on a test machine found that Outlook gives every
+  such entry a received date when it is saved into a data file, and refuses to remove it; so they
+  are left out for now - the hub and bystander mailboxes are built with their mail alone, 56 and 300
+  items - and they come back only if a measurement shows the search index treats those entries as
+  undated after all. The measurement found that it does for contacts alone - calendar entries and
+  tasks get a received date in the index, contacts get none - so the test machine with a search
+  index now carries 12 undated contacts in its hub and 42 in its bystander, and the three checks
+  measure them there; the other test machine, where those checks do not run, keeps its mailboxes
+  without them.
+
+- ✅ **One script rebuilds the hub mailbox before every test run, and the time-zone check insists on it.**
+  On a machine whose hub was not rebuilt, the time-zone check fails and names that script; it used
+  to pass without proving anything. The check that the search index reports its newest mail at the
+  right time can only catch a time-zone mistake while that mail is under an hour or two old. The
+  settings file now names the mailbox the hub is rebuilt from, and the settings script refuses a
+  test machine whose settings do not.
+
+- ✅ **The search-index speed checks are timed against the largest indexed mailbox on the machine.**
+  They used to take the first one listed. On a test machine the first is a mailbox of a few dozen
+  mails, where a two-second limit is met by construction; the indexed test machine's measurement
+  mailbox stays at 160,000 items so the limit means what it does on a real one. That mailbox now
+  exists: 160,000 items, built into a new data file on the indexed test machine in under an hour and
+  a half, and every one of them in its search index. It stays usable for a month between rebuilds
+  rather than a week: that machine's tests now check only its 30- and 60-day spans of mail for
+  staleness, because none of them asks it about the last seven days. The script that checks a test
+  machine's index state now gives an index of that size the time it needs to be counted, instead of
+  giving up after 30 seconds and reporting the index as missing.
+
+- ✅ **Mailbox tests that act on a real Outlook profile need a go-ahead for that run and computer.**
+  A test selection that merely happened to include one of those tests could reach a real mailbox by
+  accident - and nearly did: a run meant for a handful of offline checks picked up three of them,
+  stopped only because that copy of the project had no mailbox settings in it. Those tests now
+  refuse to start, before touching anything, unless the run sets `OUTLOOKAI_LIVE_OPT_IN` to the name
+  of the computer it is running on; a value saved permanently in the environment, or naming another
+  computer, is refused as well. The refusal says what the setting is for, how to give it on a test
+  machine, and that the maintainer's own computer is read-only for these tests; a new check proves
+  from the compiled tests that none of them can start any other way. Nothing that ships to users is
+  affected.
+
+- ✅ **A test machine's install disc with a computer name the machine would refuse is not built.**
+  The refusal happens on the developer's machine. The first-logon script now checks it is on a test
+  machine by its name, and a disc naming anything else produced a machine that stopped partway
+  through an unattended install about seven minutes in. Nothing that ships to users is affected.
+
+- ✅ **The last two gaps in how the test machines protect the computers around them are closed.**
+  First, four test-machine scripts still changed whatever computer ran them without checking that it
+  was a test machine: the one that builds the 20,000-item measurement mailbox, the one that times a
+  sweep of it, the one that finishes a freshly installed machine's language, regional and power
+  settings, and the one every Outlook step on a test machine runs through, which installs a
+  scheduled task. All four now refuse to run anywhere but a test machine, before they touch
+  anything - even when only asked what they would do - and the project's automated checks now fail
+  the build if any of them loses that check; the list of scripts excused from it is empty. The
+  first-logon script travels alone on the installation disc and cannot borrow the shared check, so
+  it carries its own, matched to the account and machine names the test machines are built with.
+  Each refusal was proven on the maintainer's own computer with every command that could change
+  something replaced by a tripwire: every script refused, nothing reached a tripwire, and every
+  setting each would have touched read back unchanged. Second, building a test machine from scratch
+  left its password on disk in plain text for good: the disc image that installs Windows carries it,
+  and the machine's first checkpoint was taken with that disc still in, so the checkpoint depended
+  on the file and it could never be deleted. The build now ends with a step that waits for Windows
+  to finish setting itself up, takes both discs out, takes that first checkpoint without them, and
+  only then deletes the password-carrying image - and refuses to delete it while anything on the
+  computer still depends on it. The two existing test machines were built before this, so their
+  images stay until those machines are rebuilt, and the image builder now refuses to overwrite one
+  by accident. The new finishing step has not yet run against a real machine; the parts that make
+  its decisions are tested without one.
+
+- ✅ **Two holes in how the test machines are built, found rehearsing a rebuild from nothing, are closed.**
+  First, three of the test-machine setup scripts changed a computer's settings without checking that
+  it was a test machine. One of them renames a data file in whatever Outlook profile is open, and
+  its own description claimed it checked when it did not, so run by mistake on the maintainer's own
+  computer it would have renamed a real mailbox. All three now refuse to run anywhere but a test
+  machine. That was proven on the maintainer's computer: each refused, and every setting it would
+  have touched read back unchanged. The project's automated checks now fail the build if any
+  test-machine script that changes something stops checking first, or checks only after it has
+  already changed something; four older scripts that still do not check are named in that check,
+  each with its reason, until they are fixed. Second, the test machine's mail profile could not
+  actually be rebuilt from the project's scripts. The one setting that makes its test mail account
+  usable had only ever been set by hand, and the scripts still defaulted to a version of the profile
+  known to leave that account unusable. The scripts now set it themselves and refuse the broken
+  version, and the profile part of a rebuild was run twice from a freshly installed Office, once in
+  each possible order. That showed the order matters: the profile with the mail account has to be
+  created at Outlook's very first start, or its account stays unusable until Outlook is started
+  again. The rebuild instructions are corrected to match. The runs also found that the hand-made
+  setup had quietly deleted three of the settings meant to keep the old-style Outlook in place, and
+  answered an open question for one mailbox test: a plain Outlook data file has no archive folder
+  until the product asks for one, and asking creates it.
+
+- ✅ **Three open questions about the test machines are settled by running them, and the notes corrected.**
+  The Windows mail component that the profile scripts were abandoned for on these machines' version
+  of Office was never broken: the scripts had asked it for an interface under the wrong identifier,
+  and asking under the right one works - recorded as knowledge, with nothing rebuilt on it. The
+  script that takes a test machine's mail out of Windows Search had one half that could never have
+  worked, because Windows does not let even an administrator change the setting it was writing, so
+  on the first machine where that setting existed the script would have stopped halfway; it now only
+  reads that setting and reports it, and a self-check proves it never writes it again. Exercising it
+  also showed that the test machine meant to have its mail INDEXED never has - Outlook never put
+  itself into Windows Search there, not even with its window open - so the check now names that
+  state instead of telling you to wait for a search index that will never fill, and the earlier
+  "unindexed" result on the other machine is now reported as proving less than it seemed. And the
+  second mail account the test machine needs, the one that lets two account-specific draft checks
+  prove something, is now built by a script with its own data file, where the notes said no free way
+  existed; one step writes a setting Microsoft does not document, and the script and the notes say
+  exactly which. Two side findings are recorded for the next step: Outlook clears its one-shot
+  profile-import setting by itself, and the test machines' out-of-date antivirus makes Outlook stop
+  and ask permission when a program reads account details, which the mailbox test run will need an
+  answer to.
+
+- ✅ **The test machines' default-profile switcher is replaced, because the way it worked did not.**
+  The first time it was ever run it failed outright on the test machine's version of Office - the
+  component it asks Windows for exists and answers, but refuses to hand back the interface the
+  script needs, and why is still unknown. It now sets the default the plain documented way instead,
+  which is measured working on the same machine the same day, and it refuses to name a profile that
+  does not exist: that write would have succeeded, and a default pointing at a profile nobody
+  created surfaces much later looking like an entirely different fault. Two sibling scripts are on
+  the same broken route and are marked as expected to fail until they are fixed.
+
+- ✅ **The measurement-mailbox builder refuses up front when it cannot possibly succeed.**
+  It needs two things that nothing checked: the default mail profile must be the one with no mail
+  account in it, and Outlook must already be running and warmed up. The only build that ever worked
+  satisfied both by accident, which is why it looked repeatable and was not - and why five
+  consecutive attempts failed for two different reasons that looked alike. It now checks both before
+  touching anything, reports every failing condition rather than the first, and prints the four-step
+  recipe that works. It deliberately does not fix either one: quietly rewriting which profile is the
+  default would change the machine out from under whatever runs next.
+
+- ✅ **The measurement tools name the mail profile they used when they refuse.**
+  They refuse to write into a mailbox they cannot vouch for, which is right, but the refusal named
+  only the mailbox - and the tools pick their profile themselves rather than using whichever Outlook
+  happens to be open, so the useful fact was the missing one. It cost five failed attempts to work
+  that out by elimination. Both the refusal and the success now name the profile and say where it
+  came from.
+
+- ✅ **The guard that watches for lost mail names its real reason in every failure message.**
+  It counts every folder of every mailbox before and after a test run, and walks the smaller ones
+  item by item so it can tell a mail that was FILED from a mail that was DELETED. When it cannot
+  afford the item-by-item reading it falls back to counting - and every failure message then blamed
+  the same cause, "folder above the identity budget", which is right in one case out of six and
+  sends the reader to the wrong remedy in the other five. The reason is now carried with the reading
+  and named in the message. It also says, for the first time, when the reading taken AFTER a run was
+  weaker than the one taken before it: that is the case where the same untouched mailbox can be
+  reported as a loss on one pass and as ordinary filing on the next, and it used to be
+  indistinguishable from a real deletion. Which runs fail is unchanged.
+
+- 📝 **The notes record that the test machine needs far less than was thought.**
+  The notes said the whole draft, revise, discard and send families were out of reach without a
+  working mail server on the machine; read against the tests themselves, one ordinary mail account
+  of any kind reaches 26 of those 34 checks, and only one single check anywhere genuinely needs a
+  mail to travel and arrive. The note claiming six checks needed real delivery was counting files
+  rather than checks - the real figure is 13 - and 12 checks are labelled as needing a mail server
+  when they never send anything.
+
+- ♻️ **The test suite says which machine a test needs with two labels, down from three overlapping ones.**
+  A test now carries one flag meaning "this needs a mailbox" and one short list of what it needs of
+  that machine, written on the test itself rather than on the file it sits in. The third label was a
+  summary of the other two, kept up to date by hand, and it disagreed with them: it reported that 96
+  of the mailbox tests could never run anywhere but the maintainer's own PC. Read properly, the real
+  figure is six - the ones that need a shared mailbox belonging to somebody else, which no test
+  machine can be given. Nothing about any test changed; only what it says about itself.
+
+- ✅ **The live test suite runs under the same time limits as the product.**
+  Those tests ran against a code path where none of the limits existed, which is both a coverage
+  hole and the likely reason a live test run once hung with nothing to stop it.
+
+- ✅ **The refused-sort report is confirmed against a purpose-built 20,000-item mailbox.**
+  When Outlook refuses to sort a folder, the check for new mail correctly reports that the mail it
+  could not cover is unknown rather than claiming the oldest mail is what is missing.
+
+- ♻️ **The tuning and mail-server status in `outlook_health` is harder to get wrong.**
+  The add-in and the server now share one definition of every registry key and configuration name
+  they exchange, so renaming one can no longer leave the report quietly describing something that no
+  longer exists.
+
+- ✅ **The test-machine scripts no longer guess which machine you mean.**
+  Three test guests exist side by side while the old one is replaced, and the scripts that build,
+  copy into and reach into a guest each quietly assumed one of them - so a command aimed at a new
+  guest was refused before it started, by a stored credential still pinned to the machine being
+  retired. Naming the guest is now required everywhere, the stored credential no longer pins itself
+  to one machine, and the recorded name in the parameter file is labelled as the guest the published
+  measurements were taken on rather than a guest to build. The one script that sweeps every guest to
+  reclaim the host's memory keeps its list of all three, because sweeping all of them is the point.
+
+- 📝 **The rebuild notes warn that leaving the identity checks out also deletes the record of the gap.**
+  Those checks can now be excluded by name, and on a machine with no second mail account the line
+  they print - saying in writing that nothing about that path was verified there - is the one place
+  the gap is written down anywhere. The rebuild notes now say this beside the command they would be
+  excluded from, and say that the label exists for machines that have the account rather than as a
+  way to quieten one that does not.
+
+- 📝 **The build instructions give the test machine a second mail account now, not later.**
+  The machines are about to be created from scratch, where it is one more account and one more data
+  file; adding it afterwards means editing a profile, restarting Outlook and changing a settings
+  file on a machine whose saved snapshots no longer describe it. The instructions now say what the
+  account has to be, read off the two checks that need it rather than guessed: a real account and
+  not a bare data file, named after its own address, delivering into its own data file, with a
+  signature configured, and deliberately left off the list of accounts nothing may write to.
+
+- 📝 **The notes record that the test machine runs a newer Office than the maintainer's, by choice.**
+  It is about 3,600 builds newer, and that is accepted, not fixed. The test machines otherwise copy
+  the maintainer's setup deliberately, so this is an exception and is now written down as one,
+  together with its practical consequence: a difference in Outlook's version is the first thing to
+  suspect when a test behaves differently on the test machine than on the maintainer's. Also
+  recorded: the monthly rebuild the test machine needs comes from how that one machine was licensed,
+  and is not something anyone using this product experiences.
+
+### Fixed
+
+- 🐛 **A search of a mailbox or folder no longer returns the folders themselves as results.**
+  Where Windows Search indexes the mailbox, a search with no search words listed one "hit" for every
+  folder - Calendar, Quick Step Settings, the mailbox's top level, emptied folders in Deleted
+  Items - beside the mail, and none of them could be opened. On the test machine they were 21 of the
+  first 100 results.
+
+- 📝 **The draft tools' descriptions say which drafts the tools can reach.**
+  `update_draft` can revise any unsent draft in a Drafts folder, including one you wrote yourself,
+  and a draft it revised can then be discarded by the same session. The descriptions used to say
+  OutlookAI could only ever change or delete drafts it had made itself.
+
+- 🐛 **Outlook tuning no longer stops halfway where Outlook runs without administrator rights.**
+  That is how almost everyone runs it. Five of the Cached Mode settings OutlookAI keeps applied are
+  Outlook *policy* settings, which Windows lets you read but only an administrator change, and the
+  first of them stopped the whole run: the Cached Mode and mailbox-size settings after it were never
+  applied, and the mail server's health report said the tuning had never run. OutlookAI now skips a
+  setting it may not change, applies everything else, always records when it ran, and reports the
+  skipped settings as needing an administrator - in OutlookAI Settings and in the health report.
+
+- 🐛 **OutlookAI releases the Outlook objects it adds as soon as it has added them.**
+  They are a column it adds to one of Outlook's tables while it searches, and a bookmark it places
+  in a draft while it writes. They used to be left for .NET's garbage collector, which releases them
+  at a moment nobody chooses: after the table or the draft they belong to has already gone, inside
+  Outlook. The project's own mailbox checks did the same with the attachments they add and the
+  folder collections they count. Found while chasing Outlook crashes on a test machine.
+
+- 🐛 **On Office LTSC 2024, showing you a folder no longer reuses OutlookAI's invisible window.**
+  The same goes for search results. That invisible window is the one OutlookAI keeps open so that
+  Outlook stays running for it. Asked for a new window on the same folder - your Inbox - Office 2024
+  hands that invisible window back instead of making a new one, so OutlookAI showed it, and closing
+  it took away what kept Outlook running. OutlookAI now always opens a window of its own and moves
+  it to the folder you asked for. Closing it still ends Outlook when OutlookAI had started Outlook
+  itself: Office 2024 treats closing its last window as quitting, and OutlookAI lets it quit - as it
+  must, or your own Exit could not close an Outlook that OutlookAI started - and starts it again,
+  without a window, the next time it needs it. Measured on a test machine with Office LTSC 2024; on
+  Office builds that make a new window every time, nothing changes.
+
+- 🐛 **A draft OutlookAI saved in a data file with no Inbox can be discarded or revised.**
+  Replying to a message in such a data file makes Outlook create a Drafts folder there, but Outlook
+  records that folder only in the data file's hidden top folder, which OutlookAI did not read, so it
+  then answered that the data file had no Drafts folder and refused to discard or revise the draft
+  it had just saved. Found on a test machine.
+
+- 🐛 **Discarding a draft in a .pst data file reports the id of the draft it just moved to Deleted Items.**
+  In a local data file, such as a POP3 account's, it used to report no id, or the id of an older
+  discarded draft with the same subject. A data file keeps a message's id when the message is
+  deleted, and OutlookAI only looked for a new one, as an Exchange mailbox hands out; on any mailbox
+  that is not Exchange it now first checks whether the old id opens in Deleted Items.
+
+- 🐛 **A complete search handed out page by page no longer repeats or skips mail.**
+  It could repeat a message on a later page, or, on a computer west of UTC, skip mail and still call
+  itself complete. Outlook reports a message's received time in local time under the column name
+  OutlookAI asks for first, and in UTC only under a second spelling of the same column; OutlookAI
+  read both as UTC, so where each page stopped was off by the computer's distance from UTC. Measured
+  on the first full run on a test machine, which settles an open question about the zone those
+  columns report in (Q11).
+
+- 🐛 **The Archive folder Outlook makes in a .pst data file is found without asking Outlook for it.**
+  When mail is archived in a POP3, IMAP or data-file mailbox that has no Archive folder, Outlook
+  creates one and records it in a place OutlookAI did not read, so OutlookAI's read-only lookup kept
+  answering "no Archive folder" about the folder the mail had just been archived into. The first
+  full run on a test machine found it: the mailbox checks that look for the Archive folder that way
+  expected a new one on every archive, and their clean-up never reached the test mail inside it. The
+  place Outlook uses is not in Microsoft's documentation; it was measured on that machine and is
+  read only on non-Exchange mailboxes.
+
+- 🐛 **A search of one folder finds its mail when the folder's name contains `%`, `*`, `?` or `\`.**
+  Until now it found nothing in the Windows search index (Q99 finding). Windows writes those
+  characters - and `/` - as codes in the index's address for a folder, so a folder called `50% off`
+  is filed as `50%25 off`, and OutlookAI looked for the name as written: the index answered nothing,
+  and only the last few days' mail came back. OutlookAI now spells folder names the way the index
+  does, measured on a test machine for all five characters. Results from such folders now also show
+  the folder's real name instead of the coded one, open directly, and are no longer listed twice
+  when the index and OutlookAI's check of recent mail both find them. A folder whose name contains
+  `/` can still only be searched through the folder above it, because folder paths use `/` to
+  separate folders.
+
+- 🐛 **A discard that failed before the delete was attempted says the draft was NOT deleted.**
+  That is a failure while Outlook was still reading the draft and its folder. It used to say that
+  whether the draft was deleted is unknown, and send you to look in Deleted Items. Only a failure
+  during the delete itself still says the outcome is unknown.
+
+- 🐛 **A draft that cannot have been saved is no longer reported as possibly saved.**
+  A new draft whose Drafts folder could not be opened, and a new draft, reply or forward that failed
+  before Outlook was given anything to save, now say that no draft was created and that retrying
+  cannot leave a second one, instead of sending you to look for one in Drafts.
+
+- 🐛 **The audit log no longer loses lines when two sessions write at once, and it cannot be garbled.**
+  Every session runs its own copy of the mail server, and when two of them added a line at the same
+  instant, one line could overwrite the other without any error - measured, two copies writing 3,000
+  lines each at once kept 5,883 of the 6,000. Every line is now added in one write that Windows
+  itself places at the end of the file, so no copy can overwrite another's line, even one that
+  cannot wait its turn; the copies still take turns, so the log stays in time order. Each line also
+  records which process wrote it, that writer's own line number and a checksum, and reading the log
+  back reports any line that was damaged and any line missing by those numbers, instead of answering
+  as if the log were complete. A line left unfinished by a crash no longer swallows the next one,
+  and outlook_health counts how often this server had to write without waiting its turn.
+
+- 🐛 **A default signature lands on the right account, and is read back before success is reported.**
+  OutlookAI used to put it on the wrong entry of the Outlook profile and tell you it had worked.
+  Outlook names a POP3 or IMAP account's data file after its email address by default, and making a
+  signature the default for that address could write it onto the data file instead of the account:
+  the account was left with no default signature, yet both the tool's answer and the signature list
+  reported it as set, because the check that read it back looked in the same wrong place. It was
+  found on a test machine whose account had a name of its own. A default is now written only onto
+  the mail account whose address matches exactly - never a data file or address book, whatever it is
+  called - it is refused rather than guessed when no account or more than one has that address, and
+  it is read back from that account before success is reported. The signature list now shows each
+  account's own defaults, including accounts whose name in Outlook is not their address, which it
+  used to leave out. A default an earlier version put on a data file is left where it is; setting
+  the default again puts it on the account.
+
+- 🐛 **OutlookAI no longer adds folders you never asked for to a POP3, IMAP or .pst mailbox.**
+  Finding out where such a mailbox keeps its Archive folder, and checking that it was the right
+  folder, asked Outlook for the mailbox's standard folders in a way that makes Outlook create any
+  that are missing: measured on a POP3 test mailbox, one lookup added an "Archive" folder and a
+  "Junk Email" folder to a mailbox that had neither - and every search asked for Junk Email the same
+  way. Looking things up now never creates anything: OutlookAI first checks the mailbox's own record
+  of which standard folders it has, and a folder that is not there is reported as not there.
+  Archiving mail is the one action that may still create the Archive folder, because you asked for
+  mail to be moved into it, and it now tells you when it did instead of promising that nothing is
+  ever created. Checking that a message is still a draft before revising or discarding it, and that
+  a move is not into Deleted Items or the Outbox, now looks those folders up the same way; if such a
+  check cannot be made, on any kind of mailbox, the change is refused and says why - a move used to
+  go ahead unchecked. Microsoft 365 and Exchange mailboxes, which always have these folders,
+  otherwise work exactly as before.
+
+- 🐛 **The check for new mail keeps the newest 200 mails per folder.**
+  It kept an ARBITRARY 200 instead, on every account, for every user, since the feature shipped.
+  When a folder holds more just-arrived mail than one pass reads, the check keeps 200 of it, and the
+  whole design rests on those being the newest 200: that is what makes "the oldest of this window is
+  what is missing" true, and it is what makes a tier that exists to find mail too new to be indexed
+  worth having. It asked Outlook to sort the folder by date first, in a form Outlook does not accept
+  for sorting, and the refusal was ignored - so the sort never happened and the 200 kept were
+  whatever order the folder came back in. Measured against a real mailbox across five accounts: the
+  accepted form sorts on all five and puts today's mail first, while the shipped form was refused on
+  all five and started at mail years old. Both forms are still tried, the accepted one first.
+
+- 🐛 **A Sent Items folder is sorted by when mail was SENT, no longer by when it was received.**
+  Mail you sent was never received, so a sent copy may carry no delivery time at all - and those
+  sorted below everything else, which made them the first thing the 200-mail limit dropped. That is
+  exactly backwards for a check whose purpose is finding the newest.
+
+- 🐛 **A continued exhaustive search can no longer skip mail.**
+  Each page reports the date the next one resumes from, and that date was being worked out two
+  different ways in two different places - one of which shifted it by your machine's time-zone
+  offset. Shifted the wrong way it makes the next page start past mail that was never returned, and
+  the scan still reports itself complete, in the one search mode you choose because completeness
+  matters. Both places now read the date through one piece of code, and that code takes the reading
+  which can only ever re-read mail, never skip it. There was a second copy of the same mistake in
+  the same place: when a mail's date could not be read from the folder listing, the value taken from
+  the mail itself was used without converting it at all.
+
+- 🐛 **A failure message no longer says nothing happened when something may have.**
+  Every message this product produces about a failure was checked - all thirty-one of them - and
+  sixteen were claiming, or implying, that your mail was untouched when the code could not know
+  that. The pattern was always the same: a sentence written for the checks that run BEFORE anything
+  is changed had been attached to the catch-all that runs after everything. So a draft revision
+  interrupted half-way said "Nothing was changed or deleted", a discard that failed during the
+  delete said "Nothing was changed", a move that failed said "retry", and a reply that was refused
+  because the answer was too big to return said the work had succeeded and nothing had been changed
+  in the same breath. Each of those now says what is actually known, and says what to do about it -
+  look in Deleted Items, look in Drafts, find the item before moving it again.
+
+- 🐛 **A failed draft creation no longer leaves a draft nothing can clean up.**
+  Creating a draft saves it and then does several more things to it - closing the editor, filing it
+  in Drafts, opening it on screen - and if any of those failed you were told the draft could not be
+  created, while the draft itself sat in your mailbox. Worse, the assistant never learned its
+  identity, so the one tool that could have thrown it away was structurally unable to reach it. The
+  identity is now recorded the moment the draft exists, the failure message names it, and discarding
+  it works.
+
+- 🐛 **A refused move names the folders it created before it refused.**
+  Asking to move mail into a new folder creates that folder first and checks the destination second,
+  so a move into Deleted Items created the folder and then refused with no mention of it anywhere.
+  Any folders created are now named in the failure and listed in the result. This server cannot
+  delete folders, so an unwanted one still has to be removed in Outlook.
+
+- 🐛 **A failed attachment save names the file it left behind.**
+  If saving an attachment failed part-way, a partial file was left on disk at a name you were never
+  told - the name is chosen by the server and gets a numeric suffix when it clashes. The failure now
+  names the exact path. Separately, a save that COMPLETED could be reported as a failure because
+  reading the finished file's size failed; measuring the file is no longer allowed to fail the save.
+
+- 🐛 **A failed "show me this mail" says it may have shown the mail anyway.**
+  Opening a mail in Outlook is the last step of the sequence, so a failure reported over it can
+  arrive after the window opened and the mail was marked read. The same applies to navigating to a
+  folder or driving Outlook's search box: the window may have moved even though the call failed.
+
+- 🐛 **An aborted send says it has changed the draft.**
+  When sending is stopped because the account could not be verified, nothing is sent - that was and
+  remains true - but the attempt writes the sending account onto the draft first and does not put it
+  back. The message now says so, instead of implying the draft is as you left it.
+
+- 📝 **The discard tool's description warns that a failed discard is not guaranteed to be a clean no-op.**
+  The tool description said any refusal comes back as a clear error and it never silently does
+  nothing, which is true of refusals and was silently untrue of failures: if Outlook fails during
+  the delete itself, whether the draft was deleted is unknown.
+
+- 🐛 **A failed signature change names the half-written backup it can leave behind.**
+  Every signature update or delete copies the whole signature aside first, and if that copy fails
+  the operation is abandoned with your signatures untouched - that part was already true. What it
+  did not say is that the backup folder itself may already have been created and partly filled. It
+  is now named in the message when one exists, so there is nothing to discover later.
+
+- 🐛 **Revising a draft is safe to retry when Outlook is interrupted.**
+  Editing a draft is not one instruction to Outlook but about twenty in a row, and if the connection
+  is restarted part-way through - the same time limit that protects you from a wedged Outlook - the
+  draft could be left half-changed. The worst of that was real loss: replacing an attachment removes
+  the old file and then adds the new one, so an interruption between the two took your file off the
+  draft and put nothing back. Now the request is written down before anything is touched, so
+  repeating the identical call FINISHES it instead of doing it again: a file already attached is not
+  attached twice, a file already removed stays removed, and the draft's place in its conversation is
+  put back from what was recorded rather than from what the interrupted attempt left behind. The
+  failure message says so - it used to tell you not to retry, because retrying was the thing that
+  made it worse.
+
+- 🐛 **Replacing an attachment attaches the new file before deleting the old one.**
+  The order was the other way round, so the moment of danger was a draft that had lost your file and
+  not yet gained its replacement. Now the worst an interruption can leave is a duplicate, which you
+  can see and undo.
+
+- 🐛 **A draft revision that failed part-way no longer claims nothing was changed.**
+  Only some failures prove that, and this was not one of them: it is the one raised when Outlook
+  fails somewhere inside the sequence, possibly after the text was already rewritten. It now says
+  the outcome is unknown and that repeating the same call will finish it.
+
+- 🐛 **A slow check for new mail is no longer mistaken for a broken Outlook.**
+  The safeguard that trips when Outlook stops responding compares how long a request asked for
+  against the limit for that kind of request, and with the check for new mail now allowed ten
+  minutes it would have looked like a stuck Outlook every time it ran long - taking the product
+  offline for thirty seconds for no reason. It is judged against its own limit now.
+
+- 🐛 **The check for new mail keeps what it found when it runs out of time.**
+  It used to fail outright, which also restarted the connection to Outlook - so on a large mailbox a
+  search lost the whole freshness check rather than getting part of it, and the results already
+  gathered were discarded. It now stops at the next folder, hands back the folders it did cover, and
+  says plainly that it ran out of time, which accounts it did not reach, and that naming an account
+  or a folder will let it finish.
+
+- 🐛 **Two ordinary slow searches no longer make every following request fail for half a minute.**
+  The safeguard that trips when Outlook stops responding counted a search running past its own time
+  allowance as evidence that Outlook was broken - so on a big mailbox the product could take itself
+  offline for thirty seconds with nothing wrong at all. Running past a time allowance the search
+  itself chose is no longer treated as Outlook failing to answer; the safeguard still trips on a
+  genuinely unresponsive Outlook exactly as before.
+
+- 🐛 **An interrupted send says what may have happened to the mail.**
+  If Outlook does not answer within its time limit while sending, the connection is restarted - and
+  the message may already have gone out or be sitting in the Outbox. That case used to report only
+  that Outlook had not responded, which reads like nothing happened and invites sending again. It
+  now says the outcome is unknown, tells you to look in Sent Items and the Outbox before doing
+  anything else, and records the unknown outcome in the audit log so the gap is visible afterwards
+  rather than merely being a missing line.
+
+- 🐛 **After a restarted Outlook connection, a request that changes mail is no longer told to retry.**
+  When one request wedges, the others in flight fail with it - and they were all told "this was not
+  your fault, retry it", which is right for a search and wrong for a move, a draft edit or a send,
+  any of which may already have taken effect. Reads are still told retrying is safe; anything that
+  changes mail is now told the outcome is unknown and to check before repeating it.
+
+- 🐛 **A move or archive batch keeps to its own time limit.**
+  The limit on a whole batch was the same as the limit on a single item, so a batch could start one
+  more item just under the wire and run for twice as long as its own limit allowed. Each item now
+  runs on what is left of the batch's time, and an item interrupted by that limit is reported
+  individually - saying that whether it moved is unknown - instead of failing the whole call.
+
+- 🐛 **Outlook's health check keeps the five-second promise in its own description.**
+  It says it gives up after five seconds, but on a cold start it could spend ten seconds setting up
+  the connection before its own clock even started - so the one tool meant to answer when Outlook is
+  wedged had the longest wait in the product. A tool that asks for a short time limit now gets one.
+
+- 🐛 **The Outlook helper process gets a moment to close itself cleanly before it is terminated.**
+  It always had a clean shutdown path; the termination followed so closely that the path was never
+  actually used, so its own cleanup never ran.
+
+- 🐛 **The check for new mail never builds an answer too big for the connection to Outlook to carry.**
+  That check reads the FULL text of every mail it finds, and until now nothing limited how much of
+  it crossed - so on an account Windows Search has not indexed, where the check reads a whole week
+  of mail, one answer could grow past what the connection can send and the search would come back
+  with nothing from Outlook at all. Each mail's text is now cut at 500,000 characters, and one round
+  of checking will not carry more than 32 MB of message text in total. Both limits are far beyond
+  ordinary mail and are unreachable in normal use. Because that text is what brand-new mail is
+  searched against, a cut is never silent: the answer says how many mails were cut, how many of
+  those did not match your terms - the only ones where a word further down could have been missed -
+  and what to do about it, and the search is marked as possibly incomplete only in that case. A cut
+  copy is never mistaken for the whole mail: reading the mail itself still returns all of it.
+
+- 🐛 **A draft no longer hides recipients that could not be looked up.**
+  When more than 20 of the addresses on a draft fail to resolve, only the first 20 were listed and
+  nothing said the list had been cut - so an assistant told "these 20 addresses did not resolve" out
+  of 27 reported a complete-looking list, and the seven it never saw were never raised with you.
+  Every one of them stays on the draft and fails on send. The answer now says how many really
+  failed, that the list was cut, and how to see the rest.
+
+- 🐛 **A conversation says when it may be missing part of itself because an account is not indexed.**
+  Outlook can only follow a conversation inside a single account, so members in another account come
+  from the search index - and an account Windows Search has never indexed (a local data file or
+  archive, typically) is covered by neither. That was reported only when the index happened to hold
+  something for the other account, which on exactly the profiles at risk it does not. Fetching a
+  conversation now names the accounts that are outside both checks, marks the answer incomplete, and
+  says how to check them: it is careful to say that whether the conversation reaches into them is
+  unknown, not that it does not.
+
+- 🐛 **An exhaustive search no longer takes the Outlook connection down on a damaged folder tree.**
+  That mode walked folders without any depth limit, so a looping or absurdly deep tree ended the
+  helper that talks to Outlook and your assistant was told only that Outlook had gone away. It now
+  stops at the same 64-level limit the other folder walks use, keeps scanning everything else, and
+  reports plainly that folders below that depth were never opened - so a scan that skipped part of
+  the tree can no longer read as a complete one.
+
+- 🐛 **The check for new mail no longer tells you the wrong mail is missing.**
+  When a folder holds more new mail than one pass reads, the answer says which folder was cut short
+  and that the OLDEST mail there is the part not covered - advice you act on by narrowing the date
+  range. That sentence assumed Outlook had sorted the folder newest-first, and when Outlook refused
+  to sort it the failure was ignored: the cut was then arbitrary, so the missing mail could be
+  anything, and the answer still said it was the oldest. Both cases are now told apart and reported
+  separately, and the arbitrary one says plainly that which mail is missing is unknown, so nothing
+  sends you looking in the wrong place.
+
+- 🐛 **A named-folder search says when the index cannot see that folder at all.**
+  That is typically a renamed or localised folder. The answer already checked for this, but only
+  when it came back completely empty, so a single just-arrived mail from the live check hid it
+  entirely: the search then looked like a thin result rather than one where everything older than
+  the last few minutes was never searched. It is now reported whenever the index contributes nothing
+  for the folder, in a field as well as in words.
+
+- 🐛 **A search says it did not look inside attachments of mail from the last few minutes.**
+  Text inside attachments is only searchable once Windows Search has indexed the mail; the live
+  check reads subject and body only. A search that asked for an attachment-only match already said
+  so, but the ordinary case said nothing and reported results as up to date - so a word inside a PDF
+  that arrived moments ago was simply absent from an answer that looked complete. The answer now
+  says so whenever there is new mail it could apply to.
+
+- 🐛 **An account Outlook cannot name no longer vanishes from the folder list and the new-mail check.**
+  If Outlook refuses to report an account's display name - a damaged profile entry, a data file that
+  will not open cleanly - that account used to vanish: its whole folder tree was missing from the
+  folder listing with nothing saying so, and the check for new mail abandoned it, so recent mail
+  sitting in it was invisible to every search. It is now listed and searched under a clearly marked
+  placeholder like `(unnamed store 2)`, the answer says how many accounts are in that state, and
+  asking about that placeholder by name gets an explanation instead of a "no such account" that
+  would have sent you hunting for a typo. Asking for an account that really is absent now also says
+  when the profile holds unnameable accounts it could not rule out.
+
+- 🐛 **The folder listing says when it is not the whole tree.**
+  Walking the folders stops at built-in safety limits (10,000 folders, 64 levels deep) and the
+  answer used to report itself as complete anyway, because "is there more" was worked out from the
+  already-shortened list. It now reports that the listing is short, which limit stopped it, and that
+  paging cannot reach the rest - list one account at a time instead.
+
+- 🐛 **A shared or delegate mailbox search says when an incomplete folder list narrowed it.**
+  Folder scopes in those mailboxes can only be matched by folder NAME, so if the folder walk behind
+  them stopped early, folders were searched by nothing at all while the answer looked complete. Such
+  a search is now marked as covering less than it was asked to, and says how to get the rest.
+
+- 🐛 **A search for older mail no longer skips an unindexed account while reporting itself complete.**
+  Such an account is typically a local data file or archive, which is where older mail actually
+  lives. When the requested period ended before the live check would even start, the search answered
+  from the index alone and said results were up to date, naming nothing. It now names the account
+  the index holds nothing for and marks the answer incomplete, whichever way the live check ended:
+  not needed, refused because of the filters you used, or failed outright. Previously only a search
+  whose live check ran said so, and only on a profile where nothing at all was indexed.
+
+- 🐛 **An over-large answer from Outlook no longer takes the whole mail connection down with it.**
+  When a request produced more data than the connection to Outlook can carry in one piece - most
+  likely on an account Windows Search has not indexed, where the check for new mail reads a week of
+  mail with full message text - the helper that talks to Outlook exited, every request in flight
+  failed, and your assistant was told only that Outlook had gone away. That single request is now
+  refused with an explanation naming what was asked for and by how much it was too big, the
+  connection stays up, and the assistant is told to ask for less rather than to try the same thing
+  again.
+
+- 🐛 **Searching one named account works when Windows Search has not indexed it.**
+  That account can be a local Outlook data file (.pst), an archive, a fresh install, or a machine
+  where indexing is switched off, excluded by policy or still catching up. Naming that account in a
+  search returned "Store 'X' was not found in the local index. Known stores: " - an empty list,
+  whose suggested fix was to look up the account name, which gave back the same name that had just
+  failed. Searching without naming an account already worked on the very same profile, and so did an
+  exhaustive search of that account, so the failure hit the ordinary case only. The account name is
+  now checked against the accounts Outlook actually has: an account you have searches normally - the
+  index contributes nothing, the live check covers it, and the answer says so and points at the
+  exhaustive search for full coverage - while a name you do not have is still refused, now listing
+  the accounts you DO have. A name that does not resolve is never quietly widened to your whole
+  profile.
+
+- 🐛 **A failed read, open, save, send or archive no longer retries the mail in every other account.**
+  Only a mail that genuinely was not found where the assistant looked is now searched for elsewhere.
+  Two of those retries were not free: a mail Outlook refused to display could open a window in every
+  account before the call reported failure, and a failed attachment save could write a file per
+  account. The same tightening was already made for drafts; this completes it.
+
+- 🐛 **An unexpected Outlook error reaches your assistant under its own name.**
+  An unexpected error from Outlook reached your assistant labelled with the name of the internal
+  connection it had crossed rather than with what went wrong, so a missing file and a refused
+  operation read identically. The failure now arrives under its own name.
+
+- 🐛 **A search asked to order by size is no longer re-sorted by date before you see it.**
+  The request reached the index correctly and was then undone one layer later. Size ordering is not
+  reachable from the mail tools today, so no answer you have had was affected.
+
+- 🐛 **Calendar and contact entries no longer take places away from real mail in a search.**
+  Now that a search no longer excludes items by type, an appointment or a contact can turn up among
+  the results - but those carry no received date, so nothing decided where they belonged in a list
+  sorted newest first. On a mailbox with a big calendar they could in principle have filled the
+  whole list and left no mail in it at all, with nothing in the answer to say mail was missing. An
+  entry with no date can now never take a place from one that has a date, and when that cannot be
+  ruled out the search asks the index again for the dated mail rather than handing back a short
+  answer.
+
+- 🐛 **Mail searches no longer lose bounce messages, read receipts and meeting requests.**
+  Which of those you got back used to depend on which engine answered your search - the exhaustive
+  scan could not see any of them, the index could not see meeting requests, and the check for
+  brand-new mail returned all of them - so the same search gave different answers at different times
+  and nothing said so. All three now return everything: "did my mail bounce?" is answerable, and a
+  meeting request found today no longer disappears once it is indexed.
+
+- 🐛 **A mail search says when it left something out.**
+  Three holes could not be seen from the answer at all: mail the check found but could not open,
+  mail dropped because a filter you asked for could not be read on it, and mail skipped by an
+  exhaustive scan. All three are now counted in the answer, and where a filter is the cause the
+  answer names which of your own search options failed to apply - so the assistant can re-run
+  without it instead of reporting an incomplete answer as a complete one. A folder in which every
+  mail failed to open used to report as fully checked with nothing in it.
+
+- 🐛 **Asking for the folders of an account that does not exist says the account was not found.**
+  A typo in the name used to get an empty folder list. It now says so and lists the accounts you do
+  have.
+
+- 🐛 **A failed reply, forward or draft from a mail no longer retries in every other account.**
+  Each retry could leave a stray draft that the assistant never learns about. It now only retries
+  when the original mail genuinely was not in the account it looked in.
+
+- 🐛 **Editing or discarding a draft outside your main account no longer fails with a raw error code.**
+  The recovery that was supposed to look in your other accounts never ran.
+
+- 🐛 **Mail tools no longer report every problem as the same unhelpful sentence.**
+  An error raised while talking to Outlook - a folder that does not exist, an argument the tool
+  rejected, a real Outlook failure with its own error code - reached your AI assistant as "Exception
+  has been thrown by the target of an invocation." The assistant could not tell one cause from
+  another, so it retried blindly instead of doing the obvious thing, like listing the folders.
+  Errors now arrive with their own type and message. The same defect had quietly disabled the mail
+  server's recovery from Outlook dropping out, which had therefore never once run.
+
+- 🐛 **Mail searches no longer answer about the wrong dates on a day-first machine.**
+  Date limits were written into Outlook's query language in US month-first order, while Outlook
+  reads them in your own Windows date format. On a day-first machine every date whose day number is
+  12 or lower - roughly 12 days in every month - had its day and month swapped, so a search bounded
+  to 1-5 August returned 158 mails received between January and June and not one from August, while
+  the same search for 13-15 August was correct. The check for brand-new mail was hit hardest and
+  least visibly: its window could land in the future, so it looked at nothing at all and still
+  reported that it had checked every folder and that results were up to date. Dates are now written
+  year-first, which no regional setting can misread, and the same limits now return exactly the mail
+  inside them.
+
+- 🐛 **A search of one account is no longer flagged incomplete over another account's unreadable folder.**
+  The freshness check now reports its coverage per account instead of pooling every account's
+  problems into one answer.
+
+- 🐛 **A search bounded to older mail is no longer reported as possibly missing recent mail.**
+  When the requested period ends before anything new could exist, the freshness check is now
+  recorded as unnecessary rather than as failed.
+
+- 🐛 **The sidebar reads the Office colour theme from the right Office version.**
+  It used to read the wrong one on machines that have had more than one Office installed. It also
+  falls back to the Windows light/dark setting when no Office is detected.
+
+- 🐛 **A search no longer calls itself incomplete because an account has no Junk Email or Deleted Items.**
+  A folder an account does not have is no longer counted as a folder the freshness check failed to
+  look in.
+
+- 🐛 **The AI sees everyone a mail is addressed to when it picks a signature.**
+  It was previously told only about the first 20 recipients, with nothing to say the list had been
+  cut, so it could pick a signature for the wrong audience.
+
+- 🐛 **The update line's "checked 4 minutes ago" stays right after a clock change.**
+  The update line measured elapsed time against the wall clock, so putting the clock back, a
+  daylight-saving change or a time sync could make it read as hours ago or freeze at "just now".
+
+- 🐛 **Outlook tuning works on Outlook 2013 and on future Outlook versions.**
+  The settings were written to a location only Outlook 2016 and later read, so on other versions the
+  dialog showed "(not set)" forever and the restart notice never cleared. OutlookAI now works out
+  which Office version is actually installed, rather than assuming, and the mail server does the
+  same - it reports the version it found in its health check, so an Office it does not support says
+  so plainly instead of looking like an empty mailbox.
+
+- 🐛 **The writing sidebar grows with its contents at 125% and 150% display scaling.**
+  It stayed 280 pixels wide at those scalings while its contents grew.
+
+- 🐛 **Update downloads and setup no longer hang on a stalled connection.**
+  A stalled download now gives up and says so, instead of leaving the version line on "checking..."
+  for the rest of the session. Setup also no longer hangs indefinitely when Windows or a download
+  server stops responding.
+
+- 🐛 **Searching is more reliable when Outlook is slow to start.**
+  The first search after Outlook launches is given the time it needs instead of failing, and an
+  exhaustive search that runs long now returns the results it found with a note, rather than timing
+  out and taking the connection down with it.
+
+- 🐛 **The mail-search instructions reach your AI assistant in full.**
+  The guidance the search tool sends was nearly twice the size Claude Code accepts, so it was
+  silently cut in the middle - losing, among other things, the rule that tells the assistant to warn
+  you when search results are incomplete. It now fits, with the detail moved onto the individual
+  search options, where it arrives in full.
+
+- 🐛 **Text in OutlookAI Settings is no longer cut off at any display scale.**
+  The explanation under "Make available in all my Claude Code projects" lost its last words, and on
+  a display scaled above 100% several other lines in the dialog were cut off too. Every wrapped line
+  is now measured against the font actually in use and the dialog grows to fit it, so nothing is
+  clipped at any display scale, and if it ever grew taller than your screen it scrolls instead of
+  hiding the bottom. The dialog is also a little shorter, because space that was permanently
+  reserved for two notices that are almost never shown is now only taken when they appear.
+
+- 🐛 **Mail tools no longer hang forever when Outlook stops responding.**
+  If Outlook got into a state where it accepted requests but never replied, every mail tool -
+  search, read, drafts, and even the health check meant to diagnose it - would wait silently until
+  your AI assistant gave up half an hour later, and the server stayed stuck that way until it was
+  restarted. Outlook is now driven from a separate helper process that the server can restart, so a
+  stuck Outlook produces a clear, quick error naming what happened instead of silence, and the very
+  next request starts from a clean slate. Searches still return your indexed mail while Outlook is
+  unavailable.
+
+- 🐛 **Mail tool failures are reported as real errors.**
+  Mail tools that fail now mark the response as an error rather than returning a normal-looking
+  result that merely contained an error message inside it. Assistants that did not know OutlookAI's
+  particular convention could previously mistake a failure for a successful answer.
+
+- 🐛 **Search results say clearly when they are incomplete because the live check could not run.**
+  When the live check against Outlook cannot run, results are marked as incomplete and the assistant
+  is told in plain words to pass that on, so an answer missing the last few minutes of mail can no
+  longer look like a complete one.
+
+- 🐛 **The server no longer restarts Outlook repeatedly in the background.**
+  The server could previously start Outlook again moments after a previous copy began shutting down,
+  which appears to be what left Outlook stuck and unresponsive in the first place. It now waits
+  before starting Outlook again.
+
+- ⚡ **The health check answers in about five seconds even when Outlook is not responding.**
+  Checking Outlook's health could itself take over two minutes on a machine where Outlook had
+  stopped answering - the one moment the check is worth running. It now reports in about five
+  seconds, says plainly that Outlook did not answer, and still gives you everything that does not
+  depend on Outlook.
+
+- 🐛 **OutlookAI no longer leaves stray server and helper processes behind.**
+  Server and helper processes now shut down with the program that started them instead of
+  accumulating in the background - 18 had built up on one machine, one of them stuck holding Outlook
+  open.
+
+- 🐛 **A conversation fetch says when it looked in only one of your accounts.**
+  Asking for a thread narrows the lookup to a single account for speed - and it does that even when
+  you did not ask it to, deriving the account from whichever mail you pointed at. That narrowing was
+  invisible, and worse, it silenced the very warning that exists to say a conversation reaches
+  further than the answer does: the warning is worked out from what the search index returns, and
+  narrowing the lookup narrows that too. So a reply sitting in your second mailbox was both missing
+  from the answer and unmentioned by it. The answer now names the account it was narrowed to, lists
+  the accounts nobody asked about, marks the result incomplete, and gives the fix that clears it -
+  drop the account you named.
+
+- 🐛 **A search that reused a seconds-old check for new mail says so and marks itself incomplete.**
+  Repeat searches share one live check of Outlook for up to ten seconds so that refining a search
+  stays fast; mail arriving inside those seconds is in neither the index nor the reused check. The
+  answer always carried how old the reused check was - sitting next to the word that says results
+  are fully up to date. It now says the result is incomplete, states how wide the gap is in seconds,
+  and says it closes by itself.
+
+- 🐛 **A snippet length you asked for is no longer shortened silently.**
+  Asking for more context than the limit allows gave you the limit's worth with no mention of it, so
+  a snippet that had been cut read like a whole one - and judging a mail irrelevant from it is a
+  decision made on text nobody said was truncated. Both directions are now reported. An exhaustive
+  search does not shorten this setting but drops it entirely, which was equally silent and is now
+  said plainly.
+
+- 🐛 **Asking for a conversation by mail fetches the whole of it, across every account.**
+  Asking for a thread with just a mail's id - the shape an assistant reaches for straight out of a
+  search - made this product quietly narrow the lookup to that mail's account, so replies filed in a
+  second account were missing from an answer that presents itself as the full conversation. Nobody
+  asked for that narrowing; it was taken because the mail had to be opened anyway. It is gone: a
+  lookup you did not scope now covers every account. Naming an account yourself still narrows it,
+  because that is a choice you made and can drop, and the answer still says what the choice cost.
+  The side effect is that the warning about members in an account that was never looked at now fires
+  only when you really did narrow the search, and the stronger warning - "this conversation
+  demonstrably continues in another account" - can finally be raised, because the evidence for it is
+  no longer being filtered away.
+
+- ⚡ **Whole-mailbox searches reuse a recent check of Outlook, as account-scoped ones always did.**
+  Repeat searches are meant to share one live check for up to ten seconds, so that refining a query
+  runs at index speed - but that sharing only ever worked when you named an account. A search across
+  the whole mailbox worked out what it recognises the check by from the clock, on every call, so two
+  identical searches a second apart never matched and each of them walked your folders again, which
+  is the slowest part of a search. Whole-mailbox searches now reuse the check exactly as
+  account-scoped ones always did. Nothing about what is searched changes, and the check is still
+  thrown away the moment Windows Search takes in new mail, so a reused answer can never be older
+  than the index it stands in for.
+
+- 🐛 **OutlookAI lets go of Outlook properly when the assistant's connection to it closes.**
+  This product talks to Outlook through a small helper program, and until now that helper was always
+  ended the abrupt way - even when nothing was wrong and your session was simply finishing. An
+  abrupt ending runs none of its own tidying up, and one of the things it leaves behind is a hidden
+  Outlook window the helper opens when it has to start Outlook for you. Outlook counts that window
+  even though you can never see it, so it accumulates, and a window Outlook thinks is open is a
+  reason for Outlook not to close when you tell it to. The helper is now asked to leave and given a
+  moment to do so, which is when it closes that window and hands back everything it was holding; if
+  it does not go within two seconds it is still ended the old way, so nothing can make closing
+  slower than it was. To be clear about what this is NOT: leftovers from the abrupt route were
+  measured against a real Outlook and did not make Outlook slow or unusable for anything that came
+  next - the cost was the accumulating hidden window, not a broken Outlook. This also cannot help
+  when the assistant kills the helper outright, which is what happens when Outlook has genuinely
+  stopped responding and when a session ends abruptly.
+
+- ✅ **The live tests find a mail store in the search index the way the server itself does.**
+  They now find it also when no sample of indexed mail reaches it and no address names it. On the
+  test machine with the 160,000-item measurement store, thirteen tests stopped before measuring
+  anything because of this. Nothing that ships to users is affected.
+
+- ✅ **The sweep-cost measurement script no longer creates missing folders or times the wrong one (D101).**
+  It used to ask Outlook for a data file's standard folders in a way that creates the missing ones.
+  The measurement mailbox on the indexed test machine has no Inbox, Sent Items or Junk Email of its
+  own - its mail sits in stand-in folders - and the way the script asked Outlook for them is the way
+  that, on the test machines' other data files, created a missing Junk Email folder and answered an
+  Inbox request with the file's hidden root. The script now finds folders the way OutlookAI's own
+  sweep does, says which ones that sweep skips, and times the stand-ins separately, labelled as
+  folders the sweep never reads; the other measurement script can be pointed at a stand-in folder.
+  The script had never run: its first run, against that mailbox, also found that it could not walk a
+  single folder - PowerShell turned every Outlook collection it handed on into a plain list - which
+  is fixed too. OutlookAI's own sweep was measured against the same mailbox and was right: it reads
+  the one standard folder the file has, Deleted Items, and does not count the three it lacks as
+  gaps.
+
+- ✅ **Building the add-in for the test machines works again.**
+  It stopped at once after the release script arrived, saying Visual Studio's Office build files
+  were missing when they were not.
+
+- ✅ **The test machines' hub rebuild waits for a list file another program still holds.**
+  It waits for up to a minute after the rebuild's first step, and no longer stops with the test
+  mailbox emptied and the test run lost. It happened twice in a day. Nothing that ships to users is
+  affected.
+
+- ✅ **Three mailbox checks the first full test-machine run caught asking the wrong question are fixed.**
+  The check that a complete search of one folder returns exactly that folder's mail never said "this
+  folder only", so since folders came to include their subfolders by default it compared a whole
+  subtree against one folder's mail; it now asks for the folder alone and, separately, checks the
+  default against the subtree. The check that repeated searches are answered from memory now runs
+  only where the search index holds mail, because without one every search is meant to look afresh.
+  And the health check's test now expects what the tool says when the search index is reachable but
+  holds no mail - a problem, not advice.
+
+- ✅ **Mailbox checks work on a test machine that runs none of the search-index checks.**
+  The check that the local mail server answers, the check that no mail is left queued from an
+  earlier run, and the nudge that asks Outlook to fetch mail while a check waits for it now switch
+  on for every run, not only when an index check happens to be selected - and every check that sends
+  itself mail now waits through that nudging helper. On the first full run on a test machine, three
+  checks timed out with their mail sitting on the local mail server, because Outlook's one fetch had
+  finished a moment before the mail arrived and nothing asked again. Nothing that ships to users is
+  affected.
+
+- ✅ **The remaining mailbox checks that could pass having checked nothing no longer do.**
+  The maintainer decided them one by one. The check that a search always answers passed on any error
+  at all - the very failure it exists to catch - and now fails on every error except the one where
+  the machine's search index cannot be reached. That case, and the checks that Outlook says when to
+  retry while it is starting or not responding, that the helper process Outlook work runs in never
+  outlives the server, that Outlook's search setting can be switched both ways, and that reading a
+  message and following its conversation open no window, now say when there was nothing to check,
+  the way the project's other mailbox checks already do: on the project's reference machine they
+  fail, and on a test machine they print a PROVED NOTHING line naming what was missing - so on the
+  reference machine the retry check now fails whenever Outlook is healthy, by design. The check that
+  Outlook recovers after it exits used to stand aside, green, whenever a person might be using the
+  computer; it still does on the maintainer's own machine, with a line saying so, but on a test
+  machine, where nobody is at the keyboard, the same situation now fails - and it now checks for
+  unsent mail and open compose windows before making Outlook exit even when no Outlook window was
+  open, which it used to skip. The check that a shared mailbox's messages open from a folder the
+  search index lists flat now waits up to five minutes for Exchange to finish listing that folder
+  before it gives up. Pinned by new checks that need no mailbox, with a control that fails against
+  the old code and a check for each safeguard that fails when it is removed. Nothing that ships to
+  users is affected.
+
+- ✅ **The project's own tests no longer write into your real OutlookAI audit log.**
+  The audit log (`%LOCALAPPDATA%\OutlookAI\audit.log`) is OutlookAI's record of every draft, saved
+  attachment, move, archive, send and signature change it makes, and a draft or send whose line
+  cannot be written is reported as an error - but the project's automated checks drive those same
+  paths with stand-in mail, and every one of them added a line to the real log of the computer that
+  ran them: when it was last counted, almost two lines in three were test noise. Every test run now
+  writes its audit lines to a throwaway folder of its own under the temporary folder, deleted when
+  the run ends, and a test run can no longer write the real log at all - anywhere outside the
+  temporary folder is refused before anything is created. One check went further and made the mail
+  server itself write a line to the real log on every run; it now runs inside the test process, and
+  the checks that talk to the mail server refuse to ask it for that kind of call. All of this is
+  proven without opening the real log, which your own OutlookAI may be writing to while the tests
+  run, and the proof was shown to fail on the old code. Where the log lives, what OutlookAI writes
+  to it and what it reports about it are unchanged; lines already in the log are left as they are.
+
+- ✅ **The test machines' record says both 20,000-item measurement mailboxes are built.**
+  It still said neither had been built. Both were built in mid-September, as the notes on building
+  the machines record; the record now says so and cites where, and notes that the indexed machine's
+  is still below the 160,000 items decided for it. The tool that writes each test machine's settings
+  no longer calls such a mailbox "not built" just because its build parameters have not been copied
+  into the record yet. Nothing that ships to users is affected.
+
+- ✅ **Three mailbox checks against a real Outlook no longer pass having checked nothing.**
+  The checks that a search of the whole test mailbox handed out one page at a time returns exactly
+  what a single search does - no message skipped, none twice - and that a continued search refuses a
+  changed or outdated continuation all need the test mailbox to hold more than a page of mail; on a
+  smaller one three of them quietly ended green, and the fourth compared two one-page answers that
+  could not disagree. The check that a delegate mailbox's messages still open from a folder the
+  search index lists flat did the same whenever Outlook had not yet listed that folder. Each now
+  says so, the way the project's other mailbox checks already did: on the project's reference
+  machine it fails, because there it means something has drifted, and on a test machine it prints a
+  PROVED NOTHING line naming what was missing and how to supply it. The check that Outlook recovers
+  cleanly after it exits used to skip, green, whenever anything was waiting in the Outbox; it now
+  fails on every machine instead - it cannot run without closing Outlook, which is never done while
+  mail is queued, and on a test machine nothing but a test ever queues mail, so a full Outbox there
+  is a stuck send or a previous run's leftovers that should not exist. Pinned by 32 new checks that
+  need no mailbox, with a control that fails against the old code and a check for each safeguard
+  that fails when that safeguard is removed. Nothing that ships to users is affected.
+
+- ✅ **The test machines' session runner no longer reports success for work that exited with a failure.**
+  Work handed to it as a piece of script text used to be pasted into the runner's own script, so a
+  deliberate exit with an error code ended the runner itself and the result it recorded was success;
+  and text with a syntax error left no result at all, so whoever started it waited out the whole
+  time limit. That work now runs as a script of its own, the way work handed over as a file always
+  has, so its exit code, its errors and its syntax errors all come back as they are, and work handed
+  over as a file behaves exactly as before. Shown on the maintainer's machine under both versions of
+  PowerShell, with the old runner alongside as the control; the same check on a test machine is
+  recorded as still to do.
+
+- 📦 **A build of the add-in outside Visual Studio no longer switches the builder's own Outlook to it.**
+  Every build used to register itself with the Outlook on the machine that built it and mark itself
+  as trusted, so a developer's Outlook ended up loading whichever build folder had been built last -
+  and cleaning a build removed the add-in from Outlook altogether, installed copy included. Building
+  inside Visual Studio still registers, because debugging needs it. A new developer script puts a
+  build on your own Outlook only when you ask for one - copied out of the build folder first, so
+  later builds cannot change it underneath you - takes it off again by putting the installed release
+  back, and reports which build Outlook will load at its next start.
+
+- ✅ **Four faults the first real build of the test machines' small mailboxes found are fixed.**
+  The mailbox owner was never a proper recipient of the mail addressed to them, because Outlook
+  refused the form their address was written in; mail meant for a data file's Inbox was filed in a
+  hidden folder nobody could see, because such a data file has no Inbox and Outlook handed back its
+  hidden top instead; trial items the builder writes and deletes before a build were left in a
+  different mailbox nobody had allowed, because Outlook files a new unsent mail in the default
+  mailbox's Drafts; and asking Outlook for standard folders created ones the mailbox was meant not
+  to have. The builder now writes the owner in a form Outlook accepts and checks exactly that before
+  building, files mail only into folders Outlook shows (a visible stand-in folder where a data file
+  has none), writes mail into a mailbox that is not the default one only in the one way a test
+  machine showed stays in it, checks where every first save landed and removes it there, clears its
+  own trial items from every other mailbox before and after, and never makes Outlook create a
+  folder. The unindexed test machine's trial runs confirmed each fix; the mailboxes themselves are
+  not built yet (see the entry on undated items).
+
+- ✅ **The test machines' identity account has a real Inbox, no longer a hidden folder.**
+  Its data file used to be created empty and attached, and such a file has no Inbox, so the
+  account's mail would have gone where Outlook shows nothing. Outlook now makes that data file
+  itself, as the default data file of a throwaway profile - which gives it every standard folder -
+  and the setup checks it has a real Inbox and holds nothing before it is named, attached, and made
+  the account's delivery folder. The setup script also refuses a data file with no real Inbox,
+  checks the delivery folder when it verifies the account, and no longer creates a Drafts folder
+  while it is only meant to be reading. Built this way on both test machines, where the account now
+  delivers into its own Inbox: on the unindexed one first, then on the indexed one, rebuilt from a
+  checkpoint taken before its old account and taken through the rest of its setup again - the search
+  index, the local mail server, the add-in, the signature and the test suite - each proven again,
+  with its mail searchable throughout. The search index there now files that account's mail file
+  under the account's address, instead of under the generic name another mail file on the machine
+  also had. The rebuild also showed that the test machines' automatic approval of Outlook's security
+  prompt must be in place before this setup runs, not after: without it, one of the setup's reads
+  stopped on the prompt about two minutes after a restart, although Windows reported the antivirus
+  as up to date, so the build instructions now put that step first.
+
+- ✅ **The mailbox tests no longer add folders to the test machines' mailboxes.**
+  The check that every test run leaves each mailbox as it found it, and the clean-up that removes
+  the tests' own messages, asked Outlook for each mailbox's standard folders in the same way the
+  product used to - the way that makes Outlook create any that are missing. On a test machine that
+  added a "Junk Email" folder to mailboxes the tests are never allowed to change, before the check
+  had even recorded what it would compare against. Both now look folders up without ever creating
+  one, exactly as the product itself does since this release's fix for POP3, IMAP and data-file
+  mailboxes; a folder they cannot confirm exists makes the leftover-message count fail loudly rather
+  than count it as empty; the read-only archive test now also proves that no mailbox's folder list
+  changed; and the two archiving tests expect the Archive folder to be created, and reported,
+  exactly when a test machine's mailbox had none. Nothing that ships to users is affected.
+
+- ✅ **The project's own tooling runs on the PowerShell that ships with Windows.**
+  The test machines therefore never need anything extra installed. Ten scripts declared they worked
+  on it and did not: they worked out where the project lives in a way that version leaves blank at
+  that moment, so they failed before doing anything - including three of the checks the project's
+  build runs on every change. They now run under both that version and the newer one, verified by
+  running each under both. A second, quieter failure is fixed as well: when a script ran another
+  program and captured that program's error output, the older version stopped the whole script at
+  the first line the program wrote there - even a progress report - before the script could see
+  whether the program had succeeded. The tool that makes a test machine's install disk did exactly
+  that on its own "0% complete", and the measurement-mailbox builder would have lost its tool's real
+  exit code and message the first time the tool printed a warning. Six scripts now read that output
+  safely under both versions and still stop on a real failure exactly as before; the privacy check
+  and the pre-release measurement gate no longer need the newer PowerShell installed to run their
+  own sub-checks; and one character the older version would have misread was replaced. A new build
+  check fails on all three kinds of mistake in any script, and the build now runs every one of its
+  checks under the version that ships with Windows as well as the newer one, so none of this can
+  quietly come back. Nothing that ships to users is affected.
+
+- ✅ **The indexed test machine's mail is in Windows Search at last, and the other is really kept out.**
+  The machine had never held a single one of its 20,000 test mails in its search index, and the
+  reason turned out to be the way every tool on the test machines starts Outlook: with administrator
+  rights. Outlook started like that quietly switches its Windows Search integration off - no error,
+  no prompt, no log entry, and Outlook's own "is search working" flag simply reads false - while the
+  same Outlook started the ordinary way registers itself with Windows Search within seconds and had
+  the whole test mailbox indexed in under ten minutes; that was shown on one machine, from one saved
+  starting point, changing nothing but how Outlook was launched. The fix has two parts. Whether a
+  test machine's mail belongs in the index is now set through the documented Windows interface the
+  Indexing Options window itself uses - reached through hand-written declarations of that interface,
+  checked against Microsoft's own definition line by line and held in place by two independent
+  checks, each shown to fail when a single declaration is moved or altered. And the mail is then
+  indexed by starting Outlook the ordinary way, which a new script does, because the setting on its
+  own indexes nothing: Windows Search only takes in what a running, non-elevated Outlook hands it.
+  The check that reports a machine's index state now asks Windows Search itself whether the mail is
+  in or out and why, counts the indexed mail per mailbox, only calls a machine indexed once indexing
+  has actually finished rather than merely started, and no longer reports a working index as missing
+  when it runs in the first seconds after a restart. Taking mail out of the index now actually does
+  so, in an order that was measured rather than assumed: the Windows policy setting the old script
+  relied on turned out not to remove anything - Windows Search still counts the mail as included -
+  so the script now writes the same kind of exclusion rule the Indexing Options window writes, waits
+  while Windows Search deletes the mail it had already indexed (about four and a half minutes for
+  20,000 mails), and only then applies the policy and restarts the search service, because
+  restarting it during that wait was found to make Windows Search drop the deletion - the mail was
+  all still there after a reboot. An Outlook started on top of the exclusion left it in place, and
+  on a machine that was never indexed the policy on its own did keep Outlook from adding itself.
+  Test machines are also now restarted gracefully: the restarts on record used a Windows command
+  that, as Microsoft documents, force-closes every open program whenever it is given a delay - and
+  most were given one - so any Outlook still running was shut down with its mail files open. A new
+  script closes Outlook the way the project's mailbox-safety rules require - refusing while a draft,
+  a dialog or an unsent message is open, and never killing it - and only then restarts the machine
+  without force. Nothing that ships to users is affected.
+
+- ✅ **The four profile-building scripts ran on a real test machine, and what that found is fixed.**
+  They build a test machine's Outlook profiles and its measurement mailbox, and had not run since
+  they were rewritten. The open question about Outlook's profile-import setting is settled: Outlook
+  clears it itself, and it is now cleared regardless. Each script ran from the same saved starting
+  point, restored fresh before every one. The script that switches the default profile worked end to
+  end - including refusing a profile that does not exist without touching anything, which was shown
+  rather than assumed - and Outlook then opened the chosen profile with no prompt. The script that
+  adds a named data file to a profile worked on every path, and the stall its notes warned about
+  never happened. The profile-creation script's import worked too, but three things were wrong with
+  it. Its check-up mode crashed on its very first line, because a loop variable shared its name with
+  one of the script's own settings and PowerShell silently turned every data file it checked into
+  plain text; its self-check now reads the script's own source for exactly that mistake. Its search
+  for stray data files could not see the folder these machines actually put them in. And - the one
+  that matters - a profile with no mail account, built from a profile file, stops on Outlook's "set
+  up your email" window at every single start, so no unattended tool can ever use it; the script now
+  refuses to build one unless someone will be at the screen to click through, and points at the
+  route that needs no one - Outlook's own no-email mode followed by the data-file script - which was
+  run end to end on the same machine the same day and verified clean. The measurement-mailbox
+  builder's up-front check turned out to refuse the machine's real, correct profile, because it
+  counted the profile's own data file and address book as mail accounts; it now counts only mail
+  accounts. With that fixed, a full run from the same starting point passed its checks and confirmed
+  all 20,000 items of that machine's measurement mailbox present, each exactly once and in the
+  folder it belongs in. Whether Outlook leaves its "import this profile file" setting behind - which
+  would rebuild the profile at a later start and cut the measurement mailbox out of it - is now
+  measured rather than feared: Outlook removes it within five seconds of acting on it. It is removed
+  anyway: the step that checks an import now clears a leftover one, but only once the import has
+  really happened, never before; and the measurement-mailbox builder refuses to start while one is
+  set, a check its bypass switch deliberately cannot skip. The tier-profile script, which uses the
+  same setting, gained the same clean-up, the guard against being run anywhere but a test machine
+  that the other profile scripts already had, and fixes to four of its checks that were failing the
+  one tier profile that works. Two things found along the way are recorded for whoever runs the
+  mailbox tests next: the tier profile raises a password prompt at every start, and on these offline
+  machines reading an email address through Outlook's programming interface can raise Outlook's
+  security prompt, which waits for a click that never comes - the saved starting point already has
+  one on screen. Nothing that ships to users is affected.
+
+- ✅ **Building a test machine from nothing works again: the last two broken scripts are fixed.**
+  They create the Outlook mail profile the project's measurement mailbox lives in, and the data
+  files inside it, and both were built on the same Windows component that the profile switcher had
+  already found unusable on these machines' version of Office - so a rebuild from scratch would have
+  failed at its first step, and rebuilding from scratch is precisely how these machines are meant to
+  be proved. Both now use routes that have been measured working on the machines themselves: the
+  profile and its data files come from a settings file Outlook reads once when it starts, which is
+  the same mechanism that already builds the project's other test profile; and a data file added to
+  a profile that already exists is attached first and given its exact name afterwards, by renaming
+  it - which was measured to work and settles a question four rounds of research could not answer
+  either way. The unusable component and the several hundred lines of glue around it are deleted
+  outright rather than kept as a fallback nobody exercises, because an unexercised second route is
+  the defect that caused all of this; it remains in the project's history, and the note left behind
+  records the best current guess at why it fails and the small experiment that would confirm it,
+  while saying plainly that nobody has run that experiment. One diagnostic mode went with it - it
+  asked whether Outlook tolerates an "@" in a data file's name, which has since been answered twice
+  over by measurement, and it needed to delete a throwaway profile, which nothing can do any more;
+  that missing ability is written down as a gap rather than quietly dropped, and nothing in the
+  build needs it. Both scripts can now check their own decision-making on any machine without
+  touching Outlook at all, a hundred and forty checks between them, and each prints the list of
+  things only a real test machine can settle so that a clean run is not mistaken for proof. **One
+  hazard travels with the new route and is worth knowing about**: the setting that tells Outlook to
+  read that profile file is consulted at every start, and whether Outlook clears it afterwards is
+  unknown - if it does not, every later start rebuilds the profile and would detach a measurement
+  mailbox that had since been filled, costing a thirteen-minute rebuild of twenty thousand items.
+  The remedy is a single command, it is now a numbered step in the build order rather than a
+  footnote, and the scripts warn by name while the setting is still there. The three documents that
+  describe all of this have been brought back into line with it, including several places that had
+  gone on recommending the route that does not work, or restating as unanswered a question that had
+  been measured and answered elsewhere in the same file.
+
+- ✅ **A timed-out mailbox operation in the measurement tools stops, no longer left running.**
+  The tools that build the project's measurement mailbox drive Outlook on a dedicated worker, under
+  a time limit. When that limit ran out the tool reported failure and returned - but the worker
+  carried on, still holding Outlook and still working, until the whole program exited. For a read
+  that wasted effort; for anything that WRITES it meant an abandoned session still changing the
+  mailbox after the caller had been told it had stopped, and the obvious next move - run it again -
+  would then have put two writers on the same mailbox. The worker is now asked to stop at a safe
+  point, the tool waits for it, and it reports which of two things happened: it stopped cleanly, and
+  how far it got; or it did not answer, in which case it says so loudly and says not to re-run.
+  Those are different situations inviting opposite responses, and they now also produce different
+  exit codes, so a script can tell them apart. The check that makes this work is built into the
+  loops themselves rather than added alongside them, so the mistake cannot quietly return.
+  Separately, the time limit was being spent on starting Outlook before any work began - which is
+  what actually ran out on the test machine twice - so starting up now has its own allowance, and
+  the limit on the work itself only counts time in which nothing progressed. Nothing that ships to
+  users is affected.
+
+- ✅ **A live index check that never managed to ask its question fails on the reference machine.**
+  One live check seeds a mail, waits for the machine's search index to notice it, and then asks the
+  index whether it has - and each of those questions is given a time limit, because a question that
+  runs too long says more about the machine being busy than about the feature. If every question ran
+  out of time, the index was never actually asked anything, and the check still passed - printing a
+  line saying it had proved nothing, and passing anyway. On the machine the project treats as its
+  reference machine, that now FAILS instead, because a green result there means the machine is as
+  expected and this one could not have known. On a laptop or a spare machine, where a saturated
+  indexer is ordinary, it still passes and says the same thing just as loudly - the finding is
+  identical, only whether it should stop the run differs. The message also now explains what a
+  genuinely slow indexer looks like instead, since that is the thing it is most likely to be
+  mistaken for: the questions COMPLETE and simply keep coming back empty. Same treatment two other
+  checks in this suite already had. Nothing that ships to users is affected.
+
+- ✅ **The corpus builder's trial litter no longer fails every build or reads as a corrupt corpus.**
+  Before writing anything the builder runs two short trials against the target data file - one to
+  find out where that file will really file mail, one to find out whether it will accept back-dated
+  mail - and each trial creates a throwaway mail and deletes it again. But deleting mail in Outlook
+  does not remove it, it moves it to Deleted Items; so every one of those throwaway items stayed in
+  the data file permanently, under an identity nothing had written down. One build left six to eight
+  of them, and building the documented way left twelve to sixteen, because that route runs the
+  trials twice. The self-check at the end of the build then counted them as corpus mail and
+  announced that the corpus held an item more than once and that twelve items were in the wrong
+  folder - the sentence that means every measurement taken against that corpus is worthless - about
+  a corpus that was in fact perfect. That check had never once managed to run, because it tripped
+  over its own file lock, and the moment that was fixed the builder started failing on every
+  successful build and the corpus could not be rebuilt at all. Three things are fixed. The trials
+  now clear up after themselves, both after each item and once before they start, so a data file
+  carrying residue from an older version is cleaned by the next run that touches it. The identity of
+  each throwaway item is now recorded the instant the item exists rather than three steps later,
+  closing the window in which an interruption left one that nothing could ever remove. And the
+  self-check counts them separately and names them for what they are, which gives the duplicate
+  warning back the only meaning it was ever written for: a build interrupted so late that it created
+  the same mail twice. The rule deciding which mail the clean-up may touch is pinned by ten new
+  tests that need no mailbox at all - it deletes mail, so what chooses its targets has to be
+  checkable on a machine that has none - and the two tests that used to pin the wrong behaviour now
+  pin the right one, with the faulty report they were written from kept beside them as evidence.
+  Nothing that ships to users is affected.
+
+- ✅ **The corpus builder no longer fails at the end of a successful run, and its self-check runs again.**
+  The builder writes a corpus of test mail into a test machine's data file, records every item in a
+  manifest file as it goes, and then reads that manifest back to check what it actually produced -
+  the check that exists because an early run once created every single item in the wrong folder and
+  reported success. It could never do it: it was still holding the manifest open for writing when it
+  tried to read it, and Windows refuses that combination outright. So a complete, correct build
+  ended in a file-in-use error and reported failure, and the self-check that was supposed to decide
+  whether the corpus is usable had never once run. Both halves are fixed - the reader now tolerates
+  a file someone else is writing, and the builder closes the manifest before checking itself - and
+  three tests pin it, including one that deliberately reproduces the refusal so the fix cannot be
+  quietly undone. Nothing that ships to users is affected.
+
+- ✅ **Four mailbox tests that could pass having checked nothing no longer do.**
+  Each walks a list the machine supplies - the shared mailboxes it opens, the mail accounts its
+  signature settings name, the mail it holds carrying an attachment - and an empty list meant the
+  loop body never ran, or the check ran over no items at all, and the test still passed. On a
+  machine that is supposed to have those things an empty list means the machine or its settings have
+  drifted, so the run now refuses; on a machine that genuinely has none it prints a line saying in
+  plain words that nothing was verified and what a green result there does and does not mean. Same
+  treatment two other tests already had. Every run now also prints how much each of these actually
+  covered, so a pass says what it looked at instead of leaving it to be guessed from the test's
+  name.
+
+- ✅ **The leftover-mail check covers every watched mailbox and never deletes where no test may write.**
+  After every run against real mailboxes the suite proves that no test-created mail remains
+  anywhere. It only ever looked in the mailboxes tests are allowed to write to - while the separate
+  guard that watches for mail going MISSING watches those plus every shared mailbox and every
+  reference mailbox the profile opens. So a stray test mail landing in somebody else's mailbox was
+  invisible to both: one of them only looks for mail disappearing, and this would be mail appearing.
+  The check now visits exactly the same set. In any mailbox no test may write to it counts and
+  reports rather than deleting, and a count above zero fails the run naming the mailbox and saying
+  why nothing else would have told you - because a delete aimed at those is the shape that once came
+  within one count of destroying twenty thousand items of reference mail. Nothing that ships to
+  users is affected.
+
+- ✅ **One mailbox test no longer blames Windows Search for its own query running out of time.**
+  The test creates a mail with three kinds of attachment and then waits up to 90 seconds for Windows
+  to index it, asking every 5 seconds - but each question was allowed to take 60 of those 90
+  seconds, so a single slow one consumed most of the wait and the test then reported that the
+  indexer had not got round to the mail. Each question is now bounded at 15 seconds; one that runs
+  out costs a single missed attempt rather than failing the run, and the run reports how many
+  attempts it actually got. A real failure of the search provider still fails the test, told apart
+  from a question that simply ran long. And if every attempt is lost the test says in plain words
+  that it proved nothing, instead of stating something about the indexer it never measured. Nothing
+  that ships to users is affected.
+
+- ✅ **Three mailbox tests that could not have run at all declare what they need, and can run.**
+  A safety check added earlier makes the test client refuse to call the tools that always reach
+  Outlook unless the test has declared that it means to - and three tests that do mean to never made
+  the declaration, so they would have failed on their first call. They are in the tier that no
+  automated run executes, which is why nobody found out. Fixed, and the check that catches the
+  opposite mistake now catches this one too.
+
+- 📦 **The mail server's shared library builds again for the .NET Framework target the add-in reuses.**
+  Two pieces of code added the day before used APIs that target does not have. Nothing you can see
+  changes; the build gate that exists to catch exactly this had caught it.
+
+- 📝 **The rebuild notes say where the Office installation media really lives.**
+  The rebuild notes pointed at the maintainer's Downloads folder, which was purged without warning
+  once already; the media is in the repository's own scratch directory, which nothing outside this
+  project prunes. The notes now say so, and say plainly that it is a precondition someone has to put
+  back if that directory is ever cleaned.
+
+- ✅ **The suite's final cleanup never points a delete at accounts no test may write to.**
+  That cleanup walks every account the run watches and deletes anything left carrying the suite's
+  own tag - and the list it walks deliberately includes the 20,000-item measurement mailbox and the
+  untouched account the suite watches as its evidence that nothing strayed, because an account has
+  to be on that list to be counted at all. Those two carry a different tag now, so nothing matches;
+  what kept them safe was the data rather than the code. They are counted and never deleted from,
+  every run states in writing which accounts it left alone, and a tagged item found in one fails the
+  run naming the account and how many - which nothing else would have reported, because the guard
+  that watches for lost mail only fires when items disappear and this is items appearing.
+
+- ✅ **Each test machine names its own synthetic mail population, so two no longer overwrite one record.**
+  That record is the only thing that can remove such a population from a real mailbox afterwards,
+  and it is also what says whether the population is still recent enough to measure against - yet
+  every machine's results are collected into one shared folder, under a file name taken from the
+  population rather than from the machine. With one machine that was harmless; with two, the second
+  collection silently replaced the first. The two machines being built now have distinct names
+  chosen to say which is which, and the collection step refuses to replace an existing record whose
+  contents differ unless explicitly told to, explaining what it is protecting instead of stopping
+  without a reason.
+
+- 📝 **The test-machine notes say what really happens when the test machine's Office licence runs out.**
+  They claimed Office drops into "reduced functionality" - a term that does not exist for this
+  edition of Office, borrowed from a much older product and from a different kind of licence
+  entirely, and one whose view-and-print restriction has never applied to Outlook. Measured on the
+  test machine a week after its licence expired: Outlook still runs and everything this project asks
+  of it still works. What actually happens is nagging and a red title bar. The correction matters
+  because the false version made a monthly rebuild look like a hard deadline. The notes now record
+  the real reason to check the licence before a long test run - it is a one-off quarter-second
+  question worth asking, and the one genuinely unknown risk, whether an activation prompt can hang
+  Outlook as it starts, is written down as unknown rather than guessed at. The exact way to read the
+  licence state is recorded too, including the three easy ways to get it wrong.
+
+- ✅ **Each test machine's measurements and logs go to a folder of its own, no longer overwritten.**
+  Comparing the two machines is the entire reason there are two, and those files had fixed names in
+  one shared folder, so every second collection overwrote the first and the loss looked like nothing
+  at all. The record that can remove a synthetic mail population deliberately stays in the shared
+  folder: it is named after the population rather than the machine, and keeping it there is what
+  makes two populations wrongly given the same name collide where a person can see it. Collecting
+  now also refuses to replace ANY file whose contents differ, not just that one, and says which kind
+  of loss it is preventing. Files left in the old shared folder by an earlier collection are named
+  on every run and never moved, because which machine produced them was never recorded and a guess
+  would be worse than a gap.
+
+### Security
+
+- 🔒 **A send confirmation token no longer outlives its two-minute limit when the clock moves backwards.**
+  That can be a time sync, a daylight-saving change or a virtual machine resuming. The token's
+  expiry, and every other timer inside the mail server, is now measured with a clock that only moves
+  forward.
 
 ## v3.1.0.325 - 2026-08-15
 

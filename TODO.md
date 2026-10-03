@@ -21,15 +21,9 @@
   designation from a freshly opened store in the verify session; (3) read it in the product the way
   the verify session does, after creating. Recommended: (1) first.
 
-- [ ] **Two decided jobs, held until the agents now running have merged (decided by the
-  maintainer 2026-10-03).** Each one touches files every open branch also touches, so each waits
-  for a quiet moment.
-  - **Q123 - release notes in BrowserAI's style.** Copy the release-notes style, system and rules
-    from the BrowserAI repository (`C:\Source\SixFive7\BrowserAI`) into this one: `CHANGELOG.md`
-    conventions, `AGENTS.md` rules, and `Tools/Publish-Release.ps1`. The current Unreleased section
-    (about 152,000 characters) is over GitHub's 125,000-character limit for a release body, so the
-    next release cannot publish until this lands. Do it last, because it rewrites the Unreleased
-    section every branch adds to.
+- [ ] **One decided job, held until the agents now running have merged (decided by the
+  maintainer 2026-10-03).** It touches files every open branch also touches, so it waits for a
+  quiet moment.
   - **Q125 - security scanning without GitHub.** (b) Turn on the security analysers that ship with
     the .NET SDK in the builds, and triage what they find. Plus an exception to the Dependencies rule,
     granted by the maintainer: CodeQL may be run locally. Record the exception in `AGENTS.md` beside
