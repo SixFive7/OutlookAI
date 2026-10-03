@@ -549,6 +549,16 @@ exceptions), their sentences and audit-line field, `SpecialFolders.GetDefaultFol
 the live created-folder proof and everything that existed for it (D123), and their T1 tests. Kept: Q84
 (no lookup creates a folder), every lookup that FINDS a folder (the PST Archive in the Inbox's `0x800F`
 block, the true root, a discarded PST draft by the EntryID it keeps) and every Mailbox Safety mechanism.
+Branch `worktree-agent-a0422e4b3010668c0`, `9614189`: 230 lines added, 4,384 removed. Build VM 3,520 / 0 / 0
+and 20 of 20 self-tests (87 tests and one self-test fewer than master's 3,607 and 21: the removed
+reporting tests and `Reset-ThrowawayStore.ps1`'s). Live on `OutlookAI-Unindexed`, restored to
+`CP-13B-LIVE-GREEN`, the suite restaged from `9614189` (`TEST-READY`) and the hub rebuilt: the ten
+classes that drive the draft, update, discard, reply/forward and archive paths (`LiveDraftTests`,
+`LiveHtmlDraftTests`, `LiveDraftOptionsTests`, `LiveUpdateDiscardTests`, `LiveHeadlessComposeParityTests`,
+`LiveHeadlessGuaranteeTests`, `LiveSignatureTests`, `LiveMoveArchiveTests`, T3
+`Phase4LiveMcpToolShapeTests` and `MoveArchiveLiveMcpToolTests`) passed 39 of 39 in 4.3 min; tripwire
+`0 failure(s), 0 note(s)`, `post-suite: 0 tagged artifacts (incl. Archive), 0 test folders`; the guest
+restored to `CP-13B-LIVE-GREEN` again and saved.
 - **D120 - Only the draft tools' and `discard_draft`'s reporting goes; `archive_mail`'s and
   `move_mail`'s `createdFolders` stay.** Both predate Q85 - `move_mail` names the folders
   `create_folder: true` was asked to make (2026-08-20), `archive_mail`'s is Q84 decision (c) - and the
