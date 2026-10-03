@@ -180,7 +180,10 @@ public static class LiveOutlookTestMailer
                         {
                             foreach (string attachmentPath in attachmentPaths)
                             {
-                                attachments.Add(attachmentPath);
+                                // Attachments.Add hands back the Attachment it made: released
+                                // here, never by the garbage collector after the mail was sent.
+                                object? added = attachments.Add(attachmentPath);
+                                Release(added);
                             }
                         }
                         finally
@@ -790,7 +793,8 @@ public static class LiveOutlookTestMailer
                 {
                     foreach (string path in attachmentPaths)
                     {
-                        attachments.Add(path);
+                        object? added = attachments.Add(path);
+                        Release(added);
                     }
                 }
                 finally
@@ -1567,10 +1571,14 @@ public static class LiveOutlookTestMailer
         foreach (string spelling in spellings)
         {
             dynamic? columns = null;
+            object? column = null;
             try
             {
                 columns = table.Columns;
-                columns!.Add(spelling);
+
+                // Columns.Add hands back the Column it made: released here, with its table,
+                // never by the garbage collector after the census released the table.
+                column = columns!.Add(spelling);
                 return;
             }
             catch (Exception ex) when (OutlookAI.Core.Com.OutlookComSession.IsComCallFailure(ex))
@@ -1578,6 +1586,7 @@ public static class LiveOutlookTestMailer
             }
             finally
             {
+                Release(column);
                 Release(columns);
             }
         }
@@ -1679,10 +1688,17 @@ public static class LiveOutlookTestMailer
                 foreach ((string entryId, string _, int _) in all)
                 {
                     dynamic? folder = null;
+                    dynamic? folderItems = null;
+                    dynamic? subfolders = null;
                     try
                     {
                         folder = ns.GetFolderFromID(entryId);
-                        bool empty = (int)folder.Items.Count == 0 && (int)folder.Folders.Count == 0;
+
+                        // Each collection is held and released here, never left inline in a chain
+                        // for the garbage collector to release after the folder is gone.
+                        folderItems = folder.Items;
+                        subfolders = folder.Folders;
+                        bool empty = (int)folderItems.Count == 0 && (int)subfolders.Count == 0;
                         if (deletedIds.Contains(entryId) && empty)
                         {
                             wedged++;
@@ -1698,6 +1714,8 @@ public static class LiveOutlookTestMailer
                     }
                     finally
                     {
+                        Release(subfolders);
+                        Release(folderItems);
                         Release(folder);
                     }
                 }

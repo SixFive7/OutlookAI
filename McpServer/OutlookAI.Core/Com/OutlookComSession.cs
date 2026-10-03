@@ -6707,13 +6707,18 @@ namespace OutlookAI.Core.Com
                 // Recreate the marker over the inserted content so Outlook (and the
                 // add-in's draft/signature/quote split) keep working on this draft.
                 object? newRange = null;
+                object? newMark = null;
                 try
                 {
                     newRange = doc.Range(insertAt, newEnd);
-                    bm.Add("_MailAutoSig", newRange);
+
+                    // Bookmarks.Add hands back the Bookmark it made: released here, while the
+                    // document is still open, never by the garbage collector after it closed.
+                    newMark = bm.Add("_MailAutoSig", newRange);
                 }
                 finally
                 {
+                    Release(newMark);
                     Release(newRange);
                 }
 
@@ -6949,13 +6954,15 @@ namespace OutlookAI.Core.Com
                     }
 
                     object? restoreRange = null;
+                    object? restoredMark = null;
                     try
                     {
                         restoreRange = doc.Range(writtenEnd, shifted);
-                        bm.Add(boundary, restoreRange);
+                        restoredMark = bm.Add(boundary, restoreRange);
                     }
                     finally
                     {
+                        Release(restoredMark);
                         Release(restoreRange);
                     }
                 }
@@ -7095,6 +7102,8 @@ namespace OutlookAI.Core.Com
             }
 
             object? range = null;
+            object? parentDoc = null;
+            object? restored = null;
             try
             {
                 dynamic bm = (dynamic)bookmarksObject;
@@ -7103,16 +7112,18 @@ namespace OutlookAI.Core.Com
                     return;
                 }
 
-                dynamic parentDoc = bm.Parent;
-                range = parentDoc.Range(start, end);
-                bm.Add(name, range);
+                parentDoc = bm.Parent;
+                range = ((dynamic)parentDoc!).Range(start, end);
+                restored = bm.Add(name, range);
             }
             catch (Exception ex) when (IsComCallFailure(ex))
             {
             }
             finally
             {
+                Release(restored);
                 Release(range);
+                Release(parentDoc);
             }
         }
 
@@ -8757,10 +8768,14 @@ namespace OutlookAI.Core.Com
             for (int i = 0; i < DateSortProperties.Length; i++)
             {
                 object? columns = null;
+                object? column = null;
                 try
                 {
                     columns = table.Columns;
-                    ((dynamic)columns!).Add(DateSortProperties[i]);
+
+                    // Columns.Add hands back the Column it made: released here, with its parent,
+                    // never left for the garbage collector to release after the table is gone.
+                    column = ((dynamic)columns!).Add(DateSortProperties[i]);
                 }
                 catch (Exception ex) when (IsComCallFailure(ex))
                 {
@@ -8768,6 +8783,7 @@ namespace OutlookAI.Core.Com
                 }
                 finally
                 {
+                    Release(column);
                     Release(columns);
                 }
 
@@ -8815,10 +8831,11 @@ namespace OutlookAI.Core.Com
             for (int i = 0; i < properties.Count; i++)
             {
                 object? columns = null;
+                object? column = null;
                 try
                 {
                     columns = table.Columns;
-                    ((dynamic)columns!).Add(properties[i]);
+                    column = ((dynamic)columns!).Add(properties[i]);
                 }
                 catch (Exception ex) when (IsComCallFailure(ex))
                 {
@@ -8828,6 +8845,7 @@ namespace OutlookAI.Core.Com
                 }
                 finally
                 {
+                    Release(column);
                     Release(columns);
                 }
 
@@ -10770,10 +10788,11 @@ namespace OutlookAI.Core.Com
                 if (sortProperty != null)
                 {
                     object? columns = null;
+                    object? column = null;
                     try
                     {
                         columns = t.Columns;
-                        ((dynamic)columns!).Add(sortProperty);
+                        column = ((dynamic)columns!).Add(sortProperty);
                         columnAdded = true;
                     }
                     catch (Exception ex) when (IsComCallFailure(ex))
@@ -10782,6 +10801,7 @@ namespace OutlookAI.Core.Com
                     }
                     finally
                     {
+                        Release(column);
                         Release(columns);
                     }
 
