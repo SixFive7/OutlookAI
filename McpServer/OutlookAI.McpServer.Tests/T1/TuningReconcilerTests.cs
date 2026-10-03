@@ -48,7 +48,7 @@ public sealed class TuningReconcilerTests
     {
         var catalog = new List<TuningEntry>
         {
-            new TuningEntry("search.DisableServerAssistedSearch", TuningReconciler.GroupSearch, SearchKey, "DisableServerAssistedSearch", 1, false),
+            new TuningEntry("search.DisableServerAssistedSearch", TuningReconciler.GroupSearch, SearchKey, AddInServerContract.DisableServerAssistedSearchValueName, 1, false),
             new TuningEntry("search.SearchResultsCap", TuningReconciler.GroupSearch, SearchKey, "SearchResultsCap", 0, false),
             new TuningEntry("search.IncludeDeletedItems", TuningReconciler.GroupSearch, SearchKey, "IncludeDeletedItems", 1, false),
             new TuningEntry("search.DefaultSearchScope", TuningReconciler.GroupSearch, SearchKey, "DefaultSearchScope", 2, false),
@@ -135,7 +135,7 @@ public sealed class TuningReconcilerTests
         Assert.Equal(102400, store.ReadDword(PstKey, "MaxLargeFileSize"));
         Assert.Equal(96256, store.ReadDword(PstKey, "WarnLargeFileSize"));
         // And the four before them.
-        Assert.Equal(1, store.ReadDword(SearchKey, "DisableServerAssistedSearch"));
+        Assert.Equal(1, store.ReadDword(SearchKey, AddInServerContract.DisableServerAssistedSearchValueName));
         Assert.Equal(2, store.ReadDword(SearchKey, "DefaultSearchScope"));
 
         // Nothing at all under the Policies hive.
