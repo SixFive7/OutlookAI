@@ -437,8 +437,11 @@ rebuilt). Merged as `2ff64e2` (build VM on the branch: 3,491 / 0 / 0, 21 self-te
   item-count tripwire watches. *Alternatives:* rebuild it before each guest-one run once the 7-day
   window empties (about 1.5 h plus the index); a script that swaps in a fresh store instead of
   emptying 160,000 items. *Consequence:* the sweep-cost measurement script defaults to a 7-day
-  window, so a run of it on guest one must pass its window explicitly. Being implemented; not yet
-  merged.
+  window, so a run of it on guest one must pass its window explicitly. Merged as `b4bec51` (build
+  VM: 3,492 / 0 / 0, 21 self-tests): fresh until 2026-11-01 23:59 UTC, now the deadline for guest
+  one's live run; a new T1 pin holds the two windows and that expiry. *Watch:* the checkpoint was
+  not retaken - `CP-17C-CORPUS-160K` still holds the old 7/30/60 settings file, so whoever reverts
+  to it re-stages the settings file (runbook §4.2d). *Undo:* revert `b4bec51` and re-stage.
 
 ## Open questions only you can answer
 
@@ -554,7 +557,7 @@ fake-ID lines to the real audit log; they are the last lines of the now-renamed
 `audit.until-2026-10-03.log`, and nothing has been written there since. It also ran one script
 self-test on the workstation before the build-VM rule reached it.
 
-### V13 - Guest one's corpus build: five small departures
+### V13 - Guest one's corpus build and freshness change: six small departures
 - The fixed index-check script (D100) was staged on the guest and used there before the build VM
   had verified it; the build VM confirmed it afterwards.
 - The staged settings file's provenance line cites `d2b13a7` plus uncommitted changes. A re-render
@@ -566,6 +569,8 @@ self-test on the workstation before the build-VM rule reached it.
   checks settled whether a store mounted in two profiles is indexed twice (it is not).
 - Master was merged into the branch before the build-VM run. The guest's tools are still the
   `6d01e72` build, which has the same corpus code as master.
+- For D103, a new T1 pin was added (nothing existed to update), and the checkpoint was not retaken
+  because the staged settings file is the guest's only change.
 
 ## Notes (no decision needed)
 
