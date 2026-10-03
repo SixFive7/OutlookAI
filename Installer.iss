@@ -23,7 +23,7 @@
 #define NetRuntime10Url "https://aka.ms/dotnet/10.0/dotnet-runtime-win-x64.exe"
 ; Same URL as McpRegistrationService.DotnetRuntimeDownloadUrl - both send a user whose
 ; runtime is missing to the same page, one from setup and one from OutlookAI Settings.
-; Compared by .github/scripts/check-pinned-constants.ps1.
+; Compared by Tools/Checks/check-pinned-constants.ps1.
 #define NetRuntime10ManualUrl "https://dotnet.microsoft.com/download/dotnet/10.0"
 
 [Setup]
@@ -47,7 +47,7 @@ PrivilegesRequired=lowest
 ; startup and, if it exists, skips ALL startup work - which is what stops it re-triggering the
 ; updater and spinning up processes that this installer then tears down mid-flight to swap the
 ; add-in files. Rename one side and the guard evaporates with no error at all, so the two are
-; compared mechanically by .github/scripts/check-pinned-constants.ps1 rather than by memory.
+; compared mechanically by Tools/Checks/check-pinned-constants.ps1 rather than by memory.
 SetupMutex=OutlookAISetup
 CloseApplications=yes
 RestartApplications=no
@@ -55,10 +55,11 @@ CreateAppDir=yes
 
 [Files]
 ; One recursive rule covers the whole payload: the VSTO publish output at the top level
-; AND the MCP server, which the release workflow publishes into publish\McpServer\ so it
-; lands at {app}\McpServer\. Deliberately NOT a second explicit entry - an entry naming
-; publish\McpServer\* would make ISCC fail in the compile-only installer-validation gate
-; (build.yml), which only creates a placeholder file in publish\.
+; AND the MCP server, which the release build (Tools/Publish-Release.ps1, through
+; Testbed/host/Publish-AddInPayload.ps1) publishes into publish\McpServer\ so it lands at
+; {app}\McpServer\. Deliberately NOT a second explicit entry - an entry naming
+; publish\McpServer\* would make ISCC fail for the testbed build of the same script, whose
+; installer carries no server.
 Source: "publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 ; The Visual Studio 2010 Tools for Office Runtime redistributable, vstor_redist.exe
@@ -71,10 +72,10 @@ Source: "publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs creat
 ; machines that actually need it, and never lands in {app} - so nothing has to clean it up
 ; afterwards and the installed footprint is unchanged.
 ;
-; NOT in git - it is a 40 MB third-party binary in a public repo. CI fetches it before
-; compiling; see .github/workflows/release.yml (real payload, hash-verified) and
-; build.yml (placeholder, since that gate only checks that the script compiles).
-; Deliberately no skipifsourcedoesntexist: if the fetch step is ever removed or fails, the
+; NOT in git - it is a 40 MB third-party binary in a public repo. It is staged media
+; (Testbed/MEDIA.md), and Testbed/host/Publish-AddInPayload.ps1 - which builds every release
+; and every testbed payload - holds it to a pinned SHA-256 and length before compiling.
+; Deliberately no skipifsourcedoesntexist: if the staged copy is ever missing, the
 ; compile must break loudly here rather than quietly produce an installer whose VSTO
 ; prerequisite is missing - that silent-failure mode is exactly what shipped in v3.0.1.
 Source: "Redist\vstor_redist.exe"; Flags: dontcopy
@@ -104,7 +105,7 @@ Root: HKCU; Subkey: "Software\OutlookAI"; ValueType: string; ValueName: "Install
 ; assemblies from the folder holding the .vsto - it does NOT look inside the ClickOnce
 ; `Application Files\<version>\` folder, and it does not undo the `.deploy` rename. So
 ; {app} must contain OutlookAI.vsto, OutlookAI.dll.manifest AND the un-suffixed assemblies
-; side by side; the release workflow's "Flatten VSTO payload" step is what puts them there.
+; side by side; the release build's "Flatten VSTO payload" step is what puts them there.
 ; Without it the add-in fails to load with FileNotFoundException and Outlook sets
 ; LoadBehavior=2 (the defect shipped in v2.3.3.141 through v3.0.0.319).
 Root: HKCU; Subkey: "Software\Microsoft\Office\Outlook\Addins\OutlookAI"; ValueType: string; ValueName: "Manifest"; ValueData: "file:///{app}\OutlookAI.vsto|vstolocal"; Flags: uninsdeletekey
@@ -119,7 +120,7 @@ Root: HKCU; Subkey: "Software\Microsoft\Office\Outlook\Addins\OutlookAI"; ValueT
 ; THE SET OF VERSIONS HERE MUST MATCH Services\OfficeVersions.cs (OfficeVersions.Supported),
 ; which is the add-in's one list of the Office majors it knows about - the theme probe and the
 ; Outlook tuning both work from it. The order does not matter here (all three are written); the
-; SET does, and .github/scripts/check-pinned-constants.ps1 compares the two rather than leaving
+; SET does, and Tools/Checks/check-pinned-constants.ps1 compares the two rather than leaving
 ; it to the comment that used to claim, without checking, that this "matched versions checked
 ; elsewhere".
 Root: HKCU; Subkey: "Software\Microsoft\Office\16.0\Outlook\Resiliency\DoNotDisableAddinList"; ValueType: dword; ValueName: "OutlookAI"; ValueData: "1"; Flags: uninsdeletevalue
@@ -191,7 +192,7 @@ end;
 // Same question, same answer as McpRegistrationService.IsDotnetRuntime10Installed - one
 // asked by setup, one by the add-in in OutlookAI Settings. The '10.' prefix below and the
 // Copy length that reads it are compared against the C# side by
-// .github/scripts/check-pinned-constants.ps1.
+// Tools/Checks/check-pinned-constants.ps1.
 function IsNetRuntime10Installed: Boolean;
 var
   FindRec: TFindRec;
@@ -361,7 +362,7 @@ begin
 end;
 
 // No download, and so no DownloadFile / IsWindowsExecutable guard: the bytes are the ones
-// compiled into this installer, verified by hash when CI fetched them, and covered by
+// compiled into this installer, verified by hash when the release was built, and covered by
 // setup's own CRC check on extraction. There is no network step left here to rot or to
 // hand back a web page.
 procedure InstallVstoRuntime;

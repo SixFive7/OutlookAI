@@ -22,8 +22,8 @@ namespace OutlookAI.Core.Com
     /// </para>
     /// <para>
     /// The draft tokens below it (2026-10-03, Q96) decide no control flow; they decide what a
-    /// failed draft call may CLAIM - that no draft exists, what became of the Drafts folder, and
-    /// that a discard which failed early deleted nothing - which is the other thing a misspelt
+    /// failed draft call may CLAIM - that no draft exists, and that a discard which failed early
+    /// deleted nothing - which is the other thing a misspelt
     /// literal would silently get wrong.
     /// </para>
     /// </summary>
@@ -56,21 +56,10 @@ namespace OutlookAI.Core.Com
         public const string DraftNotStarted = "DraftNotStarted";
 
         /// <summary>
-        /// new_draft's Drafts lookup itself failed - the call that makes the folder on a mailbox
-        /// without one threw, or answered no folder - so no draft exists, and the lookup's own
-        /// re-check established whether it made a folder first: any it did travels as the
-        /// call's created folders, and none means none (Q96 (ii) and (iii)). Written as
-        /// <c>DraftsFolderUnavailable:&lt;detail&gt;</c>.
+        /// new_draft's Drafts lookup itself failed - the call threw, or answered no folder - so no
+        /// draft exists (Q96 (iii)). Written as <c>DraftsFolderUnavailable:&lt;detail&gt;</c>.
         /// </summary>
         public const string DraftsFolderUnavailable = "DraftsFolderUnavailable";
-
-        /// <summary>
-        /// As <see cref="DraftsFolderUnavailable"/>, except that whether the failed lookup made a
-        /// folder first could NOT be established - the mailbox's top-level folders would not
-        /// list - so nothing is claimed either way. Written as
-        /// <c>DraftsFolderCreationUnverified:&lt;detail&gt;</c>.
-        /// </summary>
-        public const string DraftsFolderCreationUnverified = "DraftsFolderCreationUnverified";
 
         /// <summary>
         /// discard_draft failed BEFORE its delete was issued - so the draft was NOT deleted (Q96

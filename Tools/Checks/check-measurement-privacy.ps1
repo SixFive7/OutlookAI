@@ -39,11 +39,11 @@
     Repository root. Defaults to two levels above this script.
 
 .PARAMETER IncludeWorkingTree
-    Also scan untracked, non-ignored files. Off by default (CI checks what is committed); worth
+    Also scan untracked, non-ignored files. Off by default (a release checks what is committed); worth
     passing locally before a commit, which is the moment the mistake is still cheap.
 
 .EXAMPLE
-    pwsh -File .github/scripts/check-measurement-privacy.ps1
+    pwsh -File Tools/Checks/check-measurement-privacy.ps1
 #>
 [CmdletBinding()]
 param(
@@ -88,7 +88,7 @@ function Pass([string] $invariant, [string] $detail) {
 #     those with a position block around every line, and an empty one as an exception type name.
 #   * The exit code is left in $LASTEXITCODE, and the caller checks it.
 # Restated in each script that needs it, as this repository restates its shared rules.
-# .github/scripts/check-powershell-51.ps1 fails the build on a redirected native call that does
+# Tools/Checks/check-powershell-51.ps1 fails the build on a redirected native call that does
 # not go through a function like this one.
 function Invoke-NativeCommand {
     param([Parameter(Mandatory = $true)] [scriptblock] $NativeCommand)
@@ -203,12 +203,12 @@ if (-not (Test-Path -LiteralPath $gitignorePath)) {
 # 3. The gate still describes what it gates.
 # ---------------------------------------------------------------------------------------------
 $checks++
-$gate = Join-Path $RepoRoot '.github/scripts/measurement-gate.ps1'
+$gate = Join-Path $RepoRoot 'Tools/Checks/measurement-gate.ps1'
 if (-not (Test-Path -LiteralPath $gate)) {
     Fail 'measurement gate self-test' 'measurement-gate.ps1 is missing - the checks above now protect nothing.'
 } else {
     # Under the SAME PowerShell that is running this check, not pwsh by name: that is what makes
-    # CI's Windows PowerShell 5.1 pass run the gate under 5.1 as well, and what lets this check
+    # the release's Windows PowerShell 5.1 pass run the gate under 5.1 as well, and what lets this check
     # run on a machine that has only the PowerShell Windows ships with (Q78).
     $shellExe = if ($PSVersionTable.PSEdition -eq 'Core') { Join-Path $PSHOME 'pwsh.exe' } else { Join-Path $PSHOME 'powershell.exe' }
     $output = Invoke-NativeCommand { & $shellExe -NoProfile -File $gate -SelfTest 2>&1 } | Out-String

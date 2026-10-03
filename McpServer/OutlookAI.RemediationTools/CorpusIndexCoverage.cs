@@ -36,6 +36,26 @@ public sealed record CorpusIndexCoverageReport(
     /// (the indexed guest's contacts, Q98 (f)).
     /// </summary>
     public int UndatedIndexed { get; init; }
+
+    /// <summary>
+    /// Non-mail ordinals the plan DATES - an all-kinds population's appointments and tasks
+    /// (<see cref="CorpusUndatedDetail.DeliveryUtc"/>, D62 (b)). Not counted in <see cref="UndatedPlanned"/>:
+    /// the index dates them, and must date them where the plan does.
+    /// </summary>
+    public int PlannedDated { get; init; }
+
+    /// <summary>Of <see cref="PlannedDated"/>, those the index returned a row for whose date is the planned instant.</summary>
+    public int PlannedDatedAsPlanned { get; init; }
+
+    /// <summary>
+    /// Of <see cref="PlannedDated"/>, those the index returned a row for with ANOTHER date, or none - not yet
+    /// re-read after the delivery-time write, or dated by something other than the delivery time. Until it
+    /// is zero the population's order is not the plan's, so the index is not ready.
+    /// </summary>
+    public int PlannedDatedMismatched { get; init; }
+
+    /// <summary>The most common difference among <see cref="PlannedDatedMismatched"/>, index minus plan, in seconds; null when none.</summary>
+    public long? PlannedModalMismatchSeconds { get; init; }
 }
 
 /// <summary>
@@ -98,9 +118,43 @@ public static class CorpusIndexCoverage
         var offsets = new Dictionary<long, int>();
         DateTime? newestIndexed = null;
         DateTime? newestPlanned = null;
+        int plannedDated = 0;
+        int plannedAsPlanned = 0;
+        int plannedMismatched = 0;
+        var plannedOffsets = new Dictionary<long, int>();
         for (int ordinal = 1; ordinal <= itemCount; ordinal++)
         {
             CorpusItemSpec spec = plan.Describe(ordinal);
+            DateTime? plannedDelivery = spec.IsUndated ? plan.UndatedDetail(ordinal)?.DeliveryUtc : null;
+            if (plannedDelivery != null)
+            {
+                // An all-kinds appointment or task (D62 (b)): the index dates it, and must date it at the
+                // instant the plan gave it. Missing like any other ordinal until the index has a row for it.
+                plannedDated++;
+                if (!byOrdinal.TryGetValue(ordinal, out List<CorpusIndexedRow>? plannedRows))
+                {
+                    missing.Add(ordinal);
+                    continue;
+                }
+
+                DateTime? at = plannedRows.Select(r => r.DateReceivedUtc).FirstOrDefault(d => d != null);
+                long plannedOffset = at == null ? long.MinValue : (long)Math.Round((at.Value - plannedDelivery.Value).TotalSeconds);
+                if (at != null && Math.Abs(plannedOffset) <= DateTolerance.TotalSeconds)
+                {
+                    plannedAsPlanned++;
+                }
+                else
+                {
+                    plannedMismatched++;
+                    if (at != null)
+                    {
+                        plannedOffsets[plannedOffset] = plannedOffsets.TryGetValue(plannedOffset, out int times) ? times + 1 : 1;
+                    }
+                }
+
+                continue;
+            }
+
             if (spec.IsUndated)
             {
                 undatedPlanned++;
@@ -162,6 +216,12 @@ public static class CorpusIndexCoverage
             compared, mismatched, modal, newestIndexed, newestPlanned)
         {
             UndatedIndexed = undatedIndexed,
+            PlannedDated = plannedDated,
+            PlannedDatedAsPlanned = plannedAsPlanned,
+            PlannedDatedMismatched = plannedMismatched,
+            PlannedModalMismatchSeconds = plannedOffsets.Count == 0
+                ? null
+                : plannedOffsets.OrderByDescending(kv => kv.Value).ThenBy(kv => Math.Abs(kv.Key)).First().Key,
         };
     }
 
@@ -176,8 +236,12 @@ public static class CorpusIndexCoverage
             ? string.Empty
             : $"; {report.UndatedIndexed.ToString(invariant)} of those in the index, "
                 + $"{(report.UndatedIndexed - report.UndatedIndexedWithADate).ToString(invariant)} with no received date";
+        string plannedRows = report.PlannedDated == 0
+            ? string.Empty
+            : $"; {report.PlannedDated.ToString(invariant)} appointment(s) and task(s) dated by the plan, "
+                + $"{report.PlannedDatedAsPlanned.ToString(invariant)} of them at their planned instant in the index";
         string head = $"Index coverage: {report.Indexed.ToString(invariant)} of {report.Planned.ToString(invariant)} "
-            + $"population item(s) indexed ({report.UndatedPlanned.ToString(invariant)} of them undated{undatedRows})";
+            + $"population item(s) indexed ({report.UndatedPlanned.ToString(invariant)} of them undated{undatedRows}{plannedRows})";
         string newest = report.NewestPlannedUtc == null
             ? string.Empty
             : $"; newest planned {CorpusManifest.FormatUtc(report.NewestPlannedUtc.Value)}, newest indexed "
@@ -199,9 +263,21 @@ public static class CorpusIndexCoverage
         }
 
         string tail = notes.Count == 0 ? "." : ". " + string.Join(". ", notes) + ".";
-        if (report.Missing.Count == 0)
+        if (report.Missing.Count == 0 && report.PlannedDatedMismatched == 0)
         {
             return (true, head + newest + tail);
+        }
+
+        if (report.Missing.Count == 0)
+        {
+            return (false, head + newest + $". NOT YET: {report.PlannedDatedMismatched.ToString(invariant)} appointment(s) or "
+                + "task(s) carry ANOTHER date in the index than the one the plan wrote"
+                + (report.PlannedModalMismatchSeconds == null
+                    ? " (or none)"
+                    : $" (most often {report.PlannedModalMismatchSeconds.Value.ToString(invariant)} s from it)")
+                + ". Either the indexer has not re-read them since their delivery time was written - it takes the first save "
+                + "first - or it dates these kinds by something other than the delivery time, and then the all-kinds "
+                + "population cannot be held where the plan puts it (D62 (b))" + tail);
         }
 
         string sample = string.Join(", ", report.Missing.Take(12).Select(o => o.ToString(invariant)))

@@ -10,7 +10,7 @@
   real values, reading them from the gitignored vm-credentials.json that
   Testbed/host/Get-GuestCredential.ps1 documents, and writes the filled autounattend.xml into
   gitignored scratch (.work/) only. Nothing filled ever comes back into Testbed/.
-  .github/scripts/check-testbed-references.ps1 check 7 fails the build if the placeholders in
+  Tools/Checks/check-testbed-references.ps1 check 7 fails the build if the placeholders in
   this file are ever replaced by anything that looks like a value.
 
   Placeholders, all substituted by New-AnswerFile.ps1. They are named here without their braces

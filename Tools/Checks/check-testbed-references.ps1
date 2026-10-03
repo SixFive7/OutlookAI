@@ -71,8 +71,8 @@
        and no file called live-test-settings.json to be tracked anywhere, since the real one names
        real stores.
        It lives here rather than in a T1 test because every one of those files is under Testbed/,
-       and the workflow that runs T1 only triggers on McpServer/ - this script runs on every pull
-       request. T1/LiveTestSettingsTemplateTests covers the other half: that the template still
+       and this script needs no build: it runs before every release, and in seconds from any
+       checkout. T1/LiveTestSettingsTemplateTests covers the other half: that the template still
        renders into something the live tier's loader accepts.
 
     9. EVERY GUEST SCRIPT THAT WRITES CALLS THE GUEST GUARD, AND BEFORE ITS FIRST WRITE. The
@@ -88,7 +88,7 @@
        the check until it is deleted.
 
     Run it from anywhere:
-        pwsh -File .github/scripts/check-testbed-references.ps1
+        pwsh -File Tools/Checks/check-testbed-references.ps1
 
 .PARAMETER RepoRoot
     Repository root. Defaults to two levels above this script.
@@ -121,6 +121,26 @@ function Fail([string] $invariant, [string] $detail) {
 }
 function Pass([string] $invariant, [string] $detail) {
     Write-Host "  OK   $invariant - $detail"
+}
+
+# Every git call goes through this. Under Tools/ a native call is held to the strict rule of
+# Tools/Checks/check-powershell-51.ps1 check 3: a script here is as likely to run behind a
+# redirection - Tools/Publish-Release.ps1 logs every guard to a file - as from a console, and
+# Windows PowerShell 5.1 with 'Stop' dies on a program's first stderr line there. 'Continue' holds
+# only inside this function, the try keeps "program not found" terminating, and the caller reads
+# $LASTEXITCODE. Restated, as this repository restates its shared rules.
+function Invoke-NativeCommand {
+    param([Parameter(Mandatory = $true)] [scriptblock] $NativeCommand)
+
+    $ErrorActionPreference = 'Continue'
+    try {
+        & $NativeCommand | ForEach-Object {
+            if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.Exception.Message } else { $_ }
+        }
+    }
+    catch {
+        throw
+    }
 }
 
 Write-Host "Checking testbed references under $RepoRoot"
@@ -164,7 +184,7 @@ $intentionallyAbsent = @(
     @{
         Path       = 'Redist/vstor_redist.exe'
         MustIgnore = $true
-        Why        = '40 MB unmodified third-party binary, fetched and hash-verified by release.yml. Committing it would put 40 MB into git history permanently.'
+        Why        = '40 MB unmodified third-party binary, staged by hand (Testbed/MEDIA.md) and hash-verified by every build that packages it. Committing it would put 40 MB into git history permanently.'
     }
 )
 
@@ -181,7 +201,7 @@ $script:Checks++
 # mistake is still cheap, not one commit later.
 Push-Location $RepoRoot
 try {
-    $tracked = @(& git ls-files --cached --others --exclude-standard | Sort-Object -Unique)
+    $tracked = @(Invoke-NativeCommand { & git ls-files --cached --others --exclude-standard } | Sort-Object -Unique)
 }
 finally {
     Pop-Location
@@ -197,7 +217,7 @@ $topLevel = @($tracked | ForEach-Object { ($_ -split '/')[0] } | Sort-Object -Un
 $prefixPattern = ($topLevel | ForEach-Object { [regex]::Escape($_) }) -join '|'
 
 $scanned = @($tracked | Where-Object {
-        $_ -like '*.md' -or ($_ -like 'Testbed/*' -and $_ -like '*.ps1') -or ($_ -like '.github/scripts/*.ps1')
+        $_ -like '*.md' -or ($_ -like 'Testbed/*' -and $_ -like '*.ps1') -or ($_ -like 'Tools/Checks/*.ps1')
     })
 
 # WHERE A REFERENCE IS ALLOWED TO RESOLVE FROM. Not only the repository root: this project's
@@ -283,10 +303,10 @@ try {
         if (-not $e.MustIgnore) { continue }
         # Both spellings: a `dir/` rule in .gitignore only matches a path git can tell is a
         # directory, and it cannot tell for a path that does not exist on this checkout.
-        & git check-ignore -q -- $e.Path
+        $null = Invoke-NativeCommand { & git check-ignore -q -- $e.Path }
         $ok = ($LASTEXITCODE -eq 0)
         if (-not $ok) {
-            & git check-ignore -q -- ($e.Path.TrimEnd('/') + '/')
+            $null = Invoke-NativeCommand { & git check-ignore -q -- ($e.Path.TrimEnd('/') + '/') }
             $ok = ($LASTEXITCODE -eq 0)
         }
         if (-not $ok) {

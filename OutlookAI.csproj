@@ -241,9 +241,9 @@
          the signing certificate has to change BOTH: this one fails loudly at build time, while
          the updater's copy fails closed and SILENTLY - every future installer is rejected and
          auto-update stops across the whole installed base, with nothing to show for it but a
-         line in the update-error label. .github\scripts\check-pinned-constants.ps1 compares the
-         two on every build and every release, and the release workflow additionally checks both
-         against the certificate it has just imported. -->
+         line in the update-error label. Tools\Checks\check-pinned-constants.ps1 compares the
+         two before every release, and the release script additionally checks both against the
+         certificate it is about to sign with. -->
     <ManifestCertificateThumbprint>2578F7B869383572E751DD6B61B5374C55C6E995</ManifestCertificateThumbprint>
   </PropertyGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
@@ -270,7 +270,7 @@
 
     Inside Visual Studio all of it stays: BuildingInsideVisualStudio is true there, F5 needs the
     registration, and every IDE build writes the trust entry again. Everywhere else - msbuild on a
-    command line, CI, an agent - two things take it away:
+    command line, a release, an agent - two things take it away:
       1. The two writing tasks are replaced by stand-ins that only log NOT-REGISTERED-OUTSIDE-VS.
          A UsingTask declared BEFORE the import that declares the real one wins ("the first
          UsingTask element that applies to a TaskName will be used" - MSBuild's UsingTask
@@ -280,12 +280,13 @@
       2. The targets that call them come off PrepareForRun and VSTOClean (below the import).
     RegisterFormRegions is left alone on purpose. This add-in has no form region, so it writes
     nothing; a stand-in would silently drop any future form region from the manifest of every
-    command-line build, release.yml's included.
+    command-line build, the release build's included.
 
     To put a build on this machine, ask for it: Tools/Switch-AddInBuild.ps1.
 
-    CI holds all of this in place - both stand-ins, their position, condition and missing Override,
-    and the two chains below the import: .github/scripts/check-pinned-constants.ps1, check 14.
+    A guard holds all of this in place - both stand-ins, their position, condition and missing
+    Override, and the two chains below the import: Tools/Checks/check-pinned-constants.ps1,
+    check 14, which runs before every release.
   -->
   <UsingTask TaskName="SetOffice2007AddInRegistration" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll" Condition="'$(BuildingInsideVisualStudio)' != 'true'">
     <ParameterGroup>

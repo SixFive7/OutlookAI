@@ -63,11 +63,11 @@
     This script is the one sanctioned way to change what his Outlook loads - AGENTS.md, "The add-in
     on the maintainer's workstation".
 
-    FOUR MODES. Dry run by default: nothing changes without -Execute.
+    FIVE MODES. Dry run by default: nothing changes without -Execute.
 
       (default) -Commit <rev>   Put a dev build on. HEAD when -Commit is not given.
           1. Builds the add-in AT THAT COMMIT - a `git archive`, never the working tree - with the
-             build Testbed/host/Publish-AddInPayload.ps1 measured: release.yml's Publish,
+             build Testbed/host/Publish-AddInPayload.ps1 measured: the release's Publish,
              signed with a throwaway certificate whose private key is deleted before the script
              goes on, the VSTO tasks that write the registry stood in, and the host's watched
              registry keys and certificate stores snapshotted before and after. Any trace of the
@@ -103,6 +103,15 @@
                     anyone who only needs to know that a commit builds.
       -SelfTest     Every decision against synthetic inputs, and every registry write against a
                     scratch key it then deletes.
+      -CompareInstalledTargets
+                    Read-only, and the one part of the self-test that runs on the maintainer's
+                    workstation: the stand-ins against the VSTO targets of every Visual Studio
+                    here with the Office workload. The self-test skips that comparison where
+                    there is no Visual Studio, as on the build VM, and a Visual Studio update can
+                    change the targets under the stand-ins without a word - so
+                    Tools/Publish-Release.ps1 runs this before every release and refuses to
+                    release unless it passes (D7 (c), decided by the maintainer 2026-10-03). Exit 0
+                    when every targets file passes; 1 when one fails or there is none at all.
 
     WHAT IT NEVER DOES.
       * Never runs elevated: an elevated process can carry another account's HKCU.
@@ -141,6 +150,9 @@
 .PARAMETER SelfTest
     Run the self-test and exit.
 
+.PARAMETER CompareInstalledTargets
+    Compare the stand-ins with the installed VSTO targets and exit (see the modes above).
+
 .PARAMETER Execute
     Without it the default mode and -Restore are dry runs that only read and report.
 
@@ -168,6 +180,7 @@
     powershell -NoProfile -File Tools\Switch-AddInBuild.ps1 -Commit 1a2b3c4 -Execute
     powershell -NoProfile -File Tools\Switch-AddInBuild.ps1 -Restore -Execute
     powershell -NoProfile -File Tools\Switch-AddInBuild.ps1 -SelfTest
+    powershell -NoProfile -File Tools\Switch-AddInBuild.ps1 -CompareInstalledTargets
 #>
 [CmdletBinding()]
 param(
@@ -176,6 +189,7 @@ param(
     [switch] $Status,
     [switch] $BuildOnly,
     [switch] $SelfTest,
+    [switch] $CompareInstalledTargets,
     [switch] $Execute,
     [switch] $RemoveBuildTrust,
     [string] $RepoRoot,
@@ -263,7 +277,7 @@ function Say([string] $m) { Write-Host ("[{0:HH:mm:ss}] {1}" -f (Get-Date), $m) 
 # with 'Stop', the first line a native program writes to a redirected stderr is a terminating
 # NativeCommandError; 'Continue' holds only inside this function, the try keeps "program not
 # found" terminating, and callers judge the call by $LASTEXITCODE. Restated from the repository's
-# other scripts (.github/scripts/check-powershell-51.ps1 explains the rule).
+# other scripts (Tools/Checks/check-powershell-51.ps1 explains the rule).
 function Invoke-NativeCommand {
     param([Parameter(Mandatory = $true)] [scriptblock] $NativeCommand)
 
@@ -1132,7 +1146,8 @@ function Get-MSBuildArgumentList {
     $list = @(
         $projectArg,
         '/t:Publish',
-        # .github/workflows/release.yml's "Build and Publish", property for property.
+        # The release build's "Build and Publish" (the release workflow's, now
+        # Publish-AddInPayload.ps1's for Tools/Publish-Release.ps1), property for property.
         (Format-MSBuildProperty 'Configuration' 'Release'),
         (Format-MSBuildProperty 'ApplicationVersion' $DevVersion),
         (Format-MSBuildProperty 'PublishDir' 'publish\'),
@@ -1372,6 +1387,49 @@ function Remove-ThrowawayCertificate {
     else { Say '  throwaway certificate deleted from every CurrentUser store, private key included' }
 }
 
+# D7 (c): the stand-ins against the text of one VSTO targets file - every parameter the targets pass
+# a writing task must be declared by its stand-in, or MSBuild refuses the call (MSB4064). One result
+# per task: What, Expected, Actual. Pure, so the self-test feeds it synthetic targets anywhere.
+function Compare-StandInsWithTargets {
+    param([Parameter(Mandatory = $true)] [string] $TargetsText)
+    $vsto = [xml]$TargetsText
+    $results = @()
+    foreach ($name in $StandInTasks.Keys) {
+        $used = @()
+        foreach ($node in $vsto.GetElementsByTagName($name)) { foreach ($attr in $node.Attributes) { if ($attr.Name -ne 'Condition') { $used += $attr.Name } } }
+        $missing = @($used | Sort-Object -Unique | Where-Object { $StandInTasks[$name].Parameters -notcontains $_ })
+        $results += [pscustomobject]@{ What = "$name - the installed targets pass nothing the stand-ins lack"; Expected = ''; Actual = ($missing -join ',') }
+    }
+    return $results
+}
+
+# -CompareInstalledTargets: the comparison against EVERY installed VSTO targets file, as a verdict.
+# 0 when each passes; 1 when one fails or when there is none to compare with (D7 (c)).
+function Invoke-InstalledTargetsComparison {
+    Write-Host "Tools/Switch-AddInBuild.ps1 -CompareInstalledTargets under PowerShell $($PSVersionTable.PSVersion) ($($PSVersionTable.PSEdition))"
+    $paths = @(Find-InstalledVstoTargets)
+    if ($paths.Count -eq 0) {
+        Write-Host '  FAIL no Visual Studio with the Office workload on this machine, so the stand-ins were compared with nothing.'
+        return 1
+    }
+    $checks = 0
+    $failures = 0
+    foreach ($p in $paths) {
+        Write-Host "  == $p"
+        foreach ($r in @(Compare-StandInsWithTargets -TargetsText (Get-Content -LiteralPath $p -Raw))) {
+            $checks++
+            if ([string]$r.Expected -ceq [string]$r.Actual) { Write-Host "  OK   $($r.What)" }
+            else {
+                $failures++
+                Write-Host "  FAIL $($r.What) - expected [$($r.Expected)], got [$($r.Actual)]"
+            }
+        }
+    }
+    Write-Host "$checks assertion(s) across $($paths.Count) targets file(s), $failures failure(s)."
+    if ($failures -gt 0) { return 1 }
+    return 0
+}
+
 function Find-InstalledVstoTargets {
     $found = @()
     $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
@@ -1548,7 +1606,7 @@ function Invoke-GuardedBuild {
             foreach ($n in $sentinels.Notes) { Say "  NOTE $n" }
             if (-not $sentinels.Ok) { $problems += $sentinels.Problems }
             else { Say '  guard 2  both scheduled stand-ins logged; the registration target was not scheduled' }
-            # release.yml's "Flatten VSTO payload next to the manifest (|vstolocal)".
+            # The release's "Flatten VSTO payload next to the manifest (|vstolocal)".
             $appFiles = Join-Path $publish 'Application Files'
             $verDirs = @(Get-ChildItem -LiteralPath $appFiles -Directory -ErrorAction SilentlyContinue)
             if ($verDirs.Count -ne 1) { $problems += "Expected exactly one versioned folder under $appFiles, found $($verDirs.Count)." }
@@ -1716,18 +1774,18 @@ function Invoke-SelfTest {
         $code = $t.SelectSingleNode('m:Task/m:Code', $ns).InnerText
         Test-Case "$name only logs its sentinel" $true ($code.Contains("$StandInSentinel`: $name did not run") -and -not $code.Contains('Registry') -and -not $code.Contains('File.'))
     }
+    # The same comparison -CompareInstalledTargets makes - which FAILS where this skips (D7 (c)).
     $installedTargets = @(Find-InstalledVstoTargets)
     if ($installedTargets.Count -gt 0) {
-        $vsto = [xml](Get-Content -LiteralPath $installedTargets[0] -Raw)
-        foreach ($name in $StandInTasks.Keys) {
-            $used = @()
-            foreach ($node in $vsto.GetElementsByTagName($name)) { foreach ($attr in $node.Attributes) { if ($attr.Name -ne 'Condition') { $used += $attr.Name } } }
-            $missing = @($used | Sort-Object -Unique | Where-Object { $StandInTasks[$name].Parameters -notcontains $_ })
-            Test-Case "$name - the installed targets pass nothing the stand-ins lack" '' ($missing -join ',')
-        }
+        foreach ($r in @(Compare-StandInsWithTargets -TargetsText (Get-Content -LiteralPath $installedTargets[0] -Raw))) { Test-Case $r.What $r.Expected $r.Actual }
         Write-Host "       (read: $($installedTargets[0]))"
     }
     else { Write-Host '  SKIP the installed-targets comparison: no Visual Studio with the Office workload here.' }
+    $synthetic = '<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003"><Target Name="T"><SetInclusionListEntry DeploymentManifestFullPath="d" CertificateThumbprint="t" Condition="c" /><RegisterFormRegions AddInName="n" AssemblyName="a" /></Target></Project>'
+    $r = @(Compare-StandInsWithTargets -TargetsText $synthetic)
+    Test-Case 'D7 (c) on synthetic targets: covered parameters pass' 0 @($r | Where-Object { [string]$_.Expected -cne [string]$_.Actual }).Count
+    $r = @(Compare-StandInsWithTargets -TargetsText $synthetic.Replace('AssemblyName="a"', 'AssemblyName="a" NewWriterSwitch="x"'))
+    Test-Case 'D7 (c) on synthetic targets: a parameter the stand-in lacks is named' 'NewWriterSwitch' (@($r | Where-Object { $_.What -eq 'RegisterFormRegions - the installed targets pass nothing the stand-ins lack' })[0].Actual)
     $a1 = Get-MSBuildArgumentList -ProjectPath 'C:\b\source\OutlookAI.csproj' -Thumbprint 'ABCDEF' -StandInTargets 'C:\b\NoHostWrite.targets' -FileLog 'C:\b\msbuild.log'
     Test-Case 'the chain is one quoted global property with a real semicolon' $true ($a1 -contains '/p:PrepareForRunDependsOn="CopyFilesToOutputDirectory;VisualStudioForApplicationsBuild"')
     Test-Case 'DefineConstants semicolons are escaped' $true ($a1 -contains '/p:DefineConstants=VSTO40%3BTRACE')
@@ -1942,12 +2000,14 @@ if ($Restore) { $modes += '-Restore' }
 if ($Status) { $modes += '-Status' }
 if ($BuildOnly) { $modes += '-BuildOnly' }
 if ($SelfTest) { $modes += '-SelfTest' }
+if ($CompareInstalledTargets) { $modes += '-CompareInstalledTargets' }
 if ($modes.Count -gt 1) { throw "Pick one of $($modes -join ', ')." }
-if ($CommitGiven -and ($Restore -or $Status -or $SelfTest)) { throw '-Commit belongs to putting a dev build on (the default mode) and to -BuildOnly.' }
-if ($Execute -and ($Status -or $SelfTest -or $BuildOnly)) { throw '-Execute applies only to putting a dev build on and to -Restore. -Status and -SelfTest never write, and -BuildOnly never registers anything.' }
+if ($CommitGiven -and ($Restore -or $Status -or $SelfTest -or $CompareInstalledTargets)) { throw '-Commit belongs to putting a dev build on (the default mode) and to -BuildOnly.' }
+if ($Execute -and ($Status -or $SelfTest -or $BuildOnly -or $CompareInstalledTargets)) { throw '-Execute applies only to putting a dev build on and to -Restore. -Status, -SelfTest and -CompareInstalledTargets never write, and -BuildOnly never registers anything.' }
 if ($RemoveBuildTrust -and -not $Restore) { throw '-RemoveBuildTrust applies only to -Restore.' }
 
 if ($SelfTest) { exit (Invoke-SelfTest) }
+if ($CompareInstalledTargets) { exit (Invoke-InstalledTargetsComparison) }
 
 if (Test-IsElevated) {
     throw 'REFUSING TO RUN ELEVATED. An elevated process can carry another account''s HKCU, and this script only ever changes the Outlook of the user running it. Run it from an ordinary, unelevated shell.'

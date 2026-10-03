@@ -118,6 +118,15 @@ public sealed class CorpusOptions
     /// </summary>
     public bool UndatedContacts { get; private set; }
 
+    /// <summary>
+    /// <c>--all-kinds</c>: the hub or bystander population with ALL THREE non-mail kinds the indexed guest's
+    /// way - decided 2026-10-03 (D62 (b); <see cref="CorpusPlanOptions.IncludeAllKinds"/>): the contacts
+    /// undated in the index, the appointments and tasks dated at planned instants older than every mail
+    /// item. Part of the shape key like <c>--undated-contacts</c>, and exclusive with it. Needs
+    /// <c>--population hub</c> or <c>bystander</c>.
+    /// </summary>
+    public bool AllKinds { get; private set; }
+
     /// <summary>Parses the arguments after the command word. Throws on anything unrecognised.</summary>
     public static CorpusOptions Parse(IEnumerable<string> args)
     {
@@ -177,10 +186,11 @@ public sealed class CorpusOptions
 
         if (Population == null)
         {
-            if (UndatedContacts)
+            if (UndatedContacts || AllKinds)
             {
                 throw new ArgumentException(
-                    "--undated-contacts needs --population hub or bystander: the measurement corpus carries no undated item.");
+                    (AllKinds ? "--all-kinds" : "--undated-contacts")
+                    + " needs --population hub or bystander: the measurement corpus carries no undated item.");
             }
 
             return new CorpusPlanOptions(CorpusId!, Seed, AnchorUtc.Value);
@@ -199,6 +209,7 @@ public sealed class CorpusOptions
             Population = Population,
             Owner = CorpusMailboxOwner.ForStore(Store!),
             IncludeUndatedContacts = UndatedContacts,
+            IncludeAllKinds = AllKinds,
         };
     }
 
@@ -211,6 +222,9 @@ public sealed class CorpusOptions
                 break;
             case "undated-contacts":
                 UndatedContacts = true;
+                break;
+            case "all-kinds":
+                AllKinds = true;
                 break;
             case "allow-drafts-placement":
                 AllowDraftsPlacement = true;
@@ -481,7 +495,13 @@ public static class CorpusCommands
                     ? "none - switched off since 2026-10-03 (Q98 (a)): in a PST these kinds are dated, and Outlook will not remove it"
                     : "none")
                 : string.Join(", ", undatedKinds.Select(k => k.Key + "=" + k.Value.ToString(invariant)))
-                    + (population.UndatedCriterion == CorpusUndatedCriterion.IndexHoldsNoDate
+                    + (population.UndatedCriterion == CorpusUndatedCriterion.IndexDatesAsPlanned
+                        ? " - the contacts UNDATED in the index for LiveOrderKeyCollationTests, the appointments and tasks DATED "
+                            + "at planned instants older than every mail item, from "
+                            + CorpusManifest.FormatUtc(Enumerable.Range(1, plan.FixedItemCount ?? 0)
+                                .Select(o => population.PlannedDeliveryUtc(o)).Where(d => d != null).Max()!.Value)
+                            + " back (D62 (b), the indexed guest)"
+                        : population.UndatedCriterion == CorpusUndatedCriterion.IndexHoldsNoDate
                         ? " - dated in the store, UNDATED in the index (Q98 (f)), for LiveOrderKeyCollationTests on the indexed guest"
                         : " - no delivery time, for LiveOrderKeyCollationTests")));
         if (population.SubjectOnlyProbe != null)
@@ -567,13 +587,20 @@ public static class CorpusCommands
         }
 
         output.WriteLine("== undated probe ==");
+        DateTime? plannedDelivery = criterion == CorpusUndatedCriterion.IndexDatesAsPlanned
+            ? DateTime.SpecifyKind(plan.Options.AnchorUtc, DateTimeKind.Utc).AddSeconds(-(plan.Population!.OldestDatedAgeSeconds + 86_400L))
+            : null;
         Action<CorpusItemKind, string>? whileHeld = null;
         TimeSpan holdBudget = TimeSpan.Zero;
         if (options.UndatedIndexWaitSeconds > 0)
         {
             output.WriteLine("  each item is held for up to " + options.UndatedIndexWaitSeconds.ToString(CultureInfo.InvariantCulture)
-                + " s for the index to take it in, and the index's columns are printed before it is deleted (--undated-index-wait)");
-            whileHeld = CorpusUndatedIndex.CreateReader(output, TimeSpan.FromSeconds(options.UndatedIndexWaitSeconds));
+                + " s for the index to take it in, and the index's columns are printed before it is deleted (--undated-index-wait)"
+                + (plannedDelivery == null ? string.Empty : "; an appointment or a task until the index dates it as written"));
+            whileHeld = CorpusUndatedIndex.CreateReader(
+                output,
+                TimeSpan.FromSeconds(options.UndatedIndexWaitSeconds),
+                written: kind => kind is CorpusItemKind.Appointment or CorpusItemKind.Task ? plannedDelivery : null);
             holdBudget = TimeSpan.FromSeconds((double)options.UndatedIndexWaitSeconds * kinds.Count);
         }
 
@@ -585,9 +612,20 @@ public static class CorpusCommands
                 + "date is reported, not judged - corpus-indexed checks the index");
         }
 
+        // All three kinds the indexed guest's way (D62 (b)): the appointment and the task are given a delivery
+        // time the way the build gives each one its planned instant - the youngest instant the plan uses - and
+        // must read it back; the contact is written as under IndexHoldsNoDate.
+        if (plannedDelivery != null)
+        {
+            output.WriteLine("  held to the INDEX kind by kind (D62 (b)): the appointment and the task are DATED "
+                + CorpusManifest.FormatUtc(plannedDelivery.Value) + " after their first save and read back; the contact keeps the "
+                + "store's delivery time, unjudged - corpus-indexed checks both in the index");
+        }
+
         IReadOnlyList<CorpusUndatedProbe> probes = ComCorpusMailbox.ProbeUndated(
             options.Store!, plan.Options.CorpusId, kinds, whileHeld, holdBudget,
-            removeDeliveryTime: criterion != CorpusUndatedCriterion.IndexHoldsNoDate);
+            removeDeliveryTime: CorpusUndatedCriteria.StoreMustHoldNoDate(criterion),
+            plannedDeliveryUtc: plannedDelivery);
         foreach (CorpusUndatedProbe p in probes)
         {
             output.WriteLine(CorpusUndatedFidelity.Line(p));

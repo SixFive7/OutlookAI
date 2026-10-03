@@ -56,7 +56,7 @@
     is nothing worth storing, and the stored form is DPAPI-sealed per user per machine so a
     literal in a file could not become it anyway. Type it once in Outlook if it is ever asked for.
     Testbed/README.md section 4 also forbids a credential anywhere under Testbed/, and
-    .github/scripts/check-testbed-references.ps1 check 6 fails the build over one.
+    Tools/Checks/check-testbed-references.ps1 check 6 fails the build over one.
 
     WHAT IT EXPECTS TO START FROM. The profile already exists and already carries the PST that is
     meant to be the delivery store - New-OutlookProfile.ps1 and Add-OutlookPstStore.ps1 first. The

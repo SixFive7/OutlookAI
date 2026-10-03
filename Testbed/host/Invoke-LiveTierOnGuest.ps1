@@ -2,8 +2,8 @@
 <#
 .SYNOPSIS
     Runs the live tier on a test guest end to end in ONE call, and writes summary.txt and
-    summary.json: lease, checkpoint, staging, hub rebuild, throwaway reset, the suite at RunLevel
-    Limited with the per-run opt-in, results, resting checkpoint, save, release.
+    summary.json: lease, checkpoint, staging, hub rebuild, the suite at RunLevel Limited with the
+    per-run opt-in, results, resting checkpoint, save, release.
 
 .DESCRIPTION
     The guest counterpart of Invoke-TestsOnBuildVm.ps1, written 2026-10-03 after the first guest
@@ -23,8 +23,8 @@
                    Testbed/guest scripts in, swaps the server, tools, source and feed, and proves the
                    suite TEST-READY (Install-DotnetSdk.ps1 -Execute, then -Verify).
       4. PREPARE - Restart-Guest.ps1 -Execute (graceful, or it refuses), then Reset-HubPopulation.ps1
-                   and Reset-ThrowawayStore.ps1 -Execute (Testbed/README.md steps 9a and 9a-ii), both
-                   at RunLevel Limited: every Outlook start NOT elevated (D77).
+                   -Execute (Testbed/README.md step 9a) at RunLevel Limited: every Outlook start NOT
+                   elevated (D77).
       5. RUN     - the suite through Register-InteractiveTask.ps1 -RunLevel Limited, with
                    OUTLOOKAI_LIVE_OPT_IN set to the guest's computer name INSIDE the task's script,
                    for this run only, and the guest's derived filter (T2/LiveRunFilters.cs).
@@ -92,9 +92,6 @@
 .PARAMETER SkipHubReset
     Skips step 9a. For a narrowed run only: the frontier test fails on a hub nobody rebuilt.
 
-.PARAMETER SkipThrowawayReset
-    Skips step 9a-ii. For a narrowed run only.
-
 .PARAMETER SelfTest
     Checks the pure parts - the guest table, the filter, the lease decision, the TRX and console
     readers, the verdict table, summary.json's shape - and the constants against the files they
@@ -102,8 +99,8 @@
 
 .EXAMPLE
     pwsh -File Testbed/host/Invoke-LiveTierOnGuest.ps1 -VMName OutlookAI-Unindexed
-    pwsh -File Testbed/host/Invoke-LiveTierOnGuest.ps1 -VMName OutlookAI-Indexed d4e31fe -GreenCheckpoint CP-18C-LIVE-GREEN
-    pwsh -File Testbed/host/Invoke-LiveTierOnGuest.ps1 -VMName OutlookAI-Indexed -FilterSuffix '&FullyQualifiedName~LiveShowMeTests' -SkipHubReset -SkipThrowawayReset
+    pwsh -File Testbed/host/Invoke-LiveTierOnGuest.ps1 -VMName OutlookAI-Indexed d4e31fe -GreenCheckpoint CP-19C-LIVE-GREEN
+    pwsh -File Testbed/host/Invoke-LiveTierOnGuest.ps1 -VMName OutlookAI-Indexed -FilterSuffix '&FullyQualifiedName~LiveShowMeTests' -SkipHubReset
     pwsh -File Testbed/host/Invoke-LiveTierOnGuest.ps1 -SelfTest
 #>
 [CmdletBinding(DefaultParameterSetName = 'Run')]
@@ -118,7 +115,6 @@ param(
     [Parameter(ParameterSetName = 'Run')] [string] $GreenCheckpoint = '',
     [Parameter(ParameterSetName = 'Run')] [switch] $RestOnGreen,
     [Parameter(ParameterSetName = 'Run')] [switch] $SkipHubReset,
-    [Parameter(ParameterSetName = 'Run')] [switch] $SkipThrowawayReset,
     [Parameter(ParameterSetName = 'Run')] [string] $ResultsRoot,
     [Parameter(ParameterSetName = 'Run')] [string] $CredentialRepoRoot,
     [Parameter(ParameterSetName = 'Run')] [string] $SdkInstallerPath,
@@ -136,7 +132,7 @@ if (Test-Path Variable:\PSNativeCommandUseErrorActionPreference) {
 # The test guests and their layout, as constants. -SelfTest holds them to the files they copy.
 # ---------------------------------------------------------------------------------------------
 $Guests = [ordered]@{
-    'OutlookAI-Indexed'   = [ordered]@{ ComputerName = 'OAI-INDEXED'; Indexed = $true; Checkpoint = 'CP-17C-CORPUS-160K' }
+    'OutlookAI-Indexed'   = [ordered]@{ ComputerName = 'OAI-INDEXED'; Indexed = $true; Checkpoint = 'CP-18C-ALL-KINDS' }
     'OutlookAI-Unindexed' = [ordered]@{ ComputerName = 'OAI-UNINDEXED'; Indexed = $false; Checkpoint = 'CP-12B-POPULATIONS-V2' }
 }
 $GuestRoot = 'C:\OutlookAI-Q5'
@@ -398,7 +394,7 @@ function Invoke-SelfTest {
 
     Write-Host '== the guests =='
     $i = Get-GuestFacts 'OutlookAI-Indexed'
-    Check 'the indexed guest is a test guest' 'OAI-INDEXED|True|CP-17C-CORPUS-160K' @($i.ComputerName, $i.Indexed, $i.Checkpoint)
+    Check 'the indexed guest is a test guest, resting on CP-18C-ALL-KINDS' 'OAI-INDEXED|True|CP-18C-ALL-KINDS' @($i.ComputerName, $i.Indexed, $i.Checkpoint)
     $u = Get-GuestFacts 'outlookai-unindexed'
     Check 'the unindexed guest is one, in any case' 'OutlookAI-Unindexed|OAI-UNINDEXED|False' @($u.Name, $u.ComputerName, $u.Indexed)
     Check 'the build VM is refused' $true ($null -eq (Get-GuestFacts 'OutlookAI-Build'))
@@ -504,7 +500,7 @@ function Invoke-SelfTest {
     $filters = [System.IO.File]::ReadAllText((Join-Path $repo 'McpServer\OutlookAI.McpServer.Tests\T2\LiveRunFilters.cs'))
     Check 'LiveRunFilters.Guest leaves out exactly DelegateStore and CachedExchange' $true $filters.Contains('WorkstationOnlyCapabilities { get; } = new[] { DelegateStore, CachedExchange }')
     Check 'LiveRunFilters.GuestUnindexed adds SearchIndex' $true $filters.Contains('GuestUnindexed { get; } = Guest + "&Requires!=" + SearchIndex')
-    foreach ($name in 'Reset-HubPopulation.ps1', 'Reset-ThrowawayStore.ps1') {
+    foreach ($name in @('Reset-HubPopulation.ps1')) {
         $text = [System.IO.File]::ReadAllText((Join-Path $repo "Testbed\guest\$name"))
         Check "$name reads the settings where this stages them" $true $text.Contains("`$SettingsPath = '$GuestSettingsPath'")
     }
@@ -727,7 +723,7 @@ Copy-Item -LiteralPath '$GuestPayloadDir\live-test-settings.json' -Destination '
     $timings['stage'] = Format-Seconds ((Get-Date) - $t0).TotalSeconds
     Say "staged: TEST-READY ($($timings['stage']))"
 
-    # ---- PREPARE: a graceful restart, the hub rebuild and the throwaway data file.
+    # ---- PREPARE: a graceful restart and the hub rebuild.
     $t0 = Get-Date
     try {
         Use-Lease 30
@@ -738,16 +734,11 @@ Copy-Item -LiteralPath '$GuestPayloadDir\live-test-settings.json' -Destination '
             $o = Invoke-Guest 'reset-hub' "& '$GuestRoot\Reset-HubPopulation.ps1' -Execute; exit `$LASTEXITCODE" 3600
             if ((Get-TaskExit $o) -ne 0) { throw 'the hub rebuild did not succeed - guest\reset-hub.log' }
         }
-        if (-not $SkipThrowawayReset) {
-            $o = Invoke-Guest 'reset-throwaway' "& '$GuestRoot\Reset-ThrowawayStore.ps1' -Execute; exit `$LASTEXITCODE" 900
-            if ((Get-TaskExit $o) -ne 0) { throw 'the throwaway data file was not recreated - guest\reset-throwaway.log' }
-        }
     }
     catch { if (-not $stage) { $stage = 'INFRA'; $stageWhy = "preparing the guest failed: $($_.Exception.Message)" }; throw }
     $timings['prepare'] = Format-Seconds ((Get-Date) - $t0).TotalSeconds
     $prepared = @('restart')
     if (-not $SkipHubReset) { $prepared += 'hub rebuild' }
-    if (-not $SkipThrowawayReset) { $prepared += 'throwaway reset' }
     Say "prepared: $($prepared -join ', ') ($($timings['prepare']))"
 
     # ---- RUN: the suite, NOT elevated, opted in for this run only.

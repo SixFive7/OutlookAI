@@ -51,7 +51,7 @@ namespace OutlookAI.Services
     ///
     /// <para>
     /// <see cref="Supported"/> is also checked against <c>Installer.iss</c>'s resiliency entries
-    /// by <c>.github/scripts/check-pinned-constants.ps1</c> (#4), because the installer is Pascal
+    /// by <c>Tools/Checks/check-pinned-constants.ps1</c> (#4), because the installer is Pascal
     /// and cannot read a C# constant.
     /// </para>
     /// </summary>

@@ -20,7 +20,7 @@
 
     Written by an agent that was not allowed to run it: it restores NuGet packages, which is a
     download, and downloads were out of scope for the session that produced it. Verified by
-    PARSING only - the same check .github/scripts/check-testbed-references.ps1 applies to every
+    PARSING only - the same check Tools/Checks/check-testbed-references.ps1 applies to every
     script under Testbed/. No archive was produced, no package was fetched and no hash was
     computed to write it.
 
@@ -191,7 +191,7 @@ function SizeMb([string] $path) { return [math]::Round((Get-Item -LiteralPath $p
 #     those with a position block around every line, and an empty one as an exception type name.
 #   * The exit code is left in $LASTEXITCODE, and the caller checks it.
 # Restated in each script that needs it, as this repository restates its shared rules.
-# .github/scripts/check-powershell-51.ps1 fails the build on a redirected native call that does
+# Tools/Checks/check-powershell-51.ps1 fails the build on a redirected native call that does
 # not go through a function like this one.
 function Invoke-NativeCommand {
     param([Parameter(Mandatory = $true)] [scriptblock] $NativeCommand)

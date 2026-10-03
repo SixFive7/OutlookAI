@@ -224,7 +224,9 @@ when a search carries an `after`/`before` bound (a date predicate already exclud
 extra index statement per truncated search if NULLs sort first, on the order of 40-100 ms by the
 measured shapes in `Docs/magic-numbers.md`. Plus mapping every returned row rather than the first
 `Top` of them, which is pure CPU on at most 5000 rows and is what makes `index.rowsScanned` /
-`index.rowsDropped` finally mean what their names say.
+`index.rowsDropped` finally mean what their names say. **Measured 2026-10-03 on `OutlookAI-Indexed`,
+inside a mapi `SCOPE`: NULLs sort LAST** and the floor literal is accepted - so on that provider the
+second statement is never issued (`Docs/live-tier-on-the-vm.md` section 4.2e).
 
 **What was deliberately NOT protected.** A dated meeting request, bounce report or read receipt can
 still push an older mail off the end of a `Top n` list. That is the B3 decision working: under
@@ -369,7 +371,7 @@ spelling".** See the decision log below.
 
 ### 2026-10-03, autonomous - the indexed guest's first live runs: sixteen failures were the tests, one the product
 
-**Primer.** The first full live run on `OutlookAI-Indexed` (d4e31fe, runbook 4.2e) failed 17 of 123
+**Primer.** The first full live run on `OutlookAI-Indexed` (d4e31fe, runbook 4.2f) failed 17 of 123
 tests. Thirteen stopped at "Store 'Corpus A' not found among 3 discovered index scopes", and four
 failed on their own. Sixteen were tests that had never met an indexed guest with a 160,000-item
 store, or an Office 2024 behaviour; the seventeenth found a product defect (item 5). Each is decided

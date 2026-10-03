@@ -96,9 +96,8 @@
     WHICH VERSION, AND WHY IT IS PINNED. .NET 10, x64. Every project in McpServer/ targets
     `net10.0-windows`; OutlookAI.Core additionally targets `net48`, which needs no separate
     install because it builds against the `Microsoft.NETFramework.ReferenceAssemblies` package
-    (in the staged feed). `.github/workflows/mcpserver.yml` asks setup-dotnet for `10.0.x` and
-    there is NO global.json anywhere in the repository, so nothing pins a feature band and any
-    .NET 10 SDK would compile. The default below pins the version the HOST runs anyway, because
+    (in the staged feed). There is NO global.json anywhere in the repository, so nothing pins a
+    feature band and any .NET 10 SDK would compile. The default below pins the version the HOST runs anyway, because
     the host is what publishes the payload the guest measures with, and one toolchain across
     both machines is one fewer difference to suspect when a guest behaves unlike the host - the
     same reasoning Testbed/MEDIA.md applies to locale and to the Office build gap.
@@ -212,7 +211,7 @@
     The class rung 4 executes. ALWAYS ANDed with Category!=Live; see MAILBOX SAFETY above.
 
 .PARAMETER Configuration
-    Release by default, matching CI and matching what a measurement run should use.
+    Release by default, matching the release build and what a measurement run should use.
 
 .PARAMETER ProbeDir
     Where rung 2's throwaway console project is written. Removed afterwards unless -KeepProbe.

@@ -33,7 +33,7 @@ recovered on 2026-08-24 from the manifest header on the guest and are now commit
 
 Default shape, store `Outlook Data File`, placement `DraftsThenMoveWithSentFlag`, dates
 `PropertyAccessorDates`. `Testbed/testbed.json` holds them, together with the whole expected
-plan output, and `.github/scripts/check-testbed-references.ps1` fails the build if that file,
+plan output, and `Tools/Checks/check-testbed-references.ps1` fails the build if that file,
 `Testbed/guest/Build-Corpus.ps1` and this page stop agreeing.
 
 **The agreement is checkable rather than asserted.** Re-running `corpus-plan` with those four

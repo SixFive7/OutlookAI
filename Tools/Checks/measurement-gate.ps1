@@ -29,7 +29,7 @@
        meaningful only against older values from that same machine, and the maintainer does not
        want them published. So the store lives under %LOCALAPPDATA%, this script REFUSES to
        write anywhere inside a git working tree, and it REFUSES to run its comparing modes at
-       all under CI (where stdout is a public build log). `.github/scripts/check-measurement-privacy.ps1`
+       all under CI (where stdout is a public build log). `Tools/Checks/check-measurement-privacy.ps1`
        is the CI-side half that proves nothing measurement-shaped ever got committed.
 
     PROVENANCE IS PART OF THE RECORD, NOT A NICETY. Every run stores the commit, the branch,
@@ -66,9 +66,9 @@
     Default symmetric tolerance for `both`-class metrics, as a fraction. Default 0.10.
 
 .EXAMPLE
-    pwsh -File .github/scripts/measurement-gate.ps1 -Collect -TestLog .work/test.log -ProfileKind production
+    pwsh -File Tools/Checks/measurement-gate.ps1 -Collect -TestLog .work/test.log -ProfileKind production
 .EXAMPLE
-    pwsh -File .github/scripts/measurement-gate.ps1 -Run .work/live-run.json -Collect -TestLog .work/test.log -Require All
+    pwsh -File Tools/Checks/measurement-gate.ps1 -Run .work/live-run.json -Collect -TestLog .work/test.log -Require All
 #>
 [CmdletBinding()]
 param(
@@ -505,7 +505,7 @@ OutlookAI measurement baselines - MACHINE LOCAL, DO NOT COPY OUT OF THIS MACHINE
 
 What this is
   An append-only history of measurement runs taken before releases of OutlookAI, written by
-  .github/scripts/measurement-gate.ps1 in the OutlookAI repository.
+  Tools/Checks/measurement-gate.ps1 in the OutlookAI repository.
 
 Why it is here and not in the repository
   These numbers are meaningful only relative to older numbers from THIS machine. They are not
@@ -521,7 +521,7 @@ Files
 
 Reading it
   Get-Content history.jsonl | ForEach-Object { `$_ | ConvertFrom-Json }
-  or:  pwsh -File .github\scripts\measurement-gate.ps1 -Show
+  or:  pwsh -File Tools\Checks\measurement-gate.ps1 -Show
 
 Deleting it
   Safe. The next run reports "no baseline - nothing to compare" and refuses to pass until the
@@ -575,7 +575,7 @@ function Read-JsonLines([string] $path) {
 #     those with a position block around every line, and an empty one as an exception type name.
 #   * The exit code is left in $LASTEXITCODE, and the caller checks it.
 # Restated in each script that needs it, as this repository restates its shared rules.
-# .github/scripts/check-powershell-51.ps1 fails the build on a redirected native call that does
+# Tools/Checks/check-powershell-51.ps1 fails the build on a redirected native call that does
 # not go through a function like this one.
 function Invoke-NativeCommand {
     param([Parameter(Mandatory = $true)] [scriptblock] $NativeCommand)
@@ -645,7 +645,7 @@ function Read-TestLog([string] $path) {
 }
 
 function Invoke-PinnedConstantsCollector {
-    $script = Join-Path $RepoRoot '.github/scripts/check-pinned-constants.ps1'
+    $script = Join-Path $RepoRoot 'Tools/Checks/check-pinned-constants.ps1'
     if (-not (Test-Path -LiteralPath $script)) {
         return @{ Ok = $false; Detail = 'check-pinned-constants.ps1 is missing.' }
     }
@@ -1575,7 +1575,7 @@ if ($failures.Count -gt 0) {
         foreach ($f in $failures) { Write-Host "   * $f" }
         Write-Host ''
         Write-Host " If one of these is a change you MEANT to make, do not widen the tolerance. Record why:"
-        Write-Host "   pwsh -File .github/scripts/measurement-gate.ps1 -Annotate -Metric <id> -Reason 'what moved and what measurement justifies it'"
+        Write-Host "   pwsh -File Tools/Checks/measurement-gate.ps1 -Annotate -Metric <id> -Reason 'what moved and what measurement justifies it'"
     }
     $exitCode = 1
 } elseif ($coldStarts.Count -gt 0 -and -not $AcceptNewBaseline) {

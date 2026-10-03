@@ -12,6 +12,49 @@
   designation from a freshly opened store in the verify session; (3) read it in the product the way
   the verify session does, after creating. Recommended: (1) first.
 
+- [ ] **Three decided jobs, held until the agents now running have merged (decided by the
+  maintainer 2026-10-03).** Each one touches files every open branch also touches, or stops the
+  build VM they all share, so each waits for a quiet moment.
+  - **Q123 - release notes in BrowserAI's style.** Copy the release-notes style, system and rules
+    from the BrowserAI repository (`C:\Source\SixFive7\BrowserAI`) into this one: `CHANGELOG.md`
+    conventions, `AGENTS.md` rules, and `Tools/Publish-Release.ps1`. The current Unreleased section
+    (about 152,000 characters) is over GitHub's 125,000-character limit for a release body, so the
+    next release cannot publish until this lands. Do it last, because it rewrites the Unreleased
+    section every branch adds to.
+  - **Q125 - security scanning without GitHub.** (b) Turn on the security analysers that ship with
+    the .NET SDK in the builds, and triage what they find. Plus an exception to the Dependencies rule,
+    granted by the maintainer: CodeQL may be run locally. Record the exception in `AGENTS.md` beside
+    Q71/Q111, pin the CodeQL bundle by version and published hash, and add a script to run it.
+  - **Q126 - the build VM in UTC.** Set `OutlookAI-Build` to UTC and take a new base checkpoint, so
+    the non-live suite runs in a zone other than the workstation's - GitHub's runner used to catch
+    zone bugs that way (Q95). Update the runner, its records and its pins. Hold the build VM's lease
+    while switching.
+
+- [ ] **On or after 2026-10-05, ask the maintainer whether the shared test mailbox exists (Q109).**
+  He requested a free shared mailbox in his Microsoft 365 tenant on 2026-10-03 (for example
+  `outlookai-test@xxlnet.nl`, with full access for `telefonie@xxlnet.nl`); creating it takes a few
+  days, and he asked to be reminded after 48 hours. Until it exists, the six `Requires=DelegateStore`
+  Exchange tests stay disabled on the Exchange test VM. Once it does: enable them there, and move
+  test writes from telefonie into the shared mailbox wherever a test allows it (Q110).
+
+- [ ] **Decide what the add-in's tuning reconcile does with the five Cached Mode values it writes
+  under `HKCU\Software\Policies` (found 2026-10-03 by the first guest run of the two-phase add-in
+  install).** `OutlookTuningService.Reconcile` writes D25's five `caching.policy.*` values there, and
+  that key is read-only to a NOT elevated token - so in the Outlook a user runs, the first of them
+  throws, the reconcile's catch-all swallows it, and nothing after it runs: not the two user Cached
+  Mode values, not the two OST size values, not `LastReconcileUtc` (`outlook_health` then reports
+  `tuning.lastReconcileUtc` null). Only a machine where an administrator, a GPO or an earlier
+  elevated Outlook already set the five values escapes it; the maintainer's workstation is one.
+  Measured, with a control that isolates it, in `Docs/live-tier-on-the-vm.md` section 2.3. Until it
+  is decided, a guest rebuilt by `Testbed/README.md` section 1 stops at step 7c `BROKEN`, where
+  `T2/LiveHealthTests` would fail. Directions: (1) walk on past a value that cannot be written,
+  record it - in `PolicyConflicts`, or a new "needs an administrator" list the settings dialog and
+  `outlook_health` show - and always write `LastReconcileUtc`; (2) stop writing the Policies hive and
+  keep only the user-hive values; (3) write the policy values from an elevated step - the installer,
+  per-user today, or a one-time elevated helper; (4) change nothing in the product and set the five
+  values in the testbed's elevated install phase, which hides the defect the way the old elevated
+  `-Execute` did. Recommended: (1), then the proof again from `CP-08`, for `ADDIN-READY` with no
+  control.
 - [ ] **Recognise ANOTHER server session's lifetime pin on the show-me path's `ActiveExplorer()`
   branch (D49, found 2026-10-03, not measured).** `EnsureVisibleExplorer` refuses to display an
   Explorer `ActiveExplorer()` hands back only when `ComposeSurface.IsPin` knows it, and the pin
@@ -90,7 +133,7 @@
 
 - [ ] **What still stops a rebuilder rebuilding the test VM from this repository alone.**
   `Testbed/` is the entry point and holds the runnable half - parameter set, host and guest
-  scripts, the settings template, the credential contract - and `.github/scripts/check-testbed-references.ps1`
+  scripts, the settings template, the credential contract - and `Tools/Checks/check-testbed-references.ps1`
   fails the build when a document names something the repository does not contain. The corpus
   parameters are now recorded and verified: **`vm2` / seed `7777` / anchor `2026-08-19` /
   20,000 items, default shape**, recovered from the manifest header on the guest and confirmed by
@@ -118,19 +161,6 @@
         are different facts and only the second happened: the per-account index assumption was NOT
         disproved - the design stopped depending on it, which also retired the riskiest unverified
         assumption in the whole layout.
-  - [ ] **Run the two-phase add-in install on a guest (Q100, decided 2026-10-03).**
-        `Testbed/guest/Install-OutlookAIAddIn.ps1` is now `-Phase Install` (elevated, never starts
-        Outlook) and `-Phase FirstRun` (`-RunLevel Limited`, reads the started Outlook's token);
-        proven on the host only - `-SelfTest` 168/0 under 5.1 and 7, eleven mutants caught. Both
-        guests were busy when it was split, so it waits for the next guest rebuild or a free slot,
-        from a checkpoint with the add-in NOT installed. `Docs/live-tier-on-the-vm.md` section 2.3,
-        "The two phases have NOT run on a guest", lists what the run must record; replace that
-        paragraph and the script's banner with what it did.
-  - [ ] **Run `Testbed/guest/Measure-SweepCost.ps1` once.** It is the reconstruction of
-        `Docs/v3-probes/soakfix13-probe-sweep-cost.ps1`, which is gitignored and gone with its
-        scratch directory. Written from the shipped `SweepFolder` source, read-only by
-        construction, and **never executed** - the banner says so and should be replaced with what
-        it actually did.
   - [ ] **Fold the recovered facts into `Docs/live-tier-on-the-vm.md`.** Its section 8 lists ~20
         open items; the corpus parameters (item 15), the PST path and display name (item 11), the
         scheduled-task recipe (item 10) and how results leave the guest (item 13) are now answered
@@ -250,8 +280,9 @@
         is a session budget masquerading as a per-call one. The exhaustive-scan live test now
         passes an explicitly derived budget, which is the case that would have broken first;
         the general split (session budget plus a per-`RoundTripAsync` budget, both named)
-        is still open. Raising the DEFAULT is deliberately not the fix - it is CI's only
-        safety net against a hung stdio test, and CI's job timeout is 20 minutes.
+        is still open. Raising the DEFAULT is deliberately not the fix - it is the non-live
+        run's only safety net against a hung stdio test, and the build VM gives a whole run 60
+        minutes (Testbed/host/Invoke-TestsOnBuildVm.ps1 -RunTimeoutMinutes).
   - [ ] **Claude Code's 30-minute stdio idle abort is now the nearest client-side limit, and
         nobody owns it.** A 600 s exhaustive scan is 600 s of complete silence on the pipe -
         this server sends no progress notifications. It fits (600 s < 1800 s idle < the
@@ -443,34 +474,6 @@
   The maintainer asked for this at 09:00 on 2026-08-18. It is expected to be the portable
   description-budget prompt written for another project; read it and act on what it asks for. Recorded
   here because auto-compaction was imminent when it was requested.
-
-- [ ] **Run the index-collation probe on the live profile** - `T2 LiveOrderKeyCollationTests`
-  (read-only, index statements only, no COM and no mailbox writes). It answers two things the
-  B3 follow-up could only reason about, both recorded in `QUESTIONS.md` under Q8 and in
-  `Docs/magic-numbers.md` beside `WsSqlBuilder.OrderKeyFloorUtc`:
-  - [ ] **Where the provider sorts a NULL under `ORDER BY System.Message.DateReceived DESC`.**
-        If last, the displacement refetch never fires and the guard is free; if first, it fires
-        on every truncated search and each one costs a second index statement. The guarantee
-        holds either way - this decides only what it costs, and it is the number that belongs
-        in the magic-numbers row, which currently says "not measured".
-  - [ ] **Whether the provider accepts the `1601-01-01 00:00:00` floor literal** and treats the
-        comparison as "has a value". If it does not, the refetch fails and searches that need it
-        return a short answer flagged with `index.candidatesExhausted` - loud, but the guarantee
-        then rests on a query that never runs.
-
-  **PARTIAL ANSWER, measured 2026-08-18 on this machine, directly against `Search.CollatorDSO`
-  (three read-only SELECTs, no Outlook, no mailbox).** Under `ORDER BY System.Message.DateReceived
-  DESC` over a predicate matching the whole index, the first 25 rows were **all dated** - and on a
-  developer machine files vastly outnumber mail, so had undated rows sorted FIRST the block would
-  have been entirely undated. Under `ASC` the first 25 were the oldest mail rather than undated
-  rows, so they are not sorting lowest either. **The `1601-01-01 00:00:00` floor literal was
-  accepted and returned rows.** So the displacement refetch should essentially never fire, and the
-  guard is free in practice. Two readings fit the data and it cannot separate them: the provider
-  may exclude rows lacking the ORDER BY property from an ordered result, or place them last in both
-  directions - both give the same answer here, but they are different facts. **This does NOT close
-  the item:** the statements carried no `SCOPE='mapi...'`, so they ran over the general SystemIndex
-  namespace rather than the one the product uses. Full write-up and the exact statements are in the
-  session trace folder under Downloads (`tmp-aitrace/nullorder-finding.md`).
 
 - [ ] **Re-run the unindexed-store probes on a MIXED profile - the one shape no machine here has.**
   Group A and E of `Docs/completeness-gaps.md` are now all closed (A1-A5, E1). Everything about
