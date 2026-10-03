@@ -347,6 +347,137 @@ public sealed class LiveTierInventoryTests
         Assert.Empty(problems);
     }
 
+    // ------------------------------------------------------------------ Q74 layer 1: the Writes trait
+
+    [Fact]
+    public void TheWritesTrait_HasOneValue_IsDeclaredPerMethod_AndOnlyOnLiveTests()
+    {
+        // The same discipline as Requires: per METHOD, from a closed vocabulary - here one value - and
+        // only where it means something. Whether a carrier really writes nothing is
+        // ReadOnlyLiveTestTests' question; this one keeps the trait itself honest.
+        List<string> problems = new();
+        int carriers = 0;
+        foreach (Type type in TestClasses())
+        {
+            foreach (string classLevel in TraitValues(type, LiveRunFilters.WritesTrait))
+            {
+                problems.Add(type.Name + ": class-level " + LiveRunFilters.WritesTrait + "='" + classLevel
+                    + "'. It is declared per METHOD - a class-level claim would cover a method added later that writes.");
+            }
+
+            bool liveClass = TraitValues(type, "Category").Contains("Live");
+            foreach (MethodInfo method in TestMethodsOf(type))
+            {
+                List<string> values = MethodTraitValues(method, LiveRunFilters.WritesTrait);
+                if (values.Count == 0)
+                {
+                    continue;
+                }
+
+                carriers++;
+                foreach (string value in values.Where(v => !string.Equals(v, LiveRunFilters.WritesNone, StringComparison.Ordinal)))
+                {
+                    problems.Add(Name(method) + ": unknown " + LiveRunFilters.WritesTrait + " value '" + value
+                        + "' - the one value is '" + LiveRunFilters.WritesNone + "', and absence means the test may write.");
+                }
+
+                if (values.Count > 1)
+                {
+                    problems.Add(Name(method) + ": declares " + LiveRunFilters.WritesTrait + " " + values.Count + " times");
+                }
+
+                if (!liveClass && !MethodTraitValues(method, "Category").Contains("Live"))
+                {
+                    problems.Add(Name(method) + ": " + LiveRunFilters.WritesTrait + "=" + LiveRunFilters.WritesNone
+                        + " on a test that is not Category=Live, where it selects nothing and means nothing.");
+                }
+            }
+        }
+
+        Assert.Empty(problems);
+        Assert.True(carriers > 0, "no test carries " + LiveRunFilters.WritesTrait + " - the workstation filter would select nothing");
+    }
+
+    [Fact]
+    public void EveryTestOnlyTheWorkstationCanRun_DeclaresWritesNone()
+    {
+        // Since Q72 the maintainer's workstation runs only tests that write nothing, and no test guest
+        // can be given an Exchange profile. A test that needs one and may write could therefore run
+        // NOWHERE: it is either read-only and says so, or it is a test nobody can run, which is a
+        // decision to make out loud rather than a test to keep. Control: before Q74 none of the seven
+        // carried the trait.
+        List<string> problems = new();
+        foreach (MethodInfo method in LiveTestMethods())
+        {
+            List<string> blocking = MethodTraitValues(method, "Requires").Where(ProductionOnlyCapabilities.Contains).ToList();
+            if (blocking.Count > 0 && !MethodTraitValues(method, LiveRunFilters.WritesTrait).Contains(LiveRunFilters.WritesNone))
+            {
+                problems.Add(Name(method) + " (Requires " + string.Join(", ", blocking) + ") does not declare "
+                    + LiveRunFilters.WritesTrait + "=" + LiveRunFilters.WritesNone
+                    + ": no guest can run it and the read-only workstation may not");
+            }
+        }
+
+        Assert.Empty(problems);
+    }
+
+    [Fact]
+    public void TheWorkstationFilter_IsDerivedFromTheVocabulary()
+    {
+        Assert.Equal(
+            "Category=Live&Writes=None&(Requires=DelegateStore|Requires=CachedExchange)",
+            LiveRunFilters.Workstation);
+    }
+
+    [Fact]
+    public void EveryTraitKeyTheRunFiltersUse_IsCarriedByALiveTest()
+    {
+        // VSTest does not evaluate a clause on a trait KEY no test carries: it matches everything
+        // (measured 2026-10-03, `Category=Live&Bogus=None` listed all 128 live tests). So a filter key
+        // that falls out of use - or one never carried - silently stops narrowing the run. Every key the
+        // derived filters use must therefore be carried by at least one live test.
+        HashSet<string> carried = new(
+            LiveTestMethods().SelectMany(m => m.GetCustomAttributesData().Concat(m.DeclaringType!.GetCustomAttributesData()))
+                .Where(a => a.AttributeType == typeof(TraitAttribute) && a.ConstructorArguments.Count == 2)
+                .Select(a => (string)a.ConstructorArguments[0].Value!),
+            StringComparer.Ordinal);
+
+        foreach (string filter in new[] { LiveRunFilters.Guest, LiveRunFilters.GuestUnindexed, LiveRunFilters.Workstation })
+        {
+            foreach (string key in System.Text.RegularExpressions.Regex.Matches(filter, @"([A-Za-z]+)!?=").Select(m => m.Groups[1].Value))
+            {
+                Assert.True(carried.Contains(key), "the run filter " + filter + " uses the trait key '" + key
+                    + "', which no live test carries - VSTest would match everything on that clause");
+            }
+        }
+    }
+
+    [Fact]
+    public void EveryQuotedWorkstationFilter_IsTheDerivedOne()
+    {
+        // The two places a person reads the workstation run from. A copy that drifted from the derived
+        // string - a key misspelt, a capability dropped - is exactly the hand-kept filter Q74 retired.
+        List<string> problems = new();
+        foreach (string file in new[] { "Testbed/README.md", "Docs/live-tier-on-the-vm.md" })
+        {
+            string text = File.ReadAllText(Path.Combine(RepoRoot(), file));
+            if (!text.Contains(LiveRunFilters.Workstation, StringComparison.Ordinal))
+            {
+                problems.Add(file + " never quotes the workstation filter " + LiveRunFilters.Workstation);
+            }
+
+            foreach (System.Text.RegularExpressions.Match quoted in System.Text.RegularExpressions.Regex.Matches(text, @"Category=Live&Writes=[^\s`""']*"))
+            {
+                if (!string.Equals(quoted.Value, LiveRunFilters.Workstation, StringComparison.Ordinal))
+                {
+                    problems.Add(file + " quotes '" + quoted.Value + "', not the derived " + LiveRunFilters.Workstation);
+                }
+            }
+        }
+
+        Assert.Empty(problems);
+    }
+
     [Fact]
     public void TheBuckets_AreDerivedFromRequiresAlone()
     {

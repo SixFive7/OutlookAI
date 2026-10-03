@@ -27,6 +27,18 @@ public static class LiveRunFilters
     public const string SearchIndex = "SearchIndex";
 
     /// <summary>
+    /// The trait a live test carries, PER METHOD, to say it changes nothing on the machine it runs on
+    /// (Q74 layer 1): no mail item or folder, no signature, no registry value, nothing on the user's
+    /// screen, through any path - its own body, its class's and its fixtures' constructors and teardown,
+    /// or a tool it asks the MCP server for. <c>T1.ReadOnlyLiveTestTests</c> proves every carrier
+    /// statically, as far as that can be proven, and fails the build for one that can reach a write.
+    /// </summary>
+    public const string WritesTrait = "Writes";
+
+    /// <summary>The trait's one value. Absence means "may write" - the direction that fails safe.</summary>
+    public const string WritesNone = "None";
+
+    /// <summary>
     /// The capabilities only an Exchange profile has - the whole definition of the tests that cannot
     /// leave the maintainer's workstation. Since Q72 they are the only live tests that run there at all.
     /// </summary>
@@ -42,4 +54,22 @@ public static class LiveRunFilters
 
     /// <summary>The filter on the guest whose search index is switched off by design.</summary>
     public static string GuestUnindexed { get; } = Guest + "&Requires!=" + SearchIndex;
+
+    /// <summary>
+    /// The filter the maintainer's workstation runs, and the only one it may (Q72, Q74): the live tests
+    /// that need an Exchange profile - nothing else may run there - AND that carry
+    /// <see cref="WritesTrait"/>=<see cref="WritesNone"/>. Every such test must carry it
+    /// (<c>T1.LiveTierInventoryTests</c>), so in practice the two halves select the same tests; both are
+    /// kept so that neither alone decides.
+    /// <para>
+    /// <b>A VSTest property worth knowing.</b> A clause on a trait KEY that no test in the assembly
+    /// carries is not evaluated at all - it matches everything (measured 2026-10-03:
+    /// <c>Category=Live&amp;Bogus=None</c> lists every live test). So a misspelt key does not narrow a run,
+    /// it silently stops narrowing it, which is one more reason this string is derived rather than typed,
+    /// and why <c>T1.LiveTierInventoryTests</c> requires every key used here to be carried by a live test.
+    /// </para>
+    /// </summary>
+    public static string Workstation { get; } =
+        "Category=Live&" + WritesTrait + "=" + WritesNone + "&("
+        + string.Join("|", WorkstationOnlyCapabilities.Select(c => "Requires=" + c)) + ")";
 }

@@ -136,10 +136,14 @@ that can run on the test VMs runs **only** there. The only live tests that may r
 workstation are the fundamentally immovable ones — those that need Exchange (delegate and shared
 mailboxes, cached mode), which no test VM can have under the Dependencies rule — and they run
 **read-only**. **Never run a write-capable live test on the workstation, and never select a
-workstation run by a filter that could include one.** Until a code gate enforces this (tracked in
-`TODO.md`), the run filter is the only thing between a write and a real mailbox: if you cannot
-show a workstation run is read-only, do not start it. The rules below still bind every live run,
-on the workstation and on the VMs alike.
+workstation run by a filter that could include one.** Since Q74 (2026-10-03) code enforces this:
+the workstation runs only the derived filter in `Testbed/README.md` section 4d - live tests that need
+Exchange AND carry `Writes=None`, which T1 proves read-only from the compiled code - its settings'
+profile makes every in-process write throw, the test hub included, and the test-side MCP client
+refuses every tool not classified read-only. Those gates are a floor, not a licence: never edit the
+workstation's settings file, never re-declare it `Portable`, and if you cannot show a workstation
+run is read-only, do not start it. The rules below still bind every live run, on the workstation
+and on the VMs alike.
 
 `Category=Live` tests run against the developer's **real production Outlook profile**: real mail accounts plus delegate/shared mailboxes **to which the profile has full write access**. Treat every live run as an operation on production data. A past incident mass-deleted real mail (fully recovered) because an agent improvised a cleanup script — these rules exist so that never repeats. They are non-negotiable and apply to every agent, every session, whether or not live tests are the task:
 
@@ -150,5 +154,5 @@ on the workstation and on the VMs alike.
 5. **A live run may not lose mail anywhere.** The per-store count tripwire snapshots every store's mail folders before and after; any item-count **decrease**, or any folder added/removed, outside the test mailbox fails the suite loudly. No snapshot ⇒ the live tier refuses to run.
 6. **Signatures are user data.** Tests may only create/update/delete signatures prefixed `OutlookAI-McpTest-`; the `SignatureDirectorySnapshot` guard (SHA-256 before/after) must run and the suite must leave the user's real signatures bit-identical. `manage_signature` tests restore any registry defaults they touch.
 7. **Outlook lifecycle:** never `taskkill` OUTLOOK.EXE. Graceful `Application.Quit()` only when no unsent compose windows are open and the Outbox is empty — and release COM references BEFORE quitting (quitting while refs are held zombifies the process). Prefer leaving Outlook headless.
-8. **Run live tests only via the suite**, and only as `Testbed/README.md` section 4c describes: on a test guest, through `guest/Register-InteractiveTask.ps1`, with the per-run opt-in it gives. Every live test refuses to start without that opt-in (decided 2026-09-24): an accidental name filter once selected live tests, and in a checkout holding a real settings file it would have run them. **Never set the opt-in on the maintainer's workstation to run a test that can write** - see the paragraph above these rules. The suite's fixtures enforce the snapshots, allowlists, tripwire and zero-artifact sweeps. Never perform mailbox operations outside it during testing.
+8. **Run live tests only via the suite**, and only as `Testbed/README.md` section 4c describes: on a test guest, through `guest/Register-InteractiveTask.ps1`, with the per-run opt-in it gives - or, on the maintainer's workstation, only the read-only run section 4d describes. Every live test refuses to start without that opt-in (decided 2026-09-24): an accidental name filter once selected live tests, and in a checkout holding a real settings file it would have run them. **Never set the opt-in on the maintainer's workstation to run a test that can write** - see the paragraph above these rules. The suite's fixtures enforce the snapshots, allowlists, tripwire and zero-artifact sweeps. Never perform mailbox operations outside it during testing.
 9. If a gitignored `v3.MD` exists at the repo root, read its §0 safety envelope before any live-test or mailbox-touching work — it is the authoritative, more detailed contract.

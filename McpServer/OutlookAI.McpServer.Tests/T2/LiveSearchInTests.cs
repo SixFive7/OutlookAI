@@ -54,6 +54,7 @@ public sealed class LiveSearchInTests
     [Fact]
     [Trait("Requires", "SearchIndex")]
     [Trait("Requires", "ProbePopulation")]
+    [Trait("Writes", "None")]
     public void Sf6DiscoveryCase_IndexTier_SubjectOnlyPopulationIsFoundByDefaultScope()
     {
         IndexSearchService index = IndexSearchService.CreateDefault(out _);
@@ -82,6 +83,7 @@ public sealed class LiveSearchInTests
     [Fact]
     [Trait("Requires", "SearchIndex")]
     [Trait("Requires", "ProbePopulation")]
+    [Trait("Writes", "None")]
     public void Sf6DiscoveryCase_IndexTier_PrefixStemsWorkInTheSubjectColumnToo()
     {
         Assert.True(Probe.SubjectTerm.Length >= 5, "probe term too short to stem");
@@ -104,6 +106,7 @@ public sealed class LiveSearchInTests
     [Fact]
     [Trait("Requires", "SearchIndex")]
     [Trait("Requires", "ProbePopulation")]
+    [Trait("Writes", "None")]
     public void Sf6DiscoveryCase_ToolTier_DefaultQueryReturnsHits_BodyScopeReturnsNone()
     {
         SearchOutcome byDefault = Service.Search(NewProbeRequest(SearchInValues.Default));
@@ -122,6 +125,7 @@ public sealed class LiveSearchInTests
     [Fact]
     [Trait("Requires", "SearchIndex")]
     [Trait("Requires", "ProbePopulation")]
+    [Trait("Writes", "None")]
     public void Sf6DiscoveryCase_ExhaustiveTier_HonorsSearchIn()
     {
         SearchRequest subjectScoped = NewProbeRequest(SearchIn.SubjectOnly);
@@ -147,6 +151,7 @@ public sealed class LiveSearchInTests
     [Fact]
     [Trait("Requires", "SearchIndex")]
     [Trait("Requires", "ProbePopulation")]
+    [Trait("Writes", "None")]
     public void IndexTier_OrPairLatency_StaysAcceptableVersusSingleColumn()
     {
         IndexSearchService index = IndexSearchService.CreateDefault(out _);
@@ -188,6 +193,7 @@ public sealed class LiveSearchInTests
     [Fact]
     [Trait("Requires", "SearchIndex")]
     [Trait("Requires", "ProbePopulation")]
+    [Trait("Writes", "None")]
     public void AllTiers_SubjectOnlyAndBodyOnlyTerms_AreSeparatedConsistently()
     {
         IReadOnlyList<ComWalkedItem> corpus = _fixture.TestHubCorpus;

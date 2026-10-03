@@ -38,6 +38,7 @@ public sealed class LiveMailServiceTests
     [Fact]
     [Trait("Requires", "SearchIndex")]
     [Trait("Requires", "MultipleStores")]
+    [Trait("Writes", "None")]
     public void RoundTrip_SearchThenRead_TenHitsAcrossStores()
     {
         List<HitSummary> hits = new();
@@ -114,6 +115,7 @@ public sealed class LiveMailServiceTests
     [Fact]
     [Trait("Requires", "SearchIndex")]
     [Trait("Requires", "MultipleStores")]
+    [Trait("Writes", "None")]
     public void Read_BodyOffsetPaging_TilesTheBody_FromTheCachedExtraction()
     {
         // A real mail with a body long enough to window (>= 120 chars).
@@ -184,6 +186,7 @@ public sealed class LiveMailServiceTests
     [Fact]
     [Trait("Requires", "SearchIndex")]
     [Trait("Requires", "MultipleStores")]
+    [Trait("Writes", "None")]
     public void Truncation_MailOver100KB_FlagsAndTotalsCorrect()
     {
         const int cap = 20000;
@@ -305,6 +308,7 @@ public sealed class LiveMailServiceTests
     [Trait("Requires", "SearchIndex")]
     [Trait("Requires", "MultipleStores")]
     [Trait("Requires", "DelegateStore")]
+    [Trait("Writes", "None")]
     public void ListAccounts_ExactAccountsDelegatesAndFlags()
     {
         AccountsOutcome outcome = Service.ListAccounts();
@@ -353,6 +357,7 @@ public sealed class LiveMailServiceTests
     [Fact]
     [Trait("Requires", "SearchIndex")]
     [Trait("Requires", "MultipleStores")]
+    [Trait("Writes", "None")]
     public void ListFolders_TestHub_FullTree_StableOrder_And_OffsetPaging()
     {
         FoldersOutcome outcome = Service.ListFolders(_fixture.Settings.TestHubStoreDisplayName);
@@ -388,6 +393,7 @@ public sealed class LiveMailServiceTests
     [Fact]
     [Trait("Requires", "SearchIndex")]
     [Trait("Requires", "MultipleStores")]
+    [Trait("Writes", "None")]
     public void Thread_IndexPath_AndComFallback()
     {
         // Recent hits with a conversation id from a busy store. SEVERAL of them, on
@@ -459,6 +465,7 @@ public sealed class LiveMailServiceTests
     [Fact]
     [Trait("Requires", "SearchIndex")]
     [Trait("Requires", "MultipleStores")]
+    [Trait("Writes", "None")]
     public void OutlookHealth_Live_ReportsProviderStalenessAndPerStoreRows()
     {
         HealthOutcome status = Service.Health();

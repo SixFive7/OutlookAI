@@ -868,11 +868,70 @@ Three rules for the opt-in, each refused with a message that says why:
   the point the same way.
 * **It changes nothing else.** It says a live run was intended; it makes no test read-only and
   chooses no tests. **The maintainer's workstation is read-only for live tests, always** (AGENTS.md,
-  Mailbox Safety); how that is enforced in code is the maintainer's open decision (Q74), not this.
+  Mailbox Safety); since Q74 that is enforced in code by the machine's declared profile, not by this
+  variable - section 4d.
 
 Without the opt-in, every live collection fails at its fixture with `LIVE TEST REFUSED` and nothing
 touches Outlook. `--list-tests` still discovers everything without it, because discovery never
 builds a fixture.
+
+## 4d. The maintainer's workstation: the read-only run (Q72, enforced since Q74)
+
+**The workstation is read-only for live tests, always, and runs only the tests no guest can.**
+Decided by the maintainer 2026-09-24 (Q72); enforced in code since 2026-10-03 (Q74, "layers 1+2+3,
+plus A1, B1, C1 with C3, and D1 + D2"). Every other live test runs on a guest, through section 4c.
+
+**The run, from the main checkout on the workstation, in one PowerShell session:**
+
+```powershell
+$env:OUTLOOKAI_LIVE_OPT_IN = '<this workstation's computer name>'
+dotnet test McpServer\OutlookAI.McpServer.Tests\OutlookAI.McpServer.Tests.csproj -c Release --list-tests --filter "Category=Live&Writes=None&(Requires=DelegateStore|Requires=CachedExchange)"
+dotnet test McpServer\OutlookAI.McpServer.Tests\OutlookAI.McpServer.Tests.csproj -c Release --filter "Category=Live&Writes=None&(Requires=DelegateStore|Requires=CachedExchange)"
+```
+
+List first and read the list: it was 7 tests on 2026-10-03, the six that need a delegate mailbox
+and the cached-Exchange half of the short-decoded-id check. The filter is DERIVED, not typed:
+`McpServer/OutlookAI.McpServer.Tests/T2/LiveRunFilters.cs` builds it from the trait vocabulary and
+`T1/LiveTierInventoryTests` fails the build if this copy, or the runbook's, stops matching it. Two
+halves, each sufficient on its own: `Requires=DelegateStore|CachedExchange` is "needs an Exchange
+profile, so no guest can run it", and `Writes=None` is "changes nothing". Every test with the first
+must carry the second (`EveryTestOnlyTheWorkstationCanRun_DeclaresWritesNone`), so a test that needs
+Exchange and may write is a test nobody can run - which is a decision to make out loud, not a test to
+keep.
+
+**What stands behind the filter - none of it typed, none of it remembered:**
+
+1. **The trait, proven (layer 1).** `Writes=None` is declared per method, and
+   `T1/ReadOnlyLiveTestTests` walks the compiled code of every carrier - its body, its class's and its
+   fixtures' constructors and teardown, lambdas, async state machines, interface dispatch - and fails
+   the build on any way it can reach the write guard, a product member not listed as a read
+   (`T1/ReadOnlyProductApi.cs`, each entry itself walked inside the product for audit appends, COM
+   mutations, registry and file writes), a write-capable MCP tool, a late-bound COM mutation or a
+   registry write. Fifty-four live tests carry it; the seven above are the ones that need Exchange.
+2. **The profile refuses every write (layer 2).** The workstation's settings declare no
+   `machineProfile`, which reads as `Production`, and since Q74 Production - like any profile but
+   `Portable` - is read-only (`T2/LiveWriteAccess.cs`): the write allowlist refuses EVERY store, the
+   test mailbox included, so an in-process write throws `READ-ONLY MACHINE` before it reaches
+   Outlook. Never edit the workstation's settings file to change that, and never declare it
+   `Portable`.
+3. **The MCP client refuses every tool that is not read-only (layer 3).** Under the same profile
+   `McpStdioClient` refuses, before sending, every tool not classified read-only in
+   `T3/McpToolWriteClassification.cs` - an unclassified one included - so a write through the MCP
+   server process, which the in-process allowlist cannot see, is refused too.
+4. **No bounded re-run (A1).** If the count tripwire suspects a loss it re-counts twice, as before, and
+   then fails; it no longer starts a child live run of every class in the collections that ran.
+
+**A VSTest property this run depends on, measured 2026-10-03.** A filter clause on a trait KEY that no
+test in the assembly carries is not evaluated - it matches everything (`Category=Live&Bogus=None`
+listed all 128 live tests). A misspelt key therefore does not narrow a run, it silently stops
+narrowing it. That is why the filter above is derived, why every key it uses is pinned to be carried
+by a live test, and why layers 2 and 3 exist at all. **Never run this filter against a build from
+before Q74**: no test carried `Writes` then, so that clause would be ignored, and the old
+`LiveFolderScopeTests` delegate tests sat in a collection whose fixture creates and deletes test
+folders.
+
+**Releases.** The live tier is not a release gate; a short manual check of the Exchange-only WRITE
+paths no automated test reaches is, by hand: `Docs/release-manual-checks.md`.
 
 ---
 

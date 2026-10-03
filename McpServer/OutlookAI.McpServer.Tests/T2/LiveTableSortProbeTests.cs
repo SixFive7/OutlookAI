@@ -70,6 +70,7 @@ public sealed class LiveTableSortProbeTests
 
     [Fact]
     [Trait("Requires", "OutlookInstance")]
+    [Trait("Writes", "None")]
     public void TableSort_AcceptsAnExplicitPropertyName_OrRefusesBoth_AndTheRunSaysWhich()
     {
         IReadOnlyList<ComStoreDetail> stores = _fixture.VerifySession.GetStoreDetails();
@@ -190,6 +191,7 @@ public sealed class LiveTableSortProbeTests
     /// </summary>
     [Fact]
     [Trait("Requires", "OutlookInstance")]
+    [Trait("Writes", "None")]
     public void ATableDate_IsEitherUtcOrLocal_AndTheRunSaysWhich()
     {
         IReadOnlyList<ComStoreDetail> stores = _fixture.VerifySession.GetStoreDetails();
