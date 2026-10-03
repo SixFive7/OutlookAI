@@ -1,3 +1,4 @@
 <Solution>
   <Project Path="OutlookAI.csproj" Id="91aab2d6-746b-40b4-8445-b81a5142f193" />
+  <Project Path="PolicyWriter/OutlookAI.PolicyWriter.csproj" Id="30cfd827-272a-449a-9b82-97488d3619e3" />
 </Solution>

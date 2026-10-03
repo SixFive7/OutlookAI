@@ -196,7 +196,7 @@
   },
 
   "frozenClocks": {
-    "_what": "THE FROZEN CLOCKS of the two Outlook test guests - decided by the maintainer 2026-10-03 (Q130 (a) of Docs/overnight-review-2026-10-03.md). Each guest runs with Hyper-V time synchronisation OFF, and every live run restores the checkpoint named here, whose clock stands just after the guest's test data was built: every run starts at frozenUtc, so the hub, the bystander and Corpus A are exactly as old on every run as they were on the first, and no date window ever empties. Testbed/host/Set-GuestClockFrozen.ps1 made each checkpoint (-Execute) and is the guard a run calls before its suite (-Verify); Docs/live-tier-on-the-vm.md section 4.4 is the record. Never the build VM (its runner requires the host's clock within 2 s) and never OutlookAI-Exchange (Microsoft 365 sign-in needs real time): neither has, or may have, a record here.",
+    "_what": "THE FROZEN CLOCKS of the two Outlook test guests - decided by the maintainer 2026-10-03 (Q130 (a) of Docs/overnight-review-2026-10-03.md). Each guest runs with Hyper-V time synchronisation OFF, and every live run restores the checkpoint named here, whose clock stands just after the guest's test data was built: every run starts at frozenUtc, so the hub, the bystander and Corpus A are exactly as old on every run as they were on the first, and no date window ever empties. Testbed/host/Set-GuestClockFrozen.ps1 made each checkpoint (-Execute) and is the guard a run calls before its suite (-Verify); Docs/live-tier-on-the-vm.md section 4.5 is the record. Never the build VM (its runner requires the host's clock within 2 s) and never OutlookAI-Exchange (Microsoft 365 sign-in needs real time): neither has, or may have, a record here.",
     "_fields": "checkpoint: the frozen checkpoint a run restores (time sync off travels with it). parentCheckpoint: the running checkpoint it was made from - its instant is the frozen one, give or take the 20 s the script reads the clock. frozenUtc: the frozen instant, for people; frozenUnix: the same instant as a Unix second count, which is what scripts read, because ConvertFrom-Json turns an ISO-8601 string into a DateTime whose zone it loses (Testbed/README.md section 5b) - T1/FrozenGuestClockTests holds the two equal. suiteStartWithinMinutes: how long after frozenUtc the guest's clock may be when the suite starts - Set-GuestClockFrozen.ps1 -Verify refuses later. checksHoldForMinutes: how long after frozenUtc every date check the tier makes is PROVEN to hold (T1/FrozenGuestClockTests, from the values below): the frontier margin, Corpus A's declared windows, the unindexed guest's seven-day reach - the difference is what the suite itself may take. timeZone: the guest's, read off it; the frontier margin is its UTC offset less five minutes, and every frozen instant lies in summer time (before 2026-10-25), for good. hubPopulation: the hub's manifest header as the frozen checkpoint holds it, read off the guest - the T1 pins rebuild its plan from these and require the shape key to match.",
     "_runs": "A run on a frozen guest is: lease, restore the checkpoint (a checkpoint applied to a running VM resumes it at once; a saved one is started), stage, Set-GuestClockFrozen.ps1 -Verify, Outlook started NOT elevated on the tier profile (Start-OutlookUnelevated.ps1 - what step 9a used to hand the suite besides its rebuild; the checkpoint holds Outlook closed so that staging can swap the commit in), the suite, rest - with NO restart and NO hub rebuild after the restore: a restart brings the clock back at the real date (Restart-Guest.ps1 refuses a frozen guest), and the restore itself puts back the hub and wipes every artifact. Until this branch merges the guests rest on their unfrozen checkpoints and the per-run hub rebuild goes on there.",
     "OutlookAI-Indexed": {
@@ -239,6 +239,43 @@
       },
       "_made": "2026-10-03 by Set-GuestClockFrozen.ps1 -Execute, from CP-13B-LIVE-GREEN (taken 2026-10-03T14:49:51Z, right after green run 18 of section 4.1e: fd2c58b staged, Outlook not running). The guest resumed at 14:49:49Z with time sync turned off while it was saved, held its offset from the host to 0.1 s over 20 s, the checkpoint was taken between readings of 14:50:11Z and 14:50:14Z, and the proving restore came back 0.3 s before the frozen instant with time sync off. Its hub was rebuilt before run 18 (anchor 14:37:29Z, 56 items); the bystander's anchor is 2026-10-03T01:17:22Z (C0A5B75C...) and the identity store's 01:18:26Z (A14EAE6E...), read off the frozen guest the same minute. No corpus is declared on this guest (its tier profile does not mount Corpus B)."
     }
+  },
+
+  "exchangeVm": {
+    "_what": "THE FOURTH MACHINE: OutlookAI-Exchange, the Exchange test VM (decided by the maintainer 2026-10-03, Q108 to Q111). It holds ONE mailbox - the Microsoft 365 mailbox telefonie@xxlnet.nl, real mail of lower value than the maintainer's others, his test hub on the workstation all along - in cached mode, indexed, and nothing else: no PST, no mail sink. Every Exchange-only live test moves here from the maintainer's workstation (Q116 (a)). It is the one testbed VM with internet (Hyper-V's Default Switch NAT), an exception to AGENTS.md's Dependencies rule granted for it alone (Q111). Its live-test settings declare machineProfile ExchangeGuest, which is READ-ONLY until the maintainer approves the Phase 2 write-safety design (Testbed/README.md section 4e).",
+    "vmName": "OutlookAI-Exchange",
+    "computerName": "OAI-EXCHANGE",
+    "spec": {
+      "_note": "CHOSEN for this VM on 2026-10-03 and passed to Testbed/host/New-TestbedVm.ps1 explicitly; the spec file it wrote beside the VHD says the same. The Outlook guests' 4 vCPU and 8 GB, static so that a saved state and a checkpoint are as large as the memory and no larger. Its disk has a folder of its own, E:\\Hyper-V\\VirtualHardDisks\\OutlookAI-Exchange\\, where its checkpoints' differencing disks land too.",
+      "generation": 2,
+      "secureBoot": true,
+      "vtpm": true,
+      "processorCount": 4,
+      "memoryStartupBytes": 8589934592,
+      "dynamicMemory": false,
+      "vhdSizeBytes": 137438953472,
+      "vhdPath": "E:\\Hyper-V\\VirtualHardDisks\\OutlookAI-Exchange\\OutlookAI-Exchange.vhdx",
+      "checkpointType": "Standard",
+      "automaticStartAction": "Nothing",
+      "automaticStopAction": "Save",
+      "network": "Default Switch (NAT, internet) - connected AFTER CP-01-WIN-CLEAN, so the Windows install is the other guests' offline one (Q111)"
+    },
+    "windows": "Windows 11 Pro 10.0.26200, unattended from .work/media/Win11_25H2_EnglishInternational_x64_v2.iso with Testbed/guest/autounattend.template.xml - the same locale, time zone and keyboard as every guest. Windows Update left automatic, with the documented policy NoAutoRebootWithLoggedOnUsers=1 (AUOptions 4) so it never restarts the guest under a logged-on session - autologon always has one.",
+    "office": "16.0.17932.21000, ProPlus2024Volume, PerpetualVL2024, x64, updates disabled - .work/office-odt/Testbed.xml unchanged, installed online in 2.3 min (the other guests read 16.0.17932.20884, an earlier build of the same channel). Licence: VOLUME_KMSCLIENT, out-of-box grace (no KMS host is reachable; nothing activated, nothing consumed).",
+    "outlookProfile": "Outlook - made by Outlook's own first start, its one account added through the simplified account setup and Microsoft 365 sign-in that Testbed/guest/Connect-ExchangeAccount.ps1 and Testbed/host/Invoke-ExchangeSignIn.ps1 drive. Account type Exchange, ExchangeConnectionMode 700 (olCachedConnectedFull), one store: the account's cached mailbox (.ost), ExchangeStoreType 0, IsCachedExchange true, IsInstantSearchEnabled true. Device registration declined ('No, this app only'): dsregcmd reads AzureAdJoined NO, WorkplaceJoined NO.",
+    "index": "Windows Search on; the unelevated Outlook added mapi16://{SID}/ itself. Set-OutlookIndexingDisabled.ps1 -Verify: INDEXED, the store's index root telefonie@xxlnet.nl($65e0d53e), 183 rows, 2026-10-03.",
+    "credential": "McpServer/OutlookAI.McpServer.Tests/live-fixtures/exchange-credentials.json on the host, gitignored, DPAPI CurrentUser - read only by Testbed/host/Get-ExchangeCredential.ps1, in memory, at the moment of a sign-in. The secrets reach the guest only as keystrokes on its synthetic keyboard (Msvm_Keyboard); the guest's one copy is the token cache Windows keeps for Outlook.",
+    "checkpoints": [
+      "CP-01-WIN-CLEAN",
+      "CP-02-OFFICE-INSTALLED",
+      "CP-03-EXCHANGE-SIGNED-IN",
+      "CP-04-SUITE-READONLY-RUN",
+      "CP-05-PREFLIGHT-READONLY-RUN"
+    ],
+    "_checkpoints": "All five taken RUNNING (Standard), so a restore resumes rather than boots; 73.9 GB in the VM's own disk folder on 2026-10-03. CP-02 has Office and no profile - the start of a sign-in from nothing; CP-03 the account signed in and indexed; CP-04 the suite and the settings staged and the read-only runs done; CP-05 the branch's final commit staged, Defender current, the read-only run passed again - the one to restore, followed by Testbed/host/Invoke-ExchangeSignIn.ps1 -Mode Preflight. A restore undoes nothing on the Exchange server, and a token inside a checkpoint may have lapsed: Testbed/guest/Connect-ExchangeAccount.ps1 -Step Verify, then Testbed/host/Invoke-ExchangeSignIn.ps1 -Mode Reauth.",
+    "readOnlyRuns": "2026-10-03 (Docs/live-tier-on-the-vm.md section 4.4): the cached-Exchange read-only filter passed the short-decoded-id check and Q113 (b)'s health row; T2/LiveExchangeHubArtifactTests found ONE item tagged OutlookAI-McpTest in Sent Items, a leftover from the workstation years (TODO.md); the Q99 follow-up's T2/LiveExchangeFolderPathTests passed. The count tripwire: 0 failures, 0 notes, every run. After a checkpoint restore two runs refused on a 300 s census timeout: Defender's year-old signatures had brought back Outlook's Object Model Guard, six prompts stacked; Update-MpSignature cleared it and the run passed again - Testbed/host/Invoke-ExchangeSignIn.ps1 -Mode Preflight does that before every run.",
+    "q113b": "MEASURED 2026-10-03: outlook_health ties the cached Exchange store by storeHash, matchedInput profileMappingSignature (the profile's PR_MAPPING_SIGNATURE), index root telefonie@xxlnet.nl($65e0d53e), storesNotInProfile 0.",
+    "phase2": "PROPOSED 2026-10-03, NOT APPROVED (Docs/live-tier-on-the-vm.md section 4.4): until the maintainer approves it the VM is read-only."
   },
 
   "liveTestSettings": {
@@ -303,6 +340,24 @@
         "retrievePort": 110,
         "connectTimeoutMs": 2000
       }
+    },
+    "OutlookAI-Exchange": {
+      "_readOffTheGuest": "READ, NOT TYPED: what Outlook reported over COM on OAI-EXCHANGE, 2026-10-03, in its one profile 'Outlook': one account (Exchange, cached) and one store, telefonie@xxlnet.nl, its cached mailbox. The maintainer named this mailbox in Q108; it is already named in this repository's TODO.md and T1 test data, so it is not new here. machineProfile ExchangeGuest is READ-ONLY (Q108; Testbed/README.md section 4e). No delegate until the shared test mailbox exists (Q109), no bystander (on a read-only machine the census polices the hub itself), no generated population, no probe term (one would have to be read out of real mail), no corpus and no sink (Q108).",
+      "machineProfile": "ExchangeGuest",
+      "testHubStoreDisplayName": "telefonie@xxlnet.nl",
+      "hubPopulationManifestPath": null,
+      "expectedStoreDisplayNames": [
+        "telefonie@xxlnet.nl"
+      ],
+      "indexedStoreDisplayNames": [
+        "telefonie@xxlnet.nl"
+      ],
+      "expectedDelegateStoreDisplayNames": [],
+      "bystanderStoreDisplayNames": [],
+      "probeTerm": "",
+      "subjectOnlyProbe": null,
+      "corpus": null,
+      "mailSink": null
     }
   },
 

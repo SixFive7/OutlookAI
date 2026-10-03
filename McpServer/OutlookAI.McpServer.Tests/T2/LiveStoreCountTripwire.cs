@@ -75,6 +75,20 @@ public static class LiveStoreCountTripwire
     }
 
     /// <summary>
+    /// The store the census EXEMPTS as the hub, or the empty string when it exempts none. The hub is
+    /// exempt only where the suite may write in it: its churn is tagged and swept there. On a read-only
+    /// machine (<see cref="LiveWriteAccess.RefusesEveryWrite"/>) nothing may be written anywhere, so the
+    /// hub is censused item by item and compared like every other store - a departure from it FAILS and
+    /// an arrival is noted - and <see cref="TripwireWatchSoundness"/> counts it as a store the census can
+    /// fail on. Decided 2026-10-03 for the Exchange VM (Q108), whose one mailbox is real mail AND its hub.
+    /// </summary>
+    public static string ExemptHub(LiveTestSettings settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        return settings.RefusesEveryWrite ? string.Empty : settings.TestHubStoreDisplayName;
+    }
+
+    /// <summary>
     /// Stores the tripwire watches: every configured primary, every delegate store, and every
     /// declared BYSTANDER.
     /// <para>
@@ -159,7 +173,7 @@ public static class LiveStoreCountTripwire
                 return;
             }
 
-            _hub = settings.TestHubStoreDisplayName;
+            _hub = ExemptHub(settings);
             _lazyHierarchyStores = settings.ExpectedDelegateStoreDisplayNames.ToList();
 
             // The retry bounds come from what the machine DECLARES itself to be, and from
@@ -204,7 +218,7 @@ public static class LiveStoreCountTripwire
             }
 
             Stopwatch stopwatch = Stopwatch.StartNew();
-            CensusPass pass = Capture(WatchedStores(settings), "baseline", settings.TestHubStoreDisplayName, null);
+            CensusPass pass = Capture(WatchedStores(settings), "baseline", _hub, null);
             stopwatch.Stop();
             _baseline = pass.Census;
             Console.WriteLine(

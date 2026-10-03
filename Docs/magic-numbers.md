@@ -85,7 +85,7 @@ Scope: root `*.cs`, `Services\`, `TaskPane\`, `Properties\`, `OutlookAI.csproj`,
 | `-p - --output-format json --max-turns 1` | `Services\ClaudeServices.cs` | the CLI protocol contract | README quotes it verbatim; `--max-turns 1` is what makes the `error_max_turns` branch reachable, and it is handled | Kept - defensible. |
 | `"Microsoft.Outlook.Mail.Compose"`, `"Microsoft.Outlook.Explorer"` | `Ribbon.cs` | ribbon attachment points | fixed Office identifiers | Kept - defensible. |
 | `release >= 528040` | `Installer.iss` | .NET Framework 4.8 detection | the canonical 4.8 release key | Kept - defensible. |
-| `1,0,1,2` (search) / `0,0,1,1,1,0,0` (caching) | `Services\OutlookTuningService.cs` | the desired registry values | sourced to v3 plan D22/D24/D25 | Kept - defensible, with a caveat: the source (`v3.MD`) is gitignored, so the justification is unavailable to most readers. |
+| `1,0,1,2` (search) / `0,0,1,1,1,0,0` (caching) | `Services\OutlookTuningService.cs`; the five policy values' defaults, and the only values the elevated helper may write, in `Services\CachedModePolicy.cs` (Q128) | the desired registry values | sourced to v3 plan D22/D24/D25 | Kept - defensible, with a caveat: the source (`v3.MD`) is gitignored, so the justification is unavailable to most readers. |
 | `v4.8`, `ToolsVersion 18.0`, `VisualStudioVersion 17.0` | `OutlookAI.csproj` | target framework and toolchain | consistent with the installer's 4.8 check and the pinned runner | Kept - defensible. |
 
 ### Timing - timeouts, intervals, polls, delays

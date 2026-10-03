@@ -26,6 +26,13 @@ public enum LiveMachineProfile
     /// <see cref="LiveWriteAccess"/>, the one place that decides it. Being the default is what
     /// makes that fail safe: a settings file that declares no profile is read-only too.
     /// </para>
+    /// <para>
+    /// <b>And since Q116 (a), 2026-10-03, it runs no live test at all:</b>
+    /// <see cref="LiveTestSettings.Load"/> refuses a Production profile outright
+    /// (<see cref="LiveTestSettings.RefuseTheWorkstation"/>). Its Exchange-only tests moved to the
+    /// Exchange test VM (<see cref="ExchangeGuest"/>). The read-only rules above stay as the floor
+    /// beneath that refusal.
+    /// </para>
     /// </summary>
     Production = 0,
 
@@ -41,6 +48,28 @@ public enum LiveMachineProfile
     /// </para>
     /// </summary>
     Portable = 1,
+
+    /// <summary>
+    /// The dedicated Exchange test VM, <c>OutlookAI-Exchange</c> (decided by the maintainer 2026-10-03,
+    /// Q108 to Q111): ONE cached Exchange mailbox - real, production mail of lower value, which is also
+    /// the hub - a populated search index, no PST, no mail sink, and internet. Nobody is at its keyboard
+    /// during a run, but the mailbox has an owner, a server, server-side rules and mail arriving, so
+    /// it gets the re-censuses a real mailbox needs (<see cref="TripwireRetryPolicy.For(LiveMachineProfile)"/>).
+    /// <para>
+    /// <b>READ-ONLY, and nothing had to be written to make it so.</b> <see cref="LiveWriteAccess"/> lets
+    /// only <see cref="Portable"/> write, so this profile refuses every in-process write and every
+    /// write-capable MCP tool exactly as the workstation's profile did. Writes here wait for the
+    /// maintainer's approval of the Phase 2 write-safety design (Testbed/README.md, the Exchange VM's
+    /// section); until then, and on a read-only machine generally, the count tripwire censuses the hub
+    /// like any other store (<see cref="LiveStoreCountTripwire.ExemptHub"/>), so that a hub that is the
+    /// machine's only mailbox is still a store the census can fail on.
+    /// </para>
+    /// <para>
+    /// Rendered by <c>Testbed/host/New-LiveTestSettings.ps1</c> for the VM <c>Testbed/testbed.json</c>'s
+    /// <c>exchangeVm</c> block names, and for no other.
+    /// </para>
+    /// </summary>
+    ExchangeGuest = 2,
 }
 
 /// <summary>
@@ -235,8 +264,38 @@ public sealed class LiveTestSettings
                 + "(account identifiers are never committed - v3.MD S6).");
         }
 
-        return Parse(File.ReadAllText(path));
+        LiveTestSettings settings = Parse(File.ReadAllText(path));
+        RefuseTheWorkstation(settings);
+        return settings;
     }
+
+    /// <summary>
+    /// The maintainer's workstation runs NO live test - decided by the maintainer 2026-10-03 (Q116 (a)),
+    /// once the Exchange test VM had run the Exchange tests green. Its settings declare no
+    /// <c>machineProfile</c>, which reads as <see cref="LiveMachineProfile.Production"/>, and a Production
+    /// machine is refused here, in <see cref="Load"/>, before any live fixture builds a census, attaches to
+    /// Outlook or starts an MCP server - so the refusal is in code, by the profile, and needs no edit to the
+    /// workstation's settings file. Until then it ran the Exchange-only tests read-only (Q72, Q74); those
+    /// run on the Exchange VM now (<see cref="LiveRunFilters.ExchangeGuest"/>).
+    /// </summary>
+    internal static void RefuseTheWorkstation(LiveTestSettings settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        if (settings.MachineProfile != LiveMachineProfile.Production)
+        {
+            return;
+        }
+
+        throw new InvalidOperationException(WorkstationRefusal);
+    }
+
+    /// <summary>What <see cref="RefuseTheWorkstation"/> says. One spelling, here; T1 pins it.</summary>
+    internal const string WorkstationRefusal =
+        "LIVE TEST REFUSED: these live-test settings declare machineProfile 'Production' - or none, which reads as "
+        + "Production - and Production is the maintainer's workstation, where NO live test runs, read-only or not "
+        + "(Q116 (a), decided 2026-10-03; AGENTS.md, Mailbox Safety). Live tests run on the test guests "
+        + "(Testbed/README.md section 4c) and on the Exchange test VM (section 4e), whose settings are rendered by "
+        + "Testbed/host/New-LiveTestSettings.ps1. Never re-declare this machine's profile to get past this.";
 
     /// <summary>
     /// Reads and validates settings from JSON text. Split out from <see cref="Load"/> so the

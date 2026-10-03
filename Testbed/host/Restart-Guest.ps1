@@ -95,7 +95,7 @@
     once the guest is usable it sets the clock to where the guest's time would have run to had it not
     restarted - the time before the restart plus the host's elapsed time - and checks it to 5 s. The
     boot itself cannot be made to come back there: measured 2026-10-03 on OutlookAI-Unindexed restored
-    to CP-08-MAIL-SINK (runbook section 4.4), the guest came back 610,668 s (7.07 days) ahead of its
+    to CP-08-MAIL-SINK (runbook section 4.5), the guest came back 610,668 s (7.07 days) ahead of its
     own time even with its present written to its clock (Set-Date) just before the restart, so that
     write was taken out again; the correction after the boot left it 0.2 s off. In the 20-odd seconds
     between the boot and the correction the guest runs on that other clock - harmless outside a run,
@@ -841,7 +841,7 @@ if ($outlookRunning) {
 $refreezeFrom = $null
 if ($frozenDecision -eq 'RESTART-REFREEZE') {
     # The guest's own time, and the host's beside it. Not written back to the guest's clock first:
-    # that was tried, and the boot still came back days away (runbook section 4.4) - the correction
+    # that was tried, and the boot still came back days away (runbook section 4.5) - the correction
     # after the boot is what carries the time.
     Say '== frozen guest: reading its clock and the host''s =='
     $h0 = [DateTime]::UtcNow

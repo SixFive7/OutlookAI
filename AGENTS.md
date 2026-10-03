@@ -114,8 +114,8 @@ run either script's `-SelfTest` here.
 
 ## MCP Server (`McpServer/`)
 
-- `McpServer/` holds the MCP server projects (`OutlookAI.Core`, `OutlookAI.McpServer`, `OutlookAI.McpServer.Tests`). Build them with `dotnet build` **by explicit csproj path** — never via `OutlookAI.slnx`, which only contains the VSTO add-in (MSBuild-only).
-- The non-live suite (`dotnet test --filter "Category!=Live"`) runs only on the build VM - next section. Tests marked `Category=Live` need Outlook and a mailbox: they run on the test VMs, and on this workstation only the Exchange-only read-only subset (Q74, Mailbox Safety below).
+- `McpServer/` holds the MCP server projects (`OutlookAI.Core`, `OutlookAI.McpServer`, `OutlookAI.McpServer.Tests`). Build them with `dotnet build` **by explicit csproj path** — never via `OutlookAI.slnx`, which only contains the VSTO add-in and its elevated helper `PolicyWriter/` (both MSBuild-only).
+- The non-live suite (`dotnet test --filter "Category!=Live"`) runs only on the build VM - next section. Tests marked `Category=Live` need Outlook and a mailbox: they run on the test VMs - the ones that need Exchange on the Exchange VM, `OutlookAI-Exchange` - and never on this workstation (Q116 (a), Mailbox Safety below).
 - Developer documentation: `McpServer/README.md`.
 
 ## Tests run on the build VM, never on this workstation (Q94, Q102)
@@ -166,10 +166,10 @@ why. Run it in the background or with a timeout of an hour or more.
   through the two scripts "The add-in on the maintainer's workstation (Q81)" below names;
 - releases - `Tools/Publish-Release.ps1` (Build and Release, above), which builds here and tests on
   the build VM, and runs D7 (c)'s two read-only `-CompareInstalledTargets` comparisons here;
-- the Exchange-only read-only live tests (Q74) - the derived filter of `Testbed/README.md`
-  section 4d, under Mailbox Safety below.
+- and, until 2026-10-03, the Exchange-only read-only live tests (Q74) - which since Q116 (a) run on
+  the Exchange VM instead: no live test runs here at all (Mailbox Safety below).
 
-So no `dotnet test` runs a test on the workstation except that last live run, and no script's
+So no `dotnet test` runs a test on the workstation, live or not, and no script's
 `-SelfTest` runs here at all: the runner finds and runs every one of them on the VM. D7 (c) runs
 one comparison out of two self-tests here, and only that, before a release.
 `dotnet test --list-tests`, which builds and discovers and executes no test, stays usable here -
@@ -210,7 +210,7 @@ whose clock stands just after the guest's test data was built.** Decided by the 
 2026-10-03 (Q130 (a)), so the test data never ages. Never re-enable time synchronisation on either
 guest, and never restart or cold-boot one during a run - both bring its clock back at the real
 date. `Testbed/host/Restart-Guest.ps1` refuses a frozen guest; `-Refreeze` is for work outside a
-run, before a new frozen checkpoint (`Docs/live-tier-on-the-vm.md` section 4.4). The build VM and
+run, before a new frozen checkpoint (`Docs/live-tier-on-the-vm.md` section 4.5). The build VM and
 `OutlookAI-Exchange` are never frozen: both need real time.
 
 ## Dependencies
@@ -242,7 +242,18 @@ that send mail can run on the VMs. Conditions, all of them: free and open source
 permissive licence; no licence key, account or telemetry; staged offline as media in
 `Testbed/MEDIA.md` and pinned by a hash its own maintainers publish; installed only on the test
 guests, never on the maintainer's workstation. `Testbed/MEDIA.md` names the tool and version.
-This is the only exception; it does not generalise to "open source is fine".
+That exception does not generalise to "open source is fine".
+
+**A second exception, decided by the maintainer 2026-10-03 (Q111): internet for the Exchange VM.**
+`OutlookAI-Exchange` - and only it - has a network route out (Hyper-V's Default Switch NAT) and signs
+in to his Microsoft 365 tenant, because its one mailbox lives there (Q108). Conditions, all of them:
+that one VM, nothing else on it but what `Testbed/MEDIA.md` already names (no new media, no licensed
+component, nothing downloaded and installed beyond the Office the Office Deployment Tool installs from
+`.work/office-odt/Testbed.xml`); its sign-in through `Testbed/host/Invoke-ExchangeSignIn.ps1`, whose
+credential is read only on the host, in memory (`Testbed/host/Get-ExchangeCredential.ps1`), and
+reaches the VM only as keystrokes; device registration with the tenant declined; Windows' own updates
+left on, without automatic restarts. Every other test VM stays offline. This is not "test VMs may
+have internet".
 
 ## The add-in on the maintainer's workstation (Q81)
 
@@ -280,20 +291,28 @@ the next Outlook restart.
 
 ## Mailbox Safety (MANDATORY — live tests touch REAL mailboxes)
 
-**THE MAINTAINER'S WORKSTATION IS READ-ONLY FOR LIVE TESTS — ALWAYS.** Decided by the maintainer
-2026-09-24 (Q69, Q72), in his words: *"run read-only and always only read-only!"* Every live test
-that can run on the test VMs runs **only** there. The only live tests that may run on the
-workstation are the fundamentally immovable ones — those that need Exchange (delegate and shared
-mailboxes, cached mode), which no test VM can have under the Dependencies rule — and they run
-**read-only**. **Never run a write-capable live test on the workstation, and never select a
-workstation run by a filter that could include one.** Since Q74 (2026-10-03) code enforces this:
-the workstation runs only the derived filter in `Testbed/README.md` section 4d - live tests that need
-Exchange AND carry `Writes=Nothing`, which T1 proves read-only from the compiled code - its settings'
-profile makes every in-process write throw, the test hub included, and the test-side MCP client
-refuses every tool not classified read-only. Those gates are a floor, not a licence: never edit the
-workstation's settings file, never re-declare it `Portable`, and if you cannot show a workstation
-run is read-only, do not start it. The rules below still bind every live run, on the workstation
-and on the VMs alike.
+**NO LIVE TEST RUNS ON THE MAINTAINER'S WORKSTATION — NOT EVEN A READ-ONLY ONE.** Decided by the
+maintainer 2026-10-03 (Q116 (a)), once the Exchange VM had run the Exchange tests green; before that
+the workstation was read-only for live tests (Q69, Q72: *"run read-only and always only read-only!"*)
+and ran only the Exchange-only tests, read-only (Q74). Code enforces it, through the machine's
+profile: the workstation's settings declare no `machineProfile`, which reads as `Production`, and
+`LiveTestSettings.Load` refuses a Production profile before any fixture starts. Q74's gates stay
+beneath it as a floor - a Production profile refuses every in-process write and every write-capable
+MCP tool. **Never edit the workstation's settings file, never re-declare its profile, and never set
+the live opt-in there.** `Testbed/README.md` section 4d.
+
+**The Exchange VM, `OutlookAI-Exchange`, holds a REAL mailbox** (Q108): `telefonie@xxlnet.nl`,
+production mail of lower value than the maintainer's others. Every live test needing Exchange runs
+there (`Testbed/README.md` section 4e), and his conditions bind it, in his words - only *"in such a
+way that it does not touch [non-test] data in the mailbox and in such a way that it keeps the mailbox
+clean after the tests"*; *"legitimate mail in there should not disappear and it should not be buried
+in test mail forever"* - read, as he confirmed (Q129 (a)), as **touch nothing that is not test data**:
+tests create, change and delete only their own tagged items, and remove every one of them again.
+Until he approves the Phase 2 write-safety design (runbook §4.4), its profile, `ExchangeGuest`,
+refuses every write and only `Writes=Nothing` tests run there. A checkpoint undoes nothing on the
+Exchange server: every write there is permanent, and its cleanup rests on the tested sweep alone.
+Nothing may be sent or addressed to anyone but the mailbox itself (Q110). The rules below bind every
+live run, on every VM.
 
 `Category=Live` tests run against the developer's **real production Outlook profile**: real mail accounts plus delegate/shared mailboxes **to which the profile has full write access**. Treat every live run as an operation on production data. A past incident mass-deleted real mail (fully recovered) because an agent improvised a cleanup script — these rules exist so that never repeats. They are non-negotiable and apply to every agent, every session, whether or not live tests are the task:
 
@@ -304,5 +323,5 @@ and on the VMs alike.
 5. **A live run may not lose mail anywhere.** The per-store count tripwire snapshots every store's mail folders before and after; any item-count **decrease**, or any folder added/removed, outside the test mailbox fails the suite loudly. No snapshot ⇒ the live tier refuses to run.
 6. **Signatures are user data.** Tests may only create/update/delete signatures prefixed `OutlookAI-McpTest-`; the `SignatureDirectorySnapshot` guard (SHA-256 before/after) must run and the suite must leave the user's real signatures bit-identical. `manage_signature` tests restore any registry defaults they touch.
 7. **Outlook lifecycle:** never `taskkill` OUTLOOK.EXE. Graceful `Application.Quit()` only when no unsent compose windows are open and the Outbox is empty — and release COM references BEFORE quitting (quitting while refs are held zombifies the process). Prefer leaving Outlook headless.
-8. **Run live tests only via the suite**, and only as `Testbed/README.md` section 4c describes: on a test guest, through `guest/Register-InteractiveTask.ps1`, with the per-run opt-in it gives - or, on the maintainer's workstation, only the read-only run section 4d describes. Every live test refuses to start without that opt-in (decided 2026-09-24): an accidental name filter once selected live tests, and in a checkout holding a real settings file it would have run them. **Never set the opt-in on the maintainer's workstation to run a test that can write** - see the paragraph above these rules. The suite's fixtures enforce the snapshots, allowlists, tripwire and zero-artifact sweeps. Never perform mailbox operations outside it during testing.
+8. **Run live tests only via the suite**, and only as `Testbed/README.md` sections 4c and 4e describe: on a test guest or the Exchange VM, through `guest/Register-InteractiveTask.ps1`, with the per-run opt-in they give - and never on the maintainer's workstation (section 4d). Every live test refuses to start without that opt-in (decided 2026-09-24): an accidental name filter once selected live tests, and in a checkout holding a real settings file it would have run them. **Never set the opt-in on the maintainer's workstation** - see the paragraphs above these rules. The suite's fixtures enforce the snapshots, allowlists, tripwire and zero-artifact sweeps. Never perform mailbox operations outside it during testing.
 9. If a gitignored `v3.MD` exists at the repo root, read its §0 safety envelope before any live-test or mailbox-touching work — it is the authoritative, more detailed contract.

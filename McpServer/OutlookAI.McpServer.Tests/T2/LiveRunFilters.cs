@@ -10,6 +10,12 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// opt-in refusal - is pinned by <c>T1.LiveTierInventoryTests</c> to equal what is computed here, and
 /// what is computed here is pinned to the vocabulary <c>T1.LiveTierInventoryTests</c> holds.
 /// </para>
+/// <para>
+/// <b>No filter for the maintainer's workstation, since 2026-10-03 (Q116 (a)).</b> It runs no live
+/// test at all: its settings read as <see cref="LiveMachineProfile.Production"/>, which
+/// <see cref="LiveTestSettings.Load"/> refuses outright. The Exchange-only tests it used to run
+/// read-only run on the Exchange test VM instead, through <see cref="ExchangeGuest"/>.
+/// </para>
 /// </summary>
 public static class LiveRunFilters
 {
@@ -18,8 +24,8 @@ public static class LiveRunFilters
 
     /// <summary>
     /// A cached Exchange mailbox, whose object model hands out 70-byte Exchange entry ids (Q74 C1).
-    /// A PST cannot be made to behave like one, so - like <see cref="DelegateStore"/> - no test guest
-    /// can be given it.
+    /// A PST cannot be made to behave like one, so - like <see cref="DelegateStore"/> - no PST guest
+    /// can be given it; the Exchange test VM has it.
     /// </summary>
     public const string CachedExchange = "CachedExchange";
 
@@ -39,28 +45,33 @@ public static class LiveRunFilters
     public const string WritesNothing = "Nothing";
 
     /// <summary>
-    /// The capabilities only an Exchange profile has - the whole definition of the tests that cannot
-    /// leave the maintainer's workstation. Since Q72 they are the only live tests that run there at all.
+    /// The capabilities only an Exchange profile has - the whole definition of the tests no PST guest
+    /// can run. Until Q116 (a) they ran on the maintainer's workstation, read-only; since 2026-10-03 they
+    /// run on the Exchange test VM, <c>OutlookAI-Exchange</c>, and nowhere else.
     /// </summary>
-    public static IReadOnlyList<string> WorkstationOnlyCapabilities { get; } = new[] { DelegateStore, CachedExchange };
+    public static IReadOnlyList<string> ExchangeOnlyCapabilities { get; } = new[] { DelegateStore, CachedExchange };
 
     /// <summary>
-    /// The filter a test guest runs: every live test except the ones naming a capability no guest can
-    /// be given. <c>Requires!=X</c> means no value of <c>Requires</c> equals X, which is what makes a
-    /// multi-valued trait usable as an exclusion.
+    /// The filter a PST test guest runs: every live test except the ones naming a capability only an
+    /// Exchange profile has. <c>Requires!=X</c> means no value of <c>Requires</c> equals X, which is what
+    /// makes a multi-valued trait usable as an exclusion.
     /// </summary>
     public static string Guest { get; } =
-        "Category=Live" + string.Concat(WorkstationOnlyCapabilities.Select(c => "&Requires!=" + c));
+        "Category=Live" + string.Concat(ExchangeOnlyCapabilities.Select(c => "&Requires!=" + c));
 
     /// <summary>The filter on the guest whose search index is switched off by design.</summary>
     public static string GuestUnindexed { get; } = Guest + "&Requires!=" + SearchIndex;
 
     /// <summary>
-    /// The filter the maintainer's workstation runs, and the only one it may (Q72, Q74): the live tests
-    /// that need an Exchange profile - nothing else may run there - AND that carry
-    /// <see cref="WritesTrait"/>=<see cref="WritesNothing"/>. Every such test must carry it
-    /// (<c>T1.LiveTierInventoryTests</c>), so in practice the two halves select the same tests; both are
-    /// kept so that neither alone decides.
+    /// The filter the Exchange test VM runs (Q108 to Q111, Q116 (a)): the cached-Exchange tests that
+    /// carry <see cref="WritesTrait"/>=<see cref="WritesNothing"/>, and none that needs a delegate store.
+    /// <list type="bullet">
+    /// <item><b>Read-only</b>, because the VM's profile, <see cref="LiveMachineProfile.ExchangeGuest"/>,
+    /// refuses every write until the maintainer approves the Phase 2 write-safety design - a test that
+    /// may write would only fail there.</item>
+    /// <item><b>No <see cref="DelegateStore"/></b> until the free shared test mailbox the maintainer
+    /// requested exists (Q109): the VM holds one mailbox and no delegate.</item>
+    /// </list>
     /// <para>
     /// <b>Why the value is <see cref="WritesNothing"/> and never <c>None</c> - measured 2026-10-03.</b>
     /// To the VSTest filter a test that does not carry a trait has the value <c>None</c> for it:
@@ -72,7 +83,6 @@ public static class LiveRunFilters
     /// <c>T1.LiveTierInventoryTests</c> refuses <c>None</c> as a trait value and in any derived filter.
     /// </para>
     /// </summary>
-    public static string Workstation { get; } =
-        "Category=Live&" + WritesTrait + "=" + WritesNothing + "&("
-        + string.Join("|", WorkstationOnlyCapabilities.Select(c => "Requires=" + c)) + ")";
+    public static string ExchangeGuest { get; } =
+        "Category=Live&" + WritesTrait + "=" + WritesNothing + "&Requires=" + CachedExchange + "&Requires!=" + DelegateStore;
 }

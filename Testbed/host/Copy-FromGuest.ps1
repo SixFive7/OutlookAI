@@ -77,9 +77,9 @@
     machine has moved on. -Force means "yes, this is the newer copy of the same thing".
 
 .PARAMETER VMName
-    MANDATORY. Which guest to pull from. There is no default: THREE MACHINES COEXIST -
-    OutlookAI-Indexed, OutlookAI-Unindexed and OutlookAI-Build - and a default that silently
-    picks one of three is the exact shape of mistake this testbed keeps making. Here it would be
+    MANDATORY. Which guest to pull from. There is no default: FOUR MACHINES COEXIST -
+    OutlookAI-Indexed, OutlookAI-Unindexed, OutlookAI-Build and OutlookAI-Exchange - and a default that silently
+    picks one of four is the exact shape of mistake this testbed keeps making. Here it would be
     pulling one guest's manifest and landing it on top of another's.
 
     It also NAMES THE SUBDIRECTORY the results land in, so it must be a single path segment. A

@@ -22,7 +22,7 @@ public sealed class LiveWriteAccessTests
     {
         // "machineProfile": 7 parses - the enum is numeric underneath - and so would a value added
         // later. Every one of them is a machine nobody decided may write.
-        foreach (int value in new[] { -1, 2, 7, int.MaxValue })
+        foreach (int value in new[] { -1, 3, 7, int.MaxValue })
         {
             Assert.True(LiveWriteAccess.RefusesEveryWrite((LiveMachineProfile)value), "profile value " + value);
         }

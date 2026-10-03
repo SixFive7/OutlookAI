@@ -532,7 +532,9 @@ exclusion state unchanged by it.
 
 **The two phases RAN on a guest - `OutlookAI-Unindexed`, 2026-10-03 - and work as designed. Their
 first run found a PRODUCT DEFECT: in a NOT elevated Outlook the add-in's tuning reconcile never
-finishes, so on a fresh guest step 7c ends `BROKEN`, not `ADDIN-READY` (below; open in `TODO.md`).**
+finishes, so on a fresh guest step 7c ends `BROKEN`, not `ADDIN-READY` (below). Fixed the same day (Q128,
+the last record of this section): the same proof from `CP-08` now ends `ADDIN-READY` with no registry
+step.**
 Until that day their proof was the host's: `-SelfTest`, 168 assertions under Windows PowerShell 5.1
 and PowerShell 7 - seven reading the script's own syntax tree - eleven rules broken on purpose in
 scratch copies, each caught, and the four `Tools/Checks` guards.
@@ -608,10 +610,74 @@ longer read after the 240 s wait (step 6 printed "registration reconcile after 2
 self-tests passing (`Testbed/host/Invoke-TestsOnBuildVm.ps1 9bfc135 -SkipSuite`); 151 on the guest,
 whose copy has no repository for the contract section.
 
-**Not settled by it:** `ADDIN-READY` on a fresh guest, which waits on the defect; the indexed guest -
+**Not settled by it:** `ADDIN-READY` on a fresh guest, which waited on the defect - settled by the Q128 run
+below; the indexed guest -
 that an unelevated first run there feeds the index and leaves it `INDEXED`; `-Verify -WithOutlook`
 against a running Outlook, which had closed each time before the attach was tried; and the two live
 tests on a guest installed this way.
+
+**The defect, fixed (Q128), and the proof again from `CP-08` - `OutlookAI-Unindexed`, 2026-10-03.**
+Decided by the maintainer the same day (Q128): *"Allow reading it and changing it from the gui. If
+the change requires admin and the user is not admin generate a uac prompt."* What changed:
+
+* **The reconcile never stops early** (`Services/TuningReconciler.cs`, split out of
+  `OutlookTuningService` so the test project can pin it - T1 `TuningReconcilerTests`). A value Windows
+  refuses to write for lack of rights is skipped and listed in `Tuning\NeedsAdministrator` - a REG_SZ
+  of `;`-joined entry ids, `Services/AddInServerContract.cs` - which `outlook_health` reports as
+  `tuning.needsAdministrator`; every other value is still applied; any other failed write is skipped
+  too; and the bookkeeping - `RestartNeeded`, `PolicyConflicts`, `NeedsAdministrator`, then
+  `LastReconcileUtc` - is written in a `finally`, each write on its own.
+* **OutlookAI Settings shows the five policy values**, one row each: current, desired (a list - the
+  choice is stored at once as the desired value), and whether it is in effect or needs an
+  administrator. **Apply as administrator** starts `OutlookAI.PolicyWriter.exe` through ShellExecuteEx
+  `runas` - one UAC prompt for every value that needs it.
+* **The helper** (`PolicyWriter/`) is the one program in the product that runs elevated, and a
+  privilege boundary: it accepts `--sid <SID> --office <major>` and some of the five value names with
+  the values the dialog offers (`Services/CachedModePolicy.cs`, `Services/PolicyWriterRequest.cs`),
+  refuses anything else whole before writing, refuses unless the SID is the user of the process that
+  started it - read from the session manager, in the helper's own session - and writes
+  `HKEY_USERS\<SID>\Software\Policies\Microsoft\Office\<major>\Outlook\Cached Mode`, never HKCU: a
+  standard user who approves the prompt with an ADMINISTRATOR's credentials gets a helper running as
+  that administrator, whose HKCU is the administrator's hive. It never loads a hive. It is built by the
+  add-in's own build (a ProjectReference), listed with its SHA-256 in the signed
+  `OutlookAI.dll.manifest`, flattened beside `OutlookAI.dll` and installed to `{app}` by the
+  installer's `publish\*` rule; `requireAdministrator` in its manifest, so it cannot run with a
+  filtered token at all.
+
+*The run.* `CP-08-MAIL-SINK` restored and started; the payload built on the host from `94f115f` by
+`Testbed/host/Publish-AddInPayload.ps1` (guard 3 `UNCHANGED` over 305 host lines, no build warning;
+`publish\OutlookAI.PolicyWriter.exe` 26,624 bytes, SHA-256 `AEC67A1B...`, a `<file>` with that hash in
+the signed manifest) and staged with the pinned `vstor_redist.exe` and `94f115f`'s guest scripts. Every
+phase through `Register-InteractiveTask.ps1` in session 1; in session 0, read-only, a poller sampled
+OUTLOOK.EXE every 0.5 s and a WMI process-start trace recorded every `OutlookAI.PolicyWriter.exe` and
+`consent.exe` with its PARENT process id. Raw logs, one file per step, the harness and the build-VM
+runs: `.work\q128-proof\` in the main checkout (the second pass in `second-pass\`).
+
+| # | What ran | Verdict, exit code, and what else was seen |
+| --- | --- | --- |
+| 1 | `-SelfTest` (guest), `-Verify` | 158 assertions, 0 failures (the contract section SKIPs off the repository); `NOT-INSTALLED`, 3 |
+| 2 | `-Phase Install -Execute`, default task (elevated) | **`INSTALLED-NEVER-RAN`, 2**, 99.6 s: `v4R` 10.0.60917 installed, the installer, the trust entry and the record written; no OUTLOOK.EXE at any sample |
+| 3 | `-Phase FirstRun -Execute`, `-RunLevel Limited` | **`ADDIN-READY`, 0**, 16.6 s, **with no registry step of any kind**: COM 6.4 s, `LastReconcileUtc` 7.2 s after the start, `token NOT elevated`, `Connect = True`, `GetRestartNeeded() = True`, `tuning walk: 8 of the 13`, and the note *"the add-in skipped 5 value(s) it may not write without an administrator, and finished its reconcile"* - `Tuning\NeedsAdministrator` = the five `caching.policy.*` ids; the policy key absent; the user Cached Mode values 0/0 and the PST values 102400/96256 written; exclusion `UNCHANGED` |
+| 4 | OutlookAI Settings, opened through the add-in's automation hook (`OpenSettings`) and read with UI Automation, Limited | the five rows: current `(not set)`, desired `All (0)`, `Not used (0)`, `On (1)` three times, state `Needs administrator`; **Apply as administrator...** enabled. (A second Outlook start meanwhile: its startup reconcile wrote nothing, cleared `RestartNeeded`, and listed the five again) |
+| 5 | the helper, `CreateProcess` from a Limited task, a valid request | did not start: *"The requested operation requires elevation"*; nothing written |
+| 6 | the helper from the elevated task: 14 requests it must refuse | 12 refused **exit 2** (arguments): none at all, a sixth name, a name in other case, `SyncWindowSetting=2`, `DownloadSharedFolders=2`, `0x0`, `--office 18.0`, `--hive HKLM`, a value twice, no `--sid`, `S-1-5-18`, `<SID>_Classes`; 2 refused **exit 3** (user): this machine's built-in Administrator (`...-500`) and `S-1-5-21-1-2-3-4` - *"the process that started this helper runs as ...-1000"*. Afterwards the policy key in no loaded hive under `HKEY_USERS` |
+| 7 | the helper elevated, valid: `SyncWindowSetting=0 SyncWindowSettingDays=0` for vmadmin's SID | **exit 0**, *"WRITTEN under HKEY_USERS\S-1-5-21-...-1000\Software\Policies\Microsoft\Office\16.0\Outlook\Cached Mode"*; of every loaded hive under `HKEY_USERS` only that one holds the key, both values REG_DWORD |
+| 8 | **Apply as administrator...** pressed (UI Automation), the UAC prompt ended from session 0 by `Stop-Process` | *"Windows did not start the administrator helper: Unknown error (0xffffffff) (-1)."* ShellExecuteEx hands back the consent process's own exit code, and `Stop-Process` ends it with -1 - not what a user's No does. Nothing changed |
+| 9 | the same, the prompt ended with `ERROR_CANCELLED` (1223) - the code `consent.exe` ends with on No | **"Cancelled at the administrator prompt. Nothing was changed."**, 3.5 s after the press, in the dialog's secondary colour, not as an error; no helper started; the three values still `Needs administrator` |
+| 10 | the same with `ConsentPromptBehaviorAdmin` 0 ("elevate without prompting") for the step, 5 restored after | **"The values were written to your Outlook policy settings. Restart Outlook for them to take effect."** 0.6 s after the press, and the restart line. The trace: **`OutlookAI.PolicyWriter.exe` started with parent `OUTLOOK.EXE -Embedding`** - AppInfo makes the requester the elevated process's parent, which the helper's user check relies on. All five rows `In effect`, the button disabled, `NeedsAdministrator` empty, `Applied` 13 of 13 |
+| 11 | `-Phase FirstRun -Execute` again, Limited | **`ADDIN-READY`, 0**, 8 s: `LastReconcileUtc` 2.4 s in, `tuning walk: 13 of the 13`, `needsAdministrator=` empty, `GetRestartNeeded() = False`, token NOT elevated, exclusion `UNCHANGED`; `-Verify` `ADDIN-READY`, 0 |
+| 12 | a probe: one byte appended to `{app}\OutlookAI.PolicyWriter.exe`, then FirstRun | `ADDIN-READY`, `Connect = True`: **the VSTO runtime does not check that file's manifest hash when it loads the add-in** - the signed manifest records the helper, it does not guard it on disk |
+| 13 | `Restore-VMSnapshot CP-13B-LIVE-GREEN`, saved, lease released | no checkpoint kept from this run |
+| 14 | a second pass from `CP-08`, the same payload: `-Phase Install`, then FirstRun at Limited | `INSTALLED-NEVER-RAN`, 2, in 115.6 s; then `ADDIN-READY`, 0, in 14.4 s, the five listed again |
+| 15 | in OutlookAI Settings, **12 months** chosen in `SyncWindowSetting`'s list - by the list's own `CB_SETCURSEL` and the `CBN_SELCHANGE` a pick sends - then **Apply as administrator...**, prompt-free consent | the row read desired `12 months (12)`, still `Needs administrator` (the reconcile tried and was refused); then *"The values were written..."* in 1.3 s, all five `In effect`, `SyncWindowSetting` 12 in the registry, the helper's parent `OUTLOOK.EXE` again |
+| 16 | **All** chosen again, Apply as administrator | that row alone `Needs administrator`, then written: `SyncWindowSetting` 0, all five `In effect`; restored to `CP-13B-LIVE-GREEN`, saved, lease released |
+
+**Not settled by it:** a standard user approving the prompt with ANOTHER account's credentials - every
+guest has one account, so step 10's requester and helper were the same user; the helper's check and
+its `HKEY_USERS\<SID>` target are what make that case right, pinned by T1 `PolicyWriterRunTests`, not
+measured. The prompt itself was never clicked: steps 8 to 10 and 15 to 16 stood in for it from
+session 0, and steps 15 and 16 chose from the list by its own messages, not by a mouse. And, as before,
+the indexed guest and the two live tests on a guest installed this way.
 
 **Checkpoint `CP-03-OUTLOOKAI-INSTALLED` once `-Phase FirstRun` prints `ADDIN-READY`.** `CP-05-ADDIN-TRUSTED`
 is no longer a separate manual step - the trust entry is part of the scripted install - and the name
@@ -2049,7 +2115,7 @@ carries, and the fourth is the hub's own name.
 
 ### The hub is rebuilt before every run
 
-**On a frozen guest it is not - Q130 (a), decided 2026-10-03 (section 4.4).** There the frozen
+**On a frozen guest it is not - Q130 (a), decided 2026-10-03 (section 4.5).** There the frozen
 checkpoint holds the hub as it was built and every run restores it at the same instant, so the hub's
 newest item is exactly as old on every run as on the first - minutes, well inside the frontier margin.
 The rebuild below is how a NEW frozen checkpoint's hub is made. The frontier test still reads the
@@ -2394,7 +2460,7 @@ one included - stops short of the derived string. `CachedExchange` joined `Deleg
 2026-10-03 (Q74 C1).
 
 **On a FROZEN guest the run starts with the restore of its frozen checkpoint instead - decided by the
-maintainer 2026-10-03 (Q130 (a); section 4.4).** Both Outlook guests are frozen once that work is
+maintainer 2026-10-03 (Q130 (a); section 4.5).** Both Outlook guests are frozen once that work is
 merged: time synchronisation off, every run restoring the checkpoint `Testbed/testbed.json` names
 under `frozenClocks`, staging, passing `Testbed/host/Set-GuestClockFrozen.ps1 -Verify` and starting
 Outlook NOT elevated on the tier profile before the suite - with no restart and no hub rebuild after the
@@ -2447,8 +2513,10 @@ filter exactly as written above and reads the `PROVED NOTHING:` line in the outp
 is how to stop needing that line at all - by building the account, which is the only thing that
 turns those two tests from an announcement into a verification.
 
-**The maintainer's workstation runs a different filter, and only that one:** read-only, Exchange-only
-- `Testbed/README.md` section 4d, and section 5 below for the `Writes=Nothing` trait it rests on.
+**The maintainer's workstation runs no live test at all** since 2026-10-03 (Q116 (a)) - its profile
+refuses them in `LiveTestSettings.Load` (`Testbed/README.md` section 4d). **The Exchange test VM runs
+a different filter, and only that one:** read-only, Exchange-only - `Testbed/README.md` section 4e,
+and section 5 below for the `Writes=Nothing` trait it rests on.
 
 To run one class - on a test guest, inside the same interactive-task script as `Testbed/README.md`
 section 4c's lines, opt-in included:
@@ -2458,8 +2526,9 @@ dotnet test <csproj> --filter "Category=Live&FullyQualifiedName~LiveTableSortPro
 ```
 
 **Where each kind of run happens, since 2026-10-03 (Q94, `AGENTS.md`):** a live run on a test guest,
-as above; on the maintainer's workstation only the Exchange-only read-only subset (Q74); and the
-NON-live suite on neither - it runs on the build VM, through
+as above; the Exchange-only read-only subset on the Exchange test VM (section 4.4; until Q116 (a) it
+ran on the maintainer's workstation, which runs no live test now); and the NON-live suite on none of
+them - it runs on the build VM, through
 `Testbed/host/Invoke-TestsOnBuildVm.ps1` (section 4.3).
 
 **A filtered run is fully guarded.** It takes the census, runs the health preflight, checks
@@ -2960,7 +3029,7 @@ must not restart or cold-boot the guest after the restore (both leave the frozen
 after a restore inferred from the cold boot, not measured), and the build VM can never be frozen (its runner
 requires the host's clock within 2 s). Not measured: installing a freshly built add-in on a frozen guest,
 and MSBuild with files the host dated after the guest's clock. *Both measured since, and the restart after
-a restore too - section 4.4.*
+a restore too - section 4.5.*
 
 ### 4.2 The indexed guest's build-out - `OutlookAI-Indexed`, 2026-09-24 and 2026-09-27
 
@@ -3387,7 +3456,7 @@ populations stay its resting state until this branch is merged. **After the merg
 `CP-18C-ALL-KINDS` instead - its hub is rebuilt by every run anyway (the rebuild keeps all three kinds from
 then on), and its bystander is the one that needs the all-kinds build. The same date applies: **before
 2026-11-01 23:59 UTC** for Corpus A's 30-day window (Q108). *Once Q130 (a) is merged, runs restore
-`CP-20C-FROZEN-CLOCK` instead (section 4.4): CP-18C-ALL-KINDS frozen at its own instant, whose clock never
+`CP-20C-FROZEN-CLOCK` instead (section 4.5): CP-18C-ALL-KINDS frozen at its own instant, whose clock never
 reaches that date.*
 
 ### 4.2f The live tier's first runs - `OutlookAI-Indexed`, 2026-10-03
@@ -3489,7 +3558,7 @@ artifacts 0, census 0 failures, no crash. Its checkpoint:
 every run), not on the green checkpoint: `CP-18C-ALL-KINDS` is the base every agent's phase restores
 (the coordinator moved guest one there during this work), and the green state is a run's end, with a
 hub the next run tears down and rebuilds anyway. `CP-19C-LIVE-GREEN` is the evidence, kept beside it.
-*Since Q130 (a) (section 4.4) the runner's default for guest one is `CP-20C-FROZEN-CLOCK` - a second
+*Since Q130 (a) (section 4.5) the runner's default for guest one is `CP-20C-FROZEN-CLOCK` - a second
 child of `CP-18C-ALL-KINDS`, taken three minutes after `CP-19C-LIVE-GREEN` and holding CP-18C's own state
 frozen at its own instant; it was made as `CP-19C-FROZEN-CLOCK` and renamed the same evening so no two
 checkpoints share a number.*
@@ -3498,7 +3567,8 @@ checkpoints share a number.*
 
 **Why this section exists.** The third machine, and not a live-tier guest: it runs the non-live
 suite and the script self-tests for `Testbed/host/Invoke-TestsOnBuildVm.ps1`, so that nothing runs
-on the maintainer's workstation but the Exchange-only read-only live tests (Q94; `AGENTS.md`).
+on the maintainer's workstation but the Exchange-only read-only live tests (Q94; `AGENTS.md`) - and
+since Q116 (a), the same day, not even those (section 4.4).
 No Office, no mailbox, no sink, no network. `Testbed/README.md` section 1c is the procedure and how
 to use it; this is the record of building it, every step from the committed scripts and the media
 `Testbed/MEDIA.md` names. Raw logs: `.work\q102-build-vm\` in the main checkout.
@@ -3557,7 +3627,125 @@ run, restores the base and then saves it - restoring alone would leave it runnin
 RAM. A `VirtualMachine` object keeps the state it was read with and has no `Refresh()`, so every
 wait re-reads the VM by name. And a running checkpoint's memory is stored sparse: 1.6 GB for 6 GB.
 
-### 4.4 The frozen guest clocks - both Outlook guests, 2026-10-03 (Q130 (a) and (b))
+### 4.4 The Exchange VM - `OutlookAI-Exchange`, 2026-10-03 (Q108 to Q111, Q113 (b), Q116 (a))
+
+**Why this section exists.** The fourth machine: ONE real Microsoft 365 mailbox, `telefonie@xxlnet.nl`,
+cached and indexed, so that the live tests needing an Exchange profile leave the maintainer's
+workstation, whose Outlook holds far more critical mailboxes (Q108). `Testbed/README.md` section 1d
+is the procedure, 4e the run; this is the record of the build-out, every step from the committed
+scripts. It has internet (Q111) and no PST, no sink, no population. Raw logs: `.work\exchange-vm\`
+of the worktree that built it.
+
+**The build, 2026-10-03, in the order it ran** (times local, UTC+2):
+
+1. 19:21 - `New-AnswerFile.ps1`, then `New-TestbedVm.ps1 -Execute -Start` with its own disk folder,
+   4 vCPU, 8 GB static, no switch. 19:27:39 first logon `DONE`; `-CompleteInstall` ejected both discs,
+   took `CP-01-WIN-CLEAN` and deleted the answer ISO.
+2. The Default Switch connected; `outlook.office365.com:443` reachable. Windows Update policy
+   `NoAutoRebootWithLoggedOnUsers` 1 with `AUOptions` 4.
+3. Office from `.work/office-odt/Testbed.xml`, unchanged, online: 2.3 min, 16.0.17932.21000. The
+   configuration file deleted from the guest; first-run suppression `-Execute` and `-Verify`, 13 OK.
+   `CP-02-OFFICE-INSTALLED`. The licence read after Outlook's first start: `VOLUME_KMSCLIENT`,
+   out-of-box grace, 30 days - no KMS host reachable, nothing activated.
+4. Outlook's first start, NOT elevated, no profile: its "Email Account Setup" dialog; the address
+   typed, the Microsoft sign-in's password page (a WebView in an `ApplicationFrameWindow`, UI Automation
+   ids `i0118` and `idSIButton9`), the password typed from the host - no MFA page that time -, then
+   "Sign in to all apps and websites on this device?" answered "No, this app only", then Outlook's
+   "Account successfully added", its Outlook Mobile box cleared and Done, the last three through MSAA:
+   Outlook's NetUI shows the managed UI Automation client a pane and nothing in it. First by hand with
+   scratch helpers, then as the committed `host/Invoke-ExchangeSignIn.ps1` from `CP-02` again: 2 min
+   51 s, `SIGNED-IN` - profile `Outlook`, account type Exchange, `ExchangeConnectionMode` 700, the
+   store `IsCachedExchange` and `IsInstantSearchEnabled`. `dsregcmd`: AzureAdJoined NO, WorkplaceJoined NO.
+5. `Set-OutlookIndexingDisabled.ps1 -Verify`: `INDEXED`, 183 rows under `telefonie@xxlnet.nl($65e0d53e)`.
+   The mailbox is small: 25 mail folders, 5 mail items (Inbox 1, Sent Items 2, Deleted Items 2).
+   `CP-03-EXCHANGE-SIGNED-IN`.
+6. The suite staged from the branch's commit (`Install-DotnetSdk.ps1 -Execute`: `TEST-READY`), the
+   settings rendered (`machineProfile` `ExchangeGuest`).
+7. The read-only runs below; `CP-04-SUITE-READONLY-RUN`.
+
+**The read-only runs.** Every one through `guest/Register-InteractiveTask.ps1 -RunLevel Limited`, opted
+in for `OAI-EXCHANGE`, against the one Outlook, unelevated. The count tripwire, on every run:
+`watch soundness: 0 declared bystander(s), 1 store(s) this census can fail on` - the hub, censused
+item by item because the machine is read-only - and afterwards `0 failure(s), 0 note(s)`.
+
+| Run | Filter | Result |
+| --- | --- | --- |
+| A | the Exchange VM's filter, branch at `dbc8b44` | 1 of 1: the short decoded id rejected, `0x80040107` |
+| B | every `Writes=Nothing` test outside `DelegateStore`, to learn which make sense on Exchange | 49 run, 29 passed, 20 failed - every failure but one a test that needs what this VM does not have: the hub population and its attachments, its probe term and subject-only probe (null), a PST, three stores, 25 mail hits, mail in the last 30 days or over 100 KB, or the add-in, which this VM does not have (`LiveHealthTests` reads its tuning state without declaring `AddInRegistry`). The one that is about Exchange: `RoundTrip_SearchThenRead_TenHitsAcrossStores` read 9 hits and then met one whose item is no longer in its folder - an index row for an item gone since (the product's message says so), on a live mailbox where Outlook prunes its own sync logs |
+| C | the Exchange VM's filter, with the two tests below added | 3 of 4: `T2/LiveExchangeStoreHashTests` and the short id pass; `T2/LiveExchangeHubArtifactTests` FAILS on one item tagged `[OutlookAI-McpTest]` in Sent Items |
+| Q99 | the same filter, on a LOCAL-ONLY merge of `q99-name-encoding-followup` (`a6f4371`) with this branch, which the one-mailbox VM needs to run at all | 3 of 4: `T2/LiveExchangeFolderPathTests` PASSES - 40 folders walked, 16 nested paths at depth 2 each resolved to itself, and a missing child answered NotFound with one place to build: Exchange answers a missing folder name with MAPI_E_NOT_FOUND. The gate for that branch holds. The artifact count fails as in C |
+
+**The Object Model Guard, met at 21:01.** After `CP-02`'s proof run the VM was restored to `CP-04`,
+and the next run from the branch's head refused twice: the baseline census timed out at 300 s with two
+folders measured. A COM read hung as well. Outlook's windows, read by title and class only: six
+"Microsoft Outlook" dialogs stacked on its disabled main window, each the guard's "A program is
+trying to access email address information stored in Outlook" - Defender's signatures were the
+image's, 381 days old, and Security Center reported them out of date (`productState` 0x061110).
+`Update-MpSignature` (26 s) brought it to 0x061100; the six prompts were answered Deny through their
+own `WM_COMMAND`, the hung calls failed, and the same run then passed as in C - 2 of 3, the leftover
+failing, the tripwire clean. `host/Invoke-ExchangeSignIn.ps1 -Mode Preflight` now does that before
+every run.
+
+**Q113 (b), measured:** `outlook_health`'s row for the cached Exchange store reads `matchedBy=storeHash
+matchedInput=profileMappingSignature inLocalIndex=True`, index root `telefonie@xxlnet.nl($65e0d53e)`,
+`storesNotInProfile` 0. Outlook hashes the profile's `PR_MAPPING_SIGNATURE`, as Microsoft documents,
+so for a cached Exchange store the name fallback did not decide anything. One store, one profile, one
+measurement: a delegate store's row and a second profile are untested here.
+
+**The leftover in Sent Items.** One item whose subject carries `OutlookAI-McpTest`, found by the
+read-only count; nothing this VM ran created it - the census identifies the same items before and
+after every run. It is test data, so under the maintainer's rule (Q129 (a)) it must go; on this
+read-only machine nothing removes it, and nothing will by hand.
+
+**Phase 2 - PROPOSED 2026-10-03, NOT APPROVED.** What writing in this real mailbox would rest on, each
+part in code. Nothing below is built; the maintainer decides first.
+
+1. **The rule (Q129 (a))**: tests create, change and delete only their own tagged items, and remove
+   every one of them; no untagged item is touched, lost or buried.
+2. **A recipient allowlist in code (Q110)**: every outgoing address - To, Cc, Bcc, a reply's and a
+   forward's - must be the hub's own address, or the run refuses before the item is saved: a new
+   `RecipientAllowlist` asked by `LiveOutlookTestMailer` before every save and send, and by the stdio
+   client before every write-capable tool call whose arguments name a recipient. Reply-all, replies
+   to real mail and forwards are refused unless the source item is a tagged item of this run.
+3. **Writable only as an Exchange guest with the allowlist**: `LiveWriteAccess` would let
+   `ExchangeGuest` write in the hub alone, and only while that allowlist is armed; the hub stays
+   censused item by item, with the run's own tagged items the only departures and arrivals the
+   tripwire accepts: a departure of an UNTAGGED item fails, an arrival is noted - real mail arrives.
+4. **Every item tagged twice**: the subject tag and a run marker - `[OutlookAI-McpTest]` plus the
+   run's id - and every created item's EntryID recorded the moment it is saved (the allowlist the
+   sweep deletes by: EntryID AND ordinal tag, both required).
+5. **Self-sent mail**: a send is addressed to the hub itself; its Sent Items copy and the delivered
+   Inbox copy both carry the tag and the marker and are both swept; the sweep waits for the delivery
+   (the existing stable-zero wait) so no copy lands after it.
+6. **Purged, not left in Deleted Items**: the sweep deletes each item, then deletes that copy again
+   from Deleted Items, so no test mail lingers in a folder the owner reads. Exchange then keeps it in
+   the hidden Recoverable Items folder for its retention period (14 days by default) - out of the
+   owner's sight, and nothing a test touches.
+7. **The sweep's folders**: Drafts, Inbox, Sent Items, Outbox, Deleted Items and the Sync Issues
+   subtree (Conflicts, Local Failures, Server Failures), plus the test folders it created,
+   deepest first - the existing `HubSweepFolderIdsWithArchive` set.
+8. **Populations**: created per run, under the run marker, and removed at the end - never kept in
+   the mailbox between runs.
+9. **An aborted run**: the next run's preflight counts tagged items; with any present it refuses to
+   start until the leftover sweep - by tag AND marker of a recorded run, never by a subject pattern -
+   has removed them.
+10. **Never**: an untagged item touched, a deletion by subject pattern, a send to anyone but the hub.
+
+**Which writes can move to the shared test mailbox once it exists (Q110) - read from the product's
+code on 2026-10-03, to be confirmed on it.** `new_draft` creates the draft with `Items.Add` in the
+SENDING ACCOUNT's Drafts and pins `SendUsingAccount` from an Account object
+(`OutlookComSession.TryCreateNewDraft`); a shared mailbox reached through the account is a delegate
+store, not an account, so new drafts - and `update_draft` and `discard_draft` on them - stay in
+telefonie's Drafts. `send` sends from the account, so its Sent Items copy stays in telefonie's Sent
+Items, and under the recipient allowlist the delivered copy lands in telefonie's Inbox. `reply_draft`,
+`replyall_draft` and `forward_draft` pin the account whose delivery store holds the source item and
+save "into that store's Drafts" (`TryCreateDerivedDraft`): for a source item in the shared mailbox no
+account has that store, `SendUsingAccount` is left to Outlook, and whether the draft then stays in the
+shared mailbox's Drafts is exactly what the first run there must read. `move_mail` and `archive_mail`
+move items wherever they are, so a population built in the shared mailbox can stay there.
+`manage_signature` writes no mailbox at all.
+
+### 4.5 The frozen guest clocks - both Outlook guests, 2026-10-03 (Q130 (a) and (b))
 
 **Why this section exists.** The maintainer's answer of 2026-10-03 to Q130
 (`Docs/overnight-review-2026-10-03.md`): (a) freeze the clocks of `OutlookAI-Indexed` and
@@ -3580,7 +3768,7 @@ as section 2.3 runs them:
 | signatures | `Get-AuthenticodeSignature` in the guest | `vstor_redist.exe` `Valid` (its signer 2023-11-16 to 2024-11-14, timestamped); the product's installer `NotSigned` - a testbed build stops at the unsigned installer by design (`Publish-AddInPayload.ps1`, THE RELEASE BUILD) |
 | Install | `-Phase Install -Execute`, default task (elevated) | **`INSTALLED-NEVER-RAN`, exit 2** - the VSTO runtime installed (`v4R` 10.0.60917), the trust entry and the install record written: as unfrozen (section 2.3 row 3) |
 | manifest | the installed `OutlookAI.vsto`'s certificate against the guest's clock | `CN=OutlookAI Testbed`, notBefore 2026-10-03T18:13:17Z - **NOT YET VALID on the guest's clock, by 9.1 days** |
-| FirstRun | `-Phase FirstRun -Execute`, `-RunLevel Limited` | **`BROKEN`, exit 1**, 250 s: COM start 3.4 s, `Connect = True`, the add-in answered `GetRestartNeeded()`, OUTLOOK.EXE NOT elevated, its registration reconcile wrote `Mcp\LastReconcileUtc` 3.6 s in, the tuning walk 4 of 13 - the open product defect of section 2.3 (`TODO.md`), exactly as unfrozen (rows 6 and 8). No window appeared during the run (the script's own check), no VSTO or Office event in the Application log, no VSTO alert log (`VSTO_LOGALERTS` is 1) |
+| FirstRun | `-Phase FirstRun -Execute`, `-RunLevel Limited` | **`BROKEN`, exit 1**, 250 s: COM start 3.4 s, `Connect = True`, the add-in answered `GetRestartNeeded()`, OUTLOOK.EXE NOT elevated, its registration reconcile wrote `Mcp\LastReconcileUtc` 3.6 s in, the tuning walk 4 of 13 - the product defect section 2.3 recorded that day, exactly as unfrozen (rows 6 and 8); this payload was `af1fd3f`'s, from before Q128 fixed it (section 2.3, "The defect, fixed"). No window appeared during the run (the script's own check), no VSTO or Office event in the Application log, no VSTO alert log (`VSTO_LOGALERTS` is 1) |
 | control | the five Cached Mode policy values from session 0, elevated, as row 9 there | - |
 | FirstRun | again, Limited | **`ADDIN-READY`, exit 0**, 8 s: `LastReconcileUtc` 2.2 s in (written as the frozen clock's 2026-09-24T15:26:12Z), 13 of 13, token NOT elevated: as unfrozen (row 10) |
 | `-Verify` | session 0 | `ADDIN-READY`, exit 0 - "the add-in has run since" |
@@ -3717,7 +3905,6 @@ test computes no window of its own). On a frozen guest the two coincide; on a re
 a date predicate over the big store after 2026-11-01.
 
 ---
-
 ## 5. Which tests are in which bucket, and how to find out
 
 The classification is **two traits on the test itself**, not a list in a document that can drift -
@@ -3736,15 +3923,18 @@ user's screen - declared **per method**, with that one value, and absence meanin
 is not the retired third axis come back: that one restated `Requires` by hand and could only drift,
 while this one cannot be derived from `Requires` at all, and it is not trusted either -
 `T1/ReadOnlyLiveTestTests` walks the compiled code of every carrier, its fixtures included, and
-fails the build on any way it can reach a write. It exists for one machine: the maintainer's
-workstation runs only live tests that need an Exchange profile AND carry `Writes=Nothing`, and every
-test needing Exchange must carry it. The run is `Testbed/README.md` section 4d; its filter, derived in
+fails the build on any way it can reach a write. It exists for one machine: the Exchange test VM
+(section 4.4) runs only live tests that need an Exchange profile AND carry `Writes=Nothing` until the
+maintainer approves its Phase 2 write-safety design, and every test needing Exchange must carry it.
+Until Q116 (a), 2026-10-03, the machine was the maintainer's workstation, which runs no live test
+now. The run is `Testbed/README.md` section 4e; its filter, derived in
 `McpServer/OutlookAI.McpServer.Tests/T2/LiveRunFilters.cs` and pinned there and here, is:
 
-`Category=Live&Writes=Nothing&(Requires=DelegateStore|Requires=CachedExchange)`
+`Category=Live&Writes=Nothing&Requires=CachedExchange&Requires!=DelegateStore`
 
-Fifty-four live tests carry the trait on 2026-10-03; seven of them need Exchange, and those seven are
-the workstation run.
+- the cached-Exchange carriers, and none that needs a delegate store until the shared test mailbox
+exists (Q109). Fifty-four live tests carried the trait on the morning of 2026-10-03; seven of them
+needed Exchange, and those seven were the workstation run.
 
 **The three buckets, all computed:**
 
@@ -3752,7 +3942,7 @@ the workstation run.
 | --- | --- | --- |
 | non-live (the build VM) | `--filter "Category!=Live"` | 2,226 cases |
 | VM | `--filter "Category=Live&Requires!=DelegateStore&Requires!=CachedExchange"` | 121 |
-| production-only | `--filter "Category=Live&(Requires=DelegateStore\|Requires=CachedExchange)"` | 7 |
+| Exchange-only (the Exchange VM, section 4.4; the workstation before Q116 (a)) | `--filter "Category=Live&(Requires=DelegateStore\|Requires=CachedExchange)"` | 7 on the morning of 2026-10-03; 9 once section 4.4 added two |
 
 **The vocabulary, all twelve values.** Ten of them this VM can be given; two it cannot - both are an
 Exchange profile.
@@ -4615,7 +4805,9 @@ unrecorded or unverified.
   shape.
 * **The VM bucket does not prove the delegate-store or cached-Exchange paths at all**, and no test
   machine can: `Requires=DelegateStore` needs a mailbox somebody else owns, and `Requires=CachedExchange`
-  an Exchange server. Seven tests, named by the production-only filter in section 5.
+  an Exchange server. Seven tests, named by the production-only filter in section 5. **Corrected
+  2026-10-03:** the Exchange test VM can - it has an Exchange server (section 4.4); the delegate half
+  waits for the shared test mailbox (Q109).
 * **The guest's SDK is PINNED to whatever the host was running when the payload was staged**,
   and nothing enforces that they stay equal. 10.0.401 was chosen for sameness rather than for any
   requirement - no `global.json` exists - so the two can drift the

@@ -725,7 +725,7 @@ the rule is in `AGENTS.md`. *Undo:* `Testbed/host/Register-IdleSaveTask.ps1 -Unr
 - **Withdrawn:** your system-level Claude settings are out of scope for this project.
 
 
-### Q130 - D102/D103: why the data's age matters, and how to stop it mattering *(answered 2026-10-03: (a) with (b)'s window change, after the add-in measurement - implemented, `Docs/live-tier-on-the-vm.md` section 4.4)*
+### Q130 - D102/D103: why the data's age matters, and how to stop it mattering *(answered 2026-10-03: (a) with (b)'s window change, after the add-in measurement - implemented, `Docs/live-tier-on-the-vm.md` section 4.5)*
 - **Primer.** Two clocks decide when the test data has to be rebuilt. Guest one's live tier refuses
   to start once a declared window (30 or 60 days before *now*) selects none of Corpus A's items - from
   **2026-11-01 23:59:16Z**, then a 1.5 h rebuild plus its index. And the hub population is rebuilt

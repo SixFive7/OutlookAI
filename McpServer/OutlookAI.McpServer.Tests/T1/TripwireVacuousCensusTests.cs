@@ -119,6 +119,7 @@ public sealed class TripwireVacuousCensusTests
         // has to be removed first, deliberately.
         LiveTestSettings settings = new()
         {
+            MachineProfile = LiveMachineProfile.Portable,
             TestHubStoreDisplayName = Hub,
             ExpectedStoreDisplayNames = new List<string> { Hub },
         };
@@ -177,7 +178,9 @@ public sealed class TripwireVacuousCensusTests
         // The regression that matters most: the maintainer's real profile must keep running. Its
         // delegate/shared mailboxes are denied every write and already censused, so they are
         // bystanders in fact and this refusal never reaches him. Since Q74 his other primaries are
-        // denied every write too (the profile is read-only), so they are policed beside them.
+        // denied every write too (the profile is read-only), so they are policed beside them - and
+        // since 2026-10-03 the hub as well: on a read-only machine nothing exempts it
+        // (LiveStoreCountTripwire.ExemptHub; the workstation itself runs no live test since Q116 (a)).
         LiveTestSettings settings = new()
         {
             TestHubStoreDisplayName = Hub,
@@ -191,7 +194,7 @@ public sealed class TripwireVacuousCensusTests
             settings.BystanderStoreDisplayNames);
 
         Assert.True(report.Usable);
-        Assert.Equal(new[] { Identity, DelegateStore }, report.Policed);
+        Assert.Equal(new[] { Hub, Identity, DelegateStore }, report.Policed);
         Assert.Empty(report.Writable);
     }
 
@@ -251,6 +254,7 @@ public sealed class TripwireVacuousCensusTests
         // live run, so one message carries both.
         LiveTestSettings settings = new()
         {
+            MachineProfile = LiveMachineProfile.Portable,
             TestHubStoreDisplayName = Hub,
             ExpectedStoreDisplayNames = new List<string> { Hub },
             BystanderStoreDisplayNames = new List<string> { Hub },
@@ -270,6 +274,7 @@ public sealed class TripwireVacuousCensusTests
     {
         LiveTestSettings settings = new()
         {
+            MachineProfile = LiveMachineProfile.Portable,
             TestHubStoreDisplayName = Hub,
             ExpectedStoreDisplayNames = new List<string> { Hub },
         };

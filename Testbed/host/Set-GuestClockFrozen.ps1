@@ -17,11 +17,11 @@
     OutlookAI-Unindexed, Hyper-V time synchronisation is OFF and every run restores a checkpoint taken
     with it off, just after the data's anchor: every run then starts at the same instant, and the data is
     exactly as old on every run as it was on the first. Testbed/testbed.json, frozenClocks, records each
-    guest's checkpoint and instant; Docs/live-tier-on-the-vm.md section 4.4 is the record of how they
+    guest's checkpoint and instant; Docs/live-tier-on-the-vm.md section 4.5 is the record of how they
     were made and what was measured.
 
     WHAT HOLDS IT, measured on OutlookAI-Unindexed 2026-10-03 (runbook section 4.1f) and again here
-    (section 4.4): with time sync off nothing else sets the guest's clock (the Windows Time service is
+    (section 4.5): with time sync off nothing else sets the guest's clock (the Windows Time service is
     not running); a saved guest's clock stops; a checkpoint taken with time sync off restores to the same
     instant every time, and the setting travels with the checkpoint. WHAT BREAKS IT: a cold boot or an OS
     restart after the restore - the guest comes back at the host's time plus the offset it last WROTE to
@@ -238,7 +238,7 @@ function Get-FrozenClockVerdict {
     }
     if ($elapsed.TotalSeconds -lt -$Tolerance) {
         if ($verdict -eq 'FROZEN') { $verdict = 'CLOCK-MOVED' }
-        $reasons += "the guest's clock is $(Format-Span $elapsed.Duration()) BEFORE the frozen instant $(Format-Utc $Record.FrozenUtc): the guest restarted or cold-booted after the restore (it comes back at the host's time plus whatever offset its clock last held - on OutlookAI-Unindexed that was 50 hours behind the host, runbook section 4.4), somebody set the clock by hand, or this is not the recorded checkpoint. Restore '$($Record.Checkpoint)' and stage again."
+        $reasons += "the guest's clock is $(Format-Span $elapsed.Duration()) BEFORE the frozen instant $(Format-Utc $Record.FrozenUtc): the guest restarted or cold-booted after the restore (it comes back at the host's time plus whatever offset its clock last held - on OutlookAI-Unindexed that was 50 hours behind the host, runbook section 4.5), somebody set the clock by hand, or this is not the recorded checkpoint. Restore '$($Record.Checkpoint)' and stage again."
     }
     elseif ($elapsed.TotalMinutes -gt $Record.SuiteStartWithinMinutes) {
         if ($verdict -eq 'FROZEN') { $verdict = 'CLOCK-MOVED' }

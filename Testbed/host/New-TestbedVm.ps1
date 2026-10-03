@@ -104,9 +104,9 @@
     before you run it, and run it with -Execute only once you have.
 
 .PARAMETER Name
-    MANDATORY. The VM name to create. There is no default: THREE MACHINES COEXIST -
-    OutlookAI-Indexed, OutlookAI-Unindexed and OutlookAI-Build - and a default that silently
-    picks one of three is the exact shape of mistake this testbed keeps making. This script also
+    MANDATORY. The VM name to create. There is no default: FOUR MACHINES COEXIST -
+    OutlookAI-Indexed, OutlookAI-Unindexed, OutlookAI-Build and OutlookAI-Exchange - and a default that silently
+    picks one of four is the exact shape of mistake this testbed keeps making. This script also
     derives the VHD path and the spec file from the name, so a wrong default is a new disk in
     somebody else's directory, or a refusal on top of a VM that already exists.
 

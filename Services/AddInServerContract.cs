@@ -51,7 +51,11 @@ namespace OutlookAI.Services
         // Written by OutlookTuningService (desired state, group toggles, reconcile bookkeeping);
         // read by HealthReporting.ReadTuningState for the tuning block of outlook_health.
 
-        /// <summary>The tuning key, under HKEY_CURRENT_USER. No elevation anywhere in this feature.</summary>
+        /// <summary>
+        /// The tuning key, under HKEY_CURRENT_USER - the add-in's own state, which it can always
+        /// write. (Five of the Outlook values it manages are NOT always writable: see
+        /// <see cref="TuningNeedsAdministratorValueName"/>.)
+        /// </summary>
         internal const string TuningKeyPath = @"Software\OutlookAI\Tuning";
 
         /// <summary>
@@ -75,6 +79,14 @@ namespace OutlookAI.Services
 
         /// <summary>String: ';'-joined entry ids the reconciler backed off from because a policy reverted them.</summary>
         internal const string TuningPolicyConflictsValueName = "PolicyConflicts";
+
+        /// <summary>
+        /// String: ';'-joined entry ids whose write the last reconcile was REFUSED for lack of rights,
+        /// and skipped (Q128, 2026-10-03). In practice D25's five Cached Mode values under
+        /// <c>HKCU\Software\Policies</c>, which a NOT elevated Outlook may read and not write. Empty
+        /// when there are none. <c>outlook_health</c> reports it as <c>tuning.needsAdministrator</c>.
+        /// </summary>
+        internal const string TuningNeedsAdministratorValueName = "NeedsAdministrator";
 
         /// <summary>String: ISO 8601 ("o") timestamp of the last reconcile.</summary>
         internal const string TuningLastReconcileUtcValueName = "LastReconcileUtc";

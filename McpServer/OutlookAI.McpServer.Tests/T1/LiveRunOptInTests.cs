@@ -114,9 +114,11 @@ public sealed class LiveRunOptInTests
         Assert.Contains("Testbed/README.md, section 4c", message, StringComparison.Ordinal);
         Assert.Contains("setx", message, StringComparison.Ordinal);
 
-        // That the maintainer's workstation is read-only for live tests.
-        Assert.Contains("WORKSTATION IS READ-ONLY FOR LIVE TESTS", message, StringComparison.Ordinal);
+        // That the maintainer's workstation runs no live test (Q116 (a)), and where the Exchange tests run.
+        Assert.Contains("WORKSTATION RUNS NO LIVE TEST", message, StringComparison.Ordinal);
         Assert.Contains("makes no test read-only", message, StringComparison.Ordinal);
+        Assert.Contains(LiveRunFilters.ExchangeGuest, message, StringComparison.Ordinal);
+        Assert.Contains("Testbed/README.md, section 4e", message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -164,6 +166,42 @@ public sealed class LiveRunOptInTests
     }
 
     // ------------------------------------------------------------------ the funnel
+
+    [Fact]
+    public void LoadRefusesTheWorkstation_AfterParsingAndBeforeReturning()
+    {
+        // Q116 (a): the refusal is in Load, so no fixture - census, Outlook attach, MCP server - starts on
+        // the workstation. Read from the compiled code: Load calls RefuseTheWorkstation, and only after Parse.
+        MethodInfo load = typeof(LiveTestSettings).GetMethod(nameof(LiveTestSettings.Load), BindingFlags.Public | BindingFlags.Static)
+            ?? throw new InvalidOperationException("LiveTestSettings.Load is gone - this pin proves nothing.");
+
+        List<MethodBase?> calls = CallsIn(load).Select(c => c.Target).ToList();
+        int parse = calls.FindIndex(m => m != null && m.DeclaringType == typeof(LiveTestSettings) && m.Name == "Parse");
+        int refuse = calls.FindIndex(m => m != null && m.DeclaringType == typeof(LiveTestSettings) && m.Name == "RefuseTheWorkstation");
+
+        Assert.True(parse >= 0, "LiveTestSettings.Load no longer parses the settings - this pin proves nothing.");
+        Assert.True(refuse > parse, "LiveTestSettings.Load must call RefuseTheWorkstation after Parse (Q116 (a))");
+    }
+
+    [Fact]
+    public void TheWorkstationsProfile_IsRefused_AndEveryOtherProfileIsNot()
+    {
+        InvalidOperationException refused = Assert.Throws<InvalidOperationException>(
+            () => LiveTestSettings.RefuseTheWorkstation(new LiveTestSettings()));
+        Assert.StartsWith("LIVE TEST REFUSED", refused.Message, StringComparison.Ordinal);
+        Assert.Contains("Q116 (a)", refused.Message, StringComparison.Ordinal);
+        Assert.Contains("Testbed/README.md section 4c", refused.Message, StringComparison.Ordinal);
+        Assert.Contains("section 4e", refused.Message, StringComparison.Ordinal);
+
+        // A settings file that declares no profile - the workstation's own - is refused too.
+        Assert.Throws<InvalidOperationException>(() => LiveTestSettings.RefuseTheWorkstation(LiveTestSettings.Parse(
+            "{ \"testHubStoreDisplayName\": \"hub@example.test\", \"expectedStoreDisplayNames\": [\"hub@example.test\"], "
+            + "\"probeTerm\": \"x\", \"subjectOnlyProbe\": { \"storeDisplayName\": \"hub@example.test\", \"folderPath\": \"Inbox\", "
+            + "\"subjectTerm\": \"bulletin\", \"senderFragment\": \"bot\" } }")));
+
+        LiveTestSettings.RefuseTheWorkstation(new LiveTestSettings { MachineProfile = LiveMachineProfile.Portable });
+        LiveTestSettings.RefuseTheWorkstation(new LiveTestSettings { MachineProfile = LiveMachineProfile.ExchangeGuest });
+    }
 
     [Fact]
     public void LoadAsksTheGateBeforeAnythingElse()

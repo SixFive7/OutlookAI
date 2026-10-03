@@ -1388,9 +1388,11 @@ Say "  MSBuild  $msbuild ($msbuildVersion)"
 Say "  ISCC     $iscc"
 if ($vstoTargets.Count -gt 0) { Say "  VSTO     $($vstoTargets[0])" }
 else { throw 'REFUSING TO BUILD: vswhere found no VSTO build targets (OfficeTools\Microsoft.VisualStudio.Tools.Office.targets) in any Visual Studio with the Office workload.' }
-# The release block sits AFTER the VSTO check's else, never between the two: edc9dfd put it between
-# them, which made that else the release check's, so every testbed build refused here with the VSTO
-# targets found and printed (found 2026-10-03 by the Q130 measurement). -SelfTest pins the shape.
+# That refusal belongs to the VSTO targets and to nothing else. From edc9dfd until 2026-10-03 the
+# release's dotnet lines sat between that if and its else, which bound the else to `if ($Release)`:
+# every testbed build stopped here, "found no VSTO build targets", on a machine that has them, and a
+# release build on a machine without them was never refused.
+# -SelfTest pins the shape from this file's own syntax tree.
 $dotnet = $null
 if ($Release) {
     $dotnet = Resolve-Dotnet

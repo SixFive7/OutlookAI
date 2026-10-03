@@ -120,6 +120,20 @@ public sealed class TripwireRetryPolicy
         0);
 
     /// <summary>
+    /// What the Exchange test VM gets (<see cref="LiveMachineProfile.ExchangeGuest"/>, Q108): the same
+    /// 2 re-censuses ~30 s apart as <see cref="Production"/>, because its one mailbox is a real Exchange
+    /// mailbox - cached, synced, with server-side rules, a retention policy, mail arriving and an owner
+    /// who may act on it from another device during a run - and NO bounded re-run, ever: the re-run is a
+    /// child live run of every class that ran, on a real mailbox. Not tied to whether the VM may write:
+    /// the reasons for both halves hold either way.
+    /// </summary>
+    public static TripwireRetryPolicy ExchangeGuest { get; } = new(
+        "ExchangeGuest (re-censuses only - a real Exchange mailbox syncs and has an owner; a re-run would start a second live run on it)",
+        TripwireRetryLadder.MaxReCensuses,
+        TripwireRetryLadder.ReCensusGapSeconds,
+        0);
+
+    /// <summary>
     /// No retries at all: the post-run census is the verdict. What a machine gets when nothing
     /// but the suite can change a mailbox on it, and what an UNDECLARED machine gets too.
     /// </summary>
@@ -152,6 +166,11 @@ public sealed class TripwireRetryPolicy
     /// </summary>
     public static TripwireRetryPolicy For(LiveMachineProfile profile)
     {
+        if (profile == LiveMachineProfile.ExchangeGuest)
+        {
+            return ExchangeGuest;
+        }
+
         if (profile != LiveMachineProfile.Production)
         {
             return None;
