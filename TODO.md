@@ -37,14 +37,28 @@
   until then a root the hash did not tie may still be this profile's own Exchange store, so (2), (3)
   and (4) would misjudge exactly the stores whose input is unmeasured.
 
-- [ ] **Check whether a FOLDER name with `% / \ * ?` in it can be searched by folder (Q99 finding).**
-  Microsoft's MAPI-URL page lists those five characters as percent-encoded in an index URL, and a
-  STORE name is - measured: `q99 50% off*?x` is filed as `q99 50%25 off%2A%3Fx`. The store half of a
-  scope now comes from the index's own listing, so it is spelled right; the folder half is still the
-  raw name (`FolderScopeResolver.ForPrimaryStore`: `storePrefix + "/0/" + folder`). So a folder named
-  `50% off` would be scoped as `.../0/50% off` against an index that may spell it `.../0/50%25 off`.
-  Not measured for folders. Measure it on a guest (a folder of that name, one item, a folder-scoped
-  search); if the index encodes it, encode the folder segments the same way when building the scope.
+- [ ] **Let a folder whose name holds `/` be named in a `folder` argument (Q99 folder finding,
+  2026-10-03).** Outlook accepts `/` in a folder name and the index spells it `%2F`, so the folder is
+  searchable - but every tool's `folder` argument is a `/`-separated path, so `Parent/a/b` means three
+  folders and the one called `a/b` cannot be named. Today it is reached through its parent
+  (`include_subfolders`, the default), its hits report `Parent/a/b` and open, and `list_folders` lists
+  it as `Parent/a/b` - a path that reads as nesting and, passed back, finds nothing (the zero-row guard
+  then says so). Measured: `Docs/live-tier-on-the-vm.md` section 8 item 26. Directions: (a) leave it,
+  documented (`McpServer/README.md` fact 17); (b) an escape inside a segment (`\/`, or `%2F` itself),
+  parsed by `search`, `move_mail` and the exhaustive scan and written by `list_folders` - one parser
+  and one renderer; (c) a segment-array argument beside `folder`; (d) when a path does not resolve,
+  retry with adjacent segments joined by `/`. **(a) is in place, decided on the maintainer's behalf
+  2026-10-03** - it changes no tool's contract overnight, and the parent route works. **Recommended
+  next: (b)**, which is what keeps this item open; undo (a) by doing it.
+
+- [ ] **Measure a STORE name holding `% / \ * ?` in a display path (Q99 folder finding).** The index
+  writes FOLDER names into `System.ItemFolderPathDisplay` and `System.ItemPathDisplay` as names, not
+  URL spellings (section 8 item 26), and the product now derives a non-recursive folder search's
+  display path the same way for the STORE part too (`MapiItemUrl.TryBuildFolderPathDisplay` decodes
+  it). That half is inferred: no guest store has one of the five in its name since the Q99 store
+  went with its checkpoint. The next time a PST named like `q99 50% off*?x` is attached (item 24's
+  route), read one item row's `System.ItemFolderPathDisplay` and run a folder search in it with
+  `include_subfolders: false`; if the store part is the URL spelling, stop decoding it there.
 
 - [ ] **Put a release candidate's MCP server in front of one session on the workstation, without installing it.**
   The manual pre-release checks (`Docs/release-manual-checks.md`, Q74 D2) exercise the Exchange-only

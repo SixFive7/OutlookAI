@@ -18,8 +18,12 @@ namespace OutlookAI.Core.Mapi
     /// <para>
     /// MEASURED, both halves, on the indexed test guest. A STORE named <c>q99 50% off*?x</c> is
     /// filed as <c>q99 50%25 off%2A%3Fx($5159380d)</c> (Q99, 2026-10-03,
-    /// <c>Docs/live-tier-on-the-vm.md</c> section 8 item 24); FOLDER names are measured by
-    /// <c>T2/LiveFolderNameEncodingTests</c> and recorded in section 8 item 26 of the same file.
+    /// <c>Docs/live-tier-on-the-vm.md</c> section 8 item 24). FOLDERS the same day
+    /// (<c>T2/LiveFolderNameEncodingTests</c>, section 8 item 26): Outlook accepts all five in a
+    /// folder name, the URL spells each exactly as above - <c>50%25 off</c>, <c>star%2A</c>,
+    /// <c>why%3F</c>, <c>back%5Cslash</c>, <c>a%2Fb</c>, <c>%252A not a star</c> - and
+    /// <c>System.ItemFolderPathDisplay</c> and <c>System.ItemPathDisplay</c> hold the NAMES, never
+    /// this spelling.
     /// </para>
     /// <para>
     /// ⚠ WHY THIS EXISTS. A folder scope used to be built from the raw name -

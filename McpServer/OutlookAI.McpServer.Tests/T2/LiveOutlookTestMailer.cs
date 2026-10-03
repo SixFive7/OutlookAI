@@ -1052,7 +1052,7 @@ public static class LiveOutlookTestMailer
 
     /// <summary>
     /// Why <see cref="FileTaggedItemInNewTestFolder"/> refuses a request, or null when it may
-    /// run. Pure, so T1 can drive every branch (<c>T1/LiveFolderNameEncodingGuardTests</c>):
+    /// run. Pure, so T1 can drive every branch (<c>T1/FolderNameEncodingTests</c>):
     /// the new folder's name and every segment of its parent's path must carry
     /// <see cref="TestFolderNamePrefix"/> - the parent being a test folder is what keeps the new
     /// one out of every real folder - and the marker must be strong enough for the S3 match.

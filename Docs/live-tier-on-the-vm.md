@@ -2359,13 +2359,14 @@ To see the sets without running anything - `--list-tests` discovers and does not
 is safe against any mailbox:
 
 ```
-dotnet test <csproj> --list-tests --filter "Category=Live"                                                       # 129
-dotnet test <csproj> --list-tests --filter "Category=Live&Requires!=DelegateStore&Requires!=CachedExchange"      # 122
+dotnet test <csproj> --list-tests --filter "Category=Live"                                                       # 130
+dotnet test <csproj> --list-tests --filter "Category=Live&Requires!=DelegateStore&Requires!=CachedExchange"      # 123
 dotnet test <csproj> --list-tests --filter "Category=Live&(Requires=DelegateStore|Requires=CachedExchange)"      # 7
 ```
 
-Treat those numbers as "what they were when this was written" - measured 2026-10-03, after Q74, and
-again the same day after Q96 (iv) added `LiveCreatedFolderTests` (128 and 121 before it). The
+Treat those numbers as "what they were when this was written" - measured 2026-10-03, after Q74,
+again the same day after Q96 (iv) added `LiveCreatedFolderTests` (128 and 121 before it), and once
+more after the Q99 folder-name proof added `LiveFolderNameEncodingTests` (129 and 122 before it). The
 traits are the authority; the counts in a document drift. `Requires!=X` means "no value of `Requires` on
 this test equals X", which is what makes a multi-valued trait usable as an exclusion.
 
@@ -3888,6 +3889,60 @@ unrecorded or unverified.
       check that walks the profile's stores - the table probes, `outlook_health`, `list_accounts` -
       now meets one more; on the code as it stands each either names its stores or tolerates one it
       cannot probe. A run that says otherwise belongs here.
+26. **MEASURED 2026-10-03 (the Q99 folder finding) - how the index spells a FOLDER name holding
+    `% / \ * ?`, and what a folder-scoped search does with it.** Microsoft documents those five as
+    percent-encoded "if they are in the store or folder display name" (*About MAPI URLs for
+    Notification-Based Indexing*), and item 24 measured it for a store; for a folder it had never
+    been measured, while the product built a folder scope from the RAW name. On `OutlookAI-Indexed`
+    from `CP-17C-CORPUS-160K`, the 30-and-60 settings staged again after the restore and
+    `corpus-verify --window 30 --window 60` OK, the suite staged from `b0d35a1`
+    (`Testbed/README.md` step 8b, `TEST-READY`, 3,627 tests), Outlook started NOT elevated on
+    `OutlookAI-Tier` by `Start-OutlookUnelevated.ps1`, and `T2/LiveFolderNameEncodingTests` run alone
+    through `Register-InteractiveTask.ps1 -RunLevel Limited` with the opt-in: **1 passed, 1 min
+    10 s**, the tripwire's post-run census 0 failures, the hub reconciled, zero tagged artifacts and
+    zero test folders. Every write in the hub, through `move_mail` with `create_folder` or, for the
+    one name it cannot make, `LiveOutlookTestMailer.FileTaggedItemInNewTestFolder`; the index read
+    only through `SELECT` statements. Then `CP-17C` restored and the 30-and-60 settings staged again
+    (`corpus-verify` OK). Raw output: `.work\q99-folders\` of that worktree. Findings:
+
+    - **Outlook accepts all five in a folder name** (a PST, Office LTSC 2024): `move_mail` made
+      `OutlookAI-McpTest-Folder 50% off`, `... star*`, `... why?`, `... back\slash`,
+      `... 100%*? mix`, `... %2A not a star` and, inside the first, `... inner*?`; `Folders.Add`
+      made `... a/b` and kept the name exactly. `list_folders` lists each under its name - the last
+      as `OutlookAI-McpTest-Folder-Enc/OutlookAI-McpTest-Folder a/b`, which reads like a nested path.
+    - **The URL encodes each exactly as documented**: `50%25 off`, `star%2A`, `why%3F`,
+      `back%5Cslash`, `a%2Fb`, `100%25%2A%3F mix`, `%252A not a star`, and the nested one
+      `.../OutlookAI-McpTest-Folder 50%25 off/OutlookAI-McpTest-Folder inner%2A%3F`. Every item was
+      in the index 6 s after it was filed.
+    - **The display paths do not encode**: `System.ItemFolderPathDisplay` reads
+      `/tier@vm.invalid/OutlookAI-McpTest-Folder-Enc/OutlookAI-McpTest-Folder 50% off`, and
+      `System.ItemPathDisplay` the same with the subject after it - names, for every one of the five.
+    - **The scope the product used to build addressed nothing**: the raw-name `SCOPE`, alone or with
+      its folder-path equality, matched **0** rows for every name. The encoded `SCOPE` matched the
+      item, alone and with the display path spelled as names; with the display path spelled as the
+      URL spells it, 0.
+    - **Through the product, with the fix** (an index-only search, so the sweep could not cover for
+      the index): every name found by a folder search, recursive and not, reported under its real
+      folder name, `read` locating it by the URL's own folder path (`urlSegments`), and the zero-row
+      guard silent; the nested item found from its parent with subfolders and not without. The `/`
+      name is found by its parent's recursive search (folder
+      `OutlookAI-McpTest-Folder-Enc/OutlookAI-McpTest-Folder a/b`, `urlSegments`) but cannot be
+      named in `folder`, which splits on `/`: asked for that way the search finds nothing and the
+      guard says the path "matched NOTHING" - a limit of the product's path syntax, not of the index
+      (`TODO.md`).
+    - **Two oddities in the folders' OWN index rows**, which no search returns: the `back\slash`
+      folder's `System.ItemNameDisplay` is `slash`, and the `a/b` folder's
+      `System.ItemFolderPathDisplay` is `.../OutlookAI-McpTest-Folder a` - the index splits a display
+      path on both separators. The item rows inside both folders read right.
+
+    **What the product does with it** (`Mapi/MapiUrlSegment`, `McpServer/README.md` load-bearing
+    fact 17): a folder scope spells every segment the way the index does, a delegate's
+    `/1/<name>` likewise, and every URL the product reads back - a hit's folder segments, its store
+    name, a display path derived from a URL - is decoded to names, one pass each way. A name holding
+    none of the five builds byte for byte the scope it always did. Not measured, and not measurable
+    on a guest as it stands: a STORE name in a display path (no store here has one of the five;
+    decoded there by the folder evidence), a delegate's name (Exchange), and an attachment's file
+    name in an `/at=` URL, which the product does not decode.
 
 ---
 
