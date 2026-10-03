@@ -380,7 +380,7 @@ come back.
 - *Still open:* if the PowerShell Direct session breaks mid-run the runner does not reconnect; it
   now stops waiting quickly, but that run is INFRA.
 
-### The first live-tier run on a test VM (guest two) - 66 to 78 of 80, not yet green
+### The first live-tier run on a test VM (guest two) - green since run 18 (D115-D119)
 Eight runs on `OutlookAI-Unindexed`, each from `CP-12B` and each ending with **zero tagged
 artifacts** from run 2 on (run 1 left two move seeds and one undelivered mail, removed by the
 restore); the tripwire census never failed. Fixes found and made (on the run agent's branch, not
@@ -414,6 +414,36 @@ yet on master - see the crash below):
    attempts reverted). Being measured: whether the id is a hash of the new subject - which decides
    between scoping that promise to Exchange and dropping it.
 
+### D115-D119 - The live tier green on guest two: 80 of 80
+Runs 18 and 19 (`fd2c58b`, `c1a72f1`): 80 of 80, zero tagged artifacts, tripwire clean, hub
+reconciled; checkpoint `CP-13B-LIVE-GREEN` taken after run 18. Two checks print `PROVED NOTHING` by
+design on this guest (no transient Outlook state to retry; no index to fall back to). Merged as
+`d4e31fe` (build VM: 3,607 / 0 / 0, 21 self-tests).
+- **D115 - The Outlook crash: every COM child object our code receives is now released by us** - the
+  column returned when a table column is added, the bookmark added in the compose paths, and in the
+  test helpers added attachments, the census's added column and inline folder collections - instead
+  of being left to the .NET garbage collector, which released them inside Outlook after their table,
+  document or mail was gone. A T1 source check pins it. *Evidence:* the branch alone crashed 0 of 5
+  runs, merged with master 6 of 7; after the fix 3 of 3 merged runs were clean (about 0.3% by chance
+  at the old rate). *Limit:* the mechanism is inferred from those statistics and the code, not seen
+  in a crash dump. The earlier removal of one diagnostic read (`3f8cfc3`) was a false lead and stays,
+  since it only removes a read. *Alternative:* keep bisecting with crash dumps.
+- **D116 - D49 on Office LTSC 2024, cause 1: the "show me" path always opens a window of its own.**
+  Office 2024 hands back OutlookAI's hidden keep-alive window when asked for a new window on the
+  Inbox, so the window OutlookAI showed you WAS the keep-alive window, and closing it ended Outlook.
+- **D117 - D49, cause 2: OutlookAI keeps honouring Outlook's quit.** Office 2024 treats closing the
+  last visible window as quitting; honouring that is also what lets your own File > Exit end an
+  Outlook that OutlookAI started. *Alternatives:* treat the quit as a hint, or stop listening for it -
+  both would leave that Outlook running after your Exit. The test was scoped rather than loosened:
+  Outlook ending on that close is accepted only when the promoting session started it, two windows
+  existed before the close, and the quit event (not a crash) ended the session; reattaching
+  afterwards must still work. *Undo:* revert `fd2c58b`. Your own Office build was not measured.
+- **D118 - A renamed draft's ConversationId: the promise is scoped to Exchange.** Measured: outside
+  Exchange the id is a hash of the topic the draft keeps, for reply and forward alike, so it cannot
+  follow a new subject. *Alternative:* drop the promise. *Undo:* revert `b4aa28f`. Not measured:
+  renaming through `update_draft`.
+- **D119 - The hub rebuild retries moving its list file for up to 60 s**; the move failed twice with
+  "used by another process".
 ### D99-D103 - Guest one's 160,000-item corpus, built
 Built on `OutlookAI-Indexed` and checkpointed as `CP-17C-CORPUS-160K`: 160,000 items created with
 0 failures in 1 h 21 min (33 items/s), an 8.5 GB PST, and every item in the search index exactly
@@ -697,6 +727,14 @@ self-test on the workstation before the build-VM rule reached it.
   own line an entry an earlier commit of the branch had run into another.
 - The now-false last sentence of the first folder-name CHANGELOG entry ("can still only be
   searched through the folder above it") was removed.
+
+### V16 - The live tier on guest two: three departures
+- The crash's first fix was a false lead (D115); its commit stays because it only removes a read.
+- Run 19 was started by mistake on a guest that had not been restored, after a staging refusal; the
+  agent stopped its own process during the graceful restart, before any test ran, then restored,
+  re-staged and ran it properly.
+- Two throwaway experiment builds were staged on the guest to isolate D49's second cause; they were
+  never on the branch, and their worktree is deleted.
 
 ## Notes (no decision needed)
 
