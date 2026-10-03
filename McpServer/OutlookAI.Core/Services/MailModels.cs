@@ -2552,6 +2552,14 @@ namespace OutlookAI.Core.Services
         /// <summary>Group-policy conflicts the reconciler backed off from (';'-joined; null when none).</summary>
         public string? PolicyConflicts { get; set; }
 
+        /// <summary>
+        /// Tuning values the add-in's last reconcile could not write without an administrator
+        /// (';'-joined entry ids; null when none) - in practice the five Cached Mode values under
+        /// HKCU\Software\Policies, which a NOT elevated Outlook can read and not write. The reconcile
+        /// skips them and finishes; OutlookAI Settings applies them through UAC (Q128).
+        /// </summary>
+        public string? NeedsAdministrator { get; set; }
+
         /// <summary>Last reconcile timestamp (ISO 8601) as recorded by the add-in.</summary>
         public string? LastReconcileUtc { get; set; }
 

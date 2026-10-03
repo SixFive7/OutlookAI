@@ -152,6 +152,7 @@ namespace OutlookAI.Core.Services
             }
 
             string? conflicts = readValue(Contract.TuningPolicyConflictsValueName) as string;
+            string? needsAdministrator = readValue(Contract.TuningNeedsAdministratorValueName) as string;
             return new TuningHealthView
             {
                 Managed = true,
@@ -161,6 +162,7 @@ namespace OutlookAI.Core.Services
                 OstEnabled = AsBool(readValue(Contract.TuningOstEnabledValueName)),
                 RestartNeeded = AsBool(readValue(Contract.TuningRestartNeededValueName)),
                 PolicyConflicts = string.IsNullOrWhiteSpace(conflicts) ? null : conflicts,
+                NeedsAdministrator = string.IsNullOrWhiteSpace(needsAdministrator) ? null : needsAdministrator,
                 LastReconcileUtc = readValue(Contract.TuningLastReconcileUtcValueName) as string,
             };
         }

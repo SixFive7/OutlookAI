@@ -94,6 +94,20 @@
          by reflection against SearchAPI.h. Public types in their own namespace, compiled nowhere
          else in this solution, so nothing can collide as CS0436. -->
     <Compile Include="..\..\Testbed\guest\SearchCrawlScope.cs" Link="Linked\SearchCrawlScope.cs" />
+    <!-- The add-in's tuning reconcile (Q128): the walk that must never stop at a value it cannot
+         write, split out of OutlookTuningService precisely so it can be pinned here against a
+         fabricated registry - T1 TuningReconcilerTests. -->
+    <Compile Include="..\..\Services\TuningReconciler.cs" Link="Linked\TuningReconciler.cs" />
+    <!-- And the elevated helper's privilege boundary (Q128): the five Cached Mode policy values and
+         the values offered for each, the command line the add-in builds and the helper refuses
+         everything else of, and the helper's checks in their order, against a fake Windows.
+         T1 CachedModePolicyTests, PolicyWriterRequestTests, PolicyWriterRunTests. None of the four
+         is compiled into OutlookAI.Core or OutlookAI.McpServer, so nothing collides as CS0436; they
+         bind to Core's internal AddInServerContract and OfficeVersions, which Core opens to this
+         assembly. -->
+    <Compile Include="..\..\Services\CachedModePolicy.cs" Link="Linked\CachedModePolicy.cs" />
+    <Compile Include="..\..\Services\PolicyWriterRequest.cs" Link="Linked\PolicyWriterRequest.cs" />
+    <Compile Include="..\..\PolicyWriter\PolicyWriterRun.cs" Link="Linked\PolicyWriterRun.cs" />
   </ItemGroup>
 
   <ItemGroup>

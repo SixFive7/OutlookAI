@@ -627,6 +627,7 @@ function Get-TuningView {
     $view = [ordered]@{
         KeyPresent = ($null -ne $Values); Managed = $false; Enabled = $null; SearchEnabled = $null
         CachingEnabled = $null; OstEnabled = $null; RestartNeeded = $null; PolicyConflicts = $null; LastReconcileUtc = $null
+        NeedsAdministrator = $null
     }
     if ($null -eq $Values) { return [pscustomobject]$view }
     if ((ConvertTo-HealthBool $Values['Initialized']) -ne $true) { return [pscustomobject]$view }
@@ -638,8 +639,24 @@ function Get-TuningView {
     $view.RestartNeeded = ConvertTo-HealthBool $Values['RestartNeeded']
     $conflicts = ConvertTo-HealthString $Values['PolicyConflicts']
     if (-not [string]::IsNullOrWhiteSpace($conflicts)) { $view.PolicyConflicts = $conflicts }
+    # Q128 (2026-10-03): the values the reconcile was refused for lack of rights, and skipped.
+    $needsAdministrator = ConvertTo-HealthString $Values['NeedsAdministrator']
+    if (-not [string]::IsNullOrWhiteSpace($needsAdministrator)) { $view.NeedsAdministrator = $needsAdministrator }
     $view.LastReconcileUtc = ConvertTo-HealthString $Values['LastReconcileUtc']
     return [pscustomobject]$view
+}
+
+# Since Q128 (2026-10-03) the add-in's reconcile skips a value Windows will not let it write - D25's
+# five Cached Mode values under HKCU\Software\Policies, in a NOT elevated Outlook - and lists it in
+# Tuning\NeedsAdministrator, which outlook_health reports. That is the designed state of a fresh
+# guest, not a fault, so it is a NOTE: neither live test reads it, and ADDIN-READY does not wait on it.
+function Get-NeedsAdministratorNote {
+    param($View)
+    if ($null -eq $View -or -not $View.NeedsAdministrator) { return $null }
+    $ids = @(([string]$View.NeedsAdministrator).Split(';') | Where-Object { $_ })
+    return ("the add-in skipped $($ids.Count) value(s) it may not write without an administrator, and finished its reconcile (Q128): " +
+            ($ids -join ', ') + '. By design on a NOT elevated Outlook; OutlookAI Settings applies them through UAC, and ' +
+            'OutlookAI.PolicyWriter.exe beside the add-in applies them when run elevated.')
 }
 
 # What the two tests would fail on, in their own terms.
@@ -910,11 +927,14 @@ function ConvertFrom-InstallRecord {
     return [pscustomobject]@{ Problem = $null; Record = [pscustomobject]@{ Commit = [string]$o.commit; Version = [string]$o.version; InstalledUtc = $when; InstallDir = [string]$o.installDir } }
 }
 
-# The add-in's tuning reconcile (OutlookTuningService.Reconcile) walks its catalog in order, records
-# each value it applies under Tuning\Applied, and writes LastReconcileUtc LAST. A write that throws
-# ends the walk: the reconcile catches the exception, logs it to the debugger and writes nothing more.
-# So the Desired values with no Applied record say where a walk stopped - in Desired's own order,
-# which is the catalog's (the first run writes every Desired value, in catalog order).
+# The add-in's tuning reconcile walks its catalog in order, records each value it applies under
+# Tuning\Applied, and writes LastReconcileUtc LAST. Until Q128 (2026-10-03) a write that threw ENDED
+# the walk: the reconcile caught the exception, logged it to the debugger and wrote nothing more, so
+# the Desired values with no Applied record said where a walk stopped - in Desired's own order, which
+# is the catalog's (the first run writes every Desired value, in catalog order). Since Q128
+# (Services\TuningReconciler.cs) a value Windows refuses for lack of rights is SKIPPED and listed in
+# Tuning\NeedsAdministrator, and the walk goes on: Desired minus Applied is then those values, not a
+# stopping point.
 function Get-UnappliedTuning {
     param([string[]] $Desired, [string[]] $Applied)
     return @($Desired | Where-Object { $_ -and ($Applied -notcontains $_) })
@@ -940,8 +960,9 @@ function Get-UnfinishedReconcileProblem {
         $where = " Tuning\Applied records $($Facts.TuningDesiredCount - $unapplied.Count) of the $($Facts.TuningDesiredCount) Desired values; the walk stopped at or before '$($unapplied[0])'."
     }
     return ("the add-in HAS run since -Phase $PhaseInstall installed it - its registration reconcile wrote HKCU\$McpKey\$McpReconcileValue at $($Facts.StartedSinceInstallAt) - " +
-            "but its tuning reconcile has not finished since: HKCU\$TuningKey\LastReconcileUtc $tuningMarker. OutlookTuningService.Reconcile swallows the exception that stops it.$where " +
-            "The one time this was measured, the stop was a value under HKCU\Software\Policies, which only an elevated token may write (Docs/live-tier-on-the-vm.md section 2.3).")
+            "but its tuning reconcile has not finished since: HKCU\$TuningKey\LastReconcileUtc $tuningMarker.$where " +
+            "A build from before Q128 (2026-10-03) stopped at the first write that threw - measured at a value under HKCU\Software\Policies, which only an elevated token may write (Docs/live-tier-on-the-vm.md section 2.3); " +
+            "since Q128 the reconcile skips a refused value and writes LastReconcileUtc whatever it met, so in a build that has it this means the reconcile never reached its end at all.")
 }
 
 # Has the add-in written its state since the last -Phase Install? The same comparison as freshness,
@@ -986,19 +1007,23 @@ function Get-ContractChecks {
         @{ File = 'Services\AddInServerContract.cs'; Needle = 'internal const string TuningEnabledValueName = "Enabled";'; Why = 'Enabled -> tuning.enabled' }
         @{ File = 'Services\AddInServerContract.cs'; Needle = 'internal const string TuningLastReconcileUtcValueName = "LastReconcileUtc";'; Why = 'LastReconcileUtc -> tuning.lastReconcileUtc' }
         @{ File = 'Services\AddInServerContract.cs'; Needle = 'internal const string TuningPolicyConflictsValueName = "PolicyConflicts";'; Why = 'PolicyConflicts is reported' }
+        @{ File = 'Services\AddInServerContract.cs'; Needle = 'internal const string TuningNeedsAdministratorValueName = "NeedsAdministrator";'; Why = 'NeedsAdministrator is reported (Q128)' }
+        @{ File = 'McpServer\OutlookAI.Core\Services\HealthReporting.cs'; Needle = 'string? needsAdministrator = readValue(Contract.TuningNeedsAdministratorValueName) as string;'; Why = 'and read as a string, as here' }
         @{ File = 'Services\AddInServerContract.cs'; Needle = 'internal const string McpKeyPath = @"Software\OutlookAI\Mcp";'; Why = 'the registration status is read here' }
         @{ File = 'Services\AddInServerContract.cs'; Needle = 'internal const string McpStatusValueName = "Status";'; Why = 'awaiting_choice is read from Status' }
         @{ File = 'Services\AddInServerContract.cs'; Needle = 'internal const string McpLastReconcileUtcValueName = "LastReconcileUtc";'; Why = 'the add-in''s second startup marker, Mcp\LastReconcileUtc' }
         @{ File = 'Services\McpRegistrationService.cs'; Needle = 'snap.LastReconcileUtc = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture);'; Why = 'written at every reconcile, failed or not, as a round-trip UTC time' }
         @{ File = 'ThisAddIn.cs'; Needle = 'try { McpRegistrationService.Reconcile(); }'; Why = 'and that reconcile runs at every startup' }
-        @{ File = 'Services\OutlookTuningService.cs'; Needle = 'private const string DesiredKeyPath = TuningKeyPath + @"\Desired";'; Why = 'the tuning walk is read from Tuning\Desired' }
-        @{ File = 'Services\OutlookTuningService.cs'; Needle = 'private const string AppliedKeyPath = TuningKeyPath + @"\Applied";'; Why = 'and Tuning\Applied' }
-        @{ File = 'Services\OutlookTuningService.cs'; Needle = 'System.Diagnostics.Debug.WriteLine("Tuning reconcile failed: " + ex.Message);'; Why = 'a write that throws ends the tuning walk with nothing more written - what an unfinished reconcile is reported as' }
+        @{ File = 'Services\TuningReconciler.cs'; Needle = 'internal const string DesiredKeyPath = TuningKeyPath + @"\Desired";'; Why = 'the tuning walk is read from Tuning\Desired' }
+        @{ File = 'Services\TuningReconciler.cs'; Needle = 'internal const string AppliedKeyPath = TuningKeyPath + @"\Applied";'; Why = 'and Tuning\Applied' }
+        @{ File = 'Services\TuningReconciler.cs'; Needle = 'result.NeedsAdministrator.Add(entry.Id);'; Why = 'a value Windows refuses for lack of rights is skipped and listed, and the walk goes on (Q128)' }
+        @{ File = 'Services\TuningReconciler.cs'; Needle = 'WriteBookkeeping(store, result, isStartup, utcNow);'; Why = 'and the bookkeeping, LastReconcileUtc last, is written whatever the walk met' }
         @{ File = 'McpServer\OutlookAI.Core\Services\HealthReporting.cs'; Needle = 'if (value is int number)'; Why = 'only a REG_DWORD counts as a bool' }
         @{ File = 'McpServer\OutlookAI.Core\Services\HealthReporting.cs'; Needle = 'if (AsBool(readValue(Contract.TuningInitializedValueName)) != true)'; Why = 'managed rests on Initialized alone' }
         @{ File = 'McpServer\OutlookAI.Core\Services\HealthReporting.cs'; Needle = 'LastReconcileUtc = readValue(Contract.TuningLastReconcileUtcValueName) as string,'; Why = 'LastReconcileUtc must be a string' }
-        @{ File = 'Services\OutlookTuningService.cs'; Needle = 'WriteDword(TuningKeyPath, AddInServerContract.TuningInitializedValueName, 1);'; Why = 'the add-in writes Initialized as a DWORD' }
-        @{ File = 'Services\OutlookTuningService.cs'; Needle = 'WriteString(TuningKeyPath, AddInServerContract.TuningLastReconcileUtcValueName, DateTime.UtcNow.ToString("o"));'; Why = 'freshness parses a round-trip UTC timestamp' }
+        @{ File = 'Services\TuningReconciler.cs'; Needle = 'WriteDword(TuningKeyPath, AddInServerContract.TuningInitializedValueName, 1);'; Why = 'the add-in writes Initialized as a DWORD' }
+        @{ File = 'Services\TuningReconciler.cs'; Needle = 'string stamp = DateTime.SpecifyKind(utcNow, DateTimeKind.Utc).ToString("o", CultureInfo.InvariantCulture);'; Why = 'freshness parses a round-trip UTC timestamp' }
+        @{ File = 'Services\OutlookTuningService.cs'; Needle = 'TuningReconciler.Reconcile(Store, Catalog, isStartup, DateTime.UtcNow);'; Why = 'stamped with the time of THIS reconcile' }
         @{ File = 'Services\OfficeVersions.cs'; Needle = 'internal static readonly string[] Supported = { "16.0", "17.0", "15.0" };'; Why = 'the Office majors, in detection order' }
         @{ File = 'Services\OfficeVersions.cs'; Needle = 'internal const string InstallerFootprintSubKeyName = "Resiliency";'; Why = 'a hive holding only Resiliency is not a real Outlook' }
         @{ File = 'Services\McpRegistrationService.cs'; Needle = 'internal const string StatusAwaitingChoice = "awaiting_choice";'; Why = 'a pending registration question' }
@@ -1367,6 +1392,16 @@ AwQ=</Modulus><Exponent>AQAB</Exponent></RSAKeyValue></KeyValue></KeyInfo></Sign
     Test-Case 'LastReconcileUtc as a REG_EXPAND_SZ is still a string' '2026-09-24T12:00:00Z' (Get-TuningView $bad).LastReconcileUtc
     $bad = $good.Clone(); $bad['PolicyConflicts'] = (V 'String' 'caching.policy.SyncWindowSetting')
     Test-Case 'a real PolicyConflicts is reported' 'caching.policy.SyncWindowSetting' (Get-TuningView $bad).PolicyConflicts
+    Test-Case 'no NeedsAdministrator reads as none' $null (Get-TuningView $good).NeedsAdministrator
+    $five = 'caching.policy.SyncWindowSetting;caching.policy.SyncWindowSettingDays;caching.policy.DownloadSharedFolders;caching.policy.CacheOthersMail;caching.policy.DisableSyncSliderForSharedMailbox'
+    $na = $good.Clone(); $na['NeedsAdministrator'] = (V 'String' $five)
+    Test-Case 'NeedsAdministrator is reported as written (Q128)' $five (Get-TuningView $na).NeedsAdministrator
+    $na['NeedsAdministrator'] = (V 'String' '')
+    Test-Case 'an empty NeedsAdministrator reads as none' $null (Get-TuningView $na).NeedsAdministrator
+    $na['NeedsAdministrator'] = (V 'String' $five)
+    Test-Case 'and it is not a problem either test fails on' 0 @(Get-TestReadProblems (Get-TuningView $na)).Count
+    Test-Case 'it becomes a note naming all five' $true ([string](Get-NeedsAdministratorNote (Get-TuningView $na))).Contains('5 value(s)')
+    Test-Case 'no list, no note' $null (Get-NeedsAdministratorNote (Get-TuningView $good))
 
     Write-Host ''
     Write-Host '== freshness =='
@@ -1509,6 +1544,11 @@ AwQ=</Modulus><Exponent>AQAB</Exponent></RSAKeyValue></KeyValue></KeyInfo></Sign
     Test-Case 'both markers since the install is READY' $VerdictReady (Get-AddInVerdict ([pscustomobject]$f)).Verdict
     $f.RanSinceInstall = $null
     Test-Case 'no install record ignores the second marker, as before the split' $VerdictReady (Get-AddInVerdict ([pscustomobject]$f)).Verdict
+    # Q128: a fresh guest's designed state - five values skipped for an administrator, the reconcile
+    # finished - is ADDIN-READY. The values are a note, never a problem.
+    $f = $installedFacts.Clone(); $f.Tuning = (Get-TuningView $na); $f.TuningDesiredCount = 13
+    $f.TuningUnapplied = @(($five -split ';')); $f.StartedSinceInstall = $true; $f.RanSinceInstall = $true
+    Test-Case 'five values needing an administrator, reconcile finished: READY' $VerdictReady (Get-AddInVerdict ([pscustomobject]$f)).Verdict
     $f = $installedFacts.Clone(); $f.ForbidReady = $true; $f.RanSinceInstall = $false; $f.StartedSinceInstall = $false
     Test-Case '-Phase Install over a state that ran, both markers now older than its record: NEVER-RAN' $VerdictNeverRan (Get-AddInVerdict ([pscustomobject]$f)).Verdict
 
@@ -1829,6 +1869,11 @@ function Get-AddInFacts {
         if ($facts.TuningUnapplied.Count -gt 0) { $walk += '; never applied: ' + ($facts.TuningUnapplied -join ', ') }
         Say $walk
     }
+    $needsAdministratorNote = Get-NeedsAdministratorNote $facts.Tuning
+    if ($needsAdministratorNote) {
+        Say "  needs an administrator: $(($facts.Tuning.NeedsAdministrator -split ';') -join ', ')"
+        $facts.Notes += $needsAdministratorNote
+    }
     if ($RequireFresh) {
         $fresh = Test-ReconcileFresh ([string]$facts.Tuning.LastReconcileUtc) $StartedUtc
         $facts.Fresh = $fresh.Fresh
@@ -1890,6 +1935,7 @@ function Write-TestReadBlock {
     Say ("  => managed={0} enabled={1} lastReconcileUtc={2}" -f $View.Managed, $View.Enabled, $View.LastReconcileUtc)
     Say ("     searchEnabled={0} cachingEnabled={1} ostEnabled={2} restartNeeded={3} policyConflicts={4}" -f
         $View.SearchEnabled, $View.CachingEnabled, $View.OstEnabled, $View.RestartNeeded, $View.PolicyConflicts)
+    Say ("     needsAdministrator={0}" -f $View.NeedsAdministrator)
 }
 
 function Write-Verdict {
@@ -2127,7 +2173,7 @@ function Invoke-FirstRunPhase {
         if ($null -eq $first.TuningAfterSeconds) {
             $noTuning = "the add-in did not write HKCU\$TuningKey\LastReconcileUtc - its tuning reconcile's LAST write - within $FirstRunTimeoutSeconds s of Outlook starting."
             if ($null -ne $first.McpAfterSeconds) {
-                $noTuning += " It DID start: its registration reconcile wrote HKCU\$McpKey\$McpReconcileValue $($first.McpAfterSeconds) s in. So its tuning reconcile started and stopped part-way - OutlookTuningService.Reconcile swallows the exception that stops it, and the 'tuning walk' line above says how far it got. The one time this was measured, the stop was a value under HKCU\Software\Policies, which only an elevated token may write (Docs/live-tier-on-the-vm.md section 2.3)."
+                $noTuning += " It DID start: its registration reconcile wrote HKCU\$McpKey\$McpReconcileValue $($first.McpAfterSeconds) s in. So its tuning reconcile started and did not reach its end - the 'tuning walk' line above says how far it got. A build from before Q128 (2026-10-03) stopped at the first write that threw, measured at a value under HKCU\Software\Policies, which only an elevated token may write (Docs/live-tier-on-the-vm.md section 2.3); since Q128 the reconcile skips such a value and always writes LastReconcileUtc."
             }
             $comProblems += $noTuning
         }

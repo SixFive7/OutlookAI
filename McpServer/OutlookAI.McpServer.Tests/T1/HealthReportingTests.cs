@@ -85,6 +85,41 @@ public sealed class HealthReportingTests
         Assert.Null(view.PolicyConflicts);
     }
 
+    /// <summary>
+    /// Q128: the values the add-in's reconcile could not write without an administrator - in
+    /// practice the five Cached Mode values under HKCU\Software\Policies on a NOT elevated
+    /// Outlook - reach outlook_health as tuning.needsAdministrator, ';'-joined as the add-in wrote
+    /// them, and null when there are none. The reconcile still finished, so lastReconcileUtc is set.
+    /// </summary>
+    [Fact]
+    public void ReadTuningState_NeedsAdministrator_IsReported_AndEmptyIsNull()
+    {
+        const string fivePolicyValues =
+            "caching.policy.SyncWindowSetting;caching.policy.SyncWindowSettingDays;caching.policy.DownloadSharedFolders;" +
+            "caching.policy.CacheOthersMail;caching.policy.DisableSyncSliderForSharedMailbox";
+        TuningHealthView view = HealthReporting.ReadTuningState(name => name switch
+        {
+            "Initialized" => 1,
+            "NeedsAdministrator" => fivePolicyValues,
+            "LastReconcileUtc" => "2026-10-03T18:30:00.0000000Z",
+            "PolicyConflicts" => "",
+            _ => (object?)1,
+        });
+
+        Assert.Equal(fivePolicyValues, view.NeedsAdministrator);
+        Assert.Equal("2026-10-03T18:30:00.0000000Z", view.LastReconcileUtc);
+        Assert.Null(view.PolicyConflicts);
+
+        TuningHealthView none = HealthReporting.ReadTuningState(name => name switch
+        {
+            "Initialized" => 1,
+            "NeedsAdministrator" => "",
+            _ => (object?)1,
+        });
+        Assert.Null(none.NeedsAdministrator);
+        Assert.Null(HealthReporting.ReadTuningState(_ => null).NeedsAdministrator);
+    }
+
     [Fact]
     public void ReadTuningStateFromRegistry_NeverThrows()
     {

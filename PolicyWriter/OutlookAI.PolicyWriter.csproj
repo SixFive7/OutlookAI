@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="15.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <!--
+    OutlookAI.PolicyWriter.exe - THE ONE PROGRAM IN THIS PRODUCT THAT RUNS ELEVATED (Q128).
+
+    The add-in's settings dialog starts it through UAC ("runas") to write the five Outlook Cached
+    Mode policy values under HKEY_USERS\<the user's SID>\Software\Policies\..., which a NOT
+    elevated Outlook can read and cannot write. It accepts those five values and nothing else:
+    Services\CachedModePolicy.cs is the closed list, Services\PolicyWriterRequest.cs the command
+    line, PolicyWriterRun.cs the order of the checks. Each file's header says why.
+
+    WHY AN OLD-STYLE PROJECT. It is built as a ProjectReference of OutlookAI.csproj, by the same
+    Visual Studio MSBuild that builds the VSTO add-in and with no restore step:
+    Testbed/host/Publish-AddInPayload.ps1 and Tools/Switch-AddInBuild.ps1 run msbuild /t:Publish
+    without /restore, and an SDK-style project would stop there on a missing project.assets.json.
+    It rides into the add-in's publish output as Content, so it is listed and hashed in the signed
+    OutlookAI.dll.manifest like every other file of the add-in, flattened into publish\ beside
+    OutlookAI.dll, and carried to {app} by the installer's one publish\* rule.
+
+    net48, like the add-in, so it needs nothing the add-in does not already need. WinExe, so a
+    UAC-approved run never flashes a console window. requireAdministrator in its manifest, so it
+    cannot run with a filtered token by accident: a plain CreateProcess of it from a NOT elevated
+    process fails with ERROR_ELEVATION_REQUIRED (740) and nothing starts.
+
+    It compiles the add-in's own Properties\AssemblyInfo.cs, so it carries the add-in's version -
+    stamped by the release build in that one place: one app, one version - and the UAC prompt
+    names it "OutlookAI".
+  -->
+  <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
+    <ProjectGuid>{30CFD827-272A-449A-9B82-97488D3619E3}</ProjectGuid>
+    <OutputType>WinExe</OutputType>
+    <RootNamespace>OutlookAI.PolicyWriter</RootNamespace>
+    <AssemblyName>OutlookAI.PolicyWriter</AssemblyName>
+    <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
+    <LangVersion>7.3</LangVersion>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Prefer32Bit>false</Prefer32Bit>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AutoGenerateBindingRedirects>false</AutoGenerateBindingRedirects>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
+    <DebugSymbols>true</DebugSymbols>
+    <DebugType>full</DebugType>
+    <Optimize>false</Optimize>
+    <OutputPath>bin\Debug\</OutputPath>
+    <DefineConstants>DEBUG;TRACE</DefineConstants>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
+    <DebugType>pdbonly</DebugType>
+    <Optimize>true</Optimize>
+    <OutputPath>bin\Release\</OutputPath>
+    <DefineConstants>TRACE</DefineConstants>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="System" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- The add-in's assembly attributes: its version, and its name in the UAC prompt. -->
+    <Compile Include="..\Properties\AssemblyInfo.cs">
+      <Link>Properties\AssemblyInfo.cs</Link>
+    </Compile>
+    <!-- Shared with the add-in, which compiles them too, and linked into the test project. -->
+    <Compile Include="..\Services\OfficeVersions.cs">
+      <Link>Shared\OfficeVersions.cs</Link>
+    </Compile>
+    <Compile Include="..\Services\CachedModePolicy.cs">
+      <Link>Shared\CachedModePolicy.cs</Link>
+    </Compile>
+    <Compile Include="..\Services\PolicyWriterRequest.cs">
+      <Link>Shared\PolicyWriterRequest.cs</Link>
+    </Compile>
+    <!-- The helper's own: the order of the checks (also linked into the test project), the
+         Windows half of them, and Main. -->
+    <Compile Include="PolicyWriterRun.cs" />
+    <Compile Include="WindowsPolicyHost.cs" />
+    <Compile Include="Program.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="app.manifest" />
+  </ItemGroup>
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+</Project>

@@ -67,7 +67,7 @@ namespace OutlookAI.Services
         /// </summary>
         internal const string McpKeyPath = AddInServerContract.McpKeyPath;
         internal const string InstallDirValueName = "InstallDir";
-        private const string AppKeyPath = @"Software\OutlookAI";
+        internal const string AppKeyPath = @"Software\OutlookAI";
 
         /// <summary>Server name under <c>mcpServers</c>; matches what Phase 2 registered.</summary>
         internal const string ServerName = McpConfigEditor.ServerName;
