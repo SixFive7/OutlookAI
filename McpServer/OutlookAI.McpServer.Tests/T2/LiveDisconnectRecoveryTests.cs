@@ -223,9 +223,12 @@ public sealed class LiveDisconnectRecoveryTests
         }
 
         // Whether the session holds D49's lifetime pin around the promotion. Diagnostic only; the
-        // assertion below is unchanged. On the test guest (Office LTSC 2024, 16.0.17932) the second
-        // live run, 2026-10-03, logged pinned=True on both sides and Outlook STILL exited when the
-        // promoted window closed - so on that build the pin is held and does not hold Outlook.
+        // assertion below is unchanged. On the test guest (Office LTSC 2024, 16.0.17932) the live runs
+        // of 2026-10-03 logged pinned=True on both sides and Outlook STILL exited when the promoted
+        // window closed. The D49 probes measured why: on that build Explorers.Add on the folder the
+        // pin shows (the default Inbox - the hub's, here) hands back the pin itself, so the promotion
+        // displayed the pin and the close took it. ComposeSurface.AddShowMeExplorer now never returns
+        // an Explorer that already existed (T1 ShowMeExplorerPinTests).
         _output.WriteLine("lifetime pin before promotion: " + DescribePin(independentGateway));
 
         // Promote with ONE window of our own via the sanctioned goto surface (hub store).

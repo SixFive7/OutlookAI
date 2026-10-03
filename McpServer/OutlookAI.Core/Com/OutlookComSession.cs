@@ -3359,6 +3359,44 @@ namespace OutlookAI.Core.Com
             }
         }
 
+        /// <summary>STA-side: a fresh <c>Explorers.Count</c>, or -1 when it cannot be read.</summary>
+        private static int CountExplorers(object app)
+        {
+            object? explorers = null;
+            try
+            {
+                explorers = ((dynamic)app).Explorers;
+                return (int)((dynamic)explorers!).Count;
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+                return -1;
+            }
+            finally
+            {
+                Release(explorers);
+            }
+        }
+
+        /// <summary>STA-side: the top folder of the store <paramref name="folder"/> is in, or null. Creates nothing.</summary>
+        private static object? TryGetStoreRootFolder(object folder)
+        {
+            object? store = null;
+            try
+            {
+                store = ((dynamic)folder).Store;
+                return ((dynamic)store!).GetRootFolder();
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+                return null;
+            }
+            finally
+            {
+                Release(store);
+            }
+        }
+
         /// <summary>
         /// STA-side: returns the active Explorer, creating and displaying one (on
         /// <paramref name="preferredFolder"/>, else the default Inbox) when Outlook runs
@@ -3406,8 +3444,31 @@ namespace OutlookAI.Core.Com
                     }
 
                     explorers = app.Explorers;
-                    explorer = ((dynamic)explorers!).Add(folderToShow, 0); // 0 = olFolderDisplayNormal
+                    object collection = explorers!;
+                    object target = folderToShow!;
+
+                    // D49 on Office LTSC 2024 (measured 2026-10-03): Explorers.Add on the folder the
+                    // lifetime pin shows hands back the PIN itself, and displaying it made the pin the
+                    // user's window. AddShowMeExplorer never returns an Explorer that already existed;
+                    // when it had to open the window on another folder, it is navigated back here.
+                    explorer = ComposeSurface.AddShowMeExplorer(
+                        f => ((dynamic)collection).Add(f, 0), // 0 = olFolderDisplayNormal
+                        () => CountExplorers((object)app),
+                        target,
+                        () => TryGetStoreRootFolder(target),
+                        out bool rerouted,
+                        out string? addError);
+                    if (explorer == null)
+                    {
+                        error = addError;
+                        return null;
+                    }
+
                     ((dynamic)explorer!).Display();
+                    if (rerouted)
+                    {
+                        ((dynamic)explorer!).CurrentFolder = target;
+                    }
                 }
                 catch (Exception ex) when (IsComCallFailure(ex))
                 {

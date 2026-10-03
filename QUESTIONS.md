@@ -367,6 +367,40 @@ spelling".** See the decision log below.
 
 ## Decision log
 
+### 2026-10-03, autonomous - D49 on Office LTSC 2024: the show-me window was the lifetime pin itself
+
+**Primer.** D49: a live session holds a non-displayed Explorer - the lifetime pin - so that an
+Outlook OutlookAI started without a window does not exit when the last window closes. On the test
+guest (Office LTSC 2024, 16.0.17932) `LiveDisconnectRecoveryTests` failed in every run (runbook 4.1e,
+F9): Outlook started headless, `goto_folder` put one window on screen, the window was closed, and
+Outlook exited, with the session still reporting itself pinned. The question set: which kinds of
+window Office 2024 counts as keeping Outlook open - then fix, or scope the test to what is measured.
+
+**Measured** (two probes on the guest, Explorer windows only, nothing in any mailbox touched; the
+maintainer's own Office was not touched). Probe v2: whatever was kept open first - nothing, a hidden
+Explorer, a displayed Explorer parked off-screen and hidden - closing the shown window ended Outlook;
+but `Explorers.Count` stayed 1 after a second Explorer was added, and with a first Explorer on
+screen no second window appeared at all - a confound. Probe v3 resolved it: `Explorers.Add` on the
+folder a non-displayed Explorer already shows returns THAT Explorer (the same COM object, the count
+unchanged); on another folder it makes a new one; and closing the new window leaves Outlook running,
+held by the non-displayed Explorer, even after the client released every reference. So the pin
+works on Office 2024 - and the show-me path was displaying the pin itself, because the pin sits on
+the default Inbox and `goto_folder` on that Inbox was handed the pin by `Explorers.Add`.
+
+**Options.** *(a)* Never let the show-me path return an Explorer that already existed: when `Add`
+hands one back, open the window on the store's top folder and navigate it to the folder asked for.
+*(b)* Pin on a folder no show-me call asks for. *(c)* Accept that Outlook ends with the window on
+Office 2024, scope the test to that and rely on the re-attach. *(d)* Re-pin after every show-me call.
+
+**Decided: (a)** - a fix, because the measurement shows Office 2024 can keep the promise. It changes
+nothing where `Add` makes a new Explorer, as the maintainer's older Office presumably does (T1 pins
+both shapes), and it does not depend on which folder a caller asks for, as *(b)* would; *(c)* would
+drop a promise the build can keep, and *(d)* would still have shown the pin. An Explorer counts as
+existing when it is a registered pin OR the count did not go up, because a pin another session made
+is reached through another apartment's proxy, which the registry does not hold. `LiveDisconnectRecoveryTests`
+is unchanged. **Not measured:** the maintainer's Office build, and whether `ActiveExplorer()` can
+return another session's hidden pin (`TODO.md`). **Undo:** revert the commit.
+
 ### 2026-10-03, autonomous - a subject override's conversation id outside Exchange: the promise is scoped, not dropped
 
 **Primer.** `reply_draft`, `replyall_draft` and `forward_draft` take a `subject` override. Assigning

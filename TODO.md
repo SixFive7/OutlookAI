@@ -1,23 +1,17 @@
 # TODO
 
-- [ ] **Decide what keeps Outlook alive on Office LTSC 2024 when the user closes the window
-  OutlookAI opened (D49, first guest live runs, 2026-10-03).** `LiveDisconnectRecoveryTests` fails
-  on `OutlookAI-Unindexed` (Office LTSC 2024, 16.0.17932) with "D49 regression: Outlook exited when
-  its last window closed": Outlook started headless through COM, one show-me Explorer promoted by
-  `goto_folder`, `WM_CLOSE` to it, and OUTLOOK.EXE gone. Run 2 logged the session's lifetime pin -
-  the non-displayed Explorer `ComposeSurface.TryPinProcess` makes - as `pinned=True` both before and
-  after the promotion, so the pin is HELD on that build and does not hold Outlook when a displayed
-  Explorer closes (`ComposeSurface`'s remarks record it measured against an Inspector closing). An
-  attempt that re-ensured the pin on the show-me path was reverted (`9359f34`) because the session
-  was pinned all along. Directions: (1) measure on the guest which surfaces Office 2024 counts as
-  keeping it open - a hidden Explorer, a DISPLAYED Explorer parked off-screen and hidden the way the
-  compose promotion hides its Inspector, an Inspector of a scratch item - and pin with that; (2) have
-  the show-me path reuse a displayed-but-parked pin instead of adding a second Explorer; (3) accept
-  that on Office 2024 closing the last window ends Outlook, rely on the gateway re-attach the same
-  test proves, and record the D49 promise as build-dependent - a change to what the test asserts, so
-  the maintainer's call; (4) measure the same sequence on the maintainer's 2021 build too, read-only
-  apart from the window, before choosing. Recommended: (1), then (4) - the cure has to be one both
-  builds honour. Until then the test stays red on the guests, by design.
+- [ ] **Recognise ANOTHER server session's lifetime pin on the show-me path's `ActiveExplorer()`
+  branch (D49, found 2026-10-03, not measured).** `EnsureVisibleExplorer` refuses to display an
+  Explorer `ActiveExplorer()` hands back only when `ComposeSurface.IsPin` knows it, and the pin
+  registry holds IUnknown pointers - which for an out-of-process server are per-apartment proxies, so
+  a pin another session made on another STA thread is very likely not recognised, whatever the
+  registry's remarks say about being process-wide. The `Explorers.Add` branch no longer depends on it
+  (the count check in `ComposeSurface.AddShowMeExplorer`, after the D49 probes of 2026-10-03), but if
+  `ActiveExplorer()` can return a hidden Explorer at all, a second session would display that pin and
+  the user's close would end Outlook again. Directions: (1) measure on a guest whether
+  `ActiveExplorer()` ever returns a non-displayed Explorer; (2) if it does, recognise a pin by its
+  window instead (`IOleWindow`, `IsWindowVisible`); (3) keep one pin per process, owned by the
+  gateway rather than by a session. Recommended: (1) first - it is one probe on a guest.
 
 - [ ] **Run the PST half of Q74 C3 on the indexed guest.** `LiveDecodeVerifyTests.ShortDecodedId_OpensAsTheItemItself_OnAPstStore`
   carries `Requires=SearchIndex`, so `OutlookAI-Unindexed`'s filter never selects it and the first
