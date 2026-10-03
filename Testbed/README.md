@@ -907,7 +907,7 @@ it.
 
 **On a FROZEN guest - both Outlook guests, once Q130 (a) is merged (decided by the maintainer
 2026-10-03) - a run starts by restoring the guest's frozen checkpoint, NOT with step 9a.**
-`testbed.json`'s `frozenClocks` names it - `CP-19C-FROZEN-CLOCK` on `OutlookAI-Indexed`,
+`testbed.json`'s `frozenClocks` names it - `CP-20C-FROZEN-CLOCK` on `OutlookAI-Indexed`,
 `CP-14B-FROZEN-CLOCK` on `OutlookAI-Unindexed` - with time synchronisation off and its clock standing
 just after the guest's test data was built, so every run starts at that same instant and the data is
 never older than it was on the first run. In order: take the lease; restore the frozen checkpoint (a

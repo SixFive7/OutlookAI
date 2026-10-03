@@ -36,6 +36,17 @@ public static class LiveHubPopulationFreshness
     public static readonly TimeSpan FrontierFutureTolerance = TimeSpan.FromMinutes(5);
 
     /// <summary>
+    /// What a refusal adds for the two Outlook guests, whose clocks are frozen (Q130 (a), decided 2026-10-03):
+    /// there no run rebuilds the hub - the frozen checkpoint holds it - so a hub that reads stale or future means
+    /// the guest's clock left the frozen instant, and the repair is the restore, not the rebuild.
+    /// </summary>
+    public const string FrozenGuestAdvice =
+        " On a FROZEN Outlook guest (Testbed/testbed.json frozenClocks) the hub is never rebuilt for a run, so this means "
+        + "the guest's clock left its frozen instant - a restart or cold boot after the restore, or time sync turned back "
+        + "on: restore its frozen checkpoint and stage again (Testbed/host/Set-GuestClockFrozen.ps1 -Verify says how far "
+        + "the clock moved).";
+
+    /// <summary>
     /// Reads a hub population's manifest header and refuses anything else: another population's, the
     /// measurement corpus's, or one whose shape this generator would not reproduce - an old format, or
     /// a store name that does not match. Returns what its age is judged on.
@@ -101,7 +112,8 @@ public static class LiveHubPopulationFreshness
         if (age < -FrontierFutureTolerance)
         {
             return (false, "REFUSING the frontier check: " + what + ". The population's newest item is in the FUTURE, which "
-                + "means it was built against an anchor ahead of this clock - check the guest's clock and rebuild the hub.");
+                + "means it was built against an anchor ahead of this clock - check the guest's clock and rebuild the hub."
+                + FrozenGuestAdvice);
         }
 
         if (age > margin)
@@ -109,7 +121,7 @@ public static class LiveHubPopulationFreshness
             return (false, "STALE HUB: " + what + ". A frontier that old passes this test whether the product reads the index's "
                 + "time as UTC or as local time, so the run is not measuring what the test is for. Rebuild the hub before "
                 + "the run: Testbed/guest/Reset-HubPopulation.ps1 -Execute, through Register-InteractiveTask.ps1 "
-                + "(Docs/live-tier-on-the-vm.md section 3b).");
+                + "(Docs/live-tier-on-the-vm.md section 3b)." + FrozenGuestAdvice);
         }
 
         return (true, "Hub population fresh: " + what + ".");

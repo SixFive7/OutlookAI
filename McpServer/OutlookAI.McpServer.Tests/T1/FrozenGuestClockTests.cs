@@ -133,6 +133,26 @@ public sealed class FrozenGuestClockTests
         Assert.Equal(atTheBuild, atTheEndOfAnyRun);
     }
 
+    [Fact]
+    public void AHubThatReadsStaleOrFuture_OnAFrozenGuest_NamesTheMovedClock_NotOnlyTheRebuild()
+    {
+        // The freshness and frontier checks stay as guards (Q130): on a frozen guest they now fail because the
+        // CLOCK moved, and the message says so and names the restore and the guard.
+        JsonObject r = Record("OutlookAI-Indexed");
+        HubPopulationFact fact = LiveHubPopulationFreshness.Read(HubManifestHeader("OutlookAI-Indexed", r));
+        TimeSpan summer = TimeSpan.FromHours(2);
+
+        (bool stale, string late) = LiveHubPopulationFreshness.Decide(fact, fact.NewestDatedUtc.AddDays(40), summer);
+        (bool future, string early) = LiveHubPopulationFreshness.Decide(fact, fact.NewestDatedUtc.AddHours(-50), summer);
+        Assert.False(stale);
+        Assert.False(future);
+        foreach (string message in new[] { late, early })
+        {
+            Assert.Contains("FROZEN Outlook guest", message, StringComparison.Ordinal);
+            Assert.Contains("Set-GuestClockFrozen.ps1 -Verify", message, StringComparison.Ordinal);
+        }
+    }
+
     // ================================================================ helpers
 
     private static (DateTime Frozen, DateTime Last) Span(JsonObject record)
