@@ -83,7 +83,7 @@
 
 - [ ] **What still stops a rebuilder rebuilding the test VM from this repository alone.**
   `Testbed/` is the entry point and holds the runnable half - parameter set, host and guest
-  scripts, the settings template, the credential contract - and `.github/scripts/check-testbed-references.ps1`
+  scripts, the settings template, the credential contract - and `Tools/Checks/check-testbed-references.ps1`
   fails the build when a document names something the repository does not contain. The corpus
   parameters are now recorded and verified: **`vm2` / seed `7777` / anchor `2026-08-19` /
   20,000 items, default shape**, recovered from the manifest header on the guest and confirmed by
@@ -243,8 +243,9 @@
         is a session budget masquerading as a per-call one. The exhaustive-scan live test now
         passes an explicitly derived budget, which is the case that would have broken first;
         the general split (session budget plus a per-`RoundTripAsync` budget, both named)
-        is still open. Raising the DEFAULT is deliberately not the fix - it is CI's only
-        safety net against a hung stdio test, and CI's job timeout is 20 minutes.
+        is still open. Raising the DEFAULT is deliberately not the fix - it is the non-live
+        run's only safety net against a hung stdio test, and the build VM gives a whole run 60
+        minutes (Testbed/host/Invoke-TestsOnBuildVm.ps1 -RunTimeoutMinutes).
   - [ ] **Claude Code's 30-minute stdio idle abort is now the nearest client-side limit, and
         nobody owns it.** A 600 s exhaustive scan is 600 s of complete silence on the pipe -
         this server sends no progress notifications. It fits (600 s < 1800 s idle < the

@@ -67,7 +67,7 @@ public sealed class LiveTierInventoryTests
     /// <para>
     /// A free-text vocabulary drifts into synonyms, and two spellings of one capability make
     /// the filter that excludes it silently incomplete. Every value here is documented in
-    /// <c>Docs/live-tier-on-the-vm.md</c>, and <c>.github/scripts/check-pinned-constants.ps1</c>
+    /// <c>Docs/live-tier-on-the-vm.md</c>, and <c>Tools/Checks/check-pinned-constants.ps1</c>
     /// fails the build if one of them stops appearing there - the runbook is what a human reads
     /// to decide whether a live test can move to a test machine.
     /// </para>

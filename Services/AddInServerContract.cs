@@ -98,7 +98,7 @@ namespace OutlookAI.Services
         /// reads a value nobody wrote and reports <c>server-assisted</c> on a tuned machine for
         /// ever. It was spelled out six times before this constant existed (once in the add-in's
         /// tuning catalog, twice in <c>HealthReporting</c>, three times in the T2 live test).
-        /// <c>.github/scripts/check-pinned-constants.ps1</c> (#12) keeps it at one, and pins that
+        /// <c>Tools/Checks/check-pinned-constants.ps1</c> (#12) keeps it at one, and pins that
         /// one against the name <c>McpServer/README.md</c> publishes to users.
         /// </para>
         /// </summary>

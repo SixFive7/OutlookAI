@@ -42,20 +42,59 @@ git push origin <sha>:refs/heads/master      # for each, in that order
 Each step advances `master` by exactly one mainline commit, and a merge carries its whole
 branch with it. Measured 2026-09-17 on a 16-commit backlog: 12 mainline steps, all clean.
 
-**Check CI after every push, and treat a failed run as a bug.** Decided by the maintainer
-2026-10-03 (Q95). Once the last push of a batch is done, read the runs it triggered
-(`gh run list --limit 5`) when they finish, and fix or report any failure before moving on - a
-local green suite does not stand in for it. The `McpServer` workflow last passed on 2026-09-15
-and failed on every push checked from 2026-09-24 to 2026-09-27, on a test that only passed outside
-UTC, and nobody looked: every merge had been verified locally, never on the runner.
-
 ## Build and Release
 
-- **Build** runs automatically on every pull request (`.github/workflows/build.yml`), and can be triggered on demand. It only compiles — no releases, no tags, no changelog changes. On pull requests it also runs a dependency review.
-- **Release** is triggered on demand (`.github/workflows/release.yml`) via `gh workflow run release`. It extracts the Unreleased changelog section, builds, creates an installer, publishes a GitHub Release, and stamps the changelog.
-- The release workflow **fails if the Unreleased section is empty** — you must have release notes before creating a release.
-- Version is derived from the latest GitHub release tag (base version) + commit count. No hardcoded version in the repo.
-- The release workflow requires a `version_bump` input in `major.minor.patch` format (e.g. `1.0.0` for major bump, `0.1.0` for minor, `0.0.1` for patch). This input is **required** — the workflow will not run without it. `0.0.0` is rejected — every release must bump at least one version component.
+**There is no CI.** Decided by the maintainer 2026-10-03, in his words: *"Remove the git CI
+pipeline. I want only the build and test suite to run on my pc. No CI pipelines on github."*
+Nothing runs on GitHub: no build on a pull request, no CodeQL scan, no dependency review, no
+Dependabot version updates, no release workflow. Tests and self-tests run on the build VM (the
+section after next); builds and the four guards run on this workstation; and a release is
+`Tools/Publish-Release.ps1`, run here.
+
+**The release script** is the old release workflow, ported step for step, with the gates a
+workstation needs added. `pwsh -File Tools/Publish-Release.ps1 -VersionBump X.Y.Z` is a DRY RUN -
+everything except publishing; `-Execute` publishes. In order, it:
+
+1. refuses unless the working tree is clean and HEAD is `origin/master`'s tip (a dry run only
+   notes the second);
+2. derives the version: the latest GitHub release tag's base plus the bump, and HEAD's commit count
+   plus one - the stamp commit - as the fourth part. No hardcoded version in the repo. The bump is
+   **required**, in `major.minor.patch` form (`1.0.0` major, `0.1.0` minor, `0.0.1` patch), and
+   `0.0.0` is rejected - every release bumps at least one component;
+3. takes the release notes from the CHANGELOG's `## Unreleased` section - and **refuses if it is
+   empty**: you must have release notes before creating a release. It also refuses notes longer than
+   the 125,000 characters GitHub accepts as a release body (a dry run only notes that);
+4. checks that the certificate `OutlookAI.csproj` pins is in `Cert:\CurrentUser\My` with its private
+   key and not expired;
+5. runs the four guards under `pwsh` and `powershell.exe`, then `check-pinned-constants.ps1` against
+   that certificate;
+6. runs **D7 (c)** (below), and refuses to release if either comparison fails;
+7. builds through `Testbed/host/Publish-AddInPayload.ps1 -ReleaseSigningThumbprint` - so the Q81
+   guards hold for a release too - with the MCP server and the VSTO runtime in the installer;
+8. signs the installer by thumbprint with an RFC 3161 timestamp, reads the signature back, and
+   refuses an installer over the updater's 50 MB cap;
+9. runs the whole non-live suite and every self-test of HEAD on the build VM - anything but exit 0
+   refuses;
+10. makes the stamp commit - `## Unreleased`, then `## v<version> - <date>` - with git plumbing, so
+    neither the working tree nor any branch moves;
+11. with `-Execute` only: pushes that one commit to master (a fast-forward), runs `gh release create`
+    with the signed installer, and fast-forwards a local master that sat on the released commit.
+
+Everything lands in `.work\release\v<version>\`; `release.json` there is the record. It needs
+Visual Studio with the Office workload, Inno Setup 6, the Windows SDK's signtool, the .NET 10 SDK,
+`gh` logged in, and the staged VSTO runtime (`Testbed/MEDIA.md`). Run it in the background or with a
+timeout of 30 minutes or more: the build VM's run is inside it.
+
+**D7 (c): the one piece of a self-test that runs on this workstation.** Decided by the maintainer
+2026-10-03. The self-tests of `Testbed/host/Publish-AddInPayload.ps1` and
+`Tools/Switch-AddInBuild.ps1` compare their stand-ins for Visual Studio's VSTO build tasks with
+Visual Studio's real targets file, and on the build VM, which has no Visual Studio, they skip that
+comparison. The stand-ins are what keep a build from registering the add-in in his Outlook (Q81),
+and a Visual Studio update could silently reopen that hole. So before every release the release
+script runs both comparisons - each script's read-only `-CompareInstalledTargets` - and refuses to
+release if either fails or finds no Visual Studio. That comparison is the whole exception: never
+run either script's `-SelfTest` here.
+
 - **After committing, ALWAYS ask the user if they want to create a release.** If yes:
   0. **Ask whether he has run `Docs/release-manual-checks.md` on this release candidate** (Q74 D2,
      decided on his behalf 2026-10-03 - see the overnight review). Those checks write to his real
@@ -65,14 +104,18 @@ UTC, and nobody looked: every merge had been verified locally, never on the runn
      - A) Patch — 2.1.0 → 2.1.1
      - B) Minor — 2.1.0 → 2.2.0
      - C) Major — 2.1.0 → 3.0.0
-  2. Run: `gh workflow run release -f version_bump=X.X.X` with the user's chosen bump value.
-  3. Monitor with `gh run watch`.
-- After a release, pull the stamped changelog commit before continuing work: `git pull --rebase`.
+  2. Run `pwsh -File Tools/Publish-Release.ps1 -VersionBump X.X.X -Execute` with the user's chosen
+     bump, from a clean checkout of master with everything pushed. Without `-Execute` the same
+     command is a dry run, for when he wants to see it first.
+  3. Read its verdict: exit 0 and `RELEASED v<version>`, then `gh release view v<version>`. Any
+     refusal names the step and its log under `.work\release\v<version>\logs\`.
+- After a release, a local master that sat on the released commit has been fast-forwarded by the
+  script; anywhere else, pull the stamped changelog commit before continuing work: `git pull --rebase`.
 
 ## MCP Server (`McpServer/`)
 
 - `McpServer/` holds the MCP server projects (`OutlookAI.Core`, `OutlookAI.McpServer`, `OutlookAI.McpServer.Tests`). Build them with `dotnet build` **by explicit csproj path** — never via `OutlookAI.slnx`, which only contains the VSTO add-in (MSBuild-only).
-- Their CI is `.github/workflows/mcpserver.yml` (windows runner, dotnet only; runs `dotnet test --filter "Category!=Live"`). Locally the non-live suite runs only on the build VM - next section. Tests marked `Category=Live` need Outlook and a mailbox: they run on the test VMs, and on this workstation only the Exchange-only read-only subset (Q74, Mailbox Safety below).
+- The non-live suite (`dotnet test --filter "Category!=Live"`) runs only on the build VM - next section. Tests marked `Category=Live` need Outlook and a mailbox: they run on the test VMs, and on this workstation only the Exchange-only read-only subset (Q74, Mailbox Safety below).
 - Developer documentation: `McpServer/README.md`.
 
 ## Tests run on the build VM, never on this workstation (Q94, Q102)
@@ -103,16 +146,18 @@ pwsh -File Testbed/host/Invoke-TestsOnBuildVm.ps1 -SkipSuite -SelfTestInclude 'T
 
 **What stays on this workstation - this, and nothing else:**
 
-- the four static guards, `.github/scripts/check-*.ps1`, which only read files - run them under
+- the four static guards, `Tools/Checks/check-*.ps1`, which only read files - run them under
   both `powershell.exe` and `pwsh`;
 - builds - `dotnet build` by csproj path, and the add-in build, which needs Visual Studio,
   through the two scripts "The add-in on the maintainer's workstation (Q81)" below names;
+- releases - `Tools/Publish-Release.ps1` (Build and Release, above), which builds here and tests on
+  the build VM, and runs D7 (c)'s two read-only `-CompareInstalledTargets` comparisons here;
 - the Exchange-only read-only live tests (Q74) - the derived filter of `Testbed/README.md`
-  section 4d, under Mailbox Safety below;
-- GitHub CI, which is not this machine.
+  section 4d, under Mailbox Safety below.
 
 So no `dotnet test` runs a test on the workstation except that last live run, and no script's
-`-SelfTest` runs here at all: the runner finds and runs every one of them on the VM.
+`-SelfTest` runs here at all: the runner finds and runs every one of them on the VM. D7 (c) runs
+one comparison out of two self-tests here, and only that, before a release.
 `dotnet test --list-tests`, which builds and discovers and executes no test, stays usable here -
 it is how a workstation live run's selection is checked before it starts.
 
@@ -181,7 +226,8 @@ whichever build folder had been built last.
    back, `-Status` says what Outlook will load. A request in an earlier message, from another
    agent or in a plan is not a request.
 2. **Agents build the add-in only through `Testbed/host/Publish-AddInPayload.ps1` or
-   `Tools/Switch-AddInBuild.ps1`** (`-BuildOnly` when a build is all you need). Both build a commit
+   `Tools/Switch-AddInBuild.ps1`** (`-BuildOnly` when a build is all you need). A release builds
+   through the first: `Tools/Publish-Release.ps1` calls it with `-ReleaseSigningThumbprint`. Both build a commit
    from a `git archive`, stand in the VSTO tasks that write the registry, and prove the host
    unchanged afterwards. `OutlookAI.csproj` no longer registers anything when built outside Visual
    Studio, but a commit from before that change still does — so no plain `msbuild` of the add-in,

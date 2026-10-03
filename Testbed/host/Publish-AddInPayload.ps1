@@ -83,7 +83,7 @@
     and it IDENTIFIES, never produces, one piece of media:
 
       vstor_redist.exe -> C:\OutlookAI-Q5\media\   the VSTO runtime redistributable, pinned by the
-                                                   same SHA-256 and length .github/workflows/release.yml
+                                                   same SHA-256 and length every release
                                                    pins. It is staged by a human
                                                    (Testbed/MEDIA.md). The installer compiles it
                                                    in, as every release does, but a SILENT install
@@ -138,9 +138,9 @@
     fed the add-in manifest is empty either way, and the script refuses a source tree that
     declares a form region, because then it would not be).
 
-    SIGNING WITHOUT A SECRET. VSTO requires signed manifests. The release signs with a key that is
-    a GitHub secret; this signs with a THROWAWAY self-signed certificate made for this one build in
-    Cert:\CurrentUser\My - the same thing .github/workflows/build.yml does - and deletes it, private
+    SIGNING WITHOUT THE RELEASE KEY. VSTO requires signed manifests. A release is signed with the
+    maintainer's own key (THE RELEASE BUILD, below); a testbed build signs with a THROWAWAY
+    self-signed certificate made for this one build in Cert:\CurrentUser\My, and deletes it, private
     key included, before the script ends. The guest trusts that build's PUBLIC key, which the
     manifest carries; nobody can sign anything else with it afterwards, because the private half no
     longer exists.
@@ -153,6 +153,32 @@
     WHAT THE INSTALLER DOES NOT CARRY: the MCP server. The release puts it in {app}\McpServer; the
     live tier never uses that copy - it builds and spawns its own from the suite source - and the
     add-in only needs it to register itself with Claude Code, which a guest does not have.
+
+    THE RELEASE BUILD (-ReleaseSigningThumbprint). There is no CI any more: on 2026-10-03 the
+    maintainer decided that only his own machine builds and tests ("No CI pipelines on github"),
+    and Tools/Publish-Release.ps1 builds every release THROUGH THIS SCRIPT, so the three guards
+    above stand between a release build and his Outlook as well. The release build differs in
+    exactly what the release workflow did differently, and in nothing else:
+      * the manifests are signed with THAT certificate - the release key, already in
+        Cert:\CurrentUser\My with its private key - and no certificate is created or deleted.
+        Guard 3 then counts the key's thumbprint and public key as a trace only on lines the build
+        ADDED, because the key is on the host before the build and must still be there after it;
+        the build directory still counts wherever it appears;
+      * Properties/AssemblyInfo.cs is stamped with -Version, and the flattened OutlookAI.dll must
+        carry it - the file the registration loads;
+      * the MCP server is published into publish\McpServer, framework-dependent, with the same
+        version, so the installer carries it, and both of its executables must carry the version;
+      * it stops at the UNSIGNED installer: no guest manifest, no AddIn.zip. Signing the installer
+        and publishing it are Tools/Publish-Release.ps1's.
+
+    -CompareInstalledTargets RUNS ONE READ-ONLY COMPARISON AND NOTHING ELSE: guard 2's stand-ins
+    against the VSTO targets of every Visual Studio on this machine that has the Office workload -
+    the comparison the self-test makes, and skips where there is no Visual Studio, as on the build
+    VM. A Visual Studio update can change those targets, and a stand-in that no longer covers a
+    parameter or a writer reopens Q81's hole without a word. So Tools/Publish-Release.ps1 runs this
+    before every release, on the machine that builds it, and refuses to release unless it passes
+    (D7 (c), decided by the maintainer 2026-10-03). In this mode a machine with no such Visual
+    Studio FAILS rather than skips: a comparison that did not run proves nothing.
 
     THIS SCRIPT TAKES NO -VMName, AND THAT IS CORRECT - the same rule
     Testbed/host/Publish-GuestPayload.ps1 states. It only builds on the host; naming a guest
@@ -191,8 +217,20 @@
     Run the pure decisions against synthetic inputs and exit. No build, no git, no certificate, no
     registry read. Safe anywhere.
 
+.PARAMETER ReleaseSigningThumbprint
+    FOR Tools/Publish-Release.ps1. Build the RELEASE (see THE RELEASE BUILD above): sign with this
+    certificate from Cert:\CurrentUser\My, stamp -Version into the add-in and the MCP server, put
+    the server in the installer, and stop at the unsigned installer. -Version must then be the
+    release's own, never 99.99.99.0.
+
+.PARAMETER CompareInstalledTargets
+    Compare guard 2's stand-ins with the installed VSTO targets and exit: 0 when every Visual Studio
+    with the Office workload here passes, 1 when one does not or when there is none. Reads one XML
+    file per Visual Studio and writes nothing.
+
 .EXAMPLE
     pwsh -File Testbed/host/Publish-AddInPayload.ps1 -SelfTest
+    pwsh -File Testbed/host/Publish-AddInPayload.ps1 -CompareInstalledTargets
     pwsh -File Testbed/host/Publish-AddInPayload.ps1
     pwsh -File Testbed/host/Publish-AddInPayload.ps1 -Ref 1a2b3c4 -VstoRuntimePath D:\media\vstor_redist.exe
 #>
@@ -206,6 +244,8 @@ param(
     [string] $IsccPath,
     [string] $Version = '99.99.99.0',
     [int]    $BuildTimeoutMinutes = 20,
+    [string] $ReleaseSigningThumbprint,
+    [switch] $CompareInstalledTargets,
     [switch] $SelfTest
 )
 
@@ -229,8 +269,9 @@ if (-not $RepoRoot) { $RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScri
 # Everything this script names, in one place.
 # ---------------------------------------------------------------------------------------------
 
-# The VSTO runtime redistributable, exactly as .github/workflows/release.yml pins it - the same
-# file every release compiles into its installer. Microsoft-signed, version 10.0.60917.00.
+# The VSTO runtime redistributable, pinned as every release has pinned it - the same file every
+# release compiles into its installer, and Tools/Publish-Release.ps1 builds through this script.
+# Microsoft-signed, version 10.0.60917.00.
 $VstoRuntimeSha256 = 'CFE1A40BBE4A50022DB2164ABDB0154984E2CECB761A23CDC81CB5754F6E0A18'
 $VstoRuntimeBytes  = 41828424
 $VstoRuntimeSource = 'https://download.microsoft.com/download/5/d/2/5d24f8f8-efbb-4b63-aa33-3785e3104713/vstor_redist.exe'
@@ -264,6 +305,13 @@ $StandInTasks = [ordered]@{
     }
 }
 $StandInSentinel = 'TESTBED-NO-HOST-WRITE'
+
+# What every developer build carries (Properties/AssemblyInfo.cs, McpServer/Directory.Build.props),
+# and therefore what a release build may never carry.
+$DeveloperVersion = '99.99.99.0'
+
+# The two executables the MCP server's publish must produce, each stamped with the release version.
+$ServerExecutables = @('OutlookAI.McpServer.exe', 'OutlookAI.ComHost.exe')
 
 # The host state guard 3 compares. Keys under HKCU, and CurrentUser certificate stores.
 $WatchedRegistry = @(
@@ -390,7 +438,7 @@ $($blocks -join "`r`n")
 
 # One argument string for MSBuild.exe. Values with spaces are quoted. A semicolon inside a value
 # needs one of TWO spellings, and they are not interchangeable:
-#   * a SCALAR (DefineConstants) takes %3B, release.yml's spelling - the value is unescaped when a
+#   * a SCALAR (DefineConstants) takes %3B, the release workflow's spelling - the value is unescaped when a
 #     task reads it;
 #   * a LIST (PrepareForRunDependsOn) needs a REAL semicolon inside double quotes, because a target
 #     list is split on semicolons BEFORE it is unescaped. MEASURED 2026-09-24, first run of this
@@ -419,14 +467,15 @@ function Get-MSBuildArgumentList {
     $list = @(
         $projectArg,
         '/t:Publish',
-        # Mirrors .github/workflows/release.yml's "Build and Publish" step, property for property.
+        # Mirrors the release workflow's "Build and Publish" step, property for property - and
+        # since 2026-10-03 it IS the release's build (-ReleaseSigningThumbprint).
         (Format-MSBuildProperty 'Configuration' 'Release'),
         (Format-MSBuildProperty 'ApplicationVersion' $ApplicationVersion),
         (Format-MSBuildProperty 'PublishDir' 'publish\'),
         (Format-MSBuildProperty 'BootstrapperEnabled' 'true'),
         (Format-MSBuildProperty 'IsWebBootstrapper' 'false'),
         (Format-MSBuildProperty 'DefineConstants' 'VSTO40;TRACE'),
-        # The throwaway key instead of the release secret - what build.yml does.
+        # The throwaway key - or, for a release, the release key (-ReleaseSigningThumbprint).
         (Format-MSBuildProperty 'ManifestCertificateThumbprint' $Thumbprint),
         # Guard 1 and guard 2.
         (Format-MSBuildProperty 'PrepareForRunDependsOn' (Get-PrepareForRunOverride) -List),
@@ -579,6 +628,48 @@ function Find-BuildFootprint {
     return @($hits)
 }
 
+# Guard 3's verdict on traces. A THROWAWAY key did not exist before the build, so any line naming it
+# afterwards is a trace. The RELEASE key did, and must still be there afterwards - in My, and in
+# TrustedPublisher and CA where the installed release put its public half - so for it only lines the
+# build ADDED count. The build directory counts wherever it appears, in both modes.
+function Find-HostTraces {
+    param([string[]] $Before, [string[]] $After, [string] $BuildDirectory, [string] $Thumbprint, [string] $ModulusBase64, [switch] $KeyExistedBefore)
+    if (-not $KeyExistedBefore) {
+        return @(Find-BuildFootprint -Lines $After -BuildDirectory $BuildDirectory -Thumbprint $Thumbprint -ModulusBase64 $ModulusBase64)
+    }
+    $added = @((Compare-HostSnapshot -Before $Before -After $After).Added)
+    $hits = @(Find-BuildFootprint -Lines $After -BuildDirectory $BuildDirectory) +
+        @(Find-BuildFootprint -Lines $added -Thumbprint $Thumbprint -ModulusBase64 $ModulusBase64)
+    return @($hits | Where-Object { $null -ne $_ } | Sort-Object -Unique)
+}
+
+# The release workflow's "Stamp assembly version", kept by the release build: every AssemblyVersion and
+# AssemblyFileVersion attribute gets the release version. Both must be there - a source with only
+# one would ship a DLL whose two versions disagree - so a text missing either returns $null.
+function Set-AssemblyInfoVersion {
+    param([string] $Text, [string] $Version)
+    $assembly = [regex]'AssemblyVersion\("[^"]*"\)'
+    $file = [regex]'AssemblyFileVersion\("[^"]*"\)'
+    if ($assembly.Matches($Text).Count -eq 0 -or $file.Matches($Text).Count -eq 0) { return $null }
+    $Text = $assembly.Replace($Text, ('AssemblyVersion("' + $Version + '")'))
+    return $file.Replace($Text, ('AssemblyFileVersion("' + $Version + '")'))
+}
+
+# The release workflow's "Publish MCP server": framework-dependent on purpose (self-contained would add about
+# 70 MB and pass the updater's 50 MB download cap), win-x64, and -p:Version so the server carries
+# the add-in's version - one app, one version. No build servers: nothing may outlive the publish.
+function Get-ServerPublishArgumentList {
+    param([string] $ProjectPath, [string] $Version, [string] $OutputDir)
+    $project = $ProjectPath
+    if ($project -match '\s') { $project = '"' + $project + '"' }
+    $output = $OutputDir
+    if ($output -match '\s') { $output = '"' + $output + '"' }
+    return @('publish', $project, '-c', 'Release', '-r', 'win-x64', '--self-contained', 'false',
+        "-p:Version=$Version", '-o', $output, '--disable-build-servers', '--nologo')
+}
+
+function Test-ThumbprintText { param([string] $Value) return [bool]($Value -match '^[0-9A-Fa-f]{40}$') }
+
 # Lines of a snapshot that belong to one key, so the registration key can be compared on its own.
 function Select-KeyLines {
     param([string[]] $Lines, [string] $KeyPath)
@@ -723,23 +814,13 @@ function Invoke-SelfTest {
     }
 
     # Against the REAL VSTO targets, when this machine has them: every attribute the targets pass
-    # each writing task must be declared by its stand-in, or MSBuild refuses the call.
+    # each writing task must be declared by its stand-in, or MSBuild refuses the call. The same
+    # comparison -CompareInstalledTargets makes - which FAILS where this skips (D7 (c)).
     $installedTargets = @(Find-InstalledVstoTargets)
     if ($installedTargets.Count -gt 0) {
-        $vsto = [xml](Get-Content -LiteralPath $installedTargets[0] -Raw)
-        foreach ($name in $StandInTasks.Keys) {
-            $used = @()
-            foreach ($node in $vsto.GetElementsByTagName($name)) {
-                foreach ($attr in $node.Attributes) { if ($attr.Name -ne 'Condition') { $used += $attr.Name } }
-            }
-            $used = @($used | Sort-Object -Unique)
-            $missing = @($used | Where-Object { $StandInTasks[$name].Parameters -notcontains $_ })
-            Test-Case "$name - the installed targets pass nothing the stand-in lacks" '' ($missing -join ',')
-            Test-Case "$name - the installed targets do call it" $true ($used.Count -gt 0)
+        foreach ($r in @(Compare-StandInsWithTargets -TargetsText (Get-Content -LiteralPath $installedTargets[0] -Raw))) {
+            Test-Case $r.What $r.Expected $r.Actual
         }
-        $vstoText = Get-Content -LiteralPath $installedTargets[0] -Raw
-        Test-Case 'the installed targets still put RegisterOfficeAddin on PrepareForRun' $true ($vstoText.Contains('RegisterOfficeAddin;'))
-        Test-Case 'and still run VisualStudioForApplicationsBuild from it' $true ($vstoText.Contains('VisualStudioForApplicationsBuild;'))
         Write-Host "       (read: $($installedTargets[0]))"
     }
     else {
@@ -747,10 +828,29 @@ function Invoke-SelfTest {
     }
 
     Write-Host ''
+    Write-Host '== D7 (c): the comparison itself, on synthetic targets - runs everywhere =='
+    $synthetic = @'
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup><PrepareForRunDependsOn>CopyFilesToOutputDirectory;VisualStudioForApplicationsBuild;RegisterOfficeAddin;</PrepareForRunDependsOn></PropertyGroup>
+  <Target Name="RegisterOfficeAddin"><SetOffice2007AddInRegistration Url="u" AddInName="n" Condition="c" /></Target>
+  <Target Name="T"><SetInclusionListEntry DeploymentManifestFullPath="d" CertificateThumbprint="t" /><RegisterFormRegions AddInName="n" AssemblyName="a" OfficeApplication="o" /></Target>
+</Project>
+'@
+    $r = @(Compare-StandInsWithTargets -TargetsText $synthetic)
+    Test-Case 'targets the stand-ins cover pass every assertion' 0 @($r | Where-Object { [string]$_.Expected -cne [string]$_.Actual }).Count
+    Test-Case 'one assertion pair per stand-in, and two about the chain' 8 $r.Count
+    $r = @(Compare-StandInsWithTargets -TargetsText $synthetic.Replace('CertificateThumbprint="t"', 'CertificateThumbprint="t" NewWriterSwitch="x"'))
+    Test-Case 'a parameter the stand-in lacks is named' 'NewWriterSwitch' (@($r | Where-Object { $_.What -eq 'SetInclusionListEntry - the installed targets pass nothing the stand-in lacks' })[0].Actual)
+    $r = @(Compare-StandInsWithTargets -TargetsText $synthetic.Replace('RegisterOfficeAddin;', ''))
+    Test-Case 'a chain that lost RegisterOfficeAddin; fails' 'False' ([string](@($r | Where-Object { $_.What -eq 'the installed targets still put RegisterOfficeAddin on PrepareForRun' })[0].Actual))
+    $r = @(Compare-StandInsWithTargets -TargetsText $synthetic.Replace('<RegisterFormRegions AddInName="n" AssemblyName="a" OfficeApplication="o" />', ''))
+    Test-Case 'a writer the targets stopped calling fails' 'False' ([string](@($r | Where-Object { $_.What -eq 'RegisterFormRegions - the installed targets do call it' })[0].Actual))
+
+    Write-Host ''
     Write-Host '== the MSBuild command line =='
     $args1 = Get-MSBuildArgumentList -ProjectPath 'C:\b\source\OutlookAI.csproj' -Thumbprint 'ABCDEF' -StandInTargets 'C:\b\NoHostWrite.targets' -ApplicationVersion '99.99.99.0' -FileLog 'C:\b\msbuild.log'
     $joined = $args1 -join ' '
-    Test-Case 'publishes, like release.yml' $true ($args1 -contains '/t:Publish')
+    Test-Case 'publishes, like every release' $true ($args1 -contains '/t:Publish')
     Test-Case 'semicolons in DefineConstants are escaped' $true ($args1 -contains '/p:DefineConstants=VSTO40%3BTRACE')
     Test-Case 'the chain is ONE quoted global property with a REAL semicolon' $true ($args1 -contains '/p:PrepareForRunDependsOn="CopyFilesToOutputDirectory;VisualStudioForApplicationsBuild"')
     Test-Case 'and never the %3B spelling, which names one bogus target' $false ($joined.Contains('CopyFilesToOutputDirectory%3B'))
@@ -848,6 +948,35 @@ AwQ=</Modulus><Exponent>AQAB</Exponent></RSAKeyValue></KeyValue></KeyInfo></Sign
     Test-Case 'a manifest without every contract hash is refused' $true ((Test-PayloadManifestShape $bad) -join ' ').Contains('contract.Services/OfficeVersions.cs')
 
     Write-Host ''
+    Write-Host '== the release build (-ReleaseSigningThumbprint) =='
+    $info = "using System.Reflection;`r`n[assembly: AssemblyVersion(""99.99.99.0"")]`r`n[assembly: AssemblyFileVersion(""99.99.99.0"")]`r`n"
+    $stampedInfo = Set-AssemblyInfoVersion -Text $info -Version '3.1.1.900'
+    Test-Case 'AssemblyVersion is stamped' $true ($stampedInfo.Contains('AssemblyVersion("3.1.1.900")'))
+    Test-Case 'AssemblyFileVersion is stamped' $true ($stampedInfo.Contains('AssemblyFileVersion("3.1.1.900")'))
+    Test-Case 'and nothing else changes' $info.Replace('99.99.99.0', '3.1.1.900') $stampedInfo
+    Test-Case 'a source without AssemblyFileVersion is refused' $true ($null -eq (Set-AssemblyInfoVersion -Text 'AssemblyVersion("1.0.0.0")' -Version '3.1.1.900'))
+    Test-Case 'a source without AssemblyVersion is refused' $true ($null -eq (Set-AssemblyInfoVersion -Text 'AssemblyFileVersion("1.0.0.0")' -Version '3.1.1.900'))
+    Test-Case 'a 40-character thumbprint is accepted' $true (Test-ThumbprintText '2578F7B869383572E751DD6B61B5374C55C6E995')
+    Test-Case 'a short one is refused' $false (Test-ThumbprintText '2578F7B869383572E751DD6B61B5374C55C6E99')
+    Test-Case 'a non-hex one is refused' $false (Test-ThumbprintText '2578F7B869383572E751DD6B61B5374C55C6E99Z')
+    $releaseKey = @('CERT\My\2578F7B869383572E751DD6B61B5374C55C6E995|CN=OutlookAI', 'CERT\TrustedPublisher\2578F7B869383572E751DD6B61B5374C55C6E995|CN=OutlookAI')
+    Test-Case 'the release key, there before and after, is no trace' 0 (Find-HostTraces -Before $releaseKey -After $releaseKey -BuildDirectory 'C:\w\.work\release' -Thumbprint '2578F7B869383572E751DD6B61B5374C55C6E995' -KeyExistedBefore).Count
+    Test-Case 'but the same lines ARE a trace of a throwaway key' 2 (Find-HostTraces -Before $releaseKey -After $releaseKey -BuildDirectory 'C:\w\.work\release' -Thumbprint '2578F7B869383572E751DD6B61B5374C55C6E995').Count
+    $newTrust = 'HKCU\Software\Microsoft\VSTO\Security\Inclusion\{g}|Thumbprint=String:2578f7b869383572e751dd6b61b5374c55c6e995'
+    Test-Case 'a line the build added naming the release key is a trace' 1 (Find-HostTraces -Before $releaseKey -After ($releaseKey + $newTrust) -BuildDirectory 'C:\w\.work\release' -Thumbprint '2578F7B869383572E751DD6B61B5374C55C6E995' -KeyExistedBefore).Count
+    $oldDirTrace = 'HKCU\Software\Microsoft\VSTO\Security\Inclusion\{h}|Url=String:file:///C:/w/.work/release/source/publish/OutlookAI.vsto'
+    Test-Case 'the build directory is a trace even on a line that was already there' 1 (Find-HostTraces -Before @($oldDirTrace) -After @($oldDirTrace) -BuildDirectory 'C:\w\.work\release' -Thumbprint 'FFFF' -KeyExistedBefore).Count
+    $publishArgs = Get-ServerPublishArgumentList -ProjectPath 'C:\b\source\McpServer\OutlookAI.McpServer\OutlookAI.McpServer.csproj' -Version '3.1.1.900' -OutputDir 'C:\b\source\publish\McpServer'
+    Test-Case 'the server is published, Release, win-x64' 'publish|-c Release|-r win-x64' ('{0}|{1} {2}|{3} {4}' -f $publishArgs[0], $publishArgs[2], $publishArgs[3], $publishArgs[4], $publishArgs[5])
+    Test-Case 'framework-dependent - self-contained would pass the 50 MB cap' $true (($publishArgs -join ' ').Contains('--self-contained false'))
+    Test-Case 'with the release version' $true ($publishArgs -contains '-p:Version=3.1.1.900')
+    Test-Case 'into publish\McpServer, where Installer.iss picks it up' $true ($publishArgs -contains 'C:\b\source\publish\McpServer')
+    Test-Case 'with no build server left behind' $true ($publishArgs -contains '--disable-build-servers')
+    $spaced = Get-ServerPublishArgumentList -ProjectPath 'C:\a b\s.csproj' -Version '1.2.3.4' -OutputDir 'C:\a b\out'
+    Test-Case 'paths with a space are quoted' '"C:\a b\s.csproj"|"C:\a b\out"' ($spaced[1] + '|' + $spaced[10])
+    Test-Case 'the two executables the release must stamp' 'OutlookAI.McpServer.exe,OutlookAI.ComHost.exe' ($ServerExecutables -join ',')
+
+    Write-Host ''
     Write-Host '== the output directory =='
     Test-Case 'under .work is allowed' $false (Test-IsUnderGitWorkTreeButNotWork -Path 'C:\r\.work\testbed-addin-payload' -WorkTreeRoot 'C:\r')
     Test-Case 'elsewhere in the working tree is refused' $true (Test-IsUnderGitWorkTreeButNotWork -Path 'C:\r\Testbed\out' -WorkTreeRoot 'C:\r')
@@ -864,6 +993,8 @@ AwQ=</Modulus><Exponent>AQAB</Exponent></RSAKeyValue></KeyValue></KeyInfo></Sign
     Write-Host '  * that MSBuild on this machine honours Override="true" and the stand-ins actually run'
     Write-Host '  * that the host snapshot really is unchanged after a build'
     Write-Host '  * that SignFile accepts the throwaway certificate, and that it is gone afterwards'
+    Write-Host '  * that the release key signs, and that the MCP server publishes with the release version'
+    Write-Host '    - which Tools/Publish-Release.ps1''s dry run shows'
     Write-Host '  * that the installer this produces installs silently and the add-in LOADS on a guest'
     Write-Host '    - which is Testbed/guest/Install-OutlookAIAddIn.ps1''s job, not this script''s'
 
@@ -878,6 +1009,56 @@ AwQ=</Modulus><Exponent>AQAB</Exponent></RSAKeyValue></KeyValue></KeyInfo></Sign
 # =============================================================================================
 # I/O
 # =============================================================================================
+
+# D7 (c): guard 2's stand-ins against the text of one VSTO targets file. Each result is one
+# assertion - What, Expected, Actual. Pure, so the self-test feeds it synthetic targets anywhere and
+# -CompareInstalledTargets the real ones.
+function Compare-StandInsWithTargets {
+    param([Parameter(Mandatory = $true)] [string] $TargetsText)
+    $vsto = [xml]$TargetsText
+    $results = @()
+    foreach ($name in $StandInTasks.Keys) {
+        $used = @()
+        foreach ($node in $vsto.GetElementsByTagName($name)) {
+            foreach ($attr in $node.Attributes) { if ($attr.Name -ne 'Condition') { $used += $attr.Name } }
+        }
+        $used = @($used | Sort-Object -Unique)
+        $missing = @($used | Where-Object { $StandInTasks[$name].Parameters -notcontains $_ })
+        $results += [pscustomobject]@{ What = "$name - the installed targets pass nothing the stand-in lacks"; Expected = ''; Actual = ($missing -join ',') }
+        $results += [pscustomobject]@{ What = "$name - the installed targets do call it"; Expected = $true; Actual = ($used.Count -gt 0) }
+    }
+    $results += [pscustomobject]@{ What = 'the installed targets still put RegisterOfficeAddin on PrepareForRun'; Expected = $true; Actual = $TargetsText.Contains('RegisterOfficeAddin;') }
+    $results += [pscustomobject]@{ What = 'and still run VisualStudioForApplicationsBuild from it'; Expected = $true; Actual = $TargetsText.Contains('VisualStudioForApplicationsBuild;') }
+    return $results
+}
+
+# -CompareInstalledTargets: the comparison against EVERY installed VSTO targets file, as a verdict.
+# 0 when each passes; 1 when one fails or when there is none - a comparison that did not run proves
+# nothing, and the release needs it to have run (D7 (c)).
+function Invoke-InstalledTargetsComparison {
+    Write-Host "Testbed/host/Publish-AddInPayload.ps1 -CompareInstalledTargets under PowerShell $($PSVersionTable.PSVersion) ($($PSVersionTable.PSEdition))"
+    $paths = @(Find-InstalledVstoTargets)
+    if ($paths.Count -eq 0) {
+        Write-Host '  FAIL no Visual Studio with the Office workload on this machine, so the stand-ins were compared with nothing.'
+        return 1
+    }
+    $checks = 0
+    $failures = 0
+    foreach ($p in $paths) {
+        Write-Host "  == $p"
+        foreach ($r in @(Compare-StandInsWithTargets -TargetsText (Get-Content -LiteralPath $p -Raw))) {
+            $checks++
+            if ([string]$r.Expected -ceq [string]$r.Actual) { Write-Host "  OK   $($r.What)" }
+            else {
+                $failures++
+                Write-Host "  FAIL $($r.What) - expected [$($r.Expected)], got [$($r.Actual)]"
+            }
+        }
+    }
+    Write-Host "$checks assertion(s) across $($paths.Count) targets file(s), $failures failure(s)."
+    if ($failures -gt 0) { return 1 }
+    return 0
+}
 
 function Find-InstalledVstoTargets {
     $found = @()
@@ -906,7 +1087,7 @@ function Resolve-MSBuild {
 REFUSING TO BUILD: vswhere.exe is not on this machine, so there is no Visual Studio to build with.
 
 The add-in is a VSTO project and only MSBuild with Visual Studio's Office/SharePoint development
-workload can build it - the same toolchain .github/workflows/release.yml pins windows-2022 for.
+workload can build it - the toolchain every release is built with.
 Testbed/MEDIA.md says what to install. Or pass -MSBuildPath.
 "@
     }
@@ -940,9 +1121,17 @@ function Resolve-Iscc {
     throw @"
 REFUSING TO BUILD: Inno Setup 6's ISCC.exe was not found (PATH, %LOCALAPPDATA%\Programs\Inno Setup 6,
 Program Files). It compiles Installer.iss - the product's own installer, the one
-.github/workflows/release.yml builds every release with. Testbed/MEDIA.md says what to install.
+every release is built with. Testbed/MEDIA.md says what to install.
 Or pass -IsccPath.
 "@
+}
+
+function Resolve-Dotnet {
+    $onPath = @(Get-Command dotnet.exe -CommandType Application -ErrorAction SilentlyContinue)
+    if ($onPath.Count -gt 0) { return $onPath[0].Source }
+    $c = Join-Path $env:ProgramFiles 'dotnet\dotnet.exe'
+    if (Test-Path -LiteralPath $c) { return $c }
+    throw 'REFUSING TO BUILD THE RELEASE: dotnet.exe was not found (PATH, Program Files\dotnet). The release publishes the MCP server with the .NET 10 SDK.'
 }
 
 # Start a tool with its output going STRAIGHT TO FILES - never through this process's pipe - and
@@ -1132,12 +1321,25 @@ function Restore-AddinRegistration {
 # =============================================================================================
 # MAIN
 # =============================================================================================
+if ($SelfTest -and ($CompareInstalledTargets -or $ReleaseSigningThumbprint)) { throw '-SelfTest runs alone.' }
+if ($CompareInstalledTargets -and $ReleaseSigningThumbprint) { throw '-CompareInstalledTargets runs alone.' }
 if ($SelfTest) { exit (Invoke-SelfTest) }
+if ($CompareInstalledTargets) { exit (Invoke-InstalledTargetsComparison) }
 
 if (Test-IsTestbedGuestIdentity -ComputerName $env:COMPUTERNAME -UserName $env:USERNAME) {
     throw "REFUSING TO RUN on '$env:COMPUTERNAME' as '$env:USERNAME': this is a testbed guest's identity. This script builds on the HOST; the guest half is Testbed/guest/Install-OutlookAIAddIn.ps1."
 }
 if (-not (Test-FourPartVersion $Version)) { throw "-Version '$Version' is not a four-part version (each part 0-65535)." }
+
+$Release = [bool]$ReleaseSigningThumbprint
+$releaseCert = $null
+if ($Release) {
+    if (-not (Test-ThumbprintText $ReleaseSigningThumbprint)) { throw "-ReleaseSigningThumbprint '$ReleaseSigningThumbprint' is not a 40-character certificate thumbprint." }
+    if ($Version -eq $DeveloperVersion) { throw "REFUSING: a release build carries its own -Version. $DeveloperVersion is what every developer build carries, and no updater would ever replace it." }
+    $releaseCert = Get-Item -LiteralPath "Cert:\CurrentUser\My\$ReleaseSigningThumbprint" -ErrorAction SilentlyContinue
+    if (-not $releaseCert) { throw "REFUSING: the release certificate $ReleaseSigningThumbprint is not in Cert:\CurrentUser\My." }
+    if (-not $releaseCert.HasPrivateKey) { throw "REFUSING: Cert:\CurrentUser\My\$ReleaseSigningThumbprint has no private key on this machine, so it cannot sign." }
+}
 
 if (-not $OutDir) { $OutDir = Join-Path $RepoRoot '.work\testbed-addin-payload' }
 if (-not $VstoRuntimePath) { $VstoRuntimePath = Join-Path $RepoRoot '.work\media\vstor_redist.exe' }
@@ -1171,6 +1373,11 @@ $msbuildVersion = (@(Invoke-NativeCommand { & $msbuild -version -nologo 2>$null 
 Say "  MSBuild  $msbuild ($msbuildVersion)"
 Say "  ISCC     $iscc"
 if ($vstoTargets.Count -gt 0) { Say "  VSTO     $($vstoTargets[0])" }
+$dotnet = $null
+if ($Release) {
+    $dotnet = Resolve-Dotnet
+    Say "  dotnet   $dotnet"
+}
 else { throw 'REFUSING TO BUILD: vswhere found no VSTO build targets (OfficeTools\Microsoft.VisualStudio.Tools.Office.targets) in any Visual Studio with the Office workload.' }
 
 # ---------------------------------------------------------------------------------------------
@@ -1197,7 +1404,7 @@ The staged VSTO runtime is not the pinned file.
   actual    $vstoHash, $vstoLength bytes
   file      $VstoRuntimePath
 
-The pin is .github/workflows/release.yml's, compared against Microsoft's download on every release.
+The pin is every release's: this script builds them (Tools/Publish-Release.ps1).
 "@
 }
 $vstoSignature = Get-AuthenticodeSignature -LiteralPath $VstoRuntimePath
@@ -1226,6 +1433,16 @@ if ($LASTEXITCODE -ne 0) { throw "git archive failed (exit $LASTEXITCODE)." }
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 [System.IO.Compression.ZipFile]::ExtractToDirectory($sourceZip, $sourceDir)
 Say "  $Ref = $commit"
+if ($Release) {
+    # The release workflow's "Stamp assembly version" - in the build tree only; the commit keeps 99.99.99.0.
+    $assemblyInfo = Join-Path $sourceDir 'Properties\AssemblyInfo.cs'
+    $infoBytes = [System.IO.File]::ReadAllBytes($assemblyInfo)
+    $infoHasBom = ($infoBytes.Length -ge 3 -and $infoBytes[0] -eq 0xEF -and $infoBytes[1] -eq 0xBB -and $infoBytes[2] -eq 0xBF)
+    $stampedInfo = Set-AssemblyInfoVersion -Text ([System.IO.File]::ReadAllText($assemblyInfo)) -Version $Version
+    if ($null -eq $stampedInfo) { throw "Properties/AssemblyInfo.cs at $commit has no AssemblyVersion or no AssemblyFileVersion to stamp." }
+    [System.IO.File]::WriteAllText($assemblyInfo, $stampedInfo, (New-Object System.Text.UTF8Encoding($infoHasBom)))
+    Say "  Properties/AssemblyInfo.cs stamped $Version in the build tree"
+}
 
 $project = Join-Path $sourceDir 'OutlookAI.csproj'
 if (-not (Test-Path -LiteralPath $project)) { throw "The archive has no OutlookAI.csproj at its root - $sourceDir" }
@@ -1253,12 +1470,20 @@ $buildProblems = @()
 $signingKeyXml = $null
 try {
     Say ''
-    Say '== A throwaway signing certificate, for this build only =='
-    $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=OutlookAI Testbed' `
-        -FriendlyName "OutlookAI testbed build $commit - throwaway, deleted after signing" `
-        -CertStoreLocation 'Cert:\CurrentUser\My' -NotAfter (Get-Date).AddYears(10)
-    $thumb = [string]$cert.Thumbprint
-    Say "  Cert:\CurrentUser\My\$thumb"
+    if ($Release) {
+        Say '== The release signing certificate - already here; nothing is created and nothing deleted =='
+        $cert = $releaseCert
+        $thumb = [string]$cert.Thumbprint
+        Say "  Cert:\CurrentUser\My\$thumb  $($cert.Subject), valid until $($cert.NotAfter.ToString('yyyy-MM-dd'))"
+    }
+    else {
+        Say '== A throwaway signing certificate, for this build only =='
+        $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=OutlookAI Testbed' `
+            -FriendlyName "OutlookAI testbed build $commit - throwaway, deleted after signing" `
+            -CertStoreLocation 'Cert:\CurrentUser\My' -NotAfter (Get-Date).AddYears(10)
+        $thumb = [string]$cert.Thumbprint
+        Say "  Cert:\CurrentUser\My\$thumb"
+    }
 
     $msbuildArgs = Get-MSBuildArgumentList -ProjectPath $project -Thumbprint $thumb -StandInTargets $standInPath `
         -ApplicationVersion $Version -FileLog $msbuildLog
@@ -1281,7 +1506,7 @@ try {
     Say "  PrepareForRunDependsOn = $(($evaluated -replace '\s', ''))"
 
     Say ''
-    Say '== Build (release.yml''s "Build and Publish", with guards 1 and 2) =='
+    Say '== Build (the release''s "Build and Publish", with guards 1 and 2) =='
     Say "  msbuild $($msbuildArgs -join ' ')"
     $build = Invoke-Logged -FilePath $msbuild -ArgumentList $msbuildArgs -LogStem (Join-Path $OutDir 'msbuild-console') -TimeoutMinutes $BuildTimeoutMinutes -WorkingDirectory $sourceDir
     if ($build.TimedOut -or $build.ExitCode -ne 0) {
@@ -1296,7 +1521,7 @@ try {
         if (-not $sentinels.Ok) { $buildProblems += $sentinels.Problems }
         else { Say '  both scheduled stand-ins logged; the registration target was not scheduled' }
 
-        # release.yml's "Flatten VSTO payload next to the manifest (|vstolocal)", line for line.
+        # The release workflow's "Flatten VSTO payload next to the manifest (|vstolocal)", line for line.
         $publish = Join-Path $sourceDir 'publish'
         $appFiles = Join-Path $publish 'Application Files'
         $verDirs = @(Get-ChildItem -LiteralPath $appFiles -Directory -ErrorAction SilentlyContinue)
@@ -1308,7 +1533,14 @@ try {
             foreach ($required in @('OutlookAI.vsto', 'OutlookAI.dll.manifest', 'OutlookAI.dll')) {
                 if (-not (Test-Path -LiteralPath (Join-Path $publish $required))) { $buildProblems += "Missing after flatten: publish\$required" }
             }
-            # The PUBLIC half only, DER - what release.yml's Export-Certificate -Type CERT writes. The
+            # The release workflow's check: the assembly next to the manifest is the one the registration
+            # loads, so any version but the release's is a dead add-in.
+            if ($Release -and (Test-Path -LiteralPath (Join-Path $publish 'OutlookAI.dll'))) {
+                $dllVersion = (Get-Item -LiteralPath (Join-Path $publish 'OutlookAI.dll')).VersionInfo.FileVersion
+                if ($dllVersion -ne $Version) { $buildProblems += "The flattened OutlookAI.dll is $dllVersion, not $Version." }
+                else { Say "  publish\OutlookAI.dll carries $dllVersion" }
+            }
+            # The PUBLIC half only, DER - what the release workflow's Export-Certificate -Type CERT wrote. The
             # installer imports it into the guest user's TrustedPublisher store, as it does for users.
             [System.IO.File]::WriteAllBytes((Join-Path $publish 'OutlookAI.cer'),
                 $cert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert))
@@ -1318,7 +1550,8 @@ try {
     }
 }
 finally {
-    if ($thumb) { Remove-ThrowawayCertificate -Thumbprint $thumb }
+    # Never the release key: it was here before the build and stays.
+    if ($thumb -and -not $Release) { Remove-ThrowawayCertificate -Thumbprint $thumb }
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -1327,7 +1560,7 @@ Say '== Guard 3, after: nothing of this build may remain on the host =='
 $after = Get-HostSnapshot
 $modulus = $null
 if ($signingKeyXml) { $modulus = [regex]::Match($signingKeyXml, '<Modulus>([^<]+)</Modulus>').Groups[1].Value }
-$footprints = @(Find-BuildFootprint -Lines $after -BuildDirectory $OutDir -Thumbprint $thumb -ModulusBase64 $modulus)
+$footprints = @(Find-HostTraces -Before $before -After $after -BuildDirectory $OutDir -Thumbprint $thumb -ModulusBase64 $modulus -KeyExistedBefore:$Release)
 $regBefore = @(Select-KeyLines -Lines $before -KeyPath $AddinRegistrationKey)
 $regAfter = @(Select-KeyLines -Lines $after -KeyPath $AddinRegistrationKey)
 $regDiff = Compare-HostSnapshot -Before $regBefore -After $regAfter
@@ -1362,8 +1595,34 @@ if (-not $built) {
 }
 
 # ---------------------------------------------------------------------------------------------
+if ($Release) {
+    Say ''
+    Say '== MCP server (the release''s "Publish MCP server", into the same tree) =='
+    $serverOut = Join-Path $sourceDir 'publish\McpServer'
+    $serverProject = Join-Path $sourceDir 'McpServer\OutlookAI.McpServer\OutlookAI.McpServer.csproj'
+    $publishArgs = Get-ServerPublishArgumentList -ProjectPath $serverProject -Version $Version -OutputDir $serverOut
+    Say "  dotnet $($publishArgs -join ' ')"
+    $serverPublish = Invoke-Logged -FilePath $dotnet -ArgumentList $publishArgs -LogStem (Join-Path $OutDir 'dotnet-publish') -TimeoutMinutes $BuildTimeoutMinutes -WorkingDirectory $sourceDir
+    if ($serverPublish.TimedOut -or $serverPublish.ExitCode -ne 0) {
+        Show-LogTail $serverPublish.Out 40
+        throw "dotnet publish of the MCP server exited $($serverPublish.ExitCode) (timed out: $($serverPublish.TimedOut))."
+    }
+    # Both executables: the COM host rides in by ProjectReference, and nothing else would notice
+    # one that went missing or unstamped - the installer's mail tools would fail on their first call.
+    foreach ($name in $ServerExecutables) {
+        $exe = Join-Path $serverOut $name
+        if (-not (Test-Path -LiteralPath $exe)) { throw "$name is missing from the MCP server publish output." }
+        $stamped = (Get-Item -LiteralPath $exe).VersionInfo.FileVersion
+        if ($stamped -ne $Version) { throw "$name is stamped $stamped, not $Version." }
+        Say "  $name $stamped"
+    }
+    $payloadMb = [math]::Round((Get-ChildItem -LiteralPath (Join-Path $sourceDir 'publish') -Recurse -File | Measure-Object Length -Sum).Sum / 1MB, 2)
+    Say "  total uncompressed payload $payloadMb MB"
+}
+
+# ---------------------------------------------------------------------------------------------
 Say ''
-Say '== Installer (release.yml''s "Create installer", from the same tree) =='
+Say '== Installer (the release''s "Create installer", from the same tree) =='
 New-Item -ItemType Directory -Force -Path $installerDir | Out-Null
 $isccArgs = @("/DMyAppVersion=$Version", ('"/O' + $installerDir + '"'), ('"' + (Join-Path $sourceDir 'Installer.iss') + '"'))
 $compile = Invoke-Logged -FilePath $iscc -ArgumentList $isccArgs -LogStem (Join-Path $OutDir 'iscc') -TimeoutMinutes 10 -WorkingDirectory $sourceDir
@@ -1373,6 +1632,14 @@ if ($compile.TimedOut -or $compile.ExitCode -ne 0 -or -not (Test-Path -LiteralPa
     throw "ISCC exited $($compile.ExitCode) and did not produce $installer."
 }
 Say "  $installer  $([math]::Round((Get-Item -LiteralPath $installer).Length / 1MB, 1)) MB"
+
+if ($Release) {
+    Say ''
+    Say "RELEASE BUILD DONE, UNSIGNED: $installer"
+    Say "  sha256 $((Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash)"
+    Say '  Signing and publishing it are Tools/Publish-Release.ps1''s. No guest manifest and no AddIn.zip were made.'
+    exit 0
+}
 
 # ---------------------------------------------------------------------------------------------
 Say ''

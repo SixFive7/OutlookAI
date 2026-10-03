@@ -100,11 +100,11 @@ pwsh -File Testbed/host/Invoke-TestsOnBuildVm.ps1 -SkipSelfTests
 # excludes real coverage for no reason.
 
 # 2. Take the live measurements (see below) into a run file.
-pwsh -File .github/scripts/measurement-gate.ps1 -Template > .work/live-run.json   # skeleton
+pwsh -File Tools/Checks/measurement-gate.ps1 -Template > .work/live-run.json   # skeleton
 #    ... fill it in from the live run ...
 
 # 3. The gate.
-pwsh -File .github/scripts/measurement-gate.ps1 `
+pwsh -File Tools/Checks/measurement-gate.ps1 `
     -Run .work/live-run.json `
     -Collect -TestLog .work/build-vm-runs/<run>/vm/test.out.txt `
     -ProfileKind production -Indexed indexed `
@@ -267,7 +267,7 @@ A first run has nothing to compare against. The gate **records the run, reports
 Accepting the new baseline is deliberate and explicit:
 
 ```powershell
-pwsh -File .github/scripts/measurement-gate.ps1 ... -AcceptNewBaseline
+pwsh -File Tools/Checks/measurement-gate.ps1 ... -AcceptNewBaseline
 ```
 
 The reason it is not automatic: *a first measurement can just as easily be a first measurement of
@@ -304,7 +304,7 @@ which is the opposite of what a legitimate improvement deserves.
 **Move one metric's baseline:**
 
 ```powershell
-pwsh -File .github/scripts/measurement-gate.ps1 `
+pwsh -File Tools/Checks/measurement-gate.ps1 `
     -Annotate -Metric sweep.wholeStore7Day.elapsedMs `
     -Reason "table-read rewrite (a1b2c3d): sweep no longer opens each item, re-measured at 11 s over the same 5 stores with sortRefusedFolders still 0"
 ```
@@ -312,7 +312,7 @@ pwsh -File .github/scripts/measurement-gate.ps1 `
 **Move every baseline** (a new machine, a rebuilt profile, a corpus rebuild):
 
 ```powershell
-pwsh -File .github/scripts/measurement-gate.ps1 -ResetBaseline -Reason "profile rebuilt: 5 stores -> 4, Archive re-created"
+pwsh -File Tools/Checks/measurement-gate.ps1 -ResetBaseline -Reason "profile rebuilt: 5 stores -> 4, Archive re-created"
 ```
 
 `-Reason` is **required** and the gate refuses without one: an unexplained baseline reset is
@@ -359,7 +359,7 @@ redirected into the tree does not become tracked by accident.
 ### The check that catches a future accidental commit
 
 ```
-pwsh -File .github/scripts/check-measurement-privacy.ps1
+pwsh -File Tools/Checks/check-measurement-privacy.ps1
 ```
 
 CI-safe: it needs no measurements, touches no store and prints no values. Three checks.
@@ -378,8 +378,8 @@ CI-safe: it needs no measurements, touches no store and prints no values. Three 
    the gate and left out of this document is a gate nobody can read; a metric documented but not
    gated is a promise the gate does not keep.
 
-Run it alongside `check-pinned-constants.ps1`. **It is not yet wired into a workflow** — see
-[Follow-ups](#follow-ups).
+Run it alongside `check-pinned-constants.ps1`. `Tools/Publish-Release.ps1` runs it before every
+release, with the other guards, under PowerShell 7 and Windows PowerShell 5.1.
 
 ---
 
@@ -416,7 +416,7 @@ Run it alongside `check-pinned-constants.ps1`. **It is not yet wired into a work
 
 ## The 74 gated measurements
 
-Generated from the gate's own catalogue. `pwsh -File .github/scripts/measurement-gate.ps1
+Generated from the gate's own catalogue. `pwsh -File Tools/Checks/measurement-gate.ps1
 -ListMetrics` reprints this table; `-SelfTest` fails if it and the catalogue stop agreeing, so
 adding a metric means editing this section.
 
@@ -564,24 +564,12 @@ where it stops.
 
 ## Follow-ups
 
-**1. Wire `check-measurement-privacy.ps1` into CI.** It is written, tested and CI-safe, but
-`.github/workflows/` was outside the territory of the change that added it, so nothing invokes it
-yet. It belongs beside the existing pinned-constants step in `build.yml` and `release.yml`:
-
-```yaml
-      - name: Check no measurement data reached the repo
-        run: .github/scripts/check-measurement-privacy.ps1
-```
-
-Until that lands, the check has to be run by hand — which means the accidental-commit guard is
-only as good as somebody remembering it.
-
-**2. `scan.wholeStore60Day.itemsPerSecond` has never been measured.** It is catalogued so its
+**1. `scan.wholeStore60Day.itemsPerSecond` has never been measured.** It is catalogued so its
 absence is visible rather than silent. `Docs/corpus-measurement-plan.md` step 5 says exactly how,
 it is cheap, and it is read-only on the VM. It is the one measurement that would settle whether
 `ExhaustiveTimeBudgetMs` at 600 s is sized correctly.
 
-**3. The sweep emits one clock and no per-store breakdown.** `sweep.perStore.elapsedMs.max` and
+**2. The sweep emits one clock and no per-store breakdown.** `sweep.perStore.elapsedMs.max` and
 `.total` are catalogued because they are the numbers that say whether one slow store can spend
 the whole budget — but the server does not report them, so today they have to be taken by running
 the sweep once per store. Emitting a per-store breakdown in the `sweep` payload would make three
@@ -597,5 +585,5 @@ catalogued metrics collectable directly. Production-code change, maintainer's ca
 - `Docs/corpus-measurement-plan.md` — how to take the sweep and scan measurements, and the three
   traps that produce a wrong number that looks right.
 - `Docs/magic-numbers.md` — every constant in the repository and where its value came from.
-- `.github/scripts/check-pinned-constants.ps1` — the sibling mechanism, for values that exist
+- `Tools/Checks/check-pinned-constants.ps1` — the sibling mechanism, for values that exist
   twice in two languages.

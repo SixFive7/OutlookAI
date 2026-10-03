@@ -15,7 +15,7 @@ namespace OutlookAI.McpServer.Tests.T1;
 /// <para>
 /// <b>How the pieces fit.</b> <c>Testbed/host/New-LiveTestSettings.ps1</c> renders the template for
 /// one guest from that guest's section of <c>Testbed/testbed.json</c> and refuses anything the tier
-/// would refuse. <c>.github/scripts/check-testbed-references.ps1</c> check 8 holds the template's
+/// would refuse. <c>Tools/Checks/check-testbed-references.ps1</c> check 8 holds the template's
 /// FIELDS to the documented example's and runs on every pull request. Neither of those can say
 /// whether the rendered shape still LOADS: the renderer re-states the loader's rules in PowerShell,
 /// and a re-statement drifts. This class renders the template with the renderer's own rule - every

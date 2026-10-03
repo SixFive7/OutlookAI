@@ -413,7 +413,7 @@ namespace OutlookAI.Core.Services
 
         // The registration.status vocabulary. These five strings are also PUBLISHED - README.md
         // lists them for agents and McpServer/README.md explains each one - and Markdown cannot
-        // read a C# constant, so .github/scripts/check-pinned-constants.ps1 (#6) compares the two
+        // read a C# constant, so Tools/Checks/check-pinned-constants.ps1 (#6) compares the two
         // rather than leaving it to memory. Note this set is the SERVER's own verdict about
         // ~/.claude.json; the add-in's own status codes (McpRegistrationService.Status*, surfaced
         // here verbatim as AddInStatus) are a different vocabulary for a different field.

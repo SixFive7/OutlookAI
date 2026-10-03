@@ -18,7 +18,7 @@ namespace OutlookAI
         /// guard with no error at all: the add-in initialises during a silent auto-update,
         /// spins up the updater and warm-up processes, and the installer tears them down
         /// mid-flight - exactly the failure this exists to prevent. The two are therefore
-        /// compared mechanically by .github/scripts/check-pinned-constants.ps1 rather than
+        /// compared mechanically by Tools/Checks/check-pinned-constants.ps1 rather than
         /// left to a comment on one side.
         /// </summary>
         internal const string InstallerMutexName = "OutlookAISetup";

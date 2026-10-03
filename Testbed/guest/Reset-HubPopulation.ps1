@@ -982,7 +982,7 @@ function Write-Line {
 #     those with a position block around every line, and an empty one as an exception type name.
 #   * The exit code is left in $LASTEXITCODE, and the caller checks it.
 # Restated in each script that needs it, as this repository restates its shared rules.
-# .github/scripts/check-powershell-51.ps1 fails the build on a redirected native call that does
+# Tools/Checks/check-powershell-51.ps1 fails the build on a redirected native call that does
 # not go through a function like this one.
 function Invoke-NativeCommand {
     param([Parameter(Mandatory = $true)] [scriptblock] $NativeCommand)

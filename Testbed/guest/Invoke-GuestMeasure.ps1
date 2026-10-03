@@ -48,7 +48,7 @@
 
     Output is JSON Lines at -OutFile with `###` marker lines a human reads. It is measurement data
     about one machine: it belongs in the gitignored fixtures directory, never in this repository.
-    .github/scripts/check-measurement-privacy.ps1 fails a build if one lands.
+    Tools/Checks/check-measurement-privacy.ps1 fails a build if one lands.
 #>
 
 param(

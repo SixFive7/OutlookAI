@@ -63,8 +63,8 @@
        variable or expression it runs is taken for a program.
 
     AND A SCRIPT THAT DOES NOT PARSE FAILS. Under 5.1 that is what PowerShell 7-only syntax - a
-    ternary, ??, && or || between pipelines - looks like, which is one reason CI runs this script
-    under both shells.
+    ternary, ??, && or || between pipelines - looks like, which is one reason the release runs this
+    script under both shells.
 
     WHAT IT CANNOT SEE, stated rather than implied. How a script is RUN is not in its text: a
     redirection applied by whatever runs it reaches every native call inside it, and so does a
@@ -80,8 +80,8 @@
     Repository root. Defaults to two levels above this script.
 
 .EXAMPLE
-    pwsh -File .github/scripts/check-powershell-51.ps1
-    powershell -NoProfile -File .github/scripts/check-powershell-51.ps1
+    pwsh -File Tools/Checks/check-powershell-51.ps1
+    powershell -NoProfile -File Tools/Checks/check-powershell-51.ps1
 #>
 [CmdletBinding()]
 param(
@@ -120,7 +120,7 @@ function Pass([string] $invariant, [string] $detail) {
 #     those with a position block around every line, and an empty one as an exception type name.
 #   * The exit code is left in $LASTEXITCODE, and the caller checks it.
 # Restated in each script that needs it, as this repository restates its shared rules.
-# .github/scripts/check-powershell-51.ps1 fails the build on a redirected native call that does
+# Tools/Checks/check-powershell-51.ps1 fails the build on a redirected native call that does
 # not go through a function like this one.
 function Invoke-NativeCommand {
     param([Parameter(Mandatory = $true)] [scriptblock] $NativeCommand)

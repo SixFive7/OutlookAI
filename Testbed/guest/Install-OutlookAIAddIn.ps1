@@ -37,7 +37,7 @@
     the install, directly and through a shared helper; a write in the first run and in its job;
     the token check moved down; an elevated first run let through; ADDIN-READY from the install;
     -Execute alone accepted; the install record ignored; the Limited run level dropped; an
-    untrusted add-in started - and -SelfTest failed on each. Plus the four .github/scripts guards,
+    untrusted add-in started - and -SelfTest failed on each. Plus the four guards (Tools/Checks today),
     under both shells. That an unelevated token can read every HKLM key the first run reads (the
     crawl-scope rules, the Search policy, VSTO Runtime Setup) was measured on the host's Windows 11,
     not on a guest. THE GUEST PROOF IS PENDING, for the next guest rebuild or a free slot:
@@ -178,8 +178,9 @@
          match it before anything runs. (FirstRun reads the same manifest to tie the installed
          build to its commit, as the verify always did.)
       3. THE VSTO RUNTIME, from STAGED media - never a download - pinned by the SHA-256 and length
-         .github/workflows/release.yml pins (compared against Microsoft's own download on every
-         release, which is why this hash, unlike the SDK's, has a default). Skipped when
+         every release pins (until 2026-10-03 the release workflow also compared it against
+         Microsoft's own download on every release, which is why this hash, unlike the SDK's, has
+         a default). Skipped when
          `VSTO Runtime Setup\v4R` already reports this version or newer.
          WHY THIS SCRIPT INSTALLS IT AND THE INSTALLER DOES NOT: Installer.iss runs its
          prerequisite step only `if not WizardSilent`, and a silent install is the only kind an
@@ -288,7 +289,7 @@
     The staged VSTO runtime redistributable. Never downloaded.
 
 .PARAMETER VstoRuntimeSha256
-    Its SHA-256. Defaulted to release.yml's pin - see step 3.
+    Its SHA-256. Defaulted to the release's pin - see step 3.
 
 .PARAMETER SuiteSourceRoot
     Where Testbed/host/Publish-LiveTierPayload.ps1's source was expanded. Used to compare the add-in's

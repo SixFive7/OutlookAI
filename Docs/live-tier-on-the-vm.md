@@ -405,8 +405,7 @@ from-scratch rebuild replaces the guests (see `Testbed/README.md` section 1b).
 
 * **.NET SDK 10.0.401, win-x64, installed from STAGED media** by `Testbed/guest/Install-DotnetSdk.ps1`
   (`Testbed/MEDIA.md` declares the precondition). Nothing pins a feature band - there is no
-  `global.json` in this repository and CI asks `setup-dotnet` for `10.0.x` - so any .NET 10 SDK
-  would compile. 10.0.401 is chosen because it is what the host runs, and the host publishes the
+  `global.json` in this repository - so any .NET 10 SDK would compile. 10.0.401 is chosen because it is what the host runs, and the host publishes the
   payload the guest measures with: one toolchain across both is one fewer difference to suspect.
   **x64 is not optional** (`PlatformTarget x64`, and `Search.CollatorDSO` has no 32-bit story here).
 * **`net48` needs no separate install.** `OutlookAI.Core` carries `Microsoft.NETFramework.ReferenceAssemblies`,
@@ -536,7 +535,7 @@ script's `-SelfTest` on the host - 168 assertions under Windows PowerShell 5.1 a
 of them reading the script's own syntax tree (the install phase reaches no Outlook start, the first
 run no installer and no registry, environment or file write, and each refuses the wrong token
 first), and eleven rules broken on purpose in scratch copies, each caught - and the four
-`.github/scripts` guards. Both guests were busy when it was written, so the guest proof waits for the
+`Tools/Checks` guards. Both guests were busy when it was written, so the guest proof waits for the
 next guest rebuild or a free slot. On a guest, from a checkpoint with the add-in NOT installed, it
 must record: `-Verify` `NOT-INSTALLED`; `-Phase Install -Execute` from the default task ending
 `INSTALLED-NEVER-RAN` with no OUTLOOK.EXE started (the task's job output, and `Get-Process` after it)
@@ -3292,8 +3291,9 @@ wait re-reads the VM by name. And a running checkpoint's memory is stored sparse
 The classification is **two traits on the test itself**, not a list in a document that can drift -
 and not three traits either. It used to be three, and the third one was the problem.
 
-* **`Category=Live`** means "this test needs a mailbox". It is the CI gate, and it survives the
-  existence of this VM because CI runs on a GitHub Windows runner with no Outlook at all.
+* **`Category=Live`** means "this test needs a mailbox". It is the gate of the non-live run on
+  the build VM, `OutlookAI-Build`, which has no Outlook at all - as GitHub's runners had none
+  while CI existed (until 2026-10-03).
 * **`Requires`** says *what of a machine* the test needs, from one closed vocabulary, declared
   **per method**. Nothing else is declared: which bucket a test is in is a question asked of
   `Requires` at filter time.
@@ -3318,7 +3318,7 @@ the workstation run.
 
 | Bucket | How it is selected | Size |
 | --- | --- | --- |
-| CI | `--filter "Category!=Live"` | 2,226 cases |
+| non-live (the build VM) | `--filter "Category!=Live"` | 2,226 cases |
 | VM | `--filter "Category=Live&Requires!=DelegateStore&Requires!=CachedExchange"` | 121 |
 | production-only | `--filter "Category=Live&(Requires=DelegateStore\|Requires=CachedExchange)"` | 7 |
 
@@ -3340,7 +3340,7 @@ Exchange profile.
 | **`DelegateStore`** | **a delegate/shared mailbox. One of the two capabilities no test machine can be given** |
 | **`CachedExchange`** | **a cached Exchange mailbox, whose entry ids are Exchange's 70-byte form. The other one (Q74 C1, 2026-10-03)** |
 
-`.github/scripts/check-pinned-constants.ps1` fails the build if any of those twelve names stops
+`Tools/Checks/check-pinned-constants.ps1` fails the build if any of those twelve names stops
 appearing in this file, so the table above is load-bearing text and not decoration.
 
 **Why `DelegateStore` and `CachedExchange` are the only production-only capabilities.** A delegate/shared mailbox is
@@ -3382,7 +3382,7 @@ also catches the opposite error - a live class that names one of those tools and
 token, which throws on its first call, in a tier no CI run ever executes. Three classes were in
 exactly that state.
 
-`T1/LiveTierInventoryTests` enforces all of it in CI, together with the rule that every live
+`T1/LiveTierInventoryTests` enforces all of it in the non-live suite, together with the rule that every live
 class sits in a registered collection.
 
 ---
@@ -4164,7 +4164,7 @@ unrecorded or unverified.
   an Exchange server. Seven tests, named by the production-only filter in section 5.
 * **The guest's SDK is PINNED to whatever the host was running when the payload was staged**,
   and nothing enforces that they stay equal. 10.0.401 was chosen for sameness rather than for any
-  requirement - no `global.json` exists and CI asks only for `10.0.x` - so the two can drift the
+  requirement - no `global.json` exists - so the two can drift the
   moment the host updates, and the first symptom would be a guest measurement that differs from a
   host one for a reason nobody is looking for. `Testbed/MEDIA.md` records the pinned version; it is
   the thing to check when host and guest disagree about something that should not depend on the

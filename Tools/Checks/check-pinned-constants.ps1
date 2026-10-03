@@ -6,7 +6,7 @@
 .DESCRIPTION
     Some values in this repository genuinely exist twice, because the two sides are written in
     languages that cannot see each other: C# and MSBuild XML, C# and Inno Setup's Pascal, C#
-    and a GitHub Actions PowerShell step. A comment saying "keep these in step" is not a
+    and the release script's PowerShell. A comment saying "keep these in step" is not a
     mechanism - the audit that produced Docs/magic-numbers.md found one such comment that had
     already become false. This script is the mechanism.
 
@@ -23,14 +23,14 @@
     into a check that always passes, which is worse than no check at all.
 
     Run it from anywhere:
-        pwsh -File .github/scripts/check-pinned-constants.ps1
+        pwsh -File Tools/Checks/check-pinned-constants.ps1
 
 .PARAMETER RepoRoot
     Repository root. Defaults to two levels above this script.
 
 .PARAMETER ExpectedSigningThumbprint
-    Optional. When given (the release workflow passes the certificate it has just imported),
-    both pinned copies of the thumbprint must also match this.
+    Optional. When given (Tools/Publish-Release.ps1 passes the certificate it is about to sign
+    the release with), both pinned copies of the thumbprint must also match this.
 #>
 [CmdletBinding()]
 param(
@@ -142,18 +142,18 @@ if ($csMutex -and $issMutex) {
 
 # ---------------------------------------------------------------------------------------------
 # 3. Auto-updater download cap.
-#    UpdateService.MaxDownloadBytes == the release workflow's installer-size gate. Shipping an
+#    UpdateService.MaxDownloadBytes == the release script's installer-size gate. Shipping an
 #    asset over the cap silently stops auto-update everywhere; the gate is what turns that into
 #    a failed release instead.
 # ---------------------------------------------------------------------------------------------
 $script:Checks++
 $capMb = Get-Pinned 'Services/UpdateService.cs' `
     'MaxDownloadBytes\s*=\s*(\d+)L?\s*\*\s*1024\s*\*\s*1024' 'download cap (UpdateService.cs)'
-$gateMb = Get-Pinned '.github/workflows/release.yml' `
-    '\$exe\.Length\s+-gt\s+(\d+)MB' 'download cap (release.yml gate)'
+$gateMb = Get-Pinned 'Tools/Publish-Release.ps1' `
+    '\$InstallerCapMB\s*=\s*(\d+)' 'download cap (Publish-Release.ps1 gate)'
 if ($capMb -and $gateMb) {
     if ([int]$capMb -ne [int]$gateMb) {
-        Fail "installer size cap" "UpdateService.MaxDownloadBytes is ${capMb} MB but release.yml refuses installers over ${gateMb} MB. The release gate must refuse exactly what the updater refuses."
+        Fail "installer size cap" "UpdateService.MaxDownloadBytes is ${capMb} MB but Tools/Publish-Release.ps1 refuses installers over ${gateMb} MB. The release gate must refuse exactly what the updater refuses."
     } else {
         Pass "installer size cap" "$capMb MB"
     }
@@ -580,7 +580,7 @@ if ($searchPathProblems.Count -gt 0) {
 #         Switch-AddInBuild.ps1 bring Override stand-ins of their own, which win over these only
 #         while these are not;
 #       * RegisterFormRegions has NO stand-in, on purpose - a form region added later would be
-#         dropped from the manifest of every command-line build, release.yml's included;
+#         dropped from the manifest of every command-line build, the release build's included;
 #       * AFTER the import, under the same condition, PrepareForRun and VSTOClean lose the targets
 #         that call the writers, through $([MSBuild]::Unescape(...)) - a bare .Replace() returns the
 #         list escaped, and MSBuild then looks for ONE target named after all of them (MSB4057).
@@ -628,7 +628,7 @@ if ($null -ne $projText) {
                 }
             }
             if (@($top | Where-Object { $_.LocalName -eq 'UsingTask' -and $_.GetAttribute('TaskName') -ceq 'RegisterFormRegions' }).Count -gt 0) {
-                $q81Problems += "RegisterFormRegions has a stand-in. It is left alone on purpose: the add-in has no form region, so the real task writes nothing, and a stand-in would silently drop any future one from the manifest of every command-line build, release.yml's included."
+                $q81Problems += "RegisterFormRegions has a stand-in. It is left alone on purpose: the add-in has no form region, so the real task writes nothing, and a stand-in would silently drop any future one from the manifest of every command-line build, the release build's included."
             }
             $chains = [ordered]@{
                 'PrepareForRunDependsOn' = "`$([MSBuild]::Unescape(`$(PrepareForRunDependsOn.Replace('RegisterOfficeAddin', ''))))"

@@ -107,7 +107,7 @@
     THE PARAMETERS ARE NOT AN EXAMPLE. corpusId vm2, seed 7777, anchor 2026-08-19, count 20000,
     default shape: those four values reproduce the corpus that every published sweep and frame
     measurement in this repository is a statement about. They are pinned equal here, in
-    Testbed/testbed.json and in Docs/corpus-measurement-plan.md, and .github/scripts/check-testbed-references.ps1
+    Testbed/testbed.json and in Docs/corpus-measurement-plan.md, and Tools/Checks/check-testbed-references.ps1
     fails the build when the three stop agreeing. Change them only if you mean to build a
     DIFFERENT corpus, and give it a different id when you do.
 
@@ -811,7 +811,7 @@ $target = @('--store', $Store, '--allow-store', $Store)
 #     those with a position block around every line, and an empty one as an exception type name.
 #   * The exit code is left in $LASTEXITCODE, and the caller checks it.
 # Restated in each script that needs it, as this repository restates its shared rules.
-# .github/scripts/check-powershell-51.ps1 fails the build on a redirected native call that does
+# Tools/Checks/check-powershell-51.ps1 fails the build on a redirected native call that does
 # not go through a function like this one.
 function Invoke-NativeCommand {
     param([Parameter(Mandatory = $true)] [scriptblock] $NativeCommand)

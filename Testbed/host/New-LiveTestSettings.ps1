@@ -203,7 +203,7 @@ $script:TokenPattern = '\{\{[A-Za-z0-9_.]+\}\}'
 $script:ForbiddenDirectory = 'live-fixtures'
 
 # Where the suite is BUILT on a guest - Testbed/host/Publish-LiveTierPayload.ps1 expands Source.zip
-# here, and .github/scripts/check-testbed-references.ps1 check 8 pins the two values together.
+# here, and Tools/Checks/check-testbed-references.ps1 check 8 pins the two values together.
 $script:GuestSourceRoot = 'C:\OutlookAI-Q5\src'
 $script:GuestSettingsRelative = 'McpServer\OutlookAI.McpServer.Tests\live-fixtures\live-test-settings.json'
 
@@ -2000,7 +2000,7 @@ $drift = Get-TemplateDriftProblems -Fields $shape.Fields
 $templateProblems = @($shape.Problems) + $drift
 if ($templateProblems.Count -gt 0) {
     $message = "REFUSING: the template at $TemplatePath has changed shape, and filling it now would produce a settings file nobody checked:`n  - " +
-        ($templateProblems -join "`n  - ") + "`n.github/scripts/check-testbed-references.ps1 check 8 holds it to Testbed/live-test-settings.example.json; teach this script any new field before rendering."
+        ($templateProblems -join "`n  - ") + "`nTools/Checks/check-testbed-references.ps1 check 8 holds it to Testbed/live-test-settings.example.json; teach this script any new field before rendering."
     throw $message
 }
 

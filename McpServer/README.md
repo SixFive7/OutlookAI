@@ -138,13 +138,14 @@ pwsh -File Testbed/host/Invoke-TestsOnBuildVm.ps1 <commit-or-branch> -Filter 'Fu
 **The tests do not run on the maintainer's workstation** (Q94, Q102, 2026-10-03; `AGENTS.md`). The
 non-live suite - `dotnet test ... --filter "Category!=Live"` - runs on the build VM, `OutlookAI-Build`,
 through `Testbed/host/Invoke-TestsOnBuildVm.ps1`, which tests a commit from a clean checkpoint and
-brings back a summary and the TRX file (`Testbed/README.md` section 1c); and in CI. The live tier
+brings back a summary and the TRX file (`Testbed/README.md` section 1c). There is no CI (removed
+2026-10-03): `Tools/Publish-Release.ps1` runs the same build VM run before every release. The live tier
 runs on the test VMs (`Docs/live-tier-on-the-vm.md`), and on the workstation only its Exchange-only
 read-only subset (Q74).
 
-`McpServer/Directory.Build.props` enforces `TreatWarningsAsErrors`, nullable, and latest C# for all three projects. Building Core standalone gates **both** targets; a net48 break fails the build. CI is `.github/workflows/mcpserver.yml` (windows runner, dotnet only, live tier excluded).
+`McpServer/Directory.Build.props` enforces `TreatWarningsAsErrors`, nullable, and latest C# for all three projects. Building Core standalone gates **both** targets; a net48 break fails the build.
 
-The **shipped** artifact is not a `dotnet build` output — the release workflow publishes it into the installer payload. To reproduce that shape locally:
+The **shipped** artifact is not a `dotnet build` output — the release build (`Tools/Publish-Release.ps1`, through `Testbed/host/Publish-AddInPayload.ps1`) publishes it into the installer payload. To reproduce that shape locally:
 
 ```
 dotnet publish McpServer/OutlookAI.McpServer/OutlookAI.McpServer.csproj -c Release -r win-x64 --self-contained false -o <out-dir>
@@ -192,7 +193,7 @@ Two T2 tests exist and have never been run, both read-only, both written for que
 
 ### Installed mode (the shipping path, Phase 8)
 
-The server ships inside the normal add-in installer. The release workflow publishes it **framework-dependent, `win-x64`** into `publish\McpServer\`, where `Installer.iss`'s single recursive payload rule (`Source: "publish\*" … recursesubdirs`) picks it up, so it lands at:
+The server ships inside the normal add-in installer. The release build publishes it **framework-dependent, `win-x64`** into `publish\McpServer\`, where `Installer.iss`'s single recursive payload rule (`Source: "publish\*" … recursesubdirs`) picks it up, so it lands at:
 
 ```
 {app}\McpServer\OutlookAI.McpServer.exe        {app} = %LOCALAPPDATA%\OutlookAI\Setup
@@ -200,17 +201,17 @@ The server ships inside the normal add-in installer. The release workflow publis
 
 `{app}` is per-user (`PrivilegesRequired=lowest`, no admin for the install itself) and is recorded in `HKCU\Software\OutlookAI\InstallDir`, so the add-in resolves the server from the registry rather than guessing from its own assembly location — installed, that assembly sits under `{app}\Application Files\<version>\`, but in a developer build it sits directly in `bin\Release`.
 
-Framework-dependent is a deliberate choice: self-contained would add ~70 MB and blow past the auto-updater's hard 50 MB download cap (`UpdateService.maxDownloadBytes`, enforced by a release-workflow gate). The prerequisite that buys is the **base** .NET 10 runtime — `Microsoft.NETCore.App` 10.x, **not** the Desktop runtime, since nothing here references WinForms or WPF. Default roll-forward is `Minor`, so any 10.x satisfies it and 11.x would not; both the installer's `IsNetRuntime10Installed` and the add-in's `McpRegistrationService.IsDotnetRuntime10Installed` therefore probe for a `10.` directory specifically, and both probe the **filesystem** (`…\dotnet\shared\Microsoft.NETCore.App`) because the `sharedfx` registry key is absent on machines that do have the runtime. The installer downloads and installs it like it already does for .NET Framework 4.8 and the VSTO runtime — **interactive installs only**: a silent auto-update runs unattended after Outlook closes, and the elevation prompt would sit there unanswered. On that path the add-in detects the missing runtime instead and reports it.
+Framework-dependent is a deliberate choice: self-contained would add ~70 MB and blow past the auto-updater's hard 50 MB download cap (`UpdateService.maxDownloadBytes`, enforced by the release script's size gate). The prerequisite that buys is the **base** .NET 10 runtime — `Microsoft.NETCore.App` 10.x, **not** the Desktop runtime, since nothing here references WinForms or WPF. Default roll-forward is `Minor`, so any 10.x satisfies it and 11.x would not; both the installer's `IsNetRuntime10Installed` and the add-in's `McpRegistrationService.IsDotnetRuntime10Installed` therefore probe for a `10.` directory specifically, and both probe the **filesystem** (`…\dotnet\shared\Microsoft.NETCore.App`) because the `sharedfx` registry key is absent on machines that do have the runtime. The installer downloads and installs it like it already does for .NET Framework 4.8 and the VSTO runtime — **interactive installs only**: a silent auto-update runs unattended after Outlook closes, and the elevation prompt would sit there unanswered. On that path the add-in detects the missing runtime instead and reports it.
 
-**Both components carry one version.** The release stamps the same `FULL_VERSION` into `Properties/AssemblyInfo.cs` and into the server via `-p:Version=`, and the workflow fails the release if the published exe's `FileVersion` does not match. Local builds of both keep `99.99.99.0` (`McpServer/Directory.Build.props`), which is the marker the add-in's `UpdateService` uses to skip self-updating a developer build.
+**Both components carry one version.** The release stamps the same `FULL_VERSION` into `Properties/AssemblyInfo.cs` and into the server via `-p:Version=`, and the release build fails if either published exe's `FileVersion` does not match. Local builds of both keep `99.99.99.0` (`McpServer/Directory.Build.props`), which is the marker the add-in's `UpdateService` uses to skip self-updating a developer build.
 
 **Per-session processes and file-in-use.** Claude Code spawns one server process per agent session (it exits on stdin EOF), so several copies typically hold their own image file open when an update lands. `CloseApplications=yes` alone does not deal with them — Restart Manager has no window to ask — so `StopRunningMcpServers` stops them explicitly at `ssInstall`, i.e. **before** any file is replaced, matching on `ExecutablePath` under `{app}`. Matching by path and never by image name is what keeps a developer build running from a source tree alive during an install. A session whose server was stopped simply spawns a fresh one on its next mail call; nothing is persisted in the server process. What that costs the session is the per-process state: hit ids (`h1`, `h2`, …) and send-confirmation tokens are invalidated, and the error text tells the agent to re-search.
 
 ### The add-in owns the registration
 
-`Services/McpRegistrationService.cs` (add-in side, net48) owns both scopes. The text surgery is in `Services/McpConfigEditor.cs`, which is **linked into the T1 test project** (see the tests csproj and `T1/McpConfigEditorTests.cs`) — that file edits configuration the add-in does not own, where a bad splice silently costs the user settings they cannot get back, so it is written framework-neutral (no `JavaScriptSerializer`, no `System.Text.Json`) precisely so the unit tier can pin the code that actually ships. Note the consequence for CI: `mcpserver.yml` lists `Services/McpConfigEditor.cs` in its path filters even though the file lives with the add-in.
+`Services/McpRegistrationService.cs` (add-in side, net48) owns both scopes. The text surgery is in `Services/McpConfigEditor.cs`, which is **linked into the T1 test project** (see the tests csproj and `T1/McpConfigEditorTests.cs`) — that file edits configuration the add-in does not own, where a bad splice silently costs the user settings they cannot get back, so it is written framework-neutral (no `JavaScriptSerializer`, no `System.Text.Json`) precisely so the unit tier can pin the code that actually ships. Note the consequence for testing: a change to `Services/McpConfigEditor.cs` is a change to the T1 suite even though the file lives with the add-in.
 
-**User scope is opt-in, and the opt-in is never inferred.** `HKCU\Software\OutlookAI\Mcp\GlobalRegistrationEnabled` is a **tri-state** DWORD: 1 on, 0 off, *absent* never decided. Absent is load-bearing: it is the difference between "the user does not want this" and "the user has not been asked yet", and only the first may be acted on. The rules live in `Services/McpRegistrationDecision.cs` — pure, **also linked into the T1 test project** (`T1/McpRegistrationDecisionTests.cs`, and another `mcpserver.yml` path filter) — as one matrix over (stored intent × what the entry is):
+**User scope is opt-in, and the opt-in is never inferred.** `HKCU\Software\OutlookAI\Mcp\GlobalRegistrationEnabled` is a **tri-state** DWORD: 1 on, 0 off, *absent* never decided. Absent is load-bearing: it is the difference between "the user does not want this" and "the user has not been asked yet", and only the first may be acted on. The rules live in `Services/McpRegistrationDecision.cs` — pure, **also linked into the T1 test project** (`T1/McpRegistrationDecisionTests.cs`) — as one matrix over (stored intent × what the entry is):
 
 | | no entry | entry is **ours** | entry is **foreign** | unreadable |
 |---|---|---|---|---|

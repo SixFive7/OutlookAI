@@ -19,7 +19,7 @@
     WHERE THEY LAND, and why not in the repository: the gitignored live-fixtures directory.
     A manifest is megabytes of EntryIDs describing one machine's mailbox state, and measurement
     output is statistics about one machine that this repository refuses to carry
-    (.github/scripts/check-measurement-privacy.ps1 fails a build over it). The PARAMETERS that
+    (Tools/Checks/check-measurement-privacy.ps1 fails a build over it). The PARAMETERS that
     reproduce the corpus are committed instead, in Testbed/testbed.json - four values, and the
     manifest is regenerable from a build.
 

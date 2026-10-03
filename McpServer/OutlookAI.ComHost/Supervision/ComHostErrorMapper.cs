@@ -98,7 +98,7 @@ namespace OutlookAI.ComHost.Supervision
                     // Landing here is not free - OutlookTools.GuardAsync branches on
                     // exception TYPE to choose its advice, and this branch has none to
                     // choose from - so the set of types that reach it is held down by
-                    // invariant 10 in .github/scripts/check-pinned-constants.ps1, which
+                    // invariant 10 in Tools/Checks/check-pinned-constants.ps1, which
                     // fails the build when the COM layer starts raising a type the switch
                     // above does not name.
                     return new ComHostRemoteException(error.Type, message);
