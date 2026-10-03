@@ -279,11 +279,30 @@ public sealed class LiveOrderKeyCollationTests
             // could have answered with on its own. The prediction is the same count over the head of the
             // wider sample above - the same statement, the same ordering, cut at the same row - so the two
             // differ only if the provider placed the undated rows differently in two statements, and then
-            // whether the guard decided anything would be chance. That fails here, out loud.
-            IReadOnlyList<IndexHit> statement = client.ExecuteRows(WsSqlBuilder.Build(widenedQuery, sqlTop), sqlTop)
-                .Select(IndexRowMapper.Map).ToList();
-            int statementDated = OrderKeyContest.AdmittedDatedRows(statement, KindFilter.MessagesOnly);
-            int predictedDated = OrderKeyContest.AdmittedDatedRows(sample, KindFilter.MessagesOnly, sqlTop);
+            // whether the guard decided anything would be chance. That fails here, out loud. The one other
+            // way they can differ is the index moving between the two reads - the indexer still taking in
+            // an earlier test's writes - so a disagreement is read again, sample and statement together, up
+            // to twice more before it counts.
+            IReadOnlyList<IndexHit> statement = Array.Empty<IndexHit>();
+            int statementDated = 0;
+            int predictedDated = 0;
+            for (int attempt = 1; attempt <= 3; attempt++)
+            {
+                if (attempt > 1)
+                {
+                    _output.WriteLine($"store={storeName} attempt {attempt}: the statement and the sample disagreed - reading both again");
+                    sample = SampleUndatedRows(client, scope.StorePrefix).Sample;
+                }
+
+                statement = client.ExecuteRows(WsSqlBuilder.Build(widenedQuery, sqlTop), sqlTop).Select(IndexRowMapper.Map).ToList();
+                statementDated = OrderKeyContest.AdmittedDatedRows(statement, KindFilter.MessagesOnly);
+                predictedDated = OrderKeyContest.AdmittedDatedRows(sample, KindFilter.MessagesOnly, sqlTop);
+                if (statementDated == predictedDated)
+                {
+                    break;
+                }
+            }
+
             bool guardDecided = OrderKeyContest.StatementAloneFallsShort(statement.Count, sqlTop, statementDated, top);
 
             int widenedDated = widened.Hits.Count(h => h.DateReceivedUtc.HasValue);
