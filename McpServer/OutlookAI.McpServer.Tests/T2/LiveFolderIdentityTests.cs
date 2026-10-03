@@ -640,27 +640,28 @@ public sealed class LiveFolderIdentityTests
             return null;
         }
 
-        foreach (IndexRoot root in roots)
+        // A byte copy of a PST that was never attached beside its original keeps the original's UID, and the
+        // index - one per Windows user, every profile's stores in it - may hold both: two roots with one UID
+        // are refused, never picked between.
+        List<string> matching = roots
+            .Select(r => r.Url.TrimEnd('/'))
+            .Where(u => string.Equals(StoreUidUnder(client, u), layout.ProviderUidHex, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        if (matching.Count != 1)
         {
-            string rootUrl = root.Url.TrimEnd('/');
-            if (!string.Equals(StoreUidUnder(client, rootUrl), layout.ProviderUidHex, StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            string sql = "SELECT TOP 5 System.ItemUrl FROM SystemIndex WHERE SCOPE='" + rootUrl.Replace("'", "''", StringComparison.Ordinal)
-                + "/' AND System.ProviderItemID='" + layout.PstProviderItemId + "'";
-            List<string> urls = client.ExecuteRows(sql, 5, StatementTimeoutSeconds)
-                .Select(r => Text(r, "System.ItemUrl"))
-                .Where(u => u != null)
-                .Select(u => u!)
-                .ToList();
-            how = "root by its items' store UID, then " + urls.Count + " row(s) with System.ProviderItemID " + layout.PstProviderItemId;
-            return urls.Count == 1 ? urls[0] : null;
+            how = matching.Count + " index roots carry the id's store UID";
+            return null;
         }
 
-        how = "no index root carries the id's store UID";
-        return null;
+        string sql = "SELECT TOP 5 System.ItemUrl FROM SystemIndex WHERE SCOPE='" + matching[0].Replace("'", "''", StringComparison.Ordinal)
+            + "/' AND System.ProviderItemID='" + layout.PstProviderItemId + "'";
+        List<string> urls = client.ExecuteRows(sql, 5, StatementTimeoutSeconds)
+            .Select(r => Text(r, "System.ItemUrl"))
+            .Where(u => u != null)
+            .Select(u => u!)
+            .ToList();
+        how = "the one root whose items carry the store UID, then " + urls.Count + " row(s) with System.ProviderItemID " + layout.PstProviderItemId;
+        return urls.Count == 1 ? urls[0] : null;
     }
 
     /// <summary>The store UID (bytes 4..19 of an item id) the first item URL under a root carries, or null.</summary>
