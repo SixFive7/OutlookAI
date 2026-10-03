@@ -159,13 +159,50 @@ namespace OutlookAI.Core.IndexSearch
             StoreDisplayName = storeDisplayName;
             SampleCount = sampleCount;
             HasDelegateSubtree = hasDelegateSubtree;
+            if (MapiItemUrl.TryParse(storePrefix, out MapiItemUrl? parsed) && parsed != null)
+            {
+                StoreSegment = parsed.StoreSegment;
+                if (OutlookAI.Core.Mapi.StoreHash.TryParseUrlHash(parsed.StoreUrlHash, out uint hash))
+                {
+                    StoreHash = hash;
+                }
+            }
+            else
+            {
+                StoreSegment = storeDisplayName;
+            }
+        }
+
+        /// <summary>
+        /// The scope of the store root at <paramref name="storePrefix"/> -
+        /// <c>mapi16://{SID}/name($hash)</c> - or null when it is not one. For callers holding a
+        /// root URL from elsewhere (a test, a listing of their own); nothing is queried.
+        /// </summary>
+        public static StoreScopeInfo? FromStorePrefix(string? storePrefix)
+        {
+            if (!MapiItemUrl.TryParse(storePrefix, out MapiItemUrl? parsed) || parsed == null
+                || parsed.StoreType != null || parsed.FolderSegments.Count != 0 || parsed.EncodedItemSegment != null)
+            {
+                return null;
+            }
+
+            return new StoreScopeInfo(parsed.StorePrefix, parsed.StoreDisplayName, 0, false);
         }
 
         /// <summary>Whole-store SCOPE prefix (mapi16://{SID}/store($hash)).</summary>
         public string StorePrefix { get; }
 
-        /// <summary>Store display name parsed from the prefix.</summary>
+        /// <summary>Store display name parsed from the prefix - the store's OWN name, which need not be <c>Store.DisplayName</c>.</summary>
         public string StoreDisplayName { get; }
+
+        /// <summary>The prefix's store segment as the index spells it: <c>&lt;name&gt;($hash)</c>.</summary>
+        public string StoreSegment { get; }
+
+        /// <summary>
+        /// The segment's <c>($hash)</c> as a number - what <see cref="StoreIndexMatcher"/> ties a
+        /// store by - or null when the segment carries none.
+        /// </summary>
+        public uint? StoreHash { get; }
 
         /// <summary>How many sampled item URLs fell under this prefix.</summary>
         public int SampleCount { get; }
@@ -398,6 +435,94 @@ namespace OutlookAI.Core.IndexSearch
             }
 
             return null;
+        }
+
+        /// <summary>
+        /// The most store roots <see cref="ListStoreRoots"/> reads. One Windows user's index holds
+        /// one root per store of every Outlook profile they have; a few hundred is far past any
+        /// real profile, and a bound keeps a malformed index from being drained whole.
+        /// </summary>
+        public const int MaxStoreRoots = 500;
+
+        /// <summary>
+        /// The current Windows user's MAPI root in the index, <c>mapi16://{SID}/</c>: Outlook
+        /// pushes every store of every profile of this user under it (Office 16.0, i.e. Outlook
+        /// 2016 through Microsoft 365). The SID is the process's own user - the index trims every
+        /// query to the caller's rows anyway.
+        /// </summary>
+        public static string CurrentUserMapiRoot()
+        {
+            using System.Security.Principal.WindowsIdentity identity = System.Security.Principal.WindowsIdentity.GetCurrent();
+            return "mapi16://{" + identity.User!.Value + "}/";
+        }
+
+        /// <summary>
+        /// Every store root the index holds under <paramref name="userRoot"/>
+        /// (<see cref="CurrentUserMapiRoot"/>), one per store, read by ONE shallow
+        /// <c>DIRECTORY</c> traversal (<see cref="WsSqlBuilder.BuildStoreRootListing"/>): stores
+        /// of every Outlook profile of this user, stores without a single mail item, and stores
+        /// a sample of mail rows would never reach. Rows that are not a store root - anything
+        /// with a path below the store segment - are ignored, as is a second row for one root.
+        /// <para>
+        /// A ROOT IS NOT CONTENT. After a catalog reset or a store rename the root can be back
+        /// while nothing below it is (measured, Docs/live-tier-on-the-vm.md section 8 item 24),
+        /// so whether a store holds anything is a separate question
+        /// (<see cref="ScopeHasAnyItem"/>), which never matches the root row itself.
+        /// </para>
+        /// <para>
+        /// No delegate probe per root, unlike <see cref="DiscoverStoreScopes"/>: the store map
+        /// this feeds never asks it, and a delegate is resolved under its owner as before.
+        /// </para>
+        /// </summary>
+        public IReadOnlyList<StoreScopeInfo> ListStoreRoots(string userRoot, int? commandTimeoutSeconds = null)
+        {
+            if (string.IsNullOrWhiteSpace(userRoot))
+            {
+                throw new ArgumentException("The user's MAPI root must not be blank.", nameof(userRoot));
+            }
+
+            string sql = WsSqlBuilder.BuildStoreRootListing(userRoot);
+            IReadOnlyList<IReadOnlyDictionary<string, object?>> rows = _client.ExecuteRows(sql, MaxStoreRoots, commandTimeoutSeconds);
+
+            var roots = new List<StoreScopeInfo>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (IReadOnlyDictionary<string, object?> row in rows)
+            {
+                if (!row.TryGetValue("System.ItemUrl", out object? value) || value is not string url
+                    || !TryReadStoreRoot(url, userRoot, out MapiItemUrl? parsed) || parsed == null
+                    || !seen.Add(parsed.StorePrefix))
+                {
+                    continue;
+                }
+
+                roots.Add(new StoreScopeInfo(parsed.StorePrefix, parsed.StoreDisplayName, 0, false));
+            }
+
+            return roots;
+        }
+
+        /// <summary>
+        /// Whether <paramref name="url"/> is a store ROOT directly under
+        /// <paramref name="userRoot"/>: one non-empty segment, nothing below it. A store's own
+        /// name never holds a <c>/</c> - the index spells it <c>%2F</c> - so the first one ends
+        /// the store segment.
+        /// </summary>
+        internal static bool TryReadStoreRoot(string url, string userRoot, out MapiItemUrl? parsed)
+        {
+            parsed = null;
+            string root = userRoot.TrimEnd('/') + "/";
+            if (url == null || !url.StartsWith(root, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            string rest = url.Substring(root.Length).TrimEnd('/');
+            if (rest.Length == 0 || rest.IndexOf('/') >= 0)
+            {
+                return false;
+            }
+
+            return MapiItemUrl.TryParse(root + rest, out parsed) && parsed != null;
         }
 
         /// <summary>

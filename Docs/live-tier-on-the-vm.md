@@ -3434,6 +3434,83 @@ unrecorded or unverified.
     own name, and a new hash because its file is a new path; the host reproduces `be889d8b` from its
     `StoreID`. `DIRECTORY` lists the three roots in 2 ms, and no two stores share a name any more.
 
+    **Extended 2026-10-03 (Q99) - every edge case a PST can take, and what the product now does
+    with it.** Same guest from `CP-15C-SIGNATURE-SUITE-STAGED` (own checkpoint `CP-15C-q99-A-base`,
+    restored to `CP-15C` afterwards), Outlook NOT elevated, stores attached only through
+    `guest/Add-OutlookPstStore.ps1` (which gained `-Format Ansi` for this), items created only by the
+    corpus tool, the index read only through `SELECT` statements. Ten stores in all, every one filed
+    under exactly `ComputeHash(Store.StoreID)`, four of them predicted on the host from the file path
+    before Outlook was asked:
+
+    - **ANSI PST** (`q99-ansi.pst`, an 84-byte 8-bit entry ID): `($54556ee0)` = the hash of its
+      `StoreID`. Its `Store.DisplayName` came back ONE CHARACTER SHORT (`q99ansi@vm.invali`) while
+      the root folder and the index say `q99ansi@vm.invalid` - a name lookup cannot find it at all.
+      `IsInstantSearchEnabled` read False for it while its items were indexed within seconds, so that
+      flag is no evidence either way.
+    - **A copy at another path is another store**: `moved\q98-scratch.pst` filed as `($befbe850)`
+      beside the original's `($65d10200)`, both under the name `q98scratch@vm.invalid` - two roots of
+      one name that only the hash tells apart. Attached to ONE profile together, Outlook re-keyed the
+      second (`PR_RECORD_KEY` `C4B808E7...` instead of the copy's `44616A9B...`); the hash, which is
+      over the path, did not move. The original's root stayed listed while the store was in no open
+      profile.
+    - **One PST in two profiles is one root** (`identity@vm.invalid($be889d8b)` from `OutlookAI-Tier`
+      and from `IdentityMint`): the hash is over the file, not the profile.
+    - **The URL spelling**: the hash is lowercase hex WITHOUT leading zeros - `($ce9d6e4)` for
+      `0x0CE9D6E4` (`q99-lz-12.pst`, whose path was searched for that property) - so it is compared as
+      a number. A store named `q99 50% off*?x` is filed `q99 50%25 off%2A%3Fx($5159380d)`: `%`, `*`
+      and `?` are percent-encoded, a space is not.
+    - **A catalog reset** (`ISearchCatalogManager::Reset`, elevated, with the tier profile open): all
+      three roots were listed again within 30 s and the open profile's folders re-pushed (464 items);
+      the corpus store, whose profile was not open, kept only its ROOT - `SCOPE` on it matched nothing,
+      because `SCOPE` matches what lies below a URL and never the URL's own row. Opening its profile
+      (non-elevated) re-pushed it under the same name and hash: 8,877 rows nine minutes later, still
+      climbing. A non-elevated reader can read the catalog's status, counters, crawl-scope rules and
+      the roots.
+
+    **What the product does with it** (`StoreIndexMatcher`, `MailService.TryGetStoreIndexMap`): it
+    lists the roots with one `DIRECTORY` statement, computes each store's candidate hashes, and ties a
+    store to the root that carries one of them and that no other store claims. A PST no root carries
+    the hash of is NOT INDEXED - never searched through a same-named root of another store or profile.
+    Every store whose hash input is not measured - cached Exchange (the documented input is the
+    profile's `PR_MAPPING_SIGNATURE`; the product reads it from the store and from the profile section
+    named by `PR_EMSMDB_SECTION_UID`, and also tries the documented entry-ID-plus-`.ost`-path variant),
+    an IMAP or Outlook.com `.ost`, a store whose id would not read - is tied by its hash when one fits,
+    and otherwise resolved by the name rule exactly as before, as are delegates (under the owner's
+    `/1/<name>`) and every store when no map can be built. `outlook_health` says which, per store.
+
+    **Q98(f), measured the same day** with the corpus tool's undated-item probe
+    (`--undated-index-wait`), in a scratch Unicode PST and in the ANSI one: an appointment, a contact
+    and a task saved into a PST were in the index within 3-6 s. The APPOINTMENT and the TASK carry
+    `System.Message.DateReceived` - their creation time - and so sort and window like mail (the
+    appointment's `System.ItemDate` is its start); the CONTACT has NO `DateReceived` (NULL), only
+    `DateCreated`/`DateModified`/`ItemDate`, all its creation time. Every column the product's
+    `ORDER BY` reads was present for all three except the contact's `DateReceived`. Kinds:
+    `calendar|communication`, `contact|communication`, `task|communication`.
+
+    **End to end, through the product's own server, before and after** (same day, same guest
+    state). The server built from this change, and the guest's own staged server of 2026-09-27 (the
+    name rule it replaces), were driven with the same read-only calls - `outlook_health`,
+    `list_accounts`, `search` - over raw stdio from the console session at the Outlook's own level,
+    the way `guest/Invoke-GuestMeasure.ps1` drives it. Every outcome was written down before the run.
+    - **On `CorpusProfile`** (the corpus store, `q99lz@vm.invalid($ce9d6e4)` and
+      `q99 50%25 off%2A%3Fx($5159380d)`): the new server tied all three by `storeHash` / `entryId` to
+      exactly those segments and listed the tier profile's two stores under `storesNotInProfile`. The
+      old one called the two empty stores "the local index holds nothing for", with advice to
+      add them to Indexing Options, listed them `onlineOnly` in `list_accounts`, and answered a search
+      scoped to either with `storeNotIndexed: true` - all three false: both stores were indexed, they
+      just held no mail. Results for the corpus store, scoped or not, were identical.
+    - **The decoy, on `OutlookAI-Tier`**, after a new empty PST named `Outlook Data File` was attached
+      there (filed as `Outlook Data File($580470ed)`, the hash predicted from its path): a search
+      scoped to `Outlook Data File` was answered by the old server with three hits from the CORPUS
+      store of `CorpusProfile` - another profile's mail, under this profile's store name, as
+      `freshness: "live"` - and its `outlook_health` gave that store the corpus's frontier. The new
+      server searched the decoy's own root (no hits; no mail frontier, so the widest sweep window and
+      `degraded: true`) and listed `Outlook Data File($23a27f0d)` under `storesNotInProfile`.
+    - **Unchanged, and still open**: an UNSCOPED search is not scoped by store, so on both servers it
+      returned the corpus hits too - another profile's mail, under a name this profile also uses, and
+      not openable from this profile. Whether to drop or flag such hits is open (`TODO.md`); doing
+      either from the map alone would also catch an Exchange store the hash did not decide.
+
 ---
 
 ## 9. Known limits, honestly

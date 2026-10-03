@@ -418,6 +418,9 @@ namespace OutlookAI.Core.Services
             new Dictionary<string, (bool, DateTime)>(StringComparer.OrdinalIgnoreCase);
         private string? _providerReport;
         private IReadOnlyList<StoreScopeInfo>? _catalog;
+        private StoreIndexMap? _storeIndexMap;
+        private DateTime _storeIndexMapBuiltUtc;
+        private DateTime _storeIndexMapFailedUtc = DateTime.MinValue;
         private IReadOnlyList<ComStoreDetail>? _storeDetails;
         private DateTime _storeDetailsFetchedUtc;
         private int _nextHitId;
@@ -769,6 +772,7 @@ namespace OutlookAI.Core.Services
             IndexSearchResult indexResult = indexAddressable
                 ? _index.Value.Search(query, SearchIndexTimeoutSeconds)
                 : IndexSearchResult.NotQueried();
+            UseOutlookStoreNames(indexResult.Hits);
 
             // The frontier is measured over the SCOPE being searched, not over the profile
             // (StalenessScopeFor): it sets this search's sweep window, and a busy store's
@@ -2152,25 +2156,31 @@ namespace OutlookAI.Core.Services
 
             try
             {
-                foreach (StoreScopeInfo scopeInfo in GetCatalog(SearchIndexTimeoutSeconds))
+                // Each of the profile's stores by its OWN index store (Q92/Q99), keyed by the name
+                // the sweep's counters carry - Outlook's. Without a map, the index's stores by the
+                // index's names, as before: other profiles' stores then cost a probe each and key
+                // nothing, and a store whose index name differs from Outlook's keeps the widest
+                // window, which over-covers.
+                StoreIndexMap? map = TryGetStoreIndexMap(SearchIndexTimeoutSeconds);
+                foreach ((string storeName, string storePrefix) in StoreFrontierScopes(map))
                 {
                     IndexStalenessReport scoped =
-                        _index.Value.GetStaleness(scopeInfo.StorePrefix, SearchIndexTimeoutSeconds);
+                        _index.Value.GetStaleness(storePrefix, SearchIndexTimeoutSeconds);
                     if (!scoped.NewestIndexedReceivedUtc.HasValue)
                     {
                         // In the catalog because it has indexed ITEMS, but none of them mail.
-                        plan.AddStoreWithoutIndex(scopeInfo.StoreDisplayName);
+                        plan.AddStoreWithoutIndex(storeName);
                         continue;
                     }
 
                     plan.PerStoreBaseUtc ??= new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
-                    if (!plan.PerStoreBaseUtc.TryGetValue(scopeInfo.StoreDisplayName, out DateTime existing)
+                    if (!plan.PerStoreBaseUtc.TryGetValue(storeName, out DateTime existing)
                         || scoped.NewestIndexedReceivedUtc.Value < existing)
                     {
-                        // Two prefixes parsing to one display name cannot both be this
-                        // store's frontier; the earlier one is the window that cannot hide
-                        // mail, so it wins.
-                        plan.PerStoreBaseUtc[scopeInfo.StoreDisplayName] = scoped.NewestIndexedReceivedUtc.Value;
+                        // Two prefixes keyed by one store name cannot both be this store's
+                        // frontier; the earlier one is the window that cannot hide mail, so it
+                        // wins.
+                        plan.PerStoreBaseUtc[storeName] = scoped.NewestIndexedReceivedUtc.Value;
                     }
                 }
             }
@@ -3688,6 +3698,7 @@ namespace OutlookAI.Core.Services
                         Top = top + 1, // Over-fetch by one: definite has-more flag.
                     },
                     SearchIndexTimeoutSeconds);
+                UseOutlookStoreNames(result.Hits);
 
                 truncated = result.Hits.Count > top;
                 foreach (IndexHit hit in result.Hits)
@@ -7396,6 +7407,7 @@ namespace OutlookAI.Core.Services
             DateTime? newestIndexed = null;
             double? ageMinutes = null;
             List<StoreStaleness>? perStore = null;
+            List<string>? storesNotInProfile = null;
             try
             {
                 IndexSearchService index = _index.Value;
@@ -7415,6 +7427,22 @@ namespace OutlookAI.Core.Services
                 newestIndexed = staleness.NewestIndexedReceivedUtc;
                 ageMinutes = staleness.Age?.TotalMinutes;
 
+                // EACH OF OUTLOOK'S STORES TIED TO ITS OWN INDEX STORE (Q92/Q99), when Outlook is
+                // already running and answered the probe above - never started here. One row per
+                // store of this profile, named as Outlook names it, saying how it was tied and
+                // whether anything lies below its root (a root alone is what a catalog reset or a
+                // rename leaves behind). The index's other stores - other profiles', renamed or
+                // moved ones - are listed apart, as information.
+                StoreIndexMap? storeMap = outlookRunning && !comProbeFailed
+                    ? TryGetStoreIndexMap(HealthIndexTimeoutSeconds, HealthProbeBudgetMs)
+                    : null;
+                if (storeMap != null)
+                {
+                    perStore = new List<StoreStaleness>();
+                    HashSet<string> tiedByName = AddPerStoreFromMap(storeMap, index, perStore, indexClock, advice, problems);
+                    storesNotInProfile = DescribeStoresNotInProfile(storeMap, tiedByName).ToList();
+                }
+
                 // The unordered discovery sample misses tiny idle stores (Phase-1 fact
                 // 5); when Outlook is already running, its store list closes the gap via
                 // targeted per-address discovery. Never STARTS Outlook here.
@@ -7422,52 +7450,55 @@ namespace OutlookAI.Core.Services
                 // not answering right now, and this step is an ENRICHMENT whose result is
                 // optional. Asking again only costs the caller another full budget to
                 // learn what we just learned.
-                if (outlookRunning && !comProbeFailed)
+                if (storeMap == null)
                 {
-                    try
+                    if (outlookRunning && !comProbeFailed)
                     {
-                        EnsureCatalogCoverageFromCom(indexClock);
+                        try
+                        {
+                            EnsureCatalogCoverageFromCom(indexClock);
+                        }
+                        catch (Exception ex) when (ex is not OutOfMemoryException)
+                        {
+                            // Best-effort enrichment only.
+                        }
                     }
-                    catch (Exception ex) when (ex is not OutOfMemoryException)
+
+                    bool perStoreComplete = true;
+                    perStore = new List<StoreStaleness>();
+                    foreach (StoreScopeInfo scopeInfo in GetCatalog(HealthIndexTimeoutSeconds))
                     {
-                        // Best-effort enrichment only.
+                        // Overall budget as well as a per-query one: a profile with many
+                        // stores multiplies even a short timeout. Reporting fewer rows is a
+                        // fine outcome; taking minutes to report all of them is not.
+                        if (indexClock.ElapsedMilliseconds > HealthPerStoreIndexBudgetMs)
+                        {
+                            perStoreComplete = false;
+                            advice.Add("Per-store index freshness is incomplete: the index did not answer quickly enough for "
+                                + "every store. The global figure above is still accurate.");
+                            break;
+                        }
+
+                        IndexStalenessReport scoped = index.GetStaleness(
+                            scopeInfo.StorePrefix, commandTimeoutSeconds: HealthIndexTimeoutSeconds);
+                        perStore.Add(new StoreStaleness
+                        {
+                            Store = scopeInfo.StoreDisplayName,
+                            NewestIndexedUtc = scoped.NewestIndexedReceivedUtc,
+
+                            // In the catalog means the index has rows under this store's own
+                            // prefix. A missing timestamp beside it says those rows hold no mail.
+                            InLocalIndex = true,
+                        });
                     }
+
+                    // The two lists, compared. Until this ran, index.perStore was built from the
+                    // index-derived catalog and outlook.stores from COM, and a store present in
+                    // one and absent from the other was reported by neither - which is precisely
+                    // the store whose searches fall back to a fixed window, i.e. the condition an
+                    // operator opens this tool to find. Both lists were already in hand.
+                    AddStoresMissingFromIndex(perStore, storeNames, perStoreComplete, indexClock, problems);
                 }
-
-                perStore = new List<StoreStaleness>();
-                bool perStoreComplete = true;
-                foreach (StoreScopeInfo scopeInfo in GetCatalog(HealthIndexTimeoutSeconds))
-                {
-                    // Overall budget as well as a per-query one: a profile with many
-                    // stores multiplies even a short timeout. Reporting fewer rows is a
-                    // fine outcome; taking minutes to report all of them is not.
-                    if (indexClock.ElapsedMilliseconds > HealthPerStoreIndexBudgetMs)
-                    {
-                        perStoreComplete = false;
-                        advice.Add("Per-store index freshness is incomplete: the index did not answer quickly enough for "
-                            + "every store. The global figure above is still accurate.");
-                        break;
-                    }
-
-                    IndexStalenessReport scoped = index.GetStaleness(
-                        scopeInfo.StorePrefix, commandTimeoutSeconds: HealthIndexTimeoutSeconds);
-                    perStore.Add(new StoreStaleness
-                    {
-                        Store = scopeInfo.StoreDisplayName,
-                        NewestIndexedUtc = scoped.NewestIndexedReceivedUtc,
-
-                        // In the catalog means the index has rows under this store's own
-                        // prefix. A missing timestamp beside it says those rows hold no mail.
-                        InLocalIndex = true,
-                    });
-                }
-
-                // The two lists, compared. Until this ran, index.perStore was built from the
-                // index-derived catalog and outlook.stores from COM, and a store present in
-                // one and absent from the other was reported by neither - which is precisely
-                // the store whose searches fall back to a fixed window, i.e. the condition an
-                // operator opens this tool to find. Both lists were already in hand.
-                AddStoresMissingFromIndex(perStore, storeNames, perStoreComplete, indexClock, problems);
             }
             catch (Exception ex) when (ex is not OutOfMemoryException)
             {
@@ -7565,6 +7596,7 @@ namespace OutlookAI.Core.Services
                     NewestIndexedUtc = newestIndexed,
                     AgeMinutes = ageMinutes,
                     PerStore = perStore,
+                    StoresNotInProfile = storesNotInProfile,
                     WSearchStartMode = HealthReporting.DescribeServiceStartMode(wsearchStart),
                     IndexerProcessRunning = indexerRunning,
                 },
@@ -8549,12 +8581,198 @@ namespace OutlookAI.Core.Services
 
             if (missing.Count > 0)
             {
-                problems.Add("Outlook has " + missing.Count.ToString(CultureInfo.InvariantCulture)
-                    + " store(s) the local index holds nothing for (" + string.Join(", ", missing)
-                    + "). Searches covering them fall back to a live sweep of the last "
-                    + EmptyIndexSweepWindow.TotalDays.ToString("F0", CultureInfo.InvariantCulture)
-                    + " days in their arrival-path folders; older mail there is not findable through search. Add the "
-                    + "data file(s) to Windows Indexing Options, or use exhaustive:true with store plus folder/after.");
+                problems.Add(DescribeStoresMissingFromIndex(missing));
+            }
+        }
+
+        /// <summary>The health problem for stores the index holds nothing for - one wording, two callers.</summary>
+        private static string DescribeStoresMissingFromIndex(IReadOnlyList<string> missing)
+        {
+            return "Outlook has " + missing.Count.ToString(CultureInfo.InvariantCulture)
+                + " store(s) the local index holds nothing for (" + string.Join(", ", missing)
+                + "). Searches covering them fall back to a live sweep of the last "
+                + EmptyIndexSweepWindow.TotalDays.ToString("F0", CultureInfo.InvariantCulture)
+                + " days in their arrival-path folders; older mail there is not findable through search. Add the "
+                + "data file(s) to Windows Indexing Options, or use exhaustive:true with store plus folder/after.";
+        }
+
+        /// <summary>
+        /// The health rows when a store map could be built (Q92/Q99): one row per store of the
+        /// profile, under the name Outlook gives it, saying how it was tied to the index
+        /// (<see cref="StoreStaleness.MatchedBy"/>) and whether anything lies BELOW its index root.
+        /// A root alone is not content - it is what a catalog reset leaves for a profile not yet
+        /// reopened - so it reads as "not in the local index", like no root at all. A store the
+        /// hash does not decide is looked up by the name rule, exactly as before, and its row says
+        /// so. Returns the index stores the rows tied BY NAME, which are therefore not "not in
+        /// this profile" even though no hash claimed them.
+        /// <para>
+        /// Bounded like the catalog loop it replaces: past <see cref="HealthPerStoreIndexBudgetMs"/>
+        /// the remaining stores are left out and no store is called missing, because "not
+        /// established" must not become "not indexed".
+        /// </para>
+        /// </summary>
+        private HashSet<string> AddPerStoreFromMap(
+            StoreIndexMap map,
+            IndexSearchService index,
+            List<StoreStaleness> perStore,
+            System.Diagnostics.Stopwatch indexClock,
+            List<string> advice,
+            List<string> problems)
+        {
+            var tiedByName = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            bool complete = true;
+            foreach (StoreIndexMatch match in map.Stores)
+            {
+                if (indexClock.ElapsedMilliseconds > HealthPerStoreIndexBudgetMs)
+                {
+                    complete = false;
+                    advice.Add("Per-store index freshness is incomplete: the index did not answer quickly enough for "
+                        + "every store. The global figure above is still accurate.");
+                    break;
+                }
+
+                // The hash did not decide a NameRule store, so it is found the way it always was.
+                StoreScopeInfo? byName = match.Kind == StoreIndexMatchKind.NameRule && !match.Store.NameUnreadable
+                    ? FindByNameRule(match.Store.DisplayName, HealthIndexTimeoutSeconds)
+                    : null;
+                if (byName != null)
+                {
+                    tiedByName.Add(byName.StorePrefix);
+                }
+
+                StoreStaleness row = DescribeStoreMatch(match, byName);
+                StoreScopeInfo? root = match.Kind == StoreIndexMatchKind.NameRule ? byName : match.Root;
+                if (root != null)
+                {
+                    IndexStalenessReport scoped = index.GetStaleness(root.StorePrefix, commandTimeoutSeconds: HealthIndexTimeoutSeconds);
+                    row.NewestIndexedUtc = scoped.NewestIndexedReceivedUtc;
+                    row.InLocalIndex = scoped.NewestIndexedReceivedUtc.HasValue
+                        || index.ScopeHasAnyItem(root.StorePrefix, HealthIndexTimeoutSeconds);
+                }
+                else if (match.Kind == StoreIndexMatchKind.Delegate)
+                {
+                    // Under an owner's /1/<name> subtree, as before: a delegate is never a store of
+                    // its own in the index, so it has no hash to be found by.
+                    row.InLocalIndex = ProbeStoreInIndex(match.Store.DisplayName, isDelegate: true, HealthIndexTimeoutSeconds);
+                }
+                else
+                {
+                    row.InLocalIndex = false;
+                }
+
+                perStore.Add(row);
+            }
+
+            if (complete)
+            {
+                List<string> missing = perStore.Where(r => r.InLocalIndex == false).Select(r => r.Store).ToList();
+                if (missing.Count > 0)
+                {
+                    problems.Add(DescribeStoresMissingFromIndex(missing));
+                }
+            }
+
+            return tiedByName;
+        }
+
+        /// <summary>
+        /// The index store the NAME RULE gives a store - the catalog entry of that name, else, for
+        /// an address-like name the discovery sample missed, targeted discovery - exactly the
+        /// lookup a store-scoped search runs for a store the store hash does not decide. Null when
+        /// it finds none.
+        /// </summary>
+        private StoreScopeInfo? FindByNameRule(string displayName, int? commandTimeoutSeconds)
+        {
+            StoreScopeInfo? match = GetCatalog(commandTimeoutSeconds).FirstOrDefault(s =>
+                string.Equals(s.StoreDisplayName, displayName, StringComparison.OrdinalIgnoreCase));
+            if (match == null && displayName.IndexOf('@') >= 0)
+            {
+                match = _index.Value.TryDiscoverStoreScopeByAddress(displayName, commandTimeoutSeconds);
+                if (match != null)
+                {
+                    InvalidateCatalog(match);
+                }
+            }
+
+            return match;
+        }
+
+        /// <summary>
+        /// One outlook_health per-store row's MATCH fields (Q92/Q99) - how the store was tied to
+        /// the index, by what, to which index store, and why not when a hash was refused - before
+        /// the index is asked anything about its content. <paramref name="nameRuleRoot"/> is what
+        /// the name rule found for a <see cref="StoreIndexMatchKind.NameRule"/> store, and is
+        /// ignored for every other kind: a NameRule store has no wire spelling of its own, the row
+        /// says what the name rule then found, <c>displayName</c> or <c>none</c>.
+        /// </summary>
+        public static StoreStaleness DescribeStoreMatch(StoreIndexMatch match, StoreScopeInfo? nameRuleRoot)
+        {
+            if (match == null)
+            {
+                throw new ArgumentNullException(nameof(match));
+            }
+
+            StoreScopeInfo? root = match.Kind == StoreIndexMatchKind.NameRule ? nameRuleRoot : match.Root;
+            string matchedBy;
+            switch (match.Kind)
+            {
+                case StoreIndexMatchKind.StoreHash:
+                    matchedBy = "storeHash";
+                    break;
+                case StoreIndexMatchKind.Delegate:
+                    matchedBy = "delegateFolder";
+                    break;
+                case StoreIndexMatchKind.NameRule:
+                    matchedBy = root != null ? "displayName" : "none";
+                    break;
+                default:
+                    matchedBy = "none";
+                    break;
+            }
+
+            return new StoreStaleness
+            {
+                Store = match.Store.DisplayName,
+                MatchedBy = matchedBy,
+                MatchedInput = match.Kind == StoreIndexMatchKind.StoreHash && match.Input.HasValue
+                    ? DescribeMatchInput(match.Input.Value)
+                    : null,
+                IndexStore = root?.StoreSegment,
+                MatchNote = match.Note,
+            };
+        }
+
+        /// <summary>
+        /// The index stores outlook_health lists as not this profile's
+        /// (<see cref="IndexHealthView.StoresNotInProfile"/>): those no store's hash claimed, less
+        /// the ones a store the hash did not decide was found under by name
+        /// (<paramref name="tiedByNamePrefixes"/>) - that one is the store's, as far as the name
+        /// rule can tell.
+        /// </summary>
+        public static IEnumerable<string> DescribeStoresNotInProfile(StoreIndexMap map, IEnumerable<string> tiedByNamePrefixes)
+        {
+            if (map == null)
+            {
+                throw new ArgumentNullException(nameof(map));
+            }
+
+            var tied = new HashSet<string>(tiedByNamePrefixes ?? Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
+            return map.Unclaimed.Where(r => !tied.Contains(r.StorePrefix)).Select(r => r.StoreSegment);
+        }
+
+        /// <summary>The wire spelling of a <see cref="StoreHashInput"/> (<see cref="StoreStaleness.MatchedInput"/>).</summary>
+        internal static string DescribeMatchInput(StoreHashInput input)
+        {
+            switch (input)
+            {
+                case StoreHashInput.ProfileMappingSignature:
+                    return "profileMappingSignature";
+                case StoreHashInput.MappingSignature:
+                    return "mappingSignature";
+                case StoreHashInput.EntryIdAndPath:
+                    return "entryIdAndPath";
+                default:
+                    return "entryId";
             }
         }
 
@@ -8592,6 +8810,21 @@ namespace OutlookAI.Core.Services
         private bool ProbeStoreInIndex(string displayName, bool isDelegate, int? commandTimeoutSeconds = null)
         {
             int timeout = commandTimeoutSeconds ?? SearchIndexTimeoutSeconds;
+
+            // The store's own index store, by Microsoft's store hash (Q92/Q99). A match answers
+            // "does the index hold anything for it" with what is BELOW its root - a root alone is
+            // what a catalog reset or a rename leaves behind, and holds nothing searchable.
+            // A PST the map says is not in the index is not, whatever a name lookup would find -
+            // asked as a delegate too, because callers that cannot tell (StoreHasIndexRows) ask
+            // both ways, and the delegate half starts with the same name lookup. A store the map
+            // decides is never a delegate; every store it does not decide falls through to the
+            // name rule below.
+            StoreIndexMatch? matched = TryMatchStore(displayName, timeout);
+            if (matched != null)
+            {
+                return matched.Root != null && _index.Value.ScopeHasAnyItem(matched.Root.StorePrefix, timeout);
+            }
+
             IReadOnlyList<StoreScopeInfo> catalog = GetCatalog(timeout);
             foreach (StoreScopeInfo scopeInfo in catalog)
             {
@@ -8656,6 +8889,20 @@ namespace OutlookAI.Core.Services
         /// </summary>
         private FolderScopeResolution ResolveFolderScope(string store, string? folder, bool includeSubfolders)
         {
+            // By Microsoft's store hash first (Q92/Q99): the store's own index store whatever
+            // either side calls it. A PST the map ties to nothing is a store the index does not
+            // hold - searched with the index tier skipped, never widened, and never scoped to a
+            // same-named store of another profile, which is what a name lookup would find. A
+            // store the hash does not decide (unmeasured input, delegate) takes the name rule
+            // below, unchanged.
+            StoreIndexMatch? matched = TryMatchStore(store, SearchIndexTimeoutSeconds);
+            if (matched != null)
+            {
+                return matched.Root != null
+                    ? FolderScopeResolver.ForPrimaryStore(matched.Root.StorePrefix, folder, includeSubfolders)
+                    : FolderScopeResolver.ForUnindexedStore(folder);
+            }
+
             IReadOnlyList<StoreScopeInfo> catalog = GetCatalog(SearchIndexTimeoutSeconds);
             StoreScopeInfo? match = catalog.FirstOrDefault(s =>
                 string.Equals(s.StoreDisplayName, store, StringComparison.OrdinalIgnoreCase));
@@ -8824,6 +9071,220 @@ namespace OutlookAI.Core.Services
                 return _catalog;
             }
         }
+
+        /// <summary>
+        /// Each of the profile's stores tied to its own slice of the index (Q92/Q99), or null when
+        /// no map can be built - Outlook could not be asked for its stores, or the index listed no
+        /// store root under this user's <c>mapi16</c> root - and every caller then keeps the name
+        /// rule it had before the map existed. Built from the store list and ONE fresh listing of
+        /// the index's store roots (<see cref="IndexSearchService.ListStoreRoots"/>), cached for
+        /// <see cref="StoreDetailsCacheTtl"/> like the store list itself; a failed build is not
+        /// retried for <see cref="StoreIndexMapRetryInterval"/>, so a wedged Outlook or a slow
+        /// indexer costs one attempt a minute rather than one per call. <paramref name="comBudgetMs"/>
+        /// bounds the COM calls when the caller has a budget of its own - outlook_health, which
+        /// must report a slow Outlook rather than join it.
+        /// <para>
+        /// THE RULE is <see cref="StoreIndexMatcher"/>'s: by Microsoft's store hash, never by a
+        /// name. Where the hash does not decide - a store whose hash input is unmeasured, a
+        /// delegate - the map says so, and the caller runs the name rule exactly as before.
+        /// </para>
+        /// </summary>
+        private StoreIndexMap? TryGetStoreIndexMap(int? commandTimeoutSeconds, int? comBudgetMs = null)
+        {
+            lock (_catalogLock)
+            {
+                if (_storeIndexMap != null && MonotonicClock.UtcNow - _storeIndexMapBuiltUtc <= StoreDetailsCacheTtl)
+                {
+                    return _storeIndexMap;
+                }
+
+                if (MonotonicClock.UtcNow - _storeIndexMapFailedUtc < StoreIndexMapRetryInterval)
+                {
+                    return null;
+                }
+            }
+
+            StoreIndexMap? map = BuildStoreIndexMap(commandTimeoutSeconds, comBudgetMs);
+            lock (_catalogLock)
+            {
+                _storeIndexMap = map;
+                if (map != null)
+                {
+                    _storeIndexMapBuiltUtc = MonotonicClock.UtcNow;
+                }
+                else
+                {
+                    _storeIndexMapFailedUtc = MonotonicClock.UtcNow;
+                }
+            }
+
+            return map;
+        }
+
+        private StoreIndexMap? BuildStoreIndexMap(int? commandTimeoutSeconds, int? comBudgetMs)
+        {
+            IReadOnlyList<ComStoreDetail> stores;
+            string? profile = null;
+            IReadOnlyList<StoreScopeInfo> roots;
+            try
+            {
+                stores = comBudgetMs.HasValue
+                    ? _gateway.Run(GetStoreDetails, comBudgetMs.Value)
+                    : _gateway.Run(s => GetStoreDetails(s));
+                if (stores.Any(d => d.ExchangeProfileSectionHex != null))
+                {
+                    profile = comBudgetMs.HasValue
+                        ? _gateway.Run(s => s.GetProfileName(), comBudgetMs.Value)
+                        : _gateway.Run(s => s.GetProfileName());
+                }
+
+                roots = _index.Value.ListStoreRoots(IndexSearchService.CurrentUserMapiRoot(), commandTimeoutSeconds);
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                return null;
+            }
+
+            // Nothing listed: an index Outlook has never pushed to, or a root this code does not
+            // list. "No root carries this PST's hash" would then be true of every store and mean
+            // nothing, so no map is built and the name rule stays.
+            if (roots.Count == 0)
+            {
+                return null;
+            }
+
+            return StoreIndexMatcher.Match(stores.Select(d => ToIndexIdentity(d, profile)).ToList(), roots);
+        }
+
+        /// <summary>
+        /// A store's hash candidates, from the inputs Microsoft documents
+        /// (<see cref="StoreHash.Candidates"/>): its StoreID for every store, and for an Exchange
+        /// store also its mapping signature - from the store object, and from the profile section
+        /// Outlook keeps the account's copy in - and its offline-store path. The file path rides
+        /// along because a <c>.pst</c> is what makes the hash authoritative.
+        /// </summary>
+        internal static StoreIndexIdentity ToIndexIdentity(ComStoreDetail detail, string? profileName)
+        {
+            bool exchange = detail.ExchangeStoreType.HasValue && detail.ExchangeStoreType.Value != 3;
+            string? profileSignature = exchange && detail.ExchangeProfileSectionHex != null
+                ? OutlookProfileSections.TryReadMappingSignatureHex(profileName, detail.ExchangeProfileSectionHex)
+                : null;
+            return new StoreIndexIdentity(
+                detail.DisplayName,
+                detail.ExchangeStoreType,
+                StoreHash.Candidates(
+                    detail.StoreId,
+                    exchange,
+                    publicStore: detail.ExchangeStoreType == 2,
+                    detail.MappingSignatureHex,
+                    profileSignature,
+                    exchange ? detail.FilePath : null),
+                detail.NameUnreadable,
+                detail.FilePath);
+        }
+
+        /// <summary>
+        /// The map's DECISION for one store, by its display name: a hash match
+        /// (<see cref="StoreIndexMatchKind.StoreHash"/>) or a PST the index does not hold
+        /// (<see cref="StoreIndexMatchKind.None"/>). Null in every other case - no map, a name that
+        /// does not pick out exactly one store, a store the hash does not decide - and the caller
+        /// then keeps the name rule it had before the map existed.
+        /// </summary>
+        private StoreIndexMatch? TryMatchStore(string displayName, int? commandTimeoutSeconds)
+        {
+            StoreIndexMatch? match = TryGetStoreIndexMap(commandTimeoutSeconds)?.ForStore(displayName);
+            return match != null && (match.Kind == StoreIndexMatchKind.StoreHash || match.Kind == StoreIndexMatchKind.None)
+                ? match
+                : null;
+        }
+
+        /// <summary>
+        /// The index scopes whose frontiers set an unscoped search's per-store sweep windows, each
+        /// keyed by the store name the sweep's counters carry. With a map: a hash-matched store by
+        /// its own index store under Outlook's name; a PST the index does not hold by nothing, so
+        /// it keeps the widest window rather than another store's clock; and every store the hash
+        /// does not decide by the catalog entries of its name, exactly as before. Without a map,
+        /// the whole catalog under the index's names, as before.
+        /// </summary>
+        private IEnumerable<(string Store, string Prefix)> StoreFrontierScopes(StoreIndexMap? map)
+        {
+            if (map == null)
+            {
+                return GetCatalog(SearchIndexTimeoutSeconds).Select(s => (s.StoreDisplayName, s.StorePrefix)).ToList();
+            }
+
+            var scopes = new List<(string Store, string Prefix)>();
+            HashSet<string>? byName = null;
+            foreach (StoreIndexMatch m in map.Stores)
+            {
+                if (m.Kind == StoreIndexMatchKind.StoreHash && m.Root != null)
+                {
+                    scopes.Add((m.Store.DisplayName, m.Root.StorePrefix));
+                }
+                else if (m.Kind == StoreIndexMatchKind.NameRule || m.Kind == StoreIndexMatchKind.Delegate)
+                {
+                    (byName ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase)).Add(m.Store.DisplayName);
+                }
+            }
+
+            if (byName != null)
+            {
+                scopes.AddRange(GetCatalog(SearchIndexTimeoutSeconds)
+                    .Where(s => byName.Contains(s.StoreDisplayName))
+                    .Select(s => (s.StoreDisplayName, s.StorePrefix)));
+            }
+
+            return scopes;
+        }
+
+        /// <summary>
+        /// Rewrites each hit's store name from the INDEX's name for the store to the name Outlook
+        /// gives it - the name every tool takes back as <c>store</c> - when the map ties the hit's
+        /// store prefix to a store. Delegate hits (store type 1) are left alone: their store is
+        /// named by their first folder segment, not by the prefix.
+        /// <para>
+        /// Without this, a store whose own name differs from its profile name - named in a
+        /// profile only, an ANSI PST, a name with <c>% * ?</c> in it, which the index spells
+        /// <c>%25 %2A %3F</c> - surfaced in results under a name no tool accepts, its hits could
+        /// not be opened, and the freshness sweep's copy of the same mail was never recognised as
+        /// a duplicate. Only a map already built or cheap to build is used; without one the
+        /// hits keep the index's names, exactly as before.
+        /// </para>
+        /// </summary>
+        private void UseOutlookStoreNames(IReadOnlyList<IndexHit> hits)
+        {
+            if (hits.Count == 0)
+            {
+                return;
+            }
+
+            StoreIndexMap? map = TryGetStoreIndexMap(SearchIndexTimeoutSeconds);
+            if (map == null)
+            {
+                return;
+            }
+
+            foreach (IndexHit hit in hits)
+            {
+                if (hit.StoreType == 1)
+                {
+                    continue;
+                }
+
+                string? outlookName = map.StoreNameForPrefix(hit.StorePrefix);
+                if (outlookName != null)
+                {
+                    hit.StoreDisplayName = outlookName;
+                }
+            }
+        }
+
+        /// <summary>
+        /// How long a store map that could not be built - Outlook not answering, the index not
+        /// listing - is not asked for again: every caller keeps the name rule meanwhile, and a
+        /// wedged Outlook or a saturated indexer costs one attempt a minute, not one per call.
+        /// </summary>
+        private static readonly TimeSpan StoreIndexMapRetryInterval = TimeSpan.FromSeconds(60);
 
         /// <summary>
         /// Item URLs sampled to discover store scopes. The 2000-row pull measured 552 ms in
