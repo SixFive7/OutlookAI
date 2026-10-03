@@ -83,8 +83,11 @@ namespace OutlookAI.Core.Audit
         /// <summary>
         /// <c>FILE_FLAG_WRITE_THROUGH</c> on the append handle: an append returns once its line is on the
         /// disk, not merely in the cache, so a power cut right after a draft or send cannot take the line
-        /// recording it. Measured on the build VM before it was switched on (see the stress tests'
-        /// <c>WriteThrough</c> benchmark, and CHANGELOG / the Q117 report for the numbers).
+        /// recording it. Switched on by measurement (Q117, build VM, 2026-10-03, 300 open-append-close
+        /// cycles of a 400-byte line): median 10.1 ms without it and 11.0 ms with it on .NET 10, 8.5 and
+        /// 9.3 ms on .NET Framework 4.8 - under a millisecond on top of an open and close that cost ten,
+        /// for a log that takes a few lines a minute. <c>T1/AuditLogStressTests</c> prints it again on
+        /// every run.
         /// </summary>
         internal const bool WriteThrough = true;
 

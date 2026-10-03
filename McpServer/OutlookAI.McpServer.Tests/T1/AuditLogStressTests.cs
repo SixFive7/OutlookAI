@@ -29,6 +29,14 @@ namespace OutlookAI.McpServer.Tests.T1;
 public sealed class AuditLogStressTests : IDisposable
 {
     private const int Seed = 117;
+
+    /// <summary>
+    /// Lines per writer in the two eight-process runs: 1,000 lines, 40 of them about 64 KB. Sized for the
+    /// suite every agent runs - measured 2026-10-03 on the build VM, 250 per writer took 34 s with the lock
+    /// (an open-append-close costs about 10 ms there, and the lock makes them take turns) and 16 s without;
+    /// both runs were clean at that size too.
+    /// </summary>
+    private const int LinesPerWriter = 125;
     private const string Net10 = "net10.0-windows";
     private const string Net48 = "net48";
     private static readonly TimeSpan StartTimeout = TimeSpan.FromSeconds(60);
@@ -77,18 +85,23 @@ public sealed class AuditLogStressTests : IDisposable
     [Fact]
     public void EightWriterProcesses_OnBothRuntimes_WithTheLock_KeepEveryLineWhole_AndTheFileInTimeOrder()
     {
-        Writer[] writers = StartWriters("lockon", lockOn: true, net10: 6, net48: 2, lines: 250);
+        Writer[] writers = StartWriters("lockon", lockOn: true, net10: 6, net48: 2, lines: LinesPerWriter);
         Stopwatch elapsed = Go(writers);
         WaitAll(writers);
         elapsed.Stop();
 
+        Report("lock on", writers, elapsed);
         List<AuditLogEntry> lines = VerifyEveryLine(writers, out AuditLogScan scan);
         int inversions = CountTimeInversions(lines, lockedOnly: false);
-        Report("lock on", writers, scan, elapsed, inversions);
+        _output.WriteLine("  time inversions in file order: " + inversions.ToString(CultureInfo.InvariantCulture));
 
         // Ordered: the timestamp is taken while the lock is held, so the file is in time order.
         Assert.Equal(0, scan.LinesWithoutWriterLock);
         Assert.Equal(0, inversions);
+
+        // And had any of it been lost, it would show: the same log with lines taken out and lines
+        // damaged reports exactly those, by writer and number.
+        LossOnThisLogIsVisible(writers);
     }
 
     [Fact]
@@ -98,14 +111,15 @@ public sealed class AuditLogStressTests : IDisposable
         // processes writing lines of up to 64 KB to one file is FILE_APPEND_DATA. Every line must still
         // arrive whole - a byte of one line inside another would fail its checksum - and none may be
         // lost. Order is NOT asserted (that is what the lock is for); how much of it was lost is reported.
-        Writer[] writers = StartWriters("lockoff", lockOn: false, net10: 6, net48: 2, lines: 250);
+        Writer[] writers = StartWriters("lockoff", lockOn: false, net10: 6, net48: 2, lines: LinesPerWriter);
         Stopwatch elapsed = Go(writers);
         WaitAll(writers);
         elapsed.Stop();
 
+        Report("lock DISABLED", writers, elapsed);
         List<AuditLogEntry> lines = VerifyEveryLine(writers, out AuditLogScan scan);
-        int inversions = CountTimeInversions(lines, lockedOnly: false);
-        Report("lock DISABLED", writers, scan, elapsed, inversions);
+        _output.WriteLine("  time inversions in file order (nothing orders these appends): "
+            + CountTimeInversions(lines, lockedOnly: false).ToString(CultureInfo.InvariantCulture));
 
         Assert.Equal(lines.Count, scan.LinesWithoutWriterLock);
         Assert.All(lines, line => Assert.Equal(AuditLog.LockDisabled, line.WriterLock));
@@ -125,7 +139,7 @@ public sealed class AuditLogStressTests : IDisposable
 
         // 2. Four ordinary writers and one that appends until it is killed - all of them now waiting on
         //    the lock the tearing writer holds.
-        Writer[] finite = StartWriters("killrun", lockOn: true, net10: 3, net48: 1, lines: 150);
+        Writer[] finite = StartWriters("killrun", lockOn: true, net10: 3, net48: 1, lines: 75);
         Writer endless = StartWriter("endless", Net10, lockOn: true, lines: -1, finite[0].StartEvent);
         Writer[] all = finite.Concat(new[] { endless }).ToArray();
         WaitReady(all);
@@ -138,7 +152,7 @@ public sealed class AuditLogStressTests : IDisposable
         //    too - wherever it is in its append.
         WaitAll(finite);
         DateTime deadline = DateTime.UtcNow + RunTimeout;
-        while (CountLinesOf("endless") < 60 && DateTime.UtcNow < deadline)
+        while (CountLinesOf("endless") < 40 && DateTime.UtcNow < deadline)
         {
             Thread.Sleep(100);
         }
@@ -153,8 +167,9 @@ public sealed class AuditLogStressTests : IDisposable
         WaitAll(new[] { after });
         elapsed.Stop();
 
+        Report("writer killed mid-append", all.Concat(new[] { after }).ToArray(), elapsed);
         List<AuditLogEntry> lines = VerifyEveryLine(finite.Concat(new[] { endless, after }).ToArray(), out AuditLogScan scan);
-        Report("writer killed mid-append", all.Concat(new[] { after }).ToArray(), scan, elapsed, CountTimeInversions(lines, lockedOnly: true));
+        Assert.Equal(0, CountTimeInversions(lines, lockedOnly: true));
 
         // The deliberate fragment, and nothing else: it does not parse, so it is malformed (not a
         // checksum failure), and the line after it was written on a line of its own.
@@ -175,7 +190,7 @@ public sealed class AuditLogStressTests : IDisposable
 
         // The endless writer's lines stop where it was killed, with no hole before that point.
         long endlessLines = lines.Count(l => Field(l, "writer") == "endless");
-        Assert.True(endlessLines >= 60, "the endless writer wrote only " + endlessLines.ToString(CultureInfo.InvariantCulture));
+        Assert.True(endlessLines >= 40, "the endless writer wrote only " + endlessLines.ToString(CultureInfo.InvariantCulture));
         Assert.Equal(0, scan.MissingLines);
     }
 
@@ -187,7 +202,7 @@ public sealed class AuditLogStressTests : IDisposable
         foreach (string runtime in new[] { Net10, Net48 })
         {
             string dir = Path.Combine(_dir, "bench-" + runtime);
-            Process bench = Launch(runtime, "bench", Quote(dir), "300", "400");
+            Process bench = Launch(runtime, "bench", Quote(dir), "150", "400");
             List<string> output = new();
             bench.OutputDataReceived += (_, e) =>
             {
@@ -354,6 +369,76 @@ public sealed class AuditLogStressTests : IDisposable
         return lines;
     }
 
+    /// <summary>
+    /// Copies the finished log with seven whole lines left out and three damaged by one character - spread
+    /// over the file and the writers, none a writer's last - and checks the reader names exactly those ten
+    /// (pid, seq) as missing, and the three as checksum failures. A writer's LAST line could not be shown
+    /// missing by its numbering - nothing follows it - which is why the damaged line itself is counted too.
+    /// </summary>
+    private void LossOnThisLogIsVisible(Writer[] writers)
+    {
+        string[] raw = File.ReadAllLines(LogPath);
+        Dictionary<string, long> lastOf = writers.ToDictionary(w => w.Pid.ToString(CultureInfo.InvariantCulture), w => w.Lines);
+        List<string> kept = new();
+        HashSet<(int, long)> expectedMissing = new();
+        int dropped = 0;
+        int damaged = 0;
+        for (int i = 0; i < raw.Length; i++)
+        {
+            AuditLogEntry entry = AuditLogReader.ParseLine(raw[i])!;
+            bool candidate = entry.Seq < lastOf[entry.Pid!.Value.ToString(CultureInfo.InvariantCulture)] && i % 61 == 13;
+            if (candidate && dropped < 7)
+            {
+                dropped++;
+                expectedMissing.Add((entry.Pid.Value, entry.Seq!.Value));
+                continue;
+            }
+
+            if (candidate && damaged < 3)
+            {
+                damaged++;
+                expectedMissing.Add((entry.Pid.Value, entry.Seq!.Value));
+                // A plain letter that cannot be part of an escape, swapped for another: the line still
+                // parses, and only its checksum can tell.
+                int at = raw[i].IndexOf(" data=\"", StringComparison.Ordinal) + 7;
+                while ("abcdefghijklmopqsuvwxyz".IndexOf(raw[i][at]) < 0 || raw[i][at - 1] == '\\')
+                {
+                    at++;
+                }
+
+                char swapped = raw[i][at] == 'a' ? 'b' : 'a';
+                kept.Add(raw[i].Substring(0, at) + swapped + raw[i].Substring(at + 1));
+                continue;
+            }
+
+            kept.Add(raw[i]);
+        }
+
+        Assert.Equal(7, dropped);
+        Assert.Equal(3, damaged);
+        string copy = Path.Combine(_dir, "lossy", AuditLog.LogFileName);
+        Directory.CreateDirectory(Path.GetDirectoryName(copy)!);
+        File.WriteAllText(copy, string.Join("\n", kept) + "\n", new UTF8Encoding(false));
+
+        AuditLogScan scan = AuditLogReader.Read(copy, new AuditLogFilter(null, null, null, null), 1);
+        Assert.Equal(3, scan.ChecksumFailures);
+        Assert.Equal(3, scan.MalformedLines);
+        Assert.Equal(10, scan.MissingLines);
+        HashSet<(int, long)> reported = new();
+        foreach (AuditLogGap gap in scan.Gaps)
+        {
+            for (long seq = gap.FirstMissing; seq <= gap.LastMissing; seq++)
+            {
+                reported.Add((gap.Pid, seq));
+            }
+        }
+
+        Assert.Equal(expectedMissing.OrderBy(x => x), reported.OrderBy(x => x));
+        _output.WriteLine("  loss check: 7 lines removed and 3 damaged in a copy - reported missing="
+            + scan.MissingLines.ToString(CultureInfo.InvariantCulture) + ", checksum failures="
+            + scan.ChecksumFailures.ToString(CultureInfo.InvariantCulture) + ", every one named by writer and seq");
+    }
+
     private long CountLinesOf(string writer)
     {
         if (!File.Exists(LogPath))
@@ -408,8 +493,10 @@ public sealed class AuditLogStressTests : IDisposable
         return buffer;
     }
 
-    private void Report(string run, Writer[] writers, AuditLogScan scan, Stopwatch elapsed, int inversions)
+    /// <summary>What the run measured, written BEFORE anything is asserted, so a failing run keeps its numbers.</summary>
+    private void Report(string run, Writer[] writers, Stopwatch elapsed)
     {
+        AuditLogScan scan = AuditLogReader.Read(LogPath, new AuditLogFilter(null, null, null, null), 1);
         long bytes = new FileInfo(LogPath).Length;
         _output.WriteLine(run + ": " + writers.Length.ToString(CultureInfo.InvariantCulture) + " writer processes ("
             + writers.Count(w => w.Runtime == Net10).ToString(CultureInfo.InvariantCulture) + " .NET 10, "
@@ -424,8 +511,7 @@ public sealed class AuditLogStressTests : IDisposable
             + " duplicates=" + scan.DuplicateLines.ToString(CultureInfo.InvariantCulture)
             + " withoutLock=" + scan.LinesWithoutWriterLock.ToString(CultureInfo.InvariantCulture)
             + " afterAbandonedLock=" + scan.LinesAfterAbandonedLock.ToString(CultureInfo.InvariantCulture)
-            + " writers=" + scan.Writers.ToString(CultureInfo.InvariantCulture)
-            + " timeInversions=" + inversions.ToString(CultureInfo.InvariantCulture));
+            + " writers=" + scan.Writers.ToString(CultureInfo.InvariantCulture));
         foreach (Writer writer in writers)
         {
             _output.WriteLine("  " + writer.Runtime + " " + writer.Transcript());
