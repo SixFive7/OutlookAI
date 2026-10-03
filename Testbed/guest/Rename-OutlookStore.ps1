@@ -52,7 +52,7 @@
     New-Object -ComObject. And proven the other way on OAI-UNINDEXED, as vmadmin in session 1,
     twice (both orders of the from-scratch rehearsal): the guard passed, the minted store went
     from 'Outlook Data File' to 'tier@vm.invalid', and a second -Execute said "Already named".
-    .github/scripts/check-testbed-references.ps1 check 9 now fails the build if any guest script
+    Tools/Checks/check-testbed-references.ps1 check 9 now fails the build if any guest script
     that writes loses its guard, or calls it after its first write.
 
 .PARAMETER StoreFilePath

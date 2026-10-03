@@ -192,7 +192,7 @@ checkpoints reference it - so pass `-Replace` once nothing does, or build elsewh
 **The credential never lands in this repository.** The committed template carries placeholder
 tokens where the password goes. The generator substitutes them and writes only into gitignored
 `.work/`; it refuses an output path under `Testbed/`, and refuses any path inside the repository
-that is not under `.work/`. `.github/scripts/check-testbed-references.ps1` check 7 fails the build
+that is not under `.work/`. `Tools/Checks/check-testbed-references.ps1` check 7 fails the build
 if the template ever stops holding placeholders, or if a filled `autounattend.xml` is ever
 tracked. **The generated ISO holds the password in clear text** - it is in scratch, keep it there,
 and let step 3a delete it: `New-TestbedVm.ps1 -CompleteInstall` removes it once Windows setup has
@@ -422,7 +422,7 @@ decision exists to avoid.
 
 `vm2` keeps its name. It is provenance - the corpus every published measurement is a statement
 about - and renaming it to fit a convention invented afterwards would break the pin
-`.github/scripts/check-testbed-references.ps1` holds across `testbed.json`,
+`Tools/Checks/check-testbed-references.ps1` holds across `testbed.json`,
 `guest/Build-Corpus.ps1` and `Docs/corpus-measurement-plan.md`, for no gain.
 
 `testbed.json` carries this as **`corpusIdConvention`, a separate top-level key** rather than
@@ -666,7 +666,7 @@ it once** - it survives in git history and had to be rotated.
 | Dummy mail account password | wherever the sink is configured; the sink accepts anything | Anything. It is a loopback sink with no authentication. |
 
 `McpServer/**/live-fixtures/` is gitignored, and
-`.github/scripts/check-testbed-references.ps1` asserts that the rule still covers every path
+`Tools/Checks/check-testbed-references.ps1` asserts that the rule still covers every path
 declared absent because it is machine-local - the credential file, the settings file and the
 corpus manifest among them. An ignore rule that is deleted is silent until the day something
 lands.
@@ -842,7 +842,7 @@ banner claimed an identity check it did not have - `guest/Set-AccountWizardClass
 `guest/Set-OfficeFirstRunSuppressed.ps1` wrote with no guard at all; run on the maintainer's
 workstation, the first renames a real mailbox's store. All three now call it before anything
 else, and on the workstation each refused with every registry key it names unchanged, last-write
-time included, and no Outlook COM object requested. **`.github/scripts/check-testbed-references.ps1`
+time included, and no Outlook COM object requested. **`Tools/Checks/check-testbed-references.ps1`
 check 9** now fails the build when a guest script that writes does not call the guard, or calls it
 after its first write. The four writers outside that change - `guest/Build-Corpus.ps1`,
 `guest/Complete-FirstLogon.ps1`, `guest/Measure-SweepCost.ps1` and
@@ -1069,8 +1069,8 @@ paths no automated test reaches is, by hand: `Docs/release-manual-checks.md`.
 | Path | What it is |
 | --- | --- |
 | `testbed.json` | The parameter set. Corpus quad, expected plan output, build cost, guest layout, and an explicit list of what is still unrecorded. Its `vmName` is the guest this was **measured on**, not a guest to build (§3). `corpusIdConvention` also records the indexed guest's **minimum corpus size, 160,000 items** - a requirement, so the index tier's latency bounds are tests there - with, since 2026-10-03, the seed, anchor, size, plan and build cost of the 160,000-item Corpus A built on that guest that day, read off its manifest, and the 20,000-item corpus before it as `_previous`; and, under `populations`, the ids and seeds of the generated hub, bystander and identity populations and what each holds: all six built as generator v2 on 2026-10-03 - `OutlookAI-Unindexed`'s without undated items (runbook §4.1d), `OutlookAI-Indexed`'s with the hub's and the bystander's undated contacts (§4.2c). The `OutlookAI-Unindexed` three's earlier v1 build, with faults, survives only in that guest's `CP-11` checkpoint as evidence (runbook §4.1 step 6). (Corrected 2026-10-03; it said none was built as v2.) Its `liveTestSettings` section holds each guest's live-test settings values, keyed by VM name - **placeholders until they are read off the guest over COM**, which nobody has done yet - except the values that are recorded decisions, which `_decided` lists: the probe term and three of the subject-only probe's fields are the population generator's own constants. **Corrected 2026-09-27:** `OutlookAI-Unindexed`'s values were read over COM on 2026-09-24 and its section renders (runbook §4.1 step 8). **And `OutlookAI-Indexed`'s, 2026-10-03** (runbook §4.2c): read over COM in its tier profile and rendered, with `corpus` null - and the same morning with the 160,000-item corpus declared (§4.2d); its `_readOffTheGuest` note says both. `_decided` also records the mail sink - both guests declare their loopback sink (Q71). |
-| `live-test-settings.example.json` | Complete example of the gitignored settings file, every field present, placeholders only - the watched and the indexed list, the probe term and the subject-only probe as a test guest carries them, and (2026-09-24) `hubPopulationManifestPath`, the manifest of the hub's generated population that `guest/Reset-HubPopulation.ps1` rebuilds from and the frontier test reads - a test guest's field only; the maintainer's own file leaves it out. Every address in it is under `.invalid`, and `.github/scripts/check-testbed-references.ps1` check 8 fails the build if one ever is not. |
-| `live-test-settings.template.json` | The same shape as the example, holding **tokens only**: every value is a double-brace token spelling its own JSON path in a guest's `liveTestSettings` section. `.github/scripts/check-testbed-references.ps1` check 8 fails the build if its fields stop matching the example's or a value in it stops being a token, and `T1/LiveTestSettingsTemplateTests` renders it with synthetic values through the live tier's own loader. |
+| `live-test-settings.example.json` | Complete example of the gitignored settings file, every field present, placeholders only - the watched and the indexed list, the probe term and the subject-only probe as a test guest carries them, and (2026-09-24) `hubPopulationManifestPath`, the manifest of the hub's generated population that `guest/Reset-HubPopulation.ps1` rebuilds from and the frontier test reads - a test guest's field only; the maintainer's own file leaves it out. Every address in it is under `.invalid`, and `Tools/Checks/check-testbed-references.ps1` check 8 fails the build if one ever is not. |
+| `live-test-settings.template.json` | The same shape as the example, holding **tokens only**: every value is a double-brace token spelling its own JSON path in a guest's `liveTestSettings` section. `Tools/Checks/check-testbed-references.ps1` check 8 fails the build if its fields stop matching the example's or a value in it stops being a token, and `T1/LiveTestSettingsTemplateTests` renders it with synthetic values through the live tier's own loader. |
 | `host/New-LiveTestSettings.ps1` | Renders one guest's gitignored `live-test-settings.json` from that template and the guest's section of `testbed.json`, into `.work/`. `-VMName` is mandatory (§4a). **Refuses** while any value is still a placeholder (naming each), anything the tier would refuse at start, and the documented rules the tier does not itself enforce - a bystander must also be in `expectedStoreDisplayNames`, the corpus store must be a bystander, the hub must be shaped as an address; on the indexed guest the indexed list must run hub, bystander, corpus, with every entry but the corpus named as an address, and carry the generator's probe term and a complete subject-only probe on the hub; on the unindexed guest the indexed list, the probe term and the probe block must be empty or absent; every address must be under `.invalid`; a corpus below the size `corpusIdConvention` requires is refused; and (2026-09-24) every guest must name its hub population's manifest, `hubPopulationManifestPath`, as an absolute `corpus-<id>.jsonl` for the ONE hub id `corpusIdConvention.populations` assigns that guest - never the measurement corpus's manifest. **Never writes into a `live-fixtures` directory on the host**, however the path is spelled - checked first, on the resolved path and again on the path Windows reports - and inside a git working tree only under `.work/`. Prints the `Copy-ToGuest.ps1` line for the guest's destination, and what it could not check: that the guest's tier profile actually mounts every store it names. **Has rendered a real guest's file: `OutlookAI-Unindexed`'s**, first on 2026-09-24 from that guest's section, filled with the store names read over COM in its tier profile - rendered and admitted, the same SHA-256 on host and guest (runbook §4.1 step 8, `CP-13-LIVE-SETTINGS`) - and again for §4.1a on 2026-09-27, and for §4.1d on 2026-10-03 (`CP-12B-POPULATIONS-V2`). **And `OutlookAI-Indexed`'s, 2026-10-03** (§4.2c, `CP-16C-POPULATIONS-V2`), read in its tier profile the same morning - with no corpus block: the tier profile did not mount Corpus A then - **and again that morning with its 160,000-item corpus declared** (§4.2d, `CP-17C-CORPUS-160K`): the first corpus block the renderer has admitted for a real guest, at the minimum it holds that guest to. (Corrected 2026-09-27; it said "Never rendered a real guest's file", written five hours before the first one.) `-SelfTest` is 179 assertions over its decisions, 0 failures, under Windows PowerShell 5.1 and PowerShell 7 (2026-09-24). |
 | `guest/autounattend.template.xml` | The unattended-install answer file. Locale, disk layout, local account, autologon - and placeholder tokens where the password goes. Contains no credential and must never contain one. |
 | `host/New-AnswerFile.ps1` | Fills that template from the gitignored credential and packages it as a small ISO. Writes into gitignored scratch only, and refuses anywhere else. `-VMName` is mandatory (§4a). The ISO holds the guest password in clear text; step 3a deletes it once setup has consumed it. **Refuses to replace an ISO already at its output path** unless `-Replace` (2026-09-24): on this route one survives only an unfinished build or a guest whose checkpoints reference it - both current guests' do (§1b) - and replacing deletes the old file first. That refusal was run on the workstation against a stand-in file: it refused before reading the credential or writing anything. |
@@ -1457,7 +1457,8 @@ stays unknown for good; it is kept because the published measurements were taken
 
 ## 7. Keeping this honest
 
-`.github/scripts/check-testbed-references.ps1` runs in CI beside the other two checks. It fails
+`Tools/Checks/check-testbed-references.ps1` runs before every release (`Tools/Publish-Release.ps1`),
+beside the other three guards and under both shells, and by hand from any checkout. It fails
 when:
 
 * a tracked document references a repository path that does not exist and is not on its declared

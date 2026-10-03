@@ -160,7 +160,7 @@ if ($SelfTest) { Invoke-SelfTest }
 if (-not $Profile) { throw '-Profile is mandatory: name the Outlook profile to open.' }
 
 # The guest guard: the autologon account on an OAI- guest, both. Restated locally so this script
-# needs nothing staged beside it; check 9 of .github/scripts/check-testbed-references.ps1 recognises
+# needs nothing staged beside it; check 9 of Tools/Checks/check-testbed-references.ps1 recognises
 # Assert-TestbedGuestLocal by name and requires it before the first write (the scheduled task below).
 function Assert-TestbedGuestLocal {
     $machineOk = $env:COMPUTERNAME -and $ExpectedComputerNamePrefix -and $env:COMPUTERNAME.StartsWith($ExpectedComputerNamePrefix, [StringComparison]::OrdinalIgnoreCase)

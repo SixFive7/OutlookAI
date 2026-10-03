@@ -165,7 +165,7 @@ it, and the rest is install time and disk for nothing.
     .\setup.exe /configure Testbed.xml
 
 **It carries a product key, so it lives in `.work/` and nowhere else.** Never under `Testbed/`,
-never anywhere tracked. `.github/scripts/check-testbed-references.ps1` fails the build on a
+never anywhere tracked. `Tools/Checks/check-testbed-references.ps1` fails the build on a
 credential-shaped literal under `Testbed/`, but do not rely on that as the guard — the file simply
 does not belong in the repository at all.
 
@@ -253,9 +253,9 @@ install: `McpServer/OutlookAI.Core/OutlookAI.Core.csproj` carries
 `Microsoft.NETFramework.ReferenceAssemblies`, which is a NuGet package and travels in the offline
 feed below — the csproj says as much, "lets `dotnet build` compile the net48 target without a
 Visual Studio install". **There is no `global.json` anywhere in this repository**, so nothing
-pins a feature band, and `.github/workflows/mcpserver.yml` asks `actions/setup-dotnet` for
-`10.0.x` — meaning CI itself floats. So any .NET 10 SDK would compile the suite, and a .NET 11
-SDK almost certainly would too.
+pins a feature band (the CI that asked `actions/setup-dotnet` for a floating `10.0.x` was removed
+on 2026-10-03). So any .NET 10 SDK would compile the suite, and a .NET 11 SDK almost certainly
+would too.
 
 **Pin it to the host's version anyway.** The host is the machine that publishes the payload the
 guest measures with, and one toolchain across both is one fewer difference to suspect when a
@@ -455,8 +455,8 @@ What it needs that no script can produce is below.
 | Product | Visual Studio 2010 Tools for Office Runtime, redistributable |
 | File | `vstor_redist.exe`, version **10.0.60917.00**, **41,828,424 bytes** |
 | SHA-256 | `CFE1A40BBE4A50022DB2164ABDB0154984E2CECB761A23CDC81CB5754F6E0A18` |
-| Where it comes from | `https://download.microsoft.com/download/5/d/2/5d24f8f8-efbb-4b63-aa33-3785e3104713/vstor_redist.exe` - the versioned Download Center path `.github/workflows/release.yml` fetches, never the `aka.ms` alias that once started serving a web page |
-| Hash provenance | **The same pin `release.yml` enforces**, comparing it against Microsoft's download on every release. Verified again on this host 2026-09-24: hash and length match, Authenticode `Valid`, signed by Microsoft Corporation |
+| Where it comes from | `https://download.microsoft.com/download/5/d/2/5d24f8f8-efbb-4b63-aa33-3785e3104713/vstor_redist.exe` - the versioned Download Center path every release fetched until 2026-10-03, never the `aka.ms` alias that once started serving a web page |
+| Hash provenance | **The same pin every release enforces**: `Testbed/host/Publish-AddInPayload.ps1` holds it and builds every release (`Tools/Publish-Release.ps1`); until 2026-10-03 the release workflow also compared it against Microsoft's download on every release. Verified again on this host 2026-09-24: hash and length match, Authenticode `Valid`, signed by Microsoft Corporation |
 | Staged at | `.work/media/vstor_redist.exe` on the host - beside the SDK. **On this host an identical copy sits at `Redist/vstor_redist.exe`**, where a local release build expects it; the first builds used that one with `-VstoRuntimePath` |
 | Guest path | `C:\OutlookAI-Q5\media\vstor_redist.exe` |
 | Installed with | `Testbed/guest/Install-OutlookAIAddIn.ps1 -Phase Install -Execute`, which runs it `/q /norestart` - `Installer.iss`'s own switches |
@@ -483,8 +483,8 @@ documents that Office 2013 and later install the runtime's loader and its .NET 4
 
 | | On this host (measured 2026-09-24) | Why |
 | --- | --- | --- |
-| Visual Studio with the **Office/SharePoint development workload** (`Microsoft.VisualStudio.Workload.Office`) | Visual Studio 2026 Community 18.10, MSBuild 18.10.1.42706; the VSTO targets at `MSBuild\Microsoft\VisualStudio\v18.0\OfficeTools` | The only thing that carries the VSTO build targets. `release.yml` pins the `windows-2022` image because the hosted VS 2026 image dropped them; a VS 2026 **with the workload installed** builds the add-in - measured, three times |
-| **Inno Setup 6** (`ISCC.exe`) | per-user, `%LOCALAPPDATA%\Programs\Inno Setup 6` | Compiles `Installer.iss` - the product's own installer, what `release.yml` builds every release with |
+| Visual Studio with the **Office/SharePoint development workload** (`Microsoft.VisualStudio.Workload.Office`) | Visual Studio 2026 Community 18.10, MSBuild 18.10.1.42706; the VSTO targets at `MSBuild\Microsoft\VisualStudio\v18.0\OfficeTools` | The only thing that carries the VSTO build targets. GitHub's hosted VS 2026 image dropped them, which is why the release workflow pinned `windows-2022` until it was removed (2026-10-03); a VS 2026 **with the workload installed** builds the add-in - measured, three times |
+| **Inno Setup 6** (`ISCC.exe`) | per-user, `%LOCALAPPDATA%\Programs\Inno Setup 6` | Compiles `Installer.iss` - the product's own installer, what every release is built with |
 | A signing certificate | **none needed** | The build signs with a throwaway self-signed key made for that build and deleted, private key included, before the script ends. No secret is involved |
 
 Both tools are the project's existing release toolchain, not testbed additions: a machine without

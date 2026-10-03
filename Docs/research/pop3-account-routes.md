@@ -886,7 +886,7 @@ Do these in order, and none of them needs a VM:
 * Correct `Docs/live-tier-on-the-vm.md:102` and `T2/LiveMailSink.cs:45` — **13, not six**, with the
   file-versus-method explanation so the error cannot regrow.
 * Remove `Requires=Transport` from the 12 methods in B.2 that never put mail on the wire. Check
-  `.github/scripts/check-pinned-constants.ps1` first: it fails the build if a capability name stops
+  `Tools/Checks/check-pinned-constants.ps1` first: it fails the build if a capability name stops
   appearing in the runbook, and `Transport` must still appear.
 * Regenerate `Docs/live-test-inventory.txt` per-method, and fix `Transport 41` at
   `Docs/vm-coverage-analysis.md:36`.
@@ -949,6 +949,6 @@ the sense that matters. That should be weighed seriously against funding Route C
   Office process was started or attached to, and no `AutomationElement` tree was walked.
 * **All three scripts carry the never-executed banner** and have been verified by **parsing only**
   (`[System.Management.Automation.Language.Parser]::ParseFile`), which is also what
-  `.github/scripts/check-testbed-references.ps1` check 5 does.
+  `Tools/Checks/check-testbed-references.ps1` check 5 does.
 * **This document lives in `.work/`, which is gitignored**, so it is not committed. If it should
   survive, it needs a home under `Docs/`.

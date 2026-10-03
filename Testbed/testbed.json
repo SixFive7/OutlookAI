@@ -1,5 +1,5 @@
 {
-  "_readme": "The test-VM parameter set, in one machine-readable place. Testbed/README.md is the prose entry point; this file is what scripts and .github/scripts/check-testbed-references.ps1 read. NEVER put a credential here - this repository is public. See Testbed/README.md section 'Credentials'.",
+  "_readme": "The test-VM parameter set, in one machine-readable place. Testbed/README.md is the prose entry point; this file is what scripts and Tools/Checks/check-testbed-references.ps1 read. NEVER put a credential here - this repository is public. See Testbed/README.md section 'Credentials'.",
 
   "schemaVersion": 1,
 
@@ -21,7 +21,7 @@
   },
 
   "corpusIdConvention": {
-    "_whatThisIsNot": "NOT MEASUREMENT AND NOT PROVENANCE. The 'corpus' block above records one corpus that exists and was measured, and .github/scripts/check-testbed-references.ps1 pins its four values across three files. THIS block is a naming rule plus the ids reserved under it, each with a status saying whether that corpus exists and citing where that is recorded; most of the ids - the fixture populations below - describe corpora that DO NOT EXIST YET. It is separated rather than folded into 'corpus' precisely so the two can never be confused: nothing here is a figure this file vouches for - a status cites the runbook, and a seed, anchor or itemCount is filled in only from a manifest's header line - and adding a row here is not a measurement.",
+    "_whatThisIsNot": "NOT MEASUREMENT AND NOT PROVENANCE. The 'corpus' block above records one corpus that exists and was measured, and Tools/Checks/check-testbed-references.ps1 pins its four values across three files. THIS block is a naming rule plus the ids reserved under it, each with a status saying whether that corpus exists and citing where that is recorded; most of the ids - the fixture populations below - describe corpora that DO NOT EXIST YET. It is separated rather than folded into 'corpus' precisely so the two can never be confused: nothing here is a figure this file vouches for - a status cites the runbook, and a seed, anchor or itemCount is filled in only from a manifest's header line - and adding a row here is not a measurement.",
     "_why": "A manifest is named after the CORPUS, not after the guest, and Testbed/host/Copy-FromGuest.ps1 lands every guest's pull in one shared directory. One guest, harmless. Two guests sharing a corpus id, and the second pull silently replaces the first's manifest - which is the EntryID allowlist corpus-teardown requires and the file corpus-verify reads for freshness, so losing it removes the only safe way to remove that corpus from a real store. The fix is not a per-guest subdirectory: the two corpora genuinely ARE different populations, on different machines with different index state, and they already have to be told apart in each machine's settings file and in every measurement. Giving them one id and disambiguating by directory would paper over that.",
     "manifestFileName": "corpus-<corpusId>.jsonl",
     "manifestFileNameNote": "This is what makes Copy-FromGuest.ps1's default 'corpus-*.jsonl' include pattern work, and it is the whole of the collision fix: distinct ids give distinct file names, so the shared destination stops being a shared file. Copy-FromGuest.ps1 also REFUSES to replace a manifest whose content differs unless -Force is passed, as a backstop for the day somebody reuses an id anyway.",
@@ -33,7 +33,7 @@
         "guest": "OutlookAI-TestVM",
         "status": "BUILT AND MEASURED - and GONE since 2026-10-03: its guest was retired and deleted that day (Q105 (a); _vmNameNote below), and the store holding the corpus went with it. The id stays reserved: every published measurement quotes it, and the manifest kept as the corpus's record is named after it (live-fixtures/vm-corpus/corpus-vm2.jsonl, gitignored).",
         "retired": "2026-10-03",
-        "_source": "Restated here only so the id space is readable in one place. The 'corpus' block above is authoritative for this one and is what the CI check pins; do not maintain a second copy of its seed, anchor or count here."
+        "_source": "Restated here only so the id space is readable in one place. The 'corpus' block above is authoritative for this one and is what Tools/Checks/check-testbed-references.ps1 pins; do not maintain a second copy of its seed, anchor or count here."
       },
       {
         "corpusId": "vm-indexed",

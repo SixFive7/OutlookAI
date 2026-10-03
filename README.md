@@ -371,7 +371,7 @@ The installer registers the add-in directly via the Windows registry and install
 3. Restore NuGet packages
 4. Build > Rebuild Solution
 
-The project uses MSBuild to generate VSTO manifests and Inno Setup for the installer. Releases are created on demand via the release workflow (`gh workflow run release`).
+The project uses MSBuild to generate VSTO manifests and Inno Setup for the installer. Releases are built, tested, signed and published from the maintainer's machine by `Tools/Publish-Release.ps1` (a dry run unless given `-Execute`); there is no CI.
 
 **Which build your Outlook loads.** Building inside Visual Studio registers the build with your Outlook and marks it as trusted, as VSTO projects always have — F5 debugging needs that — and leaves Outlook pointed at `bin\Debug` afterwards. A build outside Visual Studio (`msbuild` on a command line, CI) registers nothing and writes no trust entry, so it never changes the add-in your Outlook loads, and cleaning it never removes one. To try a build in your own Outlook, for instance before a release:
 

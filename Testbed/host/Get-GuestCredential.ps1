@@ -13,7 +13,7 @@
 
         McpServer/OutlookAI.McpServer.Tests/live-fixtures/vm-credentials.json
 
-    gitignored by the `McpServer/**/live-fixtures/` rule. `.github/scripts/check-testbed-references.ps1`
+    gitignored by the `McpServer/**/live-fixtures/` rule. `Tools/Checks/check-testbed-references.ps1`
     asserts that rule still covers it, because an ignore rule that gets deleted is silent until
     the day something lands.
 

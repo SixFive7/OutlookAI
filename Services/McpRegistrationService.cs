@@ -852,7 +852,7 @@ namespace OutlookAI.Services
         /// Installer.iss asks the same question the same way in Pascal
         /// (<c>IsNetRuntime10Installed</c>), because setup has to decide before the add-in
         /// exists. The two version prefixes are compared by
-        /// .github/scripts/check-pinned-constants.ps1 - neither language can read the other's
+        /// Tools/Checks/check-pinned-constants.ps1 - neither language can read the other's
         /// constant, and a disagreement here shows up only as a status message.
         /// </para>
         /// </summary>

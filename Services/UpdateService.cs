@@ -39,11 +39,11 @@ namespace OutlookAI.Services
         private static readonly TimeSpan ApiTimeout = TimeSpan.FromMinutes(5);
 
         /// <summary>
-        /// Largest installer the updater will accept. Mirrored by the release workflow, which
+        /// Largest installer the updater will accept. Mirrored by the release script, which
         /// names this constant and fails the release rather than shipping an asset the whole
-        /// installed base would silently refuse - see the "Create installer" step in
-        /// <c>.github/workflows/release.yml</c>, and the drift check in
-        /// <c>.github/scripts/check-pinned-constants.ps1</c> that compares the two.
+        /// installed base would silently refuse - see <c>$InstallerCapMB</c> in
+        /// <c>Tools/Publish-Release.ps1</c>, and the drift check in
+        /// <c>Tools/Checks/check-pinned-constants.ps1</c> that compares the two.
         /// </summary>
         private const long MaxDownloadBytes = 50L * 1024 * 1024; // 50 MB
 
@@ -517,7 +517,7 @@ namespace OutlookAI.Services
         /// </summary>
         private static Task RunCheckAsync()
         {
-            // Developer/from-source builds carry the 99.99.99.0 placeholder (CI stamps the real
+            // Developer/from-source builds carry the 99.99.99.0 placeholder (the release stamps the real
             // version at release). Never auto-update such a build, and skip the network check.
             // Answered here, ahead of the guard: it is a return that never reaches the finally
             // below, so inside the guarded region it would leak the guard and wedge the updater.
@@ -798,9 +798,9 @@ namespace OutlookAI.Services
         // as "not signed by the expected OutlookAI certificate" and auto-update stops across the
         // entire installed base, with nothing to show for it but a line in the update-error
         // label. So the two are compared mechanically rather than by memory:
-        // .github/scripts/check-pinned-constants.ps1 fails the build (and the release) when they
-        // drift, and the release workflow additionally checks both against the certificate it
-        // has just imported.
+        // Tools/Checks/check-pinned-constants.ps1 fails the build (and the release) when they
+        // drift, and the release script additionally checks both against the certificate it
+        // is about to sign with.
         private const string ExpectedCertThumbprint = "2578F7B869383572E751DD6B61B5374C55C6E995";
 
         private static bool VerifySignature(string path, out string error)
