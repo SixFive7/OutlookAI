@@ -2396,8 +2396,9 @@ one included - stops short of the derived string. `CachedExchange` joined `Deleg
 **On a FROZEN guest the run starts with the restore of its frozen checkpoint instead - decided by the
 maintainer 2026-10-03 (Q130 (a); section 4.4).** Both Outlook guests are frozen once that work is
 merged: time synchronisation off, every run restoring the checkpoint `Testbed/testbed.json` names
-under `frozenClocks`, staging, and passing `Testbed/host/Set-GuestClockFrozen.ps1 -Verify` before the
-suite - with no restart and no hub rebuild after the restore (`Testbed/README.md` section 4c has the
+under `frozenClocks`, staging, passing `Testbed/host/Set-GuestClockFrozen.ps1 -Verify` and starting
+Outlook NOT elevated on the tier profile before the suite - with no restart and no hub rebuild after the
+restore (`Testbed/README.md` section 4c has the
 order). The hub rebuild below is then the first step of making a NEW frozen checkpoint, not of a run;
 until the merge it stays the first step of every run on the unfrozen checkpoints.
 
@@ -3632,9 +3633,11 @@ never had. The cost is the 14 to 18 minutes already on each hub, which the 90-mi
 **4. What keeps a run on the frozen instant.**
 
 * **The order of a run** - `Testbed/README.md` section 4c: lease, restore the frozen checkpoint, stage,
-  `Testbed/host/Set-GuestClockFrozen.ps1 -VMName <guest> -Verify` (exit 0 `FROZEN` or no suite), the suite, rest.
-  No restart and no hub rebuild after the restore: the restore puts the hub back as it was built and wipes every
-  artifact, which is why the per-run rebuild (section 3b) goes.
+  `Testbed/host/Set-GuestClockFrozen.ps1 -VMName <guest> -Verify` (exit 0 `FROZEN` or no suite), Outlook started
+  NOT elevated on the tier profile (`Testbed/guest/Start-OutlookUnelevated.ps1`), the suite, rest. No restart and
+  no hub rebuild after the restore: the restore puts the hub back as it was built and wipes every artifact, which
+  is why the per-run rebuild (section 3b) goes. The Outlook start is what step 9a used to leave the suite besides
+  its rebuild, and it was learnt the hard way - section 5's runner run 1 below.
 * **The guard**, `-Verify`, read-only: time sync off, the guest restored from the recorded checkpoint, and its
   clock no more than 2 minutes before the frozen instant and no more than 45 minutes after it. A restart or cold
   boot after the restore, time sync turned back on, or a hand-set clock each fail it, naming the cause.

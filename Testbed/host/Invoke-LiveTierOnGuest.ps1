@@ -23,8 +23,10 @@
                    Testbed/guest scripts in, swaps the server, tools, source and feed, and proves the
                    suite TEST-READY (Install-DotnetSdk.ps1 -Execute, then -Verify).
       4. PREPARE - FROM A FROZEN CHECKPOINT (the default since Q130 (a)): Set-GuestClockFrozen.ps1
-                   -Verify, and nothing else - no restart and no hub rebuild, which would leave the
-                   frozen instant the guest's data was built for; the run stops unless it says FROZEN.
+                   -Verify - the run stops unless it says FROZEN - then Outlook started NOT elevated on
+                   the tier profile (Start-OutlookUnelevated.ps1), the state step 9a hands the suite
+                   over in; no restart and no hub rebuild, which would leave the frozen instant the
+                   guest's data was built for.
                    From any other checkpoint (time sync on): Restart-Guest.ps1 -Execute (graceful, or
                    it refuses), then Reset-HubPopulation.ps1 -Execute (Testbed/README.md step 9a) at
                    RunLevel Limited: every Outlook start NOT elevated (D77).
@@ -145,6 +147,9 @@ $Guests = [ordered]@{
 }
 # Hyper-V's Time Synchronization integration service, by component id (Set-GuestClockFrozen.ps1).
 $TimeSyncComponentId = '2497F4DE-E9FA-4204-80E4-4B75C46419C0'
+# The profile the suite runs on, which a frozen start opens NOT elevated before the suite, as step 9a
+# leaves it (Reset-HubPopulation.ps1's default; -SelfTest holds the two equal).
+$TierProfileName = 'OutlookAI-Tier'
 $GuestRoot = 'C:\OutlookAI-Q5'
 $GuestPayloadDir = 'C:\OutlookAI-Q5\g4-payload'
 $GuestRunsRoot = 'C:\OutlookAI-Q5\live-runs'
@@ -181,7 +186,7 @@ function Invoke-NativeCommand {
 # start is verified, never restarted or rebuilt: either would leave the instant its data was built for.
 function Get-PrepareSteps {
     param([bool] $StartIsFrozen, [bool] $SkipHubReset)
-    if ($StartIsFrozen) { return @('frozen-clock guard') }
+    if ($StartIsFrozen) { return @('frozen-clock guard', 'Outlook NOT elevated') }
     if ($SkipHubReset) { return @('restart') }
     return @('restart', 'hub rebuild')
 }
@@ -418,9 +423,11 @@ function Invoke-SelfTest {
     Check 'the unindexed guest is one, in any case' 'OutlookAI-Unindexed|OAI-UNINDEXED|False' @($u.Name, $u.ComputerName, $u.Indexed)
     Check 'the unindexed guest rests on its frozen checkpoint' 'CP-14B-FROZEN-CLOCK' $u.Checkpoint
     Write-Host '== a frozen start (Q130 (a)) =='
-    Check 'a frozen start is verified, not restarted or rebuilt' 'frozen-clock guard' (Get-PrepareSteps -StartIsFrozen $true -SkipHubReset $false)
-    Check 'and -SkipHubReset changes nothing there' 'frozen-clock guard' (Get-PrepareSteps -StartIsFrozen $true -SkipHubReset $true)
-    Check 'an unfrozen start is restarted and its hub rebuilt' 'restart | hub rebuild' (Get-PrepareSteps -StartIsFrozen $false -SkipHubReset $false)
+    Check 'a frozen start is verified and handed Outlook as 9a would, not restarted or rebuilt' 'frozen-clock guard|Outlook NOT elevated' (Get-PrepareSteps -StartIsFrozen $true -SkipHubReset $false)
+    Check 'and -SkipHubReset changes nothing there' 'frozen-clock guard|Outlook NOT elevated' (Get-PrepareSteps -StartIsFrozen $true -SkipHubReset $true)
+    $hubReset = [System.IO.File]::ReadAllText((Join-Path $repo 'Testbed\guest\Reset-HubPopulation.ps1'))
+    Check 'the profile a frozen start opens is the one step 9a opens' $true $hubReset.Contains("[string] `$TierProfileName = '$TierProfileName'")
+    Check 'an unfrozen start is restarted and its hub rebuilt' 'restart|hub rebuild' (Get-PrepareSteps -StartIsFrozen $false -SkipHubReset $false)
     Check 'an unfrozen start with -SkipHubReset is only restarted' 'restart' (Get-PrepareSteps -StartIsFrozen $false -SkipHubReset $true)
     $own = [System.IO.File]::ReadAllText($PSCommandPath)
     Check 'the frozen branch calls the guard with -Verify' $true $own.Contains("'Set-GuestClockFrozen.ps1') -VMName `$facts.Name -Verify")
@@ -767,6 +774,10 @@ Copy-Item -LiteralPath '$GuestPayloadDir\live-test-settings.json' -Destination '
             # ps51-native-stderr-ok: a PowerShell script, not a program - it starts no program at all
             & (Join-Path $PSScriptRoot 'Set-GuestClockFrozen.ps1') -VMName $facts.Name -Verify -RepoRoot $CredentialRepoRoot -LogPath (Join-Path $runDir 'frozen-clock.log') *> (Join-Path $runDir 'frozen-clock.out.log')
             if ($LASTEXITCODE -ne 0) { throw "the frozen-clock guard did not say FROZEN (exit $LASTEXITCODE) - the guest's clock left its frozen instant, or this is not its frozen checkpoint: frozen-clock.log" }
+            # The state step 9a hands the suite over in, without its rebuild: Outlook running NOT elevated on
+            # the tier profile, its window up. The frozen checkpoint holds Outlook closed so STAGE could swap.
+            $o = Invoke-Guest 'start-outlook' "& '$GuestRoot\Start-OutlookUnelevated.ps1' -Profile '$TierProfileName'; `"START-OUTLOOK-EXIT `$LASTEXITCODE`"" 900 -Session0
+            if ($o -notmatch 'START-OUTLOOK-EXIT 0') { throw 'Start-OutlookUnelevated.ps1 did not start Outlook NOT elevated on the tier profile - guest\start-outlook.log' }
         }
         else {
             # ps51-native-stderr-ok: a PowerShell script, not a program - every program it starts goes through its own Invoke-NativeCommand, under 'Continue' inside a try
