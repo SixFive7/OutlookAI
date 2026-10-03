@@ -1,6 +1,6 @@
 <#
     ============================================================================================
-    RECONSTRUCTION. THIS SCRIPT HAS NEVER BEEN EXECUTED.
+    RECONSTRUCTION - FIRST RUN 2026-10-03, on OutlookAI-Indexed against Corpus A (160,000 items).
     ============================================================================================
 
     It replaces `Docs/v3-probes/soakfix13-probe-sweep-cost.ps1`, which step 2 of
@@ -10,9 +10,27 @@
     optional", and this is that reconstruction, written from the shipped sweep's own source
     (OutlookComSession.SweepFolder) rather than from memory of the original.
 
-    It was written by an agent that was forbidden to touch Outlook or a mailbox, so nothing here
-    has been run against a store. Read it before you trust a number out of it, and once it HAS
-    run, replace this banner with what it actually did.
+    WHAT ITS FIRST RUN DID (Docs/live-tier-on-the-vm.md section 4.2e). As written it never got
+    past the first table: PowerShell enumerated the Table's Columns collection on its way out of a
+    function, so Columns.Count failed - and every Columns.Add before it had failed silently inside
+    its try, so nothing would have been sorted either (detail 3 below has the cure, "return , $x").
+    And it asked Store.GetDefaultFolder for all four folders, the call that, on the guests' other
+    data files, CREATED a missing Junk Email folder and answered a missing Inbox with the store's
+    hidden root - on Corpus A, which has neither an Inbox nor a Sent Items nor a Junk Email of its
+    own (PR_VALID_FOLDER_MASK 0xC9), it would have timed the wrong folder or added one. Both fixed
+    the same day; then, 30-day window, cap 200, two passes, Outlook on the account-less profile:
+    every folder sorted; 28.5-35.9 ms a row walking the table, 34.9-43.3 ms with -OpenItems.
+    **Read those as PowerShell's numbers, not the sweep's**: every row here costs several
+    InvokeMember calls, which the shipped sweep, in C#, does not pay - only the difference the
+    two runs make (about +7 ms a row) speaks for opening an item. The stand-ins cost what the
+    store's own Deleted Items costs, row for row.
+
+    DEFAULT FOLDERS, AND STAND-INS. It finds a default folder the way the shipped sweep does,
+    never by the call that creates one (see $PrValidFolderMask), says which ones the sweep skips,
+    and ALSO times any stand-in the corpus builder made for a missing default folder
+    (OutlookAI-Corpus-Folder-6, -5, -3, -Junk at the store root) - labelled as such, because the
+    shipped sweep never reads them: on Corpus A it reads Deleted Items alone, 19,292 of the
+    160,000 items.
 
     WHAT MAKES IT SAFE TO RUN ANYWAY: it is read-only by construction. GetTable, Columns.Add,
     Sort, GetNextRow, GetItemFromID and property reads. No Save, no Delete, no Move, no Add, no

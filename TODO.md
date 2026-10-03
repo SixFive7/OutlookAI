@@ -119,11 +119,6 @@
         from a checkpoint with the add-in NOT installed. `Docs/live-tier-on-the-vm.md` section 2.3,
         "The two phases have NOT run on a guest", lists what the run must record; replace that
         paragraph and the script's banner with what it did.
-  - [ ] **Run `Testbed/guest/Measure-SweepCost.ps1` once.** It is the reconstruction of
-        `Docs/v3-probes/soakfix13-probe-sweep-cost.ps1`, which is gitignored and gone with its
-        scratch directory. Written from the shipped `SweepFolder` source, read-only by
-        construction, and **never executed** - the banner says so and should be replaced with what
-        it actually did.
   - [ ] **Fold the recovered facts into `Docs/live-tier-on-the-vm.md`.** Its section 8 lists ~20
         open items; the corpus parameters (item 15), the PST path and display name (item 11), the
         scheduled-task recipe (item 10) and how results leave the guest (item 13) are now answered

@@ -2866,6 +2866,35 @@ and two checks print `PROVED NOTHING` every run on this guest, by design: the re
 filter never selects it. Q101's Inspector/Outbox ordering in `LiveDisconnectRecoveryTests` never bit:
 every run read `no inspectors, outbox empty` before it closed the parked window.
 
+### 4.1f The guest clock with time synchronisation off - `OutlookAI-Unindexed`, 2026-10-03 (Q108, measured only)
+
+**Why this section exists.** Q108 (`Docs/overnight-review-2026-10-03.md`) asks whether freezing an
+Outlook guest's clock - Hyper-V time synchronisation off, every run from a checkpoint - would stop the
+test data ever going stale. This is what the guest's clock actually does, measured from the host over
+PowerShell Direct (guest UTC minus host UTC, the host's reading at the midpoint of the call). Nothing was
+left changed: every step began and ended on `CP-13B-LIVE-GREEN` with time sync back ON, the one
+temporary checkpoint (`CP-TEMP-CLOCK-PROBE-a24876cb`) was deleted, and the guest was saved with its 20
+checkpoints. No Outlook was started and no store opened. Raw logs: `.work\g1-d62\logs\` of the agent
+worktree `a24876cb`, phases `p4g2b` and `p4b`.
+
+| Step | Guest clock | Reading |
+| --- | --- | --- |
+| `CP-13B-LIVE-GREEN` restored, time sync ON (its own setting) | agrees with the host | skew 0.2 s at the first answer, 3 s after the restore; 0.1 s 20 s later |
+| Time sync OFF, `Set-Date` 10:00Z | stays where it was put | skew -25,443 s, unchanged 90 s later; `w32tm /query /source`: "the service has not been started" - nothing else sets the clock on this guest |
+| Saved 90 s, resumed | stopped while saved | lost 94.9 s against the host |
+| Checkpoint taken with time sync OFF; restored twice, 60 s apart | **the same instant every restore** | 1.7 s and 1.8 s before the checkpoint's instant; time sync still OFF after each restore - the setting travels with the checkpoint |
+| `CP-13B-LIVE-GREEN` restored after that | back to the host's time | time sync ON again (that checkpoint's own setting); skew 0.1 s |
+| COLD boot (graceful `Stop-VM`, `Start-VM`) from the time-sync-OFF checkpoint | host time plus the offset the guest last WROTE | before: skew -25,702 s (the restored instant); after: -25,445 s - the `Set-Date` offset, not the restored instant |
+| OS restart through `Testbed/host/Restart-Guest.ps1`, time sync OFF, no restore before it | keeps the offset it had | moved by -2.2 s; the restart script proved the restart by the later boot time as usual |
+| Clock set to 2026-08-01, then signatures checked | - | Authenticode of `dotnet.exe` and of the staged SDK installer `Valid`; `dotnet nuget verify --all` of `Microsoft.Extensions.Logging.Abstractions 10.0.10` exit 0, only the offline revocation warnings |
+
+**What it means for Q108 (a).** A checkpoint taken with time sync off starts every run at the same instant,
+and saving or resuming does not move it - the mechanism (a) needs is real. Two rules come with it: a run
+must not restart or cold-boot the guest after the restore (both leave the frozen instant - the restart case
+after a restore inferred from the cold boot, not measured), and the build VM can never be frozen (its runner
+requires the host's clock within 2 s). Not measured: installing a freshly built add-in on a frozen guest,
+and MSBuild with files the host dated after the guest's clock.
+
 ### 4.2 The indexed guest's build-out - `OutlookAI-Indexed`, 2026-09-24 and 2026-09-27
 
 **Why this section exists.** The same build-out as section 4.1, on the guest that must stay
@@ -3687,9 +3716,11 @@ unrecorded or unverified.
 14. **CLOSED, with a caveat that matters.** `Docs/v3-probes/soakfix13-probe-sweep-cost.ps1` was
     gitignored, so it lived on one machine and is gone. It has been **reconstructed in the
     repository** as `Testbed/guest/Measure-SweepCost.ps1`, written from the shipped sweep's own
-    source rather than from memory, and read-only by construction. **It has never been
-    executed.** Read it before trusting a number out of it, and replace its banner with what it
-    actually did once it has run.
+    source rather than from memory, and read-only by construction. **It first ran on
+    2026-10-03** (section 4.2e), against Corpus A on `OutlookAI-Indexed`: that run found two
+    faults - default folders resolved by the call that creates them, and every COM collection
+    unrolled by PowerShell - and fixed both; its banner now says what it did, and that its
+    absolute milliseconds are PowerShell's rather than the sweep's.
 15. **CLOSED 2026-08-24.** The real parameters are `vm2 / 7777 / 2026-08-19 / 20000`, recorded
     machine-readably in `Testbed/testbed.json` together with the expected plan, the per-folder
     and per-window counts, the store path and the build cost. They are not an example: they were
