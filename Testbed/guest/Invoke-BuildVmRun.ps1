@@ -371,6 +371,26 @@ function Invoke-SelfTest {
     Check 'and never through Add-Content, whose handle shuts every reader out (2026-10-03)' 0 $sayAddContent
 
     Write-Host ''
+    Write-Host '== a zip that fails part-way is not left for the host to take for the whole result =='
+    $complete = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Complete-Run' }, $true))
+    Check 'Complete-Run is defined once' 1 $complete.Count
+    $zipCatch = ''
+    if ($complete.Count -eq 1) {
+        foreach ($t in @($complete[0].Body.FindAll({ param($n) $n -is [System.Management.Automation.Language.TryStatementAst] }, $true))) {
+            if ($t.Body.Extent.Text.Contains('CreateFromDirectory') -and $t.CatchClauses.Count -gt 0) { $zipCatch = $t.CatchClauses[0].Body.Extent.Text }
+        }
+    }
+    Check 'the zip''s catch removes the zip it may have left' $true ($zipCatch.Contains('Remove-Item -LiteralPath $ResultsZip'))
+    $doneAt = -1
+    $zipAt = -1
+    if ($complete.Count -eq 1) {
+        $body = $complete[0].Body.Extent.Text
+        $doneAt = $body.IndexOf('$DoneFile')
+        $zipAt = $body.IndexOf('CreateFromDirectory')
+    }
+    Check 'and done.txt is still written after it, last' $true ($zipAt -ge 0 -and $doneAt -gt $zipAt)
+
+    Write-Host ''
     Write-Host "$($script:stChecks) check(s), $($script:stFailures.Count) failure(s)."
     if ($script:stFailures.Count -gt 0) { return 1 }
     return 0
@@ -574,7 +594,15 @@ function Complete-Run([string] $Verdict) {
         if (Test-Path -LiteralPath $ResultsZip) { Remove-Item -LiteralPath $ResultsZip -Force }
         [System.IO.Compression.ZipFile]::CreateFromDirectory($ResultsDir, $ResultsZip)
     }
-    catch { Say "could not zip the results: $($_.Exception.Message)" }
+    catch {
+        # A zip that failed part-way - a results file something else holds - is closed on the way
+        # out with the files it got before it, and the host would take that for all of them: a
+        # run.json without its TRX file, say. Removed, it sends the host to read the results one
+        # by one, each with sharing (the host's fetch), and run.json and the TRX file still decide.
+        Say "could not zip the results: $($_.Exception.Message) - the host reads them one by one"
+        try { if (Test-Path -LiteralPath $ResultsZip) { Remove-Item -LiteralPath $ResultsZip -Force } }
+        catch { Say "and could not remove the partial zip: $($_.Exception.Message)" }
+    }
     # Written LAST: its existence is what the host waits for.
     Set-Content -LiteralPath $DoneFile -Value ([string]$Verdicts[$Verdict]) -Encoding ASCII
     exit $Verdicts[$Verdict]
