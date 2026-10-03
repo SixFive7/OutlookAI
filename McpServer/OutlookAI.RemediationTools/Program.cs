@@ -548,6 +548,9 @@ internal static class Program
         Console.WriteLine("          and every verb that reads its manifest needs the same --population");
         Console.WriteLine("          [--undated-contacts]  the hub or bystander WITH its undated contacts - the indexed guest's");
         Console.WriteLine("          populations (Q98 f); part of the shape, so every verb on such a manifest needs it too");
+        Console.WriteLine("          [--all-kinds]  the hub or bystander WITH appointments, contacts and tasks - the indexed guest's");
+        Console.WriteLine("          populations since D62 (b): contacts undated in the index, appointments and tasks dated at");
+        Console.WriteLine("          planned instants older than every mail item; part of the shape, exclusive with --undated-contacts");
         Console.WriteLine("Indexed:  corpus-indexed --population ... [--manifest <path>] [--wait-seconds <n>]   (read-only, no Outlook)");
         Console.WriteLine("          corpus-probe --population ... --undated-index-wait <n>   holds each undated probe item up to");
         Console.WriteLine("          n s and prints the index's columns for it before deleting it (a NOT elevated Outlook must run)");
