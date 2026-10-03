@@ -99,6 +99,16 @@ public sealed class CorpusOptions
     /// </summary>
     public int WaitSeconds { get; private set; }
 
+    /// <summary>
+    /// With <c>corpus-probe</c>: hold each UNDATED probe item for up to this many seconds, until the
+    /// Windows Search index has a row for it, and print the index's own columns for it - the
+    /// product's ORDER BY keys and every date the index carries - before the probe deletes it as
+    /// usual. Zero, the default, holds nothing. What it answers is whether the index dates an
+    /// appointment, a contact or a task (<see cref="CorpusUndatedIndex"/>); the index only takes an
+    /// item in while a NOT elevated Outlook runs on the profile that mounts the store.
+    /// </summary>
+    public int UndatedIndexWaitSeconds { get; private set; }
+
     /// <summary>Parses the arguments after the command word. Throws on anything unrecognised.</summary>
     public static CorpusOptions Parse(IEnumerable<string> args)
     {
@@ -239,6 +249,9 @@ public sealed class CorpusOptions
                 break;
             case "wait-seconds":
                 WaitSeconds = Math.Max(0, int.Parse(value, CultureInfo.InvariantCulture));
+                break;
+            case "undated-index-wait":
+                UndatedIndexWaitSeconds = Math.Max(0, int.Parse(value, CultureInfo.InvariantCulture));
                 break;
             case "population":
                 if (!CorpusPopulation.TryParseKind(value, out CorpusPopulationKind kind))
@@ -530,7 +543,18 @@ public static class CorpusCommands
         }
 
         output.WriteLine("== undated probe ==");
-        IReadOnlyList<CorpusUndatedProbe> probes = ComCorpusMailbox.ProbeUndated(options.Store!, plan.Options.CorpusId, kinds);
+        Action<CorpusItemKind, string>? whileHeld = null;
+        TimeSpan holdBudget = TimeSpan.Zero;
+        if (options.UndatedIndexWaitSeconds > 0)
+        {
+            output.WriteLine("  each item is held for up to " + options.UndatedIndexWaitSeconds.ToString(CultureInfo.InvariantCulture)
+                + " s for the index to take it in, and the index's columns are printed before it is deleted (--undated-index-wait)");
+            whileHeld = CorpusUndatedIndex.CreateReader(output, TimeSpan.FromSeconds(options.UndatedIndexWaitSeconds));
+            holdBudget = TimeSpan.FromSeconds((double)options.UndatedIndexWaitSeconds * kinds.Count);
+        }
+
+        IReadOnlyList<CorpusUndatedProbe> probes =
+            ComCorpusMailbox.ProbeUndated(options.Store!, plan.Options.CorpusId, kinds, whileHeld, holdBudget);
         foreach (CorpusUndatedProbe p in probes)
         {
             output.WriteLine(CorpusUndatedFidelity.Line(p));
