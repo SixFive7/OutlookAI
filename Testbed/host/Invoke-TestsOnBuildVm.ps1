@@ -608,9 +608,14 @@ function Invoke-InGuest([scriptblock] $Block, [object[]] $ArgumentList = @()) {
 # or the time limit passes. Returns the guest's exit code as written in done.txt, or $null.
 function Invoke-GuestRun([int] $Attempt) {
     Say "guest: starting $GuestScriptName (attempt $Attempt)"
-    $guestPid = Invoke-InGuest -ArgumentList @((Join-Path $GuestRunRoot $GuestScriptName), (Join-Path $GuestRunRoot 'request.json'), $guestStdout, $guestStderr) -Block {
-        param($scriptPath, $requestPath, $outPath, $errPath)
-        foreach ($f in @($outPath, $errPath, 'C:\OutlookAI-Q5\run\done.txt')) { if (Test-Path -LiteralPath $f) { Remove-Item -LiteralPath $f -Force } }
+    $guestPid = Invoke-InGuest -ArgumentList @((Join-Path $GuestRunRoot $GuestScriptName), (Join-Path $GuestRunRoot 'request.json'), $guestStdout, $guestStderr, $GuestRunRoot) -Block {
+        param($scriptPath, $requestPath, $outPath, $errPath, $root)
+        # Everything an earlier attempt left, gone BEFORE the new one starts: the log is followed
+        # from its first byte, and on the first package retry (2026-10-03) the host read the old
+        # attempt's log back in the seconds before the new process replaced it.
+        foreach ($f in @($outPath, $errPath, (Join-Path $root 'done.txt'), (Join-Path $root 'results.zip'), (Join-Path $root 'results'))) {
+            if (Test-Path -LiteralPath $f) { Remove-Item -LiteralPath $f -Recurse -Force }
+        }
         $p = Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $scriptPath, '-RequestPath', $requestPath) -RedirectStandardOutput $outPath -RedirectStandardError $errPath -NoNewWindow -PassThru
         $p.Id
     }
@@ -667,7 +672,10 @@ try {
         $lease = Get-TestbedLease -VMName $BuildVmName
         if ($null -eq $lease -or ([string]$lease.reason).StartsWith($LeaseReasonPrefix)) { break }
         if (-not $saidHold) { Say "queued: $BuildVmName is leased by hand until $($lease.expiresUtc) - '$($lease.reason)'. Waiting for it to be released."; $saidHold = $true }
-        if ((Get-Date) -ge $holdDeadline) { throw "$BuildVmName stayed leased by hand ('$($lease.reason)') for $QueueTimeoutMinutes minute(s)" }
+        if ((Get-Date) -ge $holdDeadline) {
+            $timings['queue'] = $timings['queue'] + [math]::Round(((Get-Date) - $t0).TotalSeconds, 1)
+            throw "$BuildVmName stayed leased by hand ('$($lease.reason)') for $QueueTimeoutMinutes minute(s)"
+        }
         Start-Sleep -Seconds 10
     }
     $timings['queue'] = $timings['queue'] + [math]::Round(((Get-Date) - $t0).TotalSeconds, 1)
@@ -750,9 +758,15 @@ try {
         $tp = Get-Date
         Say "packages: the VM's offline feed lacks package(s) this revision needs - staging its restore closure on this host"
         $feedDir = Join-Path $runDir 'feed'
-        & (Join-Path $PSScriptRoot 'Publish-LiveTierPayload.ps1') -RepoRoot $repo -Ref $sha -OutDir $feedDir | ForEach-Object { Write-Host "  host| $_" }
+        New-Item -ItemType Directory -Force -Path $feedDir | Out-Null
+        $publishLog = Join-Path $feedDir 'publish.log'
+        # Its whole transcript goes to a file - it ends with copy-in instructions meant for a person
+        # staging a guest by hand - and only the lines about the packages are shown here.
+        # ps51-native-stderr-ok: a PowerShell script, not a program - every program it starts goes through its own Invoke-NativeCommand, under 'Continue' inside a try
+        & (Join-Path $PSScriptRoot 'Publish-LiveTierPayload.ps1') -RepoRoot $repo -Ref $sha -OutDir $feedDir *> $publishLog
+        foreach ($line in @(Get-Content -LiteralPath $publishLog | Where-Object { $_ -match 'package\(s\)|NuGet\.zip  |The feed restores|FAIL' })) { Write-Host "  host| $($line.Trim())" }
         $nugetZip = Join-Path $feedDir 'NuGet.zip'
-        if (-not (Test-Path -LiteralPath $nugetZip)) { throw "Publish-LiveTierPayload.ps1 left no $nugetZip" }
+        if (-not (Test-Path -LiteralPath $nugetZip)) { throw "Publish-LiveTierPayload.ps1 left no $nugetZip - its transcript is $publishLog" }
         Copy-Item -LiteralPath $nugetZip -Destination (Join-Path $GuestRunRoot 'NuGet.zip') -ToSession $session
         $added = Invoke-InGuest -ArgumentList @((Join-Path $GuestRunRoot 'NuGet.zip'), $GuestFeedRoot) -Block {
             param($zip, $feed)
@@ -904,6 +918,21 @@ if ($guestPhases.Count -gt 0) {
     $lines.Add("           in the VM: $((@($guestPhases.Keys | ForEach-Object { "$_ $(Format-Seconds $guestPhases[$_])" })) -join ', ')")
 }
 if ($packagesStaged) { $lines.Add('packages   staged for this revision on the host and added to the VM''s feed for this run (the base checkpoint''s feed predates them)') }
+# A revision that does not build: its compiler or NuGet errors, once each, so the summary alone says why.
+$buildErrors = @()
+if ($guestVerdict -eq 'BUILD-FAILED' -or $guestVerdict -eq 'RESTORE-FAILED') {
+    $phaseLog = Join-Path $vmDir 'build.out.txt'
+    if ($guestVerdict -eq 'RESTORE-FAILED') { $phaseLog = Join-Path $vmDir 'restore.out.txt' }
+    if (Test-Path -LiteralPath $phaseLog) {
+        $buildErrors = @(Get-Content -LiteralPath $phaseLog | Where-Object { $_ -match ':\s+error\s+[A-Z]+\d+' } | ForEach-Object { $_.Trim() } | Select-Object -Unique)
+    }
+    if ($buildErrors.Count -gt 0) {
+        $lines.Add('')
+        $lines.Add($(if ($guestVerdict -eq 'RESTORE-FAILED') { 'RESTORE ERRORS' } else { 'BUILD ERRORS' }))
+        foreach ($e in @($buildErrors | Select-Object -First 30)) { $lines.Add("  $e") }
+        if ($buildErrors.Count -gt 30) { $lines.Add("  ... and $($buildErrors.Count - 30) more - see $phaseLog") }
+    }
+}
 if ($null -ne $trx -and @($trx.Failed).Count -gt 0) {
     $lines.Add('')
     $lines.Add('FAILED TESTS')
@@ -948,6 +977,7 @@ $summary = [ordered]@{
     skipped    = $(if ($null -ne $trx) { @($trx.Skipped) } else { @() })
     selfTests  = [ordered]@{ run = $selfTests.Count; failed = $selfTestsFailed; skippedByReason = $selfTestSkips.Count; failures = @($selfTests | Where-Object { -not $_.passed } | ForEach-Object { $_.path }) }
     guestVerdict = $guestVerdict
+    buildErrors = @($buildErrors)
     packagesStaged = $packagesStaged
     timings    = $timings
     guestPhases = $guestPhases
