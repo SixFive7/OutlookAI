@@ -62,7 +62,8 @@ everything except publishing; `-Execute` publishes. In order, it:
    **required**, in `major.minor.patch` form (`1.0.0` major, `0.1.0` minor, `0.0.1` patch), and
    `0.0.0` is rejected - every release bumps at least one component;
 3. takes the release notes from the CHANGELOG's `## Unreleased` section - and **refuses if it is
-   empty**: you must have release notes before creating a release;
+   empty**: you must have release notes before creating a release. It also refuses notes longer than
+   the 125,000 characters GitHub accepts as a release body (a dry run only notes that);
 4. checks that the certificate `OutlookAI.csproj` pins is in `Cert:\CurrentUser\My` with its private
    key and not expired;
 5. runs the four guards under `pwsh` and `powershell.exe`, then `check-pinned-constants.ps1` against

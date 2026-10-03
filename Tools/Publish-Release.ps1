@@ -1,8 +1,22 @@
 #Requires -Version 5.1
 <#
     ============================================================================================
-    WRITTEN 2026-10-03, WHEN THE GITHUB CI WAS REMOVED. -Execute, WHICH PUBLISHES, HAS NEVER RUN.
+    WRITTEN 2026-10-03, WHEN THE GITHUB CI WAS REMOVED. DRY-RUN ON THE MAINTAINER'S WORKSTATION.
+    -Execute, WHICH PUBLISHES, HAS NEVER RUN.
     ============================================================================================
+
+    The first dry run (from edc9dfd) stopped at step 8, and rightly: Get-AuthenticodeSignature
+    calls every signature by the self-signed release key UnknownError, because its root is not
+    trusted, so step 8 now asks WinVerifyTrust exactly as the shipped updater does. The second
+    (from 4d9d353, 2026-10-03 18:25-18:32, 7 minutes) ran steps 1-10 through: the four guards under
+    PowerShell 7.6.6 and 5.1; D7 (c) 8/0 and 3/0 against Visual Studio Community 2026 18.10.3's
+    targets; the release build of 3.1.1.825, guard 3 UNCHANGED over 305 host lines, the add-in DLL
+    and both server executables stamped 3.1.1.825; the installer signed, WinVerifyTrust 0x800B0109
+    (the result the updater accepts), DigiCert timestamp, 43.2 MB of the 50 MB cap; the build VM's
+    run of 4d9d353 PASS - 3607 of 3607 tests and 23 of 23 self-tests, this script's 72/0 among
+    them; and the stamp commit made, two lines of CHANGELOG.md and nothing else. It also measured
+    the notes at 151,497 characters, over the 125,000 GitHub accepts as a release body - which
+    step 3 now refuses before anything is pushed.
 
 .SYNOPSIS
     Builds, tests, signs and publishes an OutlookAI release from the maintainer's workstation -
@@ -12,7 +26,9 @@
     WHY THIS EXISTS. Decided by the maintainer 2026-10-03, in his words: "Remove the git CI
     pipeline. I want only the build and test suite to run on my pc. No CI pipelines on github."
     The release workflow was the one pipeline that produced something. This is its port, step for
-    step, plus what a workstation needs that a fresh runner did not.
+    step, plus what a workstation needs that a fresh runner did not. The workflow itself stays in
+    git history - `git show 883ec5f:.github/workflows/release.yml` - and each step below names the
+    workflow step it replaces.
 
     WHAT ONE RUN DOES, IN ORDER. Every step before PUBLISH only reads, builds under .work\, or
     writes git objects no ref points at. A failure anywhere stops the run with nothing published.
@@ -28,7 +44,9 @@
           stamp commit this run makes, as every release so far (v3.1.0.325 is commit 325). The tag
           must not exist yet.
        3. RELEASE NOTES (release.yml's "Extract changelog"): the "## Unreleased" section of
-          CHANGELOG.md. Empty refuses.
+          CHANGELOG.md. Empty refuses, and so - with -Execute - do notes over GitHub's 125,000-
+          character limit for a release body, which the workflow would have found only after
+          pushing the stamp commit.
        4. THE SIGNING CERTIFICATE: the thumbprint OutlookAI.csproj pins, from
           Cert:\CurrentUser\My, with its private key. Expired refuses; under 30 days warns
           (release.yml's "Import signing certificate", minus the import - it is already here).
@@ -159,6 +177,11 @@ $InstallerCapMB = 50
 # RFC 3161 timestamp servers, tried in order, so one server's outage does not fail a release.
 $TimestampServers = @('http://timestamp.digicert.com', 'http://timestamp.sectigo.com')
 $CertificateWarnDays = 30
+
+# GitHub refuses a release body longer than this: "body is too long (maximum is 125000 characters)".
+# gh release create runs AFTER the stamp commit is pushed, so notes over it would leave master saying
+# a version was released that never was. Step 3 refuses them up front instead.
+$ReleaseBodyLimit = 125000
 
 # CERT_E_UNTRUSTEDROOT, 0x800B0109. The certificate is SELF-SIGNED (CN=OutlookAI), so WinVerifyTrust
 # ends a perfectly good signature in an untrusted root, and the shipped updater accepts exactly that
@@ -372,6 +395,15 @@ function Get-UnreleasedNotes {
     return ''
 }
 
+# Notes GitHub would refuse as a release body. Publishing refuses them; a dry run notes it and goes on.
+function Get-NotesLengthVerdict {
+    param([string] $Notes, [int] $Limit, [bool] $Publishing)
+    if ($Notes.Length -le $Limit) { return [pscustomobject]@{ Problem = $null; Note = $null } }
+    $text = "the release notes are $($Notes.Length) characters, and GitHub refuses a release body over $Limit ('body is too long'). gh release create would fail after the stamp commit had been pushed. Shorten the Unreleased section, or decide how a release body should carry notes this long."
+    if ($Publishing) { return [pscustomobject]@{ Problem = $text; Note = $null } }
+    return [pscustomobject]@{ Problem = $null; Note = $text + ' -Execute would refuse; the dry run goes on.' }
+}
+
 # release.yml's "Stamp changelog": "## Unreleased" stays, empty, and the entries under it become the
 # new version's. Only the first such heading, only at the start of a line, and in the file's own
 # line endings. $null when there is no such heading.
@@ -543,6 +575,13 @@ function Invoke-SelfTest {
     Test-Case 'an empty Unreleased section has no notes' '' (Get-UnreleasedNotes "# Changelog`n`n## Unreleased`n`n## v3.1.0.325 - 2026-08-15`n`n- Older`n")
     Test-Case 'no Unreleased section has no notes' '' (Get-UnreleasedNotes "# Changelog`n`n## v1 - x`n")
     Test-Case 'a last section runs to the end of the file' '- Only' (Get-UnreleasedNotes "## Unreleased`n- Only`n")
+    Test-Case 'GitHub''s release body limit' 125000 $ReleaseBodyLimit
+    $v = Get-NotesLengthVerdict -Notes ('x' * 125000) -Limit 125000 -Publishing $true
+    Test-Case 'notes at the limit may publish' $true ($null -eq $v.Problem -and $null -eq $v.Note)
+    $v = Get-NotesLengthVerdict -Notes ('x' * 125001) -Limit 125000 -Publishing $true
+    Test-Case 'one character over refuses to publish' $true ([string]$v.Problem).Contains('125001 characters')
+    $v = Get-NotesLengthVerdict -Notes ('x' * 125001) -Limit 125000 -Publishing $false
+    Test-Case 'and a dry run of it goes on, noted' $true ($null -eq $v.Problem -and ([string]$v.Note).Contains('dry run goes on'))
     $stamped = Set-ChangelogStamp $log '3.1.1.325' '2026-10-03'
     Test-Case 'the stamp leaves Unreleased empty and heads the entries with the version' $true ($stamped.StartsWith("# Changelog`n`n## Unreleased`n`n## v3.1.1.325 - 2026-10-03`n`n- Fix one thing`n"))
     Test-Case 'and changes nothing else' $log ($stamped.Replace("`n`n## v3.1.1.325 - 2026-10-03", ''))
@@ -771,6 +810,10 @@ $notesFile = Join-Path $outDir 'release-notes.md'
 [System.IO.File]::WriteAllText($notesFile, $notes, (New-Object System.Text.UTF8Encoding($false)))
 $noteEntries = @(($notes -split "`n") | Where-Object { $_ -match '^- ' }).Count
 Say "  $noteEntries entr(y/ies), $($notes.Length) characters -> $notesFile"
+$notesVerdict = Get-NotesLengthVerdict -Notes $notes -Limit $ReleaseBodyLimit -Publishing ([bool]$Execute)
+if ($notesVerdict.Problem) { throw "REFUSING: $($notesVerdict.Problem)" }
+if ($notesVerdict.Note) { Say "  NOTE $($notesVerdict.Note)" }
+$record.notesCharacters = $notes.Length
 
 # ---------------------------------------------------------------------------------------------
 Say ''

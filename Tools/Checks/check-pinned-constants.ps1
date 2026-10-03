@@ -628,7 +628,7 @@ if ($null -ne $projText) {
                 }
             }
             if (@($top | Where-Object { $_.LocalName -eq 'UsingTask' -and $_.GetAttribute('TaskName') -ceq 'RegisterFormRegions' }).Count -gt 0) {
-                $q81Problems += "RegisterFormRegions has a stand-in. It is left alone on purpose: the add-in has no form region, so the real task writes nothing, and a stand-in would silently drop any future one from the manifest of every command-line build, release.yml's included."
+                $q81Problems += "RegisterFormRegions has a stand-in. It is left alone on purpose: the add-in has no form region, so the real task writes nothing, and a stand-in would silently drop any future one from the manifest of every command-line build, the release build's included."
             }
             $chains = [ordered]@{
                 'PrepareForRunDependsOn' = "`$([MSBuild]::Unescape(`$(PrepareForRunDependsOn.Replace('RegisterOfficeAddin', ''))))"

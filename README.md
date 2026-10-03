@@ -383,7 +383,7 @@ powershell -File Tools\Switch-AddInBuild.ps1 -Status                     # which
 
 Without `-Execute` the first two only show what they would change. The dev build is copied out of the build folder first, so later builds cannot change it underneath you; it carries version 99.99.99.0, so the add-in's updater leaves it alone; and it does not include the mail server. Changes take effect the next time Outlook starts — the script never starts or closes Outlook.
 
-The mail server is a separate .NET 10 project built with `dotnet`, not through the Visual Studio solution — see [`McpServer/README.md`](McpServer/README.md) for its build, test, and registration instructions. The release workflow publishes it (framework-dependent, win-x64) into the installer payload and stamps it with the **same version as the add-in**, so one release produces one version across the whole product; local developer builds of both carry `99.99.99.0`, which is also the marker the auto-updater uses to leave a developer build alone.
+The mail server is a separate .NET 10 project built with `dotnet`, not through the Visual Studio solution — see [`McpServer/README.md`](McpServer/README.md) for its build, test, and registration instructions. The release build publishes it (framework-dependent, win-x64) into the installer payload and stamps it with the **same version as the add-in**, so one release produces one version across the whole product; local developer builds of both carry `99.99.99.0`, which is also the marker the auto-updater uses to leave a developer build alone.
 
 ---
 
