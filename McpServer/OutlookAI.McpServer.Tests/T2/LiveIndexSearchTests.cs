@@ -126,15 +126,20 @@ public sealed class LiveIndexSearchTests
     [Trait("Writes", "Nothing")]
     public void ProbeParity_DateRangeQuery_HitsUnder2s()
     {
+        // The 30 days before the declared corpus's anchor, not before now (Q130 (b), decided
+        // 2026-10-03): the same big-store rows on every run, whatever the clock says. With no corpus
+        // declared it is still the last 30 days of the clock (LiveDataWindow; T1/LiveDataWindowTests).
+        LiveDateWindow window = LiveDataWindow.Before(_fixture.Settings.Corpus, 30, DateTime.UtcNow);
         IndexSearchResult result = _fixture.Service.Search(new IndexQuery
         {
             Kinds = KindFilter.MailKindOnly,
-            ReceivedOnOrAfterUtc = DateTime.UtcNow.AddDays(-30),
+            ReceivedOnOrAfterUtc = window.OnOrAfterUtc,
+            ReceivedBeforeUtc = window.BeforeUtc,
             Top = 10,
         });
 
-        _output.WriteLine($"rows={result.Hits.Count} ms={result.ElapsedMilliseconds}");
-        Assert.True(result.Hits.Count > 0, "no mail indexed in the last 30 days");
+        _output.WriteLine($"window: {window.Basis}; rows={result.Hits.Count} ms={result.ElapsedMilliseconds}");
+        Assert.True(result.Hits.Count > 0, $"no mail indexed in {window.Basis}");
         Assert.InRange(result.ElapsedMilliseconds, 0, MaxQueryMs);
     }
 

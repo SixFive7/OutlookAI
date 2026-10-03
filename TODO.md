@@ -710,18 +710,6 @@
     the measurement instead of the store. The date probe's exclusion half had the same defect
     and is fixed the same way.
 
-  - **A corpus expires silently, and now it does not (2026-08-24).** Anchored on a fixed instant,
-    it stops filling the narrow measurement windows within weeks, and every test asking about
-    them keeps PASSING because selecting nothing is a valid answer about an empty window.
-    `corpus-verify` is pure - no Outlook, no store - derives the shift already applied from the
-    manifest and refuses when any window under test has emptied; the live tier runs it
-    fail-closed at fixture time from a new `corpus` settings block. `corpus-reanchor --to now`
-    was the repair: an ABSOLUTE target, so it is idempotent and resumable, never creating, moving
-    or removing an item, guarded by EntryID allowlist AND subject tags AND the expected ordinal.
-    The manifest header's anchor is deliberately not rewritten - it is half the corpus's
-    identity - so the shift is derived from the item lines and the re-anchor appends a
-    replacement line per item. **Superseded 2026-08-25: the repair is a REBUILD - see below.**
-
   - [ ] **Move `T2/CorpusFreshnessTests.cs` to T1.** It is pure - no Outlook, no COM, no settings
     file, no `Category=Live` - and belongs beside `CorpusGeneratorTests`. It sits in T2 only
     because T1 was owned by a parallel worktree while it was written. A rename, nothing else.

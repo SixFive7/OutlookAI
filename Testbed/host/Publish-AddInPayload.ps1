@@ -986,6 +986,20 @@ AwQ=</Modulus><Exponent>AQAB</Exponent></RSAKeyValue></KeyValue></KeyInfo></Sign
     Test-Case 'a path with both is refused naming both' $true ([string](Get-MSBuildPathProblem 'C:\a,b;c')).Contains("',' and ';'")
     Test-Case 'a space is accepted - Format-MSBuildProperty quotes it' '' ([string](Get-MSBuildPathProblem 'C:\a b\.work\testbed-addin-payload'))
 
+    Write-Host '== the toolchain refusal belongs to the VSTO check (this file''s own syntax tree) =='
+    # edc9dfd inserted the release block between `if ($vstoTargets.Count -gt 0)` and its else, so the
+    # else - the "no VSTO targets" refusal - became the release check's and refused EVERY testbed build.
+    $ownAst = [System.Management.Automation.Language.Parser]::ParseFile($PSCommandPath, [ref]$null, [ref]$null)
+    $refusalIfs = @($ownAst.FindAll({
+                param($n)
+                $n -is [System.Management.Automation.Language.IfStatementAst] -and $null -ne $n.ElseClause -and
+                $n.ElseClause.Extent.Text.Contains('vswhere found no VSTO build targets')
+            }, $true))
+    Test-Case 'one if statement carries the no-VSTO-targets refusal in its else' 1 $refusalIfs.Count
+    $refusalCondition = ''
+    if ($refusalIfs.Count -eq 1) { $refusalCondition = $refusalIfs[0].Clauses[0].Item1.Extent.Text }
+    Test-Case 'and its condition is the VSTO targets count, not the release switch' '$vstoTargets.Count -gt 0' $refusalCondition
+
     Write-Host ''
     Write-Host "$($script:Checks) assertion(s), $($script:Failures.Count) failure(s)."
     Write-Host ''
@@ -1373,12 +1387,15 @@ $msbuildVersion = (@(Invoke-NativeCommand { & $msbuild -version -nologo 2>$null 
 Say "  MSBuild  $msbuild ($msbuildVersion)"
 Say "  ISCC     $iscc"
 if ($vstoTargets.Count -gt 0) { Say "  VSTO     $($vstoTargets[0])" }
+else { throw 'REFUSING TO BUILD: vswhere found no VSTO build targets (OfficeTools\Microsoft.VisualStudio.Tools.Office.targets) in any Visual Studio with the Office workload.' }
+# The release block sits AFTER the VSTO check's else, never between the two: edc9dfd put it between
+# them, which made that else the release check's, so every testbed build refused here with the VSTO
+# targets found and printed (found 2026-10-03 by the Q130 measurement). -SelfTest pins the shape.
 $dotnet = $null
 if ($Release) {
     $dotnet = Resolve-Dotnet
     Say "  dotnet   $dotnet"
 }
-else { throw 'REFUSING TO BUILD: vswhere found no VSTO build targets (OfficeTools\Microsoft.VisualStudio.Tools.Office.targets) in any Visual Studio with the Office workload.' }
 
 # ---------------------------------------------------------------------------------------------
 Say ''

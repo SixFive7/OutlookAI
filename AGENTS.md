@@ -179,6 +179,17 @@ I will forget and lose performance the coming months."*
   minutes (`Testbed/README.md` section 5b); and no test VM starts with the host
   (`AutomaticStartAction Nothing`, `AutomaticStopAction Save`).
 
+## The Outlook test guests' clocks are frozen (Q130)
+
+**`OutlookAI-Indexed` and `OutlookAI-Unindexed` run with Hyper-V time synchronisation OFF, and
+every live run restores the frozen checkpoint `Testbed/testbed.json` records under `frozenClocks`,
+whose clock stands just after the guest's test data was built.** Decided by the maintainer
+2026-10-03 (Q130 (a)), so the test data never ages. Never re-enable time synchronisation on either
+guest, and never restart or cold-boot one during a run - both bring its clock back at the real
+date. `Testbed/host/Restart-Guest.ps1` refuses a frozen guest; `-Refreeze` is for work outside a
+run, before a new frozen checkpoint (`Docs/live-tier-on-the-vm.md` section 4.4). The build VM and
+`OutlookAI-Exchange` are never frozen: both need real time.
+
 ## Dependencies
 
 **No external applications and no licensed components. Ever.** Decided 2026-09-15, standing.

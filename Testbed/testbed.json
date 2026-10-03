@@ -195,6 +195,32 @@
     "baseFeedStagedFrom": "e4b00fa"
   },
 
+  "frozenClocks": {
+    "_what": "THE FROZEN CLOCKS of the two Outlook test guests - decided by the maintainer 2026-10-03 (Q130 (a) of Docs/overnight-review-2026-10-03.md). Each guest runs with Hyper-V time synchronisation OFF, and every live run restores the checkpoint named here, whose clock stands just after the guest's test data was built: every run starts at frozenUtc, so the hub, the bystander and Corpus A are exactly as old on every run as they were on the first, and no date window ever empties. Testbed/host/Set-GuestClockFrozen.ps1 made each checkpoint (-Execute) and is the guard a run calls before its suite (-Verify); Docs/live-tier-on-the-vm.md section 4.4 is the record. Never the build VM (its runner requires the host's clock within 2 s) and never OutlookAI-Exchange (Microsoft 365 sign-in needs real time): neither has, or may have, a record here.",
+    "_fields": "checkpoint: the frozen checkpoint a run restores (time sync off travels with it). parentCheckpoint: the running checkpoint it was made from - its instant is the frozen one, give or take the 20 s the script reads the clock. frozenUtc: the frozen instant, for people; frozenUnix: the same instant as a Unix second count, which is what scripts read, because ConvertFrom-Json turns an ISO-8601 string into a DateTime whose zone it loses (Testbed/README.md section 5b) - T1/FrozenGuestClockTests holds the two equal. suiteStartWithinMinutes: how long after frozenUtc the guest's clock may be when the suite starts - Set-GuestClockFrozen.ps1 -Verify refuses later. checksHoldForMinutes: how long after frozenUtc every date check the tier makes is PROVEN to hold (T1/FrozenGuestClockTests, from the values below): the frontier margin, Corpus A's declared windows, the unindexed guest's seven-day reach - the difference is what the suite itself may take. timeZone: the guest's, read off it; the frontier margin is its UTC offset less five minutes, and every frozen instant lies in summer time (before 2026-10-25), for good. hubPopulation: the hub's manifest header as the frozen checkpoint holds it, read off the guest - the T1 pins rebuild its plan from these and require the shape key to match.",
+    "_runs": "A run on a frozen guest is: lease, restore the checkpoint (a checkpoint applied to a running VM resumes it at once; a saved one is started), stage, Set-GuestClockFrozen.ps1 -Verify, the suite, rest - with NO restart and NO hub rebuild after the restore: a restart brings the clock back at the real date (Restart-Guest.ps1 refuses a frozen guest), and the restore itself puts back the hub and wipes every artifact. Until this branch merges the guests rest on their unfrozen checkpoints and the per-run hub rebuild goes on there.",
+    "OutlookAI-Unindexed": {
+      "checkpoint": "CP-14B-FROZEN-CLOCK",
+      "parentCheckpoint": "CP-13B-LIVE-GREEN",
+      "frozenUtc": "2026-10-03T14:50:12Z",
+      "frozenUnix": 1791039012,
+      "suiteStartWithinMinutes": 45,
+      "checksHoldForMinutes": 90,
+      "timeZone": "W. Europe Standard Time",
+      "hubPopulation": {
+        "corpusId": "hub-unindexed",
+        "seed": 8181,
+        "anchorUtc": "2026-10-03T14:37:29Z",
+        "store": "tier@vm.invalid",
+        "includeUndatedContacts": false,
+        "includeAllKinds": false,
+        "shapeKey": "v1|hub-unindexed|8181|2026-10-03T14:37:29Z|s:short:45:200:1200|s:normal:33:1200:6000|s:long:15:6000:24000|s:quoted-thread:6:24000:96000|s:huge-thread:1:96000:640000|d:last-24h:2:0:1|d:1d-7d:6:1:7|d:7d-60d:17:7:60|d:60d-1y:30:60:365|d:1y-4y:45:365:1460|f:6:55|f:5:25|f:3:12|f:23:8|p:hub:v2|o:tier@vm.invalid<tier@vm.invalid>",
+        "manifestSha256": "39EAB0AC85866F68A673A4C14E2F9C31C66BE118A1EDE23AEAECF4A34DAC682E"
+      },
+      "_made": "2026-10-03 by Set-GuestClockFrozen.ps1 -Execute, from CP-13B-LIVE-GREEN (taken 2026-10-03T14:49:51Z, right after green run 18 of section 4.1e: fd2c58b staged, Outlook not running). The guest resumed at 14:49:49Z with time sync turned off while it was saved, held its offset from the host to 0.1 s over 20 s, the checkpoint was taken between readings of 14:50:11Z and 14:50:14Z, and the proving restore came back 0.3 s before the frozen instant with time sync off. Its hub was rebuilt before run 18 (anchor 14:37:29Z, 56 items); the bystander's anchor is 2026-10-03T01:17:22Z (C0A5B75C...) and the identity store's 01:18:26Z (A14EAE6E...), read off the frozen guest the same minute. No corpus is declared on this guest (its tier profile does not mount Corpus B)."
+    }
+  },
+
   "liveTestSettings": {
     "_what": "The per-guest values for Testbed/live-test-settings.template.json, one section per guest, keyed by VM name. 'pwsh -File Testbed/host/New-LiveTestSettings.ps1 -VMName <name>' renders that guest's gitignored live-test-settings.json from them. Unlike the file it renders, this section IS committed - which is safe only because a test guest's stores are synthetic: created by this directory's own scripts and named after nothing real. NEVER put a store name from a working Outlook profile here. The maintainer's own settings file stays hand-written and gitignored, and the renderer refuses to write anywhere it could live.",
     "_fill": "Every value that begins '<FILL' is a placeholder, and the renderer REFUSES a guest while any remains, naming each one. They are store names and corpus build parameters that can only be READ OFF THE GUEST - over COM, from the TIER profile the live tier runs under. OutlookAI-Unindexed's were read on 2026-09-24 (its _readOffTheGuest says when and how, and it holds no placeholder now); OutlookAI-Indexed's have not been read yet, so every placeholder left is in its section. Corrected 2026-09-27; this said 'and nobody has read them yet'. Do not type the name you expect to be there; copy the one Outlook reports. Declare only stores that profile mounts: a declared store the running profile does not have is censused, is not found, and refuses the tier. The renderer cannot check that from the host and says so every time it runs.",
