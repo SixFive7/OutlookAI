@@ -358,6 +358,19 @@ function Invoke-SelfTest {
     Check 'it compares the whole computer name, not a prefix' $true ($guardText.Contains('[string]::Equals(') -and -not $guardText.Contains('StartsWith('))
 
     Write-Host ''
+    Write-Host '== the run log is appended with sharing, so the host can read it while it grows =='
+    $say = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Say' }, $true))
+    Check 'Say is defined once' 1 $say.Count
+    $sayText = ''
+    $sayAddContent = 0
+    if ($say.Count -eq 1) {
+        $sayText = $say[0].Body.Extent.Text
+        $sayAddContent = @($say[0].Body.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Add-Content' }, $true)).Count
+    }
+    Check 'it appends through a stream opened with FileShare.ReadWrite' $true $sayText.Contains('[System.IO.FileShare]::ReadWrite')
+    Check 'and never through Add-Content, whose handle shuts every reader out (2026-10-03)' 0 $sayAddContent
+
+    Write-Host ''
     Write-Host "$($script:stChecks) check(s), $($script:stFailures.Count) failure(s)."
     if ($script:stFailures.Count -gt 0) { return 1 }
     return 0
@@ -415,12 +428,21 @@ New-Item -ItemType Directory -Force -Path $ResultsDir | Out-Null
 function Say([string] $m) {
     $line = "[{0:HH:mm:ss}] {1}" -f (Get-Date), $m
     Write-Host $line
-    # Retried, because the log is read while it is written - the host follows it. On the first
-    # run (2026-10-03) the second line, a second after the file was created, never reached it and
-    # survived only in the process's stdout; why the append failed was not established.
+    # APPENDED THROUGH A STREAM THAT LETS OTHERS READ AND WRITE, NEVER Add-Content: the host
+    # follows this log while it is written, and Windows PowerShell 5.1's Add-Content opens a file
+    # so that nobody else may read it while it appends - and fails itself while anyone is reading.
+    # Measured 2026-10-03, both ways: this script lost a line to the host's read, and the host's
+    # read failed on this script's append, which ended a finished run as INFRA. UTF-8 without a
+    # byte order mark; retried, in case something else - a scanner - holds the file for a moment.
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($line + "`r`n")
     for ($attempt = 1; $attempt -le 10; $attempt++) {
-        try { Add-Content -LiteralPath $RunLog -Value $line -Encoding UTF8 -ErrorAction Stop; break }
-        catch { Start-Sleep -Milliseconds 50 }
+        try {
+            $stream = [System.IO.File]::Open($RunLog, [System.IO.FileMode]::Append, [System.IO.FileAccess]::Write, [System.IO.FileShare]::ReadWrite)
+            try { $stream.Write($bytes, 0, $bytes.Length) }
+            finally { $stream.Dispose() }
+            break
+        }
+        catch { Start-Sleep -Milliseconds (50 * $attempt) }
     }
 }
 

@@ -90,7 +90,10 @@
         1  FAIL      a test or a self-test failed, the suite hung or crashed, or the filter
                      selected no test at all
         2  BUILD     the revision did not restore or build
-        3  INFRA     the revision was NOT tested: the VM, the lock, the copy or a time limit failed
+        3  INFRA     the revision was NOT tested - no result came back: the VM, the lock, the copy
+                     or a time limit failed. An error on this side AFTER the guest's results came
+                     back does not make a run INFRA: the results decide, and the error is a note
+                     beside them (2026-10-03 - Get-HostVerdict says why)
         4  REFUSED   bad arguments, a ref that is not a commit, no credential
 
 .PARAMETER Ref
@@ -198,6 +201,75 @@ $MaxClockSkewSeconds = 2
 # Exit codes - see the banner.
 $ExitCodes = [ordered]@{ PASS = 0; FAIL = 1; BUILD = 2; INFRA = 3; REFUSED = 4 }
 
+# What the host asks the guest every few seconds while a run goes: the new whole lines of the guest
+# script's log, whether that script is alive, and whether it has finished. Sent over PowerShell
+# Direct as a script block, and run locally by -SelfTest against a file it locks itself.
+# A MOMENT WHEN THE LOG CANNOT BE OPENED IS 'BUSY', NEVER AN ERROR. On 2026-10-03 the host's read
+# hit the guest script's own append - Windows PowerShell 5.1's Add-Content opens a file so that
+# nobody else may read it while it writes (measured) - and the exception ended a run whose suite
+# had already finished as INFRA. The guest now appends with sharing, and this still never throws
+# on a busy log: the next poll reads what this one could not. FileShare.ReadWrite on this side so
+# the guest's writer is never shut out either.
+$PollGuestBlock = {
+    param($log, $from, $procId, $done)
+    $text = ''
+    $next = $from
+    $busy = $false
+    if (Test-Path -LiteralPath $log) {
+        try {
+            $fs = [System.IO.File]::Open($log, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+            try {
+                if ($fs.Length -gt $from) {
+                    [void]$fs.Seek($from, [System.IO.SeekOrigin]::Begin)
+                    $buffer = New-Object byte[] ([int]($fs.Length - $from))
+                    $read = $fs.Read($buffer, 0, $buffer.Length)
+                    $end = -1
+                    if ($read -gt 0) { $end = [Array]::LastIndexOf($buffer, [byte]10, $read - 1) }
+                    if ($end -ge 0) {
+                        $text = [System.Text.Encoding]::UTF8.GetString($buffer, 0, $end + 1)
+                        $next = $from + $end + 1
+                    }
+                }
+            }
+            finally { $fs.Dispose() }
+        }
+        catch [System.IO.IOException] { $busy = $true }
+    }
+    $isDone = Test-Path -LiteralPath $done
+    $code = $null
+    if ($isDone) {
+        try { $code = ([System.IO.File]::ReadAllText($done)).Trim() }
+        catch [System.IO.IOException] { $isDone = $false; $busy = $true }
+    }
+    [pscustomobject]@{
+        Text  = $text.TrimStart([char]0xFEFF)
+        Next  = $next
+        Alive = ($null -ne (Get-Process -Id $procId -ErrorAction SilentlyContinue))
+        Done  = $isDone
+        Code  = $code
+        Busy  = $busy
+    }
+}
+
+# The guest's log as it stands, for a run that left no results.zip - read with sharing and retried,
+# for the same reason as above, and $null rather than an error when it cannot be read at all.
+$ReadGuestLogBlock = {
+    param($path)
+    if (-not (Test-Path -LiteralPath $path)) { return $null }
+    for ($attempt = 1; $attempt -le 10; $attempt++) {
+        try {
+            $fs = [System.IO.File]::Open($path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+            try {
+                $reader = New-Object System.IO.StreamReader($fs, [System.Text.Encoding]::UTF8)
+                return $reader.ReadToEnd()
+            }
+            finally { $fs.Dispose() }
+        }
+        catch [System.IO.IOException] { Start-Sleep -Milliseconds (200 * $attempt) }
+    }
+    return $null
+}
+
 # A NATIVE PROGRAM RUNS THROUGH HERE (Q78). Under $ErrorActionPreference = 'Stop', Windows
 # PowerShell 5.1 turns the first line a native program writes to stderr into a terminating
 # NativeCommandError when anything redirects it - and a script under Testbed/ runs behind a
@@ -298,28 +370,41 @@ function ConvertFrom-TrxText {
     return [pscustomobject]@{ Counts = $counts; Declared = $declared; Failed = $failed; Skipped = $skipped }
 }
 
-# The host's verdict, from the guest's verdict and what the TRX file says. The guest decides what
-# it can see; the TRX file decides the rest - a run whose filter selected nothing passes in the
-# guest and fails here, because "no test failed" is not "the tests passed".
+# The host's verdict, from what came back. WHEREVER THE GUEST'S run.json AND THE TRX FILE CAME
+# BACK, THEY DECIDE: an error on this side - a log the host could not read for a moment, a poll that
+# failed, a fetch that had to retry - does not turn a run that was tested into "not tested". On
+# 2026-10-03 a run whose suite had finished - 238 tests, one failing - came back INFRA because the
+# host's read of the guest's log hit the guest script's own write, and a caller reading the exit
+# code took a finished, failing run for an untested one. INFRA only when no verdict came back at
+# all; the error is then the reason, and otherwise a note beside the verdict. The TRX file decides
+# what the guest cannot see: a run whose filter selected nothing passes in the guest and fails
+# here, because "no test failed" is not "the tests passed".
 function Get-HostVerdict {
     param(
-        [string] $GuestVerdict,     # the guest script's verdict, or '' when it left none
-        [string] $InfraError,       # set when the host could not complete the run
+        [string] $GuestVerdict,     # the guest script's verdict from run.json, or '' when none came back
+        [string] $InfraError,       # set when something on the host side went wrong during the run
         [object] $Trx,              # ConvertFrom-TrxText's result, or $null
         [bool]   $SuiteRequested,
         [int]    $SelfTestsRun,
         [int]    $SelfTestsFailed
     )
-    if ($InfraError) { return [pscustomobject]@{ Verdict = 'INFRA'; Why = $InfraError } }
+    if (-not $GuestVerdict) {
+        if ($InfraError) { return [pscustomobject]@{ Verdict = 'INFRA'; Why = $InfraError } }
+        return [pscustomobject]@{ Verdict = 'INFRA'; Why = 'the guest script left no verdict - no run.json came back' }
+    }
     switch ($GuestVerdict) {
         'REFUSED' { return [pscustomobject]@{ Verdict = 'REFUSED'; Why = 'the guest script refused the request' } }
-        'PACKAGES-MISSING' { return [pscustomobject]@{ Verdict = 'INFRA'; Why = 'the offline feed still lacks packages after staging them' } }
+        'PACKAGES-MISSING' {
+            $why = 'the offline feed still lacks packages after staging them'
+            if ($InfraError) { $why = "the packages this revision needs could not be staged: $InfraError" }
+            return [pscustomobject]@{ Verdict = 'INFRA'; Why = $why }
+        }
         'RESTORE-FAILED' { return [pscustomobject]@{ Verdict = 'BUILD'; Why = 'the restore failed' } }
         'BUILD-FAILED' { return [pscustomobject]@{ Verdict = 'BUILD'; Why = 'the build failed' } }
         'SUITE-BROKEN' { return [pscustomobject]@{ Verdict = 'FAIL'; Why = 'the suite hung, crashed or left no TRX file' } }
         'FAIL' { }
         'PASS' { }
-        default { return [pscustomobject]@{ Verdict = 'INFRA'; Why = "the guest script left no verdict ('$GuestVerdict')" } }
+        default { return [pscustomobject]@{ Verdict = 'INFRA'; Why = "the guest script left a verdict this runner does not know ('$GuestVerdict')" } }
     }
     if ($SuiteRequested) {
         if ($null -eq $Trx) { return [pscustomobject]@{ Verdict = 'FAIL'; Why = 'the suite ran and no TRX file came back' } }
@@ -423,10 +508,54 @@ Expected: 1</Message></ErrorInfo></Output></UnitTestResult>
     Check 'a hung or crashed suite is FAIL' 'FAIL' (Get-HostVerdict -GuestVerdict 'SUITE-BROKEN' -InfraError '' -Trx $null -SuiteRequested $true -SelfTestsRun 0 -SelfTestsFailed 0).Verdict
     Check 'packages still missing after staging is INFRA - the revision was not tested' 'INFRA' (Get-HostVerdict -GuestVerdict 'PACKAGES-MISSING' -InfraError '' -Trx $null -SuiteRequested $true -SelfTestsRun 0 -SelfTestsFailed 0).Verdict
     Check 'no guest verdict at all is INFRA' 'INFRA' (Get-HostVerdict -GuestVerdict '' -InfraError '' -Trx $null -SuiteRequested $true -SelfTestsRun 0 -SelfTestsFailed 0).Verdict
-    Check 'a host-side failure is INFRA whatever else is known' 'INFRA' (Get-HostVerdict -GuestVerdict 'PASS' -InfraError 'the VM did not resume' -Trx $green -SuiteRequested $true -SelfTestsRun 5 -SelfTestsFailed 0).Verdict
+    Check 'a host-side error with no result back is INFRA' 'INFRA' (Get-HostVerdict -GuestVerdict '' -InfraError 'the VM did not resume' -Trx $null -SuiteRequested $true -SelfTestsRun 0 -SelfTestsFailed 0).Verdict
+    Check 'and names the error' 'the VM did not resume' (Get-HostVerdict -GuestVerdict '' -InfraError 'the VM did not resume' -Trx $null -SuiteRequested $true -SelfTestsRun 0 -SelfTestsFailed 0).Why
+    $lockedLog = 'Exception calling "Open" with "4" argument(s): "The process cannot access the file ''C:\OutlookAI-Q5\run\results\run.log'' because it is being used by another process."'
+    Check 'the 2026-10-03 case: a host-side error AFTER the results came back does not hide a failure - FAIL, not INFRA' 'FAIL' (Get-HostVerdict -GuestVerdict 'FAIL' -InfraError $lockedLog -Trx $trx -SuiteRequested $true -SelfTestsRun 0 -SelfTestsFailed 0).Verdict
+    Check 'and a run whose results passed is PASS' 'PASS' (Get-HostVerdict -GuestVerdict 'PASS' -InfraError $lockedLog -Trx $green -SuiteRequested $true -SelfTestsRun 5 -SelfTestsFailed 0).Verdict
+    Check 'and a build failure is still BUILD' 'BUILD' (Get-HostVerdict -GuestVerdict 'BUILD-FAILED' -InfraError $lockedLog -Trx $null -SuiteRequested $true -SelfTestsRun 0 -SelfTestsFailed 0).Verdict
+    Check 'packages that could not be staged are INFRA, naming why' $true ((Get-HostVerdict -GuestVerdict 'PACKAGES-MISSING' -InfraError 'nuget.org did not answer' -Trx $null -SuiteRequested $true -SelfTestsRun 0 -SelfTestsFailed 0).Why.Contains('nuget.org did not answer'))
     Check 'a guest refusal is REFUSED' 'REFUSED' (Get-HostVerdict -GuestVerdict 'REFUSED' -InfraError '' -Trx $null -SuiteRequested $true -SelfTestsRun 0 -SelfTestsFailed 0).Verdict
     Check 'PASS alone exits 0' 'PASS' (@($ExitCodes.Keys | Where-Object { $ExitCodes[$_] -eq 0 }) -join ',')
     Check 'durations read as minutes and seconds' '4 m 05 s' (Format-Seconds 245)
+
+    Write-Host ''
+    Write-Host '== the guest log is read with sharing, and a locked one is Busy, never an error =='
+    # Real files, in a scratch directory under %TEMP% that is removed afterwards: this is the one
+    # place the self-test touches a disk, because what is being pinned is a file-sharing behaviour.
+    $scratch = Join-Path ([System.IO.Path]::GetTempPath()) ('oai-runner-selftest-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Force -Path $scratch | Out-Null
+    try {
+        $log = Join-Path $scratch 'run.log'
+        $done = Join-Path $scratch 'done.txt'
+        [System.IO.File]::WriteAllText($log, "first`r`nsecond`r`npartial", (New-Object System.Text.UTF8Encoding($true)))
+        $p = & $PollGuestBlock $log 0 $PID $done
+        Check 'whole lines are read, the byte order mark dropped' "first`r`nsecond`r`n" $p.Text
+        Check 'the half-written last line is left for the next poll (3 + 7 + 8 bytes read)' 18 $p.Next
+        Check 'a live script is Alive, not Done, not Busy' 'True|False|False' ('{0}|{1}|{2}' -f $p.Alive, $p.Done, $p.Busy)
+        $p = & $PollGuestBlock $log 18 $PID $done
+        Check 'nothing new until that line ends, and the offset stays' '18|' ('{0}|{1}' -f $p.Next, $p.Text)
+        # The 2026-10-03 failure, reproduced: the log held so that nobody else may read it - what
+        # Windows PowerShell 5.1's Add-Content does while it appends (measured the same day).
+        $holder = [System.IO.File]::Open($log, [System.IO.FileMode]::Open, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+        try {
+            $threw = ''
+            $p = $null
+            try { $p = & $PollGuestBlock $log 0 $PID $done } catch { $threw = $_.Exception.Message }
+            Check 'a log nobody else may open does not throw' '' $threw
+            Check 'it reads as Busy, with nothing read and the offset kept' 'True|0|' ('{0}|{1}|{2}' -f $p.Busy, $p.Next, $p.Text)
+            Check 'and the run is not taken for finished' $false $p.Done
+        }
+        finally { $holder.Dispose() }
+        [System.IO.File]::WriteAllText($done, '1')
+        $p = & $PollGuestBlock $log 0 $PID $done
+        Check 'done.txt ends the wait, and its exit code is read' 'True|1' ('{0}|{1}' -f $p.Done, $p.Code)
+        $holder = [System.IO.File]::Open($log, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+        try { Check 'the fallback read of a log works beside another reader' $true (([string](& $ReadGuestLogBlock $log)).Contains('second')) }
+        finally { $holder.Dispose() }
+        Check 'the fallback read of a log that is not there is null, not an error' $true ($null -eq (& $ReadGuestLogBlock (Join-Path $scratch 'absent.log')))
+    }
+    finally { Remove-Item -LiteralPath $scratch -Recurse -Force -ErrorAction SilentlyContinue }
 
     Write-Host ''
     Write-Host '== every Hyper-V call names the build VM, and none stops, removes or checkpoints one =='
@@ -740,6 +869,8 @@ $guestVerdict = ''
 $session = $null
 $leaseTaken = $false
 $packagesStaged = $false
+$script:guestPid = $null
+$script:guestTimedOut = $false
 $guestStdout = Join-Path $GuestRunRoot 'guest.out.txt'
 $guestStderr = Join-Path $GuestRunRoot 'guest.err.txt'
 
@@ -762,47 +893,58 @@ function Invoke-GuestRun([int] $Attempt) {
         $p = Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $scriptPath, '-RequestPath', $requestPath) -RedirectStandardOutput $outPath -RedirectStandardError $errPath -NoNewWindow -PassThru
         $p.Id
     }
+    $script:guestPid = $guestPid
     $logPath = Join-Path $GuestRunRoot 'results\run.log'
     $donePath = Join-Path $GuestRunRoot 'done.txt'
     $offset = 0
     $deadline = (Get-Date).AddMinutes($RunTimeoutMinutes)
+    # A poll that fails - PowerShell Direct answering late, the guest briefly out of reach - is
+    # retried with a growing pause, and only twelve in a row (about three minutes) end the run.
+    # A BUSY log is not a failure at all: $PollGuestBlock answers it, and the next poll reads on.
+    $failedPolls = 0
     while ($true) {
-        $poll = Invoke-InGuest -ArgumentList @($logPath, $offset, $guestPid, $donePath) -Block {
-            param($log, $from, $procId, $done)
-            $text = ''
-            $next = $from
-            if (Test-Path -LiteralPath $log) {
-                $fs = [System.IO.File]::Open($log, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
-                try {
-                    if ($fs.Length -gt $from) {
-                        [void]$fs.Seek($from, [System.IO.SeekOrigin]::Begin)
-                        $buffer = New-Object byte[] ([int]($fs.Length - $from))
-                        $read = $fs.Read($buffer, 0, $buffer.Length)
-                        $end = [Array]::LastIndexOf($buffer, [byte]10, $read - 1)
-                        if ($end -ge 0) {
-                            $text = [System.Text.Encoding]::UTF8.GetString($buffer, 0, $end + 1)
-                            $next = $from + $end + 1
-                        }
-                    }
-                }
-                finally { $fs.Dispose() }
-            }
-            $isDone = Test-Path -LiteralPath $done
-            $code = $null
-            if ($isDone) { $code = ([System.IO.File]::ReadAllText($done)).Trim() }
-            [pscustomobject]@{ Text = $text.TrimStart([char]0xFEFF); Next = $next; Alive = ($null -ne (Get-Process -Id $procId -ErrorAction SilentlyContinue)); Done = $isDone; Code = $code }
+        if ((Get-Date) -ge $deadline) { $script:guestTimedOut = $true; throw "the guest run did not finish within $RunTimeoutMinutes minute(s)" }
+        $poll = $null
+        try { $poll = Invoke-InGuest -ArgumentList @($logPath, $offset, $guestPid, $donePath) -Block $PollGuestBlock }
+        catch {
+            $failedPolls++
+            if ($failedPolls -ge 12) { throw "the guest did not answer $failedPolls polls in a row: $($_.Exception.Message)" }
+            Start-Sleep -Seconds ([Math]::Min(20, 2 * $failedPolls))
+            continue
         }
+        $failedPolls = 0
         foreach ($line in ($poll.Text -split "`r?`n")) { if ($line.Trim()) { Write-Host "  vm| $line" } }
         $offset = $poll.Next
         if ($poll.Done) { return $poll.Code }
-        if (-not $poll.Alive) {
+        if (-not $poll.Alive -and -not $poll.Busy) {
+            # Ended without done.txt - or wrote it a moment ago: one more look, then $null.
             Start-Sleep -Seconds 2
-            $late = Invoke-InGuest -ArgumentList @($donePath) -Block { param($done) if (Test-Path -LiteralPath $done) { ([System.IO.File]::ReadAllText($done)).Trim() } }
-            if ($late) { return $late }
+            $late = $null
+            try { $late = Invoke-InGuest -ArgumentList @($logPath, $offset, $guestPid, $donePath) -Block $PollGuestBlock } catch { }
+            if ($null -ne $late) {
+                foreach ($line in ($late.Text -split "`r?`n")) { if ($line.Trim()) { Write-Host "  vm| $line" } }
+                if ($late.Done) { return $late.Code }
+            }
             return $null
         }
-        if ((Get-Date) -ge $deadline) { throw "the guest run did not finish within $RunTimeoutMinutes minute(s)" }
         Start-Sleep -Seconds 3
+    }
+}
+
+# After a run ends for a reason on THIS side, with the guest script perhaps still going: wait for
+# its done.txt while its process lives, a few minutes at most, so its results can still be fetched
+# and decide the verdict (Get-HostVerdict). Not after the run's own time limit.
+function Wait-GuestDone([int] $Minutes) {
+    if ($null -eq $session -or $null -eq $script:guestPid -or $script:guestTimedOut) { return }
+    $donePath = Join-Path $GuestRunRoot 'done.txt'
+    $logPath = Join-Path $GuestRunRoot 'results\run.log'
+    $until = (Get-Date).AddMinutes($Minutes)
+    while ((Get-Date) -lt $until) {
+        $poll = $null
+        # An offset past any end reads nothing: only Alive, Done and Busy are wanted here.
+        try { $poll = Invoke-InGuest -ArgumentList @($logPath, [long]::MaxValue, $script:guestPid, $donePath) -Block $PollGuestBlock } catch { }
+        if ($null -ne $poll -and ($poll.Done -or (-not $poll.Alive -and -not $poll.Busy))) { return }
+        Start-Sleep -Seconds 5
     }
 }
 
@@ -943,9 +1085,12 @@ catch {
 }
 finally {
     # Fetch whatever the guest left, even after a failure: a partial log is how a failure is read.
+    # And when the failure was on THIS side, the guest may well finish anyway - it did on
+    # 2026-10-03 - so it is given a few minutes to, and its results then decide the verdict.
     $t0 = Get-Date
     $vmDir = Join-Path $runDir 'vm'
     if ($null -ne $session) {
+        if ($infraError) { Wait-GuestDone -Minutes 5 }
         try {
             New-Item -ItemType Directory -Force -Path $vmDir | Out-Null
             $present = Invoke-InGuest -ArgumentList @($GuestRunRoot) -Block {
@@ -953,7 +1098,17 @@ finally {
                 @('results.zip', 'guest.out.txt', 'guest.err.txt', 'done.txt') | Where-Object { Test-Path -LiteralPath (Join-Path $root $_) }
             }
             foreach ($name in @($present)) {
-                Copy-Item -FromSession $session -LiteralPath (Join-Path $GuestRunRoot $name) -Destination (Join-Path $vmDir $name)
+                # Retried: a file the guest still holds for a moment is not a missing result.
+                for ($attempt = 1; $true; $attempt++) {
+                    try {
+                        Copy-Item -FromSession $session -LiteralPath (Join-Path $GuestRunRoot $name) -Destination (Join-Path $vmDir $name)
+                        break
+                    }
+                    catch {
+                        if ($attempt -ge 5) { throw }
+                        Start-Sleep -Seconds (2 * $attempt)
+                    }
+                }
             }
             $zip = Join-Path $vmDir 'results.zip'
             if (Test-Path -LiteralPath $zip) {
@@ -961,9 +1116,10 @@ finally {
                 [System.IO.Compression.ZipFile]::ExtractToDirectory($zip, $vmDir)
                 Remove-Item -LiteralPath $zip -Force
             }
-            elseif (-not $infraError) {
-                # No zip: the guest died before its end. Bring back its log as it stands.
-                $logLeft = Invoke-InGuest -ArgumentList @((Join-Path $GuestRunRoot 'results\run.log')) -Block { param($p) if (Test-Path -LiteralPath $p) { [System.IO.File]::ReadAllText($p) } }
+            else {
+                # No zip: the guest did not reach its end. Bring back its log as it stands, read
+                # with sharing - the guest may still be writing it.
+                $logLeft = Invoke-InGuest -ArgumentList @((Join-Path $GuestRunRoot 'results\run.log')) -Block $ReadGuestLogBlock
                 if ($logLeft) { Set-Content -LiteralPath (Join-Path $vmDir 'run.log') -Value $logLeft -Encoding UTF8 }
             }
         }
@@ -1032,6 +1188,9 @@ if ($hostVerdict.Why) { $headline += " - $($hostVerdict.Why)" }
 $lines.Add($headline + ' ==')
 $lines.Add("revision   $($sha.Substring(0, 12)) - $subject")
 $lines.Add("           $Ref in $repo$(if ($dirtyCount -gt 0) { " ($dirtyCount uncommitted change(s) NOT included)" })")
+if ($infraError -and $hostVerdict.Verdict -ne 'INFRA') {
+    $lines.Add("host note  something failed on this side - $infraError - and the guest's results came back anyway; they decided the verdict")
+}
 if ($SkipSuite) { $lines.Add('suite      skipped') }
 elseif ($null -ne $trx) {
     $c = $trx.Counts
@@ -1112,6 +1271,7 @@ $summary = [ordered]@{
     skipped    = $(if ($null -ne $trx) { @($trx.Skipped) } else { @() })
     selfTests  = [ordered]@{ run = $selfTests.Count; failed = $selfTestsFailed; skippedByReason = $selfTestSkips.Count; failures = @($selfTests | Where-Object { -not $_.passed } | ForEach-Object { $_.path }) }
     guestVerdict = $guestVerdict
+    hostError  = $infraError
     buildErrors = @($buildErrors)
     packagesStaged = $packagesStaged
     timings    = $timings
