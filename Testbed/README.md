@@ -1142,6 +1142,14 @@ and has since been moved under `Docs/`, which is where it now lives.
 The testbed VMs are not left running. A scheduled task saves any testbed VM nobody is using,
 and this section is the contract for it.
 
+**On the maintainer's workstation this is in force since 2026-10-03, at his request** (`AGENTS.md`,
+"Test VMs stay saved unless in use"). `OutlookAI-TestbedIdleSave` is registered there, and every
+testbed VM is set to `AutomaticStartAction Nothing` and `AutomaticStopAction Save` -
+`host/New-TestbedVm.ps1` makes new ones that way - so a host restart leaves each VM saved rather
+than booting it. The task is the backstop: whatever starts a VM holds a lease while it uses it,
+saves the VM when a long gap without guest work comes, and saves it and releases the lease when
+it is done.
+
 **Saved, not paused, and the difference is the whole point.** `Suspend-VM` freezes a VM but
 keeps its memory resident: the host gets its CPU back and none of its RAM. `Save-VM` writes the
 guest's memory to disk and releases the RAM entirely, and resuming is still far faster than a

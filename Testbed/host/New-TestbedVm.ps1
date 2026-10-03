@@ -688,8 +688,12 @@ $newVmArgs = @{
 if ($SwitchName) { $newVmArgs['SwitchName'] = $SwitchName }
 New-VM @newVmArgs | Out-Null
 
+# Never started with the host, and SAVED - not shut down - when the host stops. The maintainer's
+# rule of 2026-10-03: test VMs stay off, saved to disk, unless something is using them. With the
+# old StartIfRunning + ShutDown pair, his restart at 12:06Z that day booted both Outlook guests
+# again and left them holding his RAM; with these two, a restart leaves every VM saved.
 Set-VM -Name $Name -ProcessorCount $ProcessorCount -CheckpointType $CheckpointType `
-    -AutomaticCheckpointsEnabled $false -AutomaticStopAction ShutDown
+    -AutomaticCheckpointsEnabled $false -AutomaticStartAction Nothing -AutomaticStopAction Save
 
 if ($StaticMemory) {
     Set-VMMemory -VMName $Name -DynamicMemoryEnabled $false -StartupBytes $MemoryStartupBytes

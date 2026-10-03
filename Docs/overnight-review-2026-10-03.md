@@ -484,6 +484,27 @@ them. Merged as `60fba07` (build VM: 3,568 / 0 / 0, 21 self-tests); guest one wa
 - **Recommendation.** (c) then (a). Nothing can be done here on your behalf: it is your real
   mailbox. The `TODO.md` item was corrected to say so.
 
+### Q105 - Delete the old `OutlookAI-TestVM` now?
+- **Primer.** The original single test VM, unused since the two Outlook guests and the build VM
+  took over. It holds 120 GB on E: (10 checkpoints); E: had 122 GB free, and guest work stops at a
+  60 GB floor.
+- **Directions.** (a) Delete it now; (b) keep it until the Q61 rebuild; (c) export it elsewhere,
+  then delete.
+- **Recommendation.** (a): nothing uses it, and the Q61 rebuild deletes it anyway.
+
+### Q106 - Register the testbed idle-save task? *Answered 12:53Z by your VM rule*
+Registered, with every test VM set never to start with the host and to be saved when it stops;
+the rule is in `AGENTS.md`. *Undo:* `Testbed/host/Register-IdleSaveTask.ps1 -Unregister`.
+
+### Q107 - Correct two facts in your global CLAUDE.md
+- **Primer.** It says background commands the main session starts are uncapped and that the
+  heartbeat Monitor runs `persistent`. In this version (VS Code extension 2.1.288) the former were
+  killed at exactly 30 minutes, and Monitors expire after at most 30 minutes, so the heartbeat had
+  to be re-armed every half hour. The session-only watchdog cron also died with every restart.
+- **Directions.** (a) Update its sections 3 and 4 with these measurements, version-tagged, after
+  saving the current file beside it as its section 8 asks; (b) leave it.
+- **Recommendation.** (a).
+
 ## Deviations from the plan
 
 ### V1 - Q96 started after one agent finished, not two
@@ -637,8 +658,10 @@ self-test on the workstation before the build-VM rule reached it.
   not say so (read only, nothing changed).
 - **`measurement-gate.ps1` misreads a duration like "2 m 10 s" as 120 s.** Found by the build-VM
   agent; documented, not yet fixed.
-- **No idle-save scheduled task is registered on the workstation**, so the Outlook guests are never
-  saved when idle either; registering one is a machine-wide change left for you.
+- **No idle-save scheduled task was registered on the workstation** overnight, so the Outlook guests
+  were never saved when idle either. *Settled 12:53Z by your rule "keep them saved unless needed"*
+  (Q106): the task is registered, every test VM is set never to start with the host and to be
+  saved when it stops, and `AGENTS.md` carries the rule.
 
 - **The "other checkout" writing test noise into your audit log was ours.** Q86's agent saw non-live
   runs from worktree `agent-a23f7465...`; that was a helper the Q74 agent started for D1, since
