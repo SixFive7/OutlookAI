@@ -308,7 +308,7 @@ public sealed class LiveEarlyReturnGuardTests
     [InlineData("T3/ComHostSupervisionLiveTests.cs", "NoComHostSurvivesTheServer", 1)]
     [InlineData("LiveUiSearchBackendTests.cs", "FlippingUserHiveValue_DrivesAdviceAndHealthField_BothStates", 1)]
     [InlineData("LiveHeadlessGuaranteeTests.cs", "NonShowMeOperations_NeverCreateAnOutlookWindow", 2)]
-    [InlineData("LiveDisconnectRecoveryTests.cs", "OutlookExit_ReleasesHeldRefsInBackground_HealthProbes_GatewayReattaches", 5)]
+    [InlineData("LiveDisconnectRecoveryTests.cs", "OutlookExit_ReleasesHeldRefsInBackground_HealthProbes_GatewayReattaches", 6)]
     public void EachGuardedTestKeepsEveryOneOfItsGuards(string file, string method, int guards)
     {
         string[] body = TestMethodBody(file, method);
@@ -695,7 +695,13 @@ public sealed class LiveEarlyReturnGuardTests
             "LiveDisconnectRecoveryTests.cs", "OutlookExit_ReleasesHeldRefsInBackground_HealthProbes_GatewayReattaches");
 
         Assert.Equal(5, body.Count(l => l.Contains("LivePopulationCoverage.StandAsideForAUser(", StringComparison.Ordinal)));
-        Assert.DoesNotContain(body, l => l.Contains("LivePopulationCoverage.Require(", StringComparison.Ordinal));
+
+        // And ONE population guard, no more (2026-10-03): step 3b needs index results to fall back to,
+        // and a machine with no indexed store says so through Require - a property of the machine, not
+        // a person to protect, so it is the right side of the split. No user-protection stop may use it.
+        int require = Assert.Single(
+            Enumerable.Range(0, body.Length), i => body[i].Contains("LivePopulationCoverage.Require(", StringComparison.Ordinal));
+        Assert.Contains("IndexedStores", string.Join("\n", body.Skip(require).Take(4)), StringComparison.Ordinal);
         Assert.DoesNotContain(body, l => l.Contains("\"SKIP", StringComparison.Ordinal) || l.Contains("$\"SKIP", StringComparison.Ordinal));
         foreach (string meaning in new[]
                  {
