@@ -8,11 +8,13 @@ using Xunit;
 namespace OutlookAI.McpServer.Tests.T1;
 
 /// <summary>
-/// Pins what outlook_health SAYS about how each store was tied to the index (Q92/Q99):
+/// Pins what outlook_health SAYS about how each store was tied to the index (Q92/Q99, Q113):
 /// <c>index.perStore[].matchedBy / matchedInput / indexStore / matchNote</c> and
 /// <c>index.storesNotInProfile</c>. Built from the real matcher over one profile holding every
 /// kind of store the rule tells apart, so each wire value is pinned against the case that
-/// produces it - and against the neighbouring case that must not.
+/// produces it - and against the neighbouring case that must not. <c>nameAndHash</c>, <c>none</c>
+/// and <c>ambiguous</c> are the rule (Q113 (a)); <c>storeHash</c> and <c>displayName</c> are the
+/// one open exception, Exchange (Q113 (b)).
 /// </summary>
 public sealed class StoreIndexHealthRowTests
 {
@@ -25,17 +27,18 @@ public sealed class StoreIndexHealthRowTests
         return header.Concat(Encoding.Unicode.GetBytes(path + "\0")).ToArray();
     }
 
-    private static StoreIndexIdentity PstStore(string displayName, string path)
-        => new(displayName, 3, StoreHash.Candidates(Convert.ToHexString(Pst(path)), false, false, null, null, null), filePath: path);
+    private static StoreIndexIdentity PstStore(string displayName, string path, string ownName)
+        => new(displayName, 3, StoreHash.Candidates(Convert.ToHexString(Pst(path)), false, false, null, null, null),
+            filePath: path, ownName: ownName);
 
     private static StoreScopeInfo IndexRoot(string ownName, uint hash)
         => StoreScopeInfo.FromStorePrefix(Root + ownName + "($" + hash.ToString("x", System.Globalization.CultureInfo.InvariantCulture) + ")")!;
 
     // One profile: a PST indexed under its own (different) name, a PST the index lacks, an
     // Exchange store tied by its signature hash, an Exchange store the hash does not decide, a
-    // delegate - and, in the index, another profile's store.
-    private static readonly StoreIndexIdentity IdentityPst = PstStore("identity@vm.invalid", @"C:\OutlookAI-Tier\identity.pst");
-    private static readonly StoreIndexIdentity MissingPst = PstStore("archive", @"C:\OutlookAI-Tier\archive.pst");
+    // delegate - and, in the index, another profile's store of the missing PST's name.
+    private static readonly StoreIndexIdentity IdentityPst = PstStore("identity@vm.invalid", @"C:\OutlookAI-Tier\identity.pst", "Outlook Data File");
+    private static readonly StoreIndexIdentity MissingPst = PstStore("archive", @"C:\OutlookAI-Tier\archive.pst", "archive");
     private static readonly StoreIndexIdentity HashedExchange = new("alice@example.com", 0,
         StoreHash.Candidates("00112233", true, false, "0A0B0C0D", null, null), filePath: @"C:\Users\a\alice.ost");
     private static readonly StoreIndexIdentity UndecidedExchange = new("bob@example.com", 4,
@@ -56,14 +59,20 @@ public sealed class StoreIndexHealthRowTests
     {
         StoreIndexMap map = Map();
 
+        // The rule: name and hash, both the store's own.
         StoreStaleness identity = MailService.DescribeStoreMatch(map.Stores[0], null);
-        Assert.Equal(("identity@vm.invalid", "storeHash", "entryId", "Outlook Data File($b25ac20a)"),
+        Assert.Equal(("identity@vm.invalid", "nameAndHash", "entryId", "Outlook Data File($b25ac20a)"),
             (identity.Store, identity.MatchedBy, identity.MatchedInput, identity.IndexStore));
+        Assert.Null(identity.MatchNote);
 
-        // The PST the index lacks says so - not "displayName", although a store of its name is indexed.
+        // The PST the index lacks says so - not "displayName", although a store of its name is
+        // indexed - and its note names the near miss, so nobody has to wonder why.
         StoreStaleness missing = MailService.DescribeStoreMatch(map.Stores[1], null);
         Assert.Equal(("none", (string?)null, (string?)null), (missing.MatchedBy, missing.MatchedInput, missing.IndexStore));
+        Assert.Contains(OtherProfiles.StoreSegment, missing.MatchNote, StringComparison.Ordinal);
+        Assert.Contains("carries another hash", missing.MatchNote, StringComparison.Ordinal);
 
+        // The open exception: an Exchange store by its hash alone.
         StoreStaleness alice = MailService.DescribeStoreMatch(map.Stores[2], null);
         Assert.Equal(("storeHash", "mappingSignature", "alice@example.com($" + AliceRoot.StoreHash!.Value.ToString("x", System.Globalization.CultureInfo.InvariantCulture) + ")"),
             (alice.MatchedBy, alice.MatchedInput, alice.IndexStore));
@@ -73,7 +82,7 @@ public sealed class StoreIndexHealthRowTests
     }
 
     [Fact]
-    public void AStoreTheHashDidNotDecide_SaysWhatTheNameRuleFound()
+    public void AnExchangeStoreTheHashDidNotDecide_SaysWhatTheNameRuleFound()
     {
         StoreIndexMatch bob = Map().Stores[3];
         Assert.Equal(StoreIndexMatchKind.NameRule, bob.Kind);
@@ -85,22 +94,59 @@ public sealed class StoreIndexHealthRowTests
         StoreStaleness notFound = MailService.DescribeStoreMatch(bob, null);
         Assert.Equal(("none", (string?)null), (notFound.MatchedBy, notFound.IndexStore));
 
-        // And a name-rule root is never reported for a store the hash DID decide.
+        // And a name-rule root is never reported for a store the rule DID decide.
         StoreStaleness identity = MailService.DescribeStoreMatch(Map().Stores[0], BobRoot);
         Assert.Equal("Outlook Data File($b25ac20a)", identity.IndexStore);
+        StoreStaleness missing = MailService.DescribeStoreMatch(Map().Stores[1], OtherProfiles);
+        Assert.Equal(("none", (string?)null), (missing.MatchedBy, missing.IndexStore));
     }
 
     [Fact]
-    public void ARefusedHash_IsExplainedInTheRow()
+    public void TwoStoresTheIndexCannotTellApart_SayAmbiguous_AndNameEachOther()
     {
-        StoreScopeInfo first = IndexRoot("old name", StoreHash.Compute(Pst(@"C:\OutlookAI-Tier\identity.pst")));
-        StoreIndexMatch contested = Assert.Single(StoreIndexMatcher.Match(new[] { IdentityPst }, new[] { first, IdentityRoot }).Stores);
+        // Two PSTs sharing both the name and the hash of one index store (the same entry ID, as a
+        // stand-in for a 32-bit collision under one name).
+        string path = @"C:\OutlookAI-Tier\shared.pst";
+        StoreScopeInfo shared = IndexRoot("Archive", StoreHash.Compute(Pst(path)));
+        StoreIndexMap map = StoreIndexMatcher.Match(
+            new[] { PstStore("Archive A", path, "Archive"), PstStore("Archive B", path, "Archive") }, new[] { shared });
 
-        StoreStaleness row = MailService.DescribeStoreMatch(contested, null);
+        StoreStaleness a = MailService.DescribeStoreMatch(map.Stores[0], null);
+        Assert.Equal(("ambiguous", (string?)null, shared.StoreSegment), (a.MatchedBy, a.MatchedInput, a.IndexStore));
+        Assert.Contains("'Archive B'", a.MatchNote, StringComparison.Ordinal);
+
+        StoreStaleness b = MailService.DescribeStoreMatch(map.Stores[1], null);
+        Assert.Equal("ambiguous", b.MatchedBy);
+        Assert.Contains("'Archive A'", b.MatchNote, StringComparison.Ordinal);
+
+        // Not "not in this profile": the index store is this profile's, only not attributable.
+        Assert.Empty(MailService.DescribeStoresNotInProfile(map, Array.Empty<string>()));
+
+        // The problem outlook_health raises names both, and says what happens to searches.
+        string problem = MailService.DescribeUnmatchableStores(new[] { "Archive A", "Archive B" });
+        Assert.Contains("Archive A, Archive B", problem, StringComparison.Ordinal);
+        Assert.Contains("refused", problem, StringComparison.Ordinal);
+        Assert.Contains("leave that index store's mail out", problem, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ARenamesLeftoverRoot_IsNotTheStores_AndTheRowExplains()
+    {
+        // The store's hash under its OLD name only: not tied - the pre-Q113 rule took that root -
+        // and the note says what the leftover is.
+        StoreScopeInfo leftover = IndexRoot("old name", StoreHash.Compute(Pst(@"C:\OutlookAI-Tier\identity.pst")));
+        StoreIndexMatch match = Assert.Single(StoreIndexMatcher.Match(new[] { IdentityPst }, new[] { leftover }).Stores);
+
+        StoreStaleness row = MailService.DescribeStoreMatch(match, null);
 
         Assert.Equal("none", row.MatchedBy);
-        Assert.Contains("more than one index store carries this store's hash", row.MatchNote, StringComparison.Ordinal);
-        Assert.Contains("Outlook Data File($b25ac20a)", row.MatchNote, StringComparison.Ordinal);
+        Assert.Contains("hash only under another name (old name($b25ac20a))", row.MatchNote, StringComparison.Ordinal);
+
+        // Control: with its current root listed too, it is tied there and nothing is noted.
+        StoreIndexMatch tied = Assert.Single(StoreIndexMatcher.Match(new[] { IdentityPst }, new[] { leftover, IdentityRoot }).Stores);
+        StoreStaleness tiedRow = MailService.DescribeStoreMatch(tied, null);
+        Assert.Equal(("nameAndHash", "Outlook Data File($b25ac20a)"), (tiedRow.MatchedBy, tiedRow.IndexStore));
+        Assert.Null(tiedRow.MatchNote);
     }
 
     [Fact]
@@ -108,7 +154,7 @@ public sealed class StoreIndexHealthRowTests
     {
         StoreIndexMap map = Map();
 
-        // Unclaimed by hash: bob's root and the other profile's 'archive'.
+        // Unclaimed: bob's root (his hash did not decide) and the other profile's 'archive'.
         Assert.Equal(new[] { "bob@example.com($13579bdf)", OtherProfiles.StoreSegment },
             MailService.DescribeStoresNotInProfile(map, Array.Empty<string>()));
 
@@ -128,7 +174,7 @@ public sealed class StoreIndexHealthRowTests
         StoreStaleness row = MailService.DescribeStoreMatch(Map().Stores[0], null);
         string json = JsonSerializer.Serialize(row, options);
 
-        Assert.Contains("\"matchedBy\":\"storeHash\"", json, StringComparison.Ordinal);
+        Assert.Contains("\"matchedBy\":\"nameAndHash\"", json, StringComparison.Ordinal);
         Assert.Contains("\"matchedInput\":\"entryId\"", json, StringComparison.Ordinal);
         Assert.Contains("\"indexStore\":\"Outlook Data File($b25ac20a)\"", json, StringComparison.Ordinal);
         Assert.DoesNotContain("matchNote", json, StringComparison.Ordinal);

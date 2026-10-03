@@ -69,16 +69,19 @@
   departed item is off by the UTC offset. Pass the spelling (`CensusColumnMap` knows the index, the
   names list the spelling) when the census is next touched.
 
-- [ ] **Read which store-hash input Outlook uses for a cached Exchange store - the one half of Q99
-  no test machine can measure.** The product now finds each store in the search index by Microsoft's
-  store hash (`McpServer/README.md` load-bearing fact 16). For a PST that is measured; for a cached
-  Exchange store Microsoft documents the input (the profile's `PR_MAPPING_SIGNATURE`) and the product
-  computes it, plus the store's own signature and the entry-ID-plus-`.ost` variant, but no guest can
-  have Exchange, and agents never query the maintainer's Outlook. His own first `outlook_health` on a
-  build with Q99 (a release, or a dev build put on through `Tools/Switch-AddInBuild.ps1` when he asks)
-  answers it, read-only: each Exchange row's `matchedBy` and `matchedInput`. `storeHash` with an input
-  settles which one; `displayName` means no documented input matched and the store is still found by
-  its name, exactly as before - then look at why. Delegate rows stay `delegateFolder` either way.
+- [ ] **Measure which store-hash input - and which name - a cached Exchange store is filed under
+  (Q113 (b)), then remove the one open exception.** Every store that is not Exchange is now matched to
+  the search index by its own name AND hash, never by a guess (Q113 (a), `McpServer/README.md`
+  load-bearing fact 16). An Exchange store still keeps the pre-Q113 match - its hash alone when one
+  documented input fits (`storeHash`), else the old name rule (`displayName`) - because Microsoft
+  documents its input (the profile's `PR_MAPPING_SIGNATURE`; the product also tries the store's own
+  signature and the entry-ID-plus-`.ost` variant) but nothing has measured it, nor the name the index
+  files it under. The Exchange test VM being built answers both: each Exchange row's `matchedBy`,
+  `matchedInput` and `indexStore` in `outlook_health` (or the maintainer's own, read-only, on a build
+  he asks for). Then make `StoreIndexIdentity.InExchangeException` false for the measured store
+  types - the one switch - read the own name for them in `GetStoreDetails`, and delete
+  `StoreIndexMatchKind.StoreHash` and `NameRule` with the tests that pin them
+  (`T1/StoreIndexMatcherTests`, the "open exception" cases). Delegate rows stay `delegateFolder`.
 
 - [ ] **Decide what an UNSCOPED search does with hits from another Outlook profile's stores (Q99
   finding).** One Windows user has one search index for all of their Outlook profiles, so a search
