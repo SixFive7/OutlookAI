@@ -125,7 +125,7 @@ Everything below describes that final shape.
 | --- | --- | --- | --- | --- |
 | Hub | as its account's address, e.g. `tier@vm.invalid` | yes | **first**, on the indexed guest | the **hub population** (56 items - generator v2 with its 12 undated items switched off, Q98 (a) 2026-10-03; section 3b) plus whatever a run is writing |
 | Bystander | as an address, e.g. `bystander@vm.invalid` | yes, and a **declared bystander** | **second**, on the indexed guest | the **bystander population** (300 items - its 42 undated items switched off, Q98 (a); section 3b) - never written by a test. It has **no Inbox and no Sent Items**, on purpose (below) |
-| Corpus A / Corpus B | anything - `Corpus A` in the examples | yes, and a **declared bystander** | **last**, on the indexed guest | the measurement corpus: at least **160,000** items on the indexed guest (`minimumItemCount` in `Testbed/testbed.json`); no minimum is recorded for the unindexed guest's |
+| Corpus A / Corpus B | anything - `Corpus A` in the examples | yes, and a **declared bystander** | **last**, on the indexed guest | the measurement corpus: at least **160,000** items on the indexed guest (`minimumItemCount` in `Testbed/testbed.json`) - **built there at 160,000 on 2026-10-03, as `Corpus A`, mounted in both profiles (section 4.2d)**; no minimum is recorded for the unindexed guest's |
 
 These three are the floor, and the shape of the committed example (section 2.8b says why the table
 stays there). **Section 2.8b adds a fourth store, the identity account's**: named as its address, e.g.
@@ -1516,7 +1516,11 @@ gave the third.
 option (a), keeping the proposed minimum).** `Testbed/testbed.json` records it as
 `corpusIdConvention.minimumItemCount`, and `Testbed/host/New-LiveTestSettings.ps1` refuses to render
 that guest's settings while the recorded corpus is smaller. Build it with `--count 160000`: at the
-recorded 24.8 items/s that is about 1 h 50 min, plus the indexer's crawl. The reason is the same
+recorded 24.8 items/s that is about 1 h 50 min, plus the indexer's crawl. **Built 2026-10-03 (section
+4.2d): 1 h 21 min at 33.0 items/s, through `PostAsNote` into a new store that is not the corpus
+profile's default, with an unelevated Outlook pushing every item into the index as it went** - and at
+that size `Set-OutlookIndexingDisabled.ps1 -Verify` needed a longer timeout on its row count, which it
+now has. The reason is the same
 day's question B, option (c): every index-tier latency bound is now timed against the LARGEST
 indexed store (`T2/LiveLatencyTarget`, pinned by `T1/LatencyTargetTests`), which on a guest is this
 corpus - and against a 20,000-item store an idle VM meets a 2-second bound by construction, where
@@ -2157,8 +2161,9 @@ attachment and conversation index all land; the store computes one conversation 
 and the four faults above. **Answered by v2's probes on the same guest, 2026-09-27 (section 4.1a):**
 items 1, 2, 3 and 8. **Answered by v2's build and the first two hub rebuilds there, 2026-10-03
 (section 4.1d):** item 7, and the half of item 8 the probes left. **Answered on the indexed guest the
-same morning (section 4.2c):** item 6, and item 4's undated rows. **Still open:** the rest of item 4,
-which the first live run there answers, and 5, a two-profile mount nobody has made.
+same morning (section 4.2c):** item 6, and item 4's undated rows; **and item 5 by the 160,000-item
+corpus's two-profile mount (section 4.2d).** **Still open:** the rest of item 4, which the first live
+run there answers.
 
 1. **ANSWERED: `PostAsNote` does; `InPlaceReceived` does NOT.** In a store that is not the profile's
    default, `PostAsNote` kept its first save in the target, parented it in the target folder and showed
@@ -2187,7 +2192,12 @@ which the first live run there answers, and 5, a two-profile mount nobody has ma
    8 item 24):** `$Hash` is computed from the store's entry ID, which for a PST holds its file path
    and nothing else that varies, and the name is the store's own, not the profile's - so one file
    mounted from the same path in two profiles should give ONE scope. Predicted from the measured
-   rule; the two-profile mount itself was not made.
+   rule; the two-profile mount itself was not made. **ANSWERED 2026-10-03: ONE scope** (section
+   4.2d). On `OutlookAI-Indexed` every population store and the new 160,000-item Corpus A are mounted
+   in both profiles, each built - and pushed into the index - by the corpus profile's Outlook. With the
+   TIER profile's Outlook then running for over thirteen minutes, mounting all of them, the index
+   still held exactly one scope per store - `Corpus A($996dc7a9)` 160,006 rows, `bystander@vm.invalid
+   ($38ebfb53)` 374 - with nothing queued and the catalog idle: no second scope, no second crawl.
 6. **ANSWERED 2026-10-03: no time at all, when the rebuild's Outlook is NOT elevated.** It bounds how
    soon after the rebuild the run can start, and so how much of the UTC-offset margin is left for the run
    itself. On `OutlookAI-Indexed` (section 4.2c) the rebuild ran at `-RunLevel Limited`, so its own Outlook
@@ -2872,7 +2882,7 @@ master first (`Testbed/README.md` step 8b). The run starts with step 9a at `-Run
 have none, and the index tests measure the hub and the bystander - where `LiveOrderKeyCollationTests`
 should now find the 12 and 42 undated rows `corpus-indexed` counted; that run is what shows they do.
 
-**Next, planned and NOT started: Corpus A at 160,000 items** (the decision of 2026-09-24, question E).
+**Next, planned here and NOT started: Corpus A at 160,000 items** (the decision of 2026-09-24, question E).
 Estimated from tonight's rates: **about 2.5 to 3.5 hours in all**, within the 6-hour bar. The route the
 rules leave (section 2.9): a NEW store, `Corpus A`, created empty in the corpus profile and attached to
 the tier profile by path while still empty, then `corpus-build --count 160000` into it with a fresh
@@ -2885,7 +2895,111 @@ Outlook as it goes (tonight: every population complete at the first ask; the ear
 2,000 rows a minute, 80 minutes for 160,000 should it lag). The PST grows to about 8.6 GB (Corpus A is
 1.07 GB for 20,000); the guest has 96 GB free, the host 284 GB. Then the settings gain the corpus block
 and the indexed list its third entry, `corpusIdConvention` records the new seed, anchor and 160,000,
-and a checkpoint follows. `TODO.md` carries the steps.
+and a checkpoint follows. **BUILT the same morning by exactly that route - section 4.2d, checkpoint
+`CP-17C-CORPUS-160K`.** The estimate held: 1 h 21 min of build at 33.0 items/s, and 2 h 32 min from
+the first step to the checkpoint; the PST came to 8.5 GB. The settings, the hub rebuild and the
+"For the run" note above are superseded there.
+
+### 4.2d Corpus A at 160,000 items - `OutlookAI-Indexed`, 2026-10-03 (question E)
+
+**Why this section exists.** The production-scale corpus decided on 2026-09-24 (question E, option (a);
+section 2.9), built the same morning as section 4.2c - decided on the maintainer's behalf (D80 of
+`Docs/overnight-review-2026-10-03.md`): guest one would otherwise sit idle while guest two's live run
+finds the fixes both guests need. From `CP-16C-POPULATIONS-V2`, on this guest only, by the route
+section 4.2c planned: a NEW store, `Corpus A`, created empty in the corpus profile and attached by path
+to the tier profile while still empty, then built with a fresh anchor. **Every Outlook start NOT
+elevated**, every step that attaches to Outlook in a `RunLevel Limited` job, every close
+`Testbed/host/Restart-Guest.ps1 -Execute`, every mailbox write through the corpus tool or
+`Add-OutlookPstStore.ps1`. The tools were section 4.2c's (`6d01e72`, the corpus code master has);
+`Build-Corpus.ps1` and `Reset-HubPopulation.ps1` were restaged from master (`d2b13a7`) - the guest's
+`Build-Corpus.ps1` was still the 2026-09-15 one - and `Set-OutlookIndexingDisabled.ps1` with the fix
+below. Raw logs, both manifests and the build's whole output: `.work\g1-cp17c\` in the main checkout.
+
+| Step | What ran | Verdict |
+| --- | --- | --- |
+| 0. The old manifest aside | Session 0, Outlook and the corpus tool not running: `corpus-vm-indexed.jsonl` moved to `C:\OutlookAI-Q5\corpus-history\vm-indexed.20260915T000000Z.jsonl`, its build log and the 2026-09-15 `Build-Corpus.ps1` beside it; the manifest copied off the guest | SHA-256 `0BCFA3DA...` before and after, on guest and host; nothing named `corpus-vm-indexed.jsonl` left - the id is the new corpus's now, and a manifest is named after its id |
+| 1. Create it | `Set-DefaultOutlookProfile.ps1 -Name CorpusProfile -Execute`; `Start-OutlookUnelevated.ps1 -Profile CorpusProfile`; `Add-OutlookPstStore.ps1 -ProfileName CorpusProfile -DisplayName 'Corpus A' -Path C:\OutlookAI-Tier\corpus-a.pst -Execute`, then `-ListOnly`; `corpus-folders` | `decision : AddThenRename`, `after : Store.DisplayName='Corpus A'`; 5 stores, `Accounts.Count : 0`; a 271,360-byte PST holding `Deleted Items items=0` and no other default folder |
+| 2. Attach it to the tier profile, empty | `Restart-Guest.ps1`; default `OutlookAI-Tier`; `Start-OutlookUnelevated.ps1 -Profile OutlookAI-Tier`; `Add-OutlookPstStore.ps1 -ProfileName OutlookAI-Tier -DisplayName 'Corpus A' -Path C:\OutlookAI-Tier\corpus-a.pst -Execute`, then `-ListOnly` | `before : Store.DisplayName='Corpus A'` - the name is the file's own (its root folder's), so the second profile needed no rename; the tier profile reads 4 stores - `tier@vm.invalid`, `identity@vm.invalid`, `bystander@vm.invalid`, `Corpus A` - and 2 accounts |
+| 3. Dry run | `Restart-Guest.ps1`; default `CorpusProfile`; Outlook NOT elevated, 200 s; `corpus-folders` of all five stores; `Build-Corpus.ps1 -Store 'Corpus A' -CorpusId vm-indexed -Seed 7777 -Anchor 2026-10-03 -Count 160000 -Manifest C:\OutlookAI-Q5\corpus-vm-indexed.jsonl` | the plan below; the preflight `OK - the default profile has no accounts, Outlook is up and warm, and ImportPRF is not set`; `Dry-run complete; 160,000 item(s) would be created` |
+| 4. Build | The same with `-Execute`, through `Register-InteractiveTask.ps1 -RunLevel Limited -TimeoutSeconds 28800 -TaskName OutlookAI-Corpus160k` - a task name of its own, because every job unregisters the shared one; watched from session 0 by the manifest's line count, the lease renewed as it went | 09:38 to 11:12 local: both probes verified, `created 160,000 ... failed 0` in 01:20:53, two censuses clean - below |
+| 5. After | `corpus-folders` of all five stores | Corpus A `Deleted Items 19292`, `OutlookAI-Corpus-Folder-6 88037`, `-5 39709`, `OutlookAI-Corpus-Folder-Junk 12962`; the old corpus's `Deleted Items 2461` - twelve fewer, below - and its other folders as before; the hub, the bystander and the identity store unchanged |
+| 6. The index | `Set-OutlookIndexingDisabled.ps1 -Verify -SettleMinutes 2 -WaitMinutes 90 -MinimumOutlookRows 180000`, Outlook still up on the corpus profile; again after the fix below; then a read-only census of Corpus A's index scope | first `NO-INDEXER`, wrongly - below; with the fix `INDEXED`, 180,518 rows on both readings, `store Corpus A($996dc7a9): 160006 row(s)`, the catalog `IDLE` with nothing queued; the census: 160,000 corpus rows, ordinals 1-160,000 each exactly once, every one with a received date, and 5 folder rows |
+| 7. Settings | `testbed.json` (below); `New-LiveTestSettings.ps1 -VMName OutlookAI-Indexed`; `Copy-ToGuest.ps1`; `corpus-verify ... --window 7 --window 30 --window 60` | rendered and admitted - watched 4, indexed `tier@vm.invalid, bystander@vm.invalid, Corpus A`, bystanders `bystander@vm.invalid, Corpus A`, `corpus vm-indexed in 'Corpus A' ... windows 7/30/60 day(s)`; SHA-256 `9674ED3E7343D23856E7DBEC59F910F53482798F1FC3A45FEB1CFD63DF2E67DA` on host and guest; `Freshness: OK - anchor 2026-10-03T00:00:00Z (never re-anchored) ... Windows now/at-anchor: 7d=12,191/12,849, 30d=24,396/24,596, 60d=39,707/39,903` |
+| 8. Hub rebuild | `Restart-Guest.ps1`; `Reset-HubPopulation.ps1 -SelfTest`, the dry run, then `-Execute` at `-RunLevel Limited` | `99 assertion(s), 0 failure(s)`; teardown `considered 136, deleted 136 ... folders removed 2`, `0 corpus item(s) remaining`; `created 68`, census 68/68, read-back 68 of 68; `OUTLOOK.EXE left 2s after the Quit`; the index wait `[1 s] 0 of 68`, then `[16 s] 68 of 68 ... 12 with no received date`; anchored `2026-10-03T09:32:50Z`, 109 minutes of margin; exit 0 in 532 s |
+| 9. Two profiles, one scope | The tier profile's Outlook, started by step 8, left running; `-Verify` at about 10 and 14 minutes | `INDEXED`, 180,520 rows, still exactly one `Corpus A($996dc7a9)` at 160,006 and one scope for every other store, nothing queued - item 5 of section 3b's "What only a guest can answer", answered |
+| 10. State | `Restart-Guest.ps1`; the state; `-Verify` | `outlook processes: 0`, `DefaultProfile: 'OutlookAI-Tier'`, `ImportPRF: ''`, guest C: 85.7 GB free; `INDEXED`, 180,520 rows on both readings |
+
+**What the build printed** (Build-Corpus's own log and the job's output, both in `.work\g1-cp17c\manifests\`):
+
+```
+  items                 : 160,000
+  body bytes (total)    : 1,766,578,340  (mean 11,041)
+  received range        : 2022-10-04T00:00:36Z .. 2026-10-02T23:59:16Z
+  per folder            : Deleted Items=19,292, Sent Items=39,709, Inbox=88,037, Junk Email=12,962
+  selected by window    : 1d=3,311, 7d=12,849, 30d=24,596, 60d=39,903, 90d=44,713, 365d=88,075
+Cross-store residue sweep (before the probes): 12 probe item(s) of 'vm-indexed' found in 'Outlook Data File', which is NOT the target; 12 deleted by the two-key rule.
+  target store: NOT the profile's default store - only the rungs whose item is never unsent (PostAsNote) are probed; every other rung files its item in the default store's Drafts first
+  target folder: 'OutlookAI-Corpus-Folder-6' - a STAND-IN: the store has no visible Inbox of its own, and keeps none
+  PostAsNote                   target=OutlookAI-Corpus-Folder-6 visible=True store=target landedIn=OutlookAI-Corpus-Folder-6 parentMatches=True inFolderTable=True sentFlag=True usable=True
+Placement: VERIFIED via PostAsNote. Items will live in the folders the plan names.
+  PropertyAccessorDates        requested 2026-09-03T00:00:00Z wrote 2026-09-03T00:00:00Z readBack 2026-09-03T00:00:00Z daslIn=True daslOut=True usable=True
+Date fidelity: VERIFIED via PropertyAccessorDates. Received dates drive DASL selection.
+Cross-store residue sweep (after the probes): no probe item of 'vm-indexed' in any other store.
+  progress: created 50,000, skipped 0, failed 0, remaining 110,000, 549,758,351 body bytes, 00:24:17 elapsed
+  progress: created 100,000, skipped 0, failed 0, remaining 60,000, 1,110,739,011 body bytes, 00:50:00 elapsed
+Build finished: created 160,000, already present 0, failed 0, 1,766,578,340 body bytes in 01:20:53 (33.0 items/s).
+Census: 160,000 item(s) found for 160,000 planned; per folder found/planned: Deleted Items=19,292/19,292, Sent Items=39,709/39,709, Inbox=88,037/88,037, Junk Email=12,962/12,962. Every ordinal exists exactly once, in the folder the plan names.
+manifest: 23557073 bytes, 160004 line(s), sha256 AB395B8157AACD0401518CFCFE32DD06C5534EF178B1BA0C090B790C3D944D42
+pst: 8479220736 bytes
+```
+
+The rate held between 27 and 36 items/s for the whole build, the corpus tool's working set growing
+from 53 to 194 MB and Outlook's staying under 90 MB; the guest's C: went from 96.0 to 86.5 GB free and
+the host's E: from 136.1 to 125.9 GB. The index kept up behind it: at 10:10, with about 65,000 items
+built, it held 53,932 of them and had 10,528 notifications queued, and by 11:15 - fifteen minutes after
+the last item - the catalog was `IDLE` with nothing queued. The manifest has 160,000 item lines and three
+folder lines: the stand-ins for the plan's Inbox (`OutlookAI-Corpus-Folder-6`), Sent Items (`-5`) and
+Junk Email (`OutlookAI-Corpus-Folder-Junk`); a store attached with `AddStoreEx` has only Deleted Items of
+its own (section 2.6), and the plan's Deleted Items went there.
+
+**The index check that said NO-INDEXER, and its fix.** `Set-OutlookIndexingDisabled.ps1 -Verify` counts
+every Outlook row in the catalog, per store, on each of its two readings. It did that through ADO with the
+default command timeout, 30 s, and at 180,989 catalog items both readings failed at exactly 30 s with
+`QUERY_E_TIMEDOUT` (`0x80041607`) - and a probe that fails is `NO-INDEXER`, so the script called a
+complete, idle index absent. The same had happened once, mid-build, at 10:09 (74,444 rows on the next
+reading, in 26 s). The count now runs under its own timeout, `$CountCommandTimeoutSeconds` = 900; with it
+each reading took about 70 s and the verdict was `INDEXED`. The TOP 1 probes keep the default.
+
+**The twelve items over plan in the old corpus.** `CP-16C` recorded that the 20,000-item corpus's Deleted
+Items held 2,473 against a plan of 2,461 (section 4.2c). The build's cross-store residue sweep found what
+they were: probe items of corpus `vm-indexed` - by every sign the 2026-09-15 build's own, whose probes ran
+twice against that store (`Build-Corpus.ps1`'s probe and the build's), six rungs each, and whose deletes
+left them in its Deleted Items, where nothing swept - and it deleted them by the two-key rule (each one's
+subject parses as the corpus's reserved probe ordinal, and its EntryID came from that very scan). That store now holds its plan
+exactly - Inbox 10,912, Sent Items 4,964, Deleted Items 2,461, Junk Email 1,663 - and its index scope
+20,016 rows, twelve fewer. Nothing else in it changed.
+
+**The old corpus stays where it is, inert** - decided on the maintainer's behalf. It is the corpus
+profile's default store, so it cannot be detached, and nothing reads it: the tier profile does not mount
+it, and its rows sit under their own scope, `Outlook Data File($23a27f0d)`. Its manifest is in
+`corpus-history\` (and off the guest), so `corpus-teardown` can still empty it.
+
+**How long it stays usable.** The tier refuses to start once a window the settings declare selects
+nothing (`T2/LiveCorpusFreshness`). This guest declares 7, 30 and 60 days; the 7-day window holds 12,191
+today and empties when the newest item, `2026-10-02T23:59:16Z`, is a week old - **from 2026-10-09
+23:59:16 UTC the tier refuses on this guest until the corpus is rebuilt** against a newer anchor. A
+rebuild is the teardown of 160,000 items (or a new store) and about 1 h 35 min of `Build-Corpus.ps1`;
+`TODO.md` carries the question of how often that should be.
+
+| Checkpoint | State |
+| --- | --- |
+| `CP-17C-CORPUS-160K` (parent `CP-16C-POPULATIONS-V2`; taken with the guest running, 2026-10-03 11:56 local) | Outlook not running; default profile `OutlookAI-Tier`; no `ImportPRF`; `INDEXED`, 180,520 rows - `Corpus A($996dc7a9)` 160,006; Corpus A at `C:\OutlookAI-Tier\corpus-a.pst` (8,520,360,960 bytes), mounted in both profiles, its manifest `AB395B81...` (160,004 lines); the old corpus inert, its manifest in `corpus-history\`; the hub at anchor `2026-10-03T09:32:50Z` with its twelve contacts (`8A1257E9...`), the bystander and the identity store as at `CP-16C`; the live-test settings with the corpus staged (`9674ED3E...`); `Set-OutlookIndexingDisabled.ps1` with the count fix, `Build-Corpus.ps1` and `Reset-HubPopulation.ps1` from master; the tools `6d01e72`'s, the server and the suite still `af56efc`'s |
+
+**For the run, which is not part of this:** as section 4.2c says - re-stage the suite from master first
+(its hub-freshness check must know the `|u:contacts` marker), then step 9a at `-RunLevel Limited` and
+9a-ii. The suite then finds Corpus A in the settings: the freshness check runs at start, the corpus is
+the largest indexed store the latency bounds are timed against, and the count tripwire censuses it as a
+bystander. **Before 2026-10-09 23:59 UTC**, or after a rebuild.
 
 ### 4.3 The build VM - `OutlookAI-Build`, 2026-10-03 (Q94, Q102)
 

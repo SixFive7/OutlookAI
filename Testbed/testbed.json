@@ -38,14 +38,40 @@
         "corpusId": "vm-indexed",
         "guest": "OutlookAI-Indexed",
         "indexed": true,
-        "status": "BUILT - 20,000 items, by the records in Docs/live-tier-on-the-vm.md: section 2.4's Q68 block, item 2 (2026-09-24, 'nine days after its 20,000-item corpus was built'), section 8 item 22 (all 20,000 crawled into the index; checkpoint CP-10-INDEXED), and section 4.2b (2026-09-27, after the Q87 rebuild: the index still lists the corpus store, 'Outlook Data File($23a27f0d)', another profile's store). BELOW minimumItemCount: the 160,000-item corpus decided on 2026-09-24 has not been built, so this guest's corpus block cannot render until it is. And it lives in the corpus profile alone, which the tier profile does not mount (liveTestSettings.OutlookAI-Indexed._readOffTheGuest). Corrected 2026-09-27; it said 'NOT BUILT - reserved name only'.",
+        "status": "BUILT - 160,000 items, 2026-10-03 (Docs/live-tier-on-the-vm.md section 4.2d; checkpoint CP-17C-CORPUS-160K): a NEW store, 'Corpus A' (C:\\OutlookAI-Tier\\corpus-a.pst), created empty in the corpus profile and attached by path to the tier profile while still empty, then built there by Testbed/guest/Build-Corpus.ps1 through PostAsNote, every Outlook start NOT elevated - created 160,000, failed 0, a census of 160,000 for 160,000 twice with every ordinal exactly once, and every item in the search index. It replaced, as this guest's corpus, the 20,000-item one of 2026-09-15, which stays where it was, inert (_previous). Corrected 2026-09-27; it said 'NOT BUILT - reserved name only'.",
         "seed": 7777,
-        "anchor": "2026-09-15",
-        "itemCount": 20000,
-        "_filled": "FILLED 2026-10-03 from the corpus's own build record on the guest, read-only: C:\\OutlookAI-Q5\\corpus-vm-indexed.jsonl on OutlookAI-Indexed at CP-15C-SIGNATURE-SUITE-STAGED (written 2026-09-15 22:53:23 guest time, 2,927,841 bytes, SHA-256 0BCFA3DA8D045E0B349837ED320DBB80923797D3A35BAD89B5FF5A8AF8A7FE49). Its header line: Version 1, CorpusId vm-indexed, Seed 7777, AnchorUtc 2026-09-15T00:00:00Z, the default shape key, store 'Outlook Data File' at C:\\OutlookAI-Tier\\Outlook Data File - CorpusProfile.pst, PlacementMethod DraftsThenMoveWithSentFlag, DateWriteMethod PropertyAccessorDates. The header carries no count: itemCount is its 20,000 item lines, ordinals 1-20,000 each exactly once (Docs/live-tier-on-the-vm.md section 4.2c). The build log beside it holds the plan sheet: 20,000 items, 225,282,619 body bytes, Inbox 10,912, Sent Items 4,964, Deleted Items 2,461, Junk Email 1,663 - and the store's Deleted Items holds 2,473, twelve more, at CP-15C already.",
+        "anchor": "2026-10-03",
+        "itemCount": 160000,
+        "_filled": "FILLED 2026-10-03 from the corpus's own manifest, C:\\OutlookAI-Q5\\corpus-vm-indexed.jsonl on OutlookAI-Indexed (23,557,073 bytes, 160,004 lines, SHA-256 AB395B8157AACD0401518CFCFE32DD06C5534EF178B1BA0C090B790C3D944D42; a copy is kept off the guest). Its header line: Version 1, CorpusId vm-indexed, Seed 7777, AnchorUtc 2026-10-03T00:00:00Z, the default shape key, store 'Corpus A' at C:\\OutlookAI-Tier\\corpus-a.pst, PlacementMethod PostAsNote, DateWriteMethod PropertyAccessorDates. The header carries no count: itemCount is its 160,000 item lines, ordinals 1-160,000 each exactly once; the other three lines are the folders the build made - the stand-ins OutlookAI-Corpus-Folder-6 (the plan's Inbox), -5 (Sent Items) and OutlookAI-Corpus-Folder-Junk (Junk Email), because a store attached with AddStoreEx has only a Deleted Items of its own (Docs/live-tier-on-the-vm.md section 2.6).",
+        "expectedPlan": {
+          "_note": "What 'corpus-plan --corpus-id vm-indexed --seed 7777 --anchor 2026-10-03 --count 160000' printed before the build, and what the build's census then found, folder for folder. Recorded so a rebuild of this corpus can be told from a subtly different one.",
+          "bodyBytesTotal": 1766578340,
+          "bodyBytesMean": 11041,
+          "bodiesOver24KB": 11299,
+          "bodiesOver96KB": 1594,
+          "bodiesOverSweepCap": 413,
+          "receivedRangeUtc": [ "2022-10-04T00:00:36Z", "2026-10-02T23:59:16Z" ],
+          "perFolder": { "Inbox": 88037, "Sent Items": 39709, "Deleted Items": 19292, "Junk Email": 12962 },
+          "perSizeClass": { "short": 71727, "normal": 52638, "long": 24336, "quoted-thread": 9705, "huge-thread": 1594 },
+          "perDateBand": { "last-24h": 3311, "1d-7d": 9538, "7d-60d": 27054, "60d-1y": 48172, "1y-4y": 71925 },
+          "unread": 22158,
+          "selectedByWindowDays": { "1": 3311, "7": 12849, "30": 24596, "60": 39903, "90": 44713, "365": 88075 }
+        },
+        "buildCost": {
+          "_note": "What building it cost on OutlookAI-Indexed, 2026-10-03, from the build's own output (section 4.2d).",
+          "itemsPerSecond": 33.0,
+          "elapsed": "01:20:53",
+          "bodyBytes": 1766578340,
+          "created": 160000,
+          "failed": 0,
+          "placementMethod": "PostAsNote",
+          "pstBytes": 8479220736,
+          "note": "PostAsNote writes each item once, into its folder; 33.0 items/s is the build alone. The whole Build-Corpus.ps1 run - plan, preflight, both probes, the build and two censuses of about five minutes each - took 1 h 34 min."
+        },
+        "_previous": "Until 2026-10-03 this guest's corpus was a 20,000-item one: seed 7777, anchor 2026-09-15, built 2026-09-15 into the corpus profile's DEFAULT store, 'Outlook Data File' (C:\\OutlookAI-Tier\\Outlook Data File - CorpusProfile.pst), which the tier profile does not mount and no script may attach to it now that it holds items (Docs/live-tier-on-the-vm.md section 2.6) - below minimumItemCount, and in a profile the tier never opens. It is still there, inert, decided on the maintainer's behalf the same day: it is that profile's default store, so it cannot be detached, and nothing reads it. Its manifest (2,927,841 bytes, SHA-256 0BCFA3DA8D045E0B349837ED320DBB80923797D3A35BAD89B5FF5A8AF8A7FE49, header DraftsThenMoveWithSentFlag / PropertyAccessorDates) was MOVED, unchanged, to C:\\OutlookAI-Q5\\corpus-history\\vm-indexed.20260915T000000Z.jsonl before the new build - the id vm-indexed now names the new corpus, and a manifest is named after its id - and a copy is kept off the guest, so a corpus-teardown can still remove it. The twelve items its Deleted Items held over its plan (2,473 for 2,461) were probe items of corpus vm-indexed - by every sign its own 2026-09-15 build's: the new build's cross-store residue sweep found and deleted them by the two-key rule, so it now holds its plan exactly - Inbox 10,912, Sent Items 4,964, Deleted Items 2,461, Junk Email 1,663 (section 4.2d).",
         "minimumItemCount": 160000,
-        "_minimumItemCount": "A REQUIREMENT, not a measurement - proposed 2026-09-24 by the Q69/Q70 work under 'do not compromise on the tests', and KEPT by the maintainer's decision the same day (question E, option (a)), so the index tier's latency assertions are tests on this guest rather than formalities. Those assertions are timed against the LARGEST indexed store since the same day (question B, option (c)) - which on this guest is this corpus. Every index query in the live tier is held to MaxQueryMs = 2000, and against one 20,000-item store on an idle VM that is met by construction; the maintainer's profile, which those numbers were set against, holds ~160,000 items across five stores (Docs/vm-coverage-analysis.md section 3.3; its largest folder alone is 108,144). So Corpus A on the indexed guest is built at production scale. Testbed/host/New-LiveTestSettings.ps1 refuses to render this guest's settings while the recorded itemCount is below it. The build is deterministic and resumable; at the recorded 24.8 items/s it is roughly 1 h 50 min, plus the indexer's own crawl.",
-        "_note": "Corpus A in the layout of Docs/live-tier-on-the-vm.md section 1.3: the store the index tier reads. Fill the nulls in, and add the expected plan, only when a build has actually produced it."
+        "_minimumItemCount": "A REQUIREMENT, not a measurement - proposed 2026-09-24 by the Q69/Q70 work under 'do not compromise on the tests', and KEPT by the maintainer's decision the same day (question E, option (a)), so the index tier's latency assertions are tests on this guest rather than formalities. Those assertions are timed against the LARGEST indexed store since the same day (question B, option (c)) - which on this guest is this corpus. Every index query in the live tier is held to MaxQueryMs = 2000, and against one 20,000-item store on an idle VM that is met by construction; the maintainer's profile, which those numbers were set against, holds ~160,000 items across five stores (Docs/vm-coverage-analysis.md section 3.3; its largest folder alone is 108,144). So Corpus A on the indexed guest is built at production scale. Testbed/host/New-LiveTestSettings.ps1 refuses to render this guest's settings while the recorded itemCount is below it. The build is deterministic and resumable; at the recorded 24.8 items/s it is roughly 1 h 50 min, plus the indexer's own crawl. MET 2026-10-03: built at 160,000 in 1 h 21 min (33.0 items/s, buildCost), the indexer keeping up behind it.",
+        "_note": "Corpus A in the layout of Docs/live-tier-on-the-vm.md section 1.3: the store the index tier reads, and the largest indexed store on this guest, which the latency bounds are timed against. Its window counts move with the clock: the narrowest window this guest's settings declare (7 days) selects nothing once its newest item, 2026-10-02T23:59:16Z, is a week old, and from then on the tier refuses to start (T2/LiveCorpusFreshness) until the corpus is rebuilt against a newer anchor."
       },
       {
         "corpusId": "vm-unindexed",
@@ -76,7 +102,7 @@
   },
 
   "expectedPlan": {
-    "_note": "What 'corpus-plan' prints for the four parameters in the 'corpus' block - NOT for anything in 'corpusIdConvention', whose corpora have no plan recorded here (the two guests' corpora exist; Corpus B's seed, anchor and itemCount were read off its manifest on 2026-10-03 and are recorded there, Corpus A's have not been read). Committed so a rebuilder can tell a correct rebuild from a subtly different one without having the old store to compare against. check-testbed-references.ps1 does not recompute these - running the tool needs a toolchain - but Testbed/guest/Build-Corpus.ps1 prints them beside the live plan.",
+    "_note": "What 'corpus-plan' prints for the four parameters in the 'corpus' block - NOT for anything in 'corpusIdConvention', whose corpora have no plan recorded here (the two guests' corpora exist; Corpus B's seed, anchor and itemCount were read off its manifest on 2026-10-03 and are recorded there, and so are Corpus A's - the 160,000-item corpus built on OutlookAI-Indexed the same day, whose record carries its own expectedPlan and buildCost). Committed so a rebuilder can tell a correct rebuild from a subtly different one without having the old store to compare against. check-testbed-references.ps1 does not recompute these - running the tool needs a toolchain - but Testbed/guest/Build-Corpus.ps1 prints them beside the live plan.",
     "bodyBytesTotal": 225282619,
     "bodyBytesMean": 11264,
     "bodiesOver24KB": 1428,
@@ -175,14 +201,14 @@
     "_indexedOrder": "indexedStoreDisplayNames on the indexed guest is [hub, bystander, corpus] in THAT order, and the renderer holds it: several index tests read entry 0, which must be the hub whose population carries senders and attachments; the exclude-subfolders measurement reads the first non-hub entry, which must be the bystander whose population has subfolders. Every entry but the corpus must be named as an .invalid address - the product finds a small store in the index only through mail addressed to it, and only for a name shaped like an address. The identity account's store is WATCHED and not in this list: it is written to by the identity tests and holds only its tiny population.",
 
     "OutlookAI-Indexed": {
-      "_readOffTheGuest": "READ, NOT TYPED: every store name below is what Outlook reported over COM in the TIER profile on OAI-INDEXED, 2026-10-03 08:33 guest time, from a NOT elevated Outlook, right after Testbed/guest/Add-OutlookPstStore.ps1 created the bystander there (Docs/live-tier-on-the-vm.md section 4.2c): exactly three stores - tier@vm.invalid (C:\\OutlookAI-Tier\\Outlook.pst, the tier account's delivery store), identity@vm.invalid (C:\\OutlookAI-Tier\\Outlook Data File - IdentityMint.pst, the identity account's - minted, Q87 (a)) and bystander@vm.invalid (C:\\OutlookAI-Tier\\bystander.pst, no account) - and 2 accounts. The identity store is watched and deliberately NOT a bystander (section 2.8b), and not in the indexed list (_indexedOrder). corpus is NULL, and the indexed list names the hub and the bystander only, for two reasons that each suffice: this tier profile does NOT mount Corpus A - it is the corpus profile's default store, 'Outlook Data File', and a store that already holds items is never attached by script (section 2.6) - and Corpus A holds 20,000 items, below the 160,000 corpusIdConvention requires for vm-indexed, which the renderer refuses. Both end when the 160,000-item corpus is built into a store attached to the tier profile while it is still empty (section 2.9; TODO.md). Until then the index tests measure the hub and the bystander, and the corpus tests say they have no corpus. mailSink is filled because Testbed/guest/Install-MailSink.ps1 reported SINK-READY on this guest (section 4.2b step 4.3).",
+      "_readOffTheGuest": "READ, NOT TYPED: every store name below is what Outlook reported over COM in the TIER profile on OAI-INDEXED, 2026-10-03 08:33 guest time, from a NOT elevated Outlook, right after Testbed/guest/Add-OutlookPstStore.ps1 created the bystander there (Docs/live-tier-on-the-vm.md section 4.2c): exactly three stores - tier@vm.invalid (C:\\OutlookAI-Tier\\Outlook.pst, the tier account's delivery store), identity@vm.invalid (C:\\OutlookAI-Tier\\Outlook Data File - IdentityMint.pst, the identity account's - minted, Q87 (a)) and bystander@vm.invalid (C:\\OutlookAI-Tier\\bystander.pst, no account) - and 2 accounts. And a FOURTH, read the same way at 09:32 the same morning, right after Add-OutlookPstStore.ps1 attached it to this profile by path while it was still empty (section 4.2d): Corpus A (C:\\OutlookAI-Tier\\corpus-a.pst, no account) - so 4 stores and 2 accounts. The identity store is watched and deliberately NOT a bystander (section 2.8b), and not in the indexed list (_indexedOrder). Corpus A is the 160,000-item measurement corpus built into it afterwards: watched, a declared bystander, and LAST in the indexed list, under the plain name only the corpus may carry (section 1.3); the corpus block is that corpus's manifest header, and corpusIdConvention records the same seed, anchor and count. Until it was built (09:38-11:12) this section carried corpus null and an indexed list of the hub and the bystander only, because the corpus this guest had then - 20,000 items in the corpus profile's default store - was below the 160,000 the renderer requires and in a store the tier profile does not mount (corpusIdConvention's vm-indexed _previous). mailSink is filled because Testbed/guest/Install-MailSink.ps1 reported SINK-READY on this guest (section 4.2b step 4.3).",
       "machineProfile": "Portable",
       "testHubStoreDisplayName": "tier@vm.invalid",
       "hubPopulationManifestPath": "C:\\OutlookAI-Q5\\corpus-hub-indexed.jsonl",
-      "expectedStoreDisplayNames": [ "tier@vm.invalid", "bystander@vm.invalid", "identity@vm.invalid" ],
-      "indexedStoreDisplayNames": [ "tier@vm.invalid", "bystander@vm.invalid" ],
+      "expectedStoreDisplayNames": [ "tier@vm.invalid", "bystander@vm.invalid", "identity@vm.invalid", "Corpus A" ],
+      "indexedStoreDisplayNames": [ "tier@vm.invalid", "bystander@vm.invalid", "Corpus A" ],
       "expectedDelegateStoreDisplayNames": [],
-      "bystanderStoreDisplayNames": [ "bystander@vm.invalid" ],
+      "bystanderStoreDisplayNames": [ "bystander@vm.invalid", "Corpus A" ],
       "throwawayStoreDisplayName": "throwaway@vm.invalid",
       "probeTerm": "invoice",
       "subjectOnlyProbe": {
@@ -192,7 +218,16 @@
         "subjectTerm": "bulletin",
         "senderFragment": "noticebot"
       },
-      "corpus": null,
+      "corpus": {
+        "_note": "Corpus A in Docs/live-tier-on-the-vm.md section 1.3, built 2026-10-03 (section 4.2d). Every value is the manifest's header line, and corpusIdConvention's vm-indexed record holds the same seed, anchor and count. windowDays copies Testbed/live-test-settings.example.json (_decided).",
+        "storeDisplayName": "Corpus A",
+        "manifestPath": "C:\\OutlookAI-Q5\\corpus-vm-indexed.jsonl",
+        "corpusId": "vm-indexed",
+        "seed": 7777,
+        "anchorUtc": "2026-10-03T00:00:00Z",
+        "itemCount": 160000,
+        "windowDays": [ 7, 30, 60 ]
+      },
       "mailSink": {
         "submitHost": "127.0.0.1",
         "submitPort": 25,
