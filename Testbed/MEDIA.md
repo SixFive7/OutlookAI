@@ -440,10 +440,10 @@ runs.
 
 **Two live tests read state only the OutlookAI add-in writes, the first time it runs inside
 Outlook**, and the script-built guests had no add-in, so both failed there rather than skipping.
-The fix is a build step (`Testbed/README.md` section 1, step 5b): `Testbed/host/Publish-AddInPayload.ps1`
+The fix is a build step (`Testbed/README.md` section 1, steps 5b and 7c): `Testbed/host/Publish-AddInPayload.ps1`
 builds the add-in from a named commit and packages it with the product's own installer, and
-`Testbed/guest/Install-OutlookAIAddIn.ps1` installs it, trusts it and proves the state the tests
-read. The installer it produces is an **artefact** - a script regenerates it from this repository.
+`Testbed/guest/Install-OutlookAIAddIn.ps1` installs it and trusts it (`-Phase Install`, elevated), then
+starts Outlook once NOT elevated and proves the state the tests read (`-Phase FirstRun`). The installer it produces is an **artefact** - a script regenerates it from this repository.
 What it needs that no script can produce is below.
 
 ### Media: the VSTO runtime redistributable
@@ -457,7 +457,7 @@ What it needs that no script can produce is below.
 | Hash provenance | **The same pin `release.yml` enforces**, comparing it against Microsoft's download on every release. Verified again on this host 2026-09-24: hash and length match, Authenticode `Valid`, signed by Microsoft Corporation |
 | Staged at | `.work/media/vstor_redist.exe` on the host - beside the SDK. **On this host an identical copy sits at `Redist/vstor_redist.exe`**, where a local release build expects it; the first builds used that one with `-VstoRuntimePath` |
 | Guest path | `C:\OutlookAI-Q5\media\vstor_redist.exe` |
-| Installed with | `Testbed/guest/Install-OutlookAIAddIn.ps1 -Execute`, which runs it `/q /norestart` - `Installer.iss`'s own switches |
+| Installed with | `Testbed/guest/Install-OutlookAIAddIn.ps1 -Phase Install -Execute`, which runs it `/q /norestart` - `Installer.iss`'s own switches |
 
 **This is not a new dependency - the product already ships it.** Every release compiles it into its
 installer, and the testbed needs the file on disk for two reasons of its own:
@@ -502,15 +502,19 @@ changed; its banner says what they are and what three runs measured.
     pwsh -File Testbed/host/Copy-ToGuest.ps1 -VMName <guest> -Path .work\testbed-addin-payload\AddIn.zip -Destination C:\OutlookAI-Q5\AddIn.zip
     pwsh -File Testbed/host/Copy-ToGuest.ps1 -VMName <guest> -Path .work\media\vstor_redist.exe -Destination C:\OutlookAI-Q5\media\vstor_redist.exe
 
-then on the guest - the unpacking over PowerShell Direct, the install **through the interactive
-task**, because it starts Outlook:
+then on the guest - the unpacking over PowerShell Direct, both phases **through the interactive
+task**: the install at its default run level, which is elevated, and the first run - which starts
+Outlook, and must not be elevated - at `-RunLevel Limited` (Q100, 2026-10-03; on the unindexed guest
+only once its index exclusion is in place, `Testbed/README.md` section 1 step 7b):
 
     Expand-Archive C:\OutlookAI-Q5\AddIn.zip -DestinationPath C:\OutlookAI-Q5\addin -Force
-    .\Register-InteractiveTask.ps1 -Script "& 'C:\OutlookAI-Q5\src\Testbed\guest\Install-OutlookAIAddIn.ps1' -Execute"
+    .\Register-InteractiveTask.ps1 -Script "& 'C:\OutlookAI-Q5\Install-OutlookAIAddIn.ps1' -Phase Install -Execute"
+    .\Register-InteractiveTask.ps1 -RunLevel Limited -Script "& 'C:\OutlookAI-Q5\Install-OutlookAIAddIn.ps1' -Phase FirstRun -Execute"
 
 **Both guests.** The Phase-7 health test declares only `Requires=AddInRegistry`, so it runs on the
-unindexed guest too. **Take the checkpoint after `ADDIN-READY`**, not before: an installed runtime,
-an installed add-in and a trust entry are a real change to the machine.
+unindexed guest too. **Take the checkpoint after `ADDIN-READY`**, which only the first run prints -
+not after the install, which ends `INSTALLED-NEVER-RAN` by design: an installed runtime, an installed
+add-in and a trust entry are a real change to the machine, and the add-in has not run yet.
 
 ## The licence clocks, and the corrections worth reading
 

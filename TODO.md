@@ -69,6 +69,14 @@
         are different facts and only the second happened: the per-account index assumption was NOT
         disproved - the design stopped depending on it, which also retired the riskiest unverified
         assumption in the whole layout.
+  - [ ] **Run the two-phase add-in install on a guest (Q100, decided 2026-10-03).**
+        `Testbed/guest/Install-OutlookAIAddIn.ps1` is now `-Phase Install` (elevated, never starts
+        Outlook) and `-Phase FirstRun` (`-RunLevel Limited`, reads the started Outlook's token);
+        proven on the host only - `-SelfTest` 168/0 under 5.1 and 7, eleven mutants caught. Both
+        guests were busy when it was split, so it waits for the next guest rebuild or a free slot,
+        from a checkpoint with the add-in NOT installed. `Docs/live-tier-on-the-vm.md` section 2.3,
+        "The two phases have NOT run on a guest", lists what the run must record; replace that
+        paragraph and the script's banner with what it did.
   - [ ] **Run `Testbed/guest/Measure-SweepCost.ps1` once.** It is the reconstruction of
         `Docs/v3-probes/soakfix13-probe-sweep-cost.ps1`, which is gitignored and gone with its
         scratch directory. Written from the shipped `SweepFolder` source, read-only by

@@ -183,6 +183,31 @@ Each **deviation** names what the plan said, what happened instead, and why.
   note on what that night's older copy printed.
 - Result: 3,346 / 0 / 0 non-live; all four checks pass in both shells; pushed as `847c258`.
 
+### D33-D43 - Q100: how the add-in install and Outlook's first start were split
+- **D33 - One script, two `-Phase` values** (`Install` elevated, `FirstRun` unelevated), rather than
+  a separate first-run script: one verdict, one self-test, one file to stage - the same shape as
+  `Add-IdentityAccount.ps1`.
+- **D34 - `-Execute` without `-Phase` is refused**, naming both commands, so an old command line
+  cannot quietly do half the job.
+- **D35 - The install phase ends `INSTALLED-NEVER-RAN` (exit 2)**, keeping "only ADDIN-READY exits 0".
+- **D36 - An install record file is written beside the log**, so `-Verify` cannot report
+  ADDIN-READY between the phases from an older build's state.
+- **D37 - The first run reads the started Outlook's token** and fails an elevated or unreadable one;
+  "not elevated" used to be inferred from the task's run level, never read.
+- **D38 - The first run's preflight blocks only on install, registration, trust, build, runtime or
+  hard-disable problems** - an untrusted start would put the trust prompt on screen and hang.
+- **D39 - The install still requires the interactive session**; installers have never run over
+  PowerShell Direct.
+- **D40 - The first run requires the payload manifest**, keeping ADDIN-READY tied to the commit.
+- **D41 - Order on both guests: install stays at step 5b; the first run is a new step 7c**, after
+  the index exclusion (7b) - an unelevated Outlook indexes itself within a minute, so the
+  unindexed guest needs its exclusion first.
+- **D42 - The printed command path is `C:\OutlookAI-Q5\Install-OutlookAIAddIn.ps1`**, the path every
+  guest run actually used.
+- **D43 - The first run refuses elevation on both guests**, not only the indexed one.
+- **Not yet run on a guest** (both were busy): the guest proof is recorded as pending in the runbook,
+  README row 7c, the script's banner and `TODO.md`.
+
 ## Open questions only you can answer
 
 ### Q104 - Seven tagged test leftovers in your workstation's hub mailbox
@@ -264,6 +289,10 @@ The fifth - the first live run on guest two - could not be: its worktree's regis
 lost while it was stopped (the folder was left without its `.git` file; its branch had no commits).
 A fresh agent restarted that run from `CP-12B-POPULATIONS-V2`, restaging from master. The orphaned
 folder `.claude/worktrees/agent-a87151b711b18a939` is left in place for now; it holds only scratch.
+
+### V9 - Q100: README rows
+The brief said the add-in step was README rows 8b and 8c; it is row 5b (8b and 8c do not mention
+the add-in and were left unchanged). The split adds a new row 7c for the first run.
 
 ## Notes (no decision needed)
 
