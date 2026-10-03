@@ -164,13 +164,13 @@ namespace OutlookAI.Core.Audit
             if (IsSameOrUnder(directory, DefaultDirectory))
             {
                 return "This is a test process: its audit lines go to '" + redirectedTo + "', and the real audit log under '"
-                    + DefaultDirectory + "' is refused, so no test can write to it.";
+                    + DefaultDirectory + "' is refused, so no test can write or read it.";
             }
 
             if (!IsSameOrUnder(directory, Path.GetTempPath()))
             {
-                return "This is a test process: its audit lines go to '" + redirectedTo + "', and it may write an audit log only "
-                    + "under the temp directory - '" + directory + "' is outside it.";
+                return "This is a test process: its audit lines go to '" + redirectedTo + "', and it may write or read an audit "
+                    + "log only under the temp directory - '" + directory + "' is outside it.";
             }
 
             return null;

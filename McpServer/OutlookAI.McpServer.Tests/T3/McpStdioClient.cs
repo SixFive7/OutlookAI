@@ -403,8 +403,9 @@ public sealed class McpStdioClient : IAsyncDisposable
 
     /// <summary>
     /// Fails the test rather than the machine's audit log: a <c>tools/call</c> the server would
-    /// answer by WRITING its audit log, without Outlook being involved at all, is refused unless
-    /// the test declared contact with the machine's own data (Q86).
+    /// answer by WRITING its audit log, without Outlook being involved at all - or by READING it,
+    /// which is all <c>audit_log</c> does (Q93) - is refused unless the test declared contact with
+    /// the machine's own data (Q86).
     /// <para>
     /// The server this client starts is the shipped executable, and nothing may redirect a
     /// shipped process's audit log - no setting, no environment variable - so whatever it audits
@@ -455,6 +456,16 @@ public sealed class McpStdioClient : IAsyncDisposable
     /// </summary>
     internal static string? DescribeAuditLogContact(string? tool, JsonElement arguments)
     {
+        if (string.Equals(tool, "audit_log", StringComparison.Ordinal))
+        {
+            // Q93. The server reads the log its own process appends to, which for this tier is the
+            // machine's REAL one, for every argument shape that passes validation - and a failing
+            // assertion would print what it read. Its validation and its reading are pinned in T1,
+            // in-process, where the log is the test run's throwaway one.
+            return "'audit_log' READS the server's audit log - on this machine the maintainer's real one - for every "
+                + "argument shape that passes validation.";
+        }
+
         if (string.Equals(tool, "discard_draft", StringComparison.Ordinal))
         {
             string? id = arguments.ValueKind == JsonValueKind.Object

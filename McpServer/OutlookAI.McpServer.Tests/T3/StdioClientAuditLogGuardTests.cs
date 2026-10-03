@@ -4,9 +4,10 @@ using Xunit;
 namespace OutlookAI.McpServer.Tests.T3;
 
 /// <summary>
-/// The stdio tier's audit-log guard, tested rather than trusted (Q86): <see cref="McpStdioClient"/>
+/// The stdio tier's audit-log guard, tested rather than trusted (Q86, Q93): <see cref="McpStdioClient"/>
 /// refuses to send a <c>tools/call</c> the server would answer by writing the machine's REAL audit
-/// log, unless the test declared contact with the machine's own data.
+/// log - or by reading it, which is what <c>audit_log</c> does - unless the test declared contact
+/// with the machine's own data.
 /// <para>
 /// Built so that a BROKEN guard still cannot leak a line. The end-to-end refusal uses an id that
 /// the guard refuses (it is not a hit id) but the server would reject at id resolution if it ever
@@ -30,6 +31,22 @@ public sealed class StdioClientAuditLogGuardTests
         Assert.Contains("discard_draft", refused.Message, StringComparison.Ordinal);
         Assert.Contains("audit log", refused.Message, StringComparison.Ordinal);
         Assert.Contains("T1", refused.Message, StringComparison.Ordinal);
+        Assert.Contains(nameof(McpStdioClient.OutlookReachingToolsAllowed), refused.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AnUndeclaredClient_RefusesAuditLog_BeforeSendingIt()
+    {
+        // audit_log READS the log, which for a server this tier starts is the machine's real one.
+        // The arguments are ones the server would itself refuse at validation (a hit id), so even
+        // a broken guard could not make this test read the real log.
+        await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();
+
+        InvalidOperationException refused = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => client.CallToolAsync("audit_log", new { entry_id = "h12" }));
+
+        Assert.Contains("audit_log", refused.Message, StringComparison.Ordinal);
+        Assert.Contains("audit log", refused.Message, StringComparison.Ordinal);
         Assert.Contains(nameof(McpStdioClient.OutlookReachingToolsAllowed), refused.Message, StringComparison.Ordinal);
     }
 
@@ -65,5 +82,15 @@ public sealed class StdioClientAuditLogGuardTests
     public void ThePredicate_IgnoresACallWithNoArguments()
     {
         Assert.Null(McpStdioClient.DescribeAuditLogContact("discard_draft", default));
+    }
+
+    [Fact]
+    public void ThePredicate_RefusesAuditLog_WhateverItsArguments()
+    {
+        // By name: every audit_log call that passes validation reads the real log, and which ones
+        // pass is the server's judgement, not this client's.
+        Assert.NotNull(McpStdioClient.DescribeAuditLogContact("audit_log", default));
+        Assert.NotNull(McpStdioClient.DescribeAuditLogContact("audit_log", JsonSerializer.SerializeToElement(new { top = 1 })));
+        Assert.NotNull(McpStdioClient.DescribeAuditLogContact("audit_log", JsonSerializer.SerializeToElement(new { entry_id = "h12" })));
     }
 }

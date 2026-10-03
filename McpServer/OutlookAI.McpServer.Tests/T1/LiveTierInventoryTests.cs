@@ -542,7 +542,7 @@ public sealed class LiveTierInventoryTests
         if (!declaresContact)
         {
             // Outside the live tier, naming a guarded tool is not by itself a fault: every
-            // tools/list roster assertion mentions all 21 tool names. The client's runtime
+            // tools/list roster assertion mentions all 22 tool names. The client's runtime
             // refusal is what stops a call, and it needs no declaration to fire.
             return StdioDeclarationVerdict.Ok;
         }

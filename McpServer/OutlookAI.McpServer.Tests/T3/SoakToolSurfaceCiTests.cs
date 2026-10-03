@@ -5,9 +5,9 @@ namespace OutlookAI.McpServer.Tests.T3;
 
 /// <summary>
 /// Soak fix D37/D38/D39/D46 wire pins (user-ordered tool-surface refinements): the
-/// tool count is EXACTLY 21 (D37: echo/index_status/health deleted, outlook_health +
+/// tool count is EXACTLY 22 (D37: echo/index_status/health deleted, outlook_health +
 /// list_signatures added; D38: manage_signature added; D39: move_mail + archive_mail
-/// added; D46: update_draft + discard_draft added), list_folders lost its depth knob and gained stable offset paging (page
+/// added; D46: update_draft + discard_draft added; Q93: audit_log added), list_folders lost its depth knob and gained stable offset paging (page
 /// 1000 since D38), read gained body_offset paging, thread explains its two lookup
 /// keys, the draft tools carry the optional signature parameter with the
 /// pick-the-best-signature steering hint, and manage_signature carries the
@@ -16,7 +16,7 @@ namespace OutlookAI.McpServer.Tests.T3;
 /// </summary>
 public sealed class SoakToolSurfaceCiTests
 {
-    /// <summary>The 21 advertised tools after D46 (exact - a change here is a reviewed surface decision).</summary>
+    /// <summary>The 22 advertised tools after Q93 (exact - a change here is a reviewed surface decision).</summary>
     private static readonly string[] ExpectedTools =
     [
         "search", "thread", "read", "save_attachment",
@@ -25,11 +25,11 @@ public sealed class SoakToolSurfaceCiTests
         "open_in_outlook", "goto_folder", "show_search_results",
         "new_draft", "reply_draft", "replyall_draft", "forward_draft",
         "update_draft", "discard_draft",
-        "send", "outlook_health",
+        "send", "outlook_health", "audit_log",
     ];
 
     [Fact]
-    public async Task ToolCount_IsExactlyTwentyOne_WithTheExpectedRoster()
+    public async Task ToolCount_IsExactlyTwentyTwo_WithTheExpectedRoster()
     {
         await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();
 
@@ -40,7 +40,7 @@ public sealed class SoakToolSurfaceCiTests
             .ToArray();
 
         Assert.Equal(ExpectedTools.OrderBy(n => n, StringComparer.Ordinal).ToArray(), names);
-        Assert.Equal(21, names.Length);
+        Assert.Equal(22, names.Length);
     }
 
     [Fact]

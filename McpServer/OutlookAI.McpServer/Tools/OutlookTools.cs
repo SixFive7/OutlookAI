@@ -147,7 +147,8 @@ internal static class ServerRuntime
 /// <summary>
 /// The MCP tool surface (v3.MD section 0.5): search/thread/read/save_attachment,
 /// move_mail/archive_mail (D39), list_accounts/list_folders/list_signatures,
-/// manage_signature, the show-me tools, the draft tools, send, and outlook_health.
+/// manage_signature, the show-me tools, the draft tools, send, outlook_health and
+/// audit_log (Q93).
 /// Payloads are compact JSON (camelCase, nulls omitted - section 12 discipline);
 /// domain failures come back as an {"error": ...} object instead of protocol faults
 /// so agents can react.
@@ -465,6 +466,51 @@ public static class OutlookTools
     public static async Task<CallToolResult> OutlookHealth(CancellationToken cancellationToken = default)
     {
         return await GuardAsync(cancellationToken, () => ServerRuntime.Service.Health());
+    }
+
+    // audit_log (Q93) reads back the log every write tool appends to. It is the ONE tool that
+    // carries MCP tool annotations, and they are the read-only mark for anything that classifies
+    // tools from metadata - a client, or the test client's classification of write-capable
+    // tools: ReadOnly (readOnlyHint), not Destructive, Idempotent, and closed-world. T1 pins all
+    // four on the attribute and T3 pins them on the wire. The description says the same in words.
+    //
+    // It runs MailService.ReadAuditLog, which is static: answering builds no COM gateway, starts
+    // no COM host and works with Outlook closed or wedged. The read never blocks the server's own
+    // appends (AuditLogReader opens the file shared for read, write and delete), and only the
+    // live audit.log is read - never a renamed or archived one.
+    [McpServerTool(Name = "audit_log", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
+    [Description("Read OutlookAI's audit log: the record of every change made through OutlookAI on this machine, by this "
+        + "session and any other - drafts created, revised and discarded, attachments saved, mail moved and archived, each "
+        + "send step (token issued, sent, refused, outcome unknown), signature changes and mails opened on screen. Newest "
+        + "first. Read-only: it changes nothing, never starts or touches Outlook, and works with Outlook closed.\n\n"
+        + "Use it to answer what was done and when, to check whether a call that failed with outcome \"unknown\" actually "
+        + "took effect, or to trace one item: entry_id matches every line naming that EntryID (entryId, newEntryId, "
+        + "sourceEntryId), and a move or discard records the item's NEW EntryID as newEntryId - follow it to trace the "
+        + "item further.\n\n"
+        + "Each entry has utc, operation and the line's fields - metadata only (ids, stores, accounts, folders, paths), never "
+        + "a subject or body. truncated=true means older entries matched beyond top: narrow with after/before/operation/"
+        + "entry_id instead of raising it. Lines that cannot be parsed are counted in malformedLines, never returned. Read "
+        + "advice whenever present.")]
+    public static async Task<CallToolResult> AuditLog(
+        [Description("Only entries at/after this instant (ISO 8601, e.g. 2026-10-03 or 2026-10-03T08:00:00Z; no offset means UTC).")]
+        string? after = null,
+        [Description("Only entries before this instant (ISO 8601).")]
+        string? before = null,
+        [Description("Operation name(s), comma-separated, matched case-insensitively - e.g. new_draft, reply_draft, "
+            + "update_draft, discard_draft, send, send_refused, move_mail, archive_mail, save_attachment, manage_signature, "
+            + "open_in_outlook. A trailing * matches a family: send* is every send step (send_token_issued, send, "
+            + "send_refused, send_outcome_unknown). When nothing matches, advice lists the operations the log does hold.")]
+        string? operation = null,
+        [Description("EntryID (hex) of a mail or draft, as read, the draft tools and move results return it. Matches every "
+            + "line naming it as entryId, newEntryId or sourceEntryId. A hit id (h12) is refused: hit ids belong to one "
+            + "session and the log records EntryIDs.")]
+        string? entry_id = null,
+        [Description("Max entries (1-100, default 25), newest first. truncated=true means more matched.")]
+        int top = MailService.AuditLogTopDefault,
+        CancellationToken cancellationToken = default)
+    {
+        return await GuardAsync(cancellationToken, () => MailService.ReadAuditLog(
+            ParseUtc(after, "after"), ParseUtc(before, "before"), operation, entry_id, top));
     }
 
     [McpServerTool(Name = "list_accounts")]
