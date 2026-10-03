@@ -37,9 +37,6 @@
     "Corpus A"
   ],
 
-  "_throwaway": "The THROWAWAY data file (Q96 (iv), 2026-10-03): a small data file with NO Drafts folder that Testbed/guest/Reset-ThrowawayStore.ps1 recreates in the tier profile before every live run, so the live tier can prove a draft tool CREATING a Drafts folder and reporting it in createdFolders - the hub has one, so on the hub that path never runs. The write allowlist grants it draft and delete and nothing else. It is in NO other list on purpose: watched, the count tripwire would fail the run over the Drafts folder the proof creates; a primary, the identity tests would draft in it; a bystander or delegate, nothing may write to it. The loader refuses it in any of them, and refuses the hub. Leave the key out on a machine without one - the proof then says it had nothing to run against.",
-  "throwawayStoreDisplayName": "throwaway@vm.invalid",
-
   "_probeTerm": "A word the index is proven to hit in every indexed store, and in one text attachment of the hub. On a test guest it is the generator's CorpusPopulation.ProbeTerm - in the body vocabulary of every population and of the measurement corpus. Empty on a guest with no index.",
   "probeTerm": "invoice",
 

@@ -278,6 +278,8 @@ the new one searches the right root and returns none. Build VM: 3,408 / 0 / 0 on
 - **Undo.** Build without the new plan option.
 
 ### D63-D73 - Q96: folder-creation reporting, finished
+*Superseded the same day: the maintainer dropped Q85's reporting requirement, and D120-D125 removed
+what these built. D65's unchanged outcome and "no draft" wording stay (D122).*
 Merged as `a0f6310` (build VM: 3,456 / 0 / 0, 21 self-tests). The live proof is pending the first
 guest run with the new throwaway data file (runbook §8 item 25).
 - **D63 - After a failed creating call, compare the top-level folder lists before and after**, rather
@@ -338,6 +340,8 @@ Built and checkpointed as `CP-16C-POPULATIONS-V2` (hub 68 = 56 + 12 undated cont
   one's live run in parallel would fix the same failures twice.
 
 ### D81-D87 - Q96's follow-ups, implemented
+*Superseded the same day by D120-D125, except D83 (`outlook_failed_before_delete`), which stays
+(D122).*
 Merged as `d62c15b` (build VM on the branch: 3,491 / 0 / 0, 21 self-tests; 16 of 16 mutants caught).
 - **D81 - "Created" means a new folder that now holds the asked-for slot**, judged by the same
   non-creating lookup the discard and update checks use. Every other new folder is reported in a new
@@ -533,6 +537,61 @@ name; `move_mail` kept Outlook's escapes, breaking its documented undo for such 
   rendered with the name `q99 throwaway 50% off*?x`): the URL encodes, the display path does not,
   folder searches find the item - D105 stands. Guest one's throwaway keeps its ordinary name in
   `testbed.json`; *alternative:* give it such a name so every run re-measures D105.
+
+### D120-D125 - Q85 dropped: the folder-creation reporting removed
+The maintainer, 2026-10-03: *"It feels like the reporting directive is adding a lot of programmatic
+complexity here. Let's drop that requirement and remove as much complexity from our code concerning
+this as possible."* Q85 was "may create, must report" for the paths that put an item INTO a special
+folder - `new_draft`, `reply_draft`/`replyall_draft`/`forward_draft` and `discard_draft` - and Q96 built
+it out. Removed: the `createdFolders`/`appearedFolders` fields of those tools (result, error object,
+exceptions), their sentences and audit-line field, `SpecialFolders.GetDefaultFolderReportingCreation`,
+`CreatingLookupReport` and the re-check of a failed lookup, `ComErrorTokens.DraftsFolderCreationUnverified`,
+the live created-folder proof and everything that existed for it (D123), and their T1 tests. Kept: Q84
+(no lookup creates a folder), every lookup that FINDS a folder (the PST Archive in the Inbox's `0x800F`
+block, the true root, a discarded PST draft by the EntryID it keeps) and every Mailbox Safety mechanism.
+- **D120 - Only the draft tools' and `discard_draft`'s reporting goes; `archive_mail`'s and
+  `move_mail`'s `createdFolders` stay.** Both predate Q85 - `move_mail` names the folders
+  `create_folder: true` was asked to make (2026-08-20), `archive_mail`'s is Q84 decision (c) - and the
+  live tests on both guests assert them. *Alternative:* drop `archive_mail`'s too, which would also
+  remove its top-level comparison and its `ArchiveFolderStateUnreadable` refusal - a behaviour change to
+  a write path the decision did not name.
+- **D121 - The three destinations call `Store.GetDefaultFolder` directly again**, as they did before
+  Q85, instead of the non-creating lookup first: Outlook hands back a folder that exists, so the first
+  step only served the before/after proof. They stay on T1's reviewed list of creating calls,
+  relabelled "may create". *Alternatives:* keep the non-creating lookup first (more reads per draft for
+  nothing now); go through `SpecialFolders.GetDefaultFolderMayCreate` (it classifies the failure, and the
+  draft paths need the COM failure itself for their messages).
+- **D122 - Kept, because each is true whatever happens to folders:** a `new_draft` whose Drafts lookup
+  failed says "NO DRAFT WAS CREATED ... Retrying cannot leave a second draft", outcome `unchanged`
+  (`DraftsFolderUnavailable`); "A DRAFT MAY HAVE BEEN SAVED" only once the compose has started
+  (`DraftNotStarted` before it); a discard that fails before its delete says the draft was NOT deleted
+  (`outlook_failed_before_delete`). **Removed with the reporting:** `DraftsFolderCreationUnverified` and the
+  draft paths' folder sentences ("CREATED before this failed", "No folder was created either", "could NOT be
+  checked"), which only said what the re-check found. *Alternative:* fold `DraftsFolderUnavailable` into
+  `DraftNotStarted` - one token fewer, but the answer would stop saying it was the account's Drafts folder
+  that failed.
+- **D123 - The throwaway data file goes entirely**: `Reset-ThrowawayStore.ps1` (step 9a-ii),
+  the `throwawayStoreDisplayName` setting (loader, renderer, templates, `testbed.json`), the allowlist's
+  draft+delete grant for it, the tagged-post helper and the Drafts-designation reader, and
+  `T1/ThrowawayStoreTests`, `T2/ThrowawayStoreProof` and `T2/LiveCreatedFolderTests`. Its one other user is
+  D114's store-name measurement, on the unmerged `q99-name-encoding-followup`: its new
+  `T2/LiveStoreNameEncodingTests` needs `ThrowawayStoreDisplayName`, `ThrowawayStoreProof.Population` and
+  `.Remedy` and `SaveTaggedPostInDeletedItems`, so **whichever of the two branches merges second drops that
+  test** (or re-points it, (d)). D114's answer is on the record - D105 stands - and by D114's own choice
+  guest one's throwaway kept its ordinary name, so the test measured nothing on an ordinary run.
+  *Alternatives:* (b) keep the throwaway as a generic second writable store for that test - about 1,000
+  lines of script, settings, validation and allowlist whose reason is gone; (c) keep only the script, for
+  ad-hoc measurements; (d) when store names need re-measuring, rename a store the guests have anyway (the
+  identity store, `Rename-OutlookStore.ps1`) for that run. *Undo:* revert the Testbed and T2 files of this
+  change.
+- **D124 - The true-root Drafts lookup stays, proven by T1 alone.** It FINDS a folder - it is what lets
+  `discard_draft` and `update_draft` accept a draft a reply filed in a data file with no Inbox - and only
+  the proof D123 removes measured it live (runbook section 8 item 25 keeps the answer). *Alternative:* a
+  slim live round trip (reply into such a file, then discard), which needs the machinery D123 removes.
+- **D125 - Records:** the runbook's dated run records keep what they recorded; its procedure loses step
+  9a-ii (a note says why) and section 8 item 25 now states the answer the true-root lookup rests on. The
+  Unreleased CHANGELOG entries for the reporting were removed or trimmed, and none was added: the
+  reporting never reached a release. No `TODO.md` item referred to it.
 
 ## Open questions only you can answer
 

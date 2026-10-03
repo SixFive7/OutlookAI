@@ -221,21 +221,6 @@ namespace OutlookAI.Core.Com
         /// reach, because its registry gate only knows ids the caller was told. It is
         /// re-read after the relocate, since a move mints a new one.
         /// </param>
-        /// <param name="createdFolders">
-        /// The folders this call CREATED, as <c>store/path</c>, reported whether the call then
-        /// succeeded or failed; null when it created nothing (Q85: may create, must report). A
-        /// POP3, IMAP or data-file store without a Drafts folder gets one when a draft is saved
-        /// into it; an Exchange mailbox always has one. A list, because a Drafts lookup that
-        /// FAILS is re-checked (Q96 (ii)) and the call's attempts are collected together. A folder
-        /// is in it only when it is proven to be the one the call made: new, and holding the
-        /// Drafts slot (Q96 question 1 (b)).
-        /// </param>
-        /// <param name="appearedFolders">
-        /// The folders that APPEARED at the top of the store while a FAILED Drafts lookup ran
-        /// and do not hold the Drafts slot, as <c>store/path</c>; null when there were none. Never
-        /// claimed as created by the call - Outlook may have made them before failing, or
-        /// something else may have (Q96 question 1 (b), 2026-10-03).
-        /// </param>
         ComDraftCreateResult? TryCreateNewDraft(
             string accountSmtpAddress,
             IReadOnlyList<string> toRecipients,
@@ -245,8 +230,6 @@ namespace OutlookAI.Core.Com
             ComSignatureOverride? signatureOverride,
             ComDraftOptions? options,
             out string? savedDraftEntryId,
-            out IReadOnlyList<string>? createdFolders,
-            out IReadOnlyList<string>? appearedFolders,
             out string? error);
 
         /// <summary>Creates a reply, reply-all or forward draft via Outlook's own derivation.</summary>
@@ -254,17 +237,6 @@ namespace OutlookAI.Core.Com
         /// Same contract as <see cref="TryCreateNewDraft"/>'s: the id of the saved draft,
         /// reported even when a later step fails, so a failed derivation cannot leave an
         /// orphan out of the cleanup tool's reach.
-        /// </param>
-        /// <param name="createdFolders">
-        /// The folders this call CREATED in the SOURCE item's store - its Drafts, where the
-        /// draft is filed - as <c>store/path</c>, reported whether the call then succeeded or
-        /// failed, and including what a failed Drafts lookup is proven to have made before it
-        /// failed (Q96 (ii), question 1 (b)); null when it created nothing (Q85).
-        /// </param>
-        /// <param name="appearedFolders">
-        /// As <see cref="TryCreateNewDraft"/>'s: what only APPEARED while a failed Drafts lookup
-        /// in the source store ran - reported on success too, because a reply or forward whose
-        /// lookup failed still succeeds, with the draft left where Outlook saved it.
         /// </param>
         ComDraftCreateResult? TryCreateDerivedDraft(
             string sourceEntryIdHex,
@@ -276,8 +248,6 @@ namespace OutlookAI.Core.Com
             ComSignatureOverride? signatureOverride,
             ComDraftOptions? options,
             out string? savedDraftEntryId,
-            out IReadOnlyList<string>? createdFolders,
-            out IReadOnlyList<string>? appearedFolders,
             out string? error);
 
         /// <summary>
@@ -303,16 +273,6 @@ namespace OutlookAI.Core.Com
             out string? error);
 
         /// <summary>Deletes a draft this server created.</summary>
-        /// <param name="createdFolders">
-        /// The folders this call CREATED - its Deleted Items, which the discard moves the draft
-        /// into - as <c>store/path</c>, reported whether the call then succeeded or failed, and
-        /// including what a failed Deleted Items lookup is proven to have made before it failed
-        /// (Q96 (ii), question 1 (b)); null when it created nothing (Q85).
-        /// </param>
-        /// <param name="appearedFolders">
-        /// What only APPEARED while a failed Deleted Items lookup ran and does not hold that
-        /// slot - never claimed as created (Q96 question 1 (b)); null when there was none.
-        /// </param>
         /// <param name="error">
         /// Null on success. A failure before the delete was issued is
         /// <see cref="ComErrorTokens.DiscardNotStarted"/> - the draft was NOT deleted (Q96 question
@@ -322,8 +282,6 @@ namespace OutlookAI.Core.Com
         ComDraftDiscardResult? TryDiscardDraft(
             string entryIdHex,
             string? storeId,
-            out IReadOnlyList<string>? createdFolders,
-            out IReadOnlyList<string>? appearedFolders,
             out string? error);
 
         /// <summary>Reads the state a draft must be in before it may be sent, including its content hash.</summary>

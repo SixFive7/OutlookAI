@@ -2297,26 +2297,10 @@ guest's filter. **Start the run inside that margin.** The frontier test reads th
 is a red run, not a quietly weaker one. The maintainer's own machine has no such field and no such
 step.
 
-**Then the throwaway data file - Q96 (iv), decided 2026-10-03, a script step for the same reason.**
-Straight after the hub rebuild, at the level it leaves Outlook running:
-
-```
-.\Register-InteractiveTask.ps1 -RunLevel Limited -TimeoutSeconds 900 -Script "& 'C:\OutlookAI-Q5\Reset-ThrowawayStore.ps1' -Execute"
-```
-
-`Testbed/guest/Reset-ThrowawayStore.ps1` detaches the previous run's throwaway data file from the
-tier profile, attaches a fresh one - `AddStoreEx`, so Deleted Items and nothing else (section 1.3) -
-under the guest's `throwawayStoreDisplayName`, proves it has no Drafts folder without asking Outlook
-for one, and deletes the old files Outlook has let go of. It is the one store
-`T2/LiveCreatedFolderTests` writes to: a reply to a tagged post in its Deleted Items, which the
-product must file in a Drafts folder it creates there and REPORT in `createdFolders`, then
-`discard_draft` - the "created" branch of Q85, which never runs on the hub because the hub has a
-Drafts folder. The write allowlist grants that store draft and delete and nothing else, and no
-census or sweep watches it: the proof creates a folder there on purpose, and it proves its own zero
-end, by tagged count and by EntryID. A settings file rendered before 2026-10-03 has no
-`throwawayStoreDisplayName`; the script then refuses and the test prints `PROVED NOTHING` - re-render
-it (`Testbed/README.md` step 9). **Never run on a guest yet: section 8 item 25 is what its first run
-must record.**
+*Until 2026-10-03 a second step followed here - `Reset-ThrowawayStore.ps1`, which
+recreated a throwaway data file for the created-folder proof (`T2/LiveCreatedFolderTests`). Both
+were removed that day with the requirement they proved: the maintainer dropped Q85's "must report"
+(section 8 item 25). A run record that names step 9a-ii predates that.*
 
 **On `OutlookAI-Unindexed` the filter also deselects the index tier:**
 `Category=Live&Requires!=DelegateStore&Requires!=CachedExchange&Requires!=SearchIndex`. That guest has no index by design
@@ -3028,8 +3012,8 @@ The frontier test can catch a local-time misreading until 2026-10-03T08:42:34Z -
 | `CP-16C-POPULATIONS-V2` (parent `CP-15C-SIGNATURE-SUITE-STAGED`; taken with the guest running, 2026-10-03 08:55 local) | Outlook not running; default profile `OutlookAI-Tier`; no `ImportPRF`; `INDEXED`, 20,524 rows; the hub at anchor `2026-10-03T06:48:34Z` with its twelve contacts (manifest SHA-256 `7A999122...`, its predecessor in `hub-history\`), the bystander at `06:38:42Z` with its forty-two (`E0D55AFB...`), the identity store at `06:39:44Z` (`EB2F0B06...`); Corpus A untouched (`0BCFA3DA...`, 20,001 lines); the live-test settings staged; the tools from `6d01e72`, the server and the suite still `af56efc`'s |
 
 **For the run, which is not part of this:** the suite on the guest is `af56efc`'s; re-stage it from
-master first (`Testbed/README.md` step 8b). The run starts with step 9a at `-RunLevel Limited` and 9a-ii
-(`Reset-ThrowawayStore.ps1`, never yet run). With no corpus declared, the corpus tests print that they
+master first (`Testbed/README.md` step 8b). The run starts with step 9a at `-RunLevel Limited`. With
+no corpus declared, the corpus tests print that they
 have none, and the index tests measure the hub and the bystander - where `LiveOrderKeyCollationTests`
 should now find the 12 and 42 undated rows `corpus-indexed` counted; that run is what shows they do.
 
@@ -3175,8 +3159,8 @@ again - `New-LiveTestSettings.ps1 -VMName OutlookAI-Indexed`, then the `Copy-ToG
 | `CP-17C-CORPUS-160K` (parent `CP-16C-POPULATIONS-V2`; taken with the guest running, 2026-10-03 11:56 local) | Outlook not running; default profile `OutlookAI-Tier`; no `ImportPRF`; `INDEXED`, 180,520 rows - `Corpus A($996dc7a9)` 160,006; Corpus A at `C:\OutlookAI-Tier\corpus-a.pst` (8,520,360,960 bytes), mounted in both profiles, its manifest `AB395B81...` (160,004 lines); the old corpus inert, its manifest in `corpus-history\`; the hub at anchor `2026-10-03T09:32:50Z` with its twelve contacts (`8A1257E9...`), the bystander and the identity store as at `CP-16C`; the live-test settings with the corpus staged (`9674ED3E...`, windows 7, 30 and 60 - since replaced on the running guest by `688FDB99...`, windows 30 and 60, above); `Set-OutlookIndexingDisabled.ps1` with the count fix, `Build-Corpus.ps1` and `Reset-HubPopulation.ps1` from master; the tools `6d01e72`'s, the server and the suite still `af56efc`'s |
 
 **For the run, which is not part of this:** as section 4.2c says - re-stage the suite from master first
-(its hub-freshness check must know the `|u:contacts` marker), then step 9a at `-RunLevel Limited` and
-9a-ii. The suite then finds Corpus A in the settings: the freshness check runs at start, the corpus is
+(its hub-freshness check must know the `|u:contacts` marker), then step 9a at `-RunLevel Limited`.
+The suite then finds Corpus A in the settings: the freshness check runs at start, the corpus is
 the largest indexed store the latency bounds are timed against, and the count tripwire censuses it as a
 bystander. **Before 2026-11-01 23:59 UTC**, or after a rebuild.
 
@@ -3997,59 +3981,17 @@ unrecorded or unverified.
       not openable from this profile. Whether to drop or flag such hits is open (`TODO.md`); doing
       either from the map alone would also catch an Exchange store the hash did not decide.
 
-25. **RAN on `OutlookAI-Unindexed`, 2026-10-03 (section 4.1e) - its first run failed by design and
-    answered Q85's open question; the fix (`5ac1d85`) passed the next runs. Every point below is
-    recorded there, the second run's detach included.** The original brief, kept for the record:
-    **the created-folder proof has never run on a guest (Q96 (iv), built 2026-10-03).**
-    What exists is proven only off the guests: `Testbed/guest/Reset-ThrowawayStore.ps1 -SelfTest`
-    (its decisions and its own source), the settings, the renderer and the write allowlist by
-    `T1/ThrowawayStoreTests` and `T1/LiveTestSettingsTemplateTests`, and every verdict of the live
-    test by `T2/ThrowawayStoreProof`'s judges, which T1 drives branch by branch. Its first run - steps
-    9, 9a, 9a-ii and 9b of `Testbed/README.md`, on either guest - must record:
-    - **The script's `verify` line.** One store under the name, in the new file, Drafts designation
-      `NotFound`, no top-level `Drafts`. A designation of `Failed` on every run means PowerShell does not
-      surface `MAPI_E_NOT_FOUND` as the `HResult` the script reads (the C# lookup reads the same
-      property and is measured; this script's reading of it is not) - fix the reading, not the check.
-    - **The test's four lines.** `before:` Drafts absent, `reply_draft:` with `createdFolders` naming
-      the throwaway's Drafts (and `appearedFolders` empty), `after:` the non-creating lookup seeing it,
-      `discard_draft:` discarded. If the lookup does not see the new folder, the test fails at `after:`
-      by design: `discard_draft` and `update_draft` would then refuse every draft in such a mailbox,
-      and that is a product finding for the maintainer, not a test to loosen.
-    - **The `designation:` line - WHERE Outlook registers the Drafts folder it created** (Q96 question
-      3, decided 2026-10-03: (a) this run records it, then (b) widen the non-creating lookup from
-      it). It reads `PR_IPM_DRAFTS_ENTRYID` at every place the object model reaches - the store
-      object and the Inbox, which the lookup reads, and the store's top folder, which it does not -
-      and says what each names: `THE CREATED DRAFTS FOLDER`, another folder, not set, unreadable, or
-      no such folder (a data file attached with `AddStoreEx` has no Inbox). Record it verbatim, with
-      the `after:` line beside it. It is written before the first verdict, so a run that fails at
-      `after:` still has it. If no place names the folder, Outlook registered it where only Extended
-      MAPI can read (the store's hidden root): (b) is then not reachable through the object model,
-      and the maintainer's choice is between the other directions of that question.
-    - **The two `top level of ...` lines** (Q96 question 2, decided (c) 2026-10-03: this test only).
-      Each lists the throwaway's top-level folders before and after `reply_draft` and `discard_draft`
-      beside what the call reported. Expected: `appeared [Drafts]` around the reply with exactly that
-      folder in `reported created`, and nothing around the discard. The test fails - LAST, after the
-      zero-artifact proof - if a folder appeared that the call did not report: on success the product
-      names only the folder its lookup returned, so such a failure is the measured answer that it
-      needs the top-level comparison on success too (that question's (b), for the maintainer).
-      Record both lines whichever way it goes.
-    - **The zero end**: the tagged count of the throwaway and the hub at 0, and no item the proof made
-      openable by EntryID.
-    - **The second run's detach**, and whether the previous file was deleted or left held by Outlook
-      (it is let go of at the next Outlook restart, which the hub rebuild provides).
-    - **Nothing else noticed the extra store.** It is in no list, so nothing watches it, but every
-      check that walks the profile's stores - the table probes, `outlook_health`, `list_accounts` -
-      now meets one more; on the code as it stands each either names its stores or tolerates one it
-      cannot probe. A run that says otherwise belongs here.
-    **Both of Q96's remaining questions answered by the merged runs (2026-10-03, section 4.1e).**
-    The bisect run E4b - the first run of master's version of this test - printed `designation: ...
-    store object = not set; top folder = not set; Inbox = no such folder in this store`, the three
-    places the object model hands out; since `5d94851` the record reads the TRUE root too, and run 13
-    printed `... true root = THE CREATED DRAFTS FOLDER` beside `after: the non-creating lookup sees
-    Drafts='Drafts'` - question 3, answered where F10 (`5ac1d85`) had already widened the lookup. And
-    both `top level of ...` lines came back as expected in every run since: `appeared [Drafts]` with
-    `reported created [throwaway@vm.invalid/Drafts]` around the reply, nothing around the discard -
-    question 2: nothing appeared that the call did not report, so its (b) is not needed.
+25. **ANSWERED 2026-10-03, and its proof REMOVED the same day - where Outlook registers the Drafts
+    folder it creates in a data file with no Inbox.** On the store's TRUE root folder - the parent of
+    the IPM subtree, reached through the top folder's `PR_PARENT_ENTRYID` - and nowhere the object model
+    hands out: not the store object, not the top folder, and there is no Inbox (bisect run E4b and run
+    13, section 4.1e; F10). The non-creating lookup reads it there since `5ac1d85`, which is what lets
+    `discard_draft` and `update_draft` accept a draft a reply filed in such a file. The measurement came
+    from the created-folder proof (`T2/LiveCreatedFolderTests`, its throwaway data file and
+    `Reset-ThrowawayStore.ps1`), which ran green on that guest and was then removed with the
+    requirement it proved: the maintainer dropped Q85's "may create, must report" for the draft tools
+    and `discard_draft` (`Docs/overnight-review-2026-10-03.md`, D120-D125). The true-root reading keeps
+    its T1 pins (`T1/ReadOnlyFolderLookupTests`); nothing on a guest re-measures it any more.
 26. **MEASURED 2026-10-03 (the Q99 folder finding) - how the index spells a FOLDER name holding
     `% / \ * ?`, and what a folder-scoped search does with it.** Microsoft documents those five as
     percent-encoded "if they are in the store or folder display name" (*About MAPI URLs for

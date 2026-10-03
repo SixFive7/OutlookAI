@@ -3620,14 +3620,10 @@ namespace OutlookAI.Core.Com
             ComSignatureOverride? signatureOverride,
             ComDraftOptions? options,
             out string? savedDraftEntryId,
-            out IReadOnlyList<string>? createdFolders,
-            out IReadOnlyList<string>? appearedFolders,
             out string? error)
         {
             EnsureNotDisposed();
             savedDraftEntryId = null;
-            createdFolders = null;
-            appearedFolders = null;
             if (string.IsNullOrWhiteSpace(accountSmtpAddress))
             {
                 throw new ArgumentException("Account SMTP address must not be blank.", nameof(accountSmtpAddress));
@@ -3650,8 +3646,6 @@ namespace OutlookAI.Core.Com
 
             string? capturedError = null;
             string? capturedSavedEntryId = null;
-            IReadOnlyList<string>? capturedCreatedFolders = null;
-            IReadOnlyList<string>? capturedAppearedFolders = null;
             ComDraftCreateResult? result = _runner.Run<ComDraftCreateResult?>(() =>
             {
                 // D49: an unpinned session kills the Outlook it composes in - see
@@ -3701,33 +3695,25 @@ namespace OutlookAI.Core.Com
                     string? deliveryStoreName = TryGetString(() => (string?)((dynamic)deliveryStore!).DisplayName);
                     string? deliveryStoreId = TryGetString(() => (string?)((dynamic)deliveryStore!).StoreID);
 
-                    // Q85 (maintainer direction 2): the draft goes INTO Drafts, so a store that
-                    // has none gets one - and the result says so. Exchange is asked as before.
-                    CreatingLookupReport draftsReport = new CreatingLookupReport();
+                    // The draft goes INTO Drafts, so a POP3, IMAP or data-file store that has none
+                    // gets one: Outlook makes it here. Not reported - the maintainer dropped Q85's
+                    // "must report" on 2026-10-03.
                     try
                     {
-                        draftsFolder = SpecialFolders.GetDefaultFolderReportingCreation(
-                            new ComSpecialFolderStore(deliveryStore, _namespace!, deliveryStoreId),
-                            SpecialFolders.OlFolderDrafts,
-                            draftsReport);
+                        draftsFolder = ((dynamic)deliveryStore).GetDefaultFolder(SpecialFolders.OlFolderDrafts);
                     }
                     catch (Exception ex) when (IsComCallFailure(ex))
                     {
-                        // Q96 (ii)/(iii): the lookup itself failed, so no draft exists - and the
-                        // lookup re-checked whether it made the folder before failing; what only
-                        // appeared meanwhile is handed back apart from it (question 1 (b)).
-                        capturedCreatedFolders = CreatedFoldersOf(draftsReport, null, deliveryStoreName);
-                        capturedAppearedFolders = AppearedFoldersOf(draftsReport, deliveryStoreName);
-                        capturedError = DraftsLookupFailure(draftsReport, DescribeComFailure(ex));
+                        // The lookup itself failed, before anything that can save a draft, so no
+                        // draft exists (Q96 (iii)).
+                        capturedError = ComErrorTokens.With(ComErrorTokens.DraftsFolderUnavailable, DescribeComFailure(ex));
                         return null;
                     }
 
-                    capturedCreatedFolders = CreatedFoldersOf(draftsReport, draftsFolder, deliveryStoreName);
-                    capturedAppearedFolders = AppearedFoldersOf(draftsReport, deliveryStoreName);
                     if (draftsFolder == null)
                     {
                         // The lookup answered no folder - nowhere to put a draft, and none made.
-                        capturedError = DraftsLookupFailure(draftsReport, "no folder returned");
+                        capturedError = ComErrorTokens.With(ComErrorTokens.DraftsFolderUnavailable, "no folder returned");
                         return null;
                     }
 
@@ -3843,8 +3829,6 @@ namespace OutlookAI.Core.Com
             });
 
             savedDraftEntryId = capturedSavedEntryId;
-            createdFolders = capturedCreatedFolders;
-            appearedFolders = capturedAppearedFolders;
             error = capturedError;
             return result;
         }
@@ -3868,14 +3852,10 @@ namespace OutlookAI.Core.Com
             ComSignatureOverride? signatureOverride,
             ComDraftOptions? options,
             out string? savedDraftEntryId,
-            out IReadOnlyList<string>? createdFolders,
-            out IReadOnlyList<string>? appearedFolders,
             out string? error)
         {
             EnsureNotDisposed();
             savedDraftEntryId = null;
-            createdFolders = null;
-            appearedFolders = null;
             if (string.IsNullOrWhiteSpace(sourceEntryIdHex))
             {
                 throw new ArgumentException("Source EntryID must not be blank.", nameof(sourceEntryIdHex));
@@ -3893,8 +3873,6 @@ namespace OutlookAI.Core.Com
 
             string? capturedError = null;
             string? capturedSavedEntryId = null;
-            IReadOnlyList<string>? capturedCreatedFolders = null;
-            IReadOnlyList<string>? capturedAppearedFolders = null;
             ComDraftCreateResult? result = _runner.Run<ComDraftCreateResult?>(() =>
             {
                 // D49: an unpinned session kills the Outlook it composes in - see
@@ -4046,26 +4024,17 @@ namespace OutlookAI.Core.Com
                     string? draftsFolderEntryId = null;
                     if (sourceStore != null)
                     {
-                        // Q85: the SOURCE store's Drafts, which a POP3, IMAP or data-file
-                        // store may not have - it is then created, and the result says so.
-                        CreatingLookupReport draftsReport = new CreatingLookupReport();
+                        // The SOURCE store's Drafts, which a POP3, IMAP or data-file store may
+                        // not have - Outlook then makes it here, unreported (Q85 dropped).
                         try
                         {
-                            draftsFolder = SpecialFolders.GetDefaultFolderReportingCreation(
-                                new ComSpecialFolderStore(sourceStore, (object)ns, sourceStoreIdActual),
-                                SpecialFolders.OlFolderDrafts,
-                                draftsReport);
+                            draftsFolder = ((dynamic)sourceStore).GetDefaultFolder(SpecialFolders.OlFolderDrafts);
                         }
                         catch (Exception ex) when (IsComCallFailure(ex))
                         {
                             // Store without a Drafts folder (some delegate caches) - the
                             // draft stays where Outlook saved it.
                         }
-
-                        // On every path, the failed lookup's re-check included (Q96 (ii)) - what
-                        // it proves created, and apart from that what only appeared (question 1 (b)).
-                        capturedCreatedFolders = CreatedFoldersOf(draftsReport, draftsFolder, sourceStoreName);
-                        capturedAppearedFolders = AppearedFoldersOf(draftsReport, sourceStoreName);
                     }
 
                     if (draftsFolder != null)
@@ -4135,8 +4104,6 @@ namespace OutlookAI.Core.Com
             });
 
             savedDraftEntryId = capturedSavedEntryId;
-            createdFolders = capturedCreatedFolders;
-            appearedFolders = capturedAppearedFolders;
             error = capturedError;
             return result;
         }
@@ -5546,21 +5513,15 @@ namespace OutlookAI.Core.Com
         public ComDraftDiscardResult? TryDiscardDraft(
             string entryIdHex,
             string? storeId,
-            out IReadOnlyList<string>? createdFolders,
-            out IReadOnlyList<string>? appearedFolders,
             out string? error)
         {
             EnsureNotDisposed();
-            createdFolders = null;
-            appearedFolders = null;
             if (string.IsNullOrWhiteSpace(entryIdHex))
             {
                 throw new ArgumentException("EntryID must not be blank.", nameof(entryIdHex));
             }
 
             string? capturedError = null;
-            IReadOnlyList<string>? capturedCreatedFolders = null;
-            IReadOnlyList<string>? capturedAppearedFolders = null;
             ComDraftDiscardResult? result = _runner.Run<ComDraftDiscardResult?>(() =>
             {
                 dynamic ns = _namespace!;
@@ -5619,34 +5580,20 @@ namespace OutlookAI.Core.Com
                             object? deleted = null;
                             try
                             {
-                                // Q85: the discard moves the draft INTO Deleted Items, so a store
-                                // without one gets it - and the result says so.
-                                CreatingLookupReport deletedReport = new CreatingLookupReport();
-                                try
-                                {
-                                    deleted = SpecialFolders.GetDefaultFolderReportingCreation(
-                                        new ComSpecialFolderStore(
-                                            parentStore!,
-                                            (object)ns,
-                                            TryGetString(() => (string?)((dynamic)parentStore!).StoreID)),
-                                        SpecialFolders.OlFolderDeletedItems,
-                                        deletedReport);
-                                }
-                                catch (Exception ex) when (IsComCallFailure(ex))
-                                {
-                                }
-
-                                // On every path, the failed lookup's re-check included (Q96 (ii)) -
-                                // what it proves created, and apart from that what only appeared.
-                                string? deletedStoreName = info.StoreDisplayName
-                                    ?? TryGetString(() => (string?)((dynamic)parentStore!).DisplayName);
-                                capturedCreatedFolders = CreatedFoldersOf(deletedReport, deleted, deletedStoreName);
-                                capturedAppearedFolders = AppearedFoldersOf(deletedReport, deletedStoreName);
+                                // The discard moves the draft INTO Deleted Items, so a POP3, IMAP or
+                                // data-file store without one gets it: Outlook makes it here,
+                                // unreported (Q85 dropped).
+                                deleted = ((dynamic)parentStore!).GetDefaultFolder(SpecialFolders.OlFolderDeletedItems);
                                 if (deleted != null)
                                 {
                                     deletedItemsName = TryGetString(() => (string?)((dynamic)deleted!).Name);
                                     deletedItemsEntryId = TryGetString(() => (string?)((dynamic)deleted!).EntryID);
                                 }
+                            }
+                            catch (Exception ex) when (IsComCallFailure(ex))
+                            {
+                                // Nothing to name: the delete still runs, and only the re-locate of
+                                // the discarded copy is lost.
                             }
                             finally
                             {
@@ -5685,63 +5632,8 @@ namespace OutlookAI.Core.Com
                 }
             });
 
-            createdFolders = capturedCreatedFolders;
-            appearedFolders = capturedAppearedFolders;
             error = capturedError;
             return result;
-        }
-
-        /// <summary>
-        /// How a write path names a special folder it CREATED (Q85) - the COM half, which only
-        /// reads the folder's <c>FolderPath</c> and <c>Name</c>; the rule is
-        /// <see cref="SpecialFolders.CreatedFolderLabelFor"/>.
-        /// </summary>
-        private static string DescribeCreatedFolder(object folder, string? storeDisplayName)
-        {
-            return SpecialFolders.CreatedFolderLabelFor(
-                TryGetString(() => (string?)((dynamic)folder).FolderPath),
-                TryGetString(() => (string?)((dynamic)folder).Name),
-                storeDisplayName);
-        }
-
-        /// <summary>
-        /// Every folder one must-report lookup CREATED, labelled for the result - the folder it
-        /// returned when that one is new (Q85), and what a FAILED lookup made before it failed
-        /// (Q96 (ii)) - or null when it created nothing, which keeps the field absent.
-        /// </summary>
-        private static IReadOnlyList<string>? CreatedFoldersOf(CreatingLookupReport report, object? returnedFolder, string? storeDisplayName)
-        {
-            List<string> labels = new List<string>();
-            if (report.Created && returnedFolder != null)
-            {
-                labels.Add(DescribeCreatedFolder(returnedFolder, storeDisplayName));
-            }
-
-            labels.AddRange(SpecialFolders.CreatedBeforeFailureLabels(report, storeDisplayName));
-            return labels.Count > 0 ? labels : null;
-        }
-
-        /// <summary>
-        /// Every folder that only APPEARED while one must-report lookup's creating call failed -
-        /// new at the top of the store, and not the folder the call asked for - labelled like a
-        /// creation and handed back apart from them, or null when there was none (Q96 question
-        /// 1 (b)). Never merged into <see cref="CreatedFoldersOf"/>: nothing proves the call made it.
-        /// </summary>
-        private static IReadOnlyList<string>? AppearedFoldersOf(CreatingLookupReport report, string? storeDisplayName)
-        {
-            IReadOnlyList<string> labels = SpecialFolders.AppearedDuringFailedCallLabels(report, storeDisplayName);
-            return labels.Count > 0 ? labels : null;
-        }
-
-        /// <summary>
-        /// The error a failed Drafts lookup leaves for new_draft (Q96): no draft exists, and the
-        /// token says whether the lookup could establish what it created before failing.
-        /// </summary>
-        private static string DraftsLookupFailure(CreatingLookupReport report, string detail)
-        {
-            return ComErrorTokens.With(
-                report.CreationUnverified ? ComErrorTokens.DraftsFolderCreationUnverified : ComErrorTokens.DraftsFolderUnavailable,
-                detail);
         }
 
         /// <summary>

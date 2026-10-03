@@ -193,28 +193,6 @@ public sealed class LiveTestSettings
     public string? HubPopulationManifestPath { get; set; }
 
     /// <summary>
-    /// OPTIONAL display name of the THROWAWAY data file (Q96 (iv), 2026-10-03): a small data file
-    /// with NO Drafts folder, which <c>Testbed/guest/Reset-ThrowawayStore.ps1</c> recreates in the tier
-    /// profile before every live run, so the live tier can prove the one path the hub cannot - a draft
-    /// tool CREATING a Drafts folder and reporting it in <c>createdFolders</c>
-    /// (<c>LiveCreatedFolderTests</c>).
-    /// <para>
-    /// <b>Writable, and deliberately in no other list.</b> The write allowlist grants it draft and
-    /// delete - the reply and the post it replies to, and the discard - and nothing else
-    /// (<see cref="StoreWriteAllowlist"/>). It is NOT watched: the census would see the Drafts folder
-    /// the test exists to create as a folder added outside the test mailbox, and the store holds
-    /// nothing but test artifacts and is recreated before the next run anyway. The test proves its
-    /// own zero-artifact end instead. Naming it in a watched, indexed, delegate or bystander list is
-    /// refused (<see cref="Validate"/>), and so is naming the hub.
-    /// </para>
-    /// <para>
-    /// Absent - the maintainer's own machine, which is read-only for live tests anyway (Q74) - and the
-    /// proof says it had nothing to run against, the Q57 pattern.
-    /// </para>
-    /// </summary>
-    public string? ThrowawayStoreDisplayName { get; set; }
-
-    /// <summary>
     /// How the settings file is read.
     /// <para>
     /// <b><see cref="JsonStringEnumConverter"/> is load-bearing, not tidiness.</b> Without it
@@ -340,8 +318,6 @@ public sealed class LiveTestSettings
                 + "machine whose hub holds no generated population.");
         }
 
-        ValidateThrowawayStore(settings);
-
         if (settings.MachineProfile != LiveMachineProfile.Production)
         {
             return;
@@ -362,63 +338,6 @@ public sealed class LiveTestSettings
                 + "subjectTerm, senderFragment) required by the D40/SF-6 recall regression. Required on a "
                 + "Production profile; set machineProfile to 'Portable' on a test machine that has no such "
                 + "population.");
-        }
-    }
-
-    /// <summary>
-    /// The rules for the throwaway data file, when a file names one (Q96 (iv)). Each closes a way it
-    /// could quietly prove nothing or reach a store it must not:
-    /// <list type="bullet">
-    /// <item>not blank - it would read as declared and name no store;</item>
-    /// <item>not the hub - the hub HAS a Drafts folder, so a reply into it creates nothing, and the
-    /// proof would pass having exercised nothing;</item>
-    /// <item>in no other list - a watched store would fire the count tripwire over the Drafts folder
-    /// the proof creates, a primary would hand it to the identity-draft grant, a bystander is a store
-    /// nothing may write to, a delegate is somebody else's mail, and an indexed store would be asked
-    /// to hold indexed mail it never has.</item>
-    /// </list>
-    /// </summary>
-    private static void ValidateThrowawayStore(LiveTestSettings settings)
-    {
-        string? throwaway = settings.ThrowawayStoreDisplayName;
-        if (throwaway == null)
-        {
-            return;
-        }
-
-        if (string.IsNullOrWhiteSpace(throwaway))
-        {
-            throw new InvalidOperationException(
-                "Live-test settings name a blank 'throwawayStoreDisplayName'. Give the display name of the data file "
-                + "Testbed/guest/Reset-ThrowawayStore.ps1 recreates before every run, or leave the key out on a machine "
-                + "that has none.");
-        }
-
-        if (string.Equals(throwaway, settings.TestHubStoreDisplayName, StringComparison.OrdinalIgnoreCase))
-        {
-            throw new InvalidOperationException(
-                "Live-test settings name the hub '" + throwaway + "' as 'throwawayStoreDisplayName'. The throwaway data "
-                + "file exists because it has NO Drafts folder; the hub has one, so a reply into it creates nothing and the "
-                + "created-folder proof would pass having proved nothing. Name the throwaway data file.");
-        }
-
-        foreach ((string list, IEnumerable<string> names) in new (string, IEnumerable<string>)[]
-        {
-            ("expectedStoreDisplayNames", settings.ExpectedStoreDisplayNames),
-            ("indexedStoreDisplayNames", settings.IndexedStoreDisplayNames ?? new List<string>()),
-            ("expectedDelegateStoreDisplayNames", settings.ExpectedDelegateStoreDisplayNames),
-            ("bystanderStoreDisplayNames", settings.BystanderStoreDisplayNames),
-        })
-        {
-            if (names.Any(n => string.Equals(n, throwaway, StringComparison.OrdinalIgnoreCase)))
-            {
-                throw new InvalidOperationException(
-                    "Live-test settings name the throwaway data file '" + throwaway + "' in '" + list + "' as well. It is "
-                    + "in no other list on purpose: watched, the count tripwire would fail the run over the Drafts folder "
-                    + "the created-folder proof makes in it; a primary, the identity tests would draft in it; a bystander "
-                    + "or a delegate, nothing may write to it; indexed, the index tests would demand mail it never holds. "
-                    + "Leave it only in 'throwawayStoreDisplayName'.");
-            }
         }
     }
 
@@ -584,8 +503,7 @@ public sealed class LiveTestSettings
             + ", corpus=" + (Corpus == null ? "none" : Corpus.CorpusId)
             + ", mailSink=" + (MailSink == null
                 ? "none (real transport)"
-                : MailSink.SubmitHost + ":" + MailSink.SubmitPort)
-            + ", throwawayStore=" + (string.IsNullOrWhiteSpace(ThrowawayStoreDisplayName) ? "none" : "set");
+                : MailSink.SubmitHost + ":" + MailSink.SubmitPort);
     }
 }
 
