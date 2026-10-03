@@ -4266,8 +4266,8 @@ unrecorded or unverified.
     `-FilterSuffix '&FullyQualifiedName~LiveFolderIdentityTests' -SkipHubReset` - on
     `OutlookAI-Unindexed` from and back to `CP-13B-LIVE-GREEN` (1 of 1, at `a5ce5cb`), on
     `OutlookAI-Indexed` 3 of 3 at `a5ce5cb` from and back to `CP-17C-CORPUS-160K`, and 3 of 3 again at
-    `b7673d1` from and back to `CP-18C-ALL-KINDS`, its resting checkpoint by then, the settings staged
-    each time; and a read-only COM probe of every store's ids on `OutlookAI-Unindexed` around two
+    `b7673d1` and `e906f85` from and back to `CP-18C-ALL-KINDS`, its resting checkpoint by then, the
+    settings staged each time; and a read-only COM probe of every store's ids on `OutlookAI-Unindexed` around two
     graceful restarts (`Restart-Guest.ps1`) and a byte copy of a scratch PST attached with
     `Add-OutlookPstStore.ps1`, the guest restored to `CP-13B` afterwards (raw output: `.work\q114\` of
     that worktree). Every write in the hub, through `move_mail` with `create_folder` and three new
