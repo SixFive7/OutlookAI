@@ -112,15 +112,6 @@ namespace OutlookAI.Core.Com
         private const string ConversationTopicDasl = "http://schemas.microsoft.com/mapi/proptag/0x0070001F";
 
         /// <summary>
-        /// PR_CONVERSATION_INDEX_TRACKING (PidTagConversationIndexTracking, 0x3016, PT_BOOLEAN):
-        /// whether an item's ConversationId is the GUID in its conversation-index header (TRUE) or
-        /// is computed from its conversation topic instead (MS-OXOMSG). Read into the draft
-        /// snapshot only: on a PST (2026-10-03) it was TRUE on a seed, its plain reply and its
-        /// renamed reply alike, so it is not what separated the renamed reply's id.
-        /// </summary>
-        private const string ConversationIndexTrackingDasl = "http://schemas.microsoft.com/mapi/proptag/0x3016000B";
-
-        /// <summary>
         /// PR_CONVERSATION_INDEX (PT_BINARY). LIVE-PROVEN on this build (batch A - A3):
         /// assigning <c>MailItem.Subject</c> on a derived draft makes Outlook REGENERATE
         /// the conversation index header, which detaches the draft from its thread. The
@@ -7668,8 +7659,7 @@ namespace OutlookAI.Core.Com
                 recipients,
                 conversationTopic,
                 importance,
-                readReceiptRequested,
-                TryGetPropertyBool(item, ConversationIndexTrackingDasl));
+                readReceiptRequested);
         }
 
         /// <summary>STA-side: the profile account with the given SmtpAddress (caller releases), or null.</summary>
@@ -10290,30 +10280,6 @@ namespace OutlookAI.Core.Com
                 return hex.ToString();
             }
             catch (Exception ex) when (IsComCallFailure(ex))
-            {
-                return null;
-            }
-            finally
-            {
-                Release(accessor);
-            }
-        }
-
-        /// <summary>PropertyAccessor read of a PT_BOOLEAN MAPI property, or null when absent or unreadable.</summary>
-        private static bool? TryGetPropertyBool(dynamic comObject, string schemaName)
-        {
-            object? accessor = null;
-            try
-            {
-                accessor = comObject.PropertyAccessor;
-                object? value = ((dynamic)accessor!).GetProperty(schemaName);
-                return value is bool flag ? flag : (bool?)null;
-            }
-            catch (COMException)
-            {
-                return null;
-            }
-            catch (Microsoft.CSharp.RuntimeBinder.RuntimeBinderException)
             {
                 return null;
             }

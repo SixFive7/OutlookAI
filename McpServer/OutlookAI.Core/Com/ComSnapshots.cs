@@ -1049,10 +1049,8 @@ namespace OutlookAI.Core.Com
             IReadOnlyList<ComRecipientInfo> recipients,
             string? conversationTopic = null,
             int? importance = null,
-            bool readReceiptRequested = false,
-            bool? conversationIndexTracking = null)
+            bool readReceiptRequested = false)
         {
-            ConversationIndexTracking = conversationIndexTracking;
             EntryId = entryId;
             StoreDisplayName = storeDisplayName;
             StoreId = storeId;
@@ -1110,13 +1108,6 @@ namespace OutlookAI.Core.Com
 
         /// <summary>MailItem.ReadReceiptRequested.</summary>
         public bool ReadReceiptRequested { get; }
-
-        /// <summary>
-        /// PR_CONVERSATION_INDEX_TRACKING (0x3016000B): true when the ConversationId is the GUID in
-        /// the index header, false when it is computed from the topic; null when the item does not
-        /// carry it or it would not read.
-        /// </summary>
-        public bool? ConversationIndexTracking { get; }
     }
 
     /// <summary>

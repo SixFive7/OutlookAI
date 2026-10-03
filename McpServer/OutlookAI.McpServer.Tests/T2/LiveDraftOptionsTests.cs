@@ -259,11 +259,9 @@ public sealed class LiveDraftOptionsTests
                 + $"renamed={renamedInfo.ConversationIndex!.Length})");
 
             // Which of MS-OXOMSG's two derivations each id came from: the GUID in the index header
-            // (bytes 6-21, when PR_CONVERSATION_INDEX_TRACKING is set) or a hash of the topic. Ids,
-            // index headers and booleans only (S4).
+            // (bytes 6-21) or a hash of the topic. Ids, index headers and booleans only (S4).
             _output.WriteLine(
                 $"A3 id from index GUID: seed={IdIsIndexGuid(seedInfo)} plain={IdIsIndexGuid(plainInfo)} renamed={IdIsIndexGuid(renamedInfo)}; "
-                + $"index tracking seed={Tracking(seedInfo)} plain={Tracking(plainInfo)} renamed={Tracking(renamedInfo)}; "
                 + $"index headers seed={IndexHeader(seedInfo)} plain={IndexHeader(plainInfo)} renamed={IndexHeader(renamedInfo)}");
 
             // Q-coordinator job 3 (2026-10-03): is the renamed reply's id a HASH of a string - the new
@@ -444,12 +442,6 @@ public sealed class LiveDraftOptionsTests
         ComDraftInfo? info = _fixture.VerifySession.TryGetMailInfo(entryId, storeId, out string? error);
         Assert.True(info != null, $"mail info unavailable: {error}");
         return info!;
-    }
-
-    /// <summary>PR_CONVERSATION_INDEX_TRACKING as read, "-" when absent. Diagnostic only.</summary>
-    private static string Tracking(ComDraftInfo info)
-    {
-        return info.ConversationIndexTracking.HasValue ? (info.ConversationIndexTracking.Value ? "true" : "false") : "-";
     }
 
     /// <summary>
