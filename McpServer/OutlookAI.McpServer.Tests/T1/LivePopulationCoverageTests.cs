@@ -13,7 +13,8 @@ namespace OutlookAI.McpServer.Tests.T1;
 /// different shapes of one failure:
 /// </para>
 /// <list type="number">
-/// <item><c>T2/LiveFolderScopeTests.DelegateFirstLevelFolders_StillResolve_AndTheWholeMailboxIsUnfiltered</c>
+/// <item><c>T2/LiveDelegateFolderScopeTests.DelegateFirstLevelFolders_StillResolve_AndTheWholeMailboxIsUnfiltered</c> (in
+/// <c>T2/LiveFolderScopeTests</c> until Q74 B1)
 /// - a bare <c>foreach</c> over <c>expectedDelegateStoreDisplayNames</c>, which is <c>[]</c> on
 /// every Portable machine including the VM. Its SIBLING two methods up has asserted that same list
 /// is non-empty since the day it was written, so the omission was visibly an oversight.</item>
@@ -193,7 +194,11 @@ public sealed class LivePopulationCoverageTests
         // compiles - these two populations are a public settings property and a public tool
         // result, and nothing can stop a future edit reading them directly again. So this reads
         // the sources, which is the substitute this file's own precedent already uses.
-        string folderScope = LiveSource("LiveFolderScopeTests.cs");
+        // The two delegate tests moved out of LiveFolderScopeTests into their own class on
+        // 2026-10-03 (Q74 B1) - its collection fixture writes, and they run only on the read-only
+        // workstation. The guard moved with them, and the old file keeps no copy of the read.
+        string folderScope = LiveSource("LiveDelegateFolderScopeTests.cs");
+        Assert.Equal(0, Occurrences(LiveSource("LiveFolderScopeTests.cs"), "ExpectedDelegateStoreDisplayNames"));
 
         // Exactly one read of the settings list in the whole file: the guard's own. Two would mean
         // the two delegate tests could answer the same question differently again, which is how

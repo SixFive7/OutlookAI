@@ -445,7 +445,9 @@ public static class CorpusCommands
             + " body(ies) and " + probeTermAttachments.ToString(invariant) + " text attachment(s)");
         output.WriteLine("  undated items         : "
             + (undatedKinds.Count == 0
-                ? "none"
+                ? (population.Kind != CorpusPopulationKind.Identity && !plan.Options.IncludeUndatedItems
+                    ? "none - switched off since 2026-10-03 (Q98 (a)): in a PST these kinds are dated, and Outlook will not remove it"
+                    : "none")
                 : string.Join(", ", undatedKinds.Select(k => k.Key + "=" + k.Value.ToString(invariant)))
                     + " - no delivery time, for LiveOrderKeyCollationTests"));
         if (population.SubjectOnlyProbe != null)

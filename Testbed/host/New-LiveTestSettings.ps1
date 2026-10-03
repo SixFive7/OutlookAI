@@ -1,9 +1,13 @@
 #Requires -Version 5.1
 <#
     ============================================================================================
-    NEVER RUN AGAINST A REAL GUEST'S VALUES - THERE ARE NONE YET. WRITTEN 2026-09-24. WHAT HAS
-    RUN IS ITS SELF-TEST, A SYNTHETIC RENDER AND ITS REFUSALS, ALL ON THE HOST.
+    HAS RENDERED ONE REAL GUEST'S FILE - OutlookAI-Unindexed's, on 2026-09-24, 2026-09-27 AND
+    2026-10-03, each copied into that guest (Docs/live-tier-on-the-vm.md sections 4.1 step 8,
+    4.1a and 4.1d). THE LIVE TIER HAS NOT YET STARTED ON ANY RENDERED FILE.
     ============================================================================================
+
+    Corrected 2026-10-03: the lines below were written on 2026-09-24, before any guest's values
+    existed, and their "What has NOT run" paragraph is the state of that morning.
 
     What was executed, on the maintainer's workstation and on no guest:
 
@@ -784,7 +788,7 @@ function Add-SettingsProblems {
     }
     elseif ($machineProfile.Value -is [string] -and $machineProfile.Value -ceq 'Portable') { }
     elseif ($machineProfile.Value -is [string] -and $machineProfile.Value -ceq 'Production') {
-        $Problems.Add("machineProfile: 'Production' is the maintainer's own machine, whose missing populations REFUSE a run. A test guest is Portable - recorded as a decision in testbed.json's _decided - so a population it lacks is announced as PROVED NOTHING instead, and its probe values come from the generator rather than from real mail.")
+        $Problems.Add("machineProfile: 'Production' is the maintainer's own machine, which is read-only for live tests (Q74) and whose missing populations REFUSE a run. A test guest is Portable - recorded as a decision in testbed.json's _decided - so a population it lacks is announced as PROVED NOTHING instead, and its probe values come from the generator rather than from real mail.")
     }
     else {
         $Problems.Add("machineProfile: must be the string 'Portable' (or 'Production', which this template cannot carry). Spell it exactly.")

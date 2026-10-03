@@ -1,19 +1,13 @@
 # TODO
 
-- [ ] **ENFORCE, IN CODE, THAT THE WORKSTATION IS READ-ONLY FOR LIVE TESTS (Q72 decided; Q74 is how).**
-  The maintainer decided 2026-09-24: live tests on his workstation run read-only, always, and only
-  the fundamentally immovable ones - the Exchange-only tests - run there at all. `AGENTS.md` now
-  says so, but today nothing but the run filter enforces it, and the retirement review found two
-  gaps a filter cannot close. First, tests that write through the MCP server process (the stdio,
-  tier-3 tests) bypass the in-process `StoreWriteAllowlist` entirely. Second, a hand-kept filter
-  string is exactly what this repository's history shows drifting. The recommended shape
-  (Q74 a+c+d): a trait marking tests that never write, pinned by CI; a workstation machine profile
-  whose write allowlist refuses EVERY store, hub included, so an in-process write throws; the test
-  client refusing to call any write-capable MCP tool under that profile, so an out-of-process write
-  is refused before it is sent; and per-population declarations replacing Production/Portable.
-  **Waiting on:** the store-list split and the other Q69 work landing, since they touch the same
-  test infrastructure, and the maintainer's go on Q74. Until then no write-capable live test may be
-  started on the workstation at all.
+- [ ] **Put a release candidate's MCP server in front of one session on the workstation, without installing it.**
+  The manual pre-release checks (`Docs/release-manual-checks.md`, Q74 D2) exercise the Exchange-only
+  write paths through the MCP server, by hand, on the maintainer's own profile - and nothing can put a
+  candidate's server there today: `Tools/Switch-AddInBuild.ps1` copies and registers the ADD-IN only and
+  never touches the server. Until this exists the list runs right after a release is installed, with the
+  previous installer kept for rollback. Recommended shape: the same copy-then-register discipline as
+  Q81 - a server build copied out of any build folder and registered for one Claude Code session, never
+  globally - so it can never become the server every other session starts.
 
 - [ ] **What still stops a rebuilder rebuilding the test VM from this repository alone.**
   `Testbed/` is the entry point and holds the runnable half - parameter set, host and guest
@@ -43,12 +37,6 @@
         are different facts and only the second happened: the per-account index assumption was NOT
         disproved - the design stopped depending on it, which also retired the riskiest unverified
         assumption in the whole layout.
-  - [ ] **Rebuild the fixture populations with generator v2 on a guest, and run the hub rebuild
-        once (2026-09-24).** v1's build on `OutlookAI-Unindexed` was not clean (runbook §4.1 step 6).
-        **v2 PROBED there 2026-09-27, NOT BUILT** (runbook §4.1a, `CP-14A-POPULATIONS-V2-PROBED`):
-        `PostAsNote` keeps its first save in a non-default store (`InPlaceReceived` does not, and is
-        retired), the owner resolves, and the dates and enrichment verify - but the undated items
-        refuse, which blocks the hub and the bystander on both guests. Waits on the item below.
   - [ ] **Run `Testbed/guest/Measure-SweepCost.ps1` once.** It is the reconstruction of
         `Docs/v3-probes/soakfix13-probe-sweep-cost.ps1`, which is gitignored and gone with its
         scratch directory. Written from the shipped `SweepFolder` source, read-only by
@@ -125,7 +113,11 @@
           as `outcome: applied`) needs `AuditLog.Append` to FAIL, and it writes to
           `%LOCALAPPDATA%\OutlookAI` through a path that is not injectable. `AppendTo` takes a
           directory and is used by `AuditLogTests`; wiring the service layer to it would make this
-          reachable, and is a bigger change than the row it guards.
+          reachable, and is a bigger change than the row it guards. (2026-10-03: no wiring is
+          needed any more. Since Q86 every test process appends to its own throwaway log,
+          `AuditLog.EffectiveLogPath`, so a T1 test can make `Append` fail by holding that file
+          open without sharing for the duration of the call - `T1/AuditLogToolTests` already
+          locks it that way.)
         - **The supervisor's own wiring for the interrupted-request outcome** needs a child that
           dies while holding a request. Both ends are pinned separately - the value
           (`MutationOutcome.ForInterrupted`) and the carrier
@@ -151,7 +143,9 @@
         tier is where it is exercised, which is the tier that had no budget at all until this
         pass. Options: accept and rely on T2; add `InternalsVisibleTo` to `OutlookAI.Core` and
         pin the wiring through an internal seam; or a structural IL assertion, which is
-        fragile and unlike anything else here.
+        fragile and unlike anything else here. (2026-10-03: the `InternalsVisibleTo` now
+        exists - Q86 added it for the audit-log redirect - so the second option costs only
+        the seam.)
   - [ ] **The grace values themselves are unmeasured.** `CleanExitGraceMilliseconds` (250)
         and `ShutdownExitGraceMilliseconds` (2000) are judgements: nobody has timed how long
         `OutlookComSession.Dispose` takes against a real Outlook, so nobody knows whether
@@ -237,11 +231,16 @@
   **State left on the machine:** 7 items tagged `[OutlookAI-McpTest]` remain in the
   `telefonie@xxlnet.nl` hub - **6 in Drafts, 1 in Outbox** - found by a read-only `search` after
   the run was stopped. They are inert: drafts sit there, and the Outbox item is a self-addressed
-  test seed, so the worst case is a test mail arriving in the test mailbox. **The next successful
-  live run's post-run sweep covers Drafts and Outbox and will delete them** - that is the
-  sanctioned cleanup path and it needs no special handling. They were NOT removed by hand: the
-  shipped tools cannot (`discard_draft` only touches drafts from its own session, `move_mail`
-  refuses Outbox and Deleted Items), and the safety envelope forbids ad-hoc deletion.
+  test seed, so the worst case is a test mail arriving in the test mailbox. They were NOT removed by
+  hand: the shipped tools cannot (`discard_draft` only touches drafts from its own session,
+  `move_mail` refuses Outbox and Deleted Items), and the safety envelope forbids ad-hoc deletion.
+  **The cleanup path this entry used to name is gone (Q74, 2026-10-03).** It said the next
+  successful live run's post-run sweep would delete them. That hub is on the maintainer's
+  workstation, which is read-only for live tests since Q72 and enforced in code since Q74: no live
+  run there may delete anything, the test hub included, and the artifact sweep now only COUNTS
+  on that machine - so nothing automated will ever remove these seven. Removing them is the
+  maintainer's call and his hand (in Outlook, by the tag), or they stay, inert; an agent does
+  neither.
 
   **What happened.** `LiveDisconnectRecoveryTests.OutlookExit_ReleasesHeldRefsInBackground_
   HealthProbes_GatewayReattaches` ran for **22.5 minutes** and was still going. Outlook had been
@@ -873,13 +872,28 @@
       the scans and sweeps that need nothing but an Outlook all target the hub and take a "corpus
       too small" early return against an empty one - so the second store is the only one the
       tripwire can watch anyway.
-      **TOOLING DONE 2026-09-24 (Q70); the build is a guest step and has not run.** The generator
-      now builds it: `corpus-build --population bystander` puts 300 tagged, deterministic items in
-      the bystander - every folder inside the identity budget, two of them populated subfolders of
-      the Inbox - and `--population hub` gives the hub a 56-item population of its own, so the
-      "corpus too small" early returns above no longer need the corpus to be the hub.
-      `Docs/live-tier-on-the-vm.md` §3b is the procedure. Close this once a guest's census reads the
-      bystander item by item.
+      **What is left is a live run whose census reads the bystander item by item.** The items are
+      there: `corpus-build --population bystander` puts 300 tagged, deterministic items in the
+      bystander - every folder inside the identity budget, two of them populated subfolders of the
+      folder its received mail is filed in - and `OutlookAI-Unindexed` has carried them since
+      2026-10-03 (runbook §4.1d, `CP-12B-POPULATIONS-V2`). `--population hub` gives the hub a
+      56-item population of its own, so the "corpus too small" early returns above no longer need
+      the corpus to be the hub. `Docs/live-tier-on-the-vm.md` §3b is the procedure.
+
+- [ ] **Make `corpus-teardown` drain the folders it created, as it drains the items: in a PST its
+      `Folder.Delete()` MOVES them into Deleted Items, so every hub rebuild leaves two more empty
+      ones there.** Measured on `OutlookAI-Unindexed`, 2026-10-03 (runbook §3b item 7, §4.1d):
+      after the first `Reset-HubPopulation.ps1` run the hub's Deleted Items held
+      `OutlookAI-Corpus-Folder-Projects` and `-Notices`, empty; after the second, also `... (2)` of
+      each - Outlook renames on collision, so they pile up - and both teardowns printed
+      `folders removed 2`. Harmless to the tests (the live tier's test folders are a different
+      string), but the hub grows by two folders a run and the count says something that did not
+      happen. Direction (a) of §3b item 7 was chosen overnight on the maintainer's behalf, for his
+      review: first a read-only corpus-tool option that resolves a manifest's recorded folder
+      EntryIDs and says where each sits now - `CP-12B-POPULATIONS-V2` holds two torn-down manifests
+      and their four folders to run it on - then, if a folder keeps its EntryID across the move, a
+      second `Delete()` from Deleted Items by EntryID AND prefix, and a count that says which
+      happened.
 
 - [ ] **UNTESTED: what an ADVISED EVENT SINK leaves inside Outlook when its COM host is killed.
       Two of the three nominated mechanisms were measured on 2026-09-15 and both came back

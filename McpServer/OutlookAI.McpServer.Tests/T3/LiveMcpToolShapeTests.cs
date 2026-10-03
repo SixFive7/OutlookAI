@@ -154,6 +154,7 @@ public sealed class LiveMcpToolShapeTests
     [Trait("Requires", "SearchIndex")]
     [Trait("Requires", "MultipleStores")]
     [Trait("Requires", "DelegateStore")]
+    [Trait("Writes", "Nothing")]
     public async Task Status_Accounts_Folders_GoldenShapes_OverRealStdio()
     {
         await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync(

@@ -1,7 +1,9 @@
 using System.Globalization;
-
+using System.Text.Json;
+using ModelContextProtocol.Protocol;
 using OutlookAI.Core.Com;
 using OutlookAI.Core.Services;
+using OutlookAI.McpServer.Tools;
 using Xunit;
 
 namespace OutlookAI.McpServer.Tests.T1;
@@ -297,6 +299,46 @@ public sealed class DraftValidationTests : IDisposable
         Assert.Equal("not_created_by_this_server", ex.Reason);
         Assert.Contains("not created or last updated by this server session", ex.Message, StringComparison.Ordinal);
         Assert.Contains("Delete it in Outlook instead", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task DiscardDraft_EntryIdNotFromThisServer_ReachesTheCallerAsDraftRefused_AndIsAuditedInTheThrowawayLog()
+    {
+        // The wire half of the guardrail, which T3/SoakBatchCCiToolShapeTests used to pin over
+        // stdio - where the audited refusal landed in the machine's REAL audit log on every run,
+        // because the server child cannot be redirected (Q86). Same service, same GuardAsync
+        // mapping the server runs, in-process: the refusal's audit line goes to this run's
+        // throwaway log instead, and that is asserted too.
+        string entryId = RandomRawEntryId();
+
+        CallToolResult result = await OutlookTools.GuardAsync(CancellationToken.None, () => _service.DiscardDraft(entryId));
+
+        Assert.True(result.IsError);
+        string text = Assert.IsType<TextContentBlock>(Assert.Single(result.Content)).Text;
+        using (JsonDocument payload = JsonDocument.Parse(text))
+        {
+            JsonElement error = payload.RootElement.GetProperty("error");
+            Assert.Equal("DraftRefused", error.GetProperty("type").GetString());
+            Assert.Equal("not_created_by_this_server", error.GetProperty("reason").GetString());
+            Assert.Equal(MutationOutcome.Unchanged, error.GetProperty("outcome").GetString());
+            string message = error.GetProperty("message").GetString()!;
+            Assert.Contains("not created or last updated by this server session", message, StringComparison.Ordinal);
+            Assert.Contains("Delete it in Outlook instead", message, StringComparison.Ordinal);
+        }
+
+        Assert.True(OutlookAI.Core.Audit.AuditLog.IsRedirected, "not redirected - the refusal above went to the real log");
+        string[] lines = File.ReadAllText(OutlookAI.Core.Audit.AuditLog.EffectiveLogPath)
+            .Split(new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries);
+        Assert.Single(lines, line =>
+            line.Contains(" op=discard_draft_refused ", StringComparison.Ordinal)
+            && line.Contains("entryId=\"" + entryId + "\"", StringComparison.Ordinal)
+            && line.Contains("reason=\"not_created_by_this_server\"", StringComparison.Ordinal));
+    }
+
+    /// <summary>A well-formed raw EntryID no draft tool ever returned, unique per call so its audit line is countable.</summary>
+    private static string RandomRawEntryId()
+    {
+        return (Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N")).ToUpperInvariant();
     }
 
     [Fact]

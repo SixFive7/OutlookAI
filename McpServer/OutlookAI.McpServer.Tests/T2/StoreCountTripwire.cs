@@ -405,6 +405,16 @@ public static class TripwireWatchSoundness
                         : string.Empty)
                     + ".");
             }
+            else if (allowlist.IsHub(store))
+            {
+                // Asked on its own since Q74: on a read-only machine the allowlist permits nothing on
+                // ANY store, so the line above can no longer catch a hub named as its own bystander -
+                // and the contradiction is still there. The census exempts the hub from every
+                // comparison, so a bystander that is the hub is a bystander nothing ever checks.
+                violations.Add(
+                    "  store '" + store + "' is declared a BYSTANDER and it is also the designated test hub, which "
+                    + "the census exempts from every comparison - so nothing would ever check that it went untouched.");
+            }
 
             if (!watchedSet.Contains(store))
             {
