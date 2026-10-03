@@ -740,19 +740,19 @@ function New-SelfTestDump {
     # module list (4)
     $at = $ms.Position; $w.Write([uint32]1); $w.Write([uint64]$base); $w.Write([uint32]0x3000); $w.Write([uint32]0); $w.Write([uint32]0); $w.Write([uint32]$nameAt)
     $vs = New-Object byte[] 52; [BitConverter]::GetBytes([uint32]0x00100000).CopyTo($vs, 8); [BitConverter]::GetBytes([uint32]0x460C4E44).CopyTo($vs, 12); $w.Write($vs)
-    $w.Write((New-Object byte[] 32)); $dir.Add(@(4, 4 + 108, $at))
+    $w.Write((New-Object byte[] 32)); $dir.Add(@(4, (4 + 108), $at))
     # memory 64 list (9): the image, the stack, the heap object - data placed after the descriptors
     $at = $ms.Position; $ranges = @(@($base, $image), @($stackBase, $stack), @($heapBase, $heap))
     $dataAt = $at + 16 + 16 * $ranges.Count
     $w.Write([uint64]$ranges.Count); $w.Write([uint64]$dataAt)
     foreach ($r in $ranges) { $w.Write([uint64]$r[0]); $w.Write([uint64]$r[1].Length) }
     foreach ($r in $ranges) { $w.Write([byte[]]$r[1]) }
-    $dir.Add(@(9, 16 + 16 * $ranges.Count, $at))
+    $dir.Add(@(9, (16 + 16 * $ranges.Count), $at))
     # thread list (3): thread 77, its stack in the memory list too
     $at = $ms.Position; $w.Write([uint32]1); $w.Write([uint32]77); $w.Write([uint32]0); $w.Write([uint32]0); $w.Write([uint32]0); $w.Write([uint64]0)
     $w.Write([uint64]$stackBase); $w.Write([uint32]$stack.Length); $w.Write([uint32]($dataAt + $image.Length)); $w.Write([uint32]1232); $w.Write([uint32]$ctxAt); $dir.Add(@(3, 52, $at))
     # exception (6): an access violation writing 0x18 on thread 77
-    $at = $ms.Position; $w.Write([uint32]77); $w.Write([uint32]0); $w.Write([uint32]0xC0000005); $w.Write([uint32]0); $w.Write([uint64]0); $w.Write([uint64]($base + 0x2010)); $w.Write([uint32]2); $w.Write([uint32]0)
+    $at = $ms.Position; $w.Write([uint32]77); $w.Write([uint32]0); $w.Write([uint32]3221225477); $w.Write([uint32]0); $w.Write([uint64]0); $w.Write([uint64]($base + 0x2010)); $w.Write([uint32]2); $w.Write([uint32]0)
     $p = New-Object uint64[] 15; $p[0] = 1; $p[1] = 0x18; foreach ($v in $p) { $w.Write([uint64]$v) }
     $w.Write([uint32]1232); $w.Write([uint32]$ctxAt); $dir.Add(@(6, 168, $at))
     $w.Flush()
@@ -770,8 +770,11 @@ function Invoke-SelfTest {
     $script:stFailures = New-Object System.Collections.Generic.List[string]
     function Check([string] $What, $Expected, $Actual) {
         $script:stChecks++
-        if ([string]$Expected -ceq [string]$Actual) { Write-Host "  OK   $What" }
-        else { $script:stFailures.Add("$What : expected [$Expected], got [$Actual]"); Write-Host "  FAIL $What - expected [$Expected], got [$Actual]" }
+        $e = [string]$Expected; $a = [string]$Actual
+        if ($Expected -is [System.Array]) { $e = $Expected -join '|' }
+        if ($Actual -is [System.Array]) { $a = $Actual -join '|' }
+        if ($e -ceq $a) { Write-Host "  OK   $What" }
+        else { $script:stFailures.Add("$What : expected [$e], got [$a]"); Write-Host "  FAIL $What - expected [$e], got [$a]" }
     }
     Write-Host "Read-CrashDump.ps1 -SelfTest under PowerShell $($PSVersionTable.PSVersion). An in-memory dump; no file, no process."
     Import-CrashDumpReader

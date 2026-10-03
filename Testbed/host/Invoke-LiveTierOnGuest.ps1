@@ -237,7 +237,7 @@ function Get-DumpHeadline {
             for ($j = $i + 1; $j -lt $lines.Count -and $j -le $i + $Frames -and $lines[$j] -match '^  \d\d  '; $j++) { $out.Add($lines[$j].Trim()) }
         }
     }
-    return ,$out.ToArray()
+    return $out.ToArray()
 }
 
 # The run's OUTLOOK.EXE crash count: the Application log's events, or the dumps WER wrote, whichever
