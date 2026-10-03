@@ -1666,6 +1666,12 @@ Names in use: `CP-01-WIN-CLEAN`, `CP-02-INSTALLER-STAGED`, `CP-03-OUTLOOKAI-INST
 and another after the sink and dummy account exist, because those two are the steps most likely
 to need redoing.
 
+The build VM, `OutlookAI-Build`, has two (section 4.3): `CP-01-WIN-CLEAN`, and
+`CP-02-SDK-TEST-READY` - taken RUNNING, because `Testbed/host/Invoke-TestsOnBuildVm.ps1` restores
+it before and after every run and a running checkpoint resumes in seconds. Never take a checkpoint
+of that VM by hand while a run might be using it, and never delete `CP-02-SDK-TEST-READY` without
+taking its replacement in the same sitting: the runner refuses without it.
+
 ---
 
 ## 3. Keeping the corpus usable
@@ -2242,11 +2248,17 @@ turns those two tests from an announcement into a verification.
 **The maintainer's workstation runs a different filter, and only that one:** read-only, Exchange-only
 - `Testbed/README.md` section 4d, and section 5 below for the `Writes=Nothing` trait it rests on.
 
-To run one class:
+To run one class - on a test guest, inside the same interactive-task script as `Testbed/README.md`
+section 4c's lines, opt-in included:
 
 ```
 dotnet test <csproj> --filter "Category=Live&FullyQualifiedName~LiveTableSortProbeTests"
 ```
+
+**Where each kind of run happens, since 2026-10-03 (Q94, `AGENTS.md`):** a live run on a test guest,
+as above; on the maintainer's workstation only the Exchange-only read-only subset (Q74); and the
+NON-live suite on neither - it runs on the build VM, through
+`Testbed/host/Invoke-TestsOnBuildVm.ps1` (section 4.3).
 
 **A filtered run is fully guarded.** It takes the census, runs the health preflight, checks
 corpus freshness and sink reachability, and verifies at the end of whichever collection the
@@ -2695,6 +2707,56 @@ from their profile `PR_ENTRYID`s, which item 24 found equal to `Store.StoreID` f
 identity store and the corpus were both `Outlook Data File`. The mint profile mounts the same file, so
 it adds no fourth root. The identity store's 15 rows are all folders; the product's discovery sample
 (`TOP 2000 ... Kind='email'`) saw only the corpus, as section 8 item 24 found.
+
+### 4.3 The build VM - `OutlookAI-Build`, 2026-10-03 (Q94, Q102)
+
+**Why this section exists.** The third machine, and not a live-tier guest: it runs the non-live
+suite and the script self-tests for `Testbed/host/Invoke-TestsOnBuildVm.ps1`, so that nothing runs
+on the maintainer's workstation but the Exchange-only read-only live tests (Q94; `AGENTS.md`).
+No Office, no mailbox, no sink, no network. `Testbed/README.md` section 1c is the procedure and how
+to use it; this is the record of building it, every step from the committed scripts and the media
+`Testbed/MEDIA.md` names. Raw logs: `.work\q102-build-vm\` in the main checkout.
+
+| Step | What ran | Verdict | Checkpoint |
+| --- | --- | --- | --- |
+| 1. Answer volume | `New-AnswerFile.ps1 -VMName OutlookAI-Build -ComputerName OAI-BUILD` | 675,840 bytes, built with oscdimg | - |
+| 2. Create and boot | `New-TestbedVm.ps1 -Name OutlookAI-Build ... -ProcessorCount 4 -MemoryStartupBytes 6GB -Execute -Start` | Generation 2, Secure Boot, vTPM, 128 GB dynamic VHDX, the adapter disconnected; 27 keystrokes typed through the boot prompt | - |
+| 3. Unattended install | nobody | the first-logon log `DONE. All 14 step(s) succeeded` 10 minutes after the start: en-NL then nl-NL, GeoId 176, system locale en-US, formats nl-NL, W. Europe Standard Time, Windows 11 Pro 10.0.26200 | - |
+| 4. Finish the install | `New-TestbedVm.ps1 -CompleteInstall -Execute`, three times - its first real run | Attempt 1 read the DONE line, ejected both discs, then refused: its read-back went through the VM object fetched before the eject and still listed both ISOs (by name, a minute later, both drives were empty). Attempt 2, after that fix, took the checkpoint and refused again: `Get-VMSnapshot` straight after `Checkpoint-VM` listed no checkpoint of the name. Attempt 3 found it, without a disc, and deleted the answer ISO. Each refusal left everything a restore needs; both read-backs now go by name and poll | `CP-01-WIN-CLEAN` |
+| 5. Payload | `Publish-LiveTierPayload.ps1 -Ref e4b00fa -ExpectedSha512 <MEDIA.md's>`; `Copy-ToGuest.ps1` four times | the SDK hash MATCHES; `Source.zip` 3.2 MB, 54 packages, 75.7 MB; the feed restores all five projects with every other source cleared; 48 s to copy in | - |
+| 6. SDK | `Install-DotnetSdk.ps1 -ExpectedSha512 <hash> -Execute` over PowerShell Direct | first: "running scripts is disabled on this system" - a fresh guest's execution policy is Restricted on every scope; with `Set-ExecutionPolicy -Scope Process Bypass -Force` first, the installer exited 0 in 84 s and `TEST-READY`, 3,137 tests discovered, 17 run | - |
+| 7. Memory | a graceful `shutdown.exe /s /t 0` inside, `Set-VMMemory -DynamicMemoryEnabled $false -StartupBytes 6GB`, `Start-VM` | `New-VM` had made it DYNAMIC - 512 MB to 1 TB - and the spec file recorded only the 6 GB; static since, and `New-TestbedVm.ps1 -StaticMemory` does it at creation now (proved on a throwaway VM, deleted) | - |
+| 8. Restart and verify | `Restart-Guest.ps1 -VMName OutlookAI-Build -Execute`; `Install-DotnetSdk.ps1 -Verify` from a new session | the restart in 26 s, no Outlook to quit - the script fits a VM without Office unchanged; `TEST-READY` again | - |
+| 9. Base checkpoint | the VM's CPU at 0 % for three minutes, no PowerShell Direct session open; `Checkpoint-VM` with the VM running | 4.6 s; the saved memory is 1,578 MB on disk | `CP-02-SDK-TEST-READY` |
+| 10. First proof | `Invoke-TestsOnBuildVm.ps1 -Ref e4b00fa` | **PASS: 3,005 total, 3,005 passed, 0 failed, 0 skipped**; 18 of 18 self-tests; 4 min 05 s | - |
+| 11. Timed second run | the same, again | **PASS, the same counts**, 3 min 56 s: 8 s restore and resume, 1 s connect, 1 s stage; in the VM 2 s expand, 3 s restore, 23 s build, 2 min 19 s test, 39 s self-tests; 1 s fetch, 12 s restore and save | - |
+| 12. Master | `Invoke-TestsOnBuildVm.ps1 origin/master` at `3e7b861` (Q74, Q86, Q93 and Q98 merged) | **PASS: 3,346 total, 3,346 passed, 0 failed, 0 skipped** - the count measured on the workstation the same night - and 18 of 18 self-tests, 3 min 50 s | - |
+| 13. A failing test | a scratch commit adding one test that fails, `-Filter` on it and one real class | **FAIL, exit 1**: 19 total, 18 passed, 1 failed, the failing test and the first line of its message in the summary | - |
+| 14. A compile error | a scratch commit that does not compile | **BUILD, exit 2**, in 1 min 02 s, the compiler's error lines in `vm\build.out.txt` | - |
+| 15. A package the feed lacks | a scratch commit adding `Humanizer.Core` 2.14.1 to the test project | the guest named it (`PACKAGES-MISSING`), the host staged that commit's closure in 45 s (55 packages; the feed check green), added the one new package to the VM's feed, and the second attempt **PASSED** - 3 min 12 s in all | - |
+| 16. Two callers at once | the branch's own HEAD, and 9 s later the failing-test commit | the second printed who held the VM every minute, ran 3 min 50 s later, and finished as above; the first PASSED - 3,089 tests and 20 of 20 self-tests, the runner's and the guest script's own among them | - |
+| 17. A lease taken by hand | `Set-TestbedLease.ps1 -VMName OutlookAI-Build`, then a run under Windows PowerShell 5.1 with `-QueueTimeoutMinutes 1` | held back for the minute, then **INFRA, exit 3**, the VM untouched (still saved) | - |
+| 18. A caller killed part-way | a run under Windows PowerShell 5.1, its process stopped mid-build | the lock went with the process. The VM stayed RUNNING - nothing on this host saves it, the idle-saver task not being registered here - until the next run, three hours later, restored the checkpoint over it (Running to Running), passed, and saved it | - |
+| 19. The same, with a janitor | every run now starts one (the runner's banner, A CALLER THAT DIES); a run under Windows PowerShell 5.1 stopped mid-build again | the janitor - a child of `WmiPrvSE`, not of the caller - saw the run end 9 s after the kill with no end line in `runs.log`, took the lock, restored the base checkpoint over the running VM and saved it, released the dead run's lease, and logged each step: the VM saved, holding no RAM, **22 s after the kill**. After a run that finished, its janitor exited without a word | - |
+| 20. This work, merged with master | the branch's HEAD after merging `7933c5c` | **PASS: 3,346 total, 3,346 passed, 0 failed, 0 skipped**, 20 of 20 self-tests, 3 min 44 s; the VM saved, its janitor gone, no lease left | - |
+
+**No test behaves differently here than on the maintainer's workstation**, and the two that could
+were checked. The runs matched master exactly: 3,005 / 0 / 0 at `e4b00fa`, 3,346 / 0 / 0 at
+`3e7b861`. `T1.SweepSortWiringTests.AnAbsentTableDateFallsBackToTheItemValueCONVERTED`
+failed on GitHub CI at this commit and passes here: at `e4b00fa` it still read the machine's own time
+zone, CI's runners are UTC and this VM is W. Europe Standard Time like the workstation (fixed on master
+since, Q95 `3cd62c0`, by giving the test a zone of its own). And about 200 tests take an "Outlook is
+not running" branch through `ComGateway.IsOutlookRunning` and the installer mutex - here as on CI,
+which has no Office either; on the workstation they may take the other. Both branches pass (Q94's
+research, decision D3 of `Docs/overnight-review-2026-10-03.md`). The suite ran in session 0, over
+PowerShell Direct: nothing in it needs a desktop. Memory, sampled every 5 s by the guest script: the
+lowest free 2,998 MB of 6,144, the highest committed 2,847 MB.
+
+**Three Hyper-V behaviours the runner rests on, measured here.** A checkpoint applied to a RUNNING VM
+resumes it at once from the checkpoint's state (Running to Running, 9 s); so the runner, ending a
+run, restores the base and then saves it - restoring alone would leave it running and holding its
+RAM. A `VirtualMachine` object keeps the state it was read with and has no `Refresh()`, so every
+wait re-reads the VM by name. And a running checkpoint's memory is stored sparse: 1.6 GB for 6 GB.
 
 ---
 

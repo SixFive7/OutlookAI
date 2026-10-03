@@ -131,9 +131,16 @@ Requires the .NET 10 SDK. **Always build by explicit csproj path — never via `
 ```
 dotnet build McpServer/OutlookAI.Core/OutlookAI.Core.csproj -c Release
 dotnet build McpServer/OutlookAI.McpServer/OutlookAI.McpServer.csproj -c Release
-dotnet test  McpServer/OutlookAI.McpServer.Tests/OutlookAI.McpServer.Tests.csproj --filter "Category!=Live"   # CI-safe tier
-dotnet test  McpServer/OutlookAI.McpServer.Tests/OutlookAI.McpServer.Tests.csproj                             # full suite (dev machine)
+pwsh -File Testbed/host/Invoke-TestsOnBuildVm.ps1                  # the non-live suite and every -SelfTest, on the build VM
+pwsh -File Testbed/host/Invoke-TestsOnBuildVm.ps1 <commit-or-branch> -Filter 'FullyQualifiedName~T1.SomeTests' -SkipSelfTests
 ```
+
+**The tests do not run on the maintainer's workstation** (Q94, Q102, 2026-10-03; `AGENTS.md`). The
+non-live suite - `dotnet test ... --filter "Category!=Live"` - runs on the build VM, `OutlookAI-Build`,
+through `Testbed/host/Invoke-TestsOnBuildVm.ps1`, which tests a commit from a clean checkpoint and
+brings back a summary and the TRX file (`Testbed/README.md` section 1c); and in CI. The live tier
+runs on the test VMs (`Docs/live-tier-on-the-vm.md`), and on the workstation only its Exchange-only
+read-only subset (Q74).
 
 `McpServer/Directory.Build.props` enforces `TreatWarningsAsErrors`, nullable, and latest C# for all three projects. Building Core standalone gates **both** targets; a net48 break fails the build. CI is `.github/workflows/mcpserver.yml` (windows runner, dotnet only, live tier excluded).
 
@@ -149,9 +156,9 @@ Add `-p:Version=<major.minor.patch.build>` to reproduce the release's version st
 
 | Tier | What | Where it runs |
 |---|---|---|
-| **T1** unit | Pure logic: WS-SQL builder shapes (anti-patterns as negative tests), EntryID codec against recorded hex fixtures, payload caps/truncation, token store, validation | Anywhere, incl. CI |
-| **T2** live integration (`[Trait("Category", "Live")]`) | Against the real SystemIndex and a real Outlook profile | Dev machine, plus whatever subset a given machine's capabilities allow - selected by `Requires`, not by a second trait |
-| **T3** MCP conformance | Spawns the built exe and speaks real JSON-RPC over stdio (`initialize`, `tools/list`, `tools/call`); protocol-only subset + live subset | Both |
+| **T1** unit | Pure logic: WS-SQL builder shapes (anti-patterns as negative tests), EntryID codec against recorded hex fixtures, payload caps/truncation, token store, validation | The build VM (`Testbed/host/Invoke-TestsOnBuildVm.ps1`) and CI - never the workstation (Q94) |
+| **T2** live integration (`[Trait("Category", "Live")]`) | Against the real SystemIndex and a real Outlook profile | The test VMs, each the subset its capabilities allow - selected by `Requires`, not by a second trait; on the workstation only the Exchange-only read-only subset (Q74) |
+| **T3** MCP conformance | Spawns the built exe and speaks real JSON-RPC over stdio (`initialize`, `tools/list`, `tools/call`); protocol-only subset + live subset | The protocol-only subset where T1 runs; the live subset where T2 runs |
 
 Live-test conventions:
 
