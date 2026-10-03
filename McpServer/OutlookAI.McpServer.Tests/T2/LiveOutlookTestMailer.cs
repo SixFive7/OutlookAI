@@ -815,6 +815,111 @@ public static class LiveOutlookTestMailer
     }
 
     /// <summary>
+    /// Saves ONE tagged POST in the store's Deleted Items and returns its EntryID - the item the
+    /// created-folder proof replies to (Q96 (iv), <c>LiveCreatedFolderTests</c>), in the throwaway
+    /// data file that has no Drafts folder.
+    /// <para>
+    /// <b>Why a post, and why Deleted Items.</b> Each choice keeps the proof's premise intact - that
+    /// the store has no Drafts folder until the product makes one:
+    /// </para>
+    /// <list type="bullet">
+    /// <item>A new unsent MAIL item's first save is filed in the DEFAULT store's Drafts, whichever
+    /// store's folder created it (measured on OAI-UNINDEXED 2026-09-24; <c>CorpusPlacement</c>); a POST
+    /// is never unsent, and is the one rung measured to keep its first save in a store that is not
+    /// the profile's default (<c>CorpusPlacementMethod.PostAsNote</c>, 2026-09-27). The save is checked
+    /// anyway, and a post that landed anywhere else refuses here.</item>
+    /// <item>A data file attached with <c>AddStoreEx</c> holds Deleted Items and nothing else
+    /// (Docs/live-tier-on-the-vm.md section 1.3), and the folder is looked up the non-creating way
+    /// (<see cref="ResolveWithoutCreating"/>) - so this creates no folder at all, and the cleanup is
+    /// the ordinary tagged purge of Deleted Items. A store whose Deleted Items cannot be proven
+    /// present refuses.</item>
+    /// </list>
+    /// <para>
+    /// Asserted as a <see cref="StoreWriteKind.Draft"/>: an item that is created and never sent. The
+    /// subject must carry <see cref="SubjectTag"/> and <paramref name="uniqueMarker"/>, so the S3
+    /// double-match cleanup recognises it.
+    /// </para>
+    /// </summary>
+    public static string SaveTaggedPostInDeletedItems(
+        string storeDisplayName, string uniqueMarker, string subject, string body)
+    {
+        LiveStoreWriteGuard.Assert(storeDisplayName, StoreWriteKind.Draft, nameof(SaveTaggedPostInDeletedItems));
+        if (string.IsNullOrWhiteSpace(uniqueMarker) || uniqueMarker.Length < 12)
+        {
+            throw new ArgumentException("Marker too weak for the S3 cleanup to recognise the post.", nameof(uniqueMarker));
+        }
+
+        if (!subject.Contains(SubjectTag, StringComparison.Ordinal) || !subject.Contains(uniqueMarker, StringComparison.Ordinal))
+        {
+            throw new ArgumentException($"A test post's subject must carry the {SubjectTag} tag and this run's marker (S3).", nameof(subject));
+        }
+
+        return RunSta(() =>
+        {
+            dynamic app = CreateOutlookApplication();
+            dynamic? ns = null;
+            dynamic? stores = null;
+            dynamic? store = null;
+            object? deleted = null;
+            dynamic? items = null;
+            dynamic? post = null;
+            dynamic? parent = null;
+            dynamic? parentStore = null;
+            try
+            {
+                ns = app.GetNamespace("MAPI");
+                stores = ns.Stores;
+                store = FindStore(stores, storeDisplayName)
+                    ?? throw new InvalidOperationException("Store not found for the test post: '" + storeDisplayName + "'.");
+                string storeId = (string)store.StoreID;
+                if (ResolveWithoutCreating((object)ns, (object)store, SpecialFolders.OlFolderDeletedItems, out deleted, out _)
+                    != OutlookComSession.DefaultFolderResolution.Resolved)
+                {
+                    throw new InvalidOperationException(
+                        "The store's Deleted Items could not be proven present without asking Outlook for it, which could "
+                        + "create it - so no test post is saved. A data file attached with AddStoreEx has one; recreate it "
+                        + "with Testbed/guest/Reset-ThrowawayStore.ps1 -Execute.");
+                }
+
+                items = ((dynamic)deleted!).Items;
+                post = items.Add(OlPostItem);
+                post.Subject = subject;
+                post.Body = body;
+                post.Save();
+                string entryId = (string)post.EntryID;
+
+                // Where the first save really landed - before anything else is done with it.
+                parent = post.Parent;
+                parentStore = parent.Store;
+                if (!string.Equals((string)parentStore.StoreID, storeId, StringComparison.OrdinalIgnoreCase)
+                    || !string.Equals((string)parent.EntryID, (string)((dynamic)deleted!).EntryID, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException(
+                        "The test post's first save did not land in the target store's Deleted Items (EntryID " + entryId
+                        + "). It carries the tag and this run's marker, so the tagged sweep of the store it reached removes it.");
+                }
+
+                return entryId;
+            }
+            finally
+            {
+                Release(parentStore);
+                Release(parent);
+                Release(post);
+                Release(items);
+                Release(deleted);
+                Release(store);
+                Release(stores);
+                Release(ns);
+                Release(app);
+            }
+        });
+    }
+
+    /// <summary><c>OlItemType.olPostItem</c>.</summary>
+    private const int OlPostItem = 6;
+
+    /// <summary>
     /// READ-ONLY census for the per-store tripwire: store-relative path -&gt; what was in
     /// every MAIL folder of <paramref name="storeDisplayName"/> (mail-typed folders plus
     /// Deleted Items, Outbox and the Sync Issues subtree, which are all mail-typed).

@@ -44,6 +44,11 @@ public static class LiveStoreWriteGuard
     public static StoreWriteAllowlist Build(LiveTestSettings settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
+        // The throwaway data file (Q96 (iv)), when the settings declare one - granted draft+delete
+        // on a machine that may write, and nothing on a read-only one, like every other store.
+        IReadOnlyList<string> throwaway = string.IsNullOrWhiteSpace(settings.ThrowawayStoreDisplayName)
+            ? Array.Empty<string>()
+            : new[] { settings.ThrowawayStoreDisplayName! };
         if (LiveWriteAccess.RefusesEveryWrite(settings.MachineProfile))
         {
             return StoreWriteAllowlist.RefusingEveryWrite(
@@ -51,14 +56,16 @@ public static class LiveStoreWriteGuard
                 settings.TestHubStoreDisplayName,
                 settings.ExpectedStoreDisplayNames,
                 settings.ExpectedDelegateStoreDisplayNames,
-                settings.BystanderStoreDisplayNames);
+                settings.BystanderStoreDisplayNames,
+                throwaway);
         }
 
         return new StoreWriteAllowlist(
             settings.TestHubStoreDisplayName,
             settings.ExpectedStoreDisplayNames,
             settings.ExpectedDelegateStoreDisplayNames,
-            settings.BystanderStoreDisplayNames);
+            settings.BystanderStoreDisplayNames,
+            throwaway);
     }
 
     /// <summary>Throws unless the write is permitted; returns the store name.</summary>

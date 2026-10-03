@@ -4721,7 +4721,7 @@ namespace OutlookAI.Core.Services
             {
                 ComDraftCreateResult? r = s.TryCreateNewDraft(
                     account, toList, subject!, draftBody, display, signatureOverride, options,
-                    out string? savedEntryId, out string? madeFolder, out string? error);
+                    out string? savedEntryId, out IReadOnlyList<string>? madeFolders, out string? error);
 
                 // REGISTERED BEFORE the call is judged, and that ordering is the fix. The
                 // draft is committed by Save() and four COM steps follow it; a failure in any
@@ -4733,7 +4733,7 @@ namespace OutlookAI.Core.Services
 
                 // Q85, the same way round: a Drafts folder the call made is reported whether
                 // the draft then succeeded or not, because this server cannot delete folders.
-                AddCreatedFolder(createdFolders, madeFolder);
+                AddCreatedFolders(createdFolders, madeFolders);
                 return r ?? throw BuildDraftCreationFailure(error, account, savedEntryId, createdFolders);
             });
 
@@ -4741,19 +4741,6 @@ namespace OutlookAI.Core.Services
             AuditDraft("new_draft", created, requestedAccount: account, sourceEntryId: null, draftBody, files, createdFolders);
             return WithCreatedFolders(
                 ToDraftOutcome("new", created, hitId: null, sourceEntryId: null, draftBody, htmlAdjustments, files), createdFolders);
-        }
-
-        /// <summary>
-        /// Collects a folder a draft or discard call reported CREATING (Q85), once. A call can
-        /// be attempted in more than one store (the cross-store retry), and each attempt reports
-        /// its own - so the list is what the whole tool call made.
-        /// </summary>
-        private static void AddCreatedFolder(List<string> into, string? createdFolder)
-        {
-            if (!string.IsNullOrEmpty(createdFolder) && !into.Contains(createdFolder!, StringComparer.OrdinalIgnoreCase))
-            {
-                into.Add(createdFolder!);
-            }
         }
 
         /// <summary>The optional <c>createdFolders</c> field: the list when a folder was made, absent (null) otherwise.</summary>
@@ -4960,9 +4947,9 @@ namespace OutlookAI.Core.Services
             {
                 ComDraftCreateResult? r = s.TryCreateDerivedDraft(
                     entryId, storeId, kind, toList, draftBody, display, signatureOverride, options,
-                    out string? savedEntryId, out string? madeFolder, out string? error);
+                    out string? savedEntryId, out IReadOnlyList<string>? madeFolders, out string? error);
                 _draftRegistry.Register(savedEntryId);
-                AddCreatedFolder(createdFolders, madeFolder);
+                AddCreatedFolders(createdFolders, madeFolders);
                 if (ShouldSearchOtherStores(storeId, r != null, error))
                 {
                     // Direct EntryID without a known store: retry across stores (same
@@ -4985,13 +4972,13 @@ namespace OutlookAI.Core.Services
                     {
                         r = s.TryCreateDerivedDraft(
                             entryId, store.StoreId, kind, toList, draftBody, display, signatureOverride, options,
-                            out savedEntryId, out madeFolder, out error);
+                            out savedEntryId, out madeFolders, out error);
 
                         // Every attempt registers its own saved draft. The loop stops at the
                         // first store that opened the item, so at most one orphan is possible
                         // now - but "at most one" is still one, and it is reachable.
                         _draftRegistry.Register(savedEntryId);
-                        AddCreatedFolder(createdFolders, madeFolder);
+                        AddCreatedFolders(createdFolders, madeFolders);
                         if (!KeepSearchingStores(r != null, error))
                         {
                             // A store that opened the item and then failed answers the
@@ -5091,6 +5078,16 @@ namespace OutlookAI.Core.Services
         /// The two named codes above it are decided before anything is created and keep
         /// their wording, which is what earns them <c>unchanged</c>.
         /// </para>
+        /// <para>
+        /// So are the three Q96 (iii) codes (2026-10-03), each raised before the compose - the
+        /// first step that can save a draft - and so each answers that NO draft exists, where
+        /// the catch-all used to say "a draft may have been saved": the Drafts lookup that
+        /// failed, with or without being able to tell whether it made the folder first, and any
+        /// other failure that early. Their outcome is <c>unchanged</c> in the sense
+        /// <c>archive_mail</c> and <c>move_mail</c> already give it: no mail was created or
+        /// changed, and a folder the call DID make travels in <c>createdFolders</c> and in the
+        /// message, as on every other path.
+        /// </para>
         /// </summary>
         private static Exception BuildDraftCreationFailure(
             string? error,
@@ -5113,12 +5110,86 @@ namespace OutlookAI.Core.Services
                     "Account '" + account + "' has no delivery store; a draft cannot be filed for it. Nothing was created.");
             }
 
+            if (Com.ComErrorTokens.TryRead(error, Com.ComErrorTokens.DraftsFolderUnavailable, out string lookupFailure))
+            {
+                return WithCreatedFolders(
+                    new OperationOutcomeException(
+                        Com.MutationOutcome.Unchanged,
+                        DescribeDraftsFolderFailure(account, lookupFailure, createdFolders, creationChecked: true)),
+                    createdFolders);
+            }
+
+            if (Com.ComErrorTokens.TryRead(error, Com.ComErrorTokens.DraftsFolderCreationUnverified, out string uncheckedFailure))
+            {
+                return WithCreatedFolders(
+                    new OperationOutcomeException(
+                        Com.MutationOutcome.Unchanged,
+                        DescribeDraftsFolderFailure(account, uncheckedFailure, createdFolders, creationChecked: false)),
+                    createdFolders);
+            }
+
+            if (Com.ComErrorTokens.TryRead(error, Com.ComErrorTokens.DraftNotStarted, out string earlyFailure))
+            {
+                return WithCreatedFolders(
+                    new OperationOutcomeException(Com.MutationOutcome.Unchanged, DescribeDraftNotStarted(earlyFailure, createdFolders)),
+                    createdFolders);
+            }
+
             return WithCreatedFolders(
                 new OperationOutcomeException(
                     Com.MutationOutcome.Unknown,
                     DescribeDraftCreationOutcomeUnknown(error, savedDraftEntryId) + DescribeCreatedFolderResidue(createdFolders)),
                 createdFolders);
         }
+
+        /// <summary>
+        /// What new_draft answers when its Drafts lookup itself failed (Q96 (iii), 2026-10-03).
+        /// It used to share the catch-all's "a draft may have been saved", which cannot be true:
+        /// the lookup comes before Outlook is given anything to save. What IS known is said
+        /// instead - no draft exists - and then what became of the folder, from the lookup's own
+        /// re-check (Q96 (ii)): the folders it made before failing, named; or none, when the
+        /// re-check could prove it; or that it could not tell, when the mailbox's top-level
+        /// folders would not list. Pure and public so T1 pins every branch.
+        /// </summary>
+        public static string DescribeDraftsFolderFailure(
+            string account,
+            string? comError,
+            IReadOnlyList<string>? createdFolders,
+            bool creationChecked)
+        {
+            string opening = "Outlook failed while opening the Drafts folder of account '" + account + "' ("
+                + (comError ?? "unknown") + "), so NO DRAFT WAS CREATED: the failure came before Outlook was given "
+                + "anything to save, so there is nothing to look for in Drafts.";
+            if (createdFolders != null && createdFolders.Count > 0)
+            {
+                return opening + DescribeCreatedFolderResidue(createdFolders) + RetryCannotDuplicateClause;
+            }
+
+            return creationChecked
+                ? opening + " No folder was created either." + RetryCannotDuplicateClause
+                : opening + " Whether Outlook created a Drafts folder in that mailbox before it failed could NOT be "
+                    + "checked - its top-level folders would not list - so look at them in Outlook before retrying.";
+        }
+
+        /// <summary>
+        /// What a draft tool answers when it failed before the compose - the first step that can
+        /// save a draft - for any reason other than its Drafts lookup (Q96 (iii)): Outlook would
+        /// not make the reply or forward, or would not take the account or the new item. No
+        /// draft exists, so the old "a draft may have been saved - check Drafts" is replaced by
+        /// what is known. A folder the call made first (new_draft's Drafts, found before this
+        /// failed) is still named. Pure and public so T1 pins it.
+        /// </summary>
+        public static string DescribeDraftNotStarted(string? comError, IReadOnlyList<string>? createdFolders)
+        {
+            return "The draft could not be created (" + (comError ?? "unknown") + "), and NO DRAFT WAS SAVED: the failure "
+                + "came before Outlook was given anything to save, so there is nothing to look for in Drafts."
+                + DescribeCreatedFolderResidue(createdFolders)
+                + RetryCannotDuplicateClause;
+        }
+
+        /// <summary>The remedy for a draft failure that provably saved nothing: a retry cannot make a second draft.</summary>
+        private const string RetryCannotDuplicateClause =
+            " Retrying cannot leave a second draft; check outlook_health first if Outlook may be busy.";
 
         /// <summary>
         /// The twin of <see cref="BuildDraftCreationFailure"/> for reply/replyall/forward,
@@ -5135,6 +5206,15 @@ namespace OutlookAI.Core.Services
                 return new OperationOutcomeException(
                     Com.MutationOutcome.Unchanged,
                     "The source mail could not be opened, so no draft was created. Re-run search - the item may have moved.");
+            }
+
+            if (Com.ComErrorTokens.TryRead(error, Com.ComErrorTokens.DraftNotStarted, out string earlyFailure))
+            {
+                // Q96 (iii): Reply()/ReplyAll()/Forward(), or the account pin, failed - before the
+                // compose, so no draft exists. The same wording new_draft uses for the same moment.
+                return WithCreatedFolders(
+                    new OperationOutcomeException(Com.MutationOutcome.Unchanged, DescribeDraftNotStarted(earlyFailure, createdFolders)),
+                    createdFolders);
             }
 
             return WithCreatedFolders(
@@ -5739,8 +5819,8 @@ namespace OutlookAI.Core.Services
             ComDraftDiscardResult discarded = _gateway.Run(s =>
             {
                 string? error = null;
-                ComDraftDiscardResult? r = s.TryDiscardDraft(entryId, storeId, out string? madeFolder, out error);
-                AddCreatedFolder(createdFolders, madeFolder);
+                ComDraftDiscardResult? r = s.TryDiscardDraft(entryId, storeId, out IReadOnlyList<string>? madeFolders, out error);
+                AddCreatedFolders(createdFolders, madeFolders);
                 if (ShouldSearchOtherStores(storeId, r != null, error))
                 {
                     // Unreachable until the COM layer began setting "ItemNotFound" here too
@@ -5749,8 +5829,8 @@ namespace OutlookAI.Core.Services
                     // that answered with a refusal has answered - the draft is not missing.
                     foreach (ComStoreDetail store in GetStoreDetails(s))
                     {
-                        r = s.TryDiscardDraft(entryId, store.StoreId, out madeFolder, out error);
-                        AddCreatedFolder(createdFolders, madeFolder);
+                        r = s.TryDiscardDraft(entryId, store.StoreId, out madeFolders, out error);
+                        AddCreatedFolders(createdFolders, madeFolders);
                         if (!KeepSearchingStores(r != null, error))
                         {
                             break;
@@ -6910,7 +6990,11 @@ namespace OutlookAI.Core.Services
             return ex is OperationOutcomeException stated ? stated.Outcome : Com.MutationOutcome.Unknown;
         }
 
-        /// <summary>Adds newly created folder paths without duplicating one two attempts both report.</summary>
+        /// <summary>
+        /// Adds newly created folder paths without duplicating one two attempts both report. A
+        /// move, a draft or a discard can be attempted in more than one store (the cross-store
+        /// retry), and each attempt reports its own - so the list is what the whole tool call made.
+        /// </summary>
         private static void AddCreatedFolders(List<string> into, IReadOnlyList<string>? created)
         {
             if (created == null)
