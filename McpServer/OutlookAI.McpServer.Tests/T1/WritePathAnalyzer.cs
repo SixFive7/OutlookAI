@@ -64,6 +64,10 @@ internal static class WritePathAnalyzer
         "Delete", "PermanentlyDelete", "Save", "SaveAs", "Send", "Move", "Copy", "Display", "Close", "Quit",
         "SendAndReceive", "Reply", "ReplyAll", "Forward", "CreateItem", "MarkAsTask", "ClearTaskFlag",
         "ShowCategoriesDialog", "AddStore", "AddStoreEx", "RemoveStore",
+
+        // A FOLDER moved or copied (Folder.MoveTo / Folder.CopyTo) - added 2026-10-03 with the Q114
+        // test-folder move helper, the first late-bound MoveTo in this assembly.
+        "MoveTo", "CopyTo",
     };
 
     private static readonly Assembly Tests = typeof(LiveCollections).Assembly;

@@ -4257,6 +4257,68 @@ unrecorded or unverified.
     on a guest as it stands: a STORE name in a display path (no store here has one of the five;
     decoded there by the folder evidence), a delegate's name (Exchange), and an attachment's file
     name in an `/at=` URL, which the product does not decode.
+31. **MEASURED 2026-10-03 (Q114/Q115) - what a FOLDER's id is, what it survives, and what the index
+    keeps of it.** (27 to 30 are the Q99 follow-up's items, on its own branch.) The maintainer decided
+    that tools address a folder only by a unique id, its name kept for display (Q114), and asked
+    whether a folder-scoped search can be answered correctly from the index alone while Outlook is
+    down (Q115). Measured on both guests, Office LTSC 2024 (16.0.17932), every Outlook start NOT
+    elevated: `T2/LiveFolderIdentityTests` through `Invoke-LiveTierOnGuest.ps1` with
+    `-FilterSuffix '&FullyQualifiedName~LiveFolderIdentityTests' -SkipHubReset` - on
+    `OutlookAI-Unindexed` from and back to `CP-13B-LIVE-GREEN` (1 of 1, at `a5ce5cb`), on
+    `OutlookAI-Indexed` 3 of 3 at `a5ce5cb` from and back to `CP-17C-CORPUS-160K`, and 3 of 3 again at
+    `b7673d1` and `e906f85` from and back to `CP-18C-ALL-KINDS`, its resting checkpoint by then, the
+    settings staged each time; and a read-only COM probe of every store's ids on `OutlookAI-Unindexed` around two
+    graceful restarts (`Restart-Guest.ps1`) and a byte copy of a scratch PST attached with
+    `Add-OutlookPstStore.ps1`, the guest restored to `CP-13B` afterwards (raw output: `.work\q114\` of
+    that worktree). Every write in the hub, through `move_mail` with `create_folder` and three new
+    tested helpers (`LiveOutlookTestMailer.RenameTestFolder`, `MoveTestFolder`, `SoftDeleteTestFolder`,
+    which refuse anything that is not a test folder); the index read only through `SELECT`. Findings:
+
+    - **A PST folder's id** is `Folder.EntryID` = its `PR_ENTRYID`, 24 bytes: four zero flag bytes (a
+      long-term id), the store's `PR_RECORD_KEY` (16) and the folder's node id (4, little-endian,
+      type 0x02) - [MS-PST] 2.4.3.2. It survived a rename, a move within the store, a soft delete
+      (`Folder.Delete`, into Deleted Items - the old id then opens the folder THERE) and two graceful
+      restarts (all 37 ids of 4 stores, their `StoreID`s and record keys identical); an item inside
+      kept its own id through its folder's rename and move. A folder deleted and made again under the
+      same name and parent got a new id ([MS-PST] 2.2.2.6: node ids come from a per-type counter).
+      `GetFolderFromID` opened every id WITHOUT a store id - nine stores on the two guests, the default
+      among them - and from lower-case hex. The note in `LiveOutlookTestMailer.RemoveEmptyTestFolder`
+      that a soft delete gives a NEW EntryID was wrong for a PST, and is corrected.
+    - **A node id is not unique across stores.** Every PST gives its default folders the same node
+      ids - root 0x8022, Deleted Items 0x8062, Inbox 0x8082, Outbox 0x80A2, Sent Items 0x80C2 - so only
+      the store UID tells two PSTs' Inboxes apart, and one hex digit separates two sibling folders'
+      ids (Inbox `...82800000`, Outbox `...A2800000`).
+    - **The other candidates fall away.** A PST folder's `PR_RECORD_KEY` is its 4-byte node id
+      (store-scoped, as MAPI documents for folders); `PR_SOURCE_KEY`, `PR_PARENT_SOURCE_KEY` and
+      `PR_LONGTERM_ENTRYID_FROM_TABLE` are absent on a PST folder object (`0x8004010F`); `StoreID` is
+      the store's `PR_ENTRYID`, 114 to 172 bytes for these Unicode PSTs because it holds the file path.
+    - **A byte copy of a PST**, attached to the profile while its original was open, was RE-KEYED by
+      Outlook: a new record key, so every folder id of the copy differs from the original's in the UID
+      part while the node ids stay equal; the original kept its key, and both keys survived a further
+      restart.
+    - **The index keeps no folder's whole id, but every row's own node id.** `System.ProviderItemID`
+      is `N` and the row's node id in ten decimal digits on every folder and item row compared
+      (`Inbox` `N0000032898` = 0x8082; an item row its own message node id, never its folder's) - the
+      "provider item ID" a store pushes with each MAPI URL (*About MAPI URLs for Notification-Based
+      Indexing*: "send only the provider item ID for folders"). A folder's own row (`System.ItemType`
+      `MAPI/Folder`) has the names path as its URL and no id segment, as documented; an item row names
+      its folder only by that path. Every one of the 1,688 property descriptions the property system
+      names was asked of each row (any the index refused as a column was dropped): none holds the
+      24-byte folder id in hex, base64 or the URL encoding.
+    - **So a PST folder id finds its index scope with no Outlook call**: the one root whose item URLs
+      carry the id's store UID, then the one row under it whose `System.ProviderItemID` is the id's
+      node id. Seven folder ids of the three indexed PSTs - six of up to 172 items and Corpus A's
+      largest, 88,037 items in a 160,000-item store - mapped exactly to the URL built from their names,
+      in 59 to 114 ms each (422 ms for the first, cold). A one-item folder's item row moved to the new
+      path 6 s after a rename and 10 s after a move (first run); in the second run the item row and the
+      folder's own row - found at its new URL by the same `System.ProviderItemID` - moved together, in
+      10 s and 8 s. Each row moved at once: never at both paths, never at neither, at a 2 s poll.
+
+    Not measured, and not measurable on these guests: Exchange - 46-byte ids ([MS-OXCDATA] 2.2.4.1:
+    the mailbox GUID and the folder's FID), whose `System.ProviderItemID` in an OST's rows is unknown
+    and, if it is an OST node id, is not held in that id; IMAP and Outlook.com stores; a move to
+    another store (documented: a new id); export and import; a mailbox seen through two stores. The
+    test is written to run as it stands on the Exchange guest.
 
 ---
 
