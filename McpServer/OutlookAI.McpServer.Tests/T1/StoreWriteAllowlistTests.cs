@@ -120,9 +120,11 @@ public sealed class StoreWriteAllowlistTests
     public void GuardBuildsTheAllowlistFromTheLiveTestSettings()
     {
         // Derived, never hand-written: hub from the settings hub, identity grant from the
-        // other configured primaries, delegates denied.
+        // other configured primaries, delegates denied. On a machine that MAY write - a test
+        // guest, which declares Portable; the workstation's shape is pinned below.
         LiveTestSettings settings = new()
         {
+            MachineProfile = LiveMachineProfile.Portable,
             TestHubStoreDisplayName = Hub,
             ExpectedStoreDisplayNames = new List<string> { Hub, Identity },
             ExpectedDelegateStoreDisplayNames = new List<string> { DelegateStore },
@@ -130,9 +132,149 @@ public sealed class StoreWriteAllowlistTests
 
         StoreWriteAllowlist allowlist = LiveStoreWriteGuard.Build(settings);
 
+        Assert.False(allowlist.RefusesEveryWrite);
         Assert.True(allowlist.IsAllowed(Hub, StoreWriteKind.Send));
         Assert.True(allowlist.IsAllowed(Identity, StoreWriteKind.Draft));
         Assert.False(allowlist.IsAllowed(Identity, StoreWriteKind.Send));
         Assert.False(allowlist.IsAllowed(DelegateStore, StoreWriteKind.Delete));
+    }
+
+    // ------------------------------------------------------------------ Q74 layer 2: the read-only machine
+
+    /// <summary>A second business mailbox on the workstation, beside <see cref="Identity"/>.</summary>
+    private const string SecondPrimary = "third@example.test";
+
+    /// <summary>
+    /// The SHAPE of the maintainer's workstation settings, with synthetic names (S6): a hub and two
+    /// other primary mailboxes, two delegate mailboxes, no bystander declared - and no machineProfile,
+    /// which the loader reads as Production. The real file is gitignored and never read here.
+    /// </summary>
+    private static LiveTestSettings Workstation()
+    {
+        return new LiveTestSettings
+        {
+            TestHubStoreDisplayName = Hub,
+            ExpectedStoreDisplayNames = new List<string> { Hub, Identity, SecondPrimary },
+            ExpectedDelegateStoreDisplayNames = new List<string> { DelegateStore, "Another Person" },
+            ProbeTerm = "term",
+        };
+    }
+
+    public static IEnumerable<object[]> EveryKindOfWrite()
+    {
+        return Enum.GetValues<StoreWriteKind>().Select(kind => new object[] { kind });
+    }
+
+    [Theory]
+    [MemberData(nameof(EveryKindOfWrite))]
+    public void TheWorkstation_RefusesThisKindOfWrite_ToEveryStore_TheHubIncluded(StoreWriteKind kind)
+    {
+        // The rule (Q72) made code (Q74 layer 2): on the read-only machine an in-process write to
+        // ANY store throws, the designated test mailbox first among them. Control: before Q74 the
+        // same settings granted the hub every kind of write and the two other primaries draft and
+        // delete, so the hub row and the two primary rows below failed.
+        StoreWriteAllowlist allowlist = LiveStoreWriteGuard.Build(Workstation());
+
+        Assert.True(allowlist.RefusesEveryWrite);
+        foreach (string store in new[] { Hub, Identity, SecondPrimary, DelegateStore, "Another Person", "stranger@example.test" })
+        {
+            Assert.False(allowlist.IsAllowed(store, kind), store + " still permits " + kind + " on the read-only machine");
+            InvalidOperationException refused =
+                Assert.Throws<InvalidOperationException>(() => allowlist.Assert(store, kind, "unit"));
+            Assert.Contains(LiveWriteAccess.ReadOnlyMachine, refused.Message, StringComparison.Ordinal);
+            Assert.Contains("'" + store + "'", refused.Message, StringComparison.Ordinal);
+
+            // The one remedy that must never be followed is the one the ordinary refusal gives.
+            Assert.Contains("Do NOT change machineProfile", refused.Message, StringComparison.Ordinal);
+            Assert.DoesNotContain("widen the live-test settings", refused.Message, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void TheWorkstation_GrantsItsOtherPrimaryMailboxes_NoIdentityDraftAnyMore()
+    {
+        // The finding the 2026-09-27 review recorded: with the workstation's settings the identity
+        // grant opened draft AND delete on the two non-hub primary mailboxes - real business mail.
+        // Closed by the read-only profile: the grant is empty and both kinds are refused.
+        LiveTestSettings settings = Workstation();
+        StoreWriteAllowlist allowlist = LiveStoreWriteGuard.Build(settings);
+
+        Assert.Empty(allowlist.IdentityAccountsAmong(settings.ExpectedStoreDisplayNames));
+        foreach (string primary in new[] { Identity, SecondPrimary })
+        {
+            Assert.False(allowlist.IsAllowed(primary, StoreWriteKind.Draft));
+            Assert.False(allowlist.IsAllowed(primary, StoreWriteKind.Delete));
+        }
+    }
+
+    [Fact]
+    public void ASettingsFileThatDeclaresNoProfile_IsReadOnly()
+    {
+        // The workstation's real file declares no machineProfile at all. Read through the real
+        // parser, so the default the loader applies is the default this pins.
+        LiveTestSettings parsed = LiveTestSettings.Parse(
+            "{ \"testHubStoreDisplayName\": \"" + Hub + "\", "
+            + "\"expectedStoreDisplayNames\": [\"" + Hub + "\", \"" + Identity + "\"], "
+            + "\"probeTerm\": \"term\", "
+            + "\"subjectOnlyProbe\": { \"storeDisplayName\": \"" + Hub + "\", \"folderPath\": \"Inbox\", "
+            + "\"subjectTerm\": \"term\", \"senderFragment\": \"term\" } }");
+
+        Assert.Equal(LiveMachineProfile.Production, parsed.MachineProfile);
+        Assert.True(parsed.RefusesEveryWrite);
+        Assert.False(LiveStoreWriteGuard.Build(parsed).IsAllowed(Hub, StoreWriteKind.Draft));
+    }
+
+    [Fact]
+    public void ATestGuest_KeepsItsWriteAccess()
+    {
+        // The other half of the decision: the guests' settings, rendered Portable, keep the hub's
+        // full rights and the identity grant - the live tier's write tests run there and only there.
+        LiveTestSettings guest = new()
+        {
+            MachineProfile = LiveMachineProfile.Portable,
+            TestHubStoreDisplayName = Hub,
+            ExpectedStoreDisplayNames = new List<string> { Hub, Identity, "bystander@example.test" },
+            BystanderStoreDisplayNames = new List<string> { "bystander@example.test" },
+        };
+
+        StoreWriteAllowlist allowlist = LiveStoreWriteGuard.Build(guest);
+
+        Assert.False(allowlist.RefusesEveryWrite);
+        Assert.All(Enum.GetValues<StoreWriteKind>(), kind => Assert.True(allowlist.IsAllowed(Hub, kind)));
+        Assert.True(allowlist.IsAllowed(Identity, StoreWriteKind.Draft));
+        Assert.False(allowlist.IsAllowed("bystander@example.test", StoreWriteKind.Draft));
+    }
+
+    [Fact]
+    public void AReadOnlyAllowlist_StillKnowsWhichStoreIsWhich_AndStillRefusesAContradiction()
+    {
+        // The tripwire's soundness check and the artifact sweep ask the allowlist WHICH kind of store
+        // each one is; a read-only machine must still be able to answer, or their messages go blank.
+        StoreWriteAllowlist allowlist = StoreWriteAllowlist.RefusingEveryWrite(
+            "unit reason", Hub, new[] { Identity }, new[] { DelegateStore }, new[] { "bystander@example.test" });
+
+        Assert.True(allowlist.IsHub(Hub));
+        Assert.True(allowlist.IsKnownReadOnly(DelegateStore));
+        Assert.True(allowlist.IsBystander("bystander@example.test"));
+        Assert.Contains("unit reason", allowlist.Explain(Hub, StoreWriteKind.Send, "unit"), StringComparison.Ordinal);
+
+        Assert.Throws<ArgumentException>(() => StoreWriteAllowlist.RefusingEveryWrite(
+            "unit reason", Hub, identityDraftStores: new[] { DelegateStore }, knownReadOnlyStores: new[] { DelegateStore }));
+        Assert.Throws<ArgumentException>(() => StoreWriteAllowlist.RefusingEveryWrite(" ", Hub));
+    }
+
+    [Fact]
+    public void OnTheWorkstation_TheTripwirePolicesEveryStoreButTheHub()
+    {
+        // A consequence worth pinning, because it is a strengthening rather than a side effect: the
+        // census used to treat the two other primaries as stores the suite "may still write to", so
+        // a change there could be the suite's own. Now nothing is writable, so they are policed.
+        LiveTestSettings settings = Workstation();
+        TripwireWatchReport report = TripwireWatchSoundness.Assess(
+            LiveStoreCountTripwire.WatchedStores(settings), LiveStoreWriteGuard.Build(settings), settings.BystanderStoreDisplayNames);
+
+        Assert.Empty(report.Writable);
+        Assert.Equal(new[] { Identity, SecondPrimary, DelegateStore, "Another Person" }, report.Policed);
+        Assert.Null(report.Refusal());
     }
 }

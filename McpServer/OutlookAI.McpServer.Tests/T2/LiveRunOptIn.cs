@@ -32,8 +32,9 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// <para>
 /// <b>WHAT IT IS NOT.</b> It says only that a live run was meant. It does not make any test
 /// read-only, and it does not decide which machine may run which test. The maintainer's
-/// workstation is read-only for live tests, always (AGENTS.md, Mailbox Safety); how that rule is
-/// enforced in code is the maintainer's open decision (Q74), and nothing here pre-empts it.
+/// workstation is read-only for live tests, always (AGENTS.md, Mailbox Safety), and since Q74
+/// (2026-10-03) that is enforced in code by the machine's declared profile, not by this variable:
+/// see <see cref="LiveWriteAccess"/>.
 /// </para>
 /// </summary>
 public static class LiveRunOptIn
@@ -84,6 +85,21 @@ public static class LiveRunOptIn
         return string.Equals(processValue.Trim(), machineName, StringComparison.OrdinalIgnoreCase)
             ? Verdict.Open
             : Verdict.OtherMachine;
+    }
+
+    /// <summary>
+    /// What <see cref="Evaluate"/> decides for THIS process, without throwing. For a caller that has
+    /// to know whether a live run is happening at all before it decides anything else - the
+    /// test-side MCP client's write posture (<see cref="LiveWriteAccess.StdioPostureFor"/>) - and
+    /// must not read a settings file when it is not.
+    /// </summary>
+    public static Verdict CurrentVerdict()
+    {
+        return Evaluate(
+            Environment.GetEnvironmentVariable(Variable, EnvironmentVariableTarget.Process),
+            ReadSaved(EnvironmentVariableTarget.User),
+            ReadSaved(EnvironmentVariableTarget.Machine),
+            Environment.MachineName);
     }
 
     /// <summary>

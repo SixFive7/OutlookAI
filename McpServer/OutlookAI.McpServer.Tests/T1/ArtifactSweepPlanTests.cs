@@ -194,9 +194,11 @@ public sealed class ArtifactSweepPlanTests
         // Permitted by BystanderCorpusDeclarationTests, which requires a declared bystander to be
         // in expectedStoreDisplayNames OR expectedDelegateStoreDisplayNames. Under the old walk
         // set the second spelling produced a bystander the sweep never looked at - the one store
-        // in the whole configuration that exists to be looked at.
+        // in the whole configuration that exists to be looked at. Portable, because the hub has to
+        // be sweepable for the split below to say anything; on the read-only machine nothing is
+        // (the next test).
         LiveTestSettings settings = Settings(
-            LiveMachineProfile.Production, new[] { Hub }, Delegate, delegates: new[] { Delegate });
+            LiveMachineProfile.Portable, new[] { Hub }, Delegate, delegates: new[] { Delegate });
         ArtifactSweepPlan plan = ArtifactSweepPolicy.Assess(settings);
 
         Assert.Equal(new[] { Hub, Delegate }, plan.Steps.Select(s => s.Store));
@@ -205,6 +207,24 @@ public sealed class ArtifactSweepPlanTests
         // The bystander declaration outranks the delegate one: both are refusals, but one is a
         // decision somebody made about THIS store and the other is a whole tier's default.
         Assert.True(plan.Steps.Single(s => s.Store == Delegate).DeclaredBystander);
+    }
+
+    [Fact]
+    public void OnTheReadOnlyMachine_TheSweepCountsEveryStore_AndPurgesNone_TheHubIncluded()
+    {
+        // Q74 layer 2 reaches the sweep through the allowlist it already asks: on a Production
+        // profile - the read-only workstation - no store may be deleted from, so every store is
+        // COUNTED and none is handed to a purge. A tagged artifact found there is reported, not
+        // removed: whatever left it, this run may not clean it up.
+        LiveTestSettings settings = Settings(
+            LiveMachineProfile.Production, new[] { Hub, Business }, bystander: null, delegates: new[] { Delegate });
+        ArtifactSweepPlan plan = ArtifactSweepPolicy.Assess(settings);
+
+        Assert.Empty(plan.Swept);
+        Assert.Equal(new[] { Hub, Business, Delegate }, plan.CountedOnly);
+        Assert.Throws<InvalidOperationException>(
+            () => ArtifactSweepPolicy.Run(plan, store => store == Hub ? 1 : 0, ShouldNotPurge, _ => { }));
+        ArtifactSweepPolicy.Run(plan, _ => 0, ShouldNotPurge, _ => { });
     }
 
     // ------------------------------------------------------------------ what a run says
