@@ -52,15 +52,15 @@ public sealed class Phase7LiveMcpToolShapeTests
         JsonElement hits = uncapped.GetProperty("hits");
         int hubCount = hits.GetArrayLength();
         Assert.True(hubCount >= 2 && hubCount <= 99,
-            $"top=100 on the hub returned {hubCount} hit(s), expected 2-99 - by store|source|folder: {DescribeHitShape(hits)}");
+            $"top=100 on the hub returned {hubCount} hit(s), expected 2-99 - by store|source|folder|itemClass: {DescribeHitShape(hits)}");
         Assert.False(uncapped.GetProperty("truncated").GetBoolean(),
             "the whole hub corpus fits in top=100 - truncated must be false");
     }
 
-    /// <summary>The hits counted by store, tier and folder - never a subject.</summary>
+    /// <summary>The hits counted by store, tier, folder and item class - never a subject.</summary>
     private static string DescribeHitShape(JsonElement hits) =>
         string.Join(", ", hits.EnumerateArray()
-            .GroupBy(h => $"{Field(h, "store")}|{Field(h, "source")}|{Field(h, "folder")}", StringComparer.Ordinal)
+            .GroupBy(h => $"{Field(h, "store")}|{Field(h, "source")}|{Field(h, "folder")}|{Field(h, "itemClass")}", StringComparer.Ordinal)
             .OrderByDescending(g => g.Count())
             .Select(g => $"{g.Key}={g.Count()}"));
 
