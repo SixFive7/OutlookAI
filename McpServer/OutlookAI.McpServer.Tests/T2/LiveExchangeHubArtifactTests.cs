@@ -59,6 +59,22 @@ public sealed class LiveExchangeHubArtifactTests
             + LiveOutlookTestMailer.HubSweepFolderIdsWithArchive.Length.ToString(CultureInfo.InvariantCulture)
             + " folders the sweep covers");
 
+        // Where they are, by the folder's olDefaultFolders number - a count per folder, nothing else -
+        // so a leftover can be reported precisely without anybody opening the mailbox to look.
+        if (liveTier + corpus > 0)
+        {
+            foreach (int folderId in LiveOutlookTestMailer.HubSweepFolderIdsWithArchive)
+            {
+                int inFolder = LiveOutlookTestMailer.CountTaggedArtifacts(hub, Fragment(LiveOutlookTestMailer.SubjectTag), new[] { folderId })
+                    + LiveOutlookTestMailer.CountTaggedArtifacts(hub, Fragment(CorpusPlan.SubjectTag), new[] { folderId });
+                if (inFolder > 0)
+                {
+                    _output.WriteLine("  default folder " + folderId.ToString(CultureInfo.InvariantCulture) + ": "
+                        + inFolder.ToString(CultureInfo.InvariantCulture) + " tagged item(s)");
+                }
+            }
+        }
+
         Assert.True(liveTier == 0, liveTier + " item(s) tagged " + LiveOutlookTestMailer.SubjectTag
             + " are in the hub. Remove them with the tested sweep on an approved write run - never by hand.");
         Assert.True(corpus == 0, corpus + " item(s) tagged " + CorpusPlan.SubjectTag
