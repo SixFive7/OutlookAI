@@ -1657,7 +1657,9 @@ behaves as absent, which is the exact silence these checks exist to remove.
 
 `windowDays` is how the machine declares which measurement windows it actually asks about. Left
 empty it means all of them, including the one-day window - which forces a rebuild every day.
-Name the windows your tests use.
+Name the windows your tests use. The indexed test guest names 30 and 60 days, not the example's
+7, 30 and 60 - none of its live tests asks its corpus a 7-day question, and declaring one made the
+tier refuse a week after every rebuild (decided 2026-10-03, section 4.2d).
 
 The same file is read by the remediation console's `audit`/`refile`/`purge`/`dedupe` verbs,
 which require the hub to appear in `expectedStoreDisplayNames`. The `corpus-*` verbs do not read
@@ -2924,7 +2926,7 @@ below. Raw logs, both manifests and the build's whole output: `.work\g1-cp17c\` 
 | 4. Build | The same with `-Execute`, through `Register-InteractiveTask.ps1 -RunLevel Limited -TimeoutSeconds 28800 -TaskName OutlookAI-Corpus160k` - a task name of its own, because every job unregisters the shared one; watched from session 0 by the manifest's line count, the lease renewed as it went | 09:38 to 11:12 local: both probes verified, `created 160,000 ... failed 0` in 01:20:53, two censuses clean - below |
 | 5. After | `corpus-folders` of all five stores | Corpus A `Deleted Items 19292`, `OutlookAI-Corpus-Folder-6 88037`, `-5 39709`, `OutlookAI-Corpus-Folder-Junk 12962`; the old corpus's `Deleted Items 2461` - twelve fewer, below - and its other folders as before; the hub, the bystander and the identity store unchanged |
 | 6. The index | `Set-OutlookIndexingDisabled.ps1 -Verify -SettleMinutes 2 -WaitMinutes 90 -MinimumOutlookRows 180000`, Outlook still up on the corpus profile; again after the fix below; then a read-only census of Corpus A's index scope | first `NO-INDEXER`, wrongly - below; with the fix `INDEXED`, 180,518 rows on both readings, `store Corpus A($996dc7a9): 160006 row(s)`, the catalog `IDLE` with nothing queued; the census: 160,000 corpus rows, ordinals 1-160,000 each exactly once, every one with a received date, and 5 folder rows |
-| 7. Settings | `testbed.json` (below); `New-LiveTestSettings.ps1 -VMName OutlookAI-Indexed`; `Copy-ToGuest.ps1`; `corpus-verify ... --window 7 --window 30 --window 60` | rendered and admitted - watched 4, indexed `tier@vm.invalid, bystander@vm.invalid, Corpus A`, bystanders `bystander@vm.invalid, Corpus A`, `corpus vm-indexed in 'Corpus A' ... windows 7/30/60 day(s)`; SHA-256 `9674ED3E7343D23856E7DBEC59F910F53482798F1FC3A45FEB1CFD63DF2E67DA` on host and guest; `Freshness: OK - anchor 2026-10-03T00:00:00Z (never re-anchored) ... Windows now/at-anchor: 7d=12,191/12,849, 30d=24,396/24,596, 60d=39,707/39,903` |
+| 7. Settings | `testbed.json` (below); `New-LiveTestSettings.ps1 -VMName OutlookAI-Indexed`; `Copy-ToGuest.ps1`; `corpus-verify ... --window 7 --window 30 --window 60` | rendered and admitted - watched 4, indexed `tier@vm.invalid, bystander@vm.invalid, Corpus A`, bystanders `bystander@vm.invalid, Corpus A`, `corpus vm-indexed in 'Corpus A' ... windows 7/30/60 day(s)`; SHA-256 `9674ED3E7343D23856E7DBEC59F910F53482798F1FC3A45FEB1CFD63DF2E67DA` on host and guest; `Freshness: OK - anchor 2026-10-03T00:00:00Z (never re-anchored) ... Windows now/at-anchor: 7d=12,191/12,849, 30d=24,396/24,596, 60d=39,707/39,903`. Restaged the same day with the windows 30 and 60 only (`688FDB99...`, "How long it stays usable", below) |
 | 8. Hub rebuild | `Restart-Guest.ps1`; `Reset-HubPopulation.ps1 -SelfTest`, the dry run, then `-Execute` at `-RunLevel Limited` | `99 assertion(s), 0 failure(s)`; teardown `considered 136, deleted 136 ... folders removed 2`, `0 corpus item(s) remaining`; `created 68`, census 68/68, read-back 68 of 68; `OUTLOOK.EXE left 2s after the Quit`; the index wait `[1 s] 0 of 68`, then `[16 s] 68 of 68 ... 12 with no received date`; anchored `2026-10-03T09:32:50Z`, 109 minutes of margin; exit 0 in 532 s |
 | 9. Two profiles, one scope | The tier profile's Outlook, started by step 8, left running; `-Verify` at about 10 and 14 minutes | `INDEXED`, 180,520 rows, still exactly one `Corpus A($996dc7a9)` at 160,006 and one scope for every other store, nothing queued - item 5 of section 3b's "What only a guest can answer", answered |
 | 10. State | `Restart-Guest.ps1`; the state; `-Verify` | `outlook processes: 0`, `DefaultProfile: 'OutlookAI-Tier'`, `ImportPRF: ''`, guest C: 85.7 GB free; `INDEXED`, 180,520 rows on both readings |
@@ -2985,21 +2987,49 @@ it, and its rows sit under their own scope, `Outlook Data File($23a27f0d)`. Its 
 `corpus-history\` (and off the guest), so `corpus-teardown` can still empty it.
 
 **How long it stays usable.** The tier refuses to start once a window the settings declare selects
-nothing (`T2/LiveCorpusFreshness`). This guest declares 7, 30 and 60 days; the 7-day window holds 12,191
-today and empties when the newest item, `2026-10-02T23:59:16Z`, is a week old - **from 2026-10-09
-23:59:16 UTC the tier refuses on this guest until the corpus is rebuilt** against a newer anchor. A
-rebuild is the teardown of 160,000 items (or a new store) and about 1 h 35 min of `Build-Corpus.ps1`;
-`TODO.md` carries the question of how often that should be.
+nothing (`T2/LiveCorpusFreshness`). As built, this guest declared 7, 30 and 60 days - the example's
+windows - and the 7-day window, which held 12,191 that day, would have emptied when the newest item,
+`2026-10-02T23:59:16Z`, was a week old: from 2026-10-09 23:59:16 UTC the tier would have refused here
+until the corpus was rebuilt, every week. A rebuild is the teardown of 160,000 items (or a new store)
+and about 1 h 35 min of `Build-Corpus.ps1`.
+
+**Decided the same day, on the maintainer's behalf: this guest declares the 30- and 60-day windows
+only** (D103 of `Docs/overnight-review-2026-10-03.md`, the option recommended above). No live test asks
+this corpus a question by window - it is the largest indexed store the latency bounds are timed
+against, and a bystander the count tripwire censuses; `Settings.Corpus` is read only by the freshness
+check - and the step-10 measurement scripts take their own window per run, so their 7-day default does
+not bind the tier. (It does bind them: `Testbed/guest/Measure-SweepCost.ps1` measures the last 7 days
+unless told otherwise, and after 2026-10-09 that window of this corpus is empty - on this guest, pass
+`-WindowDays` explicitly.) **The corpus is now fresh until 2026-11-01 23:59:16 UTC**, when its newest item leaves
+the 30-day window; after that the tier refuses on this guest until it is rebuilt. `Testbed/testbed.json`
+records the windows and the date in the guest's corpus block, and `T1/LiveTestSettingsTemplateTests`
+pins both: the windows `[30, 60]`, and the freshness check's own verdict on the committed seed, anchor
+and count - fresh at 2026-11-01 23:59, the 30-day window empty from 2026-11-02 (and the example's
+windows refusing from 2026-10-10). Rendered from `23c7527` and staged, read back on the guest, and
+checked there against the manifest with the same windows:
+
+```
+after: 1902 bytes, sha256 688FDB9944C081D1D4F6C1F1F89D52BF3E66A779E12DCDE10F1B52628E300226
+host file: 1902 bytes, sha256 688FDB9944C081D1D4F6C1F1F89D52BF3E66A779E12DCDE10F1B52628E300226
+corpus-verify --corpus-id vm-indexed --seed 7777 --anchor 2026-10-03T00:00:00Z --count 160000 --manifest C:\OutlookAI-Q5\corpus-vm-indexed.jsonl --window 30 --window 60
+Manifest records 160,000 item(s), 160,000 of them dated; 159,988 agree on the shift now applied.
+Freshness: OK - anchor 2026-10-03T00:00:00Z (never re-anchored), 10h 12m behind the clock. Windows now/at-anchor: 30d=24,374/24,596, 60d=39,695/39,903.
+```
+
+**That staged file is the guest's only change since the checkpoint**, so the checkpoint was not
+retaken: `CP-17C-CORPUS-160K` holds the settings declaring 7, 30 and 60 (`9674ED3E...`), and the running
+guest holds the 30-and-60 file (`688FDB99...`). Revert to the checkpoint, and that file must be staged
+again - `New-LiveTestSettings.ps1 -VMName OutlookAI-Indexed`, then the `Copy-ToGuest.ps1` line it prints.
 
 | Checkpoint | State |
 | --- | --- |
-| `CP-17C-CORPUS-160K` (parent `CP-16C-POPULATIONS-V2`; taken with the guest running, 2026-10-03 11:56 local) | Outlook not running; default profile `OutlookAI-Tier`; no `ImportPRF`; `INDEXED`, 180,520 rows - `Corpus A($996dc7a9)` 160,006; Corpus A at `C:\OutlookAI-Tier\corpus-a.pst` (8,520,360,960 bytes), mounted in both profiles, its manifest `AB395B81...` (160,004 lines); the old corpus inert, its manifest in `corpus-history\`; the hub at anchor `2026-10-03T09:32:50Z` with its twelve contacts (`8A1257E9...`), the bystander and the identity store as at `CP-16C`; the live-test settings with the corpus staged (`9674ED3E...`); `Set-OutlookIndexingDisabled.ps1` with the count fix, `Build-Corpus.ps1` and `Reset-HubPopulation.ps1` from master; the tools `6d01e72`'s, the server and the suite still `af56efc`'s |
+| `CP-17C-CORPUS-160K` (parent `CP-16C-POPULATIONS-V2`; taken with the guest running, 2026-10-03 11:56 local) | Outlook not running; default profile `OutlookAI-Tier`; no `ImportPRF`; `INDEXED`, 180,520 rows - `Corpus A($996dc7a9)` 160,006; Corpus A at `C:\OutlookAI-Tier\corpus-a.pst` (8,520,360,960 bytes), mounted in both profiles, its manifest `AB395B81...` (160,004 lines); the old corpus inert, its manifest in `corpus-history\`; the hub at anchor `2026-10-03T09:32:50Z` with its twelve contacts (`8A1257E9...`), the bystander and the identity store as at `CP-16C`; the live-test settings with the corpus staged (`9674ED3E...`, windows 7, 30 and 60 - since replaced on the running guest by `688FDB99...`, windows 30 and 60, above); `Set-OutlookIndexingDisabled.ps1` with the count fix, `Build-Corpus.ps1` and `Reset-HubPopulation.ps1` from master; the tools `6d01e72`'s, the server and the suite still `af56efc`'s |
 
 **For the run, which is not part of this:** as section 4.2c says - re-stage the suite from master first
 (its hub-freshness check must know the `|u:contacts` marker), then step 9a at `-RunLevel Limited` and
 9a-ii. The suite then finds Corpus A in the settings: the freshness check runs at start, the corpus is
 the largest indexed store the latency bounds are timed against, and the count tripwire censuses it as a
-bystander. **Before 2026-10-09 23:59 UTC**, or after a rebuild.
+bystander. **Before 2026-11-01 23:59 UTC**, or after a rebuild.
 
 ### 4.3 The build VM - `OutlookAI-Build`, 2026-10-03 (Q94, Q102)
 
