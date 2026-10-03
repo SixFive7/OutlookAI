@@ -414,6 +414,32 @@ yet on master - see the crash below):
    attempts reverted). Being measured: whether the id is a hash of the new subject - which decides
    between scoping that promise to Exchange and dropping it.
 
+### D99-D103 - Guest one's 160,000-item corpus, built
+Built on `OutlookAI-Indexed` and checkpointed as `CP-17C-CORPUS-160K`: 160,000 items created with
+0 failures in 1 h 21 min (33 items/s), an 8.5 GB PST, and every item in the search index exactly
+once (180,518 rows in all). The hub was rebuilt in the same session (136 items torn down, 68
+rebuilt). Merged as `2ff64e2` (build VM on the branch: 3,491 / 0 / 0, 21 self-tests).
+- **D99 - The old 20,000-item corpus is left in place, unused.** It cannot be detached (it is the
+  corpus profile's default store) and nothing reads it. *Alternative:* empty it with
+  `corpus-teardown`, using the manifest kept in `corpus-history\` on the guest.
+- **D100 - The index check now gives its row count a 900 s timeout.** At about 181,000 rows the
+  count overran ADO's default 30 s and the check reported `NO-INDEXER` on a complete, idle index;
+  each reading now takes about 70 s. *Alternatives:* lower the row threshold, or skip the check -
+  both weaken a safety check.
+- **D101 - A new store with stand-in folders** for Inbox, Sent Items and Junk Email, the planned
+  route; no live test reads the corpus by folder name. *Unchecked:* whether the step-10
+  measurement scripts (sweep cost, guest measure) mind a stand-in Inbox.
+- **D102 - The recorded 7-, 30- and 60-day freshness windows were kept at build time**, which made
+  the corpus go stale on 2026-10-09 23:59 UTC; superseded by D103.
+- **D103 - Freshness: only the 30- and 60-day windows are declared on guest one**, which keeps the
+  corpus fresh until 2026-11-01 (its agent's recommendation). No live test reads this corpus by
+  date window: it is the largest store the latency limits are timed against, and a bystander the
+  item-count tripwire watches. *Alternatives:* rebuild it before each guest-one run once the 7-day
+  window empties (about 1.5 h plus the index); a script that swaps in a fresh store instead of
+  emptying 160,000 items. *Consequence:* the sweep-cost measurement script defaults to a 7-day
+  window, so a run of it on guest one must pass its window explicitly. Being implemented; not yet
+  merged.
+
 ## Open questions only you can answer
 
 ### Q104 - Seven tagged test leftovers in your workstation's hub mailbox
@@ -528,6 +554,19 @@ fake-ID lines to the real audit log; they are the last lines of the now-renamed
 `audit.until-2026-10-03.log`, and nothing has been written there since. It also ran one script
 self-test on the workstation before the build-VM rule reached it.
 
+### V13 - Guest one's corpus build: five small departures
+- The fixed index-check script (D100) was staged on the guest and used there before the build VM
+  had verified it; the build VM confirmed it afterwards.
+- The staged settings file's provenance line cites `d2b13a7` plus uncommitted changes. A re-render
+  from the committed tree gives identical values, and the checkpoint already holds that file.
+- The build ran under its own scheduled-task name (`OutlookAI-Corpus160k`): every new job
+  unregisters the shared task, so a concurrent job could otherwise have pulled it out from under
+  the build.
+- One extra read-only query against the guest's index counted every item, and two extra index
+  checks settled whether a store mounted in two profiles is indexed twice (it is not).
+- Master was merged into the branch before the build-VM run. The guest's tools are still the
+  `6d01e72` build, which has the same corpus code as master.
+
 ## Notes (no decision needed)
 
 - **Script self-tests now run only under Windows PowerShell 5.1** (on the build VM), so nothing
@@ -568,3 +607,14 @@ self-test on the workstation before the build-VM rule reached it.
 - **Risk to watch at the first live run.** Q101's Outbox/Inspector checks now run before the
   window branch, so a hidden Inspector left behind by the headless test's `display:false` draft
   would now fail `LiveDisconnectRecoveryTests` on a guest.
+
+- **A store mounted in two profiles has one index entry.** With Corpus A in both the corpus and the
+  tier profile, Outlook ran 14 minutes and the index still held one entry for it, with no re-crawl.
+  This closes item 5 of the runbook's "What only a guest can answer".
+- **A 12-item discrepancy in the old corpus is explained.** Its agent had reported 2,473 against
+  2,461 at `CP-16C`: 12 leftover probe items in the old corpus's Deleted Items, which the build's
+  own cleanup sweep removed under the two-key rule. That store now matches its plan exactly.
+- **`corpus-verify` reports 12 of the 160,000 items with a stored date that differs from the
+  plan.** The freshness verdict still holds; not yet looked into.
+- **`Build-Corpus.ps1` shows no progress during a long build**: it holds each step's output until
+  the step ends. The manifest is written item by item, so its line count is the progress to watch.
