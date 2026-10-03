@@ -1858,6 +1858,45 @@ deselected there (`Requires!=SearchIndex`). Where they run without undated rows 
 the option - they still print `verdict=no-undated-rows-in-sample`, `coverage: 0 ... on this machine`
 and a `PROVED NOTHING:` line, which now says to rebuild with `--undated-contacts`.
 
+**And all three kinds again - decided by the maintainer 2026-10-03 (his answer (b) to D62); how, decided on
+his behalf (D120-D123 of `Docs/overnight-review-2026-10-03.md`).** The indexed guest's hub and bystander
+carry version 2's full set once more, at its own ordinals and counts - the hub four appointments, four
+contacts and four tasks (57-68), the bystander fourteen of each (301-342) - as
+`CorpusPlanOptions.IncludeAllKinds`, `--all-kinds` on the command line, each kind given the date the index
+can be held to:
+
+* **a contact stays undated in the index**, exactly as under `--undated-contacts`: the store keeps the
+  delivery time a PST gives it, nothing tries to remove it, and the index gives it no
+  `System.Message.DateReceived`. The contacts are the undated rows `LiveOrderKeyCollationTests` measure;
+* **an appointment and a task are DATED BY THE PLAN** - the deterministic part. Their delivery time is
+  written after the first save, through the PropertyAccessor in UTC, exactly as a mail item is dated, to
+  `CorpusPopulation.PlannedDeliveryUtc`: one day older than the oldest dated item the population can hold,
+  one hour further back per ordinal - the hub's from 61 days back, the bystander's from 731. So under the
+  index's `DateReceived DESC` they sort after all of the population's mail and before its undated
+  contacts: never the frontier, never a "most recent" hit, never in a date window short of all the mail.
+  **Measured before a single one was built** (section 4.2e, phase P1): the undated probe wrote
+  `2026-08-03T09:32:50Z` on a throwaway appointment and task in the hub, read it back from the store, and
+  the index dated both at exactly that instant 9 s after their save (`DATED AS WRITTEN`) - while their
+  `System.Message.DateSent` and `System.DateModified` stayed at the save itself. So the index takes an
+  appointment's and a task's `System.Message.DateReceived` from `PR_MESSAGE_DELIVERY_TIME`, which a plan
+  can choose; the creation time Q98 (f) saw was only what a PST stamps into that property at the first save;
+* **the build holds every one to it**: the undated probe writes the youngest planned instant on its own
+  appointment and task and refuses the build unless both read it back; the build records each item
+  before it judges the read-back (`RequirePlannedDeliveryTime`); the population read-back counts
+  `UndatedDatedAsPlanned` and fails on a mismatch; and `corpus-indexed` is NOT complete until the index
+  dates every planned appointment and task at its planned instant - so the per-run hub rebuild's index
+  wait refuses a hub whose order is not the plan's;
+* **IN the shape key**, `|u:all-kinds`, exclusive with both other undated options: an appointment of this
+  population carries a date the full set's does not. `Testbed/guest/Reset-HubPopulation.ps1` tears a hub
+  down by the marker its manifest carries and BUILDS it the decided way - all three kinds where the hub is
+  indexed, none where it is not (D123) - so the next per-run rebuild moves a contacts-only hub over, and
+  says so;
+* **the hub's search budget is unchanged**: twelve non-mail rows, as with the twelve contacts, so the
+  top-100 hub search (`Phase7LiveMcpToolShapeTests`) sees the same number of hits from them.
+
+On the UNINDEXED guest nothing changes here either. Where the widened-search test can now contest a store
+is no longer a margin either - see "the sized contest" in section 4.2e (D74).
+
 **It costs nothing to look at one.** `corpus-plan` is pure - no Outlook, runnable on the host - and
 for a hub population it also prints the values a settings file must carry:
 
@@ -1983,9 +2022,12 @@ runs in the same task and attaches only to an Outlook at its own integrity level
 guest that level is NOT elevated** - run it through `Register-InteractiveTask.ps1 -RunLevel Limited`,
 and it refuses to `-Execute` elevated there - because an elevated Outlook never feeds the index, and
 every Outlook start on that guest is unelevated; it then starts both Outlooks directly, at its own
-level. On the unindexed guest either level works. **And on the indexed guest it keeps the hub's undated
-contacts** (Q98 (f), above): the manifest's shape key says the hub carries them, and every verb gets
-`--undated-contacts`.
+level. On the unindexed guest either level works. **And it builds the non-mail kinds the decision names
+for the guest** (D123, 2026-10-03): the TEARDOWN takes whatever the manifest's shape key says the old hub
+carried (`|u:all-kinds` → `--all-kinds`, `|u:contacts` → `--undated-contacts`), and the BUILD gives a hub
+that is indexed here all three kinds (`--all-kinds`, D62 (b), above) and one that is not none - so a
+contacts-only hub is moved over by its next rebuild, which says so in a note. Until 2026-10-03 it kept
+what it tore down.
 
 Teardown removes the population's items AND the folders it created, and drains Deleted Items behind
 itself: a delete in a PST is a soft one that re-issues the EntryID, so teardown re-scans and deletes
