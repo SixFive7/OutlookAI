@@ -3701,11 +3701,28 @@ unrecorded or unverified.
       surface `MAPI_E_NOT_FOUND` as the `HResult` the script reads (the C# lookup reads the same
       property and is measured; this script's reading of it is not) - fix the reading, not the check.
     - **The test's four lines.** `before:` Drafts absent, `reply_draft:` with `createdFolders` naming
-      the throwaway's Drafts, `after:` the non-creating lookup seeing it, `discard_draft:` discarded.
-      The `after:` line answers the question Q85 left open - where Outlook designates a Drafts folder
-      it makes in a data file with no Inbox. If the lookup does not see it, the test fails there by
-      design: `discard_draft` and `update_draft` would then refuse every draft in such a mailbox, and
-      that is a product finding for the maintainer, not a test to loosen.
+      the throwaway's Drafts (and `appearedFolders` empty), `after:` the non-creating lookup seeing it,
+      `discard_draft:` discarded. If the lookup does not see the new folder, the test fails at `after:`
+      by design: `discard_draft` and `update_draft` would then refuse every draft in such a mailbox,
+      and that is a product finding for the maintainer, not a test to loosen.
+    - **The `designation:` line - WHERE Outlook registers the Drafts folder it created** (Q96 question
+      3, decided 2026-10-03: (a) this run records it, then (b) widen the non-creating lookup from
+      it). It reads `PR_IPM_DRAFTS_ENTRYID` at every place the object model reaches - the store
+      object and the Inbox, which the lookup reads, and the store's top folder, which it does not -
+      and says what each names: `THE CREATED DRAFTS FOLDER`, another folder, not set, unreadable, or
+      no such folder (a data file attached with `AddStoreEx` has no Inbox). Record it verbatim, with
+      the `after:` line beside it. It is written before the first verdict, so a run that fails at
+      `after:` still has it. If no place names the folder, Outlook registered it where only Extended
+      MAPI can read (the store's hidden root): (b) is then not reachable through the object model,
+      and the maintainer's choice is between the other directions of that question.
+    - **The two `top level of ...` lines** (Q96 question 2, decided (c) 2026-10-03: this test only).
+      Each lists the throwaway's top-level folders before and after `reply_draft` and `discard_draft`
+      beside what the call reported. Expected: `appeared [Drafts]` around the reply with exactly that
+      folder in `reported created`, and nothing around the discard. The test fails - LAST, after the
+      zero-artifact proof - if a folder appeared that the call did not report: on success the product
+      names only the folder its lookup returned, so such a failure is the measured answer that it
+      needs the top-level comparison on success too (that question's (b), for the maintainer).
+      Record both lines whichever way it goes.
     - **The zero end**: the tagged count of the throwaway and the hub at 0, and no item the proof made
       openable by EntryID.
     - **The second run's detach**, and whether the previous file was deleted or left held by Outlook

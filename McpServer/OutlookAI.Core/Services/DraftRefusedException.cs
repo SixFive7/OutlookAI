@@ -42,5 +42,12 @@ namespace OutlookAI.Core.Services
         /// out as the error's <c>createdFolders</c>.
         /// </summary>
         public IReadOnlyList<string>? CreatedFolders { get; internal set; }
+
+        /// <summary>
+        /// Folders that only APPEARED while a failed Deleted Items lookup of the call ran, as
+        /// <c>store/path</c> - never claimed as created by it (Q96 question 1 (b)) - or null. The
+        /// tool layer carries it out as the error's <c>appearedFolders</c>.
+        /// </summary>
+        public IReadOnlyList<string>? AppearedFolders { get; internal set; }
     }
 }

@@ -273,6 +273,95 @@ public sealed class ThrowawayStoreTests
         Assert.Contains("did not report the draft discarded", ThrowawayStoreProof.DiscardReported(Throwaway, true, false, null)!, StringComparison.Ordinal);
     }
 
+    // ------------------------------------------------------------------ Q96 question 2 (c): the top-level comparison
+
+    [Fact]
+    public void TheTopLevelComparison_PassesOnlyWhenWhatAppearedIsExactlyWhatWasReported()
+    {
+        string[] before = { "Deleted Items", "Deleted Items/old", "Search Folders" };
+        string[] afterReply = { "Deleted Items", "Deleted Items/old", "Search Folders", "Drafts" };
+        string drafts = SpecialFolders.CreatedFolderLabel(Throwaway, "Drafts");
+
+        // Exactly what appeared was reported - as created, or as having appeared - and a call
+        // that changed nothing reported nothing. Folder names compare as Outlook compares them.
+        Assert.Null(ThrowawayStoreProof.TopLevelChangeReported(Throwaway, "reply_draft", before, afterReply, new[] { drafts }, null));
+        Assert.Null(ThrowawayStoreProof.TopLevelChangeReported(Throwaway, "reply_draft", before, afterReply, null, new[] { drafts }));
+        Assert.Null(ThrowawayStoreProof.TopLevelChangeReported(Throwaway, "discard_draft", afterReply, afterReply, null, null));
+        Assert.Null(ThrowawayStoreProof.TopLevelChangeReported(
+            Throwaway, "reply_draft", before, new[] { "deleted items", "Deleted Items/old", "search folders", "Drafts" }, new[] { drafts.ToUpperInvariant() }, null));
+
+        // Below the top is not the top: the product's comparison is of the top level, and so is this.
+        Assert.Null(ThrowawayStoreProof.TopLevelChangeReported(
+            Throwaway, "reply_draft", before, afterReply.Append("Deleted Items/new").ToArray(), new[] { drafts }, null));
+
+        // THE MEASUREMENT: a folder appeared beside the one the success path named, and nothing said so.
+        string unreported = ThrowawayStoreProof.TopLevelChangeReported(
+            Throwaway, "reply_draft", before, afterReply.Append("Junk Email").ToArray(), new[] { drafts }, null)!;
+        Assert.Contains(Throwaway + "/Junk Email", unreported, StringComparison.Ordinal);
+        Assert.Contains("Q96 question 2", unreported, StringComparison.Ordinal);
+        Assert.Contains("on success too", unreported, StringComparison.Ordinal);
+        Assert.Contains("reported none of them", ThrowawayStoreProof.TopLevelChangeReported(
+            Throwaway, "reply_draft", before, afterReply, null, null)!, StringComparison.Ordinal);
+
+        // A report nothing made true, and a folder that went missing, both fail.
+        Assert.Contains("a claim nothing made true", ThrowawayStoreProof.TopLevelChangeReported(
+            Throwaway, "discard_draft", afterReply, afterReply, new[] { Throwaway + "/Deleted Items" }, null)!, StringComparison.Ordinal);
+        Assert.Contains("vanished", ThrowawayStoreProof.TopLevelChangeReported(
+            Throwaway, "discard_draft", afterReply, new[] { "Deleted Items", "Search Folders" }, null, null)!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheTopLevelRecord_SaysEverySide()
+    {
+        string line = ThrowawayStoreProof.DescribeTopLevelChange(
+            Throwaway, "reply_draft", new[] { "Deleted Items", "Deleted Items/old" }, new[] { "Deleted Items", "Deleted Items/old", "Drafts" },
+            new[] { Throwaway + "/Drafts" }, null);
+
+        Assert.Contains("around reply_draft", line, StringComparison.Ordinal);
+        Assert.Contains("before [Deleted Items]", line, StringComparison.Ordinal);
+        Assert.Contains("after [Deleted Items, Drafts]", line, StringComparison.Ordinal);
+        Assert.Contains("appeared [Drafts]; vanished []", line, StringComparison.Ordinal);
+        Assert.Contains("reported created [" + Throwaway + "/Drafts], appeared []", line, StringComparison.Ordinal);
+    }
+
+    // ------------------------------------------------------------------ Q96 question 3: where the Drafts folder is registered
+
+    [Fact]
+    public void TheDesignationRecord_SaysWhatEachPlaceNames()
+    {
+        const string DraftsId = "00000000AABBCCDD0011223344556677";
+        byte[] draftsBytes = Convert.FromHexString(DraftsId);
+        byte[] otherBytes = Convert.FromHexString("00000000FFEEDDCC0011223344556677");
+
+        Assert.Equal("THE CREATED DRAFTS FOLDER", ThrowawayStoreProof.DescribeDesignation(
+            new DesignationRead("store object", PropertyReadStatus.Found, draftsBytes), DraftsId));
+        Assert.Equal("THE CREATED DRAFTS FOLDER", ThrowawayStoreProof.DescribeDesignation(
+            new DesignationRead("store object", PropertyReadStatus.Found, draftsBytes), DraftsId.ToLowerInvariant()));
+        Assert.StartsWith("another folder (00000000FFEEDDCC", ThrowawayStoreProof.DescribeDesignation(
+            new DesignationRead("top folder", PropertyReadStatus.Found, otherBytes), DraftsId), StringComparison.Ordinal);
+        Assert.StartsWith("another folder", ThrowawayStoreProof.DescribeDesignation(
+            new DesignationRead("top folder", PropertyReadStatus.Found, draftsBytes), null), StringComparison.Ordinal);
+        Assert.Equal("not set", ThrowawayStoreProof.DescribeDesignation(new DesignationRead("top folder", PropertyReadStatus.NotFound, null), DraftsId));
+        Assert.Equal("could not be read", ThrowawayStoreProof.DescribeDesignation(new DesignationRead("Inbox", PropertyReadStatus.Failed, null), DraftsId));
+        Assert.Equal("no such folder in this store", ThrowawayStoreProof.DescribeDesignation(new DesignationRead("Inbox", null, null), DraftsId));
+        Assert.Equal("set, naming no folder", ThrowawayStoreProof.DescribeDesignation(
+            new DesignationRead("store object", PropertyReadStatus.Found, Array.Empty<byte>()), DraftsId));
+        Assert.Equal("set to a value that is no entry id", ThrowawayStoreProof.DescribeDesignation(
+            new DesignationRead("store object", PropertyReadStatus.Found, 42), DraftsId));
+
+        DesignationRead[] reads =
+        {
+            new DesignationRead("store object", PropertyReadStatus.Found, draftsBytes),
+            new DesignationRead("top folder", PropertyReadStatus.NotFound, null),
+            new DesignationRead("Inbox", null, null),
+        };
+        string line = ThrowawayStoreProof.DescribeDraftsDesignation(Throwaway, new DraftsDesignationReading(DraftsId, reads));
+        Assert.Contains("store object = THE CREATED DRAFTS FOLDER; top folder = not set; Inbox = no such folder in this store", line, StringComparison.Ordinal);
+        Assert.DoesNotContain("could not be read in that store", line, StringComparison.Ordinal);
+        Assert.Contains("could not be read in that store", ThrowawayStoreProof.DescribeDraftsDesignation(
+            Throwaway, new DraftsDesignationReading(null, reads)), StringComparison.Ordinal);
+    }
+
     // ------------------------------------------------------------------ the live test still asks
 
     [Fact]
@@ -299,6 +388,47 @@ public sealed class ThrowawayStoreTests
         int reply = source.IndexOf("Service.ReplyDraft(", StringComparison.Ordinal);
         int discard = source.IndexOf("Service.DiscardDraft(", StringComparison.Ordinal);
         Assert.True(precondition > 0 && precondition < seed && seed < reply && reply < discard, "the proof's steps are out of order");
+    }
+
+    [Fact]
+    public void TheLiveProof_MeasuresTheTopLevelAroundBothCalls_RecordsTheDesignation_AndJudgesTheComparisonLast()
+    {
+        // Q96 questions 2 (c) and 3: measured around each call, recorded before the first verdict
+        // that could end the run, and the comparison judged only after the cleanup and the
+        // zero-artifact proof - so a run that fails on it has answered everything else.
+        string source = LiveSource();
+
+        int seed = source.IndexOf("LiveOutlookTestMailer.SaveTaggedPostInDeletedItems(", StringComparison.Ordinal);
+        int beforeReply = source.IndexOf("FolderPathsOf(store)", StringComparison.Ordinal);
+        int reply = source.IndexOf("Service.ReplyDraft(", StringComparison.Ordinal);
+        int afterReply = source.IndexOf("FolderPathsOf(store)", reply, StringComparison.Ordinal);
+        int designation = source.IndexOf("RecordDraftsDesignation(store, reply.EntryId);", StringComparison.Ordinal);
+        int firstVerdict = source.IndexOf("Require(ThrowawayStoreProof.ReplyReportedTheCreatedDrafts(", StringComparison.Ordinal);
+        int discard = source.IndexOf("Service.DiscardDraft(", StringComparison.Ordinal);
+        int afterDiscard = source.IndexOf("FolderPathsOf(store)", discard, StringComparison.Ordinal);
+        int nothingLeft = source.IndexOf("AssertNothingLeft(store, sourceEntryId, reply, discarded);", StringComparison.Ordinal);
+        int replyJudged = source.IndexOf("Require(replyComparison);", StringComparison.Ordinal);
+        int discardJudged = source.IndexOf("Require(discardComparison);", StringComparison.Ordinal);
+
+        Assert.True(seed > 0 && seed < beforeReply && beforeReply < reply, "the top level must be listed before the reply");
+        Assert.True(reply < afterReply && afterReply < firstVerdict, "the top level must be listed after the reply, before any verdict");
+        Assert.True(reply < designation && designation < firstVerdict, "the designation must be recorded before any verdict");
+        Assert.True(discard < afterDiscard, "the top level must be listed after the discard");
+        Assert.True(nothingLeft > 0 && nothingLeft < replyJudged && nothingLeft < discardJudged, "the comparison is judged last");
+        Assert.Equal(2, CountOf(source, "ThrowawayStoreProof.TopLevelChangeReported("));
+        Assert.Contains("LiveFolderProbe.FolderTree(Service, store)", source, StringComparison.Ordinal);
+        Assert.Contains("LiveOutlookTestMailer.ReadDraftsDesignations(store, draftEntryId)", source, StringComparison.Ordinal);
+    }
+
+    private static int CountOf(string text, string needle)
+    {
+        int count = 0;
+        for (int at = text.IndexOf(needle, StringComparison.Ordinal); at >= 0; at = text.IndexOf(needle, at + needle.Length, StringComparison.Ordinal))
+        {
+            count++;
+        }
+
+        return count;
     }
 
     [Fact]
