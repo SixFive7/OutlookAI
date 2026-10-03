@@ -114,13 +114,53 @@ namespace OutlookAI.Core.Com
         /// <summary>
         /// PR_CONVERSATION_INDEX_TRACKING (PidTagConversationIndexTracking, 0x3016, PT_BOOLEAN):
         /// whether an item's ConversationId is the GUID in its conversation-index header (TRUE) or
-        /// is computed from its conversation topic instead (MS-OXOMSG). A subject override that
-        /// changed it would leave the draft with the source's index and topic and still give it a
-        /// different ConversationId - which is what a PST showed on 2026-10-03 (seed and plain
-        /// reply equal, renamed reply different); whether this flag is why is what the next
-        /// guest run reads.
+        /// is computed from its conversation topic instead (MS-OXOMSG). Read into the draft
+        /// snapshot only: on a PST (2026-10-03) it was TRUE on a seed, its plain reply and its
+        /// renamed reply alike, so it is not what separated the renamed reply's id.
         /// </summary>
         private const string ConversationIndexTrackingDasl = "http://schemas.microsoft.com/mapi/proptag/0x3016000B";
+
+        /// <summary>PR_SUBJECT (PidTagSubject, 0x0037, PT_UNICODE).</summary>
+        private const string SubjectDasl = "http://schemas.microsoft.com/mapi/proptag/0x0037001F";
+
+        /// <summary>
+        /// True for an Exchange store, and for one whose <c>ExchangeStoreType</c> will not read - the
+        /// fail-safe side for a path only a non-Exchange store may take.
+        /// </summary>
+        private static bool IsExchangeStoreOrUnknown(object? store)
+        {
+            if (store == null)
+            {
+                return true;
+            }
+
+            try
+            {
+                return SpecialFolders.IsExchangeStore((int)((dynamic)store).ExchangeStoreType);
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// Writes PR_SUBJECT through the PropertyAccessor and reports whether it took. Unlike
+        /// <see cref="TrySetProperty"/> it also absorbs the <see cref="UnauthorizedAccessException"/> a
+        /// refused property write raises ("does not support this operation", measured 2026-10-03), so
+        /// the caller can fall back instead of failing the draft.
+        /// </summary>
+        private static bool TryWriteSubjectProperty(dynamic item, string subject)
+        {
+            try
+            {
+                return TrySetPropertyString(item, SubjectDasl, subject);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return false;
+            }
+        }
 
         /// <summary>
         /// PR_CONVERSATION_INDEX (PT_BINARY). LIVE-PROVEN on this build (batch A - A3):
@@ -3901,9 +3941,21 @@ namespace OutlookAI.Core.Com
                         string? sourceTopic = TryGetString(() => (string?)sourceItem.ConversationTopic)
                             ?? TryGetPropertyString(sourceItem, ConversationTopicDasl);
                         string? childIndex = TryGetString(() => (string?)draft.ConversationIndex);
-                        bool? trackingBefore = TryGetPropertyBool(draft, ConversationIndexTrackingDasl);
 
-                        draft.Subject = options!.SubjectOverride;
+                        // On a store that is not Exchange the subject goes in as PR_SUBJECT, past
+                        // the object model's Subject setter. MEASURED on a PST (guest live runs 3
+                        // and 4, 2026-10-03): after MailItem.Subject the renamed reply kept index
+                        // tracking, the child index and the source topic once they were written
+                        // back, and still had a ConversationId that was not its index GUID - the
+                        // one the setter's regenerated header gave it - and that id refuses a write
+                        // ("does not support this operation"). Exchange computes the id on the
+                        // server and keeps the setter exactly as before; a store whose kind will not
+                        // read counts as Exchange, and a refused direct write falls back to it.
+                        if (IsExchangeStoreOrUnknown(sourceStore)
+                            || !TryWriteSubjectProperty(draft, options!.SubjectOverride!))
+                        {
+                            draft.Subject = options!.SubjectOverride;
+                        }
 
                         // Order matters: index first (it carries the GUID the desktop
                         // groups by), topic second (the fallback grouping key).
@@ -3912,21 +3964,7 @@ namespace OutlookAI.Core.Com
                             && TrySetPropertyBinary(draft, ConversationIndexDasl, indexBytes);
                         bool topicRestored = !string.IsNullOrEmpty(sourceTopic)
                             && TrySetPropertyString(draft, ConversationTopicDasl, sourceTopic!);
-
-                        // And which of the two the ConversationId is computed from: the draft's
-                        // own PR_CONVERSATION_INDEX_TRACKING as Reply()/Forward() left it, put
-                        // back only if the subject write changed it. On a PST (2026-10-03) the
-                        // renamed reply kept the child index and the source topic and still got a
-                        // different ConversationId from its plain twin; a flag the subject write
-                        // cleared is one way that happens. Not readable before: left alone.
-                        bool trackingKept = true;
-                        if (trackingBefore.HasValue
-                            && TryGetPropertyBool(draft, ConversationIndexTrackingDasl) != trackingBefore)
-                        {
-                            trackingKept = TrySetProperty(draft, ConversationIndexTrackingDasl, trackingBefore.Value);
-                        }
-
-                        topicPreserved = indexRestored && topicRestored && trackingKept;
+                        topicPreserved = indexRestored && topicRestored;
                     }
 
                     // Attachments AFTER the composition closed the inspector (D46/C3).
