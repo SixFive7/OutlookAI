@@ -380,6 +380,40 @@ come back.
 - *Still open:* if the PowerShell Direct session breaks mid-run the runner does not reconnect; it
   now stops waiting quickly, but that run is INFRA.
 
+### The first live-tier run on a test VM (guest two) - 66 to 78 of 80, not yet green
+Eight runs on `OutlookAI-Unindexed`, each from `CP-12B` and each ending with **zero tagged
+artifacts** from run 2 on (run 1 left two move seeds and one undelivered mail, removed by the
+restore); the tripwire census never failed. Fixes found and made (on the run agent's branch, not
+yet on master - see the crash below):
+- **F1 (harness)** - the sink probe, Outbox check and delivery nudge were armed only by a fixture
+  this guest's filter never selects.
+- **F2 (product) - D93:** Outlook records a PST's Archive folder in block `0x800F` of the Inbox's
+  `PR_ADDITIONAL_REN_ENTRYIDS_EX` - undocumented, measured byte for byte - so the non-creating
+  lookup now reads it (non-Exchange stores only). *Alternatives:* `GetDefaultFolder(39)` creates the
+  folder (Q84 forbids); matching by name fails on a localised Outlook.
+- **F3 (product, settles Q11) - D94:** a table column added by its explicit name reports LOCAL
+  time, one added by its namespace reference UTC; the paged scan read both as UTC and produced a
+  duplicate. Each column is now read by its spelling.
+- **F4-F6 (test bugs) - D95:** a missing `IncludeSubfolders=false`; the cache test moved to
+  `Requires=SearchIndex` (its no-index case is pinned in T1); a health test expected advice where
+  the product reports a problem.
+- **F7 (product) - D96:** a PST keeps a draft's EntryID when it is discarded (it opens in Deleted
+  Items); the discard path now looks that up first (non-Exchange stores only).
+- **F10 (product, answers Q96's question 3) - D97:** the Drafts folder Outlook creates in a data
+  file with no Inbox is recorded only on the store's true root folder; the product now reaches it
+  through the top folder's `PR_PARENT_ENTRYID` rather than building the root's EntryID by hand.
+**Still red, being worked on overnight with the recommended directions (D98):**
+1. **Outlook crashes when the fixes are combined with tonight's master** - an access violation in
+   OUTLOOK.EXE during `new_draft` into the identity store, 2 of 2 runs; neither half crashes alone.
+   Treated as product-severity (OutlookAI must never crash a user's Outlook); being bisected. The
+   fixes are held off master until it is fixed.
+2. **D49 on Office LTSC 2024** - Outlook exits when the user closes the window OutlookAI opened,
+   although the session's lifetime pin is held. Being measured: which windows Office 2024 counts
+   as keeping Outlook open. (Your workstation's older Office is not touched.)
+3. **A renamed reply in a PST gets a different ConversationId** (the property refuses writes; three
+   attempts reverted). Being measured: whether the id is a hash of the new subject - which decides
+   between scoping that promise to Exchange and dropping it.
+
 ## Open questions only you can answer
 
 ### Q104 - Seven tagged test leftovers in your workstation's hub mailbox
