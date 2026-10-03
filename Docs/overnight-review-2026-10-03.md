@@ -358,6 +358,28 @@ Merged as `d62c15b` (build VM on the branch: 3,491 / 0 / 0, 21 self-tests; 16 of
 - **D87 - The Q96 CHANGELOG entry and the MCP server README were corrected** to the appeared/created
   split.
 
+### D88-D92 - The build-VM runner no longer reports a finished run as "not tested"
+Found by the Q96 agent; fixed and pushed as `f64f945`..`ac4af45` (five commits; a full run on the
+fix: 3,491 / 0 / 0, 21 self-tests). Cause: on the VM, Windows PowerShell 5.1's `Add-Content` locks
+the log against readers, and the host's poll turned that into the verdict although the results had
+come back.
+- **D88 - The results decide the verdict** (`run.json` plus the TRX file); INFRA (exit 3) now means
+  nothing came back. *Alternatives:* keep INFRA and add a results field; a new exit code.
+- **D89 - A TRX file from a run that did not finish counts for the failures it shows, never for a
+  pass** - a failed test failed, but a pass needs the whole run.
+- **D90 - No zip: the host reads the result files one by one with sharing**, and the guest deletes a
+  part-written zip; this also covers a guest that died before zipping.
+- **D91 - Limits:** a busy log is tolerated while the guest lives (the 60-minute run limit still
+  applies); 10 busy polls for a dead guest; 12 failed polls with 2-20 s backoff, then up to
+  5 minutes for the guest's done-marker.
+- **D92 - Proved by fault injection on the build VM**, only inside the agent's own runs, each of
+  which restores the base checkpoint anyway.
+- *Beyond the brief (deviation):* `summary.json`'s lists are now always arrays (one failure used to
+  come out as an object and no skips as `null`), and `-SelfTestInclude 'a','b'` - which arrives
+  through `pwsh -File` as one string - is now split on commas. Seven VM runs instead of one.
+- *Still open:* if the PowerShell Direct session breaks mid-run the runner does not reconnect; it
+  now stops waiting quickly, but that run is INFRA.
+
 ## Open questions only you can answer
 
 ### Q104 - Seven tagged test leftovers in your workstation's hub mailbox
