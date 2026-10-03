@@ -375,7 +375,26 @@ public sealed class SweepSortMutationTests
         /// <summary>Binds this collection to the table recording the calls.</summary>
         public StandInColumns(StandInTable table) => _table = table;
 
-        /// <summary>Puts a spelling on the table, or refuses it.</summary>
-        public void Add(string property) => _table.Add(property);
+        /// <summary>
+        /// Puts a spelling on the table, or refuses it - and, like Outlook's <c>Columns.Add</c>, hands
+        /// back the column it made, which the product now holds and releases (2026-10-03). A
+        /// <c>void</c> here would make every rung look refused: binding a void result is a
+        /// <c>RuntimeBinderException</c>, which <c>IsComCallFailure</c> admits.
+        /// </summary>
+        public object Add(string property)
+        {
+            _table.Add(property);
+            return new StandInColumn(property);
+        }
+    }
+
+    /// <summary>The column <see cref="StandInColumns.Add"/> hands back. Public for the reason given on <see cref="StandInTable"/>.</summary>
+    public sealed class StandInColumn
+    {
+        /// <summary>Names the column.</summary>
+        public StandInColumn(string name) => Name = name;
+
+        /// <summary>The spelling it was added under.</summary>
+        public string Name { get; }
     }
 }
