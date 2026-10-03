@@ -935,23 +935,6 @@
       the "corpus too small" early returns above no longer need the corpus to be the hub.
       `Docs/live-tier-on-the-vm.md` §3b is the procedure.
 
-- [ ] **Decide how the indexed guest's 160,000-item Corpus A stays fresh: its 7-day window empties
-      on 2026-10-09 at 23:59 UTC, and from then on the live tier refuses to start on that guest
-      until the corpus is rebuilt.** Built 2026-10-03 (runbook §4.2d, `CP-17C-CORPUS-160K`) and
-      anchored that day; the guest's settings declare the windows 7, 30 and 60 days (`windowDays`,
-      copied from the example - `Testbed/testbed.json` `_decided`), and `T2/LiveCorpusFreshness`
-      refuses as soon as any declared window selects nothing. A rebuild is a teardown of 160,000
-      items (or a fresh store, attached to both profiles while still empty) plus about 1 h 35 min of
-      `Build-Corpus.ps1`, with the index filling behind it. No live test reads that corpus by window:
-      it is the largest indexed store the latency bounds are timed against, and a bystander the
-      tripwire censuses - `Settings.Corpus` is read only by the freshness check - so the 7-day
-      declaration costs a weekly rebuild there and buys the index tier nothing. Options: (a) rebuild
-      before every indexed-guest run once the window has emptied; (b) declare `[30, 60]` on that guest
-      (fresh to 2026-11-01) or `[60]` (to 2026-12-01); (c) a rebuild script that swaps in a fresh
-      store instead of tearing 160,000 items down. Recommended: (b) with `[30, 60]` - unless the
-      measurement scripts of `Testbed/README.md` step 10, which do ask about the 7-day window, are
-      meant to run on that guest.
-
 - [ ] **Make `corpus-teardown` drain the folders it created, as it drains the items: in a PST its
       `Folder.Delete()` MOVES them into Deleted Items, so every hub rebuild leaves two more empty
       ones there.** Measured on `OutlookAI-Unindexed`, 2026-10-03 (runbook §3b item 7, §4.1d):
