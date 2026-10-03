@@ -9067,10 +9067,11 @@ namespace OutlookAI.Core.Services
             if (isDelegate)
             {
                 // Delegate items are indexed under the OWNER's /1/<delegate display name>
-                // subtree (Phase-1 fact 3).
+                // subtree (Phase-1 fact 3) - the name spelled the way the index spells names
+                // (MapiUrlSegment), which changes nothing unless it holds one of % / \ * ?.
                 foreach (StoreScopeInfo owner in catalog)
                 {
-                    if (_index.Value.ScopeHasAnyItem(owner.StorePrefix + "/1/" + displayName, timeout))
+                    if (_index.Value.ScopeHasAnyItem(DelegateScope(owner, displayName), timeout))
                     {
                         return true;
                     }
@@ -9154,7 +9155,7 @@ namespace OutlookAI.Core.Services
             // Delegate store: scope under an owner's /1/<name> subtree.
             foreach (StoreScopeInfo owner in catalog)
             {
-                string delegateScope = owner.StorePrefix + "/1/" + store;
+                string delegateScope = DelegateScope(owner, store);
                 bool exists;
                 try
                 {
@@ -9209,6 +9210,23 @@ namespace OutlookAI.Core.Services
             // tier skipped - never widened, because 'store' filters which mail may come back
             // and a widened scope would answer with another store's mail.
             return FolderScopeResolver.ForUnindexedStore(folder);
+        }
+
+        /// <summary>
+        /// The index scope of a delegate mailbox: its owner's store prefix, the delegate store
+        /// type <c>/1/</c>, and the delegate store's name spelled the way the index spells a
+        /// name (<see cref="MapiUrlSegment.Encode"/> - <c>% / \ * ?</c> percent-encoded, nothing
+        /// else). For a name without those characters this is the scope it always was.
+        /// <para>
+        /// The encoding of a NAME in a URL is documented by Microsoft for store and folder names
+        /// alike, and measured on test guests for a store and for folders; a delegate mailbox
+        /// is an Exchange shape no guest can have, so this half follows the documentation and
+        /// the measured primary-store spelling rather than a measurement of its own.
+        /// </para>
+        /// </summary>
+        internal static string DelegateScope(StoreScopeInfo owner, string delegateDisplayName)
+        {
+            return owner.StorePrefix + "/1/" + MapiUrlSegment.Encode(delegateDisplayName);
         }
 
         /// <summary>
