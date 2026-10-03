@@ -1,10 +1,12 @@
 #Requires -Version 5.1
 <#
     ============================================================================================
-    NEVER RUN ON A GUEST YET. Proven by -SelfTest alone, on the build VM (2026-10-03). The first
-    live run that uses it is where the rest is proven; until then Docs/live-tier-on-the-vm.md
-    section 8 item 25 records that proof as PENDING and says what it must record. Replace this
-    banner with what it did once a guest has run it.
+    RAN ON OutlookAI-Unindexed with -Execute before each of the first live runs there (2026-10-03,
+    Docs/live-tier-on-the-vm.md section 4.1e): every time "verify : 1 store(s) named
+    'throwaway@vm.invalid' ... Drafts designation NotFound, top-level folders [Deleted Items]" and
+    READY - so PowerShell does surface MAPI_E_NOT_FOUND as the HResult this script reads. Each run
+    started from a checkpoint with no throwaway, so the DETACH of an earlier run's store is proven only
+    as far as section 4.1e records after the last run; -SelfTest covers the decisions.
     ============================================================================================
 
 .SYNOPSIS
