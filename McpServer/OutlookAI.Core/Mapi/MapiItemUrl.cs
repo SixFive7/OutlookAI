@@ -57,10 +57,16 @@ namespace OutlookAI.Core.Mapi
         /// <summary>The SID path segment including braces, e.g. "{S-1-5-21-...}".</summary>
         public string SidSegment { get; }
 
-        /// <summary>The raw store segment, e.g. "alice@example.com($deadbeef)".</summary>
+        /// <summary>The raw store segment, e.g. "alice@example.com($deadbeef)" - spelled as the index spells it.</summary>
         public string StoreSegment { get; }
 
-        /// <summary>Store display name with the "($hash)" suffix stripped and trimmed.</summary>
+        /// <summary>
+        /// Store display name with the "($hash)" suffix stripped and trimmed, and its
+        /// percent-escapes decoded (<see cref="MapiUrlSegment.Decode"/>): the store's own name,
+        /// as Outlook has it - <c>q99 50% off*?x</c> for the segment
+        /// <c>q99 50%25 off%2A%3Fx($5159380d)</c>. <see cref="StoreSegment"/> keeps the index's
+        /// spelling.
+        /// </summary>
         public string StoreDisplayName { get; }
 
         /// <summary>Hex hash from the "($hash)" suffix of the store segment, without "$".</summary>
@@ -69,7 +75,15 @@ namespace OutlookAI.Core.Mapi
         /// <summary>Store type segment: 0 default, 1 delegate, 2 public-folder favorites.</summary>
         public int? StoreType { get; }
 
-        /// <summary>Folder path segments between the store-type segment and the item segment.</summary>
+        /// <summary>
+        /// Folder path segments between the store-type segment and the item segment, each
+        /// DECODED (<see cref="MapiUrlSegment.Decode"/>) - the folder names as Outlook has them,
+        /// which is what a COM folder walk, a duplicate check against a swept item's folder and
+        /// a hit's reported folder all compare with. The index spells <c>% / \ * ?</c> in a name
+        /// percent-encoded, so before the decode a hit from a folder called <c>50% off</c> named
+        /// <c>50%25 off</c>, a folder that does not exist. For names without those characters
+        /// the decode changes nothing.
+        /// </summary>
         public IReadOnlyList<string> FolderSegments { get; }
 
         /// <summary>The encoded (Hangul-range) EntryID segment, when the URL addresses an item.</summary>
@@ -193,7 +207,7 @@ namespace OutlookAI.Core.Mapi
             List<string> folders = new List<string>();
             for (int i = folderStart; i < end; i++)
             {
-                folders.Add(segments[i]);
+                folders.Add(MapiUrlSegment.Decode(segments[i]));
             }
 
             parsed = new MapiItemUrl(
@@ -213,6 +227,11 @@ namespace OutlookAI.Core.Mapi
             return true;
         }
 
+        /// <summary>
+        /// Splits <c>name($hash)</c> into the store's DECODED name and its hash. The hash is hex
+        /// and never encoded; the name is percent-encoded like a folder name
+        /// (<see cref="MapiUrlSegment"/>), and comes back as Outlook spells it.
+        /// </summary>
         private static void SplitStoreSegment(string storeSegment, out string displayName, out string? urlHash)
         {
             displayName = storeSegment;
@@ -229,6 +248,8 @@ namespace OutlookAI.Core.Mapi
                     urlHash = candidate;
                 }
             }
+
+            displayName = MapiUrlSegment.Decode(displayName);
         }
 
         private static bool IsHex(string value)
@@ -274,6 +295,13 @@ namespace OutlookAI.Core.Mapi
         /// Returns false for anything that is not a mapi URL. A store-root URL yields the
         /// store's own path (<c>/account</c>), a delegate root <c>/host/delegate</c>.
         /// </para>
+        /// <para>
+        /// The display path holds NAMES, not URL spellings: every segment - the store name and
+        /// each folder - is decoded (<see cref="MapiUrlSegment.Decode"/>), so the folder URL
+        /// <c>.../0/50%25 off</c> yields <c>/account/50% off</c>. See
+        /// <c>Docs/live-tier-on-the-vm.md</c> section 8 item 26 for the measurement this rests
+        /// on; for a URL holding no escape the result is what it always was.
+        /// </para>
         /// </summary>
         public static bool TryBuildFolderPathDisplay(string? folderScopeUrl, out string? displayPath)
         {
@@ -315,7 +343,7 @@ namespace OutlookAI.Core.Mapi
                     continue;
                 }
 
-                path.Append('/').Append(segments[i]);
+                path.Append('/').Append(MapiUrlSegment.Decode(segments[i]));
             }
 
             displayPath = path.ToString();

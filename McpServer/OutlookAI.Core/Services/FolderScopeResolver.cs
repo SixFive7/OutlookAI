@@ -183,6 +183,16 @@ namespace OutlookAI.Core.Services
         /// <paramref name="includeSubfolders"/> is false, one folder-path equality narrows
         /// it to that folder alone (its attachment rows included - they inherit the
         /// parent's folder display path).
+        /// <para>
+        /// ⚠ The folder URL spells each name the way the INDEX does
+        /// (<see cref="MapiUrlSegment.EncodePath"/>): <c>% / \ * ?</c> percent-encoded, nothing
+        /// else touched. It used to be the raw name, which addressed no folder at all for a
+        /// name holding one of those characters - a folder called <c>50% off</c> is filed as
+        /// <c>.../0/50%25 off</c> - so the search answered from the freshness sweep alone and
+        /// the zero-row guard blamed the path. <see cref="FolderScopeResolution.RequestedFolder"/>
+        /// keeps the raw name, which is what the sweep and the exhaustive scan look the folder
+        /// up by in Outlook.
+        /// </para>
         /// </summary>
         public static FolderScopeResolution ForPrimaryStore(string storePrefix, string? folder, bool includeSubfolders)
         {
@@ -198,7 +208,7 @@ namespace OutlookAI.Core.Services
                     FolderScopeKind.WholeStore, storePrefix, storePrefix, null, false, null, null, false);
             }
 
-            string scope = storePrefix + "/0/" + normalized;
+            string scope = storePrefix + "/0/" + MapiUrlSegment.EncodePath(normalized);
             if (includeSubfolders)
             {
                 return new FolderScopeResolution(

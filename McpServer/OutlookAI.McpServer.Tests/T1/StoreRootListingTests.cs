@@ -51,6 +51,11 @@ public sealed class StoreRootListingTests
         Assert.Equal("identity@vm.invalid", roots[0].StoreDisplayName);
         Assert.Equal(UserRoot + "identity@vm.invalid($be889d8b)", roots[0].StorePrefix);
 
+        // A name the index percent-encodes is listed under the store's own name, and keeps the
+        // index's spelling in its segment and its prefix (McpServer/README.md fact 17).
+        Assert.Equal("q99 50% off*?x", roots[3].StoreDisplayName);
+        Assert.Equal(UserRoot + "q99 50%25 off%2A%3Fx($5159380d)", roots[3].StorePrefix);
+
         // ONE statement, however many roots: no probe per root rides along.
         string statement = Assert.Single(client.Statements);
         Assert.StartsWith("SELECT System.ItemUrl FROM SystemIndex WHERE DIRECTORY=", statement, StringComparison.Ordinal);

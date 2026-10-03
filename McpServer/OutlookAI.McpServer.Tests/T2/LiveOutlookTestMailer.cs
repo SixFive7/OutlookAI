@@ -920,6 +920,173 @@ public static class LiveOutlookTestMailer
     private const int OlPostItem = 6;
 
     /// <summary>
+    /// Creates ONE test folder with an EXACT name - one the product's own <c>move_mail</c> cannot
+    /// make - and moves one tagged item of this run into it. For the folder-name encoding proof
+    /// (<c>T2/LiveFolderNameEncodingTests</c>): a name holding <c>/</c>, which every product
+    /// folder path splits on, so <c>move_mail</c> with <c>create_folder</c> makes two nested
+    /// folders instead of one with that name.
+    /// <para>
+    /// What it may touch, each refused before Outlook is asked anything
+    /// (<see cref="RefuseTestFolderFiling"/>): the folder's name must carry
+    /// <see cref="TestFolderNamePrefix"/>, so <see cref="DeleteTestFolders"/> removes it; it is
+    /// made only INSIDE an existing test folder - every segment of <paramref name="parentPath"/>
+    /// carries the prefix, and the parent is looked up without creating anything - so no real
+    /// folder ever gains a child; and the item must carry <see cref="SubjectTag"/> and
+    /// <paramref name="uniqueMarker"/>, the S3 double match, so the tagged sweep removes it. The
+    /// store must be granted folder AND move writes (the hub).
+    /// </para>
+    /// <para>
+    /// Whether Outlook ACCEPTS the name is the measurement, so a refusal is an answer, not a
+    /// failure: <see cref="TestFolderFiling.FolderCreated"/> false with Outlook's own message, and
+    /// the item left where it was. The name Outlook gave the folder is read back, because it is
+    /// the name the index will spell.
+    /// </para>
+    /// </summary>
+    public static TestFolderFiling FileTaggedItemInNewTestFolder(
+        string storeDisplayName, string uniqueMarker, string itemEntryId, IReadOnlyList<string> parentPath, string folderName)
+    {
+        ArgumentNullException.ThrowIfNull(parentPath);
+        string? refusal = RefuseTestFolderFiling(folderName, parentPath, uniqueMarker);
+        if (refusal != null)
+        {
+            throw new ArgumentException(refusal, nameof(folderName));
+        }
+
+        if (string.IsNullOrWhiteSpace(itemEntryId))
+        {
+            throw new ArgumentException("EntryID required.", nameof(itemEntryId));
+        }
+
+        LiveStoreWriteGuard.Assert(storeDisplayName, StoreWriteKind.Folder, nameof(FileTaggedItemInNewTestFolder));
+        LiveStoreWriteGuard.Assert(storeDisplayName, StoreWriteKind.Move, nameof(FileTaggedItemInNewTestFolder));
+
+        return RunSta(() =>
+        {
+            dynamic app = CreateOutlookApplication();
+            dynamic? ns = null;
+            dynamic? stores = null;
+            dynamic? store = null;
+            dynamic? current = null;
+            dynamic? folders = null;
+            dynamic? created = null;
+            dynamic? item = null;
+            dynamic? moved = null;
+            try
+            {
+                ns = app.GetNamespace("MAPI");
+                stores = ns.Stores;
+                store = FindStore(stores, storeDisplayName)
+                    ?? throw new InvalidOperationException("Store not found for the test-folder filing.");
+                string storeId = (string)store.StoreID;
+
+                // The item first: refuse before anything is created if it is not this run's.
+                item = ns.GetItemFromID(itemEntryId, storeId);
+                string? subject = (string?)item.Subject;
+                if (subject == null
+                    || !subject.Contains(SubjectTag, StringComparison.Ordinal)
+                    || !subject.Contains(uniqueMarker, StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        "Refusing to file: the item's subject does not carry both the test tag and this run's marker (S3).");
+                }
+
+                // The parent, looked up and never created.
+                current = store.GetRootFolder();
+                foreach (string segment in parentPath)
+                {
+                    dynamic? children = null;
+                    dynamic? next = null;
+                    try
+                    {
+                        children = current.Folders;
+                        next = children[segment];
+                    }
+                    catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+                    {
+                        next = null;
+                    }
+                    finally
+                    {
+                        Release(children);
+                    }
+
+                    if (next == null)
+                    {
+                        throw new InvalidOperationException(
+                            "The parent test folder '" + string.Join("/", parentPath) + "' does not exist; nothing was created.");
+                    }
+
+                    Release(current);
+                    current = next;
+                }
+
+                folders = current.Folders;
+                try
+                {
+                    created = folders.Add(folderName, 6); // olFolderInbox: an IPF.Note (mail) folder
+                }
+                catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+                {
+                    return new TestFolderFiling(false, null, null, null, ex.GetType().Name + ": " + ex.Message);
+                }
+
+                string actualName = (string)created.Name;
+                string folderEntryId = (string)created.EntryID;
+                moved = item.Move(created);
+                return new TestFolderFiling(true, actualName, folderEntryId, (string)moved.EntryID, null);
+            }
+            finally
+            {
+                Release(moved);
+                Release(item);
+                Release(created);
+                Release(folders);
+                Release(current);
+                Release(store);
+                Release(stores);
+                Release(ns);
+                Release(app);
+            }
+        });
+    }
+
+    /// <summary>
+    /// Why <see cref="FileTaggedItemInNewTestFolder"/> refuses a request, or null when it may
+    /// run. Pure, so T1 can drive every branch (<c>T1/FolderNameEncodingTests</c>):
+    /// the new folder's name and every segment of its parent's path must carry
+    /// <see cref="TestFolderNamePrefix"/> - the parent being a test folder is what keeps the new
+    /// one out of every real folder - and the marker must be strong enough for the S3 match.
+    /// </summary>
+    internal static string? RefuseTestFolderFiling(string? folderName, IReadOnlyList<string>? parentPath, string? uniqueMarker)
+    {
+        if (string.IsNullOrWhiteSpace(folderName) || !folderName.Contains(TestFolderNamePrefix, StringComparison.Ordinal))
+        {
+            return "A test folder's name must carry '" + TestFolderNamePrefix + "', so the test-folder cleanup removes it.";
+        }
+
+        if (parentPath == null || parentPath.Count == 0)
+        {
+            return "A test folder with an exact name is made only inside another test folder, never at a store's top level.";
+        }
+
+        foreach (string? segment in parentPath)
+        {
+            if (string.IsNullOrWhiteSpace(segment) || !segment.Contains(TestFolderNamePrefix, StringComparison.Ordinal))
+            {
+                return "Every folder on the parent path must be a test folder carrying '" + TestFolderNamePrefix
+                    + "' - a real folder never gains a child here.";
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(uniqueMarker) || uniqueMarker.Length < 12)
+        {
+            return "Marker too weak for the S3 cleanup to recognise the item.";
+        }
+
+        return null;
+    }
+
+    /// <summary>
     /// READ-ONLY: where a store says which folder is its Drafts - <c>PR_IPM_DRAFTS_ENTRYID</c> read
     /// at the three places the object model can reach: the store object and the Inbox (where the
     /// product's non-creating lookup reads it) and the store's top folder (where it does not) -
@@ -2166,3 +2333,11 @@ public static class LiveOutlookTestMailer
         }
     }
 }
+
+/// <summary>
+/// What <see cref="LiveOutlookTestMailer.FileTaggedItemInNewTestFolder"/> did: whether Outlook made
+/// the folder, the name it gave it, and the item's new EntryID - or Outlook's refusal, with the item
+/// left where it was.
+/// </summary>
+public sealed record TestFolderFiling(
+    bool FolderCreated, string? FolderName, string? FolderEntryId, string? NewItemEntryId, string? Error);
