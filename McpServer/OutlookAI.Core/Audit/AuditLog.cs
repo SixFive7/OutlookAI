@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 
@@ -27,7 +28,10 @@ namespace OutlookAI.Core.Audit
     /// between two lines. The open is <c>FileMode.Append</c> with <c>FileShare.ReadWrite</c> and
     /// deliberately WITHOUT <c>FileShare.Delete</c>, so the file cannot be renamed or deleted
     /// under an append in progress; an open that meets a sharing violation is retried
-    /// <see cref="WriteRetries"/> times, 15 ms apart, before the operation reports it.
+    /// <see cref="WriteRetries"/> times, 15 ms apart, before the operation reports it. Appends to
+    /// one log are serialized across processes by a named mutex, because two that overlap would
+    /// otherwise overwrite each other (see <see cref="AppendTo"/>); the mutex holds no file handle,
+    /// so it changes nothing about renaming the file.
     /// </para>
     ///
     /// <para>
@@ -49,6 +53,14 @@ namespace OutlookAI.Core.Audit
         internal const string RedirectRefusalError = "RedirectedForTests";
 
         private const int WriteRetries = 3;
+
+        /// <summary>
+        /// How long an append waits for another writer of the same log before appending anyway. An
+        /// append holds the lock for one open-write-close - about a millisecond - so two seconds is
+        /// only ever reached by a writer that is stuck, and a stuck writer must not stall every
+        /// other session's drafts and sends behind it.
+        /// </summary>
+        internal const int WriterLockWaitMilliseconds = 2000;
 
         /// <summary>
         /// The throwaway directory this process was redirected to, or null - which it is in every
@@ -212,26 +224,34 @@ namespace OutlookAI.Core.Audit
 
                 Directory.CreateDirectory(directory);
                 IOException? lastIo = null;
-                for (int attempt = 0; attempt < WriteRetries; attempt++)
-                {
-                    try
-                    {
-                        // FileShare.ReadWrite: multiple server processes (one per agent
-                        // session) may append concurrently; FileMode.Append positions at
-                        // end-of-file at open time and short lines interleave cleanly in
-                        // practice.
-                        using (FileStream stream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite))
-                        using (StreamWriter writer = new StreamWriter(stream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false)))
-                        {
-                            writer.WriteLine(line);
-                        }
 
-                        return;
-                    }
-                    catch (IOException ex)
+                // One writer at a time per log, across processes. FileShare.ReadWrite lets several
+                // server processes (one per agent session) append to the same file, but
+                // FileMode.Append only positions each handle at the end-of-file it saw when it
+                // OPENED, and every write goes to that offset - so two appends whose opens overlap
+                // write to the same place and one line silently overwrites the other. Measured
+                // 2026-10-03 on .NET 10.0.12: two processes calling this method 3,000 times each at
+                // once kept 5,883 lines of 6,000, with no exception anywhere - a silent loss in the
+                // one log whose rule is that a write never goes unrecorded. See WriterLock.
+                using (WriterLock.Acquire(path))
+                {
+                    for (int attempt = 0; attempt < WriteRetries; attempt++)
                     {
-                        lastIo = ex;
-                        Thread.Sleep(15);
+                        try
+                        {
+                            using (FileStream stream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite))
+                            using (StreamWriter writer = new StreamWriter(stream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false)))
+                            {
+                                writer.WriteLine(line);
+                            }
+
+                            return;
+                        }
+                        catch (IOException ex)
+                        {
+                            lastIo = ex;
+                            Thread.Sleep(15);
+                        }
                     }
                 }
 
@@ -318,6 +338,85 @@ namespace OutlookAI.Core.Audit
             }
 
             return Path.GetFullPath(spelled).TrimEnd(Path.DirectorySeparatorChar);
+        }
+
+        /// <summary>
+        /// The name of the mutex that serializes appends to the log at <paramref name="path"/>:
+        /// in the session's own namespace (every agent session's server runs in the user's
+        /// session), one per log file - a hash of its full path, case-folded - so the real log and
+        /// a test run's throwaway one never wait on each other.
+        /// </summary>
+        internal static string WriterMutexName(string path)
+        {
+            string full = Path.GetFullPath(path).ToUpperInvariant();
+            using (SHA256 sha = SHA256.Create())
+            {
+                byte[] hash = sha.ComputeHash(Encoding.UTF8.GetBytes(full));
+                return @"Local\OutlookAI.AuditLog." + BitConverter.ToString(hash).Replace("-", string.Empty);
+            }
+        }
+
+        /// <summary>
+        /// The one-writer-at-a-time lock around an append (see <see cref="AppendTo"/> for the loss
+        /// it prevents). Best effort by design, because the APPEND is what is load-bearing, not the
+        /// lock: a writer that cannot get it within <see cref="WriterLockWaitMilliseconds"/>, or
+        /// cannot create it at all, appends anyway - exactly as every append did before the lock
+        /// existed - rather than fail the draft or send the line records. A previous holder that
+        /// died mid-append leaves the mutex abandoned, which hands ownership over normally.
+        /// </summary>
+        private sealed class WriterLock : IDisposable
+        {
+            private readonly Mutex? _mutex;
+            private readonly bool _owned;
+
+            private WriterLock(Mutex? mutex, bool owned)
+            {
+                _mutex = mutex;
+                _owned = owned;
+            }
+
+            internal static WriterLock Acquire(string path)
+            {
+                Mutex? mutex = null;
+                try
+                {
+                    mutex = new Mutex(initiallyOwned: false, WriterMutexName(path));
+                    bool owned;
+                    try
+                    {
+                        owned = mutex.WaitOne(WriterLockWaitMilliseconds);
+                    }
+                    catch (AbandonedMutexException)
+                    {
+                        owned = true;
+                    }
+
+                    return new WriterLock(mutex, owned);
+                }
+                catch (Exception ex) when (ex is UnauthorizedAccessException || ex is IOException
+                    || ex is WaitHandleCannotBeOpenedException || ex is ArgumentException)
+                {
+                    // E.g. a same-named object of another type, or one created by a process this
+                    // one may not open. Unserialized is how every append worked before.
+                    mutex?.Dispose();
+                    return new WriterLock(null, false);
+                }
+            }
+
+            public void Dispose()
+            {
+                if (_mutex == null)
+                {
+                    return;
+                }
+
+                if (_owned)
+                {
+                    _mutex.ReleaseMutex();
+                }
+
+                _mutex.Dispose();
+            }
         }
 
         /// <summary>
