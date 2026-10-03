@@ -30,10 +30,10 @@
 
     `vmName` IS EMPTY, AND THAT IS THE CURRENT SETTING, NOT A GAP. The field pins a credential
     to one guest, and the match below only fires when it has a value - so an empty string means
-    "usable for any guest". Three machines coexist during the changeover (OutlookAI-Indexed,
-    OutlookAI-Unindexed and the outgoing OutlookAI-TestVM) and one account serves all of them,
-    so a pin naming any single one of the three refuses the other two. Fill it in only when the
-    credential really is for one machine alone.
+    "usable for any guest". Three machines coexist (OutlookAI-Indexed, OutlookAI-Unindexed and
+    OutlookAI-Build) and one account serves all of them, so a pin naming any single one of the
+    three refuses the other two. Fill it in only when the credential really is for one machine
+    alone.
 
     Create it by hand when you create the guest account. Set the password to NEVER EXPIRE: a
     maximum password age silently breaks the tier weeks later and recreates the whole problem.
@@ -51,11 +51,11 @@
     value it must match, so a credential pinned to one guest cannot be handed to another by
     accident.
 
-    It is mandatory rather than optional because THREE MACHINES COEXIST during the changeover -
-    OutlookAI-Indexed, OutlookAI-Unindexed and the outgoing OutlookAI-TestVM - and a caller that
-    does not say which one it means is not making a safe request, it is making an unanswerable
-    one. There is deliberately no default anywhere in Testbed/host/: a default that silently
-    picks one of three is the exact shape of mistake this testbed keeps making.
+    It is mandatory rather than optional because THREE MACHINES COEXIST - OutlookAI-Indexed,
+    OutlookAI-Unindexed and OutlookAI-Build - and a caller that does not say which one it means
+    is not making a safe request, it is making an unanswerable one. There is deliberately no
+    default anywhere in Testbed/host/: a default that silently picks one of three is the exact
+    shape of mistake this testbed keeps making.
 
 .OUTPUTS
     [PSCredential]
@@ -105,8 +105,8 @@ foreach ($field in @('username', 'password')) {
 if ($VMName -and $json.PSObject.Properties.Name.Contains('vmName') -and $json.vmName -and $json.vmName -ne $VMName) {
     throw @"
 vm-credentials.json holds a credential pinned to '$($json.vmName)', not '$VMName'. Refusing to use it.
-Three guests coexist during the changeover and one account serves all of them, so the intended
-setting for that field is an empty string. Clear it, or create a per-guest credential file.
+One account serves all three VMs - OutlookAI-Indexed, OutlookAI-Unindexed and OutlookAI-Build -
+so the intended setting for that field is an empty string. Clear it, or create a per-guest credential file.
 "@
 }
 

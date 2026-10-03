@@ -19,7 +19,7 @@ understood. 16 commits were 12 mainline steps.
 
 ### The guests
 
-| | `OutlookAI-Indexed` | `OutlookAI-Unindexed` | `OutlookAI-TestVM` |
+| | `OutlookAI-Indexed` | `OutlookAI-Unindexed` | `OutlookAI-TestVM` (deleted 2026-10-03) |
 | --- | --- | --- | --- |
 | built | by script | by script, **untouched** | by hand, August |
 | Windows install | 5 min 54 s, 13/14 first-logon | **7 min, 14/14** | - |
@@ -191,7 +191,8 @@ task had left a `/PIM CorpusProfile` instance running, which is why it looked re
    LEANER than the hand-built machine every assumption was written against.
 3. **No mail sink, by decision.** The Outbox canary is therefore vacuous on the guests - it will
    pass and its passing will mean nothing. `Install-MailSink.ps1` is the reserve.
-4. **The old guest is still alive**, 143 GB, awaiting a word.
+4. **The old guest is still alive**, 143 GB, awaiting a word. *(It got one: retired and deleted
+   on 2026-10-03, Q105 (a).)*
 
 ### Two habits that paid for themselves today, and one that did not
 
@@ -1781,6 +1782,9 @@ converted as each row is next touched.
     developer's Outlook being un-busy will keep doing this.
 
 ## 4. VM state (`OutlookAI-TestVM`)
+
+*`OutlookAI-TestVM` was retired and deleted on 2026-10-03 (Q105 (a)). What follows is a record of
+it, not a current state.*
 
 - Guest credentials for PowerShell Direct are **not recorded here**. This repository is
   public, so they live only in the gitignored live-test settings on the maintainer's

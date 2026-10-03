@@ -83,8 +83,10 @@
   - [ ] **Answer the open questions in `Testbed/README.md` section 6.** They are the facts that are
         genuinely not recorded anywhere - Hyper-V spec, Windows edition, Office version and bitness,
         which Outlook profile is default and how the switch is automated, whether the three-store
-        layout or the mail sink exist at all. Each needs the VM or the maintainer; none can be
-        derived from the repository.
+        layout or the mail sink exist at all. Each needs a guest or the maintainer; none can be
+        derived from the repository. Since 2026-10-03 only the questions that apply to the
+        script-built guests are left to answer: those section 6 asks only about the original
+        guest, `OutlookAI-TestVM`, went unanswerable when it was deleted that day.
 
         **Two corrections, 2026-09-15, because this line had drifted from the section it points at.**
         (a) It said **eleven** questions; section 6 now numbers **16** items - 13 questions plus 3

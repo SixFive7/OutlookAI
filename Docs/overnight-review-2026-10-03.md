@@ -524,7 +524,7 @@ name; `move_mail` kept Outlook's escapes, breaking its documented undo for such 
   so what your search showed is one of those, depending on the folder it ran in. The `TODO.md`
   item is deleted, and its two lessons moved into `Testbed/README.md` section 4c.
 
-### Q105 - Delete the old `OutlookAI-TestVM` now?
+### Q105 - Delete the old `OutlookAI-TestVM` now? *Answered (a) - deleted at about 13:40Z*
 - **Primer.** The original single test VM, unused since the two Outlook guests and the build VM
   took over. It holds 120 GB on E: (10 checkpoints); E: had 122 GB free, and guest work stops at a
   60 GB floor.
@@ -532,7 +532,10 @@ name; `move_mail` kept Outlook's escapes, breaking its documented undo for such 
   then delete.
 - **Recommendation.** (a): nothing uses it, and the Q61 rebuild deletes it anyway.
 - **Answered (a); done at about 13:40Z.** No other VM's disk chain referenced its files; the VM
-  and its folder are gone, and E: went from 114 to 292 GB free.
+  and its folder are gone, and E: went from 114 to 292 GB free. The repository no longer offers it
+  as a machine - the idle-saver's allowlist and the scripts' help name the three VMs in use - and
+  `Testbed/testbed.json` keeps its record, marked retired, as the provenance of the published
+  measurements.
 
 ### Q106 - Register the testbed idle-save task? *Answered 12:53Z by your VM rule*
 Registered, with every test VM set never to start with the host and to be saved when it stops;

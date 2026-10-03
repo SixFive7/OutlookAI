@@ -362,16 +362,25 @@ rebuild from a subtly different one without needing the old store to compare aga
 
 **Its `vmName` says `OutlookAI-TestVM`, and it stays that way.** That field is *provenance* - the
 guest these numbers were taken on - not a build target, and the two are now labelled apart in the
-file itself. Repointing it at `OutlookAI-Indexed` today would assert that measurements were taken
-on a machine nobody has built yet, which is worse than a name that looks stale; emptying it would
+file itself. Repointing it at `OutlookAI-Indexed` would assert that measurements were taken on a
+machine they were not taken on, which is worse than a name that looks stale; emptying it would
 throw away the one record of where the numbers came from. It changes when the measurements
-themselves are retaken, and the whole record changes with it. The guests to *build* are named in
-§4a, and nothing defaults to either of them.
+themselves are retaken, and the whole record changes with it. The machines in use are named in
+§4a, and nothing defaults to any of them.
+
+**That machine no longer exists: `OutlookAI-TestVM` was retired and deleted on 2026-10-03**
+(Q105 (a), `Docs/overnight-review-2026-10-03.md`), unused since the two guests and the build VM
+took over - and the store holding this corpus went with it. `testbed.json` marks its record
+retired (`vmRetired`, and `retired` on the `vm2` row of `corpusIdConvention`) rather than dropping
+it: the four parameters still reproduce the corpus, and the published measurements are still
+statements about that machine. Do not build a new VM under its name.
 
 **The manifest itself is deliberately NOT committed.** It is 2.9 MB of EntryIDs describing one
 machine's mailbox state, a build regenerates it, and it belongs in the gitignored
 `McpServer/OutlookAI.McpServer.Tests/live-fixtures/` directory - which is where the recovered
-copy now lives, as `live-fixtures/vm-corpus/corpus-vm2.jsonl`.
+copy now lives, as `live-fixtures/vm-corpus/corpus-vm2.jsonl`. Since 2026-10-03 the store it
+describes is gone with its guest, so there is nothing left for it to tear down; it stays as the
+record of what the corpus was.
 
 ### Every guest gets its OWN corpus id, and the manifest is named after it
 
@@ -395,7 +404,7 @@ pull are wrong in different ways. Read them together before changing either.
 
 | Corpus id | Guest | Indexed | State |
 | --- | --- | --- | --- |
-| `vm2` | `OutlookAI-TestVM` | **unrecorded** | **built and measured** - section 3 above is its record |
+| `vm2` | `OutlookAI-TestVM` - **retired and deleted 2026-10-03** | **unrecorded** | **built and measured, and gone with its guest** - section 3 above is its record, and the id stays reserved |
 | `vm-indexed` | `OutlookAI-Indexed` | yes | **built, 20,000 items** - below the 160,000 decided for this guest, so not yet the corpus its settings need. `Corpus A` in the store layout. Seed and anchor not recorded (corrected 2026-09-27 from `Docs/live-tier-on-the-vm.md` sections 2.4, 4.2b and 8 item 22; it said "not built") |
 | `vm-unindexed` | `OutlookAI-Unindexed` | no | **built, 20,000 items, census clean**. `Corpus B` in the store layout, in the corpus profile only. Seed and anchor not recorded (corrected 2026-09-27 from `Docs/live-tier-on-the-vm.md` sections 2.9 and 4.1a; it said "not built") |
 
@@ -671,12 +680,14 @@ accounts yet.
 
 ## 4a. Nothing guesses which guest you mean
 
-**THREE MACHINES COEXIST during the changeover**: `OutlookAI-Indexed` and `OutlookAI-Unindexed`
-are being built, and `OutlookAI-TestVM` - the guest every published measurement was taken on -
-stays until its replacements are proved (`MEDIA.md`, "never destroy a working testbed before its
-replacement runs"). **A default that silently picks one of three is the exact shape of mistake
-this testbed keeps making**, so as of 2026-09-15 there are no VM-name defaults left in
-`host/`.
+**THREE MACHINES COEXIST**: the two Outlook guests, `OutlookAI-Indexed` and `OutlookAI-Unindexed`,
+and the build VM, `OutlookAI-Build` (§1c). **A default that silently picks one of three is the
+exact shape of mistake this testbed keeps making**, so as of 2026-09-15 there are no VM-name
+defaults left in `host/`. The rule dates from the changeover, when the third machine was
+`OutlookAI-TestVM` - the original guest, the one every published measurement was taken on - kept
+until its replacements were proved (`MEDIA.md`, "never destroy a working testbed before its
+replacement runs"). They were, and it was **retired and deleted on 2026-10-03** (Q105 (a)); the
+build VM had joined the set earlier the same day.
 
 **Two changes, decided together.**
 
@@ -691,11 +702,11 @@ this testbed keeps making**, so as of 2026-09-15 there are no VM-name defaults l
    `Copy-ToGuest.ps1`, `Get-GuestCredential.ps1`, `New-AnswerFile.ps1`, `New-TestbedVm.ps1` and
    `Set-TestbedLease.ps1`. Omit it and the script asks, or fails; it never assumes.
    `Publish-GuestPayload.ps1` takes no VM name at all and correctly does not need one - it only
-   builds on the host, and one payload serves all three guests. The naming happens at the
+   builds on the host, and one payload serves both Outlook guests. The naming happens at the
    copy-in.
 
 **One deliberate exception: `host/Invoke-TestbedIdleSave.ps1` keeps its default of all the
-testbed's names** - all three guests' and, since 2026-10-03, `OutlookAI-Build`'s (§1c). Its
+testbed's names** - both Outlook guests' and, since 2026-10-03, `OutlookAI-Build`'s (§1c). Its
 `-VMName` is an **allowlist, not a target** - it bounds the set the saver may touch
 at all rather than picking one to act on, and naming every known guest *is* the intent. Its
 failure direction is the safe one too: a wrong or stale entry makes it do less (a VM is not
@@ -703,9 +714,10 @@ saved, the host keeps its RAM, and `Get-VM` shows it), where a wrong default els
 machine nobody was looking at. Making it mandatory would also break the scheduled task outright -
 `host/Register-IdleSaveTask.ps1` invokes it with `-NonInteractive` and no arguments, so a
 mandatory parameter cannot prompt; it would throw every fifteen minutes for ever and the only
-symptom would be a host that never reclaims its RAM. **Keep that list in step with the guests
-that exist:** drop `OutlookAI-TestVM` when the old guest goes, and add any new guest the day it
-is built, because a testbed VM missing from the list is simply never saved.
+symptom would be a host that never reclaims its RAM. **Keep that list in step with the VMs that
+exist:** add a new one the day it is built, because a testbed VM missing from the list is simply
+never saved, and drop one the day it is deleted - `OutlookAI-TestVM` left it on 2026-10-03, the
+day it was deleted.
 
 **And one VM name is a constant, not a default: `host/Invoke-TestsOnBuildVm.ps1`'s
 `OutlookAI-Build`** (2026-10-03, §1c). The rule above forbids a default that silently picks ONE OF
@@ -1064,7 +1076,7 @@ paths no automated test reaches is, by hand: `Docs/release-manual-checks.md`.
 | `host/New-AnswerFile.ps1` | Fills that template from the gitignored credential and packages it as a small ISO. Writes into gitignored scratch only, and refuses anywhere else. `-VMName` is mandatory (§4a). The ISO holds the guest password in clear text; step 3a deletes it once setup has consumed it. **Refuses to replace an ISO already at its output path** unless `-Replace` (2026-09-24): on this route one survives only an unfinished build or a guest whose checkpoints reference it - both current guests' do (§1b) - and replacing deletes the old file first. That refusal was run on the workstation against a stand-in file: it refused before reading the credential or writing anything. |
 | `guest/Complete-FirstLogon.ps1` | The first-logon fix-ups the answer file cannot express: the en-NL language list, the home location, the locales, no sleep, no fast startup. Logs and reads back everything it set. **Guarded since 2026-09-24** by a restated two-axis guard - `vmadmin` AND a computer name starting `OAI-`, the answer file's own convention - because the answer volume carries it alone; it refuses before opening its log, so a refusal leaves a guest with no `first-logon.log` at all. Refusal proven on the workstation (no arguments and `-SkipPower`: nothing written, every setting it names unchanged); its guard's inputs were measured at a real first logon on 2026-09-15 (`on OAI-UNINDEXED as vmadmin`), but the guarded script has not yet run at one. |
 | `host/New-TestbedVm.ps1` | Creates the Hyper-V guest, attaches the Windows ISO and the answer volume, boots it, and records the spec it chose. `-Name` is mandatory (§4a). **`-CompleteInstall`** (step 3a, 2026-09-24) finishes it: waits for the first-logon log's DONE line, ejects both discs, takes `CP-01-WIN-CLEAN` with no disc in it, and deletes the answer ISO once no VM or checkpoint on the host references it; it refuses on a guest whose `CP-01-WIN-CLEAN` already holds a disc - both current guests - changing nothing. **First run 2026-10-03, building `OutlookAI-Build` (§1c), and it refused twice, safely, before it finished:** the first-logon wait read the log's DONE line, but the eject read-back went through a VM object fetched before the eject and still listed both ISOs, and the checkpoint read-back straight after `Checkpoint-VM` listed none. Both now read by name and poll (30 s, 60 s); re-run, it went straight to the answer ISO and deleted it. `-StaticMemory` since the same day: `New-VM` here leaves dynamic memory on with a 1 TB ceiling, and the spec file now records the memory the VM actually got. `-SelfTest` covers its decisions, 28 assertions in both shells. |
-| `host/Publish-GuestPayload.ps1` | Publishes the MCP server and the remediation tools on the host and zips them for copy-in. Host-only, so it takes no VM name; one payload serves all three guests. |
+| `host/Publish-GuestPayload.ps1` | Publishes the MCP server and the remediation tools on the host and zips them for copy-in. Host-only, so it takes no VM name; one payload serves both Outlook guests. |
 | `host/Get-GuestCredential.ps1` | Loads the guest credential from the gitignored fixtures directory. Documents the one place a credential may live; contains none. `-VMName` is mandatory (§4a). |
 | `host/OwnEditionModules.ps1` | **Not run on its own: dot-sourced** near the top of every host script that uses a Security or Utility cmdlet - `Get-GuestCredential.ps1` (and so every script that fetches a credential through it), `Copy-FromGuest.ps1`, `Get-MailSinkMedia.ps1`, `New-LiveTestSettings.ps1`, `Publish-AddInPayload.ps1`, `Publish-LiveTierPayload.ps1`. Imports the running PowerShell's OWN copies of those two modules by path. Windows PowerShell 5.1 started by `Start-Process` from PowerShell 7 inherits 7's module path and cannot use 7's copies - no `ConvertTo-SecureString`, no `Get-FileHash`, no `Cert:` drive - measured 2026-09-27; everywhere else the import changes nothing. |
 | `host/Copy-ToGuest.ps1` | Copies a file or a zip into the guest over PowerShell Direct. `-VMName` is mandatory (§4a). |
@@ -1223,6 +1235,11 @@ A runbook that implies completeness it does not have is worse than one that name
 These are the holes. Each is a **question a rebuilder must answer for themselves**, not a step
 that was left out.
 
+**The original guest, `OutlookAI-TestVM`, was retired and deleted on 2026-10-03** (Q105 (a)). What
+an item below still marks unknown "for the original guest" can no longer be read off it, so it
+stays unknown for good; it is kept because the published measurements were taken on that machine
+(§3).
+
 **Things only the maintainer can answer, because only the VM knows them**
 
 1. **Hyper-V generation, Secure Boot, TPM, vCPU, RAM, disk size, checkpoint type.**
@@ -1271,7 +1288,11 @@ that was left out.
    **SUPERSEDED 2026-09-15 (noted 2026-09-27):** there are two GUESTS instead, one account each,
    `vmadmin` - index state is a property of the machine, not of an account
    (`Docs/live-tier-on-the-vm.md` §1.1a; §2.4 is marked NOT NEEDED). No second account is built.
-   The original guest's accounts remain unrecorded.
+   The original guest's accounts beyond `vmadmin` were unrecorded until 2026-10-03, when the
+   gitignored credential file kept for one, `vm-credentials-vmindex.json`, was read: a second
+   account, `vmindex`, created 2026-08-24 to host the INDEXED corpus store (`testbed.json`'s
+   `unrecorded` list has the detail). What, if anything, was built under it is recorded nowhere,
+   and with that guest deleted it never will be.
 5. **Which Outlook profile is default, and how the switch is automated.** Two profiles are known
    to exist, `Outlook` and `OutlookAITest`. The switch is a registry value under
    `HKCU\...\Outlook` and Outlook must not be running when it changes - but the exact value and

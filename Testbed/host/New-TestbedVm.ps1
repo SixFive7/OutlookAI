@@ -104,16 +104,16 @@
     before you run it, and run it with -Execute only once you have.
 
 .PARAMETER Name
-    MANDATORY. The VM name to create. There is no default: THREE MACHINES COEXIST during the
-    changeover - OutlookAI-Indexed, OutlookAI-Unindexed and the outgoing OutlookAI-TestVM - and a
-    default that silently picks one of three is the exact shape of mistake this testbed keeps
-    making. This script also derives the VHD path and the spec file from the name, so a wrong
-    default is a new disk in somebody else's directory, or a refusal on top of a VM that already
-    exists.
+    MANDATORY. The VM name to create. There is no default: THREE MACHINES COEXIST -
+    OutlookAI-Indexed, OutlookAI-Unindexed and OutlookAI-Build - and a default that silently
+    picks one of three is the exact shape of mistake this testbed keeps making. This script also
+    derives the VHD path and the spec file from the name, so a wrong default is a new disk in
+    somebody else's directory, or a refusal on top of a VM that already exists.
 
-    `OutlookAI-TestVM` is the OLD guest, the one being replaced; Docs/live-tier-on-the-vm.md and
-    Testbed/testbed.json still name it because they describe the machine the published
-    measurements were taken on. It is not a name to build under.
+    `OutlookAI-TestVM` was the ORIGINAL guest, retired and deleted on 2026-10-03 (Q105);
+    Docs/live-tier-on-the-vm.md and Testbed/testbed.json still name it because they describe the
+    machine the published measurements were taken on. It is not a name to build under: a new VM
+    called that would make their record ambiguous.
 
 .PARAMETER IsoPath
     Windows 11 installation ISO. You supply this; see Testbed/README.md section 6.
