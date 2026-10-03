@@ -286,23 +286,14 @@ public sealed class SoakBatchCCiToolShapeTests
         Assert.Contains("Unknown id", error.GetProperty("message").GetString()!, StringComparison.Ordinal);
     }
 
-    [Fact]
-    public async Task DiscardDraft_EntryIdThisServerNeverCreated_IsRefusedWithTheRegistryReason()
-    {
-        // A syntactically valid EntryID that no draft tool in this process ever returned:
-        // the registry gate must refuse it WITHOUT opening anything in Outlook, which is
-        // exactly why this pin is CI-safe.
-        await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();
-
-        JsonElement result = await client.CallToolAsync("discard_draft", new { id = new string('A', 96) });
-
-        JsonElement error = result.GetProperty("error");
-        Assert.Equal("DraftRefused", error.GetProperty("type").GetString());
-        Assert.Equal("not_created_by_this_server", error.GetProperty("reason").GetString());
-        string message = error.GetProperty("message").GetString()!;
-        Assert.Contains("not created or last updated by this server session", message, StringComparison.Ordinal);
-        Assert.Contains("Delete it in Outlook instead", message, StringComparison.Ordinal);
-    }
+    // The registry refusal of a raw EntryID this server never created used to be pinned HERE,
+    // over stdio, and that pin wrote to the machine's real audit log on every run: the refusal is
+    // audited (every refusal is - "discard_draft_refused"), and the server child is a shipped
+    // process that nothing may redirect. Its 96 'A's were among the fake EntryIDs counted in the
+    // maintainer's log (Q86). It moved in-process, where the audit redirect applies:
+    // T1/DraftValidationTests pins the refusal at the service AND at the tool layer, through the
+    // same GuardAsync mapping the server runs. McpStdioClient now refuses to send such a call
+    // from this tier at all.
 
     // ------------------------------------------------------------------ helpers
 

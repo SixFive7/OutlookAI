@@ -229,8 +229,84 @@ public sealed class TripwireReRunDriverTests
         // The direction that fails safe. Every retry is a chance to convert a real loss into a
         // pass, so a machine gets the accommodation only by SAYING it is the kind of machine
         // that needs it - a real mailbox with real people, real rules and a real server in it.
-        Assert.Same(TripwireRetryPolicy.Production, TripwireRetryPolicy.For(LiveMachineProfile.Production));
+        // Since Q74 A1 that machine is read-only, so what it buys is the re-censuses alone.
+        Assert.Same(TripwireRetryPolicy.ReadOnlyProduction, TripwireRetryPolicy.For(LiveMachineProfile.Production));
         Assert.Same(TripwireRetryPolicy.None, TripwireRetryPolicy.For(LiveMachineProfile.Portable));
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Q74 A1: the read-only machine keeps its re-censuses and never re-runs.
+    // ---------------------------------------------------------------------------------------
+
+    [Fact]
+    public void TheReadOnlyProductionMachine_KeepsBothReCensuses_AndHasNoReRun()
+    {
+        // Control: before Q74 For(Production) was the full Production policy, whose
+        // MaxImplicatedReRuns is 1 - so the last assertion failed.
+        TripwireRetryPolicy workstation = TripwireRetryPolicy.For(LiveMachineProfile.Production);
+
+        Assert.Equal(2, workstation.MaxReCensuses);
+        Assert.Equal(30, workstation.ReCensusGapSeconds);
+        Assert.True(workstation.RetriesAtAll);
+        Assert.Equal(0, workstation.MaxImplicatedReRuns);
+        Assert.Contains("read-only machine", workstation.Describe(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void NoMachineProfile_DeclaredOrNot_ReachesTheReRunRung()
+    {
+        // The re-run starts a child live run of every class of every collection that ran, writing
+        // ones included. Since Q74 no machine that can declare a profile gets that - the full
+        // Production bounds are reached by nothing, and this is what keeps it so.
+        foreach (LiveMachineProfile profile in Enum.GetValues<LiveMachineProfile>().Append((LiveMachineProfile)93))
+        {
+            Assert.Equal(0, TripwireRetryPolicy.For(profile).MaxImplicatedReRuns);
+            Assert.Equal(0, TripwireRetryPolicy.For(profile, isReRunChild: false).MaxImplicatedReRuns);
+        }
+    }
+
+    [Fact]
+    public void OnTheReadOnlyMachine_ADeltaThatSurvivesBothCensusesFails_WithoutAskingForAReRun()
+    {
+        // Behaviourally, through the ladder: the source counts its censuses and throws if it is ever
+        // asked which tests to re-run or to re-run them, so a policy that leaked the rung fails by
+        // name rather than by a count.
+        PersistingSource source = new();
+
+        TripwireRetryReport report = TripwireRetryLadder.Resolve(
+            Verdict(SomeFailures[0]), source, TripwireRetryPolicy.For(LiveMachineProfile.Production));
+
+        Assert.Equal(TripwireRunOutcome.Failed, report.Outcome);
+        Assert.Equal(2, report.ReCensuses);
+        Assert.Equal(2, source.Censuses);
+        Assert.Equal(0, report.ReRuns);
+        Assert.Contains("no re-run is permitted", report.Describe(), StringComparison.Ordinal);
+    }
+
+    /// <summary>A loss that every re-census confirms, from a source that refuses any re-run.</summary>
+    private sealed class PersistingSource : ITripwireRetrySource
+    {
+        public int Censuses { get; private set; }
+
+        public void Wait(TimeSpan gap)
+        {
+        }
+
+        public TripwireVerdict ReCensus(int attempt)
+        {
+            Censuses++;
+            return Verdict(SomeFailures[0]);
+        }
+
+        public IReadOnlyList<string> ImplicatedBy(IReadOnlyList<TripwireFailure> persisting)
+        {
+            throw new InvalidOperationException("the read-only machine asked which tests to RE-RUN");
+        }
+
+        public TripwireReRunOutcome ReRun(IReadOnlyList<string> implicated, int attempt)
+        {
+            throw new InvalidOperationException("the read-only machine started a RE-RUN");
+        }
     }
 
     [Fact]

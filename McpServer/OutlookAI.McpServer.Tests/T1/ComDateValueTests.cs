@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Reflection;
 
 using OutlookAI.Core.Com;
 
@@ -24,12 +25,54 @@ namespace OutlookAI.McpServer.Tests.T1;
 /// EARLY skips the mail received in that window and reports the scan complete, in the one
 /// mode a caller chooses because completeness matters.
 /// </para>
+/// <para>
+/// <b>The item reading is pinned in a zone of the test's own, and on the machine's (Q95,
+/// 2026-10-03).</b> On a machine whose zone is UTC the item conversion is the identity, so a
+/// test that only ever used the machine's zone could not see whether it happened - CI runs in
+/// UTC, and failed on exactly that while the maintainer's UTC+2 machine passed. The tests that
+/// pin WHAT the conversion does name <see cref="OddFixedZone"/> or <see cref="OddDaylightZone"/>
+/// and state the expected instant as a literal; <see cref="TheMachineOverload_GivesTheAnswerTheProductAlwaysGave"/>
+/// holds the overload the product calls to the expression it replaced, on whatever zone the
+/// machine has.
+/// </para>
 /// </summary>
 public sealed class ComDateValueTests
 {
     /// <summary>A wall-clock instant with no zone attached, which is all COM ever hands over.</summary>
     private static readonly DateTime Unspecified =
         new DateTime(2026, 6, 22, 14, 4, 23, DateTimeKind.Unspecified);
+
+    /// <summary>
+    /// A zone of the tests' own: UTC+07:13, all year. No real zone has that offset - every one is
+    /// a whole quarter hour - so a conversion that quietly used the MACHINE's zone instead (UTC
+    /// on CI, UTC+1 or +2 on the maintainer's machine, whatever it is anywhere else) cannot land
+    /// on the same instant by coincidence. Built in code rather than looked up, so it is the same
+    /// zone on a machine whose time-zone database differs or is missing.
+    /// </summary>
+    internal static readonly TimeZoneInfo OddFixedZone = TimeZoneInfo.CreateCustomTimeZone(
+        "OutlookAI-Test-UTC+07:13", new TimeSpan(7, 13, 0), "OutlookAI test zone (UTC+07:13)", "OutlookAI test zone");
+
+    /// <summary>
+    /// The same base offset with an hour of daylight saving from 1 April 02:00 to 1 October 03:00
+    /// (wall time), every year: UTC+08:13 in summer, UTC+07:13 in winter. It is how a conversion
+    /// that used the zone's BASE offset rather than the offset the zone holds at that instant is
+    /// told apart, which no fixed zone - and no UTC machine - can do.
+    /// </summary>
+    internal static readonly TimeZoneInfo OddDaylightZone = TimeZoneInfo.CreateCustomTimeZone(
+        "OutlookAI-Test-UTC+07:13-DST",
+        new TimeSpan(7, 13, 0),
+        "OutlookAI test zone (UTC+07:13, daylight saving)",
+        "OutlookAI test zone",
+        "OutlookAI test zone (daylight)",
+        new[]
+        {
+            TimeZoneInfo.AdjustmentRule.CreateAdjustmentRule(
+                DateTime.MinValue.Date,
+                DateTime.MaxValue.Date,
+                TimeSpan.FromHours(1),
+                TimeZoneInfo.TransitionTime.CreateFixedDateRule(new DateTime(1, 1, 1, 2, 0, 0), 4, 1),
+                TimeZoneInfo.TransitionTime.CreateFixedDateRule(new DateTime(1, 1, 1, 3, 0, 0), 10, 1)),
+        });
 
     /// <summary>
     /// The table reading: an unspecified kind is the instant it says it is. Asserted as
@@ -133,5 +176,181 @@ public sealed class ComDateValueTests
         DateTime read = ComDateValue.FromTableValue(Unspecified)!.Value;
 
         Assert.Equal(literal, read.ToString(DaslDateLiteral.Format, CultureInfo.InvariantCulture));
+    }
+
+    // ------------------------------------------- the item reading, in a zone of the test's own (Q95)
+
+    /// <summary>
+    /// What the item conversion DOES, on every machine: 14:04:23 of wall time at UTC+07:13 is
+    /// 06:51:23 UTC. Stated as a literal rather than recomputed through any conversion, so the
+    /// expected value cannot share a defect with the code under test.
+    /// </summary>
+    [Fact]
+    public void AnItemValue_IsReadInTheZoneItIsGiven_NotInTheMachines()
+    {
+        DateTime? read = ComDateValue.FromItemValue(Unspecified, OddFixedZone);
+
+        Assert.NotNull(read);
+        Assert.Equal(DateTimeKind.Utc, read!.Value.Kind);
+        Assert.Equal(new DateTime(2026, 6, 22, 6, 51, 23, DateTimeKind.Utc), read.Value);
+    }
+
+    /// <summary>
+    /// The offset is the one the zone holds AT THAT WALL TIME, not its base offset: an hour apart
+    /// across the zone's daylight-saving boundary, and the summer one is an hour earlier in UTC.
+    /// </summary>
+    [Fact]
+    public void AnItemValue_UsesTheOffsetItsZoneHoldsAtThatInstant()
+    {
+        DateTime summer = new(2026, 6, 22, 14, 4, 23, DateTimeKind.Unspecified);
+        DateTime winter = new(2026, 1, 22, 14, 4, 23, DateTimeKind.Unspecified);
+
+        Assert.Equal(new DateTime(2026, 6, 22, 5, 51, 23, DateTimeKind.Utc), ComDateValue.FromItemValue(summer, OddDaylightZone));
+        Assert.Equal(new DateTime(2026, 1, 22, 6, 51, 23, DateTimeKind.Utc), ComDateValue.FromItemValue(winter, OddDaylightZone));
+    }
+
+    /// <summary>
+    /// <see cref="TheTwoReadings_DifferByExactlyTheLocalOffset"/> in a zone of the test's own,
+    /// where the difference is never zero: on a UTC machine the machine-zone version is
+    /// <c>table == item</c>, which an item reading that forgot to convert satisfies as well.
+    /// </summary>
+    [Fact]
+    public void TheTwoReadings_DifferByExactlyTheZonesOffset_OnEveryMachine()
+    {
+        DateTime table = ComDateValue.FromTableValue(Unspecified)!.Value;
+        DateTime item = ComDateValue.FromItemValue(Unspecified, OddFixedZone)!.Value;
+
+        Assert.Equal(new TimeSpan(7, 13, 0), table - item);
+    }
+
+    /// <summary>An item value that already says it is UTC is not shifted, whatever zone is given.</summary>
+    [Fact]
+    public void AnItemValue_AlreadyUtc_IsNotShiftedByTheZoneEither()
+    {
+        DateTime utc = DateTime.SpecifyKind(Unspecified, DateTimeKind.Utc);
+
+        Assert.Equal(utc, ComDateValue.FromItemValue(utc, OddFixedZone));
+        Assert.Null(ComDateValue.FromItemValue(null, OddFixedZone));
+        Assert.Throws<ArgumentNullException>(() => ComDateValue.FromItemValue(Unspecified, null!));
+    }
+
+    /// <summary>
+    /// The overload the product calls gives exactly what it gave before the zone became a
+    /// parameter - <c>DateTime.SpecifyKind(value, DateTimeKind.Local).ToUniversalTime()</c> - in
+    /// value AND kind, over every quarter hour of two whole years of THIS machine's zone,
+    /// through each of its daylight-saving gaps and overlaps, at both ends of the
+    /// <see cref="DateTime"/> range, and for a value that arrives already marked Local.
+    /// <para>
+    /// As strong as the machine's zone: on a UTC machine both sides are the identity and this
+    /// proves only that, which is why the conversion itself is pinned above in a zone of the
+    /// test's own. On a machine with daylight saving it is the proof that a gap or an overlap
+    /// is still read the way it always was.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void TheMachineOverload_GivesTheAnswerTheProductAlwaysGave()
+    {
+        List<DateTime> wallTimes = new() { DateTime.MinValue, DateTime.MaxValue };
+        for (DateTime t = new(2025, 1, 1, 0, 0, 0, DateTimeKind.Unspecified);
+             t < new DateTime(2027, 1, 1, 0, 0, 0, DateTimeKind.Unspecified);
+             t = t.AddMinutes(15))
+        {
+            wallTimes.Add(t);
+        }
+
+        int compared = 0;
+        foreach (DateTime wall in wallTimes)
+        {
+            foreach (DateTime input in new[] { wall, DateTime.SpecifyKind(wall, DateTimeKind.Local) })
+            {
+                DateTime before = DateTime.SpecifyKind(input, DateTimeKind.Local).ToUniversalTime();
+                DateTime? now = ComDateValue.FromItemValue(input);
+                DateTime? explicitLocal = ComDateValue.FromItemValue(input, TimeZoneInfo.Local);
+
+                bool same = now.HasValue && explicitLocal.HasValue
+                    && now.Value.Ticks == before.Ticks && now.Value.Kind == before.Kind
+                    && explicitLocal.Value.Ticks == before.Ticks && explicitLocal.Value.Kind == before.Kind;
+                if (!same)
+                {
+                    Assert.Fail(
+                        $"{input:o} ({input.Kind}) in {TimeZoneInfo.Local.Id}: was {before:o} ({before.Kind}), is now "
+                        + $"{now:o} ({now?.Kind}) through the machine overload and {explicitLocal:o} ({explicitLocal?.Kind}) "
+                        + "with the machine's zone passed in.");
+                }
+
+                compared++;
+            }
+        }
+
+        // Two years of quarter hours, both kinds, plus the two ends - and not a quietly empty loop.
+        Assert.Equal(2 * (((365 + 365) * 24 * 4) + 2), compared);
+    }
+
+    /// <summary>
+    /// The overload the product calls hands the conversion THIS MACHINE's zone and nothing else,
+    /// read out of its compiled body. The behavioural test above cannot see this on a UTC machine,
+    /// where <see cref="TimeZoneInfo.Local"/> and <see cref="TimeZoneInfo.Utc"/> give the same
+    /// answer - so a zone-less overload that passed UTC would be green on every CI run and wrong
+    /// on every user's machine east or west of Greenwich.
+    /// </summary>
+    [Fact]
+    public void TheMachineOverload_PassesTheMachinesZone()
+    {
+        MethodInfo zoneLess = typeof(ComDateValue).GetMethod(
+            nameof(ComDateValue.FromItemValue), new[] { typeof(DateTime?) })!;
+
+        List<MethodBase> called = CalleesOf(zoneLess);
+
+        Assert.Contains(called, m => IsMethod(m, typeof(TimeZoneInfo), "get_Local"));
+        Assert.DoesNotContain(called, m => IsMethod(m, typeof(TimeZoneInfo), "get_Utc"));
+        Assert.Contains(called, m => IsMethod(
+            m, typeof(ComDateValue), nameof(ComDateValue.FromItemValue), typeof(DateTime?), typeof(TimeZoneInfo)));
+    }
+
+    /// <summary>
+    /// True when <paramref name="method"/> is <paramref name="name"/> on <paramref name="declaringType"/>
+    /// taking exactly <paramref name="parameters"/> - compared by name and signature rather than by
+    /// <see cref="MethodInfo"/> identity, so it cannot depend on which reflection path produced each.
+    /// </summary>
+    internal static bool IsMethod(MethodBase method, Type declaringType, string name, params Type[] parameters)
+    {
+        return method.DeclaringType == declaringType
+            && string.Equals(method.Name, name, StringComparison.Ordinal)
+            && method.GetParameters().Select(p => p.ParameterType).SequenceEqual(parameters);
+    }
+
+    /// <summary>
+    /// Every method one method calls, resolved from its IL (<c>call</c> 0x28, <c>callvirt</c>
+    /// 0x6F, <c>newobj</c> 0x73, each with a 4-byte token) - the reader
+    /// <c>TripwireReRunDriverTests.CalleesOf</c> uses. The token is resolved, so a stray operand
+    /// byte cannot pass for an instruction.
+    /// </summary>
+    internal static List<MethodBase> CalleesOf(MethodInfo method)
+    {
+        byte[] il = method.GetMethodBody()!.GetILAsByteArray()!;
+        List<MethodBase> called = new();
+        for (int i = 0; i + 4 < il.Length; i++)
+        {
+            if (il[i] != 0x28 && il[i] != 0x6F && il[i] != 0x73)
+            {
+                continue;
+            }
+
+            int token = il[i + 1] | (il[i + 2] << 8) | (il[i + 3] << 16) | (il[i + 4] << 24);
+            try
+            {
+                MethodBase? resolved = method.Module.ResolveMethod(token);
+                if (resolved != null)
+                {
+                    called.Add(resolved);
+                }
+            }
+            catch (ArgumentException)
+            {
+                // Not a real call - the bytes happened to look like one.
+            }
+        }
+
+        return called;
     }
 }

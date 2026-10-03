@@ -81,9 +81,51 @@ namespace OutlookAI.Core.Com
         /// value CAME FROM, which is why they are separate names rather than one call that
         /// inspects the kind.
         /// </para>
+        /// <para>
+        /// "Local" is this machine's zone, <see cref="TimeZoneInfo.Local"/> - the zone the
+        /// Outlook beside this process converts into. This overload is the only one the product
+        /// calls; the zone is a parameter of <see cref="FromItemValue(DateTime?, TimeZoneInfo)"/>
+        /// only so that a test can hold it still.
+        /// </para>
         /// </summary>
         public static DateTime? FromItemValue(DateTime? value)
         {
+            return FromItemValue(value, TimeZoneInfo.Local);
+        }
+
+        /// <summary>
+        /// <see cref="FromItemValue(DateTime?)"/> with the zone the wall time is read in
+        /// passed in rather than taken from the machine. The product passes
+        /// <see cref="TimeZoneInfo.Local"/> and nothing else.
+        /// <para>
+        /// <b>Why the seam exists (Q95, 2026-10-03).</b> The conversion is the identity on a
+        /// machine whose zone is UTC, so a test that relied on the machine's own zone could not
+        /// tell a converted value from an unconverted one there - and GitHub's runners ARE UTC,
+        /// so CI failed on a test that passed on the maintainer's UTC+2 machine, while the
+        /// product was right on both. A test now names a zone of its own and gets the same
+        /// answer on every machine.
+        /// </para>
+        /// <para>
+        /// <b>The same answer the product always gave.</b> Before the seam this was
+        /// <c>DateTime.SpecifyKind(moment, DateTimeKind.Local).ToUniversalTime()</c>, which
+        /// subtracts the offset <see cref="TimeZoneInfo.Local"/> holds for that wall time,
+        /// never throws on a wall time the zone skips at a spring-forward, takes a wall time it
+        /// repeats at a fall-back as standard time, and clamps a result that would leave the
+        /// <see cref="DateTime"/> range to the end of it. <see cref="TimeZoneInfo.GetUtcOffset(DateTime)"/>
+        /// on the same wall time is that same offset, gap and overlap included - so this is the
+        /// same arithmetic made explicit, with the clamp kept. <c>ComDateValueTests</c> holds
+        /// the two equal across the local zone's own transitions.
+        /// </para>
+        /// </summary>
+        /// <param name="value">The item's wall time, as COM handed it over.</param>
+        /// <param name="localZone">The zone that wall time is in.</param>
+        public static DateTime? FromItemValue(DateTime? value, TimeZoneInfo localZone)
+        {
+            if (localZone == null)
+            {
+                throw new ArgumentNullException(nameof(localZone));
+            }
+
             if (!value.HasValue)
             {
                 return null;
@@ -95,7 +137,18 @@ namespace OutlookAI.Core.Com
                 return moment;
             }
 
-            return DateTime.SpecifyKind(moment, DateTimeKind.Local).ToUniversalTime();
+            DateTime wallTime = DateTime.SpecifyKind(moment, DateTimeKind.Unspecified);
+            long utcTicks = wallTime.Ticks - localZone.GetUtcOffset(wallTime).Ticks;
+            if (utcTicks < DateTime.MinValue.Ticks)
+            {
+                utcTicks = DateTime.MinValue.Ticks;
+            }
+            else if (utcTicks > DateTime.MaxValue.Ticks)
+            {
+                utcTicks = DateTime.MaxValue.Ticks;
+            }
+
+            return new DateTime(utcTicks, DateTimeKind.Utc);
         }
     }
 }

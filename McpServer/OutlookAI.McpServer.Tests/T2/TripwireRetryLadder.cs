@@ -68,6 +68,19 @@ public enum TripwireRunOutcome
 /// explicitly declares itself <see cref="LiveMachineProfile.Production"/> - a real working
 /// mailbox with real people and a real server in it - buys the accommodation.
 /// </para>
+/// <para>
+/// <b>And a READ-ONLY machine buys the re-censuses but never the re-run (Q74 A1, 2026-10-03).</b>
+/// Since Q72 the only Production machine is the maintainer's workstation, which is read-only for
+/// live tests (<see cref="LiveWriteAccess"/>). The re-census is a read and stays. The re-run is not
+/// one: <see cref="TripwireReRunDriver"/> starts a CHILD live run that drops the run's own filter and
+/// selects every class of every collection that ran - about twenty after a delegate-store run, several
+/// of which write - under the same per-run opt-in, on the one machine where nothing may be written.
+/// And it could never have changed the answer: its best outcome is
+/// <see cref="TripwireRunOutcome.PassedWithASurvivedDelta"/>, which still fails the run. So
+/// <see cref="For(LiveMachineProfile)"/> hands a read-only Production machine
+/// <see cref="ReadOnlyProduction"/>; the full <see cref="Production"/> bounds are now reached by no
+/// declared profile, and are kept only as the ladder's own unit-tested shape.
+/// </para>
 /// </summary>
 public sealed class TripwireRetryPolicy
 {
@@ -96,6 +109,17 @@ public sealed class TripwireRetryPolicy
         TripwireRetryLadder.MaxImplicatedReRuns);
 
     /// <summary>
+    /// What the read-only Production machine - the maintainer's workstation - gets: the same 2
+    /// re-censuses ~30 s apart as <see cref="Production"/>, and NO bounded re-run (Q74 A1). A
+    /// suspected loss that survives both re-censuses fails the run straight away.
+    /// </summary>
+    public static TripwireRetryPolicy ReadOnlyProduction { get; } = new(
+        "Production, read-only machine (re-censuses only - a re-run would start a live run that writes)",
+        TripwireRetryLadder.MaxReCensuses,
+        TripwireRetryLadder.ReCensusGapSeconds,
+        0);
+
+    /// <summary>
     /// No retries at all: the post-run census is the verdict. What a machine gets when nothing
     /// but the suite can change a mailbox on it, and what an UNDECLARED machine gets too.
     /// </summary>
@@ -122,11 +146,18 @@ public sealed class TripwireRetryPolicy
     /// <summary>
     /// The policy for one machine. Only a declared <see cref="LiveMachineProfile.Production"/>
     /// profile gets retries; everything else - <see cref="LiveMachineProfile.Portable"/>, and any
-    /// value added later that nobody has thought about - gets <see cref="None"/>.
+    /// value added later that nobody has thought about - gets <see cref="None"/>. And a machine
+    /// that may write nothing (<see cref="LiveWriteAccess.RefusesEveryWrite"/>) never gets the
+    /// re-run rung: which, since Q72, is every Production machine there is.
     /// </summary>
     public static TripwireRetryPolicy For(LiveMachineProfile profile)
     {
-        return profile == LiveMachineProfile.Production ? Production : None;
+        if (profile != LiveMachineProfile.Production)
+        {
+            return None;
+        }
+
+        return LiveWriteAccess.RefusesEveryWrite(profile) ? ReadOnlyProduction : Production;
     }
 
     /// <summary>

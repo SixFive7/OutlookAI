@@ -42,11 +42,11 @@ namespace OutlookAI.Services
     /// <para>
     /// INTERNAL, and it has to stay internal. A PUBLIC type in a linked file compiled into two
     /// assemblies that can see each other is CS0436, an error here (<c>TreatWarningsAsErrors</c>).
-    /// Core's copy is invisible to the test assembly precisely BECAUSE it is internal - Core
-    /// grants no <c>InternalsVisibleTo</c> - so the tests reach this through
-    /// <c>OutlookProfileRegistry</c> and <c>HealthReporting</c> instead. For the same reason this
-    /// file is NOT compiled into <c>OutlookAI.McpServer</c>: that project DOES open its internals
-    /// to the test assembly, so a copy there would collide with Core's.
+    /// Since Q86 (2026-10-03) Core opens its internals to the test assembly, so Core's copy IS
+    /// visible there - which is why the test project must never link this file itself; the tests
+    /// still reach the list through <c>OutlookProfileRegistry</c> and <c>HealthReporting</c>. For
+    /// the same reason this file is NOT compiled into <c>OutlookAI.McpServer</c>: that project
+    /// opens its internals to the test assembly as well, so a copy there would collide with Core's.
     /// </para>
     ///
     /// <para>

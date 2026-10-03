@@ -2643,6 +2643,56 @@ namespace OutlookAI.Core.Services
         public IReadOnlyList<string>? Advice { get; set; }
     }
 
+    /// <summary>One audit-log line, as audit_log returns it (Q93).</summary>
+    public sealed class AuditLogEntryView
+    {
+        /// <summary>When the line was written (the line's ts), UTC.</summary>
+        public DateTime Utc { get; set; }
+
+        /// <summary>The operation the line records (its op), e.g. new_draft, send_refused, move_mail.</summary>
+        public string Operation { get; set; } = string.Empty;
+
+        /// <summary>
+        /// The line's fields, names exactly as written (entryId, store, account, reason...) and
+        /// values unescaped. Metadata only - the log never holds a subject or a body.
+        /// </summary>
+        public IReadOnlyDictionary<string, string> Fields { get; set; } = new Dictionary<string, string>();
+    }
+
+    /// <summary>audit_log outcome (Q93): the newest matching entries of this machine's audit log.</summary>
+    public sealed class AuditLogOutcome
+    {
+        /// <summary>The log that was read - the live one only, never a renamed or archived copy.</summary>
+        public string Path { get; set; } = string.Empty;
+
+        /// <summary>The newest matching entries, newest first.</summary>
+        public IReadOnlyList<AuditLogEntryView> Entries { get; set; } = Array.Empty<AuditLogEntryView>();
+
+        /// <summary>How many entries are in <see cref="Entries"/>.</summary>
+        public int Returned { get; set; }
+
+        /// <summary>How many entries matched in all; more than <see cref="Returned"/> exactly when <see cref="Truncated"/>.</summary>
+        public int Matched { get; set; }
+
+        /// <summary>True when older entries matched beyond top - narrow the filters rather than raise top.</summary>
+        public bool Truncated { get; set; }
+
+        /// <summary>Complete lines read from the log, malformed ones included.</summary>
+        public long LinesScanned { get; set; }
+
+        /// <summary>Lines that are not in the format this server writes, skipped and never returned (null when none).</summary>
+        public long? MalformedLines { get; set; }
+
+        /// <summary>True when the last line was still being written as it was read and was left out (null otherwise).</summary>
+        public bool? IncompleteLastLine { get; set; }
+
+        /// <summary>True when there is no log file yet (null otherwise).</summary>
+        public bool? LogMissing { get; set; }
+
+        /// <summary>What to know about this answer beyond its counters (null when nothing).</summary>
+        public IReadOnlyList<string>? Advice { get; set; }
+    }
+
     /// <summary>show_search_results outcome (v3.MD L3).</summary>
     public sealed class ShowSearchResultsOutcome
     {

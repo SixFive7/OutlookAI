@@ -6,6 +6,7 @@ using OutlookAI.Core.Services;
 using OutlookAI.McpServer.Tests.T2;
 
 using Xunit;
+using Xunit.Abstractions;
 
 namespace OutlookAI.McpServer.Tests.T3;
 
@@ -34,16 +35,87 @@ namespace OutlookAI.McpServer.Tests.T3;
 /// write nothing - what they need is an Outlook, which is what <c>Requires=OutlookInstance</c>
 /// says, and it is the whole of what they say.
 /// </para>
+/// <para>
+/// <b>Neither may pass having checked nothing (Q101, 2026-10-03).</b> Each used to return GREEN
+/// on the machine state it could not check - a healthy Outlook, with no line at all; and ANY
+/// error from <c>search</c>, which is exactly what "search must degrade, never fail" exists to
+/// catch. The search test now fails on every error except the one where there was nothing to
+/// search - this machine's Windows Search index unreachable, by the product's own verdict - and
+/// both remaining returns go through <see cref="LivePopulationCoverage"/>: a refusal on a
+/// Production profile, a <c>PROVED NOTHING:</c> line on a Portable one. Pinned by
+/// <c>T1/LiveEarlyReturnGuardTests</c>.
+/// </para>
 /// </summary>
 [Collection(LiveCollections.McpToolShape)]
 [Trait("Category", "Live")]
 public sealed class OutlookAvailabilityLiveTests
 {
+    /// <summary>
+    /// What the retry-guidance check reads, named as the Production refusal wraps it. A healthy
+    /// Outlook answers <c>list_accounts</c> without an error, so there is no state to check.
+    /// </summary>
+    internal const string TransientStatePopulation =
+        "a transient Outlook state (starting, not responding or unavailable) for list_accounts to report";
+
+    /// <summary>What a reader of a PROVED NOTHING line about that check is to do about it.</summary>
+    internal const string TransientStateRemedy =
+        "The check reads the error list_accounts returns while Outlook is starting, hung or unavailable, and a "
+        + "healthy Outlook returns none - so it runs only on a machine whose Outlook is in that state when the test "
+        + "calls: straight after Outlook was closed, while it is still starting, or while it is not responding.";
+
+    /// <summary>What the freshness-contract assertions need, named as the Production refusal wraps it.</summary>
+    internal const string AnsweredSearchPopulation =
+        "a search answered from a reachable Windows Search index";
+
+    /// <summary>What a reader of a PROVED NOTHING line about the freshness contract is to do about it.</summary>
+    internal const string AnsweredSearchRemedy =
+        "search failed the way it does when this machine's Windows Search index cannot be reached at all - "
+        + "outlook_health reported index.provider as unavailable - so there was no answer to hold to the freshness "
+        + "contract. Start the Windows Search service (WSearch) and re-run; a guest with no catalog at all is a "
+        + "guest shape of its own (Docs/live-tier-on-the-vm.md section 8, item 21).";
+
     /// <summary>Error types that mean "not now, try again" rather than "this went wrong".</summary>
     private static readonly string[] TransientTypes =
     {
         "OutlookStarting", "OutlookUnresponsive", "Timeout", "ComHostUnavailable", "OutlookUnavailable",
     };
+
+    private readonly LiveMcpToolShapeFixture _fixture;
+    private readonly ITestOutputHelper _output;
+
+    public OutlookAvailabilityLiveTests(LiveMcpToolShapeFixture fixture, ITestOutputHelper output)
+    {
+        _fixture = fixture;
+        _output = output;
+    }
+
+    /// <summary>
+    /// True when <paramref name="provider"/> - <c>outlook_health</c>'s <c>index.provider</c> - is
+    /// the product's own "the SystemIndex is unreachable" marker, classified by the product's own
+    /// rule (<see cref="MailService.ClassifyIndexCurrency"/>) rather than by a second copy of it.
+    /// Absent is NOT unreachable: the one error <see cref="SearchAlwaysAnswers_AndSaysWhetherItIsComplete"/>
+    /// lets through needs the product to have said so.
+    /// </summary>
+    internal static bool IndexIsUnreachable(string? provider)
+    {
+        return provider != null
+            && MailService.ClassifyIndexCurrency(provider, null) == MailService.IndexCurrency.Unavailable;
+    }
+
+    /// <summary>
+    /// The index provider <c>outlook_health</c> reports on the SAME server - whose index tier is the
+    /// one <c>search</c> just used, created once and shared - or null when health did not say.
+    /// </summary>
+    private static async Task<string?> IndexProviderAsync(McpStdioClient client)
+    {
+        (JsonElement health, TimeSpan _) = await CallAsync(client, "outlook_health", new { });
+        return !IsError(health)
+            && PayloadOf(health).TryGetProperty("index", out JsonElement index)
+            && index.TryGetProperty("provider", out JsonElement provider)
+            && provider.ValueKind == JsonValueKind.String
+                ? provider.GetString()
+                : null;
+    }
 
     private static async Task<(JsonElement Result, TimeSpan Elapsed)> CallAsync(
         McpStdioClient client, string tool, object arguments)
@@ -75,9 +147,19 @@ public sealed class OutlookAvailabilityLiveTests
         // Whatever the machine's state, a COM-needing tool must not sit on the caller.
         Assert.True(elapsed < TimeSpan.FromSeconds(100), $"took {elapsed.TotalSeconds:F1}s");
 
-        if (!IsError(result))
+        // A healthy Outlook answers without an error, which leaves the retry-guidance check below
+        // nothing to read. That used to return GREEN with no line at all; it is the Q57 pattern now
+        // (Q101): a refusal on a Production profile, a PROVED NOTHING line on a Portable one.
+        IReadOnlyList<JsonElement> transient = LivePopulationCoverage.Require(
+            _fixture.Settings,
+            IsError(result) ? new[] { result } : Array.Empty<JsonElement>(),
+            TransientStatePopulation,
+            "the retry-guidance check",
+            TransientStateRemedy,
+            _output.WriteLine);
+        if (transient.Count == 0)
         {
-            return; // Outlook was healthy here; nothing transient to assert.
+            return;
         }
 
         JsonElement error = PayloadOf(result).GetProperty("error");
@@ -136,9 +218,33 @@ public sealed class OutlookAvailabilityLiveTests
             client, "search", new { query = "invoice", top = 3 });
 
         JsonElement payload = PayloadOf(result);
-        if (payload.TryGetProperty("error", out _))
+        string? searchError = payload.TryGetProperty("error", out JsonElement error) ? error.GetRawText() : null;
+        if (searchError != null)
         {
-            return; // No index on this machine; the freshness contract does not apply.
+            // ONE error may end this test (Q101): the one where there was nothing to search, because
+            // this machine's Windows Search index cannot be reached at all. That is the product's own
+            // verdict, read from outlook_health on the same server, whose index tier is the one this
+            // search used. Every other error is precisely what "search must degrade, never fail"
+            // below exists to catch - and it used to return green just the same.
+            string? provider = await IndexProviderAsync(client);
+            Assert.True(
+                IndexIsUnreachable(provider),
+                "search must degrade, never fail - it returned an error, and outlook_health does not report this "
+                + $"machine's index as unreachable (index.provider={provider ?? "(not reported)"}): {searchError}");
+        }
+
+        // The freshness contract needs a search that ANSWERED; the no-index error above is the one
+        // way left not to, and it says so rather than passing (the Q57 pattern, Q101).
+        IReadOnlyList<JsonElement> answered = LivePopulationCoverage.Require(
+            _fixture.Settings,
+            searchError == null ? new[] { payload } : Array.Empty<JsonElement>(),
+            AnsweredSearchPopulation,
+            "the freshness-contract assertions",
+            AnsweredSearchRemedy,
+            _output.WriteLine);
+        if (answered.Count == 0)
+        {
+            return;
         }
 
         // search is a SUCCESS even when it could not reach Outlook - losing the indexed

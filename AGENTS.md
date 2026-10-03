@@ -16,6 +16,13 @@ Rules:
 - Never modify released sections (any `## v...` heading). Only add to `## Unreleased`.
 - If the Unreleased section already has entries from earlier in the session, add to it rather than replacing it.
 
+## TODO.md
+
+**An item is either open or gone.** Decided by the maintainer 2026-10-03. When an item is done -
+or decided, if it was a decision - delete it from `TODO.md`. Never tick it (`- [x]`), and never
+leave a DONE, CLOSED or RESOLVED note behind. The record of what was done lives in git history,
+the CHANGELOG and the runbook, not in the TODO list.
+
 ## Pushing
 
 **Push every commit individually, as it is made.** Decided 2026-09-17, standing. Do not
@@ -50,6 +57,10 @@ UTC, and nobody looked: every merge had been verified locally, never on the runn
 - Version is derived from the latest GitHub release tag (base version) + commit count. No hardcoded version in the repo.
 - The release workflow requires a `version_bump` input in `major.minor.patch` format (e.g. `1.0.0` for major bump, `0.1.0` for minor, `0.0.1` for patch). This input is **required** — the workflow will not run without it. `0.0.0` is rejected — every release must bump at least one version component.
 - **After committing, ALWAYS ask the user if they want to create a release.** If yes:
+  0. **Ask whether he has run `Docs/release-manual-checks.md` on this release candidate** (Q74 D2,
+     decided on his behalf 2026-10-03 - see the overnight review). Those checks write to his real
+     mailbox, so he runs them himself and an agent never does; if he has not, say in one line what they
+     cover and let him decide whether to release anyway.
   1. **ALWAYS ask the version bump question.** Get the current version from the latest release tag via `gh release view --json tagName -q .tagName` and present options in A/B/C format showing current → new version. Example with latest tag v2.1.0.103:
      - A) Patch — 2.1.0 → 2.1.1
      - B) Minor — 2.1.0 → 2.2.0
@@ -84,7 +95,7 @@ licence key, and anything a rebuilder would have to download and install beyond 
 `Testbed/MEDIA.md` already names as preconditions.
 
 **Do not re-litigate this per task.** If a route appears blocked without a paid component, the
-answer is to question the requirement, not the rule — see `TODO.md` for how the POP3 account
+answer is to question the requirement, not the rule — see `Testbed/README.md` and `Docs/research/profile-automation-research.md` for how the POP3 account
 question was reframed rather than bought.
 
 **One exception, decided by the maintainer 2026-09-24 (Q71): a loopback mail sink for the test
@@ -136,10 +147,14 @@ that can run on the test VMs runs **only** there. The only live tests that may r
 workstation are the fundamentally immovable ones — those that need Exchange (delegate and shared
 mailboxes, cached mode), which no test VM can have under the Dependencies rule — and they run
 **read-only**. **Never run a write-capable live test on the workstation, and never select a
-workstation run by a filter that could include one.** Until a code gate enforces this (tracked in
-`TODO.md`), the run filter is the only thing between a write and a real mailbox: if you cannot
-show a workstation run is read-only, do not start it. The rules below still bind every live run,
-on the workstation and on the VMs alike.
+workstation run by a filter that could include one.** Since Q74 (2026-10-03) code enforces this:
+the workstation runs only the derived filter in `Testbed/README.md` section 4d - live tests that need
+Exchange AND carry `Writes=Nothing`, which T1 proves read-only from the compiled code - its settings'
+profile makes every in-process write throw, the test hub included, and the test-side MCP client
+refuses every tool not classified read-only. Those gates are a floor, not a licence: never edit the
+workstation's settings file, never re-declare it `Portable`, and if you cannot show a workstation
+run is read-only, do not start it. The rules below still bind every live run, on the workstation
+and on the VMs alike.
 
 `Category=Live` tests run against the developer's **real production Outlook profile**: real mail accounts plus delegate/shared mailboxes **to which the profile has full write access**. Treat every live run as an operation on production data. A past incident mass-deleted real mail (fully recovered) because an agent improvised a cleanup script — these rules exist so that never repeats. They are non-negotiable and apply to every agent, every session, whether or not live tests are the task:
 
@@ -150,5 +165,5 @@ on the workstation and on the VMs alike.
 5. **A live run may not lose mail anywhere.** The per-store count tripwire snapshots every store's mail folders before and after; any item-count **decrease**, or any folder added/removed, outside the test mailbox fails the suite loudly. No snapshot ⇒ the live tier refuses to run.
 6. **Signatures are user data.** Tests may only create/update/delete signatures prefixed `OutlookAI-McpTest-`; the `SignatureDirectorySnapshot` guard (SHA-256 before/after) must run and the suite must leave the user's real signatures bit-identical. `manage_signature` tests restore any registry defaults they touch.
 7. **Outlook lifecycle:** never `taskkill` OUTLOOK.EXE. Graceful `Application.Quit()` only when no unsent compose windows are open and the Outbox is empty — and release COM references BEFORE quitting (quitting while refs are held zombifies the process). Prefer leaving Outlook headless.
-8. **Run live tests only via the suite**, and only as `Testbed/README.md` section 4c describes: on a test guest, through `guest/Register-InteractiveTask.ps1`, with the per-run opt-in it gives. Every live test refuses to start without that opt-in (decided 2026-09-24): an accidental name filter once selected live tests, and in a checkout holding a real settings file it would have run them. **Never set the opt-in on the maintainer's workstation to run a test that can write** - see the paragraph above these rules. The suite's fixtures enforce the snapshots, allowlists, tripwire and zero-artifact sweeps. Never perform mailbox operations outside it during testing.
+8. **Run live tests only via the suite**, and only as `Testbed/README.md` section 4c describes: on a test guest, through `guest/Register-InteractiveTask.ps1`, with the per-run opt-in it gives - or, on the maintainer's workstation, only the read-only run section 4d describes. Every live test refuses to start without that opt-in (decided 2026-09-24): an accidental name filter once selected live tests, and in a checkout holding a real settings file it would have run them. **Never set the opt-in on the maintainer's workstation to run a test that can write** - see the paragraph above these rules. The suite's fixtures enforce the snapshots, allowlists, tripwire and zero-artifact sweeps. Never perform mailbox operations outside it during testing.
 9. If a gitignored `v3.MD` exists at the repo root, read its §0 safety envelope before any live-test or mailbox-touching work — it is the authoritative, more detailed contract.

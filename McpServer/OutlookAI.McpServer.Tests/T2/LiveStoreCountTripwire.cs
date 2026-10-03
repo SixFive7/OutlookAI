@@ -222,10 +222,10 @@ public static class LiveStoreCountTripwire
     /// <para>
     /// A suspected loss is not reported straight away: it goes through
     /// <see cref="TripwireRetryLadder"/> under this machine's <see cref="TripwireRetryPolicy"/>
-    /// - 2 re-censuses then 1 OUT-OF-PROCESS re-run on a Production profile, and NOTHING on any
-    /// other, where the post-run census is the verdict - and whatever it did is reported in
-    /// both directions: a run that passed on the second census says so, in the same summary
-    /// line a clean run uses.
+    /// - 2 re-censuses and, since Q74 A1, NO re-run on the read-only Production profile (the
+    /// out-of-process re-run would start a live run that writes), and NOTHING on any other, where
+    /// the post-run census is the verdict - and whatever it did is reported in both directions: a
+    /// run that passed on the second census says so, in the same summary line a clean run uses.
     /// </para>
     /// <para>
     /// A delta that SURVIVED a re-census and then cleared reports

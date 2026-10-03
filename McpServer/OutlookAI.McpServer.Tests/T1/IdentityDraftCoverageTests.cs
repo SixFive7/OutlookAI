@@ -117,9 +117,10 @@ public sealed class IdentityDraftCoverageTests
     {
         // The coverage line is printed on EVERY run, not only the empty ones. A reader of a
         // passing identity test should not have to infer from the test's NAME how many accounts
-        // it visited - that inference is exactly what was wrong before.
+        // it visited - that inference is exactly what was wrong before. Portable: since Q74 only a
+        // test guest grants an identity draft at all - the read-only workstation grants nothing.
         LiveTestSettings settings = Settings(
-            LiveMachineProfile.Production, new[] { Hub, Business, SecondBusiness }, bystander: null);
+            LiveMachineProfile.Portable, new[] { Hub, Business, SecondBusiness }, bystander: null);
         List<string> lines = new();
 
         IReadOnlyList<string> accounts = IdentityDraftCoverage.AccountsToDraftIn(
@@ -136,10 +137,11 @@ public sealed class IdentityDraftCoverageTests
     public void PartialCoverageIsAnnouncedAndNeverRefused()
     {
         // The judgement call. A machine that grants two of three IS exercising the identity path,
-        // so calling that "proved nothing" would be false - and on a Production profile it would
-        // refuse a run over a declaration somebody made on purpose. It gets a note, not a refusal.
+        // so calling that "proved nothing" would be false - and it would refuse a run over a
+        // declaration somebody made on purpose. It gets a note, not a refusal. (A guest with an
+        // identity account, section 2.8b: since Q74 no Production profile grants a draft at all.)
         LiveTestSettings settings = Settings(
-            LiveMachineProfile.Production, new[] { Hub, Business, SecondBusiness, Bystander }, Bystander);
+            LiveMachineProfile.Portable, new[] { Hub, Business, SecondBusiness, Bystander }, Bystander);
         List<string> lines = new();
 
         IdentityDraftCoverageReport coverage = IdentityDraftCoverage.Assess(settings);

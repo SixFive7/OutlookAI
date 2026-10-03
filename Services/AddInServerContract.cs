@@ -18,8 +18,9 @@ namespace OutlookAI.Services
     ///  - the add-in (<c>OutlookAI.csproj</c>) compiles this file directly;
     ///  - <c>OutlookAI.Core</c> LINKS it, which is how <c>HealthReporting</c> reads exactly what
     ///    the add-in wrote;
-    ///  - the test project LINKS it as well, because it links <see cref="McpConfigEditor"/>,
-    ///    which uses the Claude Code names below.
+    ///  - the test project does NOT link it, although it links <see cref="McpConfigEditor"/>,
+    ///    which uses the Claude Code names below: since Q86 (2026-10-03) Core opens its internals
+    ///    to the test assembly, so McpConfigEditor binds to Core's copy there.
     ///
     /// <para>
     /// FRAMEWORK-NEUTRAL, and the intersection is narrow: this compiles as net48 (the add-in),
@@ -31,15 +32,17 @@ namespace OutlookAI.Services
     /// </para>
     ///
     /// <para>
-    /// INTERNAL, and it has to stay internal. A PUBLIC type in a linked file compiled into two
+    /// INTERNAL, and it has to stay internal. A type in a linked file compiled into two
     /// assemblies that can see each other is CS0436, which is an error here
     /// (<c>TreatWarningsAsErrors</c>) - that is why the test project stopped linking
-    /// <c>PromptStore.cs</c>. Core's copy is invisible to the test assembly precisely BECAUSE it
-    /// is internal, so the two copies cannot collide. Whatever the server has to expose stays
-    /// exposed by <c>HealthReporting</c>'s own public constants, which are initialised from here.
-    /// For the same reason this file is NOT compiled into <c>OutlookAI.McpServer</c>: that
-    /// project opens its internals to the test assembly, so a copy there WOULD collide with the
-    /// linked one.
+    /// <c>PromptStore.cs</c>. Internal keeps Core's copy out of sight of everything except the
+    /// one assembly Core opens itself to, the test assembly - which is precisely why that
+    /// assembly must not link this file as well (it used to, while Core granted no
+    /// <c>InternalsVisibleTo</c>; the grant arrived with the audit-log redirect, Q86). Whatever the
+    /// server has to expose stays exposed by <c>HealthReporting</c>'s own public constants, which
+    /// are initialised from here. For the same reason this file is NOT compiled into
+    /// <c>OutlookAI.McpServer</c>: that project opens its internals to the test assembly too, so a
+    /// copy there WOULD collide with Core's.
     /// </para>
     /// </summary>
     internal static class AddInServerContract

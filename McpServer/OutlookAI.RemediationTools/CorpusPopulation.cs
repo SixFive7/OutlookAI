@@ -386,6 +386,15 @@ public sealed class CorpusPopulation
     /// population is never built into the default store, so a draft cannot be made in one without
     /// writing into another store first.
     /// </para>
+    /// <para>
+    /// And since 2026-10-03 (Q98 (a)) a plan carries those undated items only when
+    /// <see cref="CorpusPlanOptions.IncludeUndatedItems"/> asks for them, which it does not by default:
+    /// in a PST every one of those kinds is DATED, and Outlook will not remove the date. Built
+    /// without them, version 2's populations are version 1's dated items - the hub's fifty-six, the
+    /// bystander's three hundred - written by version 2's corrected write path. The version and the
+    /// shape key are the same either way: the undated items are the last ordinals, so a population
+    /// without them is a prefix of one with them.
+    /// </para>
     /// </summary>
     public const int Version = 2;
 
@@ -622,10 +631,13 @@ public sealed class CorpusPopulation
             }
         }
 
+        // The undated items are switched OFF unless the plan asks for them - Q98 (a), 2026-10-03, see
+        // CorpusPlanOptions.IncludeUndatedItems. They are each layout's last ordinals, so leaving them
+        // out changes no other item.
         (Slot[] slots, IReadOnlyList<CorpusPopulationFolder> folders) = kind switch
         {
-            CorpusPopulationKind.Hub => HubLayout(),
-            CorpusPopulationKind.Bystander => BystanderLayout(),
+            CorpusPopulationKind.Hub => HubLayout(options.IncludeUndatedItems),
+            CorpusPopulationKind.Bystander => BystanderLayout(options.IncludeUndatedItems),
             CorpusPopulationKind.Identity => IdentityLayout(),
             _ => throw new ArgumentOutOfRangeException(nameof(options), "Unknown population kind."),
         };
@@ -918,7 +930,7 @@ public sealed class CorpusPopulation
     private const int Inbox = 6;
     private const int SentItems = 5;
 
-    private static (Slot[] Slots, IReadOnlyList<CorpusPopulationFolder> Folders) HubLayout()
+    private static (Slot[] Slots, IReadOnlyList<CorpusPopulationFolder> Folders) HubLayout(bool includeUndated)
     {
         var projects = new CorpusPopulationFolder(SubfolderIdBase + 1, Inbox, CorpusManifest.CreatedFolderPrefix + "-Projects", "Inbox");
         var notices = new CorpusPopulationFolder(HubNoticesFolderId, Inbox, CorpusManifest.CreatedFolderPrefix + "-Notices", "Inbox");
@@ -994,8 +1006,12 @@ public sealed class CorpusPopulation
         // 57-68: the UNDATED rows LiveOrderKeyCollationTests measure - four appointments, four
         // contacts and four tasks. Twelve, not more: every one is a search hit (gap B3 admits every
         // item class), and Phase7's top-100 search over the hub must stay under 100 with room for
-        // what a run writes. The bystander carries the volume. No drafts: see Version.
-        AddUndated(slots, 4, CorpusItemKinds.Undated);
+        // what a run writes. The bystander carries the volume. No drafts: see Version. Only when the
+        // plan asks for them - off since 2026-10-03 (Q98 (a)); CorpusPlanOptions.IncludeUndatedItems.
+        if (includeUndated)
+        {
+            AddUndated(slots, 4, CorpusItemKinds.Undated);
+        }
 
         return (slots.ToArray(), new[] { projects, notices });
     }
@@ -1027,7 +1043,7 @@ public sealed class CorpusPopulation
         }
     }
 
-    private static (Slot[] Slots, IReadOnlyList<CorpusPopulationFolder> Folders) BystanderLayout()
+    private static (Slot[] Slots, IReadOnlyList<CorpusPopulationFolder> Folders) BystanderLayout(bool includeUndated)
     {
         var projects = new CorpusPopulationFolder(SubfolderIdBase + 1, Inbox, CorpusManifest.CreatedFolderPrefix + "-Projects", "Inbox");
         var suppliers = new CorpusPopulationFolder(SubfolderIdBase + 2, Inbox, CorpusManifest.CreatedFolderPrefix + "-Suppliers", "Inbox");
@@ -1095,8 +1111,12 @@ public sealed class CorpusPopulation
         // guards can only be told apart from its absence when more undated rows sort ahead of the
         // cut than the over-fetch leaves room for (60 - 25 = 35). The hub cannot carry that many
         // (its search must stay under 100 hits); the bystander, which no test writes and nothing
-        // pages, can. No drafts here: a bystander has no business holding unsent mail.
-        AddUndated(slots, 14, new[] { CorpusItemKind.Appointment, CorpusItemKind.Contact, CorpusItemKind.Task });
+        // pages, can. No drafts here: a bystander has no business holding unsent mail. Only when the
+        // plan asks for them - off since 2026-10-03 (Q98 (a)); CorpusPlanOptions.IncludeUndatedItems.
+        if (includeUndated)
+        {
+            AddUndated(slots, 14, new[] { CorpusItemKind.Appointment, CorpusItemKind.Contact, CorpusItemKind.Task });
+        }
 
         return (slots.ToArray(), new[] { projects, suppliers });
     }

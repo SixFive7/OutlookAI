@@ -14,11 +14,29 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// startup reconcile would re-write the desired value on the next Outlook boot. The UI
 /// the show calls drive is parked on the test-hub store with a no-match query (S2/S5:
 /// nothing but an empty result list ever appears).
+/// <para>
+/// <b>A policy value no longer passes it (Q101, 2026-10-03).</b> Where a policy-hive value
+/// exists, the user-hive flip cannot reach both states, and the test used to print <c>SKIP:</c>
+/// and return GREEN. It goes through <see cref="LivePopulationCoverage"/> now: a refusal on a
+/// Production profile, a <c>PROVED NOTHING:</c> line on a Portable one. Pinned by
+/// <c>T1/LiveEarlyReturnGuardTests</c>.
+/// </para>
 /// </summary>
 [Collection(LiveCollections.Phase3)]
 [Trait("Category", "Live")]
 public sealed class LiveUiSearchBackendTests
 {
+    /// <summary>What the two-state flip needs, named as the Production refusal wraps it.</summary>
+    internal const string UserHiveInControlPopulation =
+        "a user-hive DisableServerAssistedSearch that no policy-hive value overrides";
+
+    /// <summary>What a reader of a PROVED NOTHING line here is to do about it.</summary>
+    internal const string UserHiveInControlRemedy =
+        "A DisableServerAssistedSearch value under the Outlook Search key in the POLICY hive "
+        + "(HKCU\\Software\\Policies\\Microsoft\\Office\\<version>\\Outlook\\Search) is authoritative over the user-hive "
+        + "value this test flips, so the flip cannot reach both states. Nothing in the add-in writes it: find what did "
+        + "(Group Policy, a setup script) and remove it, or run on a machine without it.";
+
     private const string NoMatchQuery = "OutlookAiMcpNoSuchTerm7391";
 
     private readonly LivePhase3Fixture _fixture;
@@ -36,12 +54,24 @@ public sealed class LiveUiSearchBackendTests
     public void FlippingUserHiveValue_DrivesAdviceAndHealthField_BothStates()
     {
         // The user-hive flip only controls the EFFECTIVE state while no policy-hive
-        // value exists (policy is authoritative by design). No such policy exists on
-        // this machine; guard so a future GPO turns this into a clear skip, not a red.
+        // value exists (policy is authoritative by design). A policy value used to turn this
+        // into a SKIP line and a green result; it is the Q57 pattern now (Q101): a refusal on a
+        // Production profile, a PROVED NOTHING line on a Portable one.
         int? policyValue = ReadDword(HealthReporting.OutlookSearchPolicyKeyPath);
         if (policyValue.HasValue)
         {
-            _output.WriteLine($"SKIP: policy-hive DisableServerAssistedSearch={policyValue} exists - user-hive flips cannot exercise both states.");
+            _output.WriteLine($"policy-hive DisableServerAssistedSearch={policyValue} is set and overrides the user hive.");
+        }
+
+        IReadOnlyList<string> flippable = LivePopulationCoverage.Require(
+            _fixture.Settings,
+            policyValue.HasValue ? Array.Empty<string>() : new[] { HealthReporting.OutlookSearchUserKeyPath },
+            UserHiveInControlPopulation,
+            "the two-state user-hive flip",
+            UserHiveInControlRemedy,
+            _output.WriteLine);
+        if (flippable.Count == 0)
+        {
             return;
         }
 

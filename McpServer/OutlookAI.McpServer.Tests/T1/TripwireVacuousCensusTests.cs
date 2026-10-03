@@ -158,9 +158,11 @@ public sealed class TripwireVacuousCensusTests
     public void AnEmptyDeclarationDoesNotLiftIt()
     {
         // Guards the cheapest wrong fix: a bystanderStoreDisplayNames key present but blank,
-        // or full of whitespace, which reads as configured and denies nothing.
+        // or full of whitespace, which reads as configured and denies nothing. A test guest - the
+        // only machine whose other primary the identity grant can still open (Q74).
         LiveTestSettings settings = new()
         {
+            MachineProfile = LiveMachineProfile.Portable,
             TestHubStoreDisplayName = Hub,
             ExpectedStoreDisplayNames = new List<string> { Hub, Identity },
             BystanderStoreDisplayNames = new List<string> { "  ", string.Empty },
@@ -174,7 +176,8 @@ public sealed class TripwireVacuousCensusTests
     {
         // The regression that matters most: the maintainer's real profile must keep running. Its
         // delegate/shared mailboxes are denied every write and already censused, so they are
-        // bystanders in fact and this refusal never reaches him.
+        // bystanders in fact and this refusal never reaches him. Since Q74 his other primaries are
+        // denied every write too (the profile is read-only), so they are policed beside them.
         LiveTestSettings settings = new()
         {
             TestHubStoreDisplayName = Hub,
@@ -188,7 +191,8 @@ public sealed class TripwireVacuousCensusTests
             settings.BystanderStoreDisplayNames);
 
         Assert.True(report.Usable);
-        Assert.Equal(new[] { DelegateStore }, report.Policed);
+        Assert.Equal(new[] { Identity, DelegateStore }, report.Policed);
+        Assert.Empty(report.Writable);
     }
 
     [Fact]
@@ -216,12 +220,14 @@ public sealed class TripwireVacuousCensusTests
     {
         // Refusal() and Usable are two spellings of one decision, and a mutation that makes
         // either of them unconditional shows up as a disagreement here rather than as a live
-        // tier that runs when it should not.
+        // tier that runs when it should not. On a test guest, where an undeclared second primary
+        // is still in the identity grant (on the read-only workstation nothing is).
         List<string> stores = haveSecondStore
             ? new List<string> { Hub, Identity }
             : new List<string> { Hub };
         LiveTestSettings settings = new()
         {
+            MachineProfile = LiveMachineProfile.Portable,
             TestHubStoreDisplayName = Hub,
             ExpectedStoreDisplayNames = stores,
             BystanderStoreDisplayNames = declareBystander && haveSecondStore

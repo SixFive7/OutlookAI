@@ -135,20 +135,47 @@ public sealed class SweepSortWiringTests
     {
         // The defect, as a test. brief.ReceivedTime is local wall time carrying
         // DateTimeKind.Unspecified, and the cursor it feeds is named Utc. Using it raw is what put
-        // a local instant into the next page's date bound, which on this machine is an hour or two
-        // of a resumable scan either skipped or re-read.
+        // a local instant into the next page's date bound, which on the maintainer's machine is an
+        // hour or two of a resumable scan either skipped or re-read.
+        //
+        // In a zone of the test's own, UTC+07:13 (Q95, 2026-10-03). It used the machine's zone
+        // until then, and on a machine whose zone IS UTC - every GitHub runner - converting and
+        // not converting give the same instant, so the NotEqual below failed on CI against a
+        // product that was right, and nothing here could have told a dropped conversion from a
+        // kept one there.
         DateTime unspecifiedLocal = new(2026, 8, 24, 9, 0, 0, DateTimeKind.Unspecified);
 
-        DateTime? cursor = OutlookComSession.ScanCursorDate(null, unspecifiedLocal);
+        DateTime? cursor = OutlookComSession.ScanCursorDate(null, unspecifiedLocal, ComDateValueTests.OddFixedZone);
 
-        Assert.Equal(ComDateValue.FromItemValue(unspecifiedLocal), cursor);
-        Assert.NotEqual(unspecifiedLocal, cursor);
+        // 09:00 at UTC+07:13 is 01:47 UTC - a literal, not recomputed through the code under test.
+        Assert.Equal(new DateTime(2026, 8, 24, 1, 47, 0, DateTimeKind.Utc), cursor);
         Assert.Equal(DateTimeKind.Utc, cursor!.Value.Kind);
+        Assert.Equal(ComDateValue.FromItemValue(unspecifiedLocal, ComDateValueTests.OddFixedZone), cursor);
+        Assert.NotEqual(unspecifiedLocal, cursor);
 
         // And NOT the table conversion, which would leave an unspecified kind alone and call it
-        // UTC - the two differ by exactly the machine's offset, which is why the kind cannot be
+        // UTC - the two differ by exactly the zone's offset, which is why the kind cannot be
         // used to tell which conversion was meant.
         Assert.NotEqual(ComDateValue.FromTableValue(unspecifiedLocal), cursor);
+    }
+
+    [Fact]
+    public void TheScansOverloadHandsTheConversionTheMachinesZone()
+    {
+        // The overload ScanSingleFolder calls passes TimeZoneInfo.Local through, read out of its
+        // compiled body: on a UTC machine Local and Utc convert alike, so no behavioural test on CI
+        // could see a zone-less overload that passed the wrong one. And it goes through the
+        // zone-taking overload pinned above rather than converting on its own.
+        MethodInfo zoneLess = typeof(OutlookComSession).GetMethod(
+            nameof(OutlookComSession.ScanCursorDate), new[] { typeof(DateTime?), typeof(DateTime?) })!;
+
+        List<MethodBase> called = ComDateValueTests.CalleesOf(zoneLess);
+
+        Assert.Contains(called, m => ComDateValueTests.IsMethod(m, typeof(TimeZoneInfo), "get_Local"));
+        Assert.DoesNotContain(called, m => ComDateValueTests.IsMethod(m, typeof(TimeZoneInfo), "get_Utc"));
+        Assert.Contains(called, m => ComDateValueTests.IsMethod(
+            m, typeof(OutlookComSession), nameof(OutlookComSession.ScanCursorDate),
+            typeof(DateTime?), typeof(DateTime?), typeof(TimeZoneInfo)));
     }
 
     [Fact]
@@ -164,6 +191,16 @@ public sealed class SweepSortWiringTests
         // Inlining the fallback again is what the move was for, so the pin is that the call is
         // there at all.
         Assert.Single(CallsTo(Walk("ScanSingleFolder"), nameof(OutlookComSession.ScanCursorDate)));
+
+        // And that it is the MACHINE's overload (Q95): the zone-taking one exists for tests, and
+        // a scan that called it with a zone of its own choosing would convert in the wrong zone
+        // on every machine but one.
+        List<MethodBase> called = Walk("ScanSingleFolder").SelectMany(m => ComDateValueTests.CalleesOf(m)).ToList();
+        Assert.Contains(called, m => ComDateValueTests.IsMethod(
+            m, typeof(OutlookComSession), nameof(OutlookComSession.ScanCursorDate), typeof(DateTime?), typeof(DateTime?)));
+        Assert.DoesNotContain(called, m => ComDateValueTests.IsMethod(
+            m, typeof(OutlookComSession), nameof(OutlookComSession.ScanCursorDate),
+            typeof(DateTime?), typeof(DateTime?), typeof(TimeZoneInfo)));
     }
 
     // ------------------------------------------------------------- the IL reader

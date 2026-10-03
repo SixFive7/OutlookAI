@@ -19,6 +19,13 @@ public enum LiveMachineProfile
     /// A real working profile - mail accounts, delegate/shared mailboxes, a populated
     /// Windows Search index. The default, so a settings file written before this field
     /// existed keeps the strict validation it was written under.
+    /// <para>
+    /// <b>And READ-ONLY for live tests (Q72, enforced since Q74 - 2026-10-03).</b> The only
+    /// Production machine is the maintainer's workstation, and nothing may be written there: no
+    /// store, the designated test mailbox included, through any path - see
+    /// <see cref="LiveWriteAccess"/>, the one place that decides it. Being the default is what
+    /// makes that fail safe: a settings file that declares no profile is read-only too.
+    /// </para>
     /// </summary>
     Production = 0,
 
@@ -27,6 +34,11 @@ public enum LiveMachineProfile
     /// nothing in the local search index. Tests that need any of those name it under
     /// <c>Requires</c> and must be filtered out on that; this value does not make them pass,
     /// it makes the settings file honest about what the machine can offer.
+    /// <para>
+    /// The ONLY profile that may write - its hub, under <see cref="StoreWriteAllowlist"/>'s tiers.
+    /// <c>Testbed/host/New-LiveTestSettings.ps1</c> renders every guest's settings with it and
+    /// refuses to render without it.
+    /// </para>
     /// </summary>
     Portable = 1,
 }
@@ -45,6 +57,13 @@ public sealed class LiveTestSettings
     /// and demanding them would only get them invented.
     /// </summary>
     public LiveMachineProfile MachineProfile { get; set; } = LiveMachineProfile.Production;
+
+    /// <summary>
+    /// True when this machine may write nothing at all, the hub included - asked of
+    /// <see cref="LiveWriteAccess.RefusesEveryWrite"/>, never decided here.
+    /// </summary>
+    [JsonIgnore]
+    public bool RefusesEveryWrite => LiveWriteAccess.RefusesEveryWrite(MachineProfile);
 
     /// <summary>Display name of the designated test-hub store (v3.MD S2/D14).</summary>
     public string TestHubStoreDisplayName { get; set; } = string.Empty;
@@ -426,13 +445,53 @@ public sealed class LiveTestSettings
             + "It was not found, so this test can prove nothing and refuses to report success. Either the "
             + "machine or the live-test settings have drifted; a machine that genuinely lacks it should "
             + "declare machineProfile 'Portable' and filter out the tests whose Requires names "
-            + "what it does not have.");
+            + "what it does not have. A TEST GUEST, that is: the maintainer's workstation stays 'Production', "
+            + "which is read-only for live tests (Q74) - never re-declare it to get past this.");
+    }
+
+    /// <summary>
+    /// True where a PERSON may be using this machine while the live tier runs - the one profile
+    /// question a user-protection stop asks (Q101, 2026-10-03), answered here beside
+    /// <see cref="RequireProductionPopulation"/> so that what each profile means lives in one place.
+    /// <para>
+    /// Only a declared <see cref="LiveMachineProfile.Production"/> profile says yes: the
+    /// maintainer's own workstation, where a real user may be at the keyboard. A
+    /// <see cref="LiveMachineProfile.Portable"/> one is a test guest nobody uses during a run, and an
+    /// unclassified value says no as well - the answer decides whether a stop FAILS or merely
+    /// skips, and a machine nobody has classified gets the louder of the two, the rule
+    /// <c>TripwireRetryPolicy.For</c> keeps for the same reason.
+    /// </para>
+    /// </summary>
+    [JsonIgnore]
+    public bool AUserMayBeAtTheKeyboard => MachineProfile == LiveMachineProfile.Production;
+
+    /// <summary>
+    /// The inverse of <see cref="RequireProductionPopulation"/>, for a test that has stopped to
+    /// protect a person (Q101): returns where <see cref="AUserMayBeAtTheKeyboard"/>, so the caller
+    /// can stand aside and say so, and throws everywhere else. Nobody is at a test guest's keyboard
+    /// during a run, so whatever made the test stop there is something else holding Outlook - and a
+    /// green result would hide it.
+    /// </summary>
+    /// <param name="what">What the test saw that made it stop, and what that means on such a machine.</param>
+    public void RequireAUserMayBePresent(string what)
+    {
+        if (AUserMayBeAtTheKeyboard)
+        {
+            return;
+        }
+
+        throw new InvalidOperationException(
+            "This machine declares machineProfile '" + MachineProfile + "', where nobody uses the machine while the "
+            + "live tier runs - yet " + what + " A test stands aside for a person only on a 'Production' profile; "
+            + "on this one the same state means something other than a person is holding Outlook, so the test "
+            + "FAILS instead of skipping (Q101).");
     }
 
     /// <summary>One line naming what this machine claims to be, printed at the start of a live run.</summary>
     public string Describe()
     {
         return "machineProfile=" + MachineProfile
+            + ", writes=" + (RefusesEveryWrite ? "NONE (read-only machine)" : "hub allowlist")
             + ", stores=" + ExpectedStoreDisplayNames.Count
             + ", indexed=" + (IndexedStoreDisplayNames == null
                 ? "as-watched(" + ExpectedStoreDisplayNames.Count + ")"

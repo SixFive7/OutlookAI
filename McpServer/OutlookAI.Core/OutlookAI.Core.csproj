@@ -29,14 +29,33 @@
 
   <ItemGroup>
     <!--
+      The test assembly sees Core's internals (Q86, 2026-10-03). It needs exactly one thing
+      through it today: AuditLog.RedirectThisProcess, which the test assembly's module initializer
+      calls so that no test process ever appends to the real %LOCALAPPDATA%\OutlookAI\audit.log.
+      That hook must not be public - a public redirect is a setting anything could reach - and a
+      private one reached by reflection would fail only at run time if it were renamed.
+
+      The cost of opening Core up is one rule: a file linked into Core must NOT also be linked
+      into the test project. Its internal type would then exist twice in front of one
+      compilation - the test assembly's own copy and Core's, now visible - which is CS0436, an
+      error under TreatWarningsAsErrors. That is why the test project stopped linking
+      AddInServerContract.cs: the McpConfigEditor it links finds Core's copy instead.
+    -->
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>OutlookAI.McpServer.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
       The values the add-in and this server have to agree about: the two HKCU keys the add-in
       writes and HealthReporting reads, and the Claude Code configuration file one repairs and the
       other reports on. The add-in is net48/VSTO and cannot be referenced from here, so the FILE
-      is shared instead - the same trick PromptDefaults/PromptStore use for OutlookAI.McpServer
-      and McpConfigEditor uses for the test project. Constants only, and internal on purpose: a
-      public type in a file linked into two assemblies that see each other is CS0436, an error
-      under TreatWarningsAsErrors. Anything the server must expose is re-exported by
-      HealthReporting's own public constants.
+      is shared instead - the same trick PromptDefaults/PromptStore use for OutlookAI.McpServer.
+      Constants only, and internal on purpose: a public type in a file linked into two assemblies
+      that see each other is CS0436, an error under TreatWarningsAsErrors. Anything the server
+      must expose is re-exported by HealthReporting's own public constants. The test project
+      reaches this copy through InternalsVisibleTo and must not link the file itself (above).
     -->
     <Compile Include="..\..\Services\AddInServerContract.cs" Link="Linked\AddInServerContract.cs" />
     <!--

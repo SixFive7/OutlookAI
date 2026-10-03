@@ -83,7 +83,7 @@ public sealed class McpStdioConformanceTests
                          "manage_signature", "move_mail", "archive_mail", "open_in_outlook", "goto_folder", "show_search_results",
                          "new_draft", "reply_draft", "replyall_draft", "forward_draft",
                          "update_draft", "discard_draft",
-                         "send", "outlook_health",
+                         "send", "outlook_health", "audit_log",
                      })
             {
                 Assert.Contains(expected, names);

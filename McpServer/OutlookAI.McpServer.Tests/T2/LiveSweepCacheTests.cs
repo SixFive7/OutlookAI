@@ -28,6 +28,7 @@ public sealed class LiveSweepCacheTests
 
     [Fact]
     [Trait("Requires", "OutlookInstance")]
+    [Trait("Writes", "Nothing")]
     public void RapidSearches_PayOneSweep_SecondServedFromCache()
     {
         MailService service = _fixture.Service;

@@ -43,6 +43,16 @@ public enum StoreWriteKind
 /// </list>
 /// </para>
 /// <para>
+/// <b>Above all four tiers: a READ-ONLY MACHINE (Q74, 2026-10-03).</b> An allowlist built by
+/// <see cref="RefusingEveryWrite"/> refuses every kind of write to every store - the hub too, and
+/// ahead of the hub check, because the hub is the one store the tiers above would otherwise let
+/// through. <see cref="LiveStoreWriteGuard.Build"/> builds one whenever the settings' machine
+/// profile is read-only (<see cref="LiveWriteAccess.RefusesEveryWrite"/>), which since Q72 is the
+/// maintainer's workstation: there, an in-process write throws instead of reaching his mailbox,
+/// and the identity grant that used to open draft+delete on his other primary mailboxes is gone
+/// with it.
+/// </para>
+/// <para>
 /// Pure and CI-testable: it holds names, not COM handles, so T1 pins its behaviour without
 /// Outlook and without any real store name reaching this PUBLIC repo (S6).
 /// </para>
@@ -52,6 +62,12 @@ public sealed class StoreWriteAllowlist
     private readonly HashSet<string> _identityDraftStores;
     private readonly HashSet<string> _bystanders;
     private readonly HashSet<string> _denied;
+
+    /// <summary>
+    /// Why every write is refused, or null on a machine that may write. Set only by
+    /// <see cref="RefusingEveryWrite"/>.
+    /// </summary>
+    private readonly string? _everyWriteRefusedBecause;
 
     /// <summary>Builds an allowlist around one hub store.</summary>
     /// <param name="hubStoreDisplayName">The designated test mailbox; the only store with full write rights.</param>
@@ -77,7 +93,18 @@ public sealed class StoreWriteAllowlist
         IEnumerable<string>? identityDraftStores = null,
         IEnumerable<string>? knownReadOnlyStores = null,
         IEnumerable<string>? bystanderStores = null)
+        : this(hubStoreDisplayName, identityDraftStores, knownReadOnlyStores, bystanderStores, everyWriteRefusedBecause: null)
     {
+    }
+
+    private StoreWriteAllowlist(
+        string hubStoreDisplayName,
+        IEnumerable<string>? identityDraftStores,
+        IEnumerable<string>? knownReadOnlyStores,
+        IEnumerable<string>? bystanderStores,
+        string? everyWriteRefusedBecause)
+    {
+        _everyWriteRefusedBecause = everyWriteRefusedBecause;
         if (string.IsNullOrWhiteSpace(hubStoreDisplayName))
         {
             throw new ArgumentException("A write allowlist needs a hub store.", nameof(hubStoreDisplayName));
@@ -106,6 +133,37 @@ public sealed class StoreWriteAllowlist
             _identityDraftStores.Add(store);
         }
     }
+
+    /// <summary>
+    /// An allowlist for a READ-ONLY MACHINE: the same declarations as the public constructor -
+    /// so <see cref="IsHub"/>, <see cref="IsBystander"/> and <see cref="IsKnownReadOnly"/> still
+    /// answer, and a contradictory configuration is still refused - but every kind of write to
+    /// every store is refused, the hub included, with <paramref name="reason"/> as the explanation.
+    /// </summary>
+    /// <param name="reason">Why nothing may be written here - normally <see cref="LiveWriteAccess.ReadOnlyReason"/>.</param>
+    /// <param name="hubStoreDisplayName">The designated test mailbox. Named, and refused like the rest.</param>
+    /// <param name="identityDraftStores">The other primaries. Granted nothing here.</param>
+    /// <param name="knownReadOnlyStores">Delegate/shared mailboxes, for the error message.</param>
+    /// <param name="bystanderStores">Declared bystanders, for the error message.</param>
+    public static StoreWriteAllowlist RefusingEveryWrite(
+        string reason,
+        string hubStoreDisplayName,
+        IEnumerable<string>? identityDraftStores = null,
+        IEnumerable<string>? knownReadOnlyStores = null,
+        IEnumerable<string>? bystanderStores = null)
+    {
+        if (string.IsNullOrWhiteSpace(reason))
+        {
+            throw new ArgumentException(
+                "A read-only allowlist must say why nothing may be written - the refusal is the only thing whoever hits it reads.",
+                nameof(reason));
+        }
+
+        return new StoreWriteAllowlist(hubStoreDisplayName, identityDraftStores, knownReadOnlyStores, bystanderStores, reason);
+    }
+
+    /// <summary>True when this allowlist refuses every write to every store, the hub included.</summary>
+    public bool RefusesEveryWrite => _everyWriteRefusedBecause != null;
 
     /// <summary>The designated test mailbox.</summary>
     public string HubStoreDisplayName { get; }
@@ -180,6 +238,13 @@ public sealed class StoreWriteAllowlist
             return false;
         }
 
+        // A read-only machine, ahead of the hub check: the hub is the one store every tier below
+        // lets through, and on the maintainer's workstation it is his real mailbox too.
+        if (RefusesEveryWrite)
+        {
+            return false;
+        }
+
         if (IsHub(storeDisplayName))
         {
             // The hub wins even over a bystander declaration, and the count tripwire refuses
@@ -220,6 +285,15 @@ public sealed class StoreWriteAllowlist
     public string Explain(string? storeDisplayName, StoreWriteKind kind, string operation)
     {
         string target = string.IsNullOrWhiteSpace(storeDisplayName) ? "(no store)" : storeDisplayName!;
+        if (RefusesEveryWrite)
+        {
+            // Not "widen the live-test settings": on a read-only machine that advice is exactly the
+            // edit that must never be made.
+            return "REFUSING '" + operation + "' (" + kind.ToString().ToLowerInvariant() + ") on store '" + target
+                + "': " + _everyWriteRefusedBecause + " Do NOT change machineProfile to make this pass - run the test on a "
+                + "test guest.";
+        }
+
         string why = _bystanders.Contains(target)
             ? "that store is a declared BYSTANDER - the count tripwire watches it precisely "
                 + "because nothing writes to it, so no test may write to it"
