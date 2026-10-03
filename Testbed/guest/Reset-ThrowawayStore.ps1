@@ -4,9 +4,9 @@
     RAN ON OutlookAI-Unindexed with -Execute before each of the first live runs there (2026-10-03,
     Docs/live-tier-on-the-vm.md section 4.1e): every time "verify : 1 store(s) named
     'throwaway@vm.invalid' ... Drafts designation NotFound, top-level folders [Deleted Items]" and
-    READY - so PowerShell does surface MAPI_E_NOT_FOUND as the HResult this script reads. Each run
-    started from a checkpoint with no throwaway, so the DETACH of an earlier run's store is proven only
-    as far as section 4.1e records after the last run; -SelfTest covers the decisions.
+    READY - so PowerShell does surface MAPI_E_NOT_FOUND as the HResult this script reads. Once more
+    after the last run, without a restore: it detached that run's store, attached a fresh one and
+    deleted the old file, which a freshly started Outlook did not hold. -SelfTest covers the decisions.
     ============================================================================================
 
 .SYNOPSIS

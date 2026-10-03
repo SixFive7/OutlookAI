@@ -1,5 +1,24 @@
 # TODO
 
+- [ ] **Decide what a subject override promises about Outlook's conversation id in a data file (A3,
+  first guest live runs, 2026-10-03).** `LiveDraftOptionsTests.DerivedDrafts` fails on
+  `OutlookAI-Unindexed` (a POP3 PST): a reply with a subject override keeps its child index and the
+  source's topic, but its ConversationId is not the seed's. Runs 3 to 5 read, for seed, plain reply and
+  renamed reply: index tracking `true` on all three, the same 22-byte index header, the seed's and the
+  plain reply's ConversationId equal to that header's GUID (bytes 6-21), the renamed reply's another
+  value - whether the subject went in through `MailItem.Subject` or as `PR_SUBJECT`, and
+  `PR_CONVERSATION_ID` refuses a write ("does not support this operation"). So on that build Outlook
+  appears to derive a renamed item's id from something besides index and topic - plausibly the
+  changed subject itself. Three product attempts were taken out again (runbook 4.1e, F8). Directions:
+  (1) measure what the id is - a hash of the new normalized subject? - by reading
+  `PR_NORMALIZED_SUBJECT` and hashing it the MS-OXOMSG way in the test's diagnostics; (2) if it is
+  the subject, accept that in a data file a renamed reply starts its own conversation in Outlook's id
+  while keeping the index thread, say so in the tool description, and hold the test to the index on a
+  non-Exchange store - a change to what the test asserts, so the maintainer's call; (3) drop the
+  promise everywhere and let a subject override start a new conversation, as Outlook itself does.
+  Recommended: (1) first; the measurement decides between (2) and (3). Until then the test stays red
+  on the guests, by design.
+
 - [ ] **Decide what keeps Outlook alive on Office LTSC 2024 when the user closes the window
   OutlookAI opened (D49, first guest live runs, 2026-10-03).** `LiveDisconnectRecoveryTests` fails
   on `OutlookAI-Unindexed` (Office LTSC 2024, 16.0.17932) with "D49 regression: Outlook exited when

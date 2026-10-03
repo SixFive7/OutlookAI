@@ -2620,7 +2620,7 @@ the suite through `Register-InteractiveTask.ps1 -RunLevel Limited` with `OUTLOOK
 `dotnet test ... -c Release --filter "Category=Live&Requires!=DelegateStore&Requires!=CachedExchange&Requires!=SearchIndex"`,
 plus a TRX logger, the console logger at `detailed` and `--diag`; the results came back through
 `Copy-FromGuest.ps1`. Every fix went in on the host first with T1 tests, proven on the build VM
-(`Invoke-TestsOnBuildVm.ps1`: 3,478 of 3,478 and every self-test at `67c4afb`), and before runs 2 to 4
+(`Invoke-TestsOnBuildVm.ps1`: 3,478 of 3,478 and every self-test at `67c4afb`, `1059f4a` and `0f4bbfa`), and before runs 2 to 5
 the guest was restored to `CP-12B` and restaged from the new commit (`Publish-GuestPayload.ps1`,
 `Publish-LiveTierPayload.ps1`, `Install-DotnetSdk.ps1 -Execute`, `-Verify`: TEST-READY each time), the
 settings re-rendered once for the throwaway key (SHA-256 `43A77749...`). Raw logs, TRX files and
@@ -2632,6 +2632,7 @@ console captures: `.work\g2-live-green\` in worktree `agent-a634a99d582147265`.
 | 2 | `3a0fb05` (fixes F1-F7, F9; master `cd8a984` merged) | 80 | 77 | 3 | 0 | 7.1 min |
 | 3 | `67c4afb` (F10; F9's change reverted) | 80 | 78 | 2 | 0 | 7.3 min |
 | 4 | `1059f4a` (F8 second attempt) | 80 | 77 | 3 | 0 | 7.1 min |
+| 5 | `0f4bbfa` (F8 third attempt) | 80 | 78 | 2 | 0 | 7.2 min |
 
 **Every run, the guards.** The sink probe answered from run 2 on (`[sink] submission 127.0.0.1:25 and
 retrieval 127.0.0.1:110 both answering` - run 1 never armed it, F1). The count tripwire's baseline:
@@ -2658,7 +2659,7 @@ responding or unavailable) for list_accounts to report".
 | F5 | `LiveSweepCacheTests.RapidSearches` | the sweep cache is keyed on the index frontier, so with no indexed mail it never hits - by design (`T1/SweepCacheKeyTests`) | test trait | `7bb4626` - `Requires=SearchIndex` |
 | F6 | `OutlookHealthLiveToolShapeTests.CarriesTheFreshnessBlock` | required advice whenever the index is reachable; a reachable index with no mail is reported as a problem | test | `7bb4626` |
 | F7 | `LiveUpdateDiscardTests.DiscardDraft` | a PST keeps a draft's EntryID across the soft delete (run 2: `parent='Deleted Items', re-located id is the same id`); the re-locate scan excluded the old id | product | `593e668` |
-| F8 | `LiveDraftOptionsTests.DerivedDrafts` | the renamed reply's ConversationId differs from the seed's and the plain reply's; run 3: index tracking `true` on all three, the same index header, the seed's and plain reply's id that header's GUID and the renamed reply's not - a stale id from the header the subject write regenerated | product | two attempts, both reverted: restoring the tracking flag (`67c4afb`; run 3 read it `true` on all three anyway) and writing `PR_CONVERSATION_ID` back (`6bd9d60`; run 4: "The property ... 0x30130102 does not support this operation", and the unguarded write failed `ForwardDraft` too) - see below |
+| F8 | `LiveDraftOptionsTests.DerivedDrafts` | the renamed reply's ConversationId differs from the seed's and the plain reply's; run 3: index tracking `true` on all three, the same index header, the seed's and plain reply's id that header's GUID and the renamed reply's not - a stale id from the header the subject write regenerated | product, open | three attempts, all taken out again: restoring the tracking flag (`67c4afb`; run 3 read it `true` on all three anyway), writing `PR_CONVERSATION_ID` back (`6bd9d60`; run 4: "The property ... 0x30130102 does not support this operation", and the unguarded write failed `ForwardDraft` too) and setting the subject as `PR_SUBJECT` instead of through the setter (`0f4bbfa`; run 5: the renamed reply's id still not its header GUID). Still red; `TODO.md` has the directions |
 | F9 | `LiveDisconnectRecoveryTests` | "D49 regression: Outlook exited when its last window closed"; runs 2 and 3: the lifetime pin `pinned=True` before and after the promotion, and Outlook still exited when the promoted Explorer closed | product, Office LTSC 2024 | none - an attempt (`01d81ec`) was reverted (`9359f34`); `TODO.md` has the directions |
 | F10 | `LiveCreatedFolderTests` (run 2, its first run anywhere) | the Drafts folder a reply made in the throwaway data file is designated in `PR_IPM_DRAFTS_ENTRYID` on the store's TRUE root folder (NID `0x122`, the parent of the IPM subtree) and nowhere the lookup read | product | `5ac1d85` - passed in run 3 |
 
@@ -2671,7 +2672,18 @@ folder='Drafts' createdFolders=[throwaway@vm.invalid/Drafts]`, `after: the non-c
 Drafts='Drafts'`, `discard_draft: discarded=True to='Deleted Items' createdFolders=[]`. Run 2's `after:`
 line was `DefaultFolderAbsent` - Q85's open question answered: Outlook designates a Drafts folder it
 makes in a data file with no Inbox on that file's true root folder (F10). A read-only probe after run 2
-found the throwaway's Drafts and Deleted Items empty and nothing tagged in it.
+found the throwaway's Drafts and Deleted Items empty and nothing tagged in it. **The second run's
+detach**, read after run 5 without a restore (Outlook first started on the tier profile with
+`Start-OutlookUnelevated.ps1`, because the suite's lifecycle tests end with Outlook closed and the
+script refuses to start one): `detach : 'throwaway@vm.invalid' <- ...\throwaway-20261003T081352Z.pst`,
+`attach : ...\throwaway-20261003T082322Z.pst`, the same `verify` line, then `delete :
+...\throwaway-20261003T081352Z.pst` - the freshly started Outlook did not hold the old file, so it went.
+
+**What stayed red.** F8 and F9, both product findings with directions in `TODO.md`; the tests are
+unchanged. Q74 C3's PST half (`ShortDecodedId_OpensAsTheItemItself_OnAPstStore`) carries
+`Requires=SearchIndex`, so this guest's filter never selects it. Q101's Inspector/Outbox ordering in
+`LiveDisconnectRecoveryTests` never bit: every run read `no inspectors, outbox empty` before it closed
+the parked window. No `CP-13B-LIVE-GREEN` checkpoint was taken - no run was green.
 
 ### 4.2 The indexed guest's build-out - `OutlookAI-Indexed`, 2026-09-24 and 2026-09-27
 
@@ -3599,9 +3611,8 @@ unrecorded or unverified.
       either from the map alone would also catch an Exchange store the hash did not decide.
 
 25. **RAN on `OutlookAI-Unindexed`, 2026-10-03 (section 4.1e) - its first run failed by design and
-    answered Q85's open question; the fix (`5ac1d85`) passed the next run. Still open from the list
-    below: the second run's detach (every run there started from a checkpoint without a throwaway) -
-    see 4.1e for what was read after the last run.** The original brief, kept for the record:
+    answered Q85's open question; the fix (`5ac1d85`) passed the next runs. Every point below is
+    recorded there, the second run's detach included.** The original brief, kept for the record:
     **the created-folder proof has never run on a guest (Q96 (iv), built 2026-10-03).**
     What exists is proven only off the guests: `Testbed/guest/Reset-ThrowawayStore.ps1 -SelfTest`
     (its decisions and its own source), the settings, the renderer and the write allowlist by
@@ -3650,11 +3661,11 @@ unrecorded or unverified.
   the thing to check when host and guest disagree about something that should not depend on the
   toolchain.
 
-* **The VM bucket has run end to end on ONE guest, `OutlookAI-Unindexed`, four times on 2026-10-03
+* **The VM bucket has run end to end on ONE guest, `OutlookAI-Unindexed`, five times on 2026-10-03
   (section 4.1e) - 80 tests each, the unindexed filter.** The index tier (`Requires=SearchIndex`) has
-  not run on a guest yet; `OutlookAI-Indexed` is where it can. One test stays red there by a product
-  finding the maintainer has to decide (`LiveDisconnectRecoveryTests`, D49 on Office LTSC 2024 -
-  `TODO.md`). The count moved from 31 to 121 by re-reading what each test needs method by method - no
+  not run on a guest yet; `OutlookAI-Indexed` is where it can. Two tests stay red there on product
+  findings the maintainer has to decide (`LiveDisconnectRecoveryTests`, D49 on Office LTSC 2024, and
+  `LiveDraftOptionsTests.DerivedDrafts`, a renamed reply's ConversationId in a PST - `TODO.md`). The count moved from 31 to 121 by re-reading what each test needs method by method - no
   test was changed to make it fit.
 
 * **The VM runs a different Office from the maintainer's machine, by 3,598 builds, and that is
