@@ -2633,6 +2633,23 @@ console captures: `.work\g2-live-green\` in worktree `agent-a634a99d582147265`.
 | 3 | `67c4afb` (F10; F9's change reverted) | 80 | 78 | 2 | 0 | 7.3 min |
 | 4 | `1059f4a` (F8 second attempt) | 80 | 77 | 3 | 0 | 7.1 min |
 | 5 | `0f4bbfa` (F8 third attempt) | 80 | 78 | 2 | 0 | 7.2 min |
+| 6 | `f0cc4a2` (this branch + master `21bbdfd` merged) | 80 | 72 | 8 | 0 | 7.1 min |
+| 7 | `f0cc4a2` again, no restore | 80 | 71 | 9 | 0 | 6.7 min |
+| 8 | master `21bbdfd` alone, for isolation | 81 | 67 | 14 | 0 | 14.3 min |
+
+**Runs 6 to 8: merging master `21bbdfd` made OUTLOOK.EXE crash.** With master's twenty newer commits
+merged in (`f0cc4a2`, kept on branch `a634-merge-21bbdfd-outlook-crash`; the non-live suite passed it,
+3,513 of 3,513), Outlook crashed in the Phase-4 collection in both runs - the guest's Application log:
+`Faulting application name: OUTLOOK.EXE, version: 16.0.17932.20996 ... Faulting module name: ntdll.dll
+... Exception code: 0xc0000005 Fault offset: 0x0000000000078cad`, and every Phase-4 test after it failed
+with `RPC_S_SERVER_UNAVAILABLE`. Run 6 crashed just after `LiveDraftTests.IdentityDrafts` passed, run 7
+inside its `new_draft` into `identity@vm.invalid`; that test took 7.4 s and 4.5 s there against 0.28 to
+0.38 s in every other run. Neither half crashes alone: this branch before the merge ran four times
+without it (runs 2 to 5), and master alone (run 8, from a separate worktree, restored `CP-12B`) ran
+`IdentityDrafts` in 0.28 s with no crash and no `APPCRASH` - its 14 failures are run 1's kinds again,
+F1 to F10, which confirms each of those diagnoses a second time. So the crash comes from the
+two together, and the branch tip was put back to `c1b67d9`, the last state the guest ran clean; the
+merge needs that interaction found before it lands (`TODO.md`).
 
 **Every run, the guards.** The sink probe answered from run 2 on (`[sink] submission 127.0.0.1:25 and
 retrieval 127.0.0.1:110 both answering` - run 1 never armed it, F1). The count tripwire's baseline:
@@ -3661,8 +3678,8 @@ unrecorded or unverified.
   the thing to check when host and guest disagree about something that should not depend on the
   toolchain.
 
-* **The VM bucket has run end to end on ONE guest, `OutlookAI-Unindexed`, five times on 2026-10-03
-  (section 4.1e) - 80 tests each, the unindexed filter.** The index tier (`Requires=SearchIndex`) has
+* **The VM bucket has run end to end on ONE guest, `OutlookAI-Unindexed`, eight times on 2026-10-03
+  (section 4.1e) - the unindexed filter, 80 or 81 tests a run.** The index tier (`Requires=SearchIndex`) has
   not run on a guest yet; `OutlookAI-Indexed` is where it can. Two tests stay red there on product
   findings the maintainer has to decide (`LiveDisconnectRecoveryTests`, D49 on Office LTSC 2024, and
   `LiveDraftOptionsTests.DerivedDrafts`, a renamed reply's ConversationId in a PST - `TODO.md`). The count moved from 31 to 121 by re-reading what each test needs method by method - no

@@ -1,5 +1,20 @@
 # TODO
 
+- [ ] **Find what makes OUTLOOK.EXE crash once branch `worktree-agent-a634a99d582147265` and master
+  `21bbdfd` are merged - before that merge lands (first guest live runs, 2026-10-03).** Runbook 4.1e,
+  runs 6 to 8: the merge (`f0cc4a2`, kept on `a634-merge-21bbdfd-outlook-crash`) crashed Outlook on
+  `OutlookAI-Unindexed` in both runs - ntdll.dll, `0xc0000005`, offset `0x78cad` - around
+  `LiveDraftTests.IdentityDrafts`' `new_draft` into the identity store, which took 4.5 to 7.4 s there
+  against about 0.3 s everywhere else; the branch alone (runs 2 to 5) and master alone (run 8) never
+  crashed. Nothing in either side's diff of the `new_draft` path is an obvious cause: master's adds
+  `appearedFolders` bookkeeping, this branch's adds the true-root read to `SpecialFolders.Resolve`
+  (Drafts and Archive only, after the Inbox and the store object) and a PR_CONVERSATION_INDEX_TRACKING
+  read to `SnapshotDraft`. Directions: (1) bisect on the guest - the merge minus the root read
+  (`5ac1d85`), then minus the snapshot read - one live run each, about 20 minutes; (2) time the identity
+  `new_draft` with both halves and read where the seconds go before choosing; (3) land master first and
+  rebase the branch's commits one by one, a live run per commit. Recommended: (2) then (1). Until then
+  the merge stays off the branch.
+
 - [ ] **Decide what a subject override promises about Outlook's conversation id in a data file (A3,
   first guest live runs, 2026-10-03).** `LiveDraftOptionsTests.DerivedDrafts` fails on
   `OutlookAI-Unindexed` (a POP3 PST): a reply with a subject override keeps its child index and the
