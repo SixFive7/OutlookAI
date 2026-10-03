@@ -298,7 +298,12 @@ public sealed class ReadOnlyFolderLookupTests
         Assert.Equal(made.EntryId, readBack.EntryId);
         Assert.Equal(ArchiveFolderResolution.ViaInboxPersistData, readBack.Via);
         Assert.False(readBack.Created);
-        Assert.Equal(callsAfterTheMove, pst.GetDefaultFolderCalls.Count); // the read asked Outlook for nothing
+
+        // The read never asked Outlook for the Archive folder - the call that creates one. The
+        // verification after it does ask for the core default folders, each only once it is proven
+        // to exist (SpecialFolders.Resolve), so it creates nothing either: Outlook made one folder
+        // in this whole sequence, and it was the move that made it.
+        Assert.DoesNotContain(ArchiveFolderResolution.OlFolderArchive, pst.GetDefaultFolderCalls.Skip(callsAfterTheMove));
         Assert.Equal(new[] { ArchiveFolderResolution.OlFolderArchive }, pst.Created);
 
         // And the documented carriers really were empty, which is what made the old lookup blind.
