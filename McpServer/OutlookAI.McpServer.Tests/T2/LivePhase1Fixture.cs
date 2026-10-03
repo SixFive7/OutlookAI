@@ -664,10 +664,13 @@ public sealed class LivePhase1Fixture : IDisposable
 
         // Store discovery: broad sample first, then targeted per-address discovery for
         // stores the sample misses (Phase-1 finding: an unordered 30k sample never
-        // surfaced the tiny idle store, and SCOPE needs the exact ($hash) segment). Over the
-        // INDEXED list - the stores the index tier measures - not the watched one: a watched
-        // store the settings do not claim is indexed has nothing here to be discovered.
-        List<StoreScopeInfo> scopes = Service.DiscoverStoreScopes(2000).ToList();
+        // surfaced the tiny idle store, and SCOPE needs the exact ($hash) segment), then the
+        // index's own store-root listing for a store no address names (LiveIndexScopes - the
+        // 160,000-item Corpus A, 2026-10-03). Over the INDEXED list - the stores the index tier
+        // measures - not the watched one: a watched store the settings do not claim is indexed
+        // has nothing here to be discovered.
+        List<StoreScopeInfo> scopes = Service.DiscoverStoreScopes(LiveIndexScopes.SampleSize).ToList();
+        IReadOnlyList<StoreScopeInfo> sample = scopes.ToList();
         foreach (string expected in Settings.IndexedStores)
         {
             if (scopes.Any(s => string.Equals(s.StoreDisplayName, expected, StringComparison.OrdinalIgnoreCase)))
@@ -675,7 +678,7 @@ public sealed class LivePhase1Fixture : IDisposable
                 continue;
             }
 
-            StoreScopeInfo? targeted = Service.TryDiscoverStoreScopeByAddress(expected);
+            StoreScopeInfo? targeted = LiveIndexScopes.Find(Service, expected, sample);
             if (targeted != null)
             {
                 scopes.Add(targeted);
@@ -729,7 +732,9 @@ public sealed class LivePhase1Fixture : IDisposable
         return StoreScopes.FirstOrDefault(s =>
                 string.Equals(s.StoreDisplayName, storeDisplayName, StringComparison.OrdinalIgnoreCase))
             ?? throw new InvalidOperationException(
-                $"Store '{storeDisplayName}' not found among {StoreScopes.Count} discovered index scopes.");
+                $"Store '{storeDisplayName}' not found among {StoreScopes.Count} discovered index scopes "
+                + $"({string.Join(", ", StoreScopes.Select(s => s.StoreDisplayName))}) - not in the 2000-row sample, "
+                + "not by mail addressed to it, and not as the one root of that name with anything indexed below it.");
     }
 
     public string GetComStoreId(string storeDisplayName)

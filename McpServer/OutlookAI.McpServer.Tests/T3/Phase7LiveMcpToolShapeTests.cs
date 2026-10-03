@@ -46,11 +46,28 @@ public sealed class Phase7LiveMcpToolShapeTests
             top = 100,
         });
 
-        int hubCount = uncapped.GetProperty("hits").GetArrayLength();
-        Assert.InRange(hubCount, 2, 99);
+        // Out of range, the failure says where the hits came from - counted by store, tier and
+        // folder, never a subject. On OutlookAI-Indexed (2026-10-03) this returned 100 for a hub of
+        // 68 (56 dated and 12 contacts) and said nothing else.
+        JsonElement hits = uncapped.GetProperty("hits");
+        int hubCount = hits.GetArrayLength();
+        Assert.True(hubCount >= 2 && hubCount <= 99,
+            $"top=100 on the hub returned {hubCount} hit(s), expected 2-99 - by store|source|folder: {DescribeHitShape(hits)}");
         Assert.False(uncapped.GetProperty("truncated").GetBoolean(),
             "the whole hub corpus fits in top=100 - truncated must be false");
     }
+
+    /// <summary>The hits counted by store, tier and folder - never a subject.</summary>
+    private static string DescribeHitShape(JsonElement hits) =>
+        string.Join(", ", hits.EnumerateArray()
+            .GroupBy(h => $"{Field(h, "store")}|{Field(h, "source")}|{Field(h, "folder")}", StringComparer.Ordinal)
+            .OrderByDescending(g => g.Count())
+            .Select(g => $"{g.Key}={g.Count()}"));
+
+    private static string Field(JsonElement hit, string name) =>
+        hit.TryGetProperty(name, out JsonElement value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString() ?? "?"
+            : "?";
 
     [Fact]
     [Trait("Requires", "AddInRegistry")]
