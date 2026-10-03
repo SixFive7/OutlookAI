@@ -5419,12 +5419,21 @@ namespace OutlookAI.Core.Com
                     // item's Parent is the target, not the source).
                     string? deletedItemsName = null;
                     string? deletedItemsEntryId = null;
+                    bool exchangeStore = true; // unknown reads as Exchange: the re-locate then behaves exactly as before
                     parent = ((dynamic)item!).Parent;
                     if (parent != null)
                     {
                         parentStore = ((dynamic)parent!).Store;
                         if (parentStore != null)
                         {
+                            try
+                            {
+                                exchangeStore = SpecialFolders.IsExchangeStore((int)((dynamic)parentStore!).ExchangeStoreType);
+                            }
+                            catch (Exception ex) when (IsComCallFailure(ex))
+                            {
+                            }
+
                             object? deleted = null;
                             try
                             {
@@ -5463,7 +5472,7 @@ namespace OutlookAI.Core.Com
 
                     string? newEntryId = deletedItemsEntryId == null
                         ? null
-                        : TryFindDiscardedCopy(deletedItemsEntryId, info.Subject, info.EntryId);
+                        : TryFindDiscardedCopy(deletedItemsEntryId, info.Subject, info.EntryId, exchangeStore);
 
                     return new ComDraftDiscardResult(
                         info.EntryId,
@@ -6051,13 +6060,62 @@ namespace OutlookAI.Core.Com
         }
 
         /// <summary>
+        /// <paramref name="entryId"/> when it still opens AS an item whose parent folder is
+        /// <paramref name="folderEntryId"/>, else null - the one-call answer for a store that keeps
+        /// an item's EntryID across a soft delete (a PST, seen 2026-10-03). Read-only and
+        /// failure-tolerant: an id that no longer opens is simply not kept.
+        /// </summary>
+        private string? TryKeptEntryIdInFolder(string entryId, string folderEntryId)
+        {
+            object? item = null;
+            object? parent = null;
+            try
+            {
+                item = ((dynamic)_namespace!).GetItemFromID(entryId);
+                parent = item == null ? null : ((dynamic)item).Parent;
+                string? parentId = parent == null ? null : TryGetString(() => (string?)((dynamic)parent).EntryID);
+                return parentId != null && string.Equals(parentId, folderEntryId, StringComparison.OrdinalIgnoreCase)
+                    ? entryId
+                    : null;
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+                return null;
+            }
+            finally
+            {
+                Release(parent);
+                Release(item);
+            }
+        }
+
+        /// <summary>
         /// Best-effort re-locate of a just-discarded draft inside Deleted Items so the
-        /// outcome can carry a usable newEntryId (EntryIDs change on ANY move). Read-only
+        /// outcome can carry a usable newEntryId - a NEW one where the store changes EntryIDs
+        /// on a move (Exchange), the SAME one where it keeps them (a PST). Read-only
         /// and failure-tolerant: nothing depends on finding it, and Deleted Items contents
         /// are never modified.
         /// </summary>
-        private string? TryFindDiscardedCopy(string deletedItemsEntryId, string? subject, string oldEntryId)
+        private string? TryFindDiscardedCopy(string deletedItemsEntryId, string? subject, string oldEntryId, bool exchangeStore)
         {
+            // A store that KEEPS an item's EntryID across a soft delete answers in one call: the old
+            // id opens as the item now in Deleted Items. A PST does: on the first live run on a test
+            // guest (2026-10-03) the discarded draft's old id still opened after a discard that
+            // reported Deleted Items as its destination, and LiveUpdateDiscardTests now logs the
+            // folder it opens in. The scan below excludes the old id, so on such a store it finds no
+            // re-located copy at all, or, with an older discarded draft of the same subject in the
+            // folder, re-locates the WRONG item. Never asked of an Exchange store, which mints a new
+            // id on the move and may briefly keep answering the old one: there the scan, exactly as
+            // before, is the answer.
+            if (!exchangeStore)
+            {
+                string? kept = TryKeptEntryIdInFolder(oldEntryId, deletedItemsEntryId);
+                if (kept != null)
+                {
+                    return kept;
+                }
+            }
+
             object? folder = null;
             object? items = null;
             try
