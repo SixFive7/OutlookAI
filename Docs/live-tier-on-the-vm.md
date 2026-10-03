@@ -2143,11 +2143,17 @@ filter exactly as written above and reads the `PROVED NOTHING:` line in the outp
 is how to stop needing that line at all - by building the account, which is the only thing that
 turns those two tests from an announcement into a verification.
 
-To run one class:
+To run one class - on a test guest, inside the same interactive-task script as `Testbed/README.md`
+section 4c's lines, opt-in included:
 
 ```
 dotnet test <csproj> --filter "Category=Live&FullyQualifiedName~LiveTableSortProbeTests"
 ```
+
+**Where each kind of run happens, since 2026-10-03 (Q94, `AGENTS.md`):** a live run on a test guest,
+as above; on the maintainer's workstation only the Exchange-only read-only subset (Q74); and the
+NON-live suite on neither - it runs on the build VM, through
+`Testbed/host/Invoke-TestsOnBuildVm.ps1` (section 4.3).
 
 **A filtered run is fully guarded.** It takes the census, runs the health preflight, checks
 corpus freshness and sink reachability, and verifies at the end of whichever collection the
@@ -2503,9 +2509,17 @@ to use it; this is the record of building it, every step from the committed scri
 | 9. Base checkpoint | the VM's CPU at 0 % for three minutes, no PowerShell Direct session open; `Checkpoint-VM` with the VM running | 4.6 s; the saved memory is 1,578 MB on disk | `CP-02-SDK-TEST-READY` |
 | 10. First proof | `Invoke-TestsOnBuildVm.ps1 -Ref e4b00fa` | **PASS: 3,005 total, 3,005 passed, 0 failed, 0 skipped**; 18 of 18 self-tests; 4 min 05 s | - |
 | 11. Timed second run | the same, again | **PASS, the same counts**, 3 min 56 s: 8 s restore and resume, 1 s connect, 1 s stage; in the VM 2 s expand, 3 s restore, 23 s build, 2 min 19 s test, 39 s self-tests; 1 s fetch, 12 s restore and save | - |
+| 12. Master | `Invoke-TestsOnBuildVm.ps1 origin/master` at `3e7b861` (Q74, Q86, Q93 and Q98 merged) | **PASS: 3,346 total, 3,346 passed, 0 failed, 0 skipped** - the count measured on the workstation the same night - and 18 of 18 self-tests, 3 min 50 s | - |
+| 13. A failing test | a scratch commit adding one test that fails, `-Filter` on it and one real class | **FAIL, exit 1**: 19 total, 18 passed, 1 failed, the failing test and the first line of its message in the summary | - |
+| 14. A compile error | a scratch commit that does not compile | **BUILD, exit 2**, in 1 min 02 s, the compiler's error lines in `vm\build.out.txt` | - |
+| 15. A package the feed lacks | a scratch commit adding `Humanizer.Core` 2.14.1 to the test project | the guest named it (`PACKAGES-MISSING`), the host staged that commit's closure in 45 s (55 packages; the feed check green), added the one new package to the VM's feed, and the second attempt **PASSED** - 3 min 12 s in all | - |
+| 16. Two callers at once | the branch's own HEAD, and 9 s later the failing-test commit | the second printed who held the VM every minute, ran 3 min 50 s later, and finished as above; the first PASSED - 3,089 tests and 20 of 20 self-tests, the runner's and the guest script's own among them | - |
+| 17. A lease taken by hand | `Set-TestbedLease.ps1 -VMName OutlookAI-Build`, then a run under Windows PowerShell 5.1 with `-QueueTimeoutMinutes 1` | held back for the minute, then **INFRA, exit 3**, the VM untouched (still saved) | - |
+| 18. A caller killed part-way | a run under Windows PowerShell 5.1, its process stopped mid-build | the lock went with the process. The VM stayed RUNNING - nothing on this host saves it, the idle-saver task not being registered here - until the next run, three hours later, restored the checkpoint over it (Running to Running), passed, and saved it | - |
 
 **No test behaves differently here than on the maintainer's workstation**, and the two that could
-were checked. The run matched master's 3,005 / 0 / 0 exactly. `T1.SweepSortWiringTests.AnAbsentTableDateFallsBackToTheItemValueCONVERTED`
+were checked. The runs matched master exactly: 3,005 / 0 / 0 at `e4b00fa`, 3,346 / 0 / 0 at
+`3e7b861`. `T1.SweepSortWiringTests.AnAbsentTableDateFallsBackToTheItemValueCONVERTED`
 failed on GitHub CI at this commit and passes here: at `e4b00fa` it still read the machine's own time
 zone, CI's runners are UTC and this VM is W. Europe Standard Time like the workstation (fixed on master
 since, Q95 `3cd62c0`, by giving the test a zone of its own). And about 200 tests take an "Outlook is

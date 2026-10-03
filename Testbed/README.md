@@ -249,8 +249,11 @@ checkout it ran from: `summary.txt`, `summary.json`, `vm\trx\suite.trx`, `vm\run
 build, test and self-test log. **A full run took 4 min 05 s** on 2026-10-03 (`e4b00fa`: 3,005 of
 3,005 passed, 18 of 18 self-tests): 9 s to restore and resume the VM, 2 s to stage, in the VM 2 s
 expanding, 2 s restoring, 29 s building, 2 min 18 s testing and 44 s of self-tests, then 1 s
-fetching and 8 s restoring it again. Callers queue - one run at a time - so call it in the
-background or with a timeout of 20 minutes or more; it prints who holds the VM while it waits.
+fetching and 8 s restoring it again. Master at `3e7b861` the same night: 3,346 of 3,346 in
+3 min 50 s. Callers queue - one run at a time - so call it in the background or with a timeout of
+20 minutes or more; it prints who holds the VM while it waits. The runbook's §4.3 records each
+verdict proved on it: a failing test, a compile error, a missing package, two callers at once, a
+lease held by hand, and a caller killed part-way.
 
 **Why every run starts from the same checkpoint.** The runner restores `CP-02-SDK-TEST-READY`
 before every run and again after it, and saves the VM, so a run starts from a machine
@@ -732,8 +735,10 @@ simpler, and they stay. Every "measured broken" below means the declaration, not
 **The lesson, because it is the expensive half:** those scripts carried "verified by PARSING"
 banners and they parsed perfectly. A script verified by parsing is a script whose syntax is
 verified. What replaced that is a `-SelfTest` switch on each one - pure decision functions driven
-against synthetic inputs, reading no registry and making no COM call, so they run on any machine
-including the maintainer's workstation. That still does not prove a guest run: each self-test ends
+against synthetic inputs, reading no registry and making no COM call, so they run on any machine.
+Since 2026-10-03 they run on one: the build VM, through `host/Invoke-TestsOnBuildVm.ps1`, which
+finds and runs every one of them (§1c) - not on the maintainer's workstation (`AGENTS.md`, Q94),
+where they used to be run by hand. That still does not prove a guest run: each self-test ends
 by printing the list of things only a guest can settle, and those lists are the honest statement
 of what is unproven.
 

@@ -68,8 +68,48 @@ UTC, and nobody looked: every merge had been verified locally, never on the runn
 ## MCP Server (`McpServer/`)
 
 - `McpServer/` holds the MCP server projects (`OutlookAI.Core`, `OutlookAI.McpServer`, `OutlookAI.McpServer.Tests`). Build them with `dotnet build` **by explicit csproj path** — never via `OutlookAI.slnx`, which only contains the VSTO add-in (MSBuild-only).
-- Their CI is `.github/workflows/mcpserver.yml` (windows runner, dotnet only; runs `dotnet test --filter "Category!=Live"`). Tests marked `Category=Live` need the real Windows Search index plus Outlook and only run on a configured dev machine.
+- Their CI is `.github/workflows/mcpserver.yml` (windows runner, dotnet only; runs `dotnet test --filter "Category!=Live"`). Locally the non-live suite runs only on the build VM - next section. Tests marked `Category=Live` need Outlook and a mailbox: they run on the test VMs, and on this workstation only the Exchange-only read-only subset (Q74, Mailbox Safety below).
 - Developer documentation: `McpServer/README.md`.
+
+## Tests run on the build VM, never on this workstation (Q94, Q102)
+
+**Non-live tests and script self-tests run only through `Testbed/host/Invoke-TestsOnBuildVm.ps1`,
+on the build VM `OutlookAI-Build` - never on the maintainer's workstation.** Decided by the
+maintainer 2026-10-03, in his words: *"Move everything (except for the exchange tests because I
+do not have exchange in the vms) to the VMs"* (Q94), onto a small dedicated build-and-test VM
+(Q102 (b)). Proven the same day: master's non-live suite - 3,005 tests, 3,005 passed - and every
+self-test, in about four minutes (`Testbed/README.md` section 1c).
+
+```
+pwsh -File Testbed/host/Invoke-TestsOnBuildVm.ps1                    # this checkout's HEAD: the whole non-live suite and every -SelfTest
+pwsh -File Testbed/host/Invoke-TestsOnBuildVm.ps1 <commit-or-branch>  # any revision: a merge to verify, another agent's branch
+pwsh -File Testbed/host/Invoke-TestsOnBuildVm.ps1 -Filter 'FullyQualifiedName~T1.SomeTests' -SkipSelfTests
+pwsh -File Testbed/host/Invoke-TestsOnBuildVm.ps1 -SkipSuite -SelfTestInclude 'Testbed/guest/*'
+```
+
+- **It tests a commit.** Uncommitted changes are not in the run, which says how many it left out:
+  commit first - a work-in-progress commit is fine.
+- **The exit code is the verdict:** 0 pass; 1 a test or self-test failed, the suite hung, or the
+  filter selected nothing; 2 the revision does not build; 3 not tested (the VM, the lock, a time
+  limit); 4 refused. Results land in `.work\build-vm-runs\<run>\` of the checkout it ran from:
+  `summary.txt`, `summary.json`, `vm\trx\suite.trx` and every log.
+- **One run at a time; callers queue.** Run it in the background or with a timeout of 20 minutes
+  or more. Never use the VM by hand while runs may happen; to hold runs off, take a lease on it
+  with `Testbed/host/Set-TestbedLease.ps1 -VMName OutlookAI-Build` and release it after.
+
+**What stays on this workstation - this, and nothing else:**
+
+- the four static guards, `.github/scripts/check-*.ps1`, which only read files - run them under
+  both `powershell.exe` and `pwsh`;
+- builds - `dotnet build` by csproj path, and the add-in build, which needs Visual Studio,
+  through the two scripts "The add-in on the maintainer's workstation (Q81)" below names;
+- the Exchange-only read-only live tests (Q74), under Mailbox Safety below;
+- GitHub CI, which is not this machine.
+
+So no `dotnet test` runs a test on the workstation except that last live run, and no script's
+`-SelfTest` runs here at all: the runner finds and runs every one of them on the VM.
+`dotnet test --list-tests`, which builds and discovers and executes no test, stays usable here -
+it is how a workstation live run's selection is checked before it starts.
 
 ## Dependencies
 
