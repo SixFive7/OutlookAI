@@ -155,7 +155,7 @@ public static class LiveRunOptIn
             + "PowerShell session and for that run only, and start the run from there:"
             + " $env:" + Variable + " = '<the guest's computer name; $env:COMPUTERNAME prints it>'"
             + " then dotnet test McpServer\\OutlookAI.McpServer.Tests\\OutlookAI.McpServer.Tests.csproj -c Release --filter "
-            + "\"Category=Live&Requires!=DelegateStore\" - on a guest both lines go into the -Script of "
+            + "\"" + LiveRunFilters.Guest + "\" - on a guest both lines go into the -Script of "
             + "Testbed/guest/Register-InteractiveTask.ps1 (Testbed/README.md, section 4c)."
             + " The value must equal the computer name of the machine the run is on, so a value carried to another "
             + "machine opens nothing, and it must never be saved with setx or in the user or machine environment."

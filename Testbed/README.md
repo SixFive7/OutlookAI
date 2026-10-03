@@ -807,7 +807,7 @@ step 9a again. Then, on the guest:
 .\Register-InteractiveTask.ps1 -RunLevel Limited -TimeoutSeconds 7200 -Script @'
 $env:OUTLOOKAI_LIVE_OPT_IN = 'OAI-INDEXED'   # THIS guest's computer name - $env:COMPUTERNAME prints it
 Set-Location C:\OutlookAI-Q5\src
-dotnet test McpServer\OutlookAI.McpServer.Tests\OutlookAI.McpServer.Tests.csproj -c Release --filter "Category=Live&Requires!=DelegateStore"
+dotnet test McpServer\OutlookAI.McpServer.Tests\OutlookAI.McpServer.Tests.csproj -c Release --filter "Category=Live&Requires!=DelegateStore&Requires!=CachedExchange"
 '@
 ```
 
@@ -815,7 +815,10 @@ dotnet test McpServer\OutlookAI.McpServer.Tests\OutlookAI.McpServer.Tests.csproj
 `-Verify` already built (without it `dotnet test` builds a second, Debug, tree beside it); the
 filter is the runbook's (`Docs/live-tier-on-the-vm.md` §4, which points here rather than keeping a
 copy of these lines) - on `OAI-UNINDEXED` it also carries `&Requires!=SearchIndex`, and step 9a
-prints the right one for the guest it runs on.
+prints the right one for the guest it runs on. Both are derived, not typed: `T2/LiveRunFilters.cs`
+computes them from the capability vocabulary, and `T1/LiveTierInventoryTests` fails the build if any
+copy here, in the runbook or in `guest/Reset-HubPopulation.ps1` stops short of them. Since Q74 (C1) they
+exclude `CachedExchange` as well as `DelegateStore`: both are things only an Exchange profile has.
 
 **Why `-RunLevel Limited` - decided 2026-09-24.** Without it the task runs ELEVATED (the default,
 kept for the installers that need it), and so does the Outlook the suite starts - and an elevated

@@ -156,13 +156,20 @@ public sealed class LiveDecodeVerifyTests
     [Fact]
     [Trait("Requires", "SearchIndex")]
     [Trait("Requires", "MultipleStores")]
+    [Trait("Requires", "CachedExchange")]
     public void ShortDecodedId_IsRejectedByGetItemFromID_DiscoveryRecorded()
     {
         // Pins the Phase-1 platform finding so a future behavior change is noticed:
-        // the 24-byte decoded id is NOT openable on cached Exchange stores.
+        // the 24-byte decoded id is NOT openable on cached Exchange stores. The CACHED EXCHANGE
+        // half of the check (Q74 C1) - on a PST the same id opens, and the PST half below says so.
+        ComStoreDetail store = FirstIndexedStoreOf(DecodedIdStoreFormat.CachedExchange);
+        Assert.Equal(
+            DecodedIdOutcome.RejectedAsAnInvalidEntryId,
+            ShortDecodedIdExpectation.ExpectedOutcome(DecodedIdStoreFormat.CachedExchange));
+
         IndexHit? hit = _fixture.Service.Search(new IndexQuery
         {
-            Scope = _fixture.GetScope(Indexed[0]).StorePrefix,
+            Scope = _fixture.GetScope(store.DisplayName).StorePrefix,
             Kinds = KindFilter.MailKindOnly,
             Top = 1,
         }).Hits.FirstOrDefault();
@@ -174,7 +181,71 @@ public sealed class LiveDecodeVerifyTests
 
         _output.WriteLine($"short-id open: result={(opened == null ? "rejected" : "OPENED")} error={error}");
         Assert.Null(opened);
-        Assert.Contains("80040107", error ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(ShortDecodedIdExpectation.InvalidEntryIdHResult, error ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    [Trait("Requires", "SearchIndex")]
+    public void ShortDecodedId_OpensAsTheItemItself_OnAPstStore()
+    {
+        // The PST half (Q74 C3), the one a test guest can pass. INFERRED, NOT YET RUN: on a PST the
+        // 24-byte id decoded from the index URL - zero flags, the store's record key, the node id -
+        // is the message's own entry id (Mapi/EntryIdCodec.cs; the record key is what the URL
+        // carries, measured on a guest in Q92), so GetItemFromID should open it, and open THAT
+        // item. Asserted outright, so the first guest live run confirms the inference or fails it.
+        ComStoreDetail store = FirstIndexedStoreOf(DecodedIdStoreFormat.Pst);
+        Assert.Equal(
+            DecodedIdOutcome.OpensAsTheItemItself,
+            ShortDecodedIdExpectation.ExpectedOutcome(DecodedIdStoreFormat.Pst));
+
+        IndexHit? hit = _fixture.Service.Search(new IndexQuery
+        {
+            Scope = _fixture.GetScope(store.DisplayName).StorePrefix,
+            Kinds = KindFilter.MailKindOnly,
+            Top = 20,
+        }).Hits.FirstOrDefault(h => h.EntryIdHex != null && !string.IsNullOrEmpty(h.Subject) && !IsTransientTestArtifact(h));
+        Assert.True(hit != null, "no mail row in the index for the PST store this half measures");
+
+        ComOpenResult? opened = _fixture.Session.TryOpenItem(hit!.EntryIdHex!, store.StoreId, out string? error);
+
+        // Content-free (S4): an outcome, an hresult and two hex ids - never the subject itself.
+        _output.WriteLine($"short-id open on a PST: result={(opened == null ? "REJECTED" : "opened")} error={error} "
+            + $"decoded={hit.EntryIdHex} opened={opened?.EntryId}");
+        Assert.True(
+            opened != null,
+            "the 24-byte decoded id did NOT open on a PST (" + error + "). The C3 inference is wrong for this store: "
+            + "record what GetItemFromID answered before changing anything (Docs/live-tier-on-the-vm.md section 8).");
+        Assert.True(
+            string.Equals(opened!.EntryId, hit.EntryIdHex, StringComparison.OrdinalIgnoreCase),
+            "the decoded id opened an item whose own entry id differs (" + opened.EntryId + ") - it is not the item's id");
+        Assert.True(
+            string.Equals(opened.Subject ?? string.Empty, hit.Subject ?? string.Empty, StringComparison.Ordinal),
+            "the item the decoded id opened is not the item the index row describes (subjects differ)");
+    }
+
+    /// <summary>
+    /// The first store in the INDEXED list whose kind is <paramref name="format"/>, or a refusal naming
+    /// what this half needs - a machine without such a store cannot prove this half anything, and the
+    /// Requires trait is what keeps the test off it.
+    /// </summary>
+    private ComStoreDetail FirstIndexedStoreOf(DecodedIdStoreFormat format)
+    {
+        IReadOnlyList<ComStoreDetail> details = _fixture.Session.GetStoreDetails();
+        foreach (string name in Indexed)
+        {
+            ComStoreDetail? detail = details.FirstOrDefault(d =>
+                string.Equals(d.DisplayName, name, StringComparison.OrdinalIgnoreCase));
+            if (detail != null
+                && ShortDecodedIdExpectation.FormatOf(detail.ExchangeStoreType, detail.IsCachedExchange) == format)
+            {
+                return detail;
+            }
+        }
+
+        throw new InvalidOperationException(
+            "None of the " + Indexed.Count + " indexed store(s) is a " + format + " store, which this half of the "
+            + "short-decoded-id check measures. The cached-Exchange half needs Requires=CachedExchange (the maintainer's "
+            + "workstation); the PST half runs on a test guest, whose stores are PSTs.");
     }
 
     [Fact]

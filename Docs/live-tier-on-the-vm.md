@@ -2091,11 +2091,14 @@ the two cannot drift. There the filter below runs on a guest through
 Outlook never feeds the index (section 8 item 22) - with the per-run opt-in `OUTLOOKAI_LIVE_OPT_IN`
 set to that guest's computer name inside the task's own script, and `-c Release`. The filter:
 
-`Category=Live&Requires!=DelegateStore`
+`Category=Live&Requires!=DelegateStore&Requires!=CachedExchange`
 
 That filter IS the VM bucket, spelled out: everything live except the tests naming a capability
 this machine cannot be given. There is no separate "which bucket" trait to keep in step with it -
-see section 5.
+see section 5. It is not typed anywhere either: `McpServer/OutlookAI.McpServer.Tests/T2/LiveRunFilters.cs`
+derives it from the vocabulary, and `T1/LiveTierInventoryTests` fails the build if a copy of it - this
+one included - stops short of the derived string. `CachedExchange` joined `DelegateStore` on
+2026-10-03 (Q74 C1).
 
 **On a test guest, every run starts with the hub rebuild - a script step, decided 2026-09-24
 (question D, option (a)).** Restart the guest gracefully - Testbed/host/Restart-Guest.ps1 -VMName <guest>
@@ -2116,7 +2119,7 @@ is a red run, not a quietly weaker one. The maintainer's own machine has no such
 step.
 
 **On `OutlookAI-Unindexed` the filter also deselects the index tier:**
-`Category=Live&Requires!=DelegateStore&Requires!=SearchIndex`. That guest has no index by design
+`Category=Live&Requires!=DelegateStore&Requires!=CachedExchange&Requires!=SearchIndex`. That guest has no index by design
 (section 1.1a), so every test carrying `Requires=SearchIndex` would refuse there, not measure. The
 rebuild script prints the right filter for the guest it runs on, from whether the hub is in
 `indexedStoreDisplayNames`.
@@ -2153,13 +2156,13 @@ To see the sets without running anything - `--list-tests` discovers and does not
 is safe against any mailbox:
 
 ```
-dotnet test <csproj> --list-tests --filter "Category=Live"                          # 127
-dotnet test <csproj> --list-tests --filter "Category=Live&Requires!=DelegateStore"  # 121
-dotnet test <csproj> --list-tests --filter "Category=Live&Requires=DelegateStore"   # 6
+dotnet test <csproj> --list-tests --filter "Category=Live"                                                       # 128
+dotnet test <csproj> --list-tests --filter "Category=Live&Requires!=DelegateStore&Requires!=CachedExchange"      # 121
+dotnet test <csproj> --list-tests --filter "Category=Live&(Requires=DelegateStore|Requires=CachedExchange)"      # 7
 ```
 
-Treat those numbers as "what they were when this was written" - measured 2026-08-24. The traits
-are the authority; the counts in a document drift. `Requires!=X` means "no value of `Requires` on
+Treat those numbers as "what they were when this was written" - measured 2026-10-03, after Q74. The
+traits are the authority; the counts in a document drift. `Requires!=X` means "no value of `Requires` on
 this test equals X", which is what makes a multi-valued trait usable as an exclusion.
 
 ### 4.1 The unindexed guest's build-out - `OutlookAI-Unindexed`, 2026-09-24 (the live run itself: on hold)
@@ -2493,10 +2496,11 @@ and not three traits either. It used to be three, and the third one was the prob
 | Bucket | How it is selected | Size |
 | --- | --- | --- |
 | CI | `--filter "Category!=Live"` | 2,226 cases |
-| VM | `--filter "Category=Live&Requires!=DelegateStore"` | 121 |
-| production-only | `--filter "Category=Live&Requires=DelegateStore"` | 6 |
+| VM | `--filter "Category=Live&Requires!=DelegateStore&Requires!=CachedExchange"` | 121 |
+| production-only | `--filter "Category=Live&(Requires=DelegateStore|Requires=CachedExchange)"` | 7 |
 
-**The vocabulary, all eleven values.** Ten of them this VM can be given; one it cannot.
+**The vocabulary, all twelve values.** Ten of them this VM can be given; two it cannot - both are an
+Exchange profile.
 
 | Capability | What the machine must have |
 | --- | --- |
@@ -2510,16 +2514,24 @@ and not three traits either. It used to be three, and the third one was the prob
 | `IdentityAccount` | a second mail account the write allowlist grants an identity draft in - a non-hub primary left OUT of `bystanderStoreDisplayNames`. **The three-store floor in section 1.3 does not have one** and the tests naming it then prove nothing and say so; **section 2.8b builds one**, which is how a machine stops needing that announcement. Both states are real: 1.3 is the minimum that runs, 2.8b is what a complete guest has |
 | `SmallHubStore` | a hub small enough that a paging assertion means something |
 | `ProbePopulation` | the hand-curated population named in the settings file |
-| **`DelegateStore`** | **a delegate/shared mailbox. The one capability no test machine can be given** |
+| **`DelegateStore`** | **a delegate/shared mailbox. One of the two capabilities no test machine can be given** |
+| **`CachedExchange`** | **a cached Exchange mailbox, whose entry ids are Exchange's 70-byte form. The other one (Q74 C1, 2026-10-03)** |
 
-`.github/scripts/check-pinned-constants.ps1` fails the build if any of those eleven names stops
+`.github/scripts/check-pinned-constants.ps1` fails the build if any of those twelve names stops
 appearing in this file, so the table above is load-bearing text and not decoration.
 
-**Why `DelegateStore` is the only production-only capability.** A delegate/shared mailbox is
+**Why `DelegateStore` and `CachedExchange` are the only production-only capabilities.** A delegate/shared mailbox is
 indexed with its folder hierarchy FLATTENED - an item in the delegate's `Archive/SomeFolder` is
 published as `<host>/1/<delegate>/SomeFolder`, every intermediate folder dropped. A local PST
 cannot be made to have that property, and faking it would manufacture confidence in the one area
-this product has most often been surprised by. The six capabilities that used to sit beside it
+this product has most often been surprised by. `CachedExchange` is the same kind of fact one level
+down: a cached Exchange store's object model hands out 70-byte Exchange entry ids, so the 24-byte id
+decoded from an index URL is REFUSED there, while on a PST those 24 bytes are the entry id itself and
+should open. One check had both facts in it and could pass on neither kind of machine but one; it is
+two halves now - `LiveDecodeVerifyTests.ShortDecodedId_IsRejectedByGetItemFromID_DiscoveryRecorded`
+(`Requires=CachedExchange`, the workstation) and `..._OpensAsTheItemItself_OnAPstStore` (the guests;
+INFERRED from `Mapi/EntryIdCodec.cs` and section 8 item 24, not yet run - its first guest run confirms
+it or fails it). The six capabilities that used to sit beside `DelegateStore`
 (`SearchIndex`, `MailAccount`, `Transport`, `MultipleStores`, `SmallHubStore`, `ProbePopulation`)
 stopped being production-only the moment this machine's shape was settled: sections 1 and 2 build
 every one of them.
@@ -2530,7 +2542,7 @@ maintained manually, which is the exact drift `T1/LiveTierInventoryTests` exists
 was paired with CLASS-level `Requires`, so a class read as the union of everything any one of its
 methods needed. Between them they reported **96 tests that could not leave the maintainer's
 machine**. Re-read method by method, the real floor is **six** - the six the production-only
-filter selects. `LiveTierInventoryTests` now refuses the retired trait outright and refuses a
+filter selected then; seven since `CachedExchange` (Q74 C1) named the one more that could not leave. `LiveTierInventoryTests` now refuses the retired trait outright and refuses a
 class-level `Requires`, so neither can come back quietly.
 
 **The tier-3 correction, and the two mechanisms that hold it.** The T3 stdio classes spawn the
@@ -3107,9 +3119,9 @@ unrecorded or unverified.
   99 items; `LiveMailServiceTests.ListFolders...` asserts the hub tree fits one page). They
   carry `Requires=SmallHubStore`. This is the reason the two machines cannot share one settings
   shape.
-* **The VM bucket does not prove the delegate-store paths at all**, and no test machine can:
-  `Requires=DelegateStore` needs a mailbox somebody else owns. Six tests, named by the
-  production-only filter in section 5.
+* **The VM bucket does not prove the delegate-store or cached-Exchange paths at all**, and no test
+  machine can: `Requires=DelegateStore` needs a mailbox somebody else owns, and `Requires=CachedExchange`
+  an Exchange server. Seven tests, named by the production-only filter in section 5.
 * **The guest's SDK is PINNED to whatever the host was running when the payload was staged**,
   and nothing enforces that they stay equal. 10.0.401 was chosen for sameness rather than for any
   requirement - no `global.json` exists and CI asks only for `10.0.x` - so the two can drift the

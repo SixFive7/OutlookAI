@@ -120,25 +120,26 @@ public sealed class LiveTierInventoryTests
         // A hand-curated population named in the gitignored live-test settings.
         "ProbePopulation",
 
-        // The one capability a dedicated test machine cannot be given.
+        // The two capabilities a dedicated test machine cannot be given - an Exchange profile.
         DelegateStore,
+        CachedExchange,
     };
 
     /// <summary>
     /// The capabilities no dedicated test machine can be given by configuration - the whole
-    /// definition of the production-only bucket.
+    /// definition of the production-only bucket, and of the tests the maintainer's read-only
+    /// workstation runs. Read from <see cref="LiveRunFilters.WorkstationOnlyCapabilities"/>, which
+    /// the run filters are derived from, so this pin and the filters cannot name different sets.
     /// <para>
-    /// One entry, and it is not an oversight. A delegate/shared mailbox is indexed with its
-    /// folder hierarchy FLATTENED, which is not a property a local PST can be made to have;
-    /// simulating it would produce a green test about a shape the real thing does not have.
-    /// Every other capability the VM can be built to provide, so a test naming one of those is
-    /// a VM test even if it has only ever run on the maintainer's machine.
+    /// Two entries, and both are Exchange. A delegate/shared mailbox is indexed with its folder
+    /// hierarchy FLATTENED, which is not a property a local PST can be made to have; and a cached
+    /// Exchange mailbox hands out 70-byte Exchange entry ids, which a PST does not (Q74 C1, for the
+    /// short-decoded-id check). Simulating either would produce a green test about a shape the real
+    /// thing does not have. Every other capability the VM can be built to provide, so a test naming
+    /// one of those is a VM test even if it has only ever run on the maintainer's machine.
     /// </para>
     /// </summary>
-    private static readonly string[] ProductionOnlyCapabilities =
-    {
-        DelegateStore,
-    };
+    private static readonly string[] ProductionOnlyCapabilities = LiveRunFilters.WorkstationOnlyCapabilities.ToArray();
 
     /// <summary>An Outlook to attach to, and nothing more specific than that.</summary>
     /// <remarks>
@@ -150,6 +151,9 @@ public sealed class LiveTierInventoryTests
 
     /// <summary>A delegate/shared mailbox, whose index namespace drops every intermediate folder.</summary>
     private const string DelegateStore = "DelegateStore";
+
+    /// <summary>A cached Exchange mailbox, whose entry ids are Exchange's 70-byte form (Q74 C1).</summary>
+    private const string CachedExchange = "CachedExchange";
 
     /// <summary>The trait names this suite used to carry and must never carry again.</summary>
     private static readonly string[] RetiredTraits = { "LiveTier" };
@@ -274,6 +278,73 @@ public sealed class LiveTierInventoryTests
         Assert.True(
             ProductionOnlyCapabilities.Length < AllCapabilities.Length,
             "every capability is production-only, which would mean the VM can run nothing");
+    }
+
+    [Fact]
+    public void TheGuestFilters_AreDerivedFromTheVocabulary()
+    {
+        // Literals on purpose: deriving the expected value the same way the code does would pass for
+        // any derivation. These are the strings a guest run types (Testbed/README.md section 4c).
+        Assert.Equal("Category=Live&Requires!=DelegateStore&Requires!=CachedExchange", LiveRunFilters.Guest);
+        Assert.Equal(
+            "Category=Live&Requires!=DelegateStore&Requires!=CachedExchange&Requires!=SearchIndex",
+            LiveRunFilters.GuestUnindexed);
+
+        // And every name the filters exclude is a real capability, so no exclusion is a typo.
+        Assert.Contains(LiveRunFilters.SearchIndex, AllCapabilities);
+        Assert.All(LiveRunFilters.WorkstationOnlyCapabilities, c => Assert.Contains(c, AllCapabilities));
+    }
+
+    [Fact]
+    public void EveryQuotedGuestFilter_IsTheDerivedOne()
+    {
+        // The guest filter is quoted where people and scripts read it. A copy that still says only
+        // Requires!=DelegateStore would schedule the cached-Exchange half of the short-id check on a
+        // guest, where it fails by design (Q74 C1) - so no copy may stop short of the derived one.
+        string[] quoting =
+        {
+            "Testbed/README.md",
+            "Docs/live-tier-on-the-vm.md",
+            "Testbed/guest/Reset-HubPopulation.ps1",
+        };
+
+        List<string> problems = new();
+        foreach (string file in quoting)
+        {
+            string text = File.ReadAllText(Path.Combine(RepoRoot(), file));
+            if (!text.Contains(LiveRunFilters.Guest, StringComparison.Ordinal))
+            {
+                problems.Add(file + " never quotes the guest filter " + LiveRunFilters.Guest);
+            }
+
+            int from = 0;
+            const string Head = "Category=Live&Requires!=DelegateStore";
+            for (int at = text.IndexOf(Head, from, StringComparison.Ordinal); at >= 0;
+                 at = text.IndexOf(Head, from, StringComparison.Ordinal))
+            {
+                if (string.CompareOrdinal(text, at, LiveRunFilters.Guest, 0, LiveRunFilters.Guest.Length) != 0)
+                {
+                    problems.Add(file + " quotes a guest filter that stops short of " + LiveRunFilters.Guest
+                        + " at offset " + at);
+                }
+
+                from = at + Head.Length;
+            }
+        }
+
+        string script = File.ReadAllText(Path.Combine(RepoRoot(), "Testbed", "guest", "Reset-HubPopulation.ps1"));
+        if (!script.Contains("'" + LiveRunFilters.GuestUnindexed + "'", StringComparison.Ordinal))
+        {
+            problems.Add("Testbed/guest/Reset-HubPopulation.ps1 does not print the unindexed guest's filter " + LiveRunFilters.GuestUnindexed);
+        }
+
+        // The opt-in refusal names the guest run too.
+        if (!LiveRunOptIn.DescribeRefusal(LiveRunOptIn.Verdict.Missing, "M", null).Contains(LiveRunFilters.Guest, StringComparison.Ordinal))
+        {
+            problems.Add("LiveRunOptIn.DescribeRefusal does not quote " + LiveRunFilters.Guest);
+        }
+
+        Assert.Empty(problems);
     }
 
     [Fact]
@@ -721,5 +792,16 @@ public sealed class LiveTierInventoryTests
     private static string Name(MethodInfo method)
     {
         return method.DeclaringType!.Name + "." + method.Name;
+    }
+
+    private static string RepoRoot()
+    {
+        string testProjectDir = typeof(LiveTierInventoryTests).Assembly
+                .GetCustomAttributes<AssemblyMetadataAttribute>()
+                .FirstOrDefault(a => a.Key == "TestProjectDir")?.Value
+            ?? throw new InvalidOperationException("AssemblyMetadata 'TestProjectDir' is missing.");
+
+        // <repo>/McpServer/OutlookAI.McpServer.Tests/ -> <repo>
+        return Path.GetFullPath(Path.Combine(testProjectDir, "..", ".."));
     }
 }
