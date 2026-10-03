@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 
 namespace OutlookAI.Core.Services
 {
@@ -34,20 +33,5 @@ namespace OutlookAI.Core.Services
 
         /// <summary>Machine-readable refusal code (e.g. "not_created_by_this_server").</summary>
         public string Reason { get; }
-
-        /// <summary>
-        /// Folders the call CREATED before it failed, as <c>store/path</c> - discard_draft's
-        /// Deleted Items, on a mailbox that had none - or null (Q85). Never set on a NAMED
-        /// refusal: each is decided before anything is looked up. The tool layer carries it
-        /// out as the error's <c>createdFolders</c>.
-        /// </summary>
-        public IReadOnlyList<string>? CreatedFolders { get; internal set; }
-
-        /// <summary>
-        /// Folders that only APPEARED while a failed Deleted Items lookup of the call ran, as
-        /// <c>store/path</c> - never claimed as created by it (Q96 question 1 (b)) - or null. The
-        /// tool layer carries it out as the error's <c>appearedFolders</c>.
-        /// </summary>
-        public IReadOnlyList<string>? AppearedFolders { get; internal set; }
     }
 }
