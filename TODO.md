@@ -304,7 +304,9 @@
         tier is where it is exercised, which is the tier that had no budget at all until this
         pass. Options: accept and rely on T2; add `InternalsVisibleTo` to `OutlookAI.Core` and
         pin the wiring through an internal seam; or a structural IL assertion, which is
-        fragile and unlike anything else here.
+        fragile and unlike anything else here. (2026-10-03: the `InternalsVisibleTo` now
+        exists - Q86 added it for the audit-log redirect - so the second option costs only
+        the seam.)
   - [x] **Same for `ComHostSupervisor.CleanExitGraceMilliseconds`.** ~~Replacing the
         `WaitForExit(250)` with a no-op leaves the suite green.~~ Closed by
         `T3/ComHostSupervisionCiTests.OnAnOrderlyShutdown_TheComHostIsAskedToLeave_NotTerminated`,

@@ -257,15 +257,17 @@ public sealed class LiveManageSignatureTests
         }
     }
 
+    // The log THIS process appends to. The service runs in-process here, so since Q86 its lines
+    // go to the test run's throwaway directory (AuditIsolation), never the machine's real log.
     private static int CountAuditLines()
     {
-        string path = AuditLog.DefaultLogPath;
+        string path = AuditLog.EffectiveLogPath;
         return File.Exists(path) ? File.ReadAllLines(path).Length : 0;
     }
 
     private static IReadOnlyList<string> ReadAuditLinesAfter(int skip)
     {
-        string path = AuditLog.DefaultLogPath;
+        string path = AuditLog.EffectiveLogPath;
         return File.Exists(path) ? File.ReadAllLines(path).Skip(skip).ToList() : new List<string>();
     }
 

@@ -20,26 +20,171 @@ namespace OutlookAI.Core.Audit
     /// with null values are omitted. <see cref="Append"/> THROWS when the line cannot
     /// be written - a write operation without its audit line must be surfaced, never
     /// silently swallowed (D4 discipline).
+    ///
+    /// <para>
+    /// HOW THE FILE IS OPENED, because a maintainer renaming the log has to know (Q86): every
+    /// append opens the file, writes one line and closes it again - no handle is ever held
+    /// between two lines. The open is <c>FileMode.Append</c> with <c>FileShare.ReadWrite</c> and
+    /// deliberately WITHOUT <c>FileShare.Delete</c>, so the file cannot be renamed or deleted
+    /// under an append in progress; an open that meets a sharing violation is retried
+    /// <see cref="WriteRetries"/> times, 15 ms apart, before the operation reports it.
+    /// </para>
+    ///
+    /// <para>
+    /// A PROCESS CAN BE REDIRECTED, and only a test process ever is (Q86). The non-live suite
+    /// drives the real write paths through fakes, and they all end in <see cref="Append"/>; until
+    /// this existed every such line landed in the maintainer's real log, which measured 64%
+    /// test noise on 2026-09-28. The test assembly's module initializer now calls
+    /// <see cref="RedirectThisProcess"/> once, through <c>InternalsVisibleTo</c>, before any test
+    /// runs. It is not a setting: nothing a user or an installed process can reach changes it,
+    /// <see cref="DefaultDirectory"/> is untouched, and a shipped process never calls it.
+    /// </para>
     /// </summary>
     public static class AuditLog
     {
+        /// <summary>The file name the log has in whichever directory holds it.</summary>
+        public const string LogFileName = "audit.log";
+
+        /// <summary>The <c>error</c> a probe reports for a directory a redirected process may not touch.</summary>
+        internal const string RedirectRefusalError = "RedirectedForTests";
+
         private const int WriteRetries = 3;
+
+        /// <summary>
+        /// The throwaway directory this process was redirected to, or null - which it is in every
+        /// shipped process. Written once, by <see cref="RedirectThisProcess"/>.
+        /// </summary>
+        private static string? _redirectedDirectory;
 
         /// <summary>Shared OutlookAI state root (v3.MD section 0.5.2).</summary>
         public static string DefaultDirectory =>
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "OutlookAI");
 
         /// <summary>Full path of the audit log file every write op appends to.</summary>
-        public static string DefaultLogPath => Path.Combine(DefaultDirectory, "audit.log");
+        public static string DefaultLogPath => Path.Combine(DefaultDirectory, LogFileName);
 
         /// <summary>
-        /// Appends one structured line for <paramref name="operation"/> to the default
-        /// audit log. Throws <see cref="InvalidOperationException"/> when the line
-        /// cannot be written (load-bearing from Phase 4 - callers surface the failure).
+        /// The directory THIS process appends to: <see cref="DefaultDirectory"/> in every shipped
+        /// process, and the throwaway directory in a test process that redirected itself.
+        /// Everything that writes, probes or reads the log on this process's behalf goes through
+        /// this, so the three can never disagree about which file they mean.
+        /// </summary>
+        internal static string EffectiveDirectory => Volatile.Read(ref _redirectedDirectory) ?? DefaultDirectory;
+
+        /// <summary>Full path of the log THIS process appends to (see <see cref="EffectiveDirectory"/>).</summary>
+        internal static string EffectiveLogPath => Path.Combine(EffectiveDirectory, LogFileName);
+
+        /// <summary>True only in a process that redirected its audit lines - a test host, never a shipped process.</summary>
+        internal static bool IsRedirected => Volatile.Read(ref _redirectedDirectory) != null;
+
+        /// <summary>
+        /// Sends every audit line this process writes from now on to <paramref name="directory"/>
+        /// instead of the real log, for the rest of the process's life. Test hosts only.
+        /// <para>
+        /// The target has to be under the temp directory - throwaway by definition - and may not
+        /// be the real audit directory or anything inside it. It is set once: a second call with
+        /// the same directory is a no-op, and one naming a different directory throws, because
+        /// a run whose lines are split across two directories cannot be proven isolated.
+        /// </para>
+        /// </summary>
+        internal static void RedirectThisProcess(string directory)
+        {
+            string? refusal = DescribeRedirectRefusal(directory);
+            if (refusal != null)
+            {
+                throw new ArgumentException(refusal, nameof(directory));
+            }
+
+            string target = NormalizeDirectory(directory);
+            string? previous = Interlocked.CompareExchange(ref _redirectedDirectory, target, null);
+            if (previous != null && !string.Equals(previous, target, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    "This process already sends its audit lines to '" + previous + "'. A second redirect to '" + target
+                    + "' would split one run's lines across two directories.");
+            }
+        }
+
+        /// <summary>
+        /// Why <paramref name="directory"/> cannot receive a redirected process's audit lines, or
+        /// null when it can. Pure apart from resolving the two roots it compares against.
+        /// </summary>
+        internal static string? DescribeRedirectRefusal(string directory)
+        {
+            if (string.IsNullOrWhiteSpace(directory))
+            {
+                return "The redirect directory must not be blank.";
+            }
+
+            if (!Path.IsPathRooted(directory))
+            {
+                return "The redirect directory must be an absolute path: '" + directory + "' is not.";
+            }
+
+            try
+            {
+                if (IsSameOrUnder(directory, DefaultDirectory))
+                {
+                    return "'" + directory + "' is the real audit directory or inside it, which is exactly what a redirect exists to keep a test process out of.";
+                }
+
+                if (!IsSameOrUnder(directory, Path.GetTempPath()))
+                {
+                    return "'" + directory + "' is not under the temp directory ('" + Path.GetTempPath()
+                        + "'), so it is not throwaway.";
+                }
+            }
+            catch (Exception ex) when (ex is ArgumentException || ex is NotSupportedException || ex is PathTooLongException)
+            {
+                return "'" + directory + "' is not a usable path (" + ex.GetType().Name + ").";
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Why a redirected process may not write or probe the audit log under
+        /// <paramref name="directory"/>, or null when it may - and always null in a process that
+        /// was never redirected. Checked BEFORE anything is created or opened.
+        /// <para>
+        /// An allowlist rather than a single forbidden path, on purpose: the real directory is
+        /// refused in every spelling, because nothing outside the temp directory is allowed at
+        /// all - a short name, a <c>\\?\</c> prefix or a path built by hand from
+        /// <c>%LOCALAPPDATA%</c> lands outside it just the same.
+        /// </para>
+        /// </summary>
+        internal static string? DescribeRefusalWhileRedirected(string directory)
+        {
+            string? redirectedTo = Volatile.Read(ref _redirectedDirectory);
+            if (redirectedTo == null)
+            {
+                return null;
+            }
+
+            if (IsSameOrUnder(directory, DefaultDirectory))
+            {
+                return "This is a test process: its audit lines go to '" + redirectedTo + "', and the real audit log under '"
+                    + DefaultDirectory + "' is refused, so no test can write to it.";
+            }
+
+            if (!IsSameOrUnder(directory, Path.GetTempPath()))
+            {
+                return "This is a test process: its audit lines go to '" + redirectedTo + "', and it may write an audit log only "
+                    + "under the temp directory - '" + directory + "' is outside it.";
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Appends one structured line for <paramref name="operation"/> to this process's audit
+        /// log (<see cref="EffectiveDirectory"/> - the default one in every shipped process).
+        /// Throws <see cref="InvalidOperationException"/> when the line cannot be written
+        /// (load-bearing from Phase 4 - callers surface the failure).
         /// </summary>
         public static void Append(string operation, params (string Key, string? Value)[] fields)
         {
-            AppendTo(DefaultDirectory, operation, fields);
+            AppendTo(EffectiveDirectory, operation, fields);
         }
 
         /// <summary>
@@ -55,9 +200,16 @@ namespace OutlookAI.Core.Audit
             }
 
             string line = FormatLine(DateTime.UtcNow, operation, fields);
-            string path = Path.Combine(directory, "audit.log");
+            string path = Path.Combine(directory, LogFileName);
             try
             {
+                // Before CreateDirectory, so a refused directory is not even created.
+                string? refusal = DescribeRefusalWhileRedirected(directory);
+                if (refusal != null)
+                {
+                    throw new InvalidOperationException("Audit line was not written to '" + path + "'. " + refusal);
+                }
+
                 Directory.CreateDirectory(directory);
                 IOException? lastIo = null;
                 for (int attempt = 0; attempt < WriteRetries; attempt++)
@@ -103,13 +255,21 @@ namespace OutlookAI.Core.Audit
         /// when missing and opens (creating if absent) the log file for append with the
         /// same sharing the writers use, then closes it. Content-free error reason on
         /// failure (S4). Used by the health tool - write ops fail-closed without audit.
+        /// A redirected (test) process gets <see cref="RedirectRefusalError"/> for any directory
+        /// it may not touch, before anything is created or opened.
         /// </summary>
         public static bool TryProbeWritable(string directory, out string? error)
         {
             try
             {
+                if (DescribeRefusalWhileRedirected(directory) != null)
+                {
+                    error = RedirectRefusalError;
+                    return false;
+                }
+
                 Directory.CreateDirectory(directory);
-                string path = Path.Combine(directory, "audit.log");
+                string path = Path.Combine(directory, LogFileName);
                 using (new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite))
                 {
                 }
@@ -123,6 +283,41 @@ namespace OutlookAI.Core.Audit
                 error = ex.GetType().Name;
                 return false;
             }
+        }
+
+        /// <summary>
+        /// Whether <paramref name="path"/> is <paramref name="root"/> or lies under it, compared
+        /// as full paths, case-insensitively, with a <c>\\?\</c> prefix and trailing separators
+        /// removed. Throws what <see cref="Path.GetFullPath(string)"/> throws for an unusable path.
+        /// </summary>
+        internal static bool IsSameOrUnder(string path, string root)
+        {
+            string candidate = NormalizeDirectory(path);
+            string container = NormalizeDirectory(root);
+            if (string.Equals(candidate, container, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            return candidate.StartsWith(container + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string NormalizeDirectory(string path)
+        {
+            // The device prefix comes off BEFORE GetFullPath, because GetFullPath leaves a
+            // \\?\ path exactly as written - '..' segments included - and the comparison
+            // has to see the path the file system would.
+            string spelled = path.Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar);
+            if (spelled.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase))
+            {
+                spelled = @"\\" + spelled.Substring(8);
+            }
+            else if (spelled.StartsWith(@"\\?\", StringComparison.Ordinal) || spelled.StartsWith(@"\\.\", StringComparison.Ordinal))
+            {
+                spelled = spelled.Substring(4);
+            }
+
+            return Path.GetFullPath(spelled).TrimEnd(Path.DirectorySeparatorChar);
         }
 
         /// <summary>

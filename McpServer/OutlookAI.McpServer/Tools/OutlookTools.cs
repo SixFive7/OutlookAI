@@ -1068,8 +1068,14 @@ public static class OutlookTools
     /// everything it can block on now goes through the COM host, which the supervisor
     /// will kill when the deadline expires.
     /// </para>
+    /// <para>
+    /// Internal so T1 can run a service failure through the exact mapping the server runs
+    /// (Q86): a refusal the service AUDITS cannot be pinned over stdio without the server
+    /// child writing the machine's real audit log, so <c>T1/DraftValidationTests</c> drives it
+    /// in-process, where the test run's audit redirect applies.
+    /// </para>
     /// </summary>
-    private static async Task<CallToolResult> GuardAsync<T>(CancellationToken cancellationToken, Func<T> operation)
+    internal static async Task<CallToolResult> GuardAsync<T>(CancellationToken cancellationToken, Func<T> operation)
     {
         // The operation trace is armed OUTSIDE the ambient budget scope and lives for the
         // whole tool call: it records which contract calls this request dispatched, so a

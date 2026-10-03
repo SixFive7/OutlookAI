@@ -7517,10 +7517,10 @@ namespace OutlookAI.Core.Services
             }
 
             // Audit log writability (write tools fail-closed without it).
-            bool auditWritable = Audit.AuditLog.TryProbeWritable(Audit.AuditLog.DefaultDirectory, out string? auditError);
-            if (!auditWritable)
+            AuditHealthView audit = DescribeAuditLog(out string? auditProblem);
+            if (auditProblem != null)
             {
-                problems.Add("The audit log is not writable (" + (auditError ?? "unknown") + ") - draft/save/send operations will fail.");
+                problems.Add(auditProblem);
             }
 
             return new HealthOutcome
@@ -7559,16 +7559,37 @@ namespace OutlookAI.Core.Services
                     IndexerProcessRunning = indexerRunning,
                 },
                 Advice = advice.Count > 0 ? advice : null,
-                Audit = new AuditHealthView
-                {
-                    Path = Audit.AuditLog.DefaultLogPath,
-                    Writable = auditWritable,
-                    Error = auditError,
-                },
+                Audit = audit,
                 Tuning = HealthReporting.ReadTuningStateFromRegistry(),
                 // The apphost that was actually launched, which is precisely what a
                 // registration has to name in order to spawn this server.
                 Registration = HealthReporting.ReadMcpRegistration(HealthReporting.CurrentProcessPath()),
+            };
+        }
+
+        /// <summary>
+        /// The audit block of <c>outlook_health</c>, plus the problem line that goes with an
+        /// unwritable log (null when it is writable).
+        /// <para>
+        /// It probes and names the log THIS process appends to, <c>AuditLog.EffectiveDirectory</c>:
+        /// the real one in every shipped process, a throwaway one in a test process (Q86). It used
+        /// to name <c>DefaultDirectory</c> outright, which in a test process meant the health
+        /// report described - and its probe opened - the maintainer's real log while every line
+        /// the process wrote went elsewhere. Split out and internal so T1 pins that it does not.
+        /// </para>
+        /// </summary>
+        internal static AuditHealthView DescribeAuditLog(out string? problem)
+        {
+            bool writable = Audit.AuditLog.TryProbeWritable(Audit.AuditLog.EffectiveDirectory, out string? error);
+            problem = writable
+                ? null
+                : "The audit log is not writable (" + (error ?? "unknown") + ") - draft/save/send operations will fail.";
+
+            return new AuditHealthView
+            {
+                Path = Audit.AuditLog.EffectiveLogPath,
+                Writable = writable,
+                Error = error,
             };
         }
 
