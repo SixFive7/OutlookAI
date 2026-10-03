@@ -440,10 +440,10 @@ runs.
 
 **Two live tests read state only the OutlookAI add-in writes, the first time it runs inside
 Outlook**, and the script-built guests had no add-in, so both failed there rather than skipping.
-The fix is a build step (`Testbed/README.md` section 1, step 5b): `Testbed/host/Publish-AddInPayload.ps1`
+The fix is a build step (`Testbed/README.md` section 1, steps 5b and 7c): `Testbed/host/Publish-AddInPayload.ps1`
 builds the add-in from a named commit and packages it with the product's own installer, and
-`Testbed/guest/Install-OutlookAIAddIn.ps1` installs it, trusts it and proves the state the tests
-read. The installer it produces is an **artefact** - a script regenerates it from this repository.
+`Testbed/guest/Install-OutlookAIAddIn.ps1` installs it and trusts it (`-Phase Install`, elevated), then
+starts Outlook once NOT elevated and proves the state the tests read (`-Phase FirstRun`). The installer it produces is an **artefact** - a script regenerates it from this repository.
 What it needs that no script can produce is below.
 
 ### Media: the VSTO runtime redistributable
@@ -457,7 +457,7 @@ What it needs that no script can produce is below.
 | Hash provenance | **The same pin `release.yml` enforces**, comparing it against Microsoft's download on every release. Verified again on this host 2026-09-24: hash and length match, Authenticode `Valid`, signed by Microsoft Corporation |
 | Staged at | `.work/media/vstor_redist.exe` on the host - beside the SDK. **On this host an identical copy sits at `Redist/vstor_redist.exe`**, where a local release build expects it; the first builds used that one with `-VstoRuntimePath` |
 | Guest path | `C:\OutlookAI-Q5\media\vstor_redist.exe` |
-| Installed with | `Testbed/guest/Install-OutlookAIAddIn.ps1 -Execute`, which runs it `/q /norestart` - `Installer.iss`'s own switches |
+| Installed with | `Testbed/guest/Install-OutlookAIAddIn.ps1 -Phase Install -Execute`, which runs it `/q /norestart` - `Installer.iss`'s own switches |
 
 **This is not a new dependency - the product already ships it.** Every release compiles it into its
 installer, and the testbed needs the file on disk for two reasons of its own:
@@ -502,15 +502,19 @@ changed; its banner says what they are and what three runs measured.
     pwsh -File Testbed/host/Copy-ToGuest.ps1 -VMName <guest> -Path .work\testbed-addin-payload\AddIn.zip -Destination C:\OutlookAI-Q5\AddIn.zip
     pwsh -File Testbed/host/Copy-ToGuest.ps1 -VMName <guest> -Path .work\media\vstor_redist.exe -Destination C:\OutlookAI-Q5\media\vstor_redist.exe
 
-then on the guest - the unpacking over PowerShell Direct, the install **through the interactive
-task**, because it starts Outlook:
+then on the guest - the unpacking over PowerShell Direct, both phases **through the interactive
+task**: the install at its default run level, which is elevated, and the first run - which starts
+Outlook, and must not be elevated - at `-RunLevel Limited` (Q100, 2026-10-03; on the unindexed guest
+only once its index exclusion is in place, `Testbed/README.md` section 1 step 7b):
 
     Expand-Archive C:\OutlookAI-Q5\AddIn.zip -DestinationPath C:\OutlookAI-Q5\addin -Force
-    .\Register-InteractiveTask.ps1 -Script "& 'C:\OutlookAI-Q5\src\Testbed\guest\Install-OutlookAIAddIn.ps1' -Execute"
+    .\Register-InteractiveTask.ps1 -Script "& 'C:\OutlookAI-Q5\Install-OutlookAIAddIn.ps1' -Phase Install -Execute"
+    .\Register-InteractiveTask.ps1 -RunLevel Limited -Script "& 'C:\OutlookAI-Q5\Install-OutlookAIAddIn.ps1' -Phase FirstRun -Execute"
 
 **Both guests.** The Phase-7 health test declares only `Requires=AddInRegistry`, so it runs on the
-unindexed guest too. **Take the checkpoint after `ADDIN-READY`**, not before: an installed runtime,
-an installed add-in and a trust entry are a real change to the machine.
+unindexed guest too. **Take the checkpoint after `ADDIN-READY`**, which only the first run prints -
+not after the install, which ends `INSTALLED-NEVER-RAN` by design: an installed runtime, an installed
+add-in and a trust entry are a real change to the machine, and the add-in has not run yet.
 
 ## The licence clocks, and the corrections worth reading
 
@@ -765,6 +769,31 @@ it directly. Sources:
 [Upcoming preview of Microsoft Office LTSC 2024 (Microsoft Tech Community)](https://techcommunity.microsoft.com/blog/microsoft_365blog/upcoming-preview-of-microsoft-office-ltsc-2024/4082963),
 [Microsoft's subscription-free 'perpetual' Office LTSC 2024 (Directions on Microsoft)](https://www.directionsonmicrosoft.com/microsofts-subscription-free-perpetual-office-ltsc-2024-to-ship-this-year/),
 [Office 2024 and Office LTSC 2024 FAQ (Microsoft Support)](https://support.microsoft.com/en-us/office/lifecycle/office-2024-and-office-ltsc-2024-faq).
+
+## The build VM - two of the media above, and nothing new
+
+**`OutlookAI-Build`, the third machine (`Testbed/README.md` section 1c; Q94 and Q102, 2026-10-03),
+needs no media this file does not already name.** It is built from the Windows image above, with
+the same answer file and so the same locale, time zone and keyboard as the guests, and from the
+.NET SDK above, pinned by the same SHA-512 - both staged once and reused. It has **no Office**
+(none of the non-live tests needs it - decision D3 of `Docs/overnight-review-2026-10-03.md`), so
+it needs neither the Office Deployment Tool nor the VSTO runtime, and no mail sink, because no
+test there sends mail. Its NuGet feed and its source are artefacts, staged from a commit by
+`Testbed/host/Publish-LiveTierPayload.ps1` (above).
+
+| Media | On the build VM |
+| --- | --- |
+| Windows 11 image | yes - the unattended install, 2026-10-03 |
+| .NET SDK 10.0.401 | yes - `C:\OutlookAI-Q5\media\`, installed by `Testbed/guest/Install-DotnetSdk.ps1` |
+| Office Deployment Tool and `Testbed.xml` | no - an optional later step (README section 1c), for the day a test needs Office |
+| Mail sink, VSTO runtime | no |
+
+**Budget, measured on the host 2026-10-03, about 39 GB in all:** the base VHDX 21.3 GB (Windows,
+at `CP-01-WIN-CLEAN`); the differencing disk from there to the base checkpoint 14.8 GB (the SDK,
+the feed, the package cache, a built suite and Windows's own first hour); the base checkpoint's
+saved memory 1.6 GB, and the VM's saved state between runs another 1.6 GB - saved memory is
+written sparse, so 6 GB of RAM costs 1.6 GB of disk. A run writes into a differencing disk of
+its own, which the restore at its end discards: straight after one, it held 30 MB.
 
 ## The rule
 

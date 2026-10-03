@@ -1440,9 +1440,12 @@ Say 'Copy in - one machine at a time, and say which (Testbed/README.md section 4
 Say "  pwsh -File Testbed/host/Copy-ToGuest.ps1 -VMName <guest> -Path $addinZip -Destination C:\OutlookAI-Q5\AddIn.zip"
 Say "  pwsh -File Testbed/host/Copy-ToGuest.ps1 -VMName <guest> -Path $VstoRuntimePath -Destination $GuestMediaRoot\vstor_redist.exe"
 Say ''
-Say 'Then on the guest - PowerShell Direct is fine for the unpacking, NOT for the install, which starts Outlook:'
+Say 'Then on the guest - PowerShell Direct is fine for the unpacking, NOT for the two phases, which run in'
+Say 'session 1: the install elevated (the task''s default), the first run NOT elevated (Testbed/README.md section 1,'
+Say 'steps 5b and 7c - on the unindexed guest, the first run only once its index exclusion is in place):'
 Say "  Expand-Archive C:\OutlookAI-Q5\AddIn.zip -DestinationPath $GuestAddInRoot -Force"
-Say "  .\Register-InteractiveTask.ps1 -Script ""& 'C:\OutlookAI-Q5\src\Testbed\guest\Install-OutlookAIAddIn.ps1' -Execute"""
+Say "  .\Register-InteractiveTask.ps1 -Script ""& 'C:\OutlookAI-Q5\Install-OutlookAIAddIn.ps1' -Phase Install -Execute"""
+Say "  .\Register-InteractiveTask.ps1 -RunLevel Limited -Script ""& 'C:\OutlookAI-Q5\Install-OutlookAIAddIn.ps1' -Phase FirstRun -Execute"""
 Say ''
 Say 'BOTH GUESTS need it: Phase7LiveMcpToolShapeTests.Health_OverStdio_... declares only Requires=AddInRegistry,'
 Say 'so it runs - and fails without the add-in - on the unindexed guest as well as the indexed one.'

@@ -134,6 +134,38 @@
     "provenance": "Docs/autonomous-session-log.md, 2026-08-24: 'the VM already has TWO Outlook profiles, Outlook and OutlookAITest'. The corpus PST's file name ends '- OutlookAITest.pst', which is Outlook's own naming for the profile that created it."
   },
 
+  "buildVm": {
+    "_what": "THE THIRD MACHINE, and not a live-tier guest: OutlookAI-Build, the build-and-test VM (Q102 (b), decided by the maintainer 2026-10-03). It runs the non-live suite and the script self-tests for Testbed/host/Invoke-TestsOnBuildVm.ps1, which restores runnerBaseCheckpoint before every run and again after it - so a run leaves nothing behind and the VM rests saved, holding no RAM. No Office, no Outlook, no mailbox, no network. It therefore has no section under liveTestSettings, no corpus and no corpus id. Built 2026-10-03 from the committed scripts and the media in Testbed/MEDIA.md: Testbed/README.md section 1c is the procedure, Docs/live-tier-on-the-vm.md section 4.3 the record. Invoke-TestsOnBuildVm.ps1 -SelfTest holds vmName, computerName, runnerBaseCheckpoint and guest against its own constants.",
+    "vmName": "OutlookAI-Build",
+    "computerName": "OAI-BUILD",
+    "spec": {
+      "_note": "CHOSEN for this VM on 2026-10-03, and passed to Testbed/host/New-TestbedVm.ps1 explicitly; the spec file it wrote beside the VHD says the same. 4 vCPU because the suite runs its test collections one at a time (xunit.runner.json, parallelizeTestCollections false) and only the build is parallel; 6 GB static because a saved state is as large as the RAM and every run restores one; no network because the offline feed is all a run needs.",
+      "generation": 2,
+      "secureBoot": true,
+      "vtpm": true,
+      "processorCount": 4,
+      "memoryStartupBytes": 6442450944,
+      "dynamicMemory": false,
+      "vhdSizeBytes": 137438953472,
+      "checkpointType": "Standard",
+      "network": "none - the adapter is disconnected"
+    },
+    "windows": "Windows 11 Pro 10.0.26200, unattended from .work/media/Win11_25H2_EnglishInternational_x64_v2.iso with Testbed/guest/autounattend.template.xml - the same locale, time zone and keyboard as the two guests, so a culture- or zone-sensitive test behaves here as on the maintainer's machine",
+    "dotnetSdk": "10.0.401, from .work/media/dotnet-sdk-10.0.401-win-x64.exe by Testbed/guest/Install-DotnetSdk.ps1",
+    "office": "none. Adding it later is an optional step on CP-02 with the Office Deployment Tool and .work/office-odt/Testbed.xml, then a new base checkpoint and a new runnerBaseCheckpoint - Testbed/README.md section 1c",
+    "checkpoints": [
+      "CP-01-WIN-CLEAN",
+      "CP-02-SDK-TEST-READY"
+    ],
+    "runnerBaseCheckpoint": "CP-02-SDK-TEST-READY",
+    "guest": {
+      "runRoot": "C:\\OutlookAI-Q5\\run",
+      "offlineFeed": "C:\\OutlookAI-Q5\\nuget-offline",
+      "baseSuiteTree": "C:\\OutlookAI-Q5\\src - Install-DotnetSdk.ps1's verification tree, from the commit the base feed was staged from"
+    },
+    "baseFeedStagedFrom": "e4b00fa"
+  },
+
   "liveTestSettings": {
     "_what": "The per-guest values for Testbed/live-test-settings.template.json, one section per guest, keyed by VM name. 'pwsh -File Testbed/host/New-LiveTestSettings.ps1 -VMName <name>' renders that guest's gitignored live-test-settings.json from them. Unlike the file it renders, this section IS committed - which is safe only because a test guest's stores are synthetic: created by this directory's own scripts and named after nothing real. NEVER put a store name from a working Outlook profile here. The maintainer's own settings file stays hand-written and gitignored, and the renderer refuses to write anywhere it could live.",
     "_fill": "Every value that begins '<FILL' is a placeholder, and the renderer REFUSES a guest while any remains, naming each one. They are store names and corpus build parameters that can only be READ OFF THE GUEST - over COM, from the TIER profile the live tier runs under. OutlookAI-Unindexed's were read on 2026-09-24 (its _readOffTheGuest says when and how, and it holds no placeholder now); OutlookAI-Indexed's have not been read yet, so every placeholder left is in its section. Corrected 2026-09-27; this said 'and nobody has read them yet'. Do not type the name you expect to be there; copy the one Outlook reports. Declare only stores that profile mounts: a declared store the running profile does not have is censused, is not found, and refuses the tier. The renderer cannot check that from the host and says so every time it runs.",

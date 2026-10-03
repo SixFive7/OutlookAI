@@ -90,10 +90,11 @@ episode. Every record therefore carries:
 The release run is one command, and it needs the suite log and a live-run file:
 
 ```powershell
-# 1. Standing verification, output kept so the gate can read the suite numbers.
+# 1. Standing verification. The suite runs on the build VM, never on this workstation (Q94,
+#    AGENTS.md); the runner keeps dotnet test's own output, which is what the gate reads.
 dotnet build McpServer/OutlookAI.Core/OutlookAI.Core.csproj
-dotnet test McpServer/OutlookAI.McpServer.Tests/OutlookAI.McpServer.Tests.csproj `
-    --filter "Category!=Live" *> .work/test.log
+pwsh -File Testbed/host/Invoke-TestsOnBuildVm.ps1 -SkipSelfTests
+#    -> .work\build-vm-runs\<run>\vm\test.out.txt  (its summary line is the gate's input)
 # The "&FullyQualifiedName!~Tests.T3." half was retired on 2026-08-24. Category!=Live is now
 # honest - measured, with no COM host spawned across 481 process samples - so excluding tier 3
 # excludes real coverage for no reason.
@@ -105,12 +106,19 @@ pwsh -File .github/scripts/measurement-gate.ps1 -Template > .work/live-run.json 
 # 3. The gate.
 pwsh -File .github/scripts/measurement-gate.ps1 `
     -Run .work/live-run.json `
-    -Collect -TestLog .work/test.log `
+    -Collect -TestLog .work/build-vm-runs/<run>/vm/test.out.txt `
     -ProfileKind production -Indexed indexed `
     -StoreSet "5 stores / 159 folders / 2044 items" `
     -Require All `
     -Label "pre-release 2.2.0"
 ```
+
+**Since 2026-10-03 the suite numbers are the build VM's** (`OutlookAI-Build`, `Testbed/README.md`
+section 1c), not this workstation's, so the first release run after that date compares a VM's
+`suite.durationMs` with a workstation baseline and should be read as a new baseline rather than a
+regression or a win. Pass `vm\test.out.txt`, not the TRX file beside it: `Read-TestLog` reads the
+summary line `dotnet test` prints, and a TRX file carries no such line. Note also that it reads
+`Duration: 2 m 10 s` as two minutes: the seconds after a minute figure are not parsed.
 
 `-Require All` is what makes it a *release* run: every catalogued metric must be present, so a
 partial run cannot pass as a full one. Without it (`-Require Present`, the default) the gate

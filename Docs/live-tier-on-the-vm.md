@@ -421,8 +421,9 @@ from-scratch rebuild replaces the guests (see `Testbed/README.md` section 1b).
   `C:\OutlookAI-Q5\server\` payload stays what it is, and the two no longer have to be the same
   path.
 * **The add-in, on BOTH guests, built from a named commit - a scripted build step since
-  2026-09-24** (`Testbed/README.md` section 1, step 5b). This line used to say "install the add-in
-  and let it run once", and the script-built guests never had it: nothing in the build installed it.
+  2026-09-24, in two halves since 2026-10-03** (`Testbed/README.md` section 1, steps 5b and 7c). This
+  line used to say "install the add-in and let it run once", and the script-built guests never had
+  it: nothing in the build installed it.
 
 **Which tests need it, and exactly what they read.** Two, both through
 `McpServer/OutlookAI.Core/Services/HealthReporting.cs` (`ReadTuningState`), over
@@ -460,7 +461,21 @@ workstation identical. Its banner is the record. Since Q81 (2026-09-27) `Outlook
 stops both writers outside Visual Studio; the script keeps its guards, because it can build a commit
 from before that change.
 
-**On the guest, `Testbed/guest/Install-OutlookAIAddIn.ps1 -Execute`, through the interactive task**:
+**On the guest, `Testbed/guest/Install-OutlookAIAddIn.ps1`, in TWO PHASES at TWO RUN LEVELS, both through the
+interactive task** - decided by the maintainer 2026-10-03 (Q100, option 3):
+
+    .\Register-InteractiveTask.ps1 -Script "& 'C:\OutlookAI-Q5\Install-OutlookAIAddIn.ps1' -Phase Install -Execute"
+    .\Register-InteractiveTask.ps1 -RunLevel Limited -Script "& 'C:\OutlookAI-Q5\Install-OutlookAIAddIn.ps1' -Phase FirstRun -Execute"
+
+Until then one `-Execute` did all six steps below from the elevated task, so the Outlook of step 5
+started elevated - and an elevated Outlook never feeds Windows Search (section 8 item 22), which
+broke the indexed guest's rule that every Outlook there starts unelevated. Now `-Phase Install`
+(elevated, the task's default `RunLevel Highest`) does steps 1 to 4 and records what it installed and
+when, never starts Outlook, and ends `INSTALLED-NEVER-RAN` (exit 2) by design; `-Phase FirstRun`
+(`-RunLevel Limited`) does steps 5 and 6 and installs and writes nothing. Each refuses the other's
+token, and `-Execute` without `-Phase` is refused. `ADDIN-READY` means what it meant - the state the
+tests read, written by THIS start - and only FirstRun reaches it; `-Verify` compares the state with
+the install record, so a state older than the last `-Phase Install` reads `INSTALLED-NEVER-RAN`.
 
 1. **The VSTO runtime** from staged media (`Testbed/MEDIA.md`), because `Installer.iss` installs
    prerequisites only when it is NOT silent - and an unattended guest can only run it silently.
@@ -479,12 +494,17 @@ from before that change.
    certificate and the payload.
 4. **`VSTO_LOGALERTS=1`**, so a load failure writes `<app>\OutlookAI.vsto.log` instead of
    vanishing.
-5. **Outlook started once**, over COM, headless, in a watchdogged child job - never quit, never
-   killed.
+5. **Outlook started once, NOT elevated** (FirstRun), over COM, headless, in a watchdogged child
+   job - never quit, never killed. Before it, a preflight: installed, registered, trusted, the
+   payload's build, the runtime present and not hard-disabled - or it stops with Outlook untouched,
+   because without the trust entry the start would put the trust prompt on the console. While the
+   job still holds Outlook it reads the started OUTLOOK.EXE's token, as
+   `Start-OutlookUnelevated.ps1` does, and an elevated one is `BROKEN`.
 6. **Proof, not exit codes**: `LastReconcileUtc` written AFTER that start, `Initialized` and
    `Enabled` of the right type, `LoadBehavior` still 3, nothing in Outlook's disabled list, the
    add-in connected and answering a call into it, no Claude Code registration question pending (it
-   would surface as a modal dialog mid-tier), and the installed build the payload's.
+   would surface as a modal dialog mid-tier), no window left on screen by the run, and the installed
+   build the payload's.
 
 **It does not disturb the index exclusion or the corpora.** The add-in's tuning service
 (`Services/OutlookTuningService.cs`) writes only under HKCU - Outlook's Search key (four search-box
@@ -493,9 +513,11 @@ larger file-size cap). `Set-OutlookIndexingDisabled.ps1` writes only HKLM - the 
 `PreventIndexingOutlook` policy and the crawl-scope rule. The two sets are disjoint, none of the four
 search values decides whether a store is indexed, and nothing in the add-in's startup path touches
 an item or a store. That is read from both sources; the guest script also snapshots the exclusion
-state before and after its Outlook start and says if anything moved. **Order it before step 7b** so
-7b's own `-Verify` certifies the exclusion with the add-in present; on a guest already past 7b, re-run
-`Set-OutlookIndexingDisabled.ps1 -Verify` after it.
+state before and after its Outlook start and says if anything moved. **The order, since the
+split: the install before step 7b**, so 7b's own `-Verify` certifies the exclusion with the add-in
+present, and **the first run after it** (step 7c): its Outlook is NOT elevated, and a non-elevated
+Outlook adds itself to the index within a minute of starting, so on the unindexed guest the
+exclusion must already be there. Then `Set-OutlookIndexingDisabled.ps1 -Verify` on either guest.
 
 **Never executed on a guest yet.** Everything above that says "measured" was measured on the host.
 **Corrected 2026-09-27: executed on both guests since, and it printed `ADDIN-READY`** -
@@ -504,7 +526,23 @@ the same day and again on 2026-09-27 (section 4.2 step 4, section 4.2b step 4.4)
 first, then `ADDIN-READY` twice each time, the trust entry kept on the second run, and the index
 exclusion state unchanged by it.
 
-**Checkpoint `CP-03-OUTLOOKAI-INSTALLED` once `-Execute` prints `ADDIN-READY`.** `CP-05-ADDIN-TRUSTED`
+**The two phases have NOT run on a guest - PENDING (Q100, 2026-10-03).** Their proof so far is the
+script's `-SelfTest` on the host - 168 assertions under Windows PowerShell 5.1 and PowerShell 7, seven
+of them reading the script's own syntax tree (the install phase reaches no Outlook start, the first
+run no installer and no registry, environment or file write, and each refuses the wrong token
+first), and eleven rules broken on purpose in scratch copies, each caught - and the four
+`.github/scripts` guards. Both guests were busy when it was written, so the guest proof waits for the
+next guest rebuild or a free slot. On a guest, from a checkpoint with the add-in NOT installed, it
+must record: `-Verify` `NOT-INSTALLED`; `-Phase Install -Execute` from the default task ending
+`INSTALLED-NEVER-RAN` with no OUTLOOK.EXE started (the task's job output, and `Get-Process` after it)
+and the install record written; `-Verify` then `INSTALLED-NEVER-RAN` too; `-Phase FirstRun -Execute`
+at `-RunLevel Limited` printing `token NOT elevated` for its OUTLOOK.EXE and `ADDIN-READY`; a second
+`-Phase Install` over that, `INSTALLED-NEVER-RAN` again although a valid state is there; and after
+a graceful restart `Set-OutlookIndexingDisabled.ps1 -Verify` - `UNINDEXED` on the unindexed guest,
+`INDEXED` with its count unchanged on the indexed one. Also worth one look: that FirstRun refuses
+from the default (elevated) task, exit 1, before it starts anything.
+
+**Checkpoint `CP-03-OUTLOOKAI-INSTALLED` once `-Phase FirstRun` prints `ADDIN-READY`.** `CP-05-ADDIN-TRUSTED`
 is no longer a separate manual step - the trust entry is part of the scripted install - and the name
 survives only as the hand-built guest's history.
 
@@ -1628,6 +1666,12 @@ Names in use: `CP-01-WIN-CLEAN`, `CP-02-INSTALLER-STAGED`, `CP-03-OUTLOOKAI-INST
 and another after the sink and dummy account exist, because those two are the steps most likely
 to need redoing.
 
+The build VM, `OutlookAI-Build`, has two (section 4.3): `CP-01-WIN-CLEAN`, and
+`CP-02-SDK-TEST-READY` - taken RUNNING, because `Testbed/host/Invoke-TestsOnBuildVm.ps1` restores
+it before and after every run and a running checkpoint resumes in seconds. Never take a checkpoint
+of that VM by hand while a run might be using it, and never delete `CP-02-SDK-TEST-READY` without
+taking its replacement in the same sitting: the runner refuses without it.
+
 ---
 
 ## 3. Keeping the corpus usable
@@ -2204,11 +2248,17 @@ turns those two tests from an announcement into a verification.
 **The maintainer's workstation runs a different filter, and only that one:** read-only, Exchange-only
 - `Testbed/README.md` section 4d, and section 5 below for the `Writes=Nothing` trait it rests on.
 
-To run one class:
+To run one class - on a test guest, inside the same interactive-task script as `Testbed/README.md`
+section 4c's lines, opt-in included:
 
 ```
 dotnet test <csproj> --filter "Category=Live&FullyQualifiedName~LiveTableSortProbeTests"
 ```
+
+**Where each kind of run happens, since 2026-10-03 (Q94, `AGENTS.md`):** a live run on a test guest,
+as above; on the maintainer's workstation only the Exchange-only read-only subset (Q74); and the
+NON-live suite on neither - it runs on the build VM, through
+`Testbed/host/Invoke-TestsOnBuildVm.ps1` (section 4.3).
 
 **A filtered run is fully guarded.** It takes the census, runs the health preflight, checks
 corpus freshness and sink reachability, and verifies at the end of whichever collection the
@@ -2619,6 +2669,17 @@ Outlook closed and with it running NOT elevated on `OutlookAI-Tier`, and after t
 installer's first-run Outlook (started from its elevated task; that Outlook's own token was not
 read).
 
+**That one elevated start is gone from the procedure since 2026-10-03 (Q100, option 3), and its
+guest proof is PENDING.** `Install-OutlookAIAddIn.ps1` now runs as `-Phase Install` from the
+elevated task, which never starts Outlook, and `-Phase FirstRun` from a `-RunLevel Limited` one,
+which starts Outlook NOT elevated and reads that Outlook's token (section 2.3; `Testbed/README.md`
+section 1, steps 5b and 7c). Step 4.4 above is the old single `-Execute`, and this guest still
+carries what it installed - `-Verify` reads it as before, since it has no install record. The
+two-phase form has not run here or on `OutlookAI-Unindexed`: both were busy when it was written, so
+it waits for the next rebuild of this guest or a free slot, and section 2.3 lists what that run must
+record. Until it has run, "every Outlook start on this guest NOT elevated" holds for the procedure
+as written, not yet for a build that followed it.
+
 **The guard prompt, and why Q80 came first.** CaptureStore's first attempt, about two minutes after
 the restart that closed the mint profile, raised the Object Model Guard prompt ("A program is trying
 to access email address information stored in Outlook") and its COM read blocked behind it - the
@@ -2646,6 +2707,56 @@ from their profile `PR_ENTRYID`s, which item 24 found equal to `Store.StoreID` f
 identity store and the corpus were both `Outlook Data File`. The mint profile mounts the same file, so
 it adds no fourth root. The identity store's 15 rows are all folders; the product's discovery sample
 (`TOP 2000 ... Kind='email'`) saw only the corpus, as section 8 item 24 found.
+
+### 4.3 The build VM - `OutlookAI-Build`, 2026-10-03 (Q94, Q102)
+
+**Why this section exists.** The third machine, and not a live-tier guest: it runs the non-live
+suite and the script self-tests for `Testbed/host/Invoke-TestsOnBuildVm.ps1`, so that nothing runs
+on the maintainer's workstation but the Exchange-only read-only live tests (Q94; `AGENTS.md`).
+No Office, no mailbox, no sink, no network. `Testbed/README.md` section 1c is the procedure and how
+to use it; this is the record of building it, every step from the committed scripts and the media
+`Testbed/MEDIA.md` names. Raw logs: `.work\q102-build-vm\` in the main checkout.
+
+| Step | What ran | Verdict | Checkpoint |
+| --- | --- | --- | --- |
+| 1. Answer volume | `New-AnswerFile.ps1 -VMName OutlookAI-Build -ComputerName OAI-BUILD` | 675,840 bytes, built with oscdimg | - |
+| 2. Create and boot | `New-TestbedVm.ps1 -Name OutlookAI-Build ... -ProcessorCount 4 -MemoryStartupBytes 6GB -Execute -Start` | Generation 2, Secure Boot, vTPM, 128 GB dynamic VHDX, the adapter disconnected; 27 keystrokes typed through the boot prompt | - |
+| 3. Unattended install | nobody | the first-logon log `DONE. All 14 step(s) succeeded` 10 minutes after the start: en-NL then nl-NL, GeoId 176, system locale en-US, formats nl-NL, W. Europe Standard Time, Windows 11 Pro 10.0.26200 | - |
+| 4. Finish the install | `New-TestbedVm.ps1 -CompleteInstall -Execute`, three times - its first real run | Attempt 1 read the DONE line, ejected both discs, then refused: its read-back went through the VM object fetched before the eject and still listed both ISOs (by name, a minute later, both drives were empty). Attempt 2, after that fix, took the checkpoint and refused again: `Get-VMSnapshot` straight after `Checkpoint-VM` listed no checkpoint of the name. Attempt 3 found it, without a disc, and deleted the answer ISO. Each refusal left everything a restore needs; both read-backs now go by name and poll | `CP-01-WIN-CLEAN` |
+| 5. Payload | `Publish-LiveTierPayload.ps1 -Ref e4b00fa -ExpectedSha512 <MEDIA.md's>`; `Copy-ToGuest.ps1` four times | the SDK hash MATCHES; `Source.zip` 3.2 MB, 54 packages, 75.7 MB; the feed restores all five projects with every other source cleared; 48 s to copy in | - |
+| 6. SDK | `Install-DotnetSdk.ps1 -ExpectedSha512 <hash> -Execute` over PowerShell Direct | first: "running scripts is disabled on this system" - a fresh guest's execution policy is Restricted on every scope; with `Set-ExecutionPolicy -Scope Process Bypass -Force` first, the installer exited 0 in 84 s and `TEST-READY`, 3,137 tests discovered, 17 run | - |
+| 7. Memory | a graceful `shutdown.exe /s /t 0` inside, `Set-VMMemory -DynamicMemoryEnabled $false -StartupBytes 6GB`, `Start-VM` | `New-VM` had made it DYNAMIC - 512 MB to 1 TB - and the spec file recorded only the 6 GB; static since, and `New-TestbedVm.ps1 -StaticMemory` does it at creation now (proved on a throwaway VM, deleted) | - |
+| 8. Restart and verify | `Restart-Guest.ps1 -VMName OutlookAI-Build -Execute`; `Install-DotnetSdk.ps1 -Verify` from a new session | the restart in 26 s, no Outlook to quit - the script fits a VM without Office unchanged; `TEST-READY` again | - |
+| 9. Base checkpoint | the VM's CPU at 0 % for three minutes, no PowerShell Direct session open; `Checkpoint-VM` with the VM running | 4.6 s; the saved memory is 1,578 MB on disk | `CP-02-SDK-TEST-READY` |
+| 10. First proof | `Invoke-TestsOnBuildVm.ps1 -Ref e4b00fa` | **PASS: 3,005 total, 3,005 passed, 0 failed, 0 skipped**; 18 of 18 self-tests; 4 min 05 s | - |
+| 11. Timed second run | the same, again | **PASS, the same counts**, 3 min 56 s: 8 s restore and resume, 1 s connect, 1 s stage; in the VM 2 s expand, 3 s restore, 23 s build, 2 min 19 s test, 39 s self-tests; 1 s fetch, 12 s restore and save | - |
+| 12. Master | `Invoke-TestsOnBuildVm.ps1 origin/master` at `3e7b861` (Q74, Q86, Q93 and Q98 merged) | **PASS: 3,346 total, 3,346 passed, 0 failed, 0 skipped** - the count measured on the workstation the same night - and 18 of 18 self-tests, 3 min 50 s | - |
+| 13. A failing test | a scratch commit adding one test that fails, `-Filter` on it and one real class | **FAIL, exit 1**: 19 total, 18 passed, 1 failed, the failing test and the first line of its message in the summary | - |
+| 14. A compile error | a scratch commit that does not compile | **BUILD, exit 2**, in 1 min 02 s, the compiler's error lines in `vm\build.out.txt` | - |
+| 15. A package the feed lacks | a scratch commit adding `Humanizer.Core` 2.14.1 to the test project | the guest named it (`PACKAGES-MISSING`), the host staged that commit's closure in 45 s (55 packages; the feed check green), added the one new package to the VM's feed, and the second attempt **PASSED** - 3 min 12 s in all | - |
+| 16. Two callers at once | the branch's own HEAD, and 9 s later the failing-test commit | the second printed who held the VM every minute, ran 3 min 50 s later, and finished as above; the first PASSED - 3,089 tests and 20 of 20 self-tests, the runner's and the guest script's own among them | - |
+| 17. A lease taken by hand | `Set-TestbedLease.ps1 -VMName OutlookAI-Build`, then a run under Windows PowerShell 5.1 with `-QueueTimeoutMinutes 1` | held back for the minute, then **INFRA, exit 3**, the VM untouched (still saved) | - |
+| 18. A caller killed part-way | a run under Windows PowerShell 5.1, its process stopped mid-build | the lock went with the process. The VM stayed RUNNING - nothing on this host saves it, the idle-saver task not being registered here - until the next run, three hours later, restored the checkpoint over it (Running to Running), passed, and saved it | - |
+| 19. The same, with a janitor | every run now starts one (the runner's banner, A CALLER THAT DIES); a run under Windows PowerShell 5.1 stopped mid-build again | the janitor - a child of `WmiPrvSE`, not of the caller - saw the run end 9 s after the kill with no end line in `runs.log`, took the lock, restored the base checkpoint over the running VM and saved it, released the dead run's lease, and logged each step: the VM saved, holding no RAM, **22 s after the kill**. After a run that finished, its janitor exited without a word | - |
+| 20. This work, merged with master | the branch's HEAD after merging `7933c5c` | **PASS: 3,346 total, 3,346 passed, 0 failed, 0 skipped**, 20 of 20 self-tests, 3 min 44 s; the VM saved, its janitor gone, no lease left | - |
+
+**No test behaves differently here than on the maintainer's workstation**, and the two that could
+were checked. The runs matched master exactly: 3,005 / 0 / 0 at `e4b00fa`, 3,346 / 0 / 0 at
+`3e7b861`. `T1.SweepSortWiringTests.AnAbsentTableDateFallsBackToTheItemValueCONVERTED`
+failed on GitHub CI at this commit and passes here: at `e4b00fa` it still read the machine's own time
+zone, CI's runners are UTC and this VM is W. Europe Standard Time like the workstation (fixed on master
+since, Q95 `3cd62c0`, by giving the test a zone of its own). And about 200 tests take an "Outlook is
+not running" branch through `ComGateway.IsOutlookRunning` and the installer mutex - here as on CI,
+which has no Office either; on the workstation they may take the other. Both branches pass (Q94's
+research, decision D3 of `Docs/overnight-review-2026-10-03.md`). The suite ran in session 0, over
+PowerShell Direct: nothing in it needs a desktop. Memory, sampled every 5 s by the guest script: the
+lowest free 2,998 MB of 6,144, the highest committed 2,847 MB.
+
+**Three Hyper-V behaviours the runner rests on, measured here.** A checkpoint applied to a RUNNING VM
+resumes it at once from the checkpoint's state (Running to Running, 9 s); so the runner, ending a
+run, restores the base and then saves it - restoring alone would leave it running and holding its
+RAM. A `VirtualMachine` object keeps the state it was read with and has no `Refresh()`, so every
+wait re-reads the VM by name. And a running checkpoint's memory is stored sparse: 1.6 GB for 6 GB.
 
 ---
 

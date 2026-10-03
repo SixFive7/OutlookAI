@@ -52,6 +52,11 @@
     old guest is gone, and add any further guest the day it is built: a testbed VM missing from
     this list is simply never saved.
 
+    OutlookAI-Build, the build-and-test VM, joined it the day it was built (2026-10-03, Q102).
+    Testbed/host/Invoke-TestsOnBuildVm.ps1 leaves it saved after every run by restoring its base
+    checkpoint, so this only ever finds it running when a run died part-way - and then saving it
+    is right: the next run restores the checkpoint whatever state it finds.
+
 .PARAMETER MinimumUptimeMinutes
     Grace period after a VM starts, before it becomes eligible to be saved.
 
@@ -67,7 +72,7 @@ param(
     # An allowlist, not a target - see .PARAMETER VMName. This is the one script in Testbed/host/
     # that keeps a default, because naming every known guest IS the intent here, and a name that
     # is wrong or stale makes it skip a VM rather than act on the wrong one.
-    [string[]] $VMName = @('OutlookAI-Indexed', 'OutlookAI-Unindexed', 'OutlookAI-TestVM'),
+    [string[]] $VMName = @('OutlookAI-Indexed', 'OutlookAI-Unindexed', 'OutlookAI-TestVM', 'OutlookAI-Build'),
     [int] $MinimumUptimeMinutes = 10
 )
 

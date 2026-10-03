@@ -183,6 +183,57 @@ Each **deviation** names what the plan said, what happened instead, and why.
   note on what that night's older copy printed.
 - Result: 3,346 / 0 / 0 non-live; all four checks pass in both shells; pushed as `847c258`.
 
+### D33-D43 - Q100: how the add-in install and Outlook's first start were split
+- **D33 - One script, two `-Phase` values** (`Install` elevated, `FirstRun` unelevated), rather than
+  a separate first-run script: one verdict, one self-test, one file to stage - the same shape as
+  `Add-IdentityAccount.ps1`.
+- **D34 - `-Execute` without `-Phase` is refused**, naming both commands, so an old command line
+  cannot quietly do half the job.
+- **D35 - The install phase ends `INSTALLED-NEVER-RAN` (exit 2)**, keeping "only ADDIN-READY exits 0".
+- **D36 - An install record file is written beside the log**, so `-Verify` cannot report
+  ADDIN-READY between the phases from an older build's state.
+- **D37 - The first run reads the started Outlook's token** and fails an elevated or unreadable one;
+  "not elevated" used to be inferred from the task's run level, never read.
+- **D38 - The first run's preflight blocks only on install, registration, trust, build, runtime or
+  hard-disable problems** - an untrusted start would put the trust prompt on screen and hang.
+- **D39 - The install still requires the interactive session**; installers have never run over
+  PowerShell Direct.
+- **D40 - The first run requires the payload manifest**, keeping ADDIN-READY tied to the commit.
+- **D41 - Order on both guests: install stays at step 5b; the first run is a new step 7c**, after
+  the index exclusion (7b) - an unelevated Outlook indexes itself within a minute, so the
+  unindexed guest needs its exclusion first.
+- **D42 - The printed command path is `C:\OutlookAI-Q5\Install-OutlookAIAddIn.ps1`**, the path every
+  guest run actually used.
+- **D43 - The first run refuses elevation on both guests**, not only the indexed one.
+- **Not yet run on a guest** (both were busy): the guest proof is recorded as pending in the runbook,
+  README row 7c, the script's banner and `TODO.md`.
+
+### D44-D53 - Q102: the build-and-test VM and its runner
+`OutlookAI-Build` (`OAI-BUILD`) is built by the testbed scripts: Windows 11 Pro, .NET SDK 10.0.401,
+no Office, no network, 4 vCPU, 6 GB fixed memory, about 39 GB on `E:`. The runner,
+`Testbed/host/Invoke-TestsOnBuildVm.ps1 [<commit|branch>]`, reproduced master's 3,346 / 0 / 0 plus
+every script self-test in about 4 minutes. Decided along the way:
+- **D44 - A clean machine for every run:** restore checkpoint `CP-02-SDK-TEST-READY` before and
+  after every run, then save the VM, so every run starts identical and your RAM comes back.
+  *Alternatives:* reset a work folder; one VM per run; reuse a running VM.
+- **D45 - One run at a time**, behind a lock with a queue: tests share `%TEMP%`, the registry and
+  loopback ports, so parallel runs on one VM are unsafe, and a second VM costs about 39 GB.
+- **D46 - Ending a run discards the VM's state rather than restarting it** - nothing on it needs
+  keeping. *Alternative:* a graceful shutdown first, about 30 s a run.
+- **D47 - Size 4 vCPU / 6 GB fixed**: builds use the cores; peak memory was 2.9 GB.
+- **D48 - Packages missing from the VM's offline feed are staged from the workstation on demand**,
+  once per run, rather than rebuilding the base for every package change.
+- **D49 - The runner's VM name is fixed**, not a parameter: restoring checkpoints on any other VM
+  would destroy it, so there is nothing to choose.
+- **D50 - A hidden watcher (beyond the brief)** saves the VM if a caller is killed mid-run. The
+  alternative, a registered idle-save scheduled task, is a machine-wide change and was refused
+  for tonight.
+- **D51 - Tests run over PowerShell Direct, not in a desktop session** (Q94: none needs one).
+- **D52 - Every `-SelfTest` under `Testbed/` and `Tools/` is discovered automatically**; none excluded.
+- **D53 - Small:** the testbed change has a CHANGELOG entry, as earlier testbed changes did; the
+  measurement gate's suite timings now come from the VM, so the next release run sets a new
+  baseline rather than comparing with the workstation's.
+
 ## Open questions only you can answer
 
 ### Q104 - Seven tagged test leftovers in your workstation's hub mailbox
@@ -255,6 +306,10 @@ The procedure is ready (Q86) and the fix is on master, but several agents starte
 commits and their workstation test runs would still write test lines into a freshly renamed log.
 They have been told to merge master before their next run; the rename happens once they have
 (or at the end of the night), so the log you find in the morning starts clean.
+**Done at about 05:55Z**, once the build-VM runner had replaced every test run on the workstation:
+`%LOCALAPPDATA%\OutlookAI\audit.log` (8,883,282 bytes) was renamed, untouched, to
+`audit.until-2026-10-03.log` in the same folder, with no OutlookAI test process running. Your
+OutlookAI creates a fresh `audit.log` at its next write or health check.
 
 ### V8 - The session limit stopped every agent at about 02:40Z; work resumed at 05:29Z
 All five running agents (the first live run on guest two, the build VM, Q99, Q96 and Q100) were
@@ -265,7 +320,29 @@ lost while it was stopped (the folder was left without its `.git` file; its bran
 A fresh agent restarted that run from `CP-12B-POPULATIONS-V2`, restaging from master. The orphaned
 folder `.claude/worktrees/agent-a87151b711b18a939` is left in place for now; it holds only scratch.
 
+### V9 - Q100: README rows
+The brief said the add-in step was README rows 8b and 8c; it is row 5b (8b and 8c do not mention
+the add-in and were left unchanged). The split adds a new row 7c for the first run.
+
+### V10 - Q102: steps done by hand, and two fixes to existing scripts
+- Done by hand once, then scripted or proved: fixed memory (before the new `-StaticMemory` switch
+  existed; proved afterwards on a throwaway VM, since deleted), `Set-ExecutionPolicy -Scope Process
+  Bypass` before the SDK install on the fresh guest, and the base checkpoint.
+- **`New-TestbedVm.ps1 -CompleteInstall` ran for real for the first time** and had two bugs (it read
+  the ejected discs back too early, and listed no checkpoint right after taking one); both refused
+  safely and both are fixed. `New-VM` had silently made dynamic memory with a 1 TB ceiling; the
+  script now has `-StaticMemory` and records the real settings.
+- The build VM sat running with 6 GB from 02:35Z to 05:30Z across the session limit, after a
+  deliberate kill test; the watcher (D50) now prevents that.
+
 ## Notes (no decision needed)
+
+- **Both Outlook test guests also have dynamic memory with a 1 TB ceiling**, and their records do
+  not say so (read only, nothing changed).
+- **`measurement-gate.ps1` misreads a duration like "2 m 10 s" as 120 s.** Found by the build-VM
+  agent; documented, not yet fixed.
+- **No idle-save scheduled task is registered on the workstation**, so the Outlook guests are never
+  saved when idle either; registering one is a machine-wide change left for you.
 
 - **The "other checkout" writing test noise into your audit log was ours.** Q86's agent saw non-live
   runs from worktree `agent-a23f7465...`; that was a helper the Q74 agent started for D1, since
