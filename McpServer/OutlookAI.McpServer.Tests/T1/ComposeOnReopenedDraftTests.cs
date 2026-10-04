@@ -24,10 +24,13 @@ public sealed class ComposeOnReopenedDraftTests
 {
     private const string Session = "OutlookAI.Core/Com/OutlookComSession.cs";
 
-    /// <summary>Anything that opens, uses or closes a compose inspector or its editor.</summary>
+    /// <summary>
+    /// Anything that opens, uses or closes a compose inspector or its editor - as member accesses and calls,
+    /// so a name such as BodyPlacedViaWordEditor, or the "NoWordEditor" token, is not one.
+    /// </summary>
     private static readonly string[] InspectorWork =
     {
-        "GetInspector", "WordEditor", ".Close(", ".Activate(", "PromoteForWordEditor", "ComposeDraft(", "CloseHiddenInspector(",
+        ".GetInspector", ".WordEditor", ".Close(", ".Activate(", "PromoteForWordEditor(", "ComposeDraft(", "CloseHiddenInspector(",
     };
 
     [Theory]
@@ -106,10 +109,21 @@ public sealed class ComposeOnReopenedDraftTests
             "                        inspector = draft.GetInspector;",
             "                        ((dynamic)inspector!).Close(0); // olSave",
             "                        CloseHiddenInspector(mail!);",
+            "                        document = ((dynamic)inspector!).WordEditor;",
         };
         foreach (string line in crashed)
         {
             Assert.Contains(InspectorWork, work => line.Contains(work, StringComparison.Ordinal));
+        }
+
+        // ... and does not see inspector work in a name or a token that merely mentions the editor.
+        foreach (string line in new[]
+        {
+            "        private (bool SignatureInjected, bool BodyPlacedViaWordEditor) ComposeReopened(",
+            "                        composeSurfaceError: wordPlaced ? null : overrideError ?? \"NoWordEditor\");",
+        })
+        {
+            Assert.DoesNotContain(InspectorWork, work => line.Contains(work, StringComparison.Ordinal));
         }
 
         // And the member reader sees through a tuple return type, which the one-regex readers elsewhere do not.

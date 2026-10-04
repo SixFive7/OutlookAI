@@ -1018,7 +1018,10 @@ FROZEN checkpoint, its default since Q130 (a) - runs `host/Set-GuestClockFrozen.
 unless it says `FROZEN`, and starts Outlook NOT elevated on the tier profile as step 9a would have
 left it, or from any other checkpoint restarts the guest gracefully and runs step 9a; runs the suite exactly as the paragraphs below
 describe - `-RunLevel Limited`, the opt-in inside the task's script, the guest's derived filter;
-fetches the TRX file, the console and VSTest's logs and counts OUTLOOK.EXE crashes; and then, on
+fetches the TRX file, the console and VSTest's logs and counts OUTLOOK.EXE crashes - and, since 2026-10-04,
+fetches every full crash dump Windows Error Reporting wrote into `dumps\<guest>\` and puts
+`host/Read-CrashDump.ps1`'s first look at it in the summary (the dumps are armed after the restore at every run,
+by `guest/Set-OutlookCrashDumps.ps1`; `-ProveCrashDumps` proves them first; runbook section 4.6); and then, on
 every path, restores the resting checkpoint, stages the settings on it, SAVES the guest and releases
 the lease. The exit code is the verdict - 0 pass, 1 a test or a safety proof failed, 2 the commit
 did not build or stage, 3 not tested, 4 refused - and `summary.txt` and `summary.json` in
