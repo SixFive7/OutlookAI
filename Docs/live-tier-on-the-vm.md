@@ -3951,7 +3951,10 @@ a date predicate over the big store after 2026-11-01.
 once on guest one (4.2f, run 4), `OLMAPI32.DLL` on guest two (4.5 run 1; 4.1e's E3 and run 9 at `0x2E411`),
 and other runs lost Outlook mid-compose ("RPC server is unavailable") - and the guests kept no dump, so
 there was nothing to read. Raw material: `.work\crash-repro\` and `.work\guest-live-runs\` of the agent
-worktree `a467ede5` - every run's `summary.txt`, its `dumps\<guest>\*.dmp` and the report beside each dump.
+worktree `a467ede5` - every run's `summary.txt` and the report beside each of its 32 dumps (`<dump>.txt`). Three dumps
+are kept whole - the first from master's compose runs (`20261004-011320-indexed-...`), the first soak's
+(`20261004-013517-unindexed-...`) and the `MailItem.Close` variant's (`20261004-041412-unindexed-...`); the other 29,
+about 1 GB each, were deleted for disk space once read.
 
 **1. The guests keep full dumps now.** `Testbed/guest/Set-OutlookCrashDumps.ps1` writes Windows Error
 Reporting's `LocalDumps` key for `OUTLOOK.EXE` and `WINWORD.EXE` - `DumpType` 2 (full), `DumpCount` 10 -
