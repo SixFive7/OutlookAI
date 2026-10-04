@@ -369,6 +369,58 @@ spelling".** See the decision log below.
 
 ## Decision log
 
+### 2026-10-04, autonomous - the compose crash: dumps on the guests, the cause, and a compose that never hands Outlook that close
+
+**Primer.** OUTLOOK.EXE crashed now and then in the live compose tests on both Outlook guests (runbook
+4.1e, 4.2f, 4.5), and the guests kept no dump. They do now, and the 30 dumps of this work all read the
+same: an access violation at `OLMAPI32.DLL+0x2E411`, on Outlook's main thread, inside the client's
+`Inspector.Close` on the hidden compose inspector of an item `Items.Add` had just returned (runbook 4.6).
+Five decisions were taken on the maintainer's behalf.
+
+**1. How the guests keep dumps.** *Options:* (a) the runner arms Windows Error Reporting's LocalDumps key
+after every restore, with its own checkout's script; (b) new frozen checkpoints with the key in them;
+(c) a scheduled task in the guest; (d) dumps only when asked for. **Decided: (a)**
+(`Testbed/guest/Set-OutlookCrashDumps.ps1`, `Invoke-LiveTierOnGuest.ps1`). No checkpoint changes, so the
+frozen instants of 4.5 and their T1 pins stand; any commit is dumped, an older one too. (b) means two new
+frozen instants, new pins and minutes off the 90-minute window; (c) never runs, because a restore resumes
+a running guest with no logon; (d) loses the next crash the way the last ones were lost. **Undo:** revert.
+
+**2. How the dumps are read.** *Options:* (a) a minidump reader written here, unwinding with Windows' own
+`dbghelp.dll` (`StackWalk64`) and naming frames by export, no symbols; (b) the Debugging Tools for Windows,
+which need a Dependencies exception; (c) Microsoft's public symbols. **Decided: (a)**
+(`Testbed/host/Read-CrashDump.ps1`). Nothing outside Windows, and enough here: the faulting function's own
+bytes, the broken holder it was resetting, and the `Invoke` frame's arguments named the call. (c) was
+checked and has nothing to give: Office publishes no PDB for this build (404 for `outlook.pdb` and
+`olmapi32.pdb`), only Windows' own modules answer. No exception was asked for. **Undo:** none needed.
+
+**3. The fix.** A scratch soak - `new_draft` 400 times in a row - crashed about once in 40 (4 crashes in
+171 new drafts), and twelve variations of the compose changed nothing that mattered (runbook 4.6, item 5).
+*Options:* (a) never open an inspector on the object a creator returned: save it, re-open it by EntryID and
+compose there the way update_draft revises a draft; (b) a pause before the close (2 s: one crash in 237);
+(c) keep Outlook's own signature injection and end that inspector with `MailItem.Close` (one in 309); (d)
+compose by HTML alone, without Word, which drops the placement contracts of D46 and A1; (e) leave it, as
+Outlook's fault. **Decided: (a)** (`ComposeReopened`, `T1/ComposeOnReopenedDraftTests`): no crash in 2,400
+new drafts, nor in 20 compose-class and 4 full-tier runs. (b) and (c) only make it rarer; (d) gives up what the Word path exists for; (e) leaves
+users' Outlook crashing about once in 40 drafts. *Its cost:* new drafts now take update_draft's off-screen editor
+promotion (`Activate`) on a windowed Outlook too, as revisions always have; nothing reaches the screen.
+**Undo:** revert `c4595b1` and `c31a9d9`.
+
+**4. The account's default signature.** Outlook adds it only in the inspector the fix may not open, so
+drafts for an account with one came out without it. *Options:* (a) OutlookAI inserts the configured
+default itself - the profile's "New Signature" or "Reply-Forward Signature", in Outlook's default profile,
+the view `list_signatures` and `manage_signature` use - only when the agent named none and Outlook injected
+nothing; (b) no default signature in agent drafts; (c) item 3 (c) for accounts that have one; (d) read the
+running session's profile instead of the default one. **Decided: (a)**, through the path a named signature
+already takes. (b) loses what users get today, (c) is the crash, and (d) would make the draft disagree with
+`list_signatures`. **Not covered, and not measured:** a signature Outlook picks by other means - roaming
+signatures kept in an Exchange Online mailbox, a Group Policy MailSettings value - and an Outlook running on
+a profile that is not the default. **Undo:** revert `c31a9d9`.
+
+**5. The soak test stays scratch.** *Options:* (a) build it as scratch commits outside the branch, with
+git plumbing, and describe it in the runbook; (b) commit it as an opt-in live class. **Decided: (a)** - a
+400-draft loop is a measuring instrument, not a contract, and the compose classes plus the T1 pin carry the
+contract. Runbook 4.6 describes it well enough to rebuild. **Undo:** none needed.
+
 ### 2026-10-03, autonomous - the indexed guest's first live runs: sixteen failures were the tests, one the product
 
 **Primer.** The first full live run on `OutlookAI-Indexed` (d4e31fe, runbook 4.2f) failed 17 of 123

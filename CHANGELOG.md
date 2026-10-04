@@ -1000,10 +1000,10 @@ its mailbox tests on, and change nothing you install.
 - 🐛 **Writing a new draft, reply or forward no longer crashes Outlook now and then.**
   OutlookAI wrote each draft in a hidden compose window opened on the item Outlook had just created,
   and closed that window when it was done. Closing it crashed Outlook, inside Outlook itself, about once
-  in every 35 drafts written back to back, and in two of fourteen runs of the draft tests on the test
+  in every 40 drafts written back to back, and in two of fourteen runs of the draft tests on the test
   machines. OutlookAI now saves the new item first, opens it again as a saved draft and writes into
-  that, the way it already revised existing drafts, which never crashed. 1,600 drafts in a row then
-  ran without one crash. Outlook adds an account's default signature only in the window that crashed,
+  that, the way it already revised existing drafts, which never crashed. 2,400 drafts written back to
+  back on the two test machines then ran without one crash. Outlook adds an account's default signature only in the window that crashed,
   so OutlookAI now adds it itself: the signature the account is set to use for new messages, or for
   replies and forwards, in Outlook's default profile - the settings list_signatures shows. A signature
   you name for the draft still replaces it.
@@ -1615,6 +1615,11 @@ its mailbox tests on, and change nothing you install.
   next - the cost was the accumulating hidden window, not a broken Outlook. This also cannot help
   when the assistant kills the helper outright, which is what happens when Outlook has genuinely
   stopped responding and when a session ends abruptly.
+
+- ✅ **The live-test runner deletes the build it made for each run instead of leaving 180 MB behind.**
+  Git unregistered the commit's build tree after every run but left its directory, so every run of the
+  test machines' runner kept about 180 MB of build output in its results folder. The runner now deletes
+  what git left, and keeps the build tool's worker processes from holding the files open past the run.
 
 - ✅ **The live tests find a mail store in the search index the way the server itself does.**
   They now find it also when no sample of indexed mail reaches it and no address names it. On the

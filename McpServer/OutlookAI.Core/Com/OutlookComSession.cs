@@ -6447,7 +6447,7 @@ namespace OutlookAI.Core.Com
         /// an access violation at <c>OLMAPI32.DLL+0x2E411</c>, on Outlook's main thread, inside the
         /// client's late-bound <c>Inspector.Close</c>, where the teardown released a MAPI-side object whose
         /// connection still claimed an interface it no longer held. Every dump read the same. It struck
-        /// about one new draft in 35 in a tight loop and two compose-class suite runs in fourteen, and it
+        /// about one new draft in 40 in a tight loop and two compose-class suite runs in fourteen, and it
         /// struck whatever else was varied: no Word edit in that inspector at all, no signature override,
         /// no picture embedding, no sending account set, the <c>Items</c> collection released first, the
         /// item saved before its inspector, the editor promoted first, the Word document released before

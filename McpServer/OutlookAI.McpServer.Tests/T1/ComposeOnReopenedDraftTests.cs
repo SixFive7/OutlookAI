@@ -12,7 +12,7 @@ namespace OutlookAI.McpServer.Tests.T1;
 /// Why (2026-10-04, the test guests' first crash dumps - Docs/live-tier-on-the-vm.md section 4.6): closing
 /// a compose inspector of the creator's own object crashed OUTLOOK.EXE - an access violation at
 /// <c>OLMAPI32.DLL+0x2E411</c> on Outlook's main thread, inside the client's late-bound
-/// <c>Inspector.Close</c> - about one new draft in 35 in a tight loop, and in two of fourteen
+/// <c>Inspector.Close</c> - about one new draft in 40 in a tight loop, and in two of fourteen
 /// compose-class suite runs, whatever else was varied. Composing on the re-opened item never crashed: none
 /// in 1,600 compositions, none in 400 update_draft revisions of one draft.
 /// </para>
