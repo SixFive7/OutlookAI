@@ -1013,6 +1013,19 @@ its mailbox tests on, and change nothing you install.
 
 ### Fixed
 
+- 🐛 **The mail server no longer uses CPU when files change in a Claude Code project folder.**
+  Claude Code starts its own copy of the server for every session, in the session's project folder,
+  and each copy watched that folder and everything under it for a settings file the server never
+  reads. Every file created, changed or deleted there cost each copy some CPU, and every renamed
+  folder a walk of everything in it: on the maintainer's machine one copy used up to 0.9 of a core
+  and 3,000 to 4,900 CPU-seconds, and all of them together 2.39 cores in a two-minute trace while
+  the machine lagged. The server now keeps to its own folder and watches no file at all. Creating,
+  changing and deleting 1,000 files and renaming a 1,000-file folder ten times cost the old server
+  3.5 to 4.0 CPU-seconds and costs the new one nothing Windows can measure. The tests now start the
+  server in a scratch folder the way Claude Code does, and fail if file activity there costs it
+  CPU. A session already running keeps its old server until OutlookAI is updated and the session
+  is restarted.
+
 - 🐛 **A search of a mailbox or folder no longer returns the folders themselves as results.**
   Where Windows Search indexes the mailbox, a search with no search words listed one "hit" for every
   folder - Calendar, Quick Step Settings, the mailbox's top level, emptied folders in Deleted

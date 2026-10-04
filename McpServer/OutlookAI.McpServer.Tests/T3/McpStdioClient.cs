@@ -130,6 +130,11 @@ public sealed class McpStdioClient : IAsyncDisposable
     /// refuse them, so a test that has not thought about mailbox contact cannot make it by
     /// accident.
     /// </param>
+    /// <param name="workingDirectory">
+    /// The server's working directory: the exe's own folder unless a test says otherwise. Claude
+    /// Code starts the server in the session's project folder, which is what
+    /// <c>ServerWorkingDirectoryCiTests</c> does.
+    /// </param>
     /// <summary>
     /// The MCP revision this client speaks, and the one every T3 assertion is written
     /// against. Sent in <c>initialize</c> and compared against what the server answers.
@@ -139,7 +144,8 @@ public sealed class McpStdioClient : IAsyncDisposable
     public static async Task<McpStdioClient> StartAndInitializeAsync(
         TimeSpan? timeout = null,
         IReadOnlyDictionary<string, string>? environment = null,
-        string? outlookReachingTools = null)
+        string? outlookReachingTools = null,
+        string? workingDirectory = null)
     {
         string exePath = ServerExePath;
         if (!File.Exists(exePath))
@@ -160,7 +166,7 @@ public sealed class McpStdioClient : IAsyncDisposable
             RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true,
-            WorkingDirectory = Path.GetDirectoryName(exePath)!,
+            WorkingDirectory = workingDirectory ?? Path.GetDirectoryName(exePath)!,
             StandardInputEncoding = utf8NoBom,
             StandardOutputEncoding = utf8NoBom,
             StandardErrorEncoding = utf8NoBom,
