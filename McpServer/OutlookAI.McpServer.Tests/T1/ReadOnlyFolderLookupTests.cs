@@ -1229,7 +1229,7 @@ public sealed class ReadOnlyFolderLookupTests
     public void TheDraftCreators_SayNoDraftExists_OnlyAboveTheFirstStepThatCanSaveOne(string member)
     {
         // Q96 (iii). The marker that lets a failure say "no draft was saved" must flip before
-        // the compose - GetInspector and Close(olSave), the first steps that can put the item in
+        // the compose - ComposeReopened, whose Save is the first step that can put the item in
         // the mailbox - and nothing above it may save, display or close anything. Moving a
         // saving call above it would turn the sentence back into a false claim, so the order is
         // pinned rather than left to reading.
@@ -1237,13 +1237,13 @@ public sealed class ReadOnlyFolderLookupTests
 
         int declared = body.IndexOf("bool draftMayExist = false;", StringComparison.Ordinal);
         int flipped = body.IndexOf("draftMayExist = true;", StringComparison.Ordinal);
-        int compose = body.IndexOf("ComposeDraft(", StringComparison.Ordinal);
+        int compose = body.IndexOf("ComposeReopened(", StringComparison.Ordinal);
 
         Assert.True(declared >= 0, member + " must declare the marker");
         Assert.True(flipped > declared && flipped < compose, member + " must flip the marker before the compose");
         Assert.Equal(1, CountOccurrences(body, "draftMayExist = true;"));
         string aboveTheMarker = body.Substring(0, flipped);
-        foreach (string saving in new[] { ".Save()", ".Display()", ".Close(", "GetInspector", "ComposeDraft(", ".Send(", ".Move(" })
+        foreach (string saving in new[] { ".Save()", ".Display()", ".Close(", "GetInspector", "ComposeReopened(", ".Send(", ".Move(" })
         {
             Assert.DoesNotContain(saving, aboveTheMarker, StringComparison.Ordinal);
         }

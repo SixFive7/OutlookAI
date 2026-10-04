@@ -3764,10 +3764,11 @@ namespace OutlookAI.Core.Com
                     // account; a string would not bind).
                     SetSendUsingAccount(mail!, account);
 
-                    // From here on a draft may be in the mailbox: the compose saves it.
+                    // From here on a draft is in the mailbox: the compose saves it first, then re-opens it.
                     draftMayExist = true;
                     (bool signatureInjected, long textBefore, long textAfter, bool overrideApplied, string? overrideError, bool wordPlaced, bool surfacePromoted) =
-                        ComposeDraft((object)draft, body, signatureOverride);
+                        ComposeReopened(ref mail, deliveryStoreId, body, signatureOverride, pinnedAccountSmtp, replyOrForward: false);
+                    draft = mail!;
                     draft.Subject = subject;
                     List<string> unresolved = new List<string>();
                     AddRecipients(draft, toRecipients, 1, unresolved);
@@ -3790,16 +3791,8 @@ namespace OutlookAI.Core.Com
                     // new_draft leaves an orphan the product itself cannot remove.
                     capturedSavedEntryId = TryGetString(() => (string?)draft.EntryID);
 
-                    // The GetInspector touch leaves a HIDDEN Inspector alive inside
-                    // Outlook (it shows up in Application.Inspectors - Phase-4 live
-                    // finding). The Word compose path already closed it via
-                    // Close(olSave); calling GetInspector again would only materialize a
-                    // NEW one, so only the fallback path needs the cleanup. Display()
-                    // below opens a fresh visible one for the final item when requested.
-                    if (!wordPlaced)
-                    {
-                        CloseHiddenInspector(mail!);
-                    }
+                    // No hidden Inspector is left to close: the compose touched only the re-opened item's,
+                    // and ReviseHeldDocument closed it. Display() below opens a fresh visible one when asked.
 
                     mail = RelocateToFolderIfNeeded(mail!, draftsFolder!, out bool moved, out string? initialFolder, out bool inDraftsFolder);
 
@@ -3997,7 +3990,8 @@ namespace OutlookAI.Core.Com
                     // From here on a draft may be in the mailbox: the compose saves it.
                     draftMayExist = true;
                     (bool signatureInjected, long textBefore, long textAfter, bool overrideApplied, string? overrideError, bool wordPlaced, bool surfacePromoted) =
-                        ComposeDraft((object)draft, body, signatureOverride);
+                        ComposeReopened(ref mail, null, body, signatureOverride, pinnedAccountSmtp, replyOrForward: true);
+                    draft = mail!;
                     List<string> unresolved = new List<string>();
                     if (kind == ComDerivedDraftKind.Forward)
                     {
@@ -4042,13 +4036,7 @@ namespace OutlookAI.Core.Com
                     // real from this line on, and every step below it can still fail.
                     capturedSavedEntryId = TryGetString(() => (string?)draft.EntryID);
 
-                    // Same hidden-Inspector cleanup as the new-draft path: only needed
-                    // when the composition fell back to the HTML path, because the Word
-                    // path already closed the held Inspector with Close(olSave).
-                    if (!wordPlaced)
-                    {
-                        CloseHiddenInspector(mail!);
-                    }
+                    // No hidden Inspector is left to close here either (ComposeReopened).
 
                     bool moved = false;
                     string? initialFolder = null;
@@ -5332,7 +5320,7 @@ namespace OutlookAI.Core.Com
 
                     if (body != null || signatureOverride != null)
                     {
-                        (bool ok, string? composeError) = ReviseHeldDocument(item!, body, signatureOverride);
+                        (bool ok, string? composeError) = ReviseHeldDocument(item!, body, signatureOverride, measureSignatureInjection: false, out _, out _, signatureIsAccountDefault: false, out _);
                         if (!ok)
                         {
                             capturedError = composeError ?? "BodyReplaceFailed";
@@ -5796,8 +5784,16 @@ namespace OutlookAI.Core.Com
         private static (bool Ok, string? Error) ReviseHeldDocument(
             object draftObject,
             ComDraftBody? body,
-            ComSignatureOverride? signatureOverride)
+            ComSignatureOverride? signatureOverride,
+            bool measureSignatureInjection,
+            out long textBeforeTouch,
+            out long textAfterTouch,
+            bool signatureIsAccountDefault,
+            out bool accountDefaultApplied)
         {
+            textBeforeTouch = 0;
+            textAfterTouch = 0;
+            accountDefaultApplied = false;
             dynamic draft = draftObject;
             object? inspector = null;
             object? document = null;
@@ -5807,7 +5803,13 @@ namespace OutlookAI.Core.Com
             {
                 if (signatureOverride != null && !File.Exists(signatureOverride.FilePath))
                 {
-                    return (false, "SignatureFileMissing");
+                    if (!signatureIsAccountDefault)
+                    {
+                        return (false, "SignatureFileMissing");
+                    }
+
+                    // An account's default whose file is gone is no signature - as Outlook would insert none.
+                    signatureOverride = null;
                 }
 
                 // EXACTLY ONE acquisition, deliberately - matching the creators.
@@ -5816,6 +5818,13 @@ namespace OutlookAI.Core.Com
                 // 12), and asking for a second one after releasing the first wedged
                 // Outlook indefinitely on a headless instance. One inspector, held to the
                 // close, is the only shape this codebase has ever proven.
+                // A new draft's first inspector touch is where Outlook injects the account's default
+                // signature (ComposeReopened): the text before and after it says whether it did.
+                if (measureSignatureInjection)
+                {
+                    textBeforeTouch = CountNonWhitespaceText(TryGetString(() => (string?)draft.HTMLBody) ?? string.Empty);
+                }
+
                 try
                 {
                     inspector = draft.GetInspector;
@@ -5827,6 +5836,17 @@ namespace OutlookAI.Core.Com
                 if (inspector == null)
                 {
                     return (false, "NoInspector");
+                }
+
+                if (measureSignatureInjection)
+                {
+                    textAfterTouch = CountNonWhitespaceText(TryGetString(() => (string?)draft.HTMLBody) ?? string.Empty);
+                }
+
+                if (signatureIsAccountDefault && textAfterTouch > textBeforeTouch)
+                {
+                    // Outlook injected a signature into this item itself: that one stands, ours is not added.
+                    signatureOverride = null;
                 }
 
                 // ⚠ ACTIVATE BEFORE EDITING - live-measured, and the difference between
@@ -5853,6 +5873,7 @@ namespace OutlookAI.Core.Com
                 {
                     (bool sigOk, string? sigError) = ApplySignatureToDocument(document!, signatureOverride.FilePath);
                     error = sigOk ? null : sigError ?? "SignatureInsertFailed";
+                    accountDefaultApplied = sigOk && signatureIsAccountDefault;
                 }
 
                 if (error == null && body != null)
@@ -6412,184 +6433,159 @@ namespace OutlookAI.Core.Com
         }
 
         /// <summary>
-        /// STA-side body composition shared by both draft creators (rewritten in soak
-        /// fix batch A - A1). BOTH paths now compose inside Word through ONE HELD
-        /// Inspector, which is what Outlook's own compose window does:
-        /// <c>GetInspector</c> makes Outlook inject the account's OWN signature natively
-        /// (new-mail or reply/forward rendition, HTML and resources intact), an optional
-        /// override swaps that region via the <c>_MailAutoSig</c> bookmark dance, the
-        /// agent body is written ABOVE the signature region with the marker deleted and
-        /// recreated around the untouched signature (the add-in's proven
-        /// <c>AITaskPane.WriteDraftToDocument</c> technique), and
-        /// <c>Inspector.Close(olSave)</c> flushes the document into the item.
+        /// Composes a draft that <c>Items.Add</c>, <c>Reply</c>, <c>ReplyAll</c> or <c>Forward</c> has just
+        /// returned WITHOUT EVER OPENING AN INSPECTOR ON THAT OBJECT: it is saved as it stands, re-opened
+        /// by its EntryID as a separate object - which replaces <paramref name="mail"/>, the creator's
+        /// object being released - and composed there the way update_draft revises a draft
+        /// (<see cref="ReviseHeldDocument"/>: one held inspector, the editor promoted, the signature and
+        /// the body placed in Word, <c>CurrentItem.Save</c>, <c>Close(olDiscard)</c>). When the Word path
+        /// cannot be had, the body goes in by the HTML splice instead, on the same re-opened item.
         /// <para>
-        /// The retired default path assigned <c>HTMLBody</c> once with the body spliced
-        /// in after the &lt;body&gt; tag. That is string surgery on Outlook's own markup:
-        /// it left the agent text OUTSIDE Word's WordSection1 container (so it did not
-        /// inherit the message style), and when combined with an override on an account
-        /// with no default signature it produced the A1 defect - the body ended up INSIDE
-        /// the recreated <c>_MailAutoSig</c> bookmark (live-proven: the saved HTML opened
-        /// with &lt;a name="_MailAutoSig"&gt; around the agent text), i.e. Outlook and the
-        /// add-in both considered the whole message to be the signature.
+        /// ⚠ WHY: IT IS A CRASH (2026-10-04, from the test guests' first crash dumps - runbook section
+        /// 4.6). The compose this replaced held an inspector on the creator's object and closed it with
+        /// <c>Close(olSave)</c>, and closing a compose inspector of that very object killed OUTLOOK.EXE:
+        /// an access violation at <c>OLMAPI32.DLL+0x2E411</c>, on Outlook's main thread, inside the
+        /// client's late-bound <c>Inspector.Close</c>, where the teardown released a MAPI-side object whose
+        /// connection still claimed an interface it no longer held. Every dump read the same. It struck
+        /// about one new draft in 40 in a tight loop and two compose-class suite runs in fourteen, and it
+        /// struck whatever else was varied: no Word edit in that inspector at all, no signature override,
+        /// no picture embedding, no sending account set, the <c>Items</c> collection released first, the
+        /// item saved before its inspector, the editor promoted first, the Word document released before
+        /// the close, a two-second pause before it, <c>Close(olDiscard)</c> after <c>CurrentItem.Save</c>,
+        /// and OutlookAI's own add-in disconnected. It never struck an inspector on a re-opened item: none
+        /// in 1,600 compositions made this way, none in 400 update_draft revisions of one draft. The fault
+        /// is inside Outlook; what is OutlookAI's to decide is never to hand it that close, so no code may
+        /// open an inspector on an object a creator returned (<c>T1/ComposeOnReopenedDraftTests</c>).
         /// </para>
         /// <para>
-        /// PROBED on this machine (D37, unchanged and load-bearing): Word-document edits
-        /// NEVER reach the item via <c>item.Save()</c>; only Close(olSave) on the
-        /// inspector that hosted the edits flushes them (an item.Save() BETWEEN the edits
-        /// and the close re-renders the document from the item and silently wipes them,
-        /// and a close via a re-acquired inspector reference loses them too).
+        /// The returned text counts are measured across the re-opened item's inspector touch, where
+        /// Outlook injects the account's default signature into a draft it composes for the first time;
+        /// SignatureInjected is that growth.
         /// </para>
-        /// If ANY step fails, the composition falls back to the previous wholesale
-        /// HTMLBody assignment (whose input still carries the injected signature), so a
-        /// draft is never lost or left body-less; the failure is reported content-free.
         /// </summary>
-        private static (bool SignatureInjected, long TextBefore, long TextAfter, bool OverrideApplied, string? OverrideError, bool BodyPlacedViaWordEditor, bool SurfacePromoted) ComposeDraft(
-            object draftObject,
+        private (bool SignatureInjected, long TextBefore, long TextAfter, bool OverrideApplied, string? OverrideError, bool BodyPlacedViaWordEditor, bool SurfacePromoted) ComposeReopened(
+            ref object? mail,
+            string? storeId,
             ComDraftBody body,
-            ComSignatureOverride? signatureOverride)
+            ComSignatureOverride? signatureOverride,
+            string? accountSmtp,
+            bool replyOrForward)
         {
-            dynamic draft = draftObject;
-            string htmlBefore = TryGetString(() => (string?)draft.HTMLBody) ?? string.Empty;
-            long textBefore = CountNonWhitespaceText(htmlBefore);
-            string htmlAfter = htmlBefore;
-            long textAfter = textBefore;
-            bool injected = false;
-            bool wordComposeDone = false;
-            bool promoted = false;
-            string? error = null;
+            dynamic created = mail!;
+            created.Save();
+            string? entryId = TryGetString(() => (string?)created.EntryID);
+            string? reopenStoreId = storeId ?? TryGetItemStoreId(mail!);
+            object? reopened = null;
+            if (entryId != null)
+            {
+                try
+                {
+                    reopened = reopenStoreId != null
+                        ? ((dynamic)_namespace!).GetItemFromID(entryId, reopenStoreId)
+                        : ((dynamic)_namespace!).GetItemFromID(entryId);
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                    reopened = null;
+                }
+            }
 
-            object? inspector = null;
-            object? document = null;
+            if (reopened == null)
+            {
+                // No id came back, or it did not open: the body still goes in - by the HTML splice, on the
+                // object as it stands, and never through an inspector on it.
+                ComposeByHtmlSplice(created, body);
+                return (false, 0, 0, false, "DraftNotReopenable", false, false);
+            }
+
+            Release(mail);
+            mail = reopened;
+            dynamic draft = mail!;
+
+            // The account's own default signature. Outlook injects it only into a compose inspector on the
+            // creator's object - the inspector this method exists never to open - so a draft for an
+            // account with one would come out without it. It is inserted here from the same settings
+            // Outlook reads (the profile's "New Signature" / "Reply-Forward Signature"), only when the
+            // agent named none, and only when Outlook injected nothing itself (ReviseHeldDocument).
+            ComSignatureOverride? accountDefault = signatureOverride == null
+                ? TryResolveAccountDefaultSignature(accountSmtp, replyOrForward)
+                : null;
+            (bool placed, string? error) = ReviseHeldDocument(
+                mail!, body, signatureOverride ?? accountDefault, measureSignatureInjection: true,
+                out long textBefore, out long textAfter, signatureIsAccountDefault: accountDefault != null, out bool defaultApplied);
+            if (!placed)
+            {
+                // The fallback the in-place compose had: the agent's text is not lost because the editor
+                // could not be had. ReviseHeldDocument closed its inspector discarding, so the item is as
+                // it was saved.
+                ComposeByHtmlSplice(draft, body);
+            }
+
+            return (textAfter > textBefore || defaultApplied, textBefore, textAfter, placed && signatureOverride != null, placed ? null : error, placed, placed);
+        }
+
+        /// <summary>
+        /// The signature an account has configured for new messages (<paramref name="replyOrForward"/>
+        /// false) or for replies and forwards, as a signature to insert - or null when it has none, its
+        /// file is gone, or the profile cannot be read. The profile's per-account values, the same ones
+        /// list_signatures reports and manage_signature writes (<see cref="OutlookAI.Core.Services.SignatureCatalog"/>).
+        /// </summary>
+        private static ComSignatureOverride? TryResolveAccountDefaultSignature(string? accountSmtp, bool replyOrForward)
+        {
+            if (string.IsNullOrWhiteSpace(accountSmtp))
+            {
+                return null;
+            }
+
+            foreach (OutlookAI.Core.Services.SignatureAssignment assignment in OutlookAI.Core.Services.SignatureCatalog.ReadAccountAssignments())
+            {
+                if (!string.Equals(assignment.Account, accountSmtp, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                string? name = replyOrForward ? assignment.ReplyForwardSignature : assignment.NewMessageSignature;
+                OutlookAI.Core.Services.SignatureInfo? signature = string.IsNullOrWhiteSpace(name) ? null : OutlookAI.Core.Services.SignatureCatalog.TryResolve(name!);
+                return signature?.PreferredFilePath == null ? null : new ComSignatureOverride(signature.Name, signature.PreferredFilePath!);
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// The pre-Word composition, kept as the fallback: the body - an HTML body already normalized,
+        /// or plain text turned into a fragment - inserted at the top of the item's HTML. No inspector.
+        /// </summary>
+        private static void ComposeByHtmlSplice(dynamic draft, ComDraftBody body)
+        {
+            string html = TryGetString(() => (string?)draft.HTMLBody) ?? string.Empty;
+            string fragment = body.IsHtml
+                ? "<div>" + body.Html + "</div>"
+                : OutlookAI.Core.Text.HtmlBodyComposer.ToHtmlFragment(body.Text);
+            draft.HTMLBody = OutlookAI.Core.Text.HtmlBodyComposer.InsertAtBodyTop(
+                html.Length > 0 ? html : null, fragment);
+        }
+
+        /// <summary>The StoreID of the store an item sits in, or null - read through its folder, both released.</summary>
+        private static string? TryGetItemStoreId(object item)
+        {
+            object? parent = null;
+            object? store = null;
             try
             {
-                if (signatureOverride != null && !File.Exists(signatureOverride.FilePath))
-                {
-                    error = "SignatureFileMissing";
-                }
-
-                if (error == null)
-                {
-                    try
-                    {
-                        inspector = draft.GetInspector;
-                    }
-                    catch (Exception ex) when (IsComCallFailure(ex))
-                    {
-                    }
-
-                    // Signature injection is measured across the GetInspector touch
-                    // regardless of what happens next (text-based: HTML template
-                    // expansion without a signature adds markup but no text).
-                    htmlAfter = TryGetString(() => (string?)draft.HTMLBody) ?? string.Empty;
-                    textAfter = CountNonWhitespaceText(htmlAfter);
-                    injected = textAfter > textBefore;
-
-                    if (inspector == null)
-                    {
-                        error = "NoInspector";
-                    }
-                }
-
-                if (error == null)
-                {
-                    try
-                    {
-                        document = ((dynamic)inspector!).WordEditor;
-                    }
-                    catch (Exception ex) when (IsComCallFailure(ex))
-                    {
-                        // ⚠ Headless does NOT return null here, it THROWS
-                        // COMException "The operation failed." (D49 Phase-1 finding 1).
-                        // Note also that Inspector.IsWordMail() reports TRUE in exactly
-                        // this state, so it is never a usable gate.
-                    }
-
-                    if (document == null)
-                    {
-                        // D49 THE EDITOR PROMOTION. Outlook is window-less, so the editor
-                        // does not exist yet. Park the inspector's (already existing,
-                        // invisible) window off-screen, Activate it, and hide whatever the
-                        // activation put on screen: measured 53-79 ms to a live WordEditor
-                        // with nothing user-visible at any point. Only reached when the
-                        // editor was unobtainable, so a windowed Outlook never gets its
-                        // windows touched and its behaviour is byte-identical to before.
-                        document = ComposeSurface.PromoteForWordEditor(inspector!, out string? promoteError);
-                        promoted = document != null;
-                        if (document == null)
-                        {
-                            error = promoteError ?? "NoWordEditor";
-                        }
-                    }
-                }
-
-                if (error == null && signatureOverride != null)
-                {
-                    (bool sigOk, string? sigError) = ApplySignatureToDocument(document!, signatureOverride.FilePath);
-                    error = sigOk ? null : sigError ?? "SignatureInsertFailed";
-                }
-
-                if (error == null)
-                {
-                    (bool bodyOk, string? bodyError) = InsertBodyAboveSignature(document!, body);
-                    error = bodyOk ? null : bodyError ?? "BodyInsertFailed";
-                }
-
-                if (error == null)
-                {
-                    // D47: embed the signature's images instead of leaving them as
-                    // file:/// links into the Signatures directory. Done HERE, on the
-                    // create path, because that is where the link is born - an update
-                    // then starts from an embedded cid: image and re-renders losslessly.
-                    _ = EmbedLinkedPictures(document!);
-                }
-
-                if (error == null)
-                {
-                    // The load-bearing flush (probe-proven): olSave on the SAME held
-                    // inspector commits the Word edits into the item.
-                    try
-                    {
-                        ((dynamic)inspector!).Close(0); // olSave
-                        wordComposeDone = true;
-                    }
-                    catch (Exception ex) when (IsComCallFailure(ex))
-                    {
-                        error = DescribeComFailure(ex);
-                    }
-                }
+                parent = ((dynamic)item).Parent;
+                store = parent == null ? null : ((dynamic)parent).Store;
+                return store == null ? null : TryGetString(() => (string?)((dynamic)store!).StoreID);
             }
             catch (Exception ex) when (IsComCallFailure(ex))
             {
-                error = DescribeComFailure(ex);
+                return null;
             }
             finally
             {
-                Release(document);
-                Release(inspector);
+                Release(store);
+                Release(parent);
             }
-
-            if (!wordComposeDone)
-            {
-                // Fallback = the pre-batch-A composition. Its input HTML still contains
-                // the injected signature, and the wholesale HTMLBody assignment
-                // re-renders the Word document - discarding any partial Word edits.
-                string html = TryGetString(() => (string?)draft.HTMLBody) ?? string.Empty;
-                if (html.Length == 0)
-                {
-                    html = htmlAfter;
-                }
-
-                // An HTML body is ALREADY normalized markup - it must not be escaped here
-                // (that would show the agent its own tags as text); it only gets the same
-                // <div> wrapper the text path uses so the splice has one root element.
-                string fragment = body.IsHtml
-                    ? "<div>" + body.Html + "</div>"
-                    : OutlookAI.Core.Text.HtmlBodyComposer.ToHtmlFragment(body.Text);
-                draft.HTMLBody = OutlookAI.Core.Text.HtmlBodyComposer.InsertAtBodyTop(
-                    html.Length > 0 ? html : null, fragment);
-            }
-
-            return (injected, textBefore, textAfter, signatureOverride != null && wordComposeDone, error, wordComposeDone, promoted && wordComposeDone);
         }
 
         /// <summary>
@@ -7205,37 +7201,6 @@ namespace OutlookAI.Core.Com
 
             error = capturedError;
             return applied;
-        }
-
-        /// <summary>
-        /// STA-side: closes the hidden Inspector the GetInspector signature touch left
-        /// behind. Without this, a display:false draft still surfaces in
-        /// Application.Inspectors. <paramref name="saveWordEdits"/> decides the close
-        /// mode - PROBED on this machine (D37): Word-document edits (the signature
-        /// override path) do NOT reach the item via <c>item.Save()</c>; only
-        /// <c>Inspector.Close(olSave)</c> flushes them, while <c>olDiscard</c> throws
-        /// them away permanently. Default path (no Word edits): olDiscard - the item is
-        /// already saved, nothing is lost.
-        /// </summary>
-        private static void CloseHiddenInspector(object mailObject, bool saveWordEdits = false)
-        {
-            object? inspector = null;
-            try
-            {
-                inspector = ((dynamic)mailObject).GetInspector;
-                if (inspector != null)
-                {
-                    ((dynamic)inspector).Close(saveWordEdits ? 0 : 1); // 0 = olSave, 1 = olDiscard
-                }
-            }
-            catch (Exception ex) when (IsComCallFailure(ex))
-            {
-                // No inspector to close - fine.
-            }
-            finally
-            {
-                Release(inspector);
-            }
         }
 
         private static long CountNonWhitespaceText(string html)

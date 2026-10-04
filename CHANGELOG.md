@@ -171,6 +171,13 @@ its mailbox tests on, and change nothing you install.
   check fails, the reason is written out in full here rather than hidden behind a link. Both
   indicators now take their wording from one place, so they cannot disagree.
 
+- ✅ **The Outlook test machines keep a full crash dump whenever Outlook crashes in a live run.**
+  The one-call runner switches Windows Error Reporting's own crash dumps on at every run, on the
+  frozen checkpoints as they are, brings every dump back with the run's results, and reads each one
+  with Windows' own debugging library: its summary names the fault, the code it struck in, the
+  faulting thread's call stack and the classes of the objects that thread was handling. Nothing is
+  installed on the machines and no checkpoint changed.
+
 - 📦 **A release runs CodeQL's C# security queries and a check for vulnerable NuGet packages (Q125).**
   They take the place of the CodeQL scan and the dependency review that ran on GitHub until
   2026-10-03, as step 7 of `Tools/Publish-Release.ps1`, and each also runs on its own.
@@ -1013,6 +1020,17 @@ its mailbox tests on, and change nothing you install.
 
 ### Fixed
 
+- 🐛 **Writing a new draft, reply or forward no longer crashes Outlook now and then.**
+  OutlookAI wrote each draft in a hidden compose window opened on the item Outlook had just created,
+  and closed that window when it was done. Closing it crashed Outlook, inside Outlook itself, about once
+  in every 40 drafts written back to back, and in two of fourteen runs of the draft tests on the test
+  machines. OutlookAI now saves the new item first, opens it again as a saved draft and writes into
+  that, the way it already revised existing drafts, which never crashed. 2,400 drafts written back to
+  back on the two test machines then ran without one crash. Outlook adds an account's default signature only in the window that crashed,
+  so OutlookAI now adds it itself: the signature the account is set to use for new messages, or for
+  replies and forwards, in Outlook's default profile - the settings list_signatures shows. A signature
+  you name for the draft still replaces it.
+
 - 🐛 **The mail server no longer uses CPU when files change in a Claude Code project folder.**
   Claude Code starts its own copy of the server for every session, in the session's project folder,
   and each copy watched that folder and everything under it for a settings file the server never
@@ -1633,6 +1651,11 @@ its mailbox tests on, and change nothing you install.
   next - the cost was the accumulating hidden window, not a broken Outlook. This also cannot help
   when the assistant kills the helper outright, which is what happens when Outlook has genuinely
   stopped responding and when a session ends abruptly.
+
+- ✅ **The live-test runner deletes the build it made for each run instead of leaving 180 MB behind.**
+  Git unregistered the commit's build tree after every run but left its directory, so every run of the
+  test machines' runner kept about 180 MB of build output in its results folder. The runner now deletes
+  what git left, and keeps the build tool's worker processes from holding the files open past the run.
 
 - ✅ **The live tests find a mail store in the search index the way the server itself does.**
   They now find it also when no sample of indexed mail reaches it and no address names it. On the

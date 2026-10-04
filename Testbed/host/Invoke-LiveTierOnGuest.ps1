@@ -33,8 +33,10 @@
       5. RUN     - the suite through Register-InteractiveTask.ps1 -RunLevel Limited, with
                    OUTLOOKAI_LIVE_OPT_IN set to the guest's computer name INSIDE the task's script,
                    for this run only, and the guest's derived filter (T2/LiveRunFilters.cs).
-      6. FETCH   - the TRX file, the console capture and VSTest's logs, and the guest's Application
-                   log entries for an OUTLOOK.EXE crash during the run.
+      6. FETCH   - the TRX file, the console capture and VSTest's logs, the guest's Application log
+                   entries for an OUTLOOK.EXE crash during the run, and every crash dump Windows Error
+                   Reporting wrote (dumps\<guest>\) - armed in STAGE by guest\Set-OutlookCrashDumps.ps1,
+                   full dumps of OUTLOOK.EXE and WINWORD.EXE, since 2026-10-04.
       7. REST    - optionally a checkpoint of a GREEN run (-GreenCheckpoint), then the resting
                    checkpoint restored, the settings staged on it, the guest SAVED and the lease
                    released - on every path, failures included, once the guest was touched.
@@ -100,6 +102,12 @@
 .PARAMETER SkipHubReset
     Skips step 9a. For a narrowed run only: the frontier test fails on a hub nobody rebuilt.
 
+.PARAMETER ProveCrashDumps
+    After arming the crash dumps, proves them once in the run's own conditions - session 1, NOT
+    elevated, as Outlook runs: guest\Set-OutlookCrashDumps.ps1 -Prove crashes a throwaway probe
+    program (never Outlook) and waits for its full dump. Recorded in the summary; a failed proof does
+    not stop the run. Once per guest is enough - runbook section 4.6.
+
 .PARAMETER SelfTest
     Checks the pure parts - the guest table, the filter, the lease decision, the TRX and console
     readers, the verdict table, summary.json's shape - and the constants against the files they
@@ -123,6 +131,7 @@ param(
     [Parameter(ParameterSetName = 'Run')] [string] $GreenCheckpoint = '',
     [Parameter(ParameterSetName = 'Run')] [switch] $RestOnGreen,
     [Parameter(ParameterSetName = 'Run')] [switch] $SkipHubReset,
+    [Parameter(ParameterSetName = 'Run')] [switch] $ProveCrashDumps,
     [Parameter(ParameterSetName = 'Run')] [string] $ResultsRoot,
     [Parameter(ParameterSetName = 'Run')] [string] $CredentialRepoRoot,
     [Parameter(ParameterSetName = 'Run')] [string] $SdkInstallerPath,
@@ -154,6 +163,11 @@ $GuestRoot = 'C:\OutlookAI-Q5'
 $GuestPayloadDir = 'C:\OutlookAI-Q5\g4-payload'
 $GuestRunsRoot = 'C:\OutlookAI-Q5\live-runs'
 $GuestSettingsPath = 'C:\OutlookAI-Q5\src\McpServer\OutlookAI.McpServer.Tests\live-fixtures\live-test-settings.json'
+# Where the guest's Windows Error Reporting writes a FULL dump of a crashing OUTLOOK.EXE (2026-10-04):
+# armed at every run by guest\Set-OutlookCrashDumps.ps1 - THIS checkout's copy, whatever commit is
+# tested, because the frozen checkpoints predate it - and fetched into dumps\ before the guest rests.
+$GuestDumpDir = 'C:\OutlookAI-Q5\crash-dumps'
+$CrashDumpScript = 'Set-OutlookCrashDumps.ps1'
 $SdkInstallerName = 'dotnet-sdk-10.0.401-win-x64.exe'
 $SdkSha512 = 'f0d8f8e7ec24efb05172a65dd80c4a9b1ef17efcebdbf0f57c15f436eea417960a7eeb6726c473a042373d6a8b94ac1adc7d680decbf7d2c45fa5c5662d62265'
 $FilterBase = 'Category=Live&Requires!=DelegateStore&Requires!=CachedExchange'
@@ -193,6 +207,47 @@ function Get-CrashEventsSince {
         $start = [DateTime]::SpecifyKind($parsed, [DateTimeKind]::Utc)
     }
     return $start.AddMinutes(-1).ToString('o')
+}
+
+# The guest's dump listing - "DUMP <bytes> <file name>" lines among whatever else the call printed - as
+# objects; Program is the name WER puts first ("OUTLOOK.EXE.4242.dmp" is OUTLOOK.EXE's).
+function ConvertFrom-DumpListing {
+    param([string] $Text)
+    foreach ($m in [regex]::Matches([string]$Text, '(?m)^DUMP (\d+) (\S.*?\.dmp)\s*$')) {
+        $name = $m.Groups[2].Value
+        $program = $name
+        $p = [regex]::Match($name, '^(.+?)\.\d+\.dmp$')
+        if ($p.Success) { $program = $p.Groups[1].Value }
+        [pscustomobject]@{ Name = $name; Bytes = [long]$m.Groups[1].Value; Program = $program }
+    }
+}
+
+# The first look at a dump, out of host\Read-CrashDump.ps1's report: the exception, where it struck, and the
+# top frames of the faulting thread - what summary.txt shows; the whole report sits beside the dump.
+function Get-DumpHeadline {
+    param([string] $Report, [int] $Frames = 8)
+    $out = New-Object System.Collections.Generic.List[string]
+    $lines = @(([string]$Report) -split "`r?`n")
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i].StartsWith('EXCEPTION  ')) {
+            $out.Add($lines[$i].Trim())
+            for ($j = $i + 1; $j -lt $lines.Count -and $lines[$j].StartsWith('           '); $j++) { $out.Add($lines[$j].Trim()) }
+        }
+        if ($lines[$i].StartsWith('STACK      ')) {
+            for ($j = $i + 1; $j -lt $lines.Count -and $j -le $i + $Frames -and $lines[$j] -match '^  \d\d  '; $j++) { $out.Add($lines[$j].Trim()) }
+        }
+    }
+    return $out.ToArray()
+}
+
+# The run's OUTLOOK.EXE crash count: the Application log's events, or the dumps WER wrote, whichever
+# says more - a dump is a crash even when its event was not found, and -1 (unreadable) stays -1 only
+# when no dump says otherwise.
+function Merge-CrashCount {
+    param([int] $Events, [object[]] $Dumps)
+    $outlook = @($Dumps | Where-Object { $_ -and ([string]$_.Program) -ieq 'OUTLOOK.EXE' }).Count
+    if ($Events -lt 0 -and $outlook -eq 0) { return -1 }
+    return [Math]::Max($Events, $outlook)
 }
 
 # What PREPARE does, by whether the start checkpoint is frozen (its time sync off, Q130 (a)). A frozen
@@ -376,7 +431,8 @@ function New-LiveRunSummary {
         [object] $SuiteExit,
         [System.Collections.IDictionary] $Checkpoints,
         [System.Collections.IDictionary] $Timings,
-        [string] $Results
+        [string] $Results,
+        [System.Collections.IDictionary] $CrashDumps
     )
     $suite = $null; $failed = @(); $skipped = @()
     if ($null -ne $Trx) { $suite = $Trx.Counts; $failed = @($Trx.Failed); $skipped = @($Trx.Skipped) }
@@ -401,6 +457,7 @@ function New-LiveRunSummary {
         artifacts      = [ordered]@{ sweepRan = $sweepRan; leftInAStore = $left; proven = ($sweepRan -and $null -ne $left -and $left -eq 0) }
         tripwire       = [ordered]@{ reported = ($null -ne $tripwire); failures = $tripwire }
         outlookCrashes = $crashValue
+        crashDumps     = $CrashDumps
         checkpoints    = $Checkpoints
         timings        = $Timings
         results        = $Results
@@ -543,6 +600,43 @@ function Invoke-SelfTest {
     Check 'the PROVED NOTHING lines are an array' $true ($json -match '"lines":\s*\[')
     Check 'the verdict, exit code and proofs round-trip' 'FAIL|1|True|True' @($back.verdict, $back.exitCode, $back.artifacts.proven, $back.tripwire.reported)
     Check 'durations read as minutes and seconds' '59 s|1 m 00 s|40 m 59 s' @((Format-Seconds 59.4), (Format-Seconds 60), (Format-Seconds 2459.9))
+    $withDump = New-LiveRunSummary -RunId 'r' -Verdict (Get-LiveVerdict '' '' $green $clean 1 0 $false) -Revision ([ordered]@{ sha = 'x' }) -Guest 'OutlookAI-Indexed' -Filter 'f' -Narrowed $true -Trx $green -Console $clean -Crashes 1 -SuiteExit 0 -Checkpoints ([ordered]@{}) -Timings ([ordered]@{}) -Results 'd' -CrashDumps ([ordered]@{ armed = $true; files = @([ordered]@{ name = 'OUTLOOK.EXE.4242.dmp'; fetched = $true }) })
+    $dumpJson = $withDump | ConvertTo-Json -Depth 8
+    Check 'one crash dump is still an array' $true ($dumpJson -match '"files":\s*\[')
+    Check 'and the dump state round-trips' 'True|OUTLOOK.EXE.4242.dmp' @(($dumpJson | ConvertFrom-Json).crashDumps.armed, @(($dumpJson | ConvertFrom-Json).crashDumps.files)[0].name)
+
+    Write-Host '== crash dumps =='
+    $d = @(ConvertFrom-DumpListing "WERFAULT-LEFT 0`r`nDUMP 1288490188 OUTLOOK.EXE.4242.dmp`r`nDUMP 52428800 WINWORD.EXE.17.dmp`r`nnoise DUMP 1 x.dmp`r`n")
+    Check 'the guest''s listing is read line by line, the program from the name' 'OUTLOOK.EXE.4242.dmp|1288490188|OUTLOOK.EXE|WINWORD.EXE' @($d[0].Name, $d[0].Bytes, $d[0].Program, $d[1].Program)
+    Check 'only whole DUMP lines count' 2 $d.Count
+    Check 'no listing is no dump' 0 @(ConvertFrom-DumpListing 'WERFAULT-LEFT 0').Count
+    Check 'an Outlook dump is a crash even when its event was not found' 1 (Merge-CrashCount 0 $d)
+    Check 'the events count when they say more' 3 (Merge-CrashCount 3 $d)
+    Check 'unreadable events with an Outlook dump are that dump' 1 (Merge-CrashCount -1 $d)
+    Check 'unreadable events and no dump stay unreadable' -1 (Merge-CrashCount -1 @())
+    Check 'a Word dump alone is no Outlook crash' 0 (Merge-CrashCount 0 @($d[1]))
+    $dumpScript = [System.IO.File]::ReadAllText((Join-Path $repo "Testbed\guest\$CrashDumpScript"))
+    Check 'the guest script''s default folder is the one fetched' $true $dumpScript.Contains("[string]   `$DumpFolder = '$GuestDumpDir'")
+    Check 'every run arms the dumps, with this checkout''s script' $true ($own.Contains("& '`$GuestRoot\`$CrashDumpScript' -Execute -DumpFolder '`$GuestDumpDir'") -and $own.Contains('Join-Path $PSScriptRoot "..\guest\$CrashDumpScript"'))
+    $sample = "CRASH DUMP x
+EXCEPTION  access violation (0xC0000005), flags 0x0, on thread 4242
+           at 0x00007FF8A1B2C3D4  wwlib.dll+0x7BA1A (fn wwlib.dll+0x7B900 +0x11A)
+           READING 0x0000000000000018 - a null (or near-null) pointer
+
+REGISTERS  x
+  rax 0x0
+
+STACK      the faulting thread
+  00  wwlib.dll+0x7BA1A (fn wwlib.dll+0x7B900 +0x11A)
+  01  combase.dll!CoTaskMemFree+0x10
+  02  ntdll.dll!RtlUserThreadStart+0x2C
+  (3 frame(s); end of stack)
+"
+    $hl = @(Get-DumpHeadline $sample 2)
+    Check 'the headline: the exception, where, how - and the top frames, no more than asked' 'access violation|wwlib.dll+0x7BA1A|READING|00  wwlib.dll+0x7BA1A|01  combase.dll!CoTaskMemFree+0x10|5' @($hl[0].Substring(11, 16), $hl[1].Substring(23, 17), $hl[2].Substring(0, 7), $hl[3].Substring(0, 21), $hl[4], $hl.Count)
+    Check 'a report with no exception has no headline' 0 @(Get-DumpHeadline 'DUMP x').Count
+    $fetchAt = $own.IndexOf('if ($suiteStarted) { Save-CrashDumps }')
+    Check 'the dumps are fetched before the guest rests - the restore wipes them' $true ($fetchAt -gt 0 -and $fetchAt -lt $own.IndexOf('Restore-Guest $restOn'))
 
     Write-Host '== the constants, against the files they copy =='
     $media = [System.IO.File]::ReadAllText((Join-Path $repo 'Testbed\MEDIA.md'))
@@ -648,6 +742,9 @@ Say "  results   $runDir"
 
 $timings = [ordered]@{}
 $checkpointActions = [ordered]@{ start = $Checkpoint; resting = $RestingCheckpoint; green = $null; restedOn = $null; settingsStaged = $false; saved = $false }
+$crashDumpState = [ordered]@{ armed = $false; proven = $null; guestFolder = $GuestDumpDir; fetched = $false; files = @() }
+$script:dumpsFound = @()
+$suiteStarted = $false
 $stage = ''
 $stageWhy = ''
 $trx = $null
@@ -704,6 +801,42 @@ function Invoke-Guest([string] $Name, [string] $Script, [int] $TimeoutSeconds, [
     [System.IO.File]::WriteAllText((Join-Path $runDir "guest\$Name.log"), $out)
     return $out
 }
+# The dumps WER wrote during the run, fetched into dumps\<guest>\ BEFORE the guest is restored - the
+# restore wipes them. Waits, bounded, for WerFault.exe to finish writing first. Once per run; never throws.
+function Save-CrashDumps {
+    if ($crashDumpState['fetched']) { return }
+    $crashDumpState['fetched'] = $true
+    try {
+        $list = "`$deadline = (Get-Date).AddSeconds(300); while ((Get-Date) -lt `$deadline -and @(Get-Process -Name WerFault -ErrorAction SilentlyContinue).Count -gt 0) { Start-Sleep -Seconds 3 }; `"WERFAULT-LEFT `$(@(Get-Process -Name WerFault -ErrorAction SilentlyContinue).Count)`"; Get-ChildItem -LiteralPath '$GuestDumpDir' -Filter '*.dmp' -File -ErrorAction SilentlyContinue | ForEach-Object { 'DUMP ' + `$_.Length + ' ' + `$_.Name }"
+        $o = Invoke-Guest 'crash-dumps-list' $list 600 -Session0
+        $script:dumpsFound = @(ConvertFrom-DumpListing $o)
+        if ($script:dumpsFound.Count -eq 0) { return }
+        $dest = Join-Path $runDir 'dumps'
+        # ps51-native-stderr-ok: a PowerShell script, not a program - every program it starts goes through its own Invoke-NativeCommand, under 'Continue' inside a try
+        & (Join-Path $PSScriptRoot 'Copy-FromGuest.ps1') -VMName $facts.Name -RepoRoot $CredentialRepoRoot -GuestPath $GuestDumpDir -Include '*.dmp' -Destination $dest -Force *>> (Join-Path $runDir 'fetch.log')
+        $files = @()
+        foreach ($d in $script:dumpsFound) {
+            $local = Join-Path (Join-Path $dest $facts.Name) $d.Name
+            $ok = (Test-Path -LiteralPath $local) -and ((Get-Item -LiteralPath $local).Length -eq $d.Bytes)
+            $entry = [ordered]@{ name = $d.Name; program = $d.Program; bytes = $d.Bytes; fetched = $ok; path = $local; report = $null; headline = @() }
+            if ($ok) {
+                # The first look, with nothing but Windows (host\Read-CrashDump.ps1): beside the dump, and its
+                # headline into the summary.
+                try {
+                    $reportPath = "$local.txt"
+                    $text = (& (Join-Path $PSScriptRoot 'Read-CrashDump.ps1') -Path $local -OutFile $reportPath | Out-String)
+                    $entry['report'] = $reportPath
+                    $entry['headline'] = @(Get-DumpHeadline $text)
+                }
+                catch { Say "reading $($d.Name) failed: $($_.Exception.Message)" }
+            }
+            $files += $entry
+        }
+        $crashDumpState['files'] = $files
+        Say "crash dumps: $($script:dumpsFound.Count) on the guest, $(@($files | Where-Object { $_['fetched'] }).Count) fetched to dumps\$($facts.Name)\"
+    }
+    catch { Say "fetching the crash dumps failed: $($_.Exception.Message)" }
+}
 function Get-TaskExit([string] $Text) {
     $m = [regex]::Match($Text, 'RUN-REGISTER-EXIT: (-?\d+)')
     if ($m.Success) { return [int]$m.Groups[1].Value }
@@ -714,6 +847,8 @@ try {
     # ---- BUILD: the commit's tree, its payloads and the guest's settings. The guest is untouched.
     $t0 = Get-Date
     try {
+        # No MSBuild node outlives this run's builds holding files of the tree, so it can be deleted after.
+        $env:MSBUILDDISABLENODEREUSE = '1'
         Invoke-NativeCommand { & git -C $repo worktree add --detach $tree $sha 2>&1 } | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "git worktree add failed ($LASTEXITCODE)" }
         # ps51-native-stderr-ok: a PowerShell script, not a program - every program it starts goes through its own Invoke-NativeCommand, under 'Continue' inside a try
@@ -755,7 +890,10 @@ try {
         $files = @((Join-Path $runDir 'payload\McpServer.zip'), (Join-Path $runDir 'payload\Tools.zip'), (Join-Path $runDir 'livetier\Source.zip'), (Join-Path $runDir 'livetier\NuGet.zip'), (Join-Path $runDir 'live-test-settings.json'))
         # ps51-native-stderr-ok: a PowerShell script, not a program - every program it starts goes through its own Invoke-NativeCommand, under 'Continue' inside a try
         & (Join-Path $PSScriptRoot 'Copy-ToGuest.ps1') -VMName $facts.Name -RepoRoot $CredentialRepoRoot -Path $files -Destination $GuestPayloadDir *> (Join-Path $runDir 'copy.log')
-        $guestScripts = @(Get-ChildItem -LiteralPath (Join-Path $tree 'Testbed\guest') -File | ForEach-Object { $_.FullName })
+        # The commit's guest scripts - but the crash-dump arming is THIS checkout's, whatever commit is
+        # tested, so an older commit (a bisection) is dumped the same way.
+        $guestScripts = @(Get-ChildItem -LiteralPath (Join-Path $tree 'Testbed\guest') -File | Where-Object { $_.Name -ne $CrashDumpScript } | ForEach-Object { $_.FullName })
+        $guestScripts += [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\guest\$CrashDumpScript"))
         # ps51-native-stderr-ok: a PowerShell script, not a program - every program it starts goes through its own Invoke-NativeCommand, under 'Continue' inside a try
         & (Join-Path $PSScriptRoot 'Copy-ToGuest.ps1') -VMName $facts.Name -RepoRoot $CredentialRepoRoot -Path $guestScripts -Destination $GuestRoot *>> (Join-Path $runDir 'copy.log')
         $swap = @"
@@ -773,6 +911,17 @@ Copy-Item -LiteralPath '$GuestPayloadDir\live-test-settings.json' -Destination '
 "@
         $o = Invoke-Guest 'swap' $swap 900 -Session0
         if ($o -notmatch 'SWAP-DONE') { throw 'the payload swap did not finish - guest\swap.log' }
+        # Crash dumps: armed after the restore, on every run. A guest that cannot be armed is still
+        # tested - the dump is evidence, not a verdict - and the summary says it was not armed.
+        $o = Invoke-Guest 'crash-dumps-arm' "& '$GuestRoot\$CrashDumpScript' -Execute -DumpFolder '$GuestDumpDir'; `"DUMPS-EXIT `$LASTEXITCODE`"" 300 -Session0
+        $crashDumpState['armed'] = ($o -match 'VERDICT: ARMED' -and $o -match 'DUMPS-EXIT 0')
+        if ($crashDumpState['armed']) { Say "crash dumps armed: a crashing OUTLOOK.EXE leaves a full dump in $GuestDumpDir" }
+        else { Say 'NOTE      crash dumps NOT armed - guest\crash-dumps-arm.log; the run goes on without them' }
+        if ($ProveCrashDumps -and $crashDumpState['armed']) {
+            $o = Invoke-Guest 'crash-dumps-prove' "& '$GuestRoot\$CrashDumpScript' -Prove -DumpFolder '$GuestDumpDir'; exit `$LASTEXITCODE" 600
+            $crashDumpState['proven'] = ($o -match 'VERDICT: PROVEN')
+            Say "crash dumps proven: $($crashDumpState['proven']) - guest\crash-dumps-prove.log"
+        }
         $o = Invoke-Guest 'sdk-execute' "Set-Location '$GuestRoot'; & .\Install-DotnetSdk.ps1 -ExpectedSha512 '$SdkSha512' -Execute; `"SDK-EXECUTE-EXIT `$LASTEXITCODE`"" 1800 -Session0
         if ($o -notmatch 'SDK-EXECUTE-EXIT 0') { throw 'Install-DotnetSdk.ps1 -Execute failed - guest\sdk-execute.log' }
         $o = Invoke-Guest 'sdk-verify' "Set-Location '$GuestRoot'; & .\Install-DotnetSdk.ps1 -Verify; `"SDK-VERIFY-EXIT `$LASTEXITCODE`"" 1800 -Session0
@@ -827,6 +976,7 @@ exit `$LASTEXITCODE
     $guestRunStartUtc = ''
     try { $guestRunStartUtc = [string](Invoke-Command -VMName $facts.Name -Credential $credential -ErrorAction Stop -ScriptBlock { [DateTime]::UtcNow.ToString('o') }) }
     catch { Say "  (the guest's clock could not be read before the suite - the crash count falls back to the host's: $($_.Exception.Message))" }
+    $suiteStarted = $true
     $o = Invoke-Guest 'live' $liveScript ($RunTimeoutMinutes * 60)
     $suiteExit = Get-TaskExit $o
     $suiteSeconds = ((Get-Date) - $t0).TotalSeconds
@@ -847,6 +997,8 @@ exit `$LASTEXITCODE
     $o = Invoke-Guest 'crash-events' "`$s = ([datetime]'$since').ToLocalTime(); `$e = @(Get-WinEvent -FilterHashtable @{ LogName = 'Application'; StartTime = `$s; Id = 1000 } -ErrorAction SilentlyContinue | Where-Object { `$_.Message -match 'OUTLOOK\.EXE' }); `"CRASHES `$(`$e.Count)`"; `$e | ForEach-Object { `$_.TimeCreated.ToString('o') + ' ' + ((`$_.Message -split [char]10 | Select-Object -First 4) -join ' | ') }" 300 -Session0
     $cm = [regex]::Match($o, 'CRASHES (\d+)')
     if ($cm.Success) { $crashes = [int]$cm.Groups[1].Value }
+    Save-CrashDumps
+    $crashes = Merge-CrashCount $crashes $script:dumpsFound
     if ($suiteSeconds -ge ($RunTimeoutMinutes * 60 - 60)) { $stage = 'INFRA'; $stageWhy = "the suite did not finish within $RunTimeoutMinutes minutes" }
 
     # ---- GREEN CHECKPOINT, when asked and earned.
@@ -872,6 +1024,8 @@ finally {
         $mayTouch = $true
         try { Use-Lease 30 } catch { $mayTouch = $false; Say "NOT resting the guest: $($_.Exception.Message)" }
         if ($mayTouch) {
+            # A run that stopped after the suite started still keeps what WER wrote.
+            if ($suiteStarted) { Save-CrashDumps }
             $restOn = $RestingCheckpoint
             if ($RestOnGreen -and $checkpointActions['green']) { $restOn = $GreenCheckpoint }
             try {
@@ -905,6 +1059,13 @@ finally {
     catch { Say "releasing the lease failed: $($_.Exception.Message)" }
     if (Test-Path -LiteralPath $tree) {
         Invoke-NativeCommand { & git -C $repo worktree remove --force $tree 2>&1 } | Out-Null
+        # Measured 2026-10-04: git unregisters the tree but leaves its directory - about 180 MB of build
+        # output a run - on every run (and on every run of the agent before). What it left goes here.
+        if (Test-Path -LiteralPath $tree) {
+            Remove-Item -LiteralPath $tree -Recurse -Force -ErrorAction SilentlyContinue
+            Invoke-NativeCommand { & git -C $repo worktree prune 2>&1 } | Out-Null
+            if (Test-Path -LiteralPath $tree) { Say "NOTE      the commit's build tree could not be deleted: $tree" }
+        }
     }
     # The payloads are the commit's, rebuilt by any later run; only what the run found is kept.
     foreach ($built in 'payload', 'livetier') {
@@ -916,7 +1077,7 @@ finally {
 # ---- REPORT.
 $verdict = Get-LiveVerdict $stage $stageWhy $trx $consoleFacts $crashes $suiteExit $narrowed
 $timings['total'] = Format-Seconds ((Get-Date) - $started).TotalSeconds
-$summary = New-LiveRunSummary -RunId $runId -Verdict $verdict -Revision $revision -Guest $facts.Name -Filter $runFilter -Narrowed $narrowed -Trx $trx -Console $consoleFacts -Crashes $crashes -SuiteExit $suiteExit -Checkpoints $checkpointActions -Timings $timings -Results $runDir
+$summary = New-LiveRunSummary -RunId $runId -Verdict $verdict -Revision $revision -Guest $facts.Name -Filter $runFilter -Narrowed $narrowed -Trx $trx -Console $consoleFacts -Crashes $crashes -SuiteExit $suiteExit -Checkpoints $checkpointActions -Timings $timings -Results $runDir -CrashDumps $crashDumpState
 [System.IO.File]::WriteAllText((Join-Path $runDir 'summary.json'), ($summary | ConvertTo-Json -Depth 8))
 
 $lines = New-Object System.Collections.Generic.List[string]
@@ -942,7 +1103,14 @@ if ($null -ne $consoleFacts) {
 }
 $crashText = 'could not be read'
 if ($crashes -ge 0) { $crashText = [string]$crashes }
-$lines.Add("outlook    crashes during the run: $crashText")
+$dumpText = 'NOT armed'
+if ($crashDumpState['armed']) { $dumpText = 'armed' }
+$dumpList = @($crashDumpState['files'])
+if ($dumpList.Count -gt 0) {
+    $dumpText += ", $(@($dumpList | Where-Object { $_['fetched'] }).Count) of $($dumpList.Count) fetched: " + (($dumpList | ForEach-Object { "dumps\$($facts.Name)\$($_['name']) ($([math]::Round($_['bytes'] / 1MB)) MB)" }) -join ', ')
+}
+elseif ($crashDumpState['armed']) { $dumpText += ', none written' }
+$lines.Add("outlook    crashes during the run: $crashText; crash dumps: $dumpText")
 $endLine = "guest end  rested on $($checkpointActions['restedOn']); settings staged=$($checkpointActions['settingsStaged']); saved=$($checkpointActions['saved'])"
 if ($checkpointActions['green']) { $endLine += "; green checkpoint $($checkpointActions['green'])" }
 $lines.Add($endLine)
@@ -950,6 +1118,13 @@ $lines.Add("time       $(($timings.Keys | ForEach-Object { "$_ $($timings[$_])" 
 if ($null -ne $trx -and @($trx.Failed).Count -gt 0) {
     $lines.Add(''); $lines.Add('FAILED TESTS')
     foreach ($f in $trx.Failed) { $lines.Add("  $($f.name)"); $lines.Add("      $($f.message)") }
+}
+if ($dumpList.Count -gt 0) {
+    $lines.Add(''); $lines.Add('CRASH DUMPS - the first look (host\Read-CrashDump.ps1); the whole report is beside each dump, <dump>.txt')
+    foreach ($dl in $dumpList) {
+        $lines.Add("  $($dl['name'])")
+        foreach ($h in @($dl['headline'])) { if ($h) { $lines.Add("      $h") } }
+    }
 }
 if ($null -ne $consoleFacts -and @($consoleFacts.ProvedNothing).Count -gt 0) {
     $lines.Add(''); $lines.Add('PROVED NOTHING')

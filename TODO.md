@@ -1,14 +1,13 @@
 # TODO
 
-- [ ] **Make the test guests keep a crash dump of `OUTLOOK.EXE`, then find what crashed it inside Word**
-  (seen once, 2026-10-03, `OutlookAI-Indexed`, runbook 4.2f run 4; `QUESTIONS.md` decision log, the
-  indexed guest's first live runs, item 7). `wwlib.dll`, `0xc0000005`, during
-  `LiveDraftOptionsTests.NewDraft_Hub_SignatureOverride_BodyAboveTheSignature_OutsideTheSignatureBookmark`,
-  in one of five full runs; the same commit passed the next run. The guests keep no dump, so there is
-  nothing to read. Directions: (1) Windows Error Reporting's `LocalDumps` key for `OUTLOOK.EXE` on both
-  guests (a full dump into a guest folder the runner fetches with the results), then wait for the next
-  crash; (2) loop the draft-options class on a guest until it reproduces; (3) review Word's threading in
-  the signature path without a fault site. Recommended: (1).
+- [ ] **Read the next `wwlib.dll` crash's dump, if there is one, and say whether it was the compose crash**
+  (runbook 4.6, item 8). OUTLOOK.EXE died once in Word on `OutlookAI-Indexed` (4.2f run 4, 2026-10-03), in
+  `NewDraft_Hub_SignatureOverride`, before the guests kept dumps. Every crash caught since was
+  `OLMAPI32.DLL+0x2E411` in the compose inspector's close that `c4595b1` removed, and the Word crash struck in
+  that same compose - so it is most likely the same fault, but that is inferred. Nothing to do unless it comes
+  back: the runner now fetches and reads every dump. Directions: (1) wait for one; (2) run the compose
+  classes in a loop on the indexed guest until one appears or 30 runs pass clean. Recommended: (1).
+
 - [ ] **Find out why `LiveMoveArchiveTests.MoveChain` could not resolve the hub's new Archive folder
   on a guest that was not restarted** (seen once, 2026-10-03, `OutlookAI-Indexed`; `QUESTIONS.md`
   decision log, the indexed guest's first live runs, item 6). `archive_mail` created the hub's
@@ -83,21 +82,6 @@
   days, and he asked to be reminded after 48 hours. Until it exists, the six `Requires=DelegateStore`
   Exchange tests stay disabled on the Exchange test VM. Once it does: enable them there, and move
   test writes from telefonie into the shared mailbox wherever a test allows it (Q110).
-
-- [ ] **Find what crashes OUTLOOK.EXE in the compose tests on master - twice on 2026-10-03.** The
-  first live run from guest two's frozen checkpoint (`Docs/live-tier-on-the-vm.md` section 4.5, run 1:
-  `OLMAPI32.DLL`, `0xc0000005`, 3.5 minutes in, then 25 compose tests failing on `RPC server is
-  unavailable`) and the runner's run of the same hour on guest one on the real clock
-  (`20261003-202603-indexed-dc1b5c5d51cd`, section 4.2f: three `LiveDraftOptionsTests` failing the same
-  way). The next run from the same frozen checkpoint was green, 79 of 79, so it is intermittent, and it
-  is not the clock: later the same evening `af3ba68` failed the same way through the runner from the
-  frozen checkpoint, then passed 81 of 81 from it and 81 of 81 on the real clock from the same disk state,
-  and guest one failed once frozen and then passed 127 of 127 (section 4.5 has the runs). Section 4.1e's
-  crashes were heap damage from COM children left unreleased (`9664aa0`).
-  Directions: (1) count it - the frozen checkpoints make every run start identical, so N runs of the
-  compose collection alone give a rate; (2) bisect `fd2c58b` (80 of 80 three times) to `af1fd3f` with
-  that rate; (3) a crash dump - excluded: no debugger on the guests (Dependencies). Recommended: (1),
-  then (2) if the rate is high enough to bisect on.
 
 - [ ] **Approve, amend or refuse the Exchange VM's Phase 2 write-safety design** (proposed
   2026-10-03, `Docs/live-tier-on-the-vm.md` section 4.4). Until then `OutlookAI-Exchange` is

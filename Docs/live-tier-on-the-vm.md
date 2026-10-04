@@ -3548,7 +3548,7 @@ offset: 0x000000000007ba1a` - and the next two tests of the class failed on `0x8
 drives captures and releases every Word object it touches. Run 5, the same commit from the same
 checkpoint, did not crash. One crash in five full runs here, none in the guest-two runs since the
 release fix; no dump was written (the guests do not keep any), which is the first thing to change
-(`TODO.md`).
+(`TODO.md`). *They keep full dumps since 2026-10-04 - section 4.6.*
 
 **Green, and where guest one rests.** Run 5 is the indexed guest green on the merged master: 122 of 122,
 artifacts 0, census 0 failures, no crash. Its checkpoint:
@@ -3921,7 +3921,7 @@ from the same disk state (Y); on guest one one frozen run failed and the next wa
 master on guest one on the real clock with the hub rebuilt, the same hour (`20261003-202603-indexed-dc1b5c5d51cd`,
 section 4.2f), failed the same way with an OUTLOOK.EXE crash. In every failing run Outlook went away mid-compose; in
 run 1 the guest's log recorded the crash (`OLMAPI32.DLL`, `0xc0000005`). Neither host load nor the runner separates
-the failing runs from the green ones. Its rate is not measured; `TODO.md` carries it.
+the failing runs from the green ones. *Its rate, its cause and its fix are section 4.6 (2026-10-04).*
 
 **Two things the first runner runs taught, both fixed here.** (1) On a frozen guest the runner's crash count was
 blind: it searched the guest's Application log from the HOST's clock, hours ahead of every event the guest wrote -
@@ -3944,6 +3944,135 @@ of its items on every run - and, only where no corpus is declared, the last 30 d
 (`T2/LiveDataWindow.cs`; `T1/LiveDataWindowTests` pins both branches, the 24,596, and from the compiled IL that the
 test computes no window of its own). On a frozen guest the two coincide; on a real clock the test now keeps timing
 a date predicate over the big store after 2026-11-01.
+
+### 4.6 Crash dumps, and the compose crash they caught - both Outlook guests, 2026-10-04
+
+**Why this section exists.** OUTLOOK.EXE died now and then in the compose tests on both guests - `wwlib.dll`
+once on guest one (4.2f, run 4), `OLMAPI32.DLL` on guest two (4.5 run 1; 4.1e's E3 and run 9 at `0x2E411`),
+and other runs lost Outlook mid-compose ("RPC server is unavailable") - and the guests kept no dump, so
+there was nothing to read. Raw material: `.work\crash-repro\` and `.work\guest-live-runs\` of the agent
+worktree `a467ede5` - every run's `summary.txt` and the report beside each of its 32 dumps (`<dump>.txt`). Three dumps
+are kept whole - the first from master's compose runs (`20261004-011320-indexed-...`), the first soak's
+(`20261004-013517-unindexed-...`) and the `MailItem.Close` variant's (`20261004-041412-unindexed-...`); the other 29,
+about 1 GB each, were deleted for disk space once read.
+
+**1. The guests keep full dumps now.** `Testbed/guest/Set-OutlookCrashDumps.ps1` writes Windows Error
+Reporting's `LocalDumps` key for `OUTLOOK.EXE` and `WINWORD.EXE` - `DumpType` 2 (full), `DumpCount` 10 -
+into `C:\OutlookAI-Q5\crash-dumps`, Authenticated Users Modify, because Outlook runs NOT elevated and a
+filtered token cannot write where only administrators may. Nothing is installed. `Invoke-LiveTierOnGuest.ps1`
+runs it after every restore with its own checkout's copy - no checkpoint changed, so the frozen instants of
+4.5 and their T1 pins stand - fetches every dump into `dumps\<guest>\` before the guest rests, counts an
+Outlook dump as a crash even when its event was missed, and puts `host/Read-CrashDump.ps1`'s first look into
+`summary.txt`. Proved on both guests (`-ProveCrashDumps`): a throwaway copy of `rundll32.exe`, crashed on
+`DebugBreak` in session 1 NOT elevated, as Outlook runs, left a 30 MB full dump within seconds. Outlook's
+own dumps are about 1 GB (989 MB the first); every one of the 30 taken here was fetched and read.
+
+**2. Reading them with what ships with Windows.** `host/Read-CrashDump.ps1` parses the minidump itself and
+unwinds the faulting thread with `dbghelp.dll`'s `StackWalk64`, fed the dump's memory and each module's
+`.pdata`; a frame is named `module!export+0xN` when its function is exported, else module, offset and the
+start of its function. Checked first on a dump of a running `PING.EXE` on the host: every thread unwound to
+`RtlUserThreadStart`, the export names right. Office has no exports for most of itself and no RTTI, and
+Microsoft's symbol server publishes no PDB for this build (404 for `outlook.pdb` and `olmapi32.pdb` by their
+GUIDs, while Windows' `combase.pdb` answered) - so Office frames stay module and offset, and what follows was
+read off the dump's memory: the faulting code's bytes, the objects it touched, and the stack arguments of the
+COM call in progress. No debugger was needed (QUESTIONS.md, decision of 2026-10-04, item 2).
+
+**3. What every dump says** - 30 of 30, both guests, the master build and every variant below:
+
+* `access violation (0xC0000005)` READING address 0 at `OLMAPI32.DLL+0x2E411`, on Outlook's MAIN thread.
+* The faulting function (`OLMAPI32+0x2E3F8`) resets a holder - `if (m0) { m8->Release(); m8 = 0; ...;
+  m0 = 0; }` - whose `m0` was `0x40000` and whose `m8` was NULL: its own invariant broken. The holder sits at
+  `+0xA0` of an OLMAPI32 object whose `Release` (stack frame 3) is destroying it, beside the string
+  `\REGISTRY\USER\<SID>\Software\Policies\Microsoft\Office\`; another object of the class, with the same
+  string, lay destroyed cleanly in the heap.
+* The destruction is reached from an INCOMING COM call: the message loop, `combase!CStdStubBuffer_Invoke`,
+  `rpcrt4!NdrStubCall2`, oleaut32, then `OUTLOOK.EXE+0x207C60` - which sits in slot 6, `IDispatch::Invoke`,
+  of dozens of Outlook's vtables - then a shared `Release` and some 25 Outlook frames into OLMAPI32.
+* The call: that `Invoke` frame's stack arguments read `wFlags` 3 (a method) and one argument, `VT_I4` 0.
+  In `new_draft` that is one call - `Inspector.Close(0)`, olSave, on the hidden compose inspector of the
+  item `Items.Add` had just returned - and the tests' own error, "a draft may have been saved", is raised only
+  past that point. A variant that closed with `Close(1)` crashed with `VT_I4` 1 (item 5).
+
+So the COM objects involved: the hidden compose inspector of a just-created mail item, its close, and an
+Office-policy watcher in OLMAPI32 that the teardown destroys half-built. The fault is inside Outlook.
+
+**4. Reproducing it.** The compose classes alone - the 36 tests of `LiveUpdateDiscardTests`,
+`LiveHtmlDraftTests`, `LiveDraftOptionsTests`, `LiveDraftTests`, `LiveHeadlessComposeParityTests`,
+`LiveSignatureTests`, `Phase4LiveMcpToolShapeTests` and `LiveHeadlessGuaranteeTests`, the runner's
+`-FilterSuffix '&(FullyQualifiedName~...|...)'` - on master `9d2cb8c`: guest one crashed in 2 runs of 10,
+guest two in none of 4; guest two's full tier in none of 3. A scratch soak test, never merged (QUESTIONS.md,
+item 5): a `LivePhase4Fixture` class whose one test runs `new_draft` with a signature override 400 times on the
+hub, revises every second draft with `update_draft` and deletes each through `LiveOutlookTestMailer`, run with
+`-FilterSuffix '&FullyQualifiedName~LiveComposeSoakTests'` from a commit built outside the branch. It crashed
+after 64 iterations on guest one and after 37, 17 and 49 on guest two: 4 crashes in 171 new drafts, about one in 40.
+
+**5. What it is not** - each a scratch variant of the compose, run in the same soak:
+
+| Variant | Iterations to the crash, each run |
+| --- | --- |
+| the build as it was | 64; 37, 17, 49 |
+| the Word document released before the close | 26, 164 |
+| a 250 ms pumped wait before the close | 52, 244 |
+| a 2 s pumped wait before it | 237 |
+| OutlookAI's add-in disconnected first (`COMAddIns('OutlookAI').Connect = False`, read back False) | 70, 4 |
+| `CurrentItem.Save` and `Close(olDiscard)` instead of `Close(olSave)` | 13, 25, 7 - in `Close(1)` |
+| the editor promoted first (park, `Activate`, pumped settle), as update_draft does | 59, 40 |
+| the item saved before its inspector was opened | 18, 39 |
+| no signature override | 73, 16 |
+| no signature override and no picture embedding | 49, 126 |
+| no `SendUsingAccount` | 121, 56 |
+| the `Items` collection released right after `Add` | 46, 36 |
+| the inspector used only for Outlook's own signature injection, closed with no Word work in it | 24, 28 |
+| the same, ended by `MailItem.Close(olDiscard)` instead of the inspector's close | 308, and the second run - in `MailItem.Close(1)` |
+| `update_draft` alone, 400 revisions of one draft (an item opened by EntryID) | none in 400 |
+| saved, released, re-opened by EntryID, and revised the update_draft way | none in 4 runs of 400 |
+
+A plain re-open followed by the old compose also never crashed (2 runs of 400), but it committed nothing - 400
+bodies of 400 missing - because a saved draft's hidden inspector edits nothing without the update_draft path,
+as `ReviseHeldDocument`'s notes say. So: closing an inspector that was ever opened on the object a creator
+returned - whatever was done in it - crashes Outlook about once in 40; an inspector on an item opened by
+EntryID never did. Why the policy watcher is half-built is Outlook's to answer; OutlookAI's part is never to
+hand it that close.
+
+**6. The fix** (`c4595b1`, `c31a9d9`). `new_draft`, `reply_draft`, `replyall_draft` and `forward_draft` never
+open an inspector on the object `Items.Add`, `Reply`, `ReplyAll` or `Forward` returned. `ComposeReopened`
+saves it as it stands, re-opens it by EntryID, releases the original, and composes through
+`ReviseHeldDocument` - the update_draft path: one held inspector, the editor promoted, the signature and body
+placed in Word, `CurrentItem.Save`, `Close(olDiscard)`; the HTML splice stays the fallback. The old in-place
+compose and `CloseHiddenInspector` are gone. One behaviour had to move with it: Outlook injects an account's
+default signature only into an inspector on the creator's object, so `ComposeReopened` inserts the account's
+configured default itself - the profile's "New Signature" or "Reply-Forward Signature", in Outlook's default
+profile, as `list_signatures` reads them - only when the agent named no signature and Outlook injected none
+(QUESTIONS.md, item 4). `T1/ComposeOnReopenedDraftTests` pins it from the sources: no creator does inspector
+work, `ComposeReopened` releases the creator's object before the revision and hands the revision the re-opened
+item, and inspectors are opened only in `ReviseHeldDocument` and `TryApplySignatureOverrideToDraft`, on items
+opened by EntryID.
+*The trade-off:* a re-opened draft's hidden inspector edits nothing until it is activated, so new drafts now take
+update_draft's editor promotion - the window parked off-screen, `Activate`, anything shown hidden again - on a
+windowed Outlook too, where D49's compose left a windowed Outlook's windows alone. Nothing reaches the screen
+(`LiveHeadlessComposeParityTests` and `LiveHeadlessGuaranteeTests` pass), and update_draft has always done this.
+
+**7. After** - `c31a9d9` (`c4595b1` where named), the same guests, the same frozen starts:
+
+| What | Before (`9d2cb8c`) | After |
+| --- | --- | --- |
+| The soak, 400 new drafts a run | 4 crashes in 171 drafts (4 runs) | none in 2,400 - 4 runs of 400 on `c31a9d9`, 2 on `c4595b1`; 0 bodies missing |
+| The compose classes (36 tests) | guest one 2 crashes in 10 runs, guest two 0 in 4 | 36 of 36 in 10 runs of 10 on each guest, no crash |
+| The full tier | guest two 81 of 81 in 3 runs of 3 | guest one 127 of 127 in 2 runs of 2, guest two 81 of 81 in 2 runs of 2, no crash |
+
+Had the rate stayed at 4 in 171, 2,400 clean drafts would have had a probability of about 10^-25; at the lowest
+rate any crashing variant showed (one in 309), about 0.04 %. The suite-level comparison alone would not prove it
+(two crashes in 14 runs against none in 20); the soak does. The business-account signature test
+(`NewDraft_BusinessAccounts_BodyAboveTheirOwnIntactHtmlSignature`) failed on `c4595b1` - the re-opened draft gets
+no signature from Outlook - and passes on `c31a9d9`, which inserts it (item 6).
+
+**8. What stays open.** The `wwlib.dll` crash of 4.2f run 4 was never caught in a dump. It struck in
+`NewDraft_Hub_SignatureOverride`, inside the compose this replaced, so it is most likely the same close
+reaching Word's teardown first - inferred, not observed; every dump here was `OLMAPI32+0x2E411`, and the
+guests now keep the next one. `TODO.md` carries it. The default-signature insertion reads the default
+profile's settings: a signature Outlook would pick by other means - roaming signatures in an Exchange Online
+mailbox, a Group Policy MailSettings value - or an Outlook running on another profile was not measured, and
+no guest has one.
 
 ---
 ## 5. Which tests are in which bucket, and how to find out
