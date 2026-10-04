@@ -1,0 +1,46 @@
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <!--
+    THE .NET SDK'S SECURITY ANALYSERS, FOR THE TWO OLD-STYLE PROJECTS - OutlookAI.csproj and
+    PolicyWriter\OutlookAI.PolicyWriter.csproj, which both import this file. Decided by the
+    maintainer 2026-10-03 (Q125 (b)): with the GitHub CI went CodeQL's scan, so the builds run the
+    security analysers that ship with the .NET SDK instead. The MCP server's projects get the same
+    rules, at the same level, from McpServer\Directory.Build.props; this is the add-in's way to them.
+
+    WHY AN SDK IMPORT AND NOT A PACKAGE. The analysers are part of the .NET SDK
+    (<sdk>\Sdks\Microsoft.NET.Sdk\analyzers), which is where an SDK-style project takes them from.
+    These two projects are not SDK-style, and both build scripts run MSBuild with no restore step
+    (PolicyWriter's project file says why), so a PackageReference would never resolve - and a package
+    is a download this needs no more than the Dependencies rule wants it. The import at the bottom
+    asks Visual Studio's MSBuild to resolve Microsoft.NET.Sdk - the SDK the MCP server builds with,
+    found the same way - and imports that SDK's own analyser targets, so these projects run the
+    SDK's analysers from the SDK's own rule-set files. Measured 2026-10-04: Visual Studio 18.10.3
+    (Roslyn 5.10) with SDK 10.0.401, on a scratch project first and then on the add-in itself.
+
+    THE LEVEL, 10.0-all (the same in McpServer\Directory.Build.props): every rule in the Security
+    category that .NET 10's analysers ship, and only that category.
+      * all, not the default or "recommended": the default runs almost none of them, and
+        "recommended" leaves out the injection, deserialisation and DLL-search rules (CA2100,
+        CA3001-CA3012, CA2300-CA2362, CA5392), the ones a code scan exists for. "all" found 78
+        sites in the MCP server's projects when it was switched on - 71 of them one rule, CA5392 -
+        and one more in the add-in: a list one person can triage, not a flood.
+      * Security only: "all" in every category is thousands of style and design findings, and it
+        would bury the few that matter. That is not what Q125 asked for.
+      * pinned at 10.0, not "latest": an SDK update must not change the rule set under a build
+        that passed. A newer level is a deliberate edit of this number and of the props file.
+    Every finding is an ERROR. These two projects do not otherwise treat warnings as errors, and a
+    finding that only warns in a scripted build is one nobody reads - so
+    CodeAnalysisTreatWarningsAsErrors makes the SDK pick its "_warnaserror" rule-set files.
+    A real finding is fixed. A false positive is suppressed AT ITS SITE, with
+    [SuppressMessage("Security", "CAxxxx:...", Justification = "<why it is safe>")] - never here,
+    never by rule, and never without the reason.
+
+    Imported AFTER Microsoft.CSharp.targets: the SDK's file reads $(Language), which that sets.
+    Visual Studio's own builds read it too, so F5 shows the same findings.
+  -->
+  <PropertyGroup>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <AnalysisLevelSecurity>10.0-all</AnalysisLevelSecurity>
+    <CodeAnalysisTreatWarningsAsErrors>true</CodeAnalysisTreatWarningsAsErrors>
+  </PropertyGroup>
+  <Import Project="..\targets\Microsoft.NET.Sdk.Analyzers.targets" Sdk="Microsoft.NET.Sdk" />
+</Project>

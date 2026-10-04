@@ -178,6 +178,29 @@ its mailbox tests on, and change nothing you install.
   faulting thread's call stack and the classes of the objects that thread was handling. Nothing is
   installed on the machines and no checkpoint changed.
 
+- 📦 **A release runs CodeQL's C# security queries and a check for vulnerable NuGet packages (Q125).**
+  They take the place of the CodeQL scan and the dependency review that ran on GitHub until
+  2026-10-03, as step 7 of `Tools/Publish-Release.ps1`, and each also runs on its own.
+  `Tools/Invoke-CodeQL.ps1` fetches CodeQL 2.27.1, held to the SHA-256 GitHub publishes for it, and
+  runs every C# security query over the commit; a result fails the release unless it is triaged,
+  with its reason, in `Tools/codeql-accepted.json`. CodeQL is free but not open source, so
+  `AGENTS.md` records it as a third exception to the Dependencies rule, with what its licence
+  allows: this repository, while it is open source and on GitHub.com.
+  `Tools/Test-VulnerablePackages.ps1` asks nuget.org about every package of the server's projects,
+  direct or brought in by another, and a run that could not ask fails too. The first runs found
+  nothing: no CodeQL result in 432 C# files, and no known-vulnerable package in six projects.
+
+- ✅ **Every build runs the .NET SDK's security analysers, and any finding fails the build (Q125).**
+  GitHub's CI went on 2026-10-03, and the CodeQL scan with it; the maintainer chose the analysers
+  that ship with the .NET SDK in its place. Every rule in their Security category that .NET 10
+  ships runs as an error: in the MCP server's projects through `McpServer/Directory.Build.props`,
+  and in the add-in and its helper through `NetSecurityAnalyzers.targets`, which imports the SDK's
+  own analyser files into the two old-style projects. Switched on, they found 78 places in the
+  server and one in the add-in. The DLL search (CA5392) is fixed, under Security. The rest were
+  judged safe and are suppressed where they stand, each with its reason: the search index's SQL
+  (CA2100), MD5 and a fixed-seed random in two tests (CA5351, CA5394), and the updater's TLS 1.2
+  (CA5386), where the analysers' own fix was measured to stop update checks reaching GitHub.
+
 - ✅ **A one-call runner runs the live tests on the two test machines.**
   It builds the chosen commit, waits its turn for the machine, prepares it, runs the tests the safe
   way, reads the suite's own safety checks as part of the verdict, and always puts the machine back
@@ -1007,6 +1030,19 @@ its mailbox tests on, and change nothing you install.
   so OutlookAI now adds it itself: the signature the account is set to use for new messages, or for
   replies and forwards, in Outlook's default profile - the settings list_signatures shows. A signature
   you name for the draft still replaces it.
+
+- 🐛 **The mail server no longer uses CPU when files change in a Claude Code project folder.**
+  Claude Code starts its own copy of the server for every session, in the session's project folder,
+  and each copy watched that folder and everything under it for a settings file the server never
+  reads. Every file created, changed or deleted there cost each copy some CPU, and every renamed
+  folder a walk of everything in it: on the maintainer's machine one copy used up to 0.9 of a core
+  and 3,000 to 4,900 CPU-seconds, and all of them together 2.39 cores in a two-minute trace while
+  the machine lagged. The server now keeps to its own folder and watches no file at all. Creating,
+  changing and deleting 1,000 files and renaming a 1,000-file folder ten times cost the old server
+  3.5 to 4.0 CPU-seconds and costs the new one nothing Windows can measure. The tests now start the
+  server in a scratch folder the way Claude Code does, and fail if file activity there costs it
+  CPU. A session already running keeps its old server until OutlookAI is updated and the session
+  is restarted.
 
 - 🐛 **A search of a mailbox or folder no longer returns the folders themselves as results.**
   Where Windows Search indexes the mailbox, a search with no search words listed one "hit" for every
@@ -2071,6 +2107,16 @@ its mailbox tests on, and change nothing you install.
   would be worse than a gap.
 
 ### Security
+
+- 🔒 **The add-in, its elevated helper and the MCP server load Windows DLLs only from System32.**
+  Each of their P/Invoke declarations names a Windows DLL by file name alone, and Windows looked for
+  such a DLL in the program's own folder first: for an installed copy, the per-user install folder
+  under `%LOCALAPPDATA%`, which any of the user's own processes can write. The Cached Mode helper
+  runs as administrator from that folder, and `wtsapi32.dll`, which it calls, is not one of the DLLs
+  Windows protects (the KnownDLLs), so a copy planted beside the helper would have been loaded into
+  it as administrator. Every assembly of the add-in, the helper and the server now carries
+  `DefaultDllImportSearchPaths(System32)`. The .NET SDK's security analysers found it (CA5392) the
+  day they were turned on.
 
 - 🔒 **A send confirmation token no longer outlives its two-minute limit when the clock moves backwards.**
   That can be a time sync, a daylight-saving change or a virtual machine resuming. The token's

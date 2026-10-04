@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Text;
 using Microsoft.Win32.SafeHandles;
@@ -85,6 +86,8 @@ public sealed class AuditLogReaderTests : IDisposable
     }
 
     [Fact]
+    [SuppressMessage("Security", "CA5394:Do not use insecure randomness",
+        Justification = "Test input, not a secret: the fixed seed is what makes a failure reproducible, which a cryptographic generator could not give.")]
     public void ARandomisedRoundTrip_OfThousandsOfLines_LosesNothing()
     {
         // A fixed seed, so a failure is reproducible; a palette loaded with every character the

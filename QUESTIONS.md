@@ -421,6 +421,53 @@ git plumbing, and describe it in the runbook; (b) commit it as an opt-in live cl
 400-draft loop is a measuring instrument, not a contract, and the compose classes plus the T1 pin carry the
 contract. Runbook 4.6 describes it well enough to rebuild. **Undo:** none needed.
 
+### 2026-10-04, autonomous - Q125 carried out: the SDK's security analysers, CodeQL locally, a package gate
+
+**Primer.** Removing the GitHub CI also removed CodeQL's scan and the pull-request dependency review.
+The maintainer chose (b) - turn on the security analysers the .NET SDK ships, in the builds of both
+code bases - plus an exception to the Dependencies rule letting CodeQL run locally, and leaned
+towards `dotnet list package --vulnerable` as a release gate. AGENTS.md (Build and Release,
+Dependencies) now holds the rules; this entry holds the choices made on his behalf.
+
+**What the analysers found, and what became of it.** MCP server, 78 sites: CA5392 (71 P/Invokes
+with no DLL search path) FIXED - every assembly now loads its DLLs from System32 only; CA2100 (the
+index client's OLE DB command) suppressed - every statement comes from `WsSqlBuilder`'s allow-list
+and quote-doubling, the provider takes no parameters, and WS-SQL is read-only; CA5351 (MD5 in a
+test, reproducing Outlook's ConversationId) and CA5394 (a fixed-seed `Random` in a test) suppressed.
+Add-in: the same System32 fix covers its 16 P/Invokes and the elevated helper's 12 - for the helper,
+which runs as administrator from the per-user install folder, a planted `wtsapi32.dll` (not a
+KnownDLL) would have run elevated: the one real security fix here. CA5386 (the updater's
+`|= Tls12`) suppressed, measured: in the legacy TLS state the add-in runs in, the analyser's own fix
+(`SystemDefault`) fails against GitHub outright, and `|= Tls12` is the only setting that reached it.
+
+**Decided on his behalf, each with what it beat:**
+1. *The level: Security only, `10.0-all`, every finding an error.* Beat "recommended" (misses the
+   injection, deserialisation and DLL-search rules), every category at "all" (thousands of style
+   findings), `latest` (an SDK update would change the rules under a passing build) and warnings
+   (unread in a scripted build).
+2. *Every project, tests included* - the tests run against real mailboxes. Beat shipped-only.
+3. *The add-in imports the SDK's own analyser targets* through an SDK-resolved import
+   (`NetSecurityAnalyzers.targets`). Beat a NuGet package (its build has no restore), a hard-coded
+   SDK path (breaks on every SDK update) and a second, SDK-style project over the same sources.
+4. *CodeQL on the workstation, build-mode none, the `security-extended` suite, CodeQL's default
+   threat model.* Beat the build VM (offline: 700 MB of staged media and VM time per run), a traced
+   build of the add-in (full VSTO type resolution, but a build through the Q81 path for every
+   scan) and the narrower default suite the old workflow ran. Whether the release should also count
+   local input as untrusted is left open (TODO.md): measured, it is 0, 6 or 174 more results to
+   triage depending on how much of "local" is on.
+5. *The gate: every CodeQL result fixed, or triaged in `Tools/codeql-accepted.json` by rule, file and
+   line hash with a reason; an entry that matches nothing is reported, not fatal.* Beat a
+   severity threshold (a medium finding would pass untriaged) and inline suppression comments
+   (scattered through the code, where the one reviewed list keeps every triage in sight).
+6. *Release step 7, before the build: packages, then CodeQL; anything but exit 0 refuses - and "could
+   not ask nuget.org" refuses too.* Beat a report-only step and a place after signing.
+
+**First runs (2026-10-04):** CodeQL 2.27.1 over 04327b7 and 0ccf5df - 432 of 432 C# files, 55
+security queries, no result; a probe commit with a DES/ECB cipher failed the gate and passed once
+triaged.
+The package check: six projects clean; Newtonsoft.Json 12.0.1 in a scratch project failed it.
+**Not measured:** a release dry run with step 7 in it. **Undo:** revert the commit.
+
 ### 2026-10-03, autonomous - the indexed guest's first live runs: sixteen failures were the tests, one the product
 
 **Primer.** The first full live run on `OutlookAI-Indexed` (d4e31fe, runbook 4.2f) failed 17 of 123

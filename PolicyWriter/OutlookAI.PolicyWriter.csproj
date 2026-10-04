@@ -84,4 +84,6 @@
     <None Include="app.manifest" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+  <!-- The .NET SDK's security analysers, as the add-in runs them (Q125); the file says how and why. -->
+  <Import Project="..\NetSecurityAnalyzers.targets" />
 </Project>

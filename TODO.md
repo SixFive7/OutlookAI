@@ -20,13 +20,39 @@
   designation from a freshly opened store in the verify session; (3) read it in the product the way
   the verify session does, after creating. Recommended: (1) first.
 
-- [ ] **One decided job, held until the agents now running have merged (decided by the
-  maintainer 2026-10-03).** It touches files every open branch also touches, so it waits for a
-  quiet moment.
-  - **Q125 - security scanning without GitHub.** (b) Turn on the security analysers that ship with
-    the .NET SDK in the builds, and triage what they find. Plus an exception to the Dependencies rule,
-    granted by the maintainer: CodeQL may be run locally. Record the exception in `AGENTS.md` beside
-    Q71/Q111, pin the CodeQL bundle by version and published hash, and add a script to run it.
+- [ ] **Decide whether the elevated Cached Mode helper may keep running from the per-user install
+  folder (found during Q125, 2026-10-04).** `OutlookAI.PolicyWriter.exe` runs as administrator
+  through UAC (Q128), but the installer is per-user (`PrivilegesRequired=lowest`), so it lives in
+  `%LOCALAPPDATA%\OutlookAI\Setup`, and the add-in starts the copy beside itself or under the HKCU
+  `InstallDir` - all writable by any process of the user's. Q125 closed the DLL route (its P/Invokes
+  load from System32 only), but such a process can still replace the helper, or repoint
+  `InstallDir`, and be elevated by the prompt the user expects to see - a prompt that names no
+  verified publisher either way. For a standard user typing an administrator's password that is an
+  elevation of privilege. Directions: (1) install the helper per machine, under Program Files,
+  through an elevated part of the installer; (2) elevate no file of ours at all - write the five
+  validated values with Windows' own `reg.exe add HKU\<SID>\...`, one per value, chained in one
+  elevated `cmd.exe` for one prompt, which then names a Microsoft-signed program; (3) accept and
+  document it - the escalation needs the user's own approval, and anything running as the user
+  already holds the user's mail. Recommended: (2), if its prompt text is acceptable to him; (1)
+  otherwise.
+
+- [ ] **Decide whether the release's CodeQL run should count local input as untrusted (Q125
+  follow-up, 2026-10-04).** The release runs CodeQL's default threat model, where untrusted data
+  comes from the network - which this product does not read, so the scan finds nothing (0 results
+  over 0ccf5df). The MCP server's real input is standard input written by an agent that reads other
+  people's mail, but `-ThreatModel stdin` finds nothing either - inferred, not proven: the MCP SDK
+  reads that input outside the analysed source, so CodeQL never sees it reach a tool's arguments.
+  Measured over 0ccf5df with `Tools/Invoke-CodeQL.ps1 -ThreatModel ...`: `local` gives 174 results
+  (169 cs/path-injection, 4 cs/command-line-injection, 1 cs/sql-injection), nearly all paths built
+  from the user's own profile folders and TEMP, which the user's own processes control anyway;
+  `local,!environment` gives 6,
+  from HKCU and HKLM values and a tool's command line - one of them real: `PolicyElevation` takes
+  the ELEVATED helper's path from HKCU `InstallDir` (the item above). Directions: (1) keep the
+  default; (2) add `local,!environment` to the release and triage its 6 - one is the helper
+  question, five look like the user's own settings; (3) add all of `local` and triage 174; (4) model
+  the MCP tools' parameters as sources in a CodeQL model pack, so the scan sees what agents send -
+  the only direction that covers the real input, and work of its own. Recommended: (2) once the
+  helper question is decided, then (4).
 
 - [ ] **Decide how the non-live suite keeps a non-UTC zone, now that it runs only in UTC (after
   Q126 (a), 2026-10-03).** The build VM is UTC and nothing else runs the suite (Q94), so tests that

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Data.OleDb;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Runtime.InteropServices;
 
@@ -58,6 +59,9 @@ namespace OutlookAI.Core.IndexSearch
         /// </summary>
         public const int DefaultCommandTimeoutSeconds = 60;
 
+        // Q125 triage of CA2100, 2026-10-04: a false positive, suppressed here and only here.
+        [SuppressMessage("Security", "CA2100:Review SQL queries for security vulnerabilities",
+            Justification = "Every statement this runs is built by WsSqlBuilder, which admits a search term only through an allow-list of characters and doubles the single quote in every string literal it emits (WsSqlBuilderTests pins both). Search.CollatorDSO takes no command parameters, so escaping is the only way a value can travel, and WS-SQL is SELECT-only over the user's own security-trimmed SystemIndex.")]
         public IReadOnlyList<IReadOnlyDictionary<string, object?>> ExecuteRows(string sql, int maxRows, int? commandTimeoutSeconds = null)
         {
             if (sql == null)

@@ -1,0 +1,4 @@
+{
+  "_note": "CodeQL results triaged as false positives (Q125). Tools/Invoke-CodeQL.ps1 fails on every result NOT listed here, and reports an entry that no longer matches any result as stale. One entry per result: rule, path (repository-relative), lineHash (the result's partialFingerprints.primaryLocationLineHash in results.sarif, which follows the line's text, not its number), the reason it is safe, and the date it was triaged. A real finding is fixed, never listed.",
+  "accepted": []
+}

@@ -1,18 +1,12 @@
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
 using OutlookAI.McpServer;
 using OutlookAI.McpServer.Tools;
 
 // OutlookAI.McpServer - stdio MCP host (v3.MD section 0.5, Option A).
-// stdout carries the MCP JSON-RPC stream; ALL logging must go to stderr.
-var builder = Host.CreateApplicationBuilder(args);
-builder.Logging.AddConsole(options => options.LogToStandardErrorThreshold = LogLevel.Trace);
-
-builder.Services
-    .AddMcpServer(options => options.ServerInstructions = ServerMetadata.Instructions)
-    .WithStdioServerTransport()
-    .WithToolsFromAssembly();
+// stdout carries the MCP JSON-RPC stream; ALL logging must go to stderr. ServerHost builds the
+// host: its content root is the server's own folder, never the directory a client starts it in,
+// and nothing in it watches a file - ServerHost says why.
+HostApplicationBuilder builder = ServerHost.CreateBuilder(args);
 
 // WHY THE try/finally, AND WHAT IT DOES NOT COVER.
 //

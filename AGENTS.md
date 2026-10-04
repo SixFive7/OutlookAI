@@ -101,6 +101,16 @@ Dependabot version updates, no release workflow. Tests and self-tests run on the
 section after next); builds and the four guards run on this workstation; and a release is
 `Tools/Publish-Release.ps1`, run here.
 
+**Security scanning replaced CodeQL's and the dependency review's, here (Q125, decided by the
+maintainer 2026-10-03).** Every build runs the .NET SDK's security analysers - every Security rule
+.NET 10 ships, each finding a build error: `McpServer/Directory.Build.props` for the server's
+projects, `NetSecurityAnalyzers.targets` (imported by `OutlookAI.csproj` and the PolicyWriter
+project) for the add-in, which says how and why. Fix a real finding; suppress a false positive
+only at its site, with `[SuppressMessage(..., Justification = "<why it is safe>")]`. And every
+release runs `Tools/Test-VulnerablePackages.ps1` (no NuGet package with a known vulnerability) and
+`Tools/Invoke-CodeQL.ps1` (CodeQL's C# security queries, every result fixed or triaged in
+`Tools/codeql-accepted.json` with its reason) - step 7 below, and either runs alone at any time.
+
 **The release script** is the old release workflow, ported step for step, with the gates a
 workstation needs added. `pwsh -File Tools/Publish-Release.ps1 -VersionBump X.Y.Z` is a DRY RUN -
 everything except publishing; `-Execute` publishes. In order, it:
@@ -124,16 +134,18 @@ everything except publishing; `-Execute` publishes. In order, it:
 5. runs the four guards under `pwsh` and `powershell.exe`, then `check-pinned-constants.ps1` against
    that certificate;
 6. runs **D7 (c)** (below), and refuses to release if either comparison fails;
-7. builds through `Testbed/host/Publish-AddInPayload.ps1 -ReleaseSigningThumbprint` - so the Q81
+7. runs the security step (Q125): `Tools/Test-VulnerablePackages.ps1`, then `Tools/Invoke-CodeQL.ps1`
+   on HEAD - anything but exit 0 from either refuses;
+8. builds through `Testbed/host/Publish-AddInPayload.ps1 -ReleaseSigningThumbprint` - so the Q81
    guards hold for a release too - with the MCP server and the VSTO runtime in the installer;
-8. signs the installer by thumbprint with an RFC 3161 timestamp, reads the signature back, and
+9. signs the installer by thumbprint with an RFC 3161 timestamp, reads the signature back, and
    refuses an installer over the updater's 50 MB cap;
-9. runs the whole non-live suite and every self-test of HEAD on the build VM - anything but exit 0
-   refuses;
-10. makes the stamp commit - `## Unreleased`, then `## v<version> - <date>` - with git plumbing, so
+10. runs the whole non-live suite and every self-test of HEAD on the build VM - anything but exit 0
+    refuses;
+11. makes the stamp commit - `## Unreleased`, then `## v<version> - <date>` - with git plumbing, so
     neither the working tree nor any branch moves, and reads it back: the body's line ranges are
     lines of exactly that file;
-11. with `-Execute` only: pushes that one commit to master (a fast-forward), runs `gh release create`
+12. with `-Execute` only: pushes that one commit to master (a fast-forward), runs `gh release create`
     with the signed installer, and fast-forwards a local master that sat on the released commit.
 
 Everything lands in `.work\release\v<version>\`; `release.json` there is the record. It needs
@@ -227,6 +239,8 @@ why. Run it in the background or with a timeout of an hour or more.
   through the two scripts "The add-in on the maintainer's workstation (Q81)" below names;
 - releases - `Tools/Publish-Release.ps1` (Build and Release, above), which builds here and tests on
   the build VM, and runs D7 (c)'s two read-only `-CompareInstalledTargets` comparisons here;
+- the security scans (Q125): `Tools/Test-VulnerablePackages.ps1` and `Tools/Invoke-CodeQL.ps1`,
+  which need the internet the build VM does not have - in a release, and alone whenever wanted;
 - and, until 2026-10-03, the Exchange-only read-only live tests (Q74) - which since Q116 (a) run on
   the Exchange VM instead: no live test runs here at all (Mailbox Safety below).
 
@@ -315,6 +329,28 @@ credential is read only on the host, in memory (`Testbed/host/Get-ExchangeCreden
 reaches the VM only as keystrokes; device registration with the tenant declined; Windows' own updates
 left on, without automatic restarts. Every other test VM stays offline. This is not "test VMs may
 have internet".
+
+**A third exception, decided by the maintainer 2026-10-03 (Q125): CodeQL, run locally.** The
+CodeQL CLI is free but not open source - it comes under the GitHub CodeQL Terms and Conditions -
+and it may be used for the scan CodeQL used to run on GitHub. Conditions, all of them:
+- **the CodeQL CLI bundle and nothing else**, at the version `Tools/Invoke-CodeQL.ps1` pins
+  (2.27.1), held to the SHA-256 GitHub publishes beside the archive
+  (`codeql-bundle-win64.tar.gz.checksum.txt` on its release) and to its length before anything is
+  unpacked. A new version is a deliberate edit of the pin from that file, never a hash computed from
+  a download;
+- **on this workstation only**, fetched by that script and unpacked under the gitignored `.work\` -
+  never installed, never on PATH, never committed, never in the installer, never staged on a VM,
+  never copied to anyone (the licence forbids redistributing it). It builds nothing - build-mode
+  none, whose extractor only restores packages - so the Q81 rules are not in play;
+- **on this repository only, and only while it is an open-source codebase on GitHub.com** - the
+  licence's condition. Read 2026-10-04 (github/codeql-cli-binaries `LICENSE.md`): per user, no account
+  or key; for a codebase "released under an OSI-approved License" (MIT is) it permits "analysis on the
+  Open Source Codebase" and, for one "hosted and maintained on GitHub.com", generating databases "for
+  or during automated analysis, CI, or CD" - which covers the release gate. It forbids use on any
+  codebase that is not open source, a private repository included. The script refuses unless
+  `LICENSE` is MIT and origin is on github.com; were the repository made private, the release gate
+  would have to go.
+It does not generalise to other GitHub tools, nor to "free to use is fine".
 
 ## The add-in on the maintainer's workstation (Q81)
 
