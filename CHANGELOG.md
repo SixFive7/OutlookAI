@@ -997,6 +997,15 @@ its mailbox tests on, and change nothing you install.
 
 ### Fixed
 
+- 🐛 **Writing a new draft, reply or forward no longer crashes Outlook now and then.**
+  OutlookAI wrote each draft in a hidden compose window opened on the item Outlook had just created,
+  and closed that window when it was done. Closing it crashed Outlook, inside Outlook itself, about once
+  in every 35 drafts written back to back, and in two of fourteen runs of the draft tests on the test
+  machines. OutlookAI now saves the new item first, opens it again as a saved draft and writes into
+  that, the way it already revised existing drafts, which never crashed. 1,600 drafts in a row then
+  ran without one crash. The draft says the same as before: body, signature and attachments in the
+  same places.
+
 - 🐛 **A search of a mailbox or folder no longer returns the folders themselves as results.**
   Where Windows Search indexes the mailbox, a search with no search words listed one "hit" for every
   folder - Calendar, Quick Step Settings, the mailbox's top level, emptied folders in Deleted

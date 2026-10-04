@@ -847,6 +847,8 @@ try {
     # ---- BUILD: the commit's tree, its payloads and the guest's settings. The guest is untouched.
     $t0 = Get-Date
     try {
+        # No MSBuild node outlives this run's builds holding files of the tree, so it can be deleted after.
+        $env:MSBUILDDISABLENODEREUSE = '1'
         Invoke-NativeCommand { & git -C $repo worktree add --detach $tree $sha 2>&1 } | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "git worktree add failed ($LASTEXITCODE)" }
         # ps51-native-stderr-ok: a PowerShell script, not a program - every program it starts goes through its own Invoke-NativeCommand, under 'Continue' inside a try
@@ -1057,6 +1059,13 @@ finally {
     catch { Say "releasing the lease failed: $($_.Exception.Message)" }
     if (Test-Path -LiteralPath $tree) {
         Invoke-NativeCommand { & git -C $repo worktree remove --force $tree 2>&1 } | Out-Null
+        # Measured 2026-10-04: git unregisters the tree but leaves its directory - about 180 MB of build
+        # output a run - on every run (and on every run of the agent before). What it left goes here.
+        if (Test-Path -LiteralPath $tree) {
+            Remove-Item -LiteralPath $tree -Recurse -Force -ErrorAction SilentlyContinue
+            Invoke-NativeCommand { & git -C $repo worktree prune 2>&1 } | Out-Null
+            if (Test-Path -LiteralPath $tree) { Say "NOTE      the commit's build tree could not be deleted: $tree" }
+        }
     }
     # The payloads are the commit's, rebuilt by any later run; only what the run found is kept.
     foreach ($built in 'payload', 'livetier') {
