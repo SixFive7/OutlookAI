@@ -1003,8 +1003,10 @@ its mailbox tests on, and change nothing you install.
   in every 35 drafts written back to back, and in two of fourteen runs of the draft tests on the test
   machines. OutlookAI now saves the new item first, opens it again as a saved draft and writes into
   that, the way it already revised existing drafts, which never crashed. 1,600 drafts in a row then
-  ran without one crash. The draft says the same as before: body, signature and attachments in the
-  same places.
+  ran without one crash. Outlook adds an account's default signature only in the window that crashed,
+  so OutlookAI now adds it itself: the signature the account is set to use for new messages, or for
+  replies and forwards, in Outlook's default profile - the settings list_signatures shows. A signature
+  you name for the draft still replaces it.
 
 - 🐛 **A search of a mailbox or folder no longer returns the folders themselves as results.**
   Where Windows Search indexes the mailbox, a search with no search words listed one "hit" for every

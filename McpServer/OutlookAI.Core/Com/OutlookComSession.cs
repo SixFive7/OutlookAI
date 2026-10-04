@@ -3767,7 +3767,7 @@ namespace OutlookAI.Core.Com
                     // From here on a draft is in the mailbox: the compose saves it first, then re-opens it.
                     draftMayExist = true;
                     (bool signatureInjected, long textBefore, long textAfter, bool overrideApplied, string? overrideError, bool wordPlaced, bool surfacePromoted) =
-                        ComposeReopened(ref mail, deliveryStoreId, body, signatureOverride);
+                        ComposeReopened(ref mail, deliveryStoreId, body, signatureOverride, pinnedAccountSmtp, replyOrForward: false);
                     draft = mail!;
                     draft.Subject = subject;
                     List<string> unresolved = new List<string>();
@@ -3990,7 +3990,7 @@ namespace OutlookAI.Core.Com
                     // From here on a draft may be in the mailbox: the compose saves it.
                     draftMayExist = true;
                     (bool signatureInjected, long textBefore, long textAfter, bool overrideApplied, string? overrideError, bool wordPlaced, bool surfacePromoted) =
-                        ComposeReopened(ref mail, null, body, signatureOverride);
+                        ComposeReopened(ref mail, null, body, signatureOverride, pinnedAccountSmtp, replyOrForward: true);
                     draft = mail!;
                     List<string> unresolved = new List<string>();
                     if (kind == ComDerivedDraftKind.Forward)
@@ -5320,7 +5320,7 @@ namespace OutlookAI.Core.Com
 
                     if (body != null || signatureOverride != null)
                     {
-                        (bool ok, string? composeError) = ReviseHeldDocument(item!, body, signatureOverride, measureSignatureInjection: false, out _, out _);
+                        (bool ok, string? composeError) = ReviseHeldDocument(item!, body, signatureOverride, measureSignatureInjection: false, out _, out _, signatureIsAccountDefault: false, out _);
                         if (!ok)
                         {
                             capturedError = composeError ?? "BodyReplaceFailed";
@@ -5787,10 +5787,13 @@ namespace OutlookAI.Core.Com
             ComSignatureOverride? signatureOverride,
             bool measureSignatureInjection,
             out long textBeforeTouch,
-            out long textAfterTouch)
+            out long textAfterTouch,
+            bool signatureIsAccountDefault,
+            out bool accountDefaultApplied)
         {
             textBeforeTouch = 0;
             textAfterTouch = 0;
+            accountDefaultApplied = false;
             dynamic draft = draftObject;
             object? inspector = null;
             object? document = null;
@@ -5800,7 +5803,13 @@ namespace OutlookAI.Core.Com
             {
                 if (signatureOverride != null && !File.Exists(signatureOverride.FilePath))
                 {
-                    return (false, "SignatureFileMissing");
+                    if (!signatureIsAccountDefault)
+                    {
+                        return (false, "SignatureFileMissing");
+                    }
+
+                    // An account's default whose file is gone is no signature - as Outlook would insert none.
+                    signatureOverride = null;
                 }
 
                 // EXACTLY ONE acquisition, deliberately - matching the creators.
@@ -5834,6 +5843,12 @@ namespace OutlookAI.Core.Com
                     textAfterTouch = CountNonWhitespaceText(TryGetString(() => (string?)draft.HTMLBody) ?? string.Empty);
                 }
 
+                if (signatureIsAccountDefault && textAfterTouch > textBeforeTouch)
+                {
+                    // Outlook injected a signature into this item itself: that one stands, ours is not added.
+                    signatureOverride = null;
+                }
+
                 // ⚠ ACTIVATE BEFORE EDITING - live-measured, and the difference between
                 // a working revision and a silent no-op. On a NEW item the WordEditor of a
                 // hidden inspector is live and its edits commit. On an ALREADY-SAVED draft
@@ -5858,6 +5873,7 @@ namespace OutlookAI.Core.Com
                 {
                     (bool sigOk, string? sigError) = ApplySignatureToDocument(document!, signatureOverride.FilePath);
                     error = sigOk ? null : sigError ?? "SignatureInsertFailed";
+                    accountDefaultApplied = sigOk && signatureIsAccountDefault;
                 }
 
                 if (error == null && body != null)
@@ -6451,7 +6467,9 @@ namespace OutlookAI.Core.Com
             ref object? mail,
             string? storeId,
             ComDraftBody body,
-            ComSignatureOverride? signatureOverride)
+            ComSignatureOverride? signatureOverride,
+            string? accountSmtp,
+            bool replyOrForward)
         {
             dynamic created = mail!;
             created.Save();
@@ -6483,8 +6501,18 @@ namespace OutlookAI.Core.Com
             Release(mail);
             mail = reopened;
             dynamic draft = mail!;
+
+            // The account's own default signature. Outlook injects it only into a compose inspector on the
+            // creator's object - the inspector this method exists never to open - so a draft for an
+            // account with one would come out without it. It is inserted here from the same settings
+            // Outlook reads (the profile's "New Signature" / "Reply-Forward Signature"), only when the
+            // agent named none, and only when Outlook injected nothing itself (ReviseHeldDocument).
+            ComSignatureOverride? accountDefault = signatureOverride == null
+                ? TryResolveAccountDefaultSignature(accountSmtp, replyOrForward)
+                : null;
             (bool placed, string? error) = ReviseHeldDocument(
-                mail!, body, signatureOverride, measureSignatureInjection: true, out long textBefore, out long textAfter);
+                mail!, body, signatureOverride ?? accountDefault, measureSignatureInjection: true,
+                out long textBefore, out long textAfter, signatureIsAccountDefault: accountDefault != null, out bool defaultApplied);
             if (!placed)
             {
                 // The fallback the in-place compose had: the agent's text is not lost because the editor
@@ -6493,7 +6521,35 @@ namespace OutlookAI.Core.Com
                 ComposeByHtmlSplice(draft, body);
             }
 
-            return (textAfter > textBefore, textBefore, textAfter, placed && signatureOverride != null, placed ? null : error, placed, placed);
+            return (textAfter > textBefore || defaultApplied, textBefore, textAfter, placed && signatureOverride != null, placed ? null : error, placed, placed);
+        }
+
+        /// <summary>
+        /// The signature an account has configured for new messages (<paramref name="replyOrForward"/>
+        /// false) or for replies and forwards, as a signature to insert - or null when it has none, its
+        /// file is gone, or the profile cannot be read. The profile's per-account values, the same ones
+        /// list_signatures reports and manage_signature writes (<see cref="OutlookAI.Core.Services.SignatureCatalog"/>).
+        /// </summary>
+        private static ComSignatureOverride? TryResolveAccountDefaultSignature(string? accountSmtp, bool replyOrForward)
+        {
+            if (string.IsNullOrWhiteSpace(accountSmtp))
+            {
+                return null;
+            }
+
+            foreach (OutlookAI.Core.Services.SignatureAssignment assignment in OutlookAI.Core.Services.SignatureCatalog.ReadAccountAssignments())
+            {
+                if (!string.Equals(assignment.Account, accountSmtp, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                string? name = replyOrForward ? assignment.ReplyForwardSignature : assignment.NewMessageSignature;
+                OutlookAI.Core.Services.SignatureInfo? signature = string.IsNullOrWhiteSpace(name) ? null : OutlookAI.Core.Services.SignatureCatalog.TryResolve(name!);
+                return signature?.PreferredFilePath == null ? null : new ComSignatureOverride(signature.Name, signature.PreferredFilePath!);
+            }
+
+            return null;
         }
 
         /// <summary>
