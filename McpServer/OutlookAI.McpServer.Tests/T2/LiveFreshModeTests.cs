@@ -34,7 +34,7 @@ public sealed class LiveFreshModeTests
     public void FreshSearch_FindsSelfSentMail_BeforeIndexCatchesUp_ThenCleansUp()
     {
         string hub = _fixture.Settings.TestHubStoreDisplayName;
-        string marker = "oaimcp" + Guid.NewGuid().ToString("N");
+        string marker = "oaimcp" + LiveRunMarker.Current + Guid.NewGuid().ToString("N")[..8];
         string subject = $"{LiveOutlookTestMailer.SubjectTag} fresh-proof {marker}";
         string attachmentPath = Path.Combine(Path.GetTempPath(), $"OutlookAI-fresh-{marker}.txt");
         File.WriteAllText(attachmentPath, $"OutlookAI Phase-2 fresh-mode attachment payload. marker={marker}\n");

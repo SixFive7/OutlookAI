@@ -128,6 +128,11 @@ public static class LiveOutlookTestMailer
             throw new ArgumentException($"Test mail subject must carry the {SubjectTag} tag (S3).", nameof(subject));
         }
 
+        // Where mail reaches the internet (the Exchange VM's test account), the one address this sends to
+        // must be the hub's, and the subject must carry the run's marker as well as the tag (2026-10-08).
+        LiveRecipientGuard.Assert(new[] { smtpAddress }, nameof(SendSelfMail));
+        RefuseUnmarkedSubject(subject, nameof(SendSelfMail));
+
         return RunSta(() =>
         {
             dynamic app = CreateOutlookApplication();
@@ -266,6 +271,20 @@ public static class LiveOutlookTestMailer
                 Release(app);
             }
         });
+    }
+
+    /// <summary>
+    /// Where <see cref="LiveRunItemCheck.Current"/> is armed - the Exchange VM's test account - refuses a
+    /// subject that does not carry this run's marker beside the tag: an item without it is one no sweep of
+    /// this run, and no later run's leftover sweep, may take back. Elsewhere it returns.
+    /// </summary>
+    private static void RefuseUnmarkedSubject(string subject, string operation)
+    {
+        string? refusal = LiveRunItemCheck.Current?.RefusalForNewSubject(subject, operation);
+        if (refusal != null)
+        {
+            throw new InvalidOperationException(refusal);
+        }
     }
 
     /// <summary>
@@ -763,6 +782,8 @@ public static class LiveOutlookTestMailer
         {
             throw new ArgumentException($"Test draft subject must carry the {SubjectTag} tag (S3).", nameof(subject));
         }
+
+        RefuseUnmarkedSubject(subject, nameof(SaveTaggedDraftWithAttachments));
 
         return RunSta(() =>
         {

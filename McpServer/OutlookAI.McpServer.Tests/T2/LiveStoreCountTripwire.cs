@@ -173,6 +173,14 @@ public static class LiveStoreCountTripwire
                 return;
             }
 
+            // The Exchange VM's test account (2026-10-08): a run there writes in a real mailbox no checkpoint
+            // restores, so it must carry the run marker the host recorded; its hub must hold no tagged item of
+            // an unrecorded run; and what the read-only stores already held is noted, so that the sweep judges
+            // what THIS run did. All of it reads; every other machine returns at once.
+            LiveRunMarker.RequireRecordedOnExchange(settings);
+            LiveArtifactSweep.CheckHubBeforeTheRun(settings, line => Console.WriteLine(line));
+            LiveArtifactBaseline.Capture(settings, line => Console.WriteLine(line));
+
             _hub = ExemptHub(settings);
             _lazyHierarchyStores = settings.ExpectedDelegateStoreDisplayNames.ToList();
 

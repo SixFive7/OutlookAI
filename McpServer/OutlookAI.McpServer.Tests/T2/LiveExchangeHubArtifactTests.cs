@@ -51,6 +51,22 @@ public sealed class LiveExchangeHubArtifactTests
 
         int liveTier = LiveOutlookTestMailer.CountTaggedArtifacts(
             hub, Fragment(LiveOutlookTestMailer.SubjectTag), LiveOutlookTestMailer.HubSweepFolderIdsWithArchive);
+
+        // On the Exchange VM's test account (2026-10-08) the hub is WRITTEN during the run, so a tagged item
+        // there may be this run's own, mid-run, or a recorded earlier run's that this run's sweep takes back.
+        // What must be zero is the rest: tagged items of no recorded run.
+        if (LiveArtifactSweep.SweepsByRecordedMarkers(_fixture.Settings))
+        {
+            int ours = 0;
+            foreach (string marker in new[] { LiveRunMarker.Current }.Concat(LiveRunMarker.Prior))
+            {
+                ours += LiveOutlookTestMailer.CountTaggedArtifacts(hub, marker, LiveOutlookTestMailer.HubSweepFolderIdsWithArchive);
+            }
+
+            _output.WriteLine("hub (cached Exchange, the writable test account): " + liveTier.ToString(CultureInfo.InvariantCulture)
+                + " tagged item(s), " + ours.ToString(CultureInfo.InvariantCulture) + " of them this run's or a recorded earlier run's");
+            liveTier -= ours;
+        }
         int corpus = LiveOutlookTestMailer.CountTaggedArtifacts(
             hub, Fragment(CorpusPlan.SubjectTag), LiveOutlookTestMailer.HubSweepFolderIdsWithArchive);
 

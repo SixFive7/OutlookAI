@@ -33,6 +33,11 @@ internal static class ReadOnlyProductApi
         ["OutlookAI.Core.Com.ComOpenResult"] = Data,
         ["OutlookAI.Core.Com.ComStoreDetail"] = Data,
         ["OutlookAI.Core.Com.ComStoreInfo"] = Data,
+        // Read by the Exchange VM's test-account guards (2026-10-08) to judge an item before a write.
+        ["OutlookAI.Core.Com.ComItemDetail"] = Data,
+        ["OutlookAI.Core.Com.ComRecipientInfo"] = Data,
+        ["OutlookAI.Core.Com.ComSendableDraftState"] = Data,
+        ["OutlookAI.Core.Com.ComDraftInfo"] = Data,
         ["OutlookAI.Core.Com.ComTableDateKindProbe"] = Data,
         ["OutlookAI.Core.Com.ComTableSortAttempt"] = Data,
         ["OutlookAI.Core.Com.ComTableSortProbe"] = Data,
@@ -117,6 +122,12 @@ internal static class ReadOnlyProductApi
         ["OutlookAI.RemediationTools.CorpusReanchor.DeriveAppliedShift"] = "computes a time shift from two dates; the re-anchor that writes is elsewhere",
 
         ["OutlookAI.Core.Services.MailService.CreateDefault"] = "builds the service and its gateway; attaches to nothing yet",
+        ["OutlookAI.Core.Services.MailService..ctor"] = "builds the service over the gateway it is handed; attaches to nothing yet",
+        ["OutlookAI.Core.Com.ComGateway..ctor"] = "builds the gateway; it attaches to Outlook only when an operation runs",
+        ["OutlookAI.Core.Com.IOutlookSession.TryReadItem"] =
+            "reads one item's properties - the read tool's own reader (MailService.Read); reads UnRead and never sets it",
+        ["OutlookAI.Core.Com.IOutlookSession.TryGetSendableDraftState"] =
+            "reads a draft's recipients, subject and state - what the send path reads before it sends; it sends nothing",
         ["OutlookAI.Core.Services.MailService.Dispose"] = "releases the gateway's COM session",
         ["OutlookAI.Core.Services.MailService.Search"] = "the search tool: index query plus a read-only sweep; its cache is in memory",
         ["OutlookAI.Core.Services.MailService.ClearSweepCache"] = "empties the in-memory sweep cache",

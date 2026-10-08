@@ -11,10 +11,12 @@ namespace OutlookAI.McpServer.Tests.T1;
 public sealed class LiveWriteAccessTests
 {
     [Fact]
-    public void OnlyAPortableMachine_MayWrite()
+    public void OnlyAPortableMachine_AndTheExchangeVmsTestAccount_MayWrite()
     {
         Assert.False(LiveWriteAccess.RefusesEveryWrite(LiveMachineProfile.Portable));
+        Assert.False(LiveWriteAccess.RefusesEveryWrite(LiveMachineProfile.ExchangeTestAccount));
         Assert.True(LiveWriteAccess.RefusesEveryWrite(LiveMachineProfile.Production));
+        Assert.True(LiveWriteAccess.RefusesEveryWrite(LiveMachineProfile.ExchangeGuest));
     }
 
     [Fact]
@@ -22,7 +24,7 @@ public sealed class LiveWriteAccessTests
     {
         // "machineProfile": 7 parses - the enum is numeric underneath - and so would a value added
         // later. Every one of them is a machine nobody decided may write.
-        foreach (int value in new[] { -1, 3, 7, int.MaxValue })
+        foreach (int value in new[] { -1, 4, 7, int.MaxValue })
         {
             Assert.True(LiveWriteAccess.RefusesEveryWrite((LiveMachineProfile)value), "profile value " + value);
         }

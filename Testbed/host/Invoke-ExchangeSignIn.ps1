@@ -1,9 +1,10 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Signs the Exchange test VM's Outlook in to its Microsoft 365 mailbox - a new profile's first
-    account, or a re-authentication - typing the password and a fresh TOTP code into the guest
-    through its synthetic keyboard, so that no guest process or file ever holds either.
+    Signs the Exchange test VM's Outlook in to a Microsoft 365 mailbox - a new profile's first
+    account, a second account added to that profile, or a re-authentication - typing the password
+    and, where Microsoft asks and a TOTP secret exists, a fresh code into the guest through its
+    synthetic keyboard, so that no guest process or file ever holds either.
 
 .DESCRIPTION
     RUN ON THE HOST, as the Windows user who stored the credential (DPAPI, CurrentUser), with a lease
@@ -23,8 +24,20 @@
            tenant. Measured 2026-10-03: dsregcmd then reads AzureAdJoined NO, WorkplaceJoined NO.
         5. Clear Outlook's "Set up Outlook Mobile on my phone, too", then "Done".
         6. Verify    over COM, in session 1: an Exchange account with this address, cached.
+      -Mode AddAccount -Account <address> (a SECOND mailbox in the existing profile, 2026-10-08): step 0
+        asks the running Outlook for its own "Add Account..." command (ExecuteMso('AddAccount')),
+        which opens the same "Email Account Setup" dialog as its first start; then steps 1 to 6 as
+        for a new profile, with the account's own credential file.
       -Mode Reauth (an existing profile whose token has lapsed - after a checkpoint restore, say): the
         same steps from 2, for whatever sign-in page Outlook has raised.
+
+    STEP 3 READS THE PAGE BEFORE IT TYPES ANYTHING (2026-10-08). After the password, the guest's
+    -Step Page says which page Microsoft shows next. A code page is answered only for an account whose
+    credential file holds a TOTP secret. ANY OTHER SECOND-FACTOR PAGE - "More information required"
+    (MFA registration), "Approve sign in request", "Verify your identity" - STOPS the run with exit 5
+    and the page's own words printed, so that the maintainer can do what only he can: nothing is
+    clicked or skipped on his behalf, "Skip for now" included. A code page for an account WITHOUT a
+    TOTP secret stops the same way.
 
     THE SECRETS. Testbed/host/Get-ExchangeCredential.ps1 decrypts them in memory at the moment each is
     typed; the password leaves it as a SecureString and becomes a string only for the one call that
@@ -49,13 +62,22 @@
     MANDATORY. Must be the VM testbed.json's exchangeVm block names - the script refuses any other:
     typing a mailbox password into a VM nobody meant is the mistake it exists to make impossible.
 
+.PARAMETER Account
+    The mailbox to sign in, by address. Must be one testbed.json's exchangeVm.accounts lists - the
+    script refuses any other. Mandatory with -Mode AddAccount; elsewhere the default is the VM's first
+    account (telefonie@xxlnet.nl), and -Mode Preflight checks EVERY listed account.
+
 .PARAMETER Mode
-    NewProfile, Reauth or Preflight. Preflight types nothing: before every live run it brings Defender's
+    NewProfile, AddAccount, Reauth or Preflight. Preflight types nothing: before every live run it brings Defender's
     signatures up to date and waits for Security Center to say so - while they are stale, Outlook's
     Object Model Guard puts an Allow/Deny prompt in front of every out-of-process address read, and a
     run hangs on it (measured 2026-10-03: six stacked prompts, after a checkpoint restore brought back
     year-old signatures) - and then reads whether the account is still signed in. Exit 0 when both
     hold; when only the sign-in does not, run -Mode Reauth.
+
+    EXIT CODES: 0 signed in (Preflight: everything holds); 1 failed; 4 refused; 5 STOPPED FOR THE
+    MAINTAINER - Microsoft asked for a second factor, or for one to be registered, that only he can
+    give (the page's words are printed).
 
 .PARAMETER StartOutlook
     With -Mode NewProfile: start OUTLOOK.EXE in session 1, NOT elevated, before step 1.
@@ -70,7 +92,8 @@
 [CmdletBinding(DefaultParameterSetName = 'Run')]
 param(
     [Parameter(Mandatory = $true, ParameterSetName = 'Run')] [string] $VMName,
-    [Parameter(ParameterSetName = 'Run')] [ValidateSet('NewProfile', 'Reauth', 'Preflight')] [string] $Mode = 'NewProfile',
+    [Parameter(ParameterSetName = 'Run')] [ValidateSet('NewProfile', 'AddAccount', 'Reauth', 'Preflight')] [string] $Mode = 'NewProfile',
+    [Parameter(ParameterSetName = 'Run')] [string] $Account,
     [Parameter(ParameterSetName = 'Run')] [switch] $StartOutlook,
     [Parameter(ParameterSetName = 'Run')] [string] $RepoRoot,
     [Parameter(ParameterSetName = 'Run')] [int] $PageWaitSeconds = 90,
@@ -121,6 +144,47 @@ function Get-ExchangeVmProblem {
     return $null
 }
 
+# The accounts this may type a password for: exactly the ones testbed.json's exchangeVm.accounts lists,
+# compared ignoring case (an address is case-insensitive). Returns the recorded spelling, or the refusal.
+function Get-ExchangeAccounts {
+    param($Testbed)
+    if ($null -eq $Testbed -or -not ($Testbed.PSObject.Properties.Name -contains 'exchangeVm')) { return @() }
+    $vm = $Testbed.exchangeVm
+    if ($null -eq $vm -or -not ($vm.PSObject.Properties.Name -contains 'accounts')) { return @() }
+    return @($vm.accounts | Where-Object { $null -ne $_ -and ($_.address -is [string]) -and $_.address } | ForEach-Object { [string]$_.address })
+}
+function Resolve-ExchangeAccount {
+    param([string] $Account, $Testbed)
+    $known = @(Get-ExchangeAccounts $Testbed)
+    if ($known.Count -eq 0) { return [pscustomobject]@{ Account = $null; Problem = 'REFUSING: Testbed/testbed.json records no exchangeVm.accounts, so no mailbox is this VM''s to sign in.' } }
+    if ([string]::IsNullOrWhiteSpace($Account)) { return [pscustomobject]@{ Account = $known[0]; Problem = $null } }
+    foreach ($k in $known) {
+        if ([string]::Equals($k, $Account.Trim(), [StringComparison]::OrdinalIgnoreCase)) { return [pscustomobject]@{ Account = $k; Problem = $null } }
+    }
+    return [pscustomobject]@{ Account = $null; Problem = "REFUSING: '$Account' is not an account testbed.json's exchangeVm.accounts records ($($known -join ', ')). This script types a mailbox password; it types one only for a mailbox the record names." }
+}
+
+# What a -Step Page status says: the page kind and its texts.
+function Get-PageKind {
+    param($Status)
+    if ($null -eq $Status -or $Status.State -ne 'DONE') { return 'UNREAD' }
+    $line = @($Status.Detail | Where-Object { $_ -like 'PAGE *' } | Select-Object -First 1)
+    if ($line.Count -eq 0) { return 'UNREAD' }
+    return ($line[0].Substring(5)).Trim()
+}
+
+# What step 3 does with the page it read: TYPE a code, CONTINUE, STOP-MAINTAINER (exit 5) or FAIL.
+function Get-AfterPasswordAction {
+    param([string] $Kind, [bool] $HasTotp)
+    switch ($Kind) {
+        'CODE' { if ($HasTotp) { return 'TYPE' } else { return 'STOP-MAINTAINER' } }
+        'MFA' { return 'STOP-MAINTAINER' }
+        'PASSWORD' { return 'FAIL' }
+        'ERROR' { return 'FAIL' }
+        default { return 'CONTINUE' }
+    }
+}
+
 if ($SelfTest) {
     Write-Host "Invoke-ExchangeSignIn.ps1 -SelfTest under PowerShell $($PSVersionTable.PSVersion). No VM, no credential."
     $script:fails = 0
@@ -147,6 +211,22 @@ if ($SelfTest) {
     Check 'no record refuses' $true ((Get-ExchangeVmProblem 'OutlookAI-Exchange' ([pscustomobject]@{ vmName = 'x' })) -like 'REFUSING*')
     $real = Get-Content -LiteralPath (Join-Path (Split-Path -Parent $PSScriptRoot) 'testbed.json') -Raw | ConvertFrom-Json
     Check 'and testbed.json records the Exchange VM this script is for' '' ([string](Get-ExchangeVmProblem 'OutlookAI-Exchange' $real))
+    $two = [pscustomobject]@{ exchangeVm = [pscustomobject]@{ vmName = 'OutlookAI-Exchange'; accounts = @([pscustomobject]@{ address = 'first@example.invalid' }, [pscustomobject]@{ address = 'Second@example.invalid' }) } }
+    Check 'no -Account means the first recorded account' 'first@example.invalid' (Resolve-ExchangeAccount '' $two).Account
+    Check 'a recorded account is accepted, in its recorded spelling' 'Second@example.invalid' (Resolve-ExchangeAccount 'second@EXAMPLE.invalid' $two).Account
+    Check 'an unrecorded account is refused' $true ((Resolve-ExchangeAccount 'third@example.invalid' $two).Problem -like 'REFUSING*')
+    Check 'no accounts on record refuses' $true ((Resolve-ExchangeAccount 'first@example.invalid' $record).Problem -like 'REFUSING*')
+    Check 'testbed.json records the test account' 'telefonie-ai-test@xxlnet.nl' (Resolve-ExchangeAccount 'telefonie-ai-test@xxlnet.nl' $real).Account
+    Check 'and telefonie, first' 'telefonie@xxlnet.nl' (Resolve-ExchangeAccount '' $real).Account
+    Check 'a page status is read' 'MFA' (Get-PageKind (ConvertFrom-StepStatus @('STATE DONE', 'AT x', 'PAGE MFA', 'window "x"', 'TEXT More information required')))
+    Check 'an unread page' 'UNREAD' (Get-PageKind (ConvertFrom-StepStatus @('STATE TIMEOUT', 'AT x')))
+    Check 'an MFA page stops for the maintainer' 'STOP-MAINTAINER' (Get-AfterPasswordAction 'MFA' $true)
+    Check 'a code page with a TOTP secret is typed' 'TYPE' (Get-AfterPasswordAction 'CODE' $true)
+    Check 'a code page without one stops for the maintainer' 'STOP-MAINTAINER' (Get-AfterPasswordAction 'CODE' $false)
+    Check 'the password page again fails' 'FAIL' (Get-AfterPasswordAction 'PASSWORD' $false)
+    Check 'an error page fails' 'FAIL' (Get-AfterPasswordAction 'ERROR' $true)
+    Check 'the device offer continues' 'CONTINUE' (Get-AfterPasswordAction 'DEVICE' $false)
+    Check 'no page continues' 'CONTINUE' (Get-AfterPasswordAction 'NONE' $false)
     Write-Host ''
     if ($script:fails -gt 0) { Write-Host "$script:fails FAILED"; exit 1 }
     Write-Host 'All passed.'
@@ -164,8 +244,14 @@ if ($null -ne $problem) { Write-Host $problem; exit 4 }
 
 function Say([string] $m) { Write-Host ('[{0:HH:mm:ss}] {1}' -f (Get-Date), $m) }
 
+if ($Mode -eq 'AddAccount' -and [string]::IsNullOrWhiteSpace($Account)) { Write-Host 'REFUSING: -Mode AddAccount needs -Account <address>: which mailbox to add is never a default.'; exit 4 }
+$resolved = Resolve-ExchangeAccount $Account $testbed
+if ($null -ne $resolved.Problem) { Write-Host $resolved.Problem; exit 4 }
 $guestCred = & (Join-Path $PSScriptRoot 'Get-GuestCredential.ps1') -RepoRoot $RepoRoot -VMName $VMName
-$account = (& (Join-Path $PSScriptRoot 'Get-ExchangeCredential.ps1') -RepoRoot $RepoRoot).Account
+$credential = & (Join-Path $PSScriptRoot 'Get-ExchangeCredential.ps1') -RepoRoot $RepoRoot -Account $resolved.Account
+$account = $credential.Account
+$hasTotp = [bool]$credential.HasTotp
+$credential = $null
 
 $guest = @(Get-CimInstance -Namespace 'root\virtualization\v2' -ClassName 'Msvm_ComputerSystem' -Filter "ElementName='$VMName'")
 if ($guest.Count -ne 1) { Write-Host "REFUSING: expected one Msvm_ComputerSystem named '$VMName', found $($guest.Count)."; exit 4 }
@@ -274,15 +360,27 @@ try {
             exit 1
         }
         Say ('  up to date (productState 0x{0:X6}); signatures {1} day(s) old' -f $av.State, $av.Age)
-        Say 'preflight 2: is the account still signed in?'
-        $v = Invoke-GuestStep "-Step Verify -Account '$account' -WaitSeconds 60"
-        Say "  $($v.State) $($v.Detail -join ' | ')"
-        if ($v.State -ne 'SIGNED-IN') { Say '  not signed in - run this script with -Mode Reauth'; exit 1 }
+        $allSignedIn = $true
+        foreach ($recorded in @(Get-ExchangeAccounts $testbed)) {
+            Say "preflight 2: is $recorded still signed in?"
+            $v = Invoke-GuestStep "-Step Verify -Account '$recorded' -WaitSeconds 60"
+            Say "  $($v.State) $($v.Detail -join ' | ')"
+            if ($v.State -ne 'SIGNED-IN') { Say "  not signed in - run this script with -Mode Reauth -Account $recorded"; $allSignedIn = $false }
+        }
+        if (-not $allSignedIn) { exit 1 }
         exit 0
     }
 
-    if ($Mode -eq 'NewProfile') {
-        if ($StartOutlook) {
+    if ($Mode -eq 'AddAccount') {
+        Say "step 0: Outlook's own Add Account dialog (ExecuteMso AddAccount)"
+        $o = Invoke-GuestStep "-Step OpenAddAccount -WaitSeconds 60"
+        Say "  $($o.State) $($o.Detail -join ' | ')"
+        if ($o.State -ne 'DONE') { exit 1 }
+        Start-Sleep -Seconds 2
+    }
+
+    if ($Mode -eq 'NewProfile' -or $Mode -eq 'AddAccount') {
+        if ($StartOutlook -and $Mode -eq 'NewProfile') {
             Say 'starting Outlook in session 1, NOT elevated (no profile yet: it opens its account setup)'
             Invoke-Command -Session $session -ScriptBlock {
                 Set-ExecutionPolicy -Scope Process Bypass -Force
@@ -299,29 +397,68 @@ try {
 
     Say 'step 2: the password (typed from the host; never shown)'
     $r = Invoke-TypedStep -Step 'Password' -WaitSeconds $PageWaitSeconds -GetText {
-        $secure = (& (Join-Path $PSScriptRoot 'Get-ExchangeCredential.ps1') -RepoRoot $RepoRoot).Password
+        $secure = (& (Join-Path $PSScriptRoot 'Get-ExchangeCredential.ps1') -RepoRoot $RepoRoot -Account $account).Password
         $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
         try { [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
     }
-    if (-not $r.Typed) { Say "  stopped: $($r.Status.State) $($r.Status.Detail -join ' | ')"; exit 1 }
-
-    Say 'step 3: a verification code, if the sign-in asks for one'
-    $r = Invoke-TypedStep -Step 'Code' -WaitSeconds 25 -GetText {
-        (& (Join-Path $PSScriptRoot 'Get-ExchangeCredential.ps1') -RepoRoot $RepoRoot -TotpCode -MinimumValiditySeconds 12).Code
+    if (-not $r.Typed) {
+        Say "  stopped: $($r.Status.State) $($r.Status.Detail -join ' | ')"
+        $page = Invoke-GuestStep "-Step Page -WaitSeconds 5"
+        Say "  the page showing instead: $($page.Detail -join ' | ')"
+        if ((Get-PageKind $page) -eq 'MFA') { Say '  STOPPED FOR THE MAINTAINER: Microsoft asks for a second factor before the password page (above).'; exit 5 }
+        exit 1
     }
-    if ($r.Typed) { Say '  a code was asked for and typed' }
-    elseif ($r.Status.State -eq 'NOT-FOUND') { Say '  none asked for' }
-    else { Say "  stopped: $($r.Status.State) $($r.Status.Detail -join ' | ')"; exit 1 }
+
+    Say 'step 3: what the sign-in asks for next (read, nothing typed)'
+    $page = Invoke-GuestStep "-Step Page -WaitSeconds 20"
+    $kind = Get-PageKind $page
+    Say "  $kind - $($page.Detail -join ' | ')"
+    switch (Get-AfterPasswordAction $kind $hasTotp) {
+        'TYPE' {
+            $r = Invoke-TypedStep -Step 'Code' -WaitSeconds 25 -GetText {
+                (& (Join-Path $PSScriptRoot 'Get-ExchangeCredential.ps1') -RepoRoot $RepoRoot -Account $account -TotpCode -MinimumValiditySeconds 12).Code
+            }
+            if ($r.Typed) { Say '  a code was asked for and typed' }
+            else { Say "  stopped: $($r.Status.State) $($r.Status.Detail -join ' | ')"; exit 1 }
+        }
+        'STOP-MAINTAINER' {
+            if ($kind -eq 'CODE') { Say "  STOPPED FOR THE MAINTAINER: Microsoft asks $account for a verification code, and its credential file holds no TOTP secret - nothing was typed." }
+            else { Say "  STOPPED FOR THE MAINTAINER: Microsoft asks $account for a second factor or its registration (the page's words above) - nothing was clicked, 'Skip for now' included." }
+            exit 5
+        }
+        'FAIL' { Say "  stopped: the sign-in did not move past the password ($kind)"; exit 1 }
+        default { Say '  no code asked for' }
+    }
 
     Say "step 4: decline signing in to all apps and registering the device"
     $c = Invoke-GuestStep "-Step Choose -ControlName 'No, this app only' -WaitSeconds 40"
     Say "  $($c.State) $($c.Detail -join ' | ')"
 
-    if ($Mode -eq 'NewProfile') {
+    if ($Mode -eq 'NewProfile' -or $Mode -eq 'AddAccount') {
+        # Outlook now finds and configures the mailbox, a page or two of its own setup dialog. Read
+        # until it says added or failed, each page it shows printed once (2026-10-08: the second
+        # account's first attempt ended back on the address page, and nothing said why).
+        Say "step 4b: Outlook's setup dialog, until it says the account is added (read, nothing clicked)"
+        $outcome = 'SETUP-BUSY'
+        $seenPages = @{}
+        $setupDeadline = (Get-Date).AddSeconds(240)
+        while ((Get-Date) -lt $setupDeadline) {
+            $page = Invoke-GuestStep "-Step Page -WaitSeconds 10"
+            $outcome = Get-PageKind $page
+            $text = $page.Detail -join ' | '
+            if (-not $seenPages.ContainsKey($text)) { $seenPages[$text] = $true; Say "  $outcome - $text" }
+            if (@('SETUP-ADDED', 'SETUP-FAILED', 'SETUP-START', 'MFA', 'CODE', 'PASSWORD', 'ERROR') -contains $outcome) { break }
+            Start-Sleep -Seconds 3
+        }
+        if ($outcome -eq 'MFA') { Say '  STOPPED FOR THE MAINTAINER: Microsoft asks for a second factor or its registration (above) - nothing was clicked.'; exit 5 }
+        if ($outcome -ne 'SETUP-ADDED') { Say "  stopped: Outlook's setup did not report the account added ($outcome)"; exit 1 }
+
         Say "step 5: clear 'Set up Outlook Mobile on my phone, too', then Done"
-        $c = Invoke-GuestStep "-Step Choose -ControlName 'Set up Outlook Mobile on my phone, too' -WaitSeconds 60"
+        $c = Invoke-GuestStep "-Step Choose -ControlName 'Set up Outlook Mobile on my phone, too' -WaitSeconds 30"
         Say "  $($c.State) $($c.Detail -join ' | ')"
-        if ($c.State -ne 'DONE') { exit 1 }
+        # The box is offered with a profile's FIRST account; a second one's success page may not carry
+        # it, and a box that is not there is a box that will not send anybody to a phone set-up page.
+        if ($c.State -ne 'DONE' -and -not ($Mode -eq 'AddAccount' -and $c.State -eq 'NOT-FOUND')) { exit 1 }
         $c = Invoke-GuestStep "-Step Choose -ControlName 'Done' -WaitSeconds 30"
         Say "  $($c.State) $($c.Detail -join ' | ')"
         if ($c.State -ne 'DONE') { exit 1 }

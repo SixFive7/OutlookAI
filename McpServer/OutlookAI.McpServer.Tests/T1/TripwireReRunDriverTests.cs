@@ -329,7 +329,7 @@ public sealed class TripwireReRunDriverTests
             .Where(profile => TripwireRetryPolicy.For(profile).RetriesAtAll)
             .ToList();
 
-        Assert.Equal(new[] { LiveMachineProfile.Production, LiveMachineProfile.ExchangeGuest }, retrying);
+        Assert.Equal(new[] { LiveMachineProfile.Production, LiveMachineProfile.ExchangeGuest, LiveMachineProfile.ExchangeTestAccount }, retrying);
     }
 
     [Theory]

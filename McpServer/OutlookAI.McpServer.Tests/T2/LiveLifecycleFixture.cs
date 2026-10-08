@@ -20,8 +20,8 @@ public sealed class LiveLifecycleFixture : IDisposable
         // Fail-closed per-store count tripwire: no census, no live tier. Cheap after
         // the first fixture (one process-wide baseline).
         LiveStoreCountTripwire.EnsureBaseline(Settings);
-        Service = MailService.CreateDefault();
-        RunMarker = "lc" + Guid.NewGuid().ToString("N")[..12];
+        Service = LiveMailServices.CreateDefault();
+        RunMarker = LiveRunMarker.ForFixture("lc");
     }
 
     public LiveTestSettings Settings { get; }

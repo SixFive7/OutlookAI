@@ -400,23 +400,61 @@ public sealed class LiveTierInventoryTests
     }
 
     [Fact]
-    public void EveryExchangeOnlyTest_DeclaresWritesNothing()
+    public void EveryDelegateStoreTest_DeclaresWritesNothing()
     {
-        // No PST guest can be given an Exchange profile, and the one machine that has one - the
-        // Exchange test VM, since Q116 (a) the only place these tests run - is read-only until the
-        // maintainer approves its Phase 2 write-safety design. A test that needs Exchange and may write
-        // could therefore run NOWHERE: it is either read-only and says so, or it is a test nobody can
-        // run, which is a decision to make out loud rather than a test to keep. Control: before Q74
-        // none of the seven carried the trait.
+        // A delegate or shared mailbox is READ-ONLY for every test (AGENTS.md, Mailbox Safety rule 3), on
+        // every machine, so a test that needs one must declare it writes nothing. Until 2026-10-08 this held
+        // for every Exchange-only test, because the Exchange VM was read-only; since its test account became
+        // a writable hub (LiveMachineProfile.ExchangeTestAccount) a cached-Exchange test may write - in that
+        // account and nowhere else. Control: before Q74 none of the seven carried the trait.
         List<string> problems = new();
         foreach (MethodInfo method in LiveTestMethods())
         {
-            List<string> blocking = MethodTraitValues(method, "Requires").Where(ProductionOnlyCapabilities.Contains).ToList();
-            if (blocking.Count > 0 && !MethodTraitValues(method, LiveRunFilters.WritesTrait).Contains(LiveRunFilters.WritesNothing))
+            bool delegateStore = MethodTraitValues(method, "Requires").Contains(LiveRunFilters.DelegateStore);
+            if (delegateStore && !MethodTraitValues(method, LiveRunFilters.WritesTrait).Contains(LiveRunFilters.WritesNothing))
             {
-                problems.Add(Name(method) + " (Requires " + string.Join(", ", blocking) + ") does not declare "
+                problems.Add(Name(method) + " (Requires " + LiveRunFilters.DelegateStore + ") does not declare "
                     + LiveRunFilters.WritesTrait + "=" + LiveRunFilters.WritesNothing
-                    + ": no PST guest can run it, and the Exchange VM runs only read-only tests until Phase 2 is approved");
+                    + ": a delegate or shared mailbox is read-only for every test");
+            }
+        }
+
+        Assert.Empty(problems);
+    }
+
+    [Fact]
+    public void TheExchangeTestAccountFilter_IsDerivedFromTheVocabulary()
+    {
+        // Literal on purpose. Everything but what the VM lacks: no add-in, no delegate store until the
+        // shared test mailbox exists (Q109), no identity account (the real mailbox is a bystander), no
+        // hand-curated probe population.
+        Assert.Equal(
+            "Category=Live&Requires!=AddInRegistry&Requires!=DelegateStore&Requires!=IdentityAccount&Requires!=ProbePopulation",
+            LiveRunFilters.ExchangeTestAccount);
+        Assert.All(LiveRunFilters.ExchangeTestAccountLacks, c => Assert.Contains(c, AllCapabilities));
+        Assert.DoesNotContain(LiveRunFilters.CachedExchange, LiveRunFilters.ExchangeTestAccountLacks);
+        Assert.DoesNotContain(LiveRunFilters.SearchIndex, LiveRunFilters.ExchangeTestAccountLacks);
+    }
+
+    [Fact]
+    public void EveryQuotedExchangeTestAccountFilter_IsTheDerivedOne()
+    {
+        // The places a person reads the Exchange VM's write run from, and the runner that types it.
+        List<string> problems = new();
+        foreach (string file in new[] { "Testbed/README.md", "Docs/live-tier-on-the-vm.md", "Testbed/host/Invoke-LiveTierOnGuest.ps1" })
+        {
+            string text = File.ReadAllText(Path.Combine(RepoRoot(), file));
+            if (!text.Contains(LiveRunFilters.ExchangeTestAccount, StringComparison.Ordinal))
+            {
+                problems.Add(file + " never quotes the Exchange VM's write-run filter " + LiveRunFilters.ExchangeTestAccount);
+            }
+
+            foreach (System.Text.RegularExpressions.Match quoted in System.Text.RegularExpressions.Regex.Matches(text, @"Category=Live&Requires!=AddInRegistry[^\s`""']*"))
+            {
+                if (!string.Equals(quoted.Value, LiveRunFilters.ExchangeTestAccount, StringComparison.Ordinal))
+                {
+                    problems.Add(file + " quotes '" + quoted.Value + "', not the derived " + LiveRunFilters.ExchangeTestAccount);
+                }
             }
         }
 
@@ -446,7 +484,7 @@ public sealed class LiveTierInventoryTests
                 .Select(a => (string)a.ConstructorArguments[0].Value!),
             StringComparer.Ordinal);
 
-        foreach (string filter in new[] { LiveRunFilters.Guest, LiveRunFilters.GuestUnindexed, LiveRunFilters.ExchangeGuest })
+        foreach (string filter in new[] { LiveRunFilters.Guest, LiveRunFilters.GuestUnindexed, LiveRunFilters.ExchangeGuest, LiveRunFilters.ExchangeTestAccount })
         {
             foreach (string key in System.Text.RegularExpressions.Regex.Matches(filter, @"([A-Za-z]+)!?=").Select(m => m.Groups[1].Value))
             {
@@ -470,7 +508,7 @@ public sealed class LiveTierInventoryTests
             "the Writes trait's value is 'None', which VSTest also gives every test that lacks the trait");
         Assert.DoesNotContain(AllCapabilities, c => string.Equals(c, "None", StringComparison.OrdinalIgnoreCase));
 
-        foreach (string filter in new[] { LiveRunFilters.Guest, LiveRunFilters.GuestUnindexed, LiveRunFilters.ExchangeGuest })
+        foreach (string filter in new[] { LiveRunFilters.Guest, LiveRunFilters.GuestUnindexed, LiveRunFilters.ExchangeGuest, LiveRunFilters.ExchangeTestAccount })
         {
             Assert.False(
                 System.Text.RegularExpressions.Regex.IsMatch(filter, @"!?=None\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase),

@@ -309,15 +309,17 @@ public static class OaiRestartDialogs {
     [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
     // 1 elevated, 0 not, -1 unreadable (TokenElevation = 20).
     public static int Elevation(int pid) { IntPtr p = OpenProcess(0x1000, false, pid); if (p == IntPtr.Zero) return -1; try { IntPtr t; if (!OpenProcessToken(p, 8, out t)) return -1; try { int e, r; if (!GetTokenInformation(t, 20, out e, 4, out r)) return -1; return e != 0 ? 1 : 0; } finally { CloseHandle(t); } } finally { CloseHandle(p); } }
-    // Visible dialogs (#32770) of the process, as their titles. With cancelLogon, presses Cancel on
-    // each "Internet Email - " logon prompt and reports it as "CANCELLED: <title>".
+    // Visible dialogs of the process - classic ones (#32770) and Office's own NetUI dialogs (NUIDialog) -
+    // as their titles. The NetUI kind since 2026-10-08: Outlook's start-up "Check out our new look" theme
+    // dialog on the Exchange VM is one, it was missed, and Quit() parked behind it for half an hour. With
+    // cancelLogon, presses Cancel on each "Internet Email - " logon prompt and reports it as "CANCELLED: <title>".
     public static List<string> Dialogs(uint pid, bool cancelLogon) {
         List<string> found = new List<string>();
         EnumWindows(delegate (IntPtr h, IntPtr l) {
             uint p; GetWindowThreadProcessId(h, out p);
             if (p != pid || !IsWindowVisible(h)) return true;
             StringBuilder c = new StringBuilder(256); GetClassName(h, c, 256);
-            if (c.ToString() != "#32770") return true;
+            if (c.ToString() != "#32770" && c.ToString() != "NUIDialog") return true;
             StringBuilder t = new StringBuilder(512); GetWindowText(h, t, 512);
             string title = t.ToString();
             if (cancelLogon && title.StartsWith("Internet Email - ")) {

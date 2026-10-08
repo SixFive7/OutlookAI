@@ -85,4 +85,30 @@ public static class LiveRunFilters
     /// </summary>
     public static string ExchangeGuest { get; } =
         "Category=Live&" + WritesTrait + "=" + WritesNothing + "&Requires=" + CachedExchange + "&Requires!=" + DelegateStore;
+
+    /// <summary>The add-in's registry tuning state - the Exchange VM has no add-in (its TODO.md item).</summary>
+    public const string AddInRegistry = "AddInRegistry";
+
+    /// <summary>A second account the write allowlist grants an identity draft in.</summary>
+    public const string IdentityAccount = "IdentityAccount";
+
+    /// <summary>A hand-curated population named in the live-test settings.</summary>
+    public const string ProbePopulation = "ProbePopulation";
+
+    /// <summary>
+    /// What the Exchange VM does NOT have since its test account became the hub (2026-10-08), in the
+    /// order its filter names them: no add-in; no delegate store until the shared test mailbox exists
+    /// (Q109); no identity account - the other mailbox, the real one, is a bystander no test writes to; and
+    /// no hand-curated probe population - a run builds what it needs and removes it.
+    /// </summary>
+    public static IReadOnlyList<string> ExchangeTestAccountLacks { get; } = new[] { AddInRegistry, DelegateStore, IdentityAccount, ProbePopulation };
+
+    /// <summary>
+    /// The filter the Exchange VM runs with its test account as the writable hub
+    /// (<see cref="LiveMachineProfile.ExchangeTestAccount"/>): the broadest it can honestly run - every live
+    /// test, read and write, except those naming a capability it lacks (<see cref="ExchangeTestAccountLacks"/>).
+    /// Its clauses start with <c>AddInRegistry</c>, so no copy of it reads as a stopped-short guest filter.
+    /// </summary>
+    public static string ExchangeTestAccount { get; } =
+        "Category=Live" + string.Concat(ExchangeTestAccountLacks.Select(c => "&Requires!=" + c));
 }
