@@ -3738,7 +3738,8 @@ read-only count; nothing this VM ran created it - the census identifies the same
 after every run. It is test data, so under the maintainer's rule (Q129 (a)) it must go; on this
 read-only machine nothing removes it, and nothing will by hand.
 
-**Phase 2 - PROPOSED 2026-10-03, NOT APPROVED.** What writing in this real mailbox would rest on, each
+**Phase 2 - PROPOSED 2026-10-03; BUILT 2026-10-08 for the test account (section 4.4a), never for this
+mailbox, which has been a read-only bystander since.** What writing in this real mailbox would rest on, each
 part in code. Nothing below is built; the maintainer decides first.
 
 1. **The rule (Q129 (a))**: tests create, change and delete only their own tagged items, and remove
@@ -4093,11 +4094,11 @@ user's screen - declared **per method**, with that one value, and absence meanin
 is not the retired third axis come back: that one restated `Requires` by hand and could only drift,
 while this one cannot be derived from `Requires` at all, and it is not trusted either -
 `T1/ReadOnlyLiveTestTests` walks the compiled code of every carrier, its fixtures included, and
-fails the build on any way it can reach a write. It exists for one machine: the Exchange test VM
-(section 4.4) runs only live tests that need an Exchange profile AND carry `Writes=Nothing` until the
-maintainer approves its Phase 2 write-safety design, and every test needing Exchange must carry it.
-Until Q116 (a), 2026-10-03, the machine was the maintainer's workstation, which runs no live test
-now. The run is `Testbed/README.md` section 4e; its filter, derived in
+fails the build on any way it can reach a write. It existed for one machine: the Exchange test VM
+(section 4.4) ran only live tests that need an Exchange profile AND carry `Writes=Nothing`, and every
+test needing Exchange had to carry it. Until Q116 (a), 2026-10-03, the machine was the maintainer's
+workstation, which runs no live test now. That read-only run is still `Testbed/README.md` section 4e,
+for a settings file declaring `ExchangeGuest`; its filter, derived in
 `McpServer/OutlookAI.McpServer.Tests/T2/LiveRunFilters.cs` and pinned there and here, is:
 
 `Category=Live&Writes=Nothing&Requires=CachedExchange&Requires!=DelegateStore`
@@ -4105,6 +4106,15 @@ now. The run is `Testbed/README.md` section 4e; its filter, derived in
 - the cached-Exchange carriers, and none that needs a delegate store until the shared test mailbox
 exists (Q109). Fifty-four live tests carried the trait on the morning of 2026-10-03; seven of them
 needed Exchange, and those seven were the workstation run.
+
+**Since 2026-10-08 the Exchange VM writes - in its dedicated test account (section 4.4a).** Its run
+selects every live test it has the capabilities for, read and write:
+
+`Category=Live&Requires!=AddInRegistry&Requires!=DelegateStore&Requires!=IdentityAccount&Requires!=ProbePopulation`
+
+and only a test that needs a delegate store must still carry `Writes=Nothing`
+(`EveryDelegateStoreTest_DeclaresWritesNothing`): a delegate or shared mailbox is read-only for every
+test, on every machine.
 
 **The three buckets, all computed:**
 

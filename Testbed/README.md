@@ -323,14 +323,18 @@ travels with the disk), settle and replace `CP-03-SDK-TEST-READY-UTC` (`Remove-V
 
 ## 1d. The fourth machine: `OutlookAI-Exchange`, where the Exchange-only tests run
 
-**One real mailbox and nothing else** - decided by the maintainer 2026-10-03 (Q108 to Q111). The
-Microsoft 365 mailbox `telefonie@xxlnet.nl`, production but of lower value than his others and his
-test hub on the workstation all along, in Outlook's cached mode, with Windows Search indexing it.
-No PST, no mail sink, no generated population. It runs the live tests that need an Exchange profile -
-`Requires=CachedExchange` now, `Requires=DelegateStore` once the free shared test mailbox he
-requested exists (Q109) - which until Q116 (a) ran read-only on his workstation. Its runs are §4e,
-its record `testbed.json`'s `exchangeVm` block and `liveTestSettings.OutlookAI-Exchange` section,
-and its build-out the runbook's §4.4. Computer name `OAI-EXCHANGE`.
+**Two Microsoft 365 mailboxes and nothing else.** Built 2026-10-03 (Q108 to Q111) with one: the
+mailbox `telefonie@xxlnet.nl`, production but of lower value than the maintainer's others and his
+test hub on the workstation all along. On 2026-10-08 he added a second, his dedicated test account
+`telefonie-ai-test@xxlnet.nl` ("Telefonie XXLNet"), in his words *"the account you can use
+extensively for tests"*: since then the test account is the live tier's WRITABLE hub and telefonie a
+read-only bystander (§4e). Both in Outlook's cached mode in one profile, both indexed by Windows
+Search. No PST, no mail sink, no generated population. It runs the live tests that need an Exchange
+profile - `Requires=CachedExchange`, with every other test whose capabilities it has, read and write;
+`Requires=DelegateStore` once the free shared test mailbox he requested exists (Q109) - which until
+Q116 (a) ran read-only on his workstation. Its runs are §4e, its record `testbed.json`'s `exchangeVm`
+block and `liveTestSettings.OutlookAI-Exchange` section, and its build-out the runbook's §4.4.
+Computer name `OAI-EXCHANGE`.
 
 **The one testbed VM with internet** - Hyper-V's Default Switch NAT - by the maintainer's exception
 to the Dependencies rule (Q111, `AGENTS.md`), because its mailbox lives in his Microsoft 365 tenant.
@@ -352,10 +356,18 @@ Everything else is the other guests' media, unchanged (`MEDIA.md`).
 | E9 | The settings | `host/New-LiveTestSettings.ps1 -VMName OutlookAI-Exchange`, then the `host/Copy-ToGuest.ps1` line it prints | `machineProfile` `ExchangeGuest`: read-only |
 | E10 | The read-only run | §4e; checkpoint `CP-04-SUITE-READONLY-RUN` | |
 | E11 | The branch's final commit staged, the preflight passed, the read-only run again | E8 and E9 again, `host/Invoke-ExchangeSignIn.ps1 -Mode Preflight`, §4e; checkpoint `CP-05-PREFLIGHT-READONLY-RUN`, then the VM saved | |
+| E12 | The test account, 2026-10-08 | From `CP-05`: `host/Invoke-ExchangeSignIn.ps1 -VMName OutlookAI-Exchange -Mode AddAccount -Account telefonie-ai-test@xxlnet.nl -RepoRoot <main checkout>` - Outlook's own Add Account command (`ExecuteMso('AddAccount')`) opens the same "Email Account Setup" dialog, then the address, the password, "No, this app only" and Done. Outlook says "You need to restart Outlook": `host/Restart-Guest.ps1 -Execute`, `guest/Start-OutlookUnelevated.ps1 -Profile Outlook`, then `-Mode Preflight`, which checks every account `exchangeVm.accounts` records | Password only, no MFA asked, device registration declined. Two Exchange accounts, both mode 700; the test account's mailbox `ExchangeStoreType` 4 (an additional account's own mailbox), indexed as `telefonie-ai-test@xxlnet.nl($9b7b502)`. Checkpoint `CP-06-TEST-ACCOUNT-ADDED`, the resting one |
 
-**The sign-in, and where the secrets go.** The credential is the maintainer's
-`live-fixtures/exchange-credentials.json` (§4), read only by `host/Get-ExchangeCredential.ps1`, in
-memory, on the host, at the moment each secret is typed. The guest never receives one as data: the
+**The sign-in, and where the secrets go.** Each account's credential is its own gitignored file in
+`live-fixtures/` (§4) - `exchange-credentials.json` for telefonie, password and TOTP;
+`exchange-credentials-ai-test.json` for the test account, password only - read only by
+`host/Get-ExchangeCredential.ps1 -Account <address>`, in memory, on the host, at the moment each secret
+is typed; `host/Invoke-ExchangeSignIn.ps1` types a password only for an account `testbed.json`'s
+`exchangeVm.accounts` records. After the password it READS the next page before it types anything
+(`guest/Connect-ExchangeAccount.ps1 -Step Page`): a code page is answered only for an account with a
+TOTP secret, and any other second-factor page - "More information required" (MFA registration),
+"Approve sign in request", "Verify your identity" - stops the sign-in with exit 5 and the page's own
+words, for the maintainer; nothing is clicked on his behalf, "Skip for now" included. The guest never receives one as data: the
 host types it through Hyper-V's synthetic keyboard (`Msvm_Keyboard.TypeText`), so no script, task
 definition, job directory or pipe in the guest ever holds it, and the guest's one copy is the token
 cache Windows keeps for Outlook. Keystrokes go wherever the focus is, so the guest half,
@@ -370,7 +382,8 @@ have expired or been rotated since: `guest/Connect-ExchangeAccount.ps1 -Step Ver
 says `SIGNED-IN` or `NOT-SIGNED-IN`, and `host/Invoke-ExchangeSignIn.ps1 -Mode Reauth` answers the
 sign-in Outlook raises. Measured 2026-10-03: `CP-04`, restored ten minutes after it was taken, read `SIGNED-IN`; how long a token inside a checkpoint stays good is not measured yet.
 
-**Four things this VM found about the guests' Windows**, worth knowing on any of them:
+**Six things this VM found about the guests' Windows**, worth knowing on any of them (5 and 6 on
+2026-10-08):
 
 1. **Windows Terminal is the default console host on this build, and it ignores `-WindowStyle
    Hidden`.** Every `guest/Register-InteractiveTask.ps1` job showed a visible terminal window and
@@ -392,6 +405,18 @@ sign-in Outlook raises. Measured 2026-10-03: `CP-04`, restored ten minutes after
    `host/Invoke-ExchangeSignIn.ps1 -Mode Preflight` does that before every run and waits for Security
    Center to agree. Q80's auto-approve policy, which removes the dependency, is NOT applied here: it is
    the offline guests' answer, and widening it is the maintainer's decision (`TODO.md`).
+5. **Outlook's start-up "Check out our new look" theme dialog blocks Quit() and the index.** Measured
+   2026-10-08, at the first Outlook start after the test account was added: an owned NetUI dialog
+   ("Choose a theme for your Microsoft 365 apps", Office Theme, OK) sat over the explorer. Until it was
+   answered OK - which keeps the current theme - Outlook never registered the new mailbox with Windows
+   Search, and a Quit() from `host/Restart-Guest.ps1` returned without Outlook exiting, a WM_CLOSE on its
+   window too, for half an hour. Its dialog check looked only at `#32770` windows; since 2026-10-08 it
+   refuses a visible `NUIDialog` as well, so the next one is named instead of parking a restart.
+6. **Exchange automaps the test account into telefonie's.** After the restart a THIRD store appeared:
+   "Telefonie XXLNet", `ExchangeStoreType` 1, online - the test account's mailbox once more, as a
+   delegate store under telefonie's account, which therefore holds Full Access to it. It is the
+   maintainer's tenant setting, not the VM's (TODO.md). The settings leave it undeclared: it IS the hub,
+   so a census of it would read the hub's own churn as a loss, and the write guards refuse it by name.
 
 ---
 
@@ -1169,20 +1194,71 @@ refuses, before sending, every tool not classified read-only in `T3/McpToolWrite
 **Releases.** The live tier is not a release gate; a short manual check of the Exchange-only WRITE
 paths no automated test reaches is, by hand: `Docs/release-manual-checks.md`.
 
-## 4e. The Exchange VM: the read-only run (Q108 to Q111; Phase 2 awaits approval)
+## 4e. The Exchange VM: the write run in its test account (since 2026-10-08), and the read-only run
 
-**Until the maintainer approves the Phase 2 write-safety design, `OutlookAI-Exchange` runs only
-tests that write nothing** - its mailbox is real mail. Its settings declare `machineProfile`
-`ExchangeGuest`, which refuses every in-process write and every write-capable MCP tool exactly as
-the workstation's profile did (layers 2 and 3 above, unchanged: only `Portable` writes); its filter
-selects only `Writes=Nothing` carriers (layer 1); it gets the count tripwire's re-censuses, which a
-real Exchange mailbox needs, and never its re-run. And because its one mailbox is also its hub, the
-tripwire does not exempt the hub there: on a read-only machine the hub is censused item by item like
-any store (`LiveStoreCountTripwire.ExemptHub`) - an arrival is noted, as real mail arrives; a
-departure fails.
+**Since 2026-10-08 `OutlookAI-Exchange` writes - in its dedicated test account, and nowhere else.**
+The maintainer's `telefonie-ai-test@xxlnet.nl`, *"the account you can use extensively for tests"*,
+joined the VM's profile that day (§1d, E12). Its settings declare `machineProfile`
+`ExchangeTestAccount`, and the Phase 2 write-safety design of runbook §4.4 is built in code for it:
 
-**The run** - with a lease (§5b), once `host/Invoke-ExchangeSignIn.ps1 -VMName OutlookAI-Exchange
--Mode Preflight -RepoRoot <main checkout>` has exited 0: Defender's signatures current, so the Object
+- **The hub is the test account, and nothing else may be written.** telefonie, real mail, is a
+  declared bystander: the count tripwire censuses it item by item - an untagged item leaving it fails
+  the run, new mail arriving is noted - and `StoreWriteAllowlist` grants the hub alone, no identity
+  draft anywhere (`LiveStoreWriteGuard.Build`; `LiveTestSettings.Validate` refuses a file that leaves a
+  store undeclared).
+- **Mail goes to the hub itself and nowhere else** (Q110; the VM has internet). `RecipientAllowlist` is
+  asked by the test helpers (`LiveOutlookTestMailer`'s self-send), by the in-process product - every
+  fixture's `MailService` runs over `LiveGuardedOutlookSession`, which checks every draft's To, Cc and
+  Bcc and, the moment before a send, the draft's own recipients - and by the test-side MCP client
+  (`StdioHubOnlyGate`, posture `WritableHubOnly`) before every write-capable tool call.
+- **Every item a run makes carries the tag and the run's marker**, and touches only its own: the host's
+  runner makes the marker (`oair` and the UTC start to the second), records it in
+  `C:\OutlookAI-Testbed\exchange-runs\ledger.jsonl` before the suite starts and hands it in;
+  `LiveRunMarker.RequireRecordedOnExchange` refuses a run without one. A reply, reply-all, forward,
+  update, discard, move, archive, open or send is refused unless its item is in the hub and carries the
+  tag and this run's marker - a reply, a reply-all and a send also only when its sender and every
+  recipient are the hub (`LiveRunItemCheck`).
+- **The sweep takes back only a recorded run's items.** It purges the hub by the tag AND this run's
+  marker, then by each marker of an earlier run the ledger says never finished clean - an aborted run's
+  leftovers go with the next run, never by a subject pattern - and removes leftover test folders, deepest
+  first, only when every item in them is tagged. Every delete finds the item by its subject and deletes it
+  by its EntryID only when the subject carries both strings; Deleted Items is swept last, so a deleted
+  test item is purged from there too; self-sent copies are swept from Sent Items and the Inbox after the
+  existing stable-zero wait for late deliveries. Before the run, a tagged item in the hub of NO recorded
+  run refuses the run (`HubLeftovers`): nothing would delete it.
+- **The sweep judges the hub.** A store nothing may write to may keep the tagged items it held before
+  the run (`LiveArtifactBaseline`): telefonie's one leftover from the workstation years (TODO.md, Q138)
+  is reported as `preExisting=1` and left alone; one more, or one fewer, fails the run.
+- **Populations are built by the run and removed by it.** No generated or hand-curated population is
+  kept in the test account: every test that needs mail seeds its own tagged items and sweeps them, and
+  the tests that need the guests' curated probe population (`Requires=ProbePopulation`) are filtered
+  out. A permanent tagged population would read as a leftover to every zero-artifact proof, and its
+  corpus tag is one `T2/LiveExchangeHubArtifactTests` refuses in a real mailbox.
+
+**The run is one call** - the guests' runner, which restores `CP-06-TEST-ACCOUNT-ADDED` (Outlook
+running, both accounts signed in), stages the commit with that Outlook left running, runs
+`host/Invoke-ExchangeSignIn.ps1 -Mode Preflight` instead of a restart, records the marker and runs the
+suite:
+
+```powershell
+pwsh -File Testbed/host/Invoke-LiveTierOnGuest.ps1 -VMName OutlookAI-Exchange [<commit-or-branch>]
+```
+
+Its filter is `Category=Live&Requires!=AddInRegistry&Requires!=DelegateStore&Requires!=IdentityAccount&Requires!=ProbePopulation`
+(`LiveRunFilters.ExchangeTestAccount`, pinned by `T1/LiveTierInventoryTests`): the broadest the VM can
+honestly run - every live test, read and write, except those that need the add-in (not installed), a
+delegate store (until the shared test mailbox exists, Q109), an identity account (the other mailbox is
+a bystander) or the curated probe population. The runbook's §4.4 records what it found.
+
+**The read-only run (Q108 to Q111), for a settings file that declares `ExchangeGuest`.** Before
+2026-10-08 the VM's one mailbox was also its hub, and it ran only tests that write nothing. That
+profile is unchanged and stays read-only for good, so no settings file of that shape - whose hub is
+the real mailbox - can gain a write: it refuses every in-process write and every write-capable MCP tool
+exactly as the workstation's profile did (layers 2 and 3 above), its filter selects only
+`Writes=Nothing` carriers (layer 1), and because its one mailbox is also its hub, the tripwire censuses
+that hub item by item (`LiveStoreCountTripwire.ExemptHub`) - an arrival is noted, a departure fails.
+With a lease (§5b), once `host/Invoke-ExchangeSignIn.ps1 -VMName OutlookAI-Exchange -Mode Preflight
+-RepoRoot <main checkout>` has exited 0: Defender's signatures current, so the Object
 Model Guard does not stall the run (§1d, item 4), and the account still `SIGNED-IN` (if not:
 `-Mode Reauth`). Then, on the guest:
 
