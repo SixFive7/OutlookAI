@@ -91,6 +91,14 @@ public sealed class LiveRunItemCheck
     {
         ArgumentNullException.ThrowIfNull(session);
         ComItemDetail? item = session.TryReadItem(entryId, storeId, false, false, out _);
+        if (item == null && storeId == null && HubStoreId(session) is { } hubStoreId)
+        {
+            // An EntryID handed in without its store opens against the DEFAULT store, and the hub is not
+            // that one here (telefonie is the profile's first account): ask the hub as well, so an item of
+            // the hub is judged rather than passed for want of a store.
+            item = session.TryReadItem(entryId, hubStoreId, false, false, out _);
+        }
+
         if (item == null)
         {
             return null;
@@ -99,6 +107,14 @@ public sealed class LiveRunItemCheck
         string? refusal = RefusalForReading(
             item.StoreDisplayName, item.Subject, item.SenderAddress, item.Recipients.Select(r => r.Address), operation, addressesMail);
         return refusal;
+    }
+
+    /// <summary>The hub's StoreID, read off the profile's stores; null when the hub is not among them.</summary>
+    public string? HubStoreId(IOutlookSession session)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        return session.GetStoreDetails()
+            .FirstOrDefault(d => string.Equals(d.DisplayName, HubStoreDisplayName, StringComparison.OrdinalIgnoreCase))?.StoreId;
     }
 
     /// <summary>The decision of <see cref="RefusalForItem"/> over what was read. Pure: T1 drives it.</summary>
@@ -426,6 +442,11 @@ public sealed class LiveGuardedOutlookSession : IOutlookSession
         // The draft as it stands now, the moment before it goes: its own recipients decide, not what a
         // test once asked for.
         ComSendableDraftState? state = _inner.TryGetSendableDraftState(entryIdHex, storeId, out _);
+        if (state == null && storeId == null && _check.HubStoreId(_inner) is { } hubStoreId)
+        {
+            state = _inner.TryGetSendableDraftState(entryIdHex, hubStoreId, out _);
+        }
+
         if (state != null)
         {
             Refuse(_check.RefusalForReading(

@@ -83,20 +83,42 @@
   Exchange test VM. Once it does: enable them there, and move test writes from telefonie into the
   shared mailbox wherever a test allows it (Q110).
 
-- [ ] **Approve, amend or refuse the Exchange VM's Phase 2 write-safety design** (proposed
-  2026-10-03, `Docs/live-tier-on-the-vm.md` section 4.4). Until then `OutlookAI-Exchange` is
-  read-only - profile `ExchangeGuest` - and runs only `Writes=Nothing` tests (`Testbed/README.md`
-  section 4e). Nothing in the design is built.
+- [ ] **The Exchange VM's Phase 2 write-safety design now applies to the test account (Q137): confirm
+  what was decided on your behalf on 2026-10-08, and bring AGENTS.md along.** On your "the account you
+  can use extensively for tests", `telefonie-ai-test@xxlnet.nl` joined the VM's profile and became the
+  writable hub (profile `ExchangeTestAccount`), and the design of runbook section 4.4 was built for it;
+  telefonie is a read-only bystander and is never written (`Testbed/README.md` section 4e, runbook
+  section 4.4a). Taken on your behalf, each with its alternatives in section 4.4a: a new profile rather
+  than widening `ExchangeGuest`; the recipient allowlist armed on that machine only; populations built
+  per run, none kept; the run marker recorded on the host, not in the mailbox; the test account's hub
+  exempt from the census like the guests' hubs. Open: (1) confirm them; (2) amend one; (3) put the VM
+  back to read-only - render its settings as `ExchangeGuest` again. Recommended: (1). And AGENTS.md's
+  Mailbox Safety paragraph on the Exchange VM still says it refuses every write until you approve Phase
+  2 - an instruction file the agent did not edit; its replacement is in section 4.4a.
 
-- [ ] **Decide how the one tagged leftover in telefonie's Sent Items goes.** The Exchange VM's
+- [ ] **Decide how the one tagged leftover in telefonie's Sent Items goes (Q138).** The Exchange VM's
   read-only count (`T2/LiveExchangeHubArtifactTests`) found one item whose subject carries
   `OutlookAI-McpTest` in the mailbox's Sent Items on 2026-10-03 - from the workstation years, not from
-  the VM. It fails that test on every run until it is gone, and only a tested sweep on an approved
-  write run may remove it. Directions: (1) remove it with the existing tested sweep on the first
-  approved Phase 2 run - it carries the tag, so `DeleteTaggedArtifactsUntilStableZero` takes it, but
-  no run marker of a recorded run, so that would be a deletion by tag alone; (2) a one-off tested
-  helper that deletes exactly the one EntryID the maintainer confirms; (3) he deletes it himself in
-  Outlook on the web. Recommended: (3) - one item, his mailbox, and no deletion rule loosened for it.
+  the VM. Since 2026-10-08 it fails nothing: telefonie is a read-only bystander, that test judges the
+  hub - the test account - and the run's artifact sweep counts the bystander against what it held before
+  the run (`LiveArtifactBaseline`), so the item is reported as `preExisting=1` and left alone; one more
+  or one fewer fails the run. Nothing in the suite will ever delete it - it carries no marker of a
+  recorded run, and telefonie is never written. Directions: (1) keep it - it is reported on every run
+  and harms nothing; (2) a one-off tested helper that deletes exactly the one EntryID the maintainer
+  confirms; (3) he deletes it himself in Outlook on the web. Recommended: (3) - one item, his mailbox,
+  and no deletion rule loosened for it.
+
+- [ ] **Decide what to do about the test account's automapping into telefonie.** Since the test account
+  joined the profile, Outlook shows a THIRD store, "Telefonie XXLNet": the test account's mailbox once
+  more, as an online delegate store under telefonie's account - Exchange automaps a mailbox to a user
+  with Full Access to it, so telefonie holds Full Access to the test account (a tenant setting, not the
+  VM's). The settings leave it undeclared: it is the hub seen through another account, so a census of it
+  would read the hub's own test traffic as a loss, and the write guards refuse it by name. Directions:
+  (1) remove telefonie's Full Access, or re-grant it with automapping off (Melvin, in the tenant); (2)
+  keep it and let it stand in for the shared test mailbox of Q109 for the read-only `DelegateStore`
+  tests - it is a real delegate store, but its contents are the hub's churn, so the census would need to
+  treat it as the hub; (3) keep it undeclared, as now. Recommended: (1) if the shared mailbox of Q109 is
+  still coming, else (2) after a run shows what those tests make of it.
 
 - [ ] **Decide whether the Exchange VM gets the add-in.** Not installed (Phase 1 needed no write to the
   profile's configuration): `T2/LiveHealthTests` and the `AddInRegistry` tests need it, and on an
@@ -109,10 +131,12 @@
   `host/Invoke-ExchangeSignIn.ps1 -Mode Preflight` updates them before every run. Decide whether the
   VM also gets Q80's auto-approve policy (`guest/Set-OutlookProgrammaticAccess.ps1`), which removes
   the dependency but lets any process on that online VM read addresses without a prompt - so far
-  only the offline guests have it. (1) The sign-in's verification-code
-  step has never met a code page: Microsoft asked for no MFA code on either sign-in of 2026-10-03, so
-  only the RFC test vectors stand behind the TOTP generator - the first code page will be its first
-  real proof. (2) `T2/LiveHealthTests.Health_OnThisMachine_ReportsOkWithFullDetail` reads the add-in's
+  only the offline guests have it. It struck again on 2026-10-08: an Outlook started right after a
+  guest restart prompted on the first address read although Security Center already said current, and
+  the prompt was answered Deny by hand. (1) The sign-in's verification-code
+  step has never met a code page: Microsoft asked for no MFA code on either sign-in of 2026-10-03, nor
+  for the test account's on 2026-10-08, so only the RFC test vectors stand behind the TOTP generator -
+  the first code page will be its first real proof. (2) `T2/LiveHealthTests.Health_OnThisMachine_ReportsOkWithFullDetail` reads the add-in's
   tuning state without declaring `Requires=AddInRegistry`, so it fails on any machine without the add-in
   instead of being filtered out. (3) The five `T2/LiveSearchInTests` throw NullReference when the
   settings carry no `subjectOnlyProbe` instead of refusing with the remedy.

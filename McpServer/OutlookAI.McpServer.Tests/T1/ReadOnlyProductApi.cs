@@ -126,6 +126,7 @@ internal static class ReadOnlyProductApi
         ["OutlookAI.Core.Com.ComGateway..ctor"] = "builds the gateway; it attaches to Outlook only when an operation runs",
         ["OutlookAI.Core.Com.IOutlookSession.TryReadItem"] =
             "reads one item's properties - the read tool's own reader (MailService.Read); reads UnRead and never sets it",
+        ["OutlookAI.Core.Com.IOutlookSession.GetStoreDetails"] = "reads the profile's stores and their Exchange type",
         ["OutlookAI.Core.Com.IOutlookSession.TryGetSendableDraftState"] =
             "reads a draft's recipients, subject and state - what the send path reads before it sends; it sends nothing",
         ["OutlookAI.Core.Services.MailService.Dispose"] = "releases the gateway's COM session",
@@ -157,6 +158,13 @@ internal static class ReadOnlyProductApi
     /// </summary>
     internal static readonly IReadOnlyDictionary<string, string> RefusalOnlyToolNames = new Dictionary<string, string>(StringComparer.Ordinal)
     {
+        ["StdioHubOnlyGate.RefusalFor"] =
+            "the Exchange VM's hub-only gate (2026-10-08) switches on the tool name to decide, before sending, whom a write "
+            + "addresses and which item it touches - it returns a refusal or nothing, and sends no tool itself",
+        ["StdioHubOnlyGate.TargetRefusal"] =
+            "compares the tool name with 'send' to refuse a send by hit id before it is sent; it sends nothing",
+        ["StdioHubOnlyGate.ReadThroughTheProduct"] =
+            "compares the tool name with 'send' to read a draft's recipients the way the send path reads them; it sends nothing",
         ["McpStdioClient.DescribeAuditLogContact"] =
             "compares the tool name with 'discard_draft' to REFUSE, before sending, a call the server would answer by "
             + "writing its real audit log (Q86); the client never sends it",

@@ -260,6 +260,11 @@ public sealed class StdioHubOnlyGate : IDisposable
         {
             // The draft as it stands, read the way the send path reads it.
             ComSendableDraftState? state = session.TryGetSendableDraftState(entryId, null, out _);
+            if (state == null && _check.HubStoreId(session) is { } hubStoreId)
+            {
+                state = session.TryGetSendableDraftState(entryId, hubStoreId, out _);
+            }
+
             if (state != null)
             {
                 return _check.RefusalForReading(

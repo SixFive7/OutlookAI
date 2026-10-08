@@ -583,7 +583,8 @@ function Invoke-SelfTest {
     $f = Get-LiveFilter $true '' '&FullyQualifiedName~X'
     Check 'a suffix narrows it' 'Category=Live&Requires!=DelegateStore&Requires!=CachedExchange&FullyQualifiedName~X|True' @($f.Filter, $f.Narrowed)
     $f = Get-LiveFilter $true '' '' $true
-    Check 'the Exchange VM runs LiveRunFilters.ExchangeTestAccount' 'Category=Live&Requires!=AddInRegistry&Requires!=DelegateStore&Requires!=IdentityAccount&Requires!=ProbePopulation|False' @($f.Filter, $f.Narrowed)
+    Check 'the Exchange VM runs LiveRunFilters.ExchangeTestAccount' $FilterExchange $f.Filter
+    Check 'and that run is not narrowed' $false $f.Narrowed
     Check 'and a suffix narrows it' $true (Get-LiveFilter $true '' '&FullyQualifiedName~Y' $true).Filter.EndsWith('&Requires!=ProbePopulation&FullyQualifiedName~Y')
     Check 'a suffix that does not start with & is refused' $true ($null -ne (Get-LiveFilter $true '' 'FullyQualifiedName~X').Refusal)
     Check 'a filter that is not Category=Live is refused' $true ($null -ne (Get-LiveFilter $true 'FullyQualifiedName~X' '').Refusal)
