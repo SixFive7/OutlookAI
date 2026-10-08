@@ -92,6 +92,7 @@ public sealed class LiveShowMeTests
     [Fact]
     [Trait("Requires", "SearchIndex")]
     [Trait("Requires", "InteractiveDesktop")]
+    [Trait("Requires", "GeneratedPopulation")]
     public void OpenInOutlook_HubMail_InspectorForRightEntryIdThenClosedByTest()
     {
         // A hub mail to display - prefer an already-read one (Display can mark unread

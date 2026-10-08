@@ -51,6 +51,9 @@ public sealed class StdioHubOnlyGate : IDisposable
     /// <summary>The phrase every refusal of this gate carries.</summary>
     public const string Refused = "HUB-ONLY GATE REFUSED";
 
+    /// <summary>The hub's address - the one a write may come from and go to.</summary>
+    public string Hub => _check.HubStoreDisplayName;
+
     private sealed record SeenHit(string? Subject, string? Store, string? FromAddress);
 
     /// <summary>

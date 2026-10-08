@@ -61,6 +61,28 @@ public sealed class RecipientAllowlistTests
     }
 
     [Fact]
+    public void TheHubsPlusAddressesAreTheHub_AndAMarkedNameResolvesToNobody()
+    {
+        RecipientAllowlist marked = new(new[] { Hub }, "oair20261008153000");
+
+        Assert.True(marked.IsAllowed("test-account+cc-x@example.invalid"));
+        Assert.True(marked.IsAllowed("Cc <TEST-ACCOUNT+bcc@EXAMPLE.INVALID>"));
+        Assert.False(marked.IsAllowed("test-account+x@other.invalid"));
+        Assert.False(marked.IsAllowed("someone+test-account@example.invalid"));
+        Assert.False(marked.IsAllowed("+x@example.invalid"));
+        Assert.Equal("test-account+cc-1@example.invalid", marked.PlusAddress("cc-1"));
+
+        Assert.True(marked.IsAllowed("not a valid address p4oair20261008153000"));
+        Assert.False(marked.IsAllowed("not a valid address"));
+        Assert.False(marked.IsAllowed("someone oair20261008153000@example.invalid"));
+        Assert.False(Allowlist.IsAllowed("not a valid address p4oair20261008153000"));
+
+        // Read off an item, a name with no address is refused: such a draft cannot be sent from here.
+        Assert.NotNull(marked.RefusalForItem(new string?[] { Hub, "not a valid address p4oair20261008153000" }, "send"));
+        Assert.Null(marked.RefusalForItem(new string?[] { Hub, "test-account+cc@example.invalid" }, "send"));
+    }
+
+    [Fact]
     public void TheAllowlistHoldsPlainAddresses_AndAtLeastOne()
     {
         Assert.Throws<ArgumentException>(() => new RecipientAllowlist(Array.Empty<string>()));

@@ -26,6 +26,7 @@ public sealed class LiveHealthTests
     [Trait("Requires", "SearchIndex")]
     [Trait("Requires", "MultipleStores")]
     [Trait("Writes", "Nothing")]
+    [Trait("Requires", "AddInRegistry")]
     public void Health_OnThisMachine_ReportsOkWithFullDetail()
     {
         // Ensure the COM session exists so Outlook is definitely up (the fixture may

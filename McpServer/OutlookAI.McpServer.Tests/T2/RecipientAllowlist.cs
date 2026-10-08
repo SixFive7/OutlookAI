@@ -29,10 +29,25 @@ public sealed class RecipientAllowlist
 
     private readonly HashSet<string> _allowed;
 
+    /// <summary>
+    /// A string that, inside an entry with no '@', marks that entry as a test's deliberately UNRESOLVABLE
+    /// name - this run's marker, which no directory entry carries - or null to allow none.
+    /// </summary>
+    private readonly string? _unresolvableMarker;
+
     /// <summary>Builds the allowlist around the addresses a test may write to - normally the hub's one.</summary>
     /// <param name="allowedAddresses">Each must be an address (it contains '@'); compared ignoring case.</param>
-    public RecipientAllowlist(IEnumerable<string> allowedAddresses)
+    /// <param name="unresolvableMarker">
+    /// When given (12 characters or more), an entry with no '@' that contains it is allowed too: a test's
+    /// deliberately unresolvable name, which Outlook resolves to nobody because no directory entry carries
+    /// this run's marker. Such a draft cannot be sent - its recipient has no address, which the send-time
+    /// check refuses (<see cref="RefusalForItem"/>).
+    /// </param>
+    public RecipientAllowlist(IEnumerable<string> allowedAddresses, string? unresolvableMarker = null)
     {
+        _unresolvableMarker = string.IsNullOrWhiteSpace(unresolvableMarker) || unresolvableMarker.Trim().Length < 12
+            ? null
+            : unresolvableMarker.Trim();
         ArgumentNullException.ThrowIfNull(allowedAddresses);
         _allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (string address in allowedAddresses)
@@ -105,11 +120,55 @@ public sealed class RecipientAllowlist
         return text;
     }
 
-    /// <summary>True when <paramref name="address"/> - one entry, reduced by <see cref="AddressOf"/> - may be written to.</summary>
+    /// <summary>
+    /// True when <paramref name="address"/> - one entry, reduced by <see cref="AddressOf"/> - may be written to:
+    /// an allowed address itself; a PLUS ADDRESS of one (<c>local+anything@domain</c>), which Exchange delivers
+    /// to the same mailbox or, where plus addressing is off, bounces back to its sender - nobody else either
+    /// way; or, when this allowlist was given a marker, a name with no '@' that carries it.
+    /// </summary>
     public bool IsAllowed(string? address)
     {
         string reduced = AddressOf(address);
-        return reduced.Length > 0 && _allowed.Contains(reduced);
+        if (reduced.Length == 0)
+        {
+            return false;
+        }
+
+        if (_allowed.Contains(reduced) || IsPlusAddressOfAllowed(reduced))
+        {
+            return true;
+        }
+
+        return _unresolvableMarker != null
+            && !reduced.Contains('@', StringComparison.Ordinal)
+            && reduced.Contains(_unresolvableMarker, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>True when <paramref name="address"/> is <c>local+tag@domain</c> of an allowed <c>local@domain</c>.</summary>
+    private bool IsPlusAddressOfAllowed(string address)
+    {
+        int at = address.LastIndexOf('@');
+        int plus = address.IndexOf('+', StringComparison.Ordinal);
+        if (at <= 0 || plus <= 0 || plus > at || address.IndexOf('@') != at)
+        {
+            return false;
+        }
+
+        string unplussed = address.Substring(0, plus) + address.Substring(at);
+        return _allowed.Contains(unplussed);
+    }
+
+    /// <summary>
+    /// An address a test may give where it needs one DISTINCT from the hub's - a Cc, a Bcc: the hub's own
+    /// plus address <c>local+tag@domain</c>. Every address in the allowlist is the hub's, so the first one
+    /// is taken.
+    /// </summary>
+    public string PlusAddress(string tag)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(tag);
+        string hub = _allowed.First();
+        int at = hub.LastIndexOf('@');
+        return hub.Substring(0, at) + "+" + tag + hub.Substring(at);
     }
 
     /// <summary>
@@ -162,11 +221,13 @@ public sealed class RecipientAllowlist
         foreach (string? address in itemRecipientAddresses)
         {
             total++;
-            if (string.IsNullOrWhiteSpace(address))
+            string reduced = AddressOf(address);
+            if (reduced.Length == 0 || !reduced.Contains('@', StringComparison.Ordinal))
             {
+                // No address at all - a name Outlook resolved to nobody: nothing this check can vouch for.
                 unreadable++;
             }
-            else if (!IsAllowed(address))
+            else if (!IsAllowed(reduced))
             {
                 strangers++;
             }
@@ -212,8 +273,20 @@ public static class LiveRecipientGuard
     {
         ArgumentNullException.ThrowIfNull(settings);
         return LiveWriteAccess.ArmsRecipientAllowlist(settings.MachineProfile)
-            ? new RecipientAllowlist(new[] { settings.TestHubStoreDisplayName })
+            ? new RecipientAllowlist(new[] { settings.TestHubStoreDisplayName }, LiveRunMarker.Current)
             : null;
+    }
+
+    /// <summary>
+    /// An address for a test that needs one distinct from the hub's: where the allowlist is armed, the hub's
+    /// plus address carrying <paramref name="tag"/>; elsewhere <c>tag@example.invalid</c>, as the tests always
+    /// used - a domain that resolves nowhere, on machines whose mail ends in a loopback sink.
+    /// </summary>
+    public static string AddressFor(string tag)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(tag);
+        RecipientAllowlist? armed = Current;
+        return armed == null ? tag + "@example.invalid" : armed.PlusAddress(tag);
     }
 
     /// <summary>Throws when this machine arms an allowlist and a field addresses anyone but the hub.</summary>

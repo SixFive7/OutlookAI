@@ -191,7 +191,7 @@ $SdkSha512 = 'f0d8f8e7ec24efb05172a65dd80c4a9b1ef17efcebdbf0f57c15f436eea417960a
 $FilterBase = 'Category=Live&Requires!=DelegateStore&Requires!=CachedExchange'
 $FilterUnindexedExtra = '&Requires!=SearchIndex'
 # The Exchange VM with its test account as the hub - LiveRunFilters.ExchangeTestAccount.
-$FilterExchange = 'Category=Live&Requires!=AddInRegistry&Requires!=DelegateStore&Requires!=IdentityAccount&Requires!=ProbePopulation'
+$FilterExchange = 'Category=Live&Requires!=AddInRegistry&Requires!=DelegateStore&Requires!=GeneratedPopulation&Requires!=IdentityAccount&Requires!=ProbePopulation&Requires!=PstStore'
 # The host's record of the Exchange VM's run markers: beside the leases, machine state, not the repository.
 $ExchangeLedgerRelative = 'exchange-runs\ledger.jsonl'
 $LeaseReasonPrefix = 'Invoke-LiveTierOnGuest'
@@ -368,7 +368,8 @@ function Get-PriorRunMarkers {
     foreach ($line in @($LedgerLines)) {
         if ([string]::IsNullOrWhiteSpace($line)) { continue }
         $e = $null
-        try { $e = $line | ConvertFrom-Json } catch { continue }
+        # A ledger first written by Windows PowerShell 5.1 starts with a byte-order mark.
+        try { $e = $line.TrimStart([char]0xFEFF) | ConvertFrom-Json } catch { continue }
         $m = [string]$e.marker
         if ($m -cnotmatch '^[a-z0-9]{12,40}$') { continue }
         if ([string]$e.event -eq 'started' -and -not $started.Contains($m)) { $started.Add($m) }
@@ -746,7 +747,7 @@ STACK      the faulting thread
     }
     Check 'the Exchange VM is the one testbed.json exchangeVm names' 'OutlookAI-Exchange|OAI-EXCHANGE' @([string]$testbed.exchangeVm.vmName, [string]$testbed.exchangeVm.computerName)
     Check 'and rests on the newest checkpoint testbed.json records for it' ([string]@($testbed.exchangeVm.checkpoints)[-1]) $Guests['OutlookAI-Exchange'].Checkpoint
-    Check 'LiveRunFilters.ExchangeTestAccount leaves out exactly what the Exchange VM lacks' $true $filters.Contains('ExchangeTestAccountLacks { get; } = new[] { AddInRegistry, DelegateStore, IdentityAccount, ProbePopulation }')
+    Check 'LiveRunFilters.ExchangeTestAccount leaves out exactly what the Exchange VM lacks' $true $filters.Contains('new[] { AddInRegistry, DelegateStore, GeneratedPopulation, IdentityAccount, ProbePopulation, PstStore }')
     $marker = [System.IO.File]::ReadAllText((Join-Path $repo 'McpServer\OutlookAI.McpServer.Tests\T2\LiveRunMarker.cs'))
     Check 'the run reads the marker from the variable this sets' $true ($marker.Contains('"OUTLOOKAI_LIVE_RUN_MARKER"') -and $marker.Contains('"OUTLOOKAI_LIVE_PRIOR_RUN_MARKERS"') -and $own.Contains("`$env:OUTLOOKAI_LIVE_RUN_MARKER = '"))
     foreach ($name in $Guests.Keys) {

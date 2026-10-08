@@ -183,8 +183,9 @@ public sealed class LiveDraftOptionsTests
         ComDraftInfo seedInfo = RequireMailInfo(seed.EntryId, seed.StoreId ?? hubStoreId);
         Assert.False(string.IsNullOrEmpty(seedInfo.ConversationIndex), "seed must carry a ConversationIndex");
 
-        string ccAddress = "cc-" + Marker + "@example.invalid";
-        string bccAddress = "bcc-" + Marker + "@example.invalid";
+        // Where mail reaches the internet (the Exchange VM), the hub's own plus addresses (2026-10-08).
+        string ccAddress = LiveRecipientGuard.AddressFor("cc-" + Marker);
+        string bccAddress = LiveRecipientGuard.AddressFor("bcc-" + Marker);
         string unresolvable = "not a valid address " + Marker;
         string overriddenSubject = _fixture.TaggedSubject("renamed");
         var draftIds = new List<string>();
@@ -318,7 +319,7 @@ public sealed class LiveDraftOptionsTests
             LiveStoreWriteGuard.Writable(Hub, StoreWriteKind.Draft, "forward_draft");
             DraftOutcome forward = Service.ForwardDraft(
                 seed.EntryId, agentText, Hub, display: false, signature: null,
-                cc: "fwdcc-" + Marker + "@example.invalid", bcc: "fwdbcc-" + Marker + "@example.invalid",
+                cc: LiveRecipientGuard.AddressFor("fwdcc-" + Marker), bcc: LiveRecipientGuard.AddressFor("fwdbcc-" + Marker),
                 subject: overriddenSubject, importance: "low", requestReadReceipt: null);
             draftId = forward.EntryId;
 

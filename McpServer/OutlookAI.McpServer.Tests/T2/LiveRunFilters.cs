@@ -95,13 +95,21 @@ public static class LiveRunFilters
     /// <summary>A hand-curated population named in the live-test settings.</summary>
     public const string ProbePopulation = "ProbePopulation";
 
+    /// <summary>The PST guests' generated test data: the hub population and the corpus.</summary>
+    public const string GeneratedPopulation = "GeneratedPopulation";
+
+    /// <summary>A mailbox in a local .pst data file.</summary>
+    public const string PstStore = "PstStore";
+
     /// <summary>
     /// What the Exchange VM does NOT have since its test account became the hub (2026-10-08), in the
     /// order its filter names them: no add-in; no delegate store until the shared test mailbox exists
-    /// (Q109); no identity account - the other mailbox, the real one, is a bystander no test writes to; and
-    /// no hand-curated probe population - a run builds what it needs and removes it.
+    /// (Q109); no generated population - a test there seeds what it needs and the sweep removes it; no
+    /// identity account - the other mailbox, the real one, is a bystander no test writes to; no
+    /// hand-curated probe population; and no data file.
     /// </summary>
-    public static IReadOnlyList<string> ExchangeTestAccountLacks { get; } = new[] { AddInRegistry, DelegateStore, IdentityAccount, ProbePopulation };
+    public static IReadOnlyList<string> ExchangeTestAccountLacks { get; } =
+        new[] { AddInRegistry, DelegateStore, GeneratedPopulation, IdentityAccount, ProbePopulation, PstStore };
 
     /// <summary>
     /// The filter the Exchange VM runs with its test account as the writable hub

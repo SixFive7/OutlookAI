@@ -63,6 +63,17 @@ public sealed class LiveExchangeHubArtifactTests
                 ours += LiveOutlookTestMailer.CountTaggedArtifacts(hub, marker, LiveOutlookTestMailer.HubSweepFolderIdsWithArchive);
             }
 
+            // And Junk Email, where Exchange Online may file a self-sent test mail - read, never purged here.
+            int junk = LiveOutlookTestMailer.CountTaggedArtifacts(hub, Fragment(LiveOutlookTestMailer.SubjectTag), new[] { 23 });
+            int ourJunk = 0;
+            foreach (string marker in new[] { LiveRunMarker.Current }.Concat(LiveRunMarker.Prior))
+            {
+                ourJunk += LiveOutlookTestMailer.CountTaggedArtifacts(hub, marker, new[] { 23 });
+            }
+
+            liveTier += junk;
+            ours += ourJunk;
+
             _output.WriteLine("hub (cached Exchange, the writable test account): " + liveTier.ToString(CultureInfo.InvariantCulture)
                 + " tagged item(s), " + ours.ToString(CultureInfo.InvariantCulture) + " of them this run's or a recorded earlier run's");
             liveTier -= ours;

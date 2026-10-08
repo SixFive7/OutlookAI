@@ -29,6 +29,13 @@ public static class LiveArtifactSweep
     /// </summary>
     public const string TagText = "OutlookAI-McpTest";
 
+    /// <summary>
+    /// The folders counted and swept on the Exchange VM: the hub's set with its archive folder, and Junk
+    /// Email (23) - Exchange Online may file a self-sent test mail there, where no PST guest ever puts one -
+    /// before Deleted Items, which stays last so the final pass purges what the others moved there.
+    /// </summary>
+    public static readonly int[] ExchangeFolders = { 16, 6, 5, 39, 4, 23, 20, 19, 21, 22, 3 };
+
     /// <summary>True on the machine whose hub is a real Exchange account (the Exchange VM's test account).</summary>
     public static bool SweepsByRecordedMarkers(LiveTestSettings settings)
     {
@@ -42,7 +49,7 @@ public static class LiveArtifactSweep
     /// </summary>
     public static int[]? FoldersFor(LiveTestSettings settings)
     {
-        return SweepsByRecordedMarkers(settings) ? LiveOutlookTestMailer.HubSweepFolderIdsWithArchive : null;
+        return SweepsByRecordedMarkers(settings) ? ExchangeFolders : null;
     }
 
     /// <summary>Counts the tagged items in one store. Read-only.</summary>
@@ -60,7 +67,7 @@ public static class LiveArtifactSweep
             return;
         }
 
-        int[] folders = LiveOutlookTestMailer.HubSweepFolderIdsWithArchive;
+        int[] folders = ExchangeFolders;
         LiveOutlookTestMailer.DeleteTaggedArtifactsUntilStableZero(store, LiveRunMarker.Current, folderIds: folders);
         foreach (string prior in LiveRunMarker.Prior)
         {
@@ -91,7 +98,7 @@ public static class LiveArtifactSweep
         }
 
         string hub = settings.TestHubStoreDisplayName;
-        int[] folders = LiveOutlookTestMailer.HubSweepFolderIdsWithArchive;
+        int[] folders = ExchangeFolders;
         int total = LiveOutlookTestMailer.CountTaggedArtifacts(hub, TagText, folders);
         int testFolders = LiveOutlookTestMailer.CountTestFolders(hub);
         Dictionary<string, int> byMarker = new(StringComparer.Ordinal);

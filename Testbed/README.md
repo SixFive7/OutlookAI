@@ -1244,11 +1244,12 @@ suite:
 pwsh -File Testbed/host/Invoke-LiveTierOnGuest.ps1 -VMName OutlookAI-Exchange [<commit-or-branch>]
 ```
 
-Its filter is `Category=Live&Requires!=AddInRegistry&Requires!=DelegateStore&Requires!=IdentityAccount&Requires!=ProbePopulation`
+Its filter is `Category=Live&Requires!=AddInRegistry&Requires!=DelegateStore&Requires!=GeneratedPopulation&Requires!=IdentityAccount&Requires!=ProbePopulation&Requires!=PstStore`
 (`LiveRunFilters.ExchangeTestAccount`, pinned by `T1/LiveTierInventoryTests`): the broadest the VM can
 honestly run - every live test, read and write, except those that need the add-in (not installed), a
-delegate store (until the shared test mailbox exists, Q109), an identity account (the other mailbox is
-a bystander) or the curated probe population. The runbook's §4.4 records what it found.
+delegate store (until the shared test mailbox exists, Q109), the PST guests' generated population or
+their curated probe population (the test account holds neither), an identity account (the other
+mailbox is a bystander) or a data file. The runbook's §4.4a records what it found.
 
 **The read-only run (Q108 to Q111), for a settings file that declares `ExchangeGuest`.** Before
 2026-10-08 the VM's one mailbox was also its hub, and it ran only tests that write nothing. That

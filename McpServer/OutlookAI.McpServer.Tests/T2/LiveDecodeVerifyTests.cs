@@ -49,6 +49,7 @@ public sealed class LiveDecodeVerifyTests
     [Trait("Requires", "SearchIndex")]
     [Trait("Requires", "MultipleStores")]
     [Trait("Writes", "Nothing")]
+    [Trait("Requires", "GeneratedPopulation")]
     public void HitMapping_25SampledHits_AllOpenAndMatch_AtLeast24ViaPrimaryPath()
     {
         List<IndexHit> samples = SampleHitsAcrossStores();
@@ -189,6 +190,7 @@ public sealed class LiveDecodeVerifyTests
     [Fact]
     [Trait("Requires", "SearchIndex")]
     [Trait("Writes", "Nothing")]
+    [Trait("Requires", "PstStore")]
     public void ShortDecodedId_OpensAsTheItemItself_OnAPstStore()
     {
         // The PST half (Q74 C3), the one a test guest can pass. INFERRED, NOT YET RUN: on a PST the
@@ -255,6 +257,7 @@ public sealed class LiveDecodeVerifyTests
     [Trait("Requires", "SearchIndex")]
     [Trait("Requires", "MultipleStores")]
     [Trait("Writes", "Nothing")]
+    [Trait("Requires", "GeneratedPopulation")]
     public void AttachmentHit_ParentMapping_OpensParentWithMatchingAttachment()
     {
         // Real attachment-content entries (kind=document under a mapi store scope).

@@ -44,6 +44,7 @@ public sealed class LiveFolderScopeTests
     [Fact]
     [Trait("Requires", "SearchIndex")]
     [Trait("Requires", "MultipleStores")]
+    [Trait("Requires", "GeneratedPopulation")]
     public void PrimaryStore_ExcludeSubfolders_NarrowsExactly_AndCostsNothing()
     {
         // A primary-store folder WITH children: recursive must return strictly more than

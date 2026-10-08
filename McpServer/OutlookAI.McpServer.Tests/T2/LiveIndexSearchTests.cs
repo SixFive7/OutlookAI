@@ -88,6 +88,7 @@ public sealed class LiveIndexSearchTests
     [Trait("Requires", "SearchIndex")]
     [Trait("Requires", "MultipleStores")]
     [Trait("Writes", "Nothing")]
+    [Trait("Requires", "ProbePopulation")]
     public void ProbeParity_McpShapedQuery_ScopeKindContainsOrderBy()
     {
         // Section-5 R3 shape: store scope + kind + CONTAINS + ORDER BY DESC, TOP 25.
@@ -214,6 +215,7 @@ public sealed class LiveIndexSearchTests
     [Trait("Requires", "SearchIndex")]
     [Trait("Requires", "MultipleStores")]
     [Trait("Writes", "Nothing")]
+    [Trait("Requires", "GeneratedPopulation")]
     public void SenderFilter_PerColumnContains_IndexBackedUnder2s()
     {
         // Any sender address seen in recent mail of the first store; asserted content-free.

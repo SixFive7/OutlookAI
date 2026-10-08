@@ -436,7 +436,7 @@ from-scratch rebuild replaces the guests (see `Testbed/README.md` section 1b).
 | Test | Declares | Asserts | Reads |
 | --- | --- | --- | --- |
 | `T3/Phase7LiveMcpToolShapeTests.Health_OverStdio_OnThisMachine_HasOutlookVersionAndTuning` | `AddInRegistry` | `tuning.managed` is true | `Initialized`, a nonzero **REG_DWORD** |
-| `T2/LiveHealthTests.Health_OnThisMachine_ReportsOkWithFullDetail` | `SearchIndex`, `MultipleStores` - **not** `AddInRegistry`, which it needs | `Tuning.Managed`, `Tuning.Enabled`, `Tuning.LastReconcileUtc` not null | `Initialized` and `Enabled` as nonzero **REG_DWORD**s, `LastReconcileUtc` as a **REG_SZ** |
+| `T2/LiveHealthTests.Health_OnThisMachine_ReportsOkWithFullDetail` | `SearchIndex`, `MultipleStores` and, since 2026-10-08, `AddInRegistry`, which it needs | `Tuning.Managed`, `Tuning.Enabled`, `Tuning.LastReconcileUtc` not null | `Initialized` and `Enabled` as nonzero **REG_DWORD**s, `LastReconcileUtc` as a **REG_SZ** |
 
 **The type matters as much as the value**: `HealthReporting`'s `AsBool` accepts a boxed `int` and
 nothing else, so a REG_QWORD 1 reads as not-managed. The third test that declares `AddInRegistry`,
@@ -4110,7 +4110,7 @@ needed Exchange, and those seven were the workstation run.
 **Since 2026-10-08 the Exchange VM writes - in its dedicated test account (section 4.4a).** Its run
 selects every live test it has the capabilities for, read and write:
 
-`Category=Live&Requires!=AddInRegistry&Requires!=DelegateStore&Requires!=IdentityAccount&Requires!=ProbePopulation`
+`Category=Live&Requires!=AddInRegistry&Requires!=DelegateStore&Requires!=GeneratedPopulation&Requires!=IdentityAccount&Requires!=ProbePopulation&Requires!=PstStore`
 
 and only a test that needs a delegate store must still carry `Writes=Nothing`
 (`EveryDelegateStoreTest_DeclaresWritesNothing`): a delegate or shared mailbox is read-only for every
@@ -4124,8 +4124,9 @@ test, on every machine.
 | VM | `--filter "Category=Live&Requires!=DelegateStore&Requires!=CachedExchange"` | 121 |
 | Exchange-only (the Exchange VM, section 4.4; the workstation before Q116 (a)) | `--filter "Category=Live&(Requires=DelegateStore\|Requires=CachedExchange)"` | 7 on the morning of 2026-10-03; 9 once section 4.4 added two |
 
-**The vocabulary, all twelve values.** Ten of them this VM can be given; two it cannot - both are an
-Exchange profile.
+**The vocabulary, all fourteen values.** Twelve of them this VM can be given; two it cannot - both are
+an Exchange profile. And two of the twelve - `GeneratedPopulation` and `PstStore`, named 2026-10-08 - are
+what the Exchange VM, in turn, does not have (section 4.4a).
 
 | Capability | What the machine must have |
 | --- | --- |
@@ -4139,10 +4140,12 @@ Exchange profile.
 | `IdentityAccount` | a second mail account the write allowlist grants an identity draft in - a non-hub primary left OUT of `bystanderStoreDisplayNames`. **The three-store floor in section 1.3 does not have one** and the tests naming it then prove nothing and say so; **section 2.8b builds one**, which is how a machine stops needing that announcement. Both states are real: 1.3 is the minimum that runs, 2.8b is what a complete guest has |
 | `SmallHubStore` | a hub small enough that a paging assertion means something |
 | `ProbePopulation` | the hand-curated population named in the settings file |
+| `GeneratedPopulation` | the guests' GENERATED test data - the hub population and the corpus: nested folders that hold mail, attachments of every kind, mail over 100 KB, many senders, enough recent mail to sample. Named 2026-10-08, when the Exchange VM's empty test account met the thirteen tests that had silently assumed it |
+| `PstStore` | a mailbox in a local .pst data file, whose ids and index names are a data file's - the PST halves of the decode, store-map and folder-id checks |
 | **`DelegateStore`** | **a delegate/shared mailbox. One of the two capabilities no test machine can be given** |
 | **`CachedExchange`** | **a cached Exchange mailbox, whose entry ids are Exchange's 70-byte form. The other one (Q74 C1, 2026-10-03)** |
 
-`Tools/Checks/check-pinned-constants.ps1` fails the build if any of those twelve names stops
+`Tools/Checks/check-pinned-constants.ps1` fails the build if any of those fourteen names stops
 appearing in this file, so the table above is load-bearing text and not decoration.
 
 **Why `DelegateStore` and `CachedExchange` are the only production-only capabilities.** A delegate/shared mailbox is

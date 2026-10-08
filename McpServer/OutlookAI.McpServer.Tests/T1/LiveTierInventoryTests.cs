@@ -120,6 +120,16 @@ public sealed class LiveTierInventoryTests
         // A hand-curated population named in the gitignored live-test settings.
         "ProbePopulation",
 
+        // The PST guests' GENERATED test data - the hub population and the corpus a guest is built with:
+        // nested folders that hold mail, attachments of every kind, mail over 100 KB, many senders and
+        // enough recent mail to sample. Named 2026-10-08, when the Exchange VM's empty test account met the
+        // tests that had silently assumed it; that VM builds no population, so its filter leaves them out.
+        "GeneratedPopulation",
+
+        // A mailbox in a local .pst data file, whose ids and index names are a data file's - what the
+        // PST halves of the decode, store-map and folder-id checks measure. The Exchange VM has none.
+        "PstStore",
+
         // The two capabilities a dedicated test machine cannot be given - an Exchange profile.
         DelegateStore,
         CachedExchange,
@@ -429,7 +439,7 @@ public sealed class LiveTierInventoryTests
         // shared test mailbox exists (Q109), no identity account (the real mailbox is a bystander), no
         // hand-curated probe population.
         Assert.Equal(
-            "Category=Live&Requires!=AddInRegistry&Requires!=DelegateStore&Requires!=IdentityAccount&Requires!=ProbePopulation",
+            "Category=Live&Requires!=AddInRegistry&Requires!=DelegateStore&Requires!=GeneratedPopulation&Requires!=IdentityAccount&Requires!=ProbePopulation&Requires!=PstStore",
             LiveRunFilters.ExchangeTestAccount);
         Assert.All(LiveRunFilters.ExchangeTestAccountLacks, c => Assert.Contains(c, AllCapabilities));
         Assert.DoesNotContain(LiveRunFilters.CachedExchange, LiveRunFilters.ExchangeTestAccountLacks);

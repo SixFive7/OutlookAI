@@ -369,11 +369,18 @@ public sealed class McpStdioClient : IAsyncDisposable
     /// </summary>
     public async Task PrimeWritingRulesGateAsync()
     {
+        // On the Exchange VM's test account the hub-only gate judges even this call, which the server
+        // rejects before any Outlook work: there it names the hub and carries the tag and the run's marker
+        // (2026-10-08), so the gate lets it through to be rejected.
+        string address = _hubGate?.Hub ?? "nobody@example.invalid";
+        string subject = _hubGate == null
+            ? "writing-rules gate priming"
+            : LiveOutlookTestMailer.SubjectTag + " " + LiveRunMarker.Current + " writing-rules gate priming";
         await CallToolWithIsErrorAsync("new_draft", new
         {
-            account = "nobody@example.invalid",
-            to = "nobody@example.invalid",
-            subject = "writing-rules gate priming",
+            account = address,
+            to = address,
+            subject,
             body = "priming",
             body_html = "<p>priming</p>",
             display = false,
