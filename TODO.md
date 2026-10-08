@@ -76,12 +76,12 @@
   Q95's kind; (5) accept it - the live tier on the W. Europe guests drives Outlook's real dates.
   Recommended: (2), with (3) for each test as it is next touched.
 
-- [ ] **On or after 2026-10-05, ask the maintainer whether the shared test mailbox exists (Q109).**
-  He requested a free shared mailbox in his Microsoft 365 tenant on 2026-10-03 (for example
-  `outlookai-test@xxlnet.nl`, with full access for `telefonie@xxlnet.nl`); creating it takes a few
-  days, and he asked to be reminded after 48 hours. Until it exists, the six `Requires=DelegateStore`
-  Exchange tests stay disabled on the Exchange test VM. Once it does: enable them there, and move
-  test writes from telefonie into the shared mailbox wherever a test allows it (Q110).
+- [ ] **Waiting for the shared test mailbox (Q109).** The maintainer requested a free shared
+  mailbox in his Microsoft 365 tenant on 2026-10-03 (for example `outlookai-test@xxlnet.nl`, with
+  full access for `telefonie@xxlnet.nl`). On 2026-10-08 it did not exist yet; creating it lies with
+  Melvin. Until it exists, the six `Requires=DelegateStore` Exchange tests stay disabled on the
+  Exchange test VM. Once it does: enable them there, and move test writes from telefonie into the
+  shared mailbox wherever a test allows it (Q110).
 
 - [ ] **Approve, amend or refuse the Exchange VM's Phase 2 write-safety design** (proposed
   2026-10-03, `Docs/live-tier-on-the-vm.md` section 4.4). Until then `OutlookAI-Exchange` is
