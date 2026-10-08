@@ -233,8 +233,12 @@ public sealed class StdioHubOnlyGate : IDisposable
                     + "own recipients can be read before it goes.";
             }
 
+            // A hit carries its sender only when the index row names one; without it, the hit is judged by its
+            // provenance alone - the hub, the tag, this run's marker - which only this run's guarded helpers can
+            // have given an item, and they address nobody but the hub. A sender that IS named must be the hub.
+            bool judgeSender = addressesMail && !string.IsNullOrWhiteSpace(hit.FromAddress);
             return _check.RefusalForReading(
-                hit.Store, hit.Subject, addressesMail ? hit.FromAddress : null, Array.Empty<string?>(), tool, addressesMail);
+                hit.Store, hit.Subject, judgeSender ? hit.FromAddress : null, Array.Empty<string?>(), tool, judgeSender);
         }
 
         if (EntryIdHex.IsMatch(id))

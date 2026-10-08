@@ -79,6 +79,12 @@
     MAINTAINER - Microsoft asked for a second factor, or for one to be registered, that only he can
     give (the page's words are printed).
 
+.PARAMETER DefenderOnly
+    With -Mode Preflight: bring Defender's signatures up to date and stop there - for the moment
+    before Outlook starts, so that the Outlook which then starts finds them current (an Outlook started
+    on stale signatures prompted on its first address read on 2026-10-08, although they were current a
+    minute later).
+
 .PARAMETER StartOutlook
     With -Mode NewProfile: start OUTLOOK.EXE in session 1, NOT elevated, before step 1.
 
@@ -95,6 +101,7 @@ param(
     [Parameter(ParameterSetName = 'Run')] [ValidateSet('NewProfile', 'AddAccount', 'Reauth', 'Preflight')] [string] $Mode = 'NewProfile',
     [Parameter(ParameterSetName = 'Run')] [string] $Account,
     [Parameter(ParameterSetName = 'Run')] [switch] $StartOutlook,
+    [Parameter(ParameterSetName = 'Run')] [switch] $DefenderOnly,
     [Parameter(ParameterSetName = 'Run')] [string] $RepoRoot,
     [Parameter(ParameterSetName = 'Run')] [int] $PageWaitSeconds = 90,
     [Parameter(Mandatory = $true, ParameterSetName = 'SelfTest')] [switch] $SelfTest
@@ -360,6 +367,7 @@ try {
             exit 1
         }
         Say ('  up to date (productState 0x{0:X6}); signatures {1} day(s) old' -f $av.State, $av.Age)
+        if ($DefenderOnly) { exit 0 }
         $allSignedIn = $true
         foreach ($recorded in @(Get-ExchangeAccounts $testbed)) {
             Say "preflight 2: is $recorded still signed in?"

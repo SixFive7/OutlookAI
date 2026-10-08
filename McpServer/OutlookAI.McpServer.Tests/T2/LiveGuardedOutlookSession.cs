@@ -392,7 +392,12 @@ public sealed class LiveGuardedOutlookSession : IOutlookSession
             ComDraftInfo? draft = _inner.TryGetMailInfo(savedDraftEntryId, null, out _);
             if (draft != null)
             {
-                Refuse(_check.Recipients.RefusalForItem(draft.Recipients.Select(r => r.Address), operation + " (the saved draft)"));
+                // An entry Outlook could not resolve has no address - its name is what the test gave, and a
+                // name carrying the run's marker resolves to nobody. The draft is judged again before any send.
+                Refuse(_check.Recipients.RefusalForItem(
+                    draft.Recipients.Select(r => string.IsNullOrWhiteSpace(r.Address) ? r.Name : r.Address),
+                    operation + " (the saved draft)",
+                    allowMarkedNames: true));
             }
         }
 

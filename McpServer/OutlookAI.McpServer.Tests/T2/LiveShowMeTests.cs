@@ -138,6 +138,7 @@ public sealed class LiveShowMeTests
 
     [Fact]
     [Trait("Requires", "InteractiveDesktop")]
+    [Trait("Requires", "GeneratedPopulation")]
     public void ShowSearchResults_ScopeFeatureTest_AndHubScopedScreenshot()
     {
         // Park the window on the hub store first: current_folder/subfolders scopes then

@@ -214,6 +214,16 @@ public sealed class RecipientAllowlist
     /// <param name="operation">What was about to happen, for the message.</param>
     public string? RefusalForItem(IEnumerable<string?> itemRecipientAddresses, string operation)
     {
+        return RefusalForItem(itemRecipientAddresses, operation, allowMarkedNames: false);
+    }
+
+    /// <summary>
+    /// <see cref="RefusalForItem(IEnumerable{string?}, string)"/>, and with <paramref name="allowMarkedNames"/> a name
+    /// with no address that carries the run's marker is accepted - a test's deliberately unresolvable entry
+    /// on a DRAFT, which can never be sent from here (the send-time check reads it as unreadable).
+    /// </summary>
+    public string? RefusalForItem(IEnumerable<string?> itemRecipientAddresses, string operation, bool allowMarkedNames)
+    {
         ArgumentNullException.ThrowIfNull(itemRecipientAddresses);
         int total = 0;
         int strangers = 0;
@@ -222,6 +232,11 @@ public sealed class RecipientAllowlist
         {
             total++;
             string reduced = AddressOf(address);
+            if (allowMarkedNames && reduced.Length > 0 && !reduced.Contains('@', StringComparison.Ordinal) && IsAllowed(reduced))
+            {
+                continue;
+            }
+
             if (reduced.Length == 0 || !reduced.Contains('@', StringComparison.Ordinal))
             {
                 // No address at all - a name Outlook resolved to nobody: nothing this check can vouch for.

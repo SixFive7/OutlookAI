@@ -18,6 +18,7 @@ public sealed class Phase7LiveMcpToolShapeTests
     [Fact]
     [Trait("Requires", "SmallHubStore")]
     [Trait("Writes", "Nothing")]
+    [Trait("Requires", "GeneratedPopulation")]
     public async Task Search_TopOne_OnHubStore_SetsTruncated_AndTopHundredDoesNot()
     {
         LiveTestSettings settings = LiveTestSettings.Load();

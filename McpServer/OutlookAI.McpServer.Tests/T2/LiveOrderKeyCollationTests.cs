@@ -177,6 +177,7 @@ public sealed class LiveOrderKeyCollationTests
     [Fact]
     [Trait("Requires", "SearchIndex")]
     [Trait("Writes", "Nothing")]
+    [Trait("Requires", "GeneratedPopulation")]
     public void OrderKeyFloorPredicate_IsAccepted_AndAdmitsOnlyDatedRows()
     {
         IIndexClient client = IndexClientFactory.CreateAuto(out _);

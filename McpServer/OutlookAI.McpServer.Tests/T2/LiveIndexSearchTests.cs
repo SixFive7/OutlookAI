@@ -66,6 +66,7 @@ public sealed class LiveIndexSearchTests
     [Trait("Requires", "SearchIndex")]
     [Trait("Requires", "MultipleStores")]
     [Trait("Writes", "Nothing")]
+    [Trait("Requires", "GeneratedPopulation")]
     public void ProbeParity_AllThreeStores_ReturnRowsUnder2s()
     {
         foreach (string storeName in Indexed)
@@ -125,6 +126,7 @@ public sealed class LiveIndexSearchTests
     [Trait("Requires", "SearchIndex")]
     [Trait("Requires", "MultipleStores")]
     [Trait("Writes", "Nothing")]
+    [Trait("Requires", "GeneratedPopulation")]
     public void ProbeParity_DateRangeQuery_HitsUnder2s()
     {
         // The 30 days before the declared corpus's anchor, not before now (Q130 (b), decided

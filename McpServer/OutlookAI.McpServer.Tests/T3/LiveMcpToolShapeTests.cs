@@ -27,6 +27,7 @@ public sealed class LiveMcpToolShapeTests
     [Fact]
     [Trait("Requires", "SearchIndex")]
     [Trait("Requires", "MultipleStores")]
+    [Trait("Requires", "GeneratedPopulation")]
     public async Task Search_Read_SaveAttachment_Thread_GoldenShapes_OverRealStdio()
     {
         await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync(TimeSpan.FromMinutes(6));

@@ -42,13 +42,19 @@
                    released - on every path, failures included, once the guest was touched.
       8. REPORT  - summary.txt and summary.json in <RepoPath>\.work\guest-live-runs\<run id>\.
 
-    THE EXCHANGE VM (2026-10-08). OutlookAI-Exchange runs here too, with its own PREPARE and two
-    things a real mailbox adds. Its clock is never frozen and its resting checkpoint holds Outlook
-    running, signed in to both its accounts, so PREPARE neither restarts the guest nor rebuilds a hub:
-    it runs Invoke-ExchangeSignIn.ps1 -Mode Preflight - Defender's signatures current, so Outlook's
-    Object Model Guard does not stall the run, and every recorded account still SIGNED-IN - and STAGE
-    leaves that Outlook running (the swap replaces only the suite and its server, which Outlook does not
-    use). Its filter is LiveRunFilters.ExchangeTestAccount. And every run gets a RUN MARKER - 'oair' and
+    THE EXCHANGE VM (2026-10-08). OutlookAI-Exchange runs here too, with its own STAGE, PREPARE and
+    REST and two things a real mailbox adds. ITS STATE IS CARRIED FORWARD: no checkpoint is restored
+    before or after a run unless -Checkpoint names one, because its mailboxes live on the Exchange
+    server, which no checkpoint restores - a restored .ost is older than the server, and Outlook refuses
+    it at its next start ("Outlook is using an old copy of your Outlook data file", measured on the
+    second write run). So STAGE resumes the VM as the last run left it, PREPARE starts Outlook NOT
+    elevated if it is not running - after Defender's signatures are brought up to date, so that it
+    starts on current ones - and runs Invoke-ExchangeSignIn.ps1 -Mode Preflight: Defender current, so
+    Outlook's Object Model Guard does not stall the run, and every recorded account still SIGNED-IN; REST
+    saves it as it is. With -Checkpoint, the checkpoint is restored, the guest restarted gracefully and
+    its .ost files set aside (guest\Reset-OutlookOfflineStore.ps1) before Outlook starts and downloads
+    the mailboxes afresh. STAGE leaves a running Outlook running (the swap replaces only the suite and
+    its server, which Outlook does not use). Its filter is LiveRunFilters.ExchangeTestAccount. And every run gets a RUN MARKER - 'oair' and
     the UTC start to the second - recorded in the host's ledger, C:\OutlookAI-Testbed\exchange-runs\
     ledger.jsonl, BEFORE the suite starts, and handed to the run in OUTLOOKAI_LIVE_RUN_MARKER with the
     markers of earlier runs that never reported a clean sweep in OUTLOOKAI_LIVE_PRIOR_RUN_MARKERS: every
@@ -344,6 +350,14 @@ function New-RunId {
     return ('{0:yyyyMMdd-HHmmss}-{1}-{2}' -f $When, $short, $Sha.Substring(0, 12))
 }
 
+# How the Exchange VM's run begins: carried forward from its last run, or - only when a checkpoint is
+# named - restored, restarted and its data files set aside.
+function Get-ExchangeStartPlan {
+    param([bool] $CheckpointNamed)
+    if ($CheckpointNamed) { return @('restore the named checkpoint', 'restart', 'set the .ost files aside', 'Outlook NOT elevated', 'preflight') }
+    return @('resume as the last run left it', 'Outlook NOT elevated if it is not running', 'preflight')
+}
+
 # The Exchange VM's run marker: 'oair' and the run's UTC start to the second - lower-case letters and
 # digits, 18 of them, the shape T2/LiveRunMarker.cs accepts. One run at a time holds the guest's lease, so
 # two runs never share a second.
@@ -586,7 +600,9 @@ function Invoke-SelfTest {
     $f = Get-LiveFilter $true '' '' $true
     Check 'the Exchange VM runs LiveRunFilters.ExchangeTestAccount' $FilterExchange $f.Filter
     Check 'and that run is not narrowed' $false $f.Narrowed
-    Check 'and a suffix narrows it' $true (Get-LiveFilter $true '' '&FullyQualifiedName~Y' $true).Filter.EndsWith('&Requires!=ProbePopulation&FullyQualifiedName~Y')
+    Check 'the Exchange VM carries its state forward by default' 'resume as the last run left it|Outlook NOT elevated if it is not running|preflight' (Get-ExchangeStartPlan $false)
+    Check 'and a named checkpoint is restored and its data files set aside' $true ((Get-ExchangeStartPlan $true) -contains 'set the .ost files aside')
+    Check 'and a suffix narrows it' $true (Get-LiveFilter $true '' '&FullyQualifiedName~Y' $true).Filter.EndsWith('&Requires!=PstStore&FullyQualifiedName~Y')
     Check 'a suffix that does not start with & is refused' $true ($null -ne (Get-LiveFilter $true '' 'FullyQualifiedName~X').Refusal)
     Check 'a filter that is not Category=Live is refused' $true ($null -ne (Get-LiveFilter $true 'FullyQualifiedName~X' '').Refusal)
     $f = Get-LiveFilter $false 'Category=Live&Requires=SearchIndex' ''
@@ -789,12 +805,16 @@ $filterDecision = Get-LiveFilter $facts.Indexed $Filter $FilterSuffix $facts.Exc
 if ($filterDecision.Refusal) { Stop-Refused $filterDecision.Refusal }
 $runFilter = $filterDecision.Filter
 $narrowed = $filterDecision.Narrowed
+# The Exchange VM carries its state forward unless a checkpoint is named (see the header).
+$exchangeCarry = $facts.Exchange -and -not $Checkpoint
+$exchangeRestCarry = $facts.Exchange -and -not $RestingCheckpoint
 if (-not $Checkpoint) { $Checkpoint = $facts.Checkpoint }
 if (-not $RestingCheckpoint) { $RestingCheckpoint = $facts.Checkpoint }
 if ($RestOnGreen -and -not $GreenCheckpoint) { Stop-Refused '-RestOnGreen needs -GreenCheckpoint.' }
 # A checkpoint whose time sync is off is a FROZEN one (Q130 (a)): the setting travels with it.
 $startTimeSync = @(Get-VMSnapshot -VMName $facts.Name -Name $Checkpoint -ErrorAction SilentlyContinue | Get-VMIntegrationService -ErrorAction SilentlyContinue | Where-Object { ([string]$_.Id).ToUpperInvariant().EndsWith($TimeSyncComponentId) -or $_.Name -eq 'Time Synchronization' })
 $startIsFrozen = ($startTimeSync.Count -gt 0 -and -not $startTimeSync[0].Enabled)
+if ($exchangeCarry) { $startIsFrozen = $false }
 if ($startIsFrozen -and $RestOnGreen) { Stop-Refused "-RestOnGreen from the frozen checkpoint '$Checkpoint': a green checkpoint of this run would stand a run later than the frozen instant testbed.json records, and every later run would start there. Make a new frozen checkpoint with Set-GuestClockFrozen.ps1 and record it instead." }
 if (-not $RepoPath) { $RepoPath = Split-Path -Parent (Split-Path -Parent $PSScriptRoot) }
 $repo = [System.IO.Path]::GetFullPath($RepoPath)
@@ -808,7 +828,7 @@ if (-not (Test-Path -LiteralPath $credentialFile)) { Stop-Refused "no guest cred
 if (-not $SdkInstallerPath) { $SdkInstallerPath = Join-Path $CredentialRepoRoot ".work\media\$SdkInstallerName" }
 if (-not (Test-Path -LiteralPath $SdkInstallerPath)) { Stop-Refused "no SDK installer at $SdkInstallerPath (Testbed/MEDIA.md); pass -SdkInstallerPath." }
 if (-not (Get-VM -Name $facts.Name -ErrorAction SilentlyContinue)) { Stop-Refused "Hyper-V has no VM named '$($facts.Name)' here." }
-foreach ($cp in @($Checkpoint, $RestingCheckpoint)) {
+foreach ($cp in @(@($Checkpoint) | Where-Object { -not $exchangeCarry }) + @(@($RestingCheckpoint) | Where-Object { -not $exchangeRestCarry })) {
     if (-not (Get-VMSnapshot -VMName $facts.Name -Name $cp -ErrorAction SilentlyContinue)) { Stop-Refused "$($facts.Name) has no checkpoint named '$cp'." }
 }
 if ($GreenCheckpoint -and (Get-VMSnapshot -VMName $facts.Name -Name $GreenCheckpoint -ErrorAction SilentlyContinue)) { Stop-Refused "$($facts.Name) already has a checkpoint named '$GreenCheckpoint'." }
@@ -843,7 +863,8 @@ if ($facts.Exchange) {
     $priorMarkers = @(Get-PriorRunMarkers $ledgerLines $runMarker)
 }
 Say "== Invoke-LiveTierOnGuest: run $runId =="
-Say "  guest     $($facts.Name) ($($facts.ComputerName), $kind), from $Checkpoint, resting on $RestingCheckpoint"
+if ($exchangeCarry) { Say "  guest     $($facts.Name) ($($facts.ComputerName), $kind), carried forward from its last run - no checkpoint restored" }
+else { Say "  guest     $($facts.Name) ($($facts.ComputerName), $kind), from $Checkpoint, resting on $RestingCheckpoint" }
 if ($startIsFrozen) { Say "  clock     FROZEN - '$Checkpoint' has time sync off: no restart and no hub rebuild; Set-GuestClockFrozen.ps1 -Verify before the suite" }
 Say "  revision  $($sha.Substring(0, 12)) - $subject"
 if ($dirtyCount -gt 0) { Say "  NOTE      $dirtyCount uncommitted change(s) in $repo are NOT in this run - it tests the commit. Commit first to test them." }
@@ -996,8 +1017,15 @@ try {
     $t0 = Get-Date
     try {
         $touched = $true
-        Restore-Guest $Checkpoint
-        Say "restored $Checkpoint"
+        if ($exchangeCarry) {
+            if ((Get-VM -Name $facts.Name).State -ne 'Running') { Start-VM -Name $facts.Name }
+            Wait-Heartbeat
+            Say 'resumed the Exchange VM as its last run left it (its mailboxes live on the server; no checkpoint restored)'
+        }
+        else {
+            Restore-Guest $Checkpoint
+            Say "restored $Checkpoint"
+        }
         $files = @((Join-Path $runDir 'payload\McpServer.zip'), (Join-Path $runDir 'payload\Tools.zip'), (Join-Path $runDir 'livetier\Source.zip'), (Join-Path $runDir 'livetier\NuGet.zip'), (Join-Path $runDir 'live-test-settings.json'))
         # ps51-native-stderr-ok: a PowerShell script, not a program - every program it starts goes through its own Invoke-NativeCommand, under 'Continue' inside a try
         & (Join-Path $PSScriptRoot 'Copy-ToGuest.ps1') -VMName $facts.Name -RepoRoot $CredentialRepoRoot -Path $files -Destination $GuestPayloadDir *> (Join-Path $runDir 'copy.log')
@@ -1014,6 +1042,7 @@ try {
         $swap = @"
 `$ErrorActionPreference = 'Stop'
 if (@(Get-Process -Name $swapGuard -ErrorAction SilentlyContinue).Count -gt 0) { throw 'Outlook, the tools, the server or dotnet is running - not replacing anything' }
+if ('$($facts.Exchange)' -eq 'True') { Get-ChildItem -LiteralPath '$GuestRoot' -Directory | Where-Object { `$_.Name -match '\.pre-\d{8}T\d{6}Z`$' } | Remove-Item -Recurse -Force }
 `$stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
 foreach (`$name in 'server', 'tools', 'src', 'nuget-offline') { `$from = Join-Path '$GuestRoot' `$name; if (Test-Path -LiteralPath `$from) { Rename-Item -LiteralPath `$from -NewName "`$name.pre-`$stamp" } }
 Expand-Archive -LiteralPath '$GuestPayloadDir\McpServer.zip' -DestinationPath '$GuestRoot\server' -Force
@@ -1052,12 +1081,29 @@ Copy-Item -LiteralPath '$GuestPayloadDir\live-test-settings.json' -Destination '
     try {
         Use-Lease 30
         if ($facts.Exchange) {
-            # Its checkpoint holds Outlook running and signed in: Defender current and every account
-            # SIGNED-IN, or no run (Testbed/README.md section 4e).
+            if (-not $exchangeCarry) {
+                # A restored checkpoint: its .ost files are older than the server. Outlook quits, Windows
+                # restarts, the files go aside, and the Outlook started below downloads the mailboxes afresh.
+                # ps51-native-stderr-ok: a PowerShell script, not a program - every program it starts goes through its own Invoke-NativeCommand, under 'Continue' inside a try
+                & (Join-Path $PSScriptRoot 'Restart-Guest.ps1') -VMName $facts.Name -Execute -RepoRoot $CredentialRepoRoot -LogPath (Join-Path $runDir 'restart.log') *> (Join-Path $runDir 'restart.out.log')
+                if ($LASTEXITCODE -ne 0) { throw "Restart-Guest.ps1 did not complete ($LASTEXITCODE) - restart.log" }
+                $o = Invoke-Guest 'reset-ost' "& '$GuestRoot\Reset-OutlookOfflineStore.ps1' -Execute; `"RESET-OST-EXIT `$LASTEXITCODE`"" 300 -Session0
+                if ($o -notmatch 'RESET-OST-EXIT 0') { throw 'Reset-OutlookOfflineStore.ps1 did not set the data files aside - guest\reset-ost.log' }
+            }
+            $o = Invoke-Guest 'outlook-running' "if (@(Get-Process -Name OUTLOOK -ErrorAction SilentlyContinue).Count -gt 0) { 'OUTLOOK-RUNNING yes' } else { 'OUTLOOK-RUNNING no' }" 120 -Session0
+            if ($o -match 'OUTLOOK-RUNNING no') {
+                # Defender first, so the Outlook about to start finds its signatures current.
+                # ps51-native-stderr-ok: a PowerShell script, not a program - every program it starts goes through its own Invoke-NativeCommand, under 'Continue' inside a try
+                & (Join-Path $PSScriptRoot 'Invoke-ExchangeSignIn.ps1') -VMName $facts.Name -Mode Preflight -DefenderOnly -RepoRoot $CredentialRepoRoot *> (Join-Path $runDir 'preflight-defender.log')
+                if ($LASTEXITCODE -ne 0) { throw "Defender's signatures could not be brought up to date before Outlook started (exit $LASTEXITCODE) - preflight-defender.log" }
+                $o = Invoke-Guest 'start-outlook' "& '$GuestRoot\Start-OutlookUnelevated.ps1' -Profile 'Outlook'; `"START-OUTLOOK-EXIT `$LASTEXITCODE`"" 900 -Session0
+                if ($o -notmatch 'START-OUTLOOK-EXIT 0') { throw 'Start-OutlookUnelevated.ps1 did not start Outlook NOT elevated on the profile Outlook - guest\start-outlook.log' }
+            }
+            # Defender current and every account SIGNED-IN, or no run (Testbed/README.md section 4e).
             # ps51-native-stderr-ok: a PowerShell script, not a program - every program it starts goes through its own Invoke-NativeCommand, under 'Continue' inside a try
             & (Join-Path $PSScriptRoot 'Invoke-ExchangeSignIn.ps1') -VMName $facts.Name -Mode Preflight -RepoRoot $CredentialRepoRoot *> (Join-Path $runDir 'preflight.log')
             if ($LASTEXITCODE -ne 0) { throw "Invoke-ExchangeSignIn.ps1 -Mode Preflight did not pass (exit $LASTEXITCODE) - preflight.log: Defender's signatures, or an account no longer signed in (-Mode Reauth -Account <address>)" }
-            $prepared = @('Exchange preflight: Defender current, every account SIGNED-IN')
+            $prepared = @(Get-ExchangeStartPlan (-not $exchangeCarry))
         }
         elseif ($startIsFrozen) {
             # ps51-native-stderr-ok: a PowerShell script, not a program - it starts no program at all
@@ -1164,11 +1210,17 @@ finally {
             if ($suiteStarted) { Save-CrashDumps }
             $restOn = $RestingCheckpoint
             if ($RestOnGreen -and $checkpointActions['green']) { $restOn = $GreenCheckpoint }
-            try {
-                Restore-Guest $restOn
-                $checkpointActions['restedOn'] = $restOn
+            if ($exchangeRestCarry -and -not ($RestOnGreen -and $checkpointActions['green'])) {
+                # The Exchange VM rests as the run left it: a restored .ost would be older than the server.
+                $checkpointActions['restedOn'] = 'its own state, carried forward (no checkpoint restored)'
             }
-            catch { Say "RESTORING $restOn FAILED: $($_.Exception.Message)" }
+            else {
+                try {
+                    Restore-Guest $restOn
+                    $checkpointActions['restedOn'] = $restOn
+                }
+                catch { Say "RESTORING $restOn FAILED: $($_.Exception.Message)" }
+            }
             $restSettings = Join-Path $runDir 'live-test-settings.json'
             if ($checkpointActions['restedOn'] -and (Test-Path -LiteralPath $restSettings)) {
                 try {
