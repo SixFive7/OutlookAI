@@ -1,5 +1,1640 @@
 # TODO
 
+- [ ] **Investigate whether OutlookAI can do anything about the Outlook hang of 2026-11-15: its MCP
+  server cold-started `OUTLOOK.EXE -Embedding` through COM, that Outlook deadlocked 5 s into its
+  start, and the user reported that Outlook would not start.**
+  **Read this first.** This item was written on 2026-11-16 by an agent OUTSIDE this project: the user's
+  general Claude Code session that diagnosed and fixed the hang on 2026-11-15. The user asked for it
+  in these words: *"The todo should be to investigate if OutlookAI can do something about this issue.
+  As you do not have the context the agent in the OutlookAI has you cannot make the correct
+  tradeoffs. So restrict yourself to dumping all the knowledge you do have into the todo item whilst
+  clearly stating that these are only guesses with not enough context on how everything works."*
+  Apart from the source lines quoted in 1.15, that agent read nothing of OutlookAI. The only
+  exceptions are TODO.md, AGENTS.md and `git log`, to place this item. It did not read the design,
+  the decision log (QUESTIONS.md), the runbook or the tests. So:
+  - **PART 1** holds OBSERVED FACTS only, each with its source and time.
+  - **PART 2** holds that agent's INFERENCES about the causal chain. They are guesses.
+  - **PART 5** holds DIRECTIONS. They are guesses made without knowing how OutlookAI works or why it does
+    what it does. None of them is a recommendation; the OutlookAI agent makes the trade-offs.
+  **The task:** investigate whether OutlookAI can prevent this, or detect it and recover, or at least
+  report it. Decide what, if anything, to change, and record the decision. Nothing was changed in
+  OutlookAI by the session that wrote this.
+  **Everything needed is in this item, except identifying values.** Times are local CET (UTC+1)
+  unless a time ends in Z (UTC). This repository is public, so every identifying value is replaced by
+  a placeholder from the legend below:
+  - e-mail addresses;
+  - the Windows user and computer names;
+  - mailbox, store and display names;
+  - OST/NST file names;
+  - the name of the user's own add-in.
+  Those substitutions, plus the removal of blank lines and trailing spaces, are the ONLY changes made
+  to the verbatim excerpts. Every technical value (PIDs, TIDs, times, addresses in memory, offsets,
+  versions, sizes, store types) is unchanged.
+  **The real values** are in `.work/outlook-hang-2026-11-15-identifiers.md`, with other machine
+  details that help reproduce this on the user's workstation. That file exists only in the local
+  clone on that workstation and is deliberately NOT committed (`.work/` is git-ignored), because it
+  holds personal data. If it is missing, ask the user.
+  **Pointers.** The evidence folder `C:\Users\<user>\Downloads\tmp-outlook-diag\` and the Claude
+  transcripts named in PART 6 are optional pointers only. Downloads is auto-deleted after 31 days, so
+  the folder is likely gone after about 2026-12-16.
+  **Left out entirely:** the mailbox content the fixing session read afterwards (calendar entries),
+  and third parties' names.
+  **Placeholders.** The same token means the same value everywhere in this item.
+  - `<user>`: the Windows user name, in paths such as `C:\Users\<user>\...` and in Claude's project
+    folder names `C--Users-<user>-...`.
+  - `<computer>`: the computer name.
+  - `<mailbox-A>`: the SMTP address, which is also the account and store display name, of an Exchange
+    account added to the profile (exchangeStoreType 4, cached mode, OST 9,433 MB, one NST). The
+    healthy instance showed its Inbox at 17:03.
+  - `<mailbox-B>`: the same for the profile's primary Exchange mailbox (exchangeStoreType 0, cached
+    mode, OST 24,273 MB, two NSTs). The hidden Explorer windows of both COM-started instances (76888
+    and 60368) showed its Inbox.
+  - `<mailbox-C>`: the same for another added Exchange account (exchangeStoreType 4, cached mode, OST
+    16 MB, one NST).
+  - `<mailbox-D>`: the SMTP address of a fourth account. A cached store carries the same display name
+    (exchangeStoreType 4, onlineOnly true, OST 16 MB, one NST).
+  - `<store-D-online>`: the display name of `<mailbox-D>`'s delivery store, which is online-only
+    (exchangeStoreType 1, not cached).
+  - `<delegate-mailbox-1>` and `<delegate-mailbox-2>`: the display names of two delegate mailboxes
+    (isDelegate true, exchangeStoreType 1, not cached, in the local index).
+  - `<custom-addin>`: the name of the user's own VSTO add-in, loaded from a Debug build in a local
+    repository (LoadBehavior 3).
+  - `<mailbox-X>.ost`, `<mailbox-X>.nst` and `<mailbox-B>(2).nst`: Outlook's data files for those
+    mailboxes, which Outlook names after the account.
+  **Short version (INFERENCE, see PART 2).**
+  1. At 16:27:39 an OutlookAI MCP server (PID 68964, serving an unrelated Claude session) ran
+     `list_accounts` while no Outlook was running.
+  2. It cold-started Outlook through COM, and DcomLaunch started `OUTLOOK.EXE -Embedding` (PID 76888)
+     with no window.
+  3. About 5 s later Outlook's UI thread deadlocked on itself. An incoming late-bound object-model call
+     (most likely the MCP's connect sequence) was opening the Exchange offline store and held an
+     OLMAPI32 lock. Under it, Outlook made an outgoing COM call to the Network List Service
+     (`netprofm!PublicNetworkListManager::GetCost`).
+  4. While that call waited, COM let a second call into the same UI thread: the **Teams Meeting
+     Add-in**'s telemetry setup, asking the object model for the current user's SMTP address from a CLR
+     thread-pool thread. That call went into EMSMDB32/OLMAPI32 and blocked in a non-pumping wait.
+  5. 41 other threads queued on critical sections (31 of them in `OLMAPI32!HrCreateOfflineObj+0x28b`).
+     CPU stayed at 0. The instance never showed a window, and Outlook did not start for the user.
+  6. The instance stayed window-less and deadlocked from 16:27:44 until the diagnosing agent killed it
+     at 17:02:02. Within 67 ms the same MCP server, with no client call pending, cold-started a new
+     `OUTLOOK.EXE -Embedding` (PID 60368). That one booted fine and was turned into a normal visible
+     Outlook by a shell launch.
+  **PART 1 - OBSERVED FACTS (each with its source).**
+  **1.1 Machine and software.** Sources: registry, file versions, `Get-AppxPackage`, `.lnk` targets.
+  The diagnosing agent read these on 2026-11-15 between 16:47 and 17:00, as user `<computer>\<user>` at
+  Medium integrity (BUILTIN\Administrators deny-only, i.e. UAC-filtered, not elevated).
+  - Windows 11 Pro 10.0.26300, build 26300, InstallDate 8-11-2024 23:02:25, LastBootUpTime
+    13-11-2026 11:14:07 (`Win32_OperatingSystem`).
+  - Classic Outlook from Office LTSC 2021 Volume Click-to-Run, x64, 16.0.14334.20974. Raw values
+    (`HKLM\SOFTWARE\Microsoft\Office\ClickToRun\Configuration`, `...\ClickToRun\Updates`,
+    `...\ClickToRun`, the service and the file):
+  ```text
+  VersionToReport         : 16.0.14334.20974
+  ClientVersionToReport   : 16.0.14334.20974
+  Platform                : x64
+  ProductReleaseIds       : ProPlusSPLA2021Volume,VisioPro2021Volume
+  UpdateChannel           : http://officecdn.microsoft.com/pr/5030841d-c919-4594-8d2d-84ae4f96e58e
+  CDNBaseUrl              : http://officecdn.microsoft.com/pr/5030841d-c919-4594-8d2d-84ae4f96e58e
+  AudienceId              : 5030841d-c919-4594-8d2d-84ae4f96e58e
+  UpdatesEnabled          : True
+  UpdateUrl               :
+  UpdateToVersion         :
+  UpdateDeadline          :
+  InstallationPath        : C:\Program Files\Microsoft Office
+  SharedComputerLicensing : 0
+  --- Updates key
+  UpdatesSkuToSkuBlocked                  : 0
+  QueueUpdateParameters                   : displaylevel=False flt.useofficehelperaddon=unknown flt.useoutlookshareaddon=unknown flt.UseTeamsOnInstallConsumer=unknown flt.UseTeamsOnUpdateConsumer=unknown triggersource=SCHEDULEDTASK
+  UpdateDetectionLastRunTime              : 13439186984173
+  UpdateDeadlineMet                       : 1
+  UpdatesThrottleValue                    : 390
+  UpdatesAppliedTime                      : 13437050855135
+  UpdateDeliveryMechanism                 : 5030841d-c919-4594-8d2d-84ae4f96e58e
+  ApplyInitiated                          : 1
+  DownloadTime                            : 13437017537987
+  UpdateDownloadFailedCorruptionCheck     : 0
+  UpdateToVersion                         :
+  UpdatesReadyToApply                     : 0
+  UpdatesBlockedTime                      : 0
+  UpdatePackageApplied                    : 0
+  --- ClickToRun root
+  LastScenario         : UPDATE
+  LastScenarioResult   : Success
+  --- service
+  Name      : ClickToRunSvc
+  Status    : Running
+  StartType : Automatic
+  --- OUTLOOK.EXE file
+  FullName       : C:\Program Files\Microsoft Office\Root\Office16\OUTLOOK.EXE
+  Length         : 42159352
+  LastWriteTime  : 21-10-2026 02:52:08
+  FileVersion    : 16.0.14334.20974
+  ProductVersion : 16.0.14334.20974
+  ```
+  - New Outlook (olk.exe) is not in use.
+    - `Get-AppxPackage -Name '*Outlook*'` returned only `MicrosoftWindows.NarratorExtension-OutlookWebApp`
+      and `MicrosoftWindows.NarratorScript.Outlook`.
+    - A folder `C:\Program Files\WindowsApps\Microsoft.OutlookForWindows_1.2023.1101.300_x64__8wekyb3d8bbwe`
+      dated 15-11-2023 exists, but the package is not registered for the user.
+    - HKCU `Software\Microsoft\Office\16.0\Outlook\Options\General` has `HideNewOutlookToggle : 1`.
+    - HKCU `Software\Policies\Microsoft\Office\16.0\Outlook\Preferences` has
+      `NewOutlookMigrationUserSetting : 0`.
+    - HKCU `...\16.0\Outlook\Preferences` has no `UseNewOutlook` value.
+    - No olk.exe was running.
+  - Every Outlook shortcut targets classic Outlook, with no arguments:
+  ```text
+  C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Outlook.lnk
+     -> C:\Program Files\Microsoft Office\root\Office16\OUTLOOK.EXE
+  C:\Users\<user>\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Outlook.lnk
+     -> C:\Program Files\Microsoft Office\root\Office16\OUTLOOK.EXE
+  C:\Users\<user>\AppData\Roaming\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar\Outlook.lnk
+     -> C:\Program Files\Microsoft Office\root\Office16\OUTLOOK.EXE
+  ```
+  - COM add-ins (registry `Software\Microsoft\Office\Outlook\Addins`, HKCU and HKLM;
+    `HKLM\SOFTWARE\WOW6432Node\...` is absent) and Outlook's resiliency keys
+    (HKCU `Software\Microsoft\Office\16.0\Outlook\Resiliency`; there is no `DisabledItems` key, and
+    `CrashingAddinList` has no values). Verbatim:
+  ```text
+  --- Resiliency subkeys/values:
+  HKEY_CURRENT_USER\Software\Microsoft\Office\16.0\Outlook\Resiliency\CrashingAddinList
+  HKEY_CURRENT_USER\Software\Microsoft\Office\16.0\Outlook\Resiliency\DoNotDisableAddinList
+     TeamsAddin.Connect
+     OutlookAI
+  HKEY_CURRENT_USER\Software\Microsoft\Office\16.0\Outlook\Resiliency\NotificationReminderAddinData
+     OutlookAI
+     OutlookAI\dtype
+  --- Add-ins (LoadBehavior):
+  HKCU: | AccessAddin.DC | LoadBehavior=2 | Microsoft Access Outlook Add-in for Data Collection and Publishing
+  HKCU: | ColleagueImport.ColleagueImportAddin | LoadBehavior=3 | Microsoft SharePoint Server Colleague Import Add-in
+  HKCU: | <custom-addin> | LoadBehavior=3 | <custom-addin>
+  HKCU: | OutlookAI | LoadBehavior=3 | OutlookAI
+  HKCU: | TeamsAddin.FastConnect | LoadBehavior=3 | Microsoft Teams Meeting Add-in for Microsoft Office
+  HKCU: | TeamViewerMeetingAddIn.AddIn | LoadBehavior=2 |
+  HKCU: | UCAddin.LyncAddin.1 | LoadBehavior=0 |
+  HKLM: | TeamViewerMeetingAddIn.AddIn | LoadBehavior=3 | TeamViewer Meeting Add-In
+  [OutlookAI]
+  Description  : OutlookAI
+  FriendlyName : OutlookAI
+  LoadBehavior : 3
+  Manifest     : file:///C:\Users\<user>\AppData\Local\OutlookAI\Setup\OutlookAI.vsto|vstolocal
+  [<custom-addin>]
+  Description  : <custom-addin>
+  FriendlyName : <custom-addin>
+  LoadBehavior : 3
+  Manifest     : file:///C:/Users/<user>/source/repos/<custom-addin>/bin/Debug/<custom-addin>.vsto|vstolocal
+  [TeamsAddin.FastConnect]
+  FriendlyName : Microsoft Teams Meeting Add-in for Microsoft Office
+  LoadBehavior : 3
+  Description  : Microsoft Teams Meeting Add-in for Microsoft Office
+  ```
+  - Teams Meeting Add-in **1.26.27102**, at
+    `C:\Users\<user>\AppData\Local\Microsoft\TeamsMeetingAdd-in\1.26.27102\x64\`. In that folder,
+    `Microsoft.Teams.AddinLoader.dll` and `OneAuth.dll` both have file version 1.0.26271.2.
+  - Modules loaded in the hung OUTLOOK.EXE 76888 (`Get-Process -Id 76888 -Module`, 255 modules in all;
+    selected lines, verbatim):
+  ```text
+  ModuleName                                                      FileName                                                                                                                                                             Company               Ver
+  ----------                                                      --------                                                                                                                                                             -------               ---
+  ColleagueImport.dll                                             C:\Program Files\Microsoft Office\root\Office16\ADDINS\ColleagueImport.dll                                                                                           Microsoft Corporation 16.0.14334.20090
+  windhawk.dll                                                    C:\Program Files\Windhawk\Engine\1.7.3_3\64\windhawk.dll                                                                                                             Ramen Software        1.7.3
+  MpOav.dll                                                       C:\ProgramData\Microsoft\Windows Defender\Platform\4.18.26100.4-0\MpOav.dll                                                                                          Microsoft Corporation 4.18.26100.4 (79b015c6fabb20b1ccd067f376e490f0bac19809)
+  Microsoft.Teams.AddinLoader.dll                                 C:\Users\<user>\AppData\Local\Microsoft\TeamsMeetingAdd-in\1.26.27102\x64\Microsoft.Teams.AddinLoader.dll                                                              Microsoft Corporation 1.0.26271.2
+  OneAuth.dll                                                     C:\Users\<user>\AppData\Local\Microsoft\TeamsMeetingAdd-in\1.26.27102\x64\OneAuth.dll                                                                                  Microsoft Corporation 1.0.26271.2
+  Microsoft.Office.Tools.v4.0.Framework.ni.dll                    C:\WINDOWS\assembly\NativeImages_v4.0.30319_64\Microsoft.O2eb0cc9a#\932f431099a884ac946dcf42ce415a0a\Microsoft.Office.Tools.v4.0.Framework.ni.dll                    Microsoft Corporation 10.0.60917.0
+  Microsoft.Office.Tools.Common.Implementation.ni.dll             C:\WINDOWS\assembly\NativeImages_v4.0.30319_64\Microsoft.O4a946565#\9c01546322fedf1b769480cadf29f0e9\Microsoft.Office.Tools.Common.Implementation.ni.dll             Microsoft Corporation 10.0.60917.0
+  Microsoft.Office.Tools.Outlook.ni.dll                           C:\WINDOWS\assembly\NativeImages_v4.0.30319_64\Microsoft.O4b20f4dd#\493e4f7c9563737dd2bc16380ff936bb\Microsoft.Office.Tools.Outlook.ni.dll                           Microsoft Corporation 10.0.60917.0
+  Microsoft.Office.Tools.Outlook.Implementation.ni.dll            C:\WINDOWS\assembly\NativeImages_v4.0.30319_64\Microsoft.O5263ae01#\f27e75d5270bfbf4e0a86021fa4be25f\Microsoft.Office.Tools.Outlook.Implementation.ni.dll            Microsoft Corporation 10.0.60917.0
+  Microsoft.Office.Tools.ni.dll                                   C:\WINDOWS\assembly\NativeImages_v4.0.30319_64\Microsoft.O5949707a#\a3d94f264fbc44d27de7769c0020f015\Microsoft.Office.Tools.ni.dll                                   Microsoft Corporation 10.0.60917.0
+  Microsoft.Office.Tools.Common.ni.dll                            C:\WINDOWS\assembly\NativeImages_v4.0.30319_64\Microsoft.O854200f9#\b5f2ad97e0c0138139c6f79c8e76f0a8\Microsoft.Office.Tools.Common.ni.dll                            Microsoft Corporation 10.0.60917.0
+  Microsoft.VisualStudio.Tools.Applications.ServerDocument.ni.dll C:\WINDOWS\assembly\NativeImages_v4.0.30319_64\Microsoft.V1955d7fd#\2501d77ee42f4bfe540589711efa9cbe\Microsoft.VisualStudio.Tools.Applications.ServerDocument.ni.dll Microsoft Corporation 10.0.60917.0
+  Microsoft.VisualStudio.Tools.Office.Runtime.ni.dll              C:\WINDOWS\assembly\NativeImages_v4.0.30319_64\Microsoft.V28a60cc2#\526b8a692e01589c96df11137f26abda\Microsoft.VisualStudio.Tools.Office.Runtime.ni.dll              Microsoft Corporation 10.0.60917.0
+  Microsoft.VisualStudio.Tools.Applications.Runtime.ni.dll        C:\WINDOWS\assembly\NativeImages_v4.0.30319_64\Microsoft.V883708cb#\a47ce4784a812cc6c1d466ab3f301142\Microsoft.VisualStudio.Tools.Applications.Runtime.ni.dll        Microsoft Corporation 10.0.60917.0
+  Microsoft.VisualStudio.Tools.Applications.Hosting.ni.dll        C:\WINDOWS\assembly\NativeImages_v4.0.30319_64\Microsoft.Vf9a08577#\4b8ca356acfb0e105b10e33e9c5ab3b8\Microsoft.VisualStudio.Tools.Applications.Hosting.ni.dll        Microsoft Corporation 10.0.60917.0
+  clr.dll                                                         C:\Windows\Microsoft.NET\Framework64\v4.0.30319\clr.dll                                                                                                              Microsoft Corporation 4.8.10008.0 built by: d5c29ab0c000001
+  mscoreei.dll                                                    C:\Windows\Microsoft.NET\Framework64\v4.0.30319\mscoreei.dll                                                                                                         Microsoft Corporation 4.8.10001.0 built by: bd501acdc000004
+  mscoree.dll                                                     C:\WINDOWS\SYSTEM32\mscoree.dll                                                                                                                                      Microsoft Corporation 10.0.26100.3624 (WinBuild.160101.0800)
+  netprofm.dll                                                    C:\WINDOWS\System32\netprofm.dll                                                                                                                                     Microsoft Corporation 10.0.26100.1 (WinBuild.160101.0800)
+  npmproxy.dll                                                    C:\WINDOWS\System32\npmproxy.dll                                                                                                                                     Microsoft Corporation 10.0.26100.9711 (WinBuild.160101.0800)
+  Windows.Networking.Connectivity.dll                             C:\Windows\System32\Windows.Networking.Connectivity.dll                                                                                                              Microsoft Corporation 10.0.26100.9818 (WinBuild.160101.0800)
+  ```
+    The list had no module whose name contains `OutlookAI` or `<custom-addin>`, although event 45 in 1.4
+    says both of those VSTO add-ins loaded at 16:27:41. Why was not checked.
+  - Other code in Outlook: Windhawk 1.7.3 injects `windhawk.dll` (see the list above). Which Windhawk
+    mods are active was not checked.
+  - The OutlookAI install that ran: MCP server
+    `C:\Users\<user>\AppData\Local\OutlookAI\Setup\McpServer\OutlookAI.McpServer.exe`
+    (`outlook_health.registration`, see 1.13), and the add-in manifest
+    `file:///C:\Users\<user>\AppData\Local\OutlookAI\Setup\OutlookAI.vsto|vstolocal`. Which OutlookAI
+    version or source revision that is was NOT checked.
+  - Outlook data files at 17:08 (from 1.12): `<mailbox-B>.ost` 24,273 MB, `<mailbox-A>.ost`
+    9,433 MB, `<mailbox-C>.ost` 16 MB, `<mailbox-D>.ost` 16 MB, and five `.nst`
+    files of 16 MB each.
+  **1.2 Timeline.** Each line names its source.
+  - 2026-11-13 10:00:22: Outlook boot (event 45). [Application log]
+  - 2026-11-13 10:38:01: WER `AppHangB1` and `Application Hang` 1002, "OUTLOOK.EXE version 16.0.14334.20974
+    stopped interacting with Windows and was closed". Verbatim in 1.4. [Application log]
+  - 2026-11-13 10:38:53 to 10:53:59: Outlook store reconciliations (id 30) and boots at 10:51:36 and
+    10:53:53 (id 45). [Application log]
+  - 2026-11-13 11:14:07: Windows boot. [Win32_OperatingSystem] At 11:14:21 svchost PID 3240 (netprofm)
+    started, and at 11:14:22 OfficeClickToRun PID 5964. [Win32_Process]
+  - 2026-11-13 11:32:36 and 11:41:45: Office alert "Outlook couldn't start last time. Safe mode could
+    help ... Do you want to start in safe mode?" Verbatim in 1.4. [OAlerts log]
+  - 2026-11-13 11:50:56 to 20:19:12: 10 more event-45 entries, 13 that day in total. Event 45 is logged
+    when Outlook loads its add-ins, normally once per start. [Application log]
+  - 2026-11-13 17:22:08, 17:22:19, 17:46:34 and 23:10:24, and 2026-11-14 18:51:20 and 18:56:58: six
+    OutlookAI MCP servers started that were still alive on 2026-11-15 (see 1.3). [Win32_Process]
+  - 2026-11-14: no `Outlook`-provider events at all. [Application log]
+  - 2026-11-15 16:21:10: MCP server PID 68964 started, parent claude.exe 76924. [Win32_Process]
+  - 15:22:35.568Z (16:22:35): Claude session 579e5f93 starts (an unrelated research task).
+    [transcript, PART 6]
+  - 15:27:21.454Z (16:27:21): its sub-agent a26ab951d6306c1a7 starts. [transcript]
+  - **15:27:39.467Z (16:27:39.467): that sub-agent calls `mcp__outlookai__list_accounts` with input
+    `{}`.** [transcript]
+  - **16:27:39: OUTLOOK.EXE PID 76888 created, command line `"C:\Program Files\Microsoft
+    Office\Root\Office16\OUTLOOK.EXE" -Embedding`, parent svchost.exe PID 2228 (DcomLaunch).**
+    [Win32_Process] In the same second, MCP 68964's thread 23908 (0x5D64) and Outlook's UI thread
+    73000 (0x11D28) were created. [thread StartTime]
+  - 16:27:41: event 45, Outlook loaded seven add-ins, including OutlookAI (boot time 656 ms),
+    <custom-addin> (469 ms) and the Teams Meeting Add-in (16 ms). Verbatim in 1.4.
+    [Application log]
+    Outlook thread 29760 (0x7440), the Teams add-in's caller in 1.7, was created at 16:27:41.
+    [thread StartTime]
+  - 16:27:43 to 16:27:46: event 32 catalog checkpoints for six stores. At 16:27:44, event 63
+    "GetAppManifests succeeded". These are the last `Outlook`-provider events of that instance.
+    [Application log]
+  - About 16:27:44.7: the UI thread entered the wait it never left. This time is derived from the
+    wait-chain tick in 1.6 and depends on reading that tick (an inference).
+  - 15:27:44.832Z (16:27:44.832), 0.1 s later: a Claude Agent SDK session starts with cwd
+    `C:\WINDOWS\system32` (entrypoint `sdk-cli`, version 2.1.325, permissionMode `bypassPermissions`,
+    prompt `-`). It ends at 15:27:48.087Z. What started it is unknown. A process started by DcomLaunch,
+    such as this OUTLOOK.EXE, would by default have that working directory; that is not verified.
+    [transcript 6c9c2c07, PART 6]
+  - 16:28:40, 16:28:56 and 16:36:54: further Outlook threads start and block on the UI thread's critical
+    section. [wait chains, 1.6]
+  - About 16:33:40: MCP thread 0x5D64's current wait began (derived from its wait-chain tick, an
+    inference).
+  - 15:44:15.221Z (16:44:15): the user asks a new Claude session (fd2ffacb) "why is my outlook not
+    starting?". That session's MCP server 67204 had started at 16:44:09. [transcript, Win32_Process]
+  - 16:47:12 to 16:58: read-only diagnosis by that session's sub-agent; its outputs are throughout PART 1.
+  - 15:50:00.482Z (16:50:00): the user interrupts sub-agent a26ab951's pending tool call
+    ("[Request interrupted by user for tool use]"). At 15:50:14.382Z session 579e5f93 starts a
+    replacement sub-agent (a4de6896a59e9e3b0). At 15:50:45.355Z the user asks the diagnosing session to
+    also fix Outlook. [transcripts]
+  - 16:52:15: a fresh Network List Manager client gets answers from netprofm in 108 ms (1.9).
+  - 16:58:37: `cdb -pv` non-invasive attach to PID 76888, then detach (`qd`). Stacks in 1.7.
+  - **17:02:02.374: `Stop-Process -Id 76888 -Force`. PID 76888 was gone at 17:02:02.402.** [command output]
+  - **17:02:02.469: MCP 68964 starts thread 75728. OUTLOOK.EXE PID 60368 is created in the same second,
+    again `-Embedding`, parent svchost 2228.** [Get-Process threads, Win32_Process] No other MCP server
+    started a thread between 17:01:55 and 17:02:10 (1.11).
+  - 16:02:03.1967660Z and 16:02:03.2510478Z (17:02:03): OutlookAI's `tuning.lastReconcileUtc` and
+    `registration.addInLastReconcileUtc`. [outlook_health at 17:04, 1.13]
+  - 17:02:09.738 and 17:02:09.778: MCP 68964 starts threads 27600 and 73948.
+  - About 17:02:15 (not timestamped): PID 60368 has 285 threads, no hung windows, no blocked wait
+    chains, and hidden Explorer windows only (1.10).
+  - **17:02:54.368: the diagnosing agent runs `explorer.exe "C:\Program Files\Microsoft
+    Office\root\Office16\OUTLOOK.EXE"`. No new OUTLOOK.EXE remained; 60368 was still the only one.**
+  - **17:03:01: PID 60368 shows a visible, not hung window "Inbox - <mailbox-A> - Outlook".**
+  - 17:03:39 to 17:03:59: verification round 1 (1.12).
+  - 16:04:27Z to 16:05:43Z (17:04:27 to 17:05:43): the diagnosing agent calls the outlookai tools
+    `outlook_health`, `list_accounts` and `search` (7 times); all succeeded (1.13).
+  - Between 17:05:43 and 17:08:19: read-only COM reads by the diagnosing agent (1.14).
+  - 17:08:19 to 17:08:34: verification round 2 (1.12).
+  - 17:11:24: the coordinating session confirms PID 60368 (`OUTLOOK.EXE -Embedding`, started 17:02:02)
+    is the only Outlook process, with Responding=True and MainWindowTitle
+    "Inbox - <mailbox-A> - Outlook" (1.14).
+  **1.3 Processes, at about 16:48 on 2026-11-15.** Source: `Get-CimInstance Win32_Process`; the parent
+  chain was built by the diagnosing agent's script. Verbatim:
+  ```text
+  PID     : 5964
+  Name    : OfficeClickToRun.exe
+  Session : 0
+  Created : 13-11-2026 11:14:22
+  PPID    : 1736
+  Chain   : services.exe(1736) <- wininit.exe(2012) <- <gone:1768>
+  Cmd     :
+  PID     : 32724
+  Name    : OutlookAI.McpServer.exe
+  Session : 1
+  Created : 13-11-2026 17:22:08
+  PPID    : 5912
+  Chain   : claude.exe(5912) <- bash.exe(38340) <- bash.exe(36084) <- bash.exe(14424) <- WindowsTerminal.exe(28816) <- explorer.exe(12928) <- <gone:12876>
+  Cmd     : C:\Users\<user>\AppData\Local/OutlookAI/Setup/McpServer/OutlookAI.McpServer.exe
+  PID     : 26812
+  Name    : OutlookAI.McpServer.exe
+  Session : 1
+  Created : 13-11-2026 17:22:19
+  PPID    : 35756
+  Chain   : claude.exe(35756) <- bash.exe(44672) <- bash.exe(24356) <- bash.exe(37604) <- WindowsTerminal.exe(28816) <- explorer.exe(12928) <- <gone:12876>
+  Cmd     : C:\Users\<user>\AppData\Local/OutlookAI/Setup/McpServer/OutlookAI.McpServer.exe
+  PID     : 65532
+  Name    : OutlookAI.McpServer.exe
+  Session : 1
+  Created : 13-11-2026 17:46:34
+  PPID    : 64472
+  Chain   : claude.exe(64472) <- Code.exe(6348) <- Code.exe(23604) <- explorer.exe(12928) <- <gone:12876>
+  Cmd     : C:\Users\<user>\AppData\Local/OutlookAI/Setup/McpServer/OutlookAI.McpServer.exe
+  PID     : 31340
+  Name    : OutlookAI.McpServer.exe
+  Session : 1
+  Created : 13-11-2026 23:10:24
+  PPID    : 49344
+  Chain   : claude.exe(49344) <- bash.exe(40380) <- bash.exe(66288) <- bash.exe(19192) <- WindowsTerminal.exe(28816) <- explorer.exe(12928) <- <gone:12876>
+  Cmd     : C:\Users\<user>\AppData\Local/OutlookAI/Setup/McpServer/OutlookAI.McpServer.exe
+  PID     : 37340
+  Name    : OutlookAI.McpServer.exe
+  Session : 1
+  Created : 14-11-2026 18:51:20
+  PPID    : 52100
+  Chain   : claude.exe(52100) <- bash.exe(51296) <- bash.exe(58732) <- bash.exe(22076) <- WindowsTerminal.exe(28816) <- explorer.exe(12928) <- <gone:12876>
+  Cmd     : C:\Users\<user>\AppData\Local/OutlookAI/Setup/McpServer/OutlookAI.McpServer.exe
+  PID     : 73176
+  Name    : OutlookAI.McpServer.exe
+  Session : 1
+  Created : 14-11-2026 18:56:58
+  PPID    : 73536
+  Chain   : claude.exe(73536) <- bash.exe(72920) <- bash.exe(72412) <- bash.exe(73360) <- WindowsTerminal.exe(28816) <- explorer.exe(12928) <- <gone:12876>
+  Cmd     : C:\Users\<user>\AppData\Local/OutlookAI/Setup/McpServer/OutlookAI.McpServer.exe
+  PID     : 68964
+  Name    : OutlookAI.McpServer.exe
+  Session : 1
+  Created : 15-11-2026 16:21:10
+  PPID    : 76924
+  Chain   : claude.exe(76924) <- bash.exe(62420) <- bash.exe(77464) <- bash.exe(76328) <- WindowsTerminal.exe(28816) <- explorer.exe(12928) <- <gone:12876>
+  Cmd     : C:\Users\<user>\AppData\Local/OutlookAI/Setup/McpServer/OutlookAI.McpServer.exe
+  PID     : 76888
+  Name    : OUTLOOK.EXE
+  Session : 1
+  Created : 15-11-2026 16:27:39
+  PPID    : 2228
+  Chain   : svchost.exe(2228) <- services.exe(1736) <- wininit.exe(2012) <- <gone:1768>
+  Cmd     : "C:\Program Files\Microsoft Office\Root\Office16\OUTLOOK.EXE" -Embedding
+  PID     : 67204
+  Name    : OutlookAI.McpServer.exe
+  Session : 1
+  Created : 15-11-2026 16:44:09
+  PPID    : 78308
+  Chain   : claude.exe(78308) <- bash.exe(64640) <- bash.exe(77628) <- bash.exe(59280) <- WindowsTerminal.exe(28816) <- explorer.exe(12928) <- <gone:12876>
+  Cmd     : C:\Users\<user>\AppData\Local/OutlookAI/Setup/McpServer/OutlookAI.McpServer.exe
+  ```
+  - **Eight OutlookAI MCP servers were alive**, one per claude.exe parent:
+    - 32724 (claude 5912), 26812 (claude 35756), 65532 (claude 64472, under VS Code) and 31340
+      (claude 49344), all from 13 Nov;
+    - 37340 (claude 52100) and 73176 (claude 73536), from 14 Nov;
+    - 68964 (claude 76924), the trigger, from 15 Nov 16:21;
+    - 67204 (claude 78308), the diagnosing session's, from 15 Nov 16:44.
+    The first six belong to Claude sessions from 13 and 14 Nov that were still running. Matching 76924
+    to session 579e5f93 and 78308 to session fd2ffacb is by timing (an inference). The other claude.exe
+    processes' session ids were not checked.
+  - **The DcomLaunch host**, `tasklist /svc` (verbatim):
+  ```text
+  Image Name                     PID Services
+  ========================= ======== ============================================
+  svchost.exe                   2228 BrokerInfrastructure, DcomLaunch, PlugPlay,
+                                     Power, SystemEventsBroker
+  Image Name                     PID Services
+  ========================= ======== ============================================
+  OfficeClickToRun.exe          5964 ClickToRunSvc
+  ```
+  - **Integrity and elevation**, from `OpenProcessToken` + `GetTokenInformation` (TokenElevation,
+    TokenElevationType, TokenIntegrityLevel) at about 16:48 and 17:02. Verbatim:
+  ```text
+  === PID 76888
+  Token: Elevated=0 ElevationType=3 (1=default,2=full,3=limited) IntegrityRID=0x2000 (0x2000=Medium,0x3000=High,0x4000=System)
+  === PID 68964
+  Token: Elevated=0 ElevationType=3 (1=default,2=full,3=limited) IntegrityRID=0x2000 (0x2000=Medium,0x3000=High,0x4000=System)
+  Top-level windows: 0
+  === PID 67204
+  Token: Elevated=0 ElevationType=3 (1=default,2=full,3=limited) IntegrityRID=0x2000 (0x2000=Medium,0x3000=High,0x4000=System)
+  Top-level windows: 0
+  === PID 32724
+  Token: Elevated=0 ElevationType=3 (1=default,2=full,3=limited) IntegrityRID=0x2000 (0x2000=Medium,0x3000=High,0x4000=System)
+  Top-level windows: 0
+  === PID 65532
+  Token: Elevated=0 ElevationType=3 (1=default,2=full,3=limited) IntegrityRID=0x2000 (0x2000=Medium,0x3000=High,0x4000=System)
+  Top-level windows: 0
+  ```
+    PID 60368's token (Medium, not elevated) is in 1.10. The integrity of MCP servers 26812, 31340,
+    37340 and 73176 was NOT checked.
+  - **PID 76888 state at about 16:48.** `Get-Process` and a 6-second CPU and thread sample. Verbatim
+    (`Responding : True` means nothing here, because the process had no main window):
+  ```text
+  Id                 : 76888
+  ProcessName        : OUTLOOK
+  StartTime          : 15-11-2026 16:27:39
+  Responding         : True
+  MainWindowHandle   : 0
+  MainWindowTitle    :
+  CPU                : 10,78125
+  TotalProcessorTime : 00:00:10.7812500
+  UserProcessorTime  : 00:00:06.0156250
+  HandleCount        : 6729
+  Threads            : 323
+  WS_MB              : 351,3
+  Private_MB         : 315,2
+  Path               : C:\Program Files\Microsoft Office\Root\Office16\OUTLOOK.EXE
+  FileVersion        : 16.0.14334.20974
+  CPU delta over 6s: 0,000s
+  Main thread 73000 (0x11D28): state=Wait wait=UserRequest start=15-11-2026 16:27:39 cpu=00:00:01.8593750
+  --- thread state summary
+  Count Name
+  ----- ----
+    249 Wait/UserRequest
+     59 Wait/Unknown
+      9 Wait/EventPairLow
+      1 Wait/ExecutionDelay
+  --- threads that used CPU in the 6s window
+  --- earliest-started threads
+     Id Hex     StartTime           ThreadState   WaitReason TotalProcessorTime
+     -- ---     ---------           -----------   ---------- ------------------
+  73000 0x11D28 15-11-2026 16:27:39        Wait  UserRequest 00:00:01.8593750
+  27900 0x6CFC  15-11-2026 16:27:39        Wait  UserRequest 00:00:00
+  10380 0x288C  15-11-2026 16:27:39        Wait  UserRequest 00:00:00
+  44028 0xABFC  15-11-2026 16:27:39        Wait  UserRequest 00:00:00
+  74684 0x123BC 15-11-2026 16:27:39        Wait  UserRequest 00:00:00.0468750
+  69468 0x10F5C 15-11-2026 16:27:39        Wait EventPairLow 00:00:00
+  ```
+  - **PID 3240**, which the UI thread's outer COM call pointed at (1.6). Verbatim, with the tick-count
+    anchor used for the times derived in 1.6:
+  ```text
+  ProcessId       : 3240
+  Name            : svchost.exe
+  SessionId       : 0
+  CreationDate    : 13-11-2026 11:14:21
+  ParentProcessId : 1736
+  ExecutablePath  :
+  CommandLine     :
+  Image Name                     PID Services
+  ========================= ======== ============================================
+  svchost.exe                   3240 netprofm
+  Image Name:   svchost.exe
+  PID:          3240
+  Session Name: Services
+  Session#:     0
+  Mem Usage:    23.668 K
+  Status:       Unknown
+  User Name:    N/A
+  CPU Time:     0:00:22
+  Window Title: N/A
+  TickCount64 now (ms): 192986017  -> ticks(15.625ms): 12351105  at 16:50:36.512
+  ```
+  **1.4 Event logs, verbatim.**
+  The `Outlook` provider in the Application log, all of 2026-11-15. These were the last events from
+  PID 76888, and none were logged after 16:27:46:
+  ```text
+  [2026-11-15 16:27:41] Outlook id=45 lvl=Information
+  Outlook loaded the following add-in(s):
+  Name: Microsoft Exchange Add-in
+  Description: Exchange support for Unified Messaging, e-mail permission rules, and calendar availability.
+  ProgID: UmOutlookAddin.FormRegionAddin
+  GUID: {F959DBBB-3867-41F2-8E5F-3B8BEFAA81B3}
+  Load Behavior: 3
+  HKLM: 1
+  Location: C:\Program Files\Microsoft Office\root\Office16\ADDINS\UmOutlookAddin.dll
+  Boot Time (Milliseconds): 0
+  Name: Microsoft Teams Meeting Add-in for Microsoft Office
+  Description: Microsoft Teams Meeting Add-in for Microsoft Office
+  ProgID: TeamsAddin.FastConnect
+  GUID: {19A6E644-14E6-4A60-B8D7-DD20610A871D}
+  Load Behavior: 3
+  HKLM: 0
+  Location: C:\Users\<user>\AppData\Local\Microsoft\TeamsMeetingAdd-in\1.26.27102\x64\Microsoft.Teams.AddinLoader.dll
+  Boot Time (Milliseconds): 16
+  Name: OutlookAI
+  Description: OutlookAI
+  ProgID: OutlookAI
+  GUID: {00000000-0000-0000-0000-000000000000}
+  Load Behavior: 3
+  HKLM: 0
+  Location: file:///C:\Users\<user>\AppData\Local\OutlookAI\Setup\OutlookAI.vsto|vstolocal
+  Boot Time (Milliseconds): 656
+  Name: Outlook Social Connector 2016
+  Description: Connects to social networking sites and provides people, activity, and status information.
+  ProgID: OscAddin.Connect
+  GUID: {2163EB1F-3FD9-4212-A41F-81D1F933597F}
+  Load Behavior: 3
+  HKLM: 1
+  Location: C:\Program Files\Microsoft Office\root\Office16\SOCIALCONNECTOR.DLL
+  Boot Time (Milliseconds): 16
+  Name: OneNote Notes about Outlook Items
+  Description: Adds Send to OneNote and Notes about this Item buttons to the command bar
+  ProgID: OneNote.OutlookAddin
+  GUID: {93E5752E-B889-47C5-8545-654EE2533C64}
+  Load Behavior: 3
+  HKLM: 1
+  Location: C:\Program Files\Microsoft Office\root\Office16\ONBttnOL.dll
+  Boot Time (Milliseconds): 15
+  Name: <custom-addin>
+  Description: <custom-addin>
+  ProgID: <custom-addin>
+  GUID: {00000000-0000-0000-0000-000000000000}
+  Load Behavior: 3
+  HKLM: 0
+  Location: file:///C:/Users/<user>/source/repos/<custom-addin>/bin/Debug/<custom-addin>.vsto|vstolocal
+  Boot Time (Milliseconds): 469
+  Name: Microsoft SharePoint Server Colleague Import Add-in
+  Description: The Add-in allows Microsoft SharePoint Server to import colleague suggestions based on your Outlook content
+  ProgID: ColleagueImport.ColleagueImportAddin
+  GUID: {EFEF7FDB-0CED-4FB6-B3BB-3C50D39F4120}
+  Load Behavior: 3
+  HKLM: 0
+  Location: C:\Program Files\Microsoft Office\root\Office16\ADDINS\ColleagueImport.dll
+  Boot Time (Milliseconds): 16
+  [2026-11-15 16:27:43] Outlook id=32 lvl=Information
+  The store C:\Users\<user>\AppData\Local\Microsoft\Outlook\<mailbox-C>.ost has detected a catalog checkpoint.
+  [2026-11-15 16:27:43] Outlook id=32 lvl=Information
+  The store C:\Users\<user>\AppData\Local\Microsoft\Outlook\<mailbox-B>.ost has detected a catalog checkpoint.
+  [2026-11-15 16:27:44] Outlook id=63 lvl=Information
+  The Exchange web service request GetAppManifests succeeded.
+  [2026-11-15 16:27:44] Outlook id=32 lvl=Information
+  The store C:\Users\<user>\AppData\Local\Microsoft\Outlook\<mailbox-A>.ost has detected a catalog checkpoint.
+  [2026-11-15 16:27:44] Outlook id=32 lvl=Information
+  The store C:\Users\<user>\AppData\Local\Microsoft\Outlook\<mailbox-A>.nst has detected a catalog checkpoint.
+  [2026-11-15 16:27:46] Outlook id=32 lvl=Information
+  The store C:\Users\<user>\AppData\Local\Microsoft\Outlook\<mailbox-B>(2).nst has detected a catalog checkpoint.
+  [2026-11-15 16:27:46] Outlook id=32 lvl=Information
+  The store C:\Users\<user>\AppData\Local\Microsoft\Outlook\<mailbox-D>.ost has detected a catalog checkpoint.
+  ```
+  `Outlook`-provider history: event-45 (add-ins loaded, one per Outlook boot) times over the 7 days
+  before 2026-11-15 17:00, plus per-day counts by event id:
+  ```text
+  event 45 (add-ins loaded) entries:
+  [2026-11-09 14:47:47] Outlook id=45 lvl=Information
+  [2026-11-09 18:42:01] Outlook id=45 lvl=Information
+  [2026-11-11 01:57:33] Outlook id=45 lvl=Information
+  [2026-11-12 04:14:50] Outlook id=45 lvl=Information
+  [2026-11-12 06:23:05] Outlook id=45 lvl=Information
+  [2026-11-12 23:12:05] Outlook id=45 lvl=Information
+  [2026-11-13 10:00:22] Outlook id=45 lvl=Information
+  [2026-11-13 10:51:36] Outlook id=45 lvl=Information
+  [2026-11-13 10:53:53] Outlook id=45 lvl=Information
+  [2026-11-13 11:50:56] Outlook id=45 lvl=Information
+  [2026-11-13 11:52:25] Outlook id=45 lvl=Information
+  [2026-11-13 11:53:14] Outlook id=45 lvl=Information
+  [2026-11-13 11:54:05] Outlook id=45 lvl=Information
+  [2026-11-13 11:54:17] Outlook id=45 lvl=Information
+  [2026-11-13 11:55:26] Outlook id=45 lvl=Information
+  [2026-11-13 13:05:07] Outlook id=45 lvl=Information
+  [2026-11-13 19:41:27] Outlook id=45 lvl=Information
+  [2026-11-13 20:01:59] Outlook id=45 lvl=Information
+  [2026-11-13 20:19:12] Outlook id=45 lvl=Information
+  [2026-11-15 16:27:41] Outlook id=45 lvl=Information
+  per-day counts by event id (30 store reconciliation started, 32 catalog checkpoint, 36 search indexing error, 38 reconciliation completed, 45 add-ins loaded, 63 GetAppManifests succeeded):
+  2026-11-09 id=30         x8
+  2026-11-09 id=32         x16
+  2026-11-09 id=38         x8
+  2026-11-09 id=45         x2
+  2026-11-09 id=63         x15
+  2026-11-10 id=32         x8
+  2026-11-10 id=63         x19
+  2026-11-11 id=32         x5
+  2026-11-11 id=45         x1
+  2026-11-11 id=63         x9
+  2026-11-12 id=30         x8
+  2026-11-12 id=32         x11
+  2026-11-12 id=36         x1
+  2026-11-12 id=38         x8
+  2026-11-12 id=45         x3
+  2026-11-12 id=63         x22
+  2026-11-13 id=30         x39
+  2026-11-13 id=38         x17
+  2026-11-13 id=45         x13
+  2026-11-13 id=63         x21
+  2026-11-15 id=32         x6
+  2026-11-15 id=45         x1
+  2026-11-15 id=63         x1
+  ```
+  Application Error, Application Hang and Windows Error Reporting events mentioning outlook or olk.exe
+  in the same 7 days. These are the only two: there was no Application Error 1000 and no WER crash
+  report.
+  ```text
+  [2026-11-13 10:38:01] Windows Error Reporting id=1001 lvl=Information
+  Fault bucket , type 0
+  Event Name: AppHangB1
+  Response: Not available
+  Cab Id: 0
+  Problem signature:
+  P1: OUTLOOK.EXE
+  P2: 16.0.14334.20974
+  P3: 6acc8a3f
+  P4: 0f9a
+  P5: 134217728
+  P6:
+  P7:
+  P8:
+  P9:
+  P10:
+  Attached files:
+  \\?\C:\ProgramData\Microsoft\Windows\WER\Temp\WER.a156f898-38ff-4ed7-9958-13afe4f52a41.tmp.WERInternalMetadata.xml
+  \\?\C:\ProgramData\Microsoft\Windows\WER\Temp\WER.0efdcb78-8fc3-48d6-a4dc-758d9887c0ad.tmp.csv
+  \\?\C:\ProgramData\Microsoft\Windows\WER\Temp\WER.5e6803ac-57eb-40a8-a4a4-63b55e58aa5b.tmp.txt
+  \\?\C:\Users\<user>\AppData\Local\Temp\{D54BF330-195B-427F-B8F1-69A9860C1E1A} - OProcSessId.dat
+  \\?\C:\Users\<user>\AppData\Local\Temp\WER.09acb592-9f75-402f-a4d4-53e47ee690e8.tmp.appcompat.txt
+  \\?\C:\ProgramData\Microsoft\Windows\WER\Temp\WER.8e8ec779-e6cc-4eff-a980-fcf3962531a2.tmp.xml
+  These files may be available here:
+  NULL
+  Analysis symbol:
+  Rechecking for solution: 0
+  Report Id: 1692bbde-a3ee-43a8-b086-aeeb8ca713e5
+  Report Status: 97
+  Hashed bucket:
+  Cab Guid: 0
+  [2026-11-13 10:38:01] Application Hang id=1002 lvl=Error
+  The program OUTLOOK.EXE version 16.0.14334.20974 stopped interacting with Windows and was closed. To see if more information about the problem is available, check the problem history in the Security and Maintenance control panel.
+  ```
+  Office alerts (log `OAlerts`), last 30 days: the Outlook start and error entries. The other eight
+  entries were ordinary save/draft prompts in Outlook, Word and Excel and are omitted.
+  ```text
+  [2026-10-19 10:56:00] Microsoft Office 16 Alerts id=300 lvl=Information
+  Microsoft Outlook
+  The operation failed.
+  P1: 300032
+  P2: 16.0.14334.20918
+  P3: 749mP4: 0x80040107
+  [2026-11-04 15:32:24] Microsoft Office 16 Alerts id=300 lvl=Information
+  Microsoft Outlook
+  The operation failed.
+  P1: 300032
+  P2: 16.0.14334.20974
+  P3: 749mP4: 0x80040107
+  [2026-11-13 11:32:36] Microsoft Office 16 Alerts id=300 lvl=Information
+  Microsoft Outlook
+  Outlook couldn't start last time. Safe mode could help you troubleshoot the problem, but some features might not be available in this mode.
+  Do you want to start in safe mode?
+  P1: 700159
+  P2: 16.0.14334.20974
+  P3: xatgP4:
+  [2026-11-13 11:41:45] Microsoft Office 16 Alerts id=300 lvl=Information
+  Microsoft Outlook
+  Outlook couldn't start last time. Safe mode could help you troubleshoot the problem, but some features might not be available in this mode.
+  Do you want to start in safe mode?
+  P1: 700159
+  P2: 16.0.14334.20974
+  P3: xatgP4:
+  ```
+  NCSI (`Microsoft-Windows-NCSI/Operational`), last 7 days, all entries:
+  ```text
+  [2026-11-12 07:33:17] Microsoft-Windows-NCSI id=4042 lvl=Information
+  Capability change on {3d5aa5f8-d9f7-44f5-b73c-979c3802cf91} (0x600800B000000 Family: V4 Capability: None ChangeReason: SuspectArpProbeFailed)
+  [2026-11-12 07:33:58] Microsoft-Windows-NCSI id=4042 lvl=Information
+  Capability change on {3d5aa5f8-d9f7-44f5-b73c-979c3802cf91} (0x600800B000000 Family: V4 Capability: Local ChangeReason: PassivePacketHops)
+  [2026-11-12 07:33:59] Microsoft-Windows-NCSI id=4042 lvl=Information
+  Capability change on {3d5aa5f8-d9f7-44f5-b73c-979c3802cf91} (0x600800B000000 Family: V4 Capability: Internet ChangeReason: ActiveHttpProbeSucceeded)
+  [2026-11-13 10:53:39] Microsoft-Windows-NCSI id=4042 lvl=Information
+  Capability change on {3d5aa5f8-d9f7-44f5-b73c-979c3802cf91} (0x600800B000000 Family: V4 Capability: Local ChangeReason: PassivePacketHops)
+  [2026-11-13 10:53:39] Microsoft-Windows-NCSI id=4042 lvl=Information
+  Capability change on {3d5aa5f8-d9f7-44f5-b73c-979c3802cf91} (0x600800B000000 Family: V4 Capability: Internet ChangeReason: ActiveHttpProbeSucceeded)
+  [2026-11-13 11:14:23] Microsoft-Windows-NCSI id=4042 lvl=Information
+  Capability change on {3d5aa5f8-d9f7-44f5-b73c-979c3802cf91} (0x600800B000000 Family: V4 Capability: Local ChangeReason: PassivePacketHops)
+  [2026-11-13 11:14:23] Microsoft-Windows-NCSI id=4042 lvl=Information
+  Capability change on {3d5aa5f8-d9f7-44f5-b73c-979c3802cf91} (0x600800B000000 Family: V4 Capability: Internet ChangeReason: ActiveHttpProbeSucceeded)
+  ```
+  **1.5 Windows of the hung PID 76888, about 16:48.** Source: `EnumWindows`, `IsWindowVisible`,
+  `IsHungAppWindow`, `GetWindowRect`, `GetClassName` and `GetWindowText`. Every window is invisible.
+  Those on the UI thread (0x12C58 = PID 76888, 0x11D28 = TID 73000, as in the `ViewDeferedNotifManager`
+  title) report hung. The hidden Explorer `Inbox - <mailbox-B> - Outlook` existed. Verbatim:
+  ```text
+  === PID 76888
+  Token: Elevated=0 ElevationType=3 (1=default,2=full,3=limited) IntegrityRID=0x2000 (0x2000=Medium,0x3000=High,0x4000=System)
+  Top-level windows: 27
+    hwnd=0xD01DE vis=False hung=True min=False owner=0x0 rect=(0,0,0,0) class='HardwareMonitorWindowClass' title='HardwareMonitorWindow'
+    hwnd=0x210F92 vis=False hung=True min=False owner=0x0 rect=(0,0,0,0) class='tooltips_class32' title=''
+    hwnd=0x1B0DFA vis=False hung=True min=False owner=0x0 rect=(0,0,0,0) class='ViewDeferedNotifManager' title='ViewDeferedNotifManager 0x12C58 0x11D28'
+    hwnd=0x280D38 vis=False hung=True min=False owner=0x0 rect=(0,0,0,0) class='TNOTIFThisThreadSink' title='TNOTIFThisThreadSink 0x12C58 0x11D28'
+    hwnd=0x2F0DFE vis=False hung=True min=False owner=0x0 rect=(0,0,0,0) class='_WwO' title=''
+    hwnd=0x3B0FB4 vis=False hung=True min=False owner=0x0 rect=(-8,-8,3848,2120) class='OpusApp' title='Word'
+    hwnd=0x1B0ED6 vis=False hung=True min=False owner=0x480FEA rect=(0,0,29,16) class='WBPOPUP' title=''
+    hwnd=0x2B218C vis=False hung=False min=False owner=0x0 rect=(0,0,136,39) class='Hidden Window of the IM Abstraction layer' title=''
+    hwnd=0x430FBC vis=False hung=True min=False owner=0x0 rect=(0,0,136,39) class='rctrl_sbpwnd32' title=''
+    hwnd=0x30203A vis=False hung=True min=False owner=0x0 rect=(0,0,16,16) class='rctrl_sbpwnd32' title=''
+    hwnd=0x2A0466 vis=False hung=True min=False owner=0x0 rect=(0,0,16,16) class='rctrl_sbpwnd32' title=''
+    hwnd=0x480FEA vis=False hung=True min=False owner=0x0 rect=(156,156,3036,1719) class='rctrl_renwnd32' title='Inbox - <mailbox-B> - Outlook'
+    hwnd=0x4C20B2 vis=False hung=True min=False owner=0x0 rect=(0,0,16,16) class='MerengueNotifyWnd' title='Microsoft Outlook Social Connector'
+    hwnd=0x2141FB6 vis=False hung=True min=False owner=0x0 rect=(0,0,0,0) class='WMS ST Notif Class' title='WMS ST Notif Window 00012C58 00011D28'
+    hwnd=0x322024 vis=False hung=True min=False owner=0x0 rect=(0,0,16,16) class='OutlookAcctMgrNotificationWindow' title=''
+    hwnd=0x4F0F7A vis=False hung=True min=False owner=0x0 rect=(0,0,0,0) class='MsoStdCompMgr' title=''
+    hwnd=0xD220F2 vis=False hung=True min=False owner=0x0 rect=(0,0,0,0) class='.NET-BroadcastEventWindow.4.0.0.0.2982bee.0' title='.NET-BroadcastEventWindow.4.0.0.0.2982bee.0'
+    hwnd=0xDD1EB2 vis=False hung=True min=False owner=0x0 rect=(78,78,2958,1641) class='TeamsMeetingAddinWindow' title=''
+    hwnd=0x800096 vis=False hung=False min=False owner=0x0 rect=(0,0,136,39) class='Outlook Notification Area Icon Window' title=''
+    hwnd=0x16C09E2 vis=False hung=True min=False owner=0x0 rect=(0,0,0,0) class='OleDdeWndClass' title='DDE Server Window'
+    hwnd=0x10F22E6 vis=False hung=True min=False owner=0x0 rect=(0,0,0,0) class='WMS Notif Engine:Dispatch Window Class' title='W'
+    hwnd=0xE1071A vis=False hung=False min=False owner=0x0 rect=(0,0,136,39) class='OfficePowerManagerWindow' title='OfficePowerManagerWindow'
+    hwnd=0x900AD8 vis=False hung=True min=False owner=0x0 rect=(32767,32767,98302,98302) class='ARC Event Window 00' title=''
+    hwnd=0x392152 vis=False hung=True min=False owner=0x0 rect=(32767,32767,98302,98302) class='ARC Event Window 00' title=''
+    hwnd=0xE05F4 vis=False hung=True min=False owner=0x0 rect=(3841,2161,3857,2177) class='mspim_wnd32' title='Microsoft Outlook'
+    hwnd=0xB60112 vis=False hung=False min=False owner=0x800096 rect=(0,0,0,0) class='IME' title='Default IME'
+    hwnd=0x3520EC vis=False hung=True min=False owner=0xE05F4 rect=(0,0,0,0) class='IME' title='Default IME'
+  ```
+  **1.6 Wait chains**, captured 16:50 to 16:51 with `GetThreadWaitChain` (flags
+  `WCT_OUT_OF_PROC_FLAG | WCT_OUT_OF_PROC_CS_FLAG | WCT_OUT_OF_PROC_COM_FLAG`, COM callbacks
+  registered via `RegisterWaitChainCOMCallback`), the API behind Resource Monitor's "Analyze wait
+  chain".
+  - `waitms` is printed raw from `ThreadObject.WaitTime`. The diagnosing agent's reading (an
+    inference): it is the kernel tick count, in 15.625 ms ticks, at which the wait began, not a
+    duration. A duration is impossible here, because 12263311 ms is longer than the process had
+    existed.
+  - With the anchor in 1.3 (tick 12351105 at 16:50:36.512), tick 12263311 gives about 16:27:44.7 for
+    the UI thread, and tick 12286093 gives about 16:33:40 for MCP thread 0x5D64.
+  - For PID 76888, all chains that contain more than the thread itself are below (317 threads were
+    walked; the rest showed only their own node). `Com[Owned] -> Thread[pid=3240 tid=0 PidOnly]` means
+    WCT saw an outgoing COM call owned by PID 3240 (netprofm) but could not see which thread there.
+  ```text
+  === PID 76888 OUTLOOK threads=317
+    tid 73000 (0x11D28) start=16:27:39: Thread[pid=76888 tid=73000(0x11D28) waitms=12263311 ctxsw=11257 Blocked] -> Com[Owned '' timeout=0] -> Thread[pid=3240 tid=0(0x0) waitms=0 ctxsw=0 PidOnly]
+    tid 62952 (0xF5E8) start=16:27:39: Thread[pid=76888 tid=62952(0xF5E8) waitms=12263630 ctxsw=527 Blocked] -> CriticalSection[Owned '' timeout=0] -> Thread[pid=76888 tid=73000(0x11D28) waitms=12263311 ctxsw=11257 Blocked] -> Com[Owned '' timeout=0] -> Thread[pid=3240 tid=0(0x0) waitms=0 ctxsw=0 PidOnly]
+    tid 68656 (0x10C30) start=16:27:40: Thread[pid=76888 tid=68656(0x10C30) waitms=12263630 ctxsw=559 Blocked] -> CriticalSection[Owned '' timeout=0] -> Thread[pid=76888 tid=73000(0x11D28) waitms=12263311 ctxsw=11257 Blocked] -> Com[Owned '' timeout=0] -> Thread[pid=3240 tid=0(0x0) waitms=0 ctxsw=0 PidOnly]
+    tid 23592 (0x5C28) start=16:27:40: Thread[pid=76888 tid=23592(0x5C28) waitms=12263630 ctxsw=469 Blocked] -> CriticalSection[Owned '' timeout=0] -> Thread[pid=76888 tid=73000(0x11D28) waitms=12263311 ctxsw=11257 Blocked] -> Com[Owned '' timeout=0] -> Thread[pid=3240 tid=0(0x0) waitms=0 ctxsw=0 PidOnly]
+    tid 59712 (0xE940) start=16:27:41: Thread[pid=76888 tid=59712(0xE940) waitms=12263630 ctxsw=423 Blocked] -> CriticalSection[Owned '' timeout=0] -> Thread[pid=76888 tid=73000(0x11D28) waitms=12263311 ctxsw=11257 Blocked] -> Com[Owned '' timeout=0] -> Thread[pid=3240 tid=0(0x0) waitms=0 ctxsw=0 PidOnly]
+    tid 29760 (0x7440) start=16:27:41: Thread[pid=76888 tid=29760(0x7440) waitms=12263279 ctxsw=161 Blocked] -> Com[Owned '' timeout=0] -> Thread[pid=76888 tid=73000(0x11D28) waitms=12263311 ctxsw=11257 Blocked] -> Com[Owned '' timeout=0] -> Thread[pid=3240 tid=0(0x0) waitms=0 ctxsw=0 PidOnly]
+    tid 28728 (0x7038) start=16:27:41: Thread[pid=76888 tid=28728(0x7038) waitms=12263533 ctxsw=448 Blocked] -> CriticalSection[Owned '' timeout=0] -> Thread[pid=76888 tid=72648(0x11BC8) waitms=12263630 ctxsw=387 Blocked] -> CriticalSection[Owned '' timeout=0] -> Thread[pid=76888 tid=73000(0x11D28) waitms=12263311 ctxsw=11257 Blocked] -> Com[Owned '' timeout=0] -> Thread[pid=3240 tid=0(0x0) waitms=0 ctxsw=0 PidOnly]
+    tid 39728 (0x9B30) start=16:27:41: Thread[pid=76888 tid=39728(0x9B30) waitms=12263630 ctxsw=510 Blocked] -> CriticalSection[Owned '' timeout=0] -> Thread[pid=76888 tid=73000(0x11D28) waitms=12263311 ctxsw=11257 Blocked] -> Com[Owned '' timeout=0] -> Thread[pid=3240 tid=0(0x0) waitms=0 ctxsw=0 PidOnly]
+    tid 632 (0x278) start=16:27:42: Thread[pid=76888 tid=632(0x278) waitms=12263630 ctxsw=59 Blocked] -> CriticalSection[Owned '' timeout=0] -> Thread[pid=76888 tid=73000(0x11D28) waitms=12263311 ctxsw=11257 Blocked] -> Com[Owned '' timeout=0] -> Thread[pid=3240 tid=0(0x0) waitms=0 ctxsw=0 PidOnly]
+    tid 68784 (0x10CB0) start=16:27:42: Thread[pid=76888 tid=68784(0x10CB0) waitms=12263630 ctxsw=319 Blocked] -> CriticalSection[Owned '' timeout=0] -> Thread[pid=76888 tid=73000(0x11D28) waitms=12263311 ctxsw=11257 Blocked] -> Com[Owned '' timeout=0] -> Thread[pid=3240 tid=0(0x0) waitms=0 ctxsw=0 PidOnly]
+    tid 69776 (0x11090) start=16:27:42: Thread[pid=76888 tid=69776(0x11090) waitms=12263630 ctxsw=140 Blocked] -> CriticalSection[Owned '' timeout=0] -> Thread[pid=76888 tid=73000(0x11D28) waitms=12263311 ctxsw=11257 Blocked] -> Com[Owned '' timeout=0] -> Thread[pid=3240 tid=0(0x0) waitms=0 ctxsw=0 PidOnly]
+    tid 74836 (0x12454) start=16:27:42: Thread[pid=76888 tid=74836(0x12454) waitms=12263630 ctxsw=297 Blocked] -> CriticalSection[Owned '' timeout=0] -> Thread[pid=76888 tid=73000(0x11D28) waitms=12263311 ctxsw=11257 Blocked] -> Com[Owned '' timeout=0] -> Thread[pid=3240 tid=0(0x0) waitms=0 ctxsw=0 PidOnly]
+    tid 72648 (0x11BC8) start=16:27:42: Thread[pid=76888 tid=72648(0x11BC8) waitms=12263630 ctxsw=387 Blocked] -> CriticalSection[Owned '' timeout=0] -> Thread[pid=76888 tid=73000(0x11D28) waitms=12263311 ctxsw=11257 Blocked] -> Com[Owned '' timeout=0] -> Thread[pid=3240 tid=0(0x0) waitms=0 ctxsw=0 PidOnly]
+    tid 44020 (0xABF4) start=16:27:42: Thread[pid=76888 tid=44020(0xABF4) waitms=12263630 ctxsw=215 Blocked] -> CriticalSection[Owned '' timeout=0] -> Thread[pid=76888 tid=73000(0x11D28) waitms=12263311 ctxsw=11257 Blocked] -> Com[Owned '' timeout=0] -> Thread[pid=3240 tid=0(0x0) waitms=0 ctxsw=0 PidOnly]
+    tid 76896 (0x12C60) start=16:27:42: Thread[pid=76888 tid=76896(0x12C60) waitms=12263630 ctxsw=419 Blocked] -> CriticalSection[Owned '' timeout=0] -> Thread[pid=76888 tid=73000(0x11D28) waitms=12263311 ctxsw=11257 Blocked] -> Com[Owned '' timeout=0] -> Thread[pid=3240 tid=0(0x0) waitms=0 ctxsw=0 PidOnly]
+    tid 71888 (0x118D0) start=16:27:42: Thread[pid=76888 tid=71888(0x118D0) waitms=12263630 ctxsw=39 Blocked] -> CriticalSection[Owned '' timeout=0] -> Thread[pid=76888 tid=73000(0x11D28) waitms=12263311 ctxsw=11257 Blocked] -> Com[Owned '' timeout=0] -> Thread[pid=3240 tid=0(0x0) waitms=0 ctxsw=0 PidOnly]
+    tid 31044 (0x7944) start=16:27:42: Thread[pid=76888 tid=31044(0x7944) waitms=12263630 ctxsw=37 Blocked] -> CriticalSection[Owned '' timeout=0] -> Thread[pid=76888 tid=73000(0x11D28) waitms=12263311 ctxsw=11257 Blocked] -> Com[Owned '' timeout=0] -> Thread[pid=3240 tid=0(0x0) waitms=0 ctxsw=0 PidOnly]
+    tid 74816 (0x12440) start=16:27:43: Thread[pid=76888 tid=74816(0x12440) waitms=12263630 ctxsw=294 Blocked] -> CriticalSection[Owned '' timeout=0] -> Thread[pid=76888 tid=73000(0x11D28) waitms=12263311 ctxsw=11257 Blocked] -> Com[Owned '' timeout=0] -> Thread[pid=3240 tid=0(0x0) waitms=0 ctxsw=0 PidOnly]
+    tid 78436 (0x13264) start=16:27:43: Thread[pid=76888 tid=78436(0x13264) waitms=12263630 ctxsw=347 Blocked] -> CriticalSection[Owned '' timeout=0] -> Thread[pid=76888 tid=73000(0x11D28) waitms=12263311 ctxsw=11257 Blocked] -> Com[Owned '' timeout=0] -> Thread[pid=3240 tid=0(0x0) waitms=0 ctxsw=0 PidOnly]
+    tid 21932 (0x55AC) start=16:27:43: Thread[pid=76888 tid=21932(0x55AC) waitms=12263630 ctxsw=1138 Blocked] -> CriticalSection[Owned '' timeout=0] -> Thread[pid=76888 tid=73000(0x11D28) waitms=12263311 ctxsw=11257 Blocked] -> Com[Owned '' timeout=0] -> Thread[pid=3240 tid=0(0x0) waitms=0 ctxsw=0 PidOnly]
+    tid 57004 (0xDEAC) start=16:27:43: Thread[pid=76888 tid=57004(0xDEAC) waitms=12263630 ctxsw=315 Blocked] -> CriticalSection[Owned '' timeout=0] -> Thread[pid=76888 tid=73000(0x11D28) waitms=12263311 ctxsw=11257 Blocked] -> Com[Owned '' timeout=0] -> Thread[pid=3240 tid=0(0x0) waitms=0 ctxsw=0 PidOnly]
+    tid 75980 (0x128CC) start=16:27:43: Thread[pid=76888 tid=75980(0x128CC) waitms=12263630 ctxsw=75 Blocked] -> CriticalSection[Owned '' timeout=0] -> Thread[pid=76888 tid=73000(0x11D28) waitms=12263311 ctxsw=11257 Blocked] -> Com[Owned '' timeout=0] -> Thread[pid=3240 tid=0(0x0) waitms=0 ctxsw=0 PidOnly]
+    tid 64112 (0xFA70) start=16:27:43: Thread[pid=76888 tid=64112(0xFA70) waitms=12263630 ctxsw=77 Blocked] -> CriticalSection[Owned '' timeout=0] -> Thread[pid=76888 tid=73000(0x11D28) waitms=12263311 ctxsw=11257 Blocked] -> Com[Owned '' timeout=0] -> Thread[pid=3240 tid=0(0x0) waitms=0 ctxsw=0 PidOnly]
+    tid 62384 (0xF3B0) start=16:27:43: Thread[pid=76888 tid=62384(0xF3B0) waitms=12263630 ctxsw=200 Blocked] -> CriticalSection[Owned '' timeout=0] -> Thread[pid=76888 tid=73000(0x11D28) waitms=12263311 ctxsw=11257 Blocked] -> Com[Owned '' timeout=0] -> Thread[pid=3240 tid=0(0x0) waitms=0 ctxsw=0 PidOnly]
+    tid 74384 (0x12290) start=16:27:43: Thread[pid=76888 tid=74384(0x12290) waitms=12263284 ctxsw=148 Blocked] -> CriticalSection[Owned '' timeout=0] -> Thread[pid=76888 tid=72648(0x11BC8) waitms=12263630 ctxsw=387 Blocked] -> CriticalSection[Owned '' timeout=0] -> Thread[pid=76888 tid=73000(0x11D28) waitms=12263311 ctxsw=11257 Blocked] -> Com[Owned '' timeout=0] -> Thread[pid=3240 tid=0(0x0) waitms=0 ctxsw=0 PidOnly]
+    tid 2676 (0xA74) start=16:27:43: Thread[pid=76888 tid=2676(0xA74) waitms=12263630 ctxsw=74 Blocked] -> CriticalSection[Owned '' timeout=0] -> Thread[pid=76888 tid=73000(0x11D28) waitms=12263311 ctxsw=11257 Blocked] -> Com[Owned '' timeout=0] -> Thread[pid=3240 tid=0(0x0) waitms=0 ctxsw=0 PidOnly]
+    tid 12396 (0x306C) start=16:27:43: Thread[pid=76888 tid=12396(0x306C) waitms=12265080 ctxsw=151 Blocked] -> CriticalSection[Owned '' timeout=0] -> Thread[pid=76888 tid=73000(0x11D28) waitms=12263311 ctxsw=11257 Blocked] -> Com[Owned '' timeout=0] -> Thread[pid=3240 tid=0(0x0) waitms=0 ctxsw=0 PidOnly]
+    tid 69772 (0x1108C) start=16:27:43: Thread[pid=76888 tid=69772(0x1108C) waitms=12263630 ctxsw=70 Blocked] -> CriticalSection[Owned '' timeout=0] -> Thread[pid=76888 tid=73000(0x11D28) waitms=12263311 ctxsw=11257 Blocked] -> Com[Owned '' timeout=0] -> Thread[pid=3240 tid=0(0x0) waitms=0 ctxsw=0 PidOnly]
+    tid 78492 (0x1329C) start=16:27:44: Thread[pid=76888 tid=78492(0x1329C) waitms=12265080 ctxsw=109 Blocked] -> CriticalSection[Owned '' timeout=0] -> Thread[pid=76888 tid=73000(0x11D28) waitms=12263311 ctxsw=11257 Blocked] -> Com[Owned '' timeout=0] -> Thread[pid=3240 tid=0(0x0) waitms=0 ctxsw=0 PidOnly]
+    tid 30992 (0x7910) start=16:27:44: Thread[pid=76888 tid=30992(0x7910) waitms=12265080 ctxsw=62 Blocked] -> CriticalSection[Owned '' timeout=0] -> Thread[pid=76888 tid=73000(0x11D28) waitms=12263311 ctxsw=11257 Blocked] -> Com[Owned '' timeout=0] -> Thread[pid=3240 tid=0(0x0) waitms=0 ctxsw=0 PidOnly]
+    tid 76280 (0x129F8) start=16:27:45: Thread[pid=76888 tid=76280(0x129F8) waitms=12263630 ctxsw=77 Blocked] -> CriticalSection[Owned '' timeout=0] -> Thread[pid=76888 tid=73000(0x11D28) waitms=12263311 ctxsw=11257 Blocked] -> Com[Owned '' timeout=0] -> Thread[pid=3240 tid=0(0x0) waitms=0 ctxsw=0 PidOnly]
+    tid 61016 (0xEE58) start=16:27:52: Thread[pid=76888 tid=61016(0xEE58) waitms=12265080 ctxsw=38 Blocked] -> CriticalSection[Owned '' timeout=0] -> Thread[pid=76888 tid=73000(0x11D28) waitms=12263311 ctxsw=11257 Blocked] -> Com[Owned '' timeout=0] -> Thread[pid=3240 tid=0(0x0) waitms=0 ctxsw=0 PidOnly]
+    tid 77560 (0x12EF8) start=16:27:52: Thread[pid=76888 tid=77560(0x12EF8) waitms=12271101 ctxsw=45 Blocked] -> CriticalSection[Owned '' timeout=0] -> Thread[pid=76888 tid=73000(0x11D28) waitms=12263311 ctxsw=11257 Blocked] -> Com[Owned '' timeout=0] -> Thread[pid=3240 tid=0(0x0) waitms=0 ctxsw=0 PidOnly]
+    tid 56940 (0xDE6C) start=16:28:40: Thread[pid=76888 tid=56940(0xDE6C) waitms=12267892 ctxsw=11 Blocked] -> CriticalSection[Owned '' timeout=0] -> Thread[pid=76888 tid=73000(0x11D28) waitms=12263311 ctxsw=11257 Blocked] -> Com[Owned '' timeout=0] -> Thread[pid=3240 tid=0(0x0) waitms=0 ctxsw=0 PidOnly]
+    tid 77172 (0x12D74) start=16:28:40: Thread[pid=76888 tid=77172(0x12D74) waitms=12267892 ctxsw=2 Blocked] -> CriticalSection[Owned '' timeout=0] -> Thread[pid=76888 tid=73000(0x11D28) waitms=12263311 ctxsw=11257 Blocked] -> Com[Owned '' timeout=0] -> Thread[pid=3240 tid=0(0x0) waitms=0 ctxsw=0 PidOnly]
+    tid 77336 (0x12E18) start=16:28:56: Thread[pid=76888 tid=77336(0x12E18) waitms=12267892 ctxsw=1 Blocked] -> CriticalSection[Owned '' timeout=0] -> Thread[pid=76888 tid=73000(0x11D28) waitms=12263311 ctxsw=11257 Blocked] -> Com[Owned '' timeout=0] -> Thread[pid=3240 tid=0(0x0) waitms=0 ctxsw=0 PidOnly]
+    tid 70460 (0x1133C) start=16:28:56: Thread[pid=76888 tid=70460(0x1133C) waitms=12267892 ctxsw=2 Blocked] -> CriticalSection[Owned '' timeout=0] -> Thread[pid=76888 tid=73000(0x11D28) waitms=12263311 ctxsw=11257 Blocked] -> Com[Owned '' timeout=0] -> Thread[pid=3240 tid=0(0x0) waitms=0 ctxsw=0 PidOnly]
+    tid 76992 (0x12CC0) start=16:28:56: Thread[pid=76888 tid=76992(0x12CC0) waitms=12267892 ctxsw=1 Blocked] -> CriticalSection[Owned '' timeout=0] -> Thread[pid=76888 tid=73000(0x11D28) waitms=12263311 ctxsw=11257 Blocked] -> Com[Owned '' timeout=0] -> Thread[pid=3240 tid=0(0x0) waitms=0 ctxsw=0 PidOnly]
+    tid 67388 (0x1073C) start=16:28:56: Thread[pid=76888 tid=67388(0x1073C) waitms=12267892 ctxsw=1 Blocked] -> CriticalSection[Owned '' timeout=0] -> Thread[pid=76888 tid=73000(0x11D28) waitms=12263311 ctxsw=11257 Blocked] -> Com[Owned '' timeout=0] -> Thread[pid=3240 tid=0(0x0) waitms=0 ctxsw=0 PidOnly]
+    tid 75060 (0x12534) start=16:28:56: Thread[pid=76888 tid=75060(0x12534) waitms=12271101 ctxsw=15 Blocked] -> CriticalSection[Owned '' timeout=0] -> Thread[pid=76888 tid=73000(0x11D28) waitms=12263311 ctxsw=11257 Blocked] -> Com[Owned '' timeout=0] -> Thread[pid=3240 tid=0(0x0) waitms=0 ctxsw=0 PidOnly]
+    tid 77324 (0x12E0C) start=16:28:56: Thread[pid=76888 tid=77324(0x12E0C) waitms=12271101 ctxsw=7 Blocked] -> CriticalSection[Owned '' timeout=0] -> Thread[pid=76888 tid=73000(0x11D28) waitms=12263311 ctxsw=11257 Blocked] -> Com[Owned '' timeout=0] -> Thread[pid=3240 tid=0(0x0) waitms=0 ctxsw=0 PidOnly]
+    tid 73520 (0x11F30) start=16:28:56: Thread[pid=76888 tid=73520(0x11F30) waitms=12271101 ctxsw=20 Blocked] -> CriticalSection[Owned '' timeout=0] -> Thread[pid=76888 tid=73000(0x11D28) waitms=12263311 ctxsw=11257 Blocked] -> Com[Owned '' timeout=0] -> Thread[pid=3240 tid=0(0x0) waitms=0 ctxsw=0 PidOnly]
+    tid 58760 (0xE588) start=16:36:54: Thread[pid=76888 tid=58760(0xE588) waitms=12321521 ctxsw=70 Blocked] -> CriticalSection[Owned '' timeout=0] -> Thread[pid=76888 tid=73000(0x11D28) waitms=12263311 ctxsw=11257 Blocked] -> Com[Owned '' timeout=0] -> Thread[pid=3240 tid=0(0x0) waitms=0 ctxsw=0 PidOnly]
+  ```
+  Every OutlookAI MCP server, Explorer and PID 3240, same API with only multi-node chains printed. Only
+  68964 had one: thread 0x5D64, created 16:27:39, in a COM call to Outlook's UI thread. Verbatim:
+  ```text
+  === PID 26812 OutlookAI.McpServer threads=13
+  === PID 31340 OutlookAI.McpServer threads=13
+  === PID 32724 OutlookAI.McpServer threads=15
+  === PID 37340 OutlookAI.McpServer threads=13
+  === PID 65532 OutlookAI.McpServer threads=12
+  === PID 67204 OutlookAI.McpServer threads=13
+  === PID 68964 OutlookAI.McpServer threads=16
+    tid 23908 (0x5D64) start=16:27:39: Thread[pid=68964 tid=23908(0x5D64) waitms=12286093 ctxsw=1633 Blocked] -> Com[Owned '' timeout=0] -> Thread[pid=76888 tid=73000(0x11D28) waitms=12263311 ctxsw=11257 Blocked] -> Com[Owned '' timeout=0] -> Thread[pid=3240 tid=0(0x0) waitms=0 ctxsw=0 PidOnly]
+  === PID 73176 OutlookAI.McpServer threads=13
+  === PID 12928 explorer threads=469
+  === PID 3240 svchost threads=11
+  ```
+  **1.7 Stacks.** From `cdb.exe` 10.0.29680.1004 (WinDbg package 1.2611.4001.0), attached
+  non-invasively (`-pv`) to PID 76888 at 16:58:37 with Microsoft public symbols, then detached
+  (`qd`). Office's PDBs are public symbols only, so `OUTLOOK!`, `OLMAPI32!`, `EMSMDB32!` and `mso!` names
+  are the nearest exports plus an offset, not real function names. The `Microsoft_Teams_MeetingAddin!`
+  frames are managed frames the debugger resolved. Header lines, verbatim:
+  ```text
+  Microsoft (R) Windows Debugger Version 10.0.29680.1004 AMD64
+  Copyright (c) Microsoft Corporation. All rights reserved.
+  Symbol search path is: srv*C:\Users\<user>\Downloads\tmp-outlook-diag\sym*https://msdl.microsoft.com/download/symbols
+  WARNING: Process 76888 is not attached as a debuggee
+           The process can be examined but debug events will not be received
+  (12c58.11d28): Wake debugger - code 80000007 (first chance)
+  0:000> cdb: Reading initial command '.symopt+ 0x80000; ~~[0x11d28]s; .echo === MAIN THREAD 0x11D28 ===; kn 100; .echo === THREAD 0x7440 ===; ~~[0x7440]kn 60; .echo === ALL THREADS TOP FRAMES ===; ~*kn 8; qd'
+  ```
+  The UI thread 0x11D28, `kn 100`, verbatim. Read it bottom-up:
+  - 0x74-0x6f: Outlook's message loop.
+  - 0x6e-0x5c: an incoming COM call via `IDispatch::Invoke`, i.e. late-bound.
+  - 0x5b-0x41: Outlook, OLMAPI32 and EMSMDB32 opening a store, down to `OLMAPI32!HrCreateOfflineObj`.
+  - 0x40: `netprofm!PublicNetworkListManager::GetCost`.
+  - 0x3f-0x2d: an outgoing COM call waiting in COM's modal loop (`CCliModalLoop`).
+  - 0x2c-0x1e: a second incoming call, dispatched re-entrantly (`ReentrantSTAInvokeInApartment`) through
+    the universal marshaler's stub (`CUnivStubWrapper`).
+  - 0x1d-0x03: Outlook, OLMAPI32 and EMSMDB32 again, down to `OLMAPI32!StartSyncLogging` ->
+    `GetMAPISessionID` -> `HrCreateSingletonQueueOlkAsyncTask` -> `ScInitMapiUtil`.
+  - 0x02-0x00: `mso!Ordinal9147` -> `WaitForMultipleObjectsEx`.
+  ```text
+  === MAIN THREAD 0x11D28 ===
+   # Child-SP          RetAddr               Call Site
+  00 000000fa`a9af9458 00007ffd`db50ab53     ntdll!NtWaitForMultipleObjects+0x14
+  01 000000fa`a9af9460 00007ffc`87f2d693     KERNELBASE!WaitForMultipleObjectsEx+0x123
+  02 000000fa`a9af9750 00007ffc`b99f0534     mso!Ordinal9147+0x163
+  03 000000fa`a9af97c0 00007ffc`b9a00195     OLMAPI32!ScInitMapiUtil+0x714
+  04 000000fa`a9af9820 00007ffc`b99e78bd     OLMAPI32!HrCreateSingletonQueueOlkAsyncTask+0x615
+  05 000000fa`a9af9930 00007ffc`b99e77cd     OLMAPI32!GetMAPISessionID+0xc9d
+  06 000000fa`a9af9980 00007ffc`b9c8175f     OLMAPI32!GetMAPISessionID+0xbad
+  07 000000fa`a9af99b0 00007ffc`8bb8af3f     OLMAPI32!StartSyncLogging+0x80cf
+  08 000000fa`a9af99f0 00007ffc`8bb8d51d     EMSMDB32+0xaaf3f
+  09 000000fa`a9af9b40 00007ffc`8bbb6cc2     EMSMDB32+0xad51d
+  0a 000000fa`a9af9cf0 00007ffc`8bbb6b32     EMSMDB32!HrEmsuiInit+0x3c42
+  0b 000000fa`a9af9d30 00007ffc`8bbb6c52     EMSMDB32!HrEmsuiInit+0x3ab2
+  0c 000000fa`a9af9da0 00007ffc`8bbc9077     EMSMDB32!HrEmsuiInit+0x3bd2
+  0d 000000fa`a9af9e10 00007ffc`8bc3569e     EMSMDB32!HrEmsuiInit+0x15ff7
+  0e 000000fa`a9af9e70 00007ffc`8bc353ff     EMSMDB32!MSProviderInit+0x56f3e
+  0f 000000fa`a9af9ed0 00007ffc`8bc352fa     EMSMDB32!MSProviderInit+0x56c9f
+  10 000000fa`a9af9f40 00007ffc`b9a6c801     EMSMDB32!MSProviderInit+0x56b9a
+  11 000000fa`a9af9fc0 00007ffc`b99eb4d9     OLMAPI32!HrConvertMAPIFormPropsToFDMProps+0x3061
+  12 000000fa`a9afa0c0 00007ffc`b99f2e38     OLMAPI32!WrapStoreEntryID+0x1069
+  13 000000fa`a9afa190 00007ff7`1a4d6d96     OLMAPI32!HrOpenABEntryWithExchangeContext+0xf8
+  14 000000fa`a9afa210 00007ff7`1a4d6cc3     OUTLOOK!HrSetOutlookSpecialFolderEntryID+0x241056
+  15 000000fa`a9afa2a0 00007ff7`1a4d6b81     OUTLOOK!HrSetOutlookSpecialFolderEntryID+0x240f83
+  16 000000fa`a9afa2d0 00007ff7`1a4d69ef     OUTLOOK!HrSetOutlookSpecialFolderEntryID+0x240e41
+  17 000000fa`a9afa3c0 00007ff7`19d6a518     OUTLOOK!HrSetOutlookSpecialFolderEntryID+0x240caf
+  18 000000fa`a9afa3f0 00007ff7`19d6a050     OUTLOOK!FFolderSupportsUnicode+0x63b8
+  19 000000fa`a9afa530 00007ff7`19cebb8c     OUTLOOK!FFolderSupportsUnicode+0x5ef0
+  1a 000000fa`a9afa630 00007ff7`19e1f67a     OUTLOOK+0xdbb8c
+  1b 000000fa`a9afa770 00007ff7`19e1f32d     OUTLOOK!GetOutlookSafeModeState+0x3da0a
+  1c 000000fa`a9afa890 00007ff7`1a4d69c1     OUTLOOK!GetOutlookSafeModeState+0x3d6bd
+  1d 000000fa`a9afa8f0 00007ffd`dd492d53     OUTLOOK!HrSetOutlookSpecialFolderEntryID+0x240c81
+  1e 000000fa`a9afa930 00007ffd`dd40c60d     RPCRT4!Invoke+0x73
+  1f 000000fa`a9afa980 00007ffd`dc8d450d     RPCRT4!NdrStubCall2+0x30d
+  20 000000fa`a9afac30 00007ffd`dc73c4a0     combase!CStdStubBuffer_Invoke+0x14d [onecore\com\combase\ndr\ndrole\stub.cxx @ 1400]
+  21 000000fa`a9afac70 00007ffd`dc8d3eee     OLEAUT32!CUnivStubWrapper::Invoke+0x50
+  22 (Inline Function) --------`--------     combase!InvokeStubWithExceptionPolicyAndTracing::__l6::<lambda_c9f3956a20c9da92a64affc24fdd69ec>::operator()+0x2d [onecore\com\combase\dcomrem\channelb.cxx @ 1152]
+  23 000000fa`a9afacd0 00007ffd`dc8d36b8     combase!ObjectMethodExceptionHandlingAction<<lambda_c9f3956a20c9da92a64affc24fdd69ec> >+0x4e [onecore\com\combase\dcomrem\excepn.hxx @ 94]
+  24 (Inline Function) --------`--------     combase!InvokeStubWithExceptionPolicyAndTracing+0x199 [onecore\com\combase\dcomrem\channelb.cxx @ 1150]
+  25 000000fa`a9afad30 00007ffd`dc95ad00     combase!DefaultStubInvoke+0x3c8 [onecore\com\combase\dcomrem\channelb.cxx @ 1219]
+  26 000000fa`a9afaf00 00007ffd`dc8d5d42     combase!SyncServerCall::StubInvoke+0x40 [onecore\com\combase\dcomrem\ServerCall.hpp @ 791]
+  27 (Inline Function) --------`--------     combase!StubInvoke+0x201 [onecore\com\combase\dcomrem\channelb.cxx @ 1484]
+  28 000000fa`a9afaf40 00007ffd`dc8d4951     combase!ServerCall::ContextInvoke+0x3c2 [onecore\com\combase\dcomrem\ctxchnl.cxx @ 1437]
+  29 (Inline Function) --------`--------     combase!DefaultInvokeInApartment+0x8e [onecore\com\combase\dcomrem\callctrl.cxx @ 3245]
+  2a 000000fa`a9afb0e0 00007ffd`dc881686     combase!ReentrantSTAInvokeInApartment+0x1f1 [onecore\com\combase\dcomrem\reentrantsta.cpp @ 110]
+  2b 000000fa`a9afb1d0 00007ffd`dc85ae94     combase!ComInvokeWithLockAndIPID+0x11c6 [onecore\com\combase\dcomrem\channelb.cxx @ 2153]
+  2c 000000fa`a9afb4c0 00007ffd`dc9020b0     combase!ThreadDispatch+0x464 [onecore\com\combase\dcomrem\channelb.cxx @ 1634]
+  2d 000000fa`a9afb640 00007ffd`dd9952e6     combase!ThreadWndProc+0xf0 [onecore\com\combase\dcomrem\chancont.cxx @ 733]
+  2e 000000fa`a9afb6a0 00007ffd`dd995dbd     USER32!UserCallWinProcCheckWow+0x356
+  2f 000000fa`a9afb800 00007ffd`dc9067c2     USER32!DispatchMessageWorker+0x1dd
+  30 (Inline Function) --------`--------     combase!CCliModalLoop::MyDispatchMessage+0xc [onecore\com\combase\dcomrem\callctrl.cxx @ 2947]
+  31 000000fa`a9afb880 00007ffd`dc9057b7     combase!CCliModalLoop::PeekRPCAndDDEMessage+0x7e [onecore\com\combase\dcomrem\callctrl.cxx @ 2559]
+  32 000000fa`a9afb8f0 00007ffd`dc905395     combase!CCliModalLoop::BlockFn+0x1b7 [onecore\com\combase\dcomrem\callctrl.cxx @ 2055]
+  33 000000fa`a9afb980 00007ffd`dc883a60     combase!ModalLoop+0xc9 [onecore\com\combase\dcomrem\chancont.cxx @ 172]
+  34 (Inline Function) --------`--------     combase!ThreadSendReceive+0x1128 [onecore\com\combase\dcomrem\channelb.cxx @ 7268]
+  35 (Inline Function) --------`--------     combase!CSyncClientCall::SwitchAptAndDispatchCall+0x11c4 [onecore\com\combase\dcomrem\channelb.cxx @ 5744]
+  36 000000fa`a9afb9f0 00007ffd`dc9037f2     combase!CSyncClientCall::SendReceive2+0x1350 [onecore\com\combase\dcomrem\channelb.cxx @ 5306]
+  37 (Inline Function) --------`--------     combase!SyncClientCallRetryContext::SendReceiveWithRetry+0x37 [onecore\com\combase\dcomrem\callctrl.cxx @ 1494]
+  38 (Inline Function) --------`--------     combase!CSyncClientCall::SendReceiveInRetryContext+0x37 [onecore\com\combase\dcomrem\callctrl.cxx @ 581]
+  39 000000fa`a9afbe10 00007ffd`dc8d6d2a     combase!ClassicSTAThreadSendReceive+0x1a2 [onecore\com\combase\dcomrem\callctrl.cxx @ 563]
+  3a 000000fa`a9afbf30 00007ffd`dc8d65c3     combase!CSyncClientCall::SendReceive+0x52a [onecore\com\combase\dcomrem\ctxchnl.cxx @ 798]
+  3b (Inline Function) --------`--------     combase!CClientChannel::SendReceive+0x59 [onecore\com\combase\dcomrem\ctxchnl.cxx @ 675]
+  3c 000000fa`a9afc0a0 00007ffd`dd497a91     combase!NdrExtpProxySendReceive+0xc3 [onecore\com\combase\ndr\ndrole\proxy.cxx @ 1899]
+  3d 000000fa`a9afc0f0 00007ffd`dc947e56     RPCRT4!NdrpClientCall3+0x431
+  3e 000000fa`a9afc460 00007ffd`dcaa6642     combase!ObjectStublessClient+0x146 [onecore\com\combase\ndr\ndrole\amd64\stblsclt.cxx @ 366]
+  3f 000000fa`a9afc7f0 00007ffd`d40dd72c     combase!ObjectStubless+0x42 [onecore\com\combase\ndr\ndrole\amd64\stubless.asm @ 176]
+  40 000000fa`a9afc840 00007ffc`b99e5cd4     netprofm!PublicNetworkListManager::GetCost+0xdc
+  41 000000fa`a9afc8b0 00007ffc`b99e5bfc     OLMAPI32!DllGetClassObject+0x644
+  42 000000fa`a9afc8f0 00007ffc`b99e4519     OLMAPI32!DllGetClassObject+0x56c
+  43 000000fa`a9afc950 00007ffc`b99e4355     OLMAPI32!ExchangePerf_DuplicateClientInfo+0x3f9
+  44 000000fa`a9afcad0 00007ffc`b99d9277     OLMAPI32!ExchangePerf_DuplicateClientInfo+0x235
+  45 000000fa`a9afcb10 00007ffc`b99d8fa2     OLMAPI32!HrGetMAPIMalloc2Spec+0x7d7
+  46 000000fa`a9afce00 00007ffc`b99dade8     OLMAPI32!HrGetMAPIMalloc2Spec+0x502
+  47 000000fa`a9afcec0 00007ffc`8bbcd7b3     OLMAPI32!HrCreateOfflineObj+0x358
+  48 000000fa`a9afd5b0 00007ffc`8bbcec88     EMSMDB32!HrEmsuiInit+0x1a733
+  49 000000fa`a9afd6d0 00007ffc`8bbcd9cb     EMSMDB32!HrEmsuiInit+0x1bc08
+  4a 000000fa`a9afda80 00007ffc`b99ede5a     EMSMDB32!HrEmsuiInit+0x1a94b
+  4b 000000fa`a9afdb00 00007ffc`b99edb6b     OLMAPI32!WrapStoreEntryID+0x39ea
+  4c 000000fa`a9afdb90 00007ffc`b99edfa0     OLMAPI32!WrapStoreEntryID+0x36fb
+  4d 000000fa`a9afdc80 00007ffc`b99ed184     OLMAPI32!WrapStoreEntryID+0x3b30
+  4e 000000fa`a9afdcf0 00007ffc`b99ed90d     OLMAPI32!WrapStoreEntryID+0x2d14
+  4f 000000fa`a9afde10 00007ffc`b9a88465     OLMAPI32!WrapStoreEntryID+0x349d
+  50 000000fa`a9afdf30 00007ffc`b9a9ed60     OLMAPI32!PRProviderInit+0x1615
+  51 000000fa`a9afe0e0 00007ff7`19dce766     OLMAPI32!HrCopyAdapterInfo+0x8a0
+  52 000000fa`a9afe140 00007ff7`19f84810     OUTLOOK!FreeDelegatorInfo+0x34f86
+  53 000000fa`a9afe3a0 00007ff7`19d5a33b     OUTLOOK!HrBgScheduleRepairApp+0x85cb0
+  54 000000fa`a9afe400 00007ff7`19d5a25f     OUTLOOK+0x14a33b
+  55 000000fa`a9afe460 00007ff7`1a04ef51     OUTLOOK+0x14a25f
+  56 000000fa`a9afe510 00007ff7`1a09b2a7     OUTLOOK!OutlookSyncEventOccurredEx+0x2961
+  57 000000fa`a9afe540 00007ff7`1a09b1e3     OUTLOOK!OutlookSyncEventOccurredEx+0x4ecb7
+  58 000000fa`a9afe590 00007ff7`19d6a518     OUTLOOK!OutlookSyncEventOccurredEx+0x4ebf3
+  59 000000fa`a9afe670 00007ff7`19d6a050     OUTLOOK!FFolderSupportsUnicode+0x63b8
+  5a 000000fa`a9afe7d0 00007ff7`19cebb8c     OUTLOOK!FFolderSupportsUnicode+0x5ef0
+  5b 000000fa`a9afe8d0 00007ffd`dc759c38     OUTLOOK+0xdbb8c
+  5c 000000fa`a9afea10 00007ffd`dc759b50     OLEAUT32!IDispatch_Invoke_Stub+0xd8
+  5d 000000fa`a9afeaa0 00007ffd`dd40cbd0     OLEAUT32!IDispatch_RemoteInvoke_Thunk+0x60
+  5e 000000fa`a9afeb10 00007ffd`dc8d449f     RPCRT4!NdrStubCall2+0x8d0
+  5f 000000fa`a9afedc0 00007ffd`dc757254     combase!CStdStubBuffer_Invoke+0xdf [onecore\com\combase\ndr\ndrole\stub.cxx @ 1479]
+  60 000000fa`a9afee00 00007ffd`dc8d3eee     OLEAUT32!CStubWrapper::Invoke+0x44
+  61 (Inline Function) --------`--------     combase!InvokeStubWithExceptionPolicyAndTracing::__l6::<lambda_c9f3956a20c9da92a64affc24fdd69ec>::operator()+0x2d [onecore\com\combase\dcomrem\channelb.cxx @ 1152]
+  62 000000fa`a9afee40 00007ffd`dc8d36b8     combase!ObjectMethodExceptionHandlingAction<<lambda_c9f3956a20c9da92a64affc24fdd69ec> >+0x4e [onecore\com\combase\dcomrem\excepn.hxx @ 94]
+  63 (Inline Function) --------`--------     combase!InvokeStubWithExceptionPolicyAndTracing+0x199 [onecore\com\combase\dcomrem\channelb.cxx @ 1150]
+  64 000000fa`a9afeea0 00007ffd`dc95ad00     combase!DefaultStubInvoke+0x3c8 [onecore\com\combase\dcomrem\channelb.cxx @ 1219]
+  65 000000fa`a9aff070 00007ffd`dc8d5d42     combase!SyncServerCall::StubInvoke+0x40 [onecore\com\combase\dcomrem\ServerCall.hpp @ 791]
+  66 (Inline Function) --------`--------     combase!StubInvoke+0x201 [onecore\com\combase\dcomrem\channelb.cxx @ 1484]
+  67 000000fa`a9aff0b0 00007ffd`dc8d4951     combase!ServerCall::ContextInvoke+0x3c2 [onecore\com\combase\dcomrem\ctxchnl.cxx @ 1437]
+  68 (Inline Function) --------`--------     combase!DefaultInvokeInApartment+0x8e [onecore\com\combase\dcomrem\callctrl.cxx @ 3245]
+  69 000000fa`a9aff250 00007ffd`dc881686     combase!ReentrantSTAInvokeInApartment+0x1f1 [onecore\com\combase\dcomrem\reentrantsta.cpp @ 110]
+  6a 000000fa`a9aff340 00007ffd`dc85ae94     combase!ComInvokeWithLockAndIPID+0x11c6 [onecore\com\combase\dcomrem\channelb.cxx @ 2153]
+  6b 000000fa`a9aff630 00007ffd`dc9020b0     combase!ThreadDispatch+0x464 [onecore\com\combase\dcomrem\channelb.cxx @ 1634]
+  6c 000000fa`a9aff7b0 00007ffd`dd9952e6     combase!ThreadWndProc+0xf0 [onecore\com\combase\dcomrem\chancont.cxx @ 733]
+  6d 000000fa`a9aff810 00007ffd`dd995dbd     USER32!UserCallWinProcCheckWow+0x356
+  6e 000000fa`a9aff970 00007ff7`19cf68a7     USER32!DispatchMessageWorker+0x1dd
+  6f 000000fa`a9aff9f0 00007ff7`19fff475     OUTLOOK+0xe68a7
+  70 000000fa`a9affbc0 00007ff7`19e25c7f     OUTLOOK!RefreshOutlookETWLoggingState+0x1acc5
+  71 000000fa`a9affc30 00007ff7`1a00a632     OUTLOOK!GetOutlookSafeModeState+0x4400f
+  72 000000fa`a9affc80 00007ffd`dd75dda7     OUTLOOK!OlkGetResourceHandle+0x6af2
+  73 000000fa`a9affcc0 00007ffd`ddfb9c5c     KERNEL32!BaseThreadInitThunk+0x17
+  74 000000fa`a9affcf0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+  ```
+  Thread 0x7440 (TID 29760, created 16:27:41), `kn 60`, verbatim. It is a CLR thread-pool thread in
+  the Teams Meeting Add-in's telemetry setup:
+  `<SetupTelemetryAsync>` -> `TelemetryManager.CompleteInitialize` ->
+  `MsoAriaTelemetryProvider.GetCurrentSmtpAddress` -> `OutlookApplicationModel.GetCurrentUserPrimarySmtpAddress`,
+  making a cross-apartment COM call (`MTAThreadDispatchCrossApartmentCall`) into the UI thread's STA:
+  ```text
+  === THREAD 0x7440 ===
+  *** WARNING: Unable to verify checksum for C:\WINDOWS\assembly\NativeImages_v4.0.30319_64\System.Data\436b0645a91cd17436cf6460cc7670b2\System.Data.ni.dll
+   # Child-SP          RetAddr               Call Site
+  00 000000fa`ac86cda8 00007ffd`db50ab53     ntdll!NtWaitForMultipleObjects+0x14
+  01 000000fa`ac86cdb0 00007ffc`87f2d61b     KERNELBASE!WaitForMultipleObjectsEx+0x123
+  02 000000fa`ac86d0a0 00007ffd`dc905054     mso!Ordinal9147+0xeb
+  03 000000fa`ac86d110 00007ffd`dc883393     combase!MTAThreadWaitForCall+0x104 [onecore\com\combase\dcomrem\channelb.cxx @ 7148]
+  04 (Inline Function) --------`--------     combase!MTAThreadDispatchCrossApartmentCall+0x6c4 [onecore\com\combase\dcomrem\chancont.cxx @ 235]
+  05 (Inline Function) --------`--------     combase!CSyncClientCall::SwitchAptAndDispatchCall+0xaf7 [onecore\com\combase\dcomrem\channelb.cxx @ 5700]
+  06 000000fa`ac86d1c0 00007ffd`dc8d700d     combase!CSyncClientCall::SendReceive2+0xc83 [onecore\com\combase\dcomrem\channelb.cxx @ 5306]
+  07 (Inline Function) --------`--------     combase!SyncClientCallRetryContext::SendReceiveWithRetry+0x42 [onecore\com\combase\dcomrem\callctrl.cxx @ 1494]
+  08 000000fa`ac86d5e0 00007ffd`dc8d6a83     combase!CSyncClientCall::SendReceiveInRetryContext+0x5d [onecore\com\combase\dcomrem\callctrl.cxx @ 581]
+  09 (Inline Function) --------`--------     combase!DefaultSendReceive+0x3c [onecore\com\combase\dcomrem\callctrl.cxx @ 539]
+  0a 000000fa`ac86d620 00007ffd`dc8d65c3     combase!CSyncClientCall::SendReceive+0x283 [onecore\com\combase\dcomrem\ctxchnl.cxx @ 803]
+  0b (Inline Function) --------`--------     combase!CClientChannel::SendReceive+0x59 [onecore\com\combase\dcomrem\ctxchnl.cxx @ 675]
+  0c 000000fa`ac86d790 00007ffd`dd3c1526     combase!NdrExtpProxySendReceive+0xc3 [onecore\com\combase\ndr\ndrole\proxy.cxx @ 1899]
+  0d 000000fa`ac86d7e0 00007ffd`dc947f5c     RPCRT4!NdrpClientCall2+0x4e6
+  0e 000000fa`ac86de40 00007ffd`dcaa6642     combase!ObjectStublessClient+0x24c [onecore\com\combase\ndr\ndrole\amd64\stblsclt.cxx @ 365]
+  0f 000000fa`ac86e1d0 00007ffc`3c6a62f8     combase!ObjectStubless+0x42 [onecore\com\combase\ndr\ndrole\amd64\stubless.asm @ 176]
+  10 000000fa`ac86e220 00007ffc`3c6a5b22     Microsoft_Teams_MeetingAddin!DomainBoundILStubClass.IL_STUB_CLRtoCOM()+0xc8
+  11 000000fa`ac86e310 00007ffc`3c6a591c     Microsoft_Teams_MeetingAddin!Microsoft.Teams.MeetingAddin.Model.ApplicationModel.OutlookApplicationModel.GetCurrentUserPrimarySmtpAddress+0x172
+  12 000000fa`ac86e370 00007ffc`3c6a56ae     Microsoft_Teams_MeetingAddin!Microsoft.Teams.MeetingAddin.Telemetry.MsoAriaTelemetry.Provider.MsoAriaTelemetryProvider.GetCurrentSmtpAddress+0x4c
+  13 000000fa`ac86e3b0 00007ffc`3c6a5596     Microsoft_Teams_MeetingAddin!Microsoft.Teams.MeetingAddin.Telemetry.MsoAriaTelemetry.Provider.MsoAriaTelemetryProvider.SetupCommonProperties+0x3e
+  14 000000fa`ac86e3e0 00007ffc`3c6a54de     Microsoft_Teams_MeetingAddin!Microsoft.Teams.MeetingAddin.Telemetry.TelemetryFlowController.SetupCommonProperties+0x66
+  15 000000fa`ac86e430 00007ffc`3c6a2b2a     Microsoft_Teams_MeetingAddin!Microsoft.Teams.MeetingAddin.Telemetry.TelemetryManager.CompleteInitialize+0x3e
+  16 000000fa`ac86e460 00007ffc`90ca66a0     Microsoft_Teams_MeetingAddin!Microsoft.Teams.MeetingAddin.Application.<SetupTelemetryAsync>d__75.MoveNext+0x4ca
+  17 000000fa`ac86e4e0 00007ffc`90ca6525     mscorlib_ni!System.Threading.ExecutionContext.RunInternal+0x170
+  18 000000fa`ac86e5b0 00007ffc`90d43e7f     mscorlib_ni!System.Threading.ExecutionContext.Run+0x15
+  19 000000fa`ac86e5e0 00007ffc`90d493d3     mscorlib_ni!System.Runtime.CompilerServices.AsyncMethodBuilderCore.MoveNextRunner.Run+0x6f
+  1a 000000fa`ac86e630 00007ffc`90d0fcf0     mscorlib_ni!System.Threading.Tasks.AwaitTaskContinuation.RunOrScheduleAction+0x63
+  1b 000000fa`ac86e680 00007ffc`90d402fe     mscorlib_ni!System.Threading.Tasks.Task.FinishContinuations+0x400
+  1c 000000fa`ac86e710 00007ffc`61f9bca3     mscorlib_ni!System.Threading.Tasks.Task<bool>.TrySetResult+0x5e
+  1d 000000fa`ac86e750 00007ffc`61f9baa4     System_Data_ni+0x79bca3
+  1e 000000fa`ac86e7a0 00007ffc`61f9bd51     System_Data_ni+0x79baa4
+  1f 000000fa`ac86e7e0 00007ffc`61f9beac     System_Data_ni+0x79bd51
+  20 000000fa`ac86e820 00007ffc`90d0fd37     System_Data_ni+0x79beac
+  21 000000fa`ac86e870 00007ffc`90d412a4     mscorlib_ni!System.Threading.Tasks.Task.FinishContinuations+0x447
+  22 000000fa`ac86e900 00007ffc`90d42077     mscorlib_ni!System.Threading.Tasks.Task.Finish+0x34
+  23 000000fa`ac86e960 00007ffc`90d41751     mscorlib_ni!System.Threading.Tasks.Task.ExecuteWithThreadLocal+0x257
+  24 000000fa`ac86ea10 00007ffc`90ccc966     mscorlib_ni!System.Threading.Tasks.Task.ExecuteEntry+0xa1
+  25 000000fa`ac86ea50 00007ffc`9b921b63     mscorlib_ni!System.Threading.ThreadPoolWorkQueue.Dispatch+0x156
+  26 000000fa`ac86eaf0 00007ffc`9b7de34b     clr!CallDescrWorkerInternal+0x83
+  27 000000fa`ac86eb30 00007ffc`9b79682a     clr!CallDescrWorkerWithHandler+0x47
+  28 000000fa`ac86eb70 00007ffc`9b79654a     clr!MethodDescCallSite::CallTargetWorker+0xfa
+  29 000000fa`ac86ec70 00007ffc`9b7f702b     clr!QueueUserWorkItemManagedCallback+0x2a
+  2a 000000fa`ac86ed60 00007ffc`9b7f6f4f     clr!ManagedThreadBase_DispatchInner+0x33
+  2b 000000fa`ac86eda0 00007ffc`9b7f6e1b     clr!ManagedThreadBase_DispatchMiddle+0x83
+  2c 000000fa`ac86ee90 00007ffc`9b91a3e5     clr!ManagedThreadBase_DispatchOuter+0x87
+  2d 000000fa`ac86ef20 00007ffc`9bb86688     clr!ManagedThreadBase_DispatchInCorrectAD+0x15
+  2e 000000fa`ac86ef50 00007ffc`9baa3b2f     clr!Thread::DoADCallBack+0x3a4
+  2f 000000fa`ac86f0e0 00007ffc`9b7f6f4f     clr!ManagedThreadBase_DispatchInner+0x2acb37
+  30 000000fa`ac86f120 00007ffc`9b7f6e1b     clr!ManagedThreadBase_DispatchMiddle+0x83
+  31 000000fa`ac86f210 00007ffc`9b7f6d8f     clr!ManagedThreadBase_DispatchOuter+0x87
+  32 000000fa`ac86f2a0 00007ffc`9b8cdc5a     clr!ManagedThreadBase_FullTransitionWithAD+0x2f
+  33 000000fa`ac86f300 00007ffc`9b87e5fd     clr!ManagedPerAppDomainTPCount::DispatchWorkItem+0x9a
+  34 000000fa`ac86f470 00007ffc`9b87e3b9     clr!ThreadpoolMgr::ExecuteWorkRequest+0x51
+  35 000000fa`ac86f4a0 00007ffc`9b90643a     clr!ThreadpoolMgr::WorkerThreadStart+0xe9
+  36 000000fa`ac86f530 00007ffd`dd75dda7     clr!Thread::intermediateThreadProc+0x8a
+  37 000000fa`ac86fa70 00007ffd`ddfb9c5c     KERNEL32!BaseThreadInitThunk+0x17
+  38 000000fa`ac86faa0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+  ```
+  Counted over `~*kn 8` (top 8 frames of all 321 thread blocks):
+  - 41 threads were in `ntdll!RtlpWaitOnCriticalSection`: 31 under `OLMAPI32!HrCreateOfflineObj+0x28b`,
+    5 under `OLMAPI32!ReadRegStringValue+0xfbdc`, and 5 elsewhere.
+  - Exactly one thread (0x7440) was in `combase!MTAThreadWaitForCall`.
+  Representative waiters, verbatim (top 8 frames as captured):
+  - 0xF5E8, 0x10C30 and 0xE940: `HrCreateOfflineObj`.
+  - 0x12290: an EMSMDB32 lock.
+  - 0xA74: `StartSyncLogging` -> `HrCreateServerRequestManager`.
+  - 0x13264: `HrCreateOlkAsyncTask` -> `HrCreateConnectionManager`.
+  - 0x7038: MSPST32.
+  - 0x5C28 and 0x128CC: `ReadRegStringValue`.
+  - 0x109F0: a pumping wait.
+  - 0x12EF8, 0x55AC, 0xDE6C and 0x1133C: `HrCreateOfflineObj` via EMSMDB32, safe-mode code, free/busy
+    and `HrGetGlobalOffline`.
+  ```text
+     7  Id: 12c58.f5e8 Suspend: 1 Teb: 000000fa`a987f000 Unfrozen
+   # Child-SP          RetAddr               Call Site
+  00 000000fa`aa5fea48 00007ffd`ddf0a61d     ntdll!NtWaitForAlertByThreadId+0x14
+  01 000000fa`aa5fea50 00007ffd`ddf0bd1f     ntdll!RtlpWaitOnCriticalSection+0x5ad
+  02 000000fa`aa5feb50 00007ffd`ddf0cf92     ntdll!RtlpEnterCriticalSectionContended+0x1ef
+  03 000000fa`aa5febd0 00007ffc`b99dad1b     ntdll!RtlEnterCriticalSection+0xf2
+  04 000000fa`aa5fec10 00007ff7`19dafa98     OLMAPI32!HrCreateOfflineObj+0x28b
+  05 000000fa`aa5ff300 00007ff7`19daf812     OUTLOOK!FreeDelegatorInfo+0x162b8
+  06 000000fa`aa5ff390 00007ff7`19e7823b     OUTLOOK!FreeDelegatorInfo+0x16032
+  07 000000fa`aa5ff3c0 00007ff7`19e5efa1     OUTLOOK!HrGetDelegatorInfoSync+0x186eb
+    11  Id: 12c58.109f0 Suspend: 1 Teb: 000000fa`a9891000 Unfrozen
+   # Child-SP          RetAddr               Call Site
+  00 000000fa`aaeff2d8 00007ffc`87f62dc4     win32u!NtUserMsgWaitForMultipleObjectsEx+0x14
+  01 000000fa`aaeff2e0 00007ffc`b99787a2     mso!Ordinal7677+0xd4
+  02 000000fa`aaeff340 00007ffc`b9a3d311     OLMAPI32!ScRelocNotifications+0x572
+  03 000000fa`aaeff660 00007ffc`b9a3d1b2     OLMAPI32!HrGetMessageClassFromContentClassA+0x611
+  04 000000fa`aaeff6c0 00007ffc`b9a3ba8a     OLMAPI32!HrGetMessageClassFromContentClassA+0x4b2
+  05 000000fa`aaeff700 00007ffc`b9a53488     OLMAPI32!HrCreateServerRequestManager+0x7d2a
+  06 000000fa`aaeff780 00007ffd`0f6413ed     OLMAPI32!UlAddRef+0x9b8
+  07 000000fa`aaeff7b0 00007ffd`0f5754ee     mso20win32client!Ordinal499+0x21d
+    14  Id: 12c58.10c30 Suspend: 1 Teb: 000000fa`a989b000 Unfrozen
+   # Child-SP          RetAddr               Call Site
+  00 000000fa`ab3fefd8 00007ffd`ddf0a61d     ntdll!NtWaitForAlertByThreadId+0x14
+  01 000000fa`ab3fefe0 00007ffd`ddf0bd1f     ntdll!RtlpWaitOnCriticalSection+0x5ad
+  02 000000fa`ab3ff0e0 00007ffd`ddf0cf92     ntdll!RtlpEnterCriticalSectionContended+0x1ef
+  03 000000fa`ab3ff160 00007ffc`b99dad1b     ntdll!RtlEnterCriticalSection+0xf2
+  04 000000fa`ab3ff1a0 00007ff7`19dafa98     OLMAPI32!HrCreateOfflineObj+0x28b
+  05 000000fa`ab3ff890 00007ff7`19daf812     OUTLOOK!FreeDelegatorInfo+0x162b8
+  06 000000fa`ab3ff920 00007ff7`19f0020b     OUTLOOK!FreeDelegatorInfo+0x16032
+  07 000000fa`ab3ff950 00007ff7`19fe7bc0     OUTLOOK!HrBgScheduleRepairApp+0x16ab
+    16  Id: 12c58.5c28 Suspend: 1 Teb: 000000fa`a989f000 Unfrozen
+   # Child-SP          RetAddr               Call Site
+  00 000000fa`ab5fdb98 00007ffd`ddf0a61d     ntdll!NtWaitForAlertByThreadId+0x14
+  01 000000fa`ab5fdba0 00007ffd`ddf0bd1f     ntdll!RtlpWaitOnCriticalSection+0x5ad
+  02 000000fa`ab5fdca0 00007ffd`ddf0cf92     ntdll!RtlpEnterCriticalSectionContended+0x1ef
+  03 000000fa`ab5fdd20 00007ffc`b9a320bc     ntdll!RtlEnterCriticalSection+0xf2
+  04 000000fa`ab5fdd60 00007ffd`0f733307     OLMAPI32!ReadRegStringValue+0xfbdc
+  05 000000fa`ab5fdda0 00007ffc`b998a075     mso20win32client!Ordinal996+0x37
+  06 000000fa`ab5fddd0 00007ffc`b998abfd     OLMAPI32!RPCCanceller_ExtAddRef+0x1315
+  07 000000fa`ab5fde30 00007ffc`8bb7a114     OLMAPI32!ExchangePerf_GetCacheRecWrap+0x50d
+    60  Id: 12c58.e940 Suspend: 1 Teb: 000000fa`a9907000 Unfrozen
+   # Child-SP          RetAddr               Call Site
+  00 000000fa`ac66bab8 00007ffd`ddf0a61d     ntdll!NtWaitForAlertByThreadId+0x14
+  01 000000fa`ac66bac0 00007ffd`ddf0bd1f     ntdll!RtlpWaitOnCriticalSection+0x5ad
+  02 000000fa`ac66bbc0 00007ffd`ddf0cf92     ntdll!RtlpEnterCriticalSectionContended+0x1ef
+  03 000000fa`ac66bc40 00007ffc`b99dad1b     ntdll!RtlEnterCriticalSection+0xf2
+  04 000000fa`ac66bc80 00007ffc`b99daa51     OLMAPI32!HrCreateOfflineObj+0x28b
+  05 000000fa`ac66c370 00007ffc`b9a3f585     OLMAPI32!HrOpenOfflineObj+0xb1
+  06 000000fa`ac66c440 00007ffc`b9a3f9ae     OLMAPI32!HrSendHttpRequestWithHeaders+0x85
+  07 000000fa`ac66c480 00007ffc`b9a3f537     OLMAPI32!HrSendHttpRequestWithHeadersAndId+0xde
+    66  Id: 12c58.7038 Suspend: 1 Teb: 000000fa`a991d000 Unfrozen
+   # Child-SP          RetAddr               Call Site
+  00 000000fa`ad16f768 00007ffd`ddf0a61d     ntdll!NtWaitForAlertByThreadId+0x14
+  01 000000fa`ad16f770 00007ffd`ddf0bd1f     ntdll!RtlpWaitOnCriticalSection+0x5ad
+  02 000000fa`ad16f870 00007ffd`ddf0cf92     ntdll!RtlpEnterCriticalSectionContended+0x1ef
+  03 000000fa`ad16f8f0 00007ffc`9b5712bd     ntdll!RtlEnterCriticalSection+0xf2
+  04 000000fa`ad16f930 00007ffc`9b5ba1ba     MSPST32!OSTServiceEntry+0x6afad
+  05 000000fa`ad16f960 00007ffc`9b56e16b     MSPST32!MSProviderInit+0xf23a
+  06 000000fa`ad16f990 00007ffc`b9a5f239     MSPST32!OSTServiceEntry+0x67e5b
+  07 000000fa`ad16fad0 00007ffc`b9a53488     OLMAPI32!HrConvertMAPIErrorEx2+0x3919
+   253  Id: 12c58.13264 Suspend: 1 Teb: 000000fa`af972000 Unfrozen
+   # Child-SP          RetAddr               Call Site
+  00 000000fa`afebf378 00007ffd`ddf0a61d     ntdll!NtWaitForAlertByThreadId+0x14
+  01 000000fa`afebf380 00007ffd`ddf0bd1f     ntdll!RtlpWaitOnCriticalSection+0x5ad
+  02 000000fa`afebf480 00007ffd`ddf0cf92     ntdll!RtlpEnterCriticalSectionContended+0x1ef
+  03 000000fa`afebf500 00007ffc`b998420b     ntdll!RtlEnterCriticalSection+0xf2
+  04 000000fa`afebf540 00007ffc`b99839ec     OLMAPI32!UnregisterOutlookEtwCallback+0x17b
+  05 000000fa`afebf570 00007ffc`b9981291     OLMAPI32!HrCreateConnectionManager+0x1d0c
+  06 000000fa`afebf5b0 00007ffc`b99817e3     OLMAPI32!HrCreateOlkAsyncTask+0x1bc1
+  07 000000fa`afebf640 00007ffc`b9a48c8a     OLMAPI32!HrCreateOlkAsyncTask+0x2113
+   254  Id: 12c58.55ac Suspend: 1 Teb: 000000fa`af976000 Unfrozen
+   # Child-SP          RetAddr               Call Site
+  00 000000fa`b00bed48 00007ffd`ddf0a61d     ntdll!NtWaitForAlertByThreadId+0x14
+  01 000000fa`b00bed50 00007ffd`ddf0bd1f     ntdll!RtlpWaitOnCriticalSection+0x5ad
+  02 000000fa`b00bee50 00007ffd`ddf0cf92     ntdll!RtlpEnterCriticalSectionContended+0x1ef
+  03 000000fa`b00beed0 00007ffc`b99dad1b     ntdll!RtlEnterCriticalSection+0xf2
+  04 000000fa`b00bef10 00007ff7`19dafa98     OLMAPI32!HrCreateOfflineObj+0x28b
+  05 000000fa`b00bf600 00007ff7`19daf8bf     OUTLOOK!FreeDelegatorInfo+0x162b8
+  06 000000fa`b00bf690 00007ff7`19de2393     OUTLOOK!FreeDelegatorInfo+0x160df
+  07 000000fa`b00bf710 00007ff7`19de22f0     OUTLOOK!GetOutlookSafeModeState+0x723
+   259  Id: 12c58.128cc Suspend: 1 Teb: 000000fa`af988000 Unfrozen
+   # Child-SP          RetAddr               Call Site
+  00 000000fa`b07bf6f8 00007ffd`ddf0a61d     ntdll!NtWaitForAlertByThreadId+0x14
+  01 000000fa`b07bf700 00007ffd`ddf0bd1f     ntdll!RtlpWaitOnCriticalSection+0x5ad
+  02 000000fa`b07bf800 00007ffd`ddf0cf92     ntdll!RtlpEnterCriticalSectionContended+0x1ef
+  03 000000fa`b07bf880 00007ffc`b9a320bc     ntdll!RtlEnterCriticalSection+0xf2
+  04 000000fa`b07bf8c0 00007ffd`0f733307     OLMAPI32!ReadRegStringValue+0xfbdc
+  05 000000fa`b07bf900 00007ffc`b9982b48     mso20win32client!Ordinal996+0x37
+  06 000000fa`b07bf930 00007ffc`b9a1c4a1     OLMAPI32!HrCreateConnectionManager+0xe68
+  07 000000fa`b07bf980 00007ffc`b9a3ba8a     OLMAPI32!FPropContainsProp+0x4d91
+   263  Id: 12c58.12290 Suspend: 1 Teb: 000000fa`af990000 Unfrozen
+   # Child-SP          RetAddr               Call Site
+  00 000000fa`b0bbd5e8 00007ffd`ddf0a61d     ntdll!NtWaitForAlertByThreadId+0x14
+  01 000000fa`b0bbd5f0 00007ffd`ddf0bd1f     ntdll!RtlpWaitOnCriticalSection+0x5ad
+  02 000000fa`b0bbd6f0 00007ffd`ddf0cf92     ntdll!RtlpEnterCriticalSectionContended+0x1ef
+  03 000000fa`b0bbd770 00007ffc`8bba66bf     ntdll!RtlEnterCriticalSection+0xf2
+  04 000000fa`b0bbd7b0 00007ffc`8bbf57c3     EMSMDB32+0xc66bf
+  05 000000fa`b0bbd7e0 00007ffc`8beb288d     EMSMDB32!MSProviderInit+0x17063
+  06 000000fa`b0bbd810 00007ffc`8bdaf7f9     EMSMDB32!ScStatOpen+0xc635d
+  07 000000fa`b0bbd850 00007ffc`8bbf250b     EMSMDB32!EMSWizardEntry+0x501e9
+   282  Id: 12c58.a74 Suspend: 1 Teb: 000000fa`af9ba000 Unfrozen
+   # Child-SP          RetAddr               Call Site
+  00 000000fa`aa7ff288 00007ffd`ddf0a61d     ntdll!NtWaitForAlertByThreadId+0x14
+  01 000000fa`aa7ff290 00007ffd`ddf0bd1f     ntdll!RtlpWaitOnCriticalSection+0x5ad
+  02 000000fa`aa7ff390 00007ffd`ddf0cf92     ntdll!RtlpEnterCriticalSectionContended+0x1ef
+  03 000000fa`aa7ff410 00007ffc`b9a3b9d9     ntdll!RtlEnterCriticalSection+0xf2
+  04 000000fa`aa7ff450 00007ffc`b9c80fe8     OLMAPI32!HrCreateServerRequestManager+0x7c79
+  05 000000fa`aa7ff480 00007ffc`b9c87344     OLMAPI32!StartSyncLogging+0x7958
+  06 000000fa`aa7ff570 00007ffc`b9a1c4a1     OLMAPI32!StartSyncLogging+0xdcb4
+  07 000000fa`aa7ff600 00007ffc`b9a5f239     OLMAPI32!FPropContainsProp+0x4d91
+   289  Id: 12c58.12ef8 Suspend: 1 Teb: 000000fa`af9d6000 Unfrozen
+   # Child-SP          RetAddr               Call Site
+  00 000000fa`b27be8d8 00007ffd`ddf0a61d     ntdll!NtWaitForAlertByThreadId+0x14
+  01 000000fa`b27be8e0 00007ffd`ddf0bd1f     ntdll!RtlpWaitOnCriticalSection+0x5ad
+  02 000000fa`b27be9e0 00007ffd`ddf0cf92     ntdll!RtlpEnterCriticalSectionContended+0x1ef
+  03 000000fa`b27bea60 00007ffc`b99dad1b     ntdll!RtlEnterCriticalSection+0xf2
+  04 000000fa`b27beaa0 00007ffc`b99daa51     OLMAPI32!HrCreateOfflineObj+0x28b
+  05 000000fa`b27bf190 00007ffc`8bd4b93e     OLMAPI32!HrOpenOfflineObj+0xb1
+  06 000000fa`b27bf260 00007ffc`8bd4cae8     EMSMDB32!DllCanUnloadNow+0x1ba6e
+  07 000000fa`b27bf2f0 00007ffc`8bd4c6d9     EMSMDB32!DllCanUnloadNow+0x1cc18
+   290  Id: 12c58.de6c Suspend: 1 Teb: 000000fa`af9de000 Unfrozen
+   # Child-SP          RetAddr               Call Site
+  00 000000fa`a9bfeac8 00007ffd`ddf0a61d     ntdll!NtWaitForAlertByThreadId+0x14
+  01 000000fa`a9bfead0 00007ffd`ddf0bd1f     ntdll!RtlpWaitOnCriticalSection+0x5ad
+  02 000000fa`a9bfebd0 00007ffd`ddf0cf92     ntdll!RtlpEnterCriticalSectionContended+0x1ef
+  03 000000fa`a9bfec50 00007ffc`b99dad1b     ntdll!RtlEnterCriticalSection+0xf2
+  04 000000fa`a9bfec90 00007ff7`19dafa98     OLMAPI32!HrCreateOfflineObj+0x28b
+  05 000000fa`a9bff380 00007ff7`19daf812     OUTLOOK!FreeDelegatorInfo+0x162b8
+  06 000000fa`a9bff410 00007ff7`1a1c0d10     OUTLOOK!FreeDelegatorInfo+0x16032
+  07 000000fa`a9bff440 00007ff7`19f3f606     OUTLOOK!GetFBPublishingInterval+0xf660
+   293  Id: 12c58.1133c Suspend: 1 Teb: 000000fa`af9e8000 Unfrozen
+   # Child-SP          RetAddr               Call Site
+  00 000000fa`aacfecf8 00007ffd`ddf0a61d     ntdll!NtWaitForAlertByThreadId+0x14
+  01 000000fa`aacfed00 00007ffd`ddf0bd1f     ntdll!RtlpWaitOnCriticalSection+0x5ad
+  02 000000fa`aacfee00 00007ffd`ddf0cf92     ntdll!RtlpEnterCriticalSectionContended+0x1ef
+  03 000000fa`aacfee80 00007ffc`b99dad1b     ntdll!RtlEnterCriticalSection+0xf2
+  04 000000fa`aacfeec0 00007ffc`b99daa51     OLMAPI32!HrCreateOfflineObj+0x28b
+  05 000000fa`aacff5b0 00007ffc`b9a3f585     OLMAPI32!HrOpenOfflineObj+0xb1
+  06 000000fa`aacff680 00007ffc`b9acde26     OLMAPI32!HrSendHttpRequestWithHeaders+0x85
+  07 000000fa`aacff6c0 00007ffc`b9ace326     OLMAPI32!HrGetGlobalOffline+0x63a6
+  ```
+  No stack was captured on the MCP side, i.e. thread 0x5D64 in PID 68964. Only its wait-chain line in
+  1.6 exists.
+  **1.8 The triggering call.** Source: Claude Code transcripts (`.jsonl`, paths in PART 6), searched by
+  the diagnosing agent. Lines verbatim from its search output. The first two lines are transcript
+  records that only name outlookai tools, presumably when their schemas were loaded. The third is the
+  actual `tool_use`.
+  ```text
+  == C:\Users\<user>\.claude\projects\C--Users-<user>-Downloads\579e5f93-028a-4ea2-a918-38697644e3ad\subagents\agent-a26ab951d6306c1a7.jsonl (modified 16:50:00, 10 outlookai mentions)
+     2026-11-15T15:27:33.609Z  tool_use: mcp__outlookai__list_accounts,mcp__outlookai__list_folders,mcp__outlookai__read,mcp__outlookai__save_attachment,mcp__outlookai__search,mcp__outlookai__thread  input:
+     2026-11-15T15:27:39.465Z  tool_use: mcp__outlookai__list_accounts,mcp__outlookai__list_folders,mcp__outlookai__read,mcp__outlookai__save_attachment,mcp__outlookai__search,mcp__outlookai__thread  input:
+     2026-11-15T15:27:39.467Z  tool_use: mcp__outlookai__list_accounts  input: {
+  == 579e5f93-028a-4ea2-a918-38697644e3ad.jsonl  first=2026-11-15T15:22:35.568Z  modified=16:56:36
+  == agent-a26ab951d6306c1a7.jsonl  first=2026-11-15T15:27:21.454Z  modified=16:50:00
+     [2026-11-15T15:50:00.482Z] [Request interrupted by user for tool use]
+  == agent-a4de6896a59e9e3b0.jsonl  first=2026-11-15T15:50:14.382Z  modified=16:56:43
+  ```
+  - The first search covered every `.jsonl` under `C:\Users\<user>\.claude\projects` modified after
+    2026-11-15 16:15. On 2026-11-15 it found exactly one outlookai `tool_use` before the diagnosing
+    agent's own: the `list_accounts` above.
+  - MCP 68964 serves claude.exe 76924, i.e. session 579e5f93 and its sub-agents, all of which share it.
+    Up to the last search, at about 17:06, neither that session's main transcript nor its other
+    sub-agents (a4de6896a59e9e3b0, a9750354f40169b80, ad7de4071de9a0e95) held any outlookai
+    `tool_use` record.
+  - A second search covered every `.jsonl` under `C:\Users\<user>\.claude\projects\C--Users-<user>-Downloads`
+    modified after 16:45, for outlookai `tool_use` records at or after 15:45Z. All of them, verbatim
+    below, are the diagnosing agent's (a921ba5ff51ee3377), after the fix.
+  - **So, as far as these transcripts show, no client of MCP 68964 had a call outstanding at 17:02:02.**
+    The one it had was interrupted at 15:50:00Z. That conclusion is an inference from transcripts;
+    nothing inside the MCP server was observed.
+  ```text
+  2026-11-15T16:04:27.029Z  agent-a921ba5ff51ee3377.jsonl  mcp__outlookai__outlook_health
+  2026-11-15T16:04:27.038Z  agent-a921ba5ff51ee3377.jsonl  mcp__outlookai__list_accounts
+  2026-11-15T16:04:41.325Z  agent-a921ba5ff51ee3377.jsonl  mcp__outlookai__search
+  2026-11-15T16:04:41.332Z  agent-a921ba5ff51ee3377.jsonl  mcp__outlookai__search
+  2026-11-15T16:04:41.333Z  agent-a921ba5ff51ee3377.jsonl  mcp__outlookai__search
+  2026-11-15T16:04:41.975Z  agent-a921ba5ff51ee3377.jsonl  mcp__outlookai__search
+  2026-11-15T16:04:42.877Z  agent-a921ba5ff51ee3377.jsonl  mcp__outlookai__search
+  2026-11-15T16:05:42.393Z  agent-a921ba5ff51ee3377.jsonl  mcp__outlookai__search
+  2026-11-15T16:05:43.148Z  agent-a921ba5ff51ee3377.jsonl  mcp__outlookai__search
+  ```
+  - The system32 session, from the transcript
+    `C:\Users\<user>\.claude\projects\C--WINDOWS-system32\6c9c2c07-aff8-4d3a-b38c-fe8a18e27fd6.jsonl`
+    (379,518 bytes):
+    - Records: `queue-operation` at 15:27:44.832Z and 15:27:44.834Z; then a `user` record at
+      15:27:45.643Z with `"content":"-"`, `"permissionMode":"bypassPermissions"`, `"promptSource":"sdk"`,
+      `"entrypoint":"sdk-cli"`, `"cwd":"C:\\WINDOWS\\system32"`, `"version":"2.1.325"`.
+    - A `stop_hook_summary` at 15:27:48.087Z.
+    - What started it and what it did were NOT investigated.
+  - Older outlookai use: the transcript of session 19c2d4d8-e339-4d1b-a4c4-0d75b56f8e30 mentions
+    outlookai tools many times on 2026-11-12 and 2026-11-13. For example a `search` at
+    2026-11-13T10:33:32.703Z (11:33:32 local, one minute after the first 13 Nov safe-mode prompt).
+    Not analysed.
+  **1.9 Network List Service check, 16:52:15.** A separate process created the NetworkListManager
+  (CLSID DCB00C01-570F-4A9B-8D69-199FDBA5723B) and asked `IsConnected`, `IsConnectedToInternet`,
+  `GetConnectivity` and `GetNetworks(3)`, with a 20 s self-timeout. Verbatim:
+  ```text
+  start 16:52:15.577
+  activated in 60 ms
+  IsConnected=True IsConnectedToInternet=True Connectivity=66 (83 ms)
+    network 'Network' category=1 connected=True internet=True connectivity=66 domainType=0
+    network 'Network 3' category=0 connected=False internet=False connectivity=0 domainType=0
+    network 'Network 2' category=0 connected=False internet=False connectivity=0 domainType=0
+  done in 108 ms
+  ```
+  **1.10 What was done, with raw output.** All of it was by the diagnosing agent, with the user's
+  go-ahead relayed by the coordinating session. Nothing else on the machine was changed: no registry,
+  add-in, profile, data file or Office setting, and no `/safe`. Registry keys were only exported,
+  as a precaution.
+  - 17:02:02, the kill, verbatim:
+  ```text
+  before: 76888 ["C:\Program Files\Microsoft Office\Root\Office16\OUTLOOK.EXE" -Embedding] 11/15/2026 16:27:39
+  Stop-Process issued at 17:02:02.374
+  76888 gone: True at 17:02:02.402
+  OUTLOOK.EXE processes 8s later:
+    60368 parent=2228 ["C:\Program Files\Microsoft Office\Root\Office16\OUTLOOK.EXE" -Embedding] 11/15/2026 17:02:02
+  MCP 68964 alive: True
+  ```
+  - About 17:02:15, the new PID 60368 checked. Its windows are hidden and none is hung. The second
+    `rctrl_renwnd32` with no title is unexplained. No multi-node wait chain existed in 60368 or any MCP
+    server. Verbatim, filtered to these lines by the script:
+  ```text
+  60368 threads=285 cpu=28.328125 ws=389MB mainHwnd=0 title=''
+  Token: Elevated=0 ElevationType=3 (1=default,2=full,3=limited) IntegrityRID=0x2000 (0x2000=Medium,0x3000=High,0x4000=System)
+  Top-level windows: 32
+    hwnd=0x2F1004 vis=False hung=False min=False owner=0x0 rect=(156,156,3036,1719) class='rctrl_renwnd32' title='Inbox - <mailbox-B> - Outlook'
+    hwnd=0x670ECE vis=False hung=False min=False owner=0x0 rect=(0,0,136,39) class='rctrl_renwnd32' title=''
+  --- wait chains (non-trivial) for Outlook main + MCP servers:
+  ```
+  - 17:02:54, the shell launch. `Start-Process explorer.exe '"C:\Program Files\Microsoft Office\root\Office16\OUTLOOK.EXE"'`
+    was used so that the launch is the same as a Start-menu click and runs outside the agent's job
+    object. Verbatim:
+  ```text
+  shell launch issued at 17:02:54.368
+  OUTLOOK.EXE processes now:
+    60368 parent=2228 ["C:\Program Files\Microsoft Office\Root\Office16\OUTLOOK.EXE" -Embedding] 11/15/2026 17:02:02
+  visible windows of 60368 at 17:03:01:
+    hwnd=0x5A0EE6 vis=True hung=False min=False owner=0x0 rect=(-8,-8,3848,2120) class='rctrl_renwnd32' title='Inbox - <mailbox-A> - Outlook'
+  ```
+  **1.11 The second cold start, 67 ms after the kill.** Thread start times of every OutlookAI MCP
+  server inside the window 17:01:55 to 17:02:10, verbatim. The format is
+  `<pid> (claude <parent pid>) started <day hh:mm:ss>: <count> <tid>@<time>`.
+  ```text
+   26812 (claude  35756) started 13 17:22:19: threads started 17:01:55-17:02:10 = 0
+   31340 (claude  49344) started 13 23:10:24: threads started 17:01:55-17:02:10 = 0
+   32724 (claude   5912) started 13 17:22:08: threads started 17:01:55-17:02:10 = 0
+   37340 (claude  52100) started 14 18:51:20: threads started 17:01:55-17:02:10 = 0
+   65532 (claude  64472) started 13 17:46:34: threads started 17:01:55-17:02:10 = 0
+   67204 (claude  78308) started 15 16:44:09: threads started 17:01:55-17:02:10 = 0
+   68964 (claude  76924) started 15 16:21:10: threads started 17:01:55-17:02:10 = 3 75728@17:02:02.469 27600@17:02:09.738 73948@17:02:09.778
+   73176 (claude  73536) started 14 18:56:58: threads started 17:01:55-17:02:10 = 0
+  ```
+  - Kill issued at 17:02:02.374 and the process gone by 17:02:02.402. MCP 68964's thread 75728 started
+    at 17:02:02.469, 67 ms after the process was gone. OUTLOOK.EXE 60368 was created by DcomLaunch in the
+    same second.
+  - OutlookAI's reconcile timestamps from 1.13 are 16:02:03.197Z and 16:02:03.251Z.
+  - The client of the original call had been interrupted at 16:50:00 (1.8), and no tool call was in
+    flight (1.8).
+  - Which code path in 68964 did this was NOT determined. `C:\Users\<user>\AppData\Local\OutlookAI\audit.log`
+    was last written 2026-11-13 20:21:47, and no `*.log`, `*.txt`, `*.json` or `*.jsonl` under
+    `%LOCALAPPDATA%\OutlookAI` was written after 16:20 on 2026-11-15.
+  **1.12 Verification.** Source: the diagnosing agent's script. It sends `WM_NULL` with
+  `SendMessageTimeout(SMTO_ABORTIFHUNG, 5000)`, reads the status bar through UI Automation, and lists
+  the OST/NST `LastWriteTime` values. Sizes print with the Dutch thousands separator, so
+  `24.273 MB` is 24,273 MB. Round 1, verbatim:
+  ```text
+  --- round 1 at 17:03:39
+  process: threads=272 cpu=49.4s ws=411MB
+    hwnd=0x5A0EE6 class='rctrl_renwnd32' title='Inbox - <mailbox-A> - Outlook' hung=False ; WM_NULL replied in 0 ms
+      status bar: Items in View 288 | Unread Items in View 12 | Progress All folders are up to date. | Connectivity to your server. Connected to: Microsoft Exchange | Normal View. Show All Pinned Panes. | Reading View. Hide All Pinned Panes. | Zoom Out | Zoom | Zoom In | Zoom 10%
+  --- round 2 at 17:03:49
+  process: threads=274 cpu=49.6s ws=412MB
+    hwnd=0x5A0EE6 class='rctrl_renwnd32' title='Inbox - <mailbox-A> - Outlook' hung=False ; WM_NULL replied in 0 ms
+      status bar: Items in View 288 | Unread Items in View 12 | Progress All folders are up to date. | Connectivity to your server. Connected to: Microsoft Exchange | Normal View. Show All Pinned Panes. | Reading View. Hide All Pinned Panes. | Zoom Out | Zoom | Zoom In | Zoom 10%
+  --- round 3 at 17:03:59
+  process: threads=273 cpu=49.6s ws=412MB
+    hwnd=0x5A0EE6 class='rctrl_renwnd32' title='Inbox - <mailbox-A> - Outlook' hung=False ; WM_NULL replied in 0 ms
+      status bar: Items in View 288 | Unread Items in View 12 | Progress All folders are up to date. | Connectivity to your server. Connected to: Microsoft Exchange | Normal View. Show All Pinned Panes. | Reading View. Hide All Pinned Panes. | Zoom Out | Zoom | Zoom In | Zoom 10%
+  --- OST/NST files (LastWriteTime shows whether Outlook is writing synced data):
+    17:03:59    24.273 MB  <mailbox-B>.ost
+    17:03:35     9.433 MB  <mailbox-A>.ost
+    17:03:32        16 MB  <mailbox-C>.ost
+    17:02:32        16 MB  <mailbox-C>.nst
+    17:02:31        16 MB  <mailbox-A>.nst
+    17:02:31        16 MB  <mailbox-B>(2).nst
+    16:46:41        16 MB  <mailbox-D>.ost
+    16:30:49        16 MB  <mailbox-D>.nst
+    01:45:37        16 MB  <mailbox-B>.nst
+  ```
+  Round 2, after the outlookai tool calls and the COM reads, verbatim:
+  ```text
+  --- round 1 at 17:08:19
+  process: threads=272 cpu=52.5s ws=415MB
+    hwnd=0x5A0EE6 class='rctrl_renwnd32' title='Inbox - <mailbox-A> - Outlook' hung=False ; WM_NULL replied in 0 ms
+      status bar: Items in View 288 | Unread Items in View 12 | Progress All folders are up to date. | Connectivity to your server. Connected to: Microsoft Exchange | Normal View. Show All Pinned Panes. | Reading View. Hide All Pinned Panes. | Zoom Out | Zoom | Zoom In | Zoom 10%
+  --- round 2 at 17:08:34
+  process: threads=273 cpu=52.6s ws=415MB
+    hwnd=0x5A0EE6 class='rctrl_renwnd32' title='Inbox - <mailbox-A> - Outlook' hung=False ; WM_NULL replied in 0 ms
+      status bar: Items in View 288 | Unread Items in View 12 | Progress All folders are up to date. | Connectivity to your server. Connected to: Microsoft Exchange | Normal View. Show All Pinned Panes. | Reading View. Hide All Pinned Panes. | Zoom Out | Zoom | Zoom In | Zoom 10%
+  --- OST/NST files (LastWriteTime shows whether Outlook is writing synced data):
+    17:07:41     9.433 MB  <mailbox-A>.ost
+    17:07:41    24.273 MB  <mailbox-B>.ost
+    17:07:41        16 MB  <mailbox-C>.ost
+    17:05:22        16 MB  <mailbox-B>(2).nst
+    17:05:22        16 MB  <mailbox-C>.nst
+    17:04:51        16 MB  <mailbox-A>.nst
+    16:46:41        16 MB  <mailbox-D>.ost
+    16:30:49        16 MB  <mailbox-D>.nst
+    01:45:37        16 MB  <mailbox-B>.nst
+  ```
+  **1.13 outlook_health and list_accounts after the fix, 17:04:27.** Tool output verbatim, except for
+  the placeholder substitutions.
+  ```text
+  {"status":"ok","outlook":{"running":true,"headless":false,"version":"16.0.14334.20974","installerMutexHeld":false,"comConnected":true,"storesReachable":7,"stores":["<mailbox-C>","<store-D-online>","<delegate-mailbox-1>","<delegate-mailbox-2>","<mailbox-B>","<mailbox-D>","<mailbox-A>"]},"index":{"provider":"OleDb","newestIndexedUtc":"2026-11-15T16:02:55Z","ageMinutes":1.5396681216666666,"perStore":[{"store":"<mailbox-A>","newestIndexedUtc":"2026-11-15T15:49:02Z"},{"store":"<mailbox-B>","newestIndexedUtc":"2026-11-15T16:02:55Z"},{"store":"<mailbox-C>","newestIndexedUtc":"2026-11-15T16:02:25Z"},{"store":"<mailbox-A>","newestIndexedUtc":"2026-11-13T10:06:09Z"}],"wSearchStartMode":"automatic","indexerProcessRunning":true},"audit":{"path":"C:\\Users\\<user>\\AppData\\Local\\OutlookAI\\audit.log","writable":true},"tuning":{"managed":true,"enabled":true,"searchEnabled":true,"cachingEnabled":true,"ostEnabled":true,"restartNeeded":false,"lastReconcileUtc":"2026-11-15T16:02:03.1967660Z","uiSearchBackend":"local"},"registration":{"status":"ok","runningFrom":"C:\\Users\\<user>\\AppData\\Local\\OutlookAI\\Setup\\McpServer\\OutlookAI.McpServer.exe","registeredCommand":"${LOCALAPPDATA}/OutlookAI/Setup/McpServer/OutlookAI.McpServer.exe","addInStatus":"ok","addInHealed":false,"addInLastReconcileUtc":"2026-11-15T16:02:03.2510478Z","addInResolvedServerPath":"C:\\Users\\<user>\\AppData\\Local\\OutlookAI\\Setup\\McpServer\\OutlookAI.McpServer.exe"},"advice":["Index is current (newest mail 1.5 min ago); searches run at index speed."]}
+  {"accounts":[{"smtpAddress":"<mailbox-A>","displayName":"<mailbox-A>","deliveryStore":"<mailbox-A>"},{"smtpAddress":"<mailbox-B>","displayName":"<mailbox-B>","deliveryStore":"<mailbox-B>"},{"smtpAddress":"<mailbox-C>","displayName":"<mailbox-C>","deliveryStore":"<mailbox-C>"},{"smtpAddress":"<mailbox-D>","displayName":"<mailbox-D>","deliveryStore":"<store-D-online>"}],"stores":[{"displayName":"<mailbox-C>","isDelegate":false,"isCachedExchange":true,"exchangeStoreType":4,"onlineOnly":false,"locallySearchable":true,"inLocalIndex":true},{"displayName":"<store-D-online>","isDelegate":false,"isCachedExchange":false,"exchangeStoreType":1,"onlineOnly":true,"locallySearchable":false,"inLocalIndex":false},{"displayName":"<delegate-mailbox-1>","isDelegate":true,"isCachedExchange":false,"exchangeStoreType":1,"onlineOnly":false,"locallySearchable":true,"inLocalIndex":true},{"displayName":"<delegate-mailbox-2>","isDelegate":true,"isCachedExchange":false,"exchangeStoreType":1,"onlineOnly":false,"locallySearchable":true,"inLocalIndex":true},{"displayName":"<mailbox-B>","isDelegate":false,"isCachedExchange":true,"exchangeStoreType":0,"onlineOnly":false,"locallySearchable":true,"inLocalIndex":true},{"displayName":"<mailbox-D>","isDelegate":false,"isCachedExchange":true,"exchangeStoreType":4,"onlineOnly":true,"locallySearchable":false,"inLocalIndex":false},{"displayName":"<mailbox-A>","isDelegate":false,"isCachedExchange":true,"exchangeStoreType":4,"onlineOnly":false,"locallySearchable":true,"inLocalIndex":true}]}
+  ```
+  The outlookai `search` tool (seven calls, 17:04:41 to 17:05:43) also worked against the healthy
+  instance. No `read` call was made. The search results are left out (mailbox content). One `search` with a folder scope reported in
+  its `advice`: "Freshness sweep covered no folder: 'Calendar' could not be opened in Outlook, so
+  results for it are index-only". That message is quoted as seen and was not investigated.
+  **1.14 Other observations.**
+  - **ROT.** Against the healthy PID 60368, between 17:05 and 17:08,
+    `[Runtime.InteropServices.Marshal]::GetActiveObject('Outlook.Application')` in Windows PowerShell 5.1
+    failed. `New-Object -ComObject Outlook.Application` then attached to 60368 without starting a second
+    process. The script only did this while PID 60368 was the only OUTLOOK.EXE, and checked that before
+    and after. Verbatim (the lines listing calendars are omitted):
+  ```text
+  OUTLOOK before: 60368
+  GetActiveObject: Exception calling "GetActiveObject" with "1" argument(s): "Operation unavailable (Exception from HRESULT: 0x800401E3 (MK_E_UNAVAILABLE))"
+  attached via CreateObject; OUTLOOK processes after attach: 60368
+  OUTLOOK after: 60368
+  ```
+  - **The coordinating session's observation**, in its own words: at 17:11:24 on 2026-11-15 it confirmed
+    that PID 60368 (`OUTLOOK.EXE -Embedding`, started 17:02:02) was the only Outlook process, with
+    Responding=True and MainWindowTitle "Inbox - <mailbox-A> - Outlook".
+  - **The user's symptom.** The user only said "why is my outlook not starting?" (15:44:15Z). No error
+    text was given. No second OUTLOOK.EXE was seen during the diagnosis, and clicks are not logged, so
+    it is not observed what happened on the user's clicks (see PART 2).
+  - **Identity.** The diagnosing agent ran as the same user at Medium integrity (1.1), like Outlook and
+    every MCP server whose token was checked (1.3).
+  **1.15 What OutlookAI's source showed.** This is the working tree `C:\Source\SixFive7\OutlookAI` at
+  HEAD `b5da70f` (clean). It was read only to find the COM activation, so nothing else was read.
+  `McpServer/OutlookAI.Core/Com/OutlookComSession.cs`, verbatim excerpts:
+  ```csharp
+  336        /// <summary>
+  337        /// Connects to Outlook via the COM object model. Outlook is a single-instance COM
+  338        /// server: creating Outlook.Application attaches to the running instance, or starts
+  339        /// OUTLOOK.EXE when none is running (allowed per S7/D17;
+  340        /// <paramref name="allowStartingOutlook"/>=false refuses instead). Never restarts
+  341        /// or closes an existing instance.
+  342        /// </summary>
+  343        public static OutlookComSession Connect(bool allowStartingOutlook = true, Action<OutlookComSession>? onOutlookGone = null)
+  360            PumpedStaRunner runner = new PumpedStaRunner("OutlookAI.ComGateway.Sta");
+  361            OutlookComSession session = new OutlookComSession(runner, startedOutlook: !wasRunning);
+  365                runner.Run(() =>
+  366                {
+  367                    Type progIdType = Type.GetTypeFromProgID("Outlook.Application")
+  368                        ?? throw new InvalidOperationException("Outlook.Application ProgID is not registered.");
+  369                    session._application = Activator.CreateInstance(progIdType)
+  370                        ?? throw new InvalidOperationException("Failed to create Outlook.Application.");
+  371                    dynamic app = session._application;
+  372                    dynamic ns = app.GetNamespace("MAPI");
+  373                    session._namespace = (object)ns;
+  374                    try
+  375                    {
+  376                        // Binds the default profile when Outlook was cold-started by us; a
+  377                        // no-op/benign failure when a session is already active.
+  378                        ns.Logon(Type.Missing, Type.Missing, false, false);
+  379                    }
+  401                    // D49 THE PROCESS PIN. A window-less Outlook EXITS the moment the only
+  402                    // Inspector closes (Phase-1 row 1) - which is the compose path's own
+  403                    // last step, so every headless draft was killing the instance it had
+  404                    // just used, taking update_draft (com_failure) and three live-suite
+  405                    // collections (RPC_S_SERVER_UNAVAILABLE) with it. A NON-DISPLAYED
+  406                    // Explorer owns an invisible window that keeps the process alive; it
+  407                    // shows nothing, leaves Process.MainWindowHandle zero (so outlook_health
+  408                    // still reports headless), and does not cost the user promotability -
+  409                    // launching outlook.exe with the pin held still opens a normal window.
+  410                    session.EnsureComposeSurfacePin();
+  416                session.WireProcessExitWatch();
+  459        private void OnWatchedProcessExited(object? sender, EventArgs e)
+  460        {
+  461            SignalOutlookGone(GoneByProcessExit);
+  462        }
+  ```
+  `McpServer/OutlookAI.Core/Com/ComGateway.cs`, verbatim excerpts:
+  ```csharp
+  271            catch (Exception ex) when (IsDisconnectException(ex))
+  272            {
+  273                // Same rule as the no-recovery overload: the dead session is dropped, the
+  274                // work is never re-run. A budgeted operation is a multi-call lambda by
+  275                // assumption, and replaying one replays the steps that already succeeded.
+  276                Invalidate(session);
+  277                throw;
+  278            }
+  290        /// <summary>
+  291        /// Returns the live session, pinging a held one first and reconnecting when the
+  292        /// ping fails. Serialized: concurrent callers queue here while a cold Outlook
+  293        /// start is in progress.
+  294        /// </summary>
+  302            lock (_lock)
+  303            {
+  304                if (_session != null)
+  305                {
+  306                    try
+  307                    {
+  308                        _session.GetProfileName();
+  309                        return _session;
+  310                    }
+  311                    catch (Exception ex) when (IsSessionUnusable(ex))
+  312                    {
+  313                        // Outlook went away (it is never stopped by us - user action or
+  314                        // crash). Drop the dead session and reconnect below.
+  ```
+  Other lines a `rg` for `GetActiveObject|Outlook.Application|CoCreateInstance|Activator.CreateInstance|...`
+  over `McpServer\*.cs` showed. These are pointers only and were not read further:
+  ```text
+  McpServer\OutlookAI.ComHost\Supervision\ComHostPolicy.cs:140:        /// Budget for establishing the COM session (which may cold-start OUTLOOK.EXE).
+  McpServer\OutlookAI.ComHost\Supervision\ComHostPolicy.cs:345:        /// (<c>OUTLOOK.EXE -Embedding</c>, parent svchost - i.e. COM activation), and the
+  McpServer\OutlookAI.ComHost\Supervision\ComHostSupervisor.cs:326:            // session, which may cold-start OUTLOOK.EXE, so it gets a wider floor than the
+  McpServer\OutlookAI.ComHost\Supervision\ComHostSupervisor.cs:876:        /// WHAT THE KILL DOES NOT REACH: OUTLOOK.EXE. It is not in the tree, established
+  McpServer\OutlookAI.ComHost\Supervision\ComHostSupervisor.cs:880:        /// (<c>OUTLOOK.EXE -Embedding</c>, parent <c>svchost.exe</c>, see
+  McpServer\OutlookAI.Core\Com\ComOperationBudgets.cs:83:        /// Deadline for establishing the COM session, which may cold-start OUTLOOK.EXE.
+  McpServer\OutlookAI.Core\Services\HealthReporting.cs:278:        /// Whether the running OUTLOOK.EXE is HEADLESS - no main window, tray icon only
+  McpServer\OutlookAI.RemediationTools\ComStaRunner.cs:16:    /// <c>Outlook.Application</c> can COLD-START OUTLOOK.EXE, which is slow rather than
+  McpServer\OutlookAI.McpServer.Tests\T2\LiveDisconnectRecoveryTests.cs:469:        // most likely to block without ever returning: it cold-starts OUTLOOK.EXE through
+  McpServer\OutlookAI.McpServer.Tests\T2\LiveDisconnectRecoveryTests.cs:470:        // Activator.CreateInstance on the Outlook.Application ProgID, which has no timeout
+  ```
+  The `search` tool's own description says: "the server sweeps it live through Outlook (autostarting it
+  headless when needed)". The `read` tool's says: "Needs Outlook (starts it if allowed)". The
+  `outlook_health` tool's says: "attaches to Outlook only when it is already running, NEVER starts it".
+  **PART 2 - INFERENCES (the diagnosing agent's reading of the causal chain; guesses, not proven).**
+  - **2.1 Launcher.** MCP 68964 cold-started PID 76888 through `OutlookComSession.Connect`'s
+    `Activator.CreateInstance` (line 369) while serving `list_accounts`. The evidence is the same-second
+    timing, the `-Embedding` command line with a DcomLaunch parent, MCP thread 0x5D64 created in that
+    second (probably the `PumpedStaRunner` STA "OutlookAI.ComGateway.Sta") and the code. Whether the
+    installed build used this in-process path or the ComHost child (`OutlookAI.ComHost`) was not
+    determined.
+  - **2.2 The outer call.** The late-bound `IDispatch::Invoke` at the bottom of the UI thread's stack
+    came from MCP 68964's connect sequence, most likely `ns.Logon(...)` (line 378) or the hidden-Explorer
+    pin (line 410). It was probably cross-process. The only in-process cross-apartment caller found
+    (0x7440) is the inner call, although that count used top-8 frames, so a deeper in-process caller
+    would be missed. MCP 68964 was the only process found waiting on Outlook. The hidden Explorer
+    `Inbox - <mailbox-B> - Outlook` existing in 76888 suggests the pin had at least started.
+    Which of the two it was cannot be told from public symbols.
+  - **2.3 The mechanism.**
+    1. Serving that call, Outlook opened the Exchange offline store on its UI thread and took a lock in
+       `OLMAPI32!HrCreateOfflineObj` (31 threads later queued there).
+    2. Inside that, it made a cross-process COM call to netprofm (`GetCost`, plausibly for metered-network
+       handling).
+    3. An STA waiting on an outgoing COM call keeps dispatching incoming calls, so the Teams add-in's
+       cross-apartment call from 0x7440 ran re-entrantly on top of the outer frame.
+    4. That inner call needed the MAPI async-task singleton (`StartSyncLogging` ->
+       `HrCreateSingletonQueueOlkAsyncTask`). It waited for it in a non-pumping
+       `WaitForMultipleObjectsEx`, and whatever it waited for needed the lock or the UI thread the outer
+       frame holds.
+    5. Neither frame can finish, so Outlook deadlocked itself.
+    6. The netprofm call itself had probably completed: netprofm answered a fresh client in 108 ms. WCT
+       kept naming PID 3240 only because the outer frame was still registered as an outgoing call.
+    The exact object of the inner wait was not identified.
+  - **2.4 Why the cold start matters.**
+    - In this `-Embedding` start the add-ins were loaded (16:27:41) before anything opened the stores.
+      The first object-model call from outside then made Outlook open them while the Teams add-in's
+      background telemetry was already calling into the object model.
+    - In a normal start from the shell, Outlook opens the profile and stores before it loads add-ins.
+      This is general knowledge and was NOT verified here.
+    - The deadlock needs three things at once: an external call that opens stores on the UI thread, a
+      cross-process call inside it (GetCost) that opens a re-entrancy window, and an in-process
+      object-model call (Teams) landing in that window. That makes it timing-dependent. The second cold
+      start by the same MCP at 17:02:02 did NOT deadlock.
+  - **2.5 The user-visible symptom.** OUTLOOK.EXE is single-instance. A click on the shortcut starts a
+    process that hands its request to the running instance and exits. Here the running instance was
+    window-less and deadlocked, so nothing appeared. It does not matter that the user's clicks were not
+    observed. The same hand-off is how the shell launch at 17:02:54 turned the healthy 60368 into a
+    visible Outlook.
+  - **2.6 The second cold start.** When 76888 died, MCP 68964 still had a COM call outstanding, from the
+    request its client abandoned at 16:50:00. That call failed, and something in 68964 reconnected and
+    cold-started Outlook again 67 ms later without any client asking. Candidates:
+    - the abandoned request's retry;
+    - `GetOrConnect` after `Invalidate`;
+    - the process-exit watch (`OnWatchedProcessExited` -> `SignalOutlookGone`) and its consequences.
+    The reconcile timestamps at 17:02:03 fit a fresh connect.
+  - **2.7 Earlier days.** The 13 Nov hang (10:38:01), the two "couldn't start last time" prompts (11:32
+    and 11:41) and 13 Outlook boots that day may be the same mechanism, given outlookai use that day. No
+    dump exists, so this is unproven.
+  - **2.8 Not involved:** elevation, new Outlook, an Office update, add-in disabling, network outage, and
+    netprofm being down. See PART 3.
+  **PART 3 - RULED OUT, AND HOW.**
+  - **Elevation or integrity mismatch.** OUTLOOK.EXE 76888 and 60368 and MCP servers 68964, 67204, 32724
+    and 65532 were all Medium, not elevated (1.3).
+  - **New Outlook, or the classic/new toggle redirecting.** olk.exe is not registered for the user, the
+    toggle is hidden, and all shortcuts target classic OUTLOOK.EXE (1.1).
+  - **An Office update installing or pending.** LastScenario UPDATE Success, UpdatesReadyToApply 0, no
+    UpdateToVersion, ClickToRunSvc running, OUTLOOK.EXE dated 21-10-2026 (1.1).
+  - **A crash.** No Application Error 1000 or WER crash for OUTLOOK.EXE or olk.exe in 7 days (1.4). The
+    process was alive.
+  - **A busy loop.** 0.000 s CPU in 6 s, and no thread used CPU (1.3).
+  - **netprofm hung for everyone.** A new client got answers in 108 ms (1.9).
+  - **Outlook's resiliency having disabled or flagged an add-in.** No `DisabledItems`, and
+    `CrashingAddinList` is empty (1.1).
+  - **No network.** NCSI shows Internet capability since 13 Nov 11:14:23 (1.4), and the probe says
+    IsConnectedToInternet=True (1.9).
+  - **Another external process calling into Outlook.** WCT over all eight MCP servers and explorer.exe
+    found only 68964 (1.6). Other processes were not scanned.
+  **PART 4 - NOT CHECKED, AND WHY.**
+  - **Which object-model call the outer frame was** (Logon, the pin, or another). Office has only public
+    symbols, so there are no real function names.
+  - **The MCP side's stack** (68964 thread 0x5D64). No debugger was attached to the MCP process.
+  - **netprofm's own threads, and whether GetCost had returned.** As a non-admin, WCT got `PidOnly` for
+    the LocalService svchost.
+  - **The object the inner `mso!Ordinal9147` wait waited for,** and which thread would have signalled
+    it. That needs a full dump and more analysis than was done.
+  - **The integrity of MCP servers 26812, 31340, 37340 and 73176,** and the session ids of claude.exe
+    5912, 35756, 64472, 49344, 52100 and 73536.
+  - **The installed OutlookAI version,** its source revision, and which connect path (in-process
+    `ComGateway` or `ComHost`) it runs.
+  - **Why no OutlookAI or <custom-addin> assembly appears in the module list** while event 45
+    says both loaded.
+  - **What inside 68964 cold-started Outlook at 17:02:02.469.** No log covers it (1.11).
+  - **Whether an MCP cancellation from the client** (the interrupt at 16:50:00) reaches the COM work.
+  - **The origin of the `C:\WINDOWS\system32` Claude SDK session** that started 0.1 s after the UI thread
+    blocked.
+  - **Whether the 13 Nov hang had the same stack.** WER kept no dump: `Report Status: 97`, `Cab Id: 0`.
+  - **The Windows Update and Setup event logs.** They were exported but not analysed, because the cause
+    was found elsewhere.
+  - **Windhawk's active mods.**
+  - **What the user actually clicked,** and when.
+  - **How 60368 behaves later,** e.g. after the user closes its window while the hidden-Explorer pin
+    holds it.
+  - **A reproduction.** None was attempted.
+  **PART 5 - DIRECTIONS.** These are guesses, made WITHOUT knowing how OutlookAI works or why it does
+  what it does, and none is recommended. The OutlookAI agent makes the trade-offs, and may well find
+  that some of these contradict decisions already taken (S7, D17 and D49 appear in the code comments
+  above).
+  - **(A) No COM cold start from the MCP server.** When no OUTLOOK.EXE runs, either refuse with a message
+    asking for Outlook to be started (the code already has `allowStartingOutlook = false` and the
+    message "Outlook is not running and starting it was not allowed."), or start Outlook as the shell
+    does. That means `OUTLOOK.EXE`, not COM, and attaching only once its main window exists and
+    answers, e.g. `SendMessageTimeout(WM_NULL)`. Guessed trade-offs:
+    - the first call after Outlook was closed gets slower, or fails;
+    - a visible Outlook window appears on the user's desktop;
+    - it reverses what the code calls "allowed per S7/D17" and the tools' "autostarting it headless";
+    - the test tiers, which seem built around cold starts, may need changes.
+  - **(B) Keep the cold start, but wait for Outlook to finish starting before any MAPI work.** Do not call
+    `Logon` or create the pin straight after `CreateInstance`, and keep every call on the one STA.
+    Also make work stop when its MCP client cancelled or went away, so an abandoned request cannot
+    reconnect and cold-start Outlook again (17:02:02). Guessed trade-offs:
+    - there may be no reliable "finished starting" signal for an `-Embedding` start;
+    - add-ins' own background threads (Teams) still run during the start, so the race may only get
+      narrower;
+    - more waiting, and the cancellation plumbing is unknown.
+  - **(C) Use the Outlook side.** OutlookAI's own VSTO add-in runs inside Outlook; it loaded at
+    16:27:41 in 656 ms. It might tell the server when Outlook has finished starting and its stores are
+    open, so the server never calls earlier. Or the user disables or defers the Teams Meeting Add-in,
+    which removes this particular re-entrant caller. Guessed trade-offs:
+    - add-in-to-server signalling may not exist and would be new machinery;
+    - disabling Teams costs the user the Teams meeting button;
+    - other add-ins could re-enter the same way;
+    - another vendor's add-in is the user's configuration, not the product.
+  - **(D) Make sure Outlook is already running,** e.g. started at login, so the server never cold-starts
+    it. OutlookAI could document this, or tell the agent to ask the user to start Outlook when it is
+    not running. Guessed trade-offs:
+    - no code fix;
+    - it depends on the user;
+    - a closed Outlook brings the risk back.
+  - **(E) Detect and recover.** The server knows when it started Outlook itself
+    (`startedOutlook: !wasRunning`). It could watch that instance, and if its windows stay hung or the
+    first calls never return within N seconds, end only that instance and start Outlook from the shell
+    instead. Guessed trade-offs:
+    - it contradicts the code's rule that Outlook "is never stopped by us";
+    - a slow but healthy start could be killed;
+    - a kill during store open may cost a resync and an "Outlook couldn't start last time... safe mode?"
+      prompt, as on 13 Nov;
+    - more machinery.
+  - **(F, additional) Report it.** `outlook_health` could say "Outlook is running but hung", e.g. a
+    window-less instance whose windows report hung or whose COM ping times out, with advice. Agents
+    could then tell the user instead of blocking. Guessed trade-off: diagnosis only, no prevention.
+  Questions that may matter before choosing (also guesses):
+  - Which connect path does the installed build run?
+  - What did S7, D17 and D49 decide, and why?
+  - Does an MCP cancellation reach the COM work?
+  - What exactly reconnected at 17:02:02.469?
+  - Can this be reproduced on a test guest with the Teams Meeting Add-in installed, by cold-starting
+    through COM and calling `Logon` and creating the pin immediately, several times?
+  - Do the eight long-lived MCP servers (one per open Claude session, some two days old) each hold a
+    session to Outlook, and does that matter?
+  **PART 6 - POINTERS** (optional; they may no longer exist).
+  - The real value behind every placeholder: `.work/outlook-hang-2026-11-15-identifiers.md` in this
+    clone. It is local only and never committed; ask the user if it is missing.
+  - Evidence folder: `C:\Users\<user>\Downloads\tmp-outlook-diag\`. It holds:
+    - `cdb-stack-76888.txt` (all 3,700 lines of the stacks);
+    - `waitchain-outlook-76888.txt` (all 317 threads' chains);
+    - `waitchain-mcp-explorer-netprofm.txt`;
+    - `outlook-76888-modules.txt` (all 255 modules);
+    - `events-*.txt` (the exported logs);
+    - `nlmprobe-out.txt`;
+    - `verify-1.txt` and `verify-2-after-calendar-reads.txt`;
+    - `changes.md`;
+    - `reg-backup\*.reg`;
+    - `scripts\*.ps1` (`procinfo`, `waitchain`, `nlmprobe`, `verify`, `events`).
+    The `sym\` subfolder holds the downloaded public symbols.
+  - Transcripts, under `C:\Users\<user>\.claude\projects\`:
+    - the trigger: `C--Users-<user>-Downloads\579e5f93-028a-4ea2-a918-38697644e3ad.jsonl` and
+      `...\579e5f93-028a-4ea2-a918-38697644e3ad\subagents\agent-a26ab951d6306c1a7.jsonl`;
+    - the diagnosis: `C--Users-<user>-Downloads\fd2ffacb-6643-4a2c-afb0-8ead426fbd94.jsonl` and
+      `...\fd2ffacb-6643-4a2c-afb0-8ead426fbd94\subagents\agent-a921ba5ff51ee3377.jsonl`;
+    - the system32 session: `C--WINDOWS-system32\6c9c2c07-aff8-4d3a-b38c-fe8a18e27fd6.jsonl`;
+    - the earlier outlookai use: `C--Users-<user>-Downloads\19c2d4d8-e339-4d1b-a4c4-0d75b56f8e30.jsonl`.
+
 - [ ] **Read the next `wwlib.dll` crash's dump, if there is one, and say whether it was the compose crash**
   (runbook 4.6, item 8). OUTLOOK.EXE died once in Word on `OutlookAI-Indexed` (4.2f run 4, 2026-10-03), in
   `NewDraft_Hub_SignatureOverride`, before the guests kept dumps. Every crash caught since was
