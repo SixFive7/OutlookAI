@@ -33,8 +33,8 @@ public sealed record McpToolClassification(McpToolEffect Effect, string Why);
 /// <para>
 /// <b>Why a list and not the tools' own metadata.</b> The decision asked for the write-capable set
 /// to be derived from the tools' read-only hints if they carried any. They do not, with one
-/// exception: only <c>audit_log</c> (Q93) sets <c>ReadOnly</c>/<c>Destructive</c> in
-/// <c>Tools/OutlookTools.cs</c>, so the wire carries no <c>readOnlyHint</c> for the rest. Adding them is a change
+/// two exceptions: only <c>audit_log</c> (Q93) and <c>find_folder</c> (Q136 (ii)), both added read-only, set
+/// <c>ReadOnly</c>/<c>Destructive</c> in <c>Tools/</c>, so the wire carries no <c>readOnlyHint</c> for the rest. Adding them is a change
 /// to what every MCP client of the product sees, which is not this change's to make (raised as a
 /// question in the Q74 report). So: one explicit list, here, and
 /// <c>T1.McpToolWriteClassificationTests</c> fails the build until it names EVERY tool the server

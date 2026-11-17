@@ -468,11 +468,12 @@ public static partial class OutlookTools
         return await GuardAsync(cancellationToken, () => ServerRuntime.Service.Health());
     }
 
-    // audit_log (Q93) reads back the log every write tool appends to. It is the ONE tool that
-    // carries MCP tool annotations, and they are the read-only mark for anything that classifies
-    // tools from metadata - a client, or the test client's classification of write-capable
-    // tools: ReadOnly (readOnlyHint), not Destructive, Idempotent, and closed-world. T1 pins all
-    // four on the attribute and T3 pins them on the wire. The description says the same in words.
+    // audit_log (Q93) reads back the log every write tool appends to. It is one of the two tools
+    // that carry MCP tool annotations - find_folder (Q136 (ii)) is the other, both new tools that
+    // change nothing - and they are the read-only mark for anything that classifies tools from
+    // metadata - a client, or the test client's classification of write-capable tools: ReadOnly
+    // (readOnlyHint), not Destructive, Idempotent, and closed-world. T1 pins all four on the
+    // attribute and T3 pins them on the wire. The description says the same in words.
     //
     // It runs MailService.ReadAuditLog, which is static: answering builds no COM gateway, starts
     // no COM host and works with Outlook closed or wedged. The read never blocks the server's own

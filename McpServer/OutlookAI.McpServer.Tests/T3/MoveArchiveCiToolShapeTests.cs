@@ -5,12 +5,13 @@ using Xunit;
 namespace OutlookAI.McpServer.Tests.T3;
 
 /// <summary>
-/// D39 CI wire pins for move_mail/archive_mail: schemas (ids array 1-50, folder,
-/// create_folder, optional store), the load-bearing description contracts (same-store
-/// restriction, undo via fromFolder/newEntryId, EntryID-change semantics, Deleted
-/// Items refusal, designated-Archive semantics identical to Outlook's own Archive
-/// action), and the pre-COM validation / per-item error shapes - all callable on any
-/// machine (unknown hit ids fail in the hit cache before any COM work).
+/// D39 CI wire pins for move_mail/archive_mail: schemas (ids array 1-50 and folder_id since
+/// Q131-Q136 - the retired folder, create_folder and store refused by name), the load-bearing
+/// description contracts (same-store restriction, undo via fromFolderId/newEntryId, EntryID-change
+/// semantics, Deleted Items refusal, designated-Archive semantics identical to Outlook's own
+/// Archive action), find_folder's read-only annotations, and the pre-COM validation / per-item
+/// error shapes - all callable on any machine (unknown hit ids fail in the hit cache before any
+/// COM work).
 /// </summary>
 public sealed class MoveArchiveCiToolShapeTests
 {
@@ -195,6 +196,21 @@ public sealed class MoveArchiveCiToolShapeTests
         JsonElement item = result.GetProperty("items").EnumerateArray().Single();
         Assert.False(item.GetProperty("ok").GetBoolean());
         Assert.Contains("Unknown id", item.GetProperty("error").GetString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task FindFolder_IsAnnotatedReadOnly_OnTheWire()
+    {
+        // Q136 (ii): find_folder returns candidates and never acts, and a client that classifies tools by
+        // their metadata reads that here, the way it reads audit_log's.
+        await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();
+
+        JsonElement tool = await GetToolAsync(client, "find_folder");
+        Assert.True(tool.TryGetProperty("annotations", out JsonElement annotations), "find_folder carries no annotations: " + tool.GetRawText());
+        Assert.True(annotations.GetProperty("readOnlyHint").GetBoolean());
+        Assert.False(annotations.GetProperty("destructiveHint").GetBoolean());
+        Assert.True(annotations.GetProperty("idempotentHint").GetBoolean());
+        Assert.False(annotations.GetProperty("openWorldHint").GetBoolean());
     }
 
     private static async Task<JsonElement> GetToolAsync(McpStdioClient client, string name)

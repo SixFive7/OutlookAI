@@ -341,6 +341,22 @@ public sealed class FolderIdToolTests
     }
 
     [Fact]
+    public void FindFolder_CarriesTheReadOnlyAnnotations_OnItsAttribute()
+    {
+        // Q136 (ii): it returns candidates and never acts - said in metadata as audit_log says it
+        // (T3/MoveArchiveCiToolShapeTests pins the same four on the wire).
+        ModelContextProtocol.Server.McpServerToolAttribute attribute = typeof(OutlookTools)
+            .GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
+            .Select(m => System.Reflection.CustomAttributeExtensions.GetCustomAttribute<ModelContextProtocol.Server.McpServerToolAttribute>(m))
+            .Single(a => a?.Name == "find_folder")!;
+
+        Assert.True(attribute.ReadOnly);
+        Assert.False(attribute.Destructive);
+        Assert.True(attribute.Idempotent);
+        Assert.False(attribute.OpenWorld);
+    }
+
+    [Fact]
     public void TheNewArguments_AndOtherToolsAndNulls_PassUntouched()
     {
         Assert.Null(RetiredArguments.Refusal("search", Arguments(new { store_id = "S1", folder_id = "P1" })));
