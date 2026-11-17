@@ -3802,7 +3802,8 @@ on frozen clocks (Q130 (a)), and a Microsoft 365 sign-in needs the internet and 
 checked against a clock frozen days back fails, and a mailbox that syncs would age the frozen data.
 
 **The roles (Q137, settled by the maintainer 2026-10-11).** The test account is the writable hub;
-the Exchange VM's mailbox is a read-only bystander, watched by the count tripwire and written by nothing -
+the Exchange VM's mailbox is a read-only bystander, watched by the count tripwire and written by
+nothing -
 with one exception the maintainer decided on 2026-11-17 (Q138 (c)): its one leftover tagged item from
 the workstation years, in Sent Items, goes by a one-off tested helper once he has confirmed its id.
 
@@ -3877,7 +3878,27 @@ only):
   3 months; whether a running session applies it before a restart was not measured. The test account
   only; the real mailbox's 0x6649 stayed 12 throughout; the VM went back to its checkpoint afterwards.
 
-RESULTS-R3
+- **Q147 R3** (2026-11-17, under Q161 (c); Q194 still open, so option (a): the testbed's
+  connected-experience policies left as they are). The test account signed in to Outlook on the web in
+  an InPrivate Edge window through `host/Invoke-ExchangeSignIn.ps1 -Mode OwaSignIn` (no code asked for;
+  "Stay signed in?" No), and at 18:09 the signature `OutlookAI-McpTest-Roam1117` - one marker line and a
+  24x24 image - was created there and made the default for new messages, replies keeping none. Outlook
+  on the web showed its one-time "Your privacy matters" notice first. Read with
+  `guest/Measure-SignatureRoaming.ps1` at +1 min, +15 min, +1 h and after a graceful Outlook restart
+  (whose start closed the activation wizard once): every reading the same as R0 - no signature folder or
+  file, no default for any account or in MailSettings, and the classic dialog with no account selector,
+  no "Signatures on this device" and no "(address)" copy. **LTSC 2024 16.0.17932.21000 brought the cloud
+  signature down neither within an hour nor across a restart.** That is what OutlookAI's evidence rule
+  assumes for perpetual Office: roaming only where Outlook's own copies show it. R2 did not see the
+  signature on the server either, while it existed: the object model's folder list does not reach where
+  Outlook on the web keeps it, so R2 says nothing about the server side, and the morning's R2 is no
+  evidence of an empty mailbox. Then the signature was deleted in Outlook on the web (after a reload the
+  page showed "No signature yet" and no default for new mail or replies), R0 to R2 read as before, the
+  test account signed out (`-Mode OwaSignOut`, 19:21, every InPrivate window closed), and the VM went
+  back to `CP-08-ADDIN-READY` with the next live run. The draft check of the plan was not run: with no
+  local copy and no default in the profile, Outlook had nothing to put in a draft. What stays open is
+  the confound: whether "Store my Outlook settings in the cloud" or the connected-experience policies
+  kept the copy away could not be read, because Options is disabled past the activation grace (Q194).
 
 RESULTS-LIVE
 

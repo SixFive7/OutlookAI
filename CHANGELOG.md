@@ -215,7 +215,8 @@ its mailbox tests on, and change nothing you install.
 - ✅ **The Exchange test machine writes in a dedicated test account, and only there.**
   A Microsoft 365 account the maintainer gave for extensive testing joined the machine's Outlook
   profile beside the mailbox it already held, and is the hub its live tests may write in (Q137,
-  settled 2026-10-11); that mailbox, real mail, is a read-only bystander the count tripwire watches. The write-safety design proposed on 2026-10-03 is built for that account:
+  settled 2026-10-11); that mailbox, real mail, is a read-only bystander the count tripwire watches.
+  The write-safety design proposed on 2026-10-03 is built for that account:
   every address a test hands to Outlook, in-process or through the MCP server, must be the test
   account's own; every item a run makes carries the test tag and a run marker the host records before
   the run starts; a reply, a send, a move or a delete touches only the run's own tagged items in the
@@ -226,7 +227,8 @@ its mailbox tests on, and change nothing you install.
   is the test account's own store and that the second entry is neither censused nor written through,
   or the run refuses. Neither address is in the repository: `Testbed/testbed.json` names each account
   by its role, a run reads the address from that account's gitignored credential file, and the same
-  check refuses a run whose settings name an account the machine's Outlook has not signed in. The live runner runs this machine with the broadest filter it can honestly run, carries
+  check refuses a run whose settings name an account the machine's Outlook has not signed in. The
+  live runner runs this machine with the broadest filter it can honestly run, carries
   its state from run to run, because a restored offline data file is older than the server, and sets
   the data files aside when a checkpoint is restored. A tagged item that was already in a read-only
   mailbox before a run is reported and left alone instead of failing every run.
@@ -247,7 +249,10 @@ its mailbox tests on, and change nothing you install.
   `Measure-SignatureRoaming.ps1` reads the machine's Office build, licence and signature settings,
   opens Outlook's Signatures dialog and closes it with Cancel, and looks for the hidden folder roaming
   signatures live in: on 2026-11-17 Office LTSC 2024 16.0.17932.21000 showed the classic dialog with no
-  sign of roaming, and the test mailbox has no such folder, on the server or offline.
+  sign of roaming, and a signature made the test account's default in Outlook on the web had no copy
+  in Outlook an hour later or after a restart, so that Outlook does not roam signatures (Q147 R3). The
+  hidden folder could not be seen on the server even while that signature existed, so the probe's
+  server-side reading proves nothing.
   `Measure-OfflineWindow.ps1` moves the test account's "Download email for the past" slider through its
   eleven positions and reads the profile after each: the months are property 0x6649 and the days
   0x665A, always written as a pair, and LTSC 2024 offers 3 and 5 years; a pair written into the profile
@@ -642,7 +647,8 @@ its mailbox tests on, and change nothing you install.
 
 - 📝 **An agent may sign in to Outlook on the web on the Exchange test machine, on six conditions.**
   The maintainer's decision Q161 (c), 2026-11-17, now in AGENTS.md beside the machine's internet
-  exception: that machine only; the test account only, never the real mailbox; Windows' own browser, Edge;
+  exception: that machine only; the test account only, never the real mailbox; Windows' own browser,
+  Edge;
   the password and the code typed as keystrokes from the host's encrypted store, as the sign-in
   script does; "Stay signed in" and device registration declined; signed out afterwards and the
   machine restored to its checkpoint. It exists to measure roaming signatures.

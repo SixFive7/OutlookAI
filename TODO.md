@@ -1948,13 +1948,16 @@
   whether an account's signatures may roam (`SignatureRoaming`: possible on Microsoft 365 Apps 2303+,
   on perpetual Office only where Outlook's `Name (address)` copies of an Exchange account show it), and
   then leaves those copies and that account's defaults to Outlook. R1 on the Exchange VM (2026-11-17)
-  saw no roaming on Office LTSC 2024; R3 creates a real cloud signature in Outlook on the web and shows
-  whether a copy appears. If it does, LTSC 2024 roams and the evidence rule already covers it; reading
-  the hidden `ApplicationDataRoot` folder itself stays a separate decision. The mailbox's signature
+  saw no roaming on Office LTSC 2024, and R3 the same day found none either: a signature made the test
+  account's default in Outlook on the web had no copy in Outlook an hour later or after a restart
+  (runbook §4.4a). The object model's folder list did not show that signature on the server while it
+  existed, so reading the hidden `ApplicationDataRoot` folder would need another route, and stays a
+  separate decision. The mailbox's signature
   data is never written.
 
 - [ ] **Delete the one tagged leftover in the Exchange VM mailbox's Sent Items once the maintainer has
-  confirmed its id (Q138 (c), decided 2026-11-17).** Found read-only on 2026-11-17: subject `[OutlookAI-McpTest]
+  confirmed its id (Q138 (c), decided 2026-11-17).** Found read-only on 2026-11-17: subject
+  `[OutlookAI-McpTest]
   d3994a2ad25309442 d39 move seed`, sent 2026-07-26 03:46:54 (W. Europe), EntryID beginning
   `000000009D47E954`, in the real mailbox's Sent Items; nothing else tagged in either mailbox. After his
   confirmation: delete exactly that EntryID - EntryID allowlist AND ordinal tag match - through tested
@@ -1965,7 +1968,8 @@
   the test account joined the profile, Outlook shows a THIRD store, named by the test account's display
   name: the test account's mailbox once more, as an online delegate store under the real mailbox's
   account - Exchange automaps a mailbox to a user with Full Access to it, so the real mailbox holds Full
-  Access to the test account (a tenant setting, not the VM's). The settings leave it undeclared: it is the hub seen through another account, so a census of it
+  Access to the test account (a tenant setting, not the VM's). The settings leave it undeclared: it
+  is the hub seen through another account, so a census of it
   would read the hub's own test traffic as a loss, and the write guards refuse it by name. Directions:
   (1) remove that Full Access, or re-grant it with automapping off (a colleague, in the tenant); (2)
   keep it and let it stand in for the shared test mailbox of Q109 for the read-only `DelegateStore`

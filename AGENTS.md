@@ -356,7 +356,8 @@ have internet". Since 2026-11-17 the OutlookAI add-in itself is installed there 
 roaming signatures.** An agent may sign in to Outlook on the web there. Conditions, all of them:
 `OutlookAI-Exchange` only; the test account only - the account `Testbed/testbed.json` records as the
 hub - never the Exchange VM's mailbox; Windows' own browser, Edge; the password and the TOTP code typed
-as keystrokes from the host's DPAPI store, as `Testbed/host/Invoke-ExchangeSignIn.ps1` does; "Stay signed in" and
+as keystrokes from the host's DPAPI store, as `Testbed/host/Invoke-ExchangeSignIn.ps1` does; "Stay
+signed in" and
 device registration declined; signed out afterwards, and the VM restored to its checkpoint.
 
 **A third exception, decided by the maintainer 2026-10-03 (Q125): CodeQL, run locally.** The
