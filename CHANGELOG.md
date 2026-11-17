@@ -1677,6 +1677,12 @@ its mailbox tests on, and change nothing you install.
   whose frozen instants moved 27 and 28 seconds. A new test machine sets it at its first logon, and
   the answer-file builder refuses to build one whose first-logon script would not.
 
+- ✅ **Two index-coverage tests pass on any date, not only before 2026-11-16.**
+  `UnindexedStoreReportingTests` searched for mail older than today minus 90 days while its stub index
+  stays at 2026-08-18, so from 2026-11-16 the search reached past the stub's frontier and the two
+  tests that expect no sweep failed on every machine, master included. The search now ends 90 days
+  before the stub's frontier, as the file's store-scoped test already did.
+
 - ✅ **The live-test runner deletes the build it made for each run instead of leaving 180 MB behind.**
   Git unregistered the commit's build tree after every run but left its directory, so every run of the
   test machines' runner kept about 180 MB of build output in its results folder. The runner now deletes
