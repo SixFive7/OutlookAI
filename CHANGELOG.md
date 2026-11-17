@@ -667,7 +667,8 @@ its mailbox tests on, and change nothing you install.
   was closed. On that machine the runner also starts Outlook no sooner than 240 seconds after a boot:
   started 38 and 79 seconds after one, Outlook put its programmatic-access prompt in front of the
   first address read although the antivirus read up to date, and started 2 and 8 minutes after one it
-  did not.
+  did not. Past the grace Outlook there also created no item through its object model on 2026-11-17,
+  so the machine's write tests fail until that is settled (TODO.md).
 
 - ✅ **The Exchange test machine leaves out the signature tests until signature roaming is measured.**
   A signature or a default signature set on the test account could be carried into the mailbox by an

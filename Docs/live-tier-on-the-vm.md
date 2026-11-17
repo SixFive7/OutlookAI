@@ -3911,7 +3911,44 @@ only):
   the confound: whether "Store my Outlook settings in the cloud" or the connected-experience policies
   kept the copy away could not be read, because Options is disabled past the activation grace (Q194).
 
-RESULTS-LIVE
+**The live runs of 2026-11-17** (`host/Invoke-LiveTierOnGuest.ps1 -VMName OutlookAI-Exchange`; results
+in `.work\guest-live-runs\<run>\` of the branch's worktree).
+
+| Run | Revision | From | Total | Passed | Failed | Suite | Outlook |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | `6b84aab`, master `3ae6eae` merged | `CP-08-ADDIN-READY`, both .ost files set aside | 87 | 35 | 52 | 4 m 59 s | started by the run; the activation wizard closed once |
+| 2 | `8a66b74`, the addresses read at run time | carried forward | 1 (`LiveDraftTests.NewDraft_Hub_LandsInHubDrafts_...`) | 0 | 1 | 20 s | already running, no dialog open |
+
+Both runs left no tagged item behind (run 1 swept every store to zero; run 2 created nothing), the
+count tripwire found no change outside the test account, Outlook did not crash, and the mailbox
+identity check passed - in run 2 on settings whose two addresses `New-LiveTestSettings.ps1` had read
+from the credential files at render time (Q189 (b)), checked against the guest's own Outlook (Q189 (d)).
+
+**Why 52 failed, by cause:**
+
+- **Outlook creates no item through its object model any more (41 tests, and most likely a 42nd).** 30
+  failed at `MailService.NewDraft`, `COMException 0x80004004` (E_ABORT) before anything was saved, and
+  11 at the test helper's `Application.CreateItem`, "The operation failed."; `Phase5LiveMcpToolShapeTests`'
+  `KeyNotFoundException` follows from a draft that was never made. Every test that only reads passed.
+  Run 2, one draft test with Outlook already running and no dialog open, failed the same way. Office
+  here reports `---NOTIFICATIONS---` and error `0xC004F056`: it was never activated (no KMS host is
+  reachable) and its grace ran out about 25 days after the install of 2026-10-03 (`Testbed/MEDIA.md`).
+  On 2026-10-08, inside that grace, the same tests created and removed their items on this VM, and the
+  frozen guests stay inside theirs (Q130) - this VM cannot, because Microsoft 365 needs the real time.
+  So the expired grace is the most likely cause; it is not proven, because no item was created by hand
+  to try it (AGENTS.md, Mailbox Safety rule 1). Microsoft documents notifications, not lost functions,
+  for an unactivated volume edition. Until it is settled the VM's write tests cannot pass (TODO.md).
+- **The test account had no index root yet (6).** The run set both .ost files aside after restoring
+  `CP-08`, and 8 minutes later Windows Search held three roots for the real mailbox and none for the
+  test account. A run carried forward keeps its index; one from the checkpoint would need to wait for
+  the hub's root, which the runner does not yet do.
+- **`LiveHealthTests.Health_OnThisMachine_ReportsOkWithFullDetail` (1):** `outlook_health` says `degraded`
+  because the automapped online entry has no index - true of that entry, and part of the automapping
+  question in TODO.md rather than a defect.
+- **Three more**, not analysed past their messages: `LiveFolderScopeTests.UnresolvedFolderPath_...` and
+  `LiveMailServiceTests.Thread_IndexPath_AndComFallback` read index state the failed seeds left behind;
+  `LiveDisconnectRecoveryTests.OutlookExit_..._GatewayReattaches` quit Outlook, whose next start at
+  19:45 left the Activation Wizard open with no Outlook window, found there at 19:49.
 
 ### 4.5 The frozen guest clocks - both Outlook guests, 2026-10-03 (Q130 (a) and (b))
 
