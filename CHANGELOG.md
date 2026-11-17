@@ -274,8 +274,9 @@ its mailbox tests on, and change nothing you install.
   check refuses a run whose settings name an account the machine's Outlook has not signed in. The
   live runner runs this machine with the broadest filter it can honestly run, carries
   its state from run to run, because a restored offline data file is older than the server, and sets
-  the data files aside when a checkpoint is restored, then waits until every indexed mailbox has its
-  new search-index root before the tests start. A tagged item that was already in a read-only
+  the data files aside when a checkpoint is restored, has Windows Search rebuild its index, and waits
+  until each indexed mailbox has one index root before the tests start. A tagged item that was
+  already in a read-only
   mailbox before a run is reported and left alone instead of failing every run.
 
 - ✅ **A second Microsoft 365 account signs in on the Exchange test machine, and an MFA page stops it.**

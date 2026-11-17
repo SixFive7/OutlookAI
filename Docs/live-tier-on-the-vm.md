@@ -3938,10 +3938,12 @@ from the credential files at render time (Q189 (b)), checked against the guest's
   So the expired grace is the most likely cause; it is not proven, because no item was created by hand
   to try it (AGENTS.md, Mailbox Safety rule 1). Microsoft documents notifications, not lost functions,
   for an unactivated volume edition. Until it is settled the VM's write tests cannot pass (TODO.md).
-- **The test account had no index root yet (6).** The run set both .ost files aside after restoring
-  `CP-08`, and 8 minutes later Windows Search held three roots for the real mailbox and none for the
-  test account. A run carried forward keeps its index; one from the checkpoint would need to wait for
-  the hub's root, which the runner does not yet do.
+- **No index scope for the test account (6).** After the day's set-asides the catalog held more than
+  one root under each mailbox's name - the run's sample found three for the real mailbox - and the
+  scope finder, which never guesses between two roots of one name (`T2/LiveIndexScopes.cs`), found
+  none for the test account. A run carried forward keeps those roots too. Since then the runner has
+  Windows Search rebuild its catalog after a set-aside and waits for exactly one root, with rows, per
+  indexed store (`guest/Reset-OutlookOfflineStore.ps1 -ResetSearchIndex`, `-WaitForIndexRoots`).
 - **`LiveHealthTests.Health_OnThisMachine_ReportsOkWithFullDetail` (1):** `outlook_health` says `degraded`
   because the automapped online entry has no index - true of that entry, and part of the automapping
   question in TODO.md rather than a defect.

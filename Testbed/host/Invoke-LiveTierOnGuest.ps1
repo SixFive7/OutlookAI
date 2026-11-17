@@ -389,7 +389,7 @@ function New-RunId {
 # named - restored, restarted and its data files set aside.
 function Get-ExchangeStartPlan {
     param([bool] $CheckpointNamed)
-    if ($CheckpointNamed) { return @('restore the named checkpoint', 'restart', 'record the index roots', 'set the .ost files aside', 'Outlook NOT elevated', 'wait for the new index roots', 'preflight') }
+    if ($CheckpointNamed) { return @('restore the named checkpoint', 'restart', 'set the .ost files aside', 'rebuild the search index', 'Outlook NOT elevated', 'wait for one index root per indexed store', 'preflight') }
     return @('resume as the last run left it', 'Outlook NOT elevated if it is not running', 'preflight')
 }
 
@@ -681,7 +681,8 @@ function Invoke-SelfTest {
     Check 'and that run is not narrowed' $false $f.Narrowed
     Check 'the Exchange VM carries its state forward by default' 'resume as the last run left it|Outlook NOT elevated if it is not running|preflight' (Get-ExchangeStartPlan $false)
     Check 'and a named checkpoint is restored and its data files set aside' $true ((Get-ExchangeStartPlan $true) -contains 'set the .ost files aside')
-    Check 'with the index roots recorded first, and the new ones waited for after Outlook starts' 'record the index roots|set the .ost files aside|Outlook NOT elevated|wait for the new index roots' ((@(Get-ExchangeStartPlan $true) | Select-Object -Skip 2 -First 4) -join '|')
+    Check 'with the search index rebuilt after them, and its roots waited for after Outlook starts' 'set the .ost files aside|rebuild the search index|Outlook NOT elevated|wait for one index root per indexed store' ((@(Get-ExchangeStartPlan $true) | Select-Object -Skip 2 -First 4) -join '|')
+    Check 'and the runner asks the reset script for both' $true ($runner.Contains("Reset-OutlookOfflineStore.ps1' -Execute -ResetSearchIndex") -and $runner.Contains("Reset-OutlookOfflineStore.ps1' -WaitForIndexRoots"))
     $os = Get-OutlookStartFacts "  ACTIVATION-WIZARD-DISMISSED 8 s: class NUIDialog, by its Close button`r`nOK: OUTLOOK.EXE pid 9548`r`nACTIVATION-WIZARD-DISMISSALS 1`r`nSTART-OUTLOOK-EXIT 0" 'Outlook'
     Check 'a start that closed the activation wizard records one dismissal' 1 $os['activationWizardDismissed']
     Check 'and the summary line says so' "outlook    started by this run, NOT elevated, on profile 'Outlook'; Office's activation wizard dismissed 1 time(s)" (Format-OutlookStartLine $os)
@@ -1248,12 +1249,11 @@ Copy-Item -LiteralPath '$GuestPayloadDir\live-test-settings.json' -Destination '
                 # ps51-native-stderr-ok: a PowerShell script, not a program - every program it starts goes through its own Invoke-NativeCommand, under 'Continue' inside a try
                 & (Join-Path $PSScriptRoot 'Restart-Guest.ps1') -VMName $facts.Name -Execute -RepoRoot $CredentialRepoRoot -LogPath (Join-Path $runDir 'restart.log') *> (Join-Path $runDir 'restart.out.log')
                 if ($LASTEXITCODE -ne 0) { throw "Restart-Guest.ps1 did not complete ($LASTEXITCODE) - restart.log" }
-                # New data files are new stores to Windows Search, with new index roots: the old ones are
-                # recorded first, so the wait below can tell a new root from one the old files left.
-                $o = Invoke-Guest 'index-before' "& '$GuestRoot\Reset-OutlookOfflineStore.ps1' -RecordIndexRoots" 480
-                if ($o -notmatch 'INDEX-ROOTS-RECORDED \d+') { throw 'Reset-OutlookOfflineStore.ps1 -RecordIndexRoots did not record the index roots - guest\index-before.log' }
-                $o = Invoke-Guest 'reset-ost' "& '$GuestRoot\Reset-OutlookOfflineStore.ps1' -Execute; `"RESET-OST-EXIT `$LASTEXITCODE`"" 300 -Session0
-                if ($o -notmatch 'RESET-OST-EXIT 0') { throw 'Reset-OutlookOfflineStore.ps1 did not set the data files aside - guest\reset-ost.log' }
+                # New data files are new stores to Windows Search, and the old files' roots would stay beside
+                # theirs - a name with two roots is one the live tier's scope finder never guesses between
+                # (T2/LiveIndexScopes.cs). So the catalog is rebuilt from nothing after the set-aside.
+                $o = Invoke-Guest 'reset-ost' "& '$GuestRoot\Reset-OutlookOfflineStore.ps1' -Execute -ResetSearchIndex; `"RESET-OST-EXIT `$LASTEXITCODE`"" 300 -Session0
+                if ($o -notmatch 'RESET-OST-EXIT 0' -or $o -notmatch 'SEARCH-INDEX-RESET') { throw 'Reset-OutlookOfflineStore.ps1 did not set the data files aside and rebuild the search index - guest\reset-ost.log' }
             }
             $o = Invoke-Guest 'outlook-running' "if (@(Get-Process -Name OUTLOOK -ErrorAction SilentlyContinue).Count -gt 0) { 'OUTLOOK-RUNNING yes' } else { 'OUTLOOK-RUNNING no' }" 120 -Session0
             if ($o -match 'OUTLOOK-RUNNING no') {
@@ -1267,14 +1267,13 @@ Copy-Item -LiteralPath '$GuestPayloadDir\live-test-settings.json' -Destination '
                 Say ((Format-OutlookStartLine $outlookStart) -replace '^outlook\s+', 'Outlook ')
             }
             if (-not $exchangeCarry) {
-                # Every indexed store needs its NEW root before an index test runs (2026-11-17: none for the
-                # test account 8 minutes after the start, and six tests failed for it). Bounded; a store still
-                # unindexed at the end is the tests' to report.
+                # Every indexed store needs exactly one root, with something below it, before an index test
+                # runs. Bounded; a store not ready at the end is the tests' to report.
                 $o = Invoke-Guest 'index-roots' "& '$GuestRoot\Reset-OutlookOfflineStore.ps1' -WaitForIndexRoots -TimeoutSeconds 1200" 1500
                 $m = [regex]::Match($o, 'INDEX-ROOTS-(READY|TIMEOUT) (\d+)')
                 $indexRoots = 'not reported (guest\index-roots.log)'
-                if ($m.Success -and $m.Groups[1].Value -eq 'READY') { $indexRoots = "every indexed store has its new root after $($m.Groups[2].Value) s" }
-                elseif ($m.Success) { $indexRoots = "NOT every indexed store has a new root after $($m.Groups[2].Value) s - index tests may fail for it" }
+                if ($m.Success -and $m.Groups[1].Value -eq 'READY') { $indexRoots = "every indexed store has one root, with rows, $($m.Groups[2].Value) s after Outlook started on the rebuilt index" }
+                elseif ($m.Success) { $indexRoots = "NOT every indexed store has one root with rows after $($m.Groups[2].Value) s - index tests may fail for it" }
                 Say "index      $indexRoots"
             }
             # Defender current and every account SIGNED-IN, or no run (Testbed/README.md section 4e).

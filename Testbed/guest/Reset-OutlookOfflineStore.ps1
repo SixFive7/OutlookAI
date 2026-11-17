@@ -28,14 +28,16 @@
     Writes only <data file>.stale-<stamp> renames in %LOCALAPPDATA%\Microsoft\Outlook. -Execute to
     rename; without it, says what it would rename.
 
-    AND THE INDEX AFTERWARDS (2026-11-17). New data files are new stores to Windows Search: each gets a
-    new index root, '<store>(<hash>)', and the set-aside files' roots stay beside them. On 2026-11-17,
-    8 minutes after Outlook started on new files, the index held three roots for the real mailbox and
-    none for the test account, and six index tests failed for it. So the runner records the roots
-    before it sets the files aside (-RecordIndexRoots) and, once Outlook runs again, waits until every
-    store the staged live-test settings index has a root that was not there before (-WaitForIndexRoots).
-    Both only read the index, as the user whose mailboxes it holds - in session 1, through
-    Register-InteractiveTask.ps1; they write nothing but -RootsFile.
+    AND THE INDEX AFTERWARDS (2026-11-17). New data files are new stores to Windows Search, each with a
+    new index root, '<store>(<hash>)', and the set-aside files' roots stay in the catalog beside them.
+    On 2026-11-17, after the set-asides of that day, the live tier's scope finder - which never guesses
+    between two roots of one name (McpServer/OutlookAI.McpServer.Tests/T2/LiveIndexScopes.cs) - found
+    three scopes for the real mailbox and none for the test account, and six index tests failed on it.
+    So -ResetSearchIndex, with -Execute, has Windows Search rebuild its catalog from nothing after the
+    set-aside, the documented way (SetupCompletedSuccessfully = 0, the service restarted), and
+    -WaitForIndexRoots waits, once Outlook runs again, until every store the staged live-test settings
+    index has exactly one root with something indexed below it. The wait only reads the index, as the
+    user whose mailboxes it holds - in session 1, through Register-InteractiveTask.ps1.
 
 .PARAMETER Execute
     Rename the files. Without it, a dry run.
@@ -43,18 +45,16 @@
 .PARAMETER Folder
     Where the data files are. Default %LOCALAPPDATA%\Microsoft\Outlook of the user running it.
 
-.PARAMETER RecordIndexRoots
-    Write the index roots of this user's mapi16 scope, one per line, to -RootsFile, and print
-    'INDEX-ROOTS-RECORDED <n>'. Before the files are set aside.
+.PARAMETER ResetSearchIndex
+    With -Execute: after the set-aside, have Windows Search rebuild its catalog from nothing - stop the
+    WSearch service, set HKLM\SOFTWARE\Microsoft\Windows Search\SetupCompletedSuccessfully to 0, start it -
+    so that no root of a set-aside file is left in it. Needs the elevated session PowerShell Direct gives.
 
 .PARAMETER WaitForIndexRoots
     Wait, at most -TimeoutSeconds, until every store the staged live-test settings name in
-    indexedStoreDisplayNames has an index root not in -RootsFile. Prints 'INDEX-ROOTS-READY <seconds>' or
-    'INDEX-ROOTS-TIMEOUT <seconds>: <how many stores still have none>', and exits 0 either way: a store
-    still unindexed is the tests' to report, not a reason to run none.
-
-.PARAMETER RootsFile
-    Where -RecordIndexRoots writes and -WaitForIndexRoots reads. Default C:\OutlookAI-Q5\index-roots-before.txt.
+    indexedStoreDisplayNames has exactly one index root, with something indexed below it. Prints
+    'INDEX-ROOTS-READY <seconds>' or 'INDEX-ROOTS-TIMEOUT <seconds>: <how many stores are not ready>',
+    and exits 0 either way: a store not ready is the tests' to report, not a reason to run none.
 
 .PARAMETER SettingsPath
     The staged live-test settings (gitignored), whose indexedStoreDisplayNames -WaitForIndexRoots waits for.
@@ -70,14 +70,11 @@
 param(
     [Parameter(ParameterSetName = 'Run')] [switch] $Execute,
     [Parameter(ParameterSetName = 'Run')] [string] $Folder,
-    [Parameter(Mandatory = $true, ParameterSetName = 'RecordIndex')] [switch] $RecordIndexRoots,
+    [Parameter(ParameterSetName = 'Run')] [switch] $ResetSearchIndex,
     [Parameter(Mandatory = $true, ParameterSetName = 'WaitIndex')] [switch] $WaitForIndexRoots,
-    [Parameter(ParameterSetName = 'RecordIndex')]
-    [Parameter(ParameterSetName = 'WaitIndex')] [string] $RootsFile = 'C:\OutlookAI-Q5\index-roots-before.txt',
     [Parameter(ParameterSetName = 'WaitIndex')] [string] $SettingsPath = 'C:\OutlookAI-Q5\src\McpServer\OutlookAI.McpServer.Tests\live-fixtures\live-test-settings.json',
     [Parameter(ParameterSetName = 'WaitIndex')] [ValidateRange(0, 7200)] [int] $TimeoutSeconds = 1200,
     [Parameter(ParameterSetName = 'Run')]
-    [Parameter(ParameterSetName = 'RecordIndex')]
     [Parameter(ParameterSetName = 'WaitIndex')] [string[]] $ExpectedUser = @('vmadmin'),
     [Parameter(Mandatory = $true, ParameterSetName = 'SelfTest')] [switch] $SelfTest
 )
@@ -105,19 +102,16 @@ function Get-IndexRootName {
     return $root
 }
 
-# The stores that have no index root yet that was not there before: a root is a store's when it is
-# '<store>(...)', compared ignoring case. Pure.
-function Get-StoresWithoutNewRoot {
-    param([string[]] $Stores, [string[]] $Before, [string[]] $Now)
-    $old = @{}
-    foreach ($r in @($Before | Where-Object { $_ })) { $old[$r.ToLowerInvariant()] = $true }
-    $fresh = @($Now | Where-Object { $_ -and -not $old.ContainsKey($_.ToLowerInvariant()) })
-    $missing = New-Object System.Collections.Generic.List[string]
+# The stores that are not ready for an index test: not exactly one root of their name, '<store>(...)'
+# compared ignoring case, or nothing indexed below the one. $RowsByRoot maps each root to its rows. Pure.
+function Get-StoresNotReady {
+    param([string[]] $Stores, [hashtable] $RowsByRoot)
+    $notReady = New-Object System.Collections.Generic.List[string]
     foreach ($store in @($Stores | Where-Object { $_ })) {
-        $own = @($fresh | Where-Object { $_.StartsWith($store + '(', [StringComparison]::OrdinalIgnoreCase) })
-        if ($own.Count -eq 0) { $missing.Add($store) }
+        $own = @($RowsByRoot.Keys | Where-Object { ([string]$_).StartsWith($store + '(', [StringComparison]::OrdinalIgnoreCase) })
+        if ($own.Count -ne 1 -or [int]$RowsByRoot[$own[0]] -lt 1) { $notReady.Add($store) }
     }
-    return $missing.ToArray()
+    return $notReady.ToArray()
 }
 
 # Every non-empty string of one list field of the live-test settings' JSON text. Pure.
@@ -128,11 +122,11 @@ function Get-SettingsList {
     return @($settings.$Field | Where-Object { $_ -is [string] -and $_ })
 }
 
-# The distinct index roots of this user's mapi16 scope, read from Windows Search. Reads only.
+# Each index root of this user's mapi16 scope, with the rows below it, read from Windows Search. Reads only.
 function Read-IndexRoots {
     $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
     $scope = 'mapi16://{' + $sid + '}/'
-    $roots = @{}
+    $rows = @{}
     $conn = New-Object -ComObject ADODB.Connection
     $conn.Open("Provider=Search.CollatorDSO;Extended Properties='Application=Windows';")
     try {
@@ -140,27 +134,13 @@ function Read-IndexRoots {
         $rs.Open("SELECT System.ItemUrl FROM SystemIndex WHERE SCOPE='" + $scope + "'", $conn)
         while (-not $rs.EOF) {
             $root = Get-IndexRootName ([string]$rs.Fields.Item('System.ItemUrl').Value) $scope
-            if ($root) { $roots[$root] = $true }
+            if ($root) { $rows[$root] = 1 + [int]$rows[$root] }
             $rs.MoveNext()
         }
         $rs.Close()
     }
     finally { $conn.Close() }
-    return @($roots.Keys | Sort-Object)
-}
-
-# Read-IndexRoots, again every 10 s for at most $Seconds while Windows Search refuses the query: right
-# after a restart it answers 0x80041820 for a while (measured 2026-11-17, 20 s after the boot).
-function Read-IndexRootsPatiently {
-    param([int] $Seconds)
-    $deadline = (Get-Date).AddSeconds($Seconds)
-    while ($true) {
-        try { return @(Read-IndexRoots) }
-        catch {
-            if ((Get-Date) -ge $deadline) { throw }
-            Start-Sleep -Seconds 10
-        }
-    }
+    return $rows
 }
 
 if ($SelfTest) {
@@ -177,12 +157,11 @@ if ($SelfTest) {
     Check 'an item URL gives its root' 'hub@example.invalid($9b7b502)' (Get-IndexRootName 'mapi16://{S-1-5-21-1}/hub@example.invalid($9b7b502)/0/Inbox/at=1' $scope)
     Check 'a URL outside the scope gives none' '' ([string](Get-IndexRootName 'file:///C:/x.txt' $scope))
     $stores = @('hub@example.invalid', 'real@example.invalid')
-    $before = @('real@example.invalid($65e0d53e)')
-    Check 'a store with no root at all is missing' 'hub@example.invalid|real@example.invalid' ((Get-StoresWithoutNewRoot $stores $before $before) -join '|')
-    Check 'an old root does not count' 'hub@example.invalid|real@example.invalid' ((Get-StoresWithoutNewRoot $stores $before @('REAL@example.invalid($65e0d53e)')) -join '|')
-    Check 'a new root does, ignoring case' 'real@example.invalid' ((Get-StoresWithoutNewRoot $stores $before @('real@example.invalid($65e0d53e)', 'Hub@Example.invalid($1a2b3c4d)')) -join '|')
-    Check 'every store with a new root leaves none' 0 @(Get-StoresWithoutNewRoot $stores $before @('hub@example.invalid($1)', 'real@example.invalid($2)')).Count
-    Check 'a root of a longer name is not the store''s' 'hub@example.invalid' ((Get-StoresWithoutNewRoot @('hub@example.invalid') @() @('hub@example.invalid.test($1)')) -join '|')
+    Check 'a store with no root is not ready' 'hub@example.invalid' ((Get-StoresNotReady $stores @{ 'real@example.invalid($2)' = 40 }) -join '|')
+    Check 'nor one with two roots, whichever is fuller' 'real@example.invalid' ((Get-StoresNotReady $stores @{ 'hub@example.invalid($1)' = 19; 'real@example.invalid($2)' = 40; 'REAL@example.invalid($3)' = 2 }) -join '|')
+    Check 'nor one whose one root holds nothing' 'hub@example.invalid' ((Get-StoresNotReady $stores @{ 'hub@example.invalid($1)' = 0; 'real@example.invalid($2)' = 40 }) -join '|')
+    Check 'one root each, with rows, is ready' 0 @(Get-StoresNotReady $stores @{ 'Hub@Example.invalid($1)' = 19; 'real@example.invalid($2)' = 40 }).Count
+    Check 'a root of a longer name is not the store''s' 'hub@example.invalid' ((Get-StoresNotReady @('hub@example.invalid') @{ 'hub@example.invalid.test($1)' = 5 }) -join '|')
     Check 'the indexed stores are read from the staged settings' 'hub@example.invalid|real@example.invalid' ((Get-SettingsList '{ "indexedStoreDisplayNames": [ "hub@example.invalid", "", "real@example.invalid" ] }' 'indexedStoreDisplayNames') -join '|')
     Check 'an absent list is empty' 0 @(Get-SettingsList '{ "probeTerm": "" }' 'indexedStoreDisplayNames').Count
     Write-Host ''
@@ -195,27 +174,21 @@ if ($SelfTest) {
 . "$PSScriptRoot\OutlookMapiInterop.ps1"
 Assert-TestbedGuest -ExpectedUser $ExpectedUser
 
-if ($RecordIndexRoots) {
-    $roots = @(Read-IndexRootsPatiently 300)
-    [System.IO.File]::WriteAllLines($RootsFile, [string[]]$roots)
-    Write-Host "INDEX-ROOTS-RECORDED $($roots.Count)"
-    exit 0
-}
 if ($WaitForIndexRoots) {
     $stores = @()
     if (Test-Path -LiteralPath $SettingsPath) { $stores = @(Get-SettingsList (Get-Content -LiteralPath $SettingsPath -Raw) 'indexedStoreDisplayNames') }
     if ($stores.Count -eq 0) { Write-Host "INDEX-ROOTS-READY 0: no staged settings at $SettingsPath name an indexed store"; exit 0 }
-    $before = @()
-    if (Test-Path -LiteralPath $RootsFile) { $before = @(Get-Content -LiteralPath $RootsFile | Where-Object { $_ }) }
     $t0 = Get-Date
     $lastError = ''
     while ($true) {
-        $now = @()
-        try { $now = @(Read-IndexRoots); $lastError = '' } catch { $lastError = " (the last query failed: $($_.Exception.Message))" }
-        $missing = @(Get-StoresWithoutNewRoot $stores $before $now)
+        # Right after a restart Windows Search refuses the query for a while (0x80041820, measured
+        # 2026-11-17 20 s after a boot): a refused query reads as nothing indexed yet.
+        $rows = @{}
+        try { $rows = Read-IndexRoots; $lastError = '' } catch { $lastError = " (the last query failed: $($_.Exception.Message))" }
+        $notReady = @(Get-StoresNotReady $stores $rows)
         $waited = [int]((Get-Date) - $t0).TotalSeconds
-        if ($missing.Count -eq 0) { Write-Host "INDEX-ROOTS-READY $waited"; exit 0 }
-        if ($waited -ge $TimeoutSeconds) { Write-Host "INDEX-ROOTS-TIMEOUT ${waited}: $($missing.Count) of $($stores.Count) indexed store(s) still have no new index root$lastError"; exit 0 }
+        if ($notReady.Count -eq 0) { Write-Host "INDEX-ROOTS-READY $waited"; exit 0 }
+        if ($waited -ge $TimeoutSeconds) { Write-Host "INDEX-ROOTS-TIMEOUT ${waited}: $($notReady.Count) of $($stores.Count) indexed store(s) have not exactly one root with something below it$lastError"; exit 0 }
         Start-Sleep -Seconds 20
     }
 }
@@ -241,6 +214,13 @@ foreach ($name in $targets) {
     else {
         Write-Host ("WOULD SET ASIDE {0} ({1:N0} KB) -> {2}" -f $name, ($size / 1KB), $aside)
     }
+}
+if ($Execute -and $ResetSearchIndex) {
+    # The set-aside files' roots would stay in the catalog beside the new ones (see the header).
+    Stop-Service -Name WSearch -Force
+    Set-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows Search' -Name 'SetupCompletedSuccessfully' -Value 0 -Type DWord
+    Start-Service -Name WSearch
+    Write-Host 'SEARCH-INDEX-RESET: Windows Search rebuilds its catalog from nothing'
 }
 if ($Execute) { Write-Host "DONE: $($targets.Count) data file(s) set aside; Outlook makes new ones and downloads the mailboxes at its next start." }
 else { Write-Host 'DRY RUN: -Execute to rename.' }
