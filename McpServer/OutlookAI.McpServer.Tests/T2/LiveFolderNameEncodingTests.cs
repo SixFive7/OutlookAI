@@ -175,14 +175,14 @@ public sealed class LiveFolderNameEncodingTests
 
         if (!c.NeedsHelper)
         {
-            MoveMailOutcome moved = Service.MoveMail(new[] { draft.EntryId }, c.ProductPath, createFolder: true);
+            MoveMailOutcome moved = Service.MoveMail(new[] { draft.EntryId }, LiveIds.EnsureTestFolder(Service, Hub, c.ProductPath));
             MoveItemView item = Assert.Single(moved.Items);
             if (item.Ok && item.NewEntryId != null)
             {
                 c.Placed = true;
                 c.EntryId = item.NewEntryId;
                 entryIds.Add(item.NewEntryId);
-                c.Creation = "move_mail created [" + string.Join(", ", moved.CreatedFolders ?? Array.Empty<string>()) + "]";
+                c.Creation = "create_folder made it, move_mail filed into its ID " + item.ToFolderId;
             }
             else
             {
@@ -407,8 +407,9 @@ public sealed class LiveFolderNameEncodingTests
     /// The product end to end, index tier only - the sweep would find a just-filed item whatever
     /// the scope, which is exactly how a wrong scope stayed invisible: a folder search, recursive
     /// and not, the folder the hit reports, the zero-row guard, and how <c>read</c> located it.
-    /// A name holding <c>/</c> cannot be ASKED for - every product folder path splits on it - so
-    /// its item is searched for through its parent, and the direct request is reported.
+    /// A name holding <c>/</c> could not be asked for while folders were named by path - every path split
+    /// on it - so its item is searched for through its parent too; since Q131-Q136 the folder is named by
+    /// its ID like any other, and the direct request must find it.
     /// </summary>
     private void SearchThroughTheProduct(EncodingCase c)
     {
@@ -439,8 +440,8 @@ public sealed class LiveFolderNameEncodingTests
             outcome = Service.Search(new SearchRequest
             {
                 Query = c.Term,
-                Store = Hub,
-                Folder = folder,
+                StoreId = LiveIds.StoreId(Service, Hub),
+                FolderId = LiveIds.FolderId(Service, Hub, folder),
                 IncludeSubfolders = includeSubfolders,
                 IndexOnly = true,
                 Top = 10,
@@ -453,7 +454,7 @@ public sealed class LiveFolderNameEncodingTests
         }
 
         bool unresolved = (outcome.Advice ?? Array.Empty<string>())
-            .Any(a => a.Contains("matched NOTHING in the index", StringComparison.Ordinal));
+            .Any(a => a.Contains("has NO rows in the index", StringComparison.Ordinal));
         HitSummary? hit = outcome.Hits.FirstOrDefault(h => h.Subject == c.Subject);
         if (hit == null)
         {
@@ -502,6 +503,11 @@ public sealed class LiveFolderNameEncodingTests
             if (!c.NeedsHelper)
             {
                 Check(problems, c, "non-recursive", c.NonRecursive, reportedFolder);
+            }
+            else
+            {
+                // Q131-Q136: a folder whose own name holds '/' is searched by its ID like any other.
+                Check(problems, c, "by its own ID", c.DirectRequestOfASlashName, reportedFolder);
             }
 
             if (c.FromParentWithSubfolders != null)
@@ -604,7 +610,7 @@ public sealed class LiveFolderNameEncodingTests
                 + (Error ?? (Found
                     ? "FOUND, hit folder='" + HitFolder + "' source=" + Source + " locatedVia=" + LocatedVia
                     : "not found"))
-                + (Unresolved ? " [advice: folder matched NOTHING in the index]" : string.Empty);
+                + (Unresolved ? " [advice: the folder has NO rows in the index]" : string.Empty);
         }
     }
 

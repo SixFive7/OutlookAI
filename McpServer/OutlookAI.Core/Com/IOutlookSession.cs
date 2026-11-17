@@ -38,11 +38,29 @@ namespace OutlookAI.Core.Com
         IReadOnlyList<ComStoreDetail> GetStoreDetails();
 
         /// <summary>
-        /// Folder tree for one store (or all stores when null), bounded by
-        /// <paramref name="absoluteWalkCap"/> - which the result REPORTS rather than merely
-        /// obeying, because a list alone cannot say whether the tree or the cap ended it.
+        /// Folder tree for one store - named by its own entry id, <c>Store.StoreID</c> - or all
+        /// stores when null, bounded by <paramref name="absoluteWalkCap"/> - which the result REPORTS
+        /// rather than merely obeying, because a list alone cannot say whether the tree or the cap
+        /// ended it. Every folder carries its entry id, every store its root folder's (Q131, Q133).
         /// </summary>
-        ComFolderTree ListFolders(string? storeDisplayName, int absoluteWalkCap);
+        ComFolderTree ListFolders(string? storeEntryId, int absoluteWalkCap);
+
+        /// <summary>
+        /// Opens one folder by its entry id and describes it: its name, its names up to the store's
+        /// root, its store, and whether mail may be moved into it (Q131-Q136). Read-only - it opens
+        /// the folder with <c>GetFolderFromID</c>, which creates nothing. Null with
+        /// <paramref name="error"/> <c>FolderNotFound</c> when no store of the profile has it.
+        /// </summary>
+        ComFolderDetail? TryDescribeFolder(string folderEntryId, out string? error);
+
+        /// <summary>
+        /// Creates one mail folder named <paramref name="name"/> - verbatim, a <c>/</c> included - directly
+        /// under the folder <paramref name="parentFolderEntryId"/> (create_folder, Q134 (i)). Refused,
+        /// with nothing created, when the parent cannot be opened, is not a mail folder, is Deleted
+        /// Items or under it, or is the Outbox, and when the parent already has a folder of that name
+        /// (<c>FolderExists</c>, the existing folder's entry id after the colon).
+        /// </summary>
+        ComFolderDetail? TryCreateFolder(string parentFolderEntryId, string name, out string? error);
 
         /// <summary>
         /// Store-relative folder paths for one store, bounded by
@@ -80,7 +98,8 @@ namespace OutlookAI.Core.Com
             IReadOnlyList<string>? folderPath = null,
             bool includeSubfolders = true,
             IReadOnlyDictionary<string, DateTime>? perStoreSinceUtc = null,
-            int timeBudgetMs = 0);
+            int timeBudgetMs = 0,
+            string? folderEntryId = null);
 
         /// <summary>Index-bypassing COM scan, bounded by item count and time budget.</summary>
         /// <param name="resumeFrom">
@@ -106,7 +125,8 @@ namespace OutlookAI.Core.Com
             int timeBudgetMs,
             SearchIn searchIn = SearchInValues.Default,
             bool includeSubfolders = false,
-            ComScanCursor? resumeFrom = null);
+            ComScanCursor? resumeFrom = null,
+            string? folderEntryId = null);
 
         /// <summary>Opens one item and snapshots it. Null with <paramref name="error"/> set when it cannot be opened.</summary>
         ComItemDetail? TryReadItem(
@@ -149,15 +169,21 @@ namespace OutlookAI.Core.Com
         /// <summary>Opens an item in Outlook's own UI.</summary>
         ComOpenResult? TryDisplayItem(string entryIdHex, string? storeId, out string? error);
 
-        /// <summary>Navigates the active Explorer to a folder.</summary>
-        ComExplorerState? TryGotoFolder(string storeDisplayName, IReadOnlyList<string>? folderPath, out string? error);
+        /// <summary>
+        /// Navigates the active Explorer to the folder <paramref name="folderEntryId"/>, or - when that is
+        /// null - to the Inbox of the store <paramref name="storeEntryId"/>.
+        /// </summary>
+        ComExplorerState? TryGotoFolder(string? folderEntryId, string? storeEntryId, out string? error);
 
-        /// <summary>Drives Outlook's own search UI.</summary>
+        /// <summary>
+        /// Drives Outlook's own search UI, after navigating to the folder <paramref name="folderEntryId"/>
+        /// or the Inbox of the store <paramref name="storeEntryId"/> when either is given.
+        /// </summary>
         ComExplorerState? TryShowSearchResults(
             string query,
             int olSearchScope,
-            string? storeDisplayName,
-            IReadOnlyList<string>? folderPath,
+            string? folderEntryId,
+            string? storeEntryId,
             out string? error);
 
         /// <summary>Basic mail properties, used to resolve a hit before acting on it.</summary>
@@ -185,22 +211,16 @@ namespace OutlookAI.Core.Com
             out string? createdFolderPath,
             out string? error);
 
-        /// <summary>Moves an item to a folder identified by store-relative path.</summary>
-        /// <param name="createdFolderPaths">
-        /// Store-relative paths of folders this call CREATED, reported whether the move then
-        /// succeeded or not. On the failure path it used to die with a local: folders are
-        /// created before the target guard runs, so a move into <c>Deleted Items/foo</c> with
-        /// <c>create_folder: true</c> made <c>foo</c> inside Deleted Items and then answered
-        /// "Refused: moving to Deleted Items is deletion semantics" with nothing anywhere
-        /// saying a folder now existed there.
-        /// </param>
-        ComMoveItemResult? TryMoveItemToPath(
+        /// <summary>
+        /// move_mail's move: one item into the folder <paramref name="targetFolderEntryId"/>, which must be
+        /// in the item's own store (<c>CrossStoreTarget:</c> otherwise) and pass the move guard - a mail
+        /// folder, not Deleted Items or anything under it, not the Outbox. Creates nothing: since Q134 (i)
+        /// a folder is made only by <see cref="TryCreateFolder"/>.
+        /// </summary>
+        ComMoveItemResult? TryMoveItemToFolder(
             string entryIdHex,
             string? storeId,
-            IReadOnlyList<string> targetSegments,
-            bool createMissing,
-            string? requireStoreDisplayName,
-            out IReadOnlyList<string>? createdFolderPaths,
+            string targetFolderEntryId,
             out string? error);
 
         /// <summary>Moves an item to a folder identified by EntryID.</summary>

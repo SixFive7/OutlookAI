@@ -72,7 +72,7 @@ public sealed class LiveFreshModeTests
                 SearchOutcome outcome = _fixture.Service.Search(new SearchRequest
                 {
                     Query = marker,
-                    Store = hub,
+                    StoreId = LiveIds.StoreId(_fixture.Service, hub),
                     Top = 10,
                 });
 

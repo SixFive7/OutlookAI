@@ -335,7 +335,7 @@ public sealed class LiveHtmlDraftTests
         // instance EXIT (the D43 idle-self-exit hazard, live-proven again here: the next
         // test in the collection then died on RPC_S_SERVER_UNAVAILABLE 0x800706BA). The
         // Explorer is scoped to the hub store, which S5 allows.
-        _fixture.Service.GotoFolder(Hub);
+        _fixture.Service.GotoFolder(storeId: LiveIds.StoreId(_fixture.Service, Hub));
 
         // S5: hub store, and every visible character is agent-authored.
         LiveStoreWriteGuard.Writable(Hub, StoreWriteKind.Draft, "new_draft");

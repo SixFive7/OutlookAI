@@ -5211,8 +5211,239 @@ unrecorded or unverified.
     on a guest as it stands: a STORE name in a display path (no store here has one of the five;
     decoded there by the folder evidence), a delegate's name (Exchange), and an attachment's file
     name in an `/at=` URL, which the product does not decode.
+27. **MEASURED 2026-10-03 (the Q99 follow-up, D105) - a STORE name holding `% * ?` in a display
+    path.** Item 26 left this half inferred: the product decodes the store part of a non-recursive
+    folder search's `System.ItemFolderPathDisplay` on the folder evidence alone. The tested route to
+    a store with such a name is the throwaway data file: `Testbed/host/New-LiveTestSettings.ps1`
+    rendered guest one's settings from a scratch copy of `Testbed/testbed.json` that differed only in
+    `throwawayStoreDisplayName` - `q99 throwaway 50% off*?x` - and the guest's `Reset-ThrowawayStore.ps1
+    -Execute` (since removed with the throwaway, `8bdf935`) made the store under that name (`READY ... with no Drafts folder`). Both scripts refuse
+    `/` and `\` in a store name, which Outlook does not allow, so `% * ?` is all a store name can
+    carry. From `CP-17C-CORPUS-160K`, the suite staged from `9dbe8da` (master's product code, the
+    measurement commit), Outlook unelevated, `T2/LiveStoreNameEncodingTests` through
+    `Register-InteractiveTask.ps1 -RunLevel Limited`: **passed, 6 s**. The item was in the index
+    after 6 s, under the URL store segment `q99 throwaway 50%25 off%2A%3Fx($aab47bcd)`, with
+    `System.ItemFolderPathDisplay` `/q99 throwaway 50% off*?x/Deleted Items` and
+    `System.ItemPathDisplay` `/q99 throwaway 50% off*?x/Deleted Items/[OutlookAI-McpTest] ...` -
+    the store's NAME, never the URL spelling. A folder search of `Deleted Items` found it with
+    `include_subfolders` false and true (store `q99 throwaway 50% off*?x`, folder `Deleted Items`),
+    so the decode D105 put there stands. Run again from the fix's own commit in item 28's phase:
+    passed, 3 s, the same spellings under a new hash (`($ce91947)` - the throwaway is a new file each
+    run, so a new `PR_ENTRYID`).
+    *(`T2/LiveStoreNameEncodingTests` was REMOVED 2026-10-03, with master's removal of the throwaway
+    data file it wrote into (`8bdf935`, the maintainer's drop of Q85's report-it requirement). Re-pointing it
+    at a store that remains - the identity store - would need new write machinery to file a probe there, and
+    that store's name holds none of the five characters, so it could prove only the derivation, never the
+    encoding. This measurement stands as recorded above, and `McpServer/README.md` fact 17 quotes it.)*
+28. **MEASURED 2026-10-03 (the Q99 follow-up) - a folder whose name holds `/`, and every
+    folder path the product prints, through `folder`.** Decided on the maintainer's behalf against
+    *(Its FIX - the shared folder-path resolver of branch `q99-name-encoding-followup` - was never
+    merged: since Q131-Q136 (2026-11) every tool addresses a folder by its ID, so no path is read back
+    at all, and a folder whose name holds `/` is named by its ID like any other. The measurements below
+    stand; the fix they led to is described as it was built, for the record.)*
+    three requirements: (a) a folder path the product prints is accepted back verbatim by `folder` in
+    every tool that takes one; (b) every input that resolved before resolves to the same folder; (c) a
+    path that could mean two existing folders is refused, naming both. `T2/LiveFolderPathResolutionTests`
+    measures (a) with two probes that cost nothing - a folder search scoped to the printed path must
+    find the item, and `move_mail` to it must answer "already in the target folder", which only the
+    folder it is in can make it say - and (c) on a parent holding both `x/y` and `x` > `y`.
+    **Before, on master's product code** (`9dbe8da`, same guest, same route as item 27; both tests
+    failed, as expected):
+    - **Printed forms.** `list_folders` and an index hit printed `Parent/a/b` (names joined by `/`);
+      an exhaustive hit printed only the leaf (`OutlookAI-McpTest-Folder deep`); `read` printed
+      Outlook's `\\tier@vm.invalid\Parent\...`; `move_mail`'s `toFolder` printed
+      `Parent/OutlookAI-McpTest-Folder back%5Cslash`. Of those, only the `list_folders` and index forms
+      came back, and only for names without `/`.
+    - **Outlook's own `Folder.FolderPath`** (phase 1b, `bf161ec`, read off `move_mail`'s `toFolder` and
+      the folder helper) escapes three characters inside a name and leaves two: `50% off` ->
+      `50%25 off`, `back\slash` -> `back%5Cslash`, `a/b` -> `a%2Fb`, `100%*? mix` -> `100%25*? mix`,
+      `%2A not a star` -> `%252A not a star`, `star*` and `why?` unchanged. `%` itself is escaped, so a
+      decode of those three is exact.
+    - **`Folders[name]` finds a name holding `/`**: `True` for `OutlookAI-McpTest-Folder a/OutlookAI-McpTest-Folder b`.
+      `goto_folder` reached the `back\slash` folder and refused the `/` one ("was not found").
+    - **No refusal on the ambiguous path**: search answered 0 hits with the zero-row guard, `goto_folder`
+      opened a folder, and `move_mail` MOVED the item into `x` > `y` - the old split's guess.
+
+    **What the product does now** (`Services/FolderPathResolver`, `McpServer/README.md` load-bearing
+    fact 18): one printed form everywhere - store-relative names joined by `/`, `read`'s `folder`,
+    every hit and `move_mail`'s `fromFolder`/`toFolder` included - and one reader that matches a path
+    against each level's real child names through `Folders[name]`, refusing a path that has two
+    readings and, for `create_folder`, a missing rest that could go in two places. *(Revised the same
+    day by the review of this fix - item 30: names with a `/` or a space at an end, the plain split's
+    own place to build, absence only on `MAPI_E_NOT_FOUND`, and one resolution per store per batch.)*
+
+    **After, from the fix's own commit** (`a3abbec`; the same route, from `CP-17C-CORPUS-160K` with the
+    settings rendered for the throwaway name of item 27 and `Reset-ThrowawayStore.ps1 -Execute`; the
+    suite `TEST-READY`; `LiveFolderPathResolutionTests`, `LiveFolderNameEncodingTests`,
+    `LiveAttachmentNameEncodingTests` and `LiveStoreNameEncodingTests` in one run): **5 passed, 0
+    failed, 2.8 min**, the tripwire's post-run census 0 failures, the hub reconciled, zero tagged
+    artifacts and zero test folders.
+    - **Every printed path came back.** For the four cases - a plain parent, a plain nested folder,
+      `back\slash`, and `OutlookAI-McpTest-Folder a/OutlookAI-McpTest-Folder b` - `list_folders`, the
+      index hit, the exhaustive hit, `read` and `move_mail`'s `toFolder` all printed the same path
+      (`OutlookAI-McpTest-Folder-Res/OutlookAI-McpTest-Folder back\slash`, `.../OutlookAI-McpTest-Folder
+      a/OutlookAI-McpTest-Folder b`), and for every one of them a folder search scoped to it found the
+      item and `move_mail` to it answered "The item is already in the target folder". `goto_folder`
+      opened both special folders. In `LiveFolderNameEncodingTests` the `a/b` folder was found by its
+      own printed path as well as through its parent.
+    - **The ambiguous path was refused by all three tools, naming both**: "The folder path
+      '...-Amb/...x/...y' names 2 different folders, because a folder name may itself contain '/':
+      '...-Amb' > '...x' > '...y', and '...-Amb' > '...x/...y'. It was refused rather than guessed, and
+      nothing was done." - an `ArgumentException` from search and `goto_folder`, the item's error from
+      `move_mail`, which left the item where it was.
+    - **`move_mail`'s `toFolder` now reads `50% off`, `100%*? mix`, `%2A not a star`, `back\slash`**,
+      the names, where phase 1b read `50%25 off`, `100%25*? mix`, `%252A not a star`, `back%5Cslash`.
+    - **Two lines in the record are not findings**: the ambiguity test's "before the nested twin" and
+      "parent/x alone" index-only searches answer 0 hits with the zero-row guard, because they run
+      seconds after the items were filed and the index had not caught up; neither is asserted. What
+      they show is that both paths resolved without a refusal.
+    - Raw output: `.work\q99-names\` of the worktree (`phase-p2.log`, `p2-results\`). Then `CP-17C`
+      restored and started, the 30-and-60 settings staged (`D45B777E...`, 1,902 bytes, windows 30 and
+      60), `corpus-verify --window 30 --window 60` OK, the guest saved and the lease released.
+29. **MEASURED 2026-10-03 (the Q99 follow-up) - an ATTACHMENT's file name in an `/at=` URL.**
+    Microsoft says the five characters are encoded "if they appear in the message or attachment".
+    `T2/LiveAttachmentNameEncodingTests` on guest one (phase 1b, the suite from `bf161ec`, master's
+    product code, from `CP-17C-CORPUS-160K` with the 30-and-60 settings, Outlook unelevated, through
+    `Register-InteractiveTask.ps1 -RunLevel Limited`), one tagged draft in the hub carrying the probes:
+    - **Writing `PR_ATTACH_LONG_FILENAME` is refused** by Outlook's `PropertyAccessor`:
+      `UnauthorizedAccessException: The property "http://schemas.microsoft.com/mapi/proptag/0x3707001F"
+      does not support this operation` (phase 1). So a name reaches an attachment only through its
+      FILE (which can hold `%` and none of `/ \ * ?`), a display name (anything), or an embedded item.
+    - **The URL carries the file name, NOT encoded**: `OutlookAI 50% off.txt` and
+      `OutlookAI %2A look-alike.txt` appear in `/at=<id>:<name>` exactly as they are - unlike a store or
+      folder name, whose `%` is `%25`. The row's `System.Subject` is `<file name> (<parent subject>)`
+      and `System.ItemPathDisplay` `/tier@vm.invalid/Drafts/<parent subject> : <file name>`.
+    - **A display name never reaches the URL**: five probes shown as `OutlookAI star*.txt`,
+      `... why?.txt`, `... back\slash.txt`, `... a/b.txt` and `... 25% shown.txt` were filed under their
+      file names, `att3.txt` to `att7.txt`.
+    - **An embedded item's file name is its subject minus `[ ] / \ * ?`**, with `.msg`:
+      `OutlookAI-McpTest d39404740426c2848 emb 50% ab backslash star why zqand39404740426c2848.msg`,
+      display name the full subject - and it had no attachment row after 300 s.
+    - **Through the product**: for all eight indexed probes the hit's `attachmentFileName` was the real
+      file name, `read` opened the parent by the URL's own folder path (`urlSegments`), its attachment
+      list held that exact name at the probe's index, and `save_attachment` saved it at its true size
+      (75, 88, 68, 77, 86, 82, 78 and 80 bytes).
+
+    **So the product decodes nothing in an attachment's file name**, and must not: a decode would turn
+    `%2A look-alike.txt` into `* look-alike.txt`. `/ \ * ?` in an attachment's file name stay
+    unmeasured - only mail from another system can carry them (`TODO.md`). The test now pins the
+    unencoded spelling, the agent's chain for every name the index can carry, and that Outlook still
+    strips the four from an embedded item's file name; it waits only for the rows the index makes.
+    From the fix's own commit (item 28's run) it passed in 21 s: all four rows in 10 s, the same
+    spellings, the chain whole (saved 75, 88, 68 and 79 bytes), and the embedded item's file name
+    again without `[ ] / \ * ?`.
+30. **MEASURED 2026-10-03 (the review of item 28's fix) - folder names with a `/` or a space
+    at either end, or holding `//`, and what `Folders[name]` answers for a name that is not there.**
+    *(Of the fixes below, the TRAILING-SPACE half is merged with Q131-Q136 (2026-11): `WsSqlBuilder` and
+    `MapiItemUrl.TryBuildFolderPathDisplay` keep a name's trailing space, and `FolderScopeResolver` scopes
+    such a folder by its separator, or by its parent and display path. The rest belonged to the
+    path resolver, which was not merged - see item 28.)*
+    An independent review found item 28's fix not merge-ready: four ways `move_mail` could land
+    somewhere other than meant. Its decisions, all taken on the maintainer's behalf against item 28's
+    requirements (a)-(c), are in `McpServer/README.md` load-bearing fact 18; this item is the
+    measurement one of them asked for first ("measure on guest one whether Outlook accepts these
+    names; whatever is accepted gets fixed").
+    **Measured, on the reviewed product code** (`4e29a1d`, which adds only the measurement to the test;
+    guest one from `CP-17C-CORPUS-160K` with the 30-and-60 settings, Outlook unelevated, through
+    `Register-InteractiveTask.ps1 -RunLevel Limited`; `T2/LiveFolderPathResolutionTests.FolderNamesWithEdgeSlashesOrSpaces_*`,
+    each folder made by the test helper under `OutlookAI-McpTest-Folder-Edge` with one tagged item):
+    - **Outlook keeps all five names exactly as asked**: `/OutlookAI-McpTest-Folder lead`,
+      `OutlookAI-McpTest-Folder trail/`, `OutlookAI-McpTest-Folder a//b`,
+      ` OutlookAI-McpTest-Folder lead space` and `OutlookAI-McpTest-Folder trail space `. None is
+      refused, so there is no refusal to pin and every one had to be fixed.
+    - **`Folder.FolderPath` escapes each `/` as `%2F` and keeps the spaces** (`...-Edge\%2FOutlookAI-McpTest-Folder lead`,
+      `...\OutlookAI-McpTest-Folder trail%2F`, `...\OutlookAI-McpTest-Folder a%2F%2Fb`); the index URL
+      spells the names the same way (`/0/OutlookAI-McpTest-Folder-Edge/%2FOutlookAI-McpTest-Folder lead/...`,
+      `.../OutlookAI-McpTest-Folder trail space /...`) and `System.ItemFolderPathDisplay` holds the names
+      (`/tier@vm.invalid/OutlookAI-McpTest-Folder-Edge//OutlookAI-McpTest-Folder lead`). All five rows
+      were in the index within 6 s.
+    - **`Folders[name]` finds every one of them by its exact name** (`True` five times), trailing space
+      included.
+    - **`Folders[name]` for a name that is not there raises `COMException 0x8004010F`** ("The attempted
+      operation failed. An object could not be found.") - `MAPI_E_NOT_FOUND`, five times out of five.
+      This is the one answer the product now reads as "no such folder"; any other failure aborts the
+      lookup (review finding 4, `OutlookComSession.IsFolderNotFound`).
+    - **Before the fix, 16 of the 20 round trips failed.** `list_folders`, the index hit, the exhaustive
+      hit and `read` all printed the right path for every name - `...-Edge//OutlookAI-McpTest-Folder lead`,
+      `...-Edge/OutlookAI-McpTest-Folder trail/`, `...-Edge/OutlookAI-McpTest-Folder a//b`,
+      `...-Edge/OutlookAI-McpTest-Folder trail space ` - and none of those four came back: a folder
+      search found nothing, and `move_mail` to it answered "Target folder '...-Edge/OutlookAI-McpTest-Folder lead'
+      does not exist" (the old split dropped the empty part and the trailing space). Only
+      ` OutlookAI-McpTest-Folder lead space` came back, because only the path's OUTER spaces were ever
+      trimmed and that space sits inside it.
+    Raw output: `.work\q99-names\phase-p3a-2.log` of the worktree. Then `CP-17C` restored and started,
+    the 30-and-60 settings staged (`8F821EE7...`, 1,902 bytes), `corpus-verify` OK, the guest saved and
+    the lease released.
+
+    **What the product does now** (fact 18): the raw split - empty parts and edge spaces kept - is read
+    beside the plain split, so each of the five names is found by the path the product prints for it;
+    a path whose two spellings name two folders (`Parent/x/` beside `Parent/x` and `Parent/x/`) is
+    refused naming both. One name stays out of reach on purpose: a name made only of `/` and spaces
+    prints a path that also reads, the old way, as its parent - always ambiguous, refused (not measured
+    whether Outlook accepts such a name).
+
+    **After - run 1, from `4ef644a`** (guest one, the same route; 18 tests: the four classes of items
+    27 to 30 plus `LiveMoveArchiveTests`, `LiveFolderScopeTests` and `LiveSweepScopeTests`, because the
+    review's fix changes how `move_mail` and every folder search read a path; settings rendered for
+    item 27's throwaway name): 9 passed, 9 failed, 11.2 min.
+    - **The new probes of a `/`-named folder all held** (`ASlashNamedFolder_*`): the freshness sweep,
+      not index-only, swept it (`folder_only`, 1 swept, 0 skipped, listed as
+      `tier@vm.invalid/...-Via/...a/...b`); a folder-scoped exhaustive scan scanned 1 folder and found
+      the item; `show_search_results` left the window on it; `move_mail` out of it and back by the
+      `fromFolder` it printed landed in it again; `move_mail` into its existing subfolder landed there;
+      and a new subfolder through it was refused with and without `create_folder`, outcome `unchanged`,
+      naming both places, with no folder left behind. The ambiguous path was again refused by search,
+      `move_mail` and `goto_folder`, naming both.
+    - **Edge names: 4 of 5 came back from every printed path, and `Parent/x/` beside `Parent/x` was
+      refused naming both while `Parent/x` stayed its own.** The fifth, the TRAILING-SPACE name, came
+      back through `move_mail` ("already in the target folder") and through no folder search: the index
+      holds `...-Edge/OutlookAI-McpTest-Folder trail space ` with the space (URL and
+      `System.ItemFolderPathDisplay` both), and the folder's display path, the equality and the SCOPE
+      were each TRIMMED on their way into the statement. Fixed in `2119dd1` (nothing is trimmed at the
+      end any more; T1 pins it).
+    - **Five tests failed only at the hub reconciliation that ends them** ("1 item(s) carrying run
+      marker ... remain in: Archive [OUTSIDE WRITE ALLOWLIST]") - every one AFTER its own assertions had
+      passed - because `LiveMoveArchiveTests.MoveChain_TestFolderRoundTrip_Archive_Guards_Audit_Cleanup`,
+      in the same collection, had failed first and left its item in the hub's Archive folder: "hub
+      archive resolution failed after archiving: NoDesignatedArchiveFolder" - `archive_mail` created and
+      used the PST hub's Archive folder, and the read-only archive lookup then did not find it
+      designated. Every `move_mail` step before that passed (into a created folder, undo by `fromFolder`,
+      cross-store refusal, Deleted Items refusal); no archive code changes on this branch.
+    - **Two more failures with nothing to do with folder paths**: `LiveSweepScopeTests.ControlledCorpus_*`
+      (its self-sent seed did not arrive through the mail sink within 240 s) and
+      `LiveFolderScopeTests.ApostropheInAFolderName_*` (a single-name folder, so no resolver; the index's
+      zero-row advice fires for a folder created seconds earlier - the test expects silence, which
+      predates gap G5 making the guard judge the index rows alone).
+
+    **After - run 2, from `2119dd1`** (15 tests: the same, without those three): 14 passed, the
+    trailing-space name still found by no folder search, everything else - the reconciliation included -
+    passed, 4.5 min. With nothing trimmed, the SCOPE ending with the space still matched no row.
+
+    **Measured in run 3, from `04dd4b6`** (the review's fix merged with master at `883ec5f`; the edge test
+    now asks the index, SELECT only, what each statement shape answers, from the item's own URL): for
+    the folder `OutlookAI-McpTest-Folder trail space ` - SCOPE its URL: **0 rows**; its URL with the
+    separator (`.../trail space /`): 1; trimmed: 0; the space as `%20`: 0; the PARENT's URL with
+    `System.ItemFolderPathDisplay` equal to the folder's display path (space kept): 1; its URL with the
+    separator plus that equality: 1. For `OutlookAI-McpTest-Folder a//b`, the control, every shape: 1.
+    **So the index does not match a SCOPE that ends with a space**, and the product now scopes a folder
+    whose name ends with whitespace by its URL with the separator (with `include_subfolders`) or by its
+    parent narrowed by its exact display path (without) - every other folder exactly as before
+    (`FolderScopeResolver.ForPrimaryStoreSegments`, T1 pins both). Run 3 - `LiveFolderPathResolutionTests`
+    (4), `LiveFolderNameEncodingTests` and `LiveFolderScopeTests` without the apostrophe test: **9 passed,
+    0 failed**, 4.1 min, every printed path of all five edge names came back, the hub reconciled, zero
+    tagged artifacts and zero test folders. Then `CP-17C` restored and started, the 30-and-60 settings
+    staged (`102620F3...`, 1,902 bytes), `corpus-verify` OK, the guest saved and the lease released.
+    Raw output: `.work\q99-names\phase-p4.log`, `phase-p5.log`, `phase-p6.log` of the worktree.
+
+    **Re-review, the same evening (N3, N4).** A deep path no longer fails when one child of a folder on it
+    cannot be read: that child is skipped, as `list_folders`' walk skips it, and the joined names are then
+    looked up directly at that folder; the walk's budget is checked per child. A trailing-space folder
+    inside a trailing-space folder is scoped by the parent's URL WITH its separator - the measured shape
+    above (`SCOPE=folder/`). Both are pinned in T1. The live tier gained a five-part path (`plain deep`)
+    and that nested case (`nested trailing space`), committed and NOT yet run: guest one was leased by
+    another agent when they were ready, and the branch was then parked by Q114 (folder addressing by ID).
 31. **MEASURED 2026-10-03 (Q114/Q115) - what a FOLDER's id is, what it survives, and what the index
-    keeps of it.** (27 to 30 are the Q99 follow-up's items, on its own branch.) The maintainer decided
+    keeps of it.** The maintainer decided
     that tools address a folder only by a unique id, its name kept for display (Q114), and asked
     whether a folder-scoped search can be answered correctly from the index alone while Outlook is
     down (Q115). Measured on both guests, Office LTSC 2024 (16.0.17932), every Outlook start NOT

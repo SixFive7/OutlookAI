@@ -165,8 +165,8 @@ public sealed class LiveDelegateFolderScopeTests
             {
                 SearchOutcome outcome = Service.Search(new SearchRequest
                 {
-                    Store = delegateStore,
-                    Folder = nested.Path,
+                    StoreId = LiveIds.StoreId(Service, delegateStore),
+                    FolderId = LiveIds.FolderId(Service, delegateStore, nested.Path),
                     IncludeSubfolders = includeSubfolders,
                     IndexOnly = true,
                     Top = 5,
@@ -209,8 +209,8 @@ public sealed class LiveDelegateFolderScopeTests
 
             SearchOutcome folderScoped = Service.Search(new SearchRequest
             {
-                Store = delegateStore,
-                Folder = topLevel!.Path,
+                StoreId = LiveIds.StoreId(Service, delegateStore),
+                FolderId = LiveIds.FolderId(Service, delegateStore, topLevel!.Path),
                 IncludeSubfolders = false,
                 IndexOnly = true,
                 Top = 3,
@@ -222,7 +222,7 @@ public sealed class LiveDelegateFolderScopeTests
             // already covers every flat folder.
             SearchOutcome wholeStore = Service.Search(new SearchRequest
             {
-                Store = delegateStore,
+                StoreId = LiveIds.StoreId(Service, delegateStore),
                 IndexOnly = true,
                 Top = 3,
                 SnippetChars = 0,

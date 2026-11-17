@@ -41,7 +41,7 @@ namespace OutlookAI.Core.Com
                 return "Its folder no longer exists in Outlook - this hit is a stale index row (the search index keeps "
                     + "entries for deleted or renamed folders), so re-running the same search will return it again and "
                     + "it can never be opened. Ignore this hit, or search the mailbox again without the folder bound; "
-                    + "use exhaustive:true (store + folder/after) for an index-free COM search that only sees folders "
+                    + "use exhaustive:true (folder_id, or store_id + after) for an index-free COM search that only sees folders "
                     + "that really exist.";
             }
 
@@ -65,11 +65,11 @@ namespace OutlookAI.Core.Com
             if (Mentions(token, "UrlNotParsable") || Mentions(token, "NoItemPathDisplay"))
             {
                 return "The index row carries no usable location for it. Re-run the search; if the same hit comes back, "
-                    + "that row is unusable - use exhaustive:true (store + folder/after) for an index-free COM search.";
+                    + "that row is unusable - use exhaustive:true (folder_id, or store_id + after) for an index-free COM search.";
             }
 
             return "Re-run the search for fresh ids; if the same hit keeps failing, use exhaustive:true "
-                + "(store + folder/after) for an index-free COM search.";
+                + "(folder_id, or store_id + after) for an index-free COM search.";
         }
 
         /// <summary>True when the hit's folder is provably gone (the orphan-index-row case).</summary>

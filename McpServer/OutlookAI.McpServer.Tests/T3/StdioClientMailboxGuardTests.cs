@@ -22,16 +22,17 @@ namespace OutlookAI.McpServer.Tests.T3;
 public sealed class StdioClientMailboxGuardTests
 {
     /// <summary>
-    /// All three tools, named one by one rather than as a set, because each is in the set for
+    /// All four tools, named one by one rather than as a set, because each is in the set for
     /// its own reason: outlook_health probes the store list AND the Windows Search index,
     /// list_accounts enumerates accounts and stores (and starts Outlook when it is closed),
-    /// list_folders walks every folder of every store. Dropping any one of them from the set
-    /// has to fail something.
+    /// list_folders walks every folder of every store, and find_folder walks the same trees to
+    /// match a name. Dropping any one of them from the set has to fail something.
     /// </summary>
     [Theory]
     [InlineData("outlook_health")]
     [InlineData("list_accounts")]
     [InlineData("list_folders")]
+    [InlineData("find_folder")]
     public async Task AnUndeclaredClient_RefusesEveryTool_ThatAlwaysReachesOutlook(string tool)
     {
         await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();

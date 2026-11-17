@@ -52,6 +52,7 @@ namespace OutlookAI.Core.Com
             nameof(IOutlookSession.GetAccounts),
             nameof(IOutlookSession.GetStoreDetails),
             nameof(IOutlookSession.ListFolders),
+            nameof(IOutlookSession.TryDescribeFolder),
             nameof(IOutlookSession.ListFolderPaths),
             nameof(IOutlookSession.FindFolderPathsByLeafName),
             nameof(IOutlookSession.SweepFoldersNewerThan),
@@ -79,10 +80,13 @@ namespace OutlookAI.Core.Com
         /// it appends attachments and can re-apply a signature, so a re-run doubles
         /// them.</description></item>
         /// <item><description><see cref="IOutlookSession.TryDiscardDraft"/>,
-        /// <see cref="IOutlookSession.TryMoveItemToPath"/>,
+        /// <see cref="IOutlookSession.TryMoveItemToFolder"/>,
         /// <see cref="IOutlookSession.TryMoveItemToFolderId"/> - the item is gone from where
         /// the second attempt expects to find it, so the re-run reports a failure that did
         /// not happen, over a move that did.</description></item>
+        /// <item><description><see cref="IOutlookSession.TryCreateFolder"/> - a re-run finds the
+        /// folder the first attempt made and refuses it as already there, so the caller would be
+        /// told nothing was created over a folder that was (Q134).</description></item>
         /// <item><description><see cref="IOutlookSession.TryResolveOrCreateArchiveFolder"/> -
         /// on a store with no Archive folder it CREATES one, and a re-run would find that
         /// folder already there and report nothing created, losing the one fact the caller has
@@ -104,8 +108,9 @@ namespace OutlookAI.Core.Com
             nameof(IOutlookSession.TryDisplayItem),
             nameof(IOutlookSession.TryGotoFolder),
             nameof(IOutlookSession.TryShowSearchResults),
-            nameof(IOutlookSession.TryMoveItemToPath),
+            nameof(IOutlookSession.TryMoveItemToFolder),
             nameof(IOutlookSession.TryMoveItemToFolderId),
+            nameof(IOutlookSession.TryCreateFolder),
             nameof(IOutlookSession.TryResolveOrCreateArchiveFolder),
             nameof(IOutlookSession.TryCreateNewDraft),
             nameof(IOutlookSession.TryCreateDerivedDraft),

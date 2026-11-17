@@ -369,6 +369,36 @@ spelling".** See the decision log below.
 
 ## Decision log
 
+### 2026-11-17 - Q131-Q136 carried out: folders and stores addressed by ID
+
+The answers, with their primers, are in the next entry ("Folders and stores by id"). What was built
+on them (`McpServer/README.md` load-bearing fact 18):
+
+- **Q131 (b), the ID format:** the folder's whole entry id, re-encoded shorter with a check character -
+  `Core/Mapi/OutlookIds.cs`: a kind letter, Crockford base32 without the constant bytes, and a GF(32) check
+  that refuses every single wrong character and every swap of two characters fewer than 31 apart. 34
+  characters for a folder in a data file, 66 for an Exchange folder. Nothing stored, no table.
+- **Q132 (i), one folder while Outlook is closed:** found through the index by `System.ProviderItemID` for a
+  data file's folder. Exchange measured by stream A on `OutlookAI-Exchange` (2026-11-17): the route does not
+  work there - the row's id is the .ost's own node id, not in the 46-byte folder id, and it changes on an
+  .ost rebuild - so such a search is refused with that reason. No learned maps.
+- **Q133 (i), stores:** a 28-character `store_id` (`S` and the provider UID every entry id in the store
+  carries), or `T` and the store's own entry id where the root was not read; display names beside it.
+- **Q134 (i):** `create_folder(parent_id, name)`, a `/` part of the name; `move_mail` creates nothing.
+- **Q135 (i):** a clean break: names and paths are refused with a pointer to `find_folder`, and the retired
+  arguments by a call-tool filter, since the SDK would otherwise ignore them.
+- **Q136 (ii):** `find_folder(name)`, read-only, candidates only.
+
+Decided on the maintainer's behalf while building it: the target of `move_mail` is checked once, before
+any item, so a refused folder refuses the whole call; a store whose name several index stores carry is
+refused when nothing ties it by hash (stream A's stale-.ost finding); a folder whose path a namesake
+shares is reported (`scope.pathShared`), not refused; a data file's folder ID is looked up in the index
+first even while Outlook runs, so a search goes where the index files the folder now; an Exchange
+folder ID is resolved through Outlook, which is started for it as for the search's sweep (D17), and
+refused only when Outlook does not answer; `find_folder` carries the read-only tool annotations
+`audit_log` carries, and `create_folder`, like every other write tool, none. Open follow-ups are in
+`TODO.md`.
+
 ### 2026-11-17, autonomous - Q147 carried out: the signature model, its edits and its refusals
 
 **Primer.** The maintainer decided the shape (Q147 (a)+(b), Q152 (a), Q153, Q155 (c), Q156, Q157 (a),

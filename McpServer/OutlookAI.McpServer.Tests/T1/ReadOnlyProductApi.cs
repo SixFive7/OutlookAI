@@ -57,6 +57,12 @@ internal static class ReadOnlyProductApi
         ["OutlookAI.Core.IndexSearch.StoreScopeInfo"] = Data,
         ["OutlookAI.Core.IndexSearch.WsSqlBuilder"] = Data,
         ["OutlookAI.Core.Mapi.MapiItemUrl"] = Data,
+        ["OutlookAI.Core.Mapi.OutlookIds"] = Data,
+        ["OutlookAI.Core.Mapi.StoreIdParts"] = Data,
+        ["OutlookAI.Core.Com.ComFolderDetail"] = Data,
+        ["OutlookAI.Core.Com.ComStoreRoot"] = Data,
+        ["OutlookAI.Core.Services.FindFolderOutcome"] = Data,
+        ["OutlookAI.Core.Services.FolderCandidateView"] = Data,
 
         // The service layer's request and result shapes.
         ["OutlookAI.Core.Services.AccountView"] = Data,
@@ -124,6 +130,7 @@ internal static class ReadOnlyProductApi
         ["OutlookAI.Core.Services.MailService.Thread"] = "the thread tool: reads a conversation",
         ["OutlookAI.Core.Services.MailService.ListAccounts"] = "the list_accounts tool: reads the profile's accounts and stores",
         ["OutlookAI.Core.Services.MailService.ListFolders"] = "the list_folders tool: reads a folder tree",
+        ["OutlookAI.Core.Services.MailService.FindFolder"] = "the find_folder tool: walks folder trees by reading them and returns candidates; it never acts (Q136 (ii))",
         ["OutlookAI.Core.Services.MailService.Health"] = "the outlook_health tool: reads state; its audit check opens the log for append and writes nothing",
     };
 

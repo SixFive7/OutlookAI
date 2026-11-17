@@ -149,7 +149,7 @@ public sealed class UnindexedStoreScopeTests
         // rather than reporting "folder", which would describe a narrowing that never happened.
         using MailService service = Service(NothingIndexed());
         SearchRequest request = Request(PstStore);
-        request.Folder = "Inbox";
+        request.FolderId = TestFolders.FolderId(PstStore, "Inbox");
 
         SearchOutcome outcome = service.Search(request);
 
@@ -205,7 +205,7 @@ public sealed class UnindexedStoreScopeTests
         ArgumentException error =
             Assert.Throws<ArgumentException>(() => service.Search(Request("no-such-store-xyz")));
 
-        Assert.Contains("was not found in Outlook", error.Message, StringComparison.Ordinal);
+        Assert.Contains("No store in this Outlook profile has the ID", error.Message, StringComparison.Ordinal);
         Assert.DoesNotContain("was not found in the local index", error.Message, StringComparison.Ordinal);
     }
 
@@ -227,17 +227,16 @@ public sealed class UnindexedStoreScopeTests
     [Fact]
     public void TheRefusal_IsTheSameOneListFoldersUses()
     {
-        // One shape for one mistake, across the two tools that can make it (gap G1's
-        // precedent): the pure classifier is shared rather than reimplemented, so the two
+        // One shape for one mistake, across the tools that can make it (gap G1's precedent): an unknown
+        // store ID is refused by the one store resolver both share (MailService.PickStore), so the two
         // messages cannot drift into two vocabularies for one error.
-        string expected = MailService.DescribeUnresolvedFolderStore(
-            "no-such-store-xyz", new[] { IndexedStore, PstStore })!;
         using MailService service = Service(NothingIndexed());
+        string unknown = TestFolders.StoreId("no-such-store-xyz");
 
-        ArgumentException error =
-            Assert.Throws<ArgumentException>(() => service.Search(Request("no-such-store-xyz")));
+        ArgumentException bySearch = Assert.Throws<ArgumentException>(() => service.Search(Request("no-such-store-xyz")));
+        ArgumentException byListing = Assert.Throws<ArgumentException>(() => service.ListFolders(unknown));
 
-        Assert.StartsWith(expected, error.Message, StringComparison.Ordinal);
+        Assert.Equal(byListing.Message, bySearch.Message);
     }
 
     [Fact]
@@ -251,8 +250,8 @@ public sealed class UnindexedStoreScopeTests
 
         ArgumentException error = Assert.Throws<ArgumentException>(() => service.Search(Request(PstStore)));
 
-        Assert.Contains("Outlook could not be reached", error.Message, StringComparison.Ordinal);
-        Assert.DoesNotContain("was not found in Outlook", error.Message, StringComparison.Ordinal);
+        Assert.Contains("Outlook is not answering", error.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("No store in this Outlook profile has the ID", error.Message, StringComparison.Ordinal);
     }
 
     // ==================================================================== thread
@@ -265,7 +264,7 @@ public sealed class UnindexedStoreScopeTests
         // the catch alone, so the fix would have made half of C3 silent again.
         using MailService service = Service(NothingIndexed());
 
-        ThreadOutcome outcome = service.Thread("conv-1", id: null, store: PstStore);
+        ThreadOutcome outcome = service.Thread("conv-1", id: null, storeId: TestFolders.StoreId(PstStore));
 
         Assert.True(outcome.ScopeWidened);
         Assert.Contains(
@@ -278,7 +277,7 @@ public sealed class UnindexedStoreScopeTests
 
     private static SearchRequest Request(string store)
     {
-        return new SearchRequest { Query = "test", Store = store, Top = 25, SnippetChars = 0 };
+        return new SearchRequest { Query = "test", StoreId = TestFolders.StoreId(store), Top = 25, SnippetChars = 0 };
     }
 
     private static MailService Service(StubIndexClient index)
@@ -540,7 +539,8 @@ public sealed class UnindexedStoreScopeTests
             return targetMethod?.Name switch
             {
                 nameof(IOutlookSession.GetProfileName) => "T1 stand-in profile",
-                nameof(IOutlookSession.GetStoreDetails) => _stores,
+                nameof(IOutlookSession.GetStoreDetails) => TestFolders.WithRoots(_stores),
+                nameof(IOutlookSession.TryDescribeFolder) => TestFolders.Describe(args),
                 // Argument 3 is onlyStoreDisplayName; see IOutlookSession.SweepFoldersNewerThan.
                 nameof(IOutlookSession.SweepFoldersNewerThan) => _sweep(args?[3] as string),
                 _ => throw new NotSupportedException(

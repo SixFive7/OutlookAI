@@ -60,7 +60,9 @@ public static class LiveLatencyTarget
 
             using OutlookComSession session = OutlookComSession.Connect(allowStartingOutlook: true);
             List<LiveStoreSize> sizes = indexed
-                .Select(store => SizeOf(store, session.ListFolders(store, MailService.FolderWalkAbsoluteCap)))
+                .Select(store => SizeOf(store, session.ListFolders(
+                    session.GetStoreDetails().Single(d => string.Equals(d.DisplayName, store, StringComparison.OrdinalIgnoreCase)).StoreId,
+                    MailService.FolderWalkAbsoluteCap)))
                 .ToList();
             string largest = Largest(sizes);
             _measured = (key, sizes, largest);

@@ -77,7 +77,7 @@ public sealed class LiveUiSearchBackendTests
 
         // Park the Explorer on the hub store first so the driven search UI shows hub
         // content only (an empty list for the no-match query).
-        _fixture.Service.GotoFolder(_fixture.Settings.TestHubStoreDisplayName);
+        _fixture.Service.GotoFolder(storeId: LiveIds.StoreId(_fixture.Service, _fixture.Settings.TestHubStoreDisplayName));
 
         int? original = ReadDword(HealthReporting.OutlookSearchUserKeyPath);
         _output.WriteLine($"original user-hive DisableServerAssistedSearch: {(original.HasValue ? original.Value.ToString() : "(absent)")}");
@@ -90,7 +90,7 @@ public sealed class LiveUiSearchBackendTests
                 HealthReporting.ReadUiSearchBackendFromRegistry());
 
             ShowSearchResultsOutcome shownServerAssisted = _fixture.Service.ShowSearchResults(
-                NoMatchQuery, "current_folder", _fixture.Settings.TestHubStoreDisplayName);
+                NoMatchQuery, "current_folder", storeId: LiveIds.StoreId(_fixture.Service, _fixture.Settings.TestHubStoreDisplayName));
             Assert.True(shownServerAssisted.Displayed);
             Assert.NotNull(shownServerAssisted.Advice);
             string note = Assert.Single(shownServerAssisted.Advice!);
@@ -109,7 +109,7 @@ public sealed class LiveUiSearchBackendTests
                 HealthReporting.ReadUiSearchBackendFromRegistry());
 
             ShowSearchResultsOutcome shownLocal = _fixture.Service.ShowSearchResults(
-                NoMatchQuery, "current_folder", _fixture.Settings.TestHubStoreDisplayName);
+                NoMatchQuery, "current_folder", storeId: LiveIds.StoreId(_fixture.Service, _fixture.Settings.TestHubStoreDisplayName));
             Assert.True(shownLocal.Displayed);
             Assert.Null(shownLocal.Advice);
 

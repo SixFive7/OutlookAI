@@ -259,7 +259,7 @@ public sealed class SearchSchemaCiTests
         // these is re-reported at runtime by MailService (FolderScopeResolver's widening /
         // collision advice, the scope block, and SweepInfo.Scope), so the schema states
         // them once, where the argument is chosen.
-        string folderDescription = parameters.GetProperty("folder").GetProperty("description").GetString()!;
+        string folderDescription = parameters.GetProperty("folder_id").GetProperty("description").GetString()!;
         Assert.Contains("include_subfolders=false", folderDescription, StringComparison.Ordinal);
         Assert.Contains("Delegate", folderDescription, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("WITHOUT", folderDescription, StringComparison.Ordinal);
@@ -321,7 +321,7 @@ public sealed class SearchSchemaCiTests
         JsonElement schema = searchTool!.Value.GetProperty("inputSchema");
         JsonElement properties = schema.GetProperty("properties");
 
-        string folderDescription = properties.GetProperty("folder").GetProperty("description").GetString()!;
+        string folderDescription = properties.GetProperty("folder_id").GetProperty("description").GetString()!;
         Assert.Contains("subfolders", folderDescription, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("include_subfolders=false", folderDescription, StringComparison.Ordinal);
 

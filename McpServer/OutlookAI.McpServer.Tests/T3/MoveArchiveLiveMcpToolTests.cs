@@ -64,7 +64,7 @@ public sealed class MoveArchiveLiveMcpToolTests
                 JsonElement search = await client.CallToolAsync("search", new
                 {
                     query = Marker,
-                    store = Hub,
+                    store_id = WireIds.StoreId(Hub),
                     include_attachment_hits = false,
                     top = 25,
                 });
@@ -87,19 +87,29 @@ public sealed class MoveArchiveLiveMcpToolTests
 
             Assert.True(hitId != null, "seed mail not findable over stdio within 180 s");
 
-            // --- move_mail golden shape (hit id + create_folder).
+            // --- create_folder golden shape (Q134 (i)), then move_mail into it by its ID.
+            LiveStoreWriteGuard.Writable(Hub, StoreWriteKind.Folder, "create_folder");
+            JsonElement madeFolder = await client.CallToolAsync("create_folder", new
+            {
+                parent_id = WireIds.RootFolderId(Hub),
+                name = _fixture.TestFolderName,
+            });
+            Assert.True(madeFolder.GetProperty("created").GetBoolean());
+            Assert.Equal(_fixture.TestFolderName, madeFolder.GetProperty("folder").GetString());
+            Assert.Equal(WireIds.StoreId(Hub), madeFolder.GetProperty("storeId").GetString());
+            string testFolderId = madeFolder.GetProperty("folderId").GetString()!;
+
             JsonElement move = await client.CallToolAsync("move_mail", new
             {
                 ids = new[] { hitId },
-                folder = _fixture.TestFolderName,
-                create_folder = true,
+                folder_id = testFolderId,
             });
             Assert.Equal(1, move.GetProperty("requested").GetInt32());
             Assert.Equal(1, move.GetProperty("moved").GetInt32());
             Assert.Equal(0, move.GetProperty("failed").GetInt32());
             Assert.Equal(_fixture.TestFolderName, move.GetProperty("targetFolder").GetString());
-            Assert.Contains(_fixture.TestFolderName,
-                move.GetProperty("createdFolders").EnumerateArray().Select(f => f.GetString()));
+            Assert.Equal(testFolderId, move.GetProperty("targetFolderId").GetString());
+            Assert.False(move.TryGetProperty("createdFolders", out _), "move_mail creates no folder since Q134 (i)");
             Assert.Contains("newEntryId", move.GetProperty("advice").EnumerateArray().Select(a => a.GetString()!).Single(),
                 StringComparison.Ordinal);
 
@@ -113,12 +123,14 @@ public sealed class MoveArchiveLiveMcpToolTests
             // the T2 chain); what the wire shape guarantees is a non-empty undo address.
             string fromFolder = movedItem.GetProperty("fromFolder").GetString()!;
             Assert.False(string.IsNullOrEmpty(fromFolder));
+            Assert.False(string.IsNullOrEmpty(movedItem.GetProperty("fromFolderId").GetString()));
             Assert.Equal(_fixture.TestFolderName, movedItem.GetProperty("toFolder").GetString());
+            Assert.Equal(testFolderId, movedItem.GetProperty("toFolderId").GetString());
             string oldEntryId = movedItem.GetProperty("oldEntryId").GetString()!;
             string newEntryId = movedItem.GetProperty("newEntryId").GetString()!;
             Assert.True(newEntryId.Length >= 48);
             Assert.NotEqual(oldEntryId, newEntryId);
-            _output.WriteLine("wire move_mail ok: hit id flow, created folder, EntryID changed");
+            _output.WriteLine("wire create_folder + move_mail ok: hit id flow, folder made by create_folder, moved by its ID, EntryID changed");
 
             // The HIT ID keeps working after the move (refreshed to the new EntryID):
             // read through it and confirm the item is intact.

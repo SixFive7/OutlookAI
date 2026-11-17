@@ -282,7 +282,7 @@ public sealed class LiveResumableScanTests
         return new SearchRequest
         {
             Exhaustive = true,
-            Store = Hub,
+            StoreId = LiveIds.StoreId(Service, Hub),
 
             // The bound an exhaustive scan demands, wide enough to include the whole hub
             // corpus so the paged and unpaged runs answer the same question.

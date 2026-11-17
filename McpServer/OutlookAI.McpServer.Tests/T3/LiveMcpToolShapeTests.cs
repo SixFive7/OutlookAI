@@ -64,7 +64,7 @@ public sealed class LiveMcpToolShapeTests
             JsonElement cachedSearch = await client.CallToolAsync("search", new
             {
                 query = _settings.ProbeTerm,
-                store = _settings.TestHubStoreDisplayName,
+                store_id = WireIds.StoreId(_settings.TestHubStoreDisplayName),
                 top = 5,
             });
             JsonElement cachedSweep = cachedSearch.GetProperty("sweep");
@@ -93,7 +93,7 @@ public sealed class LiveMcpToolShapeTests
 
         // --- thread: via the hit's conversation id (or the COM fallback via id).
         object threadArgs = firstIndexHit.TryGetProperty("conversationId", out JsonElement conv)
-            ? new { conversation_id = conv.GetString(), id = hitId, store = firstIndexHit.GetProperty("store").GetString() }
+            ? new { conversation_id = conv.GetString(), id = hitId, store_id = firstIndexHit.GetProperty("storeId").GetString() }
             : new { id = hitId };
         JsonElement thread = await client.CallToolAsync("thread", threadArgs);
         Assert.True(thread.GetProperty("hits").GetArrayLength() >= 1);
@@ -193,7 +193,7 @@ public sealed class LiveMcpToolShapeTests
         // --- list_folders scoped to the test hub (full tree, one page).
         JsonElement folders = await client.CallToolAsync("list_folders", new
         {
-            store = _settings.TestHubStoreDisplayName,
+            store_id = WireIds.StoreId(_settings.TestHubStoreDisplayName),
         });
         JsonElement storeFolders = folders.GetProperty("stores")[0].GetProperty("folders");
         Assert.True(storeFolders.GetArrayLength() >= 1);
@@ -205,7 +205,7 @@ public sealed class LiveMcpToolShapeTests
         // Offset paging over the wire: offset=1 = the same stable order minus the first folder.
         JsonElement page1 = await client.CallToolAsync("list_folders", new
         {
-            store = _settings.TestHubStoreDisplayName,
+            store_id = WireIds.StoreId(_settings.TestHubStoreDisplayName),
             offset = 1,
         });
         Assert.Equal(1, page1.GetProperty("offset").GetInt32());
