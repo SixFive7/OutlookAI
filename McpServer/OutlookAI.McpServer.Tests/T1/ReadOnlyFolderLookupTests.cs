@@ -1142,7 +1142,7 @@ public sealed class ReadOnlyFolderLookupTests
         Assert.Equal(MutationOutcome.Unchanged, MailService.MoveFailureOutcome(code));
         Assert.DoesNotContain(
             "UNKNOWN",
-            MailService.DescribeMoveFailure(code, "Projects", null, createFolder: false),
+            MailService.DescribeMoveFailure(code, "Projects"),
             StringComparison.Ordinal);
     }
 
@@ -1357,7 +1357,8 @@ public sealed class ReadOnlyFolderLookupTests
     }
 
     [Theory]
-    [InlineData("VerifyMoveTarget", "SpecialFolderGuards.MoveTargetRefusal(")]
+    [InlineData("TargetRefusal", "SpecialFolderGuards.MoveTargetRefusal(")]
+    [InlineData("VerifyMoveTarget", "TargetRefusal(")]
     [InlineData("CheckInDraftsFolder", "SpecialFolderGuards.DraftsFolderRefusal(")]
     public void EveryWriteToolGuard_GoesThroughTheNonCreatingGuard(string member, string guard)
     {
@@ -2044,7 +2045,10 @@ public sealed class ReadOnlyFolderLookupTests
             switch (method.Name)
             {
                 case nameof(IOutlookSession.GetStoreDetails):
-                    return Array.Empty<ComStoreDetail>();
+                    return TestFolders.WithRoots(Array.Empty<ComStoreDetail>());
+
+                case nameof(IOutlookSession.TryDescribeFolder):
+                    return TestFolders.Describe(args);
 
                 case nameof(IOutlookSession.TryGetMailInfo):
                     return new ComDraftInfo(

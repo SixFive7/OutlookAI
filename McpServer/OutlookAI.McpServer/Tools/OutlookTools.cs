@@ -154,7 +154,7 @@ internal static class ServerRuntime
 /// so agents can react.
 /// </summary>
 [McpServerToolType]
-public static class OutlookTools
+public static partial class OutlookTools
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {
@@ -220,7 +220,7 @@ public static class OutlookTools
             + "body. Narrow it when a term is noisy in one of them.")]
         string? search_in = null,
         [Description("exhaustive=true bypasses the index and scans folders through Outlook instead - requires "
-            + "store plus folder and/or after, is far slower, and matches whole words in subject and body only "
+            + "folder_id, or store_id plus after; it is far slower, and matches whole words in subject and body only "
             + "(no attachment text). Default false: index + freshness sweep. It follows include_subfolders like "
             + "the other modes, so a folder scope walks the subtree - which on a big subtree can hit the 600 s "
             + "budget; pass include_subfolders=false to scan just the named folder, and check "
@@ -229,26 +229,27 @@ public static class OutlookTools
             + "exhaustive.nextToken; pass it back as resume_token to continue, and read exhaustive.stopReason for "
             + "why it stopped.")]
         bool exhaustive = false,
-        [Description("Store display name to search in (see list_accounts). Omit for all stores (required when "
-            + "exhaustive=true). The scope is honoured exactly and never silently widened. A store the profile has "
-            + "but Windows Search has not indexed (a PST, a fresh install, indexing off or still building) still "
-            + "searches: the index tier is skipped, the freshness sweep is the only tier, and the answer says so "
-            + "with index.storeNotIndexed=true, sweep.storesWithoutIndex naming it, coverageGaps no_index_frontier "
-            + "and degraded=true - only the recent window is covered, so use exhaustive=true with folder and/or "
-            + "after to read that store in full. A name the profile does not have is refused, and the error lists "
-            + "the stores that do exist.")] string? store = null,
-        [Description("Store-relative folder path (from list_folders), e.g. 'Inbox' or 'Projects/2026'. Requires "
-            + "store. Includes its subfolders unless include_subfolders=false. Delegate/shared mailboxes are "
-            + "indexed WITHOUT their folder nesting, so a folder scope there matches by folder NAME: the search "
-            + "widens to the whole delegate mailbox when the subfolder set cannot be built, and can return mail "
-            + "from a second folder with the same name elsewhere in that mailbox - advice says so whenever it "
-            + "happens, and the scope block reports what was actually covered. Setting folder also aims the "
-            + "freshness sweep at that folder and its subfolders; without it the sweep covers Inbox, Sent Items, "
-            + "Deleted Items and Junk Email of the store(s) in scope - those four folders only, not their "
-            + "subfolders - so for brand-new mail filed anywhere else, pass store + folder. Branch on "
-            + "sweep.scopeShape rather than on the sweep.scope sentence: default_folders means exactly that "
-            + "shallow four-folder set, folder means the named folder plus its subtree, folder_only means the "
-            + "named folder alone.")] string? folder = null,
+        [Description("The store to search, by its storeId - from list_accounts (also shown by list_folders, "
+            + "find_folder and every search hit). " + StoreIdRule + " Omit for all stores. The scope is honoured "
+            + "exactly and never silently widened. A store the profile has but Windows Search has not indexed (a PST, "
+            + "a fresh install, indexing off or still building) still searches: the index tier is skipped, the "
+            + "freshness sweep is the only tier, and the answer says so with index.storeNotIndexed=true, "
+            + "sweep.storesWithoutIndex naming it, coverageGaps no_index_frontier and degraded=true - only the recent "
+            + "window is covered, so use exhaustive=true with folder_id and/or after to read that store in full.")]
+        string? store_id = null,
+        [Description("The folder to search, by its folderId. " + FolderIdRule + " A folder ID names its store too, so "
+            + "store_id is not needed with it. Includes its subfolders unless include_subfolders=false. A local mail "
+            + "file's folder is found in the search index by its ID, so it searches even while Outlook is not running; "
+            + "an Exchange folder is looked up through Outlook, which is started when needed. Delegate/shared "
+            + "mailboxes are indexed WITHOUT their folder nesting, so a folder scope there matches by folder NAME: the "
+            + "search widens to the whole delegate mailbox when the subfolder set cannot be built, and can return mail "
+            + "from a second folder with the same name elsewhere in that mailbox - advice says so whenever it happens, "
+            + "and the scope block reports what was actually covered. Setting folder_id also aims the freshness sweep "
+            + "at that folder and its subfolders; without it the sweep covers Inbox, Sent Items, Deleted Items and "
+            + "Junk Email of the store(s) in scope - those four folders only, not their subfolders - so for brand-new "
+            + "mail filed anywhere else, pass folder_id. Branch on sweep.scopeShape rather than on the sweep.scope "
+            + "sentence: default_folders means exactly that shallow four-folder set, folder means the named folder "
+            + "plus its subtree, folder_only means the named folder alone.")] string? folder_id = null,
         [Description("Whether folder covers its subfolders. Default true, in every mode. Set false to search that "
             + "one folder only - also the cheap way to keep an exhaustive scan bounded.")]
         bool include_subfolders = true,
@@ -266,7 +267,7 @@ public static class OutlookTools
             + "alone, so a term living only inside an attachment is findable only once that mail is indexed.")]
         bool include_attachment_hits = true,
         [Description("Max hits (1-100, default 25). Keep small - iterate instead. truncated=true in the response "
-            + "means more matches exist beyond top: narrow with store/folder/from/after rather than raising it.")]
+            + "means more matches exist beyond top: narrow with store_id/folder_id/from/after rather than raising it.")]
         int top = 25,
         [Description("Snippet length per hit (0-1000, default 200; 0 = no snippets).")] int snippet_chars = 200,
         // The whole continuation contract lives on THIS string, deliberately. The tool
@@ -278,12 +279,12 @@ public static class OutlookTools
         // the client, and the payload (stopReason, position, nextToken, advice) is uncapped.
         [Description("Continue a previous exhaustive scan: pass the value of that result's exhaustive.nextToken. "
             + "It is opaque - never parse it or build one. Every OTHER argument must be repeated unchanged; a "
-            + "resume whose query, store, folder, dates or filters differ is REFUSED rather than silently answering "
+            + "resume whose query, store_id, folder_id, dates or filters differ is REFUSED rather than silently answering "
             + "a different question. top and snippet_chars may differ per page, and top counts PER PAGE - "
             + "exhaustive.itemsReturnedTotal is the running total across the chain. Each page hands you the next "
             + "token, so the one you just used stops working; keep the newest. Page until exhaustive.nextToken is "
             + "ABSENT, which is the only signal that the scan covered its scope - a short page is not one. If the "
-            + "token expires or this server restarts, nothing is lost: re-run the same search with folder and before "
+            + "token expires or this server restarts, nothing is lost: re-run the same search with folder_id and before "
             + "taken from the previous result's exhaustive.position instead.")]
         string? resume_token = null,
         CancellationToken cancellationToken = default)
@@ -296,8 +297,8 @@ public static class OutlookTools
                 SearchIn = SearchInValues.Parse(search_in),
                 Exhaustive = exhaustive,
                 ResumeToken = resume_token,
-                Store = store,
-                Folder = folder,
+                StoreId = store_id,
+                FolderId = folder_id,
                 IncludeSubfolders = include_subfolders,
                 From = from,
                 To = to,
@@ -335,11 +336,11 @@ public static class OutlookTools
     public static async Task<CallToolResult> Thread(
         [Description("ConversationId from a search hit or read result - the fast index path. Pass when you have it.")] string? conversation_id = null,
         [Description("Hit id (e.g. h12) or EntryID of any mail in the conversation - anchors the live conversation-graph walk. Pass it whenever you have one: without it the answer is index-only.")] string? id = null,
-        [Description("Store display name to scope the index lookup (faster). A name that does not resolve widens the lookup to the whole profile and reports scopeWidened:true.")] string? store = null,
+        [Description("storeId (from list_accounts, or the hit's own storeId) to scope the index lookup (faster). A store that cannot be looked up widens the lookup to the whole profile and reports scopeWidened:true; a value that is not a store ID - a name - is refused.")] string? store_id = null,
         [Description("Max thread members (default 50, max 200). It caps the live walk too, so raise it when live.coverageGaps reports member_cap.")] int top = 50,
         CancellationToken cancellationToken = default)
     {
-        return await GuardAsync(cancellationToken, () => ServerRuntime.Service.Thread(conversation_id, id, store, top));
+        return await GuardAsync(cancellationToken, () => ServerRuntime.Service.Thread(conversation_id, id, store_id, top));
     }
 
     [McpServerTool(Name = "read")]
@@ -386,27 +387,26 @@ public static class OutlookTools
 
     [McpServerTool(Name = "move_mail")]
     [Description("MOVE mail to another folder WITHIN ITS OWN account/store - refile into a project folder, or restore items "
-        + "from Deleted Items. Content-preserving, fully audited and REVERSIBLE: each result carries fromFolder plus "
-        + "oldEntryId/newEntryId, so any move can be undone by calling move_mail again with newEntryId and folder=fromFolder. "
-        + "Takes 1-50 ids (hit ids from search/thread, or EntryIDs); the target folder is a store-relative path (see "
-        + "list_folders). SAME-STORE ONLY: each item moves within the store it lives in - cross-store moves are rejected "
-        + "with a clear per-item error (run one call per store). Moving CHANGES an item's EntryID: use newEntryId afterwards; "
-        + "old hit ids/index rows go stale briefly (re-run search). Moving to Deleted Items or the Outbox is refused - this "
-        + "server cannot delete mail. Needs Outlook (starts it headless if needed); never opens windows."
+        + "from Deleted Items. Content-preserving, fully audited and REVERSIBLE: each result carries fromFolderId plus "
+        + "oldEntryId/newEntryId, so any move can be undone by calling move_mail again with newEntryId and "
+        + "folder_id=fromFolderId. Takes 1-50 ids (hit ids from search/thread, or EntryIDs) and the target folder's ID "
+        + "(folder_id, from find_folder or list_folders). It never creates a folder: make a missing one with "
+        + "create_folder first. SAME-STORE ONLY: each item moves within the store it lives in - an item in another "
+        + "store than the target folder is rejected with a clear per-item error. Moving CHANGES an item's EntryID: use "
+        + "newEntryId afterwards; old hit ids/index rows go stale briefly (re-run search). Moving to Deleted Items or the "
+        + "Outbox is refused - this server cannot delete mail. Needs Outlook (starts it headless if needed); never opens "
+        + "windows."
         + OutcomeHint)]
     public static async Task<CallToolResult> MoveMail(
         [Description("1-50 hit ids (e.g. h12) or full EntryID hex strings. Each item is moved within its own store.")]
         string[] ids,
-        [Description("Store-relative target folder path (from list_folders), e.g. 'Archive/2026' or 'Projects/Acme'.")]
-        string folder,
-        [Description("Create the target folder (including missing parents) when it does not exist. Default false.")]
-        bool create_folder = false,
-        [Description("Optional store display name (see list_accounts): when given, items living in a DIFFERENT store fail "
-            + "with a cross-store error instead of moving. Omit to move each item within its own store.")]
-        string? store = null,
+        [Description("The folder to move the mail into, by its folderId. " + FolderIdRule + " The folder must be in the "
+            + "items' own store and be a mail folder - not Deleted Items, the Outbox or the top of a store; it is checked "
+            + "before anything moves.")]
+        string folder_id,
         CancellationToken cancellationToken = default)
     {
-        return await GuardAsync(cancellationToken, () => ServerRuntime.Service.MoveMail(ids, folder, create_folder, store));
+        return await GuardAsync(cancellationToken, () => ServerRuntime.Service.MoveMail(ids, folder_id));
     }
 
     [McpServerTool(Name = "archive_mail")]
@@ -417,7 +417,7 @@ public static class OutlookTools
         + "files) gets one created by Outlook, and createdFolders reports it; Exchange and Microsoft 365 mailboxes always "
         + "have one. Takes 1-50 ids (hit ids or EntryIDs), which may span accounts - each goes "
         + "to its own account's Archive. Content-preserving, fully audited and REVERSIBLE like move_mail: results carry "
-        + "fromFolder + oldEntryId/newEntryId (undo = move_mail with newEntryId and folder=fromFolder). Archiving changes "
+        + "fromFolderId + oldEntryId/newEntryId (undo = move_mail with newEntryId and folder_id=fromFolderId). Archiving changes "
         + "EntryIDs; re-run search for fresh ids. Needs Outlook (starts it headless if needed); never opens windows."
         + OutcomeHint)]
     public static async Task<CallToolResult> ArchiveMail(
@@ -468,11 +468,12 @@ public static class OutlookTools
         return await GuardAsync(cancellationToken, () => ServerRuntime.Service.Health());
     }
 
-    // audit_log (Q93) reads back the log every write tool appends to. It is the ONE tool that
-    // carries MCP tool annotations, and they are the read-only mark for anything that classifies
-    // tools from metadata - a client, or the test client's classification of write-capable
-    // tools: ReadOnly (readOnlyHint), not Destructive, Idempotent, and closed-world. T1 pins all
-    // four on the attribute and T3 pins them on the wire. The description says the same in words.
+    // audit_log (Q93) reads back the log every write tool appends to. It is one of the two tools
+    // that carry MCP tool annotations - find_folder (Q136 (ii)) is the other, both new tools that
+    // change nothing - and they are the read-only mark for anything that classifies tools from
+    // metadata - a client, or the test client's classification of write-capable tools: ReadOnly
+    // (readOnlyHint), not Destructive, Idempotent, and closed-world. T1 pins all four on the
+    // attribute and T3 pins them on the wire. The description says the same in words.
     //
     // It runs MailService.ReadAuditLog, which is static: answering builds no COM gateway, starts
     // no COM host and works with Outlook closed or wedged. The read never blocks the server's own
@@ -532,26 +533,29 @@ public static class OutlookTools
     [McpServerTool(Name = "list_accounts")]
     [Description("List the profile's mail accounts and ALL stores (accounts, delegate/shared caches, archives) with flags: "
         + "isDelegate, onlineOnly/locallySearchable (server-only stores like Online Archives are invisible to local search), "
-        + "and inLocalIndex. Store display names are the 'store' argument for search/list_folders.")]
+        + "and inLocalIndex. Each store's storeId is what every store_id argument takes (search, thread, list_folders, "
+        + "find_folder, goto_folder, show_search_results), and its rootFolderId is the parent_id for a top-level "
+        + "create_folder. Display names are for reading only: two stores may share one.")]
     public static async Task<CallToolResult> ListAccounts(CancellationToken cancellationToken = default)
     {
         return await GuardAsync(cancellationToken, () => ServerRuntime.Service.ListAccounts());
     }
 
     [McpServerTool(Name = "list_folders")]
-    [Description("List the FULL folder tree(s) with item/unread counts. Folder paths feed the search tool's 'folder' argument. "
+    [Description("List the FULL folder tree(s) with item/unread counts. Every folder carries its folderId - what every "
+        + "folder_id argument takes (search, move_mail, goto_folder, show_search_results) and create_folder's parent_id; "
+        + "each store its storeId and rootFolderId. Paths are for reading only. To find one folder by name, use find_folder. "
         + "Traversal order is stable: stores sorted by display name, then depth-first with sibling folders sorted by name. "
         + "One call returns up to 1000 folders (virtually always the whole tree). truncated=true means this is NOT the "
         + "whole tree: continue with offset=nextOffset when that is present; when it is absent the folder WALK itself was "
-        + "cut short (walkCapReached / depthLimitReached) and no offset can reach the rest - narrow with 'store'. A store "
-        + "carrying nameUnreadable=true is listed under a placeholder label, not a name, and that label cannot be passed "
-        + "back as 'store'; read advice for what to do instead.")]
+        + "cut short (walkCapReached / depthLimitReached) and no offset can reach the rest - narrow with store_id. A store "
+        + "carrying nameUnreadable=true is listed under a placeholder label, not a name; its storeId still addresses it.")]
     public static async Task<CallToolResult> ListFolders(
-        [Description("Store display name (see list_accounts). Omit for all stores.")] string? store = null,
+        [Description("storeId of the one store to list (from list_accounts). Omit for all stores. " + StoreIdRule)] string? store_id = null,
         [Description("Folders to skip in the stable traversal (default 0). Use the previous result's nextOffset to continue a truncated listing.")] int offset = 0,
         CancellationToken cancellationToken = default)
     {
-        return await GuardAsync(cancellationToken, () => ServerRuntime.Service.ListFolders(store, offset));
+        return await GuardAsync(cancellationToken, () => ServerRuntime.Service.ListFolders(store_id, offset));
     }
 
     [McpServerTool(Name = "list_signatures")]
@@ -681,21 +685,23 @@ public static class OutlookTools
 
     [McpServerTool(Name = "goto_folder")]
     [Description("Navigate the user's Outlook window to a folder (like clicking it in the folder pane). "
-        + "Starts Outlook and opens a window if none is visible. Omit 'folder' for the store's Inbox."
+        + "Starts Outlook and opens a window if none is visible. Pass folder_id for a folder, or store_id alone for that "
+        + "store's Inbox."
         + OutcomeHint)]
     public static async Task<CallToolResult> GotoFolder(
-        [Description("Store display name (see list_accounts).")] string store,
-        [Description("Store-relative folder path (from list_folders), e.g. 'Inbox' or 'Projects/2026'. Omit for Inbox.")] string? folder = null,
+        [Description("The folder to show, by its folderId. " + FolderIdRule)] string? folder_id = null,
+        [Description("storeId (from list_accounts) whose Inbox to show when no folder_id is given. " + StoreIdRule)] string? store_id = null,
         CancellationToken cancellationToken = default)
     {
-        return await GuardAsync(cancellationToken, () => ServerRuntime.Service.GotoFolder(store, folder));
+        return await GuardAsync(cancellationToken, () => ServerRuntime.Service.GotoFolder(folder_id, store_id));
     }
 
     [McpServerTool(Name = "show_search_results")]
     [Description("Show the user a result list by driving Outlook's real search UI (the search box fills in and results appear on screen). "
         + "Use this to SHOW findings - for your own searching use the search tool instead. "
         + "query supports Outlook search syntax (free text plus e.g. from:name, hasattachments:yes). "
-        + "Optional store/folder navigate the window there first; scope controls the search breadth from that folder. "
+        + "Optional folder_id (or store_id, for that store's Inbox) navigates the window there first; scope controls the "
+        + "search breadth from that folder. "
         + "When Outlook's UI search runs server-assisted (local search tuning off), the result carries an 'advice' note that "
         + "the displayed list may diverge from agent search results - relay it to the user."
         + OutcomeHint)]
@@ -704,11 +710,11 @@ public static class OutlookTools
         [Description("current_folder (default - that folder only, no subfolders; the search tool's folder scope DOES "
             + "include them, so pass subfolders to show the same breadth) | subfolders (that folder and its "
             + "subfolders) | all_folders (current store) | all_outlook (all stores).")] string scope = "current_folder",
-        [Description("Store display name to navigate to first (see list_accounts).")] string? store = null,
-        [Description("Store-relative folder path to navigate to first. Requires store.")] string? folder = null,
+        [Description("The folder to navigate to first, by its folderId. " + FolderIdRule)] string? folder_id = null,
+        [Description("storeId (from list_accounts) whose Inbox to navigate to first when no folder_id is given. " + StoreIdRule)] string? store_id = null,
         CancellationToken cancellationToken = default)
     {
-        return await GuardAsync(cancellationToken, () => ServerRuntime.Service.ShowSearchResults(query, scope, store, folder));
+        return await GuardAsync(cancellationToken, () => ServerRuntime.Service.ShowSearchResults(query, scope, folder_id, store_id));
     }
 
     // The cap on unresolvedRecipients is named here WITHOUT its number, deliberately: an
@@ -995,7 +1001,7 @@ public static class OutlookTools
         + "session (restarting the server clears the list), and the contents of Deleted Items. It cannot empty "
         + "anything and it cannot delete permanently.\n\n"
         + "It is a SOFT delete - exactly like pressing Delete in Outlook: the draft moves to Deleted Items and the result "
-        + "carries newEntryId plus fromFolder, so it can be put back with move_mail. Anything it refuses comes back as a "
+        + "carries newEntryId plus fromFolderId, so it can be put back with move_mail. Anything it refuses comes back as a "
         + "clear error saying why - it never silently does nothing. A failure that is NOT a refusal is a different "
         + "case: if Outlook fails during the delete itself, whether the draft was deleted is UNKNOWN and the error "
         + "says so - look in Deleted Items rather than assuming nothing happened. A failure before the delete says the "

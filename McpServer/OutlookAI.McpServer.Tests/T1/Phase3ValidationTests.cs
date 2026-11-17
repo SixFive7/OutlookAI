@@ -40,7 +40,7 @@ public sealed class Phase3ValidationTests : IDisposable
         {
             Exhaustive = true,
             Query = "anything",
-            Store = "someone@example.com",
+            StoreId = TestFolders.StoreId("someone@example.com"),
         }));
         Assert.Contains("bound", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
@@ -52,8 +52,8 @@ public sealed class Phase3ValidationTests : IDisposable
         Assert.Throws<ArgumentException>(() => _service.Search(new SearchRequest
         {
             Exhaustive = true,
-            Store = "someone@example.com",
-            Folder = "Inbox",
+            StoreId = TestFolders.StoreId("someone@example.com"),
+            FolderId = TestFolders.FolderId("someone@example.com", "Inbox"),
             To = "someone",
         }));
     }
@@ -65,8 +65,8 @@ public sealed class Phase3ValidationTests : IDisposable
         Assert.Throws<ArgumentException>(() => _service.Search(new SearchRequest
         {
             Exhaustive = true,
-            Store = "someone@example.com",
-            Folder = "Inbox",
+            StoreId = TestFolders.StoreId("someone@example.com"),
+            FolderId = TestFolders.FolderId("someone@example.com", "Inbox"),
             AttachmentHitsOnly = true,
         }));
     }
@@ -103,9 +103,9 @@ public sealed class Phase3ValidationTests : IDisposable
     }
 
     [Fact]
-    public void ShowSearchResults_FolderWithoutStore_Throws()
+    public void ShowSearchResults_AFolderNameInsteadOfAnId_IsRefused()
     {
-        Assert.Throws<ArgumentException>(() => _service.ShowSearchResults("term", "current_folder", null, "Inbox"));
+        Assert.Throws<ArgumentException>(() => _service.ShowSearchResults("term", "current_folder", "Inbox", null));
     }
 
     [Fact]
@@ -115,9 +115,10 @@ public sealed class Phase3ValidationTests : IDisposable
     }
 
     [Fact]
-    public void GotoFolder_BlankStore_Throws()
+    public void GotoFolder_ABlankIdOrNoTarget_IsRefused()
     {
         Assert.Throws<ArgumentException>(() => _service.GotoFolder("  "));
+        Assert.Throws<ArgumentException>(() => _service.GotoFolder(null, null));
     }
 
     [Fact]

@@ -26,7 +26,8 @@ public sealed class HeadlessFirstDisciplineTests
 
     /// <summary>Tools that must NEVER cause an Outlook window, in any argument combination.</summary>
     private static readonly IReadOnlyList<string> HeadlessSafeTools =
-        ["search", "thread", "read", "save_attachment", "outlook_health", "list_accounts", "list_folders",
+        ["search", "thread", "read", "save_attachment", "outlook_health", "list_accounts", "list_folders", "find_folder",
+         "create_folder",
          "list_signatures", "manage_signature", "send", "move_mail", "archive_mail", "discard_draft",
          // Q93: a file read that never reaches Outlook at all, so it cannot open a window either.
          "audit_log"];

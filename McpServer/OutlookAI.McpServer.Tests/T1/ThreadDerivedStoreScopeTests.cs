@@ -78,7 +78,7 @@ public sealed class ThreadDerivedStoreScopeTests
         StandIn world = new StandIn();
         using MailService service = world.Service();
 
-        ThreadOutcome outcome = service.Thread(conversationId: null, id: world.SearchForAHitId(service), store: null);
+        ThreadOutcome outcome = service.Thread(conversationId: null, id: world.SearchForAHitId(service), storeId: null);
 
         // The statement itself, which is the only place the narrowing was ever real.
         Assert.DoesNotContain("SCOPE=", world.ConversationStatements.Single(), StringComparison.Ordinal);
@@ -103,7 +103,7 @@ public sealed class ThreadDerivedStoreScopeTests
         StandIn world = new StandIn();
         using MailService service = world.Service();
 
-        ThreadOutcome outcome = service.Thread(conversationId: null, id: world.SearchForAHitId(service), store: null);
+        ThreadOutcome outcome = service.Thread(conversationId: null, id: world.SearchForAHitId(service), storeId: null);
 
         Assert.True(outcome.ScopeStoreDerived);
         Assert.Null(outcome.ScopeStore);
@@ -121,7 +121,7 @@ public sealed class ThreadDerivedStoreScopeTests
         StandIn world = new StandIn();
         using MailService service = world.Service();
 
-        ThreadOutcome outcome = service.Thread(conversationId: null, id: world.SearchForAHitId(service), store: null);
+        ThreadOutcome outcome = service.Thread(conversationId: null, id: world.SearchForAHitId(service), storeId: null);
 
         Assert.Contains(outcome.Hits, h => string.Equals(h.Store, BobStore, StringComparison.OrdinalIgnoreCase));
     }
@@ -135,7 +135,7 @@ public sealed class ThreadDerivedStoreScopeTests
         StandIn world = new StandIn();
         using MailService service = world.Service();
 
-        ThreadOutcome outcome = service.Thread(conversationId: null, id: world.SearchForAHitId(service), store: null);
+        ThreadOutcome outcome = service.Thread(conversationId: null, id: world.SearchForAHitId(service), storeId: null);
 
         Assert.Contains(FreshMerge.ThreadGapUnwalkedStore, outcome.Live!.CoverageGaps!);
         Assert.DoesNotContain(FreshMerge.ThreadGapUnqueriedStore, outcome.Live.CoverageGaps!);
@@ -156,7 +156,7 @@ public sealed class ThreadDerivedStoreScopeTests
         StandIn world = new StandIn();
         using MailService service = world.Service();
 
-        ThreadOutcome outcome = service.Thread(conversationId: null, id: world.SearchForAHitId(service), store: null);
+        ThreadOutcome outcome = service.Thread(conversationId: null, id: world.SearchForAHitId(service), storeId: null);
 
         Assert.Equal(BobFrontier, outcome.Staleness!.NewestIndexedUtc);
     }
@@ -172,7 +172,7 @@ public sealed class ThreadDerivedStoreScopeTests
         using MailService service = world.Service();
 
         ThreadOutcome outcome = service.Thread(
-            conversationId: null, id: world.SearchForAHitId(service), store: AliceStore);
+            conversationId: null, id: world.SearchForAHitId(service), storeId: TestFolders.StoreId(AliceStore));
 
         Assert.Contains("SCOPE='" + AlicePrefix + "'", world.ConversationStatements.Single(), StringComparison.Ordinal);
         Assert.Equal(AliceStore, outcome.ScopeStore);
@@ -192,7 +192,7 @@ public sealed class ThreadDerivedStoreScopeTests
         using MailService service = world.Service();
 
         ThreadOutcome outcome = service.Thread(
-            conversationId: null, id: world.SearchForAHitId(service), store: AliceStore);
+            conversationId: null, id: world.SearchForAHitId(service), storeId: TestFolders.StoreId(AliceStore));
 
         Assert.Equal(AliceFrontier, outcome.Staleness!.NewestIndexedUtc);
     }
@@ -208,7 +208,7 @@ public sealed class ThreadDerivedStoreScopeTests
         StandIn world = new StandIn();
         using MailService service = world.Service();
 
-        ThreadOutcome outcome = service.Thread(conversationId: ConversationId, id: StandIn.AnchorEntryId, store: null);
+        ThreadOutcome outcome = service.Thread(conversationId: ConversationId, id: StandIn.AnchorEntryId, storeId: null);
 
         Assert.DoesNotContain("SCOPE=", world.ConversationStatements.Single(), StringComparison.Ordinal);
         Assert.Null(outcome.ScopeStore);
@@ -228,7 +228,7 @@ public sealed class ThreadDerivedStoreScopeTests
         using MailService service = world.Service();
 
         ThreadOutcome outcome = service.Thread(
-            conversationId: ConversationId, id: StandIn.AnchorEntryId, store: "Archive Old.pst");
+            conversationId: ConversationId, id: StandIn.AnchorEntryId, storeId: TestFolders.StoreId("Archive Old.pst"));
 
         Assert.True(outcome.ScopeWidened);
         Assert.Null(outcome.ScopeStore);
@@ -471,7 +471,10 @@ public sealed class ThreadDerivedStoreScopeTests
                         return "T1 stand-in profile";
 
                     case nameof(IOutlookSession.GetStoreDetails):
-                        return TwoMailboxes;
+                        return TestFolders.WithRoots(TwoMailboxes);
+
+                    case nameof(IOutlookSession.TryDescribeFolder):
+                        return TestFolders.Describe(args);
 
                     case nameof(IOutlookSession.SweepFoldersNewerThan):
                         return new ComSweepResult(

@@ -58,6 +58,7 @@ public sealed class McpStdioClient : IAsyncDisposable
         "outlook_health",
         "list_accounts",
         "list_folders",
+        "find_folder",
     };
 
     private readonly Process _server;

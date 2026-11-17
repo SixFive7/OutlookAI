@@ -35,11 +35,30 @@ namespace OutlookAI.Core.Services
         /// </summary>
         public bool IndexOnly { get; set; }
 
-        /// <summary>Store display name to scope to (as returned by list_accounts).</summary>
-        public string? Store { get; set; }
+        /// <summary>
+        /// The store to search, by its ID (<see cref="OutlookAI.Core.Mapi.OutlookIds"/>, Q133) - the
+        /// storeId list_accounts, list_folders and find_folder return. Never a display name.
+        /// </summary>
+        public string? StoreId { get; set; }
 
-        /// <summary>Store-relative folder path ('/'-separated) to scope to; requires <see cref="Store"/>.</summary>
-        public string? Folder { get; set; }
+        /// <summary>
+        /// The folder to search, by its ID (Q131) - the folderId list_folders and find_folder return.
+        /// It names its store too, so it needs no <see cref="StoreId"/>; one given with it must agree.
+        /// Never a name or a path (Q135).
+        /// </summary>
+        public string? FolderId { get; set; }
+
+        /// <summary>The scoped store's display name - set by the search from <see cref="StoreId"/> or <see cref="FolderId"/>, never by a caller.</summary>
+        internal string? ScopeStoreName { get; set; }
+
+        /// <summary>The scoped folder's names joined by '/', for reading only - set by the search from <see cref="FolderId"/>.</summary>
+        internal string? ScopeFolderPath { get; set; }
+
+        /// <summary>The scoped folder's entry id (hex) - set by the search from <see cref="FolderId"/>; what the sweep and the scan open.</summary>
+        internal string? ScopeFolderEntryId { get; set; }
+
+        /// <summary>True when Outlook reports another folder with the scoped folder's names path - set by the search.</summary>
+        internal bool ScopeFolderPathShared { get; set; }
 
         /// <summary>
         /// Whether <see cref="Folder"/> covers its SUBFOLDERS too. Default true (user
@@ -118,7 +137,7 @@ namespace OutlookAI.Core.Services
     /// <para>
     /// It is what makes the continuation survivable: the token lives in one server process,
     /// so a server restart loses it - and a caller holding this block continues by hand with
-    /// <c>folder</c> and <c>before</c>, which are parameters <c>search</c> already has. That
+    /// <c>folder_id</c> and <c>before</c>, which are parameters <c>search</c> already has. That
     /// is why the token itself can afford to be ten characters of context instead of a
     /// kilobyte of self-describing state.
     /// </para>
@@ -131,8 +150,14 @@ namespace OutlookAI.Core.Services
         /// <summary>Mail folders in scope, counted by this page's own ordered enumeration.</summary>
         public int FoldersTotal { get; set; }
 
-        /// <summary>Store-relative path of the folder the next page starts in.</summary>
+        /// <summary>Store-relative path of the folder the next page starts in - for reading only.</summary>
         public string? ResumeFolder { get; set; }
+
+        /// <summary>
+        /// The ID of that folder (Q131): a hand resume - after a restart lost the token - passes it as
+        /// folder_id, with before set from resumeCursorUtc.
+        /// </summary>
+        public string? ResumeFolderId { get; set; }
 
         /// <summary>True when the next page resumes PART WAY THROUGH that folder rather than at its top.</summary>
         public bool ResumeWithinFolder { get; set; }
@@ -189,8 +214,17 @@ namespace OutlookAI.Core.Services
         /// <summary>Store display name (delegate hits already routed to the delegate store).</summary>
         public string? Store { get; set; }
 
-        /// <summary>Folder path within the store ('/'-separated; leaf name for live hits).</summary>
+        /// <summary>The store's ID (Q133), read off the hit's own entry id; absent when that does not carry one.</summary>
+        public string? StoreId { get; set; }
+
+        /// <summary>Folder path within the store ('/'-separated; leaf name for live hits) - for reading only.</summary>
         public string? Folder { get; set; }
+
+        /// <summary>
+        /// The folder's ID (Q131) where the tier that found the hit knows it - live and exhaustive hits;
+        /// an index hit's folder is known by its names only, and read gives its folderId.
+        /// </summary>
+        public string? FolderId { get; set; }
 
         /// <summary>"inbox"/"sent" for live (gap-sweep) hits; absent for index hits.</summary>
         public string? FolderKind { get; set; }
@@ -972,8 +1006,32 @@ namespace OutlookAI.Core.Services
     /// </summary>
     public sealed class SearchScopeInfo
     {
-        /// <summary>The folder path as requested.</summary>
+        /// <summary>Display name of the store searched.</summary>
+        public string? Store { get; set; }
+
+        /// <summary>The store's ID (Q133).</summary>
+        public string? StoreId { get; set; }
+
+        /// <summary>The folder searched, as its names joined by '/' - for reading only.</summary>
         public string? Folder { get; set; }
+
+        /// <summary>The folder's ID as requested (Q131).</summary>
+        public string? FolderId { get; set; }
+
+        /// <summary>
+        /// How the folder was found in the search index: <c>index</c> - its own index row, by the node
+        /// id its ID carries (Q132, a local mail file, no Outlook needed) - or <c>outlook</c> - its
+        /// names, read from Outlook. Absent when no folder was named.
+        /// </summary>
+        public string? FolderFoundVia { get; set; }
+
+        /// <summary>
+        /// True - and present only then - when another folder of the store has the same path (a folder of the
+        /// same name beside it, or beside a folder above it): the search index files both under one path, so
+        /// the index tier's results can include the other folder's mail. advice says so; the freshness sweep
+        /// and exhaustive:true open this exact folder by its ID.
+        /// </summary>
+        public bool? PathShared { get; set; }
 
         /// <summary>Whether subfolders were requested.</summary>
         public bool IncludeSubfolders { get; set; }
@@ -1332,8 +1390,14 @@ namespace OutlookAI.Core.Services
         /// <summary>Store display name.</summary>
         public string? Store { get; set; }
 
-        /// <summary>Folder path as Outlook reports it.</summary>
+        /// <summary>The store's ID (Q133).</summary>
+        public string? StoreId { get; set; }
+
+        /// <summary>Folder path as Outlook reports it - for reading only.</summary>
         public string? Folder { get; set; }
+
+        /// <summary>The folder's ID (Q131): pass it as folder_id to search this folder or to move mail back into it.</summary>
+        public string? FolderId { get; set; }
 
         /// <summary>Subject.</summary>
         public string? Subject { get; set; }
@@ -1703,6 +1767,9 @@ namespace OutlookAI.Core.Services
     /// </summary>
     public sealed class StoreStaleness
     {
+        /// <summary>The store's ID (Q133); absent when Outlook did not list the store.</summary>
+        public string? StoreId { get; set; }
+
         /// <summary>Store display name.</summary>
         public string Store { get; set; } = string.Empty;
 
@@ -1781,11 +1848,26 @@ namespace OutlookAI.Core.Services
 
         /// <summary>Store new mail lands in.</summary>
         public string? DeliveryStore { get; set; }
+
+        /// <summary>The delivery store's ID (Q133) - what store_id takes.</summary>
+        public string? DeliveryStoreId { get; set; }
     }
 
     /// <summary>Store view for list_accounts (D22/D25 searchability flags).</summary>
     public sealed class StoreView
     {
+        /// <summary>
+        /// The store's ID (Q133) - what every store_id argument takes. Names are for reading only:
+        /// two stores may share one.
+        /// </summary>
+        public string? StoreId { get; set; }
+
+        /// <summary>
+        /// The ID of the store's root folder - the top of its folder tree: pass it as parent_id to
+        /// create_folder to make a top-level folder. Absent when Outlook did not read it.
+        /// </summary>
+        public string? RootFolderId { get; set; }
+
         /// <summary>Store display name (use as the search tool's store argument).</summary>
         public string DisplayName { get; set; } = string.Empty;
 
@@ -2183,6 +2265,9 @@ namespace OutlookAI.Core.Services
     /// <summary>Folder view for list_folders.</summary>
     public sealed class FolderView
     {
+        /// <summary>The folder's ID (Q131) - what every folder_id and parent_id argument takes.</summary>
+        public string? FolderId { get; set; }
+
         /// <summary>Store-relative path ('/'-separated) - use as the search tool's folder argument.</summary>
         public string Path { get; set; } = string.Empty;
 
@@ -2196,6 +2281,12 @@ namespace OutlookAI.Core.Services
     /// <summary>Folders of one store for list_folders.</summary>
     public sealed class StoreFoldersView
     {
+        /// <summary>The store's ID (Q133).</summary>
+        public string? StoreId { get; set; }
+
+        /// <summary>The ID of the store's root folder - parent_id for a top-level create_folder.</summary>
+        public string? RootFolderId { get; set; }
+
         /// <summary>Store display name.</summary>
         public string Store { get; set; } = string.Empty;
 
@@ -2272,13 +2363,6 @@ namespace OutlookAI.Core.Services
         /// </summary>
         public int? StoresUnnamed { get; set; }
 
-        /// <summary>
-        /// Stores a store-SCOPED listing had to leave out because they would not report a
-        /// name, so they could be neither matched against the requested store nor ruled out
-        /// of it. Null on an unscoped listing, where nothing has to be decided and such a
-        /// store is listed under its label instead.
-        /// </summary>
-        public int? StoresUnnamedExcluded { get; set; }
 
         /// <summary>
         /// What a caller has to know about this listing that the counters alone do not say -
@@ -2310,8 +2394,14 @@ namespace OutlookAI.Core.Services
         /// <summary>Store display name navigated to.</summary>
         public string Store { get; set; } = string.Empty;
 
-        /// <summary>Store-relative folder path requested (null = the store's Inbox/root).</summary>
+        /// <summary>The store's ID (Q133).</summary>
+        public string? StoreId { get; set; }
+
+        /// <summary>The folder now on screen, as its names joined by '/' - for reading only.</summary>
         public string? Folder { get; set; }
+
+        /// <summary>The ID of the folder now on screen (Q131).</summary>
+        public string? FolderId { get; set; }
 
         /// <summary>ActiveExplorer().CurrentFolder.FolderPath after navigation (\\Store\Folder\...).</summary>
         public string? ExplorerFolderPath { get; set; }
@@ -2685,8 +2775,14 @@ namespace OutlookAI.Core.Services
         /// <summary>Store the draft lived in.</summary>
         public string? Store { get; set; }
 
-        /// <summary>Folder it was discarded from - the undo address.</summary>
+        /// <summary>Folder it was discarded from - for reading only.</summary>
         public string? FromFolder { get; set; }
+
+        /// <summary>
+        /// ID of the folder it was discarded from (Q131) - the undo address: move_mail with newEntryId and
+        /// this as folder_id puts it back.
+        /// </summary>
+        public string? FromFolderId { get; set; }
 
         /// <summary>Deleted Items folder name it went to.</summary>
         public string? ToFolder { get; set; }
@@ -3149,11 +3245,23 @@ namespace OutlookAI.Core.Services
         /// <summary>Store the item lives in (moves are same-store).</summary>
         public string? Store { get; set; }
 
-        /// <summary>Store-relative path the item came FROM - the undo address.</summary>
+        /// <summary>The store's ID (Q133).</summary>
+        public string? StoreId { get; set; }
+
+        /// <summary>Store-relative path the item came FROM - for reading only.</summary>
         public string? FromFolder { get; set; }
 
-        /// <summary>Store-relative path the item is in now.</summary>
+        /// <summary>
+        /// ID of the folder the item came FROM (Q131) - the undo address: move_mail with newEntryId and
+        /// this as folder_id puts it back.
+        /// </summary>
+        public string? FromFolderId { get; set; }
+
+        /// <summary>Store-relative path the item is in now - for reading only.</summary>
         public string? ToFolder { get; set; }
+
+        /// <summary>ID of the folder the item is in now (Q131).</summary>
+        public string? ToFolderId { get; set; }
 
         /// <summary>EntryID before the move (stale after a successful move).</summary>
         public string? OldEntryId { get; set; }
@@ -3174,17 +3282,17 @@ namespace OutlookAI.Core.Services
         /// <summary>Number of items that failed (see each item's error).</summary>
         public int Failed { get; set; }
 
-        /// <summary>Echo of the store-relative target folder path.</summary>
+        /// <summary>The target folder, as its names joined by '/' - for reading only.</summary>
         public string TargetFolder { get; set; } = string.Empty;
 
-        /// <summary>
-        /// Store-relative paths of folders created for this call (create_folder=true), when
-        /// any - INCLUDING folders created by an item whose move then failed or was refused.
-        /// Folders are made before the target guard runs, so a refused move can leave one
-        /// behind; this used to be filled from successful moves alone and said nothing.
-        /// This server cannot delete folders, so an unwanted one has to be removed in Outlook.
-        /// </summary>
-        public IReadOnlyList<string>? CreatedFolders { get; set; }
+        /// <summary>The target folder's ID (Q131), as passed.</summary>
+        public string? TargetFolderId { get; set; }
+
+        /// <summary>Display name of the target folder's store - the store every item had to be in.</summary>
+        public string? TargetStore { get; set; }
+
+        /// <summary>The target folder's store's ID (Q133).</summary>
+        public string? TargetStoreId { get; set; }
 
         /// <summary>Per-item results, input order.</summary>
         public IReadOnlyList<MoveItemView> Items { get; set; } = Array.Empty<MoveItemView>();
@@ -3199,8 +3307,14 @@ namespace OutlookAI.Core.Services
         /// <summary>Store display name.</summary>
         public string Store { get; set; } = string.Empty;
 
+        /// <summary>The store's ID (Q133).</summary>
+        public string? StoreId { get; set; }
+
         /// <summary>Store-relative path of the designated Archive folder (localized name - e.g. Archive/Archiveren).</summary>
         public string Folder { get; set; } = string.Empty;
+
+        /// <summary>The Archive folder's ID (Q131).</summary>
+        public string? FolderId { get; set; }
 
         /// <summary>Resolution mechanism ("outlookDefaultFolder", "storeArchiveProperty", "inboxArchiveProperty", "inboxAdditionalRenEntryIdsEx" or "rootArchiveProperty").</summary>
         public string Via { get; set; } = string.Empty;

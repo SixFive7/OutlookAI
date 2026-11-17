@@ -311,7 +311,12 @@ namespace OutlookAI.Core.Mapi
                 return false;
             }
 
-            string url = folderScopeUrl!.Trim().TrimEnd('/');
+            // NOT trimmed at the end: a folder name may END with a space, and the index keeps it
+            // in the URL and in System.ItemFolderPathDisplay (measured on guest one, section 8
+            // item 30). Trimming it here built an equality no row can meet, so a folder search
+            // of such a folder with include_subfolders=false found nothing. A trailing '/' is
+            // always a separator - a '/' inside a name is spelled %2F.
+            string url = folderScopeUrl!.TrimStart().TrimEnd('/');
             int schemeEnd = url.IndexOf("://", StringComparison.Ordinal);
             if (schemeEnd <= 0 || !url.Substring(0, schemeEnd).StartsWith("mapi", StringComparison.OrdinalIgnoreCase))
             {

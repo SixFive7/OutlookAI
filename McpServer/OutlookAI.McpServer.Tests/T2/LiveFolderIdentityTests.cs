@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.InteropServices;
+using OutlookAI.Core.Com;
 using OutlookAI.Core.IndexSearch;
 using OutlookAI.Core.Mapi;
 using OutlookAI.Core.Services;
@@ -290,7 +291,7 @@ public sealed class LiveFolderIdentityTests
                     // End to end, with NO Outlook call: the folder id alone -> its store's index root (by the
                     // store UID its items' URLs carry) -> its own row (by System.ProviderItemID) -> the scope.
                     Stopwatch mapping = Stopwatch.StartNew();
-                    string? mapped = FolderScopeFromIndexOnly(client, roots, folder.EntryId, out string how);
+                    string? mapped = FolderScopeFromIndexOnly(client, folder.EntryId, out string how);
                     mapping.Stop();
                     int underMapped = mapped == null ? -1 : CountUnder(client, mapped);
                     _output.WriteLine(
@@ -345,7 +346,7 @@ public sealed class LiveFolderIdentityTests
                 {
                     string expected = rootUrl + "/0/" + string.Join("/", bigSegments.Select(MapiUrlSegment.Encode));
                     Stopwatch big = Stopwatch.StartNew();
-                    string? mapped = FolderScopeFromIndexOnly(client, roots, largest.EntryId, out string how);
+                    string? mapped = FolderScopeFromIndexOnly(client, largest.EntryId, out string how);
                     big.Stop();
                     _output.WriteLine(
                         "  largest folder '" + string.Join("/", bigSegments) + "' (" + largest.ItemCount + " items): id -> scope from the index alone "
@@ -434,7 +435,7 @@ public sealed class LiveFolderIdentityTests
             body: "Folder identity probe " + label + " (Q114).", display: false);
         Assert.False(string.IsNullOrEmpty(draft.EntryId));
         entryIds.Add(draft.EntryId);
-        MoveMailOutcome moved = Service.MoveMail(new[] { draft.EntryId }, path, createFolder: true);
+        MoveMailOutcome moved = Service.MoveMail(new[] { draft.EntryId }, LiveIds.EnsureTestFolder(Service, Hub, path));
         MoveItemView item = Assert.Single(moved.Items);
         Assert.True(item.Ok && item.NewEntryId != null, "move_mail did not file the probe into '" + path + "': " + item.Error);
         entryIds.Add(item.NewEntryId!);
@@ -558,6 +559,199 @@ public sealed class LiveFolderIdentityTests
         _output.WriteLine(_fixture.VerifyHubReconciled());
     }
 
+    // ------------------------------------------------------------------ 4. the folder ID the tools take (Q131-Q136)
+
+    [Fact]
+    [Trait("Requires", "MailAccount")]
+    public void AFolderId_IsFoundMadeAndMovedInto_ThroughTheTools_AndSurvivesARename()
+    {
+        // Every step through the PRODUCT's tools, as an agent takes them: find_folder finds nothing,
+        // create_folder makes a parent and inside it a folder whose name holds '/', find_folder finds that
+        // one by its name, move_mail files a tagged draft into it by its ID, search by the same ID finds the
+        // draft - and after the folder is renamed (tested helper) the same ID still opens it, still takes
+        // mail and is still searched.
+        LiveOutlookTestMailer.DeleteTestFolders(Hub);
+        string parentName = Prefix + "-Fid";
+        string childName = Prefix + "-Fid a/b";
+        string renamed = Prefix + "-Fid renamed";
+        List<string> entryIds = new();
+        try
+        {
+            string hubId = LiveIds.StoreId(Service, Hub);
+            Assert.DoesNotContain(Service.FindFolder(parentName, hubId).Candidates, c => c.Match == "exact");
+
+            CreateFolderOutcome parent = LiveIds.CreateTestFolder(Service, Hub, LiveIds.RootFolderId(Service, Hub), parentName);
+            CreateFolderOutcome child = LiveIds.CreateTestFolder(Service, Hub, parent.FolderId, childName);
+            Assert.Equal(childName, child.Name);
+            Assert.Equal(parentName + "/" + childName, child.Folder);
+            Assert.Equal(hubId, child.StoreId);
+            Assert.Equal(parent.FolderId, child.ParentId);
+            _output.WriteLine("create_folder: " + child.Folder + " -> " + child.FolderId + " (" + child.FolderId.Length + " characters)");
+            FolderCandidateView found = Assert.Single(Service.FindFolder(childName, hubId).Candidates, c => c.Match == "exact");
+            Assert.Equal(child.FolderId, found.FolderId);
+            Assert.Equal(child.Folder, found.Folder);
+
+            string subject = _fixture.TaggedSubject("folder id " + Marker);
+            DraftOutcome draft = Service.NewDraft(
+                LiveStoreWriteGuard.Writable(Hub, StoreWriteKind.Draft, "new_draft"), to: Hub, cc: null, subject: subject,
+                body: "Folder ID probe (Q131-Q136).", display: false);
+            entryIds.Add(draft.EntryId);
+            LiveStoreWriteGuard.Writable(Hub, StoreWriteKind.Move, "move_mail");
+            MoveItemView moved = Assert.Single(Service.MoveMail(new[] { draft.EntryId }, child.FolderId).Items);
+            Assert.True(moved.Ok, moved.Error);
+            entryIds.Add(moved.NewEntryId!);
+            Assert.Equal(child.FolderId, moved.ToFolderId);
+            Assert.Equal(child.Folder, moved.ToFolder);
+
+            SearchOutcome before = SearchFolder(child.FolderId, subject);
+            Assert.Contains(before.Hits, h => h.Subject == subject);
+            Assert.Equal(child.FolderId, before.Scope!.FolderId);
+            _output.WriteLine("search by folder_id before the rename: found via " + before.Scope.FolderFoundVia + ", folder '" + before.Scope.Folder + "'");
+
+            string childEntryId = DecodedEntryId(child.FolderId);
+            TestFolderChange change = LiveOutlookTestMailer.RenameTestFolder(Hub, childEntryId, renamed);
+            Assert.True(FolderEntryIdLayout.SameBytes(change.EntryIdAfter ?? childEntryId, childEntryId), "a rename changed the folder's id");
+            SearchOutcome after = SearchFolder(child.FolderId, subject);
+            Assert.Contains(after.Hits, h => h.Subject == subject);
+            FolderCandidateView afterRename = Assert.Single(Service.FindFolder(renamed, hubId).Candidates, c => c.Match == "exact");
+            Assert.Equal(child.FolderId, afterRename.FolderId);
+            _output.WriteLine("after the rename: the same ID found the mail via " + after.Scope!.FolderFoundVia
+                + " and find_folder shows it as '" + afterRename.Folder + "'");
+        }
+        finally
+        {
+            CleanUp(entryIds);
+        }
+
+        AssertHubClean();
+    }
+
+    [Fact]
+    [Trait("Requires", "SearchIndex")]
+    [Trait("Requires", "MailAccount")]
+    public void AFolderId_IsSearchedThroughTheIndexAlone_WithNoOutlookCall()
+    {
+        // Q132 (i), "searching one folder while Outlook is closed", proven with the product's own search and
+        // the machine's real index, while Outlook - for this one service - answers nothing: its gateway
+        // refuses every call. A local data file's folder is found by its own index row; an Exchange folder
+        // is refused, saying it needs Outlook (measured: the index keeps nothing its ID leads to).
+        LiveOutlookTestMailer.DeleteTestFolders(Hub);
+        List<string> entryIds = new();
+        try
+        {
+            CreateFolderOutcome folder = LiveIds.CreateTestFolder(Service, Hub, LiveIds.RootFolderId(Service, Hub), Prefix + "-FidIdx");
+            string subject = _fixture.TaggedSubject("folder id index " + Marker);
+            DraftOutcome draft = Service.NewDraft(
+                LiveStoreWriteGuard.Writable(Hub, StoreWriteKind.Draft, "new_draft"), to: Hub, cc: null, subject: subject,
+                body: "Folder ID index probe (Q132).", display: false);
+            entryIds.Add(draft.EntryId);
+            LiveStoreWriteGuard.Writable(Hub, StoreWriteKind.Move, "move_mail");
+            MoveItemView moved = Assert.Single(Service.MoveMail(new[] { draft.EntryId }, folder.FolderId).Items);
+            Assert.True(moved.Ok, moved.Error);
+            entryIds.Add(moved.NewEntryId!);
+
+            using MailService withoutOutlook = new MailService(new NoOutlookGateway(), null, IndexClientFactory.CreateAuto(out _));
+            SearchRequest request = new SearchRequest
+            {
+                Query = Marker,
+                FolderId = folder.FolderId,
+                IndexOnly = true,
+                Top = 10,
+                SnippetChars = 0,
+            };
+
+            if (folder.FolderId[0] != OutlookIds.PstFolderKind)
+            {
+                ArgumentException refused = Assert.Throws<ArgumentException>(() => withoutOutlook.Search(request));
+                Assert.Contains("needs Outlook", refused.Message, StringComparison.Ordinal);
+                _output.WriteLine("an Exchange folder without Outlook: refused - " + refused.Message);
+                return;
+            }
+
+            Stopwatch waited = Stopwatch.StartNew();
+            SearchOutcome? outcome = null;
+            while (waited.Elapsed.TotalSeconds < IndexWaitSeconds)
+            {
+                try
+                {
+                    outcome = withoutOutlook.Search(request);
+                    if (outcome.Hits.Any(h => h.Subject == subject))
+                    {
+                        break;
+                    }
+                }
+                catch (ArgumentException ex) when (ex.Message.Contains("no row for the folder itself", StringComparison.Ordinal))
+                {
+                    // The index has not filed the new folder yet.
+                }
+
+                Thread.Sleep(TimeSpan.FromSeconds(IndexPollSeconds));
+            }
+
+            Assert.True(outcome != null && outcome.Hits.Any(h => h.Subject == subject),
+                "the folder's mail was not found through the index alone within " + IndexWaitSeconds + " s");
+            Assert.Equal("index", outcome!.Scope!.FolderFoundVia);
+            Assert.Equal(Prefix + "-FidIdx", outcome.Scope.Folder);
+            _output.WriteLine("MEASURED: a folder search with no Outlook call found the mail after " + waited.Elapsed.TotalSeconds.ToString("0.0", CultureInfo.InvariantCulture)
+                + " s, through the folder's own index row (" + outcome.IndexElapsedMs + " ms in the index tier)");
+        }
+        finally
+        {
+            CleanUp(entryIds);
+        }
+
+        AssertHubClean();
+    }
+
+    /// <summary>A search of one folder by its ID, through the full product (index and freshness sweep).</summary>
+    private SearchOutcome SearchFolder(string folderId, string subject)
+    {
+        Service.ClearSweepCache();
+        return Service.Search(new SearchRequest
+        {
+            Query = Marker,
+            FolderId = folderId,
+            Top = 10,
+            SnippetChars = 0,
+        });
+    }
+
+    /// <summary>The entry id (hex) a folder ID carries.</summary>
+    private static string DecodedEntryId(string folderId)
+    {
+        Assert.True(OutlookIds.TryDecodeFolderId(folderId, "folder_id", out string hex, out string? problem), problem);
+        return hex;
+    }
+
+    /// <summary>An Outlook that answers nothing: every call throws, as when Outlook is not running.</summary>
+    private sealed class NoOutlookGateway : IComGateway
+    {
+        public event Action? OutlookGone
+        {
+            add { }
+            remove { }
+        }
+
+        public bool IsConnected => false;
+
+        public bool? QuitSinkActive => null;
+
+        public bool ProbeConnected() => false;
+
+        public T Run<T>(Func<IOutlookSession, T> operation) => throw new TimeoutException("Outlook is not running (test).");
+
+        public T Run<T>(Func<IOutlookSession, T> operation, ComSessionRecovery recovery) => throw new TimeoutException("Outlook is not running (test).");
+
+        public T Run<T>(Func<IOutlookSession, T> operation, int budgetMilliseconds, bool allowConnectFloor = false)
+            => throw new TimeoutException("Outlook is not running (test).");
+
+        public ComHostDiagnostics GetDiagnostics() => new ComHostDiagnostics("in-process", "stopped");
+
+        public void Dispose()
+        {
+        }
+    }
+
     // ------------------------------------------------------------------ helpers: the index
 
     private sealed record IndexRoot(string Url, uint? Hash);
@@ -672,56 +866,35 @@ public sealed class LiveFolderIdentityTests
     }
 
     /// <summary>
-    /// A PST folder id's index scope, found WITHOUT Outlook (Q115): the root whose item URLs carry the
-    /// id's store UID (bytes 4..19), then the one row under it whose <c>System.ProviderItemID</c> is the
-    /// id's node id. Null when the id is not a PST id or nothing matches - never a guess by name.
+    /// A PST folder id's index scope, found WITHOUT Outlook (Q115) - through the PRODUCT's own route since
+    /// Q132 (i) shipped it (<see cref="IndexSearchService.FindStoreRootsByProviderUid"/>, then
+    /// <see cref="IndexSearchService.FindRowUrlsByProviderItemId"/>), so this measurement times and checks
+    /// what a search does: the root whose item URLs carry the id's store UID (bytes 4..19), then the one
+    /// row under it whose <c>System.ProviderItemID</c> is the id's node id. Null when the id is not a PST
+    /// id or nothing single matches - never a guess by name.
     /// </summary>
-    private string? FolderScopeFromIndexOnly(IIndexClient client, List<IndexRoot> roots, string folderEntryIdHex, out string how)
+    private string? FolderScopeFromIndexOnly(IIndexClient client, string folderEntryIdHex, out string how)
     {
-        FolderEntryIdLayout? layout = FolderEntryIdLayout.Parse(folderEntryIdHex);
-        if (layout?.Kind != FolderEntryIdKind.Pst)
+        string? uid = OutlookIds.ProviderUidHexOf(folderEntryIdHex);
+        string? providerItemId = OutlookIds.PstProviderItemId(Convert.FromHexString(folderEntryIdHex));
+        if (uid == null || providerItemId == null)
         {
             how = "not a PST-format id";
             return null;
         }
 
-        // A byte copy of a PST that was never attached beside its original keeps the original's UID, and the
-        // index - one per Windows user, every profile's stores in it - may hold both: two roots with one UID
-        // are refused, never picked between.
-        List<string> matching = roots
-            .Select(r => r.Url.TrimEnd('/'))
-            .Where(u => string.Equals(StoreUidUnder(client, u), layout.ProviderUidHex, StringComparison.OrdinalIgnoreCase))
-            .ToList();
+        IndexSearchService index = new IndexSearchService(client);
+        IReadOnlyList<StoreScopeInfo> matching = index.FindStoreRootsByProviderUid(uid, StatementTimeoutSeconds);
         if (matching.Count != 1)
         {
             how = matching.Count + " index roots carry the id's store UID";
             return null;
         }
 
-        string sql = "SELECT TOP 5 System.ItemUrl FROM SystemIndex WHERE SCOPE='" + matching[0].Replace("'", "''", StringComparison.Ordinal)
-            + "/' AND System.ProviderItemID='" + layout.PstProviderItemId + "'";
-        List<string> urls = client.ExecuteRows(sql, 5, StatementTimeoutSeconds)
-            .Select(r => Text(r, "System.ItemUrl"))
-            .Where(u => u != null)
-            .Select(u => u!)
-            .ToList();
-        how = "the one root whose items carry the store UID, then " + urls.Count + " row(s) with System.ProviderItemID " + layout.PstProviderItemId;
+        IReadOnlyList<string> urls = index.FindRowUrlsByProviderItemId(matching[0].StorePrefix, providerItemId, StatementTimeoutSeconds);
+        how = "the product's route: the one root whose items carry the store UID, then " + urls.Count
+            + " row(s) with System.ProviderItemID " + providerItemId;
         return urls.Count == 1 ? urls[0] : null;
-    }
-
-    /// <summary>The store UID (bytes 4..19 of an item id) the first item URL under a root carries, or null.</summary>
-    private string? StoreUidUnder(IIndexClient client, string rootUrl)
-    {
-        string sql = "SELECT TOP 200 System.ItemUrl FROM SystemIndex WHERE SCOPE='" + rootUrl.Replace("'", "''", StringComparison.Ordinal) + "/'";
-        foreach (IReadOnlyDictionary<string, object?> row in client.ExecuteRows(sql, 200, StatementTimeoutSeconds))
-        {
-            if (MapiItemUrl.TryParse(Text(row, "System.ItemUrl"), out MapiItemUrl? parsed) && parsed!.TryDecodeEntryId(out DecodedEntryId? decoded))
-            {
-                return decoded!.StoreUidHex;
-            }
-        }
-
-        return null;
     }
 
     /// <summary>How many rows lie under a scope (TOP-bounded).</summary>

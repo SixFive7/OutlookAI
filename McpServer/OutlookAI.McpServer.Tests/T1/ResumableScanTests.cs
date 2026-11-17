@@ -201,7 +201,11 @@ public sealed class ResumableScanTests
 
         Assert.NotNull(live);
         string message = MailService.DescribeResumeRefusal(ScanTokenDecision.Superseded, live, null);
-        Assert.Contains("folder:'Archive'", message, StringComparison.Ordinal);
+
+        // The way back by hand names the folder by its ID (Q131-Q136) - a path is refused as input -
+        // with its path beside it for reading.
+        Assert.Contains("folder_id:'" + TestFolders.FolderId(Store, "Archive") + "'", message, StringComparison.Ordinal);
+        Assert.Contains("(the folder 'Archive')", message, StringComparison.Ordinal);
         Assert.Contains("before:'2026-06-11T08:14:22Z'", message, StringComparison.Ordinal);
         Assert.Contains("75 item(s)", message, StringComparison.Ordinal);
     }
@@ -220,8 +224,8 @@ public sealed class ResumableScanTests
         {
             ("terms", Request(), new[] { "different" }),
             ("searchIn", With(r => r.SearchIn = SearchIn.SubjectOnly), new[] { "test" }),
-            ("store", With(r => r.Store = "bob@example.com"), new[] { "test" }),
-            ("folder", With(r => r.Folder = "Archive"), new[] { "test" }),
+            ("store", With(r => r.StoreId = TestFolders.StoreId("bob@example.com")), new[] { "test" }),
+            ("folder", With(r => r.FolderId = TestFolders.FolderId(Store, "Archive")), new[] { "test" }),
             ("includeSubfolders", With(r => r.IncludeSubfolders = false), new[] { "test" }),
             ("after", With(r => r.AfterUtc = Frontier.AddDays(-30)), new[] { "test" }),
             ("before", With(r => r.BeforeUtc = Frontier), new[] { "test" }),
@@ -255,7 +259,7 @@ public sealed class ResumableScanTests
         // unprotected.
         ExhaustiveScanCursors store = new ExhaustiveScanCursors();
         string original = ExhaustiveScanCursors.FingerprintOf(Request(), new[] { "test" });
-        string different = ExhaustiveScanCursors.FingerprintOf(With(r => r.Folder = "Archive"), new[] { "test" });
+        string different = ExhaustiveScanCursors.FingerprintOf(With(r => r.FolderId = TestFolders.FolderId(Store, "Archive")), new[] { "test" });
         string token = store.Issue(null, original, Position(), 7, out _);
 
         Assert.Equal(ScanTokenDecision.Valid, store.Resolve(token, original, out _));
@@ -693,11 +697,11 @@ public sealed class ResumableScanTests
         return new SearchRequest
         {
             Query = "test",
-            Store = Store,
+            StoreId = TestFolders.StoreId(Store),
 
             // An exhaustive scan refuses to run unbounded, so the request carries the bound
             // its own validation demands.
-            Folder = "Inbox",
+            FolderId = TestFolders.FolderId(Store, "Inbox"),
             Exhaustive = true,
             Top = 25,
             SnippetChars = 0,
@@ -738,7 +742,8 @@ public sealed class ResumableScanTests
             folder,
             resumeWithinFolder: true,
             resumeCursorUtc: new DateTime(2026, 6, 11, 8, 14, 22, DateTimeKind.Utc),
-            resumeTier: "date");
+            resumeTier: "date",
+            resumeFolderEntryId: TestFolders.FolderEntryId(Store, folder));
     }
 
     private static ComExhaustiveResult StoppedScan(string stopReason, ComScanPosition? position)
@@ -951,7 +956,10 @@ public sealed class ResumableScanTests
                     return "T1 stand-in profile";
 
                 case nameof(IOutlookSession.GetStoreDetails):
-                    return _stores;
+                    return TestFolders.WithRoots(_stores);
+
+                case nameof(IOutlookSession.TryDescribeFolder):
+                    return TestFolders.Describe(args);
 
                 // Argument 3 is onlyStoreDisplayName; see IOutlookSession.SweepFoldersNewerThan.
                 case nameof(IOutlookSession.SweepFoldersNewerThan):

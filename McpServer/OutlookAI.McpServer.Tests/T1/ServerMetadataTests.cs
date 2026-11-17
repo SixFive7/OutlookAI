@@ -18,7 +18,8 @@ public sealed class ServerMetadataTests
     /// <para>
     /// 480, raised from 400 on 2026-11-17 for one sentence: the signature rule (Q157 (a)), which the
     /// maintainer asked to be spelled out in the server instructions as well as on the tools - "make
-    /// sure the agent understands from the mcp operation instructions". It is 452 with it.
+    /// sure the agent understands from the mcp operation instructions". It was 452 with it; 473 since the
+    /// sentence on IDs (Q131-Q136) joined it the same day, room made by shortening the rest.
     /// </para>
     /// </summary>
     [Fact]
@@ -44,6 +45,9 @@ public sealed class ServerMetadataTests
 
                      // Q157 (a): the signature rule - default, a name, or "none" - and where names come from.
                      "signature", "list_signatures", "\"none\"",
+
+                     // Q131-Q136: folders and stores by ID, and the tools that give the IDs.
+                     "by ID", "find_folder", "list_accounts",
                  })
         {
             Assert.Contains(keyword, text, StringComparison.Ordinal);

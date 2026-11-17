@@ -182,7 +182,7 @@ public sealed class ThreadUnindexedStoreTests
         // freshness "live" with degraded absent and no field naming the data file.
         using MailService service = Service(OnlyAliceIndexed());
 
-        ThreadOutcome outcome = service.Thread(conversationId: null, id: AnchorId, store: null);
+        ThreadOutcome outcome = service.Thread(conversationId: null, id: AnchorId, storeId: null);
 
         Assert.True(outcome.Live!.Performed);
         Assert.Equal(new[] { PstStore }, outcome.Live.StoresWithoutIndex);
@@ -202,7 +202,7 @@ public sealed class ThreadUnindexedStoreTests
         // the index, so nothing is outside both tiers and the walk answers live.
         using MailService service = Service(EverythingIndexed());
 
-        ThreadOutcome outcome = service.Thread(conversationId: null, id: AnchorId, store: null);
+        ThreadOutcome outcome = service.Thread(conversationId: null, id: AnchorId, storeId: null);
 
         Assert.Null(outcome.Live!.StoresWithoutIndex);
         Assert.Null(outcome.Live.CoverageGaps);
@@ -219,7 +219,7 @@ public sealed class ThreadUnindexedStoreTests
         using MailService service = Service(
             NothingIndexed(), new[] { new ComStoreDetail(PstStore, "store-pst", 3, null) }, walkedStore: PstStore);
 
-        ThreadOutcome outcome = service.Thread(conversationId: null, id: AnchorId, store: null);
+        ThreadOutcome outcome = service.Thread(conversationId: null, id: AnchorId, storeId: null);
 
         Assert.Null(outcome.Live!.StoresWithoutIndex);
         Assert.Equal(FreshMerge.FreshnessLive, outcome.Freshness);
@@ -235,7 +235,7 @@ public sealed class ThreadUnindexedStoreTests
         // StoresMissingFromIndex, which is why one fixture covers both.
         using MailService service = Service(OnlyAliceIndexed(), profileStores: Array.Empty<ComStoreDetail>());
 
-        ThreadOutcome outcome = service.Thread(conversationId: null, id: AnchorId, store: null);
+        ThreadOutcome outcome = service.Thread(conversationId: null, id: AnchorId, storeId: null);
 
         Assert.Null(outcome.Live!.StoresWithoutIndex);
         Assert.Equal(FreshMerge.FreshnessLive, outcome.Freshness);
@@ -253,7 +253,7 @@ public sealed class ThreadUnindexedStoreTests
 
         using MailService service = Service(OnlyAliceIndexed(), stores);
 
-        ThreadOutcome outcome = service.Thread(conversationId: null, id: AnchorId, store: null);
+        ThreadOutcome outcome = service.Thread(conversationId: null, id: AnchorId, storeId: null);
 
         Assert.Equal(MailService.UnindexedStoreListCap, outcome.Live!.StoresWithoutIndex!.Count);
         Assert.True(outcome.Live.StoresWithoutIndexTruncated);
@@ -435,7 +435,10 @@ public sealed class ThreadUnindexedStoreTests
                     return "T1 stand-in profile";
 
                 case nameof(IOutlookSession.GetStoreDetails):
-                    return _stores;
+                    return TestFolders.WithRoots(_stores);
+
+                case nameof(IOutlookSession.TryDescribeFolder):
+                    return TestFolders.Describe(args);
 
                 case nameof(IOutlookSession.TryGetConversationItems):
                     return Members();

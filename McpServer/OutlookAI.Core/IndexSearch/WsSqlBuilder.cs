@@ -398,6 +398,50 @@ namespace OutlookAI.Core.IndexSearch
             return "SELECT System.ItemUrl FROM SystemIndex WHERE DIRECTORY='" + ValidateScope(userRoot) + "'";
         }
 
+        /// <summary>
+        /// Statement sampling up to <paramref name="top"/> row URLs under a scope, unordered - how the
+        /// folder-ID route reads which store UID an index store's items carry (Q132 (i)).
+        /// </summary>
+        public static string BuildScopeUrlSample(string scope, int top)
+        {
+            if (top < 1)
+            {
+                throw new ArgumentOutOfRangeException(nameof(top));
+            }
+
+            return "SELECT TOP " + top.ToString(CultureInfo.InvariantCulture) + " System.ItemUrl FROM SystemIndex WHERE SCOPE='"
+                + ValidateScope(scope) + "'";
+        }
+
+        /// <summary>
+        /// Statement finding the rows under a scope whose <c>System.ProviderItemID</c> is
+        /// <paramref name="providerItemId"/> - <c>N</c> and a node id in ten decimal digits, the only
+        /// shape accepted (Q132 (i): a PST folder's own row, by the node id its ID carries).
+        /// </summary>
+        public static string BuildProviderItemIdLookup(string scope, string providerItemId, int top)
+        {
+            if (providerItemId == null || providerItemId.Length != 11 || providerItemId[0] != 'N')
+            {
+                throw new ArgumentException("A provider item id is N and ten decimal digits.", nameof(providerItemId));
+            }
+
+            for (int i = 1; i < providerItemId.Length; i++)
+            {
+                if (providerItemId[i] < '0' || providerItemId[i] > '9')
+                {
+                    throw new ArgumentException("A provider item id is N and ten decimal digits.", nameof(providerItemId));
+                }
+            }
+
+            if (top < 1)
+            {
+                throw new ArgumentOutOfRangeException(nameof(top));
+            }
+
+            return "SELECT TOP " + top.ToString(CultureInfo.InvariantCulture) + " System.ItemUrl FROM SystemIndex WHERE SCOPE='"
+                + ValidateScope(scope) + "' AND System.ProviderItemID='" + providerItemId + "'";
+        }
+
         /// <summary>Statement probing whether any item exists under a scope (TOP 1, URL only).</summary>
         public static string BuildScopeExistenceProbe(string scope)
         {
@@ -507,12 +551,14 @@ namespace OutlookAI.Core.IndexSearch
                 throw new ArgumentException("Folder path must not be null.", nameof(folderPath));
             }
 
-            string trimmed = folderPath.Trim();
-            if (trimmed.Length == 0)
+            if (folderPath.Trim().Length == 0)
             {
                 throw new ArgumentException("Folder path must not be blank.", nameof(folderPath));
             }
 
+            // Leading whitespace only: the value ENDS with a folder name, and a name may end with a
+            // space that the index keeps (section 8 item 30) - trimming it matched no row at all.
+            string trimmed = folderPath.TrimStart();
             if (trimmed[0] != '/')
             {
                 throw new ArgumentException(
@@ -591,11 +637,14 @@ namespace OutlookAI.Core.IndexSearch
         /// </summary>
         private static string ValidateScope(string scope)
         {
-            string trimmed = scope.Trim();
-            if (trimmed.Length == 0)
+            if (scope.Trim().Length == 0)
             {
                 throw new ArgumentException("Scope must not be empty.", nameof(scope));
             }
+
+            // Leading whitespace only, for the same reason as ValidateFolderPath: a folder scope
+            // ends with a folder's name, which may end with a space (section 8 item 30).
+            string trimmed = scope.TrimStart();
 
             int schemeEnd = trimmed.IndexOf("://", StringComparison.Ordinal);
             if (schemeEnd <= 0 || !trimmed.Substring(0, schemeEnd).StartsWith("mapi", StringComparison.OrdinalIgnoreCase))

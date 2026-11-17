@@ -33,8 +33,8 @@ public sealed record McpToolClassification(McpToolEffect Effect, string Why);
 /// <para>
 /// <b>Why a list and not the tools' own metadata.</b> The decision asked for the write-capable set
 /// to be derived from the tools' read-only hints if they carried any. They do not, with one
-/// exception: only <c>audit_log</c> (Q93) sets <c>ReadOnly</c>/<c>Destructive</c> in
-/// <c>Tools/OutlookTools.cs</c>, so the wire carries no <c>readOnlyHint</c> for the rest. Adding them is a change
+/// two exceptions: only <c>audit_log</c> (Q93) and <c>find_folder</c> (Q136 (ii)), both added read-only, set
+/// <c>ReadOnly</c>/<c>Destructive</c> in <c>Tools/</c>, so the wire carries no <c>readOnlyHint</c> for the rest. Adding them is a change
 /// to what every MCP client of the product sees, which is not this change's to make (raised as a
 /// question in the Q74 report). So: one explicit list, here, and
 /// <c>T1.McpToolWriteClassificationTests</c> fails the build until it names EVERY tool the server
@@ -70,6 +70,8 @@ public static class McpToolWriteClassification
                 "reads the profile's accounts and stores"),
             ["list_folders"] = new(McpToolEffect.ReadOnly,
                 "walks a folder tree by reading it (a read-only lookup never creates a folder since Q84)"),
+            ["find_folder"] = new(McpToolEffect.ReadOnly,
+                "walks folder trees by reading them and returns candidates; it never acts (Q136 (ii))"),
             ["list_signatures"] = new(McpToolEffect.ReadOnly,
                 "reads the signature directory and the profile's signature registry values"),
             ["outlook_health"] = new(McpToolEffect.ReadOnly,
@@ -80,7 +82,9 @@ public static class McpToolWriteClassification
             ["save_attachment"] = new(McpToolEffect.Writes,
                 "writes the attachment to a file on disk"),
             ["move_mail"] = new(McpToolEffect.Writes,
-                "moves items between folders, and can create the target folder"),
+                "moves items between folders (it creates none since Q134 (i))"),
+            ["create_folder"] = new(McpToolEffect.Writes,
+                "creates a mail folder (Q134 (i))"),
             ["archive_mail"] = new(McpToolEffect.Writes,
                 "moves items to the Archive folder, creating it if it is missing"),
             ["manage_signature"] = new(McpToolEffect.Writes,

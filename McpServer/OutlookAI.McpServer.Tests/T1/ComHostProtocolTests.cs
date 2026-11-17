@@ -639,8 +639,7 @@ public sealed class ComHostProtocolTests
             new[] { new ComFolderInfo("alice@example.com", "Inbox", "Inbox", 12, 3, 0) },
             walkCapReached: true,
             depthLimitReached: true,
-            storesUnnamed: 2,
-            storesUnnamedExcluded: 1);
+            storesUnnamed: 2);
 
         string json = JsonSerializer.Serialize(original, ComHostProtocol.Json);
         ComFolderTree? read = JsonSerializer.Deserialize<ComFolderTree>(json, ComHostProtocol.Json);
@@ -650,7 +649,6 @@ public sealed class ComHostProtocolTests
         Assert.True(read.WalkCapReached);
         Assert.True(read.DepthLimitReached);
         Assert.Equal(2, read.StoresUnnamed);
-        Assert.Equal(1, read.StoresUnnamedExcluded);
     }
 
     [Fact]

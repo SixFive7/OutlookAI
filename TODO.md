@@ -1986,28 +1986,42 @@
   store hash, input `profileMappingSignature`, so a root the hash did not tie is not this profile's own
   cached Exchange store. Delegate roots stay `delegateFolder`; a delegate's row is not measured yet.
 
-- [ ] **Let a folder whose name holds `/` be named in a `folder` argument (Q99 folder finding,
-  2026-10-03).** Outlook accepts `/` in a folder name and the index spells it `%2F`, so the folder is
-  searchable - but every tool's `folder` argument is a `/`-separated path, so `Parent/a/b` means three
-  folders and the one called `a/b` cannot be named. Today it is reached through its parent
-  (`include_subfolders`, the default), its hits report `Parent/a/b` and open, and `list_folders` lists
-  it as `Parent/a/b` - a path that reads as nesting and, passed back, finds nothing (the zero-row guard
-  then says so). Measured: `Docs/live-tier-on-the-vm.md` section 8 item 26. Directions: (a) leave it,
-  documented (`McpServer/README.md` fact 17); (b) an escape inside a segment (`\/`, or `%2F` itself),
-  parsed by `search`, `move_mail` and the exhaustive scan and written by `list_folders` - one parser
-  and one renderer; (c) a segment-array argument beside `folder`; (d) when a path does not resolve,
-  retry with adjacent segments joined by `/`. **(a) is in place, decided on the maintainer's behalf
-  2026-10-03** - it changes no tool's contract overnight, and the parent route works. **Recommended
-  next: (b)**, which is what keeps this item open; undo (a) by doing it.
+- [ ] **Measure `/ \ * ?` in an ATTACHMENT's file name in an `/at=` URL (Q99 follow-up, 2026-10-03).**
+  Measured: the index does not encode `%` there (`OutlookAI 50% off.txt`, `OutlookAI %2A look-alike.txt`
+  appear as they are - `Docs/live-tier-on-the-vm.md` section 8 item 29), so the product decodes nothing.
+  The other four cannot be measured on a guest as it stands: no route the object model leaves open puts
+  them into a file name (no file on disk can carry one, Outlook refuses a PropertyAccessor write of
+  `PR_ATTACH_LONG_FILENAME`, the URL carries the file name and never the display name, and an embedded
+  item's file name is its subject with exactly those four removed). Only mail from another system can
+  carry them. If the index writes such a `/` raw, `MapiItemUrl.TryParse` takes the attachment suffix
+  as the LAST `/`-separated segment, so it would misread that row - latent, unmeasured. Directions:
+  (1) leave it - no route, and probably rare; (2) make the parser find `/at=` after the item segment
+  whatever the name holds, pinned in T1 with a fabricated URL; (3) a tested route that submits raw MIME
+  carrying such a file name to a guest's mail sink, so the index's spelling can be measured.
+  Recommended: (3), then (2) if `/` comes back raw - a parser change for a spelling nobody has seen
+  would be a guess.
 
-- [ ] **Measure a STORE name holding `% / \ * ?` in a display path (Q99 folder finding).** The index
-  writes FOLDER names into `System.ItemFolderPathDisplay` and `System.ItemPathDisplay` as names, not
-  URL spellings (section 8 item 26), and the product now derives a non-recursive folder search's
-  display path the same way for the STORE part too (`MapiItemUrl.TryBuildFolderPathDisplay` decodes
-  it). That half is inferred: no guest store has one of the five in its name since the Q99 store
-  went with its checkpoint. The next time a PST named like `q99 50% off*?x` is attached (item 24's
-  route), read one item row's `System.ItemFolderPathDisplay` and run a folder search in it with
-  `include_subfolders: false`; if the store part is the URL spelling, stop decoding it there.
+- [ ] **Decide what an UNSCOPED search does with the stale copy of a rebuilt .ost (measured by stream A,
+  2026-11-17).** After an Exchange offline file is rebuilt, Windows Search keeps the old copy of the
+  mailbox as a second index store of the same name and folder paths (`<smtp>($9b7b502)` beside the live
+  `<smtp>($b37770e)` on `OutlookAI-Exchange`). A search SCOPED to the mailbox is safe since Q131-Q136: it
+  is tied by hash, or refused when only the name could place it (`MailService.DescribeSeveralIndexStoresNamed`).
+  An UNSCOPED search still reads every index store, so it can return the old copy's rows - mail moved or
+  deleted since, or a second copy of mail that is still there - and nothing says so; Q113 (a) excludes only
+  stores two of THIS profile's stores share. Directions: (a) exclude, from an unscoped search, an index store
+  whose name is a profile store's when another root of that name is tied to it by hash (the stale copy
+  is then the untied one), and say so in advice; (b) report it in `outlook_health` and in the search's
+  advice without excluding it; (c) leave it - the user rebuilds the index. Recommended: (a), because the
+  tied root is measured evidence of which copy is live, and (b) for the case where neither is tied.
+
+- [ ] **Make the index-hit locator take a folder's ID instead of its path where two folders share one
+  (stream A's finding, 2026-11-17).** Two folders of one name can sit side by side - the Exchange guest has
+  two top-level `Conversation Action Settings` - and the index keeps one path for both. `HitLocator` opens
+  an index hit by its entry id when the URL carries one, and falls back to walking the hit's folder PATH
+  (`TryResolveByPath`, `Folders[name]`), which reaches the first of the two. `find_folder` and a folder-ID
+  search already tell the two apart (`scope.pathShared`). Directions: (a) on the path fallback, try every
+  folder at that path, not the first; (b) refuse the fallback when Outlook reports a namesake on the path;
+  (c) leave it - the entry-id route covers ordinary mail. Recommended: (a), the one that finds the item.
 
 - [ ] **Put a release candidate's MCP server in front of one session on the workstation, without installing it.**
   The manual pre-release checks (`Docs/release-manual-checks.md`, Q74 D2) exercise the Exchange-only

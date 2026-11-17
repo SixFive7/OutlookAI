@@ -77,11 +77,12 @@ public sealed class FolderWalkReportingTests
     }
 
     [Fact]
-    public void TheLabel_IsAdvertisedAsUnusableAsAScope()
+    public void TheLabel_IsAdvertisedAsOnlyForReading_AndTheStoreIdAsTheAddress()
     {
-        // Putting the label in the payload creates exactly one wrong turn - an agent reads it
-        // as a store name and passes it back - so the answer that prints it also says it
-        // cannot be passed back, and why.
+        // Putting the label in the payload creates exactly one wrong turn - an agent reads it as a
+        // store name and passes it back. Since Q133 a store is addressed by its storeId, which a
+        // store without a name has like any other, so the answer that prints the label says the
+        // label is only for reading and the storeId is what to pass.
         using MailService service = Service(Tree(new[] { Folder(Unnamed, "Inbox") }, storesUnnamed: 1));
 
         FoldersOutcome outcome = service.ListFolders();
@@ -89,63 +90,36 @@ public sealed class FolderWalkReportingTests
         Assert.Contains(
             outcome.Advice!,
             a => a.Contains("would not report a display name", StringComparison.Ordinal)
-                && a.Contains("cannot be passed back as 'store'", StringComparison.Ordinal));
+                && a.Contains("storeId addresses it", StringComparison.Ordinal)
+                && a.Contains("only something to read", StringComparison.Ordinal));
     }
 
     [Fact]
-    public void PassingTheLabelBackAsAScope_IsRefusedByWhatItIs_NotAsATypo()
+    public void AStoreIdNoStoreHas_IsRefused_NamingEveryStoreWithItsId_EvenOneWithoutAName()
     {
-        // The generic refusal would send the caller hunting for a misspelling. There is no
-        // misspelling: a store scope is matched against the display name, and the display
-        // name is precisely what could not be read.
-        string? refusal = MailService.DescribeUnresolvedFolderStore(Unnamed, new[] { NamedStore });
+        // Gaps G1 and G2 were about names: a typo answered as an empty tree, and a store that would
+        // not say its name could be neither matched nor ruled out. Stores are addressed by ID now
+        // (Q133), so an unknown ID is simply refused - and the unnamed store is listed with its own ID.
+        using MailService service = Service(Tree(new[] { Folder(NamedStore, "Inbox") }));
 
-        Assert.NotNull(refusal);
-        Assert.Contains("is a placeholder", refusal!, StringComparison.Ordinal);
-        Assert.DoesNotContain("was not found in Outlook", refusal!, StringComparison.Ordinal);
+        ArgumentException refused = Assert.Throws<ArgumentException>(() => service.ListFolders(TestFolders.StoreId("typo")));
+
+        Assert.Contains("No store in this Outlook profile has the ID", refused.Message, StringComparison.Ordinal);
+        Assert.Contains("'" + NamedStore + "' (" + TestFolders.StoreId(NamedStore) + ")", refused.Message, StringComparison.Ordinal);
+        Assert.Contains("(" + TestFolders.StoreId(Unnamed) + ")", refused.Message, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void AnUnknownStore_IsNoLongerRefusedWithCertainty_WhileAnUnnameableStoreExists()
+    public void AStoreScopedListing_AddressesAStoreWithoutAName_ByItsId()
     {
-        // G2 is upstream of G1's refusal. "Store 'X' was not found in Outlook" was said with
-        // certainty about a profile that might hold X under a name nothing could read - the
-        // store was invisible to the very enumeration the message was built from.
-        string? refusal = MailService.DescribeUnresolvedFolderStore("typo", new[] { NamedStore }, unnamedStores: 1);
+        // A scope by NAME had to leave such a store out - its name could not be read to match. Its ID can.
+        using MailService service = Service(Tree(new[] { Folder(Unnamed, "Inbox") }, storesUnnamed: 1));
 
-        Assert.NotNull(refusal);
-        Assert.Contains("cannot be ruled out among", refusal!, StringComparison.Ordinal);
-        Assert.Contains(StoreNaming.UnnamedStorePrefix, refusal!, StringComparison.Ordinal);
-    }
+        FoldersOutcome outcome = service.ListFolders(TestFolders.StoreId(Unnamed));
 
-    [Fact]
-    public void WithEveryStoreNamed_TheRefusalIsUnchanged()
-    {
-        // The old wording is the right wording when it is true, and a caveat that fires when
-        // it cannot apply is the way a flag stops being read.
-        string? refusal = MailService.DescribeUnresolvedFolderStore("typo", new[] { NamedStore });
-
-        Assert.NotNull(refusal);
-        Assert.DoesNotContain("cannot be ruled out among", refusal!, StringComparison.Ordinal);
-        Assert.Contains("Known stores: " + NamedStore, refusal!, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void AStoreScopedListing_ReportsTheStoresItCouldNeitherIncludeNorRuleOut()
-    {
-        // A scoped walk cannot match an unnameable store against the requested name, and it
-        // cannot rule it out either. Leaving it out is right; leaving it out silently is the
-        // defect, because the empty half of that answer is what a caller would act on.
-        using MailService service = Service(Tree(
-            new[] { Folder(NamedStore, "Inbox") }, storesUnnamed: 1, storesUnnamedExcluded: 1));
-
-        FoldersOutcome outcome = service.ListFolders(NamedStore);
-
-        Assert.Equal(1, outcome.StoresUnnamedExcluded);
-        Assert.Contains(
-            outcome.Advice!,
-            a => a.Contains("neither include", StringComparison.Ordinal)
-                && a.Contains("without 'store'", StringComparison.Ordinal));
+        StoreFoldersView store = Assert.Single(outcome.Stores);
+        Assert.True(store.NameUnreadable);
+        Assert.Contains(outcome.Advice!, a => a.Contains("storeId addresses it", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -184,7 +158,9 @@ public sealed class FolderWalkReportingTests
         string sentence = MailService.DescribeUnnamedStores(2)!;
         Assert.Contains("2 store(s)", sentence, StringComparison.Ordinal);
         Assert.Contains(StoreNaming.UnnamedStorePrefix, sentence, StringComparison.Ordinal);
-        Assert.Contains("cannot be used as a 'store' scope", sentence, StringComparison.Ordinal);
+
+        // The consequence since Q133: the label is not an address, and list_accounts gives the one that is.
+        Assert.Contains("list_accounts gives each its storeId", sentence, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -264,7 +240,6 @@ public sealed class FolderWalkReportingTests
         Assert.Null(outcome.WalkCapReached);
         Assert.Null(outcome.DepthLimitReached);
         Assert.Null(outcome.StoresUnnamed);
-        Assert.Null(outcome.StoresUnnamedExcluded);
         Assert.Null(outcome.Advice);
     }
 
@@ -289,10 +264,10 @@ public sealed class FolderWalkReportingTests
     [Fact]
     public void TheListingAdvice_IsPureAndSaysOneThingPerHole()
     {
-        Assert.Null(MailService.DescribeFolderListingCoverage(false, false, 0, 0));
+        Assert.Null(MailService.DescribeFolderListingCoverage(false, false, 0));
 
-        IReadOnlyList<string> all = MailService.DescribeFolderListingCoverage(true, true, 2, 1)!;
-        Assert.Equal(4, all.Count);
+        IReadOnlyList<string> all = MailService.DescribeFolderListingCoverage(true, true, 2)!;
+        Assert.Equal(3, all.Count);
     }
 
     // ================================================ G4: a delegate scope built from a stub
@@ -309,8 +284,8 @@ public sealed class FolderWalkReportingTests
         SearchOutcome outcome = service.Search(new SearchRequest
         {
             Query = "test",
-            Store = DelegateStore,
-            Folder = "Archive",
+            StoreId = TestFolders.StoreId(DelegateStore),
+            FolderId = TestFolders.FolderId(DelegateStore, "Archive"),
             Top = 25,
             SnippetChars = 0,
         });
@@ -333,8 +308,8 @@ public sealed class FolderWalkReportingTests
         SearchOutcome outcome = service.Search(new SearchRequest
         {
             Query = "test",
-            Store = DelegateStore,
-            Folder = "Archive",
+            StoreId = TestFolders.StoreId(DelegateStore),
+            FolderId = TestFolders.FolderId(DelegateStore, "Archive"),
             Top = 25,
             SnippetChars = 0,
         });
@@ -403,10 +378,9 @@ public sealed class FolderWalkReportingTests
         IReadOnlyList<ComFolderInfo> folders,
         bool walkCapReached = false,
         bool depthLimitReached = false,
-        int storesUnnamed = 0,
-        int storesUnnamedExcluded = 0)
+        int storesUnnamed = 0)
     {
-        return new ComFolderTree(folders, walkCapReached, depthLimitReached, storesUnnamed, storesUnnamedExcluded);
+        return new ComFolderTree(folders, walkCapReached, depthLimitReached, storesUnnamed);
     }
 
     /// <summary>An all-stores sweep that covered an unnameable store under its label.</summary>
@@ -609,12 +583,13 @@ public sealed class FolderWalkReportingTests
             return targetMethod?.Name switch
             {
                 nameof(IOutlookSession.GetProfileName) => "T1 stand-in profile",
-                nameof(IOutlookSession.GetStoreDetails) => new[]
+                nameof(IOutlookSession.GetStoreDetails) => TestFolders.WithRoots(new[]
                 {
                     new ComStoreDetail(NamedStore, "store-a", 0, true),
                     new ComStoreDetail(Unnamed, "store-unnamed", 3, null, nameUnreadable: true),
                     new ComStoreDetail(DelegateStore, "store-delegate", 1, true),
-                },
+                }),
+                nameof(IOutlookSession.TryDescribeFolder) => TestFolders.Describe(args),
                 nameof(IOutlookSession.ListFolders) => _tree,
                 nameof(IOutlookSession.ListFolderPaths) => _paths,
                 nameof(IOutlookSession.SweepFoldersNewerThan) => new ComSweepResult(

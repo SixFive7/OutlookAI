@@ -232,23 +232,26 @@ public sealed class StoreIndexHashScopeTests
     }
 
     [Fact]
-    public void AStoreNameTwoStoresShare_IsRefused_RatherThanAnsweredFromOneOfThem()
+    public void TwoStoresOfOneName_AreToldApartByTheirIds_AndEachSearchesItsOwnIndexStore()
     {
-        // Two data files both called 'Shared' in the profile, each indexed under its own name and
-        // hash. The index tells them apart; the caller's name cannot.
+        // Two data files both called 'Shared' in the profile, each indexed under its own name and hash. A
+        // NAME could not say which was meant and was refused; since Q133 each store has its own ID, and a
+        // search scoped by one reaches that store's own index store - never the other one's.
         string pathA = @"C:\OutlookAI-Tier\shared-a.pst";
         string pathB = @"C:\OutlookAI-Tier\shared-b.pst";
-        var a = new ComStoreDetail("Shared", PstStoreId(pathA), 3, null, filePath: pathA, ownName: "Shared");
-        var b = new ComStoreDetail("Shared", PstStoreId(pathB), 3, null, filePath: pathB, ownName: "Shared");
+        var a = new ComStoreDetail("Shared", PstStoreId(pathA), 3, null, filePath: pathA, ownName: "Shared",
+            rootFolderEntryId: TestFolders.RootEntryId("Shared (a)"));
+        var b = new ComStoreDetail("Shared", PstStoreId(pathB), 3, null, filePath: pathB, ownName: "Shared",
+            rootFolderEntryId: TestFolders.RootEntryId("Shared (b)"));
         string rootA = RootOf("Shared", pathA);
         string rootB = RootOf("Shared", pathB);
         var index = new StubIndexClient(new[] { rootA, rootB }, rootA, rootA);
         using MailService service = Service(index, a, b);
 
-        ArgumentException refused = Assert.Throws<ArgumentException>(() => service.Search(Request("Shared")));
+        service.Search(Request("Shared (b)"));
 
-        Assert.Contains("2 stores in this Outlook profile are named 'Shared'", refused.Message, StringComparison.Ordinal);
-        Assert.DoesNotContain(index.Statements, IsTheSearch);
+        Assert.Contains(index.Statements, sql => IsTheSearch(sql) && sql.Contains("SCOPE='" + rootB, StringComparison.Ordinal));
+        Assert.DoesNotContain(index.Statements, sql => IsTheSearch(sql) && sql.Contains("SCOPE='" + rootA, StringComparison.Ordinal));
     }
 
     [Fact]
@@ -350,7 +353,7 @@ public sealed class StoreIndexHashScopeTests
 
     private static SearchRequest Request(string store)
     {
-        return new SearchRequest { Query = "test", Store = store, Top = 25, SnippetChars = 0 };
+        return new SearchRequest { Query = "test", StoreId = TestFolders.StoreId(store), Top = 25, SnippetChars = 0 };
     }
 
     private static SearchRequest Unscoped()
@@ -554,7 +557,8 @@ public sealed class StoreIndexHashScopeTests
             return targetMethod?.Name switch
             {
                 nameof(IOutlookSession.GetProfileName) => "T1 stand-in profile",
-                nameof(IOutlookSession.GetStoreDetails) => _stores,
+                nameof(IOutlookSession.GetStoreDetails) => TestFolders.WithRoots(_stores),
+                nameof(IOutlookSession.TryDescribeFolder) => TestFolders.Describe(args),
                 nameof(IOutlookSession.SweepFoldersNewerThan) => _sweep(args?[3] as string),
                 _ => throw new NotSupportedException(
                     "The stand-in session was asked for " + (targetMethod?.Name ?? "an unnamed member")
