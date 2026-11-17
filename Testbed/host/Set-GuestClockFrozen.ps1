@@ -161,10 +161,25 @@ function Say([string] $m) {
 # Pure parts - -SelfTest pins them
 # ---------------------------------------------------------------------------------------------
 
-# Why a VM may not be frozen, or $null when it may.
-function Get-NeverFrozenReason([string] $Name) {
+# The pools (2026-11-17): an Outlook guest's CLONE - its copy at its frozen checkpoint, under that
+# checkpoint's name (New-TestbedClone.ps1) - is frozen at its source's instant and verified against
+# its source's record; it is never frozen on its own, which would part it from that record.
+. (Join-Path $PSScriptRoot 'TestbedPool.ps1')
+
+# The frozenClocks record a VM is verified against: its own, or for a clone its source's.
+function Get-FrozenRecordName([string] $Name) {
+    $source = Get-TestbedPoolSource $Name
+    if ($source -and $script:OutlookGuests -contains $source) { return $source }
+    return $Name
+}
+
+# Why a VM may not be frozen, or $null when it may. -Making: whether a frozen checkpoint is to be
+# MADE on it, which a clone never is.
+function Get-NeverFrozenReason([string] $Name, [switch] $Making) {
     if ($script:NeverFrozen.ContainsKey($Name)) { return $script:NeverFrozen[$Name] }
-    if ($script:OutlookGuests -notcontains $Name) { return "'$Name' is not one of the two Outlook test guests ($($script:OutlookGuests -join ', '))" }
+    $record = Get-FrozenRecordName $Name
+    if ($script:OutlookGuests -notcontains $record) { return "'$Name' is not one of the two Outlook test guests ($($script:OutlookGuests -join ', ')) or a clone of one (TestbedPool.ps1)" }
+    if ($Making -and $record -ne $Name) { return "'$Name' is a clone of ${record}: it is frozen at its source's instant and verified against its source's record, and a frozen checkpoint of its own would part it from that record. Make the new frozen checkpoint on $record, record it, and clone it again (Testbed/host/New-TestbedClone.ps1)" }
     return $null
 }
 
@@ -279,6 +294,12 @@ function Invoke-SelfTest {
     Check 'the build VM never: its runner needs the host clock' ([string](Get-NeverFrozenReason 'OutlookAI-Build')).Contains('within 2 s') $true
     Check 'the Exchange VM never: Microsoft 365 sign-in needs real time' ([string](Get-NeverFrozenReason 'OutlookAI-Exchange')).Contains('real time') $true
     Check 'the retired guest is not an Outlook test guest' ([string](Get-NeverFrozenReason 'OutlookAI-TestVM')).Contains('not one of the two') $true
+    Check 'a clone of an Outlook guest may be verified' (Get-NeverFrozenReason 'OutlookAI-Indexed2') ''
+    Check 'against its source''s record' (Get-FrozenRecordName 'OutlookAI-Unindexed2') 'OutlookAI-Unindexed'
+    Check 'and a source against its own' (Get-FrozenRecordName 'OutlookAI-Indexed') 'OutlookAI-Indexed'
+    Check 'but never frozen on its own: it would part from that record' ([string](Get-NeverFrozenReason 'OutlookAI-Indexed2' -Making)).Contains('clone it again') $true
+    Check 'a source may be frozen' (Get-NeverFrozenReason 'OutlookAI-Unindexed' -Making) ''
+    Check 'a build VM''s clone is no Outlook guest' ([string](Get-NeverFrozenReason 'OutlookAI-Build2')).Contains('not one of the two') $true
 
     Write-Host '== instants =='
     Check 'Unix seconds read as UTC' (Format-Utc (ConvertFrom-UnixSeconds 1791049320)) '2026-10-03T17:42:00Z'
@@ -369,9 +390,9 @@ if ($SelfTest) { Invoke-SelfTest }
 # ---------------------------------------------------------------------------------------------
 if (-not $VMName) { Say 'REFUSING: -VMName is mandatory (Testbed/README.md section 4a): name the guest you mean.'; exit 4 }
 if ($VMName -notmatch '^[A-Za-z0-9._-]{1,64}$') { Say "REFUSING: VM name '$VMName' is not a plain name."; exit 4 }
-$never = Get-NeverFrozenReason $VMName
-if ($never) { Say "REFUSING: $never."; exit 4 }
 $making = ($FromCheckpoint -or $NewCheckpoint)
+$never = Get-NeverFrozenReason $VMName -Making:([bool]$making)
+if ($never) { Say "REFUSING: $never."; exit 4 }
 if ($making -and $Verify) { Say 'REFUSING: -Verify reads; -FromCheckpoint and -NewCheckpoint make a checkpoint. Pick one.'; exit 4 }
 if ($making -and (-not $FromCheckpoint -or -not $NewCheckpoint)) { Say 'REFUSING: making a frozen checkpoint needs both -FromCheckpoint and -NewCheckpoint.'; exit 4 }
 if ($Execute -and -not $making) { Say 'REFUSING: -Execute makes a frozen checkpoint and needs -FromCheckpoint and -NewCheckpoint; -Verify needs neither.'; exit 4 }
@@ -436,7 +457,8 @@ if (-not $making) {
     Say "== Set-GuestClockFrozen -Verify: $VMName =="
     try {
         $testbed = Get-Content -LiteralPath (Join-Path $OwnRepoRoot 'Testbed\testbed.json') -Raw | ConvertFrom-Json
-        $record = Get-FrozenClockRecord $testbed $VMName
+        # A clone is verified against its source's record (Get-FrozenRecordName): the same checkpoint name, the same instant.
+        $record = Get-FrozenClockRecord $testbed (Get-FrozenRecordName $VMName)
     }
     catch { Say "REFUSED: $($_.Exception.Message)"; exit 4 }
     Say "  record     frozen at $(Format-Utc $record.FrozenUtc) in '$($record.Checkpoint)' (parent '$($record.ParentCheckpoint)'); the suite starts within $($record.SuiteStartWithinMinutes) min, the date checks hold to $($record.ChecksHoldForMinutes) min"

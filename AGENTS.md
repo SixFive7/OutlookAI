@@ -187,6 +187,17 @@ run either script's `-SelfTest` here.
 - The non-live suite (`dotnet test --filter "Category!=Live"`) runs only on the build VM - next section. Tests marked `Category=Live` need Outlook and a mailbox: they run on the test VMs - the ones that need Exchange on the Exchange VM, `OutlookAI-Exchange` - and never on this workstation (Q116 (a), Mailbox Safety below).
 - Developer documentation: `McpServer/README.md`.
 
+## Shared code (Q154)
+
+**As a rule, no code is duplicated.** Decided by the maintainer 2026-11-17 (Q154), in his words:
+*"refactor everything to bring this pattern everywhere relevant. I want as much code shared as
+possible. And as a rule no code duplicated."* So share code instead of copying it: before writing
+something, look for it, and use what is there. Logic that both the add-in and the MCP server use
+belongs in `McpServer/OutlookAI.Core`, which the add-in references through its net48 build, behind
+a small interface - this ends the "Phase-6 no-coupling choice" that kept the add-in apart from
+Core. The copies that exist today are folded together by the refactor in `TODO.md`, and the
+questions from Q163 on decide how.
+
 ## Tests run on the build VM, never on this workstation (Q94, Q102)
 
 **Non-live tests and script self-tests run only through `Testbed/host/Invoke-TestsOnBuildVm.ps1`,
@@ -209,9 +220,12 @@ pwsh -File Testbed/host/Invoke-TestsOnBuildVm.ps1 -SkipSuite -SelfTestInclude 'T
   filter selected nothing; 2 the revision does not build; 3 not tested (the VM, the lock, a time
   limit); 4 refused. Results land in `.work\build-vm-runs\<run>\` of the checkout it ran from:
   `summary.txt`, `summary.json`, `vm\trx\suite.trx` and every log.
-- **One run at a time; callers queue.** Run it in the background or with a timeout of 20 minutes
-  or more. Never use the VM by hand while runs may happen; to hold runs off, take a lease on it
-  with `Testbed/host/Set-TestbedLease.ps1 -VMName OutlookAI-Build` and release it after.
+- **One run per VM, and the build VM is a pool** (2026-11-17): `OutlookAI-Build`, `OutlookAI-Build2`
+  and `OutlookAI-Build3` - copies of one machine, `Testbed/host/TestbedPool.ps1` - and a run takes
+  whichever is free; callers queue only while all are busy. `-VMName` pins one. Run it in the
+  background or with a timeout of 20 minutes or more. Never use a VM by hand while runs may happen;
+  to hold runs off one, take a lease on it with `Testbed/host/Set-TestbedLease.ps1 -VMName <vm>` and
+  release it after.
 - **It runs in UTC** (Q126 (a), decided by the maintainer 2026-10-03), not in this workstation's
   W. Europe: with GitHub's UTC runner gone, it is where a zone-dependent test fails. A failure
   there that W. Europe would not show is a time-zone bug until shown otherwise - fix it with a T1
@@ -222,7 +236,12 @@ per run** (2026-10-03, `Testbed/README.md` section 4c) - never driven by hand:
 
 ```
 pwsh -File Testbed/host/Invoke-LiveTierOnGuest.ps1 -VMName OutlookAI-Indexed [<commit-or-branch>] [-FilterSuffix '&FullyQualifiedName~X']
+pwsh -File Testbed/host/Invoke-LiveTierOnGuest.ps1 -Kind Indexed [<commit-or-branch>]   # whichever indexed guest is free
 ```
+
+Each Outlook guest has a clone since 2026-11-17 - `OutlookAI-Indexed2`, `OutlookAI-Unindexed2`, copies
+of their source at its frozen checkpoint (`Testbed/host/TestbedPool.ps1`) - and `-Kind` takes
+whichever guest of that kind is free. `-VMName` names one guest, a clone included.
 
 It tests a commit, like the build-VM runner, and enforces the rest itself: the lease (it waits,
 and never takes over one somebody else holds), the checkpoint, the graceful restart, step 9a,
@@ -262,7 +281,9 @@ I will forget and lose performance the coming months."*
 - `Save-VM` it when more than about ten minutes without guest work lie ahead, and when your task
   ends - then release the lease.
 - Before a session ends, every test VM is saved: `Get-VM OutlookAI-*` shows none running unless
-  a live lease says something is still using it.
+  a live lease says something is still using it. The pools' clones (2026-11-17,
+  `Testbed/host/TestbedPool.ps1`) are test VMs like any other: the same settings, leases and
+  idle-saver, which watches every pool member.
 - Two backstops, not a licence to leave one running: the `OutlookAI-TestbedIdleSave` task saves
   any running testbed VM that has no live lease and has been up ten minutes, every fifteen
   minutes (`Testbed/README.md` section 5b); and no test VM starts with the host
@@ -279,9 +300,10 @@ I will forget and lose performance the coming months."*
 
 ## The Outlook test guests' clocks are frozen (Q130)
 
-**`OutlookAI-Indexed` and `OutlookAI-Unindexed` run with Hyper-V time synchronisation OFF, and
-every live run restores the frozen checkpoint `Testbed/testbed.json` records under `frozenClocks`,
-whose clock stands just after the guest's test data was built.** Decided by the maintainer
+**`OutlookAI-Indexed` and `OutlookAI-Unindexed` - and their clones - run with Hyper-V time
+synchronisation OFF, and every live run restores the frozen checkpoint `Testbed/testbed.json`
+records under `frozenClocks`, whose clock stands just after the guest's test data was built.**
+A clone rests on a copy of its source's, under the same name and at the same instant. Decided by the maintainer
 2026-10-03 (Q130 (a)), so the test data never ages. Never re-enable time synchronisation on either
 guest, and never restart or cold-boot one during a run - both bring its clock back at the real
 date. `Testbed/host/Restart-Guest.ps1` refuses a frozen guest; `-Refreeze` is for work outside a
