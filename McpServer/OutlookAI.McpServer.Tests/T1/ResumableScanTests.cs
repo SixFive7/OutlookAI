@@ -195,7 +195,11 @@ public sealed class ResumableScanTests
 
         Assert.NotNull(live);
         string message = MailService.DescribeResumeRefusal(ScanTokenDecision.Superseded, live, null);
-        Assert.Contains("folder:'Archive'", message, StringComparison.Ordinal);
+
+        // The way back by hand names the folder by its ID (Q131-Q136) - a path is refused as input -
+        // with its path beside it for reading.
+        Assert.Contains("folder_id:'" + TestFolders.FolderId(Store, "Archive") + "'", message, StringComparison.Ordinal);
+        Assert.Contains("(the folder 'Archive')", message, StringComparison.Ordinal);
         Assert.Contains("before:'2026-06-11T08:14:22Z'", message, StringComparison.Ordinal);
         Assert.Contains("75 item(s)", message, StringComparison.Ordinal);
     }
@@ -719,7 +723,8 @@ public sealed class ResumableScanTests
             folder,
             resumeWithinFolder: true,
             resumeCursorUtc: new DateTime(2026, 6, 11, 8, 14, 22, DateTimeKind.Utc),
-            resumeTier: "date");
+            resumeTier: "date",
+            resumeFolderEntryId: TestFolders.FolderEntryId(Store, folder));
     }
 
     private static ComExhaustiveResult StoppedScan(string stopReason, ComScanPosition? position)

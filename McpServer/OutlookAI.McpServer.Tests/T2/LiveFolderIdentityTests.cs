@@ -562,6 +562,7 @@ public sealed class LiveFolderIdentityTests
     // ------------------------------------------------------------------ 4. the folder ID the tools take (Q131-Q136)
 
     [Fact]
+    [Trait("Requires", "MailAccount")]
     public void AFolderId_IsFoundMadeAndMovedInto_ThroughTheTools_AndSurvivesARename()
     {
         // Every step through the PRODUCT's tools, as an agent takes them: find_folder finds nothing,
@@ -627,6 +628,7 @@ public sealed class LiveFolderIdentityTests
 
     [Fact]
     [Trait("Requires", "SearchIndex")]
+    [Trait("Requires", "MailAccount")]
     public void AFolderId_IsSearchedThroughTheIndexAlone_WithNoOutlookCall()
     {
         // Q132 (i), "searching one folder while Outlook is closed", proven with the product's own search and

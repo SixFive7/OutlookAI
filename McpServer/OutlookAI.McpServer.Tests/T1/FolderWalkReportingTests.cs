@@ -77,11 +77,12 @@ public sealed class FolderWalkReportingTests
     }
 
     [Fact]
-    public void TheLabel_IsAdvertisedAsUnusableAsAScope()
+    public void TheLabel_IsAdvertisedAsOnlyForReading_AndTheStoreIdAsTheAddress()
     {
-        // Putting the label in the payload creates exactly one wrong turn - an agent reads it
-        // as a store name and passes it back - so the answer that prints it also says it
-        // cannot be passed back, and why.
+        // Putting the label in the payload creates exactly one wrong turn - an agent reads it as a
+        // store name and passes it back. Since Q133 a store is addressed by its storeId, which a
+        // store without a name has like any other, so the answer that prints the label says the
+        // label is only for reading and the storeId is what to pass.
         using MailService service = Service(Tree(new[] { Folder(Unnamed, "Inbox") }, storesUnnamed: 1));
 
         FoldersOutcome outcome = service.ListFolders();
@@ -89,7 +90,8 @@ public sealed class FolderWalkReportingTests
         Assert.Contains(
             outcome.Advice!,
             a => a.Contains("would not report a display name", StringComparison.Ordinal)
-                && a.Contains("cannot be passed back as 'store'", StringComparison.Ordinal));
+                && a.Contains("storeId addresses it", StringComparison.Ordinal)
+                && a.Contains("only something to read", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -156,7 +158,9 @@ public sealed class FolderWalkReportingTests
         string sentence = MailService.DescribeUnnamedStores(2)!;
         Assert.Contains("2 store(s)", sentence, StringComparison.Ordinal);
         Assert.Contains(StoreNaming.UnnamedStorePrefix, sentence, StringComparison.Ordinal);
-        Assert.Contains("cannot be used as a 'store' scope", sentence, StringComparison.Ordinal);
+
+        // The consequence since Q133: the label is not an address, and list_accounts gives the one that is.
+        Assert.Contains("list_accounts gives each its storeId", sentence, StringComparison.Ordinal);
     }
 
     [Fact]
