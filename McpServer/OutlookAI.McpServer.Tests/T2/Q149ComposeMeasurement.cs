@@ -628,6 +628,97 @@ public static class Q149Html
         return best;
     }
 
+    private static readonly Regex OutlineTag = new(@"<(?<close>/?)(?<tag>p|div|h[1-6]|table|ul|ol|li|a|img|hr|span|o:p)\b(?<attrs>[^>]*)>", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    private static readonly Regex ClassAttr = new(@"\bclass\s*=\s*[""']?(?<c>[A-Za-z0-9_-]+)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    private static readonly Regex NameAttr = new(@"\b(?:name|id)\s*=\s*[""']?(?<n>_Mail[A-Za-z]+|divRplyFwdMsg|WordSection1)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// The shape of a message body, content-free: from the start of <c>WordSection1</c> (or the body), every
+    /// block, anchor and picture as a short token - <c>p.MsoNormal</c>, <c>div[border-top]</c>,
+    /// <c>a#_MailAutoSig</c>, <c>img[cid]</c>, <c>h1</c> - with <c>{name}</c> where one of
+    /// <paramref name="tokens"/> occurs. Only tag names, Word's class names and these marks; never text.
+    /// </summary>
+    public static string Outline(string? html, IReadOnlyDictionary<string, string>? tokens = null, int maxItems = 80)
+    {
+        if (string.IsNullOrEmpty(html))
+        {
+            return string.Empty;
+        }
+
+        int from = html.IndexOf("WordSection1", StringComparison.OrdinalIgnoreCase);
+        from = from >= 0
+            ? Math.Max(0, html.LastIndexOf('<', from))
+            : Math.Max(0, html.IndexOf("<body", StringComparison.OrdinalIgnoreCase));
+
+        List<(int At, string Mark)> marks = new();
+        foreach (Match m in OutlineTag.Matches(html, from))
+        {
+            string tag = m.Groups["tag"].Value.ToLowerInvariant();
+            string attrs = m.Groups["attrs"].Value;
+            if (m.Groups["close"].Value.Length > 0)
+            {
+                if (tag is "div" or "table" or "ul" or "ol")
+                {
+                    marks.Add((m.Index, "/" + tag));
+                }
+
+                continue;
+            }
+
+            if (tag is "span" or "o:p")
+            {
+                continue;
+            }
+
+            string mark = tag;
+            Match c = ClassAttr.Match(attrs);
+            if (c.Success)
+            {
+                mark += "." + c.Groups["c"].Value;
+            }
+
+            Match n = NameAttr.Match(attrs);
+            if (n.Success)
+            {
+                mark += "#" + n.Groups["n"].Value;
+            }
+            else if (tag == "a")
+            {
+                continue;
+            }
+
+            if (attrs.Contains("border-top", StringComparison.OrdinalIgnoreCase))
+            {
+                mark += "[border-top]";
+            }
+
+            if (tag == "img")
+            {
+                mark += attrs.Contains("cid:", StringComparison.OrdinalIgnoreCase) ? "[cid]" : attrs.Contains("file:", StringComparison.OrdinalIgnoreCase) ? "[file]" : "[other]";
+            }
+
+            marks.Add((m.Index, mark));
+        }
+
+        if (tokens != null)
+        {
+            foreach (KeyValuePair<string, string> token in tokens)
+            {
+                if (string.IsNullOrEmpty(token.Value))
+                {
+                    continue;
+                }
+
+                for (int at = html.IndexOf(token.Value, from, StringComparison.Ordinal); at >= 0; at = html.IndexOf(token.Value, at + token.Value.Length, StringComparison.Ordinal))
+                {
+                    marks.Add((at, "{" + token.Key + "}"));
+                }
+            }
+        }
+
+        return string.Join(" ", marks.OrderBy(x => x.At).Take(maxItems).Select(x => x.Mark));
+    }
+
     public static int CountOrdinalIgnoreCase(string text, string needle)
     {
         int count = 0;

@@ -127,7 +127,12 @@ hour - so a whole-tier run reports each of them `NOT RUN`. A run selects it with
 pwsh -File Testbed/host/Invoke-LiveTierOnGuest.ps1 -VMName OutlookAI-Unindexed <commit> -FilterSuffix '&FullyQualifiedName~OutlookAI.McpServer.Tests.T2.LiveQ149&FullyQualifiedName!~Smoke' -SkipHubReset -RunTimeoutMinutes 180
 ```
 
-and each class's `Smoke_*` test runs every cell once (`&FullyQualifiedName~Smoke` instead).
+and each class's `Smoke_*` test runs every cell once (`&FullyQualifiedName~Smoke` instead). Every
+window-less cell is a test of its own (`L1_...`, `L1c_...`, `L2_...`, `W2_...` to `W6_...`), so a run can
+take a group of them by name - `&(FullyQualifiedName~.L1_|FullyQualifiedName~.L1c_)` - and stay short:
+on the frozen checkpoints of 2026-10-03 a run's guest account stopped answering about 40 minutes after
+the restore (the first smoke run lost its results that way), so until the checkpoints with the
+never-expiring password are recorded, each run is kept well inside that.
 
 **Every attempt is one JSON line** (`Q149-ATTEMPT {...}`), in the test output and the console capture,
 with the fields the plans name: the cell and iteration, Outlook's version, process id, whether it was a

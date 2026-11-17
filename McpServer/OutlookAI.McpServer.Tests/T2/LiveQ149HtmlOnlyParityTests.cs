@@ -156,7 +156,8 @@ public sealed class LiveQ149HtmlOnlyParityTests
             Run.Hub, Run.Hub, cc: null, Run.TaggedSubject("c2-product-" + i.ToString(CultureInfo.InvariantCulture)), text, display: false,
             signature: signature.Name, bodyHtml: fragment);
         Run.Allow(product.EntryId);
-        attempt.Set("productPlacement", product.BodyPlacement).Set("productSignatureApplied", product.SignatureApplied);
+        attempt.Set("productPlacement", product.BodyPlacement).Set("productSignatureApplied", product.SignatureApplied)
+            .Set("productComposeError", product.ComposeSurfaceError);
         string productHtml = Q149Drafts.Read(Run, product.EntryId, storeId).Html;
 
         (string, string, string)? frame = HtmlOnlyDraftComposer.ReadFrame(productHtml);
@@ -210,7 +211,10 @@ public sealed class LiveQ149HtmlOnlyParityTests
         Dictionary<string, string> quote = new(StringComparer.Ordinal) { ["quote"] = quoteToken };
         Q149HtmlFacts bare = Q149Html.Analyze(derivedHtml, quote);
         Q149HtmlFacts today = Q149Html.Analyze(productHtml, quote);
-        attempt.Set("noInspector", bare.ToFields()).Set("today", today.ToFields());
+        attempt.Set("noInspector", bare.ToFields()).Set("today", today.ToFields())
+            .Set("noInspectorOutline", Q149Html.Outline(derivedHtml, quote))
+            .Set("productComposeError", product.ComposeSurfaceError)
+            .Set("productPlacement", product.BodyPlacement);
         bool quoteHandedOver = bare.TokenAt["quote"] >= 0 && bare.WordSectionAt >= 0 && (bare.HeaderBlockAt >= 0 || bare.MailOriginalAt >= 0);
         Record(Q149Cells.C4, "the quoted original without an inspector", quoteHandedOver);
         Record(Q149Cells.C4, "the stylesheet of a " + kind + " without an inspector", bare.StylesheetHash != null && bare.StylesheetHash == today.StylesheetHash);
@@ -334,6 +338,8 @@ public sealed class LiveQ149HtmlOnlyParityTests
         Q149HtmlFacts hf = Q149Html.Analyze(h.Html, tokens);
         attempt.Set("product", pf.ToFields())
             .Set("htmlOnly", hf.ToFields())
+            .Set("productOutline", Q149Html.Outline(p.Html, tokens))
+            .Set("htmlOnlyOutline", Q149Html.Outline(h.Html, tokens))
             .Set("productAttachments", new[] { p.Attachments, (int)Math.Min(int.MaxValue, p.AttachmentBytes), p.HiddenAttachments })
             .Set("htmlOnlyAttachments", new[] { h.Attachments, (int)Math.Min(int.MaxValue, h.AttachmentBytes), h.HiddenAttachments });
 

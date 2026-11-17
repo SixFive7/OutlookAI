@@ -258,6 +258,22 @@ public sealed class Q149ComposeMeasurementTests
         Assert.Equal(0, Q149Html.Analyze(null).Length);
     }
 
+    [Fact]
+    public void TheOutlineIsTheShapeOfTheBody_WithTheTokensMarked_AndNoText()
+    {
+        string html = "<html><head><style>p {}</style></head><body><div class=WordSection1>"
+            + "<p class=MsoNormal>Secret words BODYTOKEN<o:p></o:p></p><p class=MsoNormal><a name=\"_MailAutoSig\">Groet</a></p>"
+            + "<p><img src=\"cid:x\"></p><div style='border:none;border-top:solid #E1E1E1 1.0pt'><p class=MsoNormal><b>From:</b></p></div>"
+            + "<a href=\"https://example.invalid\">link</a><p class=MsoNormal>QUOTE</p></div></body></html>";
+        string outline = Q149Html.Outline(html, new Dictionary<string, string> { ["body"] = "BODYTOKEN", ["quote"] = "QUOTE" });
+        Assert.Equal(
+            "div.WordSection1 p.MsoNormal {body} p.MsoNormal a#_MailAutoSig p img[cid] div[border-top] p.MsoNormal /div p.MsoNormal {quote} /div",
+            outline);
+        Assert.DoesNotContain("Secret", outline, StringComparison.Ordinal);
+        Assert.DoesNotContain("example.invalid", outline, StringComparison.Ordinal);
+        Assert.Equal(string.Empty, Q149Html.Outline(null));
+    }
+
     // ------------------------------------------------------------------ the HTML-only composer
 
     private const string Reference =
