@@ -454,7 +454,9 @@ KnownDLL) would have run elevated: the one real security fix here. CA5386 (the u
    build of the add-in (full VSTO type resolution, but a build through the Q81 path for every
    scan) and the narrower default suite the old workflow ran. Whether the release should also count
    local input as untrusted is left open (TODO.md): measured, it is 0, 6 or 174 more results to
-   triage depending on how much of "local" is on.
+   triage depending on how much of "local" is on. *Decided 2026-10-11 as Q146 and carried out
+   2026-11-17:* local input except environment variables, then every MCP tool's parameters as
+   untrusted input through the model in `Tools/CodeQL` (`Tools/Invoke-CodeQL.ps1` says how).
 5. *The gate: every CodeQL result fixed, or triaged in `Tools/codeql-accepted.json` by rule, file and
    line hash with a reason; an entry that matches nothing is reported, not fatal.* Beat a
    severity threshold (a medium finding would pass untriaged) and inline suppression comments
