@@ -924,9 +924,9 @@ function Add-PlantedEntries([string] $Modulus, [string] $Round) {
     try { $otherModulus = [Convert]::ToBase64String($other.ExportParameters($false).Modulus) } finally { $other.Dispose() }
     $plan = @(
         @{ Label = "$Round leaked key, canonical, at the install folder"; Url = "$profileUrl/OutlookAI/Setup/OutlookAI.vsto"; Key = (New-KeyXml -ModulusBase64 $Modulus); Gone = $true },
-        @{ Label = "$Round leaked key, wrapped, at an old unzipped copy"; Url = ($profileUrl -replace '/AppData/Local$', '') + '/Downloads/OutlookAI-v2.3.1.111/OutlookAI.vsto'; Key = (New-KeyXml -ModulusBase64 $Modulus -Spelling Wrapped); Gone = $true },
+        @{ Label = "$Round leaked key, wrapped, in a Downloads folder"; Url = ($profileUrl -replace '/AppData/Local$', '') + '/Downloads/OutlookAI-v2.3.1.111/OutlookAI.vsto'; Key = (New-KeyXml -ModulusBase64 $Modulus -Spelling Wrapped); Gone = $true },
         @{ Label = "$Round leaked key, prefixed, elsewhere"; Url = 'file:///C:/OutlookAI-old/OutlookAI.vsto'; Key = (New-KeyXml -ModulusBase64 $Modulus -Spelling Prefixed); Gone = $true },
-        @{ Label = "$Round another key, at the old unzipped copy"; Url = ($profileUrl -replace '/AppData/Local$', '') + '/Downloads/OutlookAI-v2.3.1.111/OutlookAI.vsto'; Key = (New-KeyXml -ModulusBase64 $otherModulus); Gone = $false },
+        @{ Label = "$Round another key, in the same Downloads folder"; Url = ($profileUrl -replace '/AppData/Local$', '') + '/Downloads/OutlookAI-v2.3.1.111/OutlookAI.vsto'; Key = (New-KeyXml -ModulusBase64 $otherModulus); Gone = $false },
         @{ Label = "$Round no public key at all"; Url = 'file:///C:/OutlookAI-old/Broken.vsto'; Key = $null; Gone = $false })
     $planted = @()
     foreach ($e in $plan) {
@@ -937,14 +937,35 @@ function Add-PlantedEntries([string] $Modulus, [string] $Round) {
     return $planted
 }
 
-function Wait-ProcessGone([string[]] $Names, [int] $Seconds) {
+# Whether a round has finished, by what it leaves rather than by process names: an Inno uninstaller
+# hands over to a copy of itself and the first process ends at once, and the copy holds its log open
+# until it is done. So: the log there and no longer held, and for an uninstall the registration gone
+# too - or the time is up.
+function Wait-RoundSettled([string] $Round, [string] $Log, [int] $Seconds) {
     $clock = [System.Diagnostics.Stopwatch]::StartNew()
     while ($clock.Elapsed.TotalSeconds -lt $Seconds) {
-        $left = @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $p = $_.ProcessName; @($Names | Where-Object { $p -like $_ }).Count -gt 0 })
-        if ($left.Count -eq 0) { return $true }
+        $closed = $false
+        if (Test-Path -LiteralPath $Log) {
+            try { $fs = [System.IO.File]::Open($Log, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::None); $fs.Close(); $closed = $true } catch { }
+        }
+        $done = $closed
+        if ($Round -eq 'uninstall') { $done = $closed -and -not (Test-Path -LiteralPath $UninstallKey) }
+        if ($done) { return $true }
         Start-Sleep -Milliseconds 500
     }
     return $false
+}
+
+# A log's lines as plain strings, even while something still holds it open.
+function Read-SharedLines([string] $Path) {
+    $fs = New-Object System.IO.FileStream($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, ([System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete))
+    try {
+        $reader = New-Object System.IO.StreamReader($fs)
+        $lines = @()
+        while ($null -ne ($line = $reader.ReadLine())) { $lines += [string]$line }
+        return $lines
+    }
+    finally { $fs.Dispose() }
 }
 
 # The installer, or the uninstaller it registered, /VERYSILENT - as the add-in's updater runs the
@@ -974,8 +995,7 @@ function Invoke-InstallerCleanup {
         $clock = [System.Diagnostics.Stopwatch]::StartNew()
         $p = Start-InstallerRound -Round $round -Log $log
         $ended = $p.WaitForExit(600000)
-        # An Inno uninstaller hands over to a copy of itself in %TEMP% and ends; wait for that too.
-        $settled = Wait-ProcessGone -Names @('_iu*', 'unins*', 'OutlookAI-v*') -Seconds 300
+        $settled = Wait-RoundSettled -Round $round -Log $log -Seconds 300
         $code = $null
         if ($ended) { $code = $p.ExitCode }
         $after = @(Get-InclusionNames)
@@ -988,7 +1008,7 @@ function Invoke-InstallerCleanup {
         $removedLines = @()
         # Plain strings: Get-Content's lines carry their PSDrive and PSProvider, which ConvertTo-Json
         # under Windows PowerShell 5.1 walks ten levels deep - gigabytes, measured on the first run.
-        if (Test-Path -LiteralPath $log) { $removedLines = @([System.IO.File]::ReadAllLines($log) | Where-Object { $_ -match 'VSTO trust entry|compromised' }) }
+        if (Test-Path -LiteralPath $log) { $removedLines = @(Read-SharedLines $log | Where-Object { $_ -match 'VSTO trust entry|compromised' }) }
         Write-Host ("   {0} exit {1} after {2} s (settled {3}); entries after: {4}; verdict {5}" -f $round, $code, [Math]::Round($clock.Elapsed.TotalSeconds, 1), $settled, $after.Count, $verdict.Verdict)
         foreach ($pr in $verdict.Problems) { Write-Host "   PROBLEM: $pr" }
         foreach ($l in $removedLines) { Write-Host "   log: $l" }
