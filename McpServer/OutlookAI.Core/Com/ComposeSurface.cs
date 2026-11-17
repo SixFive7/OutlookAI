@@ -10,11 +10,16 @@ namespace OutlookAI.Core.Com
     /// <summary>
     /// THE INVISIBLE COMPOSE SURFACE (v3.MD D49, soak fix 22).
     /// <para>
-    /// Phase-1 measured fact: <c>Inspector.WordEditor</c> is unobtainable while Outlook
-    /// is window-less - it does not return null, it THROWS
-    /// <c>COMException "The operation failed."</c> - and EVERY route that makes it
-    /// obtainable requires a real top-level window. There is no window-free Word path.
-    /// What CAN be controlled is whether a HUMAN ever sees that window.
+    /// What it rests on, measured on Office LTSC 2021 (16.0.14334) by the D49 probe of 2026-07-31 - 22 runs on
+    /// one machine, kept with their sample sizes in <c>Docs/research/q149-draft-text/</c>:
+    /// <c>Inspector.WordEditor</c> is unobtainable while Outlook has no window that is displayed or was
+    /// activated - it does not return null, it THROWS <c>COMException "The operation failed."</c> (2 of 2
+    /// cold starts, and every such read D46 and D48 made). The window it needs is the PROCESS's, not the
+    /// draft's own: once Outlook shows a window, a never-shown inspector hands out its editor directly
+    /// (D45: 31 of 31), and after one activation in a process later never-activated inspectors got it too
+    /// (the maintainer's audit log, 20 of 21). What CAN be controlled is whether a HUMAN ever sees the
+    /// window. The same questions on Office LTSC 2024 are measured by the Q149 (d) suite
+    /// (<c>T2/LiveQ149WindowlessComposeTests</c>), with its results in that folder.
     /// </para>
     /// <para>
     /// So this class does exactly two things, and they fix two DIFFERENT problems that
@@ -24,8 +29,8 @@ namespace OutlookAI.Core.Com
     /// <item><description>
     /// <b>The process pin</b> (<see cref="TryPinProcess"/>) - a NON-DISPLAYED
     /// <c>Explorers.Add(folder, 0)</c>. It does nothing whatsoever for the editor, but it
-    /// is a complete cure for the LIFETIME problem: measured, a window-less Outlook EXITS
-    /// when the only Inspector is closed, which is what killed the compose path's own
+    /// is a complete cure for the LIFETIME problem: measured on Office LTSC 2021 (2 of 2 cold
+    /// starts), a window-less Outlook EXITS when the only Inspector is closed, which is what killed the compose path's own
     /// instance, made <c>update_draft</c> fail with <c>com_failure</c>, and produced the
     /// three <c>RPC_S_SERVER_UNAVAILABLE</c> suite failures. With a non-displayed Explorer
     /// held the instance survives, and D33 promotability is preserved (probe-measured:
@@ -34,8 +39,9 @@ namespace OutlookAI.Core.Com
     /// <item><description>
     /// <b>The editor promotion</b> (<see cref="PromoteForWordEditor"/>) - park the
     /// inspector's (already existing, invisible) window OFF-SCREEN, <c>Activate()</c> it,
-    /// then <c>ShowWindow(SW_HIDE)</c> anything that became visible. Measured 53-79 ms to
-    /// a live WordEditor with the window ending <c>IsWindowVisible == false</c>: absent
+    /// then <c>ShowWindow(SW_HIDE)</c> anything that became visible. Measured on Office LTSC 2021
+    /// (2 runs): 53-79 ms from the <c>Activate()</c> to a live WordEditor - the activation itself took
+    /// 314-611 ms - with the window ending <c>IsWindowVisible == false</c>: absent
     /// from the screen, the taskbar and Alt-Tab. Ordering is load-bearing - off-screen
     /// FIRST, because <c>Activate()</c> alone paints the window where a user would see it
     /// (that is what the shipped <c>update_draft</c> path has been doing).
@@ -359,7 +365,7 @@ namespace OutlookAI.Core.Com
 
                 // 0 = olFolderDisplayNormal. Deliberately NOT followed by Display():
                 // an Explorer that is never displayed owns an INVISIBLE window, which
-                // pins the process without putting anything on screen (Phase-1 row 2).
+                // pins the process without putting anything on screen (D49 probe row 2, Office LTSC 2021).
                 object created = ((dynamic)explorers!).Add(folder, 0);
                 RememberPin(created, remember: true);
                 return created;
