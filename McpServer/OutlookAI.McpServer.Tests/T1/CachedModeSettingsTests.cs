@@ -477,7 +477,8 @@ public sealed class CachedModeSettingsTests
         XDocument solution = XDocument.Load(Path.Combine(RepoRoot(), "OutlookAI.slnx"));
 
         Assert.Equal(new[] { "OutlookAI.csproj" }, solution.Descendants("Project").Select(p => (string?)p.Attribute("Path")));
-        Assert.False(Directory.Exists(Path.Combine(RepoRoot(), "PolicyWriter")), "PolicyWriter/ was the elevated helper");
+        // The project file, not the folder: a checkout that built the helper before keeps its bin and obj.
+        Assert.False(File.Exists(Path.Combine(RepoRoot(), "PolicyWriter", "OutlookAI.PolicyWriter.csproj")), "PolicyWriter/ was the elevated helper");
     }
 
     [Fact]

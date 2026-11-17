@@ -42,7 +42,7 @@ assistant can now read OutlookAI's audit log and continue an exhaustive search w
 
 In the add-in, OutlookAI Settings has tabs, and you can edit every prompt and quick button. You can
 also pick the Claude model, check for updates yourself, and see and change Outlook's Cached Mode
-settings, none of which needs administrator rights any more.
+settings without administrator rights.
 
 Releases are now built and signed on the maintainer's own computer, so they no longer carry GitHub's
 build-provenance attestation. Many of the entries are about the test machines the project now runs
