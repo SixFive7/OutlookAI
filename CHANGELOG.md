@@ -512,6 +512,14 @@ its mailbox tests on, and change nothing you install.
 
 ### Changed
 
+- 📝 **The README's section on Outlook's lifetime and tray icon describes the lifetime pin.**
+  It was written before pins existed. It now says a session that finds Outlook with no window holds a
+  hidden one while it is connected, that the session which started Outlook closes it on the way out
+  and Outlook ends at once, and that a pin left behind keeps Outlook running past Application.Quit()
+  and past closing a window opened over it, while File > Exit ends it. The 10-12 minute exit is now
+  given as what it was: one measurement, on Office LTSC 2021, before pins. What Exit Now does with a
+  pin present is said to be unmeasured, where the old text claimed it disconnects and exits at once.
+
 - 📦 **The release page lists each change's icon and headline, linked to its full entry (Q123).**
   The maintainer decided it on 2026-10-03, in his words: *"copy the release notes style and system
   and rules from the BrowserAI repo"*. Every changelog entry now opens with one of twelve icons,
