@@ -28,6 +28,11 @@
                                    that hold property 0x6649 (PT_LONG, the value name 00036649) - only
                                    in a section that also carries the test account's address - and
                                    reads it back.
+      -Step WritePair -Months <m> -Days <d> [-WhileRunning]
+                                   Writes the pair - 0x6649 months and 0x665A days, as Outlook itself
+                                   always does - into the same section(s). With Outlook closed, or,
+                                   with -WhileRunning, only while it RUNS: the add-in's own case, since
+                                   it lives inside Outlook (asked 2026-11-17).
 
     Microsoft documents eleven windows, always as a months/days pair (.work's q145-admin report, open
     question 2): 3 days, 1 week, 2 weeks, 1/3/6 months, 1/2/3/5 years and All. The slider was read on
@@ -39,12 +44,14 @@
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Export', 'Diff', 'Read', 'Set', 'WriteMonths')] [string] $Step,
+    [ValidateSet('Export', 'Diff', 'Read', 'Set', 'WriteMonths', 'WritePair')] [string] $Step,
     [string] $Label,
     [string] $From,
     [string] $To,
     [int]    $Position,
     [int]    $Months = -1,
+    [int]    $Days = -1,
+    [switch] $WhileRunning,
     [string] $Hub = 'telefonie-ai-test@xxlnet.nl',
     [string] $ProfileName = 'Outlook',
     [string] $Root = 'C:\OutlookAI-Q5\measure\q145',
@@ -154,8 +161,13 @@ function Invoke-SelfTest {
     $ast = [System.Management.Automation.Language.Parser]::ParseFile($PSCommandPath, [ref] $null, [ref] $null)
     $writes = @($ast.FindAll({ param($x) $x -is [System.Management.Automation.Language.CommandAst] -and $x.GetCommandName() -match '^(Set-ItemProperty|New-ItemProperty|Remove-ItemProperty|Remove-Item)$' }, $true))
     Check 'the one registry write is Set-ItemProperty, once' ($writes.Count -eq 1 -and $writes[0].GetCommandName() -eq 'Set-ItemProperty')
-    $fn = $ast.FindAll({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'Invoke-WriteMonths' }, $true) | Select-Object -First 1
-    Check 'and it sits in Invoke-WriteMonths, behind the Outlook-closed and hub-section checks' ($fn -and $fn.Extent.Text.Contains('Set-ItemProperty') -and $fn.Extent.Text.Contains('Test-SectionIsTheHubs') -and $fn.Extent.Text.Contains("Get-Process -Name OUTLOOK"))
+    $fns = @{}
+    foreach ($x in $ast.FindAll({ param($y) $y -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)) { $fns[$x.Name] = $x.Extent.Text }
+    Check 'it sits in Write-HubValue' ($fns['Write-HubValue'] -and $fns['Write-HubValue'].Contains('Set-ItemProperty'))
+    $callers = @($ast.FindAll({ param($y) $y -is [System.Management.Automation.Language.CommandAst] -and $y.GetCommandName() -eq 'Write-HubValue' }, $true) | ForEach-Object { $q = $_.Parent; while ($q -and -not ($q -is [System.Management.Automation.Language.FunctionDefinitionAst])) { $q = $q.Parent }; if ($q) { $q.Name } else { '<script>' } } | Sort-Object -Unique)
+    Check ('whose only callers are the two write steps: ' + ($callers -join ', ')) ((@($callers | Sort-Object) -join ',') -eq 'Invoke-WriteMonths,Invoke-WritePair')
+    Check 'each takes its sections from Get-HubSections, which keeps only the hub''s' ($fns['Invoke-WriteMonths'].Contains('Get-HubSections') -and $fns['Invoke-WritePair'].Contains('Get-HubSections') -and $fns['Get-HubSections'].Contains('Test-SectionIsTheHubs'))
+    Check 'and each checks whether Outlook runs before it writes' ($fns['Invoke-WriteMonths'].Contains('Get-Process -Name OUTLOOK') -and $fns['Invoke-WritePair'].Contains('Get-Process -Name OUTLOOK'))
     $strings = @($ast.FindAll({ param($x) $x -is [System.Management.Automation.Language.StringConstantExpressionAst] -and $x.Value -match '^(Remove|Repair\.\.\.|New\.\.\.|Set as Default|More Settings)$' }, $true))
     Check 'no button but Change..., Next, the finish page''s and Close is ever looked for' ($strings.Count -eq 0)
     Write-Host ''
@@ -401,18 +413,38 @@ function Invoke-Set {
     Say ("RESULT: position {0} {1}" -f $Position, $(if ($confirmed) { 'confirmed - the Change dialog closed after its last page' } else { 'NOT confirmed' }))
 }
 
+# THE ONE REGISTRY WRITE of this script: a 4-byte value into one section the caller has proven to be the
+# test account's (Test-SectionIsTheHubs), read back at once.
+function Write-HubValue([string] $Section, [string] $Name, [int] $Value, $Before) {
+    Set-ItemProperty -LiteralPath (Join-Path $ProfileKey $Section) -Name $Name -Value ([byte[]][BitConverter]::GetBytes($Value)) -Type Binary
+    $after = (Get-Item -LiteralPath (Join-Path $ProfileKey $Section)).GetValue($Name)
+    Say ("WROTE section {0} value {1}: {2} -> {3}" -f $Section, $Name, (Format-ProfileValue $Before), (Format-ProfileValue ((@($after) | ForEach-Object { $_.ToString('X2') }) -join '')))
+}
+
+# The sections a write may touch: those that hold 0x6649 and carry the test account's address.
+function Get-HubSections($Profile) {
+    $targets = @($Profile.Sections.Keys | Where-Object { Test-SectionIsTheHubs $Profile.Sections[$_] $Hub })
+    if ($targets.Count -eq 0) { throw "no section of profile '$ProfileName' holds 00036649 and the test account's address - nothing written" }
+    return $targets
+}
+
 function Invoke-WriteMonths {
     if ($Months -lt 0) { throw '-Months is mandatory.' }
     if (@(Get-Process -Name OUTLOOK -ErrorAction SilentlyContinue).Count -gt 0) { throw 'Outlook is running - this write is measured with Outlook CLOSED (Testbed/host/Restart-Guest.ps1 closes it).' }
     $p = Read-Profile
-    $targets = @($p.Sections.Keys | Where-Object { Test-SectionIsTheHubs $p.Sections[$_] $Hub })
-    if ($targets.Count -eq 0) { throw "no section of profile '$ProfileName' holds 00036649 and the test account's address - nothing written" }
-    foreach ($sec in $targets) {
-        $before = $p.Sections[$sec]['00036649']
-        $bytes = [BitConverter]::GetBytes([int]$Months)
-        Set-ItemProperty -LiteralPath (Join-Path $ProfileKey $sec) -Name '00036649' -Value ([byte[]]$bytes) -Type Binary
-        $after = (Get-Item -LiteralPath (Join-Path $ProfileKey $sec)).GetValue('00036649')
-        Say ("WROTE section {0} value 00036649: {1} -> {2}" -f $sec, (Format-ProfileValue $before), (Format-ProfileValue ((@($after) | ForEach-Object { $_.ToString('X2') }) -join '')))
+    foreach ($sec in (Get-HubSections $p)) { Write-HubValue $sec '00036649' $Months $p.Sections[$sec]['00036649'] }
+}
+
+function Invoke-WritePair {
+    if ($Months -lt 0 -or $Days -lt 0) { throw '-Months and -Days are both mandatory: Outlook writes them as a pair.' }
+    $running = @(Get-Process -Name OUTLOOK -ErrorAction SilentlyContinue).Count -gt 0
+    if ($WhileRunning -and -not $running) { throw '-WhileRunning measures a write into a RUNNING Outlook, and Outlook is not running.' }
+    if (-not $WhileRunning -and $running) { throw 'Outlook is running - give -WhileRunning to write while it runs, or close it first.' }
+    $p = Read-Profile
+    Say ("  Outlook running: {0}" -f $running)
+    foreach ($sec in (Get-HubSections $p)) {
+        Write-HubValue $sec '00036649' $Months $p.Sections[$sec]['00036649']
+        Write-HubValue $sec '0003665a' $Days $p.Sections[$sec]['0003665a']
     }
 }
 
@@ -423,6 +455,7 @@ try {
         'Read' { Invoke-Read }
         'Set' { Invoke-Set }
         'WriteMonths' { Invoke-WriteMonths }
+        'WritePair' { Invoke-WritePair }
     }
 }
 catch { Say ('FAILED: ' + $_.Exception.Message); Say ('  at ' + (($_.ScriptStackTrace -split "`n") -join ' <- ')) }

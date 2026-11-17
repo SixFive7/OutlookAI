@@ -85,7 +85,10 @@
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Inspect', 'OpenAddAccount', 'Address', 'Password', 'Code', 'Page', 'Choose', 'Verify')] [string] $Step = 'Inspect',
+    [ValidateSet('Inspect', 'OpenAddAccount', 'Address', 'Password', 'Code', 'Page', 'Choose', 'Verify', 'OpenBrowser', 'SignOutBrowser')] [string] $Step = 'Inspect',
+    # Outlook on the web in Edge instead of Outlook's own sign-in (Q161 (c), 2026-11-17): the page window is
+    # an InPrivate Edge window, and the address field is the web page's own.
+    [switch] $Browser,
     [string] $ControlName,
     [string] $Account,
     [int] $WaitSeconds = 90,
@@ -122,6 +125,7 @@ namespace OutlookAI {
         [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
         [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
         [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr hWnd);
+        [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
         [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
         [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
 
@@ -326,6 +330,8 @@ function Bring-ToFront($Window) {
 # by process and title rather than by one class name, because the host differs between builds.
 function Find-PageWindow([string] $Page) {
     $tops = @(Get-TopWindows | Where-Object { -not $_.MailWindow -and -not $_.Offscreen })
+    # Q161 (c): the sign-in page is Outlook on the web's, in the InPrivate Edge window this script opened.
+    if ($Browser) { return @($tops | Where-Object { $_.Process -eq 'msedge' -and $_.Class -eq 'Chrome_WidgetWin_1' -and $_.Name -match 'InPrivate' }) }
     switch ($Page) {
         'Address' { return @($tops | Where-Object { $_.Process -eq 'OUTLOOK' -and $_.Class -eq 'NUIDialog' }) }
         default {
@@ -351,6 +357,12 @@ function Find-Field($Window, [string] $Page) {
             # in a running Outlook shows the box as a NetUITextbox named "Email address" (measured
             # 2026-10-08), with the rich edit appearing under it only once it has the focus.
             'Address' {
+                # The Microsoft sign-in page's address box: id i0116 (measured in Edge 2026-11-17).
+                if ($Browser) {
+                    if ($c.ControlType -eq [System.Windows.Automation.ControlType]::Edit -and -not $c.IsPassword -and $c.IsEnabled -and
+                        ($c.AutomationId -eq 'i0116' -or $c.Name -match '(?i)email|phone|skype')) { return $e }
+                    continue
+                }
                 if ($c.ClassName -eq 'RICHEDIT60W') { return $e }
                 if ($c.ClassName -eq 'NetUITextbox' -and $c.ControlType -eq [System.Windows.Automation.ControlType]::Edit -and
                     [string]::Equals($c.Name, 'Email address', [StringComparison]::OrdinalIgnoreCase) -and -not $c.IsPassword) { return $e }
@@ -507,6 +519,58 @@ if ($Step -eq 'Page') {
 }
 
 # ------------------------------------------------------------------------------------------------
+# Q161 (c): Outlook on the web, in an InPrivate Edge window - so no sign-in outlives the window.
+$OwaUrl = 'https://outlook.office.com/mail/'
+$OwaSignOutUrl = 'https://outlook.office.com/owa/logoff.owa'
+$EdgeExe = 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'
+if ($Step -eq 'OpenBrowser') {
+    if (-not $Browser) { Write-Status 'REFUSED' @('-Step OpenBrowser goes with -Browser'); exit 4 }
+    if (@(Find-PageWindow 'Any').Count -gt 0) { Write-Status 'REFUSED' @('an InPrivate Edge window is open already - close it first (-Step SignOutBrowser)'); exit 4 }
+    if (-not (Test-Path -LiteralPath $EdgeExe)) { Write-Status 'NOT-FOUND' @("Edge is not at $EdgeExe"); exit 3 }
+    Start-Process -FilePath $EdgeExe -ArgumentList '--inprivate', '--no-first-run', '--no-default-browser-check', '--new-window', $OwaUrl | Out-Null
+    $deadline = (Get-Date).AddSeconds($WaitSeconds)
+    while ((Get-Date) -lt $deadline) {
+        $w = @(Find-PageWindow 'Any') | Select-Object -First 1
+        if ($w) { Write-Status 'DONE' @(('OPENED "{0}" ({1}) handle={2}' -f (Short $w.Name), $w.Class, $w.Handle)); exit 0 }
+        Start-Sleep -Seconds 1
+    }
+    Write-Status 'NOT-FOUND' @("no InPrivate Edge window within $WaitSeconds s")
+    exit 3
+}
+if ($Step -eq 'SignOutBrowser') {
+    if (-not $Browser) { Write-Status 'REFUSED' @('-Step SignOutBrowser goes with -Browser'); exit 4 }
+    $open = @(Find-PageWindow 'Any')
+    $detail = @()
+    if ($open.Count -gt 0) {
+        # Outlook on the web's own sign-out, in the same InPrivate session, then every InPrivate window closed:
+        # an InPrivate session's cookies end with its last window.
+        Start-Process -FilePath $EdgeExe -ArgumentList '--inprivate', $OwaSignOutUrl | Out-Null
+        Start-Sleep -Seconds 12
+        $detail += ('signed out through ' + $OwaSignOutUrl)
+        foreach ($w in @(Find-PageWindow 'Any')) { $detail += ('closing "{0}"' -f (Short $w.Name)); [void][OutlookAI.SignInWindow]::PostMessage([IntPtr]$w.Handle, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero) }
+        Start-Sleep -Seconds 5
+    }
+    $left = @(Find-PageWindow 'Any').Count
+    if ($left -gt 0) { Write-Status 'STUCK' (@($detail) + "$left InPrivate window(s) still open"); exit 1 }
+    Write-Status 'DONE' (@($detail) + 'no InPrivate Edge window open')
+    exit 0
+}
+
+if ($Step -eq 'Verify' -and $Browser) {
+    # Outlook on the web has loaded once the InPrivate window's title is Outlook's mail page, not a sign-in page.
+    $deadline = (Get-Date).AddSeconds($WaitSeconds)
+    $seen = 'no InPrivate Edge window'
+    while ((Get-Date) -lt $deadline) {
+        foreach ($w in @(Find-PageWindow 'Any')) {
+            $seen = 'InPrivate window "' + (Short $w.Name) + '"'
+            if ($w.Name -match '(?i)outlook' -and $w.Name -notmatch '(?i)sign in') { Write-Status 'SIGNED-IN' @($seen); exit 0 }
+        }
+        Start-Sleep -Seconds 3
+    }
+    Write-Status 'NOT-SIGNED-IN' @($seen)
+    exit 1
+}
+
 if ($Step -eq 'Verify') {
     if (-not $Account) { Write-Status 'REFUSED' @('-Step Verify needs -Account'); exit 4 }
     $deadline = (Get-Date).AddSeconds($WaitSeconds)
@@ -678,7 +742,10 @@ function Test-FocusOnField {
         $inWindow = ($focus.Foreground -eq [int64]$window.Handle) -or ($focus.TopHandle -eq [int64]$window.Handle)
         switch ($Step) {
             'Password' { $ok = $focus.IsPassword -and ($same -or $inWindow) }
-            'Address' { $ok = (-not $focus.IsPassword) -and ($same -or ($inWindow -and @('RICHEDIT60W', 'NetUITextbox') -contains $focus.Class)) }
+            'Address' {
+                if ($Browser) { $ok = (-not $focus.IsPassword) -and ($same -or ($inWindow -and $focus.Aid -eq 'i0116')) }
+                else { $ok = (-not $focus.IsPassword) -and ($same -or ($inWindow -and @('RICHEDIT60W', 'NetUITextbox') -contains $focus.Class)) }
+            }
             default { $ok = $same -or ($inWindow -and $focus.Class -eq $field.Current.ClassName -and $focus.Aid -eq $field.Current.AutomationId) }
         }
     }

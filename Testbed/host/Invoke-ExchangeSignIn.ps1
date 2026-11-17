@@ -79,6 +79,15 @@
     MAINTAINER - Microsoft asked for a second factor, or for one to be registered, that only he can
     give (the page's words are printed).
 
+.PARAMETER Mode (OwaSignIn, OwaSignOut)
+    OUTLOOK ON THE WEB, for measuring roaming signatures (Q161 (c), decided by the maintainer 2026-11-17).
+    OwaSignIn opens Outlook on the web in an InPrivate Edge window on the guest, types the address, the
+    password and - if asked - a TOTP code exactly as the other modes do, answers "Stay signed in?" with
+    No, and waits for the mail page. OwaSignOut signs out through Outlook on the web's own sign-out and
+    closes every InPrivate window. THE TEST ACCOUNT ONLY: both refuse any account testbed.json does not
+    record with the role "hub" - never telefonie@xxlnet.nl. The VM is restored to its checkpoint
+    afterwards by whoever ran it (AGENTS.md, Q161 (c)).
+
 .PARAMETER DefenderOnly
     With -Mode Preflight: bring Defender's signatures up to date and stop there - for the moment
     before Outlook starts, so that the Outlook which then starts finds them current (an Outlook started
@@ -98,7 +107,7 @@
 [CmdletBinding(DefaultParameterSetName = 'Run')]
 param(
     [Parameter(Mandatory = $true, ParameterSetName = 'Run')] [string] $VMName,
-    [Parameter(ParameterSetName = 'Run')] [ValidateSet('NewProfile', 'AddAccount', 'Reauth', 'Preflight')] [string] $Mode = 'NewProfile',
+    [Parameter(ParameterSetName = 'Run')] [ValidateSet('NewProfile', 'AddAccount', 'Reauth', 'Preflight', 'OwaSignIn', 'OwaSignOut')] [string] $Mode = 'NewProfile',
     [Parameter(ParameterSetName = 'Run')] [string] $Account,
     [Parameter(ParameterSetName = 'Run')] [switch] $StartOutlook,
     [Parameter(ParameterSetName = 'Run')] [switch] $DefenderOnly,
@@ -171,6 +180,18 @@ function Resolve-ExchangeAccount {
     return [pscustomobject]@{ Account = $null; Problem = "REFUSING: '$Account' is not an account testbed.json's exchangeVm.accounts records ($($known -join ', ')). This script types a mailbox password; it types one only for a mailbox the record names." }
 }
 
+# Q161 (c): Outlook on the web signs in the TEST account only - the one testbed.json records as the hub.
+function Get-OwaAccountProblem {
+    param([string] $Account, $Testbed)
+    $hub = @()
+    if ($null -ne $Testbed -and ($Testbed.PSObject.Properties.Name -contains 'exchangeVm') -and ($Testbed.exchangeVm.PSObject.Properties.Name -contains 'accounts')) {
+        $hub = @($Testbed.exchangeVm.accounts | Where-Object { $null -ne $_ -and [string]$_.role -eq 'hub' } | ForEach-Object { [string]$_.address })
+    }
+    if ([string]::IsNullOrWhiteSpace($Account)) { return 'REFUSING: Outlook on the web needs -Account <address>, and only the test account may be given (Q161 (c)).' }
+    foreach ($h in $hub) { if ([string]::Equals($h, $Account.Trim(), [StringComparison]::OrdinalIgnoreCase)) { return $null } }
+    return "REFUSING: Outlook on the web signs in the test account only (Q161 (c)); '$Account' is not the account testbed.json records as the hub ($($hub -join ', '))."
+}
+
 # What a -Step Page status says: the page kind and its texts.
 function Get-PageKind {
     param($Status)
@@ -234,6 +255,10 @@ if ($SelfTest) {
     Check 'an error page fails' 'FAIL' (Get-AfterPasswordAction 'ERROR' $true)
     Check 'the device offer continues' 'CONTINUE' (Get-AfterPasswordAction 'DEVICE' $false)
     Check 'no page continues' 'CONTINUE' (Get-AfterPasswordAction 'NONE' $false)
+    $owaTestbed = [pscustomobject]@{ exchangeVm = [pscustomobject]@{ accounts = @([pscustomobject]@{ address = 'real@x.nl'; role = 'bystander' }, [pscustomobject]@{ address = 'test@x.nl'; role = 'hub' }) } }
+    Check 'Outlook on the web signs in the hub' $true ($null -eq (Get-OwaAccountProblem 'test@x.nl' $owaTestbed))
+    Check 'and never the bystander' $true ([string](Get-OwaAccountProblem 'real@x.nl' $owaTestbed)).StartsWith('REFUSING')
+    Check 'nor an account given by nobody' $true ([string](Get-OwaAccountProblem '' $owaTestbed)).StartsWith('REFUSING')
     Write-Host ''
     if ($script:fails -gt 0) { Write-Host "$script:fails FAILED"; exit 1 }
     Write-Host 'All passed.'
@@ -252,6 +277,11 @@ if ($null -ne $problem) { Write-Host $problem; exit 4 }
 function Say([string] $m) { Write-Host ('[{0:HH:mm:ss}] {1}' -f (Get-Date), $m) }
 
 if ($Mode -eq 'AddAccount' -and [string]::IsNullOrWhiteSpace($Account)) { Write-Host 'REFUSING: -Mode AddAccount needs -Account <address>: which mailbox to add is never a default.'; exit 4 }
+$owa = ($Mode -eq 'OwaSignIn' -or $Mode -eq 'OwaSignOut')
+if ($owa) { $owaProblem = Get-OwaAccountProblem $Account $testbed; if ($null -ne $owaProblem) { Write-Host $owaProblem; exit 4 } }
+# Every guest step of the Outlook-on-the-web modes reads the InPrivate Edge window instead of Outlook's.
+$GuestFlags = ''
+if ($owa) { $GuestFlags = ' -Browser' }
 $resolved = Resolve-ExchangeAccount $Account $testbed
 if ($null -ne $resolved.Problem) { Write-Host $resolved.Problem; exit 4 }
 $guestCred = & (Join-Path $PSScriptRoot 'Get-GuestCredential.ps1') -RepoRoot $RepoRoot -VMName $VMName
@@ -287,23 +317,23 @@ function Invoke-GuestStep([string] $Arguments, [int] $Timeout = 300) {
         & .\Register-InteractiveTask.ps1 -RunLevel Limited -TimeoutSeconds $t -Script "& 'C:\OutlookAI-Q5\Connect-ExchangeAccount.ps1' $a" *>&1 | Out-Null
         $step = ($a -split ' ')[1]
         Get-Content -LiteralPath "C:\OutlookAI-Q5\exchange\signin\$step.status.txt" -ErrorAction SilentlyContinue
-    } -ArgumentList $Arguments, $Timeout
+    } -ArgumentList ($Arguments + $GuestFlags), $Timeout
     return (ConvertFrom-StepStatus @($lines))
 }
 
 # A step the host types into: the guest holds the focus in a background job while the host types.
 function Invoke-TypedStep([string] $Step, [scriptblock] $GetText, [int] $WaitSeconds) {
     Invoke-Command -Session $session -ScriptBlock {
-        param($s, $w)
+        param($s, $w, $g)
         Remove-Item "C:\OutlookAI-Q5\exchange\signin\$s.status.txt", "C:\OutlookAI-Q5\exchange\signin\$s.go" -Force -ErrorAction SilentlyContinue
         $global:typedStepJob = Start-Job -ScriptBlock {
-            param($s, $w)
+            param($s, $w, $g)
             Set-ExecutionPolicy -Scope Process Bypass -Force
             Set-Location C:\OutlookAI-Q5
             # ps51-native-stderr-ok: a PowerShell script on the guest, not a program, run inside an Invoke-Command block where the host's 'Stop' does not apply - the remote session's default is 'Continue'
-            & .\Register-InteractiveTask.ps1 -RunLevel Limited -TimeoutSeconds ($w + 200) -Script "& 'C:\OutlookAI-Q5\Connect-ExchangeAccount.ps1' -Step $s -WaitSeconds $w -HoldSeconds 60" *>&1 | Out-Null
-        } -ArgumentList $s, $w
-    } -ArgumentList $Step, $WaitSeconds
+            & .\Register-InteractiveTask.ps1 -RunLevel Limited -TimeoutSeconds ($w + 200) -Script "& 'C:\OutlookAI-Q5\Connect-ExchangeAccount.ps1' -Step $s -WaitSeconds $w -HoldSeconds 60$g" *>&1 | Out-Null
+        } -ArgumentList $s, $w, $g
+    } -ArgumentList $Step, $WaitSeconds, $GuestFlags
 
     $status = $null
     $deadline = (Get-Date).AddSeconds($WaitSeconds + 90)
@@ -379,6 +409,25 @@ try {
         exit 0
     }
 
+    if ($Mode -eq 'OwaSignOut') {
+        Say 'Outlook on the web: signing out and closing every InPrivate Edge window'
+        $o = Invoke-GuestStep "-Step SignOutBrowser -WaitSeconds 60"
+        Say "  $($o.State) $($o.Detail -join ' | ')"
+        if ($o.State -eq 'DONE') { $exit = 0 }
+        exit $exit
+    }
+    if ($Mode -eq 'OwaSignIn') {
+        Say "step 0: Outlook on the web for $account in an InPrivate Edge window (Q161 (c))"
+        $o = Invoke-GuestStep "-Step OpenBrowser -WaitSeconds 60"
+        Say "  $($o.State) $($o.Detail -join ' | ')"
+        if ($o.State -ne 'DONE') { exit 1 }
+        Start-Sleep -Seconds 8
+        Say "step 1: the address ($account)"
+        $r = Invoke-TypedStep -Step 'Address' -GetText { $account } -WaitSeconds $PageWaitSeconds
+        if (-not $r.Typed) { Say "  stopped: $($r.Status.State) $($r.Status.Detail -join ' | ')"; exit 1 }
+        Start-Sleep -Seconds 3
+    }
+
     if ($Mode -eq 'AddAccount') {
         Say "step 0: Outlook's own Add Account dialog (ExecuteMso AddAccount)"
         $o = Invoke-GuestStep "-Step OpenAddAccount -WaitSeconds 60"
@@ -436,6 +485,16 @@ try {
         }
         'FAIL' { Say "  stopped: the sign-in did not move past the password ($kind)"; exit 1 }
         default { Say '  no code asked for' }
+    }
+
+    if ($Mode -eq 'OwaSignIn') {
+        Say 'step 4: "Stay signed in?" - No'
+        $c = Invoke-GuestStep "-Step Choose -ControlName 'No' -WaitSeconds 40"
+        Say "  $($c.State) $($c.Detail -join ' | ')"
+        $v = Invoke-GuestStep "-Step Verify -WaitSeconds 120"
+        Say "step 5: $($v.State) $($v.Detail -join ' | ')"
+        if ($v.State -eq 'SIGNED-IN') { $exit = 0 }
+        exit $exit
     }
 
     Say "step 4: decline signing in to all apps and registering the device"
