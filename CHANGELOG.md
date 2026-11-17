@@ -777,8 +777,10 @@ its mailbox tests on, and change nothing you install.
   first and full name as store names, the maintainer's name in a signature and his surname as a
   sender to search for, and a toy address at a real domain; they now use
   `shared-mailbox@exchange-org.invalid`, `Ann` and `Ann van Example`, `Alex Example`, `example` and
-  `a@b.example`. The baseline of `Tools/Checks/check-personal-data.ps1` comes down with every such
-  change, and is empty once the tests and the testbed need no real value at all.
+  `a@b.example`. Five live-test comments say "the hub" where they named the shared mailbox, and
+  one no longer gives the item counts of a real mailbox. The baseline of
+  `Tools/Checks/check-personal-data.ps1` comes down with every such change, and is empty once the
+  tests and the testbed need no real value at all.
 
 - ✅ **The Outlook test machines run every test at a frozen time, so their test mail never ages (Q130).**
   Each machine rests on a checkpoint taken with Hyper-V's time synchronisation off, so every run

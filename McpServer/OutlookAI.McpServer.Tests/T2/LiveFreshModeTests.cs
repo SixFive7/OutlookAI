@@ -7,7 +7,7 @@ namespace OutlookAI.McpServer.Tests.T2;
 
 /// <summary>
 /// Fresh-mode proof (v3.MD section 0.6 Phase 2 acceptance, D19/D20): a mail sent
-/// telefonie-to-telefonie via COM must be findable through search(fresh) within
+/// from the test hub to itself via COM must be findable through search(fresh) within
 /// seconds - even before the Windows Search index has caught up - because the COM
 /// gap-sweep covers items newer than the index frontier. The round trip continues into
 /// read + save_attachment + content grep, and every artifact is deleted afterwards

@@ -9,7 +9,7 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// under test, an INDEPENDENT verify session (arrival sweeps, folder identities,
 /// modification of this run's own drafts), and one unique run marker for the S3
 /// double-match rule. ALL send-flow tests target the test hub only (S2/D20:
-/// telefonie-to-telefonie; business accounts get NO send-flow artifacts at all).
+/// hub-to-hub; business accounts get NO send-flow artifacts at all).
 /// Fixture disposal runs a final tag+marker cleanup on the hub.
 /// </summary>
 public sealed class LivePhase5Fixture : IDisposable
