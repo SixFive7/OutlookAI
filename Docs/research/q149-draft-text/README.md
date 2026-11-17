@@ -125,7 +125,7 @@ run that did not select the measurement alone - it bounces Outlook dozens of tim
 hour - so a whole-tier run reports each of them `NOT RUN`. A run selects it with:
 
 ```
-pwsh -File Testbed/host/Invoke-LiveTierOnGuest.ps1 -VMName OutlookAI-Unindexed <commit> -FilterSuffix '&FullyQualifiedName~OutlookAI.McpServer.Tests.T2.LiveQ149&FullyQualifiedName!~Smoke' -SkipHubReset -RunTimeoutMinutes 180
+pwsh -File Testbed/host/Invoke-LiveTierOnGuest.ps1 -Kind Unindexed <commit> -FilterSuffix '&FullyQualifiedName~OutlookAI.McpServer.Tests.T2.LiveQ149&FullyQualifiedName!~Smoke' -SkipHubReset -RunTimeoutMinutes 180
 ```
 
 and each class's `Smoke_*` test runs every cell once (`&FullyQualifiedName~Smoke` instead). Every

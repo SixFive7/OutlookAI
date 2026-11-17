@@ -198,10 +198,12 @@ public sealed class Q149ComposeMeasurementTests
     }
 
     [Fact]
-    public void EveryCellHasItsOwnName_InItsStage_AndNoneEndsInASuffixTheSuiteAppends()
+    public void EveryCellHasItsOwnName_InItsStage_AndNoneIsAnotherCellsLineName()
     {
         // The suite writes a cell's re-reads as <cell>-commit, its process lines as <cell>-process and the
-        // product's drafts as <cell>-product; a cell whose own name ended in one would be read as another's.
+        // product's drafts as <cell>-product. A cell named like one of those lines of another cell would be
+        // read as that cell's. (W6's own name ends in "-process", which is harmless: no cell is called W6
+        // without it.)
         List<string> cells = typeof(Q149Cells).GetFields(BindingFlags.Public | BindingFlags.Static)
             .Where(f => f.IsLiteral && f.FieldType == typeof(string))
             .Select(f => (string)f.GetRawConstantValue()!)
@@ -212,9 +214,10 @@ public sealed class Q149ComposeMeasurementTests
         Assert.Contains(Q149Cells.W7, cells);
         foreach (string cell in cells)
         {
-            Assert.False(cell.EndsWith("-commit", StringComparison.Ordinal), cell);
-            Assert.False(cell.EndsWith("-process", StringComparison.Ordinal), cell);
-            Assert.False(cell.EndsWith("-product", StringComparison.Ordinal), cell);
+            foreach (string suffix in new[] { "-commit", "-process", "-product" })
+            {
+                Assert.DoesNotContain(cell + suffix, cells);
+            }
         }
     }
 
