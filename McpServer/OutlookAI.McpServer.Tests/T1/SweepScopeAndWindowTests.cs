@@ -55,7 +55,7 @@ public sealed class SweepScopeAndWindowTests
     private const string StoreB = "bob@example.com";
 
     /// <summary>An archive-only data file: a store with none of the four arrival-path folders.</summary>
-    private const string StoreC = "Archive 2019.pst";
+    private const string StoreC = "Archive Old.pst";
 
     // ============================================ (1) counters belong to ONE store
 
@@ -529,9 +529,9 @@ public sealed class SweepScopeAndWindowTests
         // the sender used. A miss here is silent: the store just gets the fallback window and
         // nothing in the payload says its own one was not applied.
         IReadOnlyDictionary<string, DateTime> resolved = OutlookComSession.NormalizeSweepWindows(
-            new Dictionary<string, DateTime>(StringComparer.Ordinal) { ["Archive 2019.PST"] = NowUtc.AddHours(-3) });
+            new Dictionary<string, DateTime>(StringComparer.Ordinal) { ["Archive Old.PST"] = NowUtc.AddHours(-3) });
 
-        Assert.Equal(NowUtc.AddHours(-3), OutlookComSession.WindowFor(resolved, "archive 2019.pst", NowUtc));
+        Assert.Equal(NowUtc.AddHours(-3), OutlookComSession.WindowFor(resolved, "archive old.pst", NowUtc));
     }
 
     [Fact]

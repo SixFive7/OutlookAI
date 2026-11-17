@@ -227,7 +227,7 @@ public sealed class ThreadDerivedStoreScopeTests
         using MailService service = world.Service();
 
         ThreadOutcome outcome = service.Thread(
-            conversationId: ConversationId, id: StandIn.AnchorEntryId, store: "Archive 2019.pst");
+            conversationId: ConversationId, id: StandIn.AnchorEntryId, store: "Archive Old.pst");
 
         Assert.True(outcome.ScopeWidened);
         Assert.Null(outcome.ScopeStore);

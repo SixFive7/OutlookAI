@@ -26,13 +26,13 @@ public sealed class ComHostProtocolTests
         // name, and that map crosses this pipe on every unscoped search. Two ways it could
         // fail silently and produce a sweep that simply looks narrow: a key policy mangling
         // the names (web defaults camel-case PROPERTY names - dictionary keys must pass
-        // through verbatim, and a store really can be called "Archive 2019.pst"), and a
+        // through verbatim, and a store really can be called "Archive Old.pst"), and a
         // DateTime losing its UTC kind on the way, which would shift every window by the
         // machine's offset. Neither shows up anywhere in the payload.
         Dictionary<string, DateTime> windows = new(StringComparer.Ordinal)
         {
-            ["Archive 2019.pst"] = new DateTime(2026, 08, 18, 07, 20, 09, DateTimeKind.Utc),
-            ["Jori Huisman"] = new DateTime(2026, 08, 17, 22, 00, 00, DateTimeKind.Utc),
+            ["Archive Old.pst"] = new DateTime(2026, 08, 18, 07, 20, 09, DateTimeKind.Utc),
+            ["Alex Example"] = new DateTime(2026, 08, 17, 22, 00, 00, DateTimeKind.Utc),
         };
 
         JsonElement wire = JsonSerializer.SerializeToElement(
@@ -53,8 +53,8 @@ public sealed class ComHostProtocolTests
         // while every store comparison in this server is case-insensitive.
         IReadOnlyDictionary<string, DateTime> normalized = OutlookComSession.NormalizeSweepWindows(back);
         Assert.Equal(
-            windows["Archive 2019.pst"],
-            OutlookComSession.WindowFor(normalized, "ARCHIVE 2019.PST", DateTime.MaxValue));
+            windows["Archive Old.pst"],
+            OutlookComSession.WindowFor(normalized, "ARCHIVE OLD.PST", DateTime.MaxValue));
     }
 
     [Fact]

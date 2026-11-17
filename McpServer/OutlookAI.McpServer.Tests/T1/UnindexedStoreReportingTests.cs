@@ -70,7 +70,7 @@ public sealed class UnindexedStoreReportingTests
     private const string IndexedPrefix = "mapi16://" + Sid + "/" + IndexedStore + "($deadbeef)";
 
     /// <summary>The archive the profile has mounted and Windows Search has never opened.</summary>
-    private const string PstStore = "Archive 2019.pst";
+    private const string PstStore = "Archive Old.pst";
 
     private static readonly DateTime Frontier = new(2026, 8, 18, 9, 30, 0, DateTimeKind.Utc);
 

@@ -45,7 +45,7 @@ public sealed class SweepBodyCapTests
 
     private const string Store = "alice@example.com";
 
-    private const string OtherStore = "Archive 2019.pst";
+    private const string OtherStore = "Archive Old.pst";
 
     private const string StorePrefix = "mapi16://" + Sid + "/" + Store + "($deadbeef)";
 

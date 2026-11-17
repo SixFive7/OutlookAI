@@ -740,6 +740,13 @@ its mailbox tests on, and change nothing you install.
   network clears the backoff and checks shortly after, and "Check for updates" always runs straight
   away.
 
+- ✅ **Tests use placeholder stores, names and addresses instead of real ones (Q189).**
+  Twelve tests named their example stores after the maintainer's own Outlook profile: his address,
+  his name and a real archive's file name. They now use `maintainer@personal.invalid`, `Alex
+  Example` and `Archive Old.pst`, which test the same things - case, spaces and dots in a store
+  name. The baseline of `Tools/Checks/check-personal-data.ps1` comes down with every such change,
+  and is empty once the tests and the testbed need no real value at all.
+
 - ✅ **The Outlook test machines run every test at a frozen time, so their test mail never ages (Q130).**
   Each machine rests on a checkpoint taken with Hyper-V's time synchronisation off, so every run
   starts at the same instant just after its test data's date: `CP-20C-FROZEN-CLOCK` on the indexed

@@ -45,7 +45,7 @@ public sealed class ThreadUnindexedStoreTests
 
     private const string IndexedPrefix = "mapi16://" + Sid + "/" + IndexedStore + "($deadbeef)";
 
-    private const string PstStore = "Archive 2019.pst";
+    private const string PstStore = "Archive Old.pst";
 
     private const string PstPrefix = "mapi16://" + Sid + "/" + PstStore + "($feedface)";
 
@@ -78,7 +78,7 @@ public sealed class ThreadUnindexedStoreTests
     public void TheAnchorIsMatchedWithoutRegardToCase()
     {
         Assert.Empty(FreshMerge.UnwalkedUnindexedStores(
-            Walked("ARCHIVE 2019.PST"), new[] { PstStore }));
+            Walked("ARCHIVE OLD.PST"), new[] { PstStore }));
     }
 
     [Theory]
