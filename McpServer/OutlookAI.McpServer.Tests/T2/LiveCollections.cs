@@ -56,6 +56,13 @@ public static class LiveCollections
     public const string Lifecycle = "LiveLifecycle";
 
     /// <summary>
+    /// The Q149 (d) measurement of how OutlookAI should write draft text (2026-11-17): it ends and
+    /// cold-starts Outlook dozens of times, so it runs only in a run that selects it alone
+    /// (<see cref="Q149RunGate"/>) and in any other run reports itself NOT RUN.
+    /// </summary>
+    public const string ComposeSurface = "LiveComposeSurface";
+
+    /// <summary>
     /// Every guarded collection. Order is irrelevant here - the RUN's order is what decides
     /// which one verifies, and that comes from the collection orderer.
     /// </summary>
@@ -70,6 +77,7 @@ public static class LiveCollections
         SignatureManage,
         McpToolShape,
         Lifecycle,
+        ComposeSurface,
     };
 
     /// <summary>True when <paramref name="collectionName"/> names a guarded live collection.</summary>

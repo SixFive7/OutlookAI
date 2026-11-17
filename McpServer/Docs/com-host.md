@@ -325,7 +325,8 @@ Measured on `OAI-UNINDEXED` (Office LTSC 2024 16.0.17932.20996; the staged serve
 whose pin code is unchanged since) by `Testbed/guest/Measure-PinWindows.ps1`, which drives real
 server processes - each with its own COM host - over stdio with `list_folders` only, and counts
 `Application.Explorers` with each one's window (`IOleWindow`, `IsWindowVisible`) around every step.
-Raw logs: `.work\q118-pin-measure\` of the worktree that ran it.
+Raw logs: `Docs/research/q118-pin-measure/` (until 2026-11-17 only in the scratch folder of the
+worktree that ran it).
 
 **Where a pin is made.** Only by a session that finds NO Explorer (`ComposeSurface.TryPinProcess`'s
 count guard) - not by every session, as an earlier reading of `Connect` had it:

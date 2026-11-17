@@ -1,0 +1,110 @@
+===== ShowMe
+job 3a305fd0f44949ec84bd50d625539118 -> C:\OutlookAI-Q5\jobs\3a305fd0f44949ec84bd50d625539118
+run level: Limited - the work runs NOT elevated, and refuses (exit 4) if its token is elevated anyway
+
+exit 0   (job 3a305fd0f44949ec84bd50d625539118)
+job directory kept at C:\OutlookAI-Q5\jobs\3a305fd0f44949ec84bd50d625539118
+run level: Limited - this token is NOT elevated (read before the work ran)
+[+   0,0s] begin     scenario ShowMe on OAI-UNINDEXED as vmadmin; server C:\OutlookAI-Q5\server\OutlookAI.Mcp
+Server.exe (99.99.99.0+fd2c58b1bfe90b99d01fb8d4522438d5900a7dae); Outlook 16.0.17932.20996
+[+   1,5s] session   A: server pid 3932 initialized in 1.233 ms
+[+   1,7s] tool      A: list_folders answered OutlookStarting at 153 ms (try 1); retrying in 2 s
+[+   7,1s] tool      A: list_folders ok in 5278 ms, 4429 bytes; COM host pid 1420
+[+   8,8s] state     showme: A started Outlook (A alive): Explorers 1 (visible 0, hidden 1); ActiveExplorer()
+: null; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 0 visible / 1 rctrl_renwnd32; top-level w
+indows 0 visible / 24; dialogs 0
+[+   9,4s] kill      A: COM host 1420 terminated (gone)
+[+  10,8s] state     showme: A's COM host killed: Explorers 1 (visible 0, hidden 1); ActiveExplorer(): null; 
+Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 0 visible / 2 rctrl_renwnd32; top-level windows 0
+ visible / 25; dialogs 0
+[+  10,9s] end       A: stdin closed; server exited after 43 ms (exit code 0); its COM host was never seen
+[+  19,1s] state     showme: A's server ended, 5 s on: Explorers 1 (visible 0, hidden 1); ActiveExplorer(): n
+ull; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 0 visible / 2 rctrl_renwnd32; top-level wind
+ows 0 visible / 25; dialogs 0
+[+  42,7s] outlook   user opens the window of the running Outlook start: window up after 3,4 s, settled at 23
+,5 s (pid 5928)
+[+  44,4s] state     showme: the user has the window open: Explorers 2 (visible 1, hidden 1); ActiveExplorer(
+): Explorer #2, visible; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 1 visible / 3 rctrl_renw
+nd32; top-level windows 3 visible / 31; dialogs 0
+[+ 170,4s] end-ol    showme user close: window close by UI Automation: WindowPattern.Close on the one visible
+ Outlook window -> OUTLOOK.EXE STILL RUNNING 120 s after the action (3028 ms to return)
+[+ 174,3s] state     showme user close: after WindowClose, Outlook still up (this reading attaches): Explorer
+s 1 (visible 0, hidden 1); ActiveExplorer(): Explorer #1, hidden; Inspectors 0; Outbox default 0, all 0 over 
+2 stores; frames 0 visible / 3 rctrl_renwnd32; top-level windows 2 visible / 29; dialogs 0
+[+ 178,0s] showme    showme: EnsureVisibleExplorer's ActiveExplorer branch, emulated: ActiveExplorer() window
+ was hidden (WindowState 0); Activate() returned; window now visible
+[+ 179,4s] state     showme: after the emulated show-me call: Explorers 1 (visible 1, hidden 0); ActiveExplor
+er(): Explorer #1, visible; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 1 visible / 3 rctrl_r
+enwnd32; top-level windows 3 visible / 29; dialogs 0
+[+ 181,7s] end-ol    showme close of the shown pin: window close by UI Automation: WindowPattern.Close on the
+ one visible Outlook window -> OUTLOOK.EXE EXITED 0,5 s after the action returned (15 ms to return)
+[+ 181,8s] done      scenario ShowMe; OUTLOOK.EXE not running
+log: C:\OutlookAI-Q5\q118\q118-ShowMe-20261003T204026.jsonl
+===== ControlClose
+job 2eb5b560a1774c478502ceaae7f83852 -> C:\OutlookAI-Q5\jobs\2eb5b560a1774c478502ceaae7f83852
+run level: Limited - the work runs NOT elevated, and refuses (exit 4) if its token is elevated anyway
+
+exit 0   (job 2eb5b560a1774c478502ceaae7f83852)
+job directory kept at C:\OutlookAI-Q5\jobs\2eb5b560a1774c478502ceaae7f83852
+run level: Limited - this token is NOT elevated (read before the work ran)
+[+   0,1s] begin     scenario ControlClose on OAI-UNINDEXED as vmadmin; server C:\OutlookAI-Q5\server\Outlook
+AI.McpServer.exe (99.99.99.0+fd2c58b1bfe90b99d01fb8d4522438d5900a7dae); Outlook 16.0.17932.20996
+[+  24,6s] outlook   user start: window up after 4,3 s, settled at 24,3 s (pid 5832)
+[+  26,2s] state     controlclose: baseline, no OutlookAI session in this Outlook: Explorers 1 (visible 1, hi
+dden 0); ActiveExplorer(): Explorer #1, visible; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 
+1 visible / 2 rctrl_renwnd32; top-level windows 3 visible / 29; dialogs 0
+[+  27,5s] end-ol    controlclose: window close by UI Automation: WindowPattern.Close on the one visible Outl
+ook window -> OUTLOOK.EXE EXITED 0,2 s after the action returned (193 ms to return)
+[+  27,5s] done      scenario ControlClose; OUTLOOK.EXE not running
+log: C:\OutlookAI-Q5\q118\q118-ControlClose-20261003T204339.jsonl
+===== Headless
+job 461e166673744b7e9db1e324852bee5e -> C:\OutlookAI-Q5\jobs\461e166673744b7e9db1e324852bee5e
+run level: Limited - the work runs NOT elevated, and refuses (exit 4) if its token is elevated anyway
+
+exit 0   (job 461e166673744b7e9db1e324852bee5e)
+job directory kept at C:\OutlookAI-Q5\jobs\461e166673744b7e9db1e324852bee5e
+run level: Limited - this token is NOT elevated (read before the work ran)
+[+   0,0s] begin     scenario Headless on OAI-UNINDEXED as vmadmin; server C:\OutlookAI-Q5\server\OutlookAI.M
+cpServer.exe (99.99.99.0+fd2c58b1bfe90b99d01fb8d4522438d5900a7dae); Outlook 16.0.17932.20996
+[+   3,2s] holder    headless: plain COM client pid 5268 holds Outlook (3,1 s)
+[+  24,6s] state     headless: Outlook started by a plain COM client, no OutlookAI session yet: Explorers 0 (
+visible 0, hidden 0); ActiveExplorer(): null; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 0 v
+isible / 1 rctrl_renwnd32; top-level windows 0 visible / 17; dialogs 0
+[+  33,9s] session   H1: server pid 6700 initialized in 9.277 ms
+[+  34,7s] session   H2: server pid 2576 initialized in 783 ms
+[+  35,5s] session   H3: server pid 3400 initialized in 813 ms
+[+  41,2s] tool      H1: list_folders ok in 5578 ms, 4429 bytes; COM host pid 7120
+[+  41,3s] tool      H2: list_folders ok in 5688 ms, 4429 bytes; COM host pid 888
+[+  41,3s] tool      H3: list_folders ok in 5755 ms, 4429 bytes; COM host pid 9520
+[+  43,5s] state     headless: H1-H3 alive at once: Explorers 3 (visible 0, hidden 3); ActiveExplorer(): null
+; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 0 visible / 4 rctrl_renwnd32; top-level windows
+ 0 visible / 33; dialogs 0
+[+  43,7s] end       H1: stdin closed; server exited after 70 ms (exit code 0); its COM host gone
+[+  43,7s] end       H2: stdin closed; server exited after 90 ms (exit code 0); its COM host gone
+[+  43,8s] end       H3: stdin closed; server exited after 117 ms (exit code 0); its COM host gone
+[+  44,6s] state     headless: H1-H3 ended normally: Explorers 3 (visible 0, hidden 3); ActiveExplorer(): nul
+l; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 0 visible / 4 rctrl_renwnd32; top-level window
+s 0 visible / 33; dialogs 0
+[+  45,2s] session   H4: server pid 8524 initialized in 560 ms
+[+  46,4s] tool      H4: list_folders ok in 1236 ms, 4429 bytes; COM host pid 3020
+[+  46,5s] end       H4: stdin closed; server exited after 65 ms (exit code 0); its COM host gone
+[+  47,4s] state     headless: H4 ended normally: Explorers 3 (visible 0, hidden 3); ActiveExplorer(): null; 
+Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 0 visible / 4 rctrl_renwnd32; top-level windows 0
+ visible / 33; dialogs 0
+[+  47,7s] holder    headless: holder let go and exited
+[+  58,6s] state     headless: holder gone, 10 s on: Explorers 3 (visible 0, hidden 3); ActiveExplorer(): nul
+l; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 0 visible / 4 rctrl_renwnd32; top-level window
+s 0 visible / 33; dialogs 0
+[+ 181,5s] end-ol    headless: Application.Quit(): quit-called -> OUTLOOK.EXE STILL RUNNING 120 s after the a
+ction (1224 ms to return)
+[+ 183,4s] state     headless: after Quit, Outlook still up (this reading attaches): Explorers 3 (visible 0, 
+hidden 3); ActiveExplorer(): null; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 0 visible / 4 
+rctrl_renwnd32; top-level windows 0 visible / 33; dialogs 0
+[+ 186,5s] end-ol    headless leftover: closed 3 hidden Explorer(s) -> OUTLOOK.EXE EXITED 0 s after the actio
+n returned (1728 ms to return)
+[+ 186,6s] done      scenario Headless; OUTLOOK.EXE not running
+log: C:\OutlookAI-Q5\q118\q118-Headless-20261003T204413.jsonl
+*>: The term '*>' is not recognized as a name of a cmdlet, function, script file, or executable program.
+Check the spelling of the name, or if a path was included, verify that the path is correct and try again.
+
+[exited with code 1]

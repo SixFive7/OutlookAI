@@ -1,0 +1,17 @@
+run level: Limited - this token is NOT elevated (read before the work ran)
+[+   0,1s] begin     scenario Control on OAI-UNINDEXED as vmadmin; server C:\OutlookAI-Q5\server\OutlookAI.Mc
+pServer.exe (99.99.99.0+fd2c58b1bfe90b99d01fb8d4522438d5900a7dae); Outlook 16.0.17932.20996
+[+  24,0s] outlook   user start: window up after 2,3 s, settled at 22,4 s (pid 6932)
+[+  26,5s] state     control: baseline, no OutlookAI session ever attached: Explorers 1 (visible 1, hidden 0)
+; ActiveExplorer(): Explorer #1, visible; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 1 visib
+le / 2 rctrl_renwnd32; top-level windows 3 visible / 29; dialogs 0
+[+  28,7s] end-ol    control: Application.Quit(): quit-called -> OUTLOOK.EXE EXITED 0,3 s after the action re
+turned (995 ms to return)
+[+  51,3s] outlook   user start: window up after 2,6 s, settled at 22,6 s (pid 9048)
+[+  52,4s] state     control: second baseline: Explorers 1 (visible 1, hidden 0); ActiveExplorer(): Explorer 
+#1, visible; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 1 visible / 2 rctrl_renwnd32; top-le
+vel windows 3 visible / 29; dialogs 0
+[+  54,9s] end-ol    control: File > Exit by UI Automation: File (Invoke) then Exit (Invoke), Exit was  id= -
+> OUTLOOK.EXE EXITED 0,3 s after the action returned (1414 ms to return)
+[+  54,9s] done      scenario Control; OUTLOOK.EXE not running
+log: C:\OutlookAI-Q5\q118\q118-Control-20261003T202106.jsonl

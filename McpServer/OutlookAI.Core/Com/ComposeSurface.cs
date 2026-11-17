@@ -10,11 +10,21 @@ namespace OutlookAI.Core.Com
     /// <summary>
     /// THE INVISIBLE COMPOSE SURFACE (v3.MD D49, soak fix 22).
     /// <para>
-    /// Phase-1 measured fact: <c>Inspector.WordEditor</c> is unobtainable while Outlook
-    /// is window-less - it does not return null, it THROWS
-    /// <c>COMException "The operation failed."</c> - and EVERY route that makes it
-    /// obtainable requires a real top-level window. There is no window-free Word path.
-    /// What CAN be controlled is whether a HUMAN ever sees that window.
+    /// What it rests on, measured on Office LTSC 2021 (16.0.14334) by the D49 probe of 2026-07-31 - 22 runs on
+    /// one machine, kept with their sample sizes in <c>Docs/research/q149-draft-text/</c>:
+    /// <c>Inspector.WordEditor</c> is unobtainable while Outlook has no window that is displayed or was
+    /// activated - it does not return null, it THROWS <c>COMException "The operation failed."</c> (2 of 2
+    /// cold starts, and every such read D46 and D48 made). The window it needs is the PROCESS's, not the
+    /// draft's own: once Outlook shows a window, a never-shown inspector hands out its editor directly
+    /// (D45: 31 of 31), and after one activation in a process later never-activated inspectors got it too
+    /// (the maintainer's audit log, 20 of 21). What CAN be controlled is whether a HUMAN ever sees the
+    /// window. The same questions on Office LTSC 2024 (16.0.17932) were measured by the Q149 (d) suite
+    /// (<c>T2/LiveQ149WindowlessComposeTests</c>) on 2026-11-17, with its results in that folder: the editor
+    /// refused the same way (L2, 20 of 20 on the two test guests) - after 30 seconds of reads, and with a
+    /// window shown by Windows, as well (W2-W5) - and after one promotion in a process the later
+    /// never-activated inspectors handed it out (W6, 60 of 60), their edits committing through
+    /// <c>ModifiedFormPages.Add("Message")</c> and <c>Close(olSave)</c> (W7, 60 of 60) and not through
+    /// <c>CurrentItem.Save()</c> (W6, 0 of 60).
     /// </para>
     /// <para>
     /// So this class does exactly two things, and they fix two DIFFERENT problems that
@@ -24,8 +34,9 @@ namespace OutlookAI.Core.Com
     /// <item><description>
     /// <b>The process pin</b> (<see cref="TryPinProcess"/>) - a NON-DISPLAYED
     /// <c>Explorers.Add(folder, 0)</c>. It does nothing whatsoever for the editor, but it
-    /// is a complete cure for the LIFETIME problem: measured, a window-less Outlook EXITS
-    /// when the only Inspector is closed, which is what killed the compose path's own
+    /// is a complete cure for the LIFETIME problem: measured on Office LTSC 2021 (2 of 2 cold
+    /// starts) and on Office LTSC 2024 (Q149 L1: 40 of 40 shipped composes without the pin, 0 of 10
+    /// with it), a window-less Outlook EXITS when the only Inspector is closed, which is what killed the compose path's own
     /// instance, made <c>update_draft</c> fail with <c>com_failure</c>, and produced the
     /// three <c>RPC_S_SERVER_UNAVAILABLE</c> suite failures. With a non-displayed Explorer
     /// held the instance survives, and D33 promotability is preserved (probe-measured:
@@ -34,11 +45,18 @@ namespace OutlookAI.Core.Com
     /// <item><description>
     /// <b>The editor promotion</b> (<see cref="PromoteForWordEditor"/>) - park the
     /// inspector's (already existing, invisible) window OFF-SCREEN, <c>Activate()</c> it,
-    /// then <c>ShowWindow(SW_HIDE)</c> anything that became visible. Measured 53-79 ms to
-    /// a live WordEditor with the window ending <c>IsWindowVisible == false</c>: absent
+    /// then <c>ShowWindow(SW_HIDE)</c> anything that became visible. Measured on Office LTSC 2021
+    /// (2 runs): 53-79 ms from the <c>Activate()</c> to a live WordEditor - the activation itself took
+    /// 314-611 ms - with the window ending <c>IsWindowVisible == false</c>: absent
     /// from the screen, the taskbar and Alt-Tab. Ordering is load-bearing - off-screen
     /// FIRST, because <c>Activate()</c> alone paints the window where a user would see it
     /// (that is what the shipped <c>update_draft</c> path has been doing).
+    /// <para>
+    /// On Office LTSC 2024 the park does not hold in a window-less Outlook (Q149, 2026-11-17): in 50 of 50
+    /// composes on the two test guests <c>Activate()</c> showed the inspector at Outlook's own position,
+    /// (25,25) 768x519, on screen for 130-646 ms until the sweep below hid it, and gave Outlook the
+    /// foreground. In a windowed Outlook it stayed off-screen (B0, 40 of 40).
+    /// </para>
     /// </description></item>
     /// </list>
     /// <para>
@@ -231,7 +249,25 @@ namespace OutlookAI.Core.Com
         /// </summary>
         internal static object? PromoteForWordEditor(object inspectorObject, out string? error)
         {
+            return PromoteForWordEditor(inspectorObject, out error, out _);
+        }
+
+        /// <summary>
+        /// <see cref="PromoteForWordEditor(object, out string)"/>, also saying whether Outlook had no window a
+        /// person could see when the promotion began - the case the promotion exists for, and the one the
+        /// audit line's <c>composeSurface</c> reports as <c>wordEditorPromoted</c>. Since 2026-10-04 every
+        /// compose promotes, windowed or not, because an edit on a re-opened draft commits only through an
+        /// activated inspector; this is what still tells the two apart.
+        /// <para>
+        /// A refusal keeps its cause: <paramref name="error"/> is <see cref="ComErrorTokens.NoWordEditor"/>
+        /// or <see cref="ComErrorTokens.ActivateFailed"/> with the failure's type and HRESULT after the colon
+        /// (<see cref="ComErrorTokens.With"/>), where it used to be the bare word.
+        /// </para>
+        /// </summary>
+        internal static object? PromoteForWordEditor(object inspectorObject, out string? error, out bool outlookWasWindowless)
+        {
             error = null;
+            outlookWasWindowless = false;
             if (inspectorObject == null)
             {
                 error = "NoInspector";
@@ -242,6 +278,7 @@ namespace OutlookAI.Core.Com
             try
             {
                 before = SnapshotOutlookWindows();
+                outlookWasWindowless = !before.Any(w => w.Visible);
                 foreach (IntPtr h in SelectWindowsToPark(before))
                 {
                     Park(h);
@@ -260,7 +297,7 @@ namespace OutlookAI.Core.Com
             }
             catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
             {
-                error = "ActivateFailed";
+                error = ComErrorTokens.With(ComErrorTokens.ActivateFailed, OutlookComSession.DescribeComFailure(ex));
             }
 
             HideAnythingThatBecameVisible(before);
@@ -271,18 +308,22 @@ namespace OutlookAI.Core.Com
             HideAnythingThatBecameVisible(before);
 
             object? document = null;
+            string? editorFailure = null;
             try
             {
                 document = ((dynamic)inspectorObject).WordEditor;
             }
             catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
             {
-                // Headless throws here rather than returning null (Phase-1 finding 1).
+                // A window-less Outlook throws here rather than returning null - on Office LTSC
+                // 2021 COMException "The operation failed." (D49). Kept with its HRESULT: the
+                // bare word made every refusal in the audit log undiagnosable.
+                editorFailure = OutlookComSession.DescribeComFailure(ex);
             }
 
             if (document == null && error == null)
             {
-                error = "NoWordEditor";
+                error = ComErrorTokens.With(ComErrorTokens.NoWordEditor, editorFailure ?? "returned null");
             }
 
             return document;
@@ -336,7 +377,7 @@ namespace OutlookAI.Core.Com
 
                 // 0 = olFolderDisplayNormal. Deliberately NOT followed by Display():
                 // an Explorer that is never displayed owns an INVISIBLE window, which
-                // pins the process without putting anything on screen (Phase-1 row 2).
+                // pins the process without putting anything on screen (D49 probe row 2, Office LTSC 2021).
                 object created = ((dynamic)explorers!).Add(folder, 0);
                 RememberPin(created, remember: true);
                 return created;
