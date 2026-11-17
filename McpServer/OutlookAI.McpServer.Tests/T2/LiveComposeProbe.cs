@@ -364,6 +364,31 @@ public static class LiveComposeProbe
         return count;
     }
 
+    /// <summary>The frames (class rctrl_renwnd32) of every OUTLOOK.EXE now - taken before an Inspector or Explorer is made.</summary>
+    internal static HashSet<IntPtr> FrameSnapshot()
+    {
+        return Q149Native.OutlookTopWindows()
+            .Where(w => string.Equals(w.ClassName, "rctrl_renwnd32", StringComparison.Ordinal))
+            .Select(w => w.Handle)
+            .ToHashSet();
+    }
+
+    /// <summary>
+    /// The frame of an Inspector or Explorer just made: through IOleWindow when Outlook answers it, else the
+    /// one frame that was not there before. Says which way it was found.
+    /// </summary>
+    internal static (IntPtr Handle, string FoundBy) FrameOf(object outlookWindowObject, HashSet<IntPtr> framesBefore)
+    {
+        IntPtr hwnd = WindowOf(outlookWindowObject);
+        if (hwnd != IntPtr.Zero)
+        {
+            return (hwnd, "IOleWindow");
+        }
+
+        List<IntPtr> added = FrameSnapshot().Where(h => !framesBefore.Contains(h)).ToList();
+        return added.Count == 1 ? (added[0], "snapshot") : (IntPtr.Zero, "none (" + added.Count.ToString(CultureInfo.InvariantCulture) + " new frames)");
+    }
+
     /// <summary>The handle of an Inspector's or Explorer's frame, through IOleWindow; zero when Outlook will not say.</summary>
     internal static IntPtr WindowOf(object outlookWindowObject)
     {

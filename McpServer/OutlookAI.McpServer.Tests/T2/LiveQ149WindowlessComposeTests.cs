@@ -281,13 +281,17 @@ public sealed class LiveQ149WindowlessComposeTests
                     {
                         if (show == ShowKind.Pin)
                         {
+                            HashSet<IntPtr> beforePin = LiveComposeProbe.FrameSnapshot();
                             pin = AddPin(app, ns, attempt);
-                            ShowWithoutActivate(LiveComposeProbe.WindowOf(pin), attempt, "pin");
+                            (IntPtr pinFrame, string pinFoundBy) = LiveComposeProbe.FrameOf(pin, beforePin);
+                            attempt.Set("windowFoundBy", pinFoundBy);
+                            ShowWithoutActivate(pinFrame, attempt, "pin");
                         }
 
                         item = ns.GetItemFromID(entryId, storeId);
                         Q149Drafts.RequireOwnUnsentDraft(Run, item);
                         attempt.Set("htmlBeforeInspector", Q149Html.Analyze((string?)item.HTMLBody).ToFields());
+                        HashSet<IntPtr> beforeInspector = LiveComposeProbe.FrameSnapshot();
                         inspector = item.GetInspector;
                         attempt.Set("htmlAfterTouch", Q149Html.Analyze((string?)item.HTMLBody).ToFields());
                         (bool? isWordMail, int? editorType) = Q149Editor.DescribeInspector((object)inspector);
@@ -298,7 +302,9 @@ public sealed class LiveQ149WindowlessComposeTests
                             .Set("opusAppAtRead", LiveComposeProbe.CountOpusAppWindows());
                         if (show == ShowKind.Inspector)
                         {
-                            ShowWithoutActivate(LiveComposeProbe.WindowOf((object)inspector), attempt, "inspector");
+                            (IntPtr frame, string foundBy) = LiveComposeProbe.FrameOf((object)inspector, beforeInspector);
+                            attempt.Set("windowFoundBy", foundBy);
+                            ShowWithoutActivate(frame, attempt, "inspector");
                         }
 
                         Q149EditorRead r = Q149Editor.ReadEditor((object)inspector, readBudgetMs, 250);
@@ -599,8 +605,7 @@ public sealed class LiveQ149WindowlessComposeTests
             try
             {
                 object pin = explorers.Add(folder, 0);
-                IntPtr hwnd = LiveComposeProbe.WindowOf(pin);
-                attempt.Set("pinWindowFound", hwnd != IntPtr.Zero);
+                attempt.Set("pinWindowViaIOleWindow", LiveComposeProbe.WindowOf(pin) != IntPtr.Zero);
                 return pin;
             }
             finally

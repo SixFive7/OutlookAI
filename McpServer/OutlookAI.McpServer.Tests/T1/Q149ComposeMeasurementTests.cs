@@ -277,13 +277,12 @@ public sealed class Q149ComposeMeasurementTests
     }
 
     [Fact]
-    public void TextBecomesWordsParagraphs_Escaped_WithLineBreaksAndBlankParagraphs()
+    public void TextBecomesOneParagraph_WithSoftBreaks_EscapedAsTheWordPathWritesIt()
     {
-        string html = HtmlOnlyDraftComposer.ParagraphsFromText("a < b\nline two\n\nsecond");
-        Assert.Contains("<p class=MsoNormal>a &lt; b<br>", html, StringComparison.Ordinal);
-        Assert.Contains("line two<o:p></o:p></p>", html, StringComparison.Ordinal);
-        Assert.Contains("<p class=MsoNormal>second<o:p></o:p></p>", html, StringComparison.Ordinal);
-        Assert.Equal(HtmlOnlyDraftComposer.BlankParagraph, HtmlOnlyDraftComposer.ParagraphsFromText("one\n\n\n\ntwo").Split('\n')[1]);
+        Assert.Equal(
+            "<p class=MsoNormal>a &lt; b<br>\nline two<br>\n<br>\nsecond<o:p></o:p></p>\n",
+            HtmlOnlyDraftComposer.ParagraphsFromText("a < b\r\nline two\n\nsecond"));
+        Assert.Equal("<p class=MsoNormal><o:p></o:p></p>\n", HtmlOnlyDraftComposer.ParagraphsFromText(string.Empty));
 
         Assert.Equal("<p class=MsoNormal>x</p><p class=Other>y</p><h1>z</h1>", HtmlOnlyDraftComposer.ParagraphsFromHtml("<p>x</p><p class=Other>y</p><h1>z</h1>"));
     }

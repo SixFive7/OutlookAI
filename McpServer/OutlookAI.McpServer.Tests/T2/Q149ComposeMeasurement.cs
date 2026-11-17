@@ -688,34 +688,28 @@ public static class HtmlOnlyDraftComposer
         return (html.Value, head.Value, body.Value);
     }
 
-    /// <summary>A plain-text body as Word's paragraphs: one per paragraph, a line break for a single newline.</summary>
+    /// <summary>
+    /// A plain-text body the way the Word path writes it today (<c>InsertBodyAboveSignature</c>): ONE
+    /// paragraph, every newline a soft line break - Word's vertical tab, which it writes as &lt;br&gt; - so a
+    /// blank line is two breaks in a row, not a paragraph of its own.
+    /// </summary>
     public static string ParagraphsFromText(string text)
     {
-        string normalized = (text ?? string.Empty).Replace("\r\n", "\n", StringComparison.Ordinal);
+        string normalized = (text ?? string.Empty).Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
+        string[] lines = normalized.Split('\n');
         StringBuilder html = new();
-        foreach (string paragraph in normalized.Split("\n\n", StringSplitOptions.None))
+        html.Append("<p class=MsoNormal>");
+        for (int i = 0; i < lines.Length; i++)
         {
-            if (paragraph.Length == 0)
+            if (i > 0)
             {
-                html.Append(BlankParagraph).Append('\n');
-                continue;
+                html.Append("<br>\n");
             }
 
-            string[] lines = paragraph.Split('\n');
-            html.Append("<p class=MsoNormal>");
-            for (int i = 0; i < lines.Length; i++)
-            {
-                if (i > 0)
-                {
-                    html.Append("<br>\n");
-                }
-
-                html.Append(WebUtility.HtmlEncode(lines[i]));
-            }
-
-            html.Append("<o:p></o:p></p>\n");
+            html.Append(WebUtility.HtmlEncode(lines[i]));
         }
 
+        html.Append("<o:p></o:p></p>\n");
         return html.ToString();
     }
 

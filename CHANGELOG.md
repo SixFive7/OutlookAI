@@ -1079,6 +1079,12 @@ its mailbox tests on, and change nothing you install.
   Items - beside the mail, and none of them could be opened. On the test machine they were 21 of the
   first 100 results.
 
+- ✅ **Two search tests pass again: since 2026-11-16 "90 days ago" was later than their fixed index date.**
+  UnindexedStoreReportingTests asked for mail from before 90 days ago against a stub index whose
+  frontier is fixed at 2026-08-18, so on 2026-11-16 the question moved past the frontier, the sweep
+  became needed, and the two tests that expect it not to be failed on every build. The question is
+  now anchored to the stub's frontier, as the store-scoped test in the same class already was.
+
 - 📝 **The draft tools' descriptions say which drafts the tools can reach.**
   `update_draft` can revise any unsent draft in a Drafts folder, including one you wrote yourself,
   and a draft it revised can then be discarded by the same session. The descriptions used to say
