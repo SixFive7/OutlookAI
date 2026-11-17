@@ -90,6 +90,9 @@
 .PARAMETER HoldSeconds
     RootStorePrompt: how long delete-unanswered leaves the prompt unanswered.
 
+.PARAMETER VisibleWithinSeconds
+    RootStorePrompt: how long a prompt, once it exists, is watched for being shown on the screen.
+
 .PARAMETER InstallerPath
     InstallerCleanup: the compiled OutlookAI installer to run.
 
@@ -111,6 +114,7 @@ param(
     [switch]   $Execute,
     [string]   $LogDir = 'C:\OutlookAI-Q5\trust-removal\results',
     [int]      $HoldSeconds = 120,
+    [int]      $VisibleWithinSeconds = 5,
     [string]   $InstallerPath,
     [string]   $InstallerScript,
     [string[]] $ExpectedUser = @('vmadmin'),
@@ -184,6 +188,8 @@ public static class OaiTrustNative
     const uint WM_COMMAND = 0x0111;
     const uint SMTO_ABORTIFHUNG = 0x2;
     const uint GW_OWNER = 4;
+    const uint DM_GETDEFID = 0x0400;
+    const long DC_HASDEFID = 0x534B;
 
     public sealed class Launched { public int Pid; public IntPtr Handle; }
 
@@ -223,6 +229,19 @@ public static class OaiTrustNative
     public static long Foreground() { return GetForegroundWindow().ToInt64(); }
 
     public static bool Exists(long hwnd) { return IsWindow(new IntPtr(hwnd)); }
+
+    public static bool Visible(long hwnd) { return IsWindowVisible(new IntPtr(hwnd)); }
+
+    // The dialog's default button - the one Enter presses: DM_GETDEFID gives DC_HASDEFID in the high
+    // word and the id in the low word. 0 when it has none or does not answer.
+    public static int DefaultButtonId(long dialog)
+    {
+        IntPtr result;
+        if (SendLength(new IntPtr(dialog), DM_GETDEFID, IntPtr.Zero, IntPtr.Zero, SMTO_ABORTIFHUNG, 2000, out result) == IntPtr.Zero) return 0;
+        long v = result.ToInt64();
+        if (((v >> 16) & 0xFFFF) != DC_HASDEFID) return 0;
+        return (int)(v & 0xFFFF);
+    }
 
     static string TextOf(IntPtr h)
     {
@@ -559,7 +578,8 @@ function Get-UiaReading([long] $Hwnd) {
         $all = $el.FindAll([System.Windows.Automation.TreeScope]::Subtree, [System.Windows.Automation.Condition]::TrueCondition)
         $out = @()
         foreach ($e in $all) {
-            $out += [pscustomobject]@{ type = $e.Current.ControlType.ProgrammaticName; name = $e.Current.Name; automationId = $e.Current.AutomationId; offscreen = $e.Current.IsOffscreen }
+            $patterns = @($e.GetSupportedPatterns() | ForEach-Object { $_.ProgrammaticName -replace 'Identifiers\.Pattern$', '' })
+            $out += [pscustomobject]@{ type = $e.Current.ControlType.ProgrammaticName; name = $e.Current.Name; automationId = $e.Current.AutomationId; offscreen = $e.Current.IsOffscreen; patterns = ($patterns -join ',') }
         }
         return $out
     }
@@ -588,27 +608,58 @@ function Get-PromptRecord([object] $Window, [long] $ForegroundBefore, [double] $
     }
 }
 
-# Answers a prompt: UI Automation's Invoke on the button, as a person's click; the dialog's own
-# WM_COMMAND when UI Automation cannot reach the button (a hidden dialog has no UI Automation
-# element a client can invoke).
+# Answers a prompt: UI Automation's Invoke on the button's element, as a person's click, when it
+# offers one; otherwise the dialog's own WM_COMMAND for that button, which is what a click sends and
+# which reaches a dialog nobody can see. Says which it used, and why UI Automation did not.
 function Send-Answer([object] $Prompt, [string] $Answer) {
     $button = Select-AnswerButton -Children $Prompt.children -Answer $Answer
+    $uiaWhy = 'no element for the button'
     try {
         $el = [System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]$Prompt.hwnd)
-        $cond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)
-        foreach ($b in $el.FindAll([System.Windows.Automation.TreeScope]::Descendants, $cond)) {
+        foreach ($b in $el.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)) {
             $match = ($b.Current.Name.Replace('&', '').Trim() -ieq $Answer)
             if (-not $match -and $null -ne $button) { $match = ($b.Current.NativeWindowHandle -eq $button.Hwnd) }
-            if ($match -and -not $b.Current.IsOffscreen) {
-                $b.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
-                return 'UI Automation Invoke on "' + $b.Current.Name + '"'
+            if (-not $match) { continue }
+            $invoke = $null
+            if ($b.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref] $invoke)) {
+                $invoke.Invoke()
+                return 'UI Automation Invoke on the ' + $b.Current.ControlType.ProgrammaticName + ' "' + $b.Current.Name + '"'
             }
+            $uiaWhy = 'its element, a ' + $b.Current.ControlType.ProgrammaticName + ', offers no InvokePattern'
+            break
         }
     }
-    catch { }
-    if ($null -eq $button) { return 'no button for ' + $Answer + ' - left unanswered' }
-    if ([OaiTrustNative]::Press($Prompt.hwnd, $button.ControlId, $button.Hwnd)) { return "WM_COMMAND id $($button.ControlId) (`"$($button.Text)`")" }
+    catch { $uiaWhy = 'UI Automation threw: ' + $_.Exception.Message }
+    if ($null -eq $button) { return 'no button for ' + $Answer + ' - left unanswered (' + $uiaWhy + ')' }
+    if ([OaiTrustNative]::Press($Prompt.hwnd, $button.ControlId, $button.Hwnd)) { return "WM_COMMAND id $($button.ControlId) (`"$($button.Text)`"), because $uiaWhy" }
     return 'WM_COMMAND could not be posted'
+}
+
+# Whether Windows builds a trusted chain for the certificate as it stands: what a root in the store
+# is for. No revocation check - the throwaway has nowhere to check.
+function Test-TrustedAsRoot([string] $CerPath) {
+    $c = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 -ArgumentList $CerPath
+    $chain = New-Object System.Security.Cryptography.X509Certificates.X509Chain
+    try {
+        $chain.ChainPolicy.RevocationMode = [System.Security.Cryptography.X509Certificates.X509RevocationMode]::NoCheck
+        $ok = $chain.Build($c)
+        $status = @($chain.ChainStatus | ForEach-Object { [string]$_.Status }) -join ','
+        return [pscustomobject]@{ trusted = $ok; status = $status }
+    }
+    finally { $chain.Reset(); $c.Reset() }
+}
+
+# Whether Windows' list of the roots a user confirmed - the ProtectedRoots value, which only the
+# system writes - still names the certificate: its SHA-1 among the value's bytes.
+function Test-InProtectedRoots([string] $Thumbprint) {
+    try {
+        $blob = [byte[]](Get-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\SystemCertificates\Root\ProtectedRoots' -Name Certificates -ErrorAction Stop).Certificates
+        $hash = New-Object byte[] 20
+        for ($i = 0; $i -lt 20; $i++) { $hash[$i] = [Convert]::ToByte($Thumbprint.Substring($i * 2, 2), 16) }
+        $hex = [BitConverter]::ToString($blob)
+        return [string]($hex.Contains([BitConverter]::ToString($hash)))
+    }
+    catch { return 'unreadable: ' + $_.Exception.Message }
 }
 
 function Test-InUserRoot([string] $Thumbprint) {
@@ -642,8 +693,21 @@ function Invoke-CertutilCase {
             $window = Select-Prompt $new
             if ($null -eq $window) { Start-Sleep -Milliseconds 200; continue }
             $record = Get-PromptRecord -Window $window -ForegroundBefore $fg -AppearedSeconds $clock.Elapsed.TotalSeconds
-            Write-Host ("   PROMPT after {0} s: '{1}' class {2}, pid {3} ({4}), visible {5}, foreground {6}" -f $record.appearedSeconds, $record.title, $record.class, $record.pid, $record.process, $record.visible, $record.foreground)
+            # A dialog exists a moment before it is shown, so "not visible" when it is first seen says
+            # nothing yet: watch it for VisibleWithinSeconds, as a person at the screen would.
+            $shownAt = $null
+            $watch = [System.Diagnostics.Stopwatch]::StartNew()
+            while ($watch.Elapsed.TotalSeconds -lt $VisibleWithinSeconds -and [OaiTrustNative]::Exists($window.Hwnd)) {
+                if ([OaiTrustNative]::Visible($window.Hwnd)) { $shownAt = [Math]::Round($clock.Elapsed.TotalSeconds, 2); break }
+                Start-Sleep -Milliseconds 100
+            }
+            $record | Add-Member -NotePropertyName shownAtSeconds -NotePropertyValue $shownAt
+            $record | Add-Member -NotePropertyName foregroundOnceShown -NotePropertyValue ([OaiTrustNative]::Foreground() -eq $window.Hwnd)
+            $record | Add-Member -NotePropertyName defaultButtonId -NotePropertyValue ([OaiTrustNative]::DefaultButtonId($window.Hwnd))
+            $record | Add-Member -NotePropertyName uiaOnceShown -NotePropertyValue @(Get-UiaReading $window.Hwnd)
+            Write-Host ("   PROMPT after {0} s: '{1}' class {2}, pid {3} ({4}); visible when first seen {5}, shown at {6} s, foreground once shown {7}, default button {8}" -f $record.appearedSeconds, $record.title, $record.class, $record.pid, $record.process, $record.visible, $(if ($null -eq $shownAt) { "NEVER within $VisibleWithinSeconds" } else { $shownAt }), $record.foregroundOnceShown, $record.defaultButtonId)
             foreach ($c in $record.controls) { if ($c.text) { Write-Host ("     [{0} {1}] {2}" -f $c.class, $c.id, ($c.text -replace "`r?`n", ' | ')) } }
+            foreach ($u in @($record.uiaOnceShown | Where-Object { $_.automationId -eq '6' -or $_.automationId -eq '7' })) { Write-Host ("     UIA: {0} '{1}' id {2}, patterns {3}" -f $u.type, $u.name, $u.automationId, $u.patterns) }
             if ($Hold -gt 0 -and $null -eq $heldFor) {
                 $h = [System.Diagnostics.Stopwatch]::StartNew()
                 while ($h.Elapsed.TotalSeconds -lt $Hold) {
@@ -651,8 +715,8 @@ function Invoke-CertutilCase {
                     if (-not [OaiTrustNative]::Exists($window.Hwnd)) { break }
                 }
                 $heldFor = [Math]::Round($h.Elapsed.TotalSeconds, 1)
-                $stillThereAfterHold = [pscustomobject]@{ prompt = [OaiTrustNative]::Exists($window.Hwnd); certutilRunning = -not [OaiTrustNative]::HasExited($proc, 0) }
-                Write-Host ("   after {0} s unanswered: prompt still there {1}, certutil still running {2}" -f $heldFor, $stillThereAfterHold.prompt, $stillThereAfterHold.certutilRunning)
+                $stillThereAfterHold = [pscustomobject]@{ prompt = [OaiTrustNative]::Exists($window.Hwnd); visible = [OaiTrustNative]::Visible($window.Hwnd); certutilRunning = -not [OaiTrustNative]::HasExited($proc, 0) }
+                Write-Host ("   after {0} s unanswered: prompt still there {1}, visible {2}, certutil still running {3}" -f $heldFor, $stillThereAfterHold.prompt, $stillThereAfterHold.visible, $stillThereAfterHold.certutilRunning)
             }
             $how = 'not answered (expected no prompt)'
             if ($Answer -ne 'None') { $how = Send-Answer -Prompt $record -Answer $Answer }
@@ -678,12 +742,15 @@ function Invoke-CertutilCase {
     }
     finally { [OaiTrustNative]::Release($proc) }
     $state = Test-InUserRoot $Thumbprint
-    Write-Host ("   certutil exit {0} after {1} s{2}; in the user's Root store now: {3} (its registry key: {4})" -f (Format-ExitCode $code), [Math]::Round($clock.Elapsed.TotalSeconds, 1), $(if ($terminated) { ', NOT ENDED - terminated by the probe' } else { '' }), $state.store, $state.registry)
+    $trust = Test-TrustedAsRoot $script:ProbeCer
+    $protected = Test-InProtectedRoots $Thumbprint
+    Write-Host ("   certutil exit {0} after {1} s{2}; in the user's Root store now: {3} (its registry key: {4}); trusted as a root: {5}{6}; in ProtectedRoots: {7}" -f (Format-ExitCode $code), [Math]::Round($clock.Elapsed.TotalSeconds, 1), $(if ($terminated) { ', NOT ENDED - terminated by the probe' } else { '' }), $state.store, $state.registry, $trust.trusted, $(if ($trust.status) { " ($($trust.status))" } else { '' }), $protected)
     return [pscustomobject]@{
         Name = $Name; CommandLine = $CommandLine; Show = $Show; Answer = $Answer
         Prompts = $prompts; HeldSeconds = $heldFor; AfterHold = $stillThereAfterHold
         ExitCode = $code; ExitCodeText = (Format-ExitCode $code); EndedOnItsOwn = (-not $terminated)
         Seconds = [Math]::Round($clock.Elapsed.TotalSeconds, 2); PresentAfter = $state.store; RegistryKeyAfter = $state.registry
+        TrustedAfter = $trust.trusted; ChainStatusAfter = $trust.status; InProtectedRootsAfter = $protected
     }
 }
 
@@ -700,6 +767,7 @@ function Invoke-RootStorePrompt {
     [System.IO.File]::WriteAllBytes($cerPath, $made.RawData)
     $thumb = $made.Thumbprint
     $made.Dispose()
+    $script:ProbeCer = $cerPath
     $result.certificate = [ordered]@{ subject = $subject; thumbprint = $thumb; file = $cerPath; privateKey = 'never stored: made in memory, only the public certificate written' }
     Write-Host "certificate: $subject, $thumb (public part only, $cerPath)"
     if ((Test-InUserRoot $thumb).store) { throw "The throwaway certificate $thumb is already in the user's Root store - a fresh one cannot be." }
@@ -738,20 +806,28 @@ function Invoke-RootStorePrompt {
     Start-Sleep -Seconds 5
     $regPrompt = Select-Prompt @(Select-NewWindows -Now ([OaiTrustNative]::TopLevel()) -Before $before -OwnPid $self.Id)
     $regState = Test-InUserRoot $thumb
-    Write-Host ("   {0} in {1} s; a prompt within 5 s: {2}; in the user's Root store now: {3} (its registry key: {4})" -f $(if ($regError) { "FAILED: $regError" } else { 'deleted' }), $regSeconds, ($null -ne $regPrompt), $regState.store, $regState.registry)
+    $regTrust = Test-TrustedAsRoot $cerPath
+    $regProtected = Test-InProtectedRoots $thumb
+    Write-Host ("   {0} in {1} s; a prompt within 5 s: {2}; in the user's Root store now: {3} (its registry key: {4}); trusted as a root: {5}{6}; in ProtectedRoots: {7}" -f $(if ($regError) { "FAILED: $regError" } else { 'deleted' }), $regSeconds, ($null -ne $regPrompt), $regState.store, $regState.registry, $regTrust.trusted, $(if ($regTrust.status) { " ($($regTrust.status))" } else { '' }), $regProtected)
     $cases += [pscustomobject]@{
         Name = 'registry-delete'; CommandLine = "Remove-Item HKCU:\$RootCertificatesKey\<thumbprint>"; Show = $null; Answer = 'None'
         Prompts = @($(if ($regPrompt) { Get-PromptRecord -Window $regPrompt -ForegroundBefore 0 -AppearedSeconds 0 })); HeldSeconds = $null; AfterHold = $null
         ExitCode = $(if ($regError) { 1 } else { 0 }); ExitCodeText = $(if ($regError) { $regError } else { 'deleted' }); EndedOnItsOwn = $true
         Seconds = $regSeconds; PresentAfter = $regState.store; RegistryKeyAfter = $regState.registry
+        TrustedAfter = $regTrust.trusted; ChainStatusAfter = $regTrust.status; InProtectedRootsAfter = $regProtected
     }
     if ($regPrompt) { $null = Send-Answer -Prompt (Get-PromptRecord -Window $regPrompt -ForegroundBefore 0 -AppearedSeconds 0) -Answer No }
+    # What the installer's own check, certutil -user -store Root, finds after that.
+    $cases += Invoke-CertutilCase -Name 'store-after-registry-delete' -CommandLine $check -Show $hide -Answer None -Thumbprint $thumb -AppearSeconds 10
 
     if ((Test-InUserRoot $thumb).store) {
         $cases += Invoke-CertutilCase -Name 'cleanup' -CommandLine $delete -Show $normal -Answer Yes -Thumbprint $thumb
     }
     $result.cases = $cases
     $result.verdict = Get-RootPromptVerdict $cases
+    $removalPrompts = @($cases | Where-Object { $_.Name -like 'delete-*' } | ForEach-Object { @($_.Prompts) })
+    $result['removalPromptsNeverShown'] = @($removalPrompts | Where-Object { $null -eq $_.shownAtSeconds }).Count
+    $result['removalPrompts'] = $removalPrompts.Count
     $result['leftInStore'] = (Test-InUserRoot $thumb).store
     return $result
 }
@@ -858,6 +934,7 @@ switch ($Scenario) {
 $outcome['finishedUtc'] = [DateTime]::UtcNow.ToString('o')
 [System.IO.File]::WriteAllText($jsonPath, ($outcome | ConvertTo-Json -Depth 10), (New-Object System.Text.UTF8Encoding($false)))
 Write-Host ''
+if ($Scenario -eq 'RootStorePrompt') { Write-Host ("removal prompts: {0}, of which never shown within {1} s: {2}" -f $outcome['removalPrompts'], $VisibleWithinSeconds, $outcome['removalPromptsNeverShown']) }
 Write-Host "VERDICT: $($outcome.verdict)"
 Write-Host "JSON: $jsonPath"
 if ($outcome.verdict -like 'INCONCLUSIVE*' -or $outcome.verdict -eq 'FAIL') { exit 1 }
