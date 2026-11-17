@@ -76,8 +76,10 @@
        7. SECURITY (Q125, 2026-10-04 - what CodeQL and the dependency review did on GitHub until
           2026-10-03): Tools/Test-VulnerablePackages.ps1 - no NuGet package of the MCP server's
           projects, direct or transitive, with a known vulnerability, from nuget.org's advisories -
-          then Tools/Invoke-CodeQL.ps1 on HEAD - CodeQL's C# security queries, with no result that
-          is not triaged in Tools/codeql-accepted.json. Anything but exit 0 from either refuses.
+          then Tools/Invoke-CodeQL.ps1 on HEAD - CodeQL's C# security queries, counting local input
+          except environment variables and every MCP tool's parameters as untrusted (Q146), with
+          no result that is not triaged in Tools/codeql-accepted.json and a census that finds the
+          tools' model on every tool. Anything but exit 0 from either refuses.
           Both need the internet; the first CodeQL run on a machine fetches its 700 MB bundle.
        8. BUILD (release.yml's "Stamp assembly version" through "Create installer"):
           Testbed/host/Publish-AddInPayload.ps1 -ReleaseSigningThumbprint, from a `git archive`
@@ -1590,7 +1592,7 @@ if (Test-Path -LiteralPath (Join-Path $codeqlDir 'summary.txt')) {
 }
 else { Show-LogTail $r.Out 25 }
 if ($r.TimedOut -or $r.ExitCode -ne 0) {
-    throw "REFUSING TO RELEASE: $($CodeQLScript.Replace('\', '/')) exit $($r.ExitCode) (timed out: $($r.TimedOut)) - 1 a result nobody has triaged, 2 the analysis failed, 3 the bundle could not be fetched or verified, 4 refused. Log: $($r.Out)"
+    throw "REFUSING TO RELEASE: $($CodeQLScript.Replace('\', '/')) exit $($r.ExitCode) (timed out: $($r.TimedOut)) - 1 a result nobody has triaged, 2 the analysis failed or its census missed an MCP tool, 3 the bundle could not be fetched or verified, 4 refused. Log: $($r.Out)"
 }
 Say '  OK  CodeQL: no untriaged result'
 

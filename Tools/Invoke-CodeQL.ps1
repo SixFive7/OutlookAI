@@ -22,6 +22,27 @@
     Visual Studio Tools for Office runtime (Microsoft.Office.Tools, 35 types) among them, so a flow
     that passes only through those types is one it cannot follow.
 
+    ============================================================================================
+    THE RELEASE'S THREAT MODEL AND THE MCP TOOLS' PARAMETERS, ADDED 2026-11-17 (Q146).
+    ============================================================================================
+
+    Decided 2026-10-11, when the maintainer left it to us: (b), local input except environment
+    variables, then (d), every MCP tool's parameters as untrusted input. Over 9f4646d the model pack
+    loaded and the census counted 22 of the 22 tools the source declares; without the pack it
+    counted 0, so the census tells the two apart. The suite found the six results 0ccf5df had under
+    "local", "!environment", at the same line hashes, and the tools' parameters added sources to one
+    of them: the search index's SQL in IndexClients.cs, reached by search's store, folder, from and
+    to and thread's conversation_id and store. Five are triaged in Tools\codeql-accepted.json; the
+    sixth was the elevated helper's install path, which Q145 removes. The census query compiled in
+    1.3 minutes on its first run and evaluated in under half a minute.
+
+    What the model does not reach, measured with scratch queries over the same database. No tool
+    parameter reaches the COM host's session (0 of OutlookComSession's parameters): the work crosses
+    into that process through a gateway lambda and a pipe. And none of the eight array parameters
+    (ids, attachments, remove_attachments) gets past the call into MailService, where each becomes
+    an IReadOnlyList. Marking the parameters of the COM session's 27 operations as sources as well
+    found three more results, all of them save_attachment's target folder (TODO.md).
+
 .SYNOPSIS
     Runs CodeQL's C# security queries over one commit of this repository, on this workstation, with
     the CodeQL bundle pinned below - downloaded once and held to the SHA-256 GitHub publishes for it.
@@ -76,18 +97,26 @@
          extractor restores the server's NuGet packages (from nuget.org) to resolve its references.
       5. THE QUERIES: the C# security-extended suite - every security query CodeQL ships for C#,
          the default code-scanning set plus the lower-precision ones - into results.sarif, under
-         CodeQL's default threat model (untrusted data comes from the network), as GitHub's code
-         scanning ran it. -ThreatModel adds others; the release adds none - see the parameter.
-      6. THE VERDICT: every result, by rule, file and line, against Tools\codeql-accepted.json -
-         the findings already triaged as false positives, each with its reason. Any result not on
-         that list fails the run. An entry that no longer matches anything is reported, so the
-         list does not outlive its findings.
+         the release's threat model (Q146 (b)): CodeQL's default, where untrusted data comes from
+         the network, plus local input except environment variables. With them, Tools\CodeQL
+         (Q146 (d)), copied into the run folder: a model pack that makes every parameter of every
+         MCP tool untrusted input, and a census query that counts the tools it reached.
+      6. THE CENSUS, THEN THE VERDICT. The census: CodeQL's count of MCP tools whose parameters it
+         treats as untrusted input must equal the number of [McpServerTool] methods the analysed
+         source declares, and not be zero. Otherwise the run fails, because a model that matched
+         nothing would let every release through with the tools unscanned. The verdict: every
+         result, by rule, file and line, against Tools\codeql-accepted.json - the findings already
+         triaged as false positives, each with its reason. Any result not on that list fails the
+         run. An entry that no longer matches anything is reported, so the list does not outlive
+         its findings.
 
-    WHAT IT LEAVES: <OutDir>\summary.txt, summary.json, results.sarif and logs\. The source copy and
-    the database are deleted at the end unless -KeepDatabase.
+    WHAT IT LEAVES: <OutDir>\summary.txt, summary.json, results.sarif, packs\ (the model and the
+    census the run used) and logs\. The source copy and the database are deleted at the end unless
+    -KeepDatabase.
 
-    EXIT CODES: 0 no untriaged finding; 1 at least one; 2 the database or the analysis failed;
-    3 not run - the bundle could not be fetched, verified or unpacked; 4 refused.
+    EXIT CODES: 0 no untriaged finding; 1 at least one; 2 the database or the analysis failed, or
+    the census did not find every MCP tool covered; 3 not run - the bundle could not be fetched,
+    verified or unpacked; 4 refused.
 
     WINDOWS POWERSHELL 5.1 AND POWERSHELL 7 BOTH. No ternary, no `??`, ASCII only.
 
@@ -112,14 +141,15 @@
     Keep the source copy and the CodeQL database in the run folder, for querying afterwards.
 
 .PARAMETER ThreatModel
-    Threat models to add to CodeQL's default, each passed as --threat-model: "local" (standard
+    The threat models to add to CodeQL's default, each passed as --threat-model: "local" (standard
     input, files, the command line, the environment and the registry count as untrusted), or a part
-    of it, and "!name" to take one away again. None by default, and none in a release. Measured over
-    0ccf5df (2026-10-04), which has no result under the default: "local" gives 174 - 169
-    cs/path-injection, 4 cs/command-line-injection, 1 cs/sql-injection - nearly all from the user's
-    own profile folders and TEMP; "local", "!environment" gives 6, all reading HKCU or HKLM or a
-    tool's command line, one of them the elevated helper's path (TODO.md); "stdin" alone gives none.
-    Whether the release should run one of those is an open question in TODO.md.
+    of it, and "!name" to take one away again. Default: the release's, "local" and "!environment"
+    (Q146 (b)). Any other list makes the run a measurement, and its summary says so; "default"
+    alone runs CodeQL's default and nothing more. Measured over 0ccf5df (2026-10-04), which has no
+    result under the default: "local" gives 174 - 169 cs/path-injection, 4 cs/command-line-injection,
+    1 cs/sql-injection - nearly all from the user's own profile folders and TEMP; "local",
+    "!environment" gives 6, all reading HKCU or HKLM or a tool's command line, one of them the
+    elevated helper's path; "stdin" alone gives none.
 
 .PARAMETER TimeoutMinutes
     The longest the download, the database or the analysis may each take. Default 60.
@@ -132,7 +162,7 @@
     pwsh -File Tools/Invoke-CodeQL.ps1
     pwsh -File Tools/Invoke-CodeQL.ps1 -Ref 1a2b3c4 -KeepDatabase
     pwsh -File Tools/Invoke-CodeQL.ps1 -FetchOnly
-    pwsh -File Tools/Invoke-CodeQL.ps1 -ThreatModel local,!environment
+    pwsh -File Tools/Invoke-CodeQL.ps1 -ThreatModel local
     pwsh -File Tools/Invoke-CodeQL.ps1 -SelfTest
 #>
 [CmdletBinding()]
@@ -143,7 +173,7 @@ param(
     [string] $BundleRoot,
     [switch] $FetchOnly,
     [switch] $KeepDatabase,
-    [string[]] $ThreatModel = @(),
+    [string[]] $ThreatModel,
     [int]    $TimeoutMinutes = 60,
     [switch] $SelfTest
 )
@@ -179,6 +209,30 @@ $BundleBytes = [long]698202451
 # The queries: every security query CodeQL ships for C#. The bundle carries the pack; nothing is
 # downloaded for it.
 $QuerySuite = 'codeql/csharp-queries:codeql-suites/csharp-security-extended.qls'
+
+# THE RELEASE'S THREAT MODEL (Q146 (b), decided 2026-10-11): CodeQL's default, where untrusted data
+# comes from the network, plus local input except environment variables - standard input, files,
+# the command line and the registry. The default alone finds nothing in a product that reads no
+# network; all of "local" was 174 results, nearly all of them paths under the user's own profile
+# and TEMP. -ThreatModel replaces it for a measurement, and the summary then says so.
+$ReleaseThreatModel = @('local', '!environment')
+
+# THE MCP TOOLS' PARAMETERS AS UNTRUSTED INPUT (Q146 (d)). Tools\CodeQL\models is a model pack that
+# makes every parameter of every [McpServerTool] method a source, and Tools\CodeQL\census holds the
+# query that counts the tools it reached. Each run copies the folder into its run folder and names
+# the packs on the command line, so nothing is fetched for them and nothing is written beside them.
+$CodeQLPacksFolder = 'Tools\CodeQL'
+$ModelPackName = 'outlookai/mcp-tool-sources'
+$CensusQuery = 'census\McpToolsWithUntrustedParameters.ql'
+$CensusMetricId = 'outlookai/mcp-tools-with-untrusted-parameters'
+
+# What declares an MCP tool in C# source, for the census: a line that opens an attribute list
+# naming McpServerTool or McpServerToolAttribute - first or after another attribute, qualified or
+# not, with or without arguments. [McpServerToolType], comments and strings do not count.
+$McpToolAttributePattern = '(?m)^[ \t]*\[(?:[^\r\n]*?[\[,])?[ \t]*(?:[A-Za-z_][A-Za-z0-9_]*\.)*McpServerTool(?:Attribute)?[ \t]*[\(\],]'
+
+# No -ThreatModel means the release's. Set here, not in param(), because it is the constant above.
+if (-not $PSBoundParameters.ContainsKey('ThreatModel')) { $ThreatModel = $ReleaseThreatModel }
 
 
 # The triaged false positives, relative to the repository root.
@@ -419,7 +473,7 @@ function Split-ThreatModel {
 }
 
 # As CodeQL's arguments: one --threat-model per value, in order. Nothing at all for none - CodeQL's
-# default threat model, the one the release runs.
+# default threat model alone.
 function Get-ThreatModelArguments {
     param([string[]] $Models)
     $out = @()
@@ -441,9 +495,64 @@ function Get-ThreatModelProblem {
 
 function Format-ThreatModel {
     param([string[]] $Models)
-    $named = @(Split-ThreatModel $Models)
+    # "default" is on already, so naming it again changes nothing and says nothing.
+    $named = @(Split-ThreatModel $Models | Where-Object { $_ -cne 'default' })
     if ($named.Count -eq 0) { return 'default' }
     return 'default + ' + ($named -join ', ')
+}
+
+# Whether a run's threat models are the release's, value for value and in order: a run under any
+# other set is a measurement, and its summary says so.
+function Test-IsReleaseThreatModel {
+    param([string[]] $Models)
+    return ((@(Split-ThreatModel $Models) -join ',') -ceq ($ReleaseThreatModel -join ','))
+}
+
+# Step 5: everything `codeql database analyze` is given, in order - the suite and the census query,
+# the threat models, the model pack and the folder both packs are found in. Nothing is downloaded.
+function Get-AnalyzeArguments {
+    param([string] $DatabaseDir, [string] $PacksDir, [string] $SarifPath, [string[]] $Models)
+    return @('database', 'analyze', (Format-Argument $DatabaseDir), $QuerySuite, (Format-Argument (Join-Path $PacksDir $CensusQuery))) +
+        @(Get-ThreatModelArguments $Models) +
+        @("--model-packs=$ModelPackName", "--additional-packs=$(Format-Argument $PacksDir)",
+            '--format=sarif-latest', "--output=$(Format-Argument $SarifPath)", '--threads=0', '--no-download')
+}
+
+# Step 3, the census's half from the source: how many MCP tools one C# file declares.
+function Get-McpToolCount {
+    param([string] $Text)
+    if ([string]::IsNullOrEmpty($Text)) { return 0 }
+    return [regex]::Matches($Text, $McpToolAttributePattern).Count
+}
+
+# Step 6, the census's half from CodeQL: one metric's value in a SARIF file, or $null if no run
+# in it reports that metric.
+function Get-SarifMetric {
+    param([string] $SarifText, [string] $RuleId)
+    $sarif = $SarifText | ConvertFrom-Json
+    foreach ($run in @($sarif.runs)) {
+        if ($null -eq $run -or $null -eq $run.properties) { continue }
+        foreach ($metric in @($run.properties.metricResults)) {
+            if ($null -ne $metric -and [string]$metric.ruleId -ceq $RuleId) { return [long]$metric.value }
+        }
+    }
+    return $null
+}
+
+# Step 6: the census's verdict. $null when CodeQL counts as many tools taking untrusted input as the
+# source declares, and that is at least one; otherwise why the run proves nothing about the tools.
+function Get-CensusProblem {
+    param([long] $SourceTools, $CoveredTools)
+    if ($SourceTools -lt 1) {
+        return "the analysed source declares no [McpServerTool] method, so the model in $($CodeQLPacksFolder.Replace('\', '/'))/models covers nothing. If the MCP SDK renamed its attribute, change the model's row, the census query and this script's pattern together"
+    }
+    if ($null -eq $CoveredTools) {
+        return "the census query reported no $CensusMetricId, so nothing shows the model was applied"
+    }
+    if ([long]$CoveredTools -ne $SourceTools) {
+        return "CodeQL treats the parameters of $CoveredTools MCP tool(s) as untrusted input, but the source declares $SourceTools. Either build-mode none could not restore the ModelContextProtocol package and left its attribute unresolved, or the model in $($CodeQLPacksFolder.Replace('\', '/'))/models no longer matches it"
+    }
+    return $null
 }
 
 # One line per finding, for the summary and the console.
@@ -484,7 +593,7 @@ function Invoke-SelfTest {
     Test-Case 'the hash is 64 lower-case hex characters' $true ($BundleSha256 -cmatch '^[0-9a-f]{64}$')
     Test-Case 'the length is pinned too' $true ($BundleBytes -gt 100MB)
     Test-Case 'the queries are the C# security suite, from the bundle''s own pack' 'codeql/csharp-queries:codeql-suites/csharp-security-extended.qls' $QuerySuite
-    Test-Case 'no -ThreatModel is CodeQL''s default and adds no argument' '' ((Get-ThreatModelArguments @()) -join ' ')
+    Test-Case 'an empty list is CodeQL''s default alone and adds no argument' '' ((Get-ThreatModelArguments @()) -join ' ')
     Test-Case 'each -ThreatModel value becomes one --threat-model, in order' '--threat-model local --threat-model !environment' ((Get-ThreatModelArguments @('local', '!environment')) -join ' ')
     Test-Case 'blank values are dropped' '--threat-model stdin' ((Get-ThreatModelArguments @('', ' stdin ')) -join ' ')
     Test-Case 'a comma list - what -File hands over - is split' '--threat-model local --threat-model !environment' ((Get-ThreatModelArguments @('local,!environment')) -join ' ')
@@ -492,6 +601,46 @@ function Invoke-SelfTest {
     Test-Case 'the summary names the default' 'default' (Format-ThreatModel @())
     Test-Case 'and what was added to it' 'default + local, !environment' (Format-ThreatModel @('local', '!environment'))
     Test-Case 'curl.exe and tar.exe are Windows'' own, by path' $true ($CurlExe.EndsWith('\System32\curl.exe') -and $TarExe.EndsWith('\System32\tar.exe'))
+
+    Write-Host ''
+    Write-Host '== step 5: the release''s threat model and the MCP tools'' parameters (Q146) =='
+    Test-Case 'the release counts local input as untrusted, except environment variables' 'local,!environment' ($ReleaseThreatModel -join ',')
+    Test-Case 'which is two --threat-model arguments, in order' '--threat-model local --threat-model !environment' ((Get-ThreatModelArguments $ReleaseThreatModel) -join ' ')
+    Test-Case 'the summary names it' 'default + local, !environment' (Format-ThreatModel $ReleaseThreatModel)
+    Test-Case '"default" alone is CodeQL''s default, named once' 'default' (Format-ThreatModel @('default'))
+    Test-Case 'the release''s set, as -File hands it over, is the release''s' $true (Test-IsReleaseThreatModel @('local,!environment'))
+    Test-Case 'another set is a measurement' $false (Test-IsReleaseThreatModel @('local'))
+    Test-Case 'so is the release''s set in another order' $false (Test-IsReleaseThreatModel @('!environment', 'local'))
+    $aa = @(Get-AnalyzeArguments -DatabaseDir 'C:\r\db' -PacksDir 'C:\r\packs' -SarifPath 'C:\r\results.sarif' -Models $ReleaseThreatModel)
+    Test-Case 'the census query runs with the suite, right after it' "$QuerySuite C:\r\packs\census\McpToolsWithUntrustedParameters.ql" (($aa[3], $aa[4]) -join ' ')
+    Test-Case 'the threat models are passed' $true (($aa -join ' ').Contains('--threat-model local --threat-model !environment'))
+    Test-Case 'the model pack is named' $true ($aa -contains '--model-packs=outlookai/mcp-tool-sources')
+    Test-Case 'and found in the run folder''s copy' $true ($aa -contains '--additional-packs=C:\r\packs')
+    Test-Case 'nothing is downloaded' $true ($aa -contains '--no-download')
+    Test-Case 'a packs folder with a space is quoted' '--additional-packs="C:\my runs\packs"' (@(Get-AnalyzeArguments -DatabaseDir 'C:\db' -PacksDir 'C:\my runs\packs' -SarifPath 'C:\r.sarif' -Models @()) | Where-Object { $_.StartsWith('--additional-packs=') })
+
+    Write-Host ''
+    Write-Host '== steps 3 and 6: the census =='
+    Test-Case '[McpServerTool] declares a tool' 1 (Get-McpToolCount "    [McpServerTool]`n    public static void A() { }")
+    Test-Case 'so does the attribute with arguments' 1 (Get-McpToolCount '    [McpServerTool(Name = "audit_log", ReadOnly = true)]')
+    Test-Case 'and after another attribute' 1 (Get-McpToolCount '    [Description("d"), McpServerTool(Name = "x")]')
+    Test-Case 'and qualified, or spelled with Attribute' 2 (Get-McpToolCount "[ModelContextProtocol.Server.McpServerTool]`r`n[McpServerToolAttribute(Name = `"y`")]")
+    Test-Case 'the tool-type attribute is not a tool' 0 (Get-McpToolCount '[McpServerToolType]')
+    Test-Case 'nor is a comment naming the attribute' 0 (Get-McpToolCount '    /// The wire name of every [McpServerTool] method.')
+    Test-Case 'nor a string' 0 (Get-McpToolCount '        Assert.True(n >= 21, "found only " + n + " [McpServerTool] methods");')
+    Test-Case 'nor a reflection lookup' 0 (Get-McpToolCount '        .Single(m => m.GetCustomAttribute<McpServerToolAttribute>()?.Name == "audit_log");')
+    Test-Case 'three tools in a file are three' 3 (Get-McpToolCount "[McpServerTool(Name = `"a`")]`n[McpServerTool(Name = `"b`")]`n  [McpServerTool(Name = `"c`")]")
+    Test-Case 'an empty file declares none' 0 (Get-McpToolCount '')
+    $metricSarif = '{"runs":[{"tool":{"driver":{"name":"CodeQL"}},"results":[],"properties":{"metricResults":[{"ruleId":"cs/summary/lines-of-code","value":113772},{"ruleId":"' + $CensusMetricId + '","value":22}]}}]}'
+    Test-Case 'the census metric is read from the SARIF' 22 (Get-SarifMetric $metricSarif $CensusMetricId)
+    Test-Case 'a metric the run does not report is $null' $true ($null -eq (Get-SarifMetric $metricSarif 'outlookai/no-such-metric'))
+    Test-Case 'so is any metric of a SARIF that has none' $true ($null -eq (Get-SarifMetric '{"runs":[{"results":[]}]}' $CensusMetricId))
+    Test-Case 'a metric is not a finding' 0 @(Get-SarifFindings $metricSarif).Count
+    Test-Case 'every tool covered passes' $true ($null -eq (Get-CensusProblem -SourceTools 22 -CoveredTools 22))
+    Test-Case 'none covered - the attribute went unresolved - fails' $true ([string](Get-CensusProblem -SourceTools 22 -CoveredTools 0)).Contains('declares 22')
+    Test-Case 'some covered fails too' $true ([string](Get-CensusProblem -SourceTools 22 -CoveredTools 21)).Contains('parameters of 21 MCP tool')
+    Test-Case 'no census metric fails' $true ([string](Get-CensusProblem -SourceTools 22 -CoveredTools $null)).Contains('reported no')
+    Test-Case 'a source with no tool fails, though CodeQL agrees' $true ([string](Get-CensusProblem -SourceTools 0 -CoveredTools 0)).Contains('declares no [McpServerTool]')
 
     Write-Host ''
     Write-Host '== step 1: the licence condition =='
@@ -569,6 +718,29 @@ function Invoke-SelfTest {
         Test-Case 'and every entry in it names its rule, file, line hash and reason' '' ([string]$real.Problem)
     }
     Test-Case 'LICENSE meets step 1 against this repository''s origin' $true ($null -eq (Get-LicenceProblem ([System.IO.File]::ReadAllText((Join-Path $RepoRoot 'LICENSE'))) 'https://github.com/SixFive7/OutlookAI.git'))
+    $packsRoot = Join-Path $RepoRoot $CodeQLPacksFolder
+    $packsLabel = $CodeQLPacksFolder.Replace('\', '/')
+    $modelPack = Join-Path $packsRoot 'models\qlpack.yml'
+    $modelFile = Join-Path $packsRoot 'models\mcp-tool-parameters.model.yml'
+    $censusPack = Join-Path $packsRoot 'census\qlpack.yml'
+    $censusFile = Join-Path $packsRoot $CensusQuery
+    foreach ($f in @($modelPack, $modelFile, $censusPack, $censusFile)) {
+        Test-Case "$($f.Substring($RepoRoot.TrimEnd('\').Length + 1).Replace('\', '/')) exists" $true (Test-Path -LiteralPath $f)
+    }
+    if ((Test-Path -LiteralPath $modelPack) -and (Test-Path -LiteralPath $modelFile) -and (Test-Path -LiteralPath $censusPack) -and (Test-Path -LiteralPath $censusFile)) {
+        $modelPackText = [System.IO.File]::ReadAllText($modelPack)
+        $censusText = [System.IO.File]::ReadAllText($censusFile)
+        Test-Case "$packsLabel/models is the model pack the run names" $true ($modelPackText -cmatch "(?m)^name:\s*$([regex]::Escape($ModelPackName))\s*$")
+        Test-Case 'and extends codeql/csharp-all with its *.model.yml' $true ($modelPackText -cmatch '(?m)^extensionTargets:' -and $modelPackText.Contains('codeql/csharp-all') -and $modelPackText.Contains('*.model.yml'))
+        Test-Case 'and declares no dependencies, which CodeQL refuses in a model pack' $false ($modelPackText -cmatch '(?m)^dependencies:')
+        Test-Case 'its one row makes every parameter of every [McpServerTool] method a remote source' $true ([System.IO.File]::ReadAllText($modelFile).Contains('["ModelContextProtocol.Server", "McpServerToolAttribute", False, "", "", "Attribute", "Parameter", "remote", "manual"]'))
+        Test-Case "$packsLabel/census depends on the bundle's codeql/csharp-all" $true ([System.IO.File]::ReadAllText($censusPack).Contains('codeql/csharp-all'))
+        Test-Case 'the census query is a metric under the id the verdict reads' $true ($censusText.Contains('@kind metric') -and $censusText.Contains("@id $CensusMetricId"))
+        Test-Case 'and counts the attribute the model names' $true ($censusText.Contains('hasFullyQualifiedName("ModelContextProtocol.Server", "McpServerToolAttribute")'))
+    }
+    $serverTools = 0
+    foreach ($cs in @(Get-ChildItem -LiteralPath (Join-Path $RepoRoot 'McpServer') -Recurse -Filter '*.cs' -File)) { $serverTools += Get-McpToolCount ([System.IO.File]::ReadAllText($cs.FullName)) }
+    Test-Case "the server's source declares tools for the census to count ($serverTools)" $true ($serverTools -gt 0)
 
     Write-Host ''
     Write-Host "$($script:Checks) assertion(s), $($script:Failures.Count) failure(s)."
@@ -576,6 +748,7 @@ function Invoke-SelfTest {
     Write-Host 'NOT COVERED HERE. Only a run on the workstation settles these:'
     Write-Host '  * that the pinned archive downloads, matches and unpacks, and the CLI in it reports the pinned version'
     Write-Host '  * that the database builds and the suite runs with this bundle'
+    Write-Host '  * that CodeQL loads the model pack and its row reaches every tool - each run''s census proves that'
     if ($script:Failures.Count -gt 0) {
         Write-Host ''
         foreach ($f in $script:Failures) { Write-Host "  $f" }
@@ -684,6 +857,10 @@ $licenceProblem = Get-LicenceProblem -LicenseText $licenseText -OriginUrl $origi
 if ($licenceProblem) { Say "REFUSED: $licenceProblem."; exit 4 }
 $threatModelProblem = Get-ThreatModelProblem $ThreatModel
 if ($threatModelProblem) { Say "REFUSED: -ThreatModel $threatModelProblem."; exit 4 }
+$packsSource = Join-Path $RepoRoot $CodeQLPacksFolder
+foreach ($needed in @('models\qlpack.yml', 'census\qlpack.yml', $CensusQuery)) {
+    if (-not (Test-Path -LiteralPath (Join-Path $packsSource $needed))) { Say "REFUSED: $($CodeQLPacksFolder.Replace('\', '/'))/$($needed.Replace('\', '/')) is missing - the model pack and its census are part of every run (Q146)."; exit 4 }
+}
 Say "  licence    MIT, origin $origin - an open-source codebase on GitHub.com, as the CodeQL licence requires"
 
 # ---- The run folder ------------------------------------------------------------------------
@@ -725,8 +902,11 @@ $null = Invoke-Git -Arguments @('archive', '--format=tar', '-o', $tarFile, $sha)
 $r = Invoke-Logged -FilePath $TarExe -ArgumentList @('-xf', (Format-Argument $tarFile), '-C', (Format-Argument $srcDir)) -LogStem (Join-Path $logDir 'source-unpack') -TimeoutMinutes 10
 if ($r.TimedOut -or $r.ExitCode -ne 0) { Show-LogTail $r.Err 10; Say "FAILED: unpacking the source archive (tar exit $($r.ExitCode))."; exit 2 }
 Remove-Item -LiteralPath $tarFile -Force
-$csCount = @(Get-ChildItem -LiteralPath $srcDir -Recurse -Filter '*.cs' -File).Count
-Say "  $csCount C# file(s) in the committed tree"
+$csFiles = @(Get-ChildItem -LiteralPath $srcDir -Recurse -Filter '*.cs' -File)
+$csCount = $csFiles.Count
+$sourceTools = 0
+foreach ($csFile in $csFiles) { $sourceTools += Get-McpToolCount ([System.IO.File]::ReadAllText($csFile.FullName)) }
+Say "  $csCount C# file(s) in the committed tree, declaring $sourceTools MCP tool(s)"
 
 # ---- 4. The database -----------------------------------------------------------------------
 Say ''
@@ -746,10 +926,13 @@ Say "  built in $createMinutes minute(s)"
 
 # ---- 5. The queries ------------------------------------------------------------------------
 Say ''
-Say "== 5. The queries: $QuerySuite, threat model $(Format-ThreatModel $ThreatModel) =="
+Say "== 5. The queries: $QuerySuite, threat model $(Format-ThreatModel $ThreatModel), model pack $ModelPackName =="
 $sarifPath = Join-Path $OutDir 'results.sarif'
-$analyzeArgs = @('database', 'analyze', (Format-Argument $dbDir), $QuerySuite) + @(Get-ThreatModelArguments $ThreatModel) +
-    @('--format=sarif-latest', "--output=$(Format-Argument $sarifPath)", '--threads=0', '--no-download')
+$packsDir = Join-Path $OutDir 'packs'
+if (Test-Path -LiteralPath $packsDir) { Remove-Item -LiteralPath $packsDir -Recurse -Force }
+Copy-Item -LiteralPath $packsSource -Destination $packsDir -Recurse
+Say "  packs      $($CodeQLPacksFolder.Replace('\', '/')) copied to $packsDir - the model and the census this run used"
+$analyzeArgs = Get-AnalyzeArguments -DatabaseDir $dbDir -PacksDir $packsDir -SarifPath $sarifPath -Models $ThreatModel
 $t0 = Get-Date
 $r = Invoke-Logged -FilePath $codeql -ArgumentList $analyzeArgs -LogStem (Join-Path $logDir 'database-analyze') -TimeoutMinutes $TimeoutMinutes
 if ($r.TimedOut -or $r.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $sarifPath)) {
@@ -763,8 +946,11 @@ Say "  analysed in $analyzeMinutes minute(s)"
 
 # ---- 6. The verdict ------------------------------------------------------------------------
 Say ''
-Say '== 6. The verdict =='
-$findings = Get-SarifFindings ([System.IO.File]::ReadAllText($sarifPath))
+Say '== 6. The census, then the verdict =='
+$sarifText = [System.IO.File]::ReadAllText($sarifPath)
+$findings = Get-SarifFindings $sarifText
+$coveredTools = Get-SarifMetric $sarifText $CensusMetricId
+$censusProblem = Get-CensusProblem -SourceTools $sourceTools -CoveredTools $coveredTools
 $acceptedText = ''
 $acceptedPath = Join-Path $RepoRoot $AcceptedFile
 if (Test-Path -LiteralPath $acceptedPath) { $acceptedText = [System.IO.File]::ReadAllText($acceptedPath) }
@@ -772,10 +958,17 @@ $accepted = Read-AcceptedFindings $acceptedText
 if ($accepted.Problem) { Say "REFUSED: $($AcceptedFile.Replace('\', '/')) - $($accepted.Problem)."; exit 4 }
 $verdict = Get-FindingsVerdict -Findings $findings -Accepted $accepted.Entries
 
+$isReleaseThreatModel = Test-IsReleaseThreatModel $ThreatModel
+$threatModelLabel = "$(Format-ThreatModel $ThreatModel) (the release's)"
+if (-not $isReleaseThreatModel) { $threatModelLabel = "$(Format-ThreatModel $ThreatModel) (NOT the release's: a measurement, not a release verdict)" }
+$coveredLabel = 'none reported'
+if ($null -ne $coveredTools) { $coveredLabel = [string]$coveredTools }
 $lines = @()
-$lines += "CodeQL $CodeQLVersion, $QuerySuite, threat model $(Format-ThreatModel $ThreatModel)"
+$lines += "CodeQL $CodeQLVersion, $QuerySuite, threat model $threatModelLabel, model pack $ModelPackName"
 $lines += "commit $sha - $subject"
 $lines += "$csCount C# file(s); database $createMinutes min, analysis $analyzeMinutes min"
+$lines += "census: the source declares $sourceTools MCP tool(s); CodeQL treats the parameters of $coveredLabel as untrusted input"
+if ($censusProblem) { $lines += "  CENSUS FAILED: $censusProblem" }
 $lines += "$(@($findings).Count) result(s): $(@($verdict.Untriaged).Count) untriaged, $(@($verdict.Accepted).Count) accepted as triaged, $(@($verdict.Stale).Count) stale accepted entr(y/ies)"
 foreach ($f in @($verdict.Untriaged)) { $lines += "  UNTRIAGED $(Format-Finding $f)" }
 foreach ($f in @($verdict.Accepted)) { $lines += "  accepted  $(Format-Finding $f)" }
@@ -784,6 +977,8 @@ Set-Content -LiteralPath (Join-Path $OutDir 'summary.txt') -Value $lines -Encodi
 $summary = [ordered]@{
     schema = 1; producedBy = 'Tools/Invoke-CodeQL.ps1'; codeql = $CodeQLVersion; suite = $QuerySuite; commit = $sha
     started = $started.ToString('o'); finished = (Get-Date).ToString('o'); csFiles = $csCount
+    threatModel = @(Split-ThreatModel $ThreatModel); releaseThreatModel = $isReleaseThreatModel; modelPack = $ModelPackName
+    census = [ordered]@{ sourceTools = $sourceTools; coveredTools = $coveredTools; problem = $censusProblem }
     databaseMinutes = $createMinutes; analysisMinutes = $analyzeMinutes
     results = @($findings).Count; untriaged = @($verdict.Untriaged); accepted = @($verdict.Accepted); stale = @($verdict.Stale)
 }
@@ -794,6 +989,10 @@ if (-not $KeepDatabase) {
     foreach ($d in @($srcDir, $dbDir)) { if (Test-Path -LiteralPath $d) { Remove-Item -LiteralPath $d -Recurse -Force } }
 }
 Say ''
+if ($censusProblem) {
+    Say "FAILED: the census - $censusProblem. Without it nothing shows the MCP tools were scanned as untrusted input. $OutDir\summary.txt"
+    exit 2
+}
 if (@($verdict.Untriaged).Count -gt 0) {
     Say "FINDINGS: $(@($verdict.Untriaged).Count) result(s) nobody has triaged. Fix each one, or - for a false positive - add it to $($AcceptedFile.Replace('\', '/')) with its reason. $OutDir\summary.txt"
     exit 1

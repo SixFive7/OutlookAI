@@ -1,0 +1,8 @@
+# The census Tools/Invoke-CodeQL.ps1 runs beside the security queries (Q146 (d)): one query that
+# counts the MCP tools whose parameters CodeQL treats as untrusted input, so a run can prove that
+# ..\models matched every tool. Never published or fetched; codeql/csharp-all resolves to the copy
+# in the pinned bundle.
+name: outlookai/mcp-tool-census
+version: 0.0.0
+dependencies:
+  codeql/csharp-all: "*"
