@@ -201,6 +201,19 @@ its mailbox tests on, and change nothing you install.
   check fails, the reason is written out in full here rather than hidden behind a link. Both
   indicators now take their wording from one place, so they cannot disagree.
 
+- ✅ **A test-machine probe measures how Windows and the installer remove trust in the leaked key.**
+  `Testbed/host/Invoke-TrustRemovalProbe.ps1` runs `Testbed/guest/Measure-TrustRemoval.ps1` on an
+  Outlook test machine under its lease, from its frozen checkpoint, and puts the checkpoint back
+  afterwards. One scenario adds a throwaway certificate to the user's Root store and removes it with
+  certutil started exactly as the installer starts it, and records every question Windows asks: its
+  text, whether it is shown, its default answer, what Yes and No do, and whether Windows still trusts
+  the certificate afterwards. It found that every removal asks, that certutil waits for the answer
+  however long it takes, and that deleting the certificate's registry key instead leaves Windows'
+  list of confirmed roots naming it, so writing the key back makes it trusted again with no
+  question. The other scenario runs the built installer and its uninstaller against planted trust
+  entries and checks that exactly the leaked key's go. Both pass (Docs/live-tier-on-the-vm.md
+  section 4.8).
+
 - ✅ **Tests that can read the machine's time zone run again in Central European time (Q144).**
   The build machine runs the suite in UTC (Q126), where the machine's zone and UTC are one zone, so
   a test that compares a local time with a UTC one only proved them equal. After the suite, every
@@ -2303,7 +2316,9 @@ its mailbox tests on, and change nothing you install.
   removes each entry that holds the leaked key, found by the key alone and wherever it points.
   Entries for other keys stay, among them the one for the current release. Microsoft documents the
   entry as a location and a public key, and the runtime's own code compares those two and nothing
-  else (Docs/live-tier-on-the-vm.md section 4.8).
+  else. On a test machine the installer and its uninstaller each removed three planted entries for
+  the leaked key, spelled three ways, and kept every other entry (Docs/live-tier-on-the-vm.md
+  section 4.8).
 
 - 🔒 **The installer removes the leaked old signing certificate from every certificate store it can change.**
   That certificate signed OutlookAI v1.0.0.1 to v2.3.1.111, and its private key became public, so no

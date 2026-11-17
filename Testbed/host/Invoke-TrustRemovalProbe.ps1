@@ -51,7 +51,8 @@
     Limited (the default): not elevated, the token a per-user installer and an auto-update get.
     Highest: elevated - for InstallerCleanup on a guest whose add-in was installed elevated
     (Testbed/guest/Install-OutlookAIAddIn.ps1 -Phase Install runs the installer from an elevated
-    task), because that install's uninstaller asks Windows for elevation, which nobody answers there.
+    task): there, at Limited, the uninstaller ended with exit 1 after two minutes having done
+    nothing, and elevated it worked (2026-11-17; most likely it asked for elevation unanswered).
 
 .PARAMETER CredentialRepoRoot
     The checkout holding the gitignored guest credential (Get-GuestCredential.ps1). Default: the
