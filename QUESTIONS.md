@@ -404,7 +404,9 @@ refusals in `SignatureManager.Manage`.
 not a policy).** Its effect is disputed in the sources (research section 2). *Options:* (a) every
 account's default, above the account's own, default changes refused, the per-message choice free;
 (b) below the account's own; (c) ignored. **Decided: (a)**, the research's precedence model, until G2's
-live test (`LiveSignatureSettingsTests.G2_...`) records what Outlook's own signature editor reports.
+live test (`LiveSignatureSettingsTests.G2_...`) records what Outlook's own signature editor reports. Its
+first run (2026-11-17, OAI-UNINDEXED) could not tell: Outlook's signature settings reported no default
+with the deployed one or without it, written while Outlook ran; `TODO.md` holds the measurement.
 **Undo:** `SignaturePolicy.Read`'s preference source.
 
 **6. Roaming on perpetual Office (Q152 (a)), after stream A's R1 (Office LTSC 2024 showed no sign of

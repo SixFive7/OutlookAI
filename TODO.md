@@ -1849,7 +1849,11 @@
   elevated step on a PST guest before the suite - a parameter of `Invoke-LiveTierOnGuest.ps1` that
   writes the policy values over PowerShell Direct, undone by the checkpoint restore - then a live test
   that reads Outlook's own view (`LiveOutlookTestMailer.ReadSignatureEngine`) and its compose window's
-  Signature menu. The maintainer decides whether the runner gets that step.
+  Signature menu. The maintainer decides whether the runner gets that step. The same step settles G2's
+  other half, a default deployed for every account in `Common\MailSettings` (QUESTIONS.md, 2026-11-17,
+  item 5): its first run, on OAI-UNINDEXED on 2026-11-17, could not tell what Outlook does with it -
+  Outlook's signature settings, read through a draft's editor, reported no default with it or without
+  it - and the value had been written while Outlook ran, which Outlook may read only when it starts.
 
 - [ ] **Decide whether OutlookAI reads the mailbox's own signature folder (Q152), once stream A's R3
   lands.** Q152 (a) is built: OutlookAI reads only what Outlook copies into the local folder, works out

@@ -4985,8 +4985,10 @@ unrecorded or unverified.
   `SignatureManagerTests`, `SignatureSelectionTests`), against fakes of the registry and the folder.
   Office LTSC 2024, which every test machine runs, showed no roaming on the Exchange test VM (stream
   A's R1, 2026-11-17); whether a copy appears there once a cloud signature exists is R3's question.
-  The policy half of G2 is not measured either: a Group Policy or Cloud Policy signature value needs
-  an elevated step the live tier does not have (`TODO.md`).
+  G2 is not settled either: what Outlook does with a default deployed for every account could not be
+  read on 2026-11-17 (its signature settings reported no default either way, with the value written
+  while Outlook ran), and a Group Policy or Cloud Policy value needs an elevated step the live tier
+  does not have (`TODO.md`).
 * **The guest's SDK is PINNED to whatever the host was running when the payload was staged**,
   and nothing enforces that they stay equal. 10.0.401 was chosen for sameness rather than for any
   requirement - no `global.json` exists - so the two can drift the

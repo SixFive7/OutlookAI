@@ -205,7 +205,12 @@ its mailbox tests on, and change nothing you install.
   Outlook's settings, and a signature folder moved elsewhere. A snapshot of the registry, beside the
   snapshot of the signature files, now fails any signature test run that leaves a signature setting
   changed: the defaults in every profile, the folder, the policies, the roaming switches and the
-  default profile.
+  default profile. Their first run, on the unindexed test machine on 2026-11-17: with Outlook on
+  `OutlookAI-Tier` and `CorpusProfile` recorded as the default, a draft got the running profile's
+  default; a folder moved while Outlook ran was listed, written to and used by OutlookAI, and
+  Outlook's own list of signatures showed what was in it. What Outlook makes of a default deployed
+  for every account could not be read: its signature settings reported no default with it or
+  without it, written while Outlook ran, so that measurement stays open.
 
 - ✅ **The Outlook test machines keep a full crash dump whenever Outlook crashes in a live run.**
   The one-call runner switches Windows Error Reporting's own crash dumps on at every run, on the
