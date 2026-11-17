@@ -443,6 +443,270 @@ effective defaults, and whether policy disables or forces them; `SignatureSelect
 the default and the reason. The add-in keeps one thing for itself: whether the signature in the open
 draft was put there by a person. **Undo:** nothing is built on it yet.
 
+### 2026-10-11 and 2026-11-17 - the maintainer's answers to Q118, Q131 to Q136, Q138 to Q140, Q142 to Q147 and Q149 to Q162
+
+**What this is.** These questions were asked and answered in conversation, not in this file, and
+none was recorded in the repository until now: answers of 2026-10-11, in two messages, and of
+2026-11-17. Words in quotes are the maintainer's. Where he answered "your recommendation" or
+"whatever you think is best", the recommendation he had been given was taken, and it is spelled out.
+The research behind several answers is in `.work\research-2026-10-11\` (q118-tray, q145-admin,
+q147-signatures, q149-pins, q149-wordeditor) and the duplicated-code survey in
+`.work\dup-survey-2026-11\`, both in the maintainer's checkout. `.work` is gitignored, so neither is
+in a clone; what the decisions rest on is restated here. The survey's questions, Q163 onwards, are
+not answered yet.
+
+#### Folders and stores by id - Q131 to Q136, 2026-10-11
+
+**Primer.** On 2026-10-03 the maintainer decided that tools address a folder only by a unique id,
+its name kept for display (Q114), and asked whether a search of one folder can be answered from the
+search index alone while Outlook is closed (Q115). `Docs/live-tier-on-the-vm.md` section 8 item 31
+measured it: a local mail file's folder id is its 24-byte EntryID, which survives a rename, a move
+within its store, a soft delete and restarts, and the index keeps every row's node id, so the id
+finds the folder's index scope with no Outlook call, in 59 to 114 ms. Exchange's 46-byte ids were
+not measured. Q131 to Q136 asked what the id looks like and how the tools change around it.
+
+- **Q131 - the id's form.** *"what you think is the most stable"*. **Decided: (b)**, the folder's
+  full EntryID, re-encoded shorter, with a check character, and nothing stored. It is stateless: no
+  table to go stale, the same id in every session and process, and usable while Outlook is closed.
+  About 34 characters for a local mail file's folder and 66 for an Exchange one.
+- **Q132 - searching one folder while Outlook is closed.** *"what you think is the most stable"*.
+  **Decided: (i)**: the Windows Search index resolves the folder id - measured for local mail files,
+  correct after renames and moves, about 0.1 s. Exchange takes the same route once it is measured on
+  the Exchange VM; until then OutlookAI refuses such a search with a clear message. No learned map
+  from ids to paths.
+- **Q133 - addressing a store.** *"i + display names for reading along as a human"*. **Decided:** a
+  store is addressed by a `store_id`, with display names shown beside it for a person reading along.
+- **Q134 - making a folder.** *"i"*. **Decided:** a separate `create_folder(parent_id, name)`, in
+  which a `/` is part of the name; `move_mail` no longer creates folders.
+- **Q135 - folder paths in existing calls.** *"i"*. **Decided:** a clean break in one release: path
+  input is refused, with a pointer to `find_folder`.
+- **Q136 - finding a folder by name.** *"ii"*. **Decided:** a read-only `find_folder(name)` that
+  returns candidates and never acts.
+
+Together they make `TODO.md`'s item on a folder whose name holds `/` moot: such a folder is reached
+by its id, and created with the `/` in its name.
+
+#### The Exchange VM - Q138 to Q140, Q161
+
+`OutlookAI-Exchange` holds one real Microsoft 365 mailbox (Q108) and stays read-only for tests until
+the maintainer approves the Phase 2 write-safety design (`Docs/live-tier-on-the-vm.md` section 4.4).
+
+- **Q138 - the old tagged item in that mailbox's Sent Items, 2026-10-11.** The VM's read-only count
+  found one item carrying `[OutlookAI-McpTest]` there, left from the years the live tests ran on the
+  workstation; it fails `T2/LiveExchangeHubArtifactTests` on every run until it is gone. *"c"*.
+  **Decided:** a one-off, TESTED helper deletes it, only after the maintainer has confirmed its
+  EntryID, selecting by EntryID allowlist AND ordinal tag match. It is the only write that mailbox
+  ever gets.
+- **Q139 - Outlook's "a program is trying to access" prompt, 2026-10-11.** Outlook's Object Model
+  Guard stalls a run with it whenever Defender's signatures are stale, and
+  `Invoke-ExchangeSignIn.ps1 -Mode Preflight` updates them before every run. The offline guests also
+  carry Q80's auto-approve policy, which on this online VM would let any process read addresses
+  without a prompt. *"a"*. **Decided:** keep only the signature-update preflight; no auto-approve
+  policy.
+- **Q140 - the add-in on the Exchange VM, 2026-10-11.** Not installed, because Phase 1 needed no
+  write to the profile's configuration; `T2/LiveHealthTests` and the `AddInRegistry` tests need it.
+  *"b"*. **Decided:** install the OutlookAI add-in there. Under Q145 (a) below, the settings it
+  manages are written at user level, never as policies.
+- **Q161 - signing in to Outlook on the web there, 2026-11-17.** Measuring roaming signatures (Q147
+  (b), below) takes a test signature kept in the mailbox itself, which Outlook on the web makes; a
+  browser sign-in on the VM is a route Q111 does not cover. *"c"*. **Decided:** an agent may sign in
+  to Outlook on the web on the Exchange VM, to measure roaming signatures. The agent that runs the
+  Exchange VM writes the amendment to Q111 in `AGENTS.md`, with its conditions.
+
+#### Cached Mode settings without administrator rights - Q142, Q143, Q145, Q151
+
+**Primer.** OutlookAI keeps five of Outlook's Cached Mode settings so that the mail an agent
+searches is offline and indexed: how much mail is kept offline (a months value and a days value),
+whether shared and delegate folders are cached (two values), and whether shared mailboxes follow
+the offline period. It writes them as Outlook POLICIES, under `HKCU\Software\Policies`, which
+Windows normally lets a user read but not write; since Q128 (2026-10-03) OutlookAI Settings shows
+them and writes the ones the user cannot through an elevated helper, `OutlookAI.PolicyWriter.exe`,
+behind one UAC prompt. Q145 asked whether that helper may run from the per-user install folder,
+where any process of the user can replace it before the prompt; Q142, whether a standard user
+approving the prompt with an administrator's password works - never tested.
+
+- **Q142 and Q145 - why administrator rights at all; asked 2026-10-11, decided 2026-11-17.** On
+  2026-10-11: *"Why do we even need admin for all these user level settings?"* The research's
+  answer: only because the values were written as policies. Each has a user-level home Outlook
+  honours: the offline period and the "Download shared folders" box are kept per account in the
+  user's own Outlook profile, where Account Settings changes them; the shared-mailbox switch has a
+  documented value under the user's own Cached Mode key; and the two shared-folder switches are on
+  by default. On 2026-11-17: *"Q145 a"*. **Decided: (a), no administrator rights:**
+  - the elevated helper, its UAC path and its part of the installer are deleted;
+  - the settings are written at user level;
+  - Microsoft 365 Cloud Policy and Group Policy keys are only read, to show a value as "Set by your
+    organization";
+  - an existing account's offline period: the user is guided to Account Settings now, and OutlookAI
+    writes the account's own profile value (`0x6649`) once the Exchange VM shows that Outlook
+    honours it. That writer goes into OutlookAI.Core, under the Q154 rule;
+  - Q142 dissolves with the prompt.
+- **Q143 - which offline periods, 2026-10-11.** OutlookAI Settings took months 0, 1, 3, 6, 12, 24
+  and days 0, 3, 7, 14 as two independent lists. *"unsure, do what you think is best to be complete
+  and correct"*. **Decided:** exactly the eleven periods Microsoft documents, each written as one
+  (months, days) pair: 3 days (0,3), 1 week (0,7), 2 weeks (0,14), 1, 3 and 6 months (1,0), (3,0),
+  (6,0), 1, 2, 3 and 5 years (12,0), (24,0), (36,0), (60,0), and All (0,0). Nothing else is
+  accepted, because Microsoft says an invalid value silently becomes 12 months (KB 3115009). 3 and 5
+  years, which the old lists lacked, are confirmed on the Exchange VM.
+- **Q151 - the policy values earlier versions wrote, 2026-11-17.** OutlookAI 3.0.0.319 to 3.1.0.325
+  wrote the five as policies wherever the user's token could - the maintainer's workstation since
+  2026-07-23 - and a policy locks Outlook's own setting. *"Q151 a - So I can see how it looks in our
+  gui. Then after I will tell you to remove them."* **Decided: (a)**: they stay in place, labelled
+  "Set by an earlier OutlookAI", and are removed on his word. Before they are, each account's own
+  period is set to All: one account on his workstation reads 12 months under the policy's All, and
+  removing the policy alone would make Outlook drop its offline mail older than that (inferred from
+  Microsoft's KB 2733062). `TODO.md` holds the removal.
+
+#### Pins, and how drafts are written - Q118, Q149, Q150
+
+**Primer.** When a program asks for Outlook while it is closed, Outlook starts with no window - only
+its icon by the clock, *"Another program is using Outlook..."* - and OutlookAI starts it that way on
+purpose (the v3 plan's D33). In that mode Outlook ends when its last window closes, a draft's hidden
+compose window included, so a session holds a never-shown Explorer, the pin, to keep it up (D49).
+Q118 measured pins left behind (`McpServer/Docs/com-host.md`, "Pins left behind, measured"): a
+session that did not start Outlook never closes its pin, and a pin left behind keeps a window-less
+Outlook up that `Application.Quit()` does not end.
+
+- **Q118 - pins left behind, 2026-10-11.** *"Q118 a - what about the special mode with the special
+  icon in the systray?"* **Approved: (a)**, a pin lifecycle fix: a shared list of sessions; the last
+  session out closes the pin; pins of dead sessions are closed; `outlook_health` lists the sessions;
+  and a lock, so sessions that start Outlook at once make one pin. His question was researched the
+  same day: the tray mode is Outlook's own "Another program is using Outlook" state, OutlookAI has no
+  tray icon of its own, and pins exist only in that mode. **(a) is on hold** until Q149's
+  measurement decides between pins only while drafting and no pins at all; `TODO.md` holds it.
+- **Q149 - do drafts need a window, and pins; asked 2026-10-11, decided 2026-11-17.** On 2026-10-11:
+  *"Q149 What happens if we drop the pin system? Why is it needed?"*, then *"I have serious doubts
+  that the word editor needs a real window. Research this in more depth. I also have serious doubts
+  that we need pins. Otherwise the special hidden outlook mode microsoft programmed would be
+  hobbled. Research if this really is the case. Then ask the question again in a similar fashion
+  updated with the research results."* What the research found:
+  - the window-less mode is not hobbled: everything works there but the Word editor and what needs a
+    compose window, such as Outlook's own signature insertion;
+  - closing a compose window ends a window-less Outlook - Microsoft's rule that closing the last
+    window ends Outlook - measured 7 of 8 on Office 2021, never on Office 2024;
+  - the Word editor is refused only while the Outlook process has no window shown or activated
+    (Office 2021); the draft's own window never has to be shown;
+  - edits to a re-opened draft are kept only after activation (3 of 3 on Office 2021; on Office 2024
+    400 of 400 bodies were lost without it).
+
+  On 2026-11-17: *"Q149 d"*. **Decided: (d)**: measure first, on the test VMs, then choose between
+  (b), keep Word, with pins only while drafting plus Q118's lifecycle work, and (c), write the
+  draft's text as HTML through Outlook's object model, with no compose window and no pins. (c) is
+  chosen only if its drafts are indistinguishable from today's.
+- **Q150 - after the user closes Outlook, 2026-11-17.** While an agent is still working, OutlookAI's
+  next call that needs Outlook starts it again without a window (the v3 plan's D17), so the icon
+  comes back within seconds. *"a"*. **Decided:** OutlookAI restarts it on the next call, as today.
+
+#### Signatures - Q147, Q152 to Q160, Q162
+
+**Primer.** Outlook keeps signatures as files - .htm, .rtf and .txt, plus a `<name>_files` folder
+for pictures - in one folder per Windows user, and each mail account's defaults for new mail and for
+replies and forwards in its Outlook profile. The MCP server lists them (`list_signatures`), creates,
+updates and deletes them (`manage_signature`), the draft tools take a `signature`, and since the
+compose-crash fix of 2026-10-04 OutlookAI inserts an account's default itself. All of it read the
+default profile and one fixed folder; nothing read the profile Outlook runs on, administrator
+policy, or roaming signatures, the ones Microsoft 365 keeps in the mailbox. Classic Outlook uses
+those from version 2303, and only Microsoft 365 Apps is known to: never the maintainer's Office LTSC
+2021, and Office LTSC 2024 is unmeasured. The add-in's task pane has one action, "Select the best
+signature", over the add-in's own copy of the server's signature catalog. Research: q147-signatures.
+
+- **Q147 - signatures, 2026-10-11.** *"Q147 a+b - OutlookAI should be able to handle
+  creating/editing/deleting signatures and selecting signatures per message based on all signatures
+  in the relevant account. This signature selection and management should be possible from both the
+  in app gui as well as the mcp server."* **Decided: (a) and (b)**: (a) read the running Outlook
+  profile and the Group Policy setting; (b) measure roaming signatures on the Exchange VM and handle
+  them. Q158 narrowed the GUI half on 2026-11-17. Its research raised Q152 to Q161.
+- **Q152 - how far roaming signatures are handled, 2026-11-17.** No supported interface reaches a
+  mailbox's signatures, and Microsoft has no plans for one in Microsoft Graph. *"your
+  recommendation"*. **Decided:** use Outlook's local copies, detect roaming, and refuse a local edit
+  of a signature the mailbox manages. Whether OutlookAI also reads the mailbox's own signature
+  folder is decided after a read-only measurement. It is never written.
+- **Q153 - testing classic Outlook's roaming, 2026-11-17.** Only Microsoft 365 Apps is known to
+  roam, and the testbed runs perpetual-licence Office by decision. *"your recommendation"*.
+  **Decided:** no Microsoft 365 Apps in the testbed. Measure the mailbox side and what Office 2024
+  does; classic Outlook's roaming is a known limit.
+- **Q154 - one copy of the code, 2026-11-17.** The add-in and the server need the same signature
+  logic, and the add-in kept its own copies of it, already drifting apart, because the "Phase-6
+  no-coupling choice" kept it from referencing OutlookAI.Core. That choice is recorded only in the
+  gitignored v3.MD (lines 64, 79-80, 144, 184 and 264) and cited in a comment of the add-in's
+  signature catalog; Core builds for net48 too, so that the add-in could reference it. *"Q154 b -
+  refactor everything to bring this pattern everywhere relevant. I want as much code shared as
+  possible. And as a rule no code duplicated."* **Decided: (b)**: the add-in references Core's
+  net48 build behind a small interface, superseding the no-coupling choice - and, as a standing rule
+  now in `AGENTS.md` (Shared code), no code is duplicated. A survey of master 9f4646d found 73 groups
+  of duplicated code (`.work\dup-survey-2026-11\`: README.txt, inventory.tsv, members.tsv); its
+  follow-up questions, Q163 onwards, are not answered yet. `TODO.md` holds the refactor.
+- **Q155 - which Outlook profile, 2026-11-17.** Outlook uses the profile it runs on, which is not
+  the default one after `/profile` or the profile picker; OutlookAI read only the default profile,
+  and with none recorded it merged every profile into one list. *"Q155 c - Always be explicit. A
+  draft that needs a signature already is written in one of the accounts and send by that email
+  which is a choice the agent made. It can match the correct signature. When adding the signature to
+  a draft maybe suggest what signature matches with the used account."* **Decided: (c)**: every
+  Outlook profile is listed, and every answer names its profile; changing a default needs an
+  explicit profile and account; a draft's result says which signature went in, and suggests the one
+  that matches the sending account.
+- **Q156 - administrator policy, 2026-11-17.** Policy can forbid signatures or force one default on
+  every account, and Cloud Policy overrides Group Policy. *"your recommendation"*. **Decided:**
+  respect it: no signature where policy forbids them; a forced default is used, and a change of
+  default is refused. A per-message choice under a forced default is allowed only if a measurement
+  confirms that Outlook allows one.
+- **Q157 - the draft tools' `signature`, 2026-11-17.** There was no way to ask for none,
+  `update_draft` could not remove one, a result did not say which default went in, and a name was
+  checked against every signature on the machine. *"Q157 a - make sure the agent understands from
+  the mcp operation instructions"*. **Decided: (a)**: `signature` left out means the account's
+  effective default; `"none"` means no signature, and in `update_draft` also removes the one there;
+  only a name the sending account can use is accepted; the result says which signature went in and
+  why. The tool descriptions and the server instructions spell this out.
+- **Q158 - the add-in's part, 2026-11-17.** In full: *"I mean, in Outlook there is already an
+  interface for signature management. So we do not have to implement that interface. Only for the
+  mcp server. But inside of the outlook addon gui I do want the ai to auto select the correct
+  signature. For example based on the language of the email so the difference between my kind
+  regards en vriendelijke groeten signatures get set correctly. No need for an interface or
+  dropdown. That is already part of outlook itself. Just a checkbox "Allow the AI to automatically
+  choose the correct signature" (on by default) or something."* **Decided:** signatures are managed
+  through the MCP server only; the add-in gets no editor, list or dropdown. In the add-in the AI
+  chooses the signature itself - by the mail's language, for one - under one checkbox, "Allow the AI
+  to automatically choose the correct signature", on by default. When it chooses is Q162.
+- **Q159 - pictures and formats, 2026-11-17.** `manage_signature`'s update deleted a signature's
+  `<name>_files` folder and rebuilt its .rtf from plain text, so editing a signature with a logo
+  broke it. *"Have full support for existing signatures with pictures and new ones created by the
+  user or the mcp server in all formats. The goal is that the mcp server can also tweak existing
+  signatures without breaking or converting stuff."* **Decided:** full support, in every format, for
+  existing signatures with pictures and for new ones the user or the MCP server makes; the MCP
+  server edits an existing one without breaking or converting it.
+- **Q160 - replies from a delegate or shared mailbox, 2026-11-17.** For mail in a store no account
+  delivers to, OutlookAI inserts no default, and what Outlook itself does there is unmeasured.
+  *"your recommendation"*. **Decided:** no signature for now, and the result says so; once the
+  shared test mailbox exists (Q109), measure what Outlook does there and match it. `TODO.md` holds
+  it, with Q109.
+- **Q162 - when the add-in's AI chooses, 2026-11-17.** *"b"*. **Decided:** when it writes or
+  rewrites the body, and when a reply or forward opens, matching the language of the mail being
+  answered. It never replaces a signature someone chose by hand, and never changes a mail as it is
+  sent. It waits for the add-in's reference to Core (Q154); `TODO.md` holds it.
+
+#### Tests and scans - Q144, Q146, 2026-10-11
+
+- **Q144 - keeping a time zone that is not UTC.** Since Q126 (a) the non-live suite runs only in
+  UTC, so a test that uses the machine's own zone as the "other" zone proves only the identity there;
+  `TODO.md`'s item names the tests found and five directions. *"whatever you think is best"*.
+  **Decided: (b) and (c)**, that item's directions (2) and (3): the build VM stays on UTC; a short
+  second pass in W. Europe runs the tests marked as zone-sensitive, and a check fails a
+  zone-sensitive test that is not marked; and tests are rewritten to set their own zone as they are
+  next touched.
+- **Q146 - the threat model of the release's CodeQL scan.** The release runs CodeQL's default threat
+  model, under which only network input is untrusted, and the product reads none.
+  `local,!environment` gave 6 results over 0ccf5df, one of them real - the elevated helper's path
+  read from HKCU, which goes with Q145 (a). The MCP server's real input, an agent's tool arguments,
+  is read by the MCP SDK outside the analysed source, so CodeQL never sees it (inferred). *"whatever
+  you think is best"*. **Decided: (b), then (d)**, the `TODO.md` item's directions (2) then (4): the
+  release's scan runs with the threat model `local,!environment`, every result fixed or recorded with
+  its reason; then the MCP tools' parameters are modelled as untrusted input.
+
+#### Working in parallel - 2026-11-17
+
+*"try to parallalize as much as possible. Even create extra virtual machines if you think that can
+speed things up."* Since then several agents work at once, each in its own worktree, and one adds
+build VMs and clones of the Outlook guests. `AGENTS.md`'s rules for test VMs cover the new ones too.
+
 ### 2026-10-04, autonomous - the compose crash: dumps on the guests, the cause, and a compose that never hands Outlook that close
 
 **Primer.** OUTLOOK.EXE crashed now and then in the live compose tests on both Outlook guests (runbook
