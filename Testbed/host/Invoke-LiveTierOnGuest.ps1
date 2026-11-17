@@ -687,7 +687,7 @@ function Invoke-SelfTest {
     Check 'and the summary line says so' "outlook    started by this run, NOT elevated, on profile 'Outlook'; Office's activation wizard dismissed 1 time(s)" (Format-OutlookStartLine $os)
     Check 'a starter that reported nothing reads as not reported, never as zero' $true ((Format-OutlookStartLine (Get-OutlookStartFacts 'OK: OUTLOOK.EXE pid 1' 'X')) -match 'NOT REPORTED')
     Check 'no start at all reads as not started' 'outlook    not started by this run (it was running already)' (Format-OutlookStartLine $null)
-    Check 'and a suffix narrows it' $true (Get-LiveFilter $true '' '&FullyQualifiedName~Y' $true).Filter.EndsWith('&Requires!=PstStore&FullyQualifiedName~Y')
+    Check 'and a suffix narrows it' $true (Get-LiveFilter $true '' '&FullyQualifiedName~Y' $true).Filter.EndsWith('&Requires!=PstStore&Writes=Nothing&FullyQualifiedName~Y')
     Check 'a suffix that does not start with & is refused' $true ($null -ne (Get-LiveFilter $true '' 'FullyQualifiedName~X').Refusal)
     Check 'a filter that is not Category=Live is refused' $true ($null -ne (Get-LiveFilter $true 'FullyQualifiedName~X' '').Refusal)
     $f = Get-LiveFilter $false 'Category=Live&Requires=SearchIndex' ''
