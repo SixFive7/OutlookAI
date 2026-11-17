@@ -46,7 +46,16 @@
                                             HKCU\Software\Microsoft\SystemCertificates\Root\
                                             Certificates deleted directly - the route with no
                                             certutil at all
-                        Then nothing of the certificate is left in the store.
+                          registry-write-after-confirmed-delete,
+                          registry-write-after-registry-delete
+                                            that key written back, as any program running as the
+                                            user can, after each kind of removal
+                        After every case: whether Windows still lists the certificate, whether it
+                        builds a trusted chain for it, and whether ProtectedRoots - the list of
+                        roots the user confirmed, which only the system writes - still names it.
+                        A prompt is watched for -VisibleWithinSeconds after it appears, because a
+                        dialog exists a moment before it is shown. Then nothing of the certificate
+                        is left in the store.
 
       InstallerCleanup  The product's installer, -InstallerPath, run /VERYSILENT the way the
                         add-in's updater runs it, and then its uninstaller /VERYSILENT, each with
@@ -754,6 +763,47 @@ function Invoke-CertutilCase {
     }
 }
 
+# The certificate's own key in the user's registry Root store, every value of it, to write back later.
+function Save-RootKey([string] $Thumbprint) {
+    $k = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($RootCertificatesKey + '\' + $Thumbprint, $false)
+    if ($null -eq $k) { return @() }
+    try {
+        $values = @()
+        foreach ($n in $k.GetValueNames()) { $values += [pscustomobject]@{ Name = $n; Kind = $k.GetValueKind($n); Data = $k.GetValue($n, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames) } }
+        return $values
+    }
+    finally { $k.Close() }
+}
+
+# Writes that key back with no certutil and no crypt32 - what any program running as the user can
+# do - and says whether Windows then lists and trusts the certificate again. ProtectedRoots, the list
+# of roots the user confirmed, is the difference this case looks for.
+function Invoke-RootKeyWriteCase([string] $Name, [string] $Thumbprint, [object[]] $Saved) {
+    Write-Host ''
+    Write-Host "-- case $Name : the certificate's key written back under HKCU:\$RootCertificatesKey, no certutil"
+    $before = Get-WindowSet
+    $err = $null
+    try {
+        $k = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($RootCertificatesKey + '\' + $Thumbprint)
+        try { foreach ($v in $Saved) { $k.SetValue($v.Name, $v.Data, $v.Kind) } } finally { $k.Close() }
+    }
+    catch { $err = $_.Exception.Message }
+    Start-Sleep -Seconds 3
+    $prompt = Select-Prompt @(Select-NewWindows -Now ([OaiTrustNative]::TopLevel()) -Before $before -OwnPid $self.Id)
+    $state = Test-InUserRoot $Thumbprint
+    $trust = Test-TrustedAsRoot $script:ProbeCer
+    $protected = Test-InProtectedRoots $Thumbprint
+    Write-Host ("   {0} ({1} value(s)); a prompt within 3 s: {2}; in the user's Root store now: {3} (its registry key: {4}); trusted as a root: {5}{6}; in ProtectedRoots: {7}" -f $(if ($err) { "FAILED: $err" } else { 'written' }), @($Saved).Count, ($null -ne $prompt), $state.store, $state.registry, $trust.trusted, $(if ($trust.status) { " ($($trust.status))" } else { '' }), $protected)
+    if ($prompt) { $null = Send-Answer -Prompt (Get-PromptRecord -Window $prompt -ForegroundBefore 0 -AppearedSeconds 0) -Answer No }
+    return [pscustomobject]@{
+        Name = $Name; CommandLine = "the key written back under HKCU:\$RootCertificatesKey\<thumbprint>"; Show = $null; Answer = 'None'
+        Prompts = @(); HeldSeconds = $null; AfterHold = $null
+        ExitCode = $(if ($err) { 1 } else { 0 }); ExitCodeText = $(if ($err) { $err } else { 'written' }); EndedOnItsOwn = $true; Seconds = 3
+        PresentAfter = $state.store; RegistryKeyAfter = $state.registry
+        TrustedAfter = $trust.trusted; ChainStatusAfter = $trust.status; InProtectedRootsAfter = $protected
+    }
+}
+
 function Invoke-RootStorePrompt {
     $result = [ordered]@{ facts = $facts; certificate = $null; cases = @(); verdict = $null }
     $subject = 'CN=OutlookAI trust-removal probe ' + $stamp
@@ -780,6 +830,7 @@ function Invoke-RootStorePrompt {
     $cases += Invoke-CertutilCase -Name 'store-absent' -CommandLine $check -Show $hide -Answer None -Thumbprint $thumb -AppearSeconds 10
     $cases += Invoke-CertutilCase -Name 'add-no' -CommandLine $add -Show $hide -Answer No -Thumbprint $thumb
     $cases += Invoke-CertutilCase -Name 'add-yes' -CommandLine $add -Show $hide -Answer Yes -Thumbprint $thumb
+    $savedKey = @(Save-RootKey $thumb)
     $cases += Invoke-CertutilCase -Name 'store-present' -CommandLine $check -Show $hide -Answer None -Thumbprint $thumb -AppearSeconds 10
     foreach ($spec in @(
             @{ Name = 'delete-no'; Show = $hide; Answer = 'No'; Hold = 0 },
@@ -790,6 +841,12 @@ function Invoke-RootStorePrompt {
             $cases += Invoke-CertutilCase -Name ('re-add before ' + $spec.Name) -CommandLine $add -Show $hide -Answer Yes -Thumbprint $thumb
         }
         $cases += Invoke-CertutilCase -Name $spec.Name -CommandLine $delete -Show $spec.Show -Answer $spec.Answer -Thumbprint $thumb -Hold $spec.Hold
+    }
+
+    # After a removal the user confirmed: does writing the key back make it a root again?
+    if ($savedKey.Count -gt 0 -and -not (Test-InUserRoot $thumb).registry) {
+        $cases += Invoke-RootKeyWriteCase -Name 'registry-write-after-confirmed-delete' -Thumbprint $thumb -Saved $savedKey
+        Remove-Item -LiteralPath ("HKCU:\" + $RootCertificatesKey + '\' + $thumb) -Recurse -Force -ErrorAction SilentlyContinue
     }
 
     # The route with no certutil: the certificate's own key in the registry store under HKCU.
@@ -819,10 +876,15 @@ function Invoke-RootStorePrompt {
     if ($regPrompt) { $null = Send-Answer -Prompt (Get-PromptRecord -Window $regPrompt -ForegroundBefore 0 -AppearedSeconds 0) -Answer No }
     # What the installer's own check, certutil -user -store Root, finds after that.
     $cases += Invoke-CertutilCase -Name 'store-after-registry-delete' -CommandLine $check -Show $hide -Answer None -Thumbprint $thumb -AppearSeconds 10
+    # And after the registry route, which leaves ProtectedRoots as it was: the same question.
+    if ($savedKey.Count -gt 0 -and -not (Test-InUserRoot $thumb).registry) {
+        $cases += Invoke-RootKeyWriteCase -Name 'registry-write-after-registry-delete' -Thumbprint $thumb -Saved $savedKey
+    }
 
     if ((Test-InUserRoot $thumb).store) {
         $cases += Invoke-CertutilCase -Name 'cleanup' -CommandLine $delete -Show $normal -Answer Yes -Thumbprint $thumb
     }
+    Remove-Item -LiteralPath ("HKCU:\" + $RootCertificatesKey + '\' + $thumb) -Recurse -Force -ErrorAction SilentlyContinue
     $result.cases = $cases
     $result.verdict = Get-RootPromptVerdict $cases
     $removalPrompts = @($cases | Where-Object { $_.Name -like 'delete-*' } | ForEach-Object { @($_.Prompts) })
