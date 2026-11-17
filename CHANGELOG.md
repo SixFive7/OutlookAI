@@ -241,8 +241,8 @@ its mailbox tests on, and change nothing you install.
   certutil started exactly as the installer starts it, and records every question Windows asks: its
   text, whether it is shown, its default answer, what Yes and No do, and whether Windows still trusts
   the certificate afterwards. It found that every removal asks, that certutil waits for the answer
-  however long it takes, and that deleting the certificate's registry key instead leaves Windows'
-  list of confirmed roots naming it, so writing the key back makes it trusted again with no
+  (still waiting after two minutes), and that deleting the certificate's registry key instead leaves
+  Windows' list of confirmed roots naming it, so writing the key back makes it trusted again with no
   question. The other scenario runs the built installer and its uninstaller against planted trust
   entries and checks that exactly the leaked key's go. Both pass (Docs/live-tier-on-the-vm.md
   section 4.8).
@@ -2490,12 +2490,12 @@ its mailbox tests on, and change nothing you install.
   installer runs with administrator rights. It is found by its thumbprint,
   E205060633DD7062D4F90033130542948A69D068, and nothing else. Your Trusted Root Certification
   Authorities store works differently: Windows asks you to confirm every removal from it, in a
-  window titled Root Certificate Store whose default answer is No, and waits for your answer for as
-  long as it takes. So when the certificate is in that store, an install or uninstall you run
-  yourself first says why in one sentence and then waits for your answer, and an automatic update
-  leaves it for the next install you run. A test machine showed all of this
-  (Docs/live-tier-on-the-vm.md section 4.8). The installer carries no copy of the certificate and
-  never adds it to the Disallowed store (decision 193 (b)).
+  window titled Root Certificate Store whose default answer is No, and the removal waits for your
+  answer; on a test machine it was still waiting after two minutes. So when the certificate is in
+  that store, an install or uninstall you run yourself first says why in one sentence and then
+  waits for your answer, and an automatic update leaves it for the next install you run. A test
+  machine showed all of this (Docs/live-tier-on-the-vm.md section 4.8). The installer carries no
+  copy of the certificate and never adds it to the Disallowed store (decision 193 (b)).
 
 - 🔒 **The add-in and the MCP server load Windows DLLs only from System32.**
   Each of their P/Invoke declarations names a Windows DLL by file name alone, and Windows looked for

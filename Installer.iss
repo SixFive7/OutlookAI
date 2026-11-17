@@ -492,10 +492,10 @@ end;
 //  * THE USER'S ROOT STORE ASKS. Windows puts every removal from it to the user: a window titled
 //    "Root Certificate Store" - "Do you want to DELETE the following certificate from the Root
 //    Store?", the certificate's subject, issuer, validity, serial number and thumbprints, Yes and
-//    No, No the default - shown even when certutil runs hidden, and waited for as long as it takes.
-//    Yes removes it (certutil exits 0), No keeps it (0x800704C7, ERROR_CANCELLED). Measured
-//    2026-11-17, Docs/live-tier-on-the-vm.md section 4.8. So that store has its own procedure,
-//    RemoveCompromisedCertificateFromUserRoot, below.
+//    No, No the default - shown even when certutil runs hidden, and certutil waits for the answer
+//    (still waiting after two minutes). Yes removes it (certutil exits 0), No keeps it (0x800704C7,
+//    ERROR_CANCELLED). Measured 2026-11-17, Docs/live-tier-on-the-vm.md section 4.8. So that store
+//    has its own procedure, RemoveCompromisedCertificateFromUserRoot, below.
 //  * Best effort throughout: on most machines it is in none of these stores, and "not found" is
 //    the normal answer, so every result is ignored. Install and uninstall run the same removal.
 const

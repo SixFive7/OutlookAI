@@ -78,10 +78,10 @@ public sealed class InstallerCompromisedCertificateTests
     /// <summary>
     /// Windows puts every removal from the user's Root store to the user - "Root Certificate Store",
     /// "Do you want to DELETE the following certificate from the Root Store?", No the default - and
-    /// certutil waits for the answer however long it takes, even started hidden (measured 2026-11-17,
-    /// Docs/live-tier-on-the-vm.md section 4.8). So the installer asks only when the certificate is in
-    /// the user's own Root store, explains first in one sentence, waits only when somebody is there,
-    /// and on a silent run - every auto-update - neither asks nor waits.
+    /// certutil waits for the answer - still waiting after two minutes - even started hidden
+    /// (measured 2026-11-17, Docs/live-tier-on-the-vm.md section 4.8). So the installer asks only
+    /// when the certificate is in the user's own Root store, explains first in one sentence, waits
+    /// only when somebody is there, and on a silent run - every auto-update - neither asks nor waits.
     /// </summary>
     [Fact]
     public void TheUsersRootStoreIsAskedOnlyWhenTheCertificateIsInIt_AfterOneSentence_AndNeverOnASilentRun()

@@ -4224,7 +4224,7 @@ below ended that way: `CP-16B-FROZEN-CLOCK` restored, `OutlookAI-Unindexed2` Sav
 The guest: Windows 11 Pro 25H2, build 26200.8037 (its registry still says "Windows 10 Pro", as every
 Windows 11 does), nl-NL date formats.
 
-**1. Removing a certificate from the user's Root store asks - every time, and waits for ever.**
+**1. Removing a certificate from the user's Root store asks - every time - and waits for the answer.**
 `-Scenario RootStorePrompt`, three runs (`8154f4a`, `0652782` and `a8fe793`; the last two watch each
 prompt until it is shown, the last also writes the certificate's registry key back). A throwaway
 certificate, made in memory with no store involved, went into the user's Root store and out again
@@ -4291,7 +4291,7 @@ issuer "Self Issued".
   it existed and found two of its four removal questions not yet shown; the second and third watched,
   and all fifteen questions there - nine removals, six additions - were shown, 0.01 to 0.38 s after
   they existed. It took the foreground in 8 of those 15.
-- **No timeout.** certutil waits as long as the question is up.
+- **No timeout seen.** After 120 s the question was still up and shown, and certutil still waiting.
 - **UI Automation reads it but cannot press it.** The probe's UI Automation sees the dialog's buttons
   as `ControlType.Pane` with no `InvokePattern` (the probe is 64-bit and certutil 32-bit; whether that
   is why was not tested), so it answered with the dialog's own `WM_COMMAND` - the message a click
