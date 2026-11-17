@@ -126,6 +126,13 @@ public sealed class SoakToolSurfaceCiTests
         Assert.Contains("language", hint, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("list_signatures", hint, StringComparison.Ordinal);
         Assert.Contains("default", hint, StringComparison.OrdinalIgnoreCase);
+
+        // Q157 (a), spelled out where the agent reads it (the maintainer: "make sure the agent understands
+        // from the mcp operation instructions"): omitted = the sending account's effective default,
+        // "none" = no signature, and the result says which went in.
+        Assert.Contains("OMIT", hint, StringComparison.Ordinal);
+        Assert.Contains("\"none\"", hint, StringComparison.Ordinal);
+        Assert.Contains("signatureReason", hint, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -163,9 +170,25 @@ public sealed class SoakToolSurfaceCiTests
             signature = "OutlookAI-NoSuchSignature-424242",
         });
 
+        // Q157 (a): a refusal with the machine-readable reason and the names that ARE usable.
         JsonElement error = result.GetProperty("error");
-        Assert.Equal("InvalidArgument", error.GetProperty("type").GetString());
+        Assert.Equal("SignatureRefused", error.GetProperty("type").GetString());
+        Assert.Equal("signature_not_usable", error.GetProperty("reason").GetString());
+        Assert.Equal("unchanged", error.GetProperty("outcome").GetString());
         Assert.Contains("signature", error.GetProperty("message").GetString(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task UpdateDraft_SignatureParameter_ExplainsSwapAndNone()
+    {
+        await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();
+
+        JsonElement tool = await GetToolAsync(client, "update_draft");
+        string hint = tool.GetProperty("inputSchema").GetProperty("properties").GetProperty("signature")
+            .GetProperty("description").GetString()!;
+        Assert.Contains("\"none\"", hint, StringComparison.Ordinal);
+        Assert.Contains("REMOVE", hint, StringComparison.Ordinal);
+        Assert.Contains("Omit to keep", hint, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -183,7 +206,14 @@ public sealed class SoakToolSurfaceCiTests
         Assert.Contains("backed up", description, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("backupPath", description, StringComparison.Ordinal);
         Assert.Contains("audit", description, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("set_default_for", description, StringComparison.Ordinal);
+        Assert.Contains("default_for", description, StringComparison.Ordinal);
+
+        // Q147/Q159: editing in place and the defaults on their own.
+        Assert.Contains("IN PLACE", description, StringComparison.Ordinal);
+        Assert.Contains("set_default", description, StringComparison.Ordinal);
+        Assert.Contains("clear_default", description, StringComparison.Ordinal);
+        Assert.Contains("EXPLICIT profile", description, StringComparison.Ordinal);
+        Assert.Contains("REFUSED", description, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -199,11 +229,15 @@ public sealed class SoakToolSurfaceCiTests
         Assert.True(properties.TryGetProperty("name", out _));
         Assert.True(properties.TryGetProperty("body_text", out _));
         Assert.True(properties.TryGetProperty("body_html", out _));
-        Assert.True(properties.TryGetProperty("set_default_for", out JsonElement setDefault),
-            "manage_signature must expose the set_default_for object");
+        Assert.True(properties.TryGetProperty("body_rtf", out _), "Q159: the RTF rendition is edited in its own right");
+        Assert.True(properties.TryGetProperty("replace", out _), "Q159: in-place text edits");
+        Assert.True(properties.TryGetProperty("pictures", out _), "Q159: pictures added, replaced, removed");
+        Assert.True(properties.TryGetProperty("default_for", out JsonElement setDefault),
+            "manage_signature must expose the default_for object");
 
-        // The {account, scope} shape must be advertised (object with both keys).
+        // The {profile, account, scope} shape must be advertised (Q155: the profile is always explicit).
         JsonElement setDefaultProps = setDefault.GetProperty("properties");
+        Assert.True(setDefaultProps.TryGetProperty("profile", out _));
         Assert.True(setDefaultProps.TryGetProperty("account", out _));
         Assert.True(setDefaultProps.TryGetProperty("scope", out _));
 
@@ -211,7 +245,7 @@ public sealed class SoakToolSurfaceCiTests
         Assert.Contains("action", required);
         Assert.Contains("name", required);
         Assert.DoesNotContain("body_text", required);
-        Assert.DoesNotContain("set_default_for", required);
+        Assert.DoesNotContain("default_for", required);
     }
 
     [Theory]
@@ -256,7 +290,7 @@ public sealed class SoakToolSurfaceCiTests
             action = "create",
             name = "OutlookAI-NoSuchSignature-424242",
             body_text = "x",
-            set_default_for = new { account = "someone@example.com", scope = "everything" },
+            default_for = new { profile = "Outlook", account = "someone@example.com", scope = "everything" },
         });
 
         JsonElement error = result.GetProperty("error");
@@ -273,7 +307,7 @@ public sealed class SoakToolSurfaceCiTests
         {
             action = "delete",
             name = "OutlookAI-NoSuchSignature-424242",
-            set_default_for = new { account = "someone@example.com", scope = "new" },
+            default_for = new { profile = "Outlook", account = "someone@example.com", scope = "new" },
         });
 
         JsonElement error = result.GetProperty("error");

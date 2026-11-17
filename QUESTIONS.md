@@ -447,6 +447,80 @@ in file contents, his Windows user name, his computer name and facts about his m
   every trust store by its thumbprint, `E205060633DD7062D4F90033130542948A69D068`, and ships no copy;
   the untrusted-list entry stays on his own PC, where it is done.
 
+### 2026-11-17, autonomous - Q147 carried out: the signature model, its edits and its refusals
+
+**Primer.** The maintainer decided the shape (Q147 (a)+(b), Q152 (a), Q153, Q155 (c), Q156, Q157 (a),
+Q159, Q160; the add-in's language pick, Q158 + Q162 (b), later). Carrying it out took the choices below
+on his behalf. The read model, the edits and the draft decision live in `McpServer/OutlookAI.Core/Services/`
+(`SignatureEnvironment`, `SignatureManager`, `SignatureSelection`, `SignatureRtf`, `SignatureHtml`,
+`SignatureText`, `SignatureListing`); `McpServer/README.md` describes them.
+
+**1. Reading one signature in full.** *Options:* (a) a `name` argument on `list_signatures`; (b) a new
+`get_signature` tool; (c) a `read` action on `manage_signature`. **Decided: (a)** - the tool count stays
+22, and the read stays on the tool classified read-only; (c) would put a read behind a write tool's
+gates. **Undo:** a tool and its pins.
+
+**2. Editing the RTF rendition without shipping its pictures through the agent.** Outlook's RTF embeds
+every picture as hex, often twice (a PNG and a WMF fallback). *Options:* (a) show each picture as a
+`[[picture:N]]` token and put the original back byte for byte wherever the token stays, with
+`[[picture-file:<file>]]` for a new PNG or JPEG; (b) return and accept the full hex; (c) RTF edits by
+find-and-replace only. **Decided: (a)**, with (c) as well: a 50 KB logo is 100 KB of hex for nothing,
+and (c) alone cannot add or remove a picture. **Undo:** `SignatureRtf.Elide`/`Expand`.
+
+**3. A text edit that formatting splits.** *Options:* (a) refuse the whole call and say to send that
+rendition edited; (b) replace across the formatting, dropping it; (c) skip that rendition silently.
+**Decided: (a)** - (b) changes formatting nobody asked to change, (c) leaves the renditions saying
+different things. **Undo:** `ReplaceText`'s split branch.
+
+**4. What the policy refusals cover (Q156).** *Options:* (a) under `DisableSignatures`, no
+`manage_signature` write at all, and a policy-forced signature cannot be deleted; (b) refuse only
+default changes, as Q156 names. **Decided: (a)** - Outlook's own signature editor is closed under that
+policy, and deleting a forced signature leaves Outlook's forced default naming nothing. **Undo:** two
+refusals in `SignatureManager.Manage`.
+
+**5. A default deployed in Outlook's own settings (`Common\MailSettings` `NewSignature`/`ReplySignature`,
+not a policy).** Its effect is disputed in the sources (research section 2). *Options:* (a) every
+account's default, above the account's own, default changes refused, the per-message choice free;
+(b) below the account's own; (c) ignored. **Decided: (a)**, the research's precedence model, until G2's
+live test (`LiveSignatureSettingsTests.G2_...`) records what Outlook's own signature editor reports. Its
+first run (2026-11-17, OAI-UNINDEXED) could not tell: Outlook's signature settings reported no default
+with the deployed one or without it, written while Outlook ran; `TODO.md` holds the measurement.
+**Undo:** `SignaturePolicy.Read`'s preference source.
+
+**6. Roaming on perpetual Office (Q152 (a)), after stream A's R1 (Office LTSC 2024 showed no sign of
+roaming) and the coordinator's instruction to keep the detection generic.** *Options:* (a) off unless
+Outlook's own `Name (address)` copies of an Exchange account are on the computer, then evident for
+those accounts; (b) treated as possible, as first built; (c) off. **Decided: (a)** - right whichever
+way R3 comes out, and it leaves the testbed's LTSC 2024 and the maintainer's LTSC 2021 their local
+defaults. Microsoft 365 Apps 2303+ stays possible on Microsoft's word. **Undo:** `SignatureRoaming.Decide`.
+
+**7. A named signature on a reply from a delegate or shared mailbox (Q160).** *Options:* (a) a
+signature of this computer goes in, no default does; (b) refuse any signature there. **Decided: (a)** -
+Q160's "no signature for now" read as the default; the agent's explicit choice is honoured and the
+result says which went in. **Undo:** the delegate branch of `SignatureSelector`.
+
+**8. A chosen signature that fails to go in.** Since the crash fix nothing else puts one in, and a
+second inspector on the same item is the shape that wedged Outlook (`ReviseHeldDocument`). *Options:*
+(a) report it - the draft has no signature, and `update_draft` with the same signature retries; (b)
+retry with the account default in a second inspector. **Decided: (a).** **Undo:** none needed.
+
+**9. Smaller ones.** `"none"` is reserved, so `manage_signature` refuses a signature of that name.
+`clear_default` takes the name of the default it clears, so nothing is cleared by mistake. An Exchange
+account added under an alias is matched by `Account.DisplayName` against its entry's `Account Name`. The
+server instructions' budget is 480 characters, up from 400, for the one signature sentence Q157 asked
+for. The add-in's signature button reads the folder through the one linked rule
+(`Services/SignatureFolderLocation.cs`) - the add-in otherwise unchanged, as Q158 asks - because the
+folder defect was named in all three places. **Undo:** each is one change.
+
+**10. What the add-in's own pick will call (Q158 + Q162, built later).** *Options:* (a) the code the
+server decides with, as it stands in Core; (b) a separate facade for the add-in. **Decided: (a)** -
+one copy (Q154), and the server exercises it on every draft: `SignatureEnvironment.ReadCurrent()` for
+the folder, profiles, policy and roaming; `SignatureSelector.Candidates(environment, account,
+runningProfile)` for the signatures that account may use, with excerpts to judge the language by, its
+effective defaults, and whether policy disables or forces them; `SignatureSelector.Decide(...)` for
+the default and the reason. The add-in keeps one thing for itself: whether the signature in the open
+draft was put there by a person. **Undo:** nothing is built on it yet.
+
 ### 2026-10-11 and 2026-11-17 - the maintainer's answers to Q118, Q131 to Q136, Q138 to Q140, Q142 to Q147 and Q149 to Q162
 
 **What this is.** These questions were asked and answered in conversation, not in this file, and

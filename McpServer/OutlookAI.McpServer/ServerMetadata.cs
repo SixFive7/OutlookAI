@@ -18,5 +18,6 @@ public static class ServerMetadata
         "Local Outlook email access: search and read mail across all accounts, folders, and "
         + "delegate mailboxes; follow threads; save/read attachments; open results in Outlook. "
         + "Use these tools whenever an answer may live in the user's email or inbox. "
-        + "Reply/forward/new drafts open in Outlook for the user to review; send is confirmation-gated.";
+        + "Reply/forward/new drafts open in Outlook for the user to review; send is confirmation-gated. "
+        + "A draft gets the sending account's default signature unless 'signature' names another (see list_signatures) or \"none\".";
 }

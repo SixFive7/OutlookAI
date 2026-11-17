@@ -105,81 +105,45 @@ public sealed class SignatureCatalogTests : IDisposable
         Assert.Null(SignatureCatalog.TryResolve("   ", _dir));
     }
 
-    // ------------------------------------------------------------------ assignments
+    // ------------------------------------------------------------------ renditions, pictures, scope (Q147, Q159)
 
     [Fact]
-    public void Assignments_ParseStringAndBinaryValues_AndListOnlyMailAccounts()
+    public void Signatures_CarryTheirFormats_PictureCount_AndTheAccountOfARoamingCopy()
     {
-        const string pop3 = "{ED475411-B0D6-11D2-8C3B-00104B2A6676}";
-        const string mapiService = "{ED475414-B0D6-11D2-8C3B-00104B2A6676}";
-        var rows = new List<IReadOnlyDictionary<string, object?>>
-        {
-            // Address book - not an account, whatever it is called.
-            new Dictionary<string, object?>
-            {
-                ["clsid"] = mapiService, ["Service Name"] = "CONTAB", ["Account Name"] = "Outlook Address Book",
-            },
-            // POP3 account, REG_SZ values, renamed by its user: the address is Email, never Account Name.
-            new Dictionary<string, object?>
-            {
-                ["clsid"] = pop3,
-                ["Account Name"] = "Work mail",
-                ["Email"] = "a@example.com",
-                ["New Signature"] = "Sig A",
-                ["Reply-Forward Signature"] = "Sig B",
-            },
-            // REG_BINARY (UTF-16LE, NUL-terminated) values.
-            new Dictionary<string, object?>
-            {
-                ["clsid"] = pop3,
-                ["Email"] = Encoding.Unicode.GetBytes("b@example.com\0"),
-                ["New Signature"] = Encoding.Unicode.GetBytes("Sig C\0"),
-            },
-            // Exchange account, the shape measured on the development host: no Email value, the
-            // Account Name is the address. No signature values: unknown, reported as nulls.
-            new Dictionary<string, object?>
-            {
-                ["clsid"] = mapiService, ["Service Name"] = "MSEMS", ["Account Name"] = "c@example.com",
-            },
-            // A data file NAMED LIKE AN ADDRESS, carrying a signature value - the 2026-09-24 defect.
-            // Not an account: the old rule listed it as d@example.com's assignment.
-            new Dictionary<string, object?>
-            {
-                ["clsid"] = mapiService,
-                ["Service Name"] = "MSUPST MS",
-                ["Account Name"] = "d@example.com",
-                ["New Signature"] = "Stray",
-            },
-        };
+        File.WriteAllText(Path.Combine(_dir, "Work (jan@example.com).htm"), "<p>x</p>");
+        File.WriteAllText(Path.Combine(_dir, "Logo.rtf"), @"{\rtf1 Logo}");
+        File.WriteAllText(Path.Combine(_dir, "Logo.txt"), "Logo");
+        Directory.CreateDirectory(Path.Combine(_dir, "Logo_files"));
+        File.WriteAllBytes(Path.Combine(_dir, "Logo_files", "image001.png"), new byte[] { 1 });
+        File.WriteAllBytes(Path.Combine(_dir, "Logo_files", "image002.JPG"), new byte[] { 2 });
+        File.WriteAllText(Path.Combine(_dir, "Logo_files", "filelist.xml"), "<xml/>");
 
-        IReadOnlyList<SignatureAssignment> assignments = SignatureCatalog.ReadAccountAssignments(() => rows);
+        IReadOnlyList<SignatureInfo> signatures = SignatureCatalog.ListSignatures(_dir);
 
-        Assert.Equal(new[] { "a@example.com", "b@example.com", "c@example.com" }, assignments.Select(a => a.Account));
-        Assert.Equal("Sig A", assignments[0].NewMessageSignature);
-        Assert.Equal("Sig B", assignments[0].ReplyForwardSignature);
-        Assert.Equal("Sig C", assignments[1].NewMessageSignature);
-        Assert.Null(assignments[1].ReplyForwardSignature);
-        Assert.Null(assignments[2].NewMessageSignature);
-        Assert.Null(assignments[2].ReplyForwardSignature);
+        SignatureInfo logo = signatures.Single(s => s.Name == "Logo");
+        Assert.Equal(new[] { "rtf", "text" }, logo.Formats);
+        Assert.Equal(2, logo.PictureCount);
+        Assert.Equal(Path.Combine(_dir, "Logo_files"), logo.ResourceDirectory);
+        Assert.Null(logo.ScopeAccount);
+        Assert.Equal("jan@example.com", signatures.Single(s => s.Name.StartsWith("Work", StringComparison.Ordinal)).ScopeAccount);
     }
 
     [Fact]
-    public void Assignments_ReaderThrow_DegradesToEmpty_NeverThrows()
+    public void Excerpt_FromAWordHtmlInWindows1252_DecodesItsAccents()
     {
-        IReadOnlyList<SignatureAssignment> assignments =
-            SignatureCatalog.ReadAccountAssignments(() => throw new InvalidOperationException("registry unavailable"));
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        File.WriteAllBytes(Path.Combine(_dir, "Word.htm"), Encoding.GetEncoding(1252).GetBytes(
+            "<html><head><meta http-equiv=Content-Type content=\"text/html; charset=windows-1252\"></head><body><p>Caf\u00e9 groet</p></body></html>"));
 
-        Assert.Empty(assignments);
+        Assert.Equal("Caf\u00e9 groet", Assert.Single(SignatureCatalog.ListSignatures(_dir)).Excerpt);
     }
 
     [Fact]
-    public void Assignments_LiveRegistryRead_NeverThrows()
+    public void Excerpt_FromTheRtf_WhenItIsTheOnlyRendition()
     {
-        // Whatever this machine's profile registry contains, the read must not throw
-        // (the Phase-4 degradation contract); shape-only assert, content-free (S4).
-        IReadOnlyList<SignatureAssignment> assignments = SignatureCatalog.ReadAccountAssignments();
+        File.WriteAllText(Path.Combine(_dir, "RtfOnly.rtf"), @"{\rtf1\ansi{\fonttbl{\f0 Calibri;}}\f0 Caf\'e9\par Team}");
 
-        Assert.All(assignments, a => Assert.Contains("@", a.Account, StringComparison.Ordinal));
+        Assert.Equal("Caf\u00e9 / Team", Assert.Single(SignatureCatalog.ListSignatures(_dir)).Excerpt);
     }
 
     [Fact]

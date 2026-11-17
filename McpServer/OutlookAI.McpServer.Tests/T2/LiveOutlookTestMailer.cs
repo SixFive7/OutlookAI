@@ -2987,6 +2987,128 @@ public static class LiveOutlookTestMailer
         });
     }
 
+    /// <summary>
+    /// What Outlook's OWN signature engine reports while a draft of this run is open in its editor:
+    /// Word's <c>EmailOptions.EmailSignature</c> - the new-message and reply/forward signatures it
+    /// would use and the signatures it lists - read through the draft's WordEditor. The measuring
+    /// instrument of the signature settings tests (G1-G3, research 2026-10-11): what Outlook itself
+    /// makes of a relocated folder or a deployed default, beside what OutlookAI makes of it.
+    /// <para>
+    /// READ-ONLY. The draft must carry the test tag and this run's marker (S3); it is opened by
+    /// EntryID - an inspector on a RE-OPENED item, the shape that has never crashed Outlook (runbook
+    /// 4.6), never on an object a creator returned - and its inspector is closed DISCARDING, so nothing
+    /// is saved. Any failure comes back in <see cref="OutlookSignatureEngineView.Error"/>, never thrown:
+    /// it is a measurement, and "Outlook would not say" is one of its answers.
+    /// </para>
+    /// </summary>
+    public static OutlookSignatureEngineView ReadSignatureEngine(string storeDisplayName, string entryIdHex, string uniqueMarker)
+    {
+        if (string.IsNullOrWhiteSpace(uniqueMarker) || uniqueMarker.Length < 12)
+        {
+            throw new ArgumentException("Marker too weak for a safe item filter (S3).", nameof(uniqueMarker));
+        }
+
+        return RunSta(() =>
+        {
+            dynamic app = CreateOutlookApplication();
+            dynamic? ns = null;
+            dynamic? stores = null;
+            dynamic? store = null;
+            dynamic? item = null;
+            object? inspector = null;
+            object? document = null;
+            dynamic? word = null;
+            dynamic? signature = null;
+            dynamic? entries = null;
+            try
+            {
+                ns = app.GetNamespace("MAPI");
+                stores = ns.Stores;
+                store = FindStore(stores, storeDisplayName)
+                    ?? throw new InvalidOperationException("Store not found for the signature-engine read.");
+                item = ns.GetItemFromID(entryIdHex, (string)store.StoreID);
+                string? subject = (string?)item.Subject;
+                if (subject == null || !subject.Contains(SubjectTag, StringComparison.Ordinal)
+                    || !subject.Contains(uniqueMarker, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException(
+                        "Refusing to open the item: its subject does not carry both the test tag and this run's marker (S3).");
+                }
+
+                inspector = item.GetInspector;
+                document = ComposeSurface.PromoteForWordEditor(inspector!, out string? promoteError);
+                if (document == null)
+                {
+                    return new OutlookSignatureEngineView(null, null, Array.Empty<string>(), "no editor: " + (promoteError ?? "unknown"));
+                }
+
+                word = ((dynamic)document).Application;
+                signature = word.EmailOptions.EmailSignature;
+                string? newMessage = TryRead(() => (string?)signature.NewMessageSignature);
+                string? reply = TryRead(() => (string?)signature.ReplyMessageSignature);
+                List<string> names = new();
+                entries = signature.EmailSignatureEntries;
+                int count = (int)entries.Count;
+                for (int i = 1; i <= count; i++)
+                {
+                    dynamic? entry = null;
+                    try
+                    {
+                        entry = entries.Item(i);
+                        names.Add((string)entry.Name);
+                    }
+                    finally
+                    {
+                        Release(entry);
+                    }
+                }
+
+                return new OutlookSignatureEngineView(newMessage, reply, names, null);
+            }
+            catch (Exception ex) when (ex is COMException or RuntimeBinderException or InvalidCastException)
+            {
+                return new OutlookSignatureEngineView(null, null, Array.Empty<string>(), ex.GetType().Name + ": " + ex.Message);
+            }
+            finally
+            {
+                Release(entries);
+                Release(signature);
+                Release(word);
+                if (inspector != null)
+                {
+                    try
+                    {
+                        ((dynamic)inspector).Close(1); // olDiscard: nothing is saved
+                    }
+                    catch (COMException)
+                    {
+                    }
+                }
+
+                Release(document);
+                Release(inspector);
+                Release(item);
+                Release(store);
+                Release(stores);
+                Release(ns);
+                Release(app);
+            }
+        });
+    }
+
+    private static string? TryRead(Func<string?> read)
+    {
+        try
+        {
+            string? value = read();
+            return string.IsNullOrEmpty(value) ? null : value;
+        }
+        catch (Exception ex) when (ex is COMException or RuntimeBinderException)
+        {
+            return "(unreadable: " + ex.GetType().Name + ")";
+        }
+    }
+
     private static T RunSta<T>(Func<T> work, TimeSpan? budget = null)
     {
         TimeSpan join = budget ?? DefaultStaBudget;
@@ -3032,6 +3154,13 @@ public static class LiveOutlookTestMailer
         }
     }
 }
+
+/// <summary>What Outlook's own signature engine reported (<see cref="LiveOutlookTestMailer.ReadSignatureEngine"/>).</summary>
+public sealed record OutlookSignatureEngineView(
+    string? NewMessageSignature,
+    string? ReplyMessageSignature,
+    IReadOnlyList<string> Entries,
+    string? Error);
 
 /// <summary>
 /// What <see cref="LiveOutlookTestMailer.FileTaggedItemInNewTestFolder"/> did: whether Outlook made

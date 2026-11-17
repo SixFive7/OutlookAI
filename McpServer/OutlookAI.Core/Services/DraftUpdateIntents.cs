@@ -178,6 +178,7 @@ namespace OutlookAI.Core.Services
             Append(canonical, "readReceipt", requestReadReceipt?.ToString());
             Append(canonical, "signature", signature?.Name);
             Append(canonical, "signaturePath", signature?.FilePath);
+            Append(canonical, "signatureNone", signature != null && signature.None ? "1" : null);
 
             // Attachment paths and removal names keep their REQUEST ORDER: the plan a repeat
             // computes consumes them in that order, so two requests differing only in ordering
