@@ -386,7 +386,7 @@ public sealed class DescriptionBudgetCiTests
 
     /// <summary>
     /// Recursive so nested object parameters are covered too (manage_signature's
-    /// <c>set_default_for</c> is an object with its own described members, and a future
+    /// <c>default_for</c> is an object with its own described members, and a future
     /// array/anyOf parameter would nest the same way).
     /// </summary>
     private static void CollectSchemaDescriptions(JsonElement schema, string path, List<WireString> into)

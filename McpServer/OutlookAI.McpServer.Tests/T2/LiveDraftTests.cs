@@ -70,10 +70,12 @@ public sealed class LiveDraftTests
             // only, never signature content of any account).
             ReadOutcome read = Service.Read(outcome.EntryId);
             Assert.Contains(agentBody.Substring(0, 30), read.Body, StringComparison.Ordinal);
-            (string? newSig, string? replySig) = SignatureConfigProbe.AssignedSignatures(Hub);
+            SignaturesOutcome listing = Service.ListSignatures();
+            (string? newSig, string? replySig, string? profile) = SignatureConfigProbe.AssignedSignatures(listing, Hub);
             _output.WriteLine(
-                $"signature[hub new]: injected={outcome.SignatureInjected} bodyTotalChars={read.BodyTotalChars} "
-                + $"assignedNew='{newSig ?? "-"}' assignedReply='{replySig ?? "-"}' files={string.Join("|", SignatureConfigProbe.SignatureFileBaseNames())}");
+                $"signature[hub new]: injected={outcome.SignatureInjected} source={outcome.SignatureSource ?? "-"} "
+                + $"bodyTotalChars={read.BodyTotalChars} profile='{profile ?? "-"}' assignedNew='{newSig ?? "-"}' "
+                + $"assignedReply='{replySig ?? "-"}' files={string.Join("|", SignatureConfigProbe.SignatureFileBaseNames(listing))}");
             if (outcome.SignatureInjected)
             {
                 Assert.True(read.BodyTotalChars > agentBody.Length, "injected signature must add body text");
@@ -144,7 +146,7 @@ public sealed class LiveDraftTests
             Assert.Contains(forward.Recipients!, r => r.Kind == "to" && r.Address != null
                 && r.Address.IndexOf(Hub, StringComparison.OrdinalIgnoreCase) >= 0);
 
-            (string? newSig, string? replySig) = SignatureConfigProbe.AssignedSignatures(Hub);
+            (string? newSig, string? replySig, string? _) = SignatureConfigProbe.AssignedSignatures(Service.ListSignatures(), Hub);
             _output.WriteLine(
                 $"signature[hub derived]: reply={reply.SignatureInjected} replyall={replyAll.SignatureInjected} "
                 + $"forward={forward.SignatureInjected} assignedReply='{replySig ?? "-"}' assignedNew='{newSig ?? "-"}'");

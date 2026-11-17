@@ -33,13 +33,18 @@ public sealed class LivePhase4Fixture : IDisposable
             LazyThreadSafetyMode.ExecutionAndPublication);
 
         // D38 guard: this collection contains signature-touching tests
-        // (LiveSignatureTests), so the real signatures get the same snapshot
-        // protection as the manage_signature suite - no snapshot, no suite.
+        // (LiveSignatureTests, LiveSignatureSettingsTests), so the real signatures get the same
+        // snapshot protection as the manage_signature suite - no snapshot, no suite. The registry
+        // half (Q147) covers the defaults, the folder value, the policy keys and DefaultProfile.
         SignatureSnapshot = SignatureDirectorySnapshot.Capture();
+        SignatureRegistry = SignatureRegistrySnapshot.Capture();
     }
 
     /// <summary>Pre-suite Signatures-directory snapshot (D38: real signatures must stay bit-identical).</summary>
     public SignatureDirectorySnapshot SignatureSnapshot { get; }
+
+    /// <summary>Pre-suite snapshot of every signature setting in the registry (Q147: put back, or the run fails).</summary>
+    public SignatureRegistrySnapshot SignatureRegistry { get; }
 
     public LiveTestSettings Settings { get; }
 
@@ -150,8 +155,16 @@ public sealed class LivePhase4Fixture : IDisposable
 
         // D38 guard: after everything (including the belt cleanup) the user's real
         // signatures must be bit-identical - only OutlookAI-McpTest-* entries may
-        // have come and gone. Throws (failing the run) otherwise.
-        SignatureSnapshot.VerifyRealSignaturesUntouched();
+        // have come and gone - and every signature setting as it was. Throws (failing
+        // the run) otherwise; the registry is checked even when the files are not.
+        try
+        {
+            SignatureSnapshot.VerifyRealSignaturesUntouched();
+        }
+        finally
+        {
+            SignatureRegistry.VerifySettingsUntouched();
+        }
     }
 }
 
@@ -354,91 +367,26 @@ public sealed class IdentityDraftCoverageReport
 }
 
 /// <summary>
-/// Read-only probe of the machine's Outlook signature CONFIGURATION (names only - no
-/// signature content is read or logged, S4): which .htm signature files exist and which
-/// signature names the profile assigns to an account for New and Reply/Forward mail.
-/// Best-effort - modern/roaming signature storage may not expose the registry values,
-/// in which case the empirical signatureInjected flag from the draft result is the
-/// authoritative finding.
+/// Read-only probe of the machine's Outlook signature CONFIGURATION for log lines (names only - no
+/// signature content, S4), read the way the product reads it: list_signatures' own answer - the
+/// folder Outlook uses, and the defaults of the profile Outlook is RUNNING (else the default one),
+/// by the mail-account rule. It used to read a literal profile named "Outlook" and match accounts
+/// by a substring of their Account Name (research 2026-10-11, section 8 item 6).
 /// </summary>
 internal static class SignatureConfigProbe
 {
-    /// <summary>Signature .htm file base names present under %APPDATA%\Microsoft\Signatures.</summary>
-    public static IReadOnlyList<string> SignatureFileBaseNames()
+    /// <summary>The signatures in the folder Outlook uses.</summary>
+    public static IReadOnlyList<string> SignatureFileBaseNames(SignaturesOutcome listing)
     {
-        string dir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Microsoft", "Signatures");
-        if (!Directory.Exists(dir))
-        {
-            return Array.Empty<string>();
-        }
-
-        return Directory.EnumerateFiles(dir, "*.htm")
-            .Select(Path.GetFileNameWithoutExtension)
-            .Where(n => n != null)
-            .Select(n => n!)
-            .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
-            .ToList();
+        return listing.Signatures.Select(s => s.Name).ToList();
     }
 
-    /// <summary>
-    /// The (newSignatureName, replyForwardSignatureName) assigned to the account in the
-    /// profile registry, or nulls when not determinable.
-    /// </summary>
-    public static (string? NewSignature, string? ReplySignature) AssignedSignatures(string accountSmtp)
+    /// <summary>The account's (new, reply/forward) defaults in the running profile, else the default one, and which profile that was.</summary>
+    public static (string? NewSignature, string? ReplySignature, string? Profile) AssignedSignatures(SignaturesOutcome listing, string accountSmtp)
     {
-        try
-        {
-            // Addresses from OutlookProfileRegistry, not a fourth hand-typed copy of the
-            // accounts GUID. The profile NAME stays a literal - "Outlook" is this machine's
-            // default profile, and a fixture that guessed it would be worse, not better.
-            using RegistryKey? profiles = Registry.CurrentUser.OpenSubKey(
-                OutlookProfileRegistry.OutlookRootKeyPath
-                + "\\" + OutlookProfileRegistry.ProfilesSubKeyName
-                + "\\Outlook\\" + OutlookProfileRegistry.AccountsSubKeyName);
-            if (profiles == null)
-            {
-                return (null, null);
-            }
-
-            foreach (string subKeyName in profiles.GetSubKeyNames())
-            {
-                using RegistryKey? sub = profiles.OpenSubKey(subKeyName);
-                if (sub == null)
-                {
-                    continue;
-                }
-
-                string? accountName = ReadRegistryString(sub, "Account Name");
-                if (accountName == null
-                    || accountName.IndexOf(accountSmtp, StringComparison.OrdinalIgnoreCase) < 0)
-                {
-                    continue;
-                }
-
-                return (ReadRegistryString(sub, "New Signature"), ReadRegistryString(sub, "Reply-Forward Signature"));
-            }
-        }
-        catch (Exception ex) when (ex is System.Security.SecurityException || ex is IOException || ex is UnauthorizedAccessException)
-        {
-        }
-
-        return (null, null);
-    }
-
-    private static string? ReadRegistryString(RegistryKey key, string valueName)
-    {
-        object? value = key.GetValue(valueName);
-        if (value is string s)
-        {
-            return s.Trim('\0');
-        }
-
-        if (value is byte[] bytes && bytes.Length >= 2)
-        {
-            return System.Text.Encoding.Unicode.GetString(bytes).Trim('\0');
-        }
-
-        return null;
+        SignatureProfileView? profile = listing.Profiles.FirstOrDefault(p => p.Running == true)
+            ?? listing.Profiles.FirstOrDefault(p => p.Default == true);
+        SignatureAccountView? row = profile?.Accounts.FirstOrDefault(a => ProfileAccountEntries.AddressEquals(a.Account, accountSmtp));
+        return (row?.NewMessage, row?.ReplyForward, profile?.Name);
     }
 }

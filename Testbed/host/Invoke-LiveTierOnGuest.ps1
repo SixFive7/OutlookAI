@@ -622,7 +622,7 @@ function Invoke-SelfTest {
     Check 'the unindexed guest is one, in any case' 'OutlookAI-Unindexed|OAI-UNINDEXED|False' @($u.Name, $u.ComputerName, $u.Indexed)
     Check 'the unindexed guest rests on its frozen checkpoint' 'CP-16B-FROZEN-CLOCK' $u.Checkpoint
     Write-Host '== their clones (TestbedPool.ps1, 2026-11-17) =='
-    Check 'every source of the two guest pools is a guest here, and nothing else is' ((@($TestbedPools['indexed'][0], $TestbedPools['unindexed'][0]) | Sort-Object) -join '|') ((@($Guests.Keys) | Sort-Object) -join '|')
+    Check 'every source of the two guest pools is a guest here, and nothing else is but the Exchange VM' ((@($TestbedPools['indexed'][0], $TestbedPools['unindexed'][0], 'OutlookAI-Exchange') | Sort-Object) -join '|') ((@($Guests.Keys) | Sort-Object) -join '|')
     foreach ($kindName in @('Indexed', 'Unindexed')) {
         $members = @(Get-KindMembers $kindName)
         $source = Get-GuestFacts $members[0]

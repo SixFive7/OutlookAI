@@ -585,7 +585,8 @@ property was stored; only Outlook reporting it proves the tests will see it, bec
   `9375CFF0413111d3B88A00104B2A6676`. Its writes are deliberately narrow: only those two value
   names, only on subkeys carrying an SMTP-shaped `Account Name`, never creating a subkey.
 * Both are reachable from the shipped MCP tool `manage_signature`, whose `set_default_for` argument
-  takes `{account, scope}` with scope `new` | `reply` | `both`.
+  takes `{account, scope}` with scope `new` | `reply` | `both`. (Since 2026-11-17 it is
+  `default_for` `{profile, account, scope}`, with the actions `set_default` and `clear_default`.)
 
 **[REPO]** There is a comment in `SignatureManager` worth repeating because it is exactly this
 machine: on Microsoft 365 Apps 2303+ roaming signatures can overrule local files unless

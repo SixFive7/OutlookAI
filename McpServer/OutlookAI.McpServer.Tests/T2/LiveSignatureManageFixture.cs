@@ -25,9 +25,13 @@ public sealed class LiveSignatureManageFixture : IDisposable
         Service = LiveMailServices.CreateDefault();
         RunMarker = LiveRunMarker.ForFixture("d38");
 
-        // The guard: no snapshot, no suite.
+        // The guard: no snapshot, no suite - the files and (Q147) every signature setting.
         Snapshot = SignatureDirectorySnapshot.Capture();
+        RegistrySnapshot = SignatureRegistrySnapshot.Capture();
     }
+
+    /// <summary>The pre-suite snapshot of every signature setting in the registry.</summary>
+    public SignatureRegistrySnapshot RegistrySnapshot { get; }
 
     public LiveTestSettings Settings { get; }
 
@@ -101,9 +105,16 @@ public sealed class LiveSignatureManageFixture : IDisposable
             Service.Dispose();
         }
 
-        // The user's real signatures MUST be bit-identical after the suite - throw
-        // (visibly failing the run) when they are not.
-        Snapshot.VerifyRealSignaturesUntouched();
+        // The user's real signatures MUST be bit-identical after the suite, and every
+        // signature setting as it was - throw (visibly failing the run) when they are not.
+        try
+        {
+            Snapshot.VerifyRealSignaturesUntouched();
+        }
+        finally
+        {
+            RegistrySnapshot.VerifySettingsUntouched();
+        }
     }
 }
 

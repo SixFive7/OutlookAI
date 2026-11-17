@@ -74,6 +74,16 @@ namespace OutlookAI.Core.Com
         public const string DiscardNotStarted = "DiscardNotStarted";
 
         /// <summary>
+        /// A draft tool's signature request was refused in the COM host - the one place the sending
+        /// account of a reply, forward or revised draft is known (Q157 (a): only a signature the account
+        /// can use; Q156: policy). Set BEFORE anything that can save a draft, so no draft exists and
+        /// update_draft left the draft untouched. Written as <c>SignatureRefused:&lt;message&gt;</c>; the
+        /// detail is the refusal a person reads - signature, account and profile names, never mail
+        /// content.
+        /// </summary>
+        public const string SignatureRefused = "SignatureRefused";
+
+        /// <summary>
         /// A token with its detail, in the <c>Token:detail</c> shape the service layer reads back
         /// with <see cref="TryRead"/>. The detail is content-free (a COM failure's type and
         /// HRESULT), never a subject, a body or a name.

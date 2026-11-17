@@ -65,6 +65,7 @@ public sealed class LiveManageSignatureTests
             // UPDATE: pre-update bytes must land byte-identical in the returned backup.
             byte[] htmBefore = File.ReadAllBytes(Path.Combine(directory, name + ".htm"));
             byte[] txtBefore = File.ReadAllBytes(Path.Combine(directory, name + ".txt"));
+            byte[] rtfBefore = File.ReadAllBytes(Path.Combine(directory, name + ".rtf"));
             ManageSignatureOutcome updated = Service.ManageSignature(new ManageSignatureRequest
             {
                 Action = "update",
@@ -76,8 +77,13 @@ public sealed class LiveManageSignatureTests
             Assert.StartsWith(SignatureManager.DefaultBackupRoot, updated.BackupPath!, StringComparison.OrdinalIgnoreCase);
             Assert.Equal(htmBefore, File.ReadAllBytes(Path.Combine(updated.BackupPath!, name + ".htm")));
             Assert.Equal(txtBefore, File.ReadAllBytes(Path.Combine(updated.BackupPath!, name + ".txt")));
-            string derivedText = File.ReadAllText(Path.Combine(directory, name + ".txt"));
-            Assert.Contains("Updated rendition", derivedText, StringComparison.Ordinal);
+            // In place (Q159): only the rendition sent changes - nothing is rebuilt from it - and the
+            // outcome says the other two still read as before.
+            Assert.Equal(new[] { SignatureFormats.Html }, updated.FormatsWritten);
+            Assert.Contains("Updated rendition", File.ReadAllText(Path.Combine(directory, name + ".htm")), StringComparison.Ordinal);
+            Assert.Equal(txtBefore, File.ReadAllBytes(Path.Combine(directory, name + ".txt")));
+            Assert.Equal(rtfBefore, File.ReadAllBytes(Path.Combine(directory, name + ".rtf")));
+            Assert.Contains("the rtf and text renditions still read as before", updated.Advice, StringComparison.Ordinal);
 
             // DELETE: second backup, file set gone, catalog no longer lists it.
             ManageSignatureOutcome deleted = Service.ManageSignature(new ManageSignatureRequest
@@ -115,14 +121,17 @@ public sealed class LiveManageSignatureTests
     [Fact]
     [Trait("Requires", "MailAccount")]
     [Trait("Requires", "LocalSignatures")]
-    public void DefaultAssignment_HubAccountOnly_SetThenCleared_OriginalsRestoredExactly()
+    public void DefaultAssignment_HubAccountOnly_SetAndClearedWithoutRewriting_OriginalsRestoredExactly()
     {
         string name = _fixture.TestSignatureName("Dflt");
         string directory = SignatureCatalog.DefaultSignatureDirectory;
         ProfileSignatureDefaultsStore store = new ProfileSignatureDefaultsStore();
 
-        SignatureDefaultsRow? hubRow = store.ReadAccounts()
-            .FirstOrDefault(r => string.Equals(r.Account, Hub, StringComparison.OrdinalIgnoreCase));
+        // The profile Outlook runs - named, never guessed (Q155): the one list_signatures marks.
+        SignaturesOutcome listing = Service.ListSignatures();
+        string? profile = listing.RunningProfile ?? listing.DefaultProfile;
+        SignatureDefaultsRow? hubRow = store.ReadAccounts().FirstOrDefault(r =>
+            ProfileAccountEntries.ProfileEquals(r.Profile, profile) && ProfileAccountEntries.AddressEquals(r.Account, Hub));
         if (hubRow == null)
         {
             // Same rule as the delegate probe: on a real profile the hub account IS in the
@@ -137,39 +146,65 @@ public sealed class LiveManageSignatureTests
             return;
         }
 
-        // Read-first (restore-exact contract): remember the ORIGINAL values verbatim.
+        // Read-first (restore-exact contract): remember the ORIGINAL values verbatim - raw, kind and
+        // data, because the signature registry snapshot holds the run to exactly that.
         string? originalNew = hubRow.NewMessage;
         string? originalReply = hubRow.ReplyForward;
-        _output.WriteLine($"hub originals: new={(originalNew ?? "<absent>")} reply={(originalReply ?? "<absent>")}");
+        RawRegistryValues originals = RawRegistryValues.Capture(
+            hubRow.AccountKey, SignatureManager.NewSignatureValueName, SignatureManager.ReplyForwardSignatureValueName);
+        _output.WriteLine($"hub originals in '{profile}': new={(originalNew ?? "<absent>")} reply={(originalReply ?? "<absent>")}");
         List<string> backupsToCleanUp = new();
 
         try
         {
-            // CREATE with set_default_for both on the HUB (the only granted account).
-            ManageSignatureOutcome created = Service.ManageSignature(new ManageSignatureRequest
+            Service.ManageSignature(new ManageSignatureRequest
             {
                 Action = "create",
                 Name = name,
                 BodyText = "Default-assignment test " + _fixture.RunMarker,
+            });
+            Dictionary<string, byte[]> files = Directory.GetFiles(directory, name + ".*").ToDictionary(f => f, File.ReadAllBytes);
+
+            // set_default ON ITS OWN (the defect: a default could only be set by rewriting the signature).
+            ManageSignatureOutcome set = Service.ManageSignature(new ManageSignatureRequest
+            {
+                Action = "set_default",
+                Name = name,
+                DefaultForProfile = profile,
                 DefaultForAccount = hubRow.Account,
                 DefaultForScope = "both",
             });
-            Assert.Equal(hubRow.Account, created.DefaultSetForAccount);
-            Assert.Equal("both", created.DefaultSetScope);
-            Assert.Contains("next start", created.Advice, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(hubRow.Account, set.DefaultSetForAccount);
+            Assert.Equal(profile, set.Profile, ignoreCase: true);
+            Assert.Null(set.FilesWritten);
+            Assert.Null(set.BackupPath);
+            Assert.Equal(files, Directory.GetFiles(directory, name + ".*").ToDictionary(f => f, File.ReadAllBytes));
+            Assert.Contains("next start", set.Advice, StringComparison.OrdinalIgnoreCase);
 
-            SignatureDefaultsRow afterSet = RequireHubRow(store);
+            SignatureDefaultsRow afterSet = RequireHubRow(store, hubRow.AccountKey);
             Assert.Equal(name, afterSet.NewMessage);
             Assert.Equal(name, afterSet.ReplyForward);
 
-            // list_signatures reflects the assignment (registry-read path).
-            SignaturesOutcome outcome = Service.ListSignatures();
-            SignatureAccountView hubView = Assert.Single(
-                outcome.Accounts ?? Array.Empty<SignatureAccountView>().ToList(),
-                a => string.Equals(a.Account, hubRow.Account, StringComparison.OrdinalIgnoreCase));
+            // list_signatures reflects the assignment, in that profile, as own and as effective default.
+            SignatureAccountView hubView = Service.ListSignatures().Profiles
+                .Single(p => ProfileAccountEntries.ProfileEquals(p.Name, profile)).Accounts
+                .Single(a => ProfileAccountEntries.AddressEquals(a.Account, hubRow.Account));
             Assert.Equal(name, hubView.NewMessage);
+            Assert.Equal(name, hubView.EffectiveReplyForward);
 
-            // DELETE clears the now-dangling assignment.
+            // clear_default clears only the default it names.
+            ManageSignatureOutcome cleared = Service.ManageSignature(new ManageSignatureRequest
+            {
+                Action = "clear_default",
+                Name = name,
+                DefaultForProfile = profile,
+                DefaultForAccount = hubRow.Account,
+                DefaultForScope = "reply",
+            });
+            Assert.Equal(name, Assert.Single(cleared.DefaultsChanged!).Previous);
+            Assert.Null(RequireHubRow(store, hubRow.AccountKey).ReplyForward);
+
+            // DELETE clears the default still naming it, in whatever profile.
             ManageSignatureOutcome deleted = Service.ManageSignature(new ManageSignatureRequest
             {
                 Action = "delete",
@@ -180,21 +215,16 @@ public sealed class LiveManageSignatureTests
                 backupsToCleanUp.Add(deleted.BackupPath);
             }
 
-            Assert.NotNull(deleted.DefaultsClearedForAccounts);
-            Assert.Contains(hubRow.Account, deleted.DefaultsClearedForAccounts!,
-                StringComparer.OrdinalIgnoreCase);
-
-            SignatureDefaultsRow afterDelete = RequireHubRow(store);
-            Assert.Null(afterDelete.NewMessage);
-            Assert.Null(afterDelete.ReplyForward);
-            _output.WriteLine("set -> asserted -> delete -> dangling assignment cleared");
+            SignatureDefaultChange swept = Assert.Single(deleted.DefaultsCleared!);
+            Assert.Equal(("new", hubRow.Account), (swept.Scope, swept.Account));
+            Assert.Null(RequireHubRow(store, hubRow.AccountKey).NewMessage);
+            _output.WriteLine("create -> set_default (files untouched) -> clear_default (reply) -> delete (new swept)");
         }
         finally
         {
-            // Restore-exact: write the original values back (or remove what we added
+            // Restore-exact: write the original values back raw (or remove what we added
             // when the original was absent) - THEN assert the restoration held.
-            RestoreValue(store, hubRow.AccountKey, SignatureManager.NewSignatureValueName, originalNew);
-            RestoreValue(store, hubRow.AccountKey, SignatureManager.ReplyForwardSignatureValueName, originalReply);
+            originals.Restore();
             DeleteTestSignatureFiles(directory, name);
             foreach (string backup in backupsToCleanUp)
             {
@@ -202,32 +232,90 @@ public sealed class LiveManageSignatureTests
             }
         }
 
-        SignatureDefaultsRow restored = RequireHubRow(store);
+        SignatureDefaultsRow restored = RequireHubRow(store, hubRow.AccountKey);
         Assert.Equal(originalNew, restored.NewMessage);
         Assert.Equal(originalReply, restored.ReplyForward);
         _output.WriteLine("hub registry values restored exactly and asserted");
     }
 
+    [Fact]
+    [Trait("Requires", "OutlookInstance")]
+    public void Update_EditsInPlace_PicturesAndUntouchedRenditionsSurviveByteForByte()
+    {
+        // Q159 on the real folder: a signature with a logo in its picture folder AND embedded in its
+        // RTF is tweaked - one phone number - and nothing else may move. The update used to delete the
+        // picture folder and rebuild the RTF from plain text.
+        string name = _fixture.TestSignatureName("Fid");
+        string directory = SignatureCatalog.DefaultSignatureDirectory;
+        string logo = Path.Combine(Path.GetTempPath(), "OutlookAI-McpTest-logo-" + _fixture.RunMarker + ".png");
+        File.WriteAllBytes(logo, TinyPng());
+        List<string> backupsToCleanUp = new();
+        try
+        {
+            ManageSignatureOutcome created = Service.ManageSignature(new ManageSignatureRequest
+            {
+                Action = "create",
+                Name = name,
+                BodyHtml = "<p>Jan Modaal</p><p>Tel 010 123 " + _fixture.RunMarker + "</p><p><img src=\""
+                    + SignatureHtml.ReferenceFor(name, "logo.png") + "\" width=\"1\" height=\"1\"></p>",
+                Pictures = new[] { new SignaturePictureChange { File = "logo.png", Path = logo } },
+            });
+            Assert.Equal(new[] { "logo.png" }, created.PicturesAdded);
+            string picture = Path.Combine(directory, name + "_files", "logo.png");
+            byte[] pictureBefore = File.ReadAllBytes(picture);
+            Assert.Single(SignatureRtf.FindPictures(File.ReadAllText(Path.Combine(directory, name + ".rtf"))));
+
+            ManageSignatureOutcome updated = Service.ManageSignature(new ManageSignatureRequest
+            {
+                Action = "update",
+                Name = name,
+                Replace = new[] { new SignatureTextEdit { Find = "Tel 010 123", Replace = "Tel 010 999" } },
+            });
+            backupsToCleanUp.Add(updated.BackupPath!);
+
+            SignatureReplacementView replaced = Assert.Single(updated.Replacements!);
+            Assert.Equal((1, 1, 1), (replaced.Html, replaced.Rtf, replaced.Text));
+            Assert.Equal(pictureBefore, File.ReadAllBytes(picture));
+            string rtf = File.ReadAllText(Path.Combine(directory, name + ".rtf"));
+            Assert.Contains("Tel 010 999", rtf, StringComparison.Ordinal);
+            Assert.Single(SignatureRtf.FindPictures(rtf));
+            SignatureDetailView detail = Service.ListSignatures(name).Signature!;
+            Assert.Contains("Tel 010 999", detail.Html, StringComparison.Ordinal);
+            Assert.True(Assert.Single(detail.Pictures!).ReferencedByHtml);
+            Assert.Null(detail.MissingPictures);
+            _output.WriteLine("in-place update: three renditions edited, the picture file and the embedded RTF picture intact");
+        }
+        finally
+        {
+            DeleteTestSignatureFiles(directory, name);
+            foreach (string backup in backupsToCleanUp)
+            {
+                TryDeleteDirectory(backup);
+            }
+
+            File.Delete(logo);
+        }
+    }
+
     // ------------------------------------------------------------------ helpers
 
-    private SignatureDefaultsRow RequireHubRow(ProfileSignatureDefaultsStore store)
+    private static SignatureDefaultsRow RequireHubRow(ProfileSignatureDefaultsStore store, string accountKey)
     {
         return store.ReadAccounts()
-                .FirstOrDefault(r => string.Equals(r.Account, Hub, StringComparison.OrdinalIgnoreCase))
+                .FirstOrDefault(r => ProfileAccountEntries.KeyEquals(r.AccountKey, accountKey))
             ?? throw new InvalidOperationException("hub account row vanished from the profile registry");
     }
 
-    private static void RestoreValue(
-        ProfileSignatureDefaultsStore store, string accountKey, string valueName, string? original)
+    private static byte[] TinyPng()
     {
-        if (original != null)
+        return new byte[]
         {
-            store.WriteDefault(accountKey, valueName, original);
-        }
-        else
-        {
-            store.ClearDefault(accountKey, valueName);
-        }
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+            0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
+            0x89, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x62, 0x00, 0x01, 0x00, 0x00,
+            0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE,
+            0x42, 0x60, 0x82,
+        };
     }
 
     /// <summary>Exact-name deletion of the test signature's possible file set (no patterns beyond the pinned prefix name).</summary>

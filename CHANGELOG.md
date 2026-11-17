@@ -50,6 +50,33 @@ its mailbox tests on, and change nothing you install.
 
 ### Added
 
+- ✨ **A signature can be read in full and changed in place, pictures included.**
+  list_signatures with a name returns all three versions Outlook keeps of a signature - the HTML one
+  for HTML mail, the RTF one for Rich Text mail and the plain text - and every picture with its file
+  path. manage_signature then changes only what it is asked to: a version sent back replaces that one
+  file, a replace edit changes a piece of text in every version that has it and keeps its
+  formatting, and pictures are added, replaced or removed one file at a time. Each file keeps the
+  encoding it was stored in. In the RTF version the pictures are embedded, and they show as
+  [[picture:1]] tokens: each token left in place becomes the same picture again, byte for byte, and
+  [[picture-file:logo.png]] embeds a new one. A new signature can be made with pictures, and its RTF
+  version then embeds them too.
+
+- ✨ **A default signature can be set or cleared on its own, for a named profile and account.**
+  manage_signature has two new actions, set_default and clear_default. A default could only be set
+  while creating or rewriting the signature itself. Every default change names its Outlook profile and
+  its account, because one address can have different defaults in two profiles, and nothing is
+  guessed. clear_default clears only the default it names. The answer gives the value before each
+  change, so it can be put back.
+
+- ✨ **A draft can go without a signature, and every draft says which signature it got and why.**
+  The draft tools take signature "none" for no signature, and update_draft takes it to remove the
+  draft's signature. Left out, a draft gets the sending account's default; a named signature must be
+  one the sending account can use. The answer names the signature, where it came from (asked for, the
+  account's default, a policy's default, or none), the reason in one sentence and the profile, and
+  suggests the account's own default when the draft got something else. A reply from a shared or
+  delegate mailbox gets no default, as before, and now says so. The tool descriptions and the
+  server's instructions spell all of this out.
+
 - ✨ **`audit_log` pages through any number of entries.**
   When more match than fit on one page, the answer carries nextToken, and passing it back as
   resume_token returns the next older page, until no nextToken comes back. Entries recorded in the
@@ -170,6 +197,20 @@ its mailbox tests on, and change nothing you install.
   last managed to look for a newer one, the same as the writing sidebar has always shown. When a
   check fails, the reason is written out in full here rather than hidden behind a link. Both
   indicators now take their wording from one place, so they cannot disagree.
+
+- ✅ **The signature tests try the profile, folder and default settings on a test machine.**
+  Three live tests set a value the user could set themselves, check what OutlookAI does with it,
+  record what Outlook's own signature editor reports, and put the value back: Outlook running on a
+  profile other than the one recorded as its default, a default deployed for every account in
+  Outlook's settings, and a signature folder moved elsewhere. A snapshot of the registry, beside the
+  snapshot of the signature files, now fails any signature test run that leaves a signature setting
+  changed: the defaults in every profile, the folder, the policies, the roaming switches and the
+  default profile. Their first run, on the unindexed test machine on 2026-11-17: with Outlook on
+  `OutlookAI-Tier` and `CorpusProfile` recorded as the default, a draft got the running profile's
+  default; a folder moved while Outlook ran was listed, written to and used by OutlookAI, and
+  Outlook's own list of signatures showed what was in it. What Outlook makes of a default deployed
+  for every account could not be read: its signature settings reported no default with it or
+  without it, written while Outlook ran, so that measurement stays open.
 
 - ✅ **The Exchange test machine writes in a dedicated test account, and only there.**
   The maintainer's Microsoft 365 account `telefonie-ai-test@xxlnet.nl`, which he gave for extensive
@@ -554,6 +595,31 @@ its mailbox tests on, and change nothing you install.
   the log rather than passing quietly.
 
 ### Changed
+
+- 🔧 **Drafts use the defaults of the profile Outlook is running, and every profile is listed.**
+  OutlookAI read only the profile recorded as Outlook's default, and when none was recorded it merged
+  every profile into one list and took whichever account matched first. A draft now gets the default
+  of the profile Outlook has open. list_signatures names every profile, marks the default and the
+  running one, and shows each account's own defaults beside the ones a draft actually gets. It asks a
+  running Outlook which profile it has open, and still never starts Outlook.
+
+- 🔧 **OutlookAI follows the administrator's signature policy.**
+  When Group Policy or Cloud Policy forbids signatures, a draft gets none and manage_signature changes
+  nothing. When a policy sets the default for every account, a draft gets that one and changing an
+  account's default is refused with the reason. While such a default is in force a draft may not use
+  another signature or none, until it is measured whether Outlook allows that per message. A default
+  deployed in Outlook's own settings (Common\MailSettings) is used the same way but leaves the choice
+  per message free. OutlookAI never writes a policy.
+
+- 🔧 **Signatures kept in an Exchange mailbox are left to Outlook.**
+  Microsoft 365 Apps from Version 2303 can keep an Exchange Online account's signatures in its
+  mailbox, with a copy on the computer named "Name (address)". OutlookAI treats that as possible on
+  Microsoft 365 Apps unless DisableRoamingSignatures is set, and on perpetual Office, such as the
+  Office LTSC 2024 the test machines run, only where Outlook's own copies show it: LTSC 2024 showed no
+  sign of it on the Exchange test machine. Where an account's signatures may live in its mailbox,
+  OutlookAI does not edit or delete their copies or change the account's defaults, because Outlook
+  would overwrite the change or copy it into the mailbox, and says to use Outlook instead. Roaming on
+  Microsoft 365 Apps itself is not tested: the test machines run perpetual Office only.
 
 - ✅ **A live run that starts Outlook closes Office's activation wizard and records it.**
   Past Office's 30-day activation grace, which the Exchange test machine's real clock has crossed,
@@ -1109,6 +1175,31 @@ its mailbox tests on, and change nothing you install.
 
 ### Fixed
 
+- 🐛 **Signatures are read from and written to the folder Outlook uses.**
+  Outlook records the folder it keeps signatures in, which an Outlook in another language can name in
+  that language and an administrator can move. OutlookAI always used %APPDATA%\Microsoft\Signatures
+  instead, in the mail server, in the add-in's signature button and in a test, so on such a computer
+  it found no signatures and wrote new ones where Outlook never looks. All three now read the folder
+  Outlook records, each time they need it.
+
+- 🐛 **Changing a signature keeps its pictures and its other versions.**
+  An update deleted the signature's picture folder and rebuilt its RTF version from the plain text, so
+  editing a signature Outlook had made with a logo lost the logo, and Rich Text mail lost its
+  formatting. An update now touches only the files it is asked to change. When it replaces one
+  version whole, the answer says which versions still read as before, because Outlook puts the HTML
+  version in HTML mail, the RTF version in Rich Text mail and the text version in plain-text mail.
+
+- 🐛 **A draft whose signature could not be added says it has none.**
+  Since the crash fix, a draft whose chosen signature could not be put in came out with no signature
+  at all, while the tool descriptions said the account's default would stay. The answer now says the
+  draft has no signature and how to retry, and the descriptions say the same.
+
+- 🐛 **An Exchange account added under another of its addresses gets its default signature.**
+  OutlookAI found an account's defaults by its email address, and an Exchange account added under an
+  alias is filed in the profile under the alias, so its drafts got no default signature and nothing
+  said why. The account is now also found by the name Outlook shows it under, and a draft whose
+  account cannot be found says so.
+
 - 🐛 **Writing a new draft, reply or forward no longer crashes Outlook now and then.**
   OutlookAI wrote each draft in a hidden compose window opened on the item Outlook had just created,
   and closed that window when it was done. Closing it crashed Outlook, inside Outlook itself, about once
@@ -1117,8 +1208,8 @@ its mailbox tests on, and change nothing you install.
   that, the way it already revised existing drafts, which never crashed. 2,400 drafts written back to
   back on the two test machines then ran without one crash. Outlook adds an account's default signature only in the window that crashed,
   so OutlookAI now adds it itself: the signature the account is set to use for new messages, or for
-  replies and forwards, in Outlook's default profile - the settings list_signatures shows. A signature
-  you name for the draft still replaces it.
+  replies and forwards, in the profile Outlook is running - the settings list_signatures shows. A
+  signature you name for the draft takes its place.
 
 - 🐛 **The mail server no longer uses CPU when files change in a Claude Code project folder.**
   Claude Code starts its own copy of the server for every session, in the session's project folder,
@@ -1740,6 +1831,13 @@ its mailbox tests on, and change nothing you install.
   next - the cost was the accumulating hidden window, not a broken Outlook. This also cannot help
   when the assistant kills the helper outright, which is what happens when Outlook has genuinely
   stopped responding and when a session ends abruptly.
+
+- ✅ **The signature test swaps one signature for another and checks the first is gone.**
+  The test meant to prove that a draft's signature can be replaced applied the same signature a
+  second time, through a test-only path that saves in a way measured to keep nothing, so it passed
+  whether or not anything changed. It now replaces the signature with a different one through
+  update_draft, checks that the first is gone and the second is there once, then removes it with
+  "none". The test-only path is deleted.
 
 - ✅ **The test machines' account password never expires, so runs on the build machine log on again.**
   Windows expires a password after 42 days, and nothing in the testbed said otherwise. The build

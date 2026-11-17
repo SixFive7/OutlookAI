@@ -25,11 +25,11 @@ internal sealed class TestSignature : IDisposable
     private readonly string _resourceDir;
     private readonly string _txtPath;
 
-    private TestSignature(string name, string directory)
+    private TestSignature(string name, string directory, bool second)
     {
         Name = name;
         _directory = directory;
-        BodyMarker = "OutlookAI MCP testhandtekening " + name.Substring(name.Length - 6);
+        BodyMarker = (second ? "OutlookAI MCP tweede handtekening " : "OutlookAI MCP testhandtekening ") + name.Substring(name.Length - 6);
         FilePath = Path.Combine(directory, name + ".htm");
         _txtPath = Path.Combine(directory, name + ".txt");
         _resourceDir = Path.Combine(directory, name + "_files");
@@ -53,10 +53,15 @@ internal sealed class TestSignature : IDisposable
     /// <summary>The .htm path (what the override inserts).</summary>
     public string FilePath { get; }
 
-    public static TestSignature Create(string runMarker)
+    /// <summary>
+    /// The run's test signature, in the folder Outlook uses now. <paramref name="label"/> makes a
+    /// SECOND one with its own name and its own body marker - what a test swapping one signature for
+    /// another needs, since swapping a signature for itself proves nothing.
+    /// </summary>
+    public static TestSignature Create(string runMarker, string? label = null)
     {
-        string name = SignatureCatalog.TestSignaturePrefix + "Sig" + runMarker;
-        return new TestSignature(name, SignatureCatalog.DefaultSignatureDirectory);
+        string name = SignatureCatalog.TestSignaturePrefix + "Sig" + runMarker + (label ?? string.Empty);
+        return new TestSignature(name, SignatureCatalog.DefaultSignatureDirectory, label != null);
     }
 
     public void Dispose()
