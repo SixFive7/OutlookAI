@@ -32,6 +32,7 @@ public sealed class LiveManageSignatureMcpToolTests
 
     [Fact]
     [Trait("Requires", "OutlookInstance")]
+    [Trait("Requires", "LocalSignatures")]
     public async Task ManageSignature_FullCycle_OverRealStdio_WithBackupPathsAndAudit()
     {
         string name = _fixture.TestSignatureName("Wire");

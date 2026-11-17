@@ -34,6 +34,7 @@ public sealed class LiveManageSignatureTests
 
     [Fact]
     [Trait("Requires", "OutlookInstance")]
+    [Trait("Requires", "LocalSignatures")]
     public void FullLifecycle_CreateUpdateDelete_WithAlwaysOnBackups_AndAuditLines()
     {
         string name = _fixture.TestSignatureName("Cycle");
@@ -113,6 +114,7 @@ public sealed class LiveManageSignatureTests
 
     [Fact]
     [Trait("Requires", "MailAccount")]
+    [Trait("Requires", "LocalSignatures")]
     public void DefaultAssignment_HubAccountOnly_SetThenCleared_OriginalsRestoredExactly()
     {
         string name = _fixture.TestSignatureName("Dflt");

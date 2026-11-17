@@ -41,6 +41,7 @@ public sealed class LiveSignatureTests
 
     [Fact]
     [Trait("Requires", "OutlookInstance")]
+    [Trait("Requires", "LocalSignatures")]
     public void ListSignatures_SeesTestSignature_WithExcerpt_AndAccountRows()
     {
         using TestSignature sig = TestSignature.Create(Marker);
@@ -91,6 +92,7 @@ public sealed class LiveSignatureTests
     [Fact]
     [Trait("Requires", "MailAccount")]
     [Trait("Requires", "Transport")]
+    [Trait("Requires", "LocalSignatures")]
     public void ReplyDraft_WithSignatureOverride_InsertsAboveQuote_ThenReplaceBranchReapplies()
     {
         using TestSignature sig = TestSignature.Create(Marker);
@@ -163,6 +165,7 @@ public sealed class LiveSignatureTests
 
     [Fact]
     [Trait("Requires", "MailAccount")]
+    [Trait("Requires", "LocalSignatures")]
     public void NewDraft_WithSignatureOverride_AppliedOnAccountWithoutDefault()
     {
         using TestSignature sig = TestSignature.Create(Marker);
@@ -219,6 +222,7 @@ public sealed class LiveSignatureTests
 
     [Fact]
     [Trait("Requires", "OutlookInstance")]
+    [Trait("Requires", "LocalSignatures")]
     public void TestSignatureLifecycle_LeavesZeroLeftovers()
     {
         string directory = SignatureCatalog.DefaultSignatureDirectory;

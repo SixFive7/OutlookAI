@@ -4110,7 +4110,7 @@ needed Exchange, and those seven were the workstation run.
 **Since 2026-10-08 the Exchange VM writes - in its dedicated test account (section 4.4a).** Its run
 selects every live test it has the capabilities for, read and write:
 
-`Category=Live&Requires!=AddInRegistry&Requires!=DelegateStore&Requires!=GeneratedPopulation&Requires!=IdentityAccount&Requires!=ProbePopulation&Requires!=PstStore`
+`Category=Live&Requires!=LocalSignatures&Requires!=DelegateStore&Requires!=GeneratedPopulation&Requires!=IdentityAccount&Requires!=ProbePopulation&Requires!=PstStore`
 
 and only a test that needs a delegate store must still carry `Writes=Nothing`
 (`EveryDelegateStoreTest_DeclaresWritesNothing`): a delegate or shared mailbox is read-only for every
@@ -4124,15 +4124,16 @@ test, on every machine.
 | VM | `--filter "Category=Live&Requires!=DelegateStore&Requires!=CachedExchange"` | 121 |
 | Exchange-only (the Exchange VM, section 4.4; the workstation before Q116 (a)) | `--filter "Category=Live&(Requires=DelegateStore\|Requires=CachedExchange)"` | 7 on the morning of 2026-10-03; 9 once section 4.4 added two |
 
-**The vocabulary, all fourteen values.** Twelve of them this VM can be given; two it cannot - both are
-an Exchange profile. And two of the twelve - `GeneratedPopulation` and `PstStore`, named 2026-10-08 - are
-what the Exchange VM, in turn, does not have (section 4.4a).
+**The vocabulary, all fifteen values.** Thirteen of them this VM can be given; two it cannot - both are
+an Exchange profile. And three of the thirteen - `GeneratedPopulation` and `PstStore`, named 2026-10-08, and
+`LocalSignatures`, named 2026-11-17 - are what the Exchange VM, in turn, does not have (section 4.4a).
 
 | Capability | What the machine must have |
 | --- | --- |
 | `OutlookInstance` | an Outlook to attach to, and nothing more specific. The floor: a live test that needs nothing else says this rather than saying nothing |
 | `InteractiveDesktop` | a real desktop session - Outlook windows and screenshots cannot be driven from session 0. Declared only by tests that PUT SOMETHING ON SCREEN |
 | `AddInRegistry` | the add-in installed and run once, so its tuning values exist |
+| `LocalSignatures` | signatures written on the machine stay on it: no Outlook there carries a signature, or an account's default one, into a mailbox. Declared by every test that writes a signature or sets or reads an account's default. The PST guests have it; the Exchange VM lacks it until it is measured whether its Office LTSC 2024 roams signatures (Q147 R1, decided by the maintainer 2026-11-17) |
 | `SearchIndex` | a populated Windows Search index - Corpus A |
 | `MailAccount` | a mail account rather than a bare PST - the dummy account |
 | `Transport` | mail that actually goes out and comes back - the local sink |
@@ -4145,7 +4146,7 @@ what the Exchange VM, in turn, does not have (section 4.4a).
 | **`DelegateStore`** | **a delegate/shared mailbox. One of the two capabilities no test machine can be given** |
 | **`CachedExchange`** | **a cached Exchange mailbox, whose entry ids are Exchange's 70-byte form. The other one (Q74 C1, 2026-10-03)** |
 
-`Tools/Checks/check-pinned-constants.ps1` fails the build if any of those fourteen names stops
+`Tools/Checks/check-pinned-constants.ps1` fails the build if any of those fifteen names stops
 appearing in this file, so the table above is load-bearing text and not decoration.
 
 **Why `DelegateStore` and `CachedExchange` are the only production-only capabilities.** A delegate/shared mailbox is

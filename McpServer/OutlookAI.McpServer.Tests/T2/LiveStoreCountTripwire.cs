@@ -217,6 +217,13 @@ public static class LiveStoreCountTripwire
             try
             {
                 LiveMailSink.EnsureOutboxDrained(_keepAlive!, settings);
+
+                // The Exchange VM (2026-11-17): the test mailbox by IDENTITY before the census counts anything.
+                // Its profile holds that mailbox twice - its own cached store and an online entry automapped
+                // through the bystander's Full Access - and this refuses the tier unless the hub's name is the
+                // test account's own store, no watched store or bystander is the same mailbox under another entry,
+                // and no two watched stores are one mailbox. Every other machine returns at once.
+                LiveMailboxIdentity.Require(settings, WatchedStores(settings), line => Console.WriteLine(line));
             }
             catch
             {

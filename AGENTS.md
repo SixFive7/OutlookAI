@@ -328,7 +328,14 @@ component, nothing downloaded and installed beyond the Office the Office Deploym
 credential is read only on the host, in memory (`Testbed/host/Get-ExchangeCredential.ps1`), and
 reaches the VM only as keystrokes; device registration with the tenant declined; Windows' own updates
 left on, without automatic restarts. Every other test VM stays offline. This is not "test VMs may
-have internet".
+have internet". Since 2026-11-17 the OutlookAI add-in itself is installed there too (Q140 (b)).
+
+**Q161 (c), decided by the maintainer 2026-11-17: Outlook on the web on the Exchange VM, to measure
+roaming signatures.** An agent may sign in to Outlook on the web there. Conditions, all of them:
+`OutlookAI-Exchange` only; the test account `telefonie-ai-test@xxlnet.nl` only, never
+`telefonie@xxlnet.nl`; Windows' own browser, Edge; the password and the TOTP code typed as keystrokes
+from the host's DPAPI store, as `Testbed/host/Invoke-ExchangeSignIn.ps1` does; "Stay signed in" and
+device registration declined; signed out afterwards, and the VM restored to its checkpoint.
 
 **A third exception, decided by the maintainer 2026-10-03 (Q125): CodeQL, run locally.** The
 CodeQL CLI is free but not open source - it comes under the GitHub CodeQL Terms and Conditions -

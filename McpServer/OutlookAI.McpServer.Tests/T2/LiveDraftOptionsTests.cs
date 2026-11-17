@@ -50,6 +50,7 @@ public sealed class LiveDraftOptionsTests
     [Fact]
     [Trait("Requires", "MailAccount")]
     [Trait("Requires", "MultipleStores")]
+    [Trait("Requires", "LocalSignatures")]
     public void NewDraft_Hub_NoConfiguredSignature_BodyOnly_NoBogusInjection()
     {
         string bodyMarker = "A1HUB" + Marker;
@@ -80,6 +81,7 @@ public sealed class LiveDraftOptionsTests
     [Fact]
     [Trait("Requires", "MailAccount")]
     [Trait("Requires", "MultipleStores")]
+    [Trait("Requires", "LocalSignatures")]
     public void NewDraft_Hub_SignatureOverride_BodyAboveTheSignature_OutsideTheSignatureBookmark()
     {
         using TestSignature sig = TestSignature.Create(Marker);
@@ -108,6 +110,7 @@ public sealed class LiveDraftOptionsTests
     [Trait("Requires", "MailAccount")]
     [Trait("Requires", "MultipleStores")]
     [Trait("Requires", "IdentityAccount")]
+    [Trait("Requires", "LocalSignatures")]
     public void NewDraft_BusinessAccounts_BodyAboveTheirOwnIntactHtmlSignature()
     {
         // Q-it2-3a identity grant: ONE tagged, never-displayed draft per business

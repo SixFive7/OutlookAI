@@ -21,8 +21,12 @@ namespace OutlookAI.McpServer.Tests.T3;
 /// carries the tag and the marker and whose store is the hub, or an EntryID the product's own reader, in this
 /// process, finds in the hub with the tag and the marker; and for a reply, a reply-all and a send, its
 /// sender and every recipient must be the hub (<see cref="LiveRunItemCheck"/>);</item>
-/// <item>a tool nobody classified is refused, and the navigation tools, <c>save_attachment</c> and
-/// <c>manage_signature</c>, which address no mail and touch no item's content, go through.</item>
+/// <item><b>Signatures</b>: <c>manage_signature</c> is refused, every action of it, until it is measured
+/// whether this VM's Office LTSC 2024 roams signatures (Q147 R1, decided by the maintainer 2026-11-17): a
+/// signature or a default set on the test account could be carried into the mailbox, where no sweep
+/// removes it. <c>list_signatures</c> only reads, and goes through;</item>
+/// <item>a tool nobody classified is refused, and the navigation tools and <c>save_attachment</c>, which
+/// address no mail and touch no item's content, go through.</item>
 /// </list>
 /// </summary>
 public sealed class StdioHubOnlyGate : IDisposable
@@ -125,8 +129,13 @@ public sealed class StdioHubOnlyGate : IDisposable
             case "goto_folder":
             case "show_search_results":
             case "save_attachment":
-            case "manage_signature":
                 return null;
+
+            case "manage_signature":
+                return Refused + ": manage_signature on the Exchange VM's test account - a signature written here may "
+                    + "roam into the mailbox, where no sweep removes it, until it is measured that this Office does not "
+                    + "roam signatures (Q147 R1). Tests that write signatures declare Requires=" + LiveRunFilters.LocalSignatures
+                    + ", which this VM's filter leaves out.";
 
             case "new_draft":
                 return First(

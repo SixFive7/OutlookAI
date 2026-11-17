@@ -93,6 +93,11 @@ public sealed class LiveTierInventoryTests
         // The add-in's registry tuning state (the D24 groups), read or flipped.
         "AddInRegistry",
 
+        // Signatures written on the machine stay on it - nothing there roams them into a mailbox. Declared by
+        // every test that writes a signature or sets or reads an account's default one; the Exchange VM lacks
+        // it until its Office's signature roaming is measured (Q147 R1, decided 2026-11-17).
+        "LocalSignatures",
+
         // A populated Windows Search index.
         "SearchIndex",
 
@@ -435,15 +440,17 @@ public sealed class LiveTierInventoryTests
     [Fact]
     public void TheExchangeTestAccountFilter_IsDerivedFromTheVocabulary()
     {
-        // Literal on purpose. Everything but what the VM lacks: no add-in, no delegate store until the
-        // shared test mailbox exists (Q109), no identity account (the real mailbox is a bystander), no
-        // hand-curated probe population.
+        // Literal on purpose. Everything but what the VM lacks: signatures known to stay local (until the
+        // roaming measurement, Q147 R1), no delegate store until the shared test mailbox exists (Q109), no
+        // identity account (the real mailbox is a bystander), no hand-curated probe population. The add-in
+        // it has (Q140 (b), 2026-11-17).
         Assert.Equal(
-            "Category=Live&Requires!=AddInRegistry&Requires!=DelegateStore&Requires!=GeneratedPopulation&Requires!=IdentityAccount&Requires!=ProbePopulation&Requires!=PstStore",
+            "Category=Live&Requires!=LocalSignatures&Requires!=DelegateStore&Requires!=GeneratedPopulation&Requires!=IdentityAccount&Requires!=ProbePopulation&Requires!=PstStore",
             LiveRunFilters.ExchangeTestAccount);
         Assert.All(LiveRunFilters.ExchangeTestAccountLacks, c => Assert.Contains(c, AllCapabilities));
         Assert.DoesNotContain(LiveRunFilters.CachedExchange, LiveRunFilters.ExchangeTestAccountLacks);
         Assert.DoesNotContain(LiveRunFilters.SearchIndex, LiveRunFilters.ExchangeTestAccountLacks);
+        Assert.DoesNotContain(LiveRunFilters.AddInRegistry, LiveRunFilters.ExchangeTestAccountLacks);
     }
 
     [Fact]
@@ -459,12 +466,19 @@ public sealed class LiveTierInventoryTests
                 problems.Add(file + " never quotes the Exchange VM's write-run filter " + LiveRunFilters.ExchangeTestAccount);
             }
 
-            foreach (System.Text.RegularExpressions.Match quoted in System.Text.RegularExpressions.Regex.Matches(text, @"Category=Live&Requires!=AddInRegistry[^\s`""']*"))
+            foreach (System.Text.RegularExpressions.Match quoted in System.Text.RegularExpressions.Regex.Matches(text, @"Category=Live&Requires!=LocalSignatures[^\s`""']*"))
             {
                 if (!string.Equals(quoted.Value, LiveRunFilters.ExchangeTestAccount, StringComparison.Ordinal))
                 {
                     problems.Add(file + " quotes '" + quoted.Value + "', not the derived " + LiveRunFilters.ExchangeTestAccount);
                 }
+            }
+
+            // The filter before the add-in was installed there (2026-10-08 to 2026-11-17) started with
+            // AddInRegistry; a copy of it is a stale one.
+            foreach (System.Text.RegularExpressions.Match stale in System.Text.RegularExpressions.Regex.Matches(text, @"Category=Live&Requires!=AddInRegistry[^\s`""']*"))
+            {
+                problems.Add(file + " still quotes the Exchange VM's filter from before its add-in, '" + stale.Value + "'");
             }
         }
 

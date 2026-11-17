@@ -256,12 +256,30 @@ public sealed class StdioHubOnlyGateTests
     public void ReadsAndToolsThatAddressNoMailPass_AndAToolNobodyJudgedIsRefused()
     {
         StdioHubOnlyGate gate = new(Check, (_, _, _) => "never asked");
-        foreach (string tool in new[] { "search", "read", "thread", "list_accounts", "list_folders", "list_signatures", "outlook_health", "audit_log", "goto_folder", "show_search_results", "save_attachment", "manage_signature" })
+        foreach (string tool in new[] { "search", "read", "thread", "list_accounts", "list_folders", "list_signatures", "outlook_health", "audit_log", "goto_folder", "show_search_results", "save_attachment" })
         {
             Assert.Null(gate.RefusalFor(tool, Args(new { })));
         }
 
         Assert.StartsWith(StdioHubOnlyGate.Refused, gate.RefusalFor("brand_new_tool", Args(new { }))!, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("create")]
+    [InlineData("update")]
+    [InlineData("delete")]
+    [InlineData("set_default")]
+    [InlineData("")]
+    public void ManageSignature_IsRefused_WhateverItsAction_UntilRoamingIsMeasured(string action)
+    {
+        // Q147 R1, decided by the maintainer 2026-11-17: on the Exchange VM a signature or a default set on the
+        // test account could roam into the mailbox, where no sweep removes it. The gate refuses the tool whole,
+        // so no action name it might grow can slip through.
+        StdioHubOnlyGate gate = new(Check, (_, _, _) => "never asked");
+        string? refusal = gate.RefusalFor("manage_signature", Args(new { action, name = "OutlookAI-McpTest-x" }));
+        Assert.NotNull(refusal);
+        Assert.StartsWith(StdioHubOnlyGate.Refused, refusal!, StringComparison.Ordinal);
+        Assert.Contains(LiveRunFilters.LocalSignatures, refusal!, StringComparison.Ordinal);
     }
 
     [Fact]

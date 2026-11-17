@@ -86,8 +86,21 @@ public static class LiveRunFilters
     public static string ExchangeGuest { get; } =
         "Category=Live&" + WritesTrait + "=" + WritesNothing + "&Requires=" + CachedExchange + "&Requires!=" + DelegateStore;
 
-    /// <summary>The add-in's registry tuning state - the Exchange VM has no add-in (its TODO.md item).</summary>
+    /// <summary>
+    /// The add-in's registry tuning state. Every test machine has it - the Exchange VM since 2026-11-17,
+    /// when the maintainer had the add-in installed there (Q140 (b), checkpoint CP-08-ADDIN-READY).
+    /// </summary>
     public const string AddInRegistry = "AddInRegistry";
+
+    /// <summary>
+    /// Signatures written on the machine stay on it: no Outlook there can carry a signature, or an
+    /// account's default signature, into a mailbox. A test that creates, changes or deletes a signature, or
+    /// sets or reads an account's default one, declares it. The PST guests have it - nothing there can roam.
+    /// The Exchange VM LACKS it until it is measured whether its Office LTSC 2024 roams signatures (Q147,
+    /// measurement R1, decided by the maintainer 2026-11-17): a default set on the test account could leave a
+    /// test signature in the mailbox that no sweep removes.
+    /// </summary>
+    public const string LocalSignatures = "LocalSignatures";
 
     /// <summary>A second account the write allowlist grants an identity draft in.</summary>
     public const string IdentityAccount = "IdentityAccount";
@@ -103,19 +116,20 @@ public static class LiveRunFilters
 
     /// <summary>
     /// What the Exchange VM does NOT have since its test account became the hub (2026-10-08), in the
-    /// order its filter names them: no add-in; no delegate store until the shared test mailbox exists
-    /// (Q109); no generated population - a test there seeds what it needs and the sweep removes it; no
-    /// identity account - the other mailbox, the real one, is a bystander no test writes to; no
-    /// hand-curated probe population; and no data file.
+    /// order its filter names them: signatures that are known to stay local (<see cref="LocalSignatures"/>,
+    /// until the roaming measurement); no delegate store until the shared test mailbox exists (Q109); no
+    /// generated population - a test there seeds what it needs and the sweep removes it; no identity
+    /// account - the other mailbox, the real one, is a bystander no test writes to; no hand-curated probe
+    /// population; and no data file. The add-in it has since 2026-11-17 (Q140 (b)).
     /// </summary>
     public static IReadOnlyList<string> ExchangeTestAccountLacks { get; } =
-        new[] { AddInRegistry, DelegateStore, GeneratedPopulation, IdentityAccount, ProbePopulation, PstStore };
+        new[] { LocalSignatures, DelegateStore, GeneratedPopulation, IdentityAccount, ProbePopulation, PstStore };
 
     /// <summary>
     /// The filter the Exchange VM runs with its test account as the writable hub
     /// (<see cref="LiveMachineProfile.ExchangeTestAccount"/>): the broadest it can honestly run - every live
     /// test, read and write, except those naming a capability it lacks (<see cref="ExchangeTestAccountLacks"/>).
-    /// Its clauses start with <c>AddInRegistry</c>, so no copy of it reads as a stopped-short guest filter.
+    /// Its clauses start with <c>LocalSignatures</c>, so no copy of it reads as a stopped-short guest filter.
     /// </summary>
     public static string ExchangeTestAccount { get; } =
         "Category=Live" + string.Concat(ExchangeTestAccountLacks.Select(c => "&Requires!=" + c));

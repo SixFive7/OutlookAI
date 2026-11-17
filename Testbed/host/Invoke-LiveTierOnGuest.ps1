@@ -197,7 +197,7 @@ $SdkSha512 = 'f0d8f8e7ec24efb05172a65dd80c4a9b1ef17efcebdbf0f57c15f436eea417960a
 $FilterBase = 'Category=Live&Requires!=DelegateStore&Requires!=CachedExchange'
 $FilterUnindexedExtra = '&Requires!=SearchIndex'
 # The Exchange VM with its test account as the hub - LiveRunFilters.ExchangeTestAccount.
-$FilterExchange = 'Category=Live&Requires!=AddInRegistry&Requires!=DelegateStore&Requires!=GeneratedPopulation&Requires!=IdentityAccount&Requires!=ProbePopulation&Requires!=PstStore'
+$FilterExchange = 'Category=Live&Requires!=LocalSignatures&Requires!=DelegateStore&Requires!=GeneratedPopulation&Requires!=IdentityAccount&Requires!=ProbePopulation&Requires!=PstStore'
 # The host's record of the Exchange VM's run markers: beside the leases, machine state, not the repository.
 $ExchangeLedgerRelative = 'exchange-runs\ledger.jsonl'
 $LeaseReasonPrefix = 'Invoke-LiveTierOnGuest'
@@ -356,6 +356,27 @@ function Get-ExchangeStartPlan {
     param([bool] $CheckpointNamed)
     if ($CheckpointNamed) { return @('restore the named checkpoint', 'restart', 'set the .ost files aside', 'Outlook NOT elevated', 'preflight') }
     return @('resume as the last run left it', 'Outlook NOT elevated if it is not running', 'preflight')
+}
+
+# What a start of Outlook by guest\Start-OutlookUnelevated.ps1 reports about Office's activation wizard -
+# the modal nag a guest past Office's activation grace raises at every start with a window (Testbed/
+# MEDIA.md, "The licence clocks"). The starter closes it and prints 'ACTIVATION-WIZARD-DISMISSALS <n>';
+# an older starter prints nothing, which reads as not reported, never as zero.
+function Get-OutlookStartFacts {
+    param([string] $Output, [string] $Profile)
+    $m = [regex]::Match([string]$Output, 'ACTIVATION-WIZARD-DISMISSALS (\d+)')
+    $n = $null
+    if ($m.Success) { $n = [int]$m.Groups[1].Value }
+    return [ordered]@{ startedByRun = $true; profile = $Profile; activationWizardDismissed = $n }
+}
+
+# The summary's line for it.
+function Format-OutlookStartLine {
+    param($Facts)
+    if ($null -eq $Facts) { return 'outlook    not started by this run (it was running already)' }
+    $wizard = "Office's activation wizard dismissed $($Facts['activationWizardDismissed']) time(s)"
+    if ($null -eq $Facts['activationWizardDismissed']) { $wizard = "Office's activation wizard: NOT REPORTED by the guest's starter" }
+    return "outlook    started by this run, NOT elevated, on profile '$($Facts['profile'])'; $wizard"
 }
 
 # The Exchange VM's run marker: 'oair' and the run's UTC start to the second - lower-case letters and
@@ -602,6 +623,11 @@ function Invoke-SelfTest {
     Check 'and that run is not narrowed' $false $f.Narrowed
     Check 'the Exchange VM carries its state forward by default' 'resume as the last run left it|Outlook NOT elevated if it is not running|preflight' (Get-ExchangeStartPlan $false)
     Check 'and a named checkpoint is restored and its data files set aside' $true ((Get-ExchangeStartPlan $true) -contains 'set the .ost files aside')
+    $os = Get-OutlookStartFacts "  ACTIVATION-WIZARD-DISMISSED 8 s: class NUIDialog, by its Close button`r`nOK: OUTLOOK.EXE pid 9548`r`nACTIVATION-WIZARD-DISMISSALS 1`r`nSTART-OUTLOOK-EXIT 0" 'Outlook'
+    Check 'a start that closed the activation wizard records one dismissal' 1 $os['activationWizardDismissed']
+    Check 'and the summary line says so' "outlook    started by this run, NOT elevated, on profile 'Outlook'; Office's activation wizard dismissed 1 time(s)" (Format-OutlookStartLine $os)
+    Check 'a starter that reported nothing reads as not reported, never as zero' $true ((Format-OutlookStartLine (Get-OutlookStartFacts 'OK: OUTLOOK.EXE pid 1' 'X')) -match 'NOT REPORTED')
+    Check 'no start at all reads as not started' 'outlook    not started by this run (it was running already)' (Format-OutlookStartLine $null)
     Check 'and a suffix narrows it' $true (Get-LiveFilter $true '' '&FullyQualifiedName~Y' $true).Filter.EndsWith('&Requires!=PstStore&FullyQualifiedName~Y')
     Check 'a suffix that does not start with & is refused' $true ($null -ne (Get-LiveFilter $true '' 'FullyQualifiedName~X').Refusal)
     Check 'a filter that is not Category=Live is refused' $true ($null -ne (Get-LiveFilter $true 'FullyQualifiedName~X' '').Refusal)
@@ -763,7 +789,7 @@ STACK      the faulting thread
     }
     Check 'the Exchange VM is the one testbed.json exchangeVm names' 'OutlookAI-Exchange|OAI-EXCHANGE' @([string]$testbed.exchangeVm.vmName, [string]$testbed.exchangeVm.computerName)
     Check 'and rests on the newest checkpoint testbed.json records for it' ([string]@($testbed.exchangeVm.checkpoints)[-1]) $Guests['OutlookAI-Exchange'].Checkpoint
-    Check 'LiveRunFilters.ExchangeTestAccount leaves out exactly what the Exchange VM lacks' $true $filters.Contains('new[] { AddInRegistry, DelegateStore, GeneratedPopulation, IdentityAccount, ProbePopulation, PstStore }')
+    Check 'LiveRunFilters.ExchangeTestAccount leaves out exactly what the Exchange VM lacks' $true $filters.Contains('new[] { LocalSignatures, DelegateStore, GeneratedPopulation, IdentityAccount, ProbePopulation, PstStore }')
     $marker = [System.IO.File]::ReadAllText((Join-Path $repo 'McpServer\OutlookAI.McpServer.Tests\T2\LiveRunMarker.cs'))
     Check 'the run reads the marker from the variable this sets' $true ($marker.Contains('"OUTLOOKAI_LIVE_RUN_MARKER"') -and $marker.Contains('"OUTLOOKAI_LIVE_PRIOR_RUN_MARKERS"') -and $own.Contains("`$env:OUTLOOKAI_LIVE_RUN_MARKER = '"))
     foreach ($name in $Guests.Keys) {
@@ -875,6 +901,8 @@ Say "  results   $runDir"
 $timings = [ordered]@{}
 $checkpointActions = [ordered]@{ start = $Checkpoint; resting = $RestingCheckpoint; green = $null; restedOn = $null; settingsStaged = $false; saved = $false }
 $crashDumpState = [ordered]@{ armed = $false; proven = $null; guestFolder = $GuestDumpDir; fetched = $false; files = @() }
+# Set when this run starts Outlook itself: what the start met, Office's activation wizard included.
+$outlookStart = $null
 $script:dumpsFound = @()
 $suiteStarted = $false
 $stage = ''
@@ -1096,8 +1124,10 @@ Copy-Item -LiteralPath '$GuestPayloadDir\live-test-settings.json' -Destination '
                 # ps51-native-stderr-ok: a PowerShell script, not a program - every program it starts goes through its own Invoke-NativeCommand, under 'Continue' inside a try
                 & (Join-Path $PSScriptRoot 'Invoke-ExchangeSignIn.ps1') -VMName $facts.Name -Mode Preflight -DefenderOnly -RepoRoot $CredentialRepoRoot *> (Join-Path $runDir 'preflight-defender.log')
                 if ($LASTEXITCODE -ne 0) { throw "Defender's signatures could not be brought up to date before Outlook started (exit $LASTEXITCODE) - preflight-defender.log" }
-                $o = Invoke-Guest 'start-outlook' "& '$GuestRoot\Start-OutlookUnelevated.ps1' -Profile 'Outlook'; `"START-OUTLOOK-EXIT `$LASTEXITCODE`"" 900 -Session0
+                $o = Invoke-Guest 'start-outlook' "& '$GuestRoot\Start-OutlookUnelevated.ps1' -Profile 'Outlook' -MinUptimeSeconds 240; `"START-OUTLOOK-EXIT `$LASTEXITCODE`"" 900 -Session0
                 if ($o -notmatch 'START-OUTLOOK-EXIT 0') { throw 'Start-OutlookUnelevated.ps1 did not start Outlook NOT elevated on the profile Outlook - guest\start-outlook.log' }
+                $outlookStart = Get-OutlookStartFacts $o 'Outlook'
+                Say ((Format-OutlookStartLine $outlookStart) -replace '^outlook\s+', 'Outlook ')
             }
             # Defender current and every account SIGNED-IN, or no run (Testbed/README.md section 4e).
             # ps51-native-stderr-ok: a PowerShell script, not a program - every program it starts goes through its own Invoke-NativeCommand, under 'Continue' inside a try
@@ -1113,6 +1143,8 @@ Copy-Item -LiteralPath '$GuestPayloadDir\live-test-settings.json' -Destination '
             # the tier profile, its window up. The frozen checkpoint holds Outlook closed so STAGE could swap.
             $o = Invoke-Guest 'start-outlook' "& '$GuestRoot\Start-OutlookUnelevated.ps1' -Profile '$TierProfileName'; `"START-OUTLOOK-EXIT `$LASTEXITCODE`"" 900 -Session0
             if ($o -notmatch 'START-OUTLOOK-EXIT 0') { throw 'Start-OutlookUnelevated.ps1 did not start Outlook NOT elevated on the tier profile - guest\start-outlook.log' }
+            $outlookStart = Get-OutlookStartFacts $o $TierProfileName
+            Say ((Format-OutlookStartLine $outlookStart) -replace '^outlook\s+', 'Outlook ')
         }
         else {
             # ps51-native-stderr-ok: a PowerShell script, not a program - every program it starts goes through its own Invoke-NativeCommand, under 'Continue' inside a try
@@ -1267,6 +1299,7 @@ $verdict = Get-LiveVerdict $stage $stageWhy $trx $consoleFacts $crashes $suiteEx
 $timings['total'] = Format-Seconds ((Get-Date) - $started).TotalSeconds
 $summary = New-LiveRunSummary -RunId $runId -Verdict $verdict -Revision $revision -Guest $facts.Name -Filter $runFilter -Narrowed $narrowed -Trx $trx -Console $consoleFacts -Crashes $crashes -SuiteExit $suiteExit -Checkpoints $checkpointActions -Timings $timings -Results $runDir -CrashDumps $crashDumpState
 if ($facts.Exchange) { $summary['runMarker'] = [ordered]@{ marker = $runMarker; priors = @($priorMarkers); ledger = $ledgerPath; clean = $ledgerOutcome } }
+$summary['outlookStart'] = $outlookStart
 [System.IO.File]::WriteAllText((Join-Path $runDir 'summary.json'), ($summary | ConvertTo-Json -Depth 8))
 
 $lines = New-Object System.Collections.Generic.List[string]
@@ -1301,6 +1334,7 @@ if ($dumpList.Count -gt 0) {
 }
 elseif ($crashDumpState['armed']) { $dumpText += ', none written' }
 $lines.Add("outlook    crashes during the run: $crashText; crash dumps: $dumpText")
+$lines.Add((Format-OutlookStartLine $outlookStart))
 $endLine = "guest end  rested on $($checkpointActions['restedOn']); settings staged=$($checkpointActions['settingsStaged']); saved=$($checkpointActions['saved'])"
 if ($checkpointActions['green']) { $endLine += "; green checkpoint $($checkpointActions['green'])" }
 $lines.Add($endLine)
