@@ -480,27 +480,71 @@ end;
 // certificate TRUST store setup can write (decision 193 (b), 2026-11-17). Before that, from the
 // user's TrustedPublisher store only.
 //
-//  * By THUMBPRINT, its one identifier here, never by subject: it shares CN=OutlookAI with the
-//    current certificate, so a subject match would also remove the one just installed above.
-//    No copy of it is shipped, and none may enter the repository.
+//  * By THUMBPRINT, its one identifier here, never by subject: its subject is not OutlookAI's but
+//    the name of the computer and user it was made on, which no file here may carry. No copy of it
+//    is shipped, and none may enter the repository.
 //  * The user's stores always - this per-user installer can write them. The computer's stores
 //    only when setup runs with administrator rights, the one case it can write them. Trust
 //    stores only: TrustedPublisher, TrustedPeople, CA (intermediates, which chains are built
 //    from), Root, and the computer's AuthRoot. Never added to Disallowed: that is for the
 //    maintainer's own computer, where it is done by hand.
-//  * Root LAST, ONLY WHEN IT IS THERE, AND NOT WAITED FOR. Windows guards the user's Root store,
-//    and a change to it can put up Windows' own confirmation (adding one does: measured, see
-//    InstallCertificate). On a silent auto-update nobody may be there to answer it, so setup
-//    never waits on it: the confirmation, if one comes, stays up until the user answers, and the
-//    next install looks again. Reading the store first means the normal machine - the
-//    certificate in no Root store at all - never sees a certutil -delstore Root at all.
+//  * The computer's Root and AuthRoot only when the certificate is there, and not waited for.
+//  * THE USER'S ROOT STORE ASKS. Windows puts every removal from it to the user: a window titled
+//    "Root Certificate Store" - "Do you want to DELETE the following certificate from the Root
+//    Store?", the certificate's subject, issuer, validity, serial number and thumbprints, Yes and
+//    No, No the default - shown even when certutil runs hidden, and waited for as long as it takes.
+//    Yes removes it (certutil exits 0), No keeps it (0x800704C7, ERROR_CANCELLED). Measured
+//    2026-11-17, Docs/live-tier-on-the-vm.md section 4.8. So that store has its own procedure,
+//    RemoveCompromisedCertificateFromUserRoot, below.
 //  * Best effort throughout: on most machines it is in none of these stores, and "not found" is
 //    the normal answer, so every result is ignored. Install and uninstall run the same removal.
+const
+  UserRootCertificateKey = 'Software\Microsoft\SystemCertificates\Root\Certificates\{#CompromisedCertThumbprint}';
+
+// THE USER'S ROOT STORE: only when the certificate is in it, and only when somebody is there to
+// answer Windows' question.
+//
+//  * In it means in the user's own Root store: the certificate's key under UserRootCertificateKey,
+//    where certutil -user -addstore Root puts it. The user's view of Root also lists the computer's
+//    roots, which this user cannot remove - so the question is never put about one of those, and the
+//    normal machine, the certificate in no Root store, starts no certutil here at all.
+//  * An interactive install or uninstall says why in one sentence first, then lets Windows ask, and
+//    waits for the answer: the user is at the screen, and the setup window waits behind the question.
+//  * A silent run - the add-in's own updates are /SILENT - never asks and never waits: it leaves the
+//    certificate for the next interactive install or uninstall, which asks again. Windows' question
+//    unexplained, after an update nobody watched, would look like an attack, and it would come back
+//    after every update while it stood unanswered.
+procedure RemoveCompromisedCertificateFromUserRoot;
+var
+  ResultCode: Integer;
+  Silent: Boolean;
+begin
+  if not RegKeyExists(HKCU, UserRootCertificateKey) then
+    exit;
+  if IsUninstaller then
+    Silent := UninstallSilent
+  else
+    Silent := WizardSilent;
+  if Silent then
+  begin
+    Log('The compromised certificate is in the user''s Root store. A silent run leaves it for the next interactive install or uninstall, which asks.');
+    exit;
+  end;
+  MsgBox('Windows will now ask, in a window titled Root Certificate Store, whether to delete an old OutlookAI certificate (thumbprint ' + Copy('{#CompromisedCertThumbprint}', 1, 8) + '...) from your trusted root certificates: its private key has leaked, so please answer Yes.', mbInformation, MB_OK);
+  if Exec('certutil', '-user -delstore Root {#CompromisedCertThumbprint}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    Log('certutil -user -delstore Root exited ' + IntToStr(ResultCode) + ': 0 removed, -2147023673 (ERROR_CANCELLED) kept.');
+end;
+
 procedure DeleteCompromisedCertificate(const Scope, Store: String);
 var
   ResultCode: Integer;
   Wait: TExecWait;
 begin
+  if (Scope = '-user ') and (Store = 'Root') then
+  begin
+    RemoveCompromisedCertificateFromUserRoot;
+    exit;
+  end;
   Wait := ewWaitUntilTerminated;
   if (Store = 'Root') or (Store = 'AuthRoot') then
   begin

@@ -15,10 +15,11 @@
     the record.
 
     WHY (Q193 (b), the maintainer's, 2026-11-17). The certificate that signed v1.0.0.1 to v2.3.1.111
-    leaked with its private key. Installer.iss removes it by thumbprint from every trust store,
-    the user's Root store last, only when it is there, and without waiting - because Windows guards
-    that store, and ADDING a certificate to it is known to put up a confirmation (Installer.iss,
-    InstallCertificate). Whether REMOVING one does was not documented and not measured.
+    leaked with its private key. Installer.iss removes it by thumbprint from every trust store, and
+    Windows guards the user's Root store: ADDING a certificate to it was known to put up a
+    confirmation (Installer.iss, InstallCertificate). Whether REMOVING one does was not documented
+    and not measured. It does - this probe's first runs, 2026-11-17 - and Installer.iss now asks
+    for that store only on an interactive run, after one sentence of its own (section 4.8).
 
     SCENARIOS (-Scenario):
 
@@ -451,10 +452,12 @@ function Invoke-SelfTest {
     $iss = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) 'Installer.iss'
     if (Test-Path -LiteralPath $iss) {
         $issText = [System.IO.File]::ReadAllText($iss)
-        Check 'Installer.iss still deletes with Scope + -delstore + Store + thumbprint' ($issText.Contains("Scope + '-delstore ' + Store + ' {#CompromisedCertThumbprint}'"))
-        Check 'Installer.iss still checks with Scope + -store + Store + thumbprint' ($issText.Contains("Scope + '-store ' + Store + ' {#CompromisedCertThumbprint}'"))
+        # The user's Root store is the one this probe measures: the installer must still remove from it
+        # with exactly this probe's command line, started hidden, and check it the way it measures.
+        Check 'Installer.iss removes from the user''s Root store with this probe''s command line, hidden' ($issText.Contains("Exec('certutil', '-user -delstore Root {#CompromisedCertThumbprint}', '', SW_HIDE, "))
+        Check 'Installer.iss finds it there by the key this probe watches' ($issText.Contains("UserRootCertificateKey = '" + $RootCertificatesKey + "\{#CompromisedCertThumbprint}';"))
+        Check 'Installer.iss still deletes from the other stores with Scope + -delstore + Store + thumbprint' ($issText.Contains("Scope + '-delstore ' + Store + ' {#CompromisedCertThumbprint}'"))
         Check 'Installer.iss still gives the user scope as -user' ($issText.Contains("DeleteCompromisedCertificateFromStores('-user ', '{#CompromisedCertUserStores}');"))
-        Check 'Installer.iss still starts certutil hidden' ($issText -match "Exec\('certutil', Scope \+ '-delstore ' \+ Store \+ ' \{#CompromisedCertThumbprint\}', '', SW_HIDE")
         Check 'Installer.iss still names this Inclusion key' ($issText.Contains("'" + $InclusionKey + "'"))
         $modulus = $null
         try { $modulus = Get-CompromisedModulus $issText } catch { Write-Host "  $($_.Exception.Message)" }

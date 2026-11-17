@@ -2294,16 +2294,31 @@ its mailbox tests on, and change nothing you install.
 
 ### Security
 
+- 🔒 **The installer removes the trust Office saved for add-ins signed with the leaked old key.**
+  Clicking Install on Office's "Publisher cannot be verified" prompt for OutlookAI v1.0.0.1 to
+  v2.3.1.111 saved a trust entry under `HKCU\Software\Microsoft\VSTO\Security\Inclusion`: where
+  the add-in was, and the public key that signed it. From then on Office loads any add-in at that
+  place signed with that key without asking. It never looks at the certificate, and that key's
+  private half is public, so anybody can sign with it. Every install, update and uninstall now
+  removes each entry that holds the leaked key, found by the key alone and wherever it points.
+  Entries for other keys stay, among them the one for the current release. Microsoft documents the
+  entry as a location and a public key, and the runtime's own code compares those two and nothing
+  else (Docs/live-tier-on-the-vm.md section 4.8).
+
 - 🔒 **The installer removes the leaked old signing certificate from every certificate store it can change.**
   That certificate signed OutlookAI v1.0.0.1 to v2.3.1.111, and its private key became public, so no
   computer should trust it. Installing or updating already removed it from your Trusted Publishers
-  store. Every install, update and uninstall now also removes it from your Trusted Root
-  Certification Authorities, Intermediate Certification Authorities and Trusted People stores, and
-  from the computer's stores too when the installer runs with administrator rights. It is found by
-  its thumbprint, E205060633DD7062D4F90033130542948A69D068, and nothing else. Windows guards your
-  Trusted Root store, so if the certificate is in it, Windows may ask you to confirm the removal;
-  the installer does not wait for your answer and looks again next time. The installer carries no
-  copy of the certificate and never adds it to the Disallowed store (decision 193 (b)).
+  store. Every install, update and uninstall now also removes it from your Intermediate
+  Certification Authorities and Trusted People stores, and from the computer's stores too when the
+  installer runs with administrator rights. It is found by its thumbprint,
+  E205060633DD7062D4F90033130542948A69D068, and nothing else. Your Trusted Root Certification
+  Authorities store works differently: Windows asks you to confirm every removal from it, in a
+  window titled Root Certificate Store whose default answer is No, and waits for your answer for as
+  long as it takes. So when the certificate is in that store, an install or uninstall you run
+  yourself first says why in one sentence and then waits for your answer, and an automatic update
+  leaves it for the next install you run. A test machine showed all of this
+  (Docs/live-tier-on-the-vm.md section 4.8). The installer carries no copy of the certificate and
+  never adds it to the Disallowed store (decision 193 (b)).
 
 - 🔒 **The add-in and the MCP server load Windows DLLs only from System32.**
   Each of their P/Invoke declarations names a Windows DLL by file name alone, and Windows looked for
