@@ -1678,6 +1678,17 @@ its mailbox tests on, and change nothing you install.
   when the assistant kills the helper outright, which is what happens when Outlook has genuinely
   stopped responding and when a session ends abruptly.
 
+- ✅ **The audit log's eight-writer test passes on a busy machine, and still checks the lock's promise.**
+  With the writer lock on, it demanded that no line was ever written without the lock and that the
+  whole file was in time order. On 2026-11-17, with three build runs and four Outlook test machines
+  on one host, writers waited longer than the lock's 2 s and appended without it, as the product
+  does by design, marking the line `lock="timeout"`: 12 of 1,000 lines on one build machine and 1 on
+  another, and the test failed on both. It now checks what the product promises instead: every line
+  written without the lock says so, exactly as many per writer as that writer's own count of
+  appends that ran out the wait, the lines written under the lock are in time order, and most lines
+  were written under it. How many lines waited it out goes to the test's output. The lock's wait is
+  unchanged.
+
 - ✅ **The test machines' account password never expires, so runs on the build machine log on again.**
   Windows expires a password after 42 days, and nothing in the testbed said otherwise. The build
   machine was installed on 2026-10-03, so its base checkpoint would have refused every run's
