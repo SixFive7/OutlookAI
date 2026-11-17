@@ -104,8 +104,8 @@ section after next); builds and the four guards run on this workstation; and a r
 **Security scanning replaced CodeQL's and the dependency review's, here (Q125, decided by the
 maintainer 2026-10-03).** Every build runs the .NET SDK's security analysers - every Security rule
 .NET 10 ships, each finding a build error: `McpServer/Directory.Build.props` for the server's
-projects, `NetSecurityAnalyzers.targets` (imported by `OutlookAI.csproj` and the PolicyWriter
-project) for the add-in, which says how and why. Fix a real finding; suppress a false positive
+projects, `NetSecurityAnalyzers.targets` (imported by `OutlookAI.csproj`) for the add-in, which
+says how and why. Fix a real finding; suppress a false positive
 only at its site, with `[SuppressMessage(..., Justification = "<why it is safe>")]`. And every
 release runs `Tools/Test-VulnerablePackages.ps1` (no NuGet package with a known vulnerability) and
 `Tools/Invoke-CodeQL.ps1` (CodeQL's C# security queries, every result fixed or triaged in
@@ -183,7 +183,7 @@ run either script's `-SelfTest` here.
 
 ## MCP Server (`McpServer/`)
 
-- `McpServer/` holds the MCP server projects (`OutlookAI.Core`, `OutlookAI.McpServer`, `OutlookAI.McpServer.Tests`). Build them with `dotnet build` **by explicit csproj path** — never via `OutlookAI.slnx`, which only contains the VSTO add-in and its elevated helper `PolicyWriter/` (both MSBuild-only).
+- `McpServer/` holds the MCP server projects (`OutlookAI.Core`, `OutlookAI.McpServer`, `OutlookAI.McpServer.Tests`). Build them with `dotnet build` **by explicit csproj path** — never via `OutlookAI.slnx`, which only contains the VSTO add-in (MSBuild-only).
 - The non-live suite (`dotnet test --filter "Category!=Live"`) runs only on the build VM - next section. Tests marked `Category=Live` need Outlook and a mailbox: they run on the test VMs - the ones that need Exchange on the Exchange VM, `OutlookAI-Exchange` - and never on this workstation (Q116 (a), Mailbox Safety below).
 - Developer documentation: `McpServer/README.md`.
 

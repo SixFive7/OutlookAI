@@ -1778,21 +1778,33 @@
   designation from a freshly opened store in the verify session; (3) read it in the product the way
   the verify session does, after creating. Recommended: (1) first.
 
-- [ ] **Decide whether the elevated Cached Mode helper may keep running from the per-user install
-  folder (found during Q125, 2026-10-04).** `OutlookAI.PolicyWriter.exe` runs as administrator
-  through UAC (Q128), but the installer is per-user (`PrivilegesRequired=lowest`), so it lives in
-  `%LOCALAPPDATA%\OutlookAI\Setup`, and the add-in starts the copy beside itself or under the HKCU
-  `InstallDir` - all writable by any process of the user's. Q125 closed the DLL route (its P/Invokes
-  load from System32 only), but such a process can still replace the helper, or repoint
-  `InstallDir`, and be elevated by the prompt the user expects to see - a prompt that names no
-  verified publisher either way. For a standard user typing an administrator's password that is an
-  elevation of privilege. Directions: (1) install the helper per machine, under Program Files,
-  through an elevated part of the installer; (2) elevate no file of ours at all - write the five
-  validated values with Windows' own `reg.exe add HKU\<SID>\...`, one per value, chained in one
-  elevated `cmd.exe` for one prompt, which then names a Microsoft-signed program; (3) accept and
-  document it - the escalation needs the user's own approval, and anything running as the user
-  already holds the user's mail. Recommended: (2), if its prompt text is acceptable to him; (1)
-  otherwise.
+- [ ] **Let OutlookAI set an existing account's own offline period, once the Exchange VM shows how
+  (Q145 (a)).** OutlookAI writes the offline period as the user's own `SyncWindowSetting`, which only
+  accounts added later take (KB 3115009). An account that already exists keeps its own period in its
+  Outlook profile, so OutlookAI Settings tells the user how to set it in Account Settings. The profile
+  value is the account's EMSMDB section property 0x6649, in months - read on the maintainer's
+  workstation, never written, and undocumented by Microsoft. Before OutlookAI writes it, a measurement
+  on `OutlookAI-Exchange`, the one test machine with an Exchange account, has to show four things:
+  that 0x6649 follows the slider through all eleven periods; where a day period is kept (0x665A is
+  the candidate); that a value written with Outlook closed takes effect; and what Outlook does with a
+  policy of 36, 60, (12, 7) or 18. It changes only that guest's Outlook profile, which a checkpoint
+  restores, and needs the maintainer's OK, because Phase 1 made no profile writes there. Then
+  implement `IAccountOfflinePeriods` (`Services/AccountOfflinePeriods.cs`, which says what it must do)
+  and set it in `OutlookTuningService.AccountPeriods`. The dialog and the removal below both use it.
+
+- [ ] **Remove the Cached Mode policy values an earlier OutlookAI wrote, when the maintainer asks
+  (Q151 (a)).** Versions 3.0.0.319 to 3.1.0.325 wrote five Cached Mode values as Group Policy wherever
+  Windows let them, the maintainer's workstation among them, and a policy period greys out Outlook's
+  own slider. They stay, labelled "Set by an earlier OutlookAI", until he asks for their removal. The
+  removal is built and tested (`Services/EarlierPolicyRemoval.cs`, T1 `EarlierPolicyRemovalTests`),
+  and nothing calls it. It sets every account's own period to All first, so no mail drops out of the
+  offline copy, and it refuses until the item above is done. Wiring it to a button or to startup is
+  the change his request will be. **Open before then:** the policy's `DownloadSharedFolders` = 1 also
+  overrides each account's own "Download shared folders" box. If an account has that box off,
+  removing the policy drops its shared folders from the offline copy. Directions: (1) the removal
+  first turns every account's box on, through the same seam (the box is bit 0x800 of the profile
+  section's config flags, read on all four of the workstation's accounts); (2) it leaves that one
+  policy value in place; (3) it removes it anyway, since the box is on by default. Recommended: (1).
 
 - [ ] **Decide whether the release's CodeQL run should count local input as untrusted (Q125
   follow-up, 2026-10-04).** The release runs CodeQL's default threat model, where untrusted data
