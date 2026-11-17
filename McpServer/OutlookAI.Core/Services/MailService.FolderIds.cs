@@ -319,8 +319,9 @@ namespace OutlookAI.Core.Services
         /// the node id the ID carries (Q132 (i)), with no Outlook call - so it is searched where the index
         /// files its mail now, a rename or move the index has not re-filed yet included. Any other
         /// folder, and a local one the index has no row for, is opened in Outlook, and its names make the
-        /// scope. An Exchange folder while Outlook is not running is REFUSED until the index route is
-        /// measured on Exchange (Q132 (i)): its <c>System.ProviderItemID</c> is unknown.
+        /// scope. An Exchange folder while Outlook is not running is REFUSED (Q132 (i)): measured on the
+        /// Exchange guest, its index row's <c>System.ProviderItemID</c> is the .ost's own node id, which the
+        /// folder's 46-byte id does not carry and which changes when the .ost is rebuilt.
         /// </summary>
         private FolderScopeResolution ResolveSearchFolder(SearchRequest request, out string? folderFoundVia)
         {
@@ -374,6 +375,7 @@ namespace OutlookAI.Core.Services
             request.ScopeFolderEntryId = detail.EntryId;
             request.ScopeStoreName = detail.StoreDisplayName;
             request.ScopeFolderPath = FolderScopeResolver.JoinNames(detail.PathSegments);
+            request.ScopeFolderPathShared = detail.PathShared;
             folderFoundVia = FolderFoundViaOutlook;
             ComStoreDetail? storeDetail = TryGetStoreDetailsForIds()?.FirstOrDefault(d =>
                 string.Equals(d.StoreId, detail.StoreEntryId, StringComparison.OrdinalIgnoreCase));
@@ -490,6 +492,7 @@ namespace OutlookAI.Core.Services
                 FolderScopeResolution scope = FolderScopeResolver.ForIndexedFolder(roots[0].StorePrefix, rows[0], request.IncludeSubfolders);
                 request.ScopeStoreName = StoreNameForUid(folderUid) ?? roots[0].StoreDisplayName;
                 request.ScopeFolderPath = scope.RequestedFolder;
+                request.ScopeFolderPathShared = PathSharedIfOutlookIsAt(request.ScopeFolderEntryId!);
                 return scope;
             }
             catch (Exception ex) when (ex is not OutOfMemoryException)
@@ -497,6 +500,37 @@ namespace OutlookAI.Core.Services
                 miss = "the search index did not answer (" + ex.GetType().Name + ")";
                 return null;
             }
+        }
+
+        /// <summary>
+        /// Whether another folder has this folder's path, asked of Outlook only when this server already holds a
+        /// session with it - the index route needs no Outlook, and must not start one to ask (the index keeps one
+        /// row for a shared path, so it cannot tell). False when Outlook is not at hand or does not answer.
+        /// </summary>
+        private bool PathSharedIfOutlookIsAt(string folderEntryId)
+        {
+            if (!_gateway.IsConnected)
+            {
+                return false;
+            }
+
+            try
+            {
+                return _gateway.Run(s => s.TryDescribeFolder(folderEntryId, out _))?.PathShared == true;
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                return false;
+            }
+        }
+
+        /// <summary>The advice for a folder whose path another folder shares. Pure.</summary>
+        public static string DescribeSharedFolderPath(string? folderPath)
+        {
+            return "Another folder of this store has the same path as '" + folderPath + "' (a folder of the same name "
+                + "beside it, or beside a folder above it). The search index files both under that one path, so the "
+                + "indexed results can include mail from the other folder. The freshness sweep and exhaustive:true open "
+                + "this exact folder by its ID - use exhaustive:true when only this folder's mail may come back.";
         }
 
         /// <summary>The display name Outlook gives the store whose items carry <paramref name="providerUidHex"/>, when its list has exactly one.</summary>
@@ -526,7 +560,8 @@ namespace OutlookAI.Core.Services
                 "store_id '" + storeId + "' cannot be searched right now: Outlook is not answering and has not listed its "
                 + "stores since this server started, and " + (roots.Count == 0
                     ? "the search index holds no store whose mail carries this ID"
-                    : roots.Count.ToString(CultureInfo.InvariantCulture) + " stores in the search index carry it, so it cannot say which")
+                    : roots.Count.ToString(CultureInfo.InvariantCulture) + " stores in the search index carry it, so it "
+                        + "cannot say which (after an .ost rebuild the index keeps the old copy beside the new)")
                 + ". Outlook is started when it is needed - retry in a few seconds; outlook_health shows its state.",
                 parameterName);
         }
@@ -541,10 +576,11 @@ namespace OutlookAI.Core.Services
                     + "seconds; outlook_health shows its state.";
             }
 
-            return "folder_id '" + folderId + "' is a folder of an Exchange mailbox (or of another non-local store), and "
-                + "searching one folder of such a mailbox needs Outlook: the route through the search index alone is "
-                + "measured for local mail files only so far (Q132). Outlook is not answering right now - it is started "
-                + "when it is needed, so retry in a few seconds - or search the whole mailbox with its store_id meanwhile.";
+            return "folder_id '" + folderId + "' is a folder of an Exchange mailbox (or of another store that is not a "
+                + "local data file), and searching one folder of such a mailbox needs Outlook: the search index keeps no "
+                + "number that an Exchange folder's ID leads to (measured, Q132), so the folder cannot be found in the "
+                + "index without Outlook naming it. Outlook is not answering right now - it is started when it is needed, "
+                + "so retry in a few seconds - or search the whole mailbox with its store_id meanwhile.";
         }
 
         /// <summary>
@@ -587,8 +623,19 @@ namespace OutlookAI.Core.Services
             }
 
             IReadOnlyList<StoreScopeInfo> catalog = GetCatalog(SearchIndexTimeoutSeconds);
-            StoreScopeInfo? match = catalog.FirstOrDefault(s =>
-                string.Equals(s.StoreDisplayName, store, StringComparison.OrdinalIgnoreCase));
+            List<StoreScopeInfo> named = catalog
+                .Where(s => string.Equals(s.StoreDisplayName, store, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (named.Count > 1)
+            {
+                // Measured on the Exchange guest (2026-11-17): after an .ost is rebuilt, Windows Search keeps the
+                // old copy of the store as a second root of the same name and the same folder paths. The name
+                // rule cannot tell the live one from the stale one, and picking the first would answer from
+                // the copy that no longer changes - so it is refused, with the reason.
+                throw new ArgumentException(DescribeSeveralIndexStoresNamed(store, named), "store_id");
+            }
+
+            StoreScopeInfo? match = named.FirstOrDefault();
 
             if (match == null && store.IndexOf('@') >= 0)
             {
@@ -614,7 +661,9 @@ namespace OutlookAI.Core.Services
                 return FolderScopeResolver.ForPrimaryStoreSegments(match.StorePrefix, folderSegments, includeSubfolders);
             }
 
-            // Delegate store: scope under an owner's /1/<name> subtree.
+            // Delegate store: scope under an owner's /1/<name> subtree - one owner's, never the first of several
+            // (a stale copy of the owner's store after an .ost rebuild holds the same subtree).
+            List<(StoreScopeInfo Owner, string Scope)> delegateScopes = new List<(StoreScopeInfo Owner, string Scope)>();
             foreach (StoreScopeInfo owner in catalog)
             {
                 string delegateScope = DelegateScope(owner, store);
@@ -630,13 +679,25 @@ namespace OutlookAI.Core.Services
 
                 if (exists)
                 {
-                    // The COM tree is needed only for a delegate FOLDER scope: to map the
-                    // requested subtree onto the flat leaf names it contains, and to spot
-                    // leaf names the flat namespace merges.
-                    ComFolderPathList? tree = folder == null ? null : TryGetFolderPaths(store);
-                    return FolderScopeResolver.ForDelegateStore(
-                        delegateScope, folder, includeSubfolders, tree?.Paths, tree?.Incomplete ?? false);
+                    delegateScopes.Add((owner, delegateScope));
                 }
+            }
+
+            if (delegateScopes.Count > 1)
+            {
+                throw new ArgumentException(
+                    DescribeSeveralIndexStoresNamed(store, delegateScopes.Select(d => d.Owner).ToList()),
+                    "store_id");
+            }
+
+            if (delegateScopes.Count == 1)
+            {
+                // The COM tree is needed only for a delegate FOLDER scope: to map the
+                // requested subtree onto the flat leaf names it contains, and to spot
+                // leaf names the flat namespace merges.
+                ComFolderPathList? tree = folder == null ? null : TryGetFolderPaths(store);
+                return FolderScopeResolver.ForDelegateStore(
+                    delegateScopes[0].Scope, folder, includeSubfolders, tree?.Paths, tree?.Incomplete ?? false);
             }
 
             // NOTHING IN THE INDEX ADDRESSES THIS STORE - a store the profile HAS (it was named by its ID,
@@ -644,6 +705,21 @@ namespace OutlookAI.Core.Services
             // store filters which mail may come back and a widened scope would answer with another
             // store's mail.
             return FolderScopeResolver.ForUnindexedStore(folder);
+        }
+
+        /// <summary>
+        /// The refusal for a store name several index stores carry - after an .ost rebuild the index keeps the
+        /// old copy beside the new (measured on the Exchange guest, 2026-11-17), and two profiles' stores can
+        /// share a name - when nothing ties this store to one of them by its hash. Pure.
+        /// </summary>
+        public static string DescribeSeveralIndexStoresNamed(string store, IReadOnlyList<StoreScopeInfo> roots)
+        {
+            return "The search index holds " + roots.Count.ToString(CultureInfo.InvariantCulture) + " stores named '" + store
+                + "' (" + string.Join(", ", roots.Select(r => r.StoreSegment)) + ") and nothing ties this mailbox to one of "
+                + "them: after an Outlook data file (.ost) is rebuilt, Windows Search keeps the old copy beside the new one, "
+                + "with the same folders. A search scoped to it is refused rather than answered from a copy that may no "
+                + "longer change. exhaustive:true reads the mailbox through Outlook; rebuilding the Windows Search index "
+                + "removes the old copy; outlook_health lists the index's stores.";
         }
 
         /// <summary>
@@ -776,6 +852,18 @@ namespace OutlookAI.Core.Services
                     + "is not clear) and pass its folderId. Never guess between folders that share a name.");
             }
 
+            List<string> sharedPaths = matched
+                .GroupBy(m => (Store: m.Folder.StoreDisplayName, Path: m.Folder.Path), new SharedPathComparer())
+                .Where(g => g.Count() > 1)
+                .Select(g => "'" + g.Key.Path + "' in '" + g.Key.Store + "'")
+                .ToList();
+            if (sharedPaths.Count > 0)
+            {
+                advice.Add("Folders of the same name sit side by side at " + string.Join(", ", sharedPaths) + ": they share one "
+                    + "path but each has its own folderId - pass the one that is meant. The search index files them under "
+                    + "that one path, so a search of either can include the other's mail (its scope block says so).");
+            }
+
             if (tree.WalkCapReached || tree.DepthLimitReached)
             {
                 advice.Add("The folder walk was cut short (" + (tree.WalkCapReached ? "walk cap" : "depth limit")
@@ -792,6 +880,22 @@ namespace OutlookAI.Core.Services
                 DepthLimitReached = tree.DepthLimitReached ? true : (bool?)null,
                 Advice = advice.Count > 0 ? advice : null,
             };
+        }
+
+        /// <summary>A store and a path compared the way Outlook compares names: case-insensitively.</summary>
+        private sealed class SharedPathComparer : IEqualityComparer<(string Store, string Path)>
+        {
+            public bool Equals((string Store, string Path) x, (string Store, string Path) y)
+            {
+                return string.Equals(x.Store, y.Store, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(x.Path, y.Path, StringComparison.OrdinalIgnoreCase);
+            }
+
+            public int GetHashCode((string Store, string Path) value)
+            {
+                return StringComparer.OrdinalIgnoreCase.GetHashCode(value.Store ?? string.Empty)
+                    ^ StringComparer.OrdinalIgnoreCase.GetHashCode(value.Path ?? string.Empty);
+            }
         }
 
         private static FolderCandidateView ToCandidate(ComFolderInfo folder, int rank, ComFolderTree tree, IReadOnlyList<ComStoreDetail>? stores)

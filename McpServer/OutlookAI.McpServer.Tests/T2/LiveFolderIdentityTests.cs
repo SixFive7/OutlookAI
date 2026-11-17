@@ -290,7 +290,7 @@ public sealed class LiveFolderIdentityTests
                     // End to end, with NO Outlook call: the folder id alone -> its store's index root (by the
                     // store UID its items' URLs carry) -> its own row (by System.ProviderItemID) -> the scope.
                     Stopwatch mapping = Stopwatch.StartNew();
-                    string? mapped = FolderScopeFromIndexOnly(client, roots, folder.EntryId, out string how);
+                    string? mapped = FolderScopeFromIndexOnly(client, folder.EntryId, out string how);
                     mapping.Stop();
                     int underMapped = mapped == null ? -1 : CountUnder(client, mapped);
                     _output.WriteLine(
@@ -345,7 +345,7 @@ public sealed class LiveFolderIdentityTests
                 {
                     string expected = rootUrl + "/0/" + string.Join("/", bigSegments.Select(MapiUrlSegment.Encode));
                     Stopwatch big = Stopwatch.StartNew();
-                    string? mapped = FolderScopeFromIndexOnly(client, roots, largest.EntryId, out string how);
+                    string? mapped = FolderScopeFromIndexOnly(client, largest.EntryId, out string how);
                     big.Stop();
                     _output.WriteLine(
                         "  largest folder '" + string.Join("/", bigSegments) + "' (" + largest.ItemCount + " items): id -> scope from the index alone "
@@ -672,56 +672,35 @@ public sealed class LiveFolderIdentityTests
     }
 
     /// <summary>
-    /// A PST folder id's index scope, found WITHOUT Outlook (Q115): the root whose item URLs carry the
-    /// id's store UID (bytes 4..19), then the one row under it whose <c>System.ProviderItemID</c> is the
-    /// id's node id. Null when the id is not a PST id or nothing matches - never a guess by name.
+    /// A PST folder id's index scope, found WITHOUT Outlook (Q115) - through the PRODUCT's own route since
+    /// Q132 (i) shipped it (<see cref="IndexSearchService.FindStoreRootsByProviderUid"/>, then
+    /// <see cref="IndexSearchService.FindRowUrlsByProviderItemId"/>), so this measurement times and checks
+    /// what a search does: the root whose item URLs carry the id's store UID (bytes 4..19), then the one
+    /// row under it whose <c>System.ProviderItemID</c> is the id's node id. Null when the id is not a PST
+    /// id or nothing single matches - never a guess by name.
     /// </summary>
-    private string? FolderScopeFromIndexOnly(IIndexClient client, List<IndexRoot> roots, string folderEntryIdHex, out string how)
+    private string? FolderScopeFromIndexOnly(IIndexClient client, string folderEntryIdHex, out string how)
     {
-        FolderEntryIdLayout? layout = FolderEntryIdLayout.Parse(folderEntryIdHex);
-        if (layout?.Kind != FolderEntryIdKind.Pst)
+        string? uid = OutlookIds.ProviderUidHexOf(folderEntryIdHex);
+        string? providerItemId = OutlookIds.PstProviderItemId(Convert.FromHexString(folderEntryIdHex));
+        if (uid == null || providerItemId == null)
         {
             how = "not a PST-format id";
             return null;
         }
 
-        // A byte copy of a PST that was never attached beside its original keeps the original's UID, and the
-        // index - one per Windows user, every profile's stores in it - may hold both: two roots with one UID
-        // are refused, never picked between.
-        List<string> matching = roots
-            .Select(r => r.Url.TrimEnd('/'))
-            .Where(u => string.Equals(StoreUidUnder(client, u), layout.ProviderUidHex, StringComparison.OrdinalIgnoreCase))
-            .ToList();
+        IndexSearchService index = new IndexSearchService(client);
+        IReadOnlyList<StoreScopeInfo> matching = index.FindStoreRootsByProviderUid(uid, StatementTimeoutSeconds);
         if (matching.Count != 1)
         {
             how = matching.Count + " index roots carry the id's store UID";
             return null;
         }
 
-        string sql = "SELECT TOP 5 System.ItemUrl FROM SystemIndex WHERE SCOPE='" + matching[0].Replace("'", "''", StringComparison.Ordinal)
-            + "/' AND System.ProviderItemID='" + layout.PstProviderItemId + "'";
-        List<string> urls = client.ExecuteRows(sql, 5, StatementTimeoutSeconds)
-            .Select(r => Text(r, "System.ItemUrl"))
-            .Where(u => u != null)
-            .Select(u => u!)
-            .ToList();
-        how = "the one root whose items carry the store UID, then " + urls.Count + " row(s) with System.ProviderItemID " + layout.PstProviderItemId;
+        IReadOnlyList<string> urls = index.FindRowUrlsByProviderItemId(matching[0].StorePrefix, providerItemId, StatementTimeoutSeconds);
+        how = "the product's route: the one root whose items carry the store UID, then " + urls.Count
+            + " row(s) with System.ProviderItemID " + providerItemId;
         return urls.Count == 1 ? urls[0] : null;
-    }
-
-    /// <summary>The store UID (bytes 4..19 of an item id) the first item URL under a root carries, or null.</summary>
-    private string? StoreUidUnder(IIndexClient client, string rootUrl)
-    {
-        string sql = "SELECT TOP 200 System.ItemUrl FROM SystemIndex WHERE SCOPE='" + rootUrl.Replace("'", "''", StringComparison.Ordinal) + "/'";
-        foreach (IReadOnlyDictionary<string, object?> row in client.ExecuteRows(sql, 200, StatementTimeoutSeconds))
-        {
-            if (MapiItemUrl.TryParse(Text(row, "System.ItemUrl"), out MapiItemUrl? parsed) && parsed!.TryDecodeEntryId(out DecodedEntryId? decoded))
-            {
-                return decoded!.StoreUidHex;
-            }
-        }
-
-        return null;
     }
 
     /// <summary>How many rows lie under a scope (TOP-bounded).</summary>

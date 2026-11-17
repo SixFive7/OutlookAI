@@ -50,6 +50,39 @@ its mailbox tests on, and change nothing you install.
 
 ### Added
 
+- ✨ **`find_folder` finds folders by name and gives their IDs, and never acts (Q136).**
+  Every tool now addresses a folder by its ID, so an assistant asked about "my Projects folder" first
+  looks the folder up. `find_folder` takes a name, part of one, or the end of a path, and returns
+  candidates: each folder's ID, name, store and store ID, and its path for reading, with exact name
+  matches first, then folders whose path ends with the text, then names that contain it. It changes
+  nothing and acts on nothing; when two folders share a name, its advice tells the assistant to pick
+  by store and path, and to ask the user when that does not settle it. It walks the same folder tree
+  `list_folders` does, and can be narrowed to one store with `store_id`.
+
+- ✨ **`create_folder` makes one mail folder under a folder given by its ID (Q134).**
+  `create_folder(parent_id, name)` makes exactly one folder and returns its ID, ready for
+  `move_mail`. A `/` in the name is part of the name, never a path separator: `Q3/Q4` makes one
+  folder called `Q3/Q4`. A top-level folder is made under the store's root folder, whose ID
+  `list_accounts` and `list_folders` now show as `rootFolderId`. It refuses, with nothing created, a
+  parent in Deleted Items or under it, the Outbox, a folder that is not a mail folder, and a parent
+  that already has a folder of that name, comparing names as Outlook does, without regard to case;
+  that refusal gives the existing folder's ID. If Outlook fails while making the folder, the parent
+  is looked at again, so the answer says whether a folder was made. Every folder made is in the
+  audit log.
+
+- ✨ **A search of one folder in a local data file works while Outlook is not running (Q132).**
+  The folder's ID carries the folder's node id, and the Windows search index keeps that number on
+  the folder's own row (`System.ProviderItemID`), so the search finds the folder in the index
+  without Outlook: the store by the identity its mail carries, then the folder's row. It searches
+  where the index files the folder's mail at that moment, also in the seconds after a rename or move
+  before the index catches up, which a search by the folder's new name could not. Measured on the
+  indexed test machine in October: correct after renames and moves, about a tenth of a second. A
+  folder of an Exchange mailbox still needs Outlook, which is started when needed; while Outlook is
+  not answering, such a search is refused with a message saying so. Measured on the Exchange test
+  machine in November, that index row carries the offline file's own node number, which an
+  Exchange folder's ID does not hold and which changes when the file is rebuilt. Nothing remembers
+  where a folder was: the ID is looked up every time.
+
 - ✨ **`audit_log` pages through any number of entries.**
   When more match than fit on one page, the answer carries nextToken, and passing it back as
   resume_token returns the next older page, until no nextToken comes back. Entries recorded in the
@@ -170,6 +203,16 @@ its mailbox tests on, and change nothing you install.
   last managed to look for a newer one, the same as the writing sidebar has always shown. When a
   check fails, the reason is written out in full here rather than hidden behind a link. Both
   indicators now take their wording from one place, so they cannot disagree.
+
+- ✅ **The tests address folders and stores by ID, as an assistant does (Q131-Q136).**
+  The mailbox tests on the test machines look IDs up through `list_accounts`, `list_folders` and
+  `find_folder`, and make their test folders with `create_folder`, which refuses any name without
+  the test-folder prefix. New checks pin the ID format: every single mistyped character and every
+  swap of two characters up to 30 places apart is refused, a name or path is refused with the
+  `find_folder` call that would find it, and an ID round-trips to the folder's whole entry id. Others
+  pin how a search finds its folder in the index with no Outlook call, the refusal of an Exchange
+  folder while Outlook is not answering, `find_folder`'s ordering and cap, every `create_folder`
+  outcome, and the refusal of every argument this release removed.
 
 - ✅ **The Outlook test machines keep a full crash dump whenever Outlook crashes in a live run.**
   The one-call runner switches Windows Error Reporting's own crash dumps on at every run, on the
@@ -490,6 +533,25 @@ its mailbox tests on, and change nothing you install.
   the log rather than passing quietly.
 
 ### Changed
+
+- 💥 **Every tool addresses folders and stores by ID; names and paths are for display only (Q131-Q135).**
+  Decided by the maintainer on 2026-10-11, after research found a folder's own Outlook ID unique
+  and stable: it survives renames, moves within the mail file, deletion into Deleted Items and
+  restarts, and is never handed out again. A folder ID is that ID, shortened: one letter for its
+  kind, the rest in Crockford's base32 with the bytes every such ID shares left out, and a last
+  character that catches a mistyped ID. It is 34 characters for a folder in a data file and 66 for
+  an Exchange folder; a store ID is 28. Nothing is stored and there is no table: the ID is the
+  folder's own, so it opens the folder directly. `search` takes `store_id` and `folder_id`,
+  `thread` and `list_folders` take `store_id`, `goto_folder` and `show_search_results` take
+  `folder_id` or `store_id`, and `move_mail` takes `folder_id`. `list_accounts` shows each store's
+  `storeId` and `rootFolderId`; `list_folders` and `find_folder` show every folder's `folderId`;
+  `read` shows the mail's `folderId` and `storeId`; search hits carry their `storeId`, and hits found
+  through Outlook their `folderId`; `move_mail`, `archive_mail` and `discard_draft` give
+  `fromFolderId`, so an undo is `move_mail` with that ID. Display names still come with every
+  answer, so a person can read along. A store whose name another store shares is told apart now,
+  where a name could only be refused. A name or path where an ID belongs is refused, with the
+  `find_folder` call that finds it; so is an argument this release removed, rather than being
+  ignored, which for `search` would have searched every mailbox.
 
 - 📦 **The release page lists each change's icon and headline, linked to its full entry (Q123).**
   The maintainer decided it on 2026-10-03, in his words: *"copy the release notes style and system
@@ -1018,7 +1080,41 @@ its mailbox tests on, and change nothing you install.
   recorded: the monthly rebuild the test machine needs comes from how that one machine was licensed,
   and is not something anyone using this product experiences.
 
+### Removed
+
+- 🗑️ **`move_mail` no longer creates folders, and no tool takes a folder path or a store name (Q134, Q135).**
+  `move_mail`'s `create_folder` and `store` arguments are gone: a folder is made with
+  `create_folder`, and the target folder's ID names its store. Its target is checked once, before
+  any mail moves, so a move into Deleted Items or the Outbox is refused with nothing moved; a move by
+  path used to make the missing folders before that check, and could leave a new folder in Deleted
+  Items. The `store` and `folder` arguments of `search`, `thread`, `list_folders`, `goto_folder` and
+  `show_search_results` are gone too, replaced by `store_id` and `folder_id`. A call that still
+  passes one is refused, naming what replaced it.
+
 ### Fixed
+
+- 🐛 **A search of one folder whose name ends with a space finds that folder's mail in the index.**
+  Outlook allows such a name and the index keeps the space, in the folder's address and in its path,
+  but OutlookAI trimmed it, so a search of that folder alone found nothing in the index. The space
+  is kept now, and a folder whose name ends with one is narrowed through its parent, the one way the
+  index matches it. Measured on the indexed test machine in the follow-up to the folder-name work
+  of October (branch `q99-name-encoding-followup`), carried over here.
+
+- 🐛 **A search of a mailbox the index holds twice under one name is refused, not answered from a copy.**
+  After an Exchange offline file (.ost) is rebuilt, Windows Search keeps the old copy of the mailbox
+  beside the new one, under the same name and with the same folders; measured on the Exchange test
+  machine in November. Where nothing ties the mailbox to one of them by its index number, a search
+  scoped to it took the first of the two, which could be the copy that no longer changes. It is
+  refused now, naming both, with what to do: read the mailbox with `exhaustive`, or rebuild the
+  Windows Search index. The same holds for a shared mailbox found under its owner's store.
+
+- 🐛 **A search of a folder with a namesake beside it says the results can include the namesake's mail.**
+  Two folders of the same name can sit side by side, as Exchange's two top-level "Conversation
+  Action Settings" folders do on the Exchange test machine, and the search index keeps one path for
+  both, so a search of one through the index can return the other's mail. Outlook now reports such
+  a folder when its ID is looked up, and the search says so in its advice and with
+  `scope.pathShared`; `find_folder` lists both folders, each with its own ID, and says they share a
+  path.
 
 - 🐛 **Writing a new draft, reply or forward no longer crashes Outlook now and then.**
   OutlookAI wrote each draft in a hidden compose window opened on the item Outlook had just created,

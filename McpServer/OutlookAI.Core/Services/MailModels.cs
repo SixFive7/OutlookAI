@@ -57,6 +57,9 @@ namespace OutlookAI.Core.Services
         /// <summary>The scoped folder's entry id (hex) - set by the search from <see cref="FolderId"/>; what the sweep and the scan open.</summary>
         internal string? ScopeFolderEntryId { get; set; }
 
+        /// <summary>True when Outlook reports another folder with the scoped folder's names path - set by the search.</summary>
+        internal bool ScopeFolderPathShared { get; set; }
+
         /// <summary>
         /// Whether <see cref="Folder"/> covers its SUBFOLDERS too. Default true (user
         /// decision, soak fix 15) - it matches what the index tier always did and removes
@@ -1015,6 +1018,14 @@ namespace OutlookAI.Core.Services
         /// names, read from Outlook. Absent when no folder was named.
         /// </summary>
         public string? FolderFoundVia { get; set; }
+
+        /// <summary>
+        /// True - and present only then - when another folder of the store has the same path (a folder of the
+        /// same name beside it, or beside a folder above it): the search index files both under one path, so
+        /// the index tier's results can include the other folder's mail. advice says so; the freshness sweep
+        /// and exhaustive:true open this exact folder by its ID.
+        /// </summary>
+        public bool? PathShared { get; set; }
 
         /// <summary>Whether subfolders were requested.</summary>
         public bool IncludeSubfolders { get; set; }

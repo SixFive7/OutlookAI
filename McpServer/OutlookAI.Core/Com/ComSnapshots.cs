@@ -463,8 +463,10 @@ namespace OutlookAI.Core.Com
             long? unreadCount,
             bool isStoreRoot,
             string? refusedAsTarget,
-            bool pathComplete = true)
+            bool pathComplete = true,
+            bool pathShared = false)
         {
+            PathShared = pathShared;
             EntryId = entryId;
             Name = name;
             PathSegments = pathSegments;
@@ -524,6 +526,14 @@ namespace OutlookAI.Core.Com
         /// depth guard): <see cref="PathSegments"/> then holds only the part below the stop.
         /// </summary>
         public bool PathComplete { get; }
+
+        /// <summary>
+        /// True when another folder of the store has the same names path - a folder of the same name beside
+        /// this one or beside any folder above it (measured on the Exchange guest: two top-level
+        /// "Conversation Action Settings" folders, one index row for the path). The search index files both
+        /// under one path, so an index scope of this folder covers the other's mail too.
+        /// </summary>
+        public bool PathShared { get; }
     }
 
     /// <summary>

@@ -4941,12 +4941,13 @@ namespace OutlookAI.Core.Com
                 string storeName = TryGetString(() => (string?)((dynamic)storeObject).DisplayName) ?? string.Empty;
                 string? storeEntryId = TryGetString(() => (string?)((dynamic)storeObject).StoreID);
                 TryReadRootFolder(storeObject, out _, out string? rootEntryId);
-                (List<string> segments, bool complete) = ReadPathSegments(folderObject, entryId, rootEntryId);
+                (List<string> segments, bool complete, bool shared) = ReadPathSegments(
+                    folderObject, entryId, rootEntryId, checkSiblings: true);
                 bool isRoot = rootEntryId != null && string.Equals(entryId, rootEntryId, StringComparison.OrdinalIgnoreCase);
                 string? refused = TargetRefusal(storeObject, session, folderObject, entryId, defaultItemType);
                 return new ComFolderDetail(
                     entryId, name, segments, storeName, storeEntryId, rootEntryId, defaultItemType, itemCount, unread, isRoot,
-                    refused, complete);
+                    refused, complete, shared);
             }
             finally
             {
@@ -4962,9 +4963,11 @@ namespace OutlookAI.Core.Com
         /// whose parent (the NameSpace) has no entry id. Complete is false when the walk stopped short:
         /// a parent that would not answer, or <see cref="FolderWalkDepthGuard"/>.
         /// </summary>
-        private static (List<string> Segments, bool Complete) ReadPathSegments(object folderObject, string folderEntryId, string? rootEntryId)
+        private static (List<string> Segments, bool Complete, bool Shared) ReadPathSegments(
+            object folderObject, string folderEntryId, string? rootEntryId, bool checkSiblings = false)
         {
             List<string> names = new List<string>();
+            bool shared = false;
             object? above = null;
             try
             {
@@ -4975,7 +4978,7 @@ namespace OutlookAI.Core.Com
                     if (rootEntryId != null && string.Equals(currentEntryId, rootEntryId, StringComparison.OrdinalIgnoreCase))
                     {
                         names.Reverse();
-                        return (names, true);
+                        return (names, true, shared);
                     }
 
                     object here = current;
@@ -4998,7 +5001,14 @@ namespace OutlookAI.Core.Com
                         // expected root that never matched is a walk that stopped short.
                         Release(up);
                         names.Reverse();
-                        return (names, rootEntryId == null);
+                        return (names, rootEntryId == null, shared);
+                    }
+
+                    // A folder of the same name beside this one gives the two one names path - the index's
+                    // address - so a scope by that path covers both (measured on the Exchange guest).
+                    if (checkSiblings && !shared && name != null)
+                    {
+                        shared = HasSameNamedSibling(up!, name, currentEntryId!);
                     }
 
                     names.Add(name ?? string.Empty);
@@ -5009,11 +5019,59 @@ namespace OutlookAI.Core.Com
                 }
 
                 names.Reverse();
-                return (names, false);
+                return (names, false, shared);
             }
             finally
             {
                 Release(above);
+            }
+        }
+
+        /// <summary>
+        /// STA-side: whether <paramref name="parentObject"/> has a child other than the folder
+        /// <paramref name="ownEntryId"/> whose name is <paramref name="name"/>, compared case-insensitively.
+        /// Reads the children's names and ids only. False when the children will not enumerate.
+        /// </summary>
+        private static bool HasSameNamedSibling(object parentObject, string name, string ownEntryId)
+        {
+            object? children = null;
+            try
+            {
+                children = ((dynamic)parentObject).Folders;
+                dynamic all = children!;
+                int count = all.Count;
+                for (int i = 1; i <= count; i++)
+                {
+                    object? child = null;
+                    try
+                    {
+                        child = all[i];
+                        object probe = child!;
+                        string? childName = TryGetString(() => (string?)((dynamic)probe).Name);
+                        if (string.Equals(childName, name, StringComparison.OrdinalIgnoreCase)
+                            && !string.Equals(TryReadFolderEntryId(probe), ownEntryId, StringComparison.OrdinalIgnoreCase))
+                        {
+                            return true;
+                        }
+                    }
+                    catch (Exception ex) when (IsComCallFailure(ex))
+                    {
+                    }
+                    finally
+                    {
+                        Release(child);
+                    }
+                }
+
+                return false;
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+                return false;
+            }
+            finally
+            {
+                Release(children);
             }
         }
 

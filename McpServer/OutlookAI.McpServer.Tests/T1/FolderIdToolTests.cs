@@ -1,5 +1,6 @@
 using System.Text.Json;
 using OutlookAI.Core.Com;
+using OutlookAI.Core.IndexSearch;
 using OutlookAI.Core.Mapi;
 using OutlookAI.Core.Services;
 using OutlookAI.McpServer.Tools;
@@ -137,6 +138,45 @@ public sealed class FolderIdToolTests
         string shown = Assert.Single(found.Candidates).StoreId!;
         Assert.Equal(MailService.StoreIdOf(uncached), shown);
         Assert.Equal('T', shown[0]);
+    }
+
+    [Fact]
+    public void TwoFoldersOfOneNameSideBySide_AreBothOffered_EachByItsOwnId_AndNamedAsSharingAPath()
+    {
+        // Measured on the Exchange guest: two top-level "Conversation Action Settings" folders, one index
+        // row for the path. find_folder must offer both, never merge them by path.
+        const string Name = "Conversation Action Settings";
+        ComFolderTree tree = new ComFolderTree(
+            new[]
+            {
+                new ComFolderInfo("Work", Name, Name, 0, 0, 0, TestFolders.FolderEntryId("Work", Name + "#1")),
+                new ComFolderInfo("Work", Name, Name, 0, 0, 0, TestFolders.FolderEntryId("Work", Name + "#2")),
+            },
+            stores: new[] { new ComStoreRoot("Work", "store-work", TestFolders.RootEntryId("Work")) });
+
+        FindFolderOutcome found = MailService.MatchFolders(tree, Name, null);
+
+        Assert.Equal(2, found.Candidates.Count);
+        Assert.NotEqual(found.Candidates[0].FolderId, found.Candidates[1].FolderId);
+        Assert.Contains(found.Advice!, a => a.Contains("side by side", StringComparison.Ordinal)
+            && a.Contains("'" + Name + "' in 'Work'", StringComparison.Ordinal));
+        Assert.Contains("exhaustive:true", MailService.DescribeSharedFolderPath(Name), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SeveralIndexStoresOfOneName_AreNamedInTheRefusal_WithTheOstRebuildCause()
+    {
+        // Measured on the Exchange guest: after an .ost rebuild the index keeps the old copy as a second root.
+        StoreScopeInfo stale = StoreScopeInfo.FromStorePrefix("mapi16://{S-1-5-21-1}/someone@example.com($9b7b502)")!;
+        StoreScopeInfo live = StoreScopeInfo.FromStorePrefix("mapi16://{S-1-5-21-1}/someone@example.com($b37770e)")!;
+
+        string refusal = MailService.DescribeSeveralIndexStoresNamed("someone@example.com", new[] { stale, live });
+
+        Assert.Contains("2 stores named 'someone@example.com'", refusal, StringComparison.Ordinal);
+        Assert.Contains("($9b7b502)", refusal, StringComparison.Ordinal);
+        Assert.Contains("($b37770e)", refusal, StringComparison.Ordinal);
+        Assert.Contains(".ost", refusal, StringComparison.Ordinal);
+        Assert.Contains("exhaustive:true", refusal, StringComparison.Ordinal);
     }
 
     // ------------------------------------------------------------------ the store an ID names

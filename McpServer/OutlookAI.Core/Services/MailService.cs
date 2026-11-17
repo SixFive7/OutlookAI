@@ -716,6 +716,7 @@ namespace OutlookAI.Core.Services
             request.ScopeStoreName = null;
             request.ScopeFolderPath = null;
             request.ScopeFolderEntryId = null;
+            request.ScopeFolderPathShared = false;
 
             if (request.Exhaustive)
             {
@@ -839,6 +840,10 @@ namespace OutlookAI.Core.Services
             // sweep can still supply hits for a folder the index has never seen, and
             // "the folder did not resolve" must not be said over a non-empty answer.
             AddFolderScopeAdvice(advice, folderScope);
+            if (request.ScopeFolderPathShared)
+            {
+                advice.Add(DescribeSharedFolderPath(request.ScopeFolderPath));
+            }
 
             if (!request.IndexOnly)
             {
@@ -2048,6 +2053,7 @@ namespace OutlookAI.Core.Services
                 Folder = request.ScopeFolderPath,
                 FolderId = request.FolderId == null ? null : OutlookIds.Canonical(request.FolderId),
                 FolderFoundVia = folderFoundVia,
+                PathShared = request.ScopeFolderPathShared ? true : (bool?)null,
                 IncludeSubfolders = request.IncludeSubfolders,
                 Shape = shape,
                 Widened = folderScope.Widened ? true : (bool?)null,
