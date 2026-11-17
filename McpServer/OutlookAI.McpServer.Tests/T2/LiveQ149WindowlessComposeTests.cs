@@ -54,9 +54,12 @@ public sealed class LiveQ149WindowlessComposeTests
 
     private Q149Run Run => _fixture.Run;
 
+    // One test per cell, so a run can select any group of cells by name and stay short: a run on a frozen
+    // guest has to finish its suite well inside the time its checkpoint allows.
+
     [Fact]
     [Trait("Requires", "MailAccount")]
-    public void L1_TheShippedCompose_WithAndWithoutItsPin()
+    public void L1_TheShippedCompose_WithoutItsPin()
     {
         if (!_fixture.Begin(_output))
         {
@@ -64,12 +67,23 @@ public sealed class LiveQ149WindowlessComposeTests
         }
 
         ShippedCompose(Q149Cells.L1, TrialsL1, pin: false);
+    }
+
+    [Fact]
+    [Trait("Requires", "MailAccount")]
+    public void L1c_TheShippedCompose_WithItsPin()
+    {
+        if (!_fixture.Begin(_output))
+        {
+            return;
+        }
+
         ShippedCompose(Q149Cells.L1Control, TrialsL1Control, pin: true);
     }
 
     [Fact]
     [Trait("Requires", "MailAccount")]
-    public void L2_W2_W3_AnInspectorNeverActivated_ReadOnceOrWaitedFor()
+    public void L2_AnInspectorNeverActivated_ReadOnce()
     {
         if (!_fixture.Begin(_output))
         {
@@ -77,14 +91,36 @@ public sealed class LiveQ149WindowlessComposeTests
         }
 
         FetchOnly(Q149Cells.L2, TrialsFetchOnly, readBudgetMs: 0, firstReadAfterStartMs: 0, show: ShowKind.None);
+    }
+
+    [Fact]
+    [Trait("Requires", "MailAccount")]
+    public void W2_AnInspectorNeverActivated_ReReadFor30Seconds()
+    {
+        if (!_fixture.Begin(_output))
+        {
+            return;
+        }
+
         FetchOnly(Q149Cells.W2, TrialsFetchOnly, readBudgetMs: 30_000, firstReadAfterStartMs: 0, show: ShowKind.None);
+    }
+
+    [Fact]
+    [Trait("Requires", "MailAccount")]
+    public void W3_AnInspectorNeverActivated_ReadFrom180Seconds()
+    {
+        if (!_fixture.Begin(_output))
+        {
+            return;
+        }
+
         FetchOnly(Q149Cells.W3, TrialsLate, readBudgetMs: 30_000, firstReadAfterStartMs: 180_000, show: ShowKind.None);
     }
 
     [Fact]
     [Trait("Requires", "MailAccount")]
     [Trait("Requires", "InteractiveDesktop")]
-    public void W4_W5_AWindowsLevelShow_WithoutActivate()
+    public void W4_TheInspectorsWindowShownByWindows_WithoutActivate()
     {
         if (!_fixture.Begin(_output))
         {
@@ -92,6 +128,18 @@ public sealed class LiveQ149WindowlessComposeTests
         }
 
         FetchOnly(Q149Cells.W4, TrialsShow, readBudgetMs: 5_000, firstReadAfterStartMs: 0, show: ShowKind.Inspector);
+    }
+
+    [Fact]
+    [Trait("Requires", "MailAccount")]
+    [Trait("Requires", "InteractiveDesktop")]
+    public void W5_ThePinsWindowShownByWindows_WithoutActivate()
+    {
+        if (!_fixture.Begin(_output))
+        {
+            return;
+        }
+
         FetchOnly(Q149Cells.W5, TrialsShow, readBudgetMs: 5_000, firstReadAfterStartMs: 0, show: ShowKind.Pin);
     }
 
