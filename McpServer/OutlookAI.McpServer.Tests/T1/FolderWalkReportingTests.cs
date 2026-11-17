@@ -273,6 +273,7 @@ public sealed class FolderWalkReportingTests
     // ================================================ G4: a delegate scope built from a stub
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void ADelegateFolderScope_SaysWhenItsNameListCameFromATruncatedWalk()
     {
         // The delegate index namespace is FLAT, so this scope is an OR of folder NAMES read
@@ -299,6 +300,7 @@ public sealed class FolderWalkReportingTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void TheSameScopeFromACompleteWalk_StaysSilent()
     {
         using MailService service = DelegateService(folderTreeTruncated: false);

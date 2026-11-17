@@ -12,6 +12,7 @@ namespace OutlookAI.McpServer.Tests.T1;
 /// ItemPathDisplay tail = "&lt;parent subject&gt; : &lt;filename&gt;". Synthetic fixtures
 /// only (S6).
 /// </summary>
+[Trait("TimeZone", "Machine")]
 public sealed class HitLocatorSubjectTests
 {
     private const string Sid = "{S-1-5-21-1111111111-2222222222-3333333333-1001}";

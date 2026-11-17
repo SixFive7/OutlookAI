@@ -241,6 +241,7 @@ public sealed class ThreadScopedStoreTests
     // ============================================================ through the whole tool
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void AScopedLookupOnATwoMailboxProfile_NamesTheAccountItNeverAsked()
     {
         // The shipped defect, end to end. Both accounts are indexed, so C4's pass finds
@@ -260,6 +261,7 @@ public sealed class ThreadScopedStoreTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void TheSameProfileWithNoScope_RaisesNothing()
     {
         // Nothing was narrowed, so nothing is claimed here and unwalked_store is free to make
@@ -274,6 +276,7 @@ public sealed class ThreadScopedStoreTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void AScopedLookupOnASingleStoreProfile_RaisesNothing()
     {
         // The cry-wolf case that decides whether the flag is worth anything: there is no other
@@ -290,6 +293,7 @@ public sealed class ThreadScopedStoreTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void AnUnindexedSecondStore_IsReportedOnceByTheOtherCode()
     {
         // Both codes are computed from Outlook's store list, so without the subtraction this
@@ -311,6 +315,7 @@ public sealed class ThreadScopedStoreTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void ADerivedStore_NoLongerNarrowsTheLookup()
     {
         // The shape an agent actually reaches for: search, then thread on a hit id. No store
@@ -339,6 +344,7 @@ public sealed class ThreadScopedStoreTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void AStoreTheCallerNAMED_IsNeverReportedAsDerived()
     {
         // The case the derived/chosen split actually turns on, and the one the first pass of
@@ -360,6 +366,7 @@ public sealed class ThreadScopedStoreTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void AScopeThatWIDENED_NarrowedNothing_AndIsNotReportedAsAScope()
     {
         // C3's state, read through C5's fields. A store the index cannot address resolves to

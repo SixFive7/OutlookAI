@@ -95,6 +95,7 @@ public sealed class TierSemanticsReportingTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void AnOrdinarySearch_ReportsBothTiersBodyScopes()
     {
         using MailService service = Service(Index(), Sweep);
@@ -106,6 +107,7 @@ public sealed class TierSemanticsReportingTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void ASubjectOnlySearch_CarriesNeither()
     {
         using MailService service = Service(Index(), Sweep);
@@ -119,6 +121,7 @@ public sealed class TierSemanticsReportingTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void AnExhaustiveSearch_SaysItReadThePlainTextBodyAndNoAttachment()
     {
         using MailService service = Service(Index(), Sweep, ScanOf);
@@ -151,6 +154,7 @@ public sealed class TierSemanticsReportingTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void AnExhaustiveSearch_CarriesTheSentenceItsFieldImplies()
     {
         using MailService service = Service(Index(), Sweep, ScanOf);
@@ -165,6 +169,7 @@ public sealed class TierSemanticsReportingTests
     // ======================================================= B5: how each tier matched
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void TheIndexMatchesWholeWords_AndTheSweepMatchesSubstrings()
     {
         using MailService service = Service(Index(), Sweep);
@@ -176,6 +181,7 @@ public sealed class TierSemanticsReportingTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void ATermlessSearch_ClaimsNoMatchingSemanticsAtAll()
     {
         using MailService service = Service(Index(), Sweep);
@@ -208,6 +214,7 @@ public sealed class TierSemanticsReportingTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void AnExhaustiveSearch_ReportsItsOwnMatchingInTheSameVocabulary()
     {
         using MailService service = Service(Index(), Sweep, ScanOf);
@@ -265,6 +272,7 @@ public sealed class TierSemanticsReportingTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void TheSecondOfTwoRapidSearches_SaysItsSweepWasNotRunAgain()
     {
         // End to end, and the state the cache exists to produce: two searches inside the TTL,
@@ -296,6 +304,7 @@ public sealed class TierSemanticsReportingTests
     // ============================================== the last silent clamp on this surface
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void ASnippetLengthAboveTheCap_IsReported()
     {
         using MailService service = Service(Index(), Sweep);
@@ -310,6 +319,7 @@ public sealed class TierSemanticsReportingTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void ANegativeSnippetLength_IsReportedToo_BecauseItTurnsSnippetsOff()
     {
         using MailService service = Service(Index(), Sweep);
@@ -324,6 +334,7 @@ public sealed class TierSemanticsReportingTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void AnExhaustiveSearch_SaysItDroppedTheSnippetLengthAltogether()
     {
         // Found by the C5 asymmetry scan: the ordinary search honours and reports this
@@ -341,6 +352,7 @@ public sealed class TierSemanticsReportingTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void ASnippetLengthInsideTheRange_SaysNothing()
     {
         using MailService service = Service(Index(), Sweep);

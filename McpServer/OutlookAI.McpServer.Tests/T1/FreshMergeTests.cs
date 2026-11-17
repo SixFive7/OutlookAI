@@ -56,6 +56,7 @@ public sealed class FreshMergeTests
     private const SearchIn Default = SearchInValues.Default;
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void MatchesTerms_NullOrEmpty_MatchesEverything()
     {
         Assert.True(FreshMerge.MatchesTerms(Brief(), null, Default));
@@ -63,6 +64,7 @@ public sealed class FreshMergeTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void MatchesTerms_AndSemantics_AllTermsMustHit()
     {
         ComMailBrief item = Brief(subject: "Invoice for April", body: "total 100 euro");
@@ -71,6 +73,7 @@ public sealed class FreshMergeTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void MatchesTerms_CaseInsensitive_AcrossSubjectAndBody()
     {
         ComMailBrief item = Brief(subject: "hello", body: "WORLD");
@@ -79,6 +82,7 @@ public sealed class FreshMergeTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void MatchesTerms_SenderIsNotMatchedByTerms_MatchingSenderAloneDoesNotHit()
     {
         // D40/SF-6 tier alignment: the index tier never matched senders by term, so the
@@ -91,6 +95,7 @@ public sealed class FreshMergeTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void MatchesTerms_PrefixStar_MatchesStem()
     {
         ComMailBrief item = Brief(subject: "factuur 2026-001");
@@ -99,6 +104,7 @@ public sealed class FreshMergeTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void MatchesTerms_NoBody_StillMatchesOnSubject()
     {
         ComMailBrief item = Brief(subject: "Order confirmation", body: null);
@@ -109,6 +115,7 @@ public sealed class FreshMergeTests
     // ------------------------------------------------- search_in scopes (D40, user 2026-07-26)
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void MatchesTerms_SubjectOnlyScope_IgnoresBody()
     {
         ComMailBrief item = Brief(subject: "alert prefix", body: "requeued backend");
@@ -118,6 +125,7 @@ public sealed class FreshMergeTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void MatchesTerms_BodyOnlyScope_IgnoresSubject()
     {
         ComMailBrief item = Brief(subject: "alert prefix", body: "requeued backend");
@@ -127,6 +135,7 @@ public sealed class FreshMergeTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void MatchesTerms_DefaultScope_FindsSubjectOnlyAndBodyOnlyTerms()
     {
         // The SF-6 shape in miniature: a term that lives only in the subject must be
@@ -139,6 +148,7 @@ public sealed class FreshMergeTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void MatchesTerms_AndsAcrossSubjectAndBody_NotInsideOneOfThem()
     {
         // Tier parity with the index builder (soak fix 13): the sweep must match mail
@@ -155,6 +165,7 @@ public sealed class FreshMergeTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void MatchesTerms_ScopesHonorPrefixStems()
     {
         ComMailBrief item = Brief(subject: "factuur 2026-001", body: "betaling ontvangen");
@@ -168,12 +179,14 @@ public sealed class FreshMergeTests
     // ---------------------------------------------------------------- IsDuplicate
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void IsDuplicate_SameStoreFolderSubjectAndTime_IsTrue()
     {
         Assert.True(FreshMerge.IsDuplicate(Brief(), Hit(), toleranceSeconds: 15));
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void IsDuplicate_DifferentFolder_SentVsInboxCopy_IsFalse()
     {
         // A self-send: identical subject + near-identical time, but Sent Items vs Inbox
@@ -183,18 +196,21 @@ public sealed class FreshMergeTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void IsDuplicate_DifferentStore_IsFalse()
     {
         Assert.False(FreshMerge.IsDuplicate(Brief(store: "bob@example.com"), Hit(store: "alice@example.com"), 15));
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void IsDuplicate_DifferentSubject_IsFalse()
     {
         Assert.False(FreshMerge.IsDuplicate(Brief(subject: "Other"), Hit(subject: "Quarterly invoice"), 15));
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void IsDuplicate_TimeOutsideTolerance_IsFalse()
     {
         ComMailBrief item = Brief(receivedLocal: BaseUtc.AddMinutes(10).ToLocalTime());
@@ -204,6 +220,7 @@ public sealed class FreshMergeTests
     // ---------------------------------------------------------------- SelectFreshOnly
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void SelectFreshOnly_DropsIndexDuplicates_KeepsNewItems()
     {
         var swept = new List<ComMailBrief>
@@ -221,6 +238,7 @@ public sealed class FreshMergeTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void SelectFreshOnly_DropsRepeatedEntryIds()
     {
         ComMailBrief item = Brief(subject: "Once");
@@ -235,6 +253,7 @@ public sealed class FreshMergeTests
     // ---------------------------------------------------------------- ResolveHitStore
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void ResolveHitStore_DelegateSubtree_UsesFirstFolderSegment()
     {
         var row = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
@@ -249,6 +268,7 @@ public sealed class FreshMergeTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void ResolveHitStore_PrimaryStore_UsesStoreDisplayName()
     {
         Assert.Equal("alice@example.com", FreshMerge.ResolveHitStore(Hit()));

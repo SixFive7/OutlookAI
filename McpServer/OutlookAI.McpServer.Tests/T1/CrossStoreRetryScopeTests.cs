@@ -34,6 +34,7 @@ namespace OutlookAI.McpServer.Tests.T1;
 /// the token it is told to.
 /// </para>
 /// </summary>
+[Trait("TimeZone", "Machine")]
 public sealed class CrossStoreRetryScopeTests
 {
     /// <summary>Three stores, so "stopped at the first" and "tried them all" cannot be confused.</summary>

@@ -101,6 +101,7 @@ public sealed class CorpusUndatedIndexTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void TheReader_AsksAgainUntilTheRowArrives_AndWritesIt()
     {
         var client = new ScriptedClient(
@@ -120,6 +121,7 @@ public sealed class CorpusUndatedIndexTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void TheReader_GivenAWrittenInstant_WaitsPastTheFirstSaveUntilTheIndexDatesItAsWritten()
     {
         // D62 (b): the index takes an item's first save first - dated at its creation - and the probe's written
@@ -155,6 +157,7 @@ public sealed class CorpusUndatedIndexTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void TheReader_GivesUpAtItsWait_AndSaysWhatToCheck()
     {
         var client = new ScriptedClient(_ => Array.Empty<IReadOnlyDictionary<string, object?>>());
@@ -171,6 +174,7 @@ public sealed class CorpusUndatedIndexTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void TheReader_ReportsARefusedStatementOnce_UsesTheOthers_AndNeverThrows()
     {
         var client = new ScriptedClient(sql => sql.Contains("System.Subject,", StringComparison.Ordinal) && sql.Contains("CONTAINS(System.Subject", StringComparison.Ordinal)

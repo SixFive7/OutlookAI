@@ -78,6 +78,7 @@ public sealed class PagingTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void SearchsFingerprint_IsBuiltByTheSharedBuilder_InItsOldShape()
     {
         // ExhaustiveScanCursors now delegates; the canonical text is what it always was.

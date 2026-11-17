@@ -80,6 +80,7 @@ public sealed class ComDateValueTests
     /// are the two things that could happen here and only one of them is right.
     /// </summary>
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void ATableValue_WithNoKind_IsTakenAsAlreadyUtc()
     {
         DateTime? read = ComDateValue.FromTableValue(Unspecified);
@@ -91,6 +92,7 @@ public sealed class ComDateValueTests
 
     /// <summary>A kind that IS stated is believed, in both directions.</summary>
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void ATableValue_ThatStatesItsKind_IsBelieved()
     {
         DateTime utc = DateTime.SpecifyKind(Unspecified, DateTimeKind.Utc);
@@ -106,6 +108,7 @@ public sealed class ComDateValueTests
     /// enter a scan's cursor as a real bound.
     /// </summary>
     [Theory]
+    [Trait("TimeZone", "Machine")]
     [InlineData(null)]
     [InlineData("2026-06-22T14:04:23Z")]
     [InlineData(0)]
@@ -124,6 +127,7 @@ public sealed class ComDateValueTests
     /// runner as anywhere else.
     /// </summary>
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void ATableValue_IsReadInTheZoneItsColumnSpellingReportsIn()
     {
         DateTime expectedFromLocal = new DateTime(2026, 6, 22, 6, 51, 23, DateTimeKind.Utc); // 14:04:23 - 07:13
@@ -149,6 +153,7 @@ public sealed class ComDateValueTests
     /// received 13:29:46Z. Read by spelling, the bound is the item's own instant.
     /// </summary>
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void TheMeasuredDuplicate_IsGoneWhenTheExplicitColumnIsReadAsLocal()
     {
         TimeZoneInfo utcPlusTwo = TimeZoneInfo.CreateCustomTimeZone("OutlookAI-Test-UTC+2", TimeSpan.FromHours(2), "UTC+2", "UTC+2");
@@ -177,6 +182,7 @@ public sealed class ComDateValueTests
     /// named methods and not one call that inspects the kind.
     /// </summary>
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void AnItemValue_WithNoKind_IsTakenAsLocalWallTime()
     {
         DateTime? read = ComDateValue.FromItemValue(Unspecified);
@@ -188,6 +194,7 @@ public sealed class ComDateValueTests
 
     /// <summary>An item value that already knows it is UTC is not shifted a second time.</summary>
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void AnItemValue_AlreadyUtc_IsNotShiftedAgain()
     {
         DateTime utc = DateTime.SpecifyKind(Unspecified, DateTimeKind.Utc);
@@ -197,6 +204,7 @@ public sealed class ComDateValueTests
 
     /// <summary>Null in, null out: an item with no received time is not an item at the epoch.</summary>
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void AnItemValue_ThatIsAbsent_StaysAbsent()
     {
         Assert.Null(ComDateValue.FromItemValue(null));
@@ -210,6 +218,7 @@ public sealed class ComDateValueTests
     /// the developer's own summer instead of the rule.
     /// </summary>
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void TheTwoReadings_DifferByExactlyTheLocalOffset()
     {
         TimeSpan offset = TimeZoneInfo.Local.GetUtcOffset(Unspecified);
@@ -227,6 +236,7 @@ public sealed class ComDateValueTests
     /// be expressed in one zone and evaluated in another.
     /// </summary>
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void TheTableReading_AgreesWithTheDaslLiteralThatSelectedTheRow()
     {
         string literal = DaslDateLiteral.FormatUtc(Unspecified);
@@ -272,6 +282,7 @@ public sealed class ComDateValueTests
     /// <c>table == item</c>, which an item reading that forgot to convert satisfies as well.
     /// </summary>
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void TheTwoReadings_DifferByExactlyTheZonesOffset_OnEveryMachine()
     {
         DateTime table = ComDateValue.FromTableValue(Unspecified)!.Value;
@@ -305,6 +316,7 @@ public sealed class ComDateValueTests
     /// </para>
     /// </summary>
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void TheMachineOverload_GivesTheAnswerTheProductAlwaysGave()
     {
         List<DateTime> wallTimes = new() { DateTime.MinValue, DateTime.MaxValue };
