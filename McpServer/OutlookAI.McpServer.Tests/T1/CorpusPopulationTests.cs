@@ -1838,6 +1838,7 @@ public sealed class CorpusPopulationTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void CorpusIndexed_RefusesTheMeasurementCorpus()
     {
         // A population's size is fixed; the corpus has corpus-verify, and 160,000 rows are not a wait.

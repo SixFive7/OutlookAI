@@ -477,7 +477,7 @@ internal static class WritePathAnalyzer
     }
 
     /// <summary>The compiler-generated MoveNext of an async or iterator method - where its body really is.</summary>
-    private static IEnumerable<MethodBase> StateMachineOf(MethodBase method)
+    internal static IEnumerable<MethodBase> StateMachineOf(MethodBase method)
     {
         foreach (StateMachineAttribute attribute in method.GetCustomAttributes<StateMachineAttribute>())
         {
@@ -495,7 +495,7 @@ internal static class WritePathAnalyzer
     /// declared in this assembly - so a call through <c>ITripwireRetrySource</c> is followed into the
     /// live source as well as into whatever else implements it.
     /// </summary>
-    private static IEnumerable<MethodBase> ImplementationsOf(MethodBase target)
+    internal static IEnumerable<MethodBase> ImplementationsOf(MethodBase target)
     {
         if (target is not MethodInfo method || !(method.IsVirtual || method.IsAbstract))
         {
@@ -612,7 +612,7 @@ internal static class WritePathAnalyzer
         return null;
     }
 
-    private static string Describe(MethodBase method)
+    internal static string Describe(MethodBase method)
     {
         string type = method.DeclaringType?.Name ?? "?";
 

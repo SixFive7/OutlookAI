@@ -29,8 +29,10 @@
       5. Copies in the archive, Testbed/guest/Invoke-BuildVmRun.ps1 and a request file, starts the
          guest script detached, and follows its log until it writes done.txt. That script restores
          from the VM's offline feed, builds, runs `dotnet test --filter Category!=Live` (ANDed in
-         code with -Filter) into a TRX file, and runs every -SelfTest it finds under Testbed\ and
-         Tools\.
+         code with -Filter) into a TRX file, then THE ZONE PASS (Q144): it switches the VM to W. Europe
+         Standard Time ($ZonePassTimeZone), runs the tests marked `TimeZone=Machine` - those that can
+         read the machine's zone, which on a UTC machine is UTC itself - again into a second TRX
+         file, and switches it back; then it runs every -SelfTest it finds under Testbed\ and Tools\.
       6. If the revision needs a NuGet package the VM's feed lacks, stages that revision's packages
          here with Testbed/host/Publish-LiveTierPayload.ps1, adds them to the VM's feed and runs
          step 5 again - once.
@@ -90,8 +92,11 @@
 
     EXIT CODES
         0  PASS      the revision built, every selected test and every self-test passed
-        1  FAIL      a test or a self-test failed, the suite hung or crashed, or the filter
-                     selected no test at all
+        1  FAIL      a test or a self-test failed - in the suite or in the zone pass - the suite or
+                     the zone pass hung or crashed, the zone pass could not switch the VM's zone or
+                     put it back, or the filter selected no test at all. A zone pass that selects no
+                     test is no failure: a revision from before Q144 marks none, and a narrow
+                     -Filter may select none of the marked ones
         2  BUILD     the revision did not restore or build
         3  INFRA     the revision was NOT tested - no result came back: the VM, the lock, the copy
                      or a time limit failed. An error on this side AFTER the guest's results came
@@ -151,7 +156,8 @@
     Internal: the id of the run the janitor watches.
 
 .PARAMETER SelfTest
-    The run-id format, the TRX reader, the verdict table, summary.json's shape, the VM-name
+    The run-id format, the TRX reader, the verdict table with the zone pass, summary.json's
+    shape, the second zone, the VM-name
     allowlist, that every Hyper-V call targets the build VM's variables and none stops, removes or
     checkpoints a VM, that this file, the guest script and Testbed/testbed.json agree on the VM's
     names and paths, and - on scratch files under %TEMP% that it locks itself and removes after -
@@ -214,6 +220,12 @@ $MaxClockSkewSeconds = 2
 
 # Exit codes - see the banner.
 $ExitCodes = [ordered]@{ PASS = 0; FAIL = 1; BUILD = 2; INFRA = 3; REFUSED = 4 }
+
+# The zone pass's zone (Q144, decided by the maintainer 2026-10-11): the build VM stays in UTC, and the
+# tests that can read the machine's zone run a second time in the zone of the maintainer's workstation
+# and the two Outlook guests, which is not UTC and keeps daylight saving. Every run asks for it; the
+# guest switches to it and back inside the run, on the base checkpoint.
+$ZonePassTimeZone = 'W. Europe Standard Time'
 
 # What the host asks the guest every few seconds while a run goes: the new whole lines of the guest
 # script's log, whether that script is alive, and whether it has finished. Sent over PowerShell
@@ -430,13 +442,19 @@ function Get-HostVerdict {
         [object] $Trx,              # ConvertFrom-TrxText's result, or $null
         [bool]   $SuiteRequested,
         [int]    $SelfTestsRun,
-        [int]    $SelfTestsFailed
+        [int]    $SelfTestsFailed,
+        [bool]   $ZonePassRequested = $false,   # the run asked for the zone pass (Q144)
+        [object] $ZonePass = $null,             # run.json's zonePass record, or $null
+        [object] $ZoneTrx = $null               # ConvertFrom-TrxText's result for the zone pass, or $null
     )
     if (-not $GuestVerdict) {
         $why = 'the guest script left no verdict - no run.json came back'
         if ($InfraError) { $why = $InfraError }
         if ($SuiteRequested -and $null -ne $Trx -and ($Trx.Counts['failed'] + $Trx.Counts['other']) -gt 0) {
             return [pscustomobject]@{ Verdict = 'FAIL'; Why = "$($Trx.Counts['failed'] + $Trx.Counts['other']) test(s) did not pass, by the suite's TRX file - the run did not finish: $why" }
+        }
+        if ($SuiteRequested -and $null -ne $ZoneTrx -and ($ZoneTrx.Counts['failed'] + $ZoneTrx.Counts['other']) -gt 0) {
+            return [pscustomobject]@{ Verdict = 'FAIL'; Why = "$($ZoneTrx.Counts['failed'] + $ZoneTrx.Counts['other']) test(s) did not pass in the zone pass, by its TRX file - the run did not finish: $why" }
         }
         return [pscustomobject]@{ Verdict = 'INFRA'; Why = $why }
     }
@@ -449,7 +467,10 @@ function Get-HostVerdict {
         }
         'RESTORE-FAILED' { return [pscustomobject]@{ Verdict = 'BUILD'; Why = 'the restore failed' } }
         'BUILD-FAILED' { return [pscustomobject]@{ Verdict = 'BUILD'; Why = 'the build failed' } }
-        'SUITE-BROKEN' { return [pscustomobject]@{ Verdict = 'FAIL'; Why = 'the suite hung, crashed or left no TRX file' } }
+        'SUITE-BROKEN' {
+            if ($null -ne $ZonePass -and [string]$ZonePass.state -eq 'broken') { return [pscustomobject]@{ Verdict = 'FAIL'; Why = "the zone pass in $($ZonePass.timeZone) did not complete: $($ZonePass.why)" } }
+            return [pscustomobject]@{ Verdict = 'FAIL'; Why = 'the suite hung, crashed or left no TRX file' }
+        }
         'FAIL' { }
         'PASS' { }
         default { return [pscustomobject]@{ Verdict = 'INFRA'; Why = "the guest script left a verdict this runner does not know ('$GuestVerdict')" } }
@@ -457,12 +478,38 @@ function Get-HostVerdict {
     if ($SuiteRequested) {
         if ($null -eq $Trx) { return [pscustomobject]@{ Verdict = 'FAIL'; Why = 'the suite ran and no TRX file came back' } }
         if ($Trx.Counts['total'] -eq 0) { return [pscustomobject]@{ Verdict = 'FAIL'; Why = 'the filter selected no test - nothing was tested' } }
-        if ($Trx.Counts['failed'] -gt 0 -or $Trx.Counts['other'] -gt 0) { return [pscustomobject]@{ Verdict = 'FAIL'; Why = "$($Trx.Counts['failed'] + $Trx.Counts['other']) test(s) did not pass" } }
+        $zoneWhy = ''
+        if ($ZonePassRequested) { $zoneWhy = Get-ZonePassFailure -ZonePass $ZonePass -ZoneTrx $ZoneTrx }
+        if ($Trx.Counts['failed'] -gt 0 -or $Trx.Counts['other'] -gt 0) {
+            $why = "$($Trx.Counts['failed'] + $Trx.Counts['other']) test(s) did not pass"
+            if ($zoneWhy) { $why += "; $zoneWhy" }
+            return [pscustomobject]@{ Verdict = 'FAIL'; Why = $why }
+        }
+        if ($zoneWhy) { return [pscustomobject]@{ Verdict = 'FAIL'; Why = $zoneWhy } }
     }
     if ($SelfTestsFailed -gt 0) { return [pscustomobject]@{ Verdict = 'FAIL'; Why = "$SelfTestsFailed self-test(s) failed" } }
     if ($GuestVerdict -eq 'FAIL') { return [pscustomobject]@{ Verdict = 'FAIL'; Why = 'the guest script reported a failure' } }
     if (-not $SuiteRequested -and $SelfTestsRun -eq 0) { return [pscustomobject]@{ Verdict = 'FAIL'; Why = 'no self-test was selected - nothing was tested' } }
     return [pscustomobject]@{ Verdict = 'PASS'; Why = '' }
+}
+
+# Why the zone pass fails a run whose suite ran, or '' when it does not (Q144). A pass that selected
+# no test does not: a revision from before Q144 marks none, and a narrow -Filter may select none of
+# the marked tests - T1/TimeZoneMarkerTests is what fails a test that should have been marked.
+function Get-ZonePassFailure {
+    param([object] $ZonePass, [object] $ZoneTrx)
+    if ($null -eq $ZonePass) { return 'the zone pass left no record in run.json' }
+    $zone = [string]$ZonePass.timeZone
+    switch ([string]$ZonePass.state) {
+        'broken' { return "the zone pass in $zone did not complete: $($ZonePass.why)" }
+        'none-selected' { return '' }
+        'skipped' { return "the zone pass in $zone did not run: $($ZonePass.why)" }
+    }
+    if ($null -eq $ZoneTrx) { return "the zone pass in $zone ran and no TRX file came back" }
+    $bad = $ZoneTrx.Counts['failed'] + $ZoneTrx.Counts['other']
+    if ($bad -gt 0) { return "$bad test(s) did not pass in $zone" }
+    if ([string]$ZonePass.state -ne 'passed') { return "the zone pass in $zone ended '$($ZonePass.state)'" }
+    return ''
 }
 
 # -SelfTestInclude's patterns, one each: every value split on commas, trimmed, empties dropped.
@@ -493,12 +540,29 @@ function New-RunSummary {
         [bool]     $PackagesStaged,
         [System.Collections.IDictionary] $Timings,
         [System.Collections.IDictionary] $GuestPhases,
-        [string]   $Results
+        [string]   $Results,
+        [bool]     $ZonePassRequested = $false,
+        [object]   $ZonePass = $null,      # run.json's zonePass record, or $null
+        [object]   $ZoneTrx = $null        # ConvertFrom-TrxText's result for the zone pass, or $null
     )
     $failed = @()
     $skipped = @()
     $suite = $null
     if ($null -ne $Trx) { $failed = @($Trx.Failed); $skipped = @($Trx.Skipped); $suite = $Trx.Counts }
+    # The zone pass (Q144): null when the run did not ask for one, and its lists arrays at every length.
+    $zonePassSummary = $null
+    if ($ZonePassRequested) {
+        $zoneFailed = @()
+        $zoneSkipped = @()
+        $zoneCounts = $null
+        if ($null -ne $ZoneTrx) { $zoneFailed = @($ZoneTrx.Failed); $zoneSkipped = @($ZoneTrx.Skipped); $zoneCounts = $ZoneTrx.Counts }
+        $zonePassSummary = [ordered]@{ timeZone = $ZonePassTimeZone; state = 'no record'; why = 'the zone pass left no record in run.json'; filter = $null; readBack = $null; restoredTo = $null; suite = $zoneCounts; failed = $zoneFailed; skipped = $zoneSkipped }
+        if ($null -ne $ZonePass) {
+            foreach ($k in @('timeZone', 'state', 'why', 'filter', 'readBack', 'restoredTo')) {
+                if ($null -ne $ZonePass.$k) { $zonePassSummary[$k] = [string]$ZonePass.$k }
+            }
+        }
+    }
     $ran = @($SelfTests | Where-Object { $null -ne $_ })
     $failures = @($ran | Where-Object { -not $_.passed } | ForEach-Object { [string]$_.path })
     $filterValue = $null
@@ -513,6 +577,7 @@ function New-RunSummary {
         suite          = $suite
         failed         = $failed
         skipped        = $skipped
+        zonePass       = $zonePassSummary
         selfTests      = [ordered]@{ run = $ran.Count; failed = $failures.Count; skippedByReason = @($SelfTestSkips | Where-Object { $null -ne $_ }).Count; failures = $failures }
         guestVerdict   = $GuestVerdict
         hostError      = $HostError
@@ -528,6 +593,43 @@ function Format-Seconds {
     param([double] $Seconds)
     if ($Seconds -lt 60) { return ('{0:N0} s' -f $Seconds) }
     return ('{0} m {1:00} s' -f [int][Math]::Floor($Seconds / 60), [int]($Seconds % 60))
+}
+
+# summary.txt's lines for the zone pass (Q144): what it ran and how it came out, and the zone a new
+# process read in it and after it - the evidence that it ran where it says, and that the self-tests
+# after it ran in the VM's own zone again.
+function Format-ZonePassLines {
+    param([bool] $Requested, [object] $ZonePass, [object] $ZoneTrx)
+    if (-not $Requested) { return @('zone pass  skipped, with the suite') }
+    if ($null -eq $ZonePass) { return @("zone pass  $ZonePassTimeZone - not known: no zone pass came back in run.json") }
+    $head = "zone pass  $($ZonePass.timeZone)"
+    $state = [string]$ZonePass.state
+    $out = @()
+    if ($null -ne $ZoneTrx -and $ZoneTrx.Counts['total'] -gt 0) {
+        $c = $ZoneTrx.Counts
+        $other = ''
+        if ($c['other'] -gt 0) { $other = ", $($c['other']) other" }
+        $out += ('{0}: {1} total: {2} passed, {3} failed, {4} skipped{5} - filter {6}' -f $head, $c['total'], $c['passed'], $c['failed'], $c['skipped'], $other, $ZonePass.filter)
+    }
+    elseif ($state -eq 'none-selected' -or $null -ne $ZoneTrx) { $out += "${head}: no test this run selects is marked - filter $($ZonePass.filter)" }
+    else {
+        $why = [string]$ZonePass.why
+        if (-not $why) { $why = 'its TRX file did not come back' }
+        $out += "${head}: $state - $why"
+    }
+    if ($ZonePass.readBack -or $ZonePass.restoredTo) { $out += "           a new process read '$($ZonePass.readBack)' in it and '$($ZonePass.restoredTo)' after it" }
+    return $out
+}
+
+# A list of failed tests for summary.txt, at most 50 named: the suite's, and the zone pass's.
+function Add-FailedTests {
+    param([System.Collections.Generic.List[string]] $Lines, [string] $Title, [object[]] $Failed, [string] $TrxFile)
+    $all = @($Failed | Where-Object { $null -ne $_ })
+    if ($all.Count -eq 0) { return }
+    $Lines.Add('')
+    $Lines.Add($Title)
+    foreach ($f in @($all | Select-Object -First 50)) { $Lines.Add("  $($f.name)"); if ($f.message) { $Lines.Add("      $($f.message)") } }
+    if ($all.Count -gt 50) { $Lines.Add("  ... and $($all.Count - 50) more - see $TrxFile") }
 }
 
 function Invoke-SelfTest {
@@ -664,6 +766,52 @@ Expected: 1</Message></ErrorInfo></Output></UnitTestResult>
     Check 'no TRX at all: no suite, and the test lists are still empty arrays' $true (($j -match '"suite":\s*null') -and ($j -match '"failed":\s*\[\s*\]') -and ($j -match '"skipped":\s*\[\s*\]'))
 
     Write-Host ''
+    Write-Host '== the zone pass (Q144): the marked tests again in a second zone, in the verdict and both summaries =='
+    Check 'the second zone is not the VM''s own' $true ($ZonePassTimeZone -ne $BuildVmTimeZone)
+    $zoneKnown = $true
+    try { [void][System.TimeZoneInfo]::FindSystemTimeZoneById($ZonePassTimeZone) } catch { $zoneKnown = $false }
+    Check 'and Windows knows it, so the guest can switch to it' $true $zoneKnown
+    function ZoneRecord([string] $State, [string] $Why = '') {
+        return [pscustomobject]@{ timeZone = $ZonePassTimeZone; state = $State; why = $Why; filter = 'Category!=Live&TimeZone=Machine'; readBack = $ZonePassTimeZone; restoredTo = $BuildVmTimeZone }
+    }
+    function ZoneVerdict([string] $GuestVerdict = 'PASS', [object] $Trx = $green, [object] $ZonePass = (ZoneRecord 'passed'), [object] $ZoneTrx = $green, [bool] $Requested = $true, [string] $InfraError = '') {
+        return (Get-HostVerdict -GuestVerdict $GuestVerdict -InfraError $InfraError -Trx $Trx -SuiteRequested $true -SelfTestsRun 5 -SelfTestsFailed 0 -ZonePassRequested $Requested -ZonePass $ZonePass -ZoneTrx $ZoneTrx)
+    }
+    $zoneOneFailure = ConvertFrom-TrxText ($trxText -replace 'outcome="Timeout"', 'outcome="Passed"')
+    Check 'a green suite and a green zone pass is PASS' 'PASS' (ZoneVerdict).Verdict
+    Check 'a test that fails only in the zone pass is FAIL' 'FAIL' (ZoneVerdict -GuestVerdict 'FAIL' -ZonePass (ZoneRecord 'failed') -ZoneTrx $zoneOneFailure).Verdict
+    Check 'and the why names the zone it failed in' $true ((ZoneVerdict -GuestVerdict 'FAIL' -ZonePass (ZoneRecord 'failed') -ZoneTrx $zoneOneFailure).Why.Contains("1 test(s) did not pass in $ZonePassTimeZone"))
+    Check 'failures in both passes are both named' '2 test(s) did not pass; 1 test(s) did not pass in W. Europe Standard Time' (ZoneVerdict -GuestVerdict 'FAIL' -Trx $trx -ZonePass (ZoneRecord 'failed') -ZoneTrx $zoneOneFailure).Why
+    Check 'a zone pass that selected no test is no failure - a revision before Q144 marks none' 'PASS' (ZoneVerdict -ZonePass (ZoneRecord 'none-selected' 'no test this run selects is marked TimeZone=Machine') -ZoneTrx $null).Verdict
+    Check 'nor is one whose TRX file holds no test' 'PASS' (ZoneVerdict -ZoneTrx $empty).Verdict
+    Check 'a zone pass that could not switch the zone is FAIL, saying why' 'FAIL|True' ('{0}|{1}' -f (ZoneVerdict -GuestVerdict 'SUITE-BROKEN' -ZonePass (ZoneRecord 'broken' 'the VM did not reach the zone: Access is denied') -ZoneTrx $null).Verdict, (ZoneVerdict -GuestVerdict 'SUITE-BROKEN' -ZonePass (ZoneRecord 'broken' 'the VM did not reach the zone: Access is denied') -ZoneTrx $null).Why.Contains('did not complete: the VM did not reach the zone'))
+    Check 'and a broken suite with a zone pass that never ran is still the suite''s fault' 'the suite hung, crashed or left no TRX file' (ZoneVerdict -GuestVerdict 'SUITE-BROKEN' -Trx $null -ZonePass (ZoneRecord 'skipped' 'the suite did not run to its end') -ZoneTrx $null).Why
+    Check 'a requested zone pass that left no record is FAIL' 'FAIL' (ZoneVerdict -ZonePass $null -ZoneTrx $null).Verdict
+    Check 'one that ran and brought back no TRX file is FAIL' 'FAIL' (ZoneVerdict -ZoneTrx $null).Verdict
+    Check 'one that did not run although the suite did is FAIL' 'FAIL' (ZoneVerdict -ZonePass (ZoneRecord 'skipped' 'the suite did not run to its end') -ZoneTrx $null).Verdict
+    Check 'a run that asked for none is judged without one' 'PASS' (ZoneVerdict -Requested $false -ZonePass $null -ZoneTrx $null).Verdict
+    Check 'a run that did not finish, whose zone TRX came back failing, is FAIL - a test that failed failed' 'FAIL' (ZoneVerdict -GuestVerdict '' -InfraError $unfinished -ZonePass $null -ZoneTrx $zoneOneFailure).Verdict
+    $z = New-RunSummary -RunId '20261117-120000-0123456789ab' -Verdict (ZoneVerdict -GuestVerdict 'FAIL' -ZonePass (ZoneRecord 'failed') -ZoneTrx $zoneOneFailure) -Revision ([ordered]@{ ref = 'HEAD' }) -Filter 'Category!=Live' -Trx $green -SelfTests @() -SelfTestSkips @() -GuestVerdict 'FAIL' -HostError '' -BuildErrors @() -PackagesStaged $false -Timings ([ordered]@{ total = 1.0 }) -GuestPhases ([ordered]@{}) -Results 'C:\x' -ZonePassRequested $true -ZonePass (ZoneRecord 'failed') -ZoneTrx $zoneOneFailure
+    $j = $z | ConvertTo-Json -Depth 6
+    Check 'summary.json: the zone pass''s one failed test is an array of one' $true ($j -match '"zonePass":\s*\{[\s\S]*"failed":\s*\[\s*\{')
+    Check 'and reads back as one, with its zone, state and counts' "1|$ZonePassTimeZone|failed|4" ('{0}|{1}|{2}|{3}' -f @(($j | ConvertFrom-Json).zonePass.failed).Count, ($j | ConvertFrom-Json).zonePass.timeZone, ($j | ConvertFrom-Json).zonePass.state, ($j | ConvertFrom-Json).zonePass.suite.total)
+    Check 'and its one skipped test an array of one' 1 @(($j | ConvertFrom-Json).zonePass.skipped).Count
+    $j = (New-RunSummary -RunId '20261117-120000-0123456789ab' -Verdict (ZoneVerdict) -Revision ([ordered]@{ ref = 'HEAD' }) -Filter '' -Trx $null -SelfTests @() -SelfTestSkips @() -GuestVerdict 'PASS' -HostError '' -BuildErrors @() -PackagesStaged $false -Timings ([ordered]@{ total = 1.0 }) -GuestPhases ([ordered]@{}) -Results 'C:\x') | ConvertTo-Json -Depth 6
+    Check 'a run that asked for no zone pass has none in summary.json' $true ($j -match '"zonePass":\s*null')
+    $lines = @(Format-ZonePassLines -Requested $true -ZonePass (ZoneRecord 'failed') -ZoneTrx $zoneOneFailure)
+    Check 'summary.txt: the zone pass''s counts and filter' "zone pass  ${ZonePassTimeZone}: 4 total: 2 passed, 1 failed, 1 skipped - filter Category!=Live&TimeZone=Machine" $lines[0]
+    Check 'and the zones a new process read in it and after it' "           a new process read '$ZonePassTimeZone' in it and '$BuildVmTimeZone' after it" $lines[1]
+    Check 'a pass that selected nothing says so' "zone pass  ${ZonePassTimeZone}: no test this run selects is marked - filter Category!=Live&TimeZone=Machine" (@(Format-ZonePassLines -Requested $true -ZonePass (ZoneRecord 'none-selected') -ZoneTrx $null)[0])
+    Check 'a broken one says why' "zone pass  ${ZonePassTimeZone}: broken - the VM did not reach the zone: x" (@(Format-ZonePassLines -Requested $true -ZonePass (ZoneRecord 'broken' 'the VM did not reach the zone: x') -ZoneTrx $null)[0])
+    Check 'a run without the suite has none' 'zone pass  skipped, with the suite' (@(Format-ZonePassLines -Requested $false -ZonePass $null -ZoneTrx $null)[0])
+    $list = New-Object System.Collections.Generic.List[string]
+    Add-FailedTests -Lines $list -Title 'FAILED IN THE ZONE PASS' -Failed @($zoneOneFailure.Failed) -TrxFile 'vm\trx\zone.trx'
+    Check 'summary.txt lists the zone pass''s failed tests under their own title' 'FAILED IN THE ZONE PASS|  T1.A.Fails|      Assert.Equal() Failure' (@($list | Where-Object { $_ }) -join '|')
+    $list = New-Object System.Collections.Generic.List[string]
+    Add-FailedTests -Lines $list -Title 'FAILED TESTS' -Failed @() -TrxFile 'vm\trx\suite.trx'
+    Check 'and adds nothing when none failed' 0 $list.Count
+
+    Write-Host ''
     Write-Host '== the guest log is read with sharing, and a locked one is Busy, never an error =='
     # Real files, in a scratch directory under %TEMP% that is removed afterwards: this is the one
     # place the self-test touches a disk, because what is being pinned is a file-sharing behaviour.
@@ -767,6 +915,7 @@ Expected: 1</Message></ErrorInfo></Output></UnitTestResult>
     Check 'its offline feed is this one' $true ($guestText.Contains("[string]   `$OfflineFeed = '$GuestFeedRoot'"))
     Check 'its guard names this computer' $true ($guestText.Contains("[string]   `$ExpectedComputerName = '$BuildVmComputerName'"))
     Check 'and this account' $true ($guestText.Contains("[string[]] `$ExpectedUser = @('$BuildVmUser')"))
+    Check 'it reads the zone pass''s zone from the request this file writes' $true ($guestText.Contains('zonePassTimeZone') -and $guestText.Contains('Set-TimeZone -Id $zone'))
 
     Write-Host ''
     Write-Host "$($script:stChecks) check(s), $($script:stFailures.Count) failure(s)."
@@ -973,6 +1122,7 @@ $requestFilter = $Filter.Trim()
 $filterShown = 'Category!=Live'
 if ($requestFilter) { $filterShown = "Category!=Live&($requestFilter)" }
 if ($SkipSuite) { Say '  suite     skipped (-SkipSuite)' } else { Say "  suite     dotnet test --filter $filterShown" }
+if (-not $SkipSuite) { Say "  zone pass the tests that can read the machine's zone, again in $ZonePassTimeZone (Q144)" }
 $SelfTestInclude = @(Split-IncludeList $SelfTestInclude)
 if ($SkipSelfTests) { Say '  selftests skipped (-SkipSelfTests)' }
 elseif (@($SelfTestInclude).Count -gt 0) { Say "  selftests only $(@($SelfTestInclude) -join ', ')" }
@@ -990,6 +1140,7 @@ $request = [ordered]@{
     skipSuite       = [bool]$SkipSuite
     skipSelfTests   = [bool]$SkipSelfTests
     selfTestInclude = @($SelfTestInclude)
+    zonePassTimeZone = $ZonePassTimeZone
     revision        = [ordered]@{ ref = $Ref; sha = $sha; subject = $subject; repo = $repo; uncommittedLeftOut = $dirtyCount; runId = $runId }
 }
 $requestPath = Join-Path $runDir 'request.json'
@@ -1296,7 +1447,7 @@ finally {
                 # what it left one file at a time, each read with sharing - the guest may still be
                 # writing - so that a run.json and a TRX file that exist still decide the verdict.
                 $fetched = @()
-                foreach ($rel in @('run.log', 'run.json', 'trx\suite.trx', 'restore.out.txt', 'build.out.txt')) {
+                foreach ($rel in @('run.log', 'run.json', 'trx\suite.trx', 'trx\zone.trx', 'restore.out.txt', 'build.out.txt')) {
                     $text = Invoke-InGuest -ArgumentList @((Join-Path $GuestRunRoot (Join-Path 'results' $rel))) -Block $ReadGuestLogBlock
                     if ($null -eq $text) { continue }
                     $target = Join-Path $vmDir $rel
@@ -1348,17 +1499,24 @@ if (Test-Path -LiteralPath $runJsonPath) {
     try { $guestRecord = [System.IO.File]::ReadAllText($runJsonPath) | ConvertFrom-Json; $guestVerdict = [string]$guestRecord.verdict }
     catch { if (-not $infraError) { $infraError = "run.json came back unreadable: $($_.Exception.Message)" } }
 }
-$trxPath = Join-Path $vmDir 'trx\suite.trx'
-$trx = $null
-if (Test-Path -LiteralPath $trxPath) {
-    try { $trx = ConvertFrom-TrxText ([System.IO.File]::ReadAllText($trxPath)) }
-    catch { if (-not $infraError) { $infraError = "the TRX file came back unreadable: $($_.Exception.Message)" } }
+function Read-TrxFile([string] $Path, [string] $What) {
+    if (-not (Test-Path -LiteralPath $Path)) { return $null }
+    try { return (ConvertFrom-TrxText ([System.IO.File]::ReadAllText($Path))) }
+    catch {
+        if (-not $script:infraError) { $script:infraError = "$What came back unreadable: $($_.Exception.Message)" }
+        return $null
+    }
 }
+$trx = Read-TrxFile (Join-Path $vmDir 'trx\suite.trx') 'the TRX file'
+# The zone pass (Q144): its TRX file and its record in run.json.
+$zoneTrx = Read-TrxFile (Join-Path $vmDir 'trx\zone.trx') "the zone pass's TRX file"
+$zonePassRequested = -not $SkipSuite
+$zonePass = $null
 $selfTests = @()
 $selfTestSkips = @()
-if ($null -ne $guestRecord) { $selfTests = @($guestRecord.selfTests); $selfTestSkips = @($guestRecord.selfTestSkips) }
+if ($null -ne $guestRecord) { $selfTests = @($guestRecord.selfTests); $selfTestSkips = @($guestRecord.selfTestSkips); $zonePass = $guestRecord.zonePass }
 $selfTestsFailed = @($selfTests | Where-Object { -not $_.passed }).Count
-$hostVerdict = Get-HostVerdict -GuestVerdict $guestVerdict -InfraError $infraError -Trx $trx -SuiteRequested (-not $SkipSuite) -SelfTestsRun $selfTests.Count -SelfTestsFailed $selfTestsFailed
+$hostVerdict = Get-HostVerdict -GuestVerdict $guestVerdict -InfraError $infraError -Trx $trx -SuiteRequested (-not $SkipSuite) -SelfTestsRun $selfTests.Count -SelfTestsFailed $selfTestsFailed -ZonePassRequested $zonePassRequested -ZonePass $zonePass -ZoneTrx $zoneTrx
 $timings['total'] = [math]::Round(((Get-Date) - $tStart).TotalSeconds, 1)
 $exitCode = $ExitCodes[$hostVerdict.Verdict]
 
@@ -1383,6 +1541,7 @@ elseif ($null -ne $trx) {
     $lines.Add(("suite      {0} total: {1} passed, {2} failed, {3} skipped{4} - filter {5}" -f $c['total'], $c['passed'], $c['failed'], $c['skipped'], $(if ($c['other'] -gt 0) { ", $($c['other']) other" } else { '' }), $filterShown))
 }
 else { $lines.Add("suite      no TRX file - guest verdict '$guestVerdict'") }
+foreach ($l in @(Format-ZonePassLines -Requested $zonePassRequested -ZonePass $zonePass -ZoneTrx $zoneTrx)) { $lines.Add($l) }
 if ($SkipSelfTests) { $lines.Add('self-tests skipped') }
 elseif ($null -eq $guestRecord) { $lines.Add('self-tests not known - no run.json came back') }
 else { $lines.Add(("self-tests {0} run: {1} passed, {2} failed; {3} skipped by reason" -f $selfTests.Count, ($selfTests.Count - $selfTestsFailed), $selfTestsFailed, $selfTestSkips.Count)) }
@@ -1414,12 +1573,8 @@ if ($guestVerdict -eq 'BUILD-FAILED' -or $guestVerdict -eq 'RESTORE-FAILED') {
         if ($buildErrors.Count -gt 30) { $lines.Add("  ... and $($buildErrors.Count - 30) more - see $phaseLog") }
     }
 }
-if ($null -ne $trx -and @($trx.Failed).Count -gt 0) {
-    $lines.Add('')
-    $lines.Add('FAILED TESTS')
-    foreach ($f in @($trx.Failed | Select-Object -First 50)) { $lines.Add("  $($f.name)"); if ($f.message) { $lines.Add("      $($f.message)") } }
-    if (@($trx.Failed).Count -gt 50) { $lines.Add("  ... and $(@($trx.Failed).Count - 50) more - see vm\trx\suite.trx") }
-}
+if ($null -ne $trx) { Add-FailedTests -Lines $lines -Title 'FAILED TESTS' -Failed @($trx.Failed) -TrxFile 'vm\trx\suite.trx' }
+if ($null -ne $zoneTrx) { Add-FailedTests -Lines $lines -Title "FAILED IN THE ZONE PASS, IN $($ZonePassTimeZone.ToUpperInvariant())" -Failed @($zoneTrx.Failed) -TrxFile 'vm\trx\zone.trx' }
 if ($null -ne $trx -and @($trx.Skipped).Count -gt 0) {
     $lines.Add('')
     $lines.Add('SKIPPED TESTS')
@@ -1443,12 +1598,12 @@ if ($null -ne $guestRecord -and @($guestRecord.notes).Count -gt 0) {
 }
 $lines.Add('')
 $lines.Add("results    $runDir")
-$lines.Add('           summary.txt and summary.json here; vm\run.log, vm\trx\suite.trx and every build, test and self-test log under vm\')
+$lines.Add('           summary.txt and summary.json here; vm\run.log, vm\trx\suite.trx, vm\trx\zone.trx and every build, test and self-test log under vm\')
 
 Set-Content -LiteralPath (Join-Path $runDir 'summary.txt') -Value $lines -Encoding UTF8
 $summaryFilter = $filterShown
 if ($SkipSuite) { $summaryFilter = '' }
-$summary = New-RunSummary -RunId $runId -Verdict $hostVerdict -Revision ([ordered]@{ ref = $Ref; sha = $sha; subject = $subject; repo = $repo; uncommittedLeftOut = $dirtyCount }) -Filter $summaryFilter -Trx $trx -SelfTests $selfTests -SelfTestSkips $selfTestSkips -GuestVerdict $guestVerdict -HostError $infraError -BuildErrors $buildErrors -PackagesStaged $packagesStaged -Timings $timings -GuestPhases $guestPhases -Results $runDir
+$summary = New-RunSummary -RunId $runId -Verdict $hostVerdict -Revision ([ordered]@{ ref = $Ref; sha = $sha; subject = $subject; repo = $repo; uncommittedLeftOut = $dirtyCount }) -Filter $summaryFilter -Trx $trx -SelfTests $selfTests -SelfTestSkips $selfTestSkips -GuestVerdict $guestVerdict -HostError $infraError -BuildErrors $buildErrors -PackagesStaged $packagesStaged -Timings $timings -GuestPhases $guestPhases -Results $runDir -ZonePassRequested $zonePassRequested -ZonePass $zonePass -ZoneTrx $zoneTrx
 ($summary | ConvertTo-Json -Depth 6) | Set-Content -LiteralPath (Join-Path $runDir 'summary.json') -Encoding UTF8
 Write-History ("end    $runId  $($hostVerdict.Verdict)  $(Format-Seconds $timings['total'])")
 

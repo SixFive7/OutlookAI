@@ -4,6 +4,7 @@ using Xunit;
 namespace OutlookAI.McpServer.Tests.T1;
 
 /// <summary>T1: Phase-2 WS-SQL builder additions - ConversationID equality (thread tool) and size ordering.</summary>
+[Trait("TimeZone", "Machine")]
 public sealed class WsSqlBuilderPhase2Tests
 {
     private const string SyntheticScope = "mapi16://{S-1-5-21-1111111111-2222222222-3333333333-1001}/alice@example.com($deadbeef)";

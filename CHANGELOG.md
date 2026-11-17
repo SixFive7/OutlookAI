@@ -171,6 +171,19 @@ its mailbox tests on, and change nothing you install.
   check fails, the reason is written out in full here rather than hidden behind a link. Both
   indicators now take their wording from one place, so they cannot disagree.
 
+- ✅ **Tests that can read the machine's time zone run again in Central European time (Q144).**
+  The build machine runs the suite in UTC (Q126), where the machine's zone and UTC are one zone, so
+  a test that compares a local time with a UTC one only proved them equal. After the suite, every
+  run now switches the machine to W. Europe Standard Time, runs the tests marked
+  `[Trait("TimeZone", "Machine")]` once more, and switches it back before the self-checks. The
+  summary, its JSON and the exit code report both runs. A new check, `T1/TimeZoneMarkerTests`,
+  fails any unmarked test whose code, or the code it calls in the product, reads the machine's zone,
+  and names the call chain to the read. It found 323 of the 2,595 test methods, in 39 classes; 145
+  of them reach the zone only through a product conversion that reads it for a local time alone,
+  which a reading of the code cannot tell apart. All 323 are marked; their 383 test cases took
+  1.2 s between them in a recent full run. As the maintainer decided, a marked test is rewritten to
+  set its own zone when it is next changed, and then loses its mark.
+
 - ✅ **The Outlook test machines keep a full crash dump whenever Outlook crashes in a live run.**
   The one-call runner switches Windows Error Reporting's own crash dumps on at every run, on the
   frozen checkpoints as they are, brings every dump back with the run's results, and reads each one
@@ -723,7 +736,7 @@ its mailbox tests on, and change nothing you install.
   GitHub's UTC runner used to catch time-zone bugs, the way the Q95 one was found, and it went with
   the CI. `OutlookAI-Build` now rests on `CP-03-SDK-TEST-READY-UTC`, the runner refuses a guest in
   any other zone, and the first runs passed 3,818 of 3,818 with no zone bug found. Tests that use
-  the machine's own zone as the other one now prove less; how to cover them is open (Q144).
+  the machine's own zone as the other one prove less there, so they run again in Central European time (Q144).
 
 - ✅ **The indexed test machine's test mailboxes hold calendar entries, contacts and tasks again.**
   There are four of each in the hub and fourteen in the bystander, as the maintainer decided (D62

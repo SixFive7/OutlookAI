@@ -1812,27 +1812,24 @@
   the only direction that covers the real input, and work of its own. Recommended: (2) once the
   helper question is decided, then (4).
 
-- [ ] **Decide how the non-live suite keeps a non-UTC zone, now that it runs only in UTC (after
-  Q126 (a), 2026-10-03).** The build VM is UTC and nothing else runs the suite (Q94), so tests that
-  use the machine's own zone as the "other" zone - build a `Local` value, compare it with the `Utc`
-  one - prove only the identity: a product bug that mixes local and UTC times passes them in UTC
-  and would have failed them in W. Europe. Found by searching T1 for reads of the machine's zone,
-  which is not exhaustive: `FreshMergeTests` (Outlook's local received time against the index's
-  UTC one), `ComHostProtocolTests` (a date's kind over the wire), `DaslDateLiteralTests`'s
-  local-kind case, `CensusTableRowTests`'s local-kind fingerprint, and two `ComDateValueTests` -
-  whose conversion is also pinned in a zone of the test's own (Q95), the pattern that holds in any
-  zone. The first UTC run passed whole, so nothing
-  is known broken. Directions: (1) both zones on every run - the runner runs the suite again after
-  switching the guest to W. Europe inside the run (the restore throws that away): complete, about
-  3 more minutes a run; (2) the same, but the second pass runs only tests tagged as reading the
-  machine's zone, with a T1 guard that finds such tests by their IL and fails an untagged one:
-  seconds a run; (3) make those tests zone-explicit, as `ComDateValueTests` is - the product
-  function takes a `TimeZoneInfo`, the machine overload passes `TimeZoneInfo.Local` (pinned by IL),
-  and the test uses a zone of its own: right in any zone, but product refactoring per function;
-  (4) an odd-offset zone with daylight saving instead of UTC (D4's other alternative): every test
-  keeps a non-zero offset, but loses what UTC catches - a test that assumes the offset is not zero,
-  Q95's kind; (5) accept it - the live tier on the W. Europe guests drives Outlook's real dates.
-  Recommended: (2), with (3) for each test as it is next touched.
+- [ ] **Decide how wide the time-zone check's line is (Q144 follow-up, 2026-11-17).**
+  `T1/TimeZoneMarkerTests` fails a test that can read the machine's zone and is not marked
+  `[Trait("TimeZone", "Machine")]`, and the build VM runs the marked ones again in W. Europe. It reads
+  compiled code, which cannot show a value's kind, so it counts a test that CAN reach a read, not
+  only one that does: 145 of the 323 marked tests reach the zone only through five product
+  conversions that convert a value already marked Local and nothing else - `WsSqlBuilder.FormatUtc`,
+  `DaslDateLiteral.FormatUtc`, `IndexRowMapper.AsUtcDateTime`, `IndexSearchService.GetStaleness`,
+  `ComDateValue.FromTableValue`. Under the rule that a marked test is rewritten to set its own zone
+  when next touched, those 145 can lose their marks only if the product changes. Measured
+  2026-11-17 with a scratch copy of the walk. Directions: (1) keep the line as it is -
+  nothing to maintain, 323 marks, and the 383 marked cases take about a second of test time; (2)
+  trust the five conversions through a reviewed list and count making a Local value
+  (`DateTime.SpecifyKind(x, DateTimeKind.Local)`, `new DateTime(..., DateTimeKind.Local)`) as a read
+  instead - 178 marks, and a list kept true by hand, as `ReadOnlyProductApi` is; (3) give the five a
+  zone parameter, as `ComDateValue.FromItemValue` got in Q95, so their tests name a zone of their
+  own - product work in five functions; (4) count only the tests' own code - 28 marks, and it misses
+  every test whose product call converts in the machine's zone, `MailService.ToUtc` (122 tests)
+  among them, the Q95 kind. Recommended: (1) now, and (3) for each function as it is next changed.
 
 - [ ] **Waiting for the shared test mailbox (Q109).** The maintainer requested a free shared
   mailbox in his Microsoft 365 tenant on 2026-10-03 (for example `outlookai-test@xxlnet.nl`, with

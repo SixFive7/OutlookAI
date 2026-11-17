@@ -174,6 +174,7 @@ public sealed class ThreadUnindexedStoreTests
     // ============================================================ through the whole tool
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void AConversationWalkedOnAMixedProfile_NamesTheStoreNeitherTierCovers()
     {
         // The shipped defect, end to end: one indexed mailbox, one data file the index has
@@ -194,6 +195,7 @@ public sealed class ThreadUnindexedStoreTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void AFullyIndexedProfile_RaisesNothing()
     {
         // The flag that matters is the one that does not cry wolf: every store here is in
@@ -209,6 +211,7 @@ public sealed class ThreadUnindexedStoreTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void AProfileOfNothingButTheWalkedStore_RaisesNothing()
     {
         // An all-PST profile of ONE store: the index holds nothing for it, and the walk
@@ -223,6 +226,7 @@ public sealed class ThreadUnindexedStoreTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void AStoreListWithNothingInIt_MakesNoClaimEitherWay()
     {
         // Silence means "not established", never "indexed" - the same rule the sweep's
@@ -238,6 +242,7 @@ public sealed class ThreadUnindexedStoreTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void ManyUnindexedStores_AreCappedAndTheCutIsReported()
     {
         List<ComStoreDetail> stores = new List<ComStoreDetail> { new(IndexedStore, "store-alice", 0, true) };

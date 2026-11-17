@@ -35,6 +35,7 @@ public sealed class DaslDateLiteralTests
     private static readonly string[] CultureNames = ["en-US", "nl-NL", "de-DE", "lt-LT", "th-TH", ""];
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void DayTwelveOrLower_PinsTheExactYearFirstLiteral()
     {
         // Day 5 <= 12: under the old month-first literal Outlook read "08/05/2026" as
@@ -49,6 +50,7 @@ public sealed class DaslDateLiteralTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void EveryMonth_FirstTwelveDays_StayYearMonthDay()
     {
         // The whole ambiguous band in one pin: days 1-12 of every month are exactly the
@@ -69,6 +71,7 @@ public sealed class DaslDateLiteralTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void Literal_IsIdenticalUnderEveryThreadCulture()
     {
         DateTime utc = new(2026, 8, 5, 7, 9, 3, DateTimeKind.Utc);
@@ -81,6 +84,7 @@ public sealed class DaslDateLiteralTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void ExhaustiveFilter_DateClauses_AreIdenticalUnderEveryThreadCulture()
     {
         // The formatter is pure, but the defect shipped inside the FILTER - so the filter
@@ -110,6 +114,7 @@ public sealed class DaslDateLiteralTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void LocalKind_IsConvertedToUtc_UnspecifiedIsTakenAsUtc()
     {
         DateTime utc = new(2026, 8, 5, 7, 9, 3, DateTimeKind.Utc);
@@ -124,6 +129,7 @@ public sealed class DaslDateLiteralTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void DaslAndWsSqlTiers_EmitTheSameDateLiteral()
     {
         // Both query languages now carry one shape, so a future change to either tier's

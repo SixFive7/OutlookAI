@@ -44,6 +44,7 @@ namespace OutlookAI.McpServer.Tests.T1;
 /// stand-in index client. No mailbox and no Windows Search index are touched.
 /// </para>
 /// </summary>
+[Trait("TimeZone", "Machine")]
 public sealed class SweepCacheKeyTests
 {
     private const string Sid = "{S-1-5-21-1111111111-2222222222-3333333333-1001}";

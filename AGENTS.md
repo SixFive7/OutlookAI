@@ -205,10 +205,11 @@ pwsh -File Testbed/host/Invoke-TestsOnBuildVm.ps1 -SkipSuite -SelfTestInclude 'T
 
 - **It tests a commit.** Uncommitted changes are not in the run, which says how many it left out:
   commit first - a work-in-progress commit is fine.
-- **The exit code is the verdict:** 0 pass; 1 a test or self-test failed, the suite hung, or the
-  filter selected nothing; 2 the revision does not build; 3 not tested (the VM, the lock, a time
-  limit); 4 refused. Results land in `.work\build-vm-runs\<run>\` of the checkout it ran from:
-  `summary.txt`, `summary.json`, `vm\trx\suite.trx` and every log.
+- **The exit code is the verdict:** 0 pass; 1 a test or self-test failed - in the suite or the zone
+  pass - the suite hung, or the filter selected nothing; 2 the revision does not build; 3 not
+  tested (the VM, the lock, a time limit); 4 refused. Results land in `.work\build-vm-runs\<run>\`
+  of the checkout it ran from: `summary.txt`, `summary.json`, `vm\trx\suite.trx`,
+  `vm\trx\zone.trx` and every log.
 - **One run at a time; callers queue.** Run it in the background or with a timeout of 20 minutes
   or more. Never use the VM by hand while runs may happen; to hold runs off, take a lease on it
   with `Testbed/host/Set-TestbedLease.ps1 -VMName OutlookAI-Build` and release it after.
@@ -216,6 +217,15 @@ pwsh -File Testbed/host/Invoke-TestsOnBuildVm.ps1 -SkipSuite -SelfTestInclude 'T
   W. Europe: with GitHub's UTC runner gone, it is where a zone-dependent test fails. A failure
   there that W. Europe would not show is a time-zone bug until shown otherwise - fix it with a T1
   test that pins it in both zones, never by moving the VM back (`Testbed/README.md` section 1c).
+- **The tests that can read the machine's time zone run a second time, in W. Europe** (Q144,
+  decided by the maintainer 2026-10-11): every run but a `-SkipSuite` one switches the VM to
+  W. Europe Standard Time after the suite, runs the tests marked `[Trait("TimeZone", "Machine")]`
+  again, and switches it back. `T1/TimeZoneMarkerTests` fails a test that can read the machine's
+  zone and carries no mark; the failure names the call chain to the read. Mark it - on the method,
+  or on its class when every test in the class reads the zone. **When you next touch a marked test,
+  rewrite it to set its own zone**, as `T1/ComDateValueTests` does with `OddFixedZone` - the product
+  function takes a `TimeZoneInfo`, and the test names a zone of its own - and drop the mark once
+  the check no longer finds the test. Write a new test that way from the start.
 
 **Live runs on the two test guests go through `Testbed/host/Invoke-LiveTierOnGuest.ps1`, one call
 per run** (2026-10-03, `Testbed/README.md` section 4c) - never driven by hand:
