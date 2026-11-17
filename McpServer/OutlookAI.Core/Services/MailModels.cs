@@ -137,7 +137,7 @@ namespace OutlookAI.Core.Services
     /// <para>
     /// It is what makes the continuation survivable: the token lives in one server process,
     /// so a server restart loses it - and a caller holding this block continues by hand with
-    /// <c>folder</c> and <c>before</c>, which are parameters <c>search</c> already has. That
+    /// <c>folder_id</c> and <c>before</c>, which are parameters <c>search</c> already has. That
     /// is why the token itself can afford to be ten characters of context instead of a
     /// kilobyte of self-describing state.
     /// </para>
@@ -150,8 +150,14 @@ namespace OutlookAI.Core.Services
         /// <summary>Mail folders in scope, counted by this page's own ordered enumeration.</summary>
         public int FoldersTotal { get; set; }
 
-        /// <summary>Store-relative path of the folder the next page starts in.</summary>
+        /// <summary>Store-relative path of the folder the next page starts in - for reading only.</summary>
         public string? ResumeFolder { get; set; }
+
+        /// <summary>
+        /// The ID of that folder (Q131): a hand resume - after a restart lost the token - passes it as
+        /// folder_id, with before set from resumeCursorUtc.
+        /// </summary>
+        public string? ResumeFolderId { get; set; }
 
         /// <summary>True when the next page resumes PART WAY THROUGH that folder rather than at its top.</summary>
         public bool ResumeWithinFolder { get; set; }
@@ -2075,13 +2081,6 @@ namespace OutlookAI.Core.Services
         /// </summary>
         public int? StoresUnnamed { get; set; }
 
-        /// <summary>
-        /// Stores a store-SCOPED listing had to leave out because they would not report a
-        /// name, so they could be neither matched against the requested store nor ruled out
-        /// of it. Null on an unscoped listing, where nothing has to be decided and such a
-        /// store is listed under its label instead.
-        /// </summary>
-        public int? StoresUnnamedExcluded { get; set; }
 
         /// <summary>
         /// What a caller has to know about this listing that the counters alone do not say -

@@ -204,7 +204,7 @@ public sealed class UnindexedStoreScopeTests
         ArgumentException error =
             Assert.Throws<ArgumentException>(() => service.Search(Request("no-such-store-xyz")));
 
-        Assert.Contains("was not found in Outlook", error.Message, StringComparison.Ordinal);
+        Assert.Contains("No store in this Outlook profile has the ID", error.Message, StringComparison.Ordinal);
         Assert.DoesNotContain("was not found in the local index", error.Message, StringComparison.Ordinal);
     }
 
@@ -226,17 +226,16 @@ public sealed class UnindexedStoreScopeTests
     [Fact]
     public void TheRefusal_IsTheSameOneListFoldersUses()
     {
-        // One shape for one mistake, across the two tools that can make it (gap G1's
-        // precedent): the pure classifier is shared rather than reimplemented, so the two
+        // One shape for one mistake, across the tools that can make it (gap G1's precedent): an unknown
+        // store ID is refused by the one store resolver both share (MailService.PickStore), so the two
         // messages cannot drift into two vocabularies for one error.
-        string expected = MailService.DescribeUnresolvedFolderStore(
-            "no-such-store-xyz", new[] { IndexedStore, PstStore })!;
         using MailService service = Service(NothingIndexed());
+        string unknown = TestFolders.StoreId("no-such-store-xyz");
 
-        ArgumentException error =
-            Assert.Throws<ArgumentException>(() => service.Search(Request("no-such-store-xyz")));
+        ArgumentException bySearch = Assert.Throws<ArgumentException>(() => service.Search(Request("no-such-store-xyz")));
+        ArgumentException byListing = Assert.Throws<ArgumentException>(() => service.ListFolders(unknown));
 
-        Assert.StartsWith(expected, error.Message, StringComparison.Ordinal);
+        Assert.Equal(byListing.Message, bySearch.Message);
     }
 
     [Fact]
@@ -250,8 +249,8 @@ public sealed class UnindexedStoreScopeTests
 
         ArgumentException error = Assert.Throws<ArgumentException>(() => service.Search(Request(PstStore)));
 
-        Assert.Contains("Outlook could not be reached", error.Message, StringComparison.Ordinal);
-        Assert.DoesNotContain("was not found in Outlook", error.Message, StringComparison.Ordinal);
+        Assert.Contains("Outlook is not answering", error.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("No store in this Outlook profile has the ID", error.Message, StringComparison.Ordinal);
     }
 
     // ==================================================================== thread

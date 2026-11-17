@@ -306,7 +306,6 @@ namespace OutlookAI.Core.Com
             bool walkCapReached = false,
             bool depthLimitReached = false,
             int storesUnnamed = 0,
-            int storesUnnamedExcluded = 0,
             IReadOnlyList<ComStoreRoot>? stores = null)
         {
             Stores = stores ?? Array.Empty<ComStoreRoot>();
@@ -314,7 +313,6 @@ namespace OutlookAI.Core.Com
             WalkCapReached = walkCapReached;
             DepthLimitReached = depthLimitReached;
             StoresUnnamed = storesUnnamed;
-            StoresUnnamedExcluded = storesUnnamedExcluded;
         }
 
         /// <summary>The folders the walk collected, in the stable traversal order.</summary>
@@ -337,13 +335,6 @@ namespace OutlookAI.Core.Com
         /// display name (gap G2).
         /// </summary>
         public int StoresUnnamed { get; }
-
-        /// <summary>
-        /// Unnameable stores a store-SCOPED walk left out because they could be neither
-        /// matched against the requested name nor ruled out of it. Zero on an unscoped walk,
-        /// where every store is in scope and nothing has to be decided.
-        /// </summary>
-        public int StoresUnnamedExcluded { get; }
     }
 
     /// <summary>
@@ -820,8 +811,10 @@ namespace OutlookAI.Core.Com
             string? resumeFolderPath = null,
             bool resumeWithinFolder = false,
             DateTime? resumeCursorUtc = null,
-            string? resumeTier = null)
+            string? resumeTier = null,
+            string? resumeFolderEntryId = null)
         {
+            ResumeFolderEntryId = resumeFolderEntryId;
             Cursor = cursor;
             FoldersDone = foldersDone;
             FoldersTotal = foldersTotal;
@@ -842,6 +835,9 @@ namespace OutlookAI.Core.Com
 
         /// <summary>Store-relative path of the folder the next page starts in.</summary>
         public string? ResumeFolderPath { get; }
+
+        /// <summary>Entry id of that folder - what its folder ID is built from, so a hand resume names it by ID.</summary>
+        public string? ResumeFolderEntryId { get; }
 
         /// <summary>True when the next page resumes PART WAY THROUGH that folder.</summary>
         public bool ResumeWithinFolder { get; }

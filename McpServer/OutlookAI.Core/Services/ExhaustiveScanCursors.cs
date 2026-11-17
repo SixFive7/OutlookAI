@@ -78,6 +78,9 @@ namespace OutlookAI.Core.Services
         /// <summary>Store-relative path the next page starts in.</summary>
         public string? ResumeFolderPath { get; internal set; }
 
+        /// <summary>Entry id of that folder, for the hand resume by folder ID.</summary>
+        public string? ResumeFolderEntryId { get; internal set; }
+
         /// <summary>The next page's inclusive date bound, when the folder sorted.</summary>
         public DateTime? ResumeCursorUtc { get; internal set; }
 
@@ -102,11 +105,14 @@ namespace OutlookAI.Core.Services
                 .Append(PagesServed.ToString(CultureInfo.InvariantCulture))
                 .Append(" page(s).");
 
-            if (!string.IsNullOrEmpty(ResumeFolderPath))
+            string? resumeFolderId = OutlookAI.Core.Mapi.OutlookIds.FolderIdFromEntryId(ResumeFolderEntryId);
+            if (!string.IsNullOrEmpty(resumeFolderId))
             {
-                _ = text.Append(" Continue without a token by re-running the same search with folder:'")
+                _ = text.Append(" Continue without a token by re-running the same search with folder_id:'")
+                    .Append(resumeFolderId)
+                    .Append("' (the folder '")
                     .Append(ResumeFolderPath)
-                    .Append('\'');
+                    .Append("')");
                 if (ResumeCursorUtc.HasValue)
                 {
                     _ = text.Append(" and before:'")
@@ -369,6 +375,7 @@ namespace OutlookAI.Core.Services
                 session.FoldersDone = position.FoldersDone;
                 session.FoldersTotal = position.FoldersTotal;
                 session.ResumeFolderPath = position.ResumeFolderPath;
+                session.ResumeFolderEntryId = position.ResumeFolderEntryId;
                 session.ResumeCursorUtc = position.ResumeCursorUtc;
                 session.ResumeTier = position.ResumeTier;
                 _tokenToSession[token] = session.SessionId;

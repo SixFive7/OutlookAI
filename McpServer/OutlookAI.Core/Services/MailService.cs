@@ -963,7 +963,7 @@ namespace OutlookAI.Core.Services
             {
                 advice.Add("Result list capped at " + top.ToString(CultureInfo.InvariantCulture)
                     + " (top); more matches exist - raise top (max " + SearchTopCap.ToString(CultureInfo.InvariantCulture)
-                    + ") or narrow with store/folder/from/after filters.");
+                    + ") or narrow with store_id/folder_id/from/after filters.");
             }
 
             AddTopClampAdvice(advice, request.Top, top);
@@ -993,7 +993,7 @@ namespace OutlookAI.Core.Services
                 // Say so (D42), in a FIELD as well as here since 2026-08-18 (gap G6).
                 advice.Add("The index tier could not confirm this list holds every match: its candidate rows ran out "
                     + "while filtering, or the follow-up query that would have proved otherwise failed. "
-                    + "Narrow with store/folder/after, or lower top.");
+                    + "Narrow with store_id/folder_id/after, or lower top.");
             }
 
             // Say the live check's outcome in a FIELD, not only in prose: a result that
@@ -1251,7 +1251,7 @@ namespace OutlookAI.Core.Services
             advice.Add("top=" + requestedTop.ToString(CultureInfo.InvariantCulture) + " was reduced to "
                 + effectiveTop.ToString(CultureInfo.InvariantCulture) + " (the hard cap): search returns at most "
                 + SearchTopCap.ToString(CultureInfo.InvariantCulture)
-                + " hits per call. Narrow with store/folder/from/after, or page by moving the 'before' bound.");
+                + " hits per call. Narrow with store_id/folder_id/from/after, or page by moving the 'before' bound.");
         }
 
         /// <summary>
@@ -1487,9 +1487,9 @@ namespace OutlookAI.Core.Services
                             + " s budget after " + sweep.FoldersSwept.ToString(CultureInfo.InvariantCulture)
                             + " folder(s) and stopped there, so stores or folders it had not reached yet have no freshness "
                             + "coverage - index results still cover them, but brand-new mail there may be missing. It "
-                            + "returned what it did cover rather than failing. Name a 'store' (and a 'folder' if you know "
-                            + "one) to give the sweep less ground, or re-run: the window it could not finish is still open "
-                            + "next time.");
+                            + "returned what it did cover rather than failing. Pass a store_id (or a folder_id if you know "
+                            + "the folder) to give the sweep less ground, or re-run: the window it could not finish is still "
+                            + "open next time.");
                         break;
 
                     case FreshMerge.GapTimeBudget:
@@ -1748,7 +1748,7 @@ namespace OutlookAI.Core.Services
                             + " levels and never opened them, so mail in them is NOT covered by these results. A real "
                             + "mailbox is nowhere near that deep, so this points at a damaged or looping folder tree "
                             + "rather than at the bound being too low - list_folders on this store shows where. Scan "
-                            + "the subtree directly with folder set to a path inside it.");
+                            + "the subtree directly with folder_id set to a folder inside it.");
                         break;
 
                     case FreshMerge.ScanGapRowsUnreadable:
@@ -1808,8 +1808,8 @@ namespace OutlookAI.Core.Services
                             + "been covered, so ordinarily nothing is missing"
                             + (exhaustive.CursorFolderMissing == true
                                 ? " - EXCEPT that the folder this scan had stopped inside is gone, so whatever it "
-                                    + "still held is NOT covered by these results. Check list_folders for where it "
-                                    + "went and scan that path directly."
+                                    + "still held is NOT covered by these results. Check find_folder for where it "
+                                    + "went and scan that folder directly by its folder_id."
                                 : ". Mail that arrived in an already-finished folder after that folder was scanned is "
                                     + "not covered either; a fresh search with a tighter 'after' bound picks it up."));
                         break;
@@ -1911,8 +1911,9 @@ namespace OutlookAI.Core.Services
                 case ScanTokenDecision.Unknown:
                     return "resume_token is not known to this server: continuation state lives in the running "
                         + "process and is lost when it restarts, and it is also dropped once its scan finishes. "
-                        + "Continue by re-running this search with 'folder' and 'before' set from the previous "
-                        + "result's exhaustive.position, or omit resume_token to start a fresh scan.";
+                        + "Continue by re-running this search with folder_id and before set from the previous "
+                        + "result's exhaustive.position (resumeFolderId, resumeCursorUtc), or omit resume_token to "
+                        + "start a fresh scan.";
 
                 case ScanTokenDecision.Expired:
                     return "resume_token has expired - a paged scan stays resumable for a limited time after its "
@@ -3239,6 +3240,7 @@ namespace OutlookAI.Core.Services
                     FoldersDone = scan.Position.FoldersDone,
                     FoldersTotal = scan.Position.FoldersTotal,
                     ResumeFolder = scan.Position.ResumeFolderPath,
+                    ResumeFolderId = OutlookIds.FolderIdFromEntryId(scan.Position.ResumeFolderEntryId),
                     ResumeWithinFolder = scan.Position.ResumeWithinFolder,
                     ResumeCursorUtc = scan.Position.ResumeCursorUtc,
                     ResumeTier = scan.Position.ResumeTier,
@@ -7930,8 +7932,8 @@ namespace OutlookAI.Core.Services
             return storesUnnamed.Value.ToString(CultureInfo.InvariantCulture)
                 + " store(s) in this profile would not report a display name to Outlook. Their mail IS in this answer "
                 + "(the freshness sweep covered them under '" + StoreNaming.UnnamedStorePrefix
-                + "N)' labels), but they cannot be used as a 'store' scope, and hits from them carry that label "
-                + "instead of a real store name. list_folders shows their folder trees.";
+                + "N)' labels), and hits from them carry that label instead of a real store name; list_accounts "
+                + "gives each its storeId, which scopes a search like any other's. list_folders shows their trees.";
         }
 
         /// <summary>
@@ -7958,78 +7960,6 @@ namespace OutlookAI.Core.Services
                 + "-level depth guard), and a delegate folder scope can only be matched by folder "
                 + "NAME - so folders the walk never reached were searched by no tier. Narrow to a single folder with "
                 + "include_subfolders:false, or use exhaustive:true with store plus folder/after bounds.";
-        }
-
-        /// <summary>
-        /// Why a <c>list_folders</c> store scope resolved to nothing, or null when the empty
-        /// tree is the honest answer (gap G1). Pure, and public so T1 pins both verdicts -
-        /// reaching them for real needs a live profile.
-        /// <para>
-        /// The message deliberately matches the shape the index-tier store resolver already
-        /// throws: what was asked for, what exists, and the tool that lists the rest. Two
-        /// tools refusing the same mistake in two different shapes is how an agent learns to
-        /// handle one and not the other.
-        /// </para>
-        /// <para>
-        /// <paramref name="knownStores"/> comes from the same COM enumeration
-        /// <c>ListFolders</c> itself walks, so the two agree by construction. It holds the
-        /// stores that reported a NAME; <paramref name="unnamedStores"/> counts the rest,
-        /// and it is what stops this refusal asserting more than it knows. Until gap G2 was
-        /// closed such a store was absent from every list in this server, so "not found in
-        /// Outlook" was said with certainty about a profile that might well have held it
-        /// under a name nothing could read.
-        /// </para>
-        /// </summary>
-        /// <param name="requestedStore">The store scope as the caller wrote it.</param>
-        /// <param name="knownStores">Stores Outlook reported a display name for.</param>
-        /// <param name="unnamedStores">
-        /// How many stores Outlook has whose display name could not be read (gap G2). Any of
-        /// them could be the requested one, so a non-zero count turns the refusal from a
-        /// verdict into a report of what could and could not be established.
-        /// </param>
-        public static string? DescribeUnresolvedFolderStore(
-            string requestedStore, IReadOnlyList<string>? knownStores, int unnamedStores = 0)
-        {
-            if (requestedStore == null)
-            {
-                throw new ArgumentNullException(nameof(requestedStore));
-            }
-
-            if (StoreNaming.IsUnnamedStoreLabel(requestedStore))
-            {
-                // The caller read a label out of a payload and passed it back as a scope,
-                // which is the one wrong turn this label makes possible - so it gets the
-                // answer that fits, rather than the "check for a typo" a generic refusal
-                // would send it hunting for. A scope is matched against DisplayName, and
-                // DisplayName is exactly what this store would not report.
-                return "'" + requestedStore + "' is a placeholder this server prints for a store whose display name "
-                    + "Outlook would not report - not a name, and it cannot be used as a scope, because a store scope "
-                    + "is matched against the display name that could not be read. Search without 'store' to include "
-                    + "that store's mail, or use exhaustive:true with a folder bound.";
-            }
-
-            IReadOnlyList<string> known = knownStores ?? Array.Empty<string>();
-            foreach (string candidate in known)
-            {
-                if (string.Equals(candidate, requestedStore, StringComparison.OrdinalIgnoreCase))
-                {
-                    // It is there and it has no folders below its root. Nothing was lost, so
-                    // nothing is reported.
-                    return null;
-                }
-            }
-
-            return "Store '" + requestedStore + "' was not found in Outlook. "
-                + (known.Count > 0
-                    ? "Known stores: " + string.Join(", ", known) + ". "
-                    : "Outlook reported no stores at all. ")
-                + (unnamedStores > 0
-                    ? unnamedStores.ToString(CultureInfo.InvariantCulture)
-                        + " further store(s) would not report a display name, so this one cannot be ruled out among "
-                        + "them; list_folders without 'store' lists them under '" + StoreNaming.UnnamedStorePrefix
-                        + "N)' labels. "
-                    : string.Empty)
-                + "Use list_accounts for the full store list.";
         }
 
         /// <summary>
@@ -8101,9 +8031,8 @@ namespace OutlookAI.Core.Services
                 WalkCapReached = tree.WalkCapReached ? true : (bool?)null,
                 DepthLimitReached = tree.DepthLimitReached ? true : (bool?)null,
                 StoresUnnamed = tree.StoresUnnamed > 0 ? tree.StoresUnnamed : (int?)null,
-                StoresUnnamedExcluded = tree.StoresUnnamedExcluded > 0 ? tree.StoresUnnamedExcluded : (int?)null,
                 Advice = DescribeFolderListingCoverage(
-                    tree.WalkCapReached, tree.DepthLimitReached, tree.StoresUnnamed, tree.StoresUnnamedExcluded),
+                    tree.WalkCapReached, tree.DepthLimitReached, tree.StoresUnnamed),
             };
         }
 
@@ -8119,7 +8048,7 @@ namespace OutlookAI.Core.Services
         /// </para>
         /// </summary>
         public static IReadOnlyList<string>? DescribeFolderListingCoverage(
-            bool walkCapReached, bool depthLimitReached, int storesUnnamed, int storesUnnamedExcluded)
+            bool walkCapReached, bool depthLimitReached, int storesUnnamed)
         {
             List<string> advice = new List<string>();
             if (walkCapReached)
@@ -8128,7 +8057,7 @@ namespace OutlookAI.Core.Services
                     + FolderWalkAbsoluteCap.ToString(CultureInfo.InvariantCulture)
                     + "-folder cap, so folders (and possibly whole stores, which are walked one after another) are "
                     + "missing from this tree. Paging cannot reach them - the next call re-walks and stops in the "
-                    + "same place - so list one store at a time with 'store'.");
+                    + "same place - so list one store at a time with store_id.");
             }
 
             if (depthLimitReached)
@@ -8143,17 +8072,8 @@ namespace OutlookAI.Core.Services
             {
                 advice.Add(storesUnnamed.ToString(CultureInfo.InvariantCulture)
                     + " store(s) would not report a display name and are listed under '" + StoreNaming.UnnamedStorePrefix
-                    + "N)' labels (nameUnreadable: true). Their folders are real and are listed; the LABEL is not a "
-                    + "name and cannot be passed back as 'store' to search or list_folders, because a store scope is "
-                    + "matched against the display name that could not be read. Search without 'store' to include "
-                    + "their mail.");
-            }
-
-            if (storesUnnamedExcluded > 0)
-            {
-                advice.Add(storesUnnamedExcluded.ToString(CultureInfo.InvariantCulture)
-                    + " store(s) would not report a display name, so this store-scoped listing could neither include "
-                    + "them nor rule them out. Call list_folders without 'store' to see them.");
+                    + "N)' labels (nameUnreadable: true). Their folders are real and are listed, and each store's "
+                    + "storeId addresses it like any other - the LABEL is only something to read.");
             }
 
             return advice.Count == 0 ? null : advice;

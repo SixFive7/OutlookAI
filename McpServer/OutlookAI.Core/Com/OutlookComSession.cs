@@ -1410,7 +1410,6 @@ namespace OutlookAI.Core.Com
                 List<ComStoreRoot> walkedStores = new List<ComStoreRoot>();
                 HashSet<int> unnamedIndexes = new HashSet<int>();
                 int unnamed = 0;
-                const int unnamedExcluded = 0;
                 try
                 {
                     int count = stores.Count;
@@ -1423,8 +1422,8 @@ namespace OutlookAI.Core.Com
 
                             // A SCOPED listing names its store by the store's own entry id (Q133):
                             // never by a name, which two stores may share and an unnamed store
-                            // cannot be matched against - so an unnamed store is no longer left out
-                            // of a scope that is its own (unnamedExcluded stays 0).
+                            // cannot be matched against - so a scope that is an unnamed store's own
+                            // lists it, where a scope by name had to leave it out.
                             if (storeEntryId != null
                                 && !string.Equals(
                                     TryGetString(() => (string?)((dynamic)probe!).StoreID), storeEntryId, StringComparison.OrdinalIgnoreCase))
@@ -1503,7 +1502,7 @@ namespace OutlookAI.Core.Com
                 }
 
                 return new ComFolderTree(
-                    result, bounds.WalkCapReached, bounds.DepthLimitReached, unnamed, unnamedExcluded, walkedStores);
+                    result, bounds.WalkCapReached, bounds.DepthLimitReached, unnamed, walkedStores);
             });
         }
 
@@ -9885,7 +9884,8 @@ namespace OutlookAI.Core.Com
                     _folderOpen ? _folderPath : null,
                     _folderOpen && (dateCursor.HasValue || rowOrdinal > 0 || (emitted != null && emitted.Count > 0)),
                     dateCursor,
-                    _folderOpen ? tier : null);
+                    _folderOpen ? tier : null,
+                    _folderOpen ? _folderEntryId : null);
             }
 
             private void NoteStop(string reason)
