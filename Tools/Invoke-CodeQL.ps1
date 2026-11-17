@@ -33,8 +33,10 @@
     "local", "!environment", at the same line hashes, and the tools' parameters added sources to one
     of them: the search index's SQL in IndexClients.cs, reached by search's store, folder, from and
     to and thread's conversation_id and store. Five are triaged in Tools\codeql-accepted.json; the
-    sixth was the elevated helper's install path, which Q145 removes. The census query compiled in
-    1.3 minutes on its first run and evaluated in under half a minute.
+    sixth was the elevated helper's install path, which Q145 removes: over a merge with Q145's
+    branch at 867db46, made for the run and put on no branch, the census was 22 of 22 and the five
+    were the only results - exit 0. The census query compiled in 1.3 minutes on its first run and
+    evaluated in under half a minute.
 
     What the model does not reach, measured with scratch queries over the same database. No tool
     parameter reaches the COM host's session (0 of OutlookComSession's parameters): the work crosses
