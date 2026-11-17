@@ -17,6 +17,7 @@ namespace OutlookAI.McpServer.Tests.T1;
 /// one call that would otherwise emit an empty restriction.
 /// </para>
 /// </summary>
+[Trait("TimeZone", "Machine")]
 public sealed class ExhaustiveDaslFilterTests
 {
     private const string Subject = "\"urn:schemas:httpmail:subject\"";

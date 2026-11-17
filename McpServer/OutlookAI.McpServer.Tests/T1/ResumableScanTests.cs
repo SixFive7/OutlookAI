@@ -43,6 +43,7 @@ public sealed class ResumableScanTests
     // ===================================================================== the token itself
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void AToken_RoundTripsAndCarriesTheWalkStateBackToTheChild()
     {
         // The whole mechanism in one test: page 1 stops with a position, the answer carries a
@@ -82,6 +83,7 @@ public sealed class ResumableScanTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void ANextToken_IsPresentExactlyWhenTheScanStoppedEarly()
     {
         // Pinned in BOTH directions on purpose. "Always present" teaches an agent to loop for
@@ -98,6 +100,7 @@ public sealed class ResumableScanTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void AScanThatStoppedWithNoPosition_IssuesNoToken_AndSaysSoRatherThanLookingComplete()
     {
         // The third state, and the one that would otherwise be indistinguishable from
@@ -117,6 +120,7 @@ public sealed class ResumableScanTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void EveryWayATokenFails_HasItsOwnMessage_BecauseTheRemediesDiffer()
     {
         ExhaustiveScanCursors store = new ExhaustiveScanCursors();
@@ -155,6 +159,7 @@ public sealed class ResumableScanTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void AnExpiredToken_IsRefusedAsExpired_AndNotAsUnknown()
     {
         // Two different sentences for two different situations: "your chain aged out" points
@@ -178,6 +183,7 @@ public sealed class ResumableScanTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void ASupersededToken_IsRefused_AndTheRefusalCarriesThePositionSoRecoveryNeedsNoToken()
     {
         // A lost response is the reason a caller ever replays an older token, and honouring
@@ -201,6 +207,7 @@ public sealed class ResumableScanTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void AResumeWhoseQuestionChanged_IsRefused_AndTheRefusalNamesWhatChanged()
     {
         // Parameterised over every field the fingerprint covers, because a silent honour or a
@@ -238,6 +245,7 @@ public sealed class ResumableScanTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void TheStore_RefusesAResumeWhoseFingerprintDoesNotMatch_RatherThanHonouringIt()
     {
         // The comparison itself, not just the fingerprint that feeds it. Reverting this one
@@ -266,6 +274,7 @@ public sealed class ResumableScanTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void AChangedResume_IsRefusedEndToEnd_AndLeavesTheChainUsable()
     {
         // The same decision through the real service, because that is where a caller meets
@@ -299,6 +308,7 @@ public sealed class ResumableScanTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void AResumeTokenWithoutExhaustive_IsRefused_RatherThanQuietlyIgnored()
     {
         // The silent half of the same failure. Without this the handle simply does nothing:
@@ -314,6 +324,7 @@ public sealed class ResumableScanTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void PresentationArguments_DoNotChangeTheQuestion_SoAPageMayBeSmallerThanTheLast()
     {
         // top and snippet_chars shape ONE page rather than the result set, so a caller who
@@ -325,6 +336,7 @@ public sealed class ResumableScanTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void AnOmittedArgument_AndOneSetToItsDefault_DoNotFingerprintAlike()
     {
         // Presence-first canonicalisation, the same rule DraftUpdateIntents uses and for the
@@ -361,6 +373,7 @@ public sealed class ResumableScanTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void AChainThatFinished_StopsHoldingItsState()
     {
         // The finished-folder set and the suppression set exist to make the NEXT page
@@ -399,6 +412,7 @@ public sealed class ResumableScanTests
     // ===================================================================== the stop reason
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void TheStopReason_IsRecordedByTheWalk_AndNotDerivedFromTheBooleans()
     {
         // The reason this is a field at all. Both bounds can be latched on one result, and
@@ -428,6 +442,7 @@ public sealed class ResumableScanTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void TheDepthGuard_IsNeverAStopReason_BecauseItNeverStopsTheWalk()
     {
         // depthLimitReached bounds one subtree and every sibling branch is still walked, so a
@@ -474,6 +489,7 @@ public sealed class ResumableScanTests
     // ===================================================================== the payload
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void AResumableStop_StillDegradesTheAnswer_BecauseARemedyIsNotARepair()
     {
         // The decision this pins: a scan that CAN be continued is still, as returned,
@@ -492,6 +508,7 @@ public sealed class ResumableScanTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void ThePosition_ReportsWhereToCarryOn_InParametersSearchAlreadyHas()
     {
         MailService service = Service(new ScriptedSession(
@@ -509,6 +526,7 @@ public sealed class ResumableScanTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void TheChainCounters_OnlyEverMoveForward()
     {
         // A caller decides when to stop paging from these numbers, so a total that dropped
@@ -639,6 +657,7 @@ public sealed class ResumableScanTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void TheResumeDateBound_IsInclusive_AndDoesNotReplaceTheCallersOwnBeforeBound()
     {
         // The caller's 'before' is exclusive and stays exactly as they wrote it; the resume

@@ -122,6 +122,7 @@ public sealed class SweepSortWiringTests
     // ------------------------------------------------------------- the scan cursor's date
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void TheTableDateWinsWhenTheRowCarriedOne()
     {
         DateTime fromTable = new(2026, 8, 24, 9, 0, 0, DateTimeKind.Utc);
@@ -131,6 +132,7 @@ public sealed class SweepSortWiringTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void AnAbsentTableDateFallsBackToTheItemValueCONVERTED()
     {
         // The defect, as a test. brief.ReceivedTime is local wall time carrying
@@ -179,6 +181,7 @@ public sealed class SweepSortWiringTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void NeitherHalfPresentIsStillNull()
     {
         Assert.Null(OutlookComSession.ScanCursorDate(null, null));

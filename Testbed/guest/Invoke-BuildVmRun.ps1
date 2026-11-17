@@ -2,8 +2,9 @@
 <#
 .SYNOPSIS
     ONE RUN ON THE BUILD VM: expands a staged revision, restores it from the offline feed, builds
-    it, runs the non-live suite into a TRX file and every script self-test, and leaves all of it in
-    one results directory for the host to fetch. Runs on OAI-BUILD and nowhere else.
+    it, runs the non-live suite into a TRX file, runs its zone-sensitive tests again in a second
+    time zone, runs every script self-test, and leaves all of it in one results directory for the
+    host to fetch. Runs on OAI-BUILD and nowhere else.
 
 .DESCRIPTION
     RUN ON OAI-BUILD ONLY, and normally only by Testbed/host/Invoke-TestsOnBuildVm.ps1, which copies
@@ -34,6 +35,13 @@
       4. TEST: `dotnet test --no-build` with the filter `Category!=Live`, ANDed in CODE with whatever
          narrower filter the request carries - a request cannot remove it - into results\trx\suite.trx,
          with a hang timeout so one wedged test ends the run with its name instead of a silence.
+      4b. THE ZONE PASS (Q144), when the request names a zone and the suite ran to its end: the VM is
+         switched to that zone, a new process is asked which zone it sees, the tests marked
+         `TimeZone=Machine` run again the same way into results\trx\zone.trx, and the VM is put back
+         in the zone it started in - in a finally, checked the same way - before anything else runs.
+         The suite runs in UTC (Q126 (a)), where the machine's zone and UTC are one zone; the marked
+         tests are the ones that can read the machine's zone, and T1/TimeZoneMarkerTests fails one
+         that is not marked.
       5. SELF-TESTS: every script under Testbed\ and Tools\ that declares a [switch] $SelfTest is run
          with -SelfTest alone, in Windows PowerShell 5.1, one process each, output to a file, time
          limited. Found by the syntax tree, not by a list, so a new self-test is run the day it lands;
@@ -47,7 +55,8 @@
         PACKAGES-MISSING 20   the offline feed lacks a package this revision needs (listed in run.json)
         RESTORE-FAILED   21   the restore failed for any other reason
         BUILD-FAILED     30   the revision does not build
-        SUITE-BROKEN     40   dotnet test timed out, crashed, or left no TRX file
+        SUITE-BROKEN     40   dotnet test timed out, crashed, or left no TRX file - in the suite or the
+                              zone pass - or the zone pass could not switch the VM's zone or put it back
         REFUSED           2   the guard, or a request this script will not run
     The HOST decides the final verdict from the TRX file, not from these exit codes alone: a run
     whose filter selected nothing passes here and fails there.
@@ -61,13 +70,15 @@
     WHAT IT DOES NOT DO. It never starts Outlook, creates a COM object, touches a profile, a store
     or a mail item, or sets the live tier's opt-in; the VM has no Office for any of that to reach,
     and Category!=Live is not removable. It never writes outside <RunRoot> and the offline feed,
-    and the host reverts the VM afterwards either way.
+    and changes no setting of the machine but its time zone, for the zone pass, which it sets back;
+    the host reverts the VM afterwards either way.
 
 .PARAMETER RequestPath
     The request the host wrote: a JSON object with any of filter, configuration, skipSuite,
     skipSelfTests, selfTestInclude (wildcards on repository-relative paths such as
     'Testbed/host/*'), restoreTimeoutMinutes, buildTimeoutMinutes, testTimeoutMinutes,
-    hangTimeoutMinutes and selfTestTimeoutSeconds, plus a revision object recorded as given.
+    hangTimeoutMinutes, selfTestTimeoutSeconds and zonePassTimeZone (a Windows time-zone id; ''
+    or absent for no zone pass), plus a revision object recorded as given.
     A file rather than parameters because a test filter is made of &, |, ( and ", and a file is
     the one route that carries it unchanged. Defaults to <RunRoot>\request.json.
 
@@ -86,8 +97,9 @@
 
 .PARAMETER SelfTest
     Pure. Checks the filter composition, the request reader, the missing-package parser, the
-    self-test discovery and the verdict table against synthetic inputs. Runs anywhere - it is
-    ahead of the guard - and reads nothing but this file.
+    self-test discovery, the zone pass's decisions and the verdict table against synthetic inputs,
+    and that the zone pass sets the zone back in a finally. Runs anywhere - it is ahead of the
+    guard - and reads nothing but this file.
 
 .EXAMPLE
     # On OAI-BUILD, as the host runner does it:
@@ -118,6 +130,12 @@ $ErrorActionPreference = 'Stop'
 # live tier's own opt-in is never set here either - three locks, of which this is the first.
 $LiveExclusion = 'Category!=Live'
 
+# The zone pass's marker (Q144, decided by the maintainer 2026-10-11): the tests that can read the
+# machine's time zone, which run a second time with the VM in the zone the request names.
+# McpServer/OutlookAI.McpServer.Tests/T1/MachineZoneReads.cs defines it, and T1/TimeZoneMarkerTests
+# reads this line to hold the two equal.
+$ZonePassMarker = 'TimeZone=Machine'
+
 # Self-tests that cannot run on this VM, by repository-relative path, each with its reason. Every
 # other script that declares -SelfTest is run. An entry whose script no longer declares -SelfTest,
 # or no longer exists, is reported, so the list cannot outlive its reasons silently.
@@ -145,6 +163,57 @@ function Get-SuiteFilter {
     param([string] $RequestFilter)
     if ([string]::IsNullOrWhiteSpace($RequestFilter)) { return $LiveExclusion }
     return ($LiveExclusion + '&(' + $RequestFilter.Trim() + ')')
+}
+
+# The arguments of one dotnet test run over the built revision - the suite's, and the zone pass's.
+function Get-TestArguments {
+    param([string] $Project, [string] $Configuration, [string] $Filter, [string] $TrxName, [string] $TrxDir, [int] $HangTimeoutMinutes)
+    return @('test', $Project, '-c', $Configuration, '--no-build', '--no-restore',
+        '--filter', $Filter,
+        '--logger', "trx;LogFileName=$TrxName",
+        '--results-directory', $TrxDir,
+        '--blame-hang-timeout', ("{0}m" -f $HangTimeoutMinutes),
+        '--blame-hang-dump-type', 'none')
+}
+
+# The line dotnet test ends a run with - "Passed!  - Failed: 0, Passed: 3346, ..." - or ''.
+function Get-TestSummaryLine {
+    param([string] $Text)
+    $summaryLine = ''
+    foreach ($line in ($Text -split "`r?`n")) { if ($line -match '(Passed|Failed)!\s+-\s+Failed:') { $summaryLine = $line.Trim() } }
+    return $summaryLine
+}
+
+# The zone pass's filter: the suite's own, narrowed to the marked tests. A request filter narrows it
+# as it narrows the suite, so a run of one class runs that class's marked tests again, or none.
+function Get-ZonePassFilter {
+    param([string] $RequestFilter)
+    return ((Get-SuiteFilter $RequestFilter) + '&' + $ZonePassMarker)
+}
+
+# What the zone pass came to, from what each of its steps reported. Pure. 'broken' when the VM did not
+# reach the zone or could not be put back - whatever the tests did, the rest of the run would not be
+# in the zone it claims - or when the test run timed out or left no TRX file. A clean exit that left
+# no TRX file because no test matched is 'none-selected', not broken: a revision from before Q144
+# marks no test, and a narrow request filter may select none of the marked ones.
+function Get-ZonePassState {
+    param(
+        [string] $SwitchError,      # '' or why the VM did not reach the zone
+        [string] $RestoreError,     # '' or why the VM could not be put back in its own zone
+        [object] $ExitCode,         # dotnet test's exit code, or $null when it did not run or was stopped
+        [bool]   $TimedOut,
+        [bool]   $TrxPresent,
+        [bool]   $NoTestMatched     # its log says no test matched the filter
+    )
+    if ($SwitchError) { return [pscustomobject]@{ State = 'broken'; Why = "the VM did not reach the zone: $SwitchError" } }
+    if ($RestoreError) { return [pscustomobject]@{ State = 'broken'; Why = "the VM could not be put back in its own zone, so what ran after it did not run there: $RestoreError" } }
+    if ($TimedOut) { return [pscustomobject]@{ State = 'broken'; Why = 'dotnet test did not finish within the time limit' } }
+    if (-not $TrxPresent) {
+        if ($ExitCode -eq 0 -and $NoTestMatched) { return [pscustomobject]@{ State = 'none-selected'; Why = "no test this run selects is marked $ZonePassMarker" } }
+        return [pscustomobject]@{ State = 'broken'; Why = "dotnet test left no TRX file (exit $ExitCode)" }
+    }
+    if ($ExitCode -eq 0) { return [pscustomobject]@{ State = 'passed'; Why = '' } }
+    return [pscustomobject]@{ State = 'failed'; Why = "dotnet test exited $ExitCode" }
 }
 
 # A filter this script will not hand to dotnet test, or $null. Not a safety guard - the AND above is
@@ -178,6 +247,7 @@ function Read-RunRequest {
         testTimeoutMinutes     = 40
         hangTimeoutMinutes     = 15
         selfTestTimeoutSeconds = 300
+        zonePassTimeZone       = ''
         revision               = $null
     }
     $request = [ordered]@{}
@@ -200,6 +270,10 @@ function Read-RunRequest {
     $request['skipSelfTests'] = [bool]$request['skipSelfTests']
     $request['selfTestInclude'] = @($request['selfTestInclude'] | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | ForEach-Object { ([string]$_).Replace('\', '/') })
     $request['filter'] = [string]$request['filter']
+    # A Windows time-zone id - 'W. Europe Standard Time', 'UTC', 'Pacific Standard Time (Mexico)' -
+    # or '' for no zone pass. Anything else is refused rather than handed to Set-TimeZone.
+    $request['zonePassTimeZone'] = ([string]$request['zonePassTimeZone']).Trim()
+    if ($request['zonePassTimeZone'] -and $request['zonePassTimeZone'] -notmatch '^[A-Za-z0-9 .()+-]{1,64}$') { throw "zonePassTimeZone '$($request['zonePassTimeZone'])' is not a Windows time-zone id." }
     return [pscustomobject]@{ Request = $request; Unknown = $unknown }
 }
 
@@ -247,18 +321,20 @@ function Test-SelfTestSelected {
 }
 
 # The run's verdict from what each phase reported. Pure: the phases decide, in the order they ran.
+# The zone pass counts as the suite does: broken is SUITE-BROKEN, a failing test is FAIL.
 function Get-RunVerdict {
     param(
         [string] $Restore,      # 'ok' | 'missing' | 'failed' | 'skipped'
         [string] $Build,        # 'ok' | 'failed' | 'skipped'
         [string] $Suite,        # 'passed' | 'failed' | 'broken' | 'skipped'
-        [int]    $SelfTestsFailed
+        [int]    $SelfTestsFailed,
+        [string] $ZonePass = 'skipped'   # Get-ZonePassState's State, or 'skipped'
     )
     if ($Restore -eq 'missing') { return 'PACKAGES-MISSING' }
     if ($Restore -eq 'failed') { return 'RESTORE-FAILED' }
     if ($Build -eq 'failed') { return 'BUILD-FAILED' }
-    if ($Suite -eq 'broken') { return 'SUITE-BROKEN' }
-    if ($Suite -eq 'failed' -or $SelfTestsFailed -gt 0) { return 'FAIL' }
+    if ($Suite -eq 'broken' -or $ZonePass -eq 'broken') { return 'SUITE-BROKEN' }
+    if ($Suite -eq 'failed' -or $ZonePass -eq 'failed' -or $SelfTestsFailed -gt 0) { return 'FAIL' }
     return 'PASS'
 }
 
@@ -343,7 +419,33 @@ function Invoke-SelfTest {
     Check 'a missing package outranks everything after it' 'PACKAGES-MISSING' (Get-RunVerdict -Restore missing -Build skipped -Suite skipped -SelfTestsFailed 3)
     Check 'a build failure outranks a failing self-test' 'BUILD-FAILED' (Get-RunVerdict -Restore ok -Build failed -Suite skipped -SelfTestsFailed 1)
     Check 'a broken suite is SUITE-BROKEN, not FAIL' 'SUITE-BROKEN' (Get-RunVerdict -Restore ok -Build ok -Suite broken -SelfTestsFailed 0)
+    Check 'a green suite whose zone pass failed a test is FAIL' 'FAIL' (Get-RunVerdict -Restore ok -Build ok -Suite passed -SelfTestsFailed 0 -ZonePass failed)
+    Check 'a broken zone pass is SUITE-BROKEN, as a broken suite is' 'SUITE-BROKEN' (Get-RunVerdict -Restore ok -Build ok -Suite passed -SelfTestsFailed 0 -ZonePass broken)
+    Check 'a zone pass that selected no test is no failure' 'PASS' (Get-RunVerdict -Restore ok -Build ok -Suite passed -SelfTestsFailed 0 -ZonePass none-selected)
     Check 'every verdict has an exit code, and PASS alone has 0' 'PASS' (@($Verdicts.Keys | Where-Object { $Verdicts[$_] -eq 0 }) -join ',')
+
+    Write-Host ''
+    Write-Host '== the zone pass (Q144) =='
+    Check 'with no request filter it is the suite, narrowed to the marked tests' 'Category!=Live&TimeZone=Machine' (Get-ZonePassFilter '')
+    Check 'a request filter narrows it as it narrows the suite' 'Category!=Live&(FullyQualifiedName~T1.Foo)&TimeZone=Machine' (Get-ZonePassFilter 'FullyQualifiedName~T1.Foo')
+    Check 'a test run is no-build, no-restore, into a named TRX file, with a hang timeout' 'test | p.csproj | -c | Release | --no-build | --no-restore | --filter | F | --logger | trx;LogFileName=zone.trx | --results-directory | d | --blame-hang-timeout | 15m | --blame-hang-dump-type | none' (Get-TestArguments -Project 'p.csproj' -Configuration 'Release' -Filter 'F' -TrxName 'zone.trx' -TrxDir 'd' -HangTimeoutMinutes 15)
+    Check 'the line dotnet test ends with is found' 'Passed!  - Failed:     0, Passed:   383, Skipped:     0, Total:   383' (Get-TestSummaryLine "Starting test execution`r`n  Passed!  - Failed:     0, Passed:   383, Skipped:     0, Total:   383`r`n")
+    Check 'a request that names no zone asks for no zone pass' '' ((Read-RunRequest '').Request['zonePassTimeZone'])
+    Check 'a zone the request names is read' 'W. Europe Standard Time' ((Read-RunRequest '{"zonePassTimeZone":"W. Europe Standard Time"}').Request['zonePassTimeZone'])
+    $threw = $false
+    try { [void](Read-RunRequest '{"zonePassTimeZone":"UTC; Remove-Item C:\\x"}') } catch { $threw = $true }
+    Check 'a zone that is no time-zone id is refused, not handed to Set-TimeZone' $true $threw
+    function ZoneState([string] $SwitchError = '', [string] $RestoreError = '', $ExitCode = 0, [bool] $TimedOut = $false, [bool] $TrxPresent = $true, [bool] $NoTestMatched = $false) {
+        return (Get-ZonePassState -SwitchError $SwitchError -RestoreError $RestoreError -ExitCode $ExitCode -TimedOut $TimedOut -TrxPresent $TrxPresent -NoTestMatched $NoTestMatched)
+    }
+    Check 'reached the zone, ran green, came back: passed' 'passed' (ZoneState).State
+    Check 'a marked test that fails there: failed' 'failed' (ZoneState -ExitCode 1).State
+    Check 'the VM did not reach the zone: broken, saying so' 'broken|True' ('{0}|{1}' -f (ZoneState -SwitchError 'Access is denied').State, (ZoneState -SwitchError 'Access is denied').Why.Contains('did not reach the zone'))
+    Check 'the VM could not be put back: broken, even with every test green' 'broken' (ZoneState -RestoreError 'Access is denied').State
+    Check 'a run that timed out: broken' 'broken' (ZoneState -ExitCode $null -TimedOut $true -TrxPresent $false).State
+    Check 'no TRX file after a clean exit that matched no test: none-selected - a revision before Q144 marks none' 'none-selected' (ZoneState -TrxPresent $false -NoTestMatched $true).State
+    Check 'no TRX file after a clean exit for another reason: broken' 'broken' (ZoneState -TrxPresent $false).State
+    Check 'no TRX file after a crash: broken, whatever the log says' 'broken' (ZoneState -ExitCode 1 -TrxPresent $false -NoTestMatched $true).State
 
     Write-Host ''
     Write-Host '== the guard is a real one =='
@@ -389,6 +491,17 @@ function Invoke-SelfTest {
         $zipAt = $body.IndexOf('CreateFromDirectory')
     }
     Check 'and done.txt is still written after it, last' $true ($zipAt -ge 0 -and $doneAt -gt $zipAt)
+
+    Write-Host ''
+    Write-Host '== the zone pass puts the VM back in its own zone, whatever happens in it =='
+    $zoneSetters = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Set-TimeZone' }, $true))
+    Check 'the zone is set in two places: into the zone pass, and back' 2 $zoneSetters.Count
+    $restoring = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.TryStatementAst] -and $null -ne $n.Finally }, $true) |
+        Where-Object { @($_.Finally.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Set-TimeZone' }, $true)).Count -eq 1 })
+    Check 'the one that sets it back is in a finally' 1 $restoring.Count
+    $restoreBody = ''
+    if ($restoring.Count -eq 1) { $restoreBody = $restoring[0].Finally.Extent.Text }
+    Check 'and sets back the zone the run found, not a name of its own' $true ($restoreBody.Contains('Set-TimeZone -Id $homeZone'))
 
     Write-Host ''
     Write-Host "$($script:stChecks) check(s), $($script:stFailures.Count) failure(s)."
@@ -446,7 +559,8 @@ if (Test-Path -LiteralPath $ResultsDir) { Remove-Item -LiteralPath $ResultsDir -
 New-Item -ItemType Directory -Force -Path $ResultsDir | Out-Null
 
 function Say([string] $m) {
-    $line = "[{0:HH:mm:ss}] {1}" -f (Get-Date), $m
+    # In UTC, the VM's own zone, so the zone pass's change of zone does not move this log's clock.
+    $line = "[{0:HH:mm:ss}] {1}" -f [DateTime]::UtcNow, $m
     Write-Host $line
     # APPENDED THROUGH A STREAM THAT LETS OTHERS READ AND WRITE, NEVER Add-Content: the host
     # follows this log while it is written, and Windows PowerShell 5.1's Add-Content opens a file
@@ -561,6 +675,7 @@ $record = [ordered]@{
     machine       = $null
     phases        = [ordered]@{}
     suite         = $null
+    zonePass      = $null
     selfTests     = @()
     selfTestSkips = @()
     missingPackages = @()
@@ -749,17 +864,11 @@ if (-not $request['skipSuite']) {
         $trxDir = Join-Path $ResultsDir 'trx'
         New-Item -ItemType Directory -Force -Path $trxDir | Out-Null
         Say "test: --filter $filter"
-        $testArgs = @('test', $projectFull, '-c', $request['configuration'], '--no-build', '--no-restore',
-            '--filter', $filter,
-            '--logger', 'trx;LogFileName=suite.trx',
-            '--results-directory', $trxDir,
-            '--blame-hang-timeout', ("{0}m" -f $request['hangTimeoutMinutes']),
-            '--blame-hang-dump-type', 'none')
+        $testArgs = Get-TestArguments -Project $projectFull -Configuration $request['configuration'] -Filter $filter -TrxName 'suite.trx' -TrxDir $trxDir -HangTimeoutMinutes $request['hangTimeoutMinutes']
         $test = Invoke-Logged -FilePath $dotnetExe -Arguments $testArgs -LogName 'test' -TimeoutSeconds ($request['testTimeoutMinutes'] * 60) -WorkingDirectory $SourceRoot
         $trx = Join-Path $trxDir 'suite.trx'
         $testText = Get-LogText $test
-        $summaryLine = ''
-        foreach ($line in ($testText -split "`r?`n")) { if ($line -match '(Passed|Failed)!\s+-\s+Failed:') { $summaryLine = $line.Trim() } }
+        $summaryLine = Get-TestSummaryLine $testText
         $record['phases']['test'] = [ordered]@{ seconds = $test.Seconds; exitCode = $test.ExitCode; timedOut = $test.TimedOut }
         $record['suite'] = [ordered]@{ filter = $filter; trx = 'trx/suite.trx'; trxPresent = (Test-Path -LiteralPath $trx); summaryLine = $summaryLine }
         if ($test.TimedOut) {
@@ -785,6 +894,95 @@ if (-not $request['skipSuite']) {
 }
 else {
     Say 'suite: skipped by the request'
+}
+
+# ---------------------------------------------------------------------------------------------
+# 4b. The zone pass (Q144, decided by the maintainer 2026-10-11). The suite ran in the VM's own zone,
+#     UTC (Q126 (a)), where the machine's zone and UTC are one zone, so a test that compares a local
+#     value with a UTC one proves only the identity. The tests marked as able to read the machine's
+#     zone run again with the VM in the zone the request names, and the VM goes back to its own zone
+#     in a finally, before anything else runs. Only after a suite that ran to its end: a broken one
+#     ends the run as it is.
+# ---------------------------------------------------------------------------------------------
+
+# The zone a process started NOW sees - what the next test host will see, which this process's own,
+# cached zone need not be - read through .NET's TimeZoneInfo.Local, as the test host reads it.
+function Get-ZoneOfANewProcess([string] $LogName) {
+    $probe = Invoke-Logged -FilePath (Join-Path $PSHOME 'powershell.exe') -Arguments @('-NoProfile', '-NonInteractive', '-Command', '[System.TimeZoneInfo]::Local.Id') -LogName $LogName -TimeoutSeconds 60
+    if ($probe.TimedOut -or $probe.ExitCode -ne 0) { throw "a new process could not say its zone (exit $($probe.ExitCode), timed out: $($probe.TimedOut))" }
+    return ([System.IO.File]::ReadAllText($probe.Out)).Trim()
+}
+
+$zonePassState = 'skipped'
+if ($request['zonePassTimeZone']) {
+    $zone = $request['zonePassTimeZone']
+    $zoneFilter = Get-ZonePassFilter $request['filter']
+    $record['zonePass'] = [ordered]@{ timeZone = $zone; filter = $zoneFilter; state = 'skipped'; why = 'the suite did not run to its end' }
+    if ($request['skipSuite']) { $record['zonePass'].why = 'the suite was skipped' }
+}
+if ($request['zonePassTimeZone'] -and ($suiteState -eq 'passed' -or $suiteState -eq 'failed')) {
+    $t0 = Get-Date
+    $homeZone = (Get-TimeZone).Id
+    $zoneTrx = Join-Path $trxDir 'zone.trx'
+    $switchError = ''
+    $restoreError = ''
+    $readBack = ''
+    $restoredTo = ''
+    $zoneTest = $null
+    $zoneText = ''
+    Say "zone pass: the VM leaves '$homeZone' for '$zone', runs the tests marked $ZonePassMarker again, and comes back"
+    try {
+        try {
+            Set-TimeZone -Id $zone
+            $readBack = Get-ZoneOfANewProcess 'zone-pass-check'
+            if ($readBack -ne $zone) { $switchError = "Set-TimeZone returned, and a new process reads '$readBack'" }
+        }
+        catch { $switchError = $_.Exception.Message }
+        if (-not $switchError) {
+            Say "zone pass: a new process reads '$readBack'; test --filter $zoneFilter"
+            $zoneArgs = Get-TestArguments -Project $projectFull -Configuration $request['configuration'] -Filter $zoneFilter -TrxName 'zone.trx' -TrxDir $trxDir -HangTimeoutMinutes $request['hangTimeoutMinutes']
+            $zoneTest = Invoke-Logged -FilePath $dotnetExe -Arguments $zoneArgs -LogName 'zone-test' -TimeoutSeconds ($request['testTimeoutMinutes'] * 60) -WorkingDirectory $SourceRoot
+            $zoneText = Get-LogText $zoneTest
+        }
+    }
+    finally {
+        # Back to the VM's own zone whatever happened above: the self-tests run after this, and the
+        # run's record says it ran in that zone.
+        try {
+            Set-TimeZone -Id $homeZone
+            $restoredTo = Get-ZoneOfANewProcess 'zone-pass-restore-check'
+            if ($restoredTo -ne $homeZone) { $restoreError = "Set-TimeZone returned, and a new process reads '$restoredTo'" }
+        }
+        catch { $restoreError = $_.Exception.Message }
+    }
+    $zoneExit = $null
+    $zoneTimedOut = $false
+    if ($null -ne $zoneTest) { $zoneExit = $zoneTest.ExitCode; $zoneTimedOut = $zoneTest.TimedOut }
+    $zoneTrxPresent = Test-Path -LiteralPath $zoneTrx
+    $state = Get-ZonePassState -SwitchError $switchError -RestoreError $restoreError -ExitCode $zoneExit -TimedOut $zoneTimedOut -TrxPresent $zoneTrxPresent -NoTestMatched ($zoneText -match 'No test matches the given testcase filter')
+    $zonePassState = $state.State
+    $zoneSummaryLine = Get-TestSummaryLine $zoneText
+    $record['phases']['zonePass'] = [ordered]@{ seconds = [math]::Round(((Get-Date) - $t0).TotalSeconds, 1); exitCode = $zoneExit; timedOut = $zoneTimedOut }
+    $record['zonePass'] = [ordered]@{
+        timeZone    = $zone
+        homeZone    = $homeZone
+        readBack    = $readBack
+        restoredTo  = $restoredTo
+        filter      = $zoneFilter
+        trx         = 'trx/zone.trx'
+        trxPresent  = $zoneTrxPresent
+        summaryLine = $zoneSummaryLine
+        state       = $state.State
+        why         = $state.Why
+    }
+    $said = "zone pass: $($state.State) in $($record['phases']['zonePass'].seconds) s, back in '$restoredTo'"
+    if ($state.Why) { $said += " - $($state.Why)" }
+    if ($zoneSummaryLine) { $said += " - $zoneSummaryLine" }
+    Say $said
+    if ($state.State -eq 'failed' -or $state.State -eq 'broken') { Show-Tail $zoneText 40 }
+}
+elseif ($request['zonePassTimeZone']) {
+    Say "zone pass: not run - $($record['zonePass'].why)"
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -862,4 +1060,4 @@ elseif ($request['skipSelfTests']) {
 # ---------------------------------------------------------------------------------------------
 # 6. The verdict.
 # ---------------------------------------------------------------------------------------------
-Complete-Run (Get-RunVerdict -Restore $restoreState -Build $buildState -Suite $suiteState -SelfTestsFailed $selfTestsFailed)
+Complete-Run (Get-RunVerdict -Restore $restoreState -Build $buildState -Suite $suiteState -SelfTestsFailed $selfTestsFailed -ZonePass $zonePassState)

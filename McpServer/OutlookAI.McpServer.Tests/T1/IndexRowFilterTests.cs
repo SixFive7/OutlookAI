@@ -34,6 +34,7 @@ public sealed class IndexRowFilterTests
     }
 
     [Theory]
+    [Trait("TimeZone", "Machine")]
     [InlineData("picture")]
     [InlineData("communication")]
     [InlineData("calendar")]
@@ -58,6 +59,7 @@ public sealed class IndexRowFilterTests
     /// reached the mail first, with nothing in the payload saying so.
     /// </summary>
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void MessageRows_AreKeptWhateverTheirKind()
     {
         Assert.True(IndexRowFilter.Keep(Hit(MessageUrl, "email"), KindFilter.MessagesAndAttachments));
@@ -68,6 +70,7 @@ public sealed class IndexRowFilterTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void KindComparisonIsCaseInsensitive_TheProviderReturnsMixedCase()
     {
         // Still exercised through the one shape that reads the kind at all.
@@ -79,6 +82,7 @@ public sealed class IndexRowFilterTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void NonMapiRows_AreNeverKept_EvenWhenTheirKindIsEmail()
     {
         // An .eml/.msg file on disk indexes as kind 'email'. Without a SCOPE the statement
@@ -92,6 +96,7 @@ public sealed class IndexRowFilterTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void MailKindOnly_KeepsMailMessagesAndRejectsAttachmentRows()
     {
         // The store-discovery shape: it wants a row that is certainly mail, so this is the
@@ -102,6 +107,7 @@ public sealed class IndexRowFilterTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void AttachmentsOnly_KeepsOnlyAttachmentRows()
     {
         Assert.False(IndexRowFilter.Keep(Hit(MessageUrl, "email"), KindFilter.AttachmentsOnly));
@@ -117,6 +123,7 @@ public sealed class IndexRowFilterTests
     /// rows of its own members would return each of them twice.
     /// </summary>
     [Theory]
+    [Trait("TimeZone", "Machine")]
     [InlineData("calendar")]
     [InlineData("email")]
     [InlineData("document")]
@@ -126,6 +133,7 @@ public sealed class IndexRowFilterTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void MessagesOnly_KeepsAMessageRowWithNoKindAtAll()
     {
         // A kind test needs the column to SAY email, so a row whose System.Kind did not come
@@ -135,6 +143,7 @@ public sealed class IndexRowFilterTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void MessagesOnly_StillRejectsAttachmentRowsAndTheFileSystem()
     {
         Assert.False(IndexRowFilter.Keep(Hit(AttachmentUrl, "picture"), KindFilter.MessagesOnly));
@@ -154,6 +163,7 @@ public sealed class IndexRowFilterTests
     /// undated and with no item segment: 21 of a top=100 page, and none of them openable.
     /// </summary>
     [Theory]
+    [Trait("TimeZone", "Machine")]
     [InlineData("/0")]
     [InlineData("/0/Calendar")]
     [InlineData("/0/Quick Step Settings")]
@@ -170,6 +180,7 @@ public sealed class IndexRowFilterTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void AnItem_IsNeverTakenForAFolder_OnItsKindAlone()
     {
         // An item's URL ends in its encoded EntryID: whatever kind the row carries, it is an item.
@@ -191,6 +202,7 @@ public sealed class IndexRowFilterTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void AContactCard_IsStillAnItem()
     {
         // Gap B3 admits every item class, so the hub's undated contacts stay hits: they are
@@ -211,6 +223,7 @@ public sealed class IndexRowFilterTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void Keep_RejectsAnUnknownKindFilter()
     {
         Assert.Throws<ArgumentException>(() => IndexRowFilter.Keep(Hit(MessageUrl, "email"), (KindFilter)99));

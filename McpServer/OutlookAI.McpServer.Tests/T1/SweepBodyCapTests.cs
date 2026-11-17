@@ -186,6 +186,7 @@ public sealed class SweepBodyCapTests
     // ================================================== what the payload says when it bites
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void ACutBodyOnAnItemThatDidNotMatch_RaisesTheCode_AndDegradesTheAnswer()
     {
         // THE CASE THAT MATTERS. The item was swept, its body was cut, and it then failed the
@@ -204,6 +205,7 @@ public sealed class SweepBodyCapTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void TheAdvice_QuotesTheCapAndBothCounts_RatherThanRestatingThem()
     {
         using MailService service = Service(_ => SweepOf(
@@ -227,6 +229,7 @@ public sealed class SweepBodyCapTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void ACutBodyOnAnItemThatMatchedAnyway_IsReportedAsAFact_AndRaisesNothing()
     {
         // The cry-wolf guard. These bodies are never displayed, so a cut on an item that
@@ -245,6 +248,7 @@ public sealed class SweepBodyCapTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void ASubjectOnlySearch_NeverRaisesIt_BecauseTheBodyIsNeverConsulted()
     {
         using MailService service = Service(_ => SweepOf(Mail("AA1", body: "nothing relevant here", cut: true)));
@@ -258,6 +262,7 @@ public sealed class SweepBodyCapTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void ATermLessSearch_NeverRaisesIt_BecauseEveryItemMatches()
     {
         using MailService service = Service(_ => SweepOf(Mail("AA1", body: "anything", cut: true)));
@@ -270,6 +275,7 @@ public sealed class SweepBodyCapTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void AnUncutSweep_CarriesNeitherFieldAtAll()
     {
         using MailService service = Service(_ => SweepOf(Mail("AA1", body: "the needle is here")));
@@ -284,6 +290,7 @@ public sealed class SweepBodyCapTests
     // ========================================================= which bound, and whose store
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void AnExhaustedBudget_ChangesTheRemedyTheAdviceGives()
     {
         // A per-item cut points at ONE enormous mail and read pages the whole of it; an
@@ -305,6 +312,7 @@ public sealed class SweepBodyCapTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void AnExhaustedBudget_IsNotReportedToAScopeThatLostNothingByIt()
     {
         // The budget belongs to the FRAME, which spans every store the sweep visited, so a
@@ -323,6 +331,7 @@ public sealed class SweepBodyCapTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void AnotherStoresCutBody_IsNeverCountedInThisStoresAnswer()
     {
         // Counted inside the store filter, so a cached all-stores sweep serving a
@@ -351,6 +360,7 @@ public sealed class SweepBodyCapTests
     // ============================================================== the body cache
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void ACutSweepBody_IsNeverServedAsAWholeBody_ByReadOrItsCache()
     {
         // THE BUG THIS FORBIDS, which would be worse than the one being fixed: a truncated

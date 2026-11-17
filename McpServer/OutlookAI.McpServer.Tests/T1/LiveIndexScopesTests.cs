@@ -11,6 +11,7 @@ namespace OutlookAI.McpServer.Tests.T1;
 /// sampled another profile's store 1,941 times and Corpus A not once, and 13 tests failed before
 /// measuring anything; the listing is what finds a store no sample reaches and no address names.
 /// </summary>
+[Trait("TimeZone", "Machine")]
 public sealed class LiveIndexScopesTests
 {
     private const string UserRoot = "mapi16://{S-1-5-21-1-2-3-1000}/";

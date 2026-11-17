@@ -229,6 +229,7 @@ public sealed class SweepSortMutationTests
     /// mode a caller picks because completeness matters.
     /// </summary>
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void ARowDate_IsReadThroughTheSharedTableHelper()
     {
         DateTime unspecified = new DateTime(2026, 8, 23, 18, 5, 0, DateTimeKind.Unspecified);
@@ -250,6 +251,7 @@ public sealed class SweepSortMutationTests
     /// readings themselves are pinned in <c>ComDateValueTests</c>.
     /// </summary>
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void ARowDate_IsReadInTheZoneItsColumnSpellingReportsIn()
     {
         DateTime unspecified = new DateTime(2026, 9, 30, 13, 29, 46, DateTimeKind.Unspecified);
