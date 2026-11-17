@@ -937,7 +937,7 @@ public static partial class OutlookTools
         + "session (restarting the server clears the list), and the contents of Deleted Items. It cannot empty "
         + "anything and it cannot delete permanently.\n\n"
         + "It is a SOFT delete - exactly like pressing Delete in Outlook: the draft moves to Deleted Items and the result "
-        + "carries newEntryId plus fromFolder, so it can be put back with move_mail. Anything it refuses comes back as a "
+        + "carries newEntryId plus fromFolderId, so it can be put back with move_mail. Anything it refuses comes back as a "
         + "clear error saying why - it never silently does nothing. A failure that is NOT a refusal is a different "
         + "case: if Outlook fails during the delete itself, whether the draft was deleted is UNKNOWN and the error "
         + "says so - look in Deleted Items rather than assuming nothing happened. A failure before the delete says the "
