@@ -4130,6 +4130,64 @@ mailbox, a Group Policy MailSettings value - or an Outlook running on another pr
 no guest has one.
 
 ---
+### 4.7 The pools: clones of the build VM and the two Outlook guests, 2026-11-17
+
+**Why this section exists.** Eight agents worked in parallel that day, and every one queued on
+`OutlookAI-Build` and the two Outlook guests: at 16:58 one build run held the VM and six waited, and a
+run started at 16:43 waited 22 minutes for it. The maintainer: *"try to parallelize as much as
+possible. Even create extra virtual machines if you think that can speed things up."* So each VM a
+runner restores got CLONES - whole copies of it at that checkpoint - and the runners take whichever
+copy is free. `Testbed/host/TestbedPool.ps1` lists the pools, `Testbed/host/New-TestbedClone.ps1` makes
+the clones, `testbed.json`'s `vmPools` records them, and `Testbed/README.md` sections 1c, 4a and 4c say
+how to use them. Raw logs: `.work\vm-pool\` of the worktree `stream-f-vm-pool`.
+
+**Checked before the first clone:**
+
+| Check | Finding |
+| --- | --- |
+| Licensing and activation | Windows on every testbed VM is the consumer Pro image (`MEDIA.md`), unactivated: no expiry, a watermark and nags. Office on the Outlook guests is ProPlus 2024 volume, a KMS client that has never reached a KMS host: installed 2026-09-15, so at the frozen instants about twelve of its 30 days of grace remain, for ever, and `MEDIA.md` measured every COM read and a cold start working past grace anyway. The build VM has no Office. A clone adds no component and no media - the Dependencies rule in `AGENTS.md` is untouched - and is in its source's licence state: one more unactivated Windows (and Office) of the kind the testbed already runs. |
+| Identity | A clone keeps its source's computer name (`OAI-BUILD`, `OAI-INDEXED`, `OAI-UNINDEXED`), machine SID, account and password, stores and loopback mail sink. None meets another machine: no testbed VM but `OutlookAI-Exchange` has a network (every adapter here is disconnected, and the script disconnects a clone's if it is not), and PowerShell Direct finds a VM by its Hyper-V name. A new computer name would need a restart - which a frozen guest may never have - and a new checkpoint to prove. So the runners hold a clone to its source's computer name, the guest credential (its `vmName` empty) serves every clone, and a live run's opt-in is the source's computer name. The vTPM's key protector is this host's, and unwrapped on import. |
+| Frozen clocks | `Export-VMSnapshot` keeps a running checkpoint's memory, so a clone of a frozen checkpoint resumes at the same instant with time sync off. `Set-GuestClockFrozen.ps1 -Verify` checks a clone against its source's `frozenClocks` record - the same checkpoint name and instant - and refuses to make a frozen checkpoint on a clone, which would part it from that record. |
+| Budgets | Disk, measured at rest with the saved memory: 27.5 GB a build clone, 40.2 GB the indexed one, 26.7 GB the unindexed one (their sources' chains: 49, 109 and 94 GB) - 122 GB for the four; E: had 619 GB free before the first clone. The export of a source takes as much again until it is deleted. Memory: none while a clone rests saved; a runner starts a pool member other than the first only while `Win32_OperatingSystem.FreePhysicalMemory` covers its startup memory (6 GB build, 12 GB guest) plus 16 GB kept for the maintainer. 128 GB in the host; 52 to 64 GB available through the afternoon. |
+| VM settings | `AutomaticStartAction Nothing`, `AutomaticStopAction Save`, automatic checkpoints off and Standard checkpoints, set by the script on every clone and read back; every pool member is on the idle-saver's list (`TestbedPool.ps1`). |
+| Never `OutlookAI-Exchange` | In no pool, and refused by name by `New-TestbedClone.ps1`: it holds a real Microsoft 365 sign-in and device state (Q108, Q111). |
+
+**The clones, as made** - each source's runner checkpoint exported once (`Export-VMSnapshot`, the chain
+merged into one VHDX), imported per clone with `Import-VM -Copy -GenerateNewId` into its own folders,
+renamed in the compatibility report before it was registered, its settings set, and checkpointed,
+still saved, under the source checkpoint's name:
+
+| Clone | From | Export | Import | At rest |
+| --- | --- | --- | --- | --- |
+| `OutlookAI-Indexed2` | `OutlookAI-Indexed`, `CP-22C-FROZEN-CLOCK` | 29 s | 67 s | saved, 6 CPU, 12 GB dynamic, time sync OFF; 40.0 GB |
+| `OutlookAI-Build2` | `OutlookAI-Build`, `CP-03-SDK-TEST-READY-UTC` | 25 s, under the runner's lock, for both | 50 s | saved, 4 CPU, 6 GB static, time sync ON; 27.5 GB |
+| `OutlookAI-Build3` | the same export | - | 35 s | the same; 27.5 GB |
+| `OutlookAI-Unindexed2` | `OutlookAI-Unindexed`, `CP-16B-FROZEN-CLOCK` | 39 s, after waiting 28 minutes for a live run's lease | 54 s | saved, 6 CPU, 12 GB dynamic, time sync OFF; 26.7 GB |
+
+The first try at the build clones waited behind six queued runs for the runner's lock, polling every 5
+s like them, and lost the lock to one of them when it came free; the script now asks every quarter
+second, and got it the next time.
+
+**The proofs** - a run on each clone, naming it, before it joins its pool:
+
+| Clone | Run | Result |
+| --- | --- | --- |
+| `OutlookAI-Build2` | `20261117-172008-00acbed007ec`, `-VMName OutlookAI-Build2`, this branch at `00acbed` | 3,826 of 3,829 and 33 of 33 self-tests - this work's new and changed ones among them - in 17 min 40 s. The three: master's two date-bound tests, which failed on every machine from 2026-11-16 (fixed on master in `e1ed4ba`), and `T1.AuditLogStressTests.EightWriterProcesses_OnBothRuntimes_WithTheLock_KeepEveryLineWhole_AndTheFileInTimeOrder`, its first assertion: 12 lines appended without the writer lock, after their writers waited out its 2 s - every append took 550 to 600 ms at the median there, 2.0 to 2.4 s at p99 - and 5 time inversions with them, in 1 min 35 s where it takes 40 s on a quiet machine (`TODO.md`). The four audit-log stress tests alone on the same clone 3 minutes later: 4 of 4 (`20261117-174013-00acbed007ec`). |
+| `OutlookAI-Build3` | `20261117-172021-00acbed007ec`, `-VMName OutlookAI-Build3`, the same commit, at the same time | The same: 3,826 of 3,829, 33 of 33 self-tests, the same three - the stress test with 1 line without the lock and no inversion - in 19 min 11 s. |
+| `OutlookAI-Build2` again | `20261117-175937-4f6159ed35e3`, NOT named - the pool took it, `OutlookAI-Build` busy, after 5 s in the queue - this branch merged with master (`4f6159e`) | **PASS: 3,829 of 3,829**, 33 of 33 self-tests, in 17 min 14 s. |
+| `OutlookAI-Build3` again | `20261117-180203-4f6159ed35e3`, `-VMName OutlookAI-Build3`, `4f6159e`, beside it | **PASS: 3,829 of 3,829**, 33 of 33 self-tests, in 16 min 26 s. |
+| `OutlookAI-Indexed2` | `20261117-170838-indexed-aea2679737c0`, `-VMName OutlookAI-Indexed2`, `aea2679` | **PASS: 127 of 127**; 0 tagged artifacts, tripwire census 0 failures, no OUTLOOK.EXE crash; `Set-GuestClockFrozen.ps1 -Verify` said FROZEN against `OutlookAI-Indexed`'s record, the clone's clock 3.3 minutes after the frozen instant; rested on `CP-22C-FROZEN-CLOCK`, saved; 31 min 36 s. |
+| `OutlookAI-Unindexed2` | `20261117-174406-unindexed-00acbed007ec`, **`-Kind Unindexed`**, `00acbed` - the source held by another agent's live run, the runner took the clone (6 s) | **PASS: 81 of 81**; 0 tagged artifacts, tripwire census 0 failures, no OUTLOOK.EXE crash; the frozen guard said FROZEN against `OutlookAI-Unindexed`'s record, the clone 3.6 minutes after the frozen instant; rested on `CP-16B-FROZEN-CLOCK`, saved; 17 min 37 s. The first run through `-Kind`. |
+
+**Three build runs and four guests at once.** From 17:20 to 17:40 the two clone proofs ran beside
+another agent's run on `OutlookAI-Build` and four Outlook guests (two of them this work's): the host's
+CPU read 82 to 100 % in twelve samples over a minute, with 35 GB of its 128 GB available. Each build
+run took 17 to 19 minutes, its tests 11 to 12, where a run alone took 9 to 10 and its tests 6 - so three
+runs finished in 19 minutes that would have taken about 30 one after another, and the one test that
+times eight writers against each other failed on both clones and passed alone. Memory, the one budget
+the pool guards, was never short; CPU was. Whether the pools should also keep CPU free for the
+maintainer is open: `TODO.md`.
+
 ## 5. Which tests are in which bucket, and how to find out
 
 The classification is **two traits on the test itself**, not a list in a document that can drift -

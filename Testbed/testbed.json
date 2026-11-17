@@ -206,8 +206,8 @@
     "build": {
       "source": "OutlookAI-Build",
       "clones": [
-        { "vmName": "OutlookAI-Build2", "fromCheckpoint": "CP-03-SDK-TEST-READY-UTC", "checkpoint": "CP-03-SDK-TEST-READY-UTC", "madeUtc": "2026-11-17T16:19:06Z", "provenBy": null },
-        { "vmName": "OutlookAI-Build3", "fromCheckpoint": "CP-03-SDK-TEST-READY-UTC", "checkpoint": "CP-03-SDK-TEST-READY-UTC", "madeUtc": "2026-11-17T16:19:06Z", "provenBy": null }
+        { "vmName": "OutlookAI-Build2", "fromCheckpoint": "CP-03-SDK-TEST-READY-UTC", "checkpoint": "CP-03-SDK-TEST-READY-UTC", "madeUtc": "2026-11-17T16:19:06Z", "provenBy": "20261117-175937-4f6159ed35e3, taken by the pool, not named: PASS, 3,829 of 3,829 and 33 of 33 self-tests on this branch merged with master; first, named with -VMName on 00acbed, 3,826 of 3,829 - master's two date-bound tests and the audit-log stress test under load (Docs/live-tier-on-the-vm.md section 4.7)" },
+        { "vmName": "OutlookAI-Build3", "fromCheckpoint": "CP-03-SDK-TEST-READY-UTC", "checkpoint": "CP-03-SDK-TEST-READY-UTC", "madeUtc": "2026-11-17T16:19:06Z", "provenBy": "20261117-180203-4f6159ed35e3, named with -VMName: PASS, 3,829 of 3,829 and 33 of 33 self-tests on this branch merged with master; first, on 00acbed, 3,826 of 3,829 as OutlookAI-Build2's" }
       ]
     },
     "indexed": {
@@ -219,7 +219,7 @@
     "unindexed": {
       "source": "OutlookAI-Unindexed",
       "clones": [
-        { "vmName": "OutlookAI-Unindexed2", "fromCheckpoint": "CP-16B-FROZEN-CLOCK", "checkpoint": "CP-16B-FROZEN-CLOCK", "madeUtc": "2026-11-17T16:40:04Z", "provenBy": null }
+        { "vmName": "OutlookAI-Unindexed2", "fromCheckpoint": "CP-16B-FROZEN-CLOCK", "checkpoint": "CP-16B-FROZEN-CLOCK", "madeUtc": "2026-11-17T16:40:04Z", "provenBy": "20261117-174406-unindexed-00acbed007ec, through -Kind Unindexed while the source was busy: PASS, 81 of 81, 0 artifacts, 0 census failures, 0 crashes, frozen guard FROZEN against OutlookAI-Unindexed's record" }
       ]
     }
   },
