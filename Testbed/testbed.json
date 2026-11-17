@@ -213,13 +213,13 @@
     "indexed": {
       "source": "OutlookAI-Indexed",
       "clones": [
-        { "vmName": "OutlookAI-Indexed2", "fromCheckpoint": "CP-22C-FROZEN-CLOCK", "checkpoint": "CP-22C-FROZEN-CLOCK", "madeUtc": "2026-11-17T16:05:50Z", "provenBy": null }
+        { "vmName": "OutlookAI-Indexed2", "fromCheckpoint": "CP-22C-FROZEN-CLOCK", "checkpoint": "CP-22C-FROZEN-CLOCK", "madeUtc": "2026-11-17T16:05:50Z", "provenBy": "20261117-170838-indexed-aea2679737c0: PASS, 127 of 127, 0 artifacts, 0 census failures, 0 crashes, frozen guard FROZEN against OutlookAI-Indexed's record" }
       ]
     },
     "unindexed": {
       "source": "OutlookAI-Unindexed",
       "clones": [
-        { "vmName": "OutlookAI-Unindexed2", "fromCheckpoint": "CP-16B-FROZEN-CLOCK", "checkpoint": "CP-16B-FROZEN-CLOCK", "madeUtc": null, "provenBy": null }
+        { "vmName": "OutlookAI-Unindexed2", "fromCheckpoint": "CP-16B-FROZEN-CLOCK", "checkpoint": "CP-16B-FROZEN-CLOCK", "madeUtc": "2026-11-17T16:40:04Z", "provenBy": null }
       ]
     }
   },

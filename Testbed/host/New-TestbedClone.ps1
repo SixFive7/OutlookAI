@@ -56,7 +56,8 @@
     joins the pool on master when that branch lands.
 
     BUDGETS. Disk: a clone holds what its source's checkpoint chain holds, merged - at most the
-    chain's size (2026-11-17: Build 49 GB, Indexed 108 GB, Unindexed 93 GB) - plus the checkpoint's
+    chain's size (2026-11-17: Build 49 GB, Indexed 109 GB, Unindexed 93 GB), and far less: a build
+    clone measured 27.5 GB at rest and the indexed one 40 GB - plus the checkpoint's
     saved memory; the export holds as much once more until it is deleted at the end. Refused unless
     the drive has that for every clone and the export, plus 60 GB. Memory: none while a clone rests
     saved. The runners start one only when the host has its startup memory plus 16 GB to spare.

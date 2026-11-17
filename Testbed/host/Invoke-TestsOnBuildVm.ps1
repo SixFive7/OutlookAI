@@ -83,7 +83,7 @@
     for maintenance by hand) holds runs off that VM until it is released or expires; they take
     another member. Running several VMs in parallel was not chosen on 2026-10-03, when a queue was
     rarely long; with eight agents queueing it was (the maintainer, 2026-11-17: "try to parallelize
-    as much as possible"), at about 55 GB of disk and, only while it runs, 6 GB of memory a clone.
+    as much as possible"), at 27.5 GB of disk a clone (measured) and, only while it runs, 6 GB of memory.
 
     CREDENTIALS only through Testbed/host/Get-GuestCredential.ps1, from the main checkout - found
     with `git rev-parse --git-common-dir`, so this runs from any worktree - or -CredentialRepoRoot.

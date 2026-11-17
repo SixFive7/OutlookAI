@@ -274,8 +274,9 @@ lease held by hand, a caller killed part-way, whose VM its janitor saved 22 s la
 whose log, and one whose results, something else held: FAIL, as the tests said, where the runner
 before the fix said INFRA (rows 21 to 25). Where
 the runner keeps its own state: `%SystemDrive%\OutlookAI-Testbed\build-vm\` - `runner.lock`,
-`runner.owner.json` while a run holds it, `runs.log` (a start and an end line per run) and
-`janitor.log`.
+`runner.owner.json` while a run holds it - for `OutlookAI-Build`; each clone has its own pair,
+`runner.<vm>.lock` and `runner.<vm>.owner.json` - `runs.log` (a start and an end line per run, naming
+the VM since 2026-11-17) and `janitor.log`.
 
 **The build pool (2026-11-17).** Eight agents were queueing on this one VM, and the maintainer asked
 for as much parallel work as the host allows, extra VMs included. So `OutlookAI-Build` has CLONES,
@@ -285,7 +286,7 @@ the same computer name (`OAI-BUILD`), account, SDK and feed - so every member gi
 run. `host/TestbedPool.ps1` lists them; the runner takes whichever is free, one run per VM, and prints
 which in its summary (`vm`), so three agents' runs go at once. A member other than `OutlookAI-Build` is
 taken only while the host has its 6 GB and 16 GB more available, so the maintainer's own work keeps its
-memory; `-VMName OutlookAI-Build2` pins one member. Budget: about 55 GB of disk a clone, and memory only
+memory; `-VMName OutlookAI-Build2` pins one member. Budget, measured: 27.5 GB of disk a clone, and memory only
 while it runs. **When the base is replaced** (above, or as on 2026-11-17), the clones are made again:
 remove each (`Remove-VM`, then its folders under `E:\Hyper-V\VirtualMachines` and
 `E:\Hyper-V\VirtualHardDisks`), run `host/New-TestbedClone.ps1 -Source OutlookAI-Build -Name
