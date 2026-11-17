@@ -74,16 +74,16 @@ public sealed class LiveManageSignatureMcpToolTests
             Assert.StartsWith(SignatureManager.DefaultBackupRoot, updateBackup!, StringComparison.OrdinalIgnoreCase);
             Assert.True(Directory.Exists(updateBackup!), "the update backup directory must exist");
 
-            // Unknown account in the object-shaped set_default_for: rejected, files intact.
+            // A profile that does not exist in the object-shaped default_for: rejected, files intact.
             JsonElement rejected = await client.CallToolAsync("manage_signature", new
             {
                 action = "update",
                 name,
                 body_text = "should not land",
-                set_default_for = new { account = "stranger@nowhere.test", scope = "new" },
+                default_for = new { profile = "OutlookAI-NoSuchProfile-" + _fixture.RunMarker, account = "stranger@nowhere.test", scope = "new" },
             });
             Assert.Equal("InvalidArgument", rejected.GetProperty("error").GetProperty("type").GetString());
-            Assert.Contains("not found", rejected.GetProperty("error").GetProperty("message").GetString(),
+            Assert.Contains("does not exist", rejected.GetProperty("error").GetProperty("message").GetString(),
                 StringComparison.OrdinalIgnoreCase);
 
             // DELETE: backup again, files gone.

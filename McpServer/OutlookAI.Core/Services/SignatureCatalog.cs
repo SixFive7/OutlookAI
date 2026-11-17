@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -13,13 +12,22 @@ namespace OutlookAI.Core.Services
     public sealed class SignatureInfo
     {
         /// <summary>Creates a signature descriptor.</summary>
-        public SignatureInfo(string name, string? excerpt, string? htmlPath, string? rtfPath, string? textPath)
+        public SignatureInfo(
+            string name,
+            string? excerpt,
+            string? htmlPath,
+            string? rtfPath,
+            string? textPath,
+            string? resourceDirectory = null,
+            int pictureCount = 0)
         {
             Name = name;
             Excerpt = excerpt;
             HtmlPath = htmlPath;
             RtfPath = rtfPath;
             TextPath = textPath;
+            ResourceDirectory = resourceDirectory;
+            PictureCount = pictureCount;
         }
 
         /// <summary>Signature name (file base name - what Outlook shows in its pickers).</summary>
@@ -37,45 +45,68 @@ namespace OutlookAI.Core.Services
         /// <summary>Full path of the .txt rendition, when present.</summary>
         public string? TextPath { get; }
 
+        /// <summary>The <c>&lt;name&gt;_files</c> folder holding the HTML rendition's pictures, when it exists.</summary>
+        public string? ResourceDirectory { get; }
+
+        /// <summary>How many picture files <see cref="ResourceDirectory"/> holds.</summary>
+        public int PictureCount { get; }
+
         /// <summary>The best rendition for Word InsertFile: .htm, then .rtf, then .txt.</summary>
         public string? PreferredFilePath => HtmlPath ?? RtfPath ?? TextPath;
-    }
-
-    /// <summary>Registry-determined default-signature assignment of one mail account.</summary>
-    public sealed class SignatureAssignment
-    {
-        /// <summary>Creates an assignment row.</summary>
-        public SignatureAssignment(string account, string? newMessageSignature, string? replyForwardSignature)
-        {
-            Account = account;
-            NewMessageSignature = newMessageSignature;
-            ReplyForwardSignature = replyForwardSignature;
-        }
 
         /// <summary>
-        /// The account's email address (<see cref="ProfileAccountEntries"/>: <c>Email</c> for
-        /// POP3/IMAP, <c>Account Name</c> for Exchange) - never a data file's or address book's
-        /// name, which is what the old "Account Name contains @" rule reported alongside.
+        /// The account this signature belongs to when its name is shaped like Outlook's local copy of
+        /// a roaming signature, <c>Name (address)</c>; null for a signature of this device.
         /// </summary>
-        public string Account { get; }
+        public string? ScopeAccount => SignatureRoaming.AccountSuffixOf(Name);
 
-        /// <summary>Signature name assigned for new messages (null = not recorded in the registry - unknown, never guessed).</summary>
-        public string? NewMessageSignature { get; }
+        /// <summary>The renditions present, in the answers' vocabulary: html, rtf, text.</summary>
+        public IReadOnlyList<string> Formats
+        {
+            get
+            {
+                List<string> formats = new List<string>(3);
+                if (HtmlPath != null)
+                {
+                    formats.Add(SignatureFormats.Html);
+                }
 
-        /// <summary>Signature name assigned for replies/forwards (null = not recorded - unknown).</summary>
-        public string? ReplyForwardSignature { get; }
+                if (RtfPath != null)
+                {
+                    formats.Add(SignatureFormats.Rtf);
+                }
+
+                if (TextPath != null)
+                {
+                    formats.Add(SignatureFormats.Text);
+                }
+
+                return formats;
+            }
+        }
+    }
+
+    /// <summary>The three renditions Outlook keeps of a signature, one per mail format, by name.</summary>
+    public static class SignatureFormats
+    {
+        /// <summary>The .htm rendition, used by HTML mail.</summary>
+        public const string Html = "html";
+
+        /// <summary>The .rtf rendition, used by Rich Text mail.</summary>
+        public const string Rtf = "rtf";
+
+        /// <summary>The .txt rendition, used by plain-text mail.</summary>
+        public const string Text = "text";
+
+        /// <summary>All three, in the order they are reported.</summary>
+        public static readonly IReadOnlyList<string> All = Array.AsReadOnly(new[] { Html, Rtf, Text });
     }
 
     /// <summary>
-    /// Reads the Outlook signature landscape (soak fix D37, R5 signature steering):
-    /// the signature files under %APPDATA%\Microsoft\Signatures (names + short
-    /// plain-text excerpts, content never logged) and the per-account default
-    /// assignments from the profile registry ("New Signature"/"Reply-Forward
-    /// Signature" under the profile's 9375CFF0... key). Assignment reading DEGRADES
-    /// GRACEFULLY: values can be absent (an account without a signature, or
-    /// Office-roaming-managed state - Phase 4 found them unreadable on this machine at
-    /// the time) - absent means UNKNOWN, never a guess. Pure filesystem + registry:
-    /// no COM, safe on any machine, host-neutral (v3.MD section 0.5.2).
+    /// Reads the signature files in the folder Outlook uses (<see cref="SignatureFolder"/>): names,
+    /// renditions, pictures and short plain-text excerpts. Content is never logged. Pure
+    /// filesystem - no COM, no registry beyond the folder value, safe on any machine, host-neutral
+    /// (v3.MD section 0.5.2). Which account uses which signature is <see cref="SignatureEnvironment"/>.
     /// </summary>
     public static class SignatureCatalog
     {
@@ -85,15 +116,32 @@ namespace OutlookAI.Core.Services
         /// <summary>Prefix of the throwaway test signatures live tests may create (S3 cleanup set).</summary>
         public const string TestSignaturePrefix = "OutlookAI-McpTest-";
 
+        /// <summary>The suffix of a signature's picture folder: <c>&lt;name&gt;_files</c>.</summary>
+        public const string ResourceDirectorySuffix = "_files";
+
         private static readonly string[] SignatureExtensions = { ".htm", ".html", ".rtf", ".txt" };
 
-        /// <summary>The Outlook signatures directory (%APPDATA%\Microsoft\Signatures).</summary>
-        public static string DefaultSignatureDirectory =>
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Microsoft", "Signatures");
+        private static readonly string[] PictureExtensions =
+        {
+            ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tif", ".tiff", ".emf", ".wmf", ".emz", ".wmz", ".svg", ".webp",
+        };
+
+        /// <summary>
+        /// The Outlook signatures directory, resolved NOW from the value Outlook records
+        /// (<see cref="SignatureFolder"/>) - <c>%APPDATA%\Microsoft\Signatures</c> only when none is.
+        /// </summary>
+        public static string DefaultSignatureDirectory => SignatureFolder.CurrentPath;
+
+        /// <summary>True when a file name is a picture by its extension.</summary>
+        public static bool IsPictureFile(string? fileName)
+        {
+            string extension = Path.GetExtension(fileName ?? string.Empty);
+            return PictureExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase);
+        }
 
         /// <summary>
         /// Enumerates the installed signatures (name-sorted). Missing directory =>
-        /// empty list. <paramref name="directory"/> overrides the default for tests.
+        /// empty list. <paramref name="directory"/> overrides the resolved folder for tests.
         /// </summary>
         public static IReadOnlyList<SignatureInfo> ListSignatures(string? directory = null)
         {
@@ -135,7 +183,11 @@ namespace OutlookAI.Core.Services
                     : pair.Value.TryGetValue(".html", out string? htmlAlt) ? htmlAlt : null;
                 string? rtf = pair.Value.TryGetValue(".rtf", out string? rtfPath) ? rtfPath : null;
                 string? text = pair.Value.TryGetValue(".txt", out string? txtPath) ? txtPath : null;
-                result.Add(new SignatureInfo(pair.Key, TryReadExcerpt(text, html), html, rtf, text));
+                string resourceDirectory = Path.Combine(root, pair.Key + ResourceDirectorySuffix);
+                bool hasResources = Directory.Exists(resourceDirectory);
+                int pictures = hasResources ? CountPictures(resourceDirectory) : 0;
+                result.Add(new SignatureInfo(
+                    pair.Key, TryReadExcerpt(text, html, rtf), html, rtf, text, hasResources ? resourceDirectory : null, pictures));
             }
 
             return result;
@@ -154,57 +206,6 @@ namespace OutlookAI.Core.Services
 
             return ListSignatures(directory)
                 .FirstOrDefault(s => string.Equals(s.Name, name.Trim(), StringComparison.OrdinalIgnoreCase));
-        }
-
-        /// <summary>
-        /// Reads per-account default-signature assignments from the profile registry - for MAIL
-        /// ACCOUNTS only, by <see cref="ProfileAccountEntries"/>' rule, the same one
-        /// manage_signature writes and verifies by. It used to be "any entry whose Account Name
-        /// contains @", which listed a data file named after an address as that address's
-        /// account and missed a POP3/IMAP account the user had named anything else - so this,
-        /// list_signatures' answer, confirmed the very write that had gone to the data file
-        /// (2026-09-24). Never throws: unreadable/absent state yields an empty list (unknown -
-        /// the Phase-4 degradation contract). <paramref name="valuesReader"/> is the T1 injection
-        /// seam - production passes null for the live registry.
-        /// </summary>
-        public static IReadOnlyList<SignatureAssignment> ReadAccountAssignments(
-            Func<IReadOnlyList<IReadOnlyDictionary<string, object?>>>? valuesReader = null)
-        {
-            try
-            {
-                IReadOnlyList<IReadOnlyDictionary<string, object?>> accountValueSets =
-                    valuesReader != null ? valuesReader() : ReadProfileAccountValueSets();
-
-                List<SignatureAssignment> result = new List<SignatureAssignment>();
-                foreach (IReadOnlyDictionary<string, object?> values in accountValueSets)
-                {
-                    // Mail accounts only: the key also lists every data file and address book of
-                    // the profile, and a data file's name can be an address.
-                    ProfileAccountEntry entry = ProfileAccountEntries.Classify(string.Empty, values);
-                    if (entry.Kind != ProfileEntryKind.MailAccount || entry.Address == null)
-                    {
-                        continue;
-                    }
-
-                    result.Add(new SignatureAssignment(entry.Address, entry.NewSignature, entry.ReplyForwardSignature));
-                }
-
-                return result;
-            }
-            catch (Exception ex) when (ex is not OutOfMemoryException)
-            {
-                // Unknown, never guessed: callers report no assignment data.
-                return Array.Empty<SignatureAssignment>();
-            }
-        }
-
-        /// <summary>
-        /// The raw value sets of the default profile's account-manager entries - the same reader
-        /// manage_signature writes through (<see cref="LiveProfileAccountRegistry"/>).
-        /// </summary>
-        private static IReadOnlyList<IReadOnlyDictionary<string, object?>> ReadProfileAccountValueSets()
-        {
-            return new LiveProfileAccountRegistry().ReadEntries().Select(e => e.Values).ToList();
         }
 
         /// <summary>
@@ -234,24 +235,27 @@ namespace OutlookAI.Core.Services
         }
 
         /// <summary>
-        /// Short plain-text excerpt of a signature: the first two non-empty lines of
-        /// the .txt rendition (BOM-aware decode), else of the HTML converted to text.
-        /// Capped at <see cref="ExcerptMaxChars"/>. Null when nothing is readable.
+        /// Short plain-text excerpt of a signature: the first two non-empty lines of the .txt
+        /// rendition, else of the HTML converted to text, else of the RTF's text - each decoded the
+        /// way it was written (<see cref="SignatureText"/>). Capped at <see cref="ExcerptMaxChars"/>.
+        /// Null when nothing is readable.
         /// </summary>
-        public static string? TryReadExcerpt(string? textPath, string? htmlPath)
+        public static string? TryReadExcerpt(string? textPath, string? htmlPath, string? rtfPath = null)
         {
             try
             {
                 string? plain = null;
                 if (textPath != null && File.Exists(textPath))
                 {
-                    using StreamReader reader = new StreamReader(textPath, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
-                    plain = reader.ReadToEnd();
+                    plain = SignatureText.ReadText(textPath).Text;
                 }
                 else if (htmlPath != null && File.Exists(htmlPath))
                 {
-                    using StreamReader reader = new StreamReader(htmlPath, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
-                    plain = Text.HtmlToText.Convert(reader.ReadToEnd());
+                    plain = Text.HtmlToText.Convert(SignatureText.ReadHtml(htmlPath).Text);
+                }
+                else if (rtfPath != null && File.Exists(rtfPath))
+                {
+                    plain = SignatureRtf.ToPlainText(SignatureText.ReadRtf(rtfPath).Text);
                 }
 
                 if (string.IsNullOrWhiteSpace(plain))
@@ -262,7 +266,7 @@ namespace OutlookAI.Core.Services
                 List<string> lines = new List<string>(2);
                 foreach (string rawLine in plain!.Split('\n'))
                 {
-                    string line = rawLine.Trim().Trim('\uFEFF', '\uFFFE');
+                    string line = rawLine.Trim().Trim('﻿', '￾');
                     if (line.Length > 0)
                     {
                         lines.Add(line);
@@ -286,9 +290,21 @@ namespace OutlookAI.Core.Services
 
                 return excerpt;
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException or ArgumentException)
             {
                 return null;
+            }
+        }
+
+        private static int CountPictures(string resourceDirectory)
+        {
+            try
+            {
+                return Directory.GetFiles(resourceDirectory).Count(f => IsPictureFile(Path.GetFileName(f)));
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                return 0;
             }
         }
     }

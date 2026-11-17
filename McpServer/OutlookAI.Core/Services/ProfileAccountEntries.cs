@@ -32,6 +32,19 @@ namespace OutlookAI.Core.Services
         Unrecognized,
     }
 
+    /// <summary>Which kind of mail account a <see cref="ProfileEntryKind.MailAccount"/> entry is.</summary>
+    public enum MailAccountKind
+    {
+        /// <summary>A POP3 account (CLSID_OlkPOP3Account).</summary>
+        Pop3,
+
+        /// <summary>An IMAP account (CLSID_OlkIMAP4Account).</summary>
+        Imap,
+
+        /// <summary>An Exchange account: the MAPI-service wrapper around <c>MSEMS</c>. The only kind that can roam signatures.</summary>
+        Exchange,
+    }
+
     /// <summary>One entry of the account-manager key, classified (data only).</summary>
     public sealed class ProfileAccountEntry
     {
@@ -42,7 +55,9 @@ namespace OutlookAI.Core.Services
             string? address,
             string? accountName,
             string? newSignature,
-            string? replyForwardSignature)
+            string? replyForwardSignature,
+            string? profileName = null,
+            MailAccountKind? accountKind = null)
         {
             Key = key ?? throw new ArgumentNullException(nameof(key));
             Kind = kind;
@@ -50,7 +65,20 @@ namespace OutlookAI.Core.Services
             AccountName = accountName;
             NewSignature = newSignature;
             ReplyForwardSignature = replyForwardSignature;
+            ProfileName = profileName ?? ProfileAccountEntries.ProfileNameOf(key);
+            AccountKind = accountKind;
         }
+
+        /// <summary>
+        /// The Outlook profile the entry belongs to. Every entry carries its profile, because the
+        /// same address can be an account in two profiles with two different defaults, and the
+        /// reader used to merge every profile into one list whenever no default profile was
+        /// recorded - insertion then took whichever profile's entry came first (Q147).
+        /// </summary>
+        public string? ProfileName { get; }
+
+        /// <summary>POP3, IMAP or Exchange for a mail account; null for every other kind.</summary>
+        public MailAccountKind? AccountKind { get; }
 
         /// <summary>
         /// Opaque handle of the entry: its HKCU-relative registry path for the live registry,
@@ -87,12 +115,19 @@ namespace OutlookAI.Core.Services
     /// <summary>One raw entry as read: its key and the values the classification needs.</summary>
     public sealed class ProfileRegistryEntry
     {
-        /// <summary>Creates a raw entry.</summary>
-        public ProfileRegistryEntry(string key, IReadOnlyDictionary<string, object?> values)
+        /// <summary>
+        /// Creates a raw entry. <paramref name="profileName"/> defaults to the profile named in the
+        /// key, which is where the live reader puts it.
+        /// </summary>
+        public ProfileRegistryEntry(string key, IReadOnlyDictionary<string, object?> values, string? profileName = null)
         {
             Key = key ?? throw new ArgumentNullException(nameof(key));
             Values = values ?? throw new ArgumentNullException(nameof(values));
+            ProfileName = profileName ?? ProfileAccountEntries.ProfileNameOf(key);
         }
+
+        /// <summary>The profile the entry belongs to (null only for a fake whose key names none).</summary>
+        public string? ProfileName { get; }
 
         /// <summary>The entry's handle (HKCU-relative registry path for the live registry).</summary>
         public string Key { get; }
@@ -101,8 +136,28 @@ namespace OutlookAI.Core.Services
         public IReadOnlyDictionary<string, object?> Values { get; }
     }
 
+    /// <summary>The Outlook profiles of the Windows user, and the one recorded as the default.</summary>
+    public sealed class ProfileList
+    {
+        /// <summary>Creates the list.</summary>
+        public ProfileList(string? defaultProfile, IReadOnlyList<string> names)
+        {
+            DefaultProfile = defaultProfile;
+            Names = names ?? throw new ArgumentNullException(nameof(names));
+        }
+
+        /// <summary>
+        /// <c>DefaultProfile</c> as recorded: the profile Outlook starts with unless told otherwise
+        /// (<c>/profile</c>, the profile picker). Null when none is recorded.
+        /// </summary>
+        public string? DefaultProfile { get; }
+
+        /// <summary>Every profile, name-sorted.</summary>
+        public IReadOnlyList<string> Names { get; }
+    }
+
     /// <summary>
-    /// Raw access to the entries of the default profile's account-manager key - the T1 seam.
+    /// Raw access to the entries of every profile's account-manager key - the T1 seam.
     /// A fake holds the value names and shapes Outlook writes, so the classification, the
     /// selection, the write guard and the read-back all run against it unchanged;
     /// <see cref="LiveProfileAccountRegistry"/> is the real registry.
@@ -110,10 +165,14 @@ namespace OutlookAI.Core.Services
     public interface IProfileAccountRegistry
     {
         /// <summary>
-        /// Every entry, read NOW - never cached, so a read-back sees what the registry holds after
-        /// the write rather than what the writer believed it wrote.
+        /// Every entry of EVERY profile, each tagged with its profile, read NOW - never cached, so a
+        /// read-back sees what the registry holds after the write rather than what the writer
+        /// believed it wrote. Callers group by profile; nothing may merge two profiles.
         /// </summary>
         IReadOnlyList<ProfileRegistryEntry> ReadEntries();
+
+        /// <summary>The profiles and the recorded default, read now.</summary>
+        ProfileList ReadProfiles();
 
         /// <summary>Sets a REG_SZ value on an EXISTING entry; never creates an entry.</summary>
         void SetString(string key, string valueName, string value);
@@ -124,36 +183,49 @@ namespace OutlookAI.Core.Services
 
     /// <summary>
     /// The live registry: every numbered subkey of
-    /// HKCU\Software\Microsoft\Office\&lt;major&gt;\Outlook\Profiles\&lt;default profile&gt;\9375CFF0413111d3B88A00104B2A6676
-    /// (every profile's, when no <c>DefaultProfile</c> is recorded - as this product has always
-    /// read it). The major is the detected one (<see cref="OutlookProfileRegistry.OfficeVersion"/>).
-    /// Reads only <see cref="ProfileAccountEntries.ValueNamesRead"/>: an account entry also holds
-    /// its sealed POP3 password, which nothing here has any business loading.
+    /// HKCU\Software\Microsoft\Office\&lt;major&gt;\Outlook\Profiles\&lt;profile&gt;\9375CFF0413111d3B88A00104B2A6676,
+    /// for EVERY profile, each entry tagged with its profile. It used to read only the default
+    /// profile - or, with no <c>DefaultProfile</c> recorded, every profile merged into one list -
+    /// so an Outlook running on another profile was invisible, and a merge let the first profile's
+    /// entry stand for an address both profiles had (Q147). The major is the detected one
+    /// (<see cref="OutlookProfileRegistry.OfficeVersion"/>). Reads only
+    /// <see cref="ProfileAccountEntries.ValueNamesRead"/>: an account entry also holds its sealed
+    /// POP3 password, which nothing here has any business loading.
     /// </summary>
     public sealed class LiveProfileAccountRegistry : IProfileAccountRegistry
     {
+        /// <summary>The value naming the profile Outlook starts with.</summary>
+        public const string DefaultProfileValueName = "DefaultProfile";
+
+        /// <inheritdoc />
+        public ProfileList ReadProfiles()
+        {
+            using RegistryKey? outlook = Registry.CurrentUser.OpenSubKey(OutlookProfileRegistry.OutlookRootKeyPath);
+            if (outlook == null)
+            {
+                return new ProfileList(null, Array.Empty<string>());
+            }
+
+            string? defaultProfile = outlook.GetValue(DefaultProfileValueName) as string;
+            using RegistryKey? profiles = outlook.OpenSubKey(OutlookProfileRegistry.ProfilesSubKeyName);
+            string[] names = profiles?.GetSubKeyNames() ?? Array.Empty<string>();
+            Array.Sort(names, StringComparer.OrdinalIgnoreCase);
+            return new ProfileList(string.IsNullOrWhiteSpace(defaultProfile) ? null : defaultProfile, names);
+        }
+
         /// <inheritdoc />
         public IReadOnlyList<ProfileRegistryEntry> ReadEntries()
         {
             List<ProfileRegistryEntry> entries = new List<ProfileRegistryEntry>();
             string outlookRoot = OutlookProfileRegistry.OutlookRootKeyPath;
-            using RegistryKey? outlook = Registry.CurrentUser.OpenSubKey(outlookRoot);
-            if (outlook == null)
-            {
-                return entries;
-            }
-
-            string? defaultProfile = outlook.GetValue("DefaultProfile") as string;
-            using RegistryKey? profiles = outlook.OpenSubKey(OutlookProfileRegistry.ProfilesSubKeyName);
+            using RegistryKey? profiles = Registry.CurrentUser.OpenSubKey(
+                outlookRoot + "\\" + OutlookProfileRegistry.ProfilesSubKeyName);
             if (profiles == null)
             {
                 return entries;
             }
 
-            IEnumerable<string> profileNames = defaultProfile != null
-                ? new[] { defaultProfile }
-                : profiles.GetSubKeyNames();
-            foreach (string profileName in profileNames)
+            foreach (string profileName in profiles.GetSubKeyNames())
             {
                 string accountsPath = profileName + "\\" + OutlookProfileRegistry.AccountsSubKeyName;
                 using RegistryKey? accounts = profiles.OpenSubKey(accountsPath);
@@ -182,7 +254,8 @@ namespace OutlookAI.Core.Services
 
                     entries.Add(new ProfileRegistryEntry(
                         outlookRoot + "\\" + OutlookProfileRegistry.ProfilesSubKeyName + "\\" + accountsPath + "\\" + subKeyName,
-                        values));
+                        values,
+                        profileName));
                 }
             }
 
@@ -368,7 +441,7 @@ namespace OutlookAI.Core.Services
         /// are matched case-insensitively (the registry's own rule), whatever comparer the
         /// dictionary was built with. Pure.
         /// </summary>
-        public static ProfileAccountEntry Classify(string key, IReadOnlyDictionary<string, object?> values)
+        public static ProfileAccountEntry Classify(string key, IReadOnlyDictionary<string, object?> values, string? profileName = null)
         {
             if (values == null)
             {
@@ -381,10 +454,12 @@ namespace OutlookAI.Core.Services
             ProfileEntryKind kind = ClassifyKind(clsid, serviceName);
 
             string? address = null;
+            MailAccountKind? accountKind = null;
             if (kind == ProfileEntryKind.MailAccount)
             {
                 string? email = Blank(Text(values, EmailValueName));
                 bool exchange = Guid.TryParse(clsid?.Trim(), out Guid type) && type == MapiServiceClsid;
+                accountKind = exchange ? MailAccountKind.Exchange : type == Imap4AccountClsid ? MailAccountKind.Imap : MailAccountKind.Pop3;
 
                 // POP3 / IMAP: Email and nothing else - their Account Name is the display name,
                 // and matching on it is the defect this type replaces. Exchange records no Email
@@ -399,10 +474,12 @@ namespace OutlookAI.Core.Services
                 address,
                 accountName,
                 Blank(Text(values, NewSignatureValueName)),
-                Blank(Text(values, ReplyForwardSignatureValueName)));
+                Blank(Text(values, ReplyForwardSignatureValueName)),
+                profileName ?? ProfileNameOf(key),
+                accountKind);
         }
 
-        /// <summary>Every entry of <paramref name="registry"/>, freshly read and classified.</summary>
+        /// <summary>Every entry of <paramref name="registry"/>, freshly read and classified, each with its profile.</summary>
         public static IReadOnlyList<ProfileAccountEntry> ReadAll(IProfileAccountRegistry registry)
         {
             if (registry == null)
@@ -410,7 +487,38 @@ namespace OutlookAI.Core.Services
                 throw new ArgumentNullException(nameof(registry));
             }
 
-            return registry.ReadEntries().Select(e => Classify(e.Key, e.Values)).ToList();
+            return registry.ReadEntries().Select(e => Classify(e.Key, e.Values, e.ProfileName)).ToList();
+        }
+
+        /// <summary>
+        /// The profile an entry handle names: the segment after <c>\Profiles\</c> in the live
+        /// reader's key shape, or null when the handle is not that shape (a fake's own key). Pure.
+        /// </summary>
+        public static string? ProfileNameOf(string? key)
+        {
+            if (string.IsNullOrEmpty(key))
+            {
+                return null;
+            }
+
+            string marker = "\\" + OutlookProfileRegistry.ProfilesSubKeyName + "\\";
+            int at = key!.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+            if (at < 0)
+            {
+                return null;
+            }
+
+            int start = at + marker.Length;
+            int end = key.IndexOf('\\', start);
+            string name = end < 0 ? key.Substring(start) : key.Substring(start, end - start);
+            return name.Length == 0 ? null : name;
+        }
+
+        /// <summary>Profile names compare as Outlook compares them: case-insensitively, trimmed.</summary>
+        public static bool ProfileEquals(string? left, string? right)
+        {
+            return left != null && right != null
+                && string.Equals(left.Trim(), right.Trim(), StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>The whole address, trimmed, case-insensitive. Null or blank never matches.</summary>

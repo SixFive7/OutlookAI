@@ -43,16 +43,17 @@
 
     WHAT IT DELIBERATELY DOES NOT DO: implement any of that. This product already ships it, tested:
 
-      * SignatureManager writes the file set - .htm + .txt + .rtf - under
-        %APPDATA%\Microsoft\Signatures, deriving whichever renditions it was not given. All three
-        are always written because each mail format reads only its own and silently omits the
-        signature when it is missing.
+      * SignatureManager writes the file set - .htm + .txt + .rtf - in the signature folder Outlook
+        records (Common\General\Signatures, %APPDATA%\Microsoft\Signatures when none is), deriving
+        whichever renditions a CREATE was not given. All three are written because each mail format
+        reads only its own and silently omits the signature when it is missing.
       * ProfileSignatureDefaultsStore writes the per-account binding as REG_SZ into 'New Signature'
         and 'Reply-Forward Signature' under the account's subkey of
         9375CFF0413111d3B88A00104B2A6676. Its writes are narrow on purpose: only those two value
         names, only on subkeys carrying an SMTP-shaped 'Account Name', never creating a subkey.
-      * Both are reachable through the shipped MCP tool manage_signature, whose set_default_for
-        argument takes { account, scope } with scope 'new' | 'reply' | 'both'.
+      * Both are reachable through the shipped MCP tool manage_signature, whose default_for
+        argument takes { profile, account, scope } with scope 'new' | 'reply' | 'both' - the profile
+        always explicit since Q155 (2026-11-17), so -OutlookProfile names it.
 
     So this script drives the shipped tool over stdio. THAT IS THE POINT, not a shortcut: mailbox
     safety rule 1 says creating or editing anything happens only through the project's tested
@@ -78,15 +79,16 @@
     them - but only as long as this one is not named as if it were a test artefact. The script
     refuses that prefix.
 
-    ONE THING ALREADY SETTLED, so nobody goes looking: on Microsoft 365 Apps 2303+ roaming
-    signatures can overrule local files unless DisableRoamingSignatures=1. The guests are Office
-    LTSC 2024, where LOCAL FILES ARE AUTHORITATIVE - that is recorded in SignatureManager's own
-    documentation. No roaming setting is needed here.
+    ROAMING, so nobody goes looking: on Microsoft 365 Apps 2303+ roaming signatures can overrule
+    local files unless DisableRoamingSignatures=1. Whether Office LTSC 2024 roams is not measured
+    (Q147 R1), so the product treats it as if it may - which matters only for an Exchange account,
+    whose defaults it then leaves to Outlook. The identity account is POP3: nothing roams.
 
     IDEMPOTENT, with one wrinkle. Re-running with the same name and body is a no-op in effect, but
-    manage_signature's 'update' action rewrites the files and backs the previous set up under
-    %LOCALAPPDATA%\OutlookAI\signature-backups first. So a second run is safe and leaves one more
-    backup directory behind. The script chooses create-or-update by asking list_signatures first.
+    manage_signature's 'update' action rewrites the plain-text rendition and backs the previous set
+    up under %LOCALAPPDATA%\OutlookAI\signature-backups first. So a second run is safe and leaves
+    one more backup directory behind. The script chooses create-or-update by asking list_signatures
+    first, and sets the default with the default_for of that same call.
 
     RUN IT IN SESSION 1, AT OUTLOOK'S INTEGRITY LEVEL (above): Register-InteractiveTask.ps1, with
     -RunLevel Limited for a non-elevated Outlook. Windows PowerShell 5.1 - no ternary,
@@ -107,6 +109,10 @@
 .PARAMETER Scope
     'new' | 'reply' | 'both'. Section 2.8b needs at least 'new'.
 
+.PARAMETER OutlookProfile
+    The Outlook profile the account belongs to - the tier profile on the guests. Explicit, as the
+    product requires (Q155).
+
 .PARAMETER ServerExe
     The MCP server, staged by Testbed/host/Publish-GuestPayload.ps1.
 
@@ -123,6 +129,7 @@ param(
     [string] $BodyText = 'OutlookAI testbed identity account.',
     [string] $BodyHtml,
     [ValidateSet('new', 'reply', 'both')] [string] $Scope = 'new',
+    [string] $OutlookProfile = 'OutlookAI-Tier',
     [string] $ServerExe = 'C:\OutlookAI-Q5\server\OutlookAI.McpServer.exe',
     [int]    $ReplyTimeoutSeconds = 300,
     [string[]] $ExpectedUser = @('vmadmin'),
@@ -146,6 +153,7 @@ set the suite is entitled to delete, which is the opposite of what section 2.8b 
 Write-Host "account        : $Account"
 Write-Host "signature      : $SignatureName"
 Write-Host "scope          : $Scope"
+Write-Host "profile        : $OutlookProfile"
 Write-Host "server         : $ServerExe"
 Write-Host ''
 
@@ -261,10 +269,10 @@ Accounts this profile does have: $($addresses -join ', ')
     Write-Host "signature '$SignatureName' -> $action"
 
     $callArgs = @{
-        action          = $action
-        name            = $SignatureName
-        body_text       = $BodyText
-        set_default_for = @{ account = $Account; scope = $Scope }
+        action      = $action
+        name        = $SignatureName
+        body_text   = $BodyText
+        default_for = @{ profile = $OutlookProfile; account = $Account; scope = $Scope }
     }
     if ($BodyHtml) { $callArgs['body_html'] = $BodyHtml }
 
@@ -291,12 +299,15 @@ Accounts this profile does have: $($addresses -join ', ')
     # whether the account will use it. list_signatures reports the per-account assignments it can
     # read out of the profile registry, and MISSING means unknown rather than absent - so an
     # unreadable answer is reported as unproven rather than quietly passed.
-    # list_signatures returns { signatures[], accounts[], note } - the assignments live under
-    # 'accounts', each { account, newMessage, replyForward }. When nothing could be read the whole
-    # list is omitted and 'note' says why, which is the unknown case handled below.
+    # list_signatures returns every profile under 'profiles', each { name, accounts[] }, and each
+    # account { account, newMessage, replyForward, ... } - read in the profile the default was set in.
     $bound = $null
-    foreach ($assignment in $after.accounts) {
-        if ($assignment.account -ieq $Account) { $bound = $assignment }
+    foreach ($p in $after.profiles) {
+        if ($p.name -ieq $OutlookProfile) {
+            foreach ($assignment in $p.accounts) {
+                if ($assignment.account -ieq $Account) { $bound = $assignment }
+            }
+        }
     }
 
     if ($null -eq $bound) {

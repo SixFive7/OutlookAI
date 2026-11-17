@@ -555,37 +555,65 @@ public static class OutlookTools
     }
 
     [McpServerTool(Name = "list_signatures")]
-    [Description("List the installed Outlook email signatures: each name plus a short plain-text excerpt (use the excerpt to "
-        + "detect a signature's language and purpose), and per-account default assignments where the profile registry records "
-        + "them (missing = unknown, e.g. no signature configured or roaming-managed - never guessed). Use this to pick the "
-        + "BEST signature for a draft via the draft tools' 'signature' parameter - e.g. match the language of the "
-        + "recipient/thread. Read-only, never starts Outlook.")]
-    public static async Task<CallToolResult> ListSignatures(CancellationToken cancellationToken = default)
+    [Description("List the Outlook email signatures and how drafts choose one. Returns every Outlook profile (the default "
+        + "and the running one marked) with its mail accounts and, per account, its own defaults and the EFFECTIVE ones a "
+        + "draft gets (a policy's when one is set); the signature folder; policy and roaming state; and every signature with "
+        + "a short plain-text excerpt (use the excerpt to detect its language and purpose), its formats (html, rtf, text) "
+        + "and pictures. Pass name to read ONE signature in full - its HTML, its RTF (pictures shown as [[picture:N]] tokens) "
+        + "and its text, plus every picture with its file path - which is what editing it with manage_signature needs. Use "
+        + "this to pick the BEST signature for a draft via the draft tools' 'signature' parameter, e.g. the one in the "
+        + "language of the recipient or thread. Read-only, never starts Outlook.")]
+    public static async Task<CallToolResult> ListSignatures(
+        [Description("A signature name to read in full: every format and its pictures. Omit for the overview.")] string? name = null,
+        CancellationToken cancellationToken = default)
     {
-        return await GuardAsync(cancellationToken, () => ServerRuntime.Service.ListSignatures());
+        return await GuardAsync(cancellationToken, () => ServerRuntime.Service.ListSignatures(name));
     }
 
     [McpServerTool(Name = "manage_signature")]
-    [Description("Create, update or DELETE an Outlook email signature by writing its file set (.htm + .txt + .rtf) in the "
-        + "Signatures folder. DESTRUCTIVE: 'delete' permanently removes the signature and 'update' replaces its content - "
-        + "before either, the previous files are automatically backed up under %LOCALAPPDATA%\\OutlookAI\\signature-backups "
-        + "and the backup path is returned as backupPath; double-check the name (see list_signatures) before deleting. "
-        + "For create/update supply body_text and/or body_html - the missing renditions are derived. Deleting a signature "
-        + "also clears per-account default assignments that referenced it. Optional set_default_for records the signature "
-        + "as an account's default (new mail, replies, or both) on the ONE mail account in the Outlook profile whose address "
-        + "is exactly set_default_for.account - refused, with nothing written, when none or several match - and reads it "
-        + "back before reporting it; Outlook picks that up at its next start. Never starts or touches Outlook itself; every "
-        + "operation is audit-logged.")]
+    [Description("Create, edit or DELETE an Outlook email signature, and set or clear an account's default signature. A "
+        + "signature is files in the folder Outlook uses: an HTML, an RTF and a plain-text rendition (each mail format inserts "
+        + "only its own) plus a picture folder.\n\n"
+        + "create: give body_html, body_rtf and/or body_text; the renditions not given are derived. update edits IN PLACE and "
+        + "touches only what you pass: body_html, body_rtf and body_text each replace that one rendition (read it first with "
+        + "list_signatures(name) and send it back edited); replace [{find, replace}] changes visible text in every rendition "
+        + "that has it, formatting kept; pictures adds, replaces or removes picture files. Nothing is rebuilt from another "
+        + "rendition. set_default and clear_default change an account's default for new mail, replies or both - default_for "
+        + "needs an EXPLICIT profile and account (list_signatures lists them); create and update may set one too.\n\n"
+        + "DESTRUCTIVE: 'delete' permanently removes the signature and 'update' changes it - before either, the previous files "
+        + "are automatically backed up under %LOCALAPPDATA%\\OutlookAI\\signature-backups and the path is returned as "
+        + "backupPath. Deleting also clears every default that named it. REFUSED, with the reason and nothing written: any "
+        + "write while policy disables signatures, a default a policy sets for every account, Outlook's local copy of a "
+        + "roaming signature, and a default of an Exchange account whose signatures may roam. Defaults are read back before "
+        + "they are reported. Never starts or touches Outlook; every operation is audit-logged.")]
     public static async Task<CallToolResult> ManageSignature(
-        [Description("'create' | 'update' | 'delete'.")] string action,
-        [Description("Signature name (as shown by list_signatures and Outlook's signature pickers).")] string name,
-        [Description("Plain-text signature body (create/update). When omitted it is derived from body_html.")]
+        [Description("'create' | 'update' | 'delete' | 'set_default' | 'clear_default'.")] string action,
+        [Description("Signature name (as list_signatures shows it). For clear_default: the signature that is the default now - "
+            + "only that default is cleared.")]
+        string name,
+        [Description("Plain-text rendition. create: written (derived from another when omitted). update: replaces the .txt only.")]
         string? body_text = null,
-        [Description("HTML signature body (create/update), fragment or full document. When omitted it is derived from body_text.")]
+        [Description("HTML rendition, fragment or full document. Refer to the signature's pictures as <name>_files/<file> - "
+            + "list_signatures(name) gives the exact prefix as pictureReference. create: written. update: replaces the .htm "
+            + "only; send the whole document back, edited.")]
         string? body_html = null,
-        [Description("Optionally record the signature as an account default: {\"account\": SMTP address from list_accounts, "
-            + "\"scope\": \"new\"|\"reply\"|\"both\"}. Not allowed with delete.")]
-        SetDefaultForArg? set_default_for = null,
+        [Description("RTF rendition: a whole document starting {\\rtf1, as list_signatures(name) returns it. Keep each "
+            + "[[picture:N]] token where that picture should stay - it becomes the same picture again, byte for byte - delete a "
+            + "token to remove its picture, and write [[picture-file:<file>]] or [[picture-file:<file>|WIDTHxHEIGHT]] (pixels) to "
+            + "embed a PNG or JPEG from the signature's picture folder or an absolute path. update: replaces the .rtf only.")]
+        string? body_rtf = null,
+        [Description("update only: in-place text edits, [{\"find\": \"old text\", \"replace\": \"new text\"}], each applied to "
+            + "every rendition that contains the text (matched as it reads, case included), formatting kept. Refused with "
+            + "nothing written when a find is in no rendition, or when formatting splits it - then send that rendition whole.")]
+        TextEditArg[]? replace = null,
+        [Description("Picture folder changes: {\"file\": \"logo.png\", \"path\": \"C:\\\\pictures\\\\logo.png\"} adds the file or "
+            + "replaces it, {\"file\": \"image002.png\", \"remove\": true} removes it. PNG, JPEG, GIF or BMP, at most 2 MB, "
+            + "named after its real format. The HTML shows a picture only where it refers to it (body_html or replace); the RTF "
+            + "embeds its own copies (body_rtf). A picture the HTML still shows cannot be removed.")]
+        PictureArg[]? pictures = null,
+        [Description("{\"profile\": Outlook profile, \"account\": account address, \"scope\": \"new\"|\"reply\"|\"both\"} - all "
+            + "three required. For set_default and clear_default, and optionally with create or update. Not with delete.")]
+        DefaultForArg? default_for = null,
         CancellationToken cancellationToken = default)
     {
         return await GuardAsync(cancellationToken, () => ServerRuntime.Service.ManageSignature(new ManageSignatureRequest
@@ -594,19 +622,49 @@ public static class OutlookTools
             Name = name,
             BodyText = body_text,
             BodyHtml = body_html,
-            DefaultForAccount = set_default_for?.Account,
-            DefaultForScope = set_default_for?.Scope,
+            BodyRtf = body_rtf,
+            Replace = replace?.Select(e => new SignatureTextEdit { Find = e?.Find ?? string.Empty, Replace = e?.Replace ?? string.Empty }).ToList(),
+            Pictures = pictures?.Select(p => new SignaturePictureChange { File = p?.File ?? string.Empty, Path = p?.Path, Remove = p?.Remove == true }).ToList(),
+            DefaultForProfile = default_for?.Profile,
+            DefaultForAccount = default_for?.Account,
+            DefaultForScope = default_for?.Scope,
         }));
     }
 
-    /// <summary>manage_signature's set_default_for argument object.</summary>
-    public sealed class SetDefaultForArg
+    /// <summary>manage_signature's default_for argument object.</summary>
+    public sealed class DefaultForArg
     {
-        /// <summary>Account SMTP address (see list_accounts).</summary>
+        /// <summary>The Outlook profile (see list_signatures) - always explicit.</summary>
+        public string? Profile { get; set; }
+
+        /// <summary>Account SMTP address (see list_signatures).</summary>
         public string? Account { get; set; }
 
-        /// <summary>Which default(s) to record: "new" | "reply" | "both".</summary>
+        /// <summary>Which default(s): "new" | "reply" | "both".</summary>
         public string? Scope { get; set; }
+    }
+
+    /// <summary>One of manage_signature's replace edits.</summary>
+    public sealed class TextEditArg
+    {
+        /// <summary>The visible text to find.</summary>
+        public string? Find { get; set; }
+
+        /// <summary>The text to put in its place.</summary>
+        public string? Replace { get; set; }
+    }
+
+    /// <summary>One of manage_signature's picture changes.</summary>
+    public sealed class PictureArg
+    {
+        /// <summary>The file name in the picture folder.</summary>
+        public string? File { get; set; }
+
+        /// <summary>An absolute path to copy in.</summary>
+        public string? Path { get; set; }
+
+        /// <summary>True to remove the file.</summary>
+        public bool? Remove { get; set; }
     }
 
     [McpServerTool(Name = "open_in_outlook")]
@@ -680,6 +738,19 @@ public static class OutlookTools
 
     private const string ImportanceHint = "Message importance: 'low', 'normal' or 'high'. Omit for Outlook's default (normal).";
 
+    // Q157 (a), and the maintainer's "make sure the agent understands from the mcp operation
+    // instructions": the three values and what each does, which account decides, and where the
+    // answer says what happened - on the parameter every draft tool shares, written once.
+    private const string SignatureHint = "Which signature the draft gets. OMIT it for the sending account's EFFECTIVE default "
+        + "signature (for new mail, or for replies and forwards; from the profile Outlook is running; a policy's when one is "
+        + "set). Pass \"none\" for no signature. Or pass a signature name from list_signatures that the sending account can "
+        + "use: pick the BEST one for this message, e.g. match the recipient's or thread's language using the excerpts; with "
+        + "a single signature the choice is trivial. The result's signature, signatureSource and signatureReason say which "
+        + "went in and why, and signatureSuggestion names the account's own default when the draft got something else.";
+
+    private const string DerivedSignatureHint = SignatureHint + " The sending account is the one the mail arrived in; a "
+        + "delegate or shared mailbox has none, so it gets no signature unless you name one.";
+
     private const string ReadReceiptHint = "Ask for a read receipt (default: the account's own setting). Use only when the "
         + "user asked for one - recipients see the request.";
 
@@ -732,10 +803,7 @@ public static class OutlookTools
         [Description(BccHint)] string? bcc = null,
         [Description("Open the draft in an Outlook window for the user (default true). Pass false only when the user asked not to see it.")]
         bool display = true,
-        [Description("Signature name to apply instead of the account default (see list_signatures). Pick the BEST one for this "
-            + "message - e.g. match the recipient's/thread's language using the excerpts; with a single signature the choice is "
-            + "trivial. Omit for the account's default signature.")]
-        string? signature = null,
+        [Description(SignatureHint)] string? signature = null,
         [Description(ImportanceHint)] string? importance = null,
         [Description(ReadReceiptHint)] bool? request_read_receipt = null,
         [Description(AttachmentsHint)] string[]? attachments = null,
@@ -766,9 +834,7 @@ public static class OutlookTools
         [Description(BccHint)] string? bcc = null,
         [Description(DerivedSubjectHint)] string? subject = null,
         [Description("Open the draft in an Outlook window for the user (default true).")] bool display = true,
-        [Description("Signature name to apply instead of the account default (see list_signatures). Pick the BEST one for this "
-            + "reply - e.g. match the thread's language; with a single signature the choice is trivial. Omit for the default.")]
-        string? signature = null,
+        [Description(DerivedSignatureHint)] string? signature = null,
         [Description(ImportanceHint)] string? importance = null,
         [Description(ReadReceiptHint)] bool? request_read_receipt = null,
         [Description(AttachmentsHint)] string[]? attachments = null,
@@ -799,9 +865,7 @@ public static class OutlookTools
         [Description(BccHint)] string? bcc = null,
         [Description(DerivedSubjectHint)] string? subject = null,
         [Description("Open the draft in an Outlook window for the user (default true).")] bool display = true,
-        [Description("Signature name to apply instead of the account default (see list_signatures). Pick the BEST one for this "
-            + "reply - e.g. match the thread's language; with a single signature the choice is trivial. Omit for the default.")]
-        string? signature = null,
+        [Description(DerivedSignatureHint)] string? signature = null,
         [Description(ImportanceHint)] string? importance = null,
         [Description(ReadReceiptHint)] bool? request_read_receipt = null,
         [Description(AttachmentsHint)] string[]? attachments = null,
@@ -833,9 +897,7 @@ public static class OutlookTools
         [Description(BccHint)] string? bcc = null,
         [Description(DerivedSubjectHint)] string? subject = null,
         [Description("Open the draft in an Outlook window for the user (default true).")] bool display = true,
-        [Description("Signature name to apply instead of the account default (see list_signatures). Pick the BEST one for this "
-            + "message - e.g. match the new recipient's language; with a single signature the choice is trivial. Omit for the default.")]
-        string? signature = null,
+        [Description(DerivedSignatureHint)] string? signature = null,
         [Description(ImportanceHint)] string? importance = null,
         [Description(ReadReceiptHint)] bool? request_read_receipt = null,
         [Description(AttachmentsHint)] string[]? attachments = null,
@@ -892,8 +954,9 @@ public static class OutlookTools
         string? bcc = null,
         [Description(ImportanceHint)] string? importance = null,
         [Description(ReadReceiptHint)] bool? request_read_receipt = null,
-        [Description("Signature name to swap in (see list_signatures). Replaces the draft's signature region only, "
-            + "leaving your text and any quoted original untouched. Omit to keep the current signature.")]
+        [Description("Swap the draft's signature for this one - a name from list_signatures that the sending account can use - "
+            + "or pass \"none\" to REMOVE it. Replaces or removes the draft's signature region only, leaving your text and any "
+            + "quoted original untouched. Omit to keep the current signature.")]
         string? signature = null,
         [Description(AttachmentsHint)] string[]? attachments = null,
         [Description("File names to REMOVE from the draft, exactly as reported in the attachments list (e.g. "
@@ -1252,6 +1315,15 @@ public static class OutlookTools
             // A service-layer failure that already knows what happened to the mail and says
             // so in its own message; this arm only carries the machine-readable half out.
             return Error("OperationFailed", ex.Message, null, outcome: ex.Outcome);
+        }
+        catch (SignatureRefusedException ex)
+        {
+            // Q147/Q156/Q157: refused for a reason outside the request's shape - policy, roaming, an
+            // account that cannot use the signature. Every one is decided before anything is written.
+            return Error("SignatureRefused", ex.Message,
+                "Nothing was written or created. The message says why and what is allowed instead; list_signatures shows "
+                + "the policy, the roaming state and which signatures each account can use.",
+                ex.Reason, outcome: MutationOutcome.Unchanged);
         }
         catch (OutlookUnavailableException ex)
         {
