@@ -71,7 +71,15 @@
     expires; the next run restores its checkpoint first anyway.
 
 .PARAMETER VMName
-    OutlookAI-Indexed or OutlookAI-Unindexed. Mandatory: no default picks a guest.
+    The guest: OutlookAI-Indexed or OutlookAI-Unindexed, or one of their clones (TestbedPool.ps1).
+    This or -Kind, never both and never neither: no default picks a guest.
+
+.PARAMETER Kind
+    Indexed or Unindexed: whichever guest of that kind is free - the source first, then its clones,
+    a clone only while the host has its memory and the reserve to spare (TestbedPool.ps1) - taken
+    once the payloads are built, when the run needs it. From that guest's frozen checkpoint, resting
+    on it again: -Checkpoint, -RestingCheckpoint, -GreenCheckpoint and -RestOnGreen name one
+    machine's checkpoints and need -VMName.
 
 .PARAMETER Ref
     The commit or branch to test. Default HEAD of -RepoPath.
@@ -121,7 +129,8 @@
 #>
 [CmdletBinding(DefaultParameterSetName = 'Run')]
 param(
-    [Parameter(Mandatory = $true, ParameterSetName = 'Run')] [string] $VMName,
+    [Parameter(ParameterSetName = 'Run')] [string] $VMName,
+    [Parameter(ParameterSetName = 'Run')] [ValidateSet('Indexed', 'Unindexed')] [string] $Kind,
     [Parameter(ParameterSetName = 'Run', Position = 0)] [string] $Ref = 'HEAD',
     [Parameter(ParameterSetName = 'Run')] [string] $RepoPath,
     [Parameter(ParameterSetName = 'Run')] [string] $Filter = '',
@@ -154,6 +163,11 @@ $Guests = [ordered]@{
     'OutlookAI-Indexed'   = [ordered]@{ ComputerName = 'OAI-INDEXED'; Indexed = $true; Checkpoint = 'CP-22C-FROZEN-CLOCK' }
     'OutlookAI-Unindexed' = [ordered]@{ ComputerName = 'OAI-UNINDEXED'; Indexed = $false; Checkpoint = 'CP-16B-FROZEN-CLOCK' }
 }
+# AND THEIR CLONES (2026-11-17): TestbedPool.ps1's indexed and unindexed pools. A clone is its
+# source copied at the source's frozen checkpoint - New-TestbedClone.ps1 - and rests on a checkpoint
+# of the same name, with the source's computer name, stores and settings, so its facts are its
+# source's: the same opt-in, the same filter, the same rendered settings, the same frozen record.
+. (Join-Path $PSScriptRoot 'TestbedPool.ps1')
 # Hyper-V's Time Synchronization integration service, by component id (Set-GuestClockFrozen.ps1).
 $TimeSyncComponentId = '2497F4DE-E9FA-4204-80E4-4B75C46419C0'
 # The profile the suite runs on, which a frozen start opens NOT elevated before the suite, as step 9a
@@ -259,18 +273,29 @@ function Get-PrepareSteps {
     return @('restart', 'hub rebuild')
 }
 
-# The guest's facts, or $null for anything that is not one of the two test guests - compared whole
-# and ignoring case, as Hyper-V compares names.
+# The guest's facts, or $null for anything that is not a test guest - one of the two Outlook guests
+# or a clone of one in their pools (TestbedPool.ps1) - compared whole and ignoring case, as Hyper-V
+# compares names. A clone's facts are its source's under its own name, and Source names the guest
+# whose records - liveTestSettings, frozenClocks - it is rendered and verified from.
 function Get-GuestFacts {
     param([string] $Name)
-    if ([string]::IsNullOrWhiteSpace($Name) -or $Name -ne $Name.Trim()) { return $null }
-    foreach ($key in $Guests.Keys) {
-        if ([string]::Equals($Name, $key, [System.StringComparison]::OrdinalIgnoreCase)) {
-            $facts = $Guests[$key]
-            return [pscustomobject]@{ Name = $key; ComputerName = $facts.ComputerName; Indexed = $facts.Indexed; Checkpoint = $facts.Checkpoint }
-        }
-    }
-    return $null
+    $pool = Get-TestbedPoolOf $Name
+    if ($pool -ne 'indexed' -and $pool -ne 'unindexed') { return $null }
+    $source = $TestbedPools[$pool][0]
+    if (-not $Guests.Contains($source)) { return $null }
+    $own = @($TestbedPools[$pool] | Where-Object { [string]::Equals($_, $Name, [System.StringComparison]::OrdinalIgnoreCase) })[0]
+    $facts = $Guests[$source]
+    $guestKind = 'Unindexed'
+    if ($facts.Indexed) { $guestKind = 'Indexed' }
+    return [pscustomobject]@{ Name = $own; Source = $source; Kind = $guestKind; ComputerName = $facts.ComputerName; Indexed = $facts.Indexed; Checkpoint = $facts.Checkpoint }
+}
+
+# The guests of a kind, in the order -Kind tries them: the source first, then its clones.
+function Get-KindMembers {
+    param([string] $Kind)
+    if ($Kind -eq 'Indexed') { return @($TestbedPools['indexed']) }
+    if ($Kind -eq 'Unindexed') { return @($TestbedPools['unindexed']) }
+    throw "'$Kind' is not a kind of guest: Indexed or Unindexed."
 }
 
 # The run's filter: the guest's derived one (LiveRunFilters.Guest / GuestUnindexed) narrowed by
@@ -316,7 +341,7 @@ function New-RunId {
     param([DateTime] $When, [string] $Sha, [string] $GuestName)
     if ($Sha -notmatch '^[0-9a-f]{12,40}$') { throw "Not a commit id: '$Sha'." }
     $short = 'indexed'
-    if ($GuestName -match 'Unindexed$') { $short = 'unindexed' }
+    if ($GuestName -match 'Unindexed\d*$') { $short = 'unindexed' }
     return ('{0:yyyyMMdd-HHmmss}-{1}-{2}' -f $When, $short, $Sha.Substring(0, 12))
 }
 
@@ -492,6 +517,27 @@ function Invoke-SelfTest {
     $u = Get-GuestFacts 'outlookai-unindexed'
     Check 'the unindexed guest is one, in any case' 'OutlookAI-Unindexed|OAI-UNINDEXED|False' @($u.Name, $u.ComputerName, $u.Indexed)
     Check 'the unindexed guest rests on its frozen checkpoint' 'CP-16B-FROZEN-CLOCK' $u.Checkpoint
+    Write-Host '== their clones (TestbedPool.ps1, 2026-11-17) =='
+    Check 'every source of the two guest pools is a guest here, and nothing else is' ((@($TestbedPools['indexed'][0], $TestbedPools['unindexed'][0]) | Sort-Object) -join '|') ((@($Guests.Keys) | Sort-Object) -join '|')
+    foreach ($kindName in @('Indexed', 'Unindexed')) {
+        $members = @(Get-KindMembers $kindName)
+        $source = Get-GuestFacts $members[0]
+        Check "-Kind $kindName tries the source first" $source.Name $members[0]
+        foreach ($clone in @($members | Select-Object -Skip 1)) {
+            $f = Get-GuestFacts $clone
+            Check "$clone is a test guest: its source's facts under its own name" "$clone|$($source.Name)|$kindName|$($source.ComputerName)|$($source.Indexed)|$($source.Checkpoint)" ("{0}|{1}|{2}|{3}|{4}|{5}" -f $f.Name, $f.Source, $f.Kind, $f.ComputerName, $f.Indexed, $f.Checkpoint)
+        }
+    }
+    $c = Get-GuestFacts 'outlookai-indexed2'
+    Check 'a clone named in another case is the clone, spelled as the pool spells it' 'OutlookAI-Indexed2|OutlookAI-Indexed' "$($c.Name)|$($c.Source)"
+    Check 'a clone the pool does not list is refused' $true ($null -eq (Get-GuestFacts 'OutlookAI-Indexed9'))
+    Check 'a build clone is refused' $true ($null -eq (Get-GuestFacts 'OutlookAI-Build2'))
+    Check 'the Exchange VM is refused' $true ($null -eq (Get-GuestFacts 'OutlookAI-Exchange'))
+    $threw = $false; try { [void](Get-KindMembers 'Exchange') } catch { $threw = $true }
+    Check 'there is no third kind' $true $threw
+    $runner = [System.IO.File]::ReadAllText($PSCommandPath)
+    Check 'a clone''s settings are rendered from its source''s section' $true $runner.Contains("'New-LiveTestSettings.ps1') -VMName `$facts.Source")
+    Check 'a lease is taken in one step with reading it' $true ($runner.Contains('$claim = Enter-TestbedLeaseClaim -VMName $Name') -and $runner.Contains('$holder = Request-GuestLease $guest.Name 60'))
     Write-Host '== a frozen start (Q130 (a)) =='
     Check 'a frozen start is verified and handed Outlook as 9a would, not restarted or rebuilt' 'frozen-clock guard|Outlook NOT elevated' (Get-PrepareSteps -StartIsFrozen $true -SkipHubReset $false)
     Check 'and -SkipHubReset changes nothing there' 'frozen-clock guard|Outlook NOT elevated' (Get-PrepareSteps -StartIsFrozen $true -SkipHubReset $true)
@@ -538,6 +584,8 @@ function Invoke-SelfTest {
     Write-Host '== the run id =='
     Check 'when, guest, commit' '20261003-174500-indexed-d4e31fe12345' (New-RunId ([datetime]'2026-10-03T17:45:00') 'd4e31fe1234567890' 'OutlookAI-Indexed')
     Check 'the unindexed guest' '20261003-174500-unindexed-d4e31fe12345' (New-RunId ([datetime]'2026-10-03T17:45:00') 'd4e31fe1234567890' 'OutlookAI-Unindexed')
+    Check 'and its clone' '20261003-174500-unindexed-d4e31fe12345' (New-RunId ([datetime]'2026-10-03T17:45:00') 'd4e31fe1234567890' 'OutlookAI-Unindexed2')
+    Check 'and the indexed guest''s clone' '20261003-174500-indexed-d4e31fe12345' (New-RunId ([datetime]'2026-10-03T17:45:00') 'd4e31fe1234567890' 'OutlookAI-Indexed2')
     $threw = $false; try { New-RunId (Get-Date) 'HEAD' 'OutlookAI-Indexed' | Out-Null } catch { $threw = $true }
     Check 'a ref that is not a commit id is refused' $true $threw
 
@@ -688,19 +736,53 @@ function Stop-Refused([string] $Why) {
     exit $ExitCodes['REFUSED']
 }
 
-$facts = Get-GuestFacts $VMName
-if ($null -eq $facts) { Stop-Refused "'$VMName' is not a test guest - only OutlookAI-Indexed and OutlookAI-Unindexed. The build VM has Invoke-TestsOnBuildVm.ps1, and nothing here runs on this workstation." }
+if ($VMName -and $Kind) { Stop-Refused '-VMName and -Kind together are ambiguous: name a guest, or a kind of guest.' }
+if (-not $VMName -and -not $Kind) { Stop-Refused 'name a guest with -VMName, or a kind of guest with -Kind Indexed or -Kind Unindexed: no default picks one (Testbed/README.md section 4a).' }
+if ($Kind) {
+    if ($Checkpoint -or $RestingCheckpoint -or $GreenCheckpoint -or $RestOnGreen) { Stop-Refused '-Checkpoint, -RestingCheckpoint, -GreenCheckpoint and -RestOnGreen name one machine''s checkpoints; with -Kind a run starts and rests on the frozen checkpoint of whichever guest it takes. Give -VMName for them.' }
+    # The kind's source stands in until a guest is taken: every guest of a kind has the same facts.
+    $facts = Get-GuestFacts (Get-KindMembers $Kind)[0]
+}
+else {
+    $facts = Get-GuestFacts $VMName
+    if ($null -eq $facts) { Stop-Refused "'$VMName' is not a test guest - only the Outlook guests and their clones: $((@(Get-KindMembers 'Indexed') + @(Get-KindMembers 'Unindexed')) -join ', '). The build VM has Invoke-TestsOnBuildVm.ps1, and nothing here runs on this workstation." }
+}
 $filterDecision = Get-LiveFilter $facts.Indexed $Filter $FilterSuffix
 if ($filterDecision.Refusal) { Stop-Refused $filterDecision.Refusal }
 $runFilter = $filterDecision.Filter
 $narrowed = $filterDecision.Narrowed
-if (-not $Checkpoint) { $Checkpoint = $facts.Checkpoint }
-if (-not $RestingCheckpoint) { $RestingCheckpoint = $facts.Checkpoint }
 if ($RestOnGreen -and -not $GreenCheckpoint) { Stop-Refused '-RestOnGreen needs -GreenCheckpoint.' }
-# A checkpoint whose time sync is off is a FROZEN one (Q130 (a)): the setting travels with it.
-$startTimeSync = @(Get-VMSnapshot -VMName $facts.Name -Name $Checkpoint -ErrorAction SilentlyContinue | Get-VMIntegrationService -ErrorAction SilentlyContinue | Where-Object { ([string]$_.Id).ToUpperInvariant().EndsWith($TimeSyncComponentId) -or $_.Name -eq 'Time Synchronization' })
-$startIsFrozen = ($startTimeSync.Count -gt 0 -and -not $startTimeSync[0].Enabled)
-if ($startIsFrozen -and $RestOnGreen) { Stop-Refused "-RestOnGreen from the frozen checkpoint '$Checkpoint': a green checkpoint of this run would stand a run later than the frozen instant testbed.json records, and every later run would start there. Make a new frozen checkpoint with Set-GuestClockFrozen.ps1 and record it instead." }
+
+# Why a run cannot have this guest from Hyper-V - '' when it can: the VM, the start and resting
+# checkpoints, and no checkpoint already under the green name.
+function Get-GuestRunRefusal([object] $Guest) {
+    if (-not (Get-VM -Name $Guest.Name -ErrorAction SilentlyContinue)) { return "Hyper-V has no VM named '$($Guest.Name)' here." }
+    $start = $Checkpoint
+    if (-not $start) { $start = $Guest.Checkpoint }
+    $rest = $RestingCheckpoint
+    if (-not $rest) { $rest = $Guest.Checkpoint }
+    foreach ($cp in @($start, $rest)) {
+        if (-not (Get-VMSnapshot -VMName $Guest.Name -Name $cp -ErrorAction SilentlyContinue)) { return "$($Guest.Name) has no checkpoint named '$cp'." }
+    }
+    if ($GreenCheckpoint -and (Get-VMSnapshot -VMName $Guest.Name -Name $GreenCheckpoint -ErrorAction SilentlyContinue)) { return "$($Guest.Name) already has a checkpoint named '$GreenCheckpoint'." }
+    return ''
+}
+# The guest this run uses from here on, its checkpoints, and whether its start is FROZEN: a
+# checkpoint whose time sync is off (Q130 (a)), the setting travelling with the checkpoint.
+function Use-Guest([object] $Guest) {
+    $script:facts = $Guest
+    if (-not $script:Checkpoint) { $script:Checkpoint = $Guest.Checkpoint }
+    if (-not $script:RestingCheckpoint) { $script:RestingCheckpoint = $Guest.Checkpoint }
+    $ts = @(Get-VMSnapshot -VMName $Guest.Name -Name $script:Checkpoint -ErrorAction SilentlyContinue | Get-VMIntegrationService -ErrorAction SilentlyContinue | Where-Object { ([string]$_.Id).ToUpperInvariant().EndsWith($TimeSyncComponentId) -or $_.Name -eq 'Time Synchronization' })
+    $script:startIsFrozen = ($ts.Count -gt 0 -and -not $ts[0].Enabled)
+}
+$startIsFrozen = $false
+if (-not $Kind) {
+    $refusal = Get-GuestRunRefusal $facts
+    if ($refusal) { Stop-Refused $refusal }
+    Use-Guest $facts
+    if ($startIsFrozen -and $RestOnGreen) { Stop-Refused "-RestOnGreen from the frozen checkpoint '$Checkpoint': a green checkpoint of this run would stand a run later than the frozen instant testbed.json records, and every later run would start there. Make a new frozen checkpoint with Set-GuestClockFrozen.ps1 and record it instead." }
+}
 if (-not $RepoPath) { $RepoPath = Split-Path -Parent (Split-Path -Parent $PSScriptRoot) }
 $repo = [System.IO.Path]::GetFullPath($RepoPath)
 if (-not $CredentialRepoRoot) {
@@ -712,11 +794,6 @@ $credentialFile = Join-Path $CredentialRepoRoot 'McpServer\OutlookAI.McpServer.T
 if (-not (Test-Path -LiteralPath $credentialFile)) { Stop-Refused "no guest credential at $credentialFile. It lives in the main checkout only (gitignored); pass -CredentialRepoRoot." }
 if (-not $SdkInstallerPath) { $SdkInstallerPath = Join-Path $CredentialRepoRoot ".work\media\$SdkInstallerName" }
 if (-not (Test-Path -LiteralPath $SdkInstallerPath)) { Stop-Refused "no SDK installer at $SdkInstallerPath (Testbed/MEDIA.md); pass -SdkInstallerPath." }
-if (-not (Get-VM -Name $facts.Name -ErrorAction SilentlyContinue)) { Stop-Refused "Hyper-V has no VM named '$($facts.Name)' here." }
-foreach ($cp in @($Checkpoint, $RestingCheckpoint)) {
-    if (-not (Get-VMSnapshot -VMName $facts.Name -Name $cp -ErrorAction SilentlyContinue)) { Stop-Refused "$($facts.Name) has no checkpoint named '$cp'." }
-}
-if ($GreenCheckpoint -and (Get-VMSnapshot -VMName $facts.Name -Name $GreenCheckpoint -ErrorAction SilentlyContinue)) { Stop-Refused "$($facts.Name) already has a checkpoint named '$GreenCheckpoint'." }
 
 $sha = (@(Invoke-NativeCommand { & git -C $repo rev-parse --verify "$Ref^{commit}" 2>&1 }) | Out-String).Trim()
 if ($LASTEXITCODE -ne 0 -or $sha -notmatch '^[0-9a-f]{40}$') { Stop-Refused "git could not resolve '$Ref' to a commit in $repo - $sha" }
@@ -730,10 +807,12 @@ New-Item -ItemType Directory -Force -Path $runDir, (Join-Path $runDir 'guest') |
 $script:LogPath = Join-Path $runDir 'run.log'
 $revision = [ordered]@{ ref = $Ref; sha = $sha; subject = $subject; repo = $repo; uncommittedLeftOut = $dirtyCount }
 
-$kind = 'unindexed'
-if ($facts.Indexed) { $kind = 'indexed' }
+# Not $kind: PowerShell's names ignore case, and that is the -Kind parameter.
+$kindText = 'unindexed'
+if ($facts.Indexed) { $kindText = 'indexed' }
 Say "== Invoke-LiveTierOnGuest: run $runId =="
-Say "  guest     $($facts.Name) ($($facts.ComputerName), $kind), from $Checkpoint, resting on $RestingCheckpoint"
+if ($Kind) { Say "  guest     whichever $kindText guest is free once the payloads are built: $((Get-KindMembers $Kind) -join ', ') ($($facts.ComputerName)), from and resting on its frozen checkpoint" }
+else { Say "  guest     $($facts.Name) ($($facts.ComputerName), $kindText), from $Checkpoint, resting on $RestingCheckpoint" }
 if ($startIsFrozen) { Say "  clock     FROZEN - '$Checkpoint' has time sync off: no restart and no hub rebuild; Set-GuestClockFrozen.ps1 -Verify before the suite" }
 Say "  revision  $($sha.Substring(0, 12)) - $subject"
 if ($dirtyCount -gt 0) { Say "  NOTE      $dirtyCount uncommitted change(s) in $repo are NOT in this run - it tests the commit. Commit first to test them." }
@@ -761,6 +840,19 @@ function Use-Lease([int] $Minutes) {
     $decision = Get-LeaseDecision (Get-TestbedLease -VMName $facts.Name) $runId ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())
     if ($decision -eq 'theirs') { throw "the lease on $($facts.Name) is held by someone else - not touching the guest" }
     & (Join-Path $PSScriptRoot 'Set-TestbedLease.ps1') -VMName $facts.Name -Minutes ([Math]::Min(480, [Math]::Max(30, $Minutes))) -Reason "$LeaseReasonPrefix $runId" | Out-Null
+}
+# Takes the lease on a guest in one step with reading it (Enter-TestbedLeaseClaim), so two runs that
+# find the same guest free in the same moment cannot both take it. Returns $null when the lease is
+# this run's, or the live lease somebody else holds - which is never taken over.
+function Request-GuestLease([string] $Name, [int] $Minutes) {
+    $claim = Enter-TestbedLeaseClaim -VMName $Name
+    try {
+        $lease = Get-TestbedLease -VMName $Name
+        if ((Get-LeaseDecision $lease $runId ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())) -eq 'theirs') { return $lease }
+        & (Join-Path $PSScriptRoot 'Set-TestbedLease.ps1') -VMName $Name -Minutes ([Math]::Min(480, [Math]::Max(30, $Minutes))) -Reason "$LeaseReasonPrefix $runId" | Out-Null
+        return $null
+    }
+    finally { $claim.Dispose() }
 }
 function Wait-Heartbeat {
     $deadline = (Get-Date).AddMinutes(5)
@@ -857,28 +949,54 @@ try {
         # ps51-native-stderr-ok: a PowerShell script, not a program - every program it starts goes through its own Invoke-NativeCommand, under 'Continue' inside a try
         & (Join-Path $PSScriptRoot 'Publish-LiveTierPayload.ps1') -RepoRoot $tree -OutDir (Join-Path $runDir 'livetier') -Ref HEAD -SdkInstallerPath $SdkInstallerPath -ExpectedSha512 $SdkSha512 *> (Join-Path $runDir 'publish-livetier.log')
         if ($LASTEXITCODE -ne 0) { throw "Publish-LiveTierPayload.ps1 failed ($LASTEXITCODE) - publish-livetier.log" }
+        # A clone's settings are its source's (Get-GuestFacts): its stores, corpus and sink are copies.
         # ps51-native-stderr-ok: a PowerShell script, not a program - every program it starts goes through its own Invoke-NativeCommand, under 'Continue' inside a try
-        & (Join-Path $PSScriptRoot 'New-LiveTestSettings.ps1') -VMName $facts.Name -RepoRoot $tree -OutPath (Join-Path $runDir 'live-test-settings.json') *> (Join-Path $runDir 'settings.log')
+        & (Join-Path $PSScriptRoot 'New-LiveTestSettings.ps1') -VMName $facts.Source -RepoRoot $tree -OutPath (Join-Path $runDir 'live-test-settings.json') *> (Join-Path $runDir 'settings.log')
         if ($LASTEXITCODE -ne 0) { throw "New-LiveTestSettings.ps1 refused this guest's settings ($LASTEXITCODE) - settings.log" }
     }
     catch { $stage = 'BUILD'; $stageWhy = $_.Exception.Message; throw }
     $timings['build'] = Format-Seconds ((Get-Date) - $t0).TotalSeconds
     Say "built: payloads and settings ($($timings['build']))"
 
-    # ---- LEASE: wait, never take over.
+    # ---- LEASE: wait, never take over. With -Kind, whichever guest of the kind is free: the source
+    # first, a clone only while the host has its startup memory and the reserve (TestbedPool.ps1).
     $t0 = Get-Date
     $deadline = (Get-Date).AddMinutes($LeaseWaitMinutes)
-    $said = $false
-    while ($true) {
-        $lease = Get-TestbedLease -VMName $facts.Name
-        if ((Get-LeaseDecision $lease $runId ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())) -ne 'theirs') { break }
-        if (-not $said) { Say "waiting: $($facts.Name) is leased until $($lease.expiresUtc) - $($lease.reason)"; $said = $true }
-        if ((Get-Date) -ge $deadline) { $stage = 'INFRA'; $stageWhy = "the guest stayed leased by someone else for $LeaseWaitMinutes minutes"; throw $stageWhy }
-        Start-Sleep -Seconds 60
+    $candidates = @($facts.Name)
+    if ($Kind) { $candidates = @(Get-KindMembers $Kind) }
+    $lastSaid = ''
+    $takenGuest = $null
+    while ($null -eq $takenGuest) {
+        $why = @()
+        for ($i = 0; $i -lt $candidates.Count; $i++) {
+            $guest = Get-GuestFacts $candidates[$i]
+            if ($Kind) {
+                $refusal = Get-GuestRunRefusal $guest
+                if ($refusal) { $why += $refusal; continue }
+                if ($i -gt 0) {
+                    $need = [long](Get-VM -Name $guest.Name).MemoryStartup
+                    $available = Get-HostAvailableBytes
+                    if (-not (Test-HostHasRoom -NeedBytes $need -AvailableBytes $available)) { $why += ("{0} waits for memory: the host has {1:N1} GB available, under its {2:N0} GB and the {3:N0} GB kept free" -f $guest.Name, ($available / 1GB), ($need / 1GB), ($TestbedHostReserveBytes / 1GB)); continue }
+                }
+            }
+            $holder = Request-GuestLease $guest.Name 60
+            if ($null -eq $holder) { $takenGuest = $guest; break }
+            $why += "$($guest.Name) is leased until $($holder.expiresUtc) - $($holder.reason)"
+        }
+        if ($null -eq $takenGuest) {
+            $text = $why -join '; '
+            if ($text -ne $lastSaid) { Say "waiting: $text"; $lastSaid = $text }
+            if ((Get-Date) -ge $deadline) { $stage = 'INFRA'; $stageWhy = "no guest came free in $LeaseWaitMinutes minutes - $text"; throw $stageWhy }
+            Start-Sleep -Seconds 30
+        }
     }
-    Use-Lease 60
+    if ($Kind) {
+        Use-Guest $takenGuest
+        $checkpointActions['start'] = $Checkpoint
+        $checkpointActions['resting'] = $RestingCheckpoint
+    }
     $timings['lease'] = Format-Seconds ((Get-Date) - $t0).TotalSeconds
-    Say "lease taken ($($timings['lease']))"
+    Say "lease taken on $($facts.Name) ($($timings['lease']))$(if ($Kind) { " - from $Checkpoint$(if ($startIsFrozen) { ', frozen' })" })"
     $credential = & (Join-Path $PSScriptRoot 'Get-GuestCredential.ps1') -RepoRoot $CredentialRepoRoot -VMName $facts.Name
 
     # ---- STAGE.

@@ -20,8 +20,9 @@
       1. Resolves -Ref in -RepoPath to ONE COMMIT and archives it with `git archive` - a commit,
          never a working tree, so every result names a revision anybody can check out. A HEAD with
          uncommitted changes is tested as committed, and the run says how many changes it left out.
-      2. Takes the runner lock (queues behind any run already going - see CONCURRENT CALLERS).
-      3. Takes a lease on the VM (Testbed/README.md section 5b), so the idle-saver keeps away.
+      2. Takes a build VM of the pool that is free - its lock, queueing while every one is busy
+         (see CONCURRENT CALLERS) - or the one -VMName names.
+      3. Takes a lease on that VM (Testbed/README.md section 5b), so the idle-saver keeps away.
       4. Restores the base checkpoint and resumes the VM from it, waits for its heartbeat and
          PowerShell Direct, proves it is OAI-BUILD logged on as the autologon account in the UTC
          time zone (Q126 (a): the suite runs in a zone other than the workstation's), and waits
@@ -54,12 +55,18 @@
     machine holds no Office, no PST and nothing a run must keep. Restarts of this VM, which only a
     rebuild needs, go through Testbed/host/Restart-Guest.ps1 like any guest's.
 
-    CONCURRENT CALLERS ARE SERIALISED. One VM, one run at a time: a lock file opened exclusively
-    under %SystemDrive%\OutlookAI-Testbed\build-vm\ (machine-wide, beside the leases). A second
-    caller waits in the queue, printing who holds the VM every minute, for up to
-    -QueueTimeoutMinutes. The lock is an open file handle, so a caller that dies - killed, crashed,
-    its terminal closed - releases it with its process, and the next run restores the checkpoint
-    whatever state it finds.
+    CONCURRENT CALLERS SHARE THE BUILD POOL (2026-11-17). One run per VM at a time, and as many VMs
+    as the pool has: OutlookAI-Build and its clones (Testbed/host/TestbedPool.ps1), whole copies of
+    it made by Testbed/host/New-TestbedClone.ps1 - the same base checkpoint by the same name, the
+    same computer name and account - so any member gives a commit the same run. Each VM has a lock
+    file opened exclusively under %SystemDrive%\OutlookAI-Testbed\build-vm\ (machine-wide, beside
+    the leases); OutlookAI-Build's keeps the name every runner before the pool used, runner.lock,
+    so a run from an older checkout and a run from this one never share it. A run takes the first
+    member that is free (Enter-PoolVm) - a member other than the first only while the host has its
+    memory and a reserve to spare - and waits in the queue while none is, printing what holds each
+    every minute, for up to -QueueTimeoutMinutes. The lock is an open file handle, so a caller that
+    dies - killed, crashed, its terminal closed - releases it with its process, and the next run
+    on that VM restores the checkpoint whatever state it finds.
 
     A CALLER THAT DIES DOES NOT LEAVE THE VM HOLDING ITS RAM. Measured 2026-10-03: a run stopped
     part-way left the VM running, 6 GB held, for three hours, until the next run came - nothing on
@@ -72,21 +79,23 @@
     is put right: the janitor takes the lock (behind any run that took over first, which restores
     the checkpoint itself), restores the base checkpoint, saves the VM and releases the dead run's
     lease, and says so in janitor.log beside the lock. It never touches the VM without the lock.
-    A LEASE someone else holds on the VM (Set-TestbedLease.ps1,
-    for maintenance by hand) also holds runs back until it is released or expires. Running several
-    VMs in parallel was not chosen: the suite runs its collections one at a time and finishes in
-    minutes, and a second VM would double what the host keeps on disk for a queue that is rarely
-    long.
+    A LEASE someone else holds on a VM (Set-TestbedLease.ps1,
+    for maintenance by hand) holds runs off that VM until it is released or expires; they take
+    another member. Running several VMs in parallel was not chosen on 2026-10-03, when a queue was
+    rarely long; with eight agents queueing it was (the maintainer, 2026-11-17: "try to parallelize
+    as much as possible"), at about 55 GB of disk and, only while it runs, 6 GB of memory a clone.
 
     CREDENTIALS only through Testbed/host/Get-GuestCredential.ps1, from the main checkout - found
     with `git rev-parse --git-common-dir`, so this runs from any worktree - or -CredentialRepoRoot.
     Never printed, never written.
 
-    ONLY OutlookAI-Build. The VM name is a constant, not a parameter - Testbed/README.md section 4a
-    forbids a default that picks one of several machines, and there is nothing here to pick: this
-    restores checkpoints, and on any other VM that would destroy its state. Every Hyper-V call goes
-    through the VM object Get-BuildVm returns after checking that name; the computer name inside
-    must read OAI-BUILD before anything is copied in. -SelfTest pins both.
+    ONLY THE BUILD POOL. Testbed/README.md section 4a forbids a default that picks one of several
+    DIFFERENT machines; the members of a pool are one machine, copied, and this restores
+    checkpoints, which on any other VM would destroy its state. So the pool is a list, not a
+    parameter, -VMName may only pin one of its members, Find-PoolVm refuses any other name before
+    Hyper-V is asked, every Hyper-V call goes through the VM object Get-BuildVm returns for the
+    member the run holds, and the computer name inside must read OAI-BUILD before anything is
+    copied in. -SelfTest pins all of it.
 
     EXIT CODES
         0  PASS      the revision built, every selected test and every self-test passed
@@ -143,12 +152,20 @@
     Leave the VM running after the run, with its state, for inspection over PowerShell Direct.
     The next run restores the checkpoint regardless; release nothing by hand.
 
+.PARAMETER VMName
+    Pin the run to one build VM of the pool (Testbed/host/TestbedPool.ps1), waiting for that one
+    while it is busy - to prove a new clone before it joins the pool, or to look at one machine.
+    Default: whichever member is free. Any name outside the build pool is refused.
+
 .PARAMETER JanitorForPid
     Internal: what a run starts its janitor with (see A CALLER THAT DIES). The process id of the
     run to watch. Not for use by hand.
 
 .PARAMETER JanitorRunId
     Internal: the id of the run the janitor watches.
+
+.PARAMETER JanitorVmName
+    Internal: the pool member the run the janitor watches took.
 
 .PARAMETER SelfTest
     The run-id format, the TRX reader, the verdict table, summary.json's shape, the VM-name
@@ -183,8 +200,10 @@ param(
     [Parameter(ParameterSetName = 'Run')] [int]      $QueueTimeoutMinutes = 120,
     [Parameter(ParameterSetName = 'Run')] [int]      $RunTimeoutMinutes = 60,
     [Parameter(ParameterSetName = 'Run')] [switch]   $KeepVmRunning,
+    [Parameter(ParameterSetName = 'Run')] [string]   $VMName,
     [Parameter(Mandatory = $true, ParameterSetName = 'Janitor')] [int]    $JanitorForPid,
     [Parameter(Mandatory = $true, ParameterSetName = 'Janitor')] [string] $JanitorRunId,
+    [Parameter(Mandatory = $true, ParameterSetName = 'Janitor')] [string] $JanitorVmName,
     [Parameter(Mandatory = $true, ParameterSetName = 'SelfTest')] [switch] $SelfTest
 )
 
@@ -197,7 +216,14 @@ if (Test-Path Variable:\PSNativeCommandUseErrorActionPreference) {
 # The build VM, as constants. -SelfTest holds them equal to Testbed/testbed.json's buildVm block
 # and to the guest script's defaults.
 # ---------------------------------------------------------------------------------------------
-$BuildVmName = 'OutlookAI-Build'
+# THE BUILD POOL (2026-11-17): TestbedPool.ps1's - OutlookAI-Build and its clones, each a whole copy
+# of it at the base checkpoint, its computer name and account included - so every member answers as
+# OAI-BUILD and restores the same base by name. A run takes whichever member is free (Enter-PoolVm);
+# -VMName pins one. $BuildVmName is the member THIS run or janitor holds, set by Use-PoolVm once it
+# is chosen, and every Hyper-V call below names it. -SelfTest holds the pool to testbed.json.
+. (Join-Path $PSScriptRoot 'TestbedPool.ps1')
+$BuildVmPool = @($TestbedPools['build'])
+$BuildVmName = ''
 $BuildVmComputerName = 'OAI-BUILD'
 $BuildVmUser = 'vmadmin'
 $BaseCheckpointName = 'CP-03-SDK-TEST-READY-UTC'
@@ -326,12 +352,25 @@ function Invoke-NativeCommand {
 # PURE DECISIONS. No Hyper-V, no git, no file but the ones -SelfTest names. -SelfTest pins them.
 # =============================================================================================
 
-# The only VM this script will act on. Compared whole and ordinal-ignore-case, as Hyper-V compares
-# names; a prefix, a suffix or another testbed guest is refused.
+# The only VMs this script will act on: the build pool's. Compared whole and ordinal-ignore-case, as
+# Hyper-V compares names; a prefix, a suffix, a clone the pool does not list or another testbed
+# guest is refused.
 function Test-IsBuildVmName {
     param([string] $Name)
-    if ([string]::IsNullOrWhiteSpace($Name)) { return $false }
-    return [string]::Equals($Name.Trim(), $BuildVmName, [System.StringComparison]::OrdinalIgnoreCase) -and ($Name -eq $Name.Trim())
+    if ([string]::IsNullOrWhiteSpace($Name) -or $Name -ne $Name.Trim()) { return $false }
+    foreach ($member in $BuildVmPool) {
+        if ([string]::Equals($Name, $member, [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
+    }
+    return $false
+}
+
+# The pool members a run may take, in the order it tries them: the whole pool, or the one -VMName
+# pins, spelled as the pool spells it. A name that is no build VM is refused.
+function Get-PoolCandidates {
+    param([string] $Pinned)
+    if (-not $Pinned) { return @($BuildVmPool) }
+    if (-not (Test-IsBuildVmName $Pinned)) { throw "'$Pinned' is not a build VM of the pool ($($BuildVmPool -join ', '))." }
+    return @($BuildVmPool | Where-Object { [string]::Equals($_, $Pinned, [System.StringComparison]::OrdinalIgnoreCase) })
 }
 
 # Why the resumed guest is refused before anything is copied in - or '' when it is OAI-BUILD, logged
@@ -493,7 +532,8 @@ function New-RunSummary {
         [bool]     $PackagesStaged,
         [System.Collections.IDictionary] $Timings,
         [System.Collections.IDictionary] $GuestPhases,
-        [string]   $Results
+        [string]   $Results,
+        [string]   $Vm              # the pool member the run took; '' when it took none
     )
     $failed = @()
     $skipped = @()
@@ -508,6 +548,7 @@ function New-RunSummary {
         verdict        = $Verdict.Verdict
         why            = $Verdict.Why
         exitCode       = $ExitCodes[$Verdict.Verdict]
+        vm             = $(if ($Vm) { $Vm } else { $null })
         revision       = $Revision
         filter         = $filterValue
         suite          = $suite
@@ -545,14 +586,30 @@ function Invoke-SelfTest {
 
     Write-Host "Invoke-TestsOnBuildVm.ps1 -SelfTest under PowerShell $($PSVersionTable.PSVersion). No Hyper-V, no git, no VM, no credential."
     Write-Host ''
-    Write-Host '== the only VM it acts on =='
-    Check 'OutlookAI-Build is the build VM' $true (Test-IsBuildVmName 'OutlookAI-Build')
+    Write-Host '== the only VMs it acts on: the build pool =='
+    Check 'OutlookAI-Build is a build VM' $true (Test-IsBuildVmName 'OutlookAI-Build')
     Check 'in any case, as Hyper-V compares names' $true (Test-IsBuildVmName 'outlookai-build')
+    Check 'the pool starts with OutlookAI-Build, the one VM every run took before the pool' 'OutlookAI-Build' $BuildVmPool[0]
+    Check 'and every clone it lists is a build VM' 0 @($BuildVmPool | Where-Object { -not (Test-IsBuildVmName $_) }).Count
     Check 'OutlookAI-Indexed is not' $false (Test-IsBuildVmName 'OutlookAI-Indexed')
     Check 'OutlookAI-Unindexed is not' $false (Test-IsBuildVmName 'OutlookAI-Unindexed')
-    Check 'a name that merely starts the same way is not' $false (Test-IsBuildVmName 'OutlookAI-Build2')
+    Check 'nor an Outlook guest''s clone' $false (Test-IsBuildVmName 'OutlookAI-Indexed2')
+    Check 'nor the Exchange VM' $false (Test-IsBuildVmName 'OutlookAI-Exchange')
+    Check 'a clone the pool does not list is not' $false (Test-IsBuildVmName 'OutlookAI-Build9')
+    Check 'nor a name that merely starts the same way' $false (Test-IsBuildVmName 'OutlookAI-Builder')
     Check 'nor one padded with a space' $false (Test-IsBuildVmName 'OutlookAI-Build ')
     Check 'nor an empty one' $false (Test-IsBuildVmName '')
+    Check 'a run takes from the whole pool, in its order' ($BuildVmPool -join '|') ((Get-PoolCandidates -Pinned '') -join '|')
+    Check '-VMName pins one member, spelled as the pool spells it' 'OutlookAI-Build2' ((Get-PoolCandidates -Pinned 'outlookai-build2') -join '|')
+    $threw = ''
+    try { [void](Get-PoolCandidates -Pinned 'OutlookAI-Indexed') } catch { $threw = $_.Exception.Message }
+    Check 'and refuses any other VM' $true ($threw.Contains('not a build VM'))
+    $lockNames = Get-BuildRunnerLockNames 'OutlookAI-Build'
+    Check 'OutlookAI-Build keeps the lock every runner took before the pool, so older checkouts'' runs and these exclude each other' 'runner.lock|runner.owner.json' "$($lockNames.Lock)|$($lockNames.Owner)"
+    $lockNames = Get-BuildRunnerLockNames 'OutlookAI-Build2'
+    Check 'a clone has a lock and an owner file of its own' 'runner.OutlookAI-Build2.lock|runner.OutlookAI-Build2.owner.json' "$($lockNames.Lock)|$($lockNames.Owner)"
+    Check 'another member starts only with its memory and the reserve to spare' 'True|False|False' ('{0}|{1}|{2}' -f (Test-HostHasRoom -NeedBytes 6GB -AvailableBytes 22GB -ReserveBytes 16GB), (Test-HostHasRoom -NeedBytes 6GB -AvailableBytes 21GB -ReserveBytes 16GB), (Test-HostHasRoom -NeedBytes 6GB -AvailableBytes -1 -ReserveBytes 16GB))
+    Check 'the reserve kept for the maintainer is 16 GB' 16 ($TestbedHostReserveBytes / 1GB)
     Check 'OAI-BUILD as vmadmin in UTC is the guest a run expects' '' (Get-GuestRefusal -Computer 'OAI-BUILD' -User 'vmadmin' -TimeZone 'UTC')
     Check 'another computer is refused' $true ((Get-GuestRefusal -Computer 'OAI-INDEXED' -User 'vmadmin' -TimeZone 'UTC') -like "*not 'vmadmin' on 'OAI-BUILD'*")
     Check 'another account is refused' $true ((Get-GuestRefusal -Computer 'OAI-BUILD' -User 'tier' -TimeZone 'UTC') -like "*not 'vmadmin' on 'OAI-BUILD'*")
@@ -645,10 +702,11 @@ Expected: 1</Message></ErrorInfo></Output></UnitTestResult>
     $twoFailures = ConvertFrom-TrxText ($trxText -replace 'outcome="Timeout"', 'outcome="Failed"')
     function Get-SummaryJson($Trx, [object[]] $SelfTests, [object[]] $BuildErrors) {
         $v = Get-HostVerdict -GuestVerdict 'FAIL' -InfraError '' -Trx $Trx -SuiteRequested ($null -ne $Trx) -SelfTestsRun @($SelfTests).Count -SelfTestsFailed 0
-        $s = New-RunSummary -RunId '20261003-091919-d7e58af90183' -Verdict $v -Revision ([ordered]@{ ref = 'HEAD' }) -Filter 'Category!=Live' -Trx $Trx -SelfTests $SelfTests -SelfTestSkips @() -GuestVerdict 'FAIL' -HostError '' -BuildErrors $BuildErrors -PackagesStaged $false -Timings ([ordered]@{ total = 1.0 }) -GuestPhases ([ordered]@{}) -Results 'C:\x'
+        $s = New-RunSummary -RunId '20261003-091919-d7e58af90183' -Verdict $v -Revision ([ordered]@{ ref = 'HEAD' }) -Filter 'Category!=Live' -Trx $Trx -SelfTests $SelfTests -SelfTestSkips @() -GuestVerdict 'FAIL' -HostError '' -BuildErrors $BuildErrors -PackagesStaged $false -Timings ([ordered]@{ total = 1.0 }) -GuestPhases ([ordered]@{}) -Results 'C:\x' -Vm 'OutlookAI-Build2'
         return ($s | ConvertTo-Json -Depth 6)
     }
     $j = Get-SummaryJson $oneFailure @() @()
+    Check 'it names the pool member the run took' 'OutlookAI-Build2' (($j | ConvertFrom-Json).vm)
     Check 'one failed test is an array of one, not an object' $true ($j -match '"failed":\s*\[\s*\{')
     Check 'and reads back as an array' $true ((($j | ConvertFrom-Json).failed) -is [System.Array])
     Check 'no skipped test is an empty array, not null' $true ($j -match '"skipped":\s*\[\s*\]')
@@ -732,16 +790,23 @@ Expected: 1</Message></ErrorInfo></Output></UnitTestResult>
                 if ($elements[$i] -is [System.Management.Automation.Language.CommandParameterAst] -and @('Name', 'VMName', 'VMId', 'Id') -contains $elements[$i].ParameterName) {
                     $value = ''
                     if ($i + 1 -lt $elements.Count) { $value = $elements[$i + 1].Extent.Text }
-                    $ok = ($value -eq '$BuildVmName') -or ($name -eq 'Get-VMSnapshot' -and $elements[$i].ParameterName -eq 'Name' -and $value -eq '$BaseCheckpointName') -or ($name -eq 'Get-VMIntegrationService' -and $elements[$i].ParameterName -eq 'Name')
+                    # The one lookup by another variable: Get-VM -Name $Name inside Find-PoolVm, which
+                    # refuses any name that is not a build VM of the pool before Hyper-V is asked.
+                    $enclosing = $c.Parent
+                    while ($null -ne $enclosing -and $enclosing -isnot [System.Management.Automation.Language.FunctionDefinitionAst]) { $enclosing = $enclosing.Parent }
+                    $inFindPoolVm = ($null -ne $enclosing -and $enclosing.Name -eq 'Find-PoolVm')
+                    $ok = ($value -eq '$BuildVmName') -or ($name -eq 'Get-VMSnapshot' -and $elements[$i].ParameterName -eq 'Name' -and $value -eq '$BaseCheckpointName') -or ($name -eq 'Get-VMIntegrationService' -and $elements[$i].ParameterName -eq 'Name') -or ($name -eq 'Get-VM' -and $value -eq '$Name' -and $inFindPoolVm)
                     if (-not $ok) { $loose += "$name -$($elements[$i].ParameterName) $value (line $($c.Extent.StartLineNumber))" }
                 }
             }
         }
     }
     Check 'no command that stops, removes, reconfigures or checkpoints a VM, and no Stop-Process' '' ($used -join '; ')
-    Check 'every -Name / -VMName handed to a VM command is $BuildVmName (or the base checkpoint''s name)' '' ($loose -join '; ')
+    Check 'every -Name / -VMName handed to a VM command is $BuildVmName (or the base checkpoint''s name, or the pool lookup''s)' '' ($loose -join '; ')
     $vmLookups = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Get-VM' }, $true))
-    Check 'the VM is looked up in exactly one place, Get-BuildVm' 1 $vmLookups.Count
+    Check 'a VM is looked up in exactly one place, Find-PoolVm' 1 $vmLookups.Count
+    $findPoolVm = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Find-PoolVm' }, $true))
+    Check 'and it refuses a name that is no build VM before it asks Hyper-V' $true ($findPoolVm.Count -eq 1 -and $findPoolVm[0].Body.Extent.Text.IndexOf('Test-IsBuildVmName') -ge 0 -and $findPoolVm[0].Body.Extent.Text.IndexOf('Test-IsBuildVmName') -lt $findPoolVm[0].Body.Extent.Text.IndexOf('Get-VM '))
 
     Write-Host ''
     Write-Host '== this file, the guest script and testbed.json agree =='
@@ -749,16 +814,37 @@ Expected: 1</Message></ErrorInfo></Output></UnitTestResult>
     $testbedPath = Join-Path $repoRoot 'Testbed\testbed.json'
     $guestPath = Join-Path $repoRoot (Join-Path 'Testbed\guest' $GuestScriptName)
     $buildVm = $null
-    if (Test-Path -LiteralPath $testbedPath) { $buildVm = ([System.IO.File]::ReadAllText($testbedPath) | ConvertFrom-Json).buildVm }
+    $testbedJson = $null
+    if (Test-Path -LiteralPath $testbedPath) { $testbedJson = [System.IO.File]::ReadAllText($testbedPath) | ConvertFrom-Json; $buildVm = $testbedJson.buildVm }
     Check 'testbed.json has a buildVm block' $true ($null -ne $buildVm)
     if ($null -ne $buildVm) {
-        Check 'testbed.json names the same VM' $BuildVmName $buildVm.vmName
+        Check 'testbed.json names the same VM as the pool''s source' $BuildVmPool[0] $buildVm.vmName
         Check 'and the same computer name' $BuildVmComputerName $buildVm.computerName
         Check 'and the same base checkpoint' $BaseCheckpointName $buildVm.runnerBaseCheckpoint
         Check 'and the base checkpoint is one of its checkpoints' $true (@($buildVm.checkpoints) -contains $BaseCheckpointName)
         Check 'and the same time zone (Q126 (a))' $BuildVmTimeZone $buildVm.timeZone
         Check 'and the same run directory' $GuestRunRoot $buildVm.guest.runRoot
         Check 'and the same offline feed' $GuestFeedRoot $buildVm.guest.offlineFeed
+    }
+    # TestbedPool.ps1 lists the pools; testbed.json's vmPools records each clone. They must agree, and
+    # each clone must have been made from the checkpoint its source's runner restores now.
+    $vmPools = $null
+    if ($null -ne $testbedJson) { $vmPools = $testbedJson.vmPools }
+    Check 'testbed.json has a vmPools block' $true ($null -ne $vmPools)
+    if ($null -ne $vmPools) {
+        foreach ($pool in $TestbedPools.Keys) {
+            $record = $vmPools.$pool
+            $clones = @()
+            $recorded = @()
+            if ($null -ne $record) { $clones = @(@($record.clones) | Where-Object { $null -ne $_ }); $recorded = @([string]$record.source) + @($clones | ForEach-Object { [string]$_.vmName }) }
+            Check "the $pool pool is the one testbed.json records, its source first" (@($TestbedPools[$pool]) -join '|') ($recorded -join '|')
+            $from = ''
+            if ($pool -eq 'build' -and $null -ne $buildVm) { $from = [string]$buildVm.runnerBaseCheckpoint }
+            elseif ($null -ne $testbedJson.frozenClocks -and $null -ne $record) { $from = [string]$testbedJson.frozenClocks.([string]$record.source).checkpoint }
+            foreach ($clone in $clones) {
+                Check "$($clone.vmName) was made from the checkpoint its source's runner restores ($from), and rests on that name" "$from|$from" "$($clone.fromCheckpoint)|$($clone.checkpoint)"
+            }
+        }
     }
     $guestText = ''
     if (Test-Path -LiteralPath $guestPath) { $guestText = [System.IO.File]::ReadAllText($guestPath) }
@@ -782,15 +868,95 @@ if ($SelfTest) { exit (Invoke-SelfTest) }
 # SHARED BY A RUN AND ITS JANITOR: the lock, the history, and the VM.
 # =============================================================================================
 . (Join-Path $PSScriptRoot 'TestbedLeasePath.ps1')
-$lockDir = Join-Path $env:SystemDrive 'OutlookAI-Testbed\build-vm'
-New-Item -ItemType Directory -Force -Path $lockDir | Out-Null
-$lockPath = Join-Path $lockDir 'runner.lock'
-$ownerPath = Join-Path $lockDir 'runner.owner.json'
+$lockDir = Get-BuildRunnerDirectory
+$lockPath = ''
+$ownerPath = ''
 $historyPath = Join-Path $lockDir 'runs.log'
 $vm = $null
 $checkpoint = $null
 
 function Say([string] $m) { Write-Host ("[{0:HH:mm:ss}] {1}" -f (Get-Date), $m) }
+
+# The pool member this run or janitor holds from here on: its name, and its lock and owner file.
+function Use-PoolVm([string] $Name) {
+    $script:BuildVmName = $Name
+    $names = Get-BuildRunnerLockNames $Name
+    $script:lockPath = Join-Path $lockDir $names.Lock
+    $script:ownerPath = Join-Path $lockDir $names.Owner
+}
+
+# Who holds a member's lock, from its owner file - what a queued run says while it waits.
+function Get-LockHolder([string] $OwnerFile) {
+    try {
+        $o = [System.IO.File]::ReadAllText($OwnerFile) | ConvertFrom-Json
+        return "run $($o.runId) (pid $($o.pid), $($o.ref) in $($o.repo), started $($o.startedLocal))"
+    }
+    catch { return 'another run' }
+}
+
+# A RUN TAKES WHICHEVER BUILD VM IS FREE (2026-11-17). The candidates are tried in pool order every
+# 5 s until one is ours or the time is up. A member is passed over while it is not on this host, while
+# somebody holds a lease on it by hand (Set-TestbedLease.ps1, for maintenance), while a run holds its
+# lock, and - any member but the first - while the host lacks its startup memory and the reserve
+# TestbedPool.ps1 keeps for the maintainer. Once the lock is ours the lease is read again and taken
+# in one step (Enter-TestbedLeaseClaim), so a lease taken by hand in between still holds the VM back.
+# What holds each member back is said once a minute. Returns the lock; $null when the time ran out,
+# with the reasons in $script:queueWhy; throws when no candidate is on this host at all.
+function Enter-PoolVm([string[]] $Candidates, [int] $TimeoutMinutes) {
+    $deadline = (Get-Date).AddMinutes($TimeoutMinutes)
+    $lastSaid = [DateTime]::MinValue
+    $queued = $false
+    while ($true) {
+        $why = New-Object System.Collections.Generic.List[string]
+        $present = 0
+        for ($i = 0; $i -lt $Candidates.Count; $i++) {
+            $name = $Candidates[$i]
+            $found = @(Find-PoolVm $name)
+            if ($found.Count -ne 1) { $why.Add("$name is not on this host"); continue }
+            $present++
+            $lease = Get-TestbedLease -VMName $name
+            if ($null -ne $lease -and -not ([string]$lease.reason).StartsWith($LeaseReasonPrefix)) { $why.Add("$name is leased by hand until $($lease.expiresUtc) - '$($lease.reason)'"); continue }
+            if ($i -gt 0) {
+                $available = Get-HostAvailableBytes
+                if (-not (Test-HostHasRoom -NeedBytes ([long]$found[0].MemoryStartup) -AvailableBytes $available)) {
+                    $why.Add(("{0} waits for memory: the host has {1:N1} GB available, under its {2:N0} GB and the {3:N0} GB kept free" -f $name, ($available / 1GB), ($found[0].MemoryStartup / 1GB), ($TestbedHostReserveBytes / 1GB)))
+                    continue
+                }
+            }
+            Use-PoolVm $name
+            $held = $null
+            try { $held = [System.IO.File]::Open($script:lockPath, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None) }
+            catch [System.IO.IOException] { $why.Add("$name is busy with $(Get-LockHolder $script:ownerPath)"); continue }
+            $claim = Enter-TestbedLeaseClaim -VMName $name
+            $byHand = $null
+            try {
+                $lease = Get-TestbedLease -VMName $name
+                if ($null -ne $lease -and -not ([string]$lease.reason).StartsWith($LeaseReasonPrefix)) { $byHand = $lease }
+                else {
+                    $leaseOutput = & (Join-Path $PSScriptRoot 'Set-TestbedLease.ps1') -VMName $name -Minutes ([Math]::Min(480, $RunTimeoutMinutes + 20)) -Reason "$LeaseReasonPrefix $runId"
+                    $script:leaseTaken = $true
+                    Write-Verbose ([string]$leaseOutput)
+                }
+            }
+            finally { $claim.Dispose() }
+            if ($null -ne $byHand) {
+                $held.Dispose()
+                $why.Add("$name is leased by hand until $($byHand.expiresUtc) - '$($byHand.reason)'")
+                continue
+            }
+            return $held
+        }
+        if ($present -eq 0) { throw "no build VM of the pool is on this host ($($Candidates -join ', ')); Testbed/README.md section 1c builds OutlookAI-Build." }
+        $script:queueWhy = $why -join '; '
+        if ((Get-Date) -ge $deadline) { return $null }
+        if (((Get-Date) - $lastSaid).TotalSeconds -ge 60) {
+            if (-not $queued) { Say "queued: $($script:queueWhy)" } else { Say "  still waiting: $($script:queueWhy)" }
+            $queued = $true
+            $lastSaid = Get-Date
+        }
+        Start-Sleep -Seconds 5
+    }
+}
 
 function Enter-RunnerLock([int] $TimeoutMinutes) {
     $deadline = (Get-Date).AddMinutes($TimeoutMinutes)
@@ -818,14 +984,32 @@ function Enter-RunnerLock([int] $TimeoutMinutes) {
     }
 }
 
+# One line of runs.log, which every run and janitor on the pool appends to. Appended with sharing and
+# retried, never Add-Content: with several runs ending at once, Windows PowerShell 5.1's Add-Content
+# - which shuts every other writer out while it writes - would lose an end line, and a run's janitor
+# reads a missing end line as a run that died part-way.
 function Write-History([string] $Line) {
-    try { Add-Content -LiteralPath $historyPath -Value ("{0:yyyy-MM-dd HH:mm:ss}  {1}" -f (Get-Date), $Line) -Encoding UTF8 } catch { }
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes(("{0:yyyy-MM-dd HH:mm:ss}  {1}" -f (Get-Date), $Line) + [Environment]::NewLine)
+    for ($attempt = 1; $attempt -le 20; $attempt++) {
+        try {
+            $fs = [System.IO.File]::Open($historyPath, [System.IO.FileMode]::Append, [System.IO.FileAccess]::Write, [System.IO.FileShare]::ReadWrite)
+            try { $fs.Write($bytes, 0, $bytes.Length) } finally { $fs.Dispose() }
+            return
+        }
+        catch { Start-Sleep -Milliseconds (50 * $attempt) }
+    }
+}
+
+# The one place a VM is looked up: a member of the build pool, by name, refused before Hyper-V is
+# asked when it is no build VM, and checked again on what Hyper-V returns.
+function Find-PoolVm([string] $Name) {
+    if (-not (Test-IsBuildVmName $Name)) { throw "'$Name' is not a build VM of the pool ($($BuildVmPool -join ', ')). Refusing to look it up." }
+    return @(Get-VM -Name $Name -ErrorAction SilentlyContinue | Where-Object { Test-IsBuildVmName $_.Name })
 }
 
 function Get-BuildVm {
-    $found = @(Get-VM -Name $BuildVmName -ErrorAction SilentlyContinue)
-    if ($found.Count -ne 1) { throw "expected one VM named '$BuildVmName' on this host and found $($found.Count). Testbed/README.md section 1c builds it." }
-    if (-not (Test-IsBuildVmName $found[0].Name)) { throw "Hyper-V returned '$($found[0].Name)' for '$BuildVmName'. Refusing to act on it." }
+    $found = @(Find-PoolVm $BuildVmName)
+    if ($found.Count -ne 1) { throw "expected one VM named '$BuildVmName' on this host and found $($found.Count). Testbed/README.md section 1c builds OutlookAI-Build; New-TestbedClone.ps1 makes its clones." }
     return $found[0]
 }
 
@@ -875,6 +1059,9 @@ if ($PSCmdlet.ParameterSetName -eq 'Janitor') {
         try { Add-Content -LiteralPath $janitorLog -Value ("{0:yyyy-MM-dd HH:mm:ss}  {1}  {2}" -f (Get-Date), $JanitorRunId, $Text) -Encoding UTF8 } catch { }
     }
     if (-not (Test-IsRunId $JanitorRunId)) { exit $ExitCodes['REFUSED'] }
+    # The pool member the run took - and only a member: the janitor restores checkpoints.
+    if (-not (Test-IsBuildVmName $JanitorVmName)) { Write-JanitorLine "refused: '$JanitorVmName' is not a build VM of the pool"; exit $ExitCodes['REFUSED'] }
+    Use-PoolVm (@(Get-PoolCandidates -Pinned $JanitorVmName)[0])
 
     # The run's process, pinned by its start time as well, so a process id reused after it ends
     # is not mistaken for it.
@@ -905,7 +1092,7 @@ if ($PSCmdlet.ParameterSetName -eq 'Janitor') {
         if ($state -eq 'Saved' -or $state -eq 'Off') { Write-JanitorLine "the VM is already $state - nothing to put back" }
         else {
             $final = Restore-BaseAndSave
-            Write-JanitorLine "restored '$BaseCheckpointName' over the dead run's VM ($state); it is now $final"
+            Write-JanitorLine "restored '$BaseCheckpointName' over the dead run's VM, $BuildVmName ($state); it is now $final"
         }
         $lease = Get-TestbedLease -VMName $BuildVmName
         if ($null -ne $lease -and ([string]$lease.reason) -eq "$LeaseReasonPrefix $JanitorRunId") {
@@ -935,6 +1122,8 @@ function Measure-Phase([string] $Name, [DateTime] $Since) { $timings[$Name] = [m
 
 if ($QueueTimeoutMinutes -lt 1 -or $RunTimeoutMinutes -lt 5) { Stop-Refused '-QueueTimeoutMinutes must be at least 1 and -RunTimeoutMinutes at least 5.' }
 if ($SkipSuite -and $SkipSelfTests) { Stop-Refused '-SkipSuite and -SkipSelfTests together leave nothing to run.' }
+$candidates = @()
+try { $candidates = @(Get-PoolCandidates -Pinned $VMName) } catch { Stop-Refused $_.Exception.Message }
 
 # ---- the repository and the revision ---------------------------------------------------------
 if (-not $RepoPath) { $RepoPath = $PSScriptRoot }
@@ -995,18 +1184,26 @@ $request = [ordered]@{
 $requestPath = Join-Path $runDir 'request.json'
 ($request | ConvertTo-Json -Depth 5) | Set-Content -LiteralPath $requestPath -Encoding UTF8
 
-# ---- the lock ---------------------------------------------------------------------------------
+# ---- a build VM of the pool: its lock, then its lease (Enter-PoolVm) ---------------------------
 $t0 = Get-Date
-$lock = Enter-RunnerLock -TimeoutMinutes $QueueTimeoutMinutes
-Measure-Phase 'queue' $t0
-if ($null -eq $lock) {
-    Say "INFRA: the build VM stayed busy for $QueueTimeoutMinutes minute(s); this run did not start. Nothing on the VM was touched."
+$leaseTaken = $false
+$lock = $null
+try { $lock = Enter-PoolVm -Candidates $candidates -TimeoutMinutes $QueueTimeoutMinutes }
+catch {
+    Say "INFRA: $($_.Exception.Message) This run did not start; nothing was touched."
     exit $ExitCodes['INFRA']
 }
-[ordered]@{ runId = $runId; pid = $PID; ref = $Ref; sha = $sha; repo = $repo; startedLocal = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss') } |
+Measure-Phase 'queue' $t0
+if ($null -eq $lock) {
+    Say "INFRA: no build VM came free in $QueueTimeoutMinutes minute(s) - $($script:queueWhy). This run did not start; nothing on a VM was touched."
+    exit $ExitCodes['INFRA']
+}
+[ordered]@{ runId = $runId; pid = $PID; ref = $Ref; sha = $sha; repo = $repo; vm = $BuildVmName; startedLocal = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss') } |
     ConvertTo-Json | Set-Content -LiteralPath $ownerPath -Encoding UTF8
-if ($timings['queue'] -ge 5) { Say "the build VM is ours after $(Format-Seconds $timings['queue']) in the queue" }
-Write-History "start  $runId  $Ref  $repo"
+$queueText = ''
+if ($timings['queue'] -ge 5) { $queueText = " after $(Format-Seconds $timings['queue']) in the queue" }
+Say "VM: $BuildVmName is ours$queueText"
+Write-History "start  $runId  $Ref  $repo  $BuildVmName"
 
 # The janitor, for the case this process is stopped part-way (the banner). Through WMI, so it is
 # no child of this process and survives whatever stops it; hidden, so no console appears. A run
@@ -1014,7 +1211,7 @@ Write-History "start  $runId  $Ref  $repo"
 if (-not $KeepVmRunning) {
     try {
         $shellExe = (Get-Process -Id $PID).Path
-        $janitorCommand = '"{0}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "{1}" -JanitorForPid {2} -JanitorRunId {3}' -f $shellExe, $PSCommandPath, $PID, $runId
+        $janitorCommand = '"{0}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "{1}" -JanitorForPid {2} -JanitorRunId {3} -JanitorVmName {4}' -f $shellExe, $PSCommandPath, $PID, $runId, $BuildVmName
         $hidden = New-CimInstance -CimClass (Get-CimClass -ClassName Win32_ProcessStartup) -Property @{ ShowWindow = [uint16]0 } -ClientOnly
         $created = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $janitorCommand; ProcessStartupInformation = $hidden }
         if ($created.ReturnValue -ne 0) { Say "janitor: Win32_Process.Create returned $($created.ReturnValue) - this run has none, and if it is stopped part-way the VM stays running until the next run" }
@@ -1027,7 +1224,6 @@ if (-not $KeepVmRunning) {
 $infraError = ''
 $guestVerdict = ''
 $session = $null
-$leaseTaken = $false
 $packagesStaged = $false
 $script:guestPid = $null
 $script:guestTimedOut = $false
@@ -1125,26 +1321,8 @@ function Wait-GuestDone([int] $Minutes) {
 }
 
 try {
-    # The lease: an operator's own lease on the VM holds runs back; ours keeps the idle-saver off.
-    $t0 = Get-Date
-    $holdDeadline = (Get-Date).AddMinutes($QueueTimeoutMinutes)
-    $saidHold = $false
-    while ($true) {
-        $lease = Get-TestbedLease -VMName $BuildVmName
-        if ($null -eq $lease -or ([string]$lease.reason).StartsWith($LeaseReasonPrefix)) { break }
-        if (-not $saidHold) { Say "queued: $BuildVmName is leased by hand until $($lease.expiresUtc) - '$($lease.reason)'. Waiting for it to be released."; $saidHold = $true }
-        if ((Get-Date) -ge $holdDeadline) {
-            $timings['queue'] = $timings['queue'] + [math]::Round(((Get-Date) - $t0).TotalSeconds, 1)
-            throw "$BuildVmName stayed leased by hand ('$($lease.reason)') for $QueueTimeoutMinutes minute(s)"
-        }
-        Start-Sleep -Seconds 10
-    }
-    $timings['queue'] = $timings['queue'] + [math]::Round(((Get-Date) - $t0).TotalSeconds, 1)
-    $leaseOutput = & (Join-Path $PSScriptRoot 'Set-TestbedLease.ps1') -VMName $BuildVmName -Minutes ([Math]::Min(480, $RunTimeoutMinutes + 20)) -Reason "$LeaseReasonPrefix $runId"
-    $leaseTaken = $true
-    Write-Verbose ([string]$leaseOutput)
-
-    # The VM, from its base checkpoint.
+    # The lease is ours already (Enter-PoolVm): an operator's own lease on a VM holds runs off it, and
+    # ours keeps the idle-saver off this one. The VM, from its base checkpoint.
     $t0 = Get-Date
     $vm = Get-BuildVm
     $checkpoint = Get-BaseCheckpoint
@@ -1374,6 +1552,7 @@ if ($hostVerdict.Why) { $headline += " - $($hostVerdict.Why)" }
 $lines.Add($headline + ' ==')
 $lines.Add("revision   $($sha.Substring(0, 12)) - $subject")
 $lines.Add("           $Ref in $repo$(if ($dirtyCount -gt 0) { " ($dirtyCount uncommitted change(s) NOT included)" })")
+$lines.Add("vm         $BuildVmName, of the build pool's $(@($BuildVmPool).Count): $($BuildVmPool -join ', ')")
 if ($infraError -and $guestVerdict -and $hostVerdict.Verdict -ne 'INFRA') {
     $lines.Add("host note  something failed on this side - $infraError - and the guest's results came back anyway; they decided the verdict")
 }
@@ -1448,9 +1627,9 @@ $lines.Add('           summary.txt and summary.json here; vm\run.log, vm\trx\sui
 Set-Content -LiteralPath (Join-Path $runDir 'summary.txt') -Value $lines -Encoding UTF8
 $summaryFilter = $filterShown
 if ($SkipSuite) { $summaryFilter = '' }
-$summary = New-RunSummary -RunId $runId -Verdict $hostVerdict -Revision ([ordered]@{ ref = $Ref; sha = $sha; subject = $subject; repo = $repo; uncommittedLeftOut = $dirtyCount }) -Filter $summaryFilter -Trx $trx -SelfTests $selfTests -SelfTestSkips $selfTestSkips -GuestVerdict $guestVerdict -HostError $infraError -BuildErrors $buildErrors -PackagesStaged $packagesStaged -Timings $timings -GuestPhases $guestPhases -Results $runDir
+$summary = New-RunSummary -RunId $runId -Verdict $hostVerdict -Revision ([ordered]@{ ref = $Ref; sha = $sha; subject = $subject; repo = $repo; uncommittedLeftOut = $dirtyCount }) -Filter $summaryFilter -Trx $trx -SelfTests $selfTests -SelfTestSkips $selfTestSkips -GuestVerdict $guestVerdict -HostError $infraError -BuildErrors $buildErrors -PackagesStaged $packagesStaged -Timings $timings -GuestPhases $guestPhases -Results $runDir -Vm $BuildVmName
 ($summary | ConvertTo-Json -Depth 6) | Set-Content -LiteralPath (Join-Path $runDir 'summary.json') -Encoding UTF8
-Write-History ("end    $runId  $($hostVerdict.Verdict)  $(Format-Seconds $timings['total'])")
+Write-History ("end    $runId  $($hostVerdict.Verdict)  $(Format-Seconds $timings['total'])  $BuildVmName")
 
 Write-Host ''
 foreach ($l in $lines) { Write-Host $l }

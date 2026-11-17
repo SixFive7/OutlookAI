@@ -171,6 +171,19 @@ its mailbox tests on, and change nothing you install.
   check fails, the reason is written out in full here rather than hidden behind a link. Both
   indicators now take their wording from one place, so they cannot disagree.
 
+- ✅ **Three build machines and two of each Outlook test machine now take test runs at once.**
+  Eight agents were queueing on one build machine and the two Outlook test machines, and the
+  maintainer asked for as much parallel work as the host allows, extra machines included. The build
+  machine has two copies, `OutlookAI-Build2` and `OutlookAI-Build3`, and each Outlook test machine
+  one, `OutlookAI-Indexed2` and `OutlookAI-Unindexed2`, each made in about two minutes from the
+  checkpoint its source's runner restores, with the same computer name, account, mailboxes and
+  frozen clock (`Testbed/host/New-TestbedClone.ps1`). The build runner takes whichever build machine
+  is free and names it in its summary; the live runner takes a machine by name as before, or the
+  first free one of a kind with `-Kind Indexed` or `-Kind Unindexed`. A copy is started only while
+  the host has its memory and 16 GB more available, so the maintainer's own work keeps its memory;
+  a resting copy holds disk and no memory. The idle-saver watches every copy. The Exchange test
+  machine is never copied: it holds a real Microsoft 365 sign-in.
+
 - ✅ **The Outlook test machines keep a full crash dump whenever Outlook crashes in a live run.**
   The one-call runner switches Windows Error Reporting's own crash dumps on at every run, on the
   frozen checkpoints as they are, brings every dump back with the run's results, and reads each one

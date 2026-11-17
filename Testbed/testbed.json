@@ -200,6 +200,30 @@
     "baseFeedStagedFrom": "e4b00fa"
   },
 
+  "vmPools": {
+    "_what": "THE POOLS (2026-11-17; the maintainer that day: 'try to parallelize as much as possible. Even create extra virtual machines if you think that can speed things up'). A pool is a source VM and its CLONES - whole copies made by Testbed/host/New-TestbedClone.ps1 from the checkpoint the source's runner restores, each resting on a checkpoint of the same name, with the source's computer name, account, stores and settings - so a run that names a pool may take any member. Testbed/host/TestbedPool.ps1 lists the members (the runners take whichever is free, the idle-saver watches them all), and Invoke-TestsOnBuildVm.ps1 -SelfTest fails while that list and this record disagree, or while a clone's fromCheckpoint is not the checkpoint its source's runner restores now: replace a source's checkpoint and its clones are made again. A guest clone is verified against its source's frozenClocks record (Set-GuestClockFrozen.ps1 -Verify) and rendered from its source's liveTestSettings section: it has neither of its own. Never OutlookAI-Exchange, which holds a real Microsoft 365 sign-in and device state (Q108, Q111). Docs/live-tier-on-the-vm.md section 4.7 is the record.",
+    "_fields": "source: the VM the clones copy. clones: one record each - vmName; fromCheckpoint, the source checkpoint it was exported from; checkpoint, its own, under the same name, the one its runner restores; madeUtc, when New-TestbedClone.ps1 made it; provenBy, the run on it, named with -VMName, that proved it before it joined the pool.",
+    "build": {
+      "source": "OutlookAI-Build",
+      "clones": [
+        { "vmName": "OutlookAI-Build2", "fromCheckpoint": "CP-03-SDK-TEST-READY-UTC", "checkpoint": "CP-03-SDK-TEST-READY-UTC", "madeUtc": "2026-11-17T16:19:06Z", "provenBy": null },
+        { "vmName": "OutlookAI-Build3", "fromCheckpoint": "CP-03-SDK-TEST-READY-UTC", "checkpoint": "CP-03-SDK-TEST-READY-UTC", "madeUtc": "2026-11-17T16:19:06Z", "provenBy": null }
+      ]
+    },
+    "indexed": {
+      "source": "OutlookAI-Indexed",
+      "clones": [
+        { "vmName": "OutlookAI-Indexed2", "fromCheckpoint": "CP-22C-FROZEN-CLOCK", "checkpoint": "CP-22C-FROZEN-CLOCK", "madeUtc": "2026-11-17T16:05:50Z", "provenBy": null }
+      ]
+    },
+    "unindexed": {
+      "source": "OutlookAI-Unindexed",
+      "clones": [
+        { "vmName": "OutlookAI-Unindexed2", "fromCheckpoint": "CP-16B-FROZEN-CLOCK", "checkpoint": "CP-16B-FROZEN-CLOCK", "madeUtc": null, "provenBy": null }
+      ]
+    }
+  },
+
   "frozenClocks": {
     "_what": "THE FROZEN CLOCKS of the two Outlook test guests - decided by the maintainer 2026-10-03 (Q130 (a) of Docs/overnight-review-2026-10-03.md). Each guest runs with Hyper-V time synchronisation OFF, and every live run restores the checkpoint named here, whose clock stands just after the guest's test data was built: every run starts at frozenUtc, so the hub, the bystander and Corpus A are exactly as old on every run as they were on the first, and no date window ever empties. Testbed/host/Set-GuestClockFrozen.ps1 made each checkpoint (-Execute) and is the guard a run calls before its suite (-Verify); Docs/live-tier-on-the-vm.md section 4.5 is the record. Never the build VM (its runner requires the host's clock within 2 s) and never OutlookAI-Exchange (Microsoft 365 sign-in needs real time): neither has, or may have, a record here.",
     "_fields": "checkpoint: the frozen checkpoint a run restores (time sync off travels with it). parentCheckpoint: the running checkpoint it was made from - its instant is the frozen one, give or take the 20 s the script reads the clock. frozenUtc: the frozen instant, for people; frozenUnix: the same instant as a Unix second count, which is what scripts read, because ConvertFrom-Json turns an ISO-8601 string into a DateTime whose zone it loses (Testbed/README.md section 5b) - T1/FrozenGuestClockTests holds the two equal. suiteStartWithinMinutes: how long after frozenUtc the guest's clock may be when the suite starts - Set-GuestClockFrozen.ps1 -Verify refuses later. checksHoldForMinutes: how long after frozenUtc every date check the tier makes is PROVEN to hold (T1/FrozenGuestClockTests, from the values below): the frontier margin, Corpus A's declared windows, the unindexed guest's seven-day reach - the difference is what the suite itself may take. timeZone: the guest's, read off it; the frontier margin is its UTC offset less five minutes, and every frozen instant lies in summer time (before 2026-10-25), for good. hubPopulation: the hub's manifest header as the frozen checkpoint holds it, read off the guest - the T1 pins rebuild its plan from these and require the shape key to match.",

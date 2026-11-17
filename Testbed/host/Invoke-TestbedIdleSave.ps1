@@ -51,6 +51,10 @@
     KEEP THIS LIST IN STEP WITH THE VMS THAT EXIST. Add a testbed VM the day it is built - one
     missing from this list is simply never saved - and drop one the day it is deleted.
     OutlookAI-TestVM, the original guest, left it on 2026-10-03, the day it was deleted (Q105).
+    SINCE 2026-11-17 THE DEFAULT IS READ FROM Testbed/host/TestbedPool.ps1: every member of every
+    pool - the build VM, the two Outlook guests and their clones - and OutlookAI-Exchange, which is
+    in no pool. A clone joins this list the moment it joins its pool, so it cannot be forgotten
+    here. The list is still an allowlist: a pool member that is not on this host is skipped.
 
     OutlookAI-Build, the build-and-test VM, joined it the day it was built (2026-10-03, Q102).
     OutlookAI-Exchange, the Exchange test VM, joined it the day it was built too (2026-10-03,
@@ -74,14 +78,20 @@
 param(
     # An allowlist, not a target - see .PARAMETER VMName. This is the one script in Testbed/host/
     # that keeps a default, because naming every known guest IS the intent here, and a name that
-    # is wrong or stale makes it skip a VM rather than act on the wrong one.
-    [string[]] $VMName = @('OutlookAI-Indexed', 'OutlookAI-Unindexed', 'OutlookAI-Build', 'OutlookAI-Exchange'),
+    # is wrong or stale makes it skip a VM rather than act on the wrong one. The default is set in
+    # the body, from TestbedPool.ps1: Windows PowerShell 5.1 leaves $PSScriptRoot empty while
+    # param() defaults are evaluated (Tools/Checks/check-powershell-51.ps1, rule 1).
+    [string[]] $VMName,
     [int] $MinimumUptimeMinutes = 10
 )
 
 $ErrorActionPreference = 'Stop'
 
 . (Join-Path $PSScriptRoot 'TestbedLeasePath.ps1')
+if (-not $PSBoundParameters.ContainsKey('VMName')) {
+    . (Join-Path $PSScriptRoot 'TestbedPool.ps1')
+    $VMName = @(Get-TestbedPoolMembers) + @('OutlookAI-Exchange')
+}
 
 $logDir = Join-Path $env:SystemDrive 'OutlookAI-Testbed'
 $log = Join-Path $logDir 'idle-save.log'
