@@ -36,6 +36,7 @@ public sealed class StdioHubOnlyGate : IDisposable
 
     private readonly LiveRunItemCheck _check;
     private readonly Func<string, string, bool, string?>? _entryIdRefusal;
+    private readonly Func<string, string?>? _folderStore;
     private readonly Dictionary<string, SeenHit> _hits = new(StringComparer.Ordinal);
     private readonly object _gate = new();
     private OutlookComSession? _session;
@@ -46,10 +47,15 @@ public sealed class StdioHubOnlyGate : IDisposable
     /// Judges an EntryID: (entryId, operation, addressesMail) to a refusal or null. Null to read it through
     /// the product's own session in this process - the live default; T1 passes a fake.
     /// </param>
-    public StdioHubOnlyGate(LiveRunItemCheck check, Func<string, string, bool, string?>? entryIdRefusal = null)
+    /// <param name="folderStore">
+    /// The store a folder's entry id (hex) is in, or null when it cannot be opened. Null to read it through the
+    /// product's own session in this process - the live default; T1 passes a fake.
+    /// </param>
+    public StdioHubOnlyGate(LiveRunItemCheck check, Func<string, string, bool, string?>? entryIdRefusal = null, Func<string, string?>? folderStore = null)
     {
         _check = check ?? throw new ArgumentNullException(nameof(check));
         _entryIdRefusal = entryIdRefusal;
+        _folderStore = folderStore;
     }
 
     /// <summary>The phrase every refusal of this gate carries.</summary>
@@ -129,7 +135,11 @@ public sealed class StdioHubOnlyGate : IDisposable
             case "goto_folder":
             case "show_search_results":
             case "save_attachment":
+            case "find_folder":
                 return null;
+
+            case "create_folder":
+                return FolderParentRefusal(tool, StringArgument(arguments, "parent_id"));
 
             case "manage_signature":
                 return Refused + ": manage_signature on the Exchange VM's test account - a signature written here may "
@@ -257,6 +267,36 @@ public sealed class StdioHubOnlyGate : IDisposable
 
         // Neither a hit id nor an EntryID: the server rejects it as malformed before it reaches Outlook.
         return null;
+    }
+
+    /// <summary>
+    /// create_folder makes a folder in the hub and nowhere else (2026-11-17, folders by ID): its parent,
+    /// decoded the product's way and opened through the product's own session, must be a folder of the hub.
+    /// A parent this gate cannot decode or open is the server's to refuse - it opens it the same way - so
+    /// the gate lets the product's own refusal through rather than masking it with one of its own.
+    /// </summary>
+    private string? FolderParentRefusal(string tool, string? parentId)
+    {
+        if (string.IsNullOrWhiteSpace(parentId) || !OutlookAI.Core.Mapi.OutlookIds.TryDecodeFolderId(parentId, "parent_id", out string entryIdHex, out _))
+        {
+            return null;
+        }
+
+        string? store = (_folderStore ?? DescribeThroughTheProduct)(entryIdHex);
+        return store == null || string.Equals(store, _check.HubStoreDisplayName, StringComparison.OrdinalIgnoreCase)
+            ? null
+            : Refused + ": '" + tool + "' makes a folder only in the hub, and the parent named is in '" + store + "'.";
+    }
+
+    private string? DescribeThroughTheProduct(string folderEntryIdHex)
+    {
+        IOutlookSession session;
+        lock (_gate)
+        {
+            session = _session ??= OutlookComSession.Connect(allowStartingOutlook: false);
+        }
+
+        return session.TryDescribeFolder(folderEntryIdHex, out _)?.StoreDisplayName;
     }
 
     /// <summary>

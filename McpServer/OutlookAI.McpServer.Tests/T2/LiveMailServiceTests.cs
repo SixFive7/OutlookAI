@@ -70,7 +70,7 @@ public sealed class LiveMailServiceTests
             SearchOutcome outcome = Service.Search(new SearchRequest
             {
                 IndexOnly = true,
-                Store = store,
+                StoreId = LiveIds.StoreId(Service, store),
                 IncludeAttachmentHits = false,
                 Top = 3,
             });
@@ -95,7 +95,7 @@ public sealed class LiveMailServiceTests
             SearchOutcome outcome = Service.Search(new SearchRequest
             {
                 IndexOnly = true,
-                Store = store,
+                StoreId = LiveIds.StoreId(Service, store),
                 IncludeAttachmentHits = false,
                 Top = 8,
             });
@@ -109,7 +109,7 @@ public sealed class LiveMailServiceTests
             SearchOutcome extra = Service.Search(new SearchRequest
             {
                 IndexOnly = true,
-                Store = Indexed[0],
+                StoreId = LiveIds.StoreId(Service, Indexed[0]),
                 IncludeAttachmentHits = false,
                 Top = 30,
             });
@@ -173,7 +173,7 @@ public sealed class LiveMailServiceTests
             SearchOutcome outcome = Service.Search(new SearchRequest
             {
                 IndexOnly = true,
-                Store = store,
+                StoreId = LiveIds.StoreId(Service, store),
                 IncludeAttachmentHits = false,
                 Top = 15,
             });
@@ -248,7 +248,7 @@ public sealed class LiveMailServiceTests
                 candidates = Service.Search(new SearchRequest
                 {
                     IndexOnly = true,
-                    Store = store,
+                    StoreId = LiveIds.StoreId(Service, store),
                     IncludeAttachmentHits = false,
                     OrderBySizeDescending = true,
                     HasAttachments = false,
@@ -263,7 +263,7 @@ public sealed class LiveMailServiceTests
                 candidates = Service.Search(new SearchRequest
                 {
                     IndexOnly = true,
-                    Store = store,
+                    StoreId = LiveIds.StoreId(Service, store),
                     IncludeAttachmentHits = false,
                     HasAttachments = false,
                     Top = 100,
@@ -307,7 +307,7 @@ public sealed class LiveMailServiceTests
             {
                 IndexOnly = true,
                 Query = _fixture.Settings.ProbeTerm,
-                Store = store,
+                StoreId = LiveIds.StoreId(Service, store),
                 AttachmentHitsOnly = true,
                 Top = 10,
             });
@@ -410,7 +410,8 @@ public sealed class LiveMailServiceTests
     [Trait("Writes", "Nothing")]
     public void ListFolders_TestHub_FullTree_StableOrder_And_OffsetPaging()
     {
-        FoldersOutcome outcome = Service.ListFolders(_fixture.Settings.TestHubStoreDisplayName);
+        string hubId = LiveIds.StoreId(Service, _fixture.Settings.TestHubStoreDisplayName);
+        FoldersOutcome outcome = Service.ListFolders(hubId);
 
         StoreFoldersView store = Assert.Single(outcome.Stores);
         Assert.True(store.Folders.Count >= 3, "test hub should expose at least a few folders");
@@ -424,12 +425,12 @@ public sealed class LiveMailServiceTests
         // Stable traversal: a repeat call returns the identical flattened order, and
         // offset=1 returns exactly the same order minus the first folder (live paging
         // proof without needing a >cap store).
-        FoldersOutcome repeat = Service.ListFolders(_fixture.Settings.TestHubStoreDisplayName);
+        FoldersOutcome repeat = Service.ListFolders(hubId);
         Assert.Equal(
             store.Folders.Select(f => f.Path),
             Assert.Single(repeat.Stores).Folders.Select(f => f.Path));
 
-        FoldersOutcome page1 = Service.ListFolders(_fixture.Settings.TestHubStoreDisplayName, offset: 1);
+        FoldersOutcome page1 = Service.ListFolders(hubId, offset: 1);
         Assert.Equal(1, page1.Offset);
         Assert.Equal(outcome.FolderTotal, page1.FolderTotal);
         Assert.Equal(
@@ -458,7 +459,7 @@ public sealed class LiveMailServiceTests
             candidates.AddRange(Service.Search(new SearchRequest
             {
                 IndexOnly = true,
-                Store = store,
+                StoreId = LiveIds.StoreId(Service, store),
                 IncludeAttachmentHits = false,
                 Top = 20,
             }).Hits.Where(h => h.ConversationId != null && !string.IsNullOrEmpty(h.Subject)));
@@ -472,7 +473,7 @@ public sealed class LiveMailServiceTests
         Assert.NotNull(seed);
 
         // Index path.
-        ThreadOutcome indexThread = Service.Thread(seed!.ConversationId, seed.Id, seed.Store);
+        ThreadOutcome indexThread = Service.Thread(seed!.ConversationId, seed.Id, seed.StoreId);
         _output.WriteLine($"thread(index) source={indexThread.Source} members={indexThread.Hits.Count} ms={indexThread.ElapsedMs}");
         Assert.True(indexThread.Hits.Count >= 1);
         if (indexThread.Source == "index")
@@ -495,7 +496,7 @@ public sealed class LiveMailServiceTests
         // 69 ms, on an item whose conversation the index tier had just returned 50
         // members for). That is the documented busy-Outlook shape, not a contract
         // violation - retry rather than pin the race.
-        ThreadOutcome comThread = Service.Thread("zzzznonexistentconversationzzzz", seed.Id, seed.Store);
+        ThreadOutcome comThread = Service.Thread("zzzznonexistentconversationzzzz", seed.Id, seed.StoreId);
         foreach (HitSummary candidate in candidates.Take(5))
         {
             if (comThread.Hits.Count > 0)
@@ -503,7 +504,7 @@ public sealed class LiveMailServiceTests
                 break;
             }
 
-            comThread = Service.Thread("zzzznonexistentconversationzzzz", candidate.Id, candidate.Store);
+            comThread = Service.Thread("zzzznonexistentconversationzzzz", candidate.Id, candidate.StoreId);
         }
 
         _output.WriteLine($"thread(com) source={comThread.Source} members={comThread.Hits.Count} ms={comThread.ElapsedMs}");

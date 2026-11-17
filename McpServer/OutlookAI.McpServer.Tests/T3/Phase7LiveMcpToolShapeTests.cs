@@ -28,7 +28,7 @@ public sealed class Phase7LiveMcpToolShapeTests
         // top=1 must cut the list and say so.
         JsonElement capped = await client.CallToolAsync("search", new
         {
-            store = settings.TestHubStoreDisplayName,
+            store_id = WireIds.StoreId(settings.TestHubStoreDisplayName),
             top = 1,
         });
 
@@ -43,7 +43,7 @@ public sealed class Phase7LiveMcpToolShapeTests
         // top=100 fits the whole hub corpus: no truncation.
         JsonElement uncapped = await client.CallToolAsync("search", new
         {
-            store = settings.TestHubStoreDisplayName,
+            store_id = WireIds.StoreId(settings.TestHubStoreDisplayName),
             top = 100,
         });
 

@@ -46,7 +46,7 @@ public sealed class Phase3LiveMcpToolShapeTests
         using OutlookComSession session = OutlookComSession.Connect(allowStartingOutlook: true);
 
         // --- goto_folder: golden shape + explorer folder path.
-        JsonElement gone = await client.CallToolAsync("goto_folder", new { store = hub });
+        JsonElement gone = await client.CallToolAsync("goto_folder", new { store_id = WireIds.StoreId(hub) });
         Assert.True(gone.GetProperty("displayed").GetBoolean());
         string? explorerPath = gone.GetProperty("explorerFolderPath").GetString();
         Assert.False(string.IsNullOrEmpty(explorerPath));
@@ -56,7 +56,7 @@ public sealed class Phase3LiveMcpToolShapeTests
         // --- open_in_outlook: search a hub hit, display it, verify + close the Inspector.
         JsonElement search = await client.CallToolAsync("search", new
         {
-            store = hub,
+            store_id = WireIds.StoreId(hub),
             include_attachment_hits = false,
             top = 10,
         });
@@ -111,7 +111,7 @@ public sealed class Phase3LiveMcpToolShapeTests
         {
             query = "OutlookAiMcpNoSuchTerm7391",
             scope = "current_folder",
-            store = hub,
+            store_id = WireIds.StoreId(hub),
         });
         Assert.True(shown.GetProperty("displayed").GetBoolean());
         Assert.Equal("current_folder", shown.GetProperty("scope").GetString());
@@ -149,7 +149,7 @@ public sealed class Phase3LiveMcpToolShapeTests
         {
             query = _settings.ProbeTerm,
             exhaustive = true,
-            store = hub,
+            store_id = WireIds.StoreId(hub),
             after = "2000-01-01",
             top = 50,
         });

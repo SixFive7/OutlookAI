@@ -74,7 +74,10 @@ internal static class ServerHost
         builder.Services
             .AddMcpServer(options => options.ServerInstructions = ServerMetadata.Instructions)
             .WithStdioServerTransport()
-            .WithToolsFromAssembly();
+            .WithToolsFromAssembly()
+
+            // Arguments retired by Q135 (i) are refused, never ignored: see Tools.RetiredArguments.
+            .WithRequestFilters(filters => filters.AddCallToolFilter(Tools.RetiredArguments.Filter));
 
         return builder;
     }

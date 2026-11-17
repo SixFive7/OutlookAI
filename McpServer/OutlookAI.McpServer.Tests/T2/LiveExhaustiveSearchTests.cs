@@ -100,7 +100,7 @@ public sealed class LiveExhaustiveSearchTests
         SearchOutcome outcome = Service.Search(new SearchRequest
         {
             Exhaustive = true,
-            Store = Hub,
+            StoreId = LiveIds.StoreId(Service, Hub),
             Query = term,
             AfterUtc = new DateTime(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc),
             Top = 100,
@@ -169,8 +169,8 @@ public sealed class LiveExhaustiveSearchTests
         SearchOutcome outcome = Service.Search(new SearchRequest
         {
             Exhaustive = true,
-            Store = Hub,
-            Folder = folderPath,
+            StoreId = LiveIds.StoreId(Service, Hub),
+            FolderId = LiveIds.FolderId(Service, Hub, folderPath),
             IncludeSubfolders = false,
             Query = term,
             Top = 100,
@@ -194,8 +194,8 @@ public sealed class LiveExhaustiveSearchTests
         SearchOutcome subtreeOutcome = Service.Search(new SearchRequest
         {
             Exhaustive = true,
-            Store = Hub,
-            Folder = folderPath,
+            StoreId = LiveIds.StoreId(Service, Hub),
+            FolderId = LiveIds.FolderId(Service, Hub, folderPath),
             Query = term,
             Top = 100,
         });

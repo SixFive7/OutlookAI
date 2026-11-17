@@ -1571,6 +1571,19 @@ public static class LiveOutlookTestMailer
                 folder.MoveTo(newParent);
                 string? sameObject = TryRead(() => (string?)folder.EntryID);
                 string? underNewParent = FindChildEntryId((object)newParent, name);
+
+                // The parent object read before the move can list its children as they were: measured on
+                // OutlookAI-Indexed2 (2026-11-17), the moved folder was not among them at once. Read-only:
+                // the parent is opened again by its id and looked in again, for at most five seconds.
+                for (int attempt = 0; underNewParent == null && attempt < 10; attempt++)
+                {
+                    Thread.Sleep(500);
+                    Release(newParent);
+                    newParent = null;
+                    newParent = ns.GetFolderFromID(newParentEntryId, storeId);
+                    underNewParent = FindChildEntryId((object)newParent, name);
+                }
+
                 return new TestFolderChange(folderEntryId, sameObject, underNewParent, name, null);
             }
             finally

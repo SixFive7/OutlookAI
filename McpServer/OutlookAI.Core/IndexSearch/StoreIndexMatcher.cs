@@ -82,8 +82,12 @@ namespace OutlookAI.Core.IndexSearch
             IReadOnlyList<StoreHashCandidate> candidates,
             bool nameUnreadable = false,
             string? filePath = null,
-            string? ownName = null)
+            string? ownName = null,
+            string? storeEntryId = null,
+            string? storeId = null)
         {
+            StoreEntryId = storeEntryId;
+            StoreId = storeId;
             DisplayName = displayName ?? throw new ArgumentNullException(nameof(displayName));
             ExchangeStoreType = exchangeStoreType;
             Candidates = candidates ?? throw new ArgumentNullException(nameof(candidates));
@@ -115,6 +119,15 @@ namespace OutlookAI.Core.IndexSearch
         /// name-and-hash rule applies to; null for the rest and when it would not read.
         /// </summary>
         public string? OwnName { get; }
+
+        /// <summary>
+        /// <c>Store.StoreID</c> - what ties this identity to the one store of the profile it came from,
+        /// whatever its name (Q133: a store named by its ID is decided by identity, never by name).
+        /// </summary>
+        public string? StoreEntryId { get; }
+
+        /// <summary>The store's ID as the tools show it (<see cref="OutlookAI.Core.Mapi.OutlookIds.StoreIdOf"/>); null when it has none.</summary>
+        public string? StoreId { get; }
 
         /// <summary>
         /// THE ONE OPEN EXCEPTION (Q113 (b)), in one place so it is easy to remove: true for every

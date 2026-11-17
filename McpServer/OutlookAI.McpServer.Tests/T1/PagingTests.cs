@@ -82,9 +82,14 @@ public sealed class PagingTests
     public void SearchsFingerprint_IsBuiltByTheSharedBuilder_InItsOldShape()
     {
         // ExhaustiveScanCursors now delegates; the canonical text is what it always was.
-        string fingerprint = ExhaustiveScanCursors.FingerprintOf(new SearchRequest { Store = "s", Folder = "Inbox" }, new[] { "t" });
+        // The store and the folder enter it as the IDs the caller passed, canonically spelled (Q131-Q136).
+        string storeId = TestFolders.StoreId("s");
+        string folderId = TestFolders.FolderId("s", "Inbox");
+        string fingerprint = ExhaustiveScanCursors.FingerprintOf(
+            new SearchRequest { StoreId = storeId.ToLowerInvariant(), FolderId = folderId }, new[] { "t" });
         Assert.StartsWith("terms=1|1|t\nsearchIn=1|", fingerprint, StringComparison.Ordinal);
-        Assert.Contains("\nstore=1|s\nfolder=1|Inbox\nincludeSubfolders=1|1\nafter=0\n", fingerprint, StringComparison.Ordinal);
+        Assert.Contains(
+            "\nstore=1|" + storeId + "\nfolder=1|" + folderId + "\nincludeSubfolders=1|1\nafter=0\n", fingerprint, StringComparison.Ordinal);
     }
 
     // ================================================================== the stateless token

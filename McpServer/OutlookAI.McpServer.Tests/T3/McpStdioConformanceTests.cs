@@ -79,7 +79,8 @@ public sealed class McpStdioConformanceTests
                 .ToList();
             foreach (string expected in new[]
                      {
-                         "search", "thread", "read", "save_attachment", "list_accounts", "list_folders", "list_signatures",
+                         "search", "thread", "read", "save_attachment", "list_accounts", "list_folders", "find_folder",
+                         "create_folder", "list_signatures",
                          "manage_signature", "move_mail", "archive_mail", "open_in_outlook", "goto_folder", "show_search_results",
                          "new_draft", "reply_draft", "replyall_draft", "forward_draft",
                          "update_draft", "discard_draft",

@@ -122,7 +122,7 @@ public sealed class FreshnessSweepClassTests
     /// </summary>
     [Theory]
     [InlineData(nameof(IOutlookSession.TryReadItem))]
-    [InlineData(nameof(IOutlookSession.TryMoveItemToPath))]
+    [InlineData(nameof(IOutlookSession.TryMoveItemToFolder))]
     [InlineData(nameof(IOutlookSession.TryMoveItemToFolderId))]
     [InlineData(nameof(IOutlookSession.TryCreateNewDraft))]
     [InlineData(nameof(IOutlookSession.TryCreateDerivedDraft))]

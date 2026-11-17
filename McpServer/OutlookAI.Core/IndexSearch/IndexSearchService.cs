@@ -521,6 +521,71 @@ namespace OutlookAI.Core.IndexSearch
         /// name never holds a <c>/</c> - the index spells it <c>%2F</c> - so the first one ends
         /// the store segment.
         /// </summary>
+        /// <summary>
+        /// The store roots of this user's index whose items carry <paramref name="providerUidHex"/> - the
+        /// provider UID at bytes 4..19 of every entry id in a store (a PST's record key) - read off the
+        /// item ids in a sample of each root's row URLs (Q132 (i), measured on the indexed guest: Q115,
+        /// runbook section 8 item 31). Index only: no Outlook. A root whose sample holds no item id says
+        /// nothing and is not matched. The index is one per Windows user and holds every profile's stores,
+        /// so a byte copy of a PST that was never attached beside its original can carry the same UID:
+        /// the caller refuses more than one match rather than picking between them.
+        /// </summary>
+        public IReadOnlyList<StoreScopeInfo> FindStoreRootsByProviderUid(string providerUidHex, int? commandTimeoutSeconds = null)
+        {
+            if (string.IsNullOrWhiteSpace(providerUidHex))
+            {
+                throw new ArgumentException("A provider UID is required.", nameof(providerUidHex));
+            }
+
+            List<StoreScopeInfo> matches = new List<StoreScopeInfo>();
+            foreach (StoreScopeInfo root in ListStoreRoots(CurrentUserMapiRoot(), commandTimeoutSeconds))
+            {
+                string sql = WsSqlBuilder.BuildScopeUrlSample(root.StorePrefix.TrimEnd('/') + "/", StoreUidSampleRows);
+                foreach (IReadOnlyDictionary<string, object?> row in _client.ExecuteRows(sql, StoreUidSampleRows, commandTimeoutSeconds))
+                {
+                    if (row.TryGetValue("System.ItemUrl", out object? value) && value is string url
+                        && MapiItemUrl.TryParse(url, out MapiItemUrl? parsed) && parsed != null
+                        && parsed.TryDecodeEntryId(out DecodedEntryId? decoded) && decoded != null)
+                    {
+                        if (string.Equals(decoded.StoreUidHex, providerUidHex, StringComparison.OrdinalIgnoreCase))
+                        {
+                            matches.Add(root);
+                        }
+
+                        break;
+                    }
+                }
+            }
+
+            return matches;
+        }
+
+        /// <summary>
+        /// The URLs of the rows under <paramref name="storeScope"/> whose <c>System.ProviderItemID</c> is
+        /// <paramref name="providerItemId"/>: for a PST folder's node id, the folder's OWN row, whose URL is
+        /// the folder's names path - the index scope of the folder (Q132 (i)). Index only.
+        /// </summary>
+        public IReadOnlyList<string> FindRowUrlsByProviderItemId(string storeScope, string providerItemId, int? commandTimeoutSeconds = null)
+        {
+            string sql = WsSqlBuilder.BuildProviderItemIdLookup(storeScope.TrimEnd('/') + "/", providerItemId, ProviderItemIdRows);
+            List<string> urls = new List<string>();
+            foreach (IReadOnlyDictionary<string, object?> row in _client.ExecuteRows(sql, ProviderItemIdRows, commandTimeoutSeconds))
+            {
+                if (row.TryGetValue("System.ItemUrl", out object? value) && value is string url && url.Length > 0)
+                {
+                    urls.Add(url);
+                }
+            }
+
+            return urls;
+        }
+
+        /// <summary>Rows sampled per store root to read its store UID: enough to pass the folder rows a root lists first.</summary>
+        private const int StoreUidSampleRows = 200;
+
+        /// <summary>Rows asked for by one provider-item-id lookup: one is the answer, more is a refusal.</summary>
+        private const int ProviderItemIdRows = 5;
+
         internal static bool TryReadStoreRoot(string url, string userRoot, out MapiItemUrl? parsed)
         {
             parsed = null;

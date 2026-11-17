@@ -256,12 +256,44 @@ public sealed class StdioHubOnlyGateTests
     public void ReadsAndToolsThatAddressNoMailPass_AndAToolNobodyJudgedIsRefused()
     {
         StdioHubOnlyGate gate = new(Check, (_, _, _) => "never asked");
-        foreach (string tool in new[] { "search", "read", "thread", "list_accounts", "list_folders", "list_signatures", "outlook_health", "audit_log", "goto_folder", "show_search_results", "save_attachment" })
+        foreach (string tool in new[] { "search", "read", "thread", "list_accounts", "list_folders", "list_signatures", "outlook_health", "audit_log", "goto_folder", "show_search_results", "save_attachment", "find_folder" })
         {
             Assert.Null(gate.RefusalFor(tool, Args(new { })));
         }
 
         Assert.StartsWith(StdioHubOnlyGate.Refused, gate.RefusalFor("brand_new_tool", Args(new { }))!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CreateFolder_MakesAFolderOnlyInTheHub_AndLeavesAnUnopenableParentToTheServer()
+    {
+        // An Exchange folder's entry id, as the ID tests build one, and the folder ID the tools take for it.
+        byte[] entryId = new byte[46];
+        byte[] uid = { 0x02, 0x60, 0x47, 0xAA, 0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80, 0x90, 0xA0, 0xB0, 0xC0 };
+        Array.Copy(uid, 0, entryId, 4, 16);
+        entryId[20] = 0x01;
+        for (int i = 0; i < 16; i++)
+        {
+            entryId[22 + i] = (byte)(0xD0 + i);
+        }
+
+        entryId[43] = 0x2A;
+        string parentId = OutlookAI.Core.Mapi.OutlookIds.FolderIdFromEntryId(entryId);
+        string? askedFor = null;
+
+        StdioHubOnlyGate inHub = new(Check, (_, _, _) => "never asked", hex => { askedFor = hex; return Hub; });
+        Assert.Null(inHub.RefusalFor("create_folder", Args(new { parent_id = parentId, name = "x" })));
+        Assert.Equal(Convert.ToHexString(entryId), askedFor);
+
+        StdioHubOnlyGate elsewhere = new(Check, (_, _, _) => "never asked", _ => "real-mailbox@example.invalid");
+        string? refusal = elsewhere.RefusalFor("create_folder", Args(new { parent_id = parentId, name = "x" }));
+        Assert.StartsWith(StdioHubOnlyGate.Refused, refusal!, StringComparison.Ordinal);
+        Assert.Contains("only in the hub", refusal, StringComparison.Ordinal);
+
+        // A parent nothing can open, or an id that is no folder ID, is the server's to refuse - and it does.
+        StdioHubOnlyGate unopenable = new(Check, (_, _, _) => "never asked", _ => null);
+        Assert.Null(unopenable.RefusalFor("create_folder", Args(new { parent_id = parentId, name = "x" })));
+        Assert.Null(elsewhere.RefusalFor("create_folder", Args(new { parent_id = "not-a-folder-id", name = "x" })));
     }
 
     [Theory]

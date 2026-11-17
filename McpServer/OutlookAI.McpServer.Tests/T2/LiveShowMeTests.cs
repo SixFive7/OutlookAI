@@ -49,14 +49,16 @@ public sealed class LiveShowMeTests
     {
         // Locale-proof target: a real TOP-LEVEL folder path reported by list_folders
         // (the listing now always returns the full tree - filter to depth 1).
-        FoldersOutcome folders = Service.ListFolders(Hub);
+        FoldersOutcome folders = Service.ListFolders(LiveIds.StoreId(Service, Hub));
         StoreFoldersView store = Assert.Single(folders.Stores);
         FolderView target = store.Folders.FirstOrDefault(f => !f.Path.Contains('/') && (f.Items ?? 0) > 0)
             ?? store.Folders.First(f => !f.Path.Contains('/'));
         string expectedPath = "\\\\" + Hub + "\\" + target.Path.Replace('/', '\\');
 
-        GotoFolderOutcome outcome = Service.GotoFolder(Hub, target.Path);
+        GotoFolderOutcome outcome = Service.GotoFolder(target.FolderId);
         Assert.True(outcome.Displayed);
+        Assert.Equal(target.FolderId, outcome.FolderId);
+        Assert.Equal(target.Path, outcome.Folder);
         Assert.Equal(expectedPath, outcome.ExplorerFolderPath, ignoreCase: true);
 
         // Independent verification through a second COM client: the ACCEPTANCE assert.
@@ -82,7 +84,7 @@ public sealed class LiveShowMeTests
         _output.WriteLine($"goto_folder ok: folderPathMatches=true windowState={state.WindowState}");
 
         // Default navigation (no folder): lands on the hub's Inbox (or root) without error.
-        GotoFolderOutcome defaultOutcome = Service.GotoFolder(Hub);
+        GotoFolderOutcome defaultOutcome = Service.GotoFolder(storeId: LiveIds.StoreId(Service, Hub));
         Assert.True(defaultOutcome.Displayed);
         Assert.False(string.IsNullOrEmpty(defaultOutcome.ExplorerFolderPath));
         Assert.StartsWith("\\\\" + Hub, defaultOutcome.ExplorerFolderPath!, StringComparison.OrdinalIgnoreCase);
@@ -100,7 +102,7 @@ public sealed class LiveShowMeTests
         List<HitSummary> hits = Service.Search(new SearchRequest
         {
             IndexOnly = true,
-            Store = Hub,
+            StoreId = LiveIds.StoreId(Service, Hub),
             IncludeAttachmentHits = false,
             Top = 20,
         }).Hits.Where(h => !string.IsNullOrEmpty(h.Subject) && !HubCorpus.IsTestArtifact(h.Subject)).ToList();
@@ -143,7 +145,7 @@ public sealed class LiveShowMeTests
     {
         // Park the window on the hub store first: current_folder/subfolders scopes then
         // apply to hub content only, and the later screenshot is S5-clean.
-        Service.GotoFolder(Hub);
+        Service.GotoFolder(storeId: LiveIds.StoreId(Service, Hub));
 
         // --- Feature test all four olSearchScope values (v3.MD risk register) with a
         // query that matches nothing, so no business-store content is put on screen.
@@ -193,7 +195,7 @@ public sealed class LiveShowMeTests
 
         try
         {
-            ShowSearchResultsOutcome shown = Service.ShowSearchResults(term, "current_folder", Hub);
+            ShowSearchResultsOutcome shown = Service.ShowSearchResults(term, "current_folder", storeId: LiveIds.StoreId(Service, Hub));
             Assert.True(shown.Displayed);
             Assert.Equal("current_folder", shown.Scope);
             _output.WriteLine($"show_search_results ok: captionPresent={shown.ExplorerCaption != null} folderPresent={shown.ExplorerFolderPath != null}");

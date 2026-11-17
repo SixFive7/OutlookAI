@@ -754,46 +754,4 @@ public sealed class SweepScopeAndWindowTests
         Assert.Contains("unread_only / before", line, StringComparison.Ordinal);
         Assert.Contains("3", line, StringComparison.Ordinal);
     }
-
-    // ================================= (8) list_folders refuses an unresolvable store (G1)
-
-    [Fact]
-    public void AnUnknownStore_IsRefusedByName_NotAnsweredWithAnEmptyTree()
-    {
-        // THE DEFECT (gap G1): list_folders(store: "typo") answered folderTotal: 0,
-        // truncated: false and no error - indistinguishable from a store that is there and
-        // holds no folders, so a misspelling came back looking like a fact about the
-        // mailbox. search has always refused an unresolvable store loudly; this makes the
-        // two agree.
-        string? refusal = MailService.DescribeUnresolvedFolderStore("typo", new[] { StoreA, StoreB });
-
-        Assert.NotNull(refusal);
-        Assert.Contains("typo", refusal!, StringComparison.Ordinal);
-        Assert.Contains(StoreA, refusal, StringComparison.Ordinal);
-        Assert.Contains(StoreB, refusal, StringComparison.Ordinal);
-        Assert.Contains("list_accounts", refusal, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void AStoreThatIsThereAndSimplyHasNoFolders_StaysAnEmptyTree()
-    {
-        // The mirror of the defect, and why the check consults the store list instead of
-        // just counting rows: a store whose root has no subfolders is a real thing, and
-        // inventing an error for it would be the same lie in the other direction. Matching
-        // is case-insensitive, as store names are everywhere else in this server.
-        Assert.Null(MailService.DescribeUnresolvedFolderStore(StoreA, new[] { StoreA, StoreB }));
-        Assert.Null(MailService.DescribeUnresolvedFolderStore(StoreA.ToUpperInvariant(), new[] { StoreA }));
-    }
-
-    [Fact]
-    public void AProfileThatReportedNoStoresAtAll_SaysSo_RatherThanListingNothing()
-    {
-        // "Known stores: " with an empty list reads as a formatting bug, and the state it
-        // describes - Outlook enumerating no stores - is a different problem from a typo.
-        string refusal = Assert.IsType<string>(
-            MailService.DescribeUnresolvedFolderStore("anything", Array.Empty<string>()));
-
-        Assert.Contains("no stores at all", refusal, StringComparison.Ordinal);
-        Assert.DoesNotContain("Known stores:", refusal, StringComparison.Ordinal);
-    }
 }

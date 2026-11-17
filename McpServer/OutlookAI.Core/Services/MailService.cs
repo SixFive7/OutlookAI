@@ -22,7 +22,7 @@ namespace OutlookAI.Core.Services
     /// assumptions; per-process hit cache only (a server process lives for one agent
     /// session).
     /// </summary>
-    public sealed class MailService : IDisposable
+    public sealed partial class MailService : IDisposable
     {
         // Live-verified (Phase 1: 25/25 within 5 s; Phase-2 run 1): a wide tolerance
         // lets a same-subject sibling mail within the window win the folder probe, so
@@ -710,10 +710,13 @@ namespace OutlookAI.Core.Services
             int top = Clamp(request.Top, 1, SearchTopCap);
             int snippetChars = Clamp(request.SnippetChars, 0, SnippetCharsCap);
             IReadOnlyList<string> terms = SplitTerms(request.Query);
-            if (request.Folder != null && request.Store == null)
-            {
-                throw new ArgumentException("folder requires store.", nameof(request));
-            }
+
+            // Q131-Q136: the scope arrives as IDs and is resolved below - never by a caller, so a reused
+            // request cannot carry an earlier search's store or folder into this one.
+            request.ScopeStoreName = null;
+            request.ScopeFolderPath = null;
+            request.ScopeFolderEntryId = null;
+            request.ScopeFolderPathShared = false;
 
             if (request.Exhaustive)
             {
@@ -732,11 +735,7 @@ namespace OutlookAI.Core.Services
                     nameof(request));
             }
 
-            FolderScopeResolution? folderScope = null;
-            if (request.Store != null)
-            {
-                folderScope = ResolveFolderScope(request.Store, request.Folder, request.IncludeSubfolders);
-            }
+            FolderScopeResolution? folderScope = ResolveSearchScope(request, out string? folderFoundVia);
 
             // A store the PROFILE has but the index cannot address (a PST, an archive-only
             // data file, indexing off or still building) has no SCOPE to query with, and the
@@ -760,7 +759,7 @@ namespace OutlookAI.Core.Services
             // an index store two of this profile's stores share - name and hash alike - are left out,
             // and those stores are reported as unmatched (index.storesUnmatched) instead. A scoped
             // search never gets this far for such a store: ResolveFolderScope refused it.
-            IReadOnlyList<StoreIndexMatch> unmatchable = request.Store == null
+            IReadOnlyList<StoreIndexMatch> unmatchable = request.ScopeStoreName == null
                 ? TryGetStoreIndexMap(SearchIndexTimeoutSeconds)?.Unmatchable ?? Array.Empty<StoreIndexMatch>()
                 : Array.Empty<StoreIndexMatch>();
 
@@ -841,6 +840,10 @@ namespace OutlookAI.Core.Services
             // sweep can still supply hits for a folder the index has never seen, and
             // "the folder did not resolve" must not be said over a non-empty answer.
             AddFolderScopeAdvice(advice, folderScope);
+            if (request.ScopeFolderPathShared)
+            {
+                advice.Add(DescribeSharedFolderPath(request.ScopeFolderPath));
+            }
 
             if (!request.IndexOnly)
             {
@@ -889,18 +892,18 @@ namespace OutlookAI.Core.Services
                             : "Retry shortly, check outlook_health, or search again with exhaustive:true plus store + "
                               + "folder/after bounds for an index-free COM search."));
                 }
-                else if (sweep.Performed && sweep.FoldersSwept == 0 && request.Folder != null)
+                else if (sweep.Performed && sweep.FoldersSwept == 0 && request.ScopeFolderEntryId != null)
                 {
-                    // The folder-scoped sweep could not resolve the folder through COM
-                    // (renamed, gone, or not a mail folder): index results still stand,
-                    // but this query has no freshness coverage - say so rather than
-                    // implying the last few minutes were checked.
-                    advice.Add("Freshness sweep covered no folder: '" + request.Folder
-                        + "' could not be opened in Outlook, so results for it are index-only and may lag the last "
-                        + indexAge + " of mail. Check the path with list_folders.");
+                    // The folder-scoped sweep could not open the folder through COM by its ID
+                    // (deleted, or not a mail folder): index results still stand, but this
+                    // query has no freshness coverage - say so rather than implying the last
+                    // few minutes were checked.
+                    advice.Add("Freshness sweep covered no folder: '" + request.ScopeFolderPath
+                        + "' could not be opened in Outlook by its ID, so results for it are index-only and may lag the last "
+                        + indexAge + " of mail. Check the folder with find_folder.");
                 }
 
-                advice.AddRange(DescribeSweepCoverage(sweep, indexAge, request.Folder != null));
+                advice.AddRange(DescribeSweepCoverage(sweep, indexAge, request.ScopeFolderEntryId != null));
                 string? attachmentTextAdvice = DescribeAttachmentTextGap(sweep);
                 if (attachmentTextAdvice != null)
                 {
@@ -943,7 +946,7 @@ namespace OutlookAI.Core.Services
                 advice.Add("Outlook is not running, so the index is frozen; recent mail may be missing until Outlook runs again.");
             }
 
-            string? staleAdvice = DescribeStaleIndex(staleness.Age?.TotalMinutes, request.Store != null);
+            string? staleAdvice = DescribeStaleIndex(staleness.Age?.TotalMinutes, request.ScopeStoreName != null);
             if (staleAdvice != null)
             {
                 advice.Add(staleAdvice);
@@ -960,7 +963,7 @@ namespace OutlookAI.Core.Services
             {
                 advice.Add("Result list capped at " + top.ToString(CultureInfo.InvariantCulture)
                     + " (top); more matches exist - raise top (max " + SearchTopCap.ToString(CultureInfo.InvariantCulture)
-                    + ") or narrow with store/folder/from/after filters.");
+                    + ") or narrow with store_id/folder_id/from/after filters.");
             }
 
             AddTopClampAdvice(advice, request.Top, top);
@@ -990,7 +993,7 @@ namespace OutlookAI.Core.Services
                 // Say so (D42), in a FIELD as well as here since 2026-08-18 (gap G6).
                 advice.Add("The index tier could not confirm this list holds every match: its candidate rows ran out "
                     + "while filtering, or the follow-up query that would have proved otherwise failed. "
-                    + "Narrow with store/folder/after, or lower top.");
+                    + "Narrow with store_id/folder_id/after, or lower top.");
             }
 
             // Say the live check's outcome in a FIELD, not only in prose: a result that
@@ -1032,12 +1035,12 @@ namespace OutlookAI.Core.Services
                         FreshMerge.BodyScopeBodyAndAttachments, request.SearchIn, terms.Count > 0),
                     TermMatch = terms.Count > 0 ? FreshMerge.TermMatchWholeWord : null,
                 },
-                Scope = DescribeSearchScope(folderScope, request),
+                Scope = DescribeSearchScope(folderScope, request, folderFoundVia),
                 Staleness = new StalenessInfo
                 {
                     NewestIndexedUtc = staleness.NewestIndexedReceivedUtc,
                     OldestStoreFrontierUtc = OldestStoreFrontier(
-                        request.Store != null, staleness.NewestIndexedReceivedUtc, oldestPerStoreFrontierUtc),
+                        request.ScopeStoreName != null, staleness.NewestIndexedReceivedUtc, oldestPerStoreFrontierUtc),
                     AgeMinutes = staleness.Age?.TotalMinutes,
                     OutlookRunning = outlookRunning,
                 },
@@ -1248,7 +1251,7 @@ namespace OutlookAI.Core.Services
             advice.Add("top=" + requestedTop.ToString(CultureInfo.InvariantCulture) + " was reduced to "
                 + effectiveTop.ToString(CultureInfo.InvariantCulture) + " (the hard cap): search returns at most "
                 + SearchTopCap.ToString(CultureInfo.InvariantCulture)
-                + " hits per call. Narrow with store/folder/from/after, or page by moving the 'before' bound.");
+                + " hits per call. Narrow with store_id/folder_id/from/after, or page by moving the 'before' bound.");
         }
 
         /// <summary>
@@ -1382,7 +1385,7 @@ namespace OutlookAI.Core.Services
                     return null;
                 }
 
-                advice.Add(FolderScopeResolver.DescribeUnresolvedFolder(request.Folder, request.Store!));
+                advice.Add(FolderScopeResolver.DescribeUnresolvedFolder(request.ScopeFolderPath, request.ScopeStoreName ?? string.Empty));
                 return true;
             }
             catch (Exception ex) when (ex is not OutOfMemoryException)
@@ -1484,9 +1487,9 @@ namespace OutlookAI.Core.Services
                             + " s budget after " + sweep.FoldersSwept.ToString(CultureInfo.InvariantCulture)
                             + " folder(s) and stopped there, so stores or folders it had not reached yet have no freshness "
                             + "coverage - index results still cover them, but brand-new mail there may be missing. It "
-                            + "returned what it did cover rather than failing. Name a 'store' (and a 'folder' if you know "
-                            + "one) to give the sweep less ground, or re-run: the window it could not finish is still open "
-                            + "next time.");
+                            + "returned what it did cover rather than failing. Pass a store_id (or a folder_id if you know "
+                            + "the folder) to give the sweep less ground, or re-run: the window it could not finish is still "
+                            + "open next time.");
                         break;
 
                     case FreshMerge.GapTimeBudget:
@@ -1745,7 +1748,7 @@ namespace OutlookAI.Core.Services
                             + " levels and never opened them, so mail in them is NOT covered by these results. A real "
                             + "mailbox is nowhere near that deep, so this points at a damaged or looping folder tree "
                             + "rather than at the bound being too low - list_folders on this store shows where. Scan "
-                            + "the subtree directly with folder set to a path inside it.");
+                            + "the subtree directly with folder_id set to a folder inside it.");
                         break;
 
                     case FreshMerge.ScanGapRowsUnreadable:
@@ -1805,8 +1808,8 @@ namespace OutlookAI.Core.Services
                             + "been covered, so ordinarily nothing is missing"
                             + (exhaustive.CursorFolderMissing == true
                                 ? " - EXCEPT that the folder this scan had stopped inside is gone, so whatever it "
-                                    + "still held is NOT covered by these results. Check list_folders for where it "
-                                    + "went and scan that path directly."
+                                    + "still held is NOT covered by these results. Check find_folder for where it "
+                                    + "went and scan that folder directly by its folder_id."
                                 : ". Mail that arrived in an already-finished folder after that folder was scanned is "
                                     + "not covered either; a fresh search with a tighter 'after' bound picks it up."));
                         break;
@@ -1908,8 +1911,9 @@ namespace OutlookAI.Core.Services
                 case ScanTokenDecision.Unknown:
                     return "resume_token is not known to this server: continuation state lives in the running "
                         + "process and is lost when it restarts, and it is also dropped once its scan finishes. "
-                        + "Continue by re-running this search with 'folder' and 'before' set from the previous "
-                        + "result's exhaustive.position, or omit resume_token to start a fresh scan.";
+                        + "Continue by re-running this search with folder_id and before set from the previous "
+                        + "result's exhaustive.position (resumeFolderId, resumeCursorUtc), or omit resume_token to "
+                        + "start a fresh scan.";
 
                 case ScanTokenDecision.Expired:
                     return "resume_token has expired - a paged scan stays resumable for a limited time after its "
@@ -2015,7 +2019,7 @@ namespace OutlookAI.Core.Services
         /// scope the index cannot address - the two cases where what was COVERED differs from
         /// what was asked for.
         /// </summary>
-        private static SearchScopeInfo? DescribeSearchScope(FolderScopeResolution? folderScope, SearchRequest request)
+        private static SearchScopeInfo? DescribeSearchScope(FolderScopeResolution? folderScope, SearchRequest request, string? folderFoundVia)
         {
             // A store scope with no folder is ordinarily uninteresting - it covers exactly
             // what was asked for - so it stays out of the payload. StoreNotIndexed does not:
@@ -2043,7 +2047,14 @@ namespace OutlookAI.Core.Services
 
             return new SearchScopeInfo
             {
-                Folder = request.Folder,
+                Store = request.ScopeStoreName,
+                StoreId = request.StoreId != null
+                    ? OutlookIds.Canonical(request.StoreId)
+                    : OutlookIds.StoreIdOfEntryId(request.ScopeFolderEntryId),
+                Folder = request.ScopeFolderPath,
+                FolderId = request.FolderId == null ? null : OutlookIds.Canonical(request.FolderId),
+                FolderFoundVia = folderFoundVia,
+                PathShared = request.ScopeFolderPathShared ? true : (bool?)null,
                 IncludeSubfolders = request.IncludeSubfolders,
                 Shape = shape,
                 Widened = folderScope.Widened ? true : (bool?)null,
@@ -2160,7 +2171,7 @@ namespace OutlookAI.Core.Services
             DateTime emptyIndexBase = DateTime.UtcNow - EmptyIndexSweepWindow;
             SweepWindowPlan plan = new SweepWindowPlan();
 
-            if (request.Store != null)
+            if (request.ScopeStoreName != null)
             {
                 // Scoped: the search's own probe was already scoped to this store, so the
                 // window and the key are the same value - this store's frontier.
@@ -2168,7 +2179,7 @@ namespace OutlookAI.Core.Services
                 plan.CacheKeyBaseUtc = plan.FallbackBaseUtc;
                 if (!staleness.NewestIndexedReceivedUtc.HasValue)
                 {
-                    plan.AddStoreWithoutIndex(request.Store);
+                    plan.AddStoreWithoutIndex(request.ScopeStoreName);
                 }
 
                 return plan;
@@ -2329,7 +2340,7 @@ namespace OutlookAI.Core.Services
                 info.Performed = false;
                 info.NotNeeded = true;
                 info.Error = null;
-                return NoteProfileStoresWithoutIndex(info, request.Store, perStoreBase);
+                return NoteProfileStoresWithoutIndex(info, request.ScopeStoreName, perStoreBase);
             }
 
             // What the sweep structurally cannot answer, decided in one pure place
@@ -2347,7 +2358,7 @@ namespace OutlookAI.Core.Services
                 // store the index cannot see.
                 info.Performed = false;
                 info.Error = refusal;
-                return NoteProfileStoresWithoutIndex(info, request.Store, perStoreBase);
+                return NoteProfileStoresWithoutIndex(info, request.ScopeStoreName, perStoreBase);
             }
 
             // The sweep follows the SEARCH scope (soak fix 13): a folder-scoped search
@@ -2356,8 +2367,8 @@ namespace OutlookAI.Core.Services
             // folders of the store(s) in scope. Before the fix every search swept
             // Inbox + Sent Items only, so mail a server-side rule filed elsewhere on
             // arrival was invisible until the index caught up.
-            IReadOnlyList<string>? sweepFolderPath = ParseFolderSegments(request.Folder);
-            string? folderKey = sweepFolderPath == null ? null : string.Join("/", sweepFolderPath);
+            // Keyed by the folder's entry id: the one name of a folder a rename does not change.
+            string? folderKey = request.ScopeFolderEntryId;
 
             // The default folder set is shallow by construction (SweepFolder, not
             // SweepFolderTree), so only a folder-scoped sweep can honor the flag.
@@ -2394,7 +2405,7 @@ namespace OutlookAI.Core.Services
             ComSweepResult effectiveResult;
             IReadOnlyList<ComMailBrief> sweptItems;
             if (_sweepCache.TryGet(
-                    cacheKeyBase, request.Store, folderKey, sweepRecursive, nowUtc,
+                    cacheKeyBase, request.ScopeStoreName, folderKey, sweepRecursive, nowUtc,
                     out SweepCache.CachedSweep? cachedSweep, perStoreBase)
                 && cachedSweep != null)
             {
@@ -2402,7 +2413,7 @@ namespace OutlookAI.Core.Services
                 info.Cached = true;
                 info.CacheAgeSeconds = Math.Round((nowUtc - cachedSweep.FetchedAtUtc).TotalSeconds, 1);
                 info.ElapsedMs = 0;
-                ApplySweepCounters(info, cachedSweep.Result, request.Store);
+                ApplySweepCounters(info, cachedSweep.Result, request.ScopeStoreName);
                 effectiveResult = cachedSweep.Result;
                 sweptItems = cachedSweep.Result.Items;
             }
@@ -2419,8 +2430,8 @@ namespace OutlookAI.Core.Services
                     // partial coverage rather than as a timeout and a killed host.
                     sweepResult = _gateway.Run(
                     s => s.SweepFoldersNewerThan(
-                        gapStart, SweepPerFolderCap, includeBodies: true, request.Store, sweepFolderPath, sweepRecursive,
-                        perStoreGapStart, SweepWorkBudgetMs),
+                        gapStart, SweepPerFolderCap, includeBodies: true, request.ScopeStoreName, null, sweepRecursive,
+                        perStoreGapStart, SweepWorkBudgetMs, request.ScopeFolderEntryId),
                     SweepBudgetMs,
                     allowConnectFloor: true);
                 }
@@ -2432,7 +2443,7 @@ namespace OutlookAI.Core.Services
                 {
                     info.Performed = false;
                     info.Error = ex.Message;
-                    return NoteProfileStoresWithoutIndex(info, request.Store, perStoreBase);
+                    return NoteProfileStoresWithoutIndex(info, request.ScopeStoreName, perStoreBase);
                 }
                 catch (TimeoutException ex)
                 {
@@ -2442,7 +2453,7 @@ namespace OutlookAI.Core.Services
                     // this text reaches the agent, and through it the user.
                     info.Performed = false;
                     info.Error = ex.Message;
-                    return NoteProfileStoresWithoutIndex(info, request.Store, perStoreBase);
+                    return NoteProfileStoresWithoutIndex(info, request.ScopeStoreName, perStoreBase);
                 }
                 catch (Exception ex) when (ex is not OutOfMemoryException)
                 {
@@ -2454,13 +2465,13 @@ namespace OutlookAI.Core.Services
                     info.Error = ex is System.Runtime.InteropServices.COMException com
                         ? string.Format(CultureInfo.InvariantCulture, "COMException 0x{0:X8}", com.HResult)
                         : ex.GetType().Name;
-                    return NoteProfileStoresWithoutIndex(info, request.Store, perStoreBase);
+                    return NoteProfileStoresWithoutIndex(info, request.ScopeStoreName, perStoreBase);
                 }
 
                 stopwatch.Stop();
                 info.Performed = true;
                 info.ElapsedMs = stopwatch.ElapsedMilliseconds;
-                ApplySweepCounters(info, sweepResult, request.Store);
+                ApplySweepCounters(info, sweepResult, request.ScopeStoreName);
                 effectiveResult = sweepResult;
                 sweptItems = sweepResult.Items;
 
@@ -2471,7 +2482,7 @@ namespace OutlookAI.Core.Services
                 if (!windowsClamped)
                 {
                     _sweepCache.Store(
-                        cacheKeyBase, request.Store, folderKey, sweepRecursive, sweepResult, info.ElapsedMs, nowUtc,
+                        cacheKeyBase, request.ScopeStoreName, folderKey, sweepRecursive, sweepResult, info.ElapsedMs, nowUtc,
                         perStoreBase);
                 }
             }
@@ -2480,7 +2491,7 @@ namespace OutlookAI.Core.Services
             // known: the planned value has to assume the fallback window applies to someone,
             // and on a fully catalogued profile it applies to no one. Reporting the plan
             // would say "swept back 7 days" over a sweep that swept back eleven minutes.
-            info.GapStartUtc = WindowActuallyUsed(effectiveResult, request.Store, gapStart, perStoreGapStart)
+            info.GapStartUtc = WindowActuallyUsed(effectiveResult, request.ScopeStoreName, gapStart, perStoreGapStart)
                 ?? plannedGapStart;
 
             // A store the sweep visited and the index catalog has never heard of. Its window
@@ -2498,7 +2509,7 @@ namespace OutlookAI.Core.Services
             NoteStoresWithoutIndex(
                 info,
                 effectiveResult.PerStore.Select(counters => counters.StoreDisplayName).ToList(),
-                request.Store,
+                request.ScopeStoreName,
                 perStoreBase);
 
             List<ComMailBrief> filtered = new List<ComMailBrief>();
@@ -2514,8 +2525,11 @@ namespace OutlookAI.Core.Services
             int bodiesCappedUnmatched = 0;
             foreach (ComMailBrief item in sweptItems)
             {
-                if (request.Store != null
-                    && !string.Equals(item.StoreDisplayName, request.Store, StringComparison.OrdinalIgnoreCase))
+                // A folder-scoped sweep covered that one folder, opened by its ID - its store is
+                // the folder's own, whatever name the index gave it.
+                if (request.ScopeStoreName != null
+                    && request.ScopeFolderEntryId == null
+                    && !string.Equals(item.StoreDisplayName, request.ScopeStoreName, StringComparison.OrdinalIgnoreCase))
                 {
                     continue; // Cached all-stores sweep serving a store-scoped request.
                 }
@@ -3007,17 +3021,17 @@ namespace OutlookAI.Core.Services
         /// </summary>
         private SearchOutcome RunExhaustive(SearchRequest request, IReadOnlyList<string> terms, int top)
         {
-            if (string.IsNullOrWhiteSpace(request.Store))
+            if (request.StoreId == null && request.FolderId == null)
             {
                 throw new ArgumentException(
-                    "An exhaustive search requires 'store' (a display name from list_accounts) - it scans Outlook folders directly instead of the index.",
+                    "An exhaustive search requires store_id (from list_accounts) or folder_id (from find_folder or list_folders) - it scans Outlook folders directly instead of the index.",
                     nameof(request));
             }
 
-            if (request.Folder == null && !request.AfterUtc.HasValue)
+            if (request.FolderId == null && !request.AfterUtc.HasValue)
             {
                 throw new ArgumentException(
-                    "An exhaustive search requires a bound: pass 'folder' (scan one folder) and/or 'after' (date-bounded store scan). Unbounded store scans take minutes - use a normal (indexed) search for those.",
+                    "An exhaustive search requires a bound: pass 'folder_id' (scan one folder) and/or 'after' (date-bounded store scan). Unbounded store scans take minutes - use a normal (indexed) search for those.",
                     nameof(request));
             }
 
@@ -3035,7 +3049,7 @@ namespace OutlookAI.Core.Services
                     nameof(request));
             }
 
-            IReadOnlyList<string>? folderSegments = ParseFolderSegments(request.Folder);
+            ResolveExhaustiveScope(request);
 
             // The continuation contract (F2). The fingerprint is taken from the request the
             // caller just made, and a resume is honoured only where it matches the request
@@ -3073,8 +3087,8 @@ namespace OutlookAI.Core.Services
             // allowed to be longer than an ordinary one.
             ComExhaustiveResult scan = _gateway.Run(
                 s => s.ExhaustiveScan(
-                    request.Store!,
-                    folderSegments,
+                    request.ScopeStoreName ?? string.Empty,
+                    null,
                     terms,
                     request.AfterUtc,
                     request.BeforeUtc,
@@ -3082,7 +3096,8 @@ namespace OutlookAI.Core.Services
                     timeBudgetMs: ExhaustiveTimeBudgetMs,
                     searchIn: request.SearchIn,
                     includeSubfolders: request.IncludeSubfolders,
-                    resumeFrom: resumeFrom),
+                    resumeFrom: resumeFrom,
+                    folderEntryId: request.ScopeFolderEntryId),
                 ComOperationBudgets.ExhaustiveScanDeadlineMs,
                 allowConnectFloor: true);
             stopwatch.Stop();
@@ -3225,6 +3240,7 @@ namespace OutlookAI.Core.Services
                     FoldersDone = scan.Position.FoldersDone,
                     FoldersTotal = scan.Position.FoldersTotal,
                     ResumeFolder = scan.Position.ResumeFolderPath,
+                    ResumeFolderId = OutlookIds.FolderIdFromEntryId(scan.Position.ResumeFolderEntryId),
                     ResumeWithinFolder = scan.Position.ResumeWithinFolder,
                     ResumeCursorUtc = scan.Position.ResumeCursorUtc,
                     ResumeTier = scan.Position.ResumeTier,
@@ -3294,9 +3310,13 @@ namespace OutlookAI.Core.Services
                 IndexElapsedMs = 0,
                 Sweep = null,
                 Exhaustive = exhaustive,
-                Scope = request.Folder == null ? null : new SearchScopeInfo
+                Scope = request.FolderId == null ? null : new SearchScopeInfo
                 {
-                    Folder = request.Folder,
+                    Store = request.ScopeStoreName,
+                    StoreId = OutlookIds.StoreIdOfEntryId(request.ScopeFolderEntryId),
+                    Folder = request.ScopeFolderPath,
+                    FolderId = OutlookIds.Canonical(request.FolderId),
+                    FolderFoundVia = FolderFoundViaOutlook,
                     IncludeSubfolders = request.IncludeSubfolders,
                     Shape = request.IncludeSubfolders ? "folder" : "folder_only",
                 },
@@ -3426,7 +3446,9 @@ namespace OutlookAI.Core.Services
                 Id = hitId,
                 EntryId = detail.EntryId,
                 Store = detail.StoreDisplayName,
+                StoreId = OutlookIds.StoreIdOfEntryId(detail.FolderEntryId ?? detail.EntryId),
                 Folder = detail.FolderPath,
+                FolderId = OutlookIds.FolderIdFromEntryId(detail.FolderEntryId),
                 Subject = detail.Subject,
                 FromName = detail.SenderName,
                 FromAddress = detail.SenderAddress,
@@ -3636,12 +3658,36 @@ namespace OutlookAI.Core.Services
         /// an error.
         /// </para>
         /// </summary>
-        public ThreadOutcome Thread(string? conversationId, string? id, string? store, int top = ThreadTopDefault)
+        public ThreadOutcome Thread(string? conversationId, string? id, string? storeId, int top = ThreadTopDefault)
         {
             top = Clamp(top, 1, ThreadTopCap);
             if (conversationId == null && id == null)
             {
                 throw new ArgumentException("Provide conversation_id (from a hit) or id (a hit id / EntryID).");
+            }
+
+            // store_id only makes the index lookup faster (the conversation is pinned by id either way), so
+            // a store that cannot be looked up WIDENS the lookup, as a name that did not resolve always did.
+            // A value that is not a store ID at all is refused: a mistyped ID must not pass for a store.
+            string? store = null;
+            ComStoreDetail? storeDetail = null;
+            bool storeUnresolved = false;
+            if (storeId != null)
+            {
+                if (!OutlookIds.TryDecodeStoreId(storeId, "store_id", out _, out string? storeProblem))
+                {
+                    throw new ArgumentException(storeProblem, "store_id");
+                }
+
+                try
+                {
+                    storeDetail = ResolveStoreId(storeId, "store_id");
+                    store = storeDetail.DisplayName;
+                }
+                catch (ArgumentException)
+                {
+                    storeUnresolved = true;
+                }
             }
 
             Stopwatch stopwatch = Stopwatch.StartNew();
@@ -3684,14 +3730,14 @@ namespace OutlookAI.Core.Services
             // default call shape returning a partial conversation on every multi-store profile
             // is the more expensive of the two.
             string? scope = null;
-            bool scopeWidened = false;
+            bool scopeWidened = storeUnresolved;
             if (store != null)
             {
                 try
                 {
                     // `store`, not `effectiveStore`: they are the same string on this branch,
                     // and naming the parameter is what says the scope came from the caller.
-                    scope = ResolveScope(store, null);
+                    scope = ResolveFolderScope(storeDetail, store, null, includeSubfolders: true).Scope;
 
                     // The second way to get no scope, added with the unindexed-store fix: a
                     // store the profile HAS and the index cannot address resolves to null
@@ -4299,98 +4345,6 @@ namespace OutlookAI.Core.Services
         }
 
         /// <summary>
-        /// Navigates the Outlook window to a folder (ActiveExplorer().CurrentFolder).
-        /// Omitting the folder goes to the store's Inbox (root when it has none). Creates
-        /// and shows an Explorer when Outlook runs headless.
-        /// </summary>
-        public GotoFolderOutcome GotoFolder(string store, string? folder = null)
-        {
-            if (string.IsNullOrWhiteSpace(store))
-            {
-                throw new ArgumentException("store is required (a display name from list_accounts).", nameof(store));
-            }
-
-            IReadOnlyList<string>? segments = ParseFolderSegments(folder);
-            ComExplorerState state = _gateway.Run(s =>
-            {
-                ComExplorerState? result = s.TryGotoFolder(store, segments, out string? error);
-                return result ?? throw BuildNavigationError(error, store, folder);
-            });
-
-            return new GotoFolderOutcome
-            {
-                Store = store,
-                Folder = folder,
-                ExplorerFolderPath = state.CurrentFolderPath,
-                ExplorerCaption = state.Caption,
-                Displayed = true,
-            };
-        }
-
-        /// <summary>
-        /// Drives Outlook's real search UI (Explorer.Search) so the user sees the result
-        /// list. Optional store/folder navigate the window there first, which is what
-        /// the current_folder/subfolders scopes apply to. When the effective registry
-        /// state says the UI search backend is server-assisted (D22/D35), the outcome
-        /// carries advice that the displayed list may diverge from agent search.
-        /// </summary>
-        public ShowSearchResultsOutcome ShowSearchResults(string query, string scope = "current_folder", string? store = null, string? folder = null)
-        {
-            if (string.IsNullOrWhiteSpace(query))
-            {
-                throw new ArgumentException("query is required.", nameof(query));
-            }
-
-            if (query.Length > ShowSearchQueryCharsCap)
-            {
-                throw new ArgumentException(
-                    "query is too long for the Outlook search box (max "
-                    + ShowSearchQueryCharsCap.ToString(CultureInfo.InvariantCulture) + " chars).",
-                    nameof(query));
-            }
-
-            foreach (char c in query)
-            {
-                if (char.IsControl(c))
-                {
-                    throw new ArgumentException("query must not contain control characters.", nameof(query));
-                }
-            }
-
-            if (folder != null && store == null)
-            {
-                throw new ArgumentException("folder requires store.", nameof(folder));
-            }
-
-            int olScope = MapSearchScope(scope);
-            IReadOnlyList<string>? segments = ParseFolderSegments(folder);
-            ComExplorerState state = _gateway.Run(s =>
-            {
-                ComExplorerState? result = s.TryShowSearchResults(query, olScope, store, segments, out string? error);
-                return result ?? throw BuildNavigationError(error, store, folder);
-            });
-
-            // Effective registry state, re-read per call (policy hive authoritative):
-            // with server-assisted UI search active, what the user now SEES is capped +
-            // ranked by Exchange and can silently diverge from agent search (D22/D35).
-            List<string>? advice = null;
-            if (HealthReporting.ReadUiSearchBackendFromRegistry() == HealthReporting.UiSearchBackendServerAssisted)
-            {
-                advice = new List<string> { ServerAssistedUiSearchAdvice };
-            }
-
-            return new ShowSearchResultsOutcome
-            {
-                Query = query,
-                Scope = NormalizeScopeName(scope),
-                ExplorerFolderPath = state.CurrentFolderPath,
-                ExplorerCaption = state.Caption,
-                Displayed = true,
-                Advice = advice,
-            };
-        }
-
-        /// <summary>
         /// Maps the tool-facing scope name to the OlSearchScope enum value
         /// (feature-tested live in Phase 3: all four values accepted on this Outlook
         /// build - see v3.MD section 0.8 Phase-3 facts).
@@ -4416,44 +4370,6 @@ namespace OutlookAI.Core.Services
         private static string NormalizeScopeName(string scope)
         {
             return (scope ?? string.Empty).Trim().ToLowerInvariant();
-        }
-
-        /// <summary>
-        /// What goto_folder and show_search_results answer when they failed.
-        /// <para>
-        /// The two named codes are resolution failures, decided before any window is touched.
-        /// The catch-all is not: by the time it can fire, <c>EnsureVisibleExplorer</c> may
-        /// have CREATED and shown an Explorer window, <c>CurrentFolder</c> may have been set,
-        /// and for show_search_results <c>Explorer.Search</c> may already be running - the
-        /// only thing left to throw is the state snapshot afterwards. "Outlook could not show
-        /// the requested view" reads as though the user's screen is untouched, and it may not
-        /// be. These two are the one part of the audit that was left unread; reading them put
-        /// this row in the same class as the rest.
-        /// </para>
-        /// </summary>
-        private static Exception BuildNavigationError(string? error, string? store, string? folder)
-        {
-            if (error == "StoreNotFound")
-            {
-                return new OperationOutcomeException(
-                    Com.MutationOutcome.Unchanged,
-                    "Store '" + store + "' was not found in Outlook, so nothing was opened or moved on screen. "
-                    + "Use list_accounts for store display names.");
-            }
-
-            if (error == "FolderNotFound")
-            {
-                return new OperationOutcomeException(
-                    Com.MutationOutcome.Unchanged,
-                    "Folder '" + folder + "' was not found in store '" + store + "', so nothing was opened or moved on "
-                    + "screen. Use list_folders for store-relative paths.");
-            }
-
-            return new OperationOutcomeException(
-                Com.MutationOutcome.Unknown,
-                "Outlook could not confirm the requested view (" + (error ?? "unknown") + "). THE WINDOW MAY HAVE MOVED "
-                + "ANYWAY: an Explorer can have been created and shown, the current folder set, and a search started "
-                + "before this failed. Ask the user what they can see before navigating again.");
         }
 
         /// <summary>
@@ -4644,24 +4560,6 @@ namespace OutlookAI.Core.Services
 
             return null;
         }
-
-        private static IReadOnlyList<string>? ParseFolderSegments(string? folder)
-        {
-            if (folder == null)
-            {
-                return null;
-            }
-
-            string trimmed = folder.Trim().Trim('/');
-            if (trimmed.Length == 0)
-            {
-                return null;
-            }
-
-            return trimmed.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
-        }
-
-        // ------------------------------------------------------------------ drafts (Phase 4, v3.MD L4/D4)
 
         /// <summary>
         /// The subject-length gate for every draft path, in ONE place - and the only place
@@ -5832,11 +5730,13 @@ namespace OutlookAI.Core.Services
                 NewEntryId = discarded.NewEntryId,
                 Store = discarded.StoreDisplayName,
                 FromFolder = discarded.FromFolder,
+                FromFolderId = OutlookIds.FolderIdFromEntryId(discarded.FromFolderEntryId),
                 ToFolder = discarded.ToFolder,
                 Subject = discarded.Subject,
-                Advice = discarded.NewEntryId != null && discarded.FromFolder != null
+                Advice = discarded.NewEntryId != null && discarded.FromFolderEntryId != null
                     ? "Soft delete only - the draft is in " + (discarded.ToFolder ?? "Deleted Items")
-                        + " and can be restored with move_mail using newEntryId and folder='" + discarded.FromFolder + "'."
+                        + " and can be restored with move_mail using newEntryId and folder_id='"
+                        + OutlookIds.FolderIdFromEntryId(discarded.FromFolderEntryId) + "'."
                     : "Soft delete only - the draft was moved to " + (discarded.ToFolder ?? "Deleted Items")
                         + " and can be restored from there in Outlook.",
             };
@@ -6527,65 +6427,7 @@ namespace OutlookAI.Core.Services
         public const string MoveEntryIdAdvice =
             "Moving changed each item's EntryID: use newEntryId from now on (old ids and existing index rows for these "
             + "items are stale until the index catches up - re-run search for fresh ids). Undo any move by calling "
-            + "move_mail with newEntryId and folder = its fromFolder.";
-
-        /// <summary>
-        /// Moves 1-50 items (hit ids or EntryIDs) to a store-relative folder path,
-        /// SAME-STORE only (D39 v1): each item moves within its own store; when
-        /// <paramref name="store"/> is given, items living elsewhere fail per-item with
-        /// a cross-store error. Content-preserving and reversible - per-item results
-        /// carry old/new EntryIDs and fromFolder as the undo address; every move is
-        /// audit-logged (load-bearing: an unwritable audit log stops the batch).
-        /// Deleted Items (and subtree) and Outbox are refused as targets (S1 v2: no
-        /// delete surface).
-        /// </summary>
-        public MoveMailOutcome MoveMail(IReadOnlyList<string>? ids, string? folder, bool createFolder = false, string? store = null)
-        {
-            IReadOnlyList<string> requestIds = ValidateMoveIds(ids);
-            IReadOnlyList<string> segments = ParseFolderSegments(folder)
-                ?? throw new ArgumentException(
-                    "folder is required: the store-relative target path, e.g. 'Archive/2026' (see list_folders).", nameof(folder));
-            string? requiredStore = string.IsNullOrWhiteSpace(store) ? null : store!.Trim();
-            string targetFolderEcho = string.Join("/", segments);
-
-            List<MoveItemView> items = new List<MoveItemView>(requestIds.Count);
-            List<string> createdFolders = new List<string>();
-            bool auditBroken = false;
-            Stopwatch batchClock = Stopwatch.StartNew();
-            foreach (string id in requestIds)
-            {
-                if (auditBroken)
-                {
-                    items.Add(FailedItem(id, "Not attempted: the audit log is unavailable (every move must be audited)."));
-                    continue;
-                }
-
-                int itemBudgetMs = RemainingBatchBudgetMs(batchClock);
-                if (itemBudgetMs < MinimumItemBudgetMs)
-                {
-                    items.Add(FailedItem(id, BatchBudgetExhaustedMessage));
-                    continue;
-                }
-
-                MoveItemView item = MoveOne(
-                    id, segments, createFolder, requiredStore, targetFolderEcho, createdFolders, itemBudgetMs,
-                    out bool auditFailed);
-                auditBroken |= auditFailed;
-                items.Add(item);
-            }
-
-            int movedCount = items.Count(i => i.Ok);
-            return new MoveMailOutcome
-            {
-                Requested = requestIds.Count,
-                Moved = movedCount,
-                Failed = items.Count - movedCount,
-                TargetFolder = targetFolderEcho,
-                CreatedFolders = createdFolders.Count > 0 ? createdFolders : null,
-                Items = items,
-                Advice = movedCount > 0 ? new[] { MoveEntryIdAdvice } : null,
-            };
-        }
+            + "move_mail with newEntryId and folder_id = its fromFolderId.";
 
         /// <summary>
         /// Archives 1-50 items (hit ids or EntryIDs): moves each to ITS OWN store's
@@ -6633,7 +6475,9 @@ namespace OutlookAI.Core.Services
                 .Select(v => new ArchiveFolderView
                 {
                     Store = v.Info!.StoreDisplayName,
+                    StoreId = OutlookIds.StoreIdOfEntryId(v.Info!.EntryId),
                     Folder = v.Info!.StoreRelativePath,
+                    FolderId = OutlookIds.FolderIdFromEntryId(v.Info!.EntryId),
                     Via = v.Info!.Via,
                 })
                 .OrderBy(v => v.Store, StringComparer.OrdinalIgnoreCase)
@@ -6789,7 +6633,7 @@ namespace OutlookAI.Core.Services
                 {
                     return FailedItem(
                         id,
-                        DescribeMoveFailure(moveError, target.StoreRelativePath, requestedStore: null, createFolder: false),
+                        DescribeMoveFailure(moveError, target.StoreRelativePath),
                         MoveFailureOutcome(moveError));
                 }
 
@@ -6804,104 +6648,6 @@ namespace OutlookAI.Core.Services
                 // Per item, not per batch. The item's own budget is what expired, so the
                 // rest of the batch is still worth attempting - and the item is a mutation
                 // whose outcome nobody can now state, which the message has to say.
-                return FailedItem(id, BatchItemTimedOutMessage(ex.Message), Com.MutationOutcome.Unknown);
-            }
-            catch (Exception ex) when (ex is InvalidOperationException || OutlookComSession.IsComCallFailure(ex))
-            {
-                return FailedItem(id, ex.Message, OutcomeOf(ex));
-            }
-        }
-
-        private MoveItemView MoveOne(
-            string id,
-            IReadOnlyList<string> segments,
-            bool createFolder,
-            string? requestedStore,
-            string targetFolderEcho,
-            List<string> createdFolders,
-            int itemBudgetMs,
-            out bool auditFailed)
-        {
-            auditFailed = false;
-            string entryId;
-            string? storeId;
-            string? hitId;
-            try
-            {
-                (entryId, storeId, _, _, hitId) = ResolveToEntryId(id);
-            }
-            catch (Exception ex) when (ex is ArgumentException || ex is InvalidOperationException)
-            {
-                return FailedItem(id, ex.Message);
-            }
-
-            try
-            {
-                // The created-folder list is collected from EVERY attempt, successful or
-                // not: folders are created before the target guard runs, so a refusal can
-                // arrive over a folder this call has just made (row 6 of the 2026-08-19
-                // atomicity audit). It used to be read only off the success result.
-                List<string> createdHere = new List<string>();
-                (ComMoveItemResult? moved, string? comError) = _gateway.Run(
-                    s =>
-                {
-                    ComMoveItemResult? r = s.TryMoveItemToPath(
-                        entryId, storeId, segments, createFolder, requestedStore, out IReadOnlyList<string>? madeFolders, out string? e);
-                    AddCreatedFolders(createdHere, madeFolders);
-                    if (ShouldSearchOtherStores(storeId, r != null, e))
-                    {
-                        // Direct EntryID without a known store: retry across stores
-                        // (same pattern as read/draft ops).
-                        foreach (ComStoreDetail candidate in GetStoreDetails(s))
-                        {
-                            r = s.TryMoveItemToPath(
-                                entryId, candidate.StoreId, segments, createFolder, requestedStore, out madeFolders, out e);
-                            AddCreatedFolders(createdHere, madeFolders);
-                            if (!KeepSearchingStores(r != null, e))
-                            {
-                                break;
-                            }
-                        }
-                    }
-
-                    return (r, e);
-                },
-                    itemBudgetMs,
-                    allowConnectFloor: true);
-
-                foreach (string created in createdHere)
-                {
-                    if (!createdFolders.Contains(created, StringComparer.OrdinalIgnoreCase))
-                    {
-                        createdFolders.Add(created);
-                    }
-                }
-
-                if (moved == null)
-                {
-                    return FailedItem(
-                        id,
-                        DescribeMoveFailure(comError, targetFolderEcho, requestedStore, createFolder, createdHere),
-                        MoveFailureOutcome(comError));
-                }
-
-                foreach (string created in moved.CreatedFolderPaths)
-                {
-                    if (!createdFolders.Contains(created, StringComparer.OrdinalIgnoreCase))
-                    {
-                        createdFolders.Add(created);
-                    }
-                }
-
-                return CompleteMove("move_mail", id, hitId, moved, out auditFailed);
-            }
-            catch (OutlookUnavailableException)
-            {
-                throw;
-            }
-            catch (TimeoutException ex)
-            {
-                // Per item, not per batch - see ArchiveOne's twin.
                 return FailedItem(id, BatchItemTimedOutMessage(ex.Message), Com.MutationOutcome.Unknown);
             }
             catch (Exception ex) when (ex is InvalidOperationException || OutlookComSession.IsComCallFailure(ex))
@@ -6929,7 +6675,9 @@ namespace OutlookAI.Core.Services
                     ("newEntryId", moved.NewEntryId),
                     ("store", moved.StoreDisplayName),
                     ("fromFolder", moved.FromFolderPath),
+                    ("fromFolderId", OutlookIds.FolderIdFromEntryId(moved.FromFolderEntryId)),
                     ("toFolder", moved.ToFolderPath),
+                    ("toFolderId", OutlookIds.FolderIdFromEntryId(moved.ToFolderEntryId)),
                     ("hitId", hitId));
             }
             catch (InvalidOperationException ex)
@@ -6958,8 +6706,11 @@ namespace OutlookAI.Core.Services
                 Id = id,
                 Ok = true,
                 Store = moved.StoreDisplayName,
+                StoreId = OutlookIds.StoreIdOfEntryId(moved.ToFolderEntryId ?? moved.NewEntryId),
                 FromFolder = moved.FromFolderPath,
+                FromFolderId = OutlookIds.FolderIdFromEntryId(moved.FromFolderEntryId),
                 ToFolder = moved.ToFolderPath,
+                ToFolderId = OutlookIds.FolderIdFromEntryId(moved.ToFolderEntryId),
                 OldEntryId = moved.OldEntryId,
                 NewEntryId = moved.NewEntryId,
             };
@@ -6986,23 +6737,6 @@ namespace OutlookAI.Core.Services
             return ex is OperationOutcomeException stated ? stated.Outcome : Com.MutationOutcome.Unknown;
         }
 
-        /// <summary>Adds newly created folder paths without duplicating one two attempts both report.</summary>
-        private static void AddCreatedFolders(List<string> into, IReadOnlyList<string>? created)
-        {
-            if (created == null)
-            {
-                return;
-            }
-
-            foreach (string path in created)
-            {
-                if (!into.Contains(path, StringComparer.OrdinalIgnoreCase))
-                {
-                    into.Add(path);
-                }
-            }
-        }
-
         /// <summary>
         /// Whether a refused or failed move left the item where it was. Every NAMED code is
         /// decided before <c>Move()</c> is called, so those are provably unchanged; the
@@ -7025,7 +6759,7 @@ namespace OutlookAI.Core.Services
                 case "ItemNotFound":
                 case "NotAMailItem":
                 case "TargetFolderNotFound":
-                case "TargetFolderCreateFailed":
+                case "TargetIsStoreRoot":
                 case "TargetNotAMailFolder":
                 case "TargetIsDeletedItems":
                 case "TargetIsOutbox":
@@ -7079,26 +6813,10 @@ namespace OutlookAI.Core.Services
             return cleaned;
         }
 
-        /// <summary>
-        /// Maps content-free COM move errors to agent-actionable per-item error text
-        /// (pure, public for T1 pinning).
-        /// </summary>
-        /// <param name="createdFolderPaths">
-        /// Folders this call created before it failed. They are named in the message because
-        /// nothing else reports them: <c>createdFolders</c> on the outcome used to be filled
-        /// from the SUCCESS result alone, so <c>move_mail</c> to <c>Deleted Items/foo</c> with
-        /// <c>create_folder: true</c> created <c>foo</c> inside Deleted Items and answered
-        /// with a refusal that mentioned no folder at all.
-        /// </param>
-        public static string DescribeMoveFailure(
-            string? comError,
-            string targetFolder,
-            string? requestedStore,
-            bool createFolder,
-            IReadOnlyList<string>? createdFolderPaths = null)
+        /// <summary>What a failed or refused move tells the caller, by the COM layer's refusal code. Pure; T1 pins it.</summary>
+        public static string DescribeMoveFailure(string? comError, string targetFolder)
         {
-            return DescribeMoveRefusal(comError, targetFolder, requestedStore, createFolder)
-                + DescribeCreatedFolderResidue(createdFolderPaths);
+            return DescribeMoveRefusal(comError, targetFolder);
         }
 
         /// <summary>
@@ -7120,15 +6838,15 @@ namespace OutlookAI.Core.Services
                 + " in Outlook if unwanted - this server cannot remove folders.";
         }
 
-        private static string DescribeMoveRefusal(string? comError, string targetFolder, string? requestedStore, bool createFolder)
+        private static string DescribeMoveRefusal(string? comError, string targetFolder)
         {
             if (comError != null && comError.StartsWith("CrossStoreTarget:", StringComparison.Ordinal))
             {
                 string itemStore = comError.Substring("CrossStoreTarget:".Length);
-                return "Cross-store move refused: the item lives in store '" + itemStore + "'"
-                    + (requestedStore != null ? " but the requested store is '" + requestedStore + "'" : string.Empty)
-                    + ". v1 moves are same-store only (archive semantics are same-store and EntryIDs are store-scoped) - "
-                    + "call move_mail per store, or omit 'store' to move each item within its own store.";
+                return "Cross-store move refused: the item lives in store '" + itemStore + "' and the target folder '"
+                    + targetFolder + "' is in another store. Moves are same-store only (archive semantics are same-store "
+                    + "and EntryIDs are store-scoped) - pick a folder of the item's own store: find_folder shows the store "
+                    + "of every candidate, and read shows the store of the item.";
             }
 
             switch (comError)
@@ -7138,10 +6856,11 @@ namespace OutlookAI.Core.Services
                 case "NotAMailItem":
                     return "Only mail items can be moved by this tool.";
                 case "TargetFolderNotFound":
-                    return "Target folder '" + targetFolder + "' does not exist in the item's store"
-                        + (createFolder ? "." : " - pass create_folder=true to create it, or check list_folders.");
-                case "TargetFolderCreateFailed":
-                    return "Target folder '" + targetFolder + "' could not be created in the item's store.";
+                    return "The target folder '" + targetFolder + "' could not be opened - it may have been deleted. Get a "
+                        + "current folderId from find_folder or list_folders.";
+                case "TargetIsStoreRoot":
+                    return "Refused: the target is the top of the store's folder tree, which is not a folder mail lives in. "
+                        + "Pick a folder under it, or make one there with create_folder.";
                 case "TargetNotAMailFolder":
                     return "Target folder '" + targetFolder + "' is not a mail folder.";
                 case "TargetIsDeletedItems":
@@ -8133,6 +7852,8 @@ namespace OutlookAI.Core.Services
 
                 storeViews.Add(new StoreView
                 {
+                    StoreId = StoreIdOf(store),
+                    RootFolderId = OutlookIds.FolderIdFromEntryId(store.RootFolderEntryId),
                     DisplayName = store.DisplayName,
 
                     // Gap G2: this tool is where an agent is told what the 'store' argument
@@ -8155,6 +7876,7 @@ namespace OutlookAI.Core.Services
                     SmtpAddress = a.SmtpAddress,
                     DisplayName = a.DisplayName,
                     DeliveryStore = a.DeliveryStoreDisplayName,
+                    DeliveryStoreId = DeliveryStoreIdOf(a, stores),
                 }).ToList(),
                 Stores = storeViews,
             };
@@ -8254,48 +7976,6 @@ namespace OutlookAI.Core.Services
         }
 
         /// <summary>
-        /// FULL folder trees (list_folders) in the stable traversal order (stores by
-        /// display name, then depth-first with siblings by name), paged by
-        /// <paramref name="offset"/> into windows of <see cref="FoldersPerCallCap"/>.
-        /// Real profiles fit in one page; the bound is section 12 discipline.
-        /// </summary>
-        public FoldersOutcome ListFolders(string? store = null, int offset = 0)
-        {
-            if (offset < 0)
-            {
-                offset = 0;
-            }
-
-            ComFolderTree tree = _gateway.Run(s => s.ListFolders(store, FolderWalkAbsoluteCap));
-
-            // Gap G1. A store name that matched nothing produced folderTotal: 0,
-            // truncated: false and no error - indistinguishable from a store that is there
-            // and empty, so a typo came back looking like an answer. search has always
-            // refused an unresolvable store loudly; this was the odd one out, and the fix is
-            // that same refusal rather than a second shape.
-            //
-            // Only on the EMPTY result, so the ordinary call pays nothing: the store list is
-            // fetched (from a cache with a 5-minute TTL) exactly when there is a question to
-            // answer. An empty tree from a store that IS in the list stays an empty tree with
-            // no error - a store whose root has no subfolders is a real thing, and inventing
-            // a failure for it would be the mirror of the defect.
-            if (store != null && tree.Folders.Count == 0)
-            {
-                IReadOnlyList<ComStoreDetail> details = _gateway.Run(s => GetStoreDetails(s));
-                string? refusal = DescribeUnresolvedFolderStore(
-                    store,
-                    details.Where(d => !d.NameUnreadable).Select(d => d.DisplayName).ToList(),
-                    details.Count(d => d.NameUnreadable));
-                if (refusal != null)
-                {
-                    throw new ArgumentException(refusal, nameof(store));
-                }
-            }
-
-            return PageFolders(tree, offset);
-        }
-
-        /// <summary>
         /// What to say when the freshness sweep covered a store Outlook would not name (gap
         /// G2), or null when every store named itself.
         /// <para>
@@ -8315,8 +7995,8 @@ namespace OutlookAI.Core.Services
             return storesUnnamed.Value.ToString(CultureInfo.InvariantCulture)
                 + " store(s) in this profile would not report a display name to Outlook. Their mail IS in this answer "
                 + "(the freshness sweep covered them under '" + StoreNaming.UnnamedStorePrefix
-                + "N)' labels), but they cannot be used as a 'store' scope, and hits from them carry that label "
-                + "instead of a real store name. list_folders shows their folder trees.";
+                + "N)' labels), and hits from them carry that label instead of a real store name; list_accounts "
+                + "gives each its storeId, which scopes a search like any other's. list_folders shows their trees.";
         }
 
         /// <summary>
@@ -8346,83 +8026,11 @@ namespace OutlookAI.Core.Services
         }
 
         /// <summary>
-        /// Why a <c>list_folders</c> store scope resolved to nothing, or null when the empty
-        /// tree is the honest answer (gap G1). Pure, and public so T1 pins both verdicts -
-        /// reaching them for real needs a live profile.
-        /// <para>
-        /// The message deliberately matches the shape the index-tier store resolver already
-        /// throws: what was asked for, what exists, and the tool that lists the rest. Two
-        /// tools refusing the same mistake in two different shapes is how an agent learns to
-        /// handle one and not the other.
-        /// </para>
-        /// <para>
-        /// <paramref name="knownStores"/> comes from the same COM enumeration
-        /// <c>ListFolders</c> itself walks, so the two agree by construction. It holds the
-        /// stores that reported a NAME; <paramref name="unnamedStores"/> counts the rest,
-        /// and it is what stops this refusal asserting more than it knows. Until gap G2 was
-        /// closed such a store was absent from every list in this server, so "not found in
-        /// Outlook" was said with certainty about a profile that might well have held it
-        /// under a name nothing could read.
-        /// </para>
-        /// </summary>
-        /// <param name="requestedStore">The store scope as the caller wrote it.</param>
-        /// <param name="knownStores">Stores Outlook reported a display name for.</param>
-        /// <param name="unnamedStores">
-        /// How many stores Outlook has whose display name could not be read (gap G2). Any of
-        /// them could be the requested one, so a non-zero count turns the refusal from a
-        /// verdict into a report of what could and could not be established.
-        /// </param>
-        public static string? DescribeUnresolvedFolderStore(
-            string requestedStore, IReadOnlyList<string>? knownStores, int unnamedStores = 0)
-        {
-            if (requestedStore == null)
-            {
-                throw new ArgumentNullException(nameof(requestedStore));
-            }
-
-            if (StoreNaming.IsUnnamedStoreLabel(requestedStore))
-            {
-                // The caller read a label out of a payload and passed it back as a scope,
-                // which is the one wrong turn this label makes possible - so it gets the
-                // answer that fits, rather than the "check for a typo" a generic refusal
-                // would send it hunting for. A scope is matched against DisplayName, and
-                // DisplayName is exactly what this store would not report.
-                return "'" + requestedStore + "' is a placeholder this server prints for a store whose display name "
-                    + "Outlook would not report - not a name, and it cannot be used as a scope, because a store scope "
-                    + "is matched against the display name that could not be read. Search without 'store' to include "
-                    + "that store's mail, or use exhaustive:true with a folder bound.";
-            }
-
-            IReadOnlyList<string> known = knownStores ?? Array.Empty<string>();
-            foreach (string candidate in known)
-            {
-                if (string.Equals(candidate, requestedStore, StringComparison.OrdinalIgnoreCase))
-                {
-                    // It is there and it has no folders below its root. Nothing was lost, so
-                    // nothing is reported.
-                    return null;
-                }
-            }
-
-            return "Store '" + requestedStore + "' was not found in Outlook. "
-                + (known.Count > 0
-                    ? "Known stores: " + string.Join(", ", known) + ". "
-                    : "Outlook reported no stores at all. ")
-                + (unnamedStores > 0
-                    ? unnamedStores.ToString(CultureInfo.InvariantCulture)
-                        + " further store(s) would not report a display name, so this one cannot be ruled out among "
-                        + "them; list_folders without 'store' lists them under '" + StoreNaming.UnnamedStorePrefix
-                        + "N)' labels. "
-                    : string.Empty)
-                + "Use list_accounts for the full store list.";
-        }
-
-        /// <summary>
         /// Pure paging step of list_folders (public for T1): slices the stable-order
         /// flattened walk at [offset, offset + <see cref="FoldersPerCallCap"/>) and
         /// derives the has-more contract (truncated + nextOffset + total).
         /// </summary>
-        public static FoldersOutcome PageFolders(ComFolderTree tree, int offset)
+        public static FoldersOutcome PageFolders(ComFolderTree tree, int offset, IReadOnlyList<ComStoreDetail>? stores = null)
         {
             if (tree == null)
             {
@@ -8443,18 +8051,23 @@ namespace OutlookAI.Core.Services
                 page.Add(folders[i]);
             }
 
+            // One block per STORE, told apart by identity (Q133): two stores may share a display name,
+            // and grouping by the name merged their folders into one block under one name.
             List<StoreFoldersView> byStore = page
-                .GroupBy(f => f.StoreDisplayName, StringComparer.OrdinalIgnoreCase)
+                .GroupBy(f => (Name: f.StoreDisplayName, Id: StoreIdForWalkedFolder(f, tree, stores)))
                 .Select(g => new StoreFoldersView
                 {
-                    Store = g.Key,
+                    StoreId = g.Key.Id,
+                    RootFolderId = RootFolderIdForWalkedStore(g.First(), tree),
+                    Store = g.Key.Name,
 
                     // Gap G2: the label is in the payload, so what it IS has to be there
-                    // beside it - an agent that reads it as a store name will pass it back
-                    // as a scope and be refused for a reason it has no way to guess.
-                    NameUnreadable = StoreNaming.IsUnnamedStoreLabel(g.Key) ? true : (bool?)null,
+                    // beside it - an agent that reads it as a store name will mistake it
+                    // for one.
+                    NameUnreadable = StoreNaming.IsUnnamedStoreLabel(g.Key.Name) ? true : (bool?)null,
                     Folders = g.Select(f => new FolderView
                     {
+                        FolderId = OutlookIds.FolderIdFromEntryId(f.EntryId),
                         Path = f.Path,
                         Items = f.ItemCount,
                         Unread = f.UnreadCount,
@@ -8481,9 +8094,8 @@ namespace OutlookAI.Core.Services
                 WalkCapReached = tree.WalkCapReached ? true : (bool?)null,
                 DepthLimitReached = tree.DepthLimitReached ? true : (bool?)null,
                 StoresUnnamed = tree.StoresUnnamed > 0 ? tree.StoresUnnamed : (int?)null,
-                StoresUnnamedExcluded = tree.StoresUnnamedExcluded > 0 ? tree.StoresUnnamedExcluded : (int?)null,
                 Advice = DescribeFolderListingCoverage(
-                    tree.WalkCapReached, tree.DepthLimitReached, tree.StoresUnnamed, tree.StoresUnnamedExcluded),
+                    tree.WalkCapReached, tree.DepthLimitReached, tree.StoresUnnamed),
             };
         }
 
@@ -8499,7 +8111,7 @@ namespace OutlookAI.Core.Services
         /// </para>
         /// </summary>
         public static IReadOnlyList<string>? DescribeFolderListingCoverage(
-            bool walkCapReached, bool depthLimitReached, int storesUnnamed, int storesUnnamedExcluded)
+            bool walkCapReached, bool depthLimitReached, int storesUnnamed)
         {
             List<string> advice = new List<string>();
             if (walkCapReached)
@@ -8508,7 +8120,7 @@ namespace OutlookAI.Core.Services
                     + FolderWalkAbsoluteCap.ToString(CultureInfo.InvariantCulture)
                     + "-folder cap, so folders (and possibly whole stores, which are walked one after another) are "
                     + "missing from this tree. Paging cannot reach them - the next call re-walks and stops in the "
-                    + "same place - so list one store at a time with 'store'.");
+                    + "same place - so list one store at a time with store_id.");
             }
 
             if (depthLimitReached)
@@ -8523,17 +8135,8 @@ namespace OutlookAI.Core.Services
             {
                 advice.Add(storesUnnamed.ToString(CultureInfo.InvariantCulture)
                     + " store(s) would not report a display name and are listed under '" + StoreNaming.UnnamedStorePrefix
-                    + "N)' labels (nameUnreadable: true). Their folders are real and are listed; the LABEL is not a "
-                    + "name and cannot be passed back as 'store' to search or list_folders, because a store scope is "
-                    + "matched against the display name that could not be read. Search without 'store' to include "
-                    + "their mail.");
-            }
-
-            if (storesUnnamedExcluded > 0)
-            {
-                advice.Add(storesUnnamedExcluded.ToString(CultureInfo.InvariantCulture)
-                    + " store(s) would not report a display name, so this store-scoped listing could neither include "
-                    + "them nor rule them out. Call list_folders without 'store' to see them.");
+                    + "N)' labels (nameUnreadable: true). Their folders are real and are listed, and each store's "
+                    + "storeId addresses it like any other - the LABEL is only something to read.");
             }
 
             return advice.Count == 0 ? null : advice;
@@ -8564,6 +8167,7 @@ namespace OutlookAI.Core.Services
                 FromAddress = hit.FromAddress,
                 ReceivedUtc = hit.DateReceivedUtc,
                 Store = FreshMerge.ResolveHitStore(hit),
+                StoreId = OutlookIds.StoreIdOfEntryId(hit.EntryIdHex),
                 Folder = DescribeHitFolder(hit),
                 Snippet = snippet,
                 SizeBytes = hit.SizeBytes,
@@ -8606,7 +8210,9 @@ namespace OutlookAI.Core.Services
                 FromAddress = item.SenderAddress,
                 ReceivedUtc = ToUtc(item.ReceivedTime),
                 Store = item.StoreDisplayName,
+                StoreId = OutlookIds.StoreIdOfEntryId(item.FolderEntryId ?? item.EntryId),
                 Folder = item.FolderName,
+                FolderId = OutlookIds.FolderIdFromEntryId(item.FolderEntryId),
                 FolderKind = item.FolderKind,
                 Snippet = snippet,
                 SizeBytes = item.SizeBytes,
@@ -9044,6 +8650,7 @@ namespace OutlookAI.Core.Services
 
             return new StoreStaleness
             {
+                StoreId = match.Store.StoreId,
                 Store = match.Store.DisplayName,
                 MatchedBy = matchedBy,
                 MatchedInput = (match.Kind == StoreIndexMatchKind.NameAndHash || match.Kind == StoreIndexMatchKind.StoreHash)
@@ -9183,140 +8790,6 @@ namespace OutlookAI.Core.Services
             }
 
             return false;
-        }
-
-        /// <summary>
-        /// The index SCOPE for a whole store, or null when the store exists in the profile
-        /// but the index cannot address it. Null is an ANSWER here, not a failure - the
-        /// caller decides what an unaddressable store means for its own tool.
-        /// </summary>
-        private string? ResolveScope(string store, string? folder)
-        {
-            return ResolveFolderScope(store, folder, includeSubfolders: true).Scope;
-        }
-
-        /// <summary>
-        /// Turns a store display name + folder path + include_subfolders into the index
-        /// predicates, choosing the shape the store's namespace actually supports.
-        /// <para>
-        /// ⚠ THE DELEGATE FIX (soak fix 15). This method used to build a NESTED delegate
-        /// URL (<c>&lt;host&gt;/1/&lt;delegate&gt;/&lt;path&gt;</c>) for a delegate
-        /// folder. The delegate index namespace is FLAT - intermediate folders are dropped
-        /// from both the mapi URL and System.ItemFolderPathDisplay - so that URL addressed
-        /// a folder that does not exist and every delegate SUBFOLDER search returned 0
-        /// rows, silently (measured: 8/8 probed subfolders, ~3,871 items across 15
-        /// subfolders unreachable on this profile). Delegate scopes now go through
-        /// <see cref="FolderScopeResolver.ForDelegateStore"/>: delegate STORE ROOT scope +
-        /// folder-NAME equality, verified exact against COM ground truth.
-        /// </para>
-        /// </summary>
-        private FolderScopeResolution ResolveFolderScope(string store, string? folder, bool includeSubfolders)
-        {
-            // By the store's own name AND hash first (Q113 (a)): its own index store, whatever the
-            // profile calls it. A store the map ties to nothing is a store the index does not hold -
-            // searched with the index tier skipped, never widened, and never scoped to a same-named
-            // store of another profile, which is what a name lookup would find. A store whose mail the
-            // index cannot attribute, or a name several stores share, is REFUSED rather than guessed.
-            // Only the name rule's own cases - no map, a name the profile does not have, THE ONE OPEN
-            // EXCEPTION (Exchange, Q113 (b)) and delegates - take the name rule below, unchanged.
-            (StoreNameDecision decision, StoreScopeInfo? matchedRoot, string? mapRefusal) =
-                DecideStoreName(store, SearchIndexTimeoutSeconds);
-            switch (decision)
-            {
-                case StoreNameDecision.Tied:
-                    return FolderScopeResolver.ForPrimaryStore(matchedRoot!.StorePrefix, folder, includeSubfolders);
-                case StoreNameDecision.NotIndexed:
-                    return FolderScopeResolver.ForUnindexedStore(folder);
-                case StoreNameDecision.Refused:
-                    throw new ArgumentException(mapRefusal, nameof(store));
-            }
-
-            IReadOnlyList<StoreScopeInfo> catalog = GetCatalog(SearchIndexTimeoutSeconds);
-            StoreScopeInfo? match = catalog.FirstOrDefault(s =>
-                string.Equals(s.StoreDisplayName, store, StringComparison.OrdinalIgnoreCase));
-
-            if (match == null && store.IndexOf('@') >= 0)
-            {
-                match = _index.Value.TryDiscoverStoreScopeByAddress(store, SearchIndexTimeoutSeconds);
-                if (match != null)
-                {
-                    InvalidateCatalog(match);
-                }
-            }
-
-            if (match != null)
-            {
-                // Not even by the index's own name for it does a search reach an index store whose
-                // mail the index cannot attribute to one store (Q113 (a)).
-                StoreIndexMatch? contested = TryGetStoreIndexMap(SearchIndexTimeoutSeconds)?.Unmatchable
-                    .FirstOrDefault(m => m.Contested.Any(r =>
-                        string.Equals(r.StorePrefix, match.StorePrefix, StringComparison.OrdinalIgnoreCase)));
-                if (contested != null)
-                {
-                    throw new ArgumentException(DescribeUnmatchableStore(contested), nameof(store));
-                }
-
-                return FolderScopeResolver.ForPrimaryStore(match.StorePrefix, folder, includeSubfolders);
-            }
-
-            // Delegate store: scope under an owner's /1/<name> subtree.
-            foreach (StoreScopeInfo owner in catalog)
-            {
-                string delegateScope = DelegateScope(owner, store);
-                bool exists;
-                try
-                {
-                    exists = _index.Value.ScopeHasAnyItem(delegateScope, SearchIndexTimeoutSeconds);
-                }
-                catch (Exception ex) when (ex is not OutOfMemoryException)
-                {
-                    exists = false;
-                }
-
-                if (exists)
-                {
-                    // The COM tree is needed only for a delegate FOLDER scope: to map the
-                    // requested subtree onto the flat leaf names it contains, and to spot
-                    // leaf names the flat namespace merges.
-                    ComFolderPathList? tree = folder == null ? null : TryGetFolderPaths(store);
-                    return FolderScopeResolver.ForDelegateStore(
-                        delegateScope, folder, includeSubfolders, tree?.Paths, tree?.Incomplete ?? false);
-                }
-            }
-
-            // NOTHING IN THE INDEX ADDRESSES THIS STORE. That is a fact about the INDEX, and
-            // it used to be reported as if it were a fact about the profile: the refusal
-            // named the index catalog as "Known stores", which on a profile of unindexed
-            // data files is EMPTY, and sent the caller to list_accounts - which returns the
-            // very name that just failed. A real store and a typo were the same message.
-            //
-            // So the verdict comes from Outlook, which is the profile the caller is actually
-            // searching, through the same pure classifier list_folders refuses with (gap G1).
-            // Fetched only here, on the failed lookup, and from a 5-minute cache, so an
-            // ordinary store-scoped search pays nothing for it.
-            IReadOnlyList<string>? profileStores = TryGetProfileStoreNames();
-            if (profileStores == null)
-            {
-                // Outlook is unreachable, so the two cases genuinely cannot be told apart
-                // right now. Say that, rather than picking one and sounding certain.
-                throw new ArgumentException(
-                    "Store '" + store + "' is not in the local search index, and Outlook could not be reached to "
-                    + "check whether the profile has it - so a store that exists but is not indexed cannot be told "
-                    + "apart from a misspelled name. Check outlook_health, then retry; search without 'store' works "
-                    + "meanwhile.",
-                    nameof(store));
-            }
-
-            string? refusal = DescribeUnresolvedFolderStore(store, profileStores);
-            if (refusal != null)
-            {
-                throw new ArgumentException(refusal, nameof(store));
-            }
-
-            // Outlook HAS it; only the index does not. The search proceeds with the index
-            // tier skipped - never widened, because 'store' filters which mail may come back
-            // and a widened scope would answer with another store's mail.
-            return FolderScopeResolver.ForUnindexedStore(folder);
         }
 
         /// <summary>
@@ -9584,7 +9057,9 @@ namespace OutlookAI.Core.Services
                     exchange ? detail.FilePath : null),
                 detail.NameUnreadable,
                 detail.FilePath,
-                detail.OwnName);
+                detail.OwnName,
+                detail.StoreId,
+                StoreIdOf(detail));
         }
 
         /// <summary>What the store map decides for a store NAME (<see cref="DecideStoreName"/>).</summary>

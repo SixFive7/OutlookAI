@@ -1,3 +1,4 @@
+using OutlookAI.McpServer.Tests.T1;
 using System.Text.Json;
 using Xunit;
 
@@ -24,11 +25,11 @@ public sealed class Phase3CiToolShapeTests
     }
 
     [Fact]
-    public async Task GotoFolder_BlankStore_ReturnsStructuredErrorJson()
+    public async Task GotoFolder_BlankFolderId_ReturnsStructuredErrorJson()
     {
         await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();
 
-        JsonElement result = await client.CallToolAsync("goto_folder", new { store = " " });
+        JsonElement result = await client.CallToolAsync("goto_folder", new { folder_id = " " });
 
         Assert.Equal("InvalidArgument", result.GetProperty("error").GetProperty("type").GetString());
     }
@@ -46,13 +47,18 @@ public sealed class Phase3CiToolShapeTests
     }
 
     [Fact]
-    public async Task ShowSearchResults_FolderWithoutStore_ReturnsStructuredErrorJson()
+    public async Task ShowSearchResults_AFolderName_IsRefused_AndTheRetiredArgumentToo()
     {
         await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();
 
-        JsonElement result = await client.CallToolAsync("show_search_results", new { query = "term", folder = "Inbox" });
+        JsonElement byName = await client.CallToolAsync("show_search_results", new { query = "term", folder_id = "Inbox" });
+        Assert.Equal("InvalidArgument", byName.GetProperty("error").GetProperty("type").GetString());
+        Assert.Contains("find_folder", byName.GetProperty("error").GetProperty("message").GetString(), StringComparison.Ordinal);
 
-        Assert.Equal("InvalidArgument", result.GetProperty("error").GetProperty("type").GetString());
+        JsonElement retired = await client.CallToolAsync("show_search_results", new { query = "term", folder = "Inbox" });
+        Assert.Equal("InvalidArgument", retired.GetProperty("error").GetProperty("type").GetString());
+        Assert.Contains(
+            "no longer takes 'folder'", retired.GetProperty("error").GetProperty("message").GetString(), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -121,7 +127,7 @@ public sealed class Phase3CiToolShapeTests
         {
             query = "anything",
             exhaustive = true,
-            store = "someone@example.com",
+            store_id = TestFolders.StoreId("someone@example.com"),
         });
 
         JsonElement error = result.GetProperty("error");
@@ -137,8 +143,7 @@ public sealed class Phase3CiToolShapeTests
         JsonElement result = await client.CallToolAsync("search", new
         {
             exhaustive = true,
-            store = "someone@example.com",
-            folder = "Inbox",
+            folder_id = TestFolders.FolderId("someone@example.com", "Inbox"),
             to = "someone",
         });
 

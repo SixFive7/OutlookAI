@@ -204,7 +204,25 @@ public sealed class LiveGuardedOutlookSession : IOutlookSession
     public IReadOnlyList<ComStoreDetail> GetStoreDetails() => _inner.GetStoreDetails();
 
     /// <inheritdoc/>
-    public ComFolderTree ListFolders(string? storeDisplayName, int absoluteWalkCap) => _inner.ListFolders(storeDisplayName, absoluteWalkCap);
+    public ComFolderTree ListFolders(string? storeEntryId, int absoluteWalkCap) => _inner.ListFolders(storeEntryId, absoluteWalkCap);
+
+    /// <inheritdoc/>
+    public ComFolderDetail? TryDescribeFolder(string folderEntryId, out string? error) => _inner.TryDescribeFolder(folderEntryId, out error);
+
+    /// <inheritdoc/>
+    public ComFolderDetail? TryCreateFolder(string parentFolderEntryId, string name, out string? error)
+    {
+        // A folder is made in the hub and nowhere else: the parent is opened (read-only) first, and its
+        // store must be the hub - by its display name, as every other hub check here is made.
+        ComFolderDetail? parent = _inner.TryDescribeFolder(parentFolderEntryId, out string? describeError);
+        if (parent == null || !string.Equals(parent.StoreDisplayName, _check.HubStoreDisplayName, StringComparison.OrdinalIgnoreCase))
+        {
+            Refuse(LiveRunItemCheck.Refused + ": create_folder may make a folder only in the hub, and the parent "
+                + (parent == null ? "could not be opened (" + (describeError ?? "no error") + ")" : "is in '" + parent.StoreDisplayName + "'") + ".");
+        }
+
+        return _inner.TryCreateFolder(parentFolderEntryId, name, out error);
+    }
 
     /// <inheritdoc/>
     public ComFolderPathList ListFolderPaths(string storeDisplayName, int absoluteWalkCap) => _inner.ListFolderPaths(storeDisplayName, absoluteWalkCap);
@@ -222,8 +240,9 @@ public sealed class LiveGuardedOutlookSession : IOutlookSession
         IReadOnlyList<string>? folderPath = null,
         bool includeSubfolders = true,
         IReadOnlyDictionary<string, DateTime>? perStoreSinceUtc = null,
-        int timeBudgetMs = 0)
-        => _inner.SweepFoldersNewerThan(sinceUtc, perFolderCap, includeBodies, onlyStoreDisplayName, folderPath, includeSubfolders, perStoreSinceUtc, timeBudgetMs);
+        int timeBudgetMs = 0,
+        string? folderEntryId = null)
+        => _inner.SweepFoldersNewerThan(sinceUtc, perFolderCap, includeBodies, onlyStoreDisplayName, folderPath, includeSubfolders, perStoreSinceUtc, timeBudgetMs, folderEntryId);
 
     /// <inheritdoc/>
     public ComExhaustiveResult ExhaustiveScan(
@@ -236,8 +255,9 @@ public sealed class LiveGuardedOutlookSession : IOutlookSession
         int timeBudgetMs,
         SearchIn searchIn = SearchInValues.Default,
         bool includeSubfolders = false,
-        ComScanCursor? resumeFrom = null)
-        => _inner.ExhaustiveScan(storeDisplayName, folderPath, terms, sinceUtc, beforeUtc, maxItems, timeBudgetMs, searchIn, includeSubfolders, resumeFrom);
+        ComScanCursor? resumeFrom = null,
+        string? folderEntryId = null)
+        => _inner.ExhaustiveScan(storeDisplayName, folderPath, terms, sinceUtc, beforeUtc, maxItems, timeBudgetMs, searchIn, includeSubfolders, resumeFrom, folderEntryId);
 
     /// <inheritdoc/>
     public ComItemDetail? TryReadItem(string entryIdHex, string? storeId, bool includeHeaders, bool includeBody, out string? error, bool includeHtml = false)
@@ -272,12 +292,12 @@ public sealed class LiveGuardedOutlookSession : IOutlookSession
         => _inner.TryResolveByPath(storeDisplayName, folderPath, itemSubject, indexReceivedUtc, out error, toleranceSeconds);
 
     /// <inheritdoc/>
-    public ComExplorerState? TryGotoFolder(string storeDisplayName, IReadOnlyList<string>? folderPath, out string? error)
-        => _inner.TryGotoFolder(storeDisplayName, folderPath, out error);
+    public ComExplorerState? TryGotoFolder(string? folderEntryId, string? storeEntryId, out string? error)
+        => _inner.TryGotoFolder(folderEntryId, storeEntryId, out error);
 
     /// <inheritdoc/>
-    public ComExplorerState? TryShowSearchResults(string query, int olSearchScope, string? storeDisplayName, IReadOnlyList<string>? folderPath, out string? error)
-        => _inner.TryShowSearchResults(query, olSearchScope, storeDisplayName, folderPath, out error);
+    public ComExplorerState? TryShowSearchResults(string query, int olSearchScope, string? folderEntryId, string? storeEntryId, out string? error)
+        => _inner.TryShowSearchResults(query, olSearchScope, folderEntryId, storeEntryId, out error);
 
     /// <inheritdoc/>
     public ComDraftInfo? TryGetMailInfo(string entryIdHex, string? storeId, out string? error) => _inner.TryGetMailInfo(entryIdHex, storeId, out error);
@@ -311,17 +331,10 @@ public sealed class LiveGuardedOutlookSession : IOutlookSession
     }
 
     /// <inheritdoc/>
-    public ComMoveItemResult? TryMoveItemToPath(
-        string entryIdHex,
-        string? storeId,
-        IReadOnlyList<string> targetSegments,
-        bool createMissing,
-        string? requireStoreDisplayName,
-        out IReadOnlyList<string>? createdFolderPaths,
-        out string? error)
+    public ComMoveItemResult? TryMoveItemToFolder(string entryIdHex, string? storeId, string targetFolderEntryId, out string? error)
     {
         RefuseItem(entryIdHex, storeId, "move_mail", addressesMail: false);
-        return _inner.TryMoveItemToPath(entryIdHex, storeId, targetSegments, createMissing, requireStoreDisplayName, out createdFolderPaths, out error);
+        return _inner.TryMoveItemToFolder(entryIdHex, storeId, targetFolderEntryId, out error);
     }
 
     /// <inheritdoc/>

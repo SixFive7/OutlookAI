@@ -163,12 +163,13 @@ public sealed class LiveFolderScopeTests
             entryId = draft.EntryId;
             Assert.False(string.IsNullOrEmpty(entryId));
 
-            MoveMailOutcome moved = Service.MoveMail(new[] { entryId }, childFolder, createFolder: true);
+            string childFolderId = LiveIds.EnsureTestFolder(Service, Hub, childFolder);
+            MoveMailOutcome moved = Service.MoveMail(new[] { entryId }, childFolderId);
             MoveItemView movedItem = Assert.Single(moved.Items);
             Assert.True(movedItem.Ok, movedItem.Error);
             entryId = movedItem.NewEntryId!;
-            Assert.NotNull(moved.CreatedFolders);
-            _output.WriteLine($"seed filed into '{childFolder}' (created: {string.Join(", ", moved.CreatedFolders!)})");
+            Assert.Equal(childFolderId, movedItem.ToFolderId);
+            _output.WriteLine($"seed filed into '{childFolder}' (made with create_folder, moved by its ID)");
 
             // --- EXHAUSTIVE tier: recursion is the default, narrowing is explicit.
             SearchOutcome deepScan = Exhaustive(parentFolder, includeSubfolders: true);
@@ -261,7 +262,7 @@ public sealed class LiveFolderScopeTests
                 body: "Apostrophe folder probe " + probeTerm + " (soak fix 15).", display: false);
             entryId = draft.EntryId;
 
-            MoveMailOutcome moved = Service.MoveMail(new[] { entryId }, folder, createFolder: true);
+            MoveMailOutcome moved = Service.MoveMail(new[] { entryId }, LiveIds.EnsureTestFolder(Service, Hub, folder));
             MoveItemView movedItem = Assert.Single(moved.Items);
             Assert.True(movedItem.Ok, movedItem.Error);
             entryId = movedItem.NewEntryId!;
@@ -270,8 +271,8 @@ public sealed class LiveFolderScopeTests
             SearchOutcome outcome = Service.Search(new SearchRequest
             {
                 Query = probeTerm,
-                Store = Hub,
-                Folder = folder,
+                StoreId = LiveIds.StoreId(Service, Hub),
+                FolderId = LiveIds.FolderId(Service, Hub, folder),
                 Top = 10,
                 SnippetChars = 0,
             });
@@ -292,7 +293,7 @@ public sealed class LiveFolderScopeTests
             // for the item means it stays quiet; and a hub that is not indexed has no folder bound
             // to fail at all.
             bool guardSpoke = (outcome.Advice ?? Array.Empty<string>())
-                .Any(a => a.Contains("matched NOTHING in the index", StringComparison.Ordinal));
+                .Any(a => a.Contains("has NO rows in the index", StringComparison.Ordinal));
             bool indexServedIt = outcome.Hits.Any(h => h.Subject == seedSubject && h.Source == "index");
             Assert.Equal(outcome.Index?.FolderNotIndexed == true, guardSpoke);
             Assert.False(indexServedIt && guardSpoke, "the index served the item, yet the guard says the folder matched nothing in it");
@@ -317,31 +318,41 @@ public sealed class LiveFolderScopeTests
 
     [Fact]
     [Trait("Requires", "SearchIndex")]
-    public void UnresolvedFolderPath_IsReportedAsAResolutionProblem_NotAnEmptyResult()
+    public void AFolderIdNoFolderHas_IsRefused_NotAnsweredAsAnEmptyResult()
     {
+        // Q131-Q136: a folder is named by its ID, so "a path that resolves to nothing" cannot be asked
+        // any more; the nearest question is an ID no folder has, and it must be refused, never answered
+        // as an empty folder - nor may a NAME be taken for one.
         Service.ClearSweepCache();
-        SearchOutcome outcome = Service.Search(new SearchRequest
+        ArgumentException unknown = Assert.Throws<ArgumentException>(() => Service.Search(new SearchRequest
         {
             Query = "sfxabsent" + Marker,
-            Store = Hub,
-            Folder = "OutlookAI-McpTest-NoSuchFolder/Deeper",
+            FolderId = LiveIds.UnknownFolderIdIn(Service, Hub),
             Top = 5,
             SnippetChars = 0,
             IndexOnly = true,
-        });
+        }));
+        Assert.Contains("No folder in this Outlook profile has the ID", unknown.Message, StringComparison.Ordinal);
+        Assert.Contains("find_folder", unknown.Message, StringComparison.Ordinal);
 
-        Assert.Empty(outcome.Hits);
-        Assert.NotNull(outcome.Advice);
-        Assert.Contains(outcome.Advice!, a => a.Contains("matched NOTHING in the index", StringComparison.Ordinal));
-        _output.WriteLine("zero-row guard fired: an unresolvable folder path is named as such");
+        ArgumentException byName = Assert.Throws<ArgumentException>(() => Service.Search(new SearchRequest
+        {
+            Query = "sfxabsent" + Marker,
+            FolderId = "Inbox",
+            Top = 5,
+            SnippetChars = 0,
+            IndexOnly = true,
+        }));
+        Assert.Contains("find_folder", byName.Message, StringComparison.Ordinal);
+        _output.WriteLine("an unknown folder ID and a folder name are both refused, each with the pointer to find_folder");
 
         // A REAL folder that simply holds no match must stay quiet - the guard must not
         // cry wolf on every empty result.
         SearchOutcome realFolder = Service.Search(new SearchRequest
         {
             Query = "sfxabsent" + Marker,
-            Store = Hub,
-            Folder = "Inbox",
+            StoreId = LiveIds.StoreId(Service, Hub),
+            FolderId = LiveIds.FolderId(Service, Hub, "Inbox"),
             Top = 5,
             SnippetChars = 0,
             IndexOnly = true,
@@ -349,7 +360,7 @@ public sealed class LiveFolderScopeTests
         Assert.Empty(realFolder.Hits);
         Assert.DoesNotContain(
             realFolder.Advice ?? Array.Empty<string>(),
-            a => a.Contains("matched NOTHING in the index", StringComparison.Ordinal));
+            a => a.Contains("has NO rows in the index", StringComparison.Ordinal));
         _output.WriteLine("an empty-but-valid folder produces no resolution advice");
     }
 
@@ -359,7 +370,7 @@ public sealed class LiveFolderScopeTests
     {
         SearchOutcome outcome = Service.Search(new SearchRequest
         {
-            Store = Hub,
+            StoreId = LiveIds.StoreId(Service, Hub),
             Top = 500,
             SnippetChars = 0,
             IndexOnly = true,
@@ -377,8 +388,8 @@ public sealed class LiveFolderScopeTests
         return Service.Search(new SearchRequest
         {
             Query = probeTerm,
-            Store = Hub,
-            Folder = folder,
+            StoreId = LiveIds.StoreId(Service, Hub),
+            FolderId = LiveIds.FolderId(Service, Hub, folder),
             IncludeSubfolders = includeSubfolders,
             Top = MailService.SearchTopCap,
             SnippetChars = 0,
@@ -396,8 +407,8 @@ public sealed class LiveFolderScopeTests
     {
         return Service.Search(new SearchRequest
         {
-            Store = Hub,
-            Folder = folder,
+            StoreId = LiveIds.StoreId(Service, Hub),
+            FolderId = LiveIds.FolderId(Service, Hub, folder),
             IncludeSubfolders = includeSubfolders,
             Exhaustive = true,
             Top = MailService.SearchTopCap,

@@ -451,7 +451,7 @@ public sealed class LiveUpdateDiscardTests
         {
             LiveStoreWriteGuard.Writable(Hub, StoreWriteKind.Move, "move_mail");
             MoveMailOutcome move = Service.MoveMail(
-                new[] { draft.EntryId }, LiveOutlookTestMailer.TestFolderNamePrefix, createFolder: true);
+                new[] { draft.EntryId }, LiveIds.EnsureTestFolder(Service, Hub, LiveOutlookTestMailer.TestFolderNamePrefix));
             Assert.Null(move.Items[0].Error);
             string movedId = move.Items[0].NewEntryId!;
             movedEntryId = movedId;

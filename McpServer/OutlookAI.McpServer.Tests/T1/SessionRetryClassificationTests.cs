@@ -69,7 +69,7 @@ public sealed class SessionRetryClassificationTests
     [InlineData(nameof(IOutlookSession.TryCreateDerivedDraft))]
     [InlineData(nameof(IOutlookSession.TryUpdateDraft))]
     [InlineData(nameof(IOutlookSession.TryDiscardDraft))]
-    [InlineData(nameof(IOutlookSession.TryMoveItemToPath))]
+    [InlineData(nameof(IOutlookSession.TryMoveItemToFolder))]
     [InlineData(nameof(IOutlookSession.TryMoveItemToFolderId))]
     [InlineData(nameof(IOutlookSession.TrySaveAttachment))]
     public void EveryOperationThatLeavesSomethingBehind_IsNotRetryable(string operation)
@@ -97,7 +97,7 @@ public sealed class SessionRetryClassificationTests
     [InlineData(nameof(IOutlookSession.TryReadItem), true)]
     [InlineData(nameof(IOutlookSession.TrySendDraft), false)]
     [InlineData(nameof(IOutlookSession.TryUpdateDraft), false)]
-    [InlineData(nameof(IOutlookSession.TryMoveItemToPath), false)]
+    [InlineData(nameof(IOutlookSession.TryMoveItemToFolder), false)]
     [InlineData("SomeMethodAddedLater", false)]
     public void AnInterruptedRequest_IsToldWhetherItIsSafeToRetry(string operation, bool retryable)
     {
