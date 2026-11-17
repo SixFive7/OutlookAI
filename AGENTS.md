@@ -136,6 +136,9 @@ only at its site, with `[SuppressMessage(..., Justification = "<why it is safe>"
 release runs `Tools/Test-VulnerablePackages.ps1` (no NuGet package with a known vulnerability) and
 `Tools/Invoke-CodeQL.ps1` (CodeQL's C# security queries, every result fixed or triaged in
 `Tools/codeql-accepted.json` with its reason) - step 7 below, and either runs alone at any time.
+CodeQL counts local input except environment variables as untrusted, and every MCP tool's
+parameters too, through the model in `Tools/CodeQL`; a run fails unless its census finds that model
+on every tool (Q146, decided 2026-10-11).
 
 **The release script** is the old release workflow, ported step for step, with the gates a
 workstation needs added. `pwsh -File Tools/Publish-Release.ps1 -VersionBump X.Y.Z` is a DRY RUN -

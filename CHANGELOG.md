@@ -233,6 +233,22 @@ its mailbox tests on, and change nothing you install.
   `Tools/Test-VulnerablePackages.ps1` asks nuget.org about every package of the server's projects,
   direct or brought in by another, and a run that could not ask fails too. The first runs found
   nothing: no CodeQL result in 432 C# files, and no known-vulnerable package in six projects.
+  CodeQL had little chance to, though: by default it trusts everything but the network, and
+  OutlookAI reads nothing from the network. So since Q146 (decided 2026-10-11) it also distrusts
+  standard input, files, the command line and the registry. Environment variables stay trusted:
+  over 0ccf5df they alone made 168 of the 174 results, nearly all paths under the user's own
+  profile and TEMP. And `Tools/CodeQL` tells it that every argument an agent passes to an MCP tool
+  is untrusted, because the agent fills them in from mail other people wrote. CodeQL cannot see
+  that for itself: the MCP SDK hands the arguments over inside a library it does not analyse. A
+  census query on every run counts the tools that model reached, and the run fails if one is
+  missing, so a model that stopped matching cannot pass a release unnoticed: 22 of 22 on
+  2026-11-17. That run found six results. Five are safe, and `Tools/codeql-accepted.json` says
+  why: the search index's SQL, which six arguments of the search and thread tools reach only
+  through `WsSqlBuilder`'s allow-list and doubled quotes, and four reads of registry values that
+  only the user or an administrator can set. The sixth was real: the elevated helper's install
+  path, which Q145 removes along with the helper. What the scan still cannot see, measured: the
+  work the COM host process does with the arguments, and the eight list arguments past the
+  server's first call (TODO.md).
 
 - ✅ **Every build runs the .NET SDK's security analysers, and any finding fails the build (Q125).**
   GitHub's CI went on 2026-10-03, and the CodeQL scan with it; the maintainer chose the analysers
