@@ -1376,24 +1376,95 @@ namespace OutlookAI.Core.Com
     }
 
     /// <summary>
-    /// Signature-override request for the draft creators (soak fix D37, R5 steering):
-    /// replace the account-default signature with the named one via the WordEditor
-    /// _MailAutoSig bookmark dance (the add-in's proven pattern).
+    /// The draft tools' signature request, across the process boundary (soak fix D37, Q157 (a)):
+    /// a named signature to put in the _MailAutoSig region by the WordEditor bookmark dance (the
+    /// add-in's proven pattern), or - with <see cref="None"/> - no signature at all, which on
+    /// update_draft removes the region. Null (no object) is the sending account's effective default,
+    /// decided in the COM host where the account and the running profile are known.
     /// </summary>
     public sealed class ComSignatureOverride
     {
-        /// <summary>Creates an override request.</summary>
-        public ComSignatureOverride(string name, string filePath)
+        /// <summary>Creates a request.</summary>
+        public ComSignatureOverride(string name, string filePath, bool none = false)
         {
             Name = name;
             FilePath = filePath;
+            None = none;
         }
 
-        /// <summary>Signature name (for reporting/audit).</summary>
+        /// <summary>signature="none": no signature, and on update_draft the draft's own removed.</summary>
+        public static ComSignatureOverride NoSignature()
+        {
+            return new ComSignatureOverride(Services.SignatureManager.NoSignatureKeyword, string.Empty, none: true);
+        }
+
+        /// <summary>Signature name (for reporting/audit); "none" for <see cref="None"/>.</summary>
         public string Name { get; }
 
-        /// <summary>Signature file to insert (.htm preferred - Word converts and embeds its images natively).</summary>
+        /// <summary>Signature file to insert (.htm preferred - Word converts and embeds its images natively); empty for <see cref="None"/>.</summary>
         public string FilePath { get; }
+
+        /// <summary>True for signature="none".</summary>
+        public bool None { get; }
+    }
+
+    /// <summary>
+    /// Which signature a draft got and why (Q155 (c), Q157 (a)) - the COM host's decision, carried
+    /// back for the draft result. Content-free apart from signature, profile and account names.
+    /// </summary>
+    public sealed class ComSignatureOutcome
+    {
+        /// <summary>Creates the outcome.</summary>
+        public ComSignatureOutcome(
+            string? name,
+            string source,
+            string reason,
+            string? profile,
+            string? suggestion = null,
+            string? suggestionReason = null,
+            bool? removed = null)
+        {
+            Name = name;
+            Source = source;
+            Reason = reason;
+            Profile = profile;
+            Suggestion = suggestion;
+            SuggestionReason = suggestionReason;
+            Removed = removed;
+        }
+
+        /// <summary>The signature that went in, or null.</summary>
+        public string? Name { get; }
+
+        /// <summary>requested | accountDefault | policyDefault | none.</summary>
+        public string Source { get; }
+
+        /// <summary>Why, in one sentence.</summary>
+        public string Reason { get; }
+
+        /// <summary>The profile whose defaults decided it.</summary>
+        public string? Profile { get; }
+
+        /// <summary>The sending account's own default, when the draft got something else.</summary>
+        public string? Suggestion { get; }
+
+        /// <summary>Why the suggestion.</summary>
+        public string? SuggestionReason { get; }
+
+        /// <summary>update_draft with "none": whether a signature region was there to remove.</summary>
+        public bool? Removed { get; }
+
+        /// <summary>The outcome of a decision.</summary>
+        public static ComSignatureOutcome From(Services.SignatureDecision decision, string? insertedName, bool? removed = null)
+        {
+            if (decision == null)
+            {
+                throw new ArgumentNullException(nameof(decision));
+            }
+
+            return new ComSignatureOutcome(
+                insertedName, decision.Source, decision.Reason, decision.Profile, decision.Suggestion, decision.SuggestionReason, removed);
+        }
     }
 
     /// <summary>
@@ -1494,8 +1565,10 @@ namespace OutlookAI.Core.Com
             bool? conversationTopicPreserved = null,
             IReadOnlyList<ComAttachmentInfo>? attachments = null,
             bool composeSurfacePromoted = false,
-            string? composeSurfaceError = null)
+            string? composeSurfaceError = null,
+            ComSignatureOutcome? signatureOutcome = null)
         {
+            SignatureOutcome = signatureOutcome;
             ComposeSurfacePromoted = composeSurfacePromoted;
             ComposeSurfaceError = composeSurfaceError;
             Attachments = attachments ?? Array.Empty<ComAttachmentInfo>();
@@ -1528,11 +1601,15 @@ namespace OutlookAI.Core.Com
         public bool AccountResolved { get; }
 
         /// <summary>
-        /// True when touching GetInspector grew the body's TEXT content - i.e. Outlook
-        /// injected the account's signature (text-based: template HTML expansion without
-        /// a signature adds markup but no text).
+        /// True when a DEFAULT signature went in: the body's TEXT grew across the re-opened item's
+        /// GetInspector touch (Outlook injected one itself - text-based: template HTML expansion
+        /// without a signature adds markup but no text), or OutlookAI inserted the effective default
+        /// because Outlook did not (since the 2026-10-04 crash fix, the usual case).
         /// </summary>
         public bool SignatureInjected { get; }
+
+        /// <summary>Which signature went in and why (null from a COM host older than Q157).</summary>
+        public ComSignatureOutcome? SignatureOutcome { get; }
 
         /// <summary>Non-whitespace body text chars before the GetInspector touch.</summary>
         public long BodyTextCharsBeforeSignature { get; }
@@ -1549,13 +1626,16 @@ namespace OutlookAI.Core.Com
         /// <summary>True when the draft was opened in an Inspector window (D4 default).</summary>
         public bool Displayed { get; }
 
-        /// <summary>Signature name the caller asked to apply instead of the default (null = no override requested).</summary>
+        /// <summary>The signature chosen for the draft - the caller's or the effective default (null = none).</summary>
         public string? SignatureOverrideName { get; }
 
-        /// <summary>True when the override was applied (Word bookmark dance completed; on false the default-signature draft stands).</summary>
+        /// <summary>
+        /// True when the chosen signature was inserted (Word bookmark dance completed). On false the draft
+        /// carries NO signature: since the 2026-10-04 crash fix nothing else puts one in.
+        /// </summary>
         public bool SignatureOverrideApplied { get; }
 
-        /// <summary>Content-free failure reason when a requested override could not be applied.</summary>
+        /// <summary>Content-free failure reason when the chosen signature could not be applied.</summary>
         public string? SignatureOverrideError { get; }
 
         /// <summary>
@@ -2152,8 +2232,10 @@ namespace OutlookAI.Core.Com
             bool signatureOverrideApplied,
             string? signatureOverrideError,
             bool? conversationTopicPreserved,
-            int inlineImagesDropped = 0)
+            int inlineImagesDropped = 0,
+            ComSignatureOutcome? signatureOutcome = null)
         {
+            SignatureOutcome = signatureOutcome;
             InlineImagesDropped = inlineImagesDropped;
             Draft = draft;
             ChangedFields = changedFields;
@@ -2222,6 +2304,9 @@ namespace OutlookAI.Core.Com
 
         /// <summary>Content-free reason a requested override failed.</summary>
         public string? SignatureOverrideError { get; }
+
+        /// <summary>Which signature the revision put in or took out, and why (null when the signature was left alone).</summary>
+        public ComSignatureOutcome? SignatureOutcome { get; }
 
         /// <summary>Only set when the subject was replaced: whether threading survived it (A3).</summary>
         public bool? ConversationTopicPreserved { get; }

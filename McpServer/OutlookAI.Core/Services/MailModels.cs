@@ -1921,45 +1921,321 @@ namespace OutlookAI.Core.Services
 
         /// <summary>Short plain-text excerpt (first lines) - use it to detect each signature's language/purpose.</summary>
         public string? Excerpt { get; set; }
+
+        /// <summary>The renditions present: html, rtf, text. A mail format whose rendition is missing gets no signature.</summary>
+        public IReadOnlyList<string> Formats { get; set; } = Array.Empty<string>();
+
+        /// <summary>How many pictures its picture folder holds (absent when none).</summary>
+        public int? Pictures { get; set; }
+
+        /// <summary>
+        /// For Outlook's local copy of a roaming signature ("Name (address)"): the account it belongs to,
+        /// the only one that can use it while roaming is possible. Absent for a signature of this device.
+        /// </summary>
+        public string? Account { get; set; }
+
+        /// <summary>True when it is a local copy of a signature kept in a mailbox: Outlook manages it, so OutlookAI will not edit it.</summary>
+        public bool? ManagedInMailbox { get; set; }
+
+        /// <summary>Where it is a default: profile, account and scope (new | reply).</summary>
+        public IReadOnlyList<SignatureDefaultUseView>? DefaultFor { get; set; }
     }
 
-    /// <summary>Registry-determined default-signature assignment of one account (list_signatures).</summary>
-    public sealed class SignatureAccountView
+    /// <summary>One place a signature is a default (list_signatures).</summary>
+    public sealed class SignatureDefaultUseView
     {
-        /// <summary>Account SMTP address.</summary>
+        /// <summary>The Outlook profile.</summary>
+        public string Profile { get; set; } = string.Empty;
+
+        /// <summary>The account's address.</summary>
         public string Account { get; set; } = string.Empty;
 
-        /// <summary>Default signature for new messages (absent = unknown, never guessed).</summary>
+        /// <summary>new | reply.</summary>
+        public string Scope { get; set; } = string.Empty;
+    }
+
+    /// <summary>One mail account of one profile, with its defaults (list_signatures).</summary>
+    public sealed class SignatureAccountView
+    {
+        /// <summary>Account SMTP address - default_for.account.</summary>
+        public string Account { get; set; } = string.Empty;
+
+        /// <summary>pop3 | imap | exchange.</summary>
+        public string? Kind { get; set; }
+
+        /// <summary>The profile entry's own name, when it is not the address (an Exchange account added under an alias, say).</summary>
+        public string? AccountName { get; set; }
+
+        /// <summary>The account's own new-message default in this profile (absent = none recorded).</summary>
         public string? NewMessage { get; set; }
 
-        /// <summary>Default signature for replies/forwards (absent = unknown).</summary>
+        /// <summary>The account's own reply/forward default in this profile (absent = none recorded).</summary>
         public string? ReplyForward { get; set; }
+
+        /// <summary>The new-message signature a draft from this account gets when signature is left out (absent = none).</summary>
+        public string? EffectiveNewMessage { get; set; }
+
+        /// <summary>The reply/forward signature a draft from this account gets when signature is left out (absent = none).</summary>
+        public string? EffectiveReplyForward { get; set; }
+
+        /// <summary>Where the effective defaults come from: account | cloudPolicy | groupPolicy | preference.</summary>
+        public string? DefaultsFrom { get; set; }
+
+        /// <summary>False when manage_signature refuses to change this account's defaults; <see cref="DefaultsLocked"/> says why.</summary>
+        public bool DefaultsEditable { get; set; }
+
+        /// <summary>Why the defaults cannot be changed here, when they cannot.</summary>
+        public string? DefaultsLocked { get; set; }
+    }
+
+    /// <summary>One Outlook profile (list_signatures). Every profile is listed - and named in every answer (Q155).</summary>
+    public sealed class SignatureProfileView
+    {
+        /// <summary>The profile name - default_for.profile.</summary>
+        public string Name { get; set; } = string.Empty;
+
+        /// <summary>True for the profile recorded as the default (the one Outlook starts with unless told otherwise).</summary>
+        public bool? Default { get; set; }
+
+        /// <summary>True for the profile the running Outlook has open - whose defaults the draft tools use.</summary>
+        public bool? Running { get; set; }
+
+        /// <summary>The profile's mail accounts.</summary>
+        public IReadOnlyList<SignatureAccountView> Accounts { get; set; } = Array.Empty<SignatureAccountView>();
+    }
+
+    /// <summary>The signature folder (list_signatures).</summary>
+    public sealed class SignatureFolderView
+    {
+        /// <summary>The folder, absolute.</summary>
+        public string Path { get; set; } = string.Empty;
+
+        /// <summary>registry (Outlook's recorded Common\General\Signatures value) | default.</summary>
+        public string Source { get; set; } = "default";
+
+        /// <summary>False when the folder does not exist yet (no signature has ever been made).</summary>
+        public bool Exists { get; set; }
+    }
+
+    /// <summary>The administrator's signature rules in force (list_signatures; absent when none).</summary>
+    public sealed class SignaturePolicyView
+    {
+        /// <summary>True when policy disables signatures altogether.</summary>
+        public bool? SignaturesDisabled { get; set; }
+
+        /// <summary>cloudPolicy | groupPolicy, for <see cref="SignaturesDisabled"/>.</summary>
+        public string? DisabledBy { get; set; }
+
+        /// <summary>The new-message signature set for every account.</summary>
+        public string? NewMessage { get; set; }
+
+        /// <summary>cloudPolicy | groupPolicy | preference.</summary>
+        public string? NewMessageFrom { get; set; }
+
+        /// <summary>The reply/forward signature set for every account.</summary>
+        public string? ReplyForward { get; set; }
+
+        /// <summary>cloudPolicy | groupPolicy | preference.</summary>
+        public string? ReplyForwardFrom { get; set; }
+    }
+
+    /// <summary>Roaming signatures on this computer (list_signatures).</summary>
+    public sealed class SignatureRoamingView
+    {
+        /// <summary>off | possible | unknown (treated as possible).</summary>
+        public string State { get; set; } = "unknown";
+
+        /// <summary>Why.</summary>
+        public string Reason { get; set; } = string.Empty;
+    }
+
+    /// <summary>One picture file of a signature's picture folder (list_signatures with name).</summary>
+    public sealed class SignaturePictureView
+    {
+        /// <summary>The file name in the folder - what 'pictures' changes name.</summary>
+        public string File { get; set; } = string.Empty;
+
+        /// <summary>The file's absolute path - open it to see the picture.</summary>
+        public string Path { get; set; } = string.Empty;
+
+        /// <summary>Its size.</summary>
+        public long Bytes { get; set; }
+
+        /// <summary>image/png and the like.</summary>
+        public string ContentType { get; set; } = string.Empty;
+
+        /// <summary>Pixel width, when the header says.</summary>
+        public int? Width { get; set; }
+
+        /// <summary>Pixel height, when the header says.</summary>
+        public int? Height { get; set; }
+
+        /// <summary>True when the HTML rendition shows it (src, background).</summary>
+        public bool ReferencedByHtml { get; set; }
+    }
+
+    /// <summary>One picture embedded in the RTF rendition (list_signatures with name).</summary>
+    public sealed class SignatureRtfPictureView
+    {
+        /// <summary>N in <c>[[picture:N]]</c>.</summary>
+        public int Number { get; set; }
+
+        /// <summary>png | jpeg | emf | wmf | bitmap | unknown.</summary>
+        public string Kind { get; set; } = string.Empty;
+
+        /// <summary>Its size.</summary>
+        public int Bytes { get; set; }
+
+        /// <summary>Displayed width in pixels at 96 dpi, when recorded.</summary>
+        public int? Width { get; set; }
+
+        /// <summary>Displayed height in pixels at 96 dpi, when recorded.</summary>
+        public int? Height { get; set; }
+
+        /// <summary>SHA-256 of the picture's bytes - equal to a picture file's when they are the same picture.</summary>
+        public string Sha256 { get; set; } = string.Empty;
+    }
+
+    /// <summary>One signature in full: every rendition and its pictures (list_signatures with name, Q159).</summary>
+    public sealed class SignatureDetailView
+    {
+        /// <summary>Signature name.</summary>
+        public string Name { get; set; } = string.Empty;
+
+        /// <summary>The renditions present.</summary>
+        public IReadOnlyList<string> Formats { get; set; } = Array.Empty<string>();
+
+        /// <summary>The .htm rendition's source, decoded. Pictures are referenced as <see cref="PictureReference"/>&lt;file&gt;.</summary>
+        public string? Html { get; set; }
+
+        /// <summary>The encoding the .htm is stored in (kept on update).</summary>
+        public string? HtmlEncoding { get; set; }
+
+        /// <summary>
+        /// The .rtf rendition's source with each embedded picture shown as <c>[[picture:N]]</c> - send it back
+        /// edited as body_rtf and every token still in it becomes its picture again, byte for byte.
+        /// </summary>
+        public string? Rtf { get; set; }
+
+        /// <summary>The .txt rendition.</summary>
+        public string? Text { get; set; }
+
+        /// <summary>The encoding the .txt is stored in (kept on update).</summary>
+        public string? TextEncoding { get; set; }
+
+        /// <summary>The relative reference the HTML uses for a picture of this signature: <c>Name_files/</c>, URL-encoded.</summary>
+        public string PictureReference { get; set; } = string.Empty;
+
+        /// <summary>The picture folder's pictures.</summary>
+        public IReadOnlyList<SignaturePictureView>? Pictures { get; set; }
+
+        /// <summary>The picture folder's other files (Word's filelist.xml, theme data) - kept as they are.</summary>
+        public IReadOnlyList<string>? OtherFiles { get; set; }
+
+        /// <summary>Pictures the HTML refers to that are not in the folder.</summary>
+        public IReadOnlyList<string>? MissingPictures { get; set; }
+
+        /// <summary>The pictures embedded in the RTF rendition.</summary>
+        public IReadOnlyList<SignatureRtfPictureView>? RtfPictures { get; set; }
+
+        /// <summary>For a roaming copy, the account it belongs to.</summary>
+        public string? Account { get; set; }
+
+        /// <summary>True when it is Outlook's copy of a mailbox signature: read-only for OutlookAI.</summary>
+        public bool? ManagedInMailbox { get; set; }
+
+        /// <summary>Where it is a default.</summary>
+        public IReadOnlyList<SignatureDefaultUseView>? DefaultFor { get; set; }
+
+        /// <summary>Renditions cut at the size cap - edit those with replace, not by sending them back whole.</summary>
+        public IReadOnlyList<string>? Truncated { get; set; }
     }
 
     /// <summary>list_signatures outcome.</summary>
     public sealed class SignaturesOutcome
     {
-        /// <summary>Installed signatures (name + excerpt), name-sorted.</summary>
+        /// <summary>Installed signatures, name-sorted.</summary>
         public IReadOnlyList<SignatureView> Signatures { get; set; } = Array.Empty<SignatureView>();
 
-        /// <summary>Per-account default assignments as far as the registry records them (absent when unreadable).</summary>
-        public IReadOnlyList<SignatureAccountView>? Accounts { get; set; }
+        /// <summary>Every Outlook profile with its mail accounts and their defaults.</summary>
+        public IReadOnlyList<SignatureProfileView> Profiles { get; set; } = Array.Empty<SignatureProfileView>();
 
-        /// <summary>Explains unknown defaults when assignments are missing (degrade-gracefully contract).</summary>
+        /// <summary>The profile recorded as the default, when one is.</summary>
+        public string? DefaultProfile { get; set; }
+
+        /// <summary>The profile the running Outlook has open, when Outlook runs and answered.</summary>
+        public string? RunningProfile { get; set; }
+
+        /// <summary>Why <see cref="RunningProfile"/> is absent, when it is.</summary>
+        public string? RunningProfileNote { get; set; }
+
+        /// <summary>The folder the signatures are read from and written to.</summary>
+        public SignatureFolderView Folder { get; set; } = new SignatureFolderView();
+
+        /// <summary>The administrator's rules in force (absent when none).</summary>
+        public SignaturePolicyView? Policy { get; set; }
+
+        /// <summary>Roaming signatures on this computer.</summary>
+        public SignatureRoamingView Roaming { get; set; } = new SignatureRoamingView();
+
+        /// <summary>The one signature asked for by name, in full.</summary>
+        public SignatureDetailView? Signature { get; set; }
+
+        /// <summary>What to know before choosing.</summary>
         public string? Note { get; set; }
+
+        /// <summary>Parts of the settings that could not be read.</summary>
+        public IReadOnlyList<string>? Problems { get; set; }
     }
 
-    /// <summary>manage_signature outcome (soak fix D38).</summary>
+    /// <summary>One in-place text edit's result (manage_signature replace): how often it was replaced, per rendition.</summary>
+    public sealed class SignatureReplacementView
+    {
+        /// <summary>The text found.</summary>
+        public string Find { get; set; } = string.Empty;
+
+        /// <summary>Occurrences replaced in the .htm (absent when it has no .htm).</summary>
+        public int? Html { get; set; }
+
+        /// <summary>Occurrences replaced in the .rtf.</summary>
+        public int? Rtf { get; set; }
+
+        /// <summary>Occurrences replaced in the .txt.</summary>
+        public int? Text { get; set; }
+    }
+
+    /// <summary>manage_signature outcome (soak fix D38, Q147, Q159).</summary>
     public sealed class ManageSignatureOutcome
     {
-        /// <summary>Executed action: create | update | delete.</summary>
+        /// <summary>Executed action: create | update | delete | set_default | clear_default.</summary>
         public string Action { get; set; } = string.Empty;
 
         /// <summary>Signature name operated on.</summary>
         public string Name { get; set; } = string.Empty;
 
-        /// <summary>Absolute paths of the rendition files written (create/update: .htm + .txt + .rtf).</summary>
+        /// <summary>The signature folder.</summary>
+        public string? Folder { get; set; }
+
+        /// <summary>Absolute paths of the files written: renditions, pictures, Word's filelist.xml.</summary>
         public IReadOnlyList<string>? FilesWritten { get; set; }
+
+        /// <summary>The renditions written (html, rtf, text) - on update only the ones that changed.</summary>
+        public IReadOnlyList<string>? FormatsWritten { get; set; }
+
+        /// <summary>On create, the renditions derived because they were not given.</summary>
+        public IReadOnlyList<string>? FormatsDerived { get; set; }
+
+        /// <summary>Pictures added to the picture folder.</summary>
+        public IReadOnlyList<string>? PicturesAdded { get; set; }
+
+        /// <summary>Pictures replaced in it.</summary>
+        public IReadOnlyList<string>? PicturesReplaced { get; set; }
+
+        /// <summary>Pictures removed from it.</summary>
+        public IReadOnlyList<string>? PicturesRemoved { get; set; }
+
+        /// <summary>The replace edits and how often each was applied.</summary>
+        public IReadOnlyList<SignatureReplacementView>? Replacements { get; set; }
 
         /// <summary>Absolute paths removed by delete (files and the _files resource directory).</summary>
         public IReadOnlyList<string>? FilesDeleted { get; set; }
@@ -1967,14 +2243,20 @@ namespace OutlookAI.Core.Services
         /// <summary>Backup directory holding the previous file set (always present for update/delete).</summary>
         public string? BackupPath { get; set; }
 
-        /// <summary>Account whose default assignment was recorded (set_default_for).</summary>
+        /// <summary>The profile whose default was set or cleared.</summary>
+        public string? Profile { get; set; }
+
+        /// <summary>Account whose default was recorded.</summary>
         public string? DefaultSetForAccount { get; set; }
 
         /// <summary>Scope recorded for that account: new | reply | both.</summary>
         public string? DefaultSetScope { get; set; }
 
-        /// <summary>Accounts whose dangling default assignments were cleared by a delete.</summary>
-        public IReadOnlyList<string>? DefaultsClearedForAccounts { get; set; }
+        /// <summary>Every default value set or cleared, with the value before - what restores it.</summary>
+        public IReadOnlyList<SignatureDefaultChange>? DefaultsChanged { get; set; }
+
+        /// <summary>Defaults, in any profile, that named a deleted signature and were cleared.</summary>
+        public IReadOnlyList<SignatureDefaultChange>? DefaultsCleared { get; set; }
 
         /// <summary>Operational guidance (e.g. Outlook restart pickup of default changes).</summary>
         public string? Advice { get; set; }
@@ -2161,16 +2443,39 @@ namespace OutlookAI.Core.Services
         /// <summary>Draft subject (RE:/FW: prefixes included for derived drafts).</summary>
         public string? Subject { get; set; }
 
-        /// <summary>True when Outlook injected the account's DEFAULT signature into the body.</summary>
+        /// <summary>
+        /// True when a DEFAULT signature went into the body: the account's or the policy's, inserted by
+        /// OutlookAI (since the 2026-10-04 crash fix Outlook never gets the chance), or one Outlook added
+        /// itself. False for a signature the agent named - see <see cref="Signature"/>.
+        /// </summary>
         public bool SignatureInjected { get; set; }
 
-        /// <summary>The signature name requested via the 'signature' parameter (absent when the account default was used).</summary>
+        /// <summary>The signature that went in (absent = none) - see <see cref="SignatureSource"/> and <see cref="SignatureReason"/>.</summary>
         public string? Signature { get; set; }
 
-        /// <summary>Whether the requested signature override was applied (absent when none was requested; false = the default-signature draft stands).</summary>
+        /// <summary>requested | accountDefault | policyDefault | none.</summary>
+        public string? SignatureSource { get; set; }
+
+        /// <summary>Why that signature, or why none, in one sentence.</summary>
+        public string? SignatureReason { get; set; }
+
+        /// <summary>The Outlook profile whose defaults decided it.</summary>
+        public string? SignatureProfile { get; set; }
+
+        /// <summary>The sending account's own default, when the draft got something else - pass it to update_draft to switch.</summary>
+        public string? SignatureSuggestion { get; set; }
+
+        /// <summary>Why <see cref="SignatureSuggestion"/>.</summary>
+        public string? SignatureSuggestionReason { get; set; }
+
+        /// <summary>
+        /// Whether the chosen signature was inserted (absent when none was chosen). False means the draft
+        /// carries NO signature - the account default is not put in its place - and update_draft with the
+        /// same signature retries it.
+        /// </summary>
         public bool? SignatureApplied { get; set; }
 
-        /// <summary>Content-free reason when a requested override failed (the draft is still valid, with the default signature).</summary>
+        /// <summary>Content-free reason the chosen signature could not be inserted; the draft exists, without a signature.</summary>
         public string? SignatureError { get; set; }
 
         /// <summary>True when the draft was opened in an Outlook window for the user (D4 default).</summary>
@@ -2384,11 +2689,20 @@ namespace OutlookAI.Core.Services
         /// <summary>Present (true) only when a read receipt is requested.</summary>
         public bool? ReadReceiptRequested { get; set; }
 
-        /// <summary>Signature name requested for this update, when one was.</summary>
+        /// <summary>Signature name requested for this update, when one was ("none" when it was removed).</summary>
         public string? Signature { get; set; }
 
         /// <summary>Whether the requested signature swap was applied.</summary>
         public bool? SignatureApplied { get; set; }
+
+        /// <summary>For signature="none": true when the draft's signature was removed, false when it had none to remove.</summary>
+        public bool? SignatureRemoved { get; set; }
+
+        /// <summary>Why, in one sentence, when a signature was swapped or removed.</summary>
+        public string? SignatureReason { get; set; }
+
+        /// <summary>The sending account's own default, when the draft now has something else.</summary>
+        public string? SignatureSuggestion { get; set; }
 
         /// <summary>"text" or "html" - present only when a body was supplied.</summary>
         public string? BodyFormat { get; set; }
