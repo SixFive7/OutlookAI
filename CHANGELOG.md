@@ -1875,6 +1875,12 @@ its mailbox tests on, and change nothing you install.
   when the assistant kills the helper outright, which is what happens when Outlook has genuinely
   stopped responding and when a session ends abruptly.
 
+- ✅ **The index-refile measurement no longer fails when Outlook lists a moved folder late.**
+  The live test that times how fast the index follows a folder rename and move reads the folder's
+  ID under its new parent right after moving it. On the copy of the indexed test machine the parent
+  read before the move did not list the folder yet, and the test failed on that read alone. The
+  test helper now opens the new parent again and looks once more, for at most five seconds.
+
 - ✅ **The signature test swaps one signature for another and checks the first is gone.**
   The test meant to prove that a draft's signature can be replaced applied the same signature a
   second time, through a test-only path that saves in a way measured to keep nothing, so it passed
