@@ -1,0 +1,78 @@
+run level: Limited - this token is NOT elevated (read before the work ran)
+[+   0,0s] begin     scenario Visible on OAI-UNINDEXED as vmadmin; server C:\OutlookAI-Q5\server\OutlookAI.Mc
+pServer.exe (99.99.99.0+fd2c58b1bfe90b99d01fb8d4522438d5900a7dae); Outlook 16.0.17932.20996
+[+  22,4s] outlook   user start: window up after 2,2 s, settled at 22,2 s (pid 9548)
+[+  23,2s] state     visible: baseline: Explorers 1 (visible 1, hidden 0); ActiveExplorer(): Explorer #1, vis
+ible; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 1 visible / 2 rctrl_renwnd32; top-level win
+dows 3 visible / 29; dialogs 0
+[+  29,7s] session   seq1: server pid 5340 initialized in 6.483 ms
+[+  33,1s] tool      seq1: list_folders ok in 3235 ms, 4429 bytes; COM host pid 7196
+[+  33,2s] end       seq1: stdin closed; server exited after 65 ms (exit code 0); its COM host gone
+[+  34,0s] state     visible: after sequential session 1 ended normally: Explorers 1 (visible 1, hidden 0); A
+ctiveExplorer(): Explorer #1, visible; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 1 visible 
+/ 2 rctrl_renwnd32; top-level windows 3 visible / 29; dialogs 0
+[+  34,4s] session   seq2: server pid 8632 initialized in 427 ms
+[+  35,7s] tool      seq2: list_folders ok in 1238 ms, 4429 bytes; COM host pid 7236
+[+  35,8s] end       seq2: stdin closed; server exited after 44 ms (exit code 0); its COM host gone
+[+  36,5s] state     visible: after sequential session 2 ended normally: Explorers 1 (visible 1, hidden 0); A
+ctiveExplorer(): Explorer #1, visible; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 1 visible 
+/ 2 rctrl_renwnd32; top-level windows 3 visible / 29; dialogs 0
+[+  36,9s] session   seq3: server pid 8672 initialized in 410 ms
+[+  38,1s] tool      seq3: list_folders ok in 1122 ms, 4429 bytes; COM host pid 7096
+[+  38,1s] end       seq3: stdin closed; server exited after 48 ms (exit code 0); its COM host gone
+[+  38,8s] state     visible: after sequential session 3 ended normally: Explorers 1 (visible 1, hidden 0); A
+ctiveExplorer(): Explorer #1, visible; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 1 visible 
+/ 2 rctrl_renwnd32; top-level windows 3 visible / 29; dialogs 0
+[+  39,3s] session   con1: server pid 6844 initialized in 445 ms
+[+  39,7s] session   con2: server pid 5156 initialized in 434 ms
+[+  40,2s] session   con3: server pid 9560 initialized in 491 ms
+[+  41,8s] tool      con1: list_folders ok in 1616 ms, 4429 bytes; COM host pid 5364
+[+  41,9s] tool      con2: list_folders ok in 1650 ms, 4429 bytes; COM host pid 6644
+[+  41,9s] tool      con3: list_folders ok in 1673 ms, 4429 bytes; COM host pid 7116
+[+  42,8s] state     visible: three sessions alive at once: Explorers 1 (visible 1, hidden 0); ActiveExplorer
+(): Explorer #1, visible; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 1 visible / 2 rctrl_ren
+wnd32; top-level windows 3 visible / 29; dialogs 0
+[+  42,9s] end       con1: stdin closed; server exited after 64 ms (exit code 0); its COM host gone
+[+  42,9s] end       con2: stdin closed; server exited after 67 ms (exit code 0); its COM host gone
+[+  43,0s] end       con3: stdin closed; server exited after 90 ms (exit code 0); its COM host gone
+[+  43,7s] state     visible: after the three ended normally: Explorers 1 (visible 1, hidden 0); ActiveExplor
+er(): Explorer #1, visible; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 1 visible / 2 rctrl_r
+enwnd32; top-level windows 3 visible / 29; dialogs 0
+[+  44,2s] session   kill1: server pid 5296 initialized in 416 ms
+[+  45,5s] tool      kill1: list_folders ok in 1305 ms, 4429 bytes; COM host pid 4892
+[+  46,1s] kill      kill1: COM host 4892 terminated (gone)
+[+  46,9s] state     visible: after kill1 lost its COM host: Explorers 1 (visible 1, hidden 0); ActiveExplore
+r(): Explorer #1, visible; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 1 visible / 2 rctrl_re
+nwnd32; top-level windows 3 visible / 29; dialogs 0
+[+  46,9s] end       kill1: stdin closed; server exited after 26 ms (exit code 0); its COM host was never see
+n
+[+  47,7s] state     visible: after kill1 server ended: Explorers 1 (visible 1, hidden 0); ActiveExplorer(): 
+Explorer #1, visible; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 1 visible / 2 rctrl_renwnd3
+2; top-level windows 3 visible / 29; dialogs 0
+[+  49,7s] end-ol    visible: Application.Quit(): quit-called -> OUTLOOK.EXE EXITED 0 s after the action retu
+rned (1353 ms to return)
+[+  71,8s] outlook   user start: window up after 2 s, settled at 22,1 s (pid 6556)
+[+  72,7s] state     visible2: baseline: Explorers 1 (visible 1, hidden 0); ActiveExplorer(): Explorer #1, vi
+sible; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 1 visible / 2 rctrl_renwnd32; top-level wi
+ndows 1 visible / 28; dialogs 0
+[+  73,1s] session   seq4: server pid 2928 initialized in 399 ms
+[+  74,2s] tool      seq4: list_folders ok in 1104 ms, 4429 bytes; COM host pid 6756
+[+  74,3s] end       seq4: stdin closed; server exited after 44 ms (exit code 0); its COM host gone
+[+  74,7s] session   con4: server pid 8300 initialized in 428 ms
+[+  75,1s] session   con5: server pid 8740 initialized in 415 ms
+[+  76,4s] tool      con4: list_folders ok in 1260 ms, 4429 bytes; COM host pid 1808
+[+  76,4s] tool      con5: list_folders ok in 1282 ms, 4429 bytes; COM host pid 3944
+[+  76,5s] end       con4: stdin closed; server exited after 42 ms (exit code 0); its COM host gone
+[+  76,5s] end       con5: stdin closed; server exited after 44 ms (exit code 0); its COM host gone
+[+  77,0s] session   kill2: server pid 2580 initialized in 444 ms
+[+  78,1s] tool      kill2: list_folders ok in 1134 ms, 4429 bytes; COM host pid 7228
+[+  78,7s] kill      kill2: COM host 7228 terminated (gone)
+[+  78,7s] end       kill2: stdin closed; server exited after 25 ms (exit code 0); its COM host was never see
+n
+[+  79,5s] state     visible2: after one sequential, two at once and one killed: Explorers 1 (visible 1, hidd
+en 0); ActiveExplorer(): Explorer #1, visible; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 1 
+visible / 2 rctrl_renwnd32; top-level windows 1 visible / 28; dialogs 0
+[+  81,4s] end-ol    visible2: File > Exit by UI Automation: File (Invoke) then Exit (Invoke), Exit was  id= 
+-> OUTLOOK.EXE EXITED 0,3 s after the action returned (1044 ms to return)
+[+  81,5s] done      scenario Visible; OUTLOOK.EXE not running
+log: C:\OutlookAI-Q5\q118\q118-Visible-20261003T202227.jsonl

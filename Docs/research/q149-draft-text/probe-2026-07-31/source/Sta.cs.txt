@@ -1,0 +1,122 @@
+using System.Collections.Concurrent;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+
+namespace HeadlessProbe;
+
+/// <summary>Minimal copy of the product's pumped STA runner (Core/Com/PumpedStaRunner.cs is internal).</summary>
+internal sealed class Sta : IDisposable
+{
+    private readonly ConcurrentQueue<KeyValuePair<Func<object>, TaskCompletionSource<object>>> _queue = new();
+    private readonly AutoResetEvent _work = new(false);
+    private readonly ManualResetEventSlim _ready = new(false);
+    private readonly Thread _thread;
+    private volatile bool _shutdown;
+
+    public Sta()
+    {
+        _thread = new Thread(Loop) { IsBackground = true, Name = "probe-sta" };
+        _thread.SetApartmentState(ApartmentState.STA);
+        _thread.Start();
+        _ready.Wait();
+    }
+
+    public T Run<T>(Func<T> work)
+    {
+        if (Thread.CurrentThread.ManagedThreadId == _thread.ManagedThreadId) return work();
+        var tcs = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _queue.Enqueue(new(() => work(), tcs));
+        _work.Set();
+        return (T)tcs.Task.GetAwaiter().GetResult();
+    }
+
+    public void Run(Action work) => Run<object>(() => { work(); return null; });
+
+    public static void PumpedWait(int ms)
+    {
+        if (ms <= 0) return;
+        var sw = Stopwatch.StartNew();
+        while (true)
+        {
+            long rem = ms - sw.ElapsedMilliseconds;
+            if (rem <= 0) return;
+            _ = N.MsgWaitForMultipleObjectsEx(0, Array.Empty<IntPtr>(), (uint)rem, N.QS_ALLINPUT, N.MWMO_INPUTAVAILABLE);
+            Drain();
+        }
+    }
+
+    private void Loop()
+    {
+        N.PeekMessage(out _, IntPtr.Zero, 0, 0, N.PM_NOREMOVE);
+        RetryFilter filter = null;
+        bool registered = false;
+        try { filter = new RetryFilter(); registered = N.CoRegisterMessageFilter(filter, out _) >= 0; } catch { }
+        _ready.Set();
+        IntPtr[] handles = { _work.SafeWaitHandle.DangerousGetHandle() };
+        while (!_shutdown)
+        {
+            uint w = N.MsgWaitForMultipleObjectsEx(1, handles, N.Infinite, N.QS_ALLINPUT, N.MWMO_INPUTAVAILABLE);
+            if (w == 0) DrainWork();
+            else if (w == 1) Drain();
+            else break;
+        }
+        DrainWork();
+        if (registered) { try { N.CoRegisterMessageFilter(null, out _); } catch { } }
+        GC.KeepAlive(filter);
+    }
+
+    private static void Drain()
+    {
+        while (N.PeekMessage(out N.MSG m, IntPtr.Zero, 0, 0, N.PM_REMOVE))
+        {
+            if (m.message == 0x0012) return;
+            N.TranslateMessage(ref m);
+            N.DispatchMessage(ref m);
+        }
+    }
+
+    private void DrainWork()
+    {
+        while (_queue.TryDequeue(out var item))
+        {
+            try { item.Value.SetResult(item.Key()); }
+            catch (Exception ex) { item.Value.SetException(ex); }
+        }
+    }
+
+    public void Dispose()
+    {
+        _shutdown = true;
+        _work.Set();
+        _thread.Join(TimeSpan.FromSeconds(10));
+    }
+
+    [ComImport, Guid("00000016-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IOleMessageFilter
+    {
+        [PreserveSig] int HandleInComingCall(int a, IntPtr b, int c, IntPtr d);
+        [PreserveSig] int RetryRejectedCall(IntPtr a, int tick, int rejectType);
+        [PreserveSig] int MessagePending(IntPtr a, int b, int c);
+    }
+
+    private sealed class RetryFilter : IOleMessageFilter
+    {
+        public int HandleInComingCall(int a, IntPtr b, int c, IntPtr d) => 0;
+        public int RetryRejectedCall(IntPtr a, int tick, int rejectType) => rejectType == 2 && tick < 30000 ? 250 : -1;
+        public int MessagePending(IntPtr a, int b, int c) => 2;
+    }
+
+    internal static class N
+    {
+        internal const uint PM_NOREMOVE = 0, PM_REMOVE = 1, QS_ALLINPUT = 0x04FF, MWMO_INPUTAVAILABLE = 4, Infinite = 0xFFFFFFFF;
+
+        [StructLayout(LayoutKind.Sequential)] internal struct POINT { public int X, Y; }
+        [StructLayout(LayoutKind.Sequential)] internal struct MSG { public IntPtr hwnd; public uint message; public IntPtr wParam, lParam; public uint time; public POINT pt; }
+
+        [DllImport("user32.dll", SetLastError = true)] internal static extern uint MsgWaitForMultipleObjectsEx(uint n, IntPtr[] h, uint ms, uint mask, uint flags);
+        [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] internal static extern bool PeekMessage(out MSG m, IntPtr h, uint min, uint max, uint remove);
+        [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] internal static extern bool TranslateMessage([In] ref MSG m);
+        [DllImport("user32.dll")] internal static extern IntPtr DispatchMessage([In] ref MSG m);
+        [DllImport("ole32.dll")] internal static extern int CoRegisterMessageFilter(IOleMessageFilter n, out IOleMessageFilter o);
+    }
+}

@@ -1,0 +1,106 @@
+# D49 acceptance: raw MCP stdio against the REBUILT REGISTERED Release exe, with Outlook
+# started HEADLESS by the server itself, plus one real external round trip.
+# Safety: every artifact carries the [OutlookAI-McpTest] tag and is purged afterwards.
+$ErrorActionPreference = 'Stop'
+$exe = 'C:\Source\SixFive7\OutlookAI-v3\McpServer\OutlookAI.McpServer\bin\Release\net10.0-windows\OutlookAI.McpServer.exe'
+$tag = '[OutlookAI-McpTest]'
+$marker = 'D49' + ([guid]::NewGuid().ToString('N').Substring(0, 8))
+$from = 'account-b@example.invalid'
+$to = 'external@example.invalid'
+$sigSource = "$env:APPDATA\Microsoft\Signatures\VoIP Fabric_files\image001.png"
+
+$psi = New-Object Diagnostics.ProcessStartInfo
+$psi.FileName = $exe
+$psi.RedirectStandardInput = $true
+$psi.RedirectStandardOutput = $true
+$psi.RedirectStandardError = $true
+$psi.UseShellExecute = $false
+$p = [Diagnostics.Process]::Start($psi)
+
+function Send($obj) { $p.StandardInput.WriteLine(($obj | ConvertTo-Json -Depth 12 -Compress)); $p.StandardInput.Flush() }
+function Recv() {
+    while ($true) {
+        $line = $p.StandardOutput.ReadLine()
+        if ($null -eq $line) { return $null }
+        if ($line.Trim().StartsWith('{')) { return ($line | ConvertFrom-Json) }
+    }
+}
+$script:id = 0
+function Call($name, $arguments) {
+    $script:id++
+    Send @{ jsonrpc = '2.0'; id = $script:id; method = 'tools/call'; params = @{ name = $name; arguments = $arguments } }
+    $r = Recv
+    return ($r.result.content[0].text | ConvertFrom-Json)
+}
+
+Send @{ jsonrpc = '2.0'; id = 0; method = 'initialize'; params = @{ protocolVersion = '2024-11-05'; capabilities = @{}; clientInfo = @{ name = 'd49-verify'; version = '1' } } }
+$null = Recv
+Send @{ jsonrpc = '2.0'; method = 'notifications/initialized' }
+Send @{ jsonrpc = '2.0'; id = 999; method = 'tools/list'; params = @{} }
+$list = Recv
+"TOOL COUNT: $($list.result.tools.Count)"
+
+$health = Call 'outlook_health' @{}
+"health: status=$($health.status) outlookRunning=$($health.outlookRunning) headless=$($health.headless)"
+
+# ---------------- 1. HEADLESS COMPOSE, full capability ----------------
+$subject = "$tag D49 headless external render check $marker"
+$bodyHtml = "<h1>D49$marker</h1><p>Deze mail is <strong>volledig headless</strong> opgesteld.</p>" +
+"<table><thead><tr><th>Controle</th><th>Verwacht</th></tr></thead><tbody><tr><td>Logo</td><td>zichtbaar</td></tr></tbody></table>"
+
+$draft = Call 'new_draft' @{ account = $from; to = $to; subject = $subject; body_html = $bodyHtml; signature = 'VoIP Fabric'; display = $false }
+"draft: entryId=$($draft.entryId.Substring(0,16))... placement=$($draft.bodyPlacement) promoted=$($draft.composeSurfacePromoted) " +
+"signatureApplied=$($draft.signatureApplied) signatureError=$($draft.signatureError) surfaceError=$($draft.composeSurfaceError) " +
+"recipients=$(@($draft.recipients).Count) attachments=$(($draft.attachments | ForEach-Object { \"$($_.name)=$($_.sizeBytes)b\" }) -join ',')"
+
+$html = Call 'read' @{ id = $draft.entryId; include_html = $true; max_body_chars = 0 }
+$h = $html.bodyHtml
+$bodyAt = $h.IndexOf("D49$marker")
+$sigAt = $h.IndexOf('_MailAutoSig')
+$wsAt = $h.IndexOf('WordSection1')
+"draft html: len=$($h.Length) wordSection@$wsAt body@$bodyAt sigAnchor@$sigAt cid=$($h.Contains('src="cid:')) " +
+"fileUrl=$($h.Contains('file:///')) userPath=$($h.Contains('C:\Users')) h1=$($h.Contains('<h1')) table=$($h.Contains('<table'))"
+
+# ---------------- 2. REAL EXTERNAL SEND (two-step token) ----------------
+$refusal = Call 'send' @{ id = $draft.entryId }
+$token = $refusal.confirmToken
+"send step 1: status=$($refusal.status) tokenIssued=$([bool]$token)"
+$sent = Call 'send' @{ id = $draft.entryId; confirm_token = $token }
+"send step 2: status=$($sent.status) sentAt=$($sent.sentAt)"
+$sentAt = Get-Date
+
+# ---------------- 3. WAIT FOR THE RECEIVED COPY ----------------
+$received = $null
+for ($i = 0; $i -lt 40; $i++) {
+    Start-Sleep -Seconds 10
+    $found = Call 'search' @{ query = $marker; store = 'account-a@example.invalid'; folder = 'Inbox'; top = 5; snippet_chars = 0 }
+    if ($found.hits -and @($found.hits).Count -gt 0) { $received = @($found.hits)[0]; break }
+}
+if (-not $received) { "RECEIVED: not found after $((Get-Date) - $sentAt)"; }
+else {
+    "received after $([int]((Get-Date) - $sentAt).TotalSeconds)s: id=$($received.id)"
+    $rd = Call 'read' @{ id = $received.id; include_html = $true; max_body_chars = 0 }
+    $rh = $rd.bodyHtml
+    "received html: len=$($rh.Length) cid=$($rh.Contains('cid:')) fileUrl=$($rh.Contains('file:///')) " +
+    "userPath=$($rh.Contains('C:\Users')) vrect=$($rh.Contains('<v:rect')) h1=$($rh.Contains('<h1')) table=$($rh.Contains('<table')) body=$($rh.Contains(\"D49$marker\"))"
+    "received attachments: $(($rd.attachments | ForEach-Object { \"$($_.name)=$($_.sizeBytes)b\" }) -join ',')"
+
+    $outDir = 'C:\Users\<user>\Downloads\tmp-outlookai-headless-probe\received'
+    New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+    $saved = Call 'save_attachment' @{ id = $received.id; attachment_index = 1; target_dir = $outDir }
+    $f = Get-Item $saved.path
+    $bytes = [IO.File]::ReadAllBytes($f.FullName)
+    $magic = ($bytes[0..7] | ForEach-Object { $_.ToString('X2') }) -join ' '
+    $srcHash = (Get-FileHash $sigSource -Algorithm SHA256).Hash
+    $gotHash = (Get-FileHash $f.FullName -Algorithm SHA256).Hash
+    "saved: $($f.Name) bytes=$($f.Length) magic='$magic' identicalToSignatureSource=$($srcHash -eq $gotHash)"
+
+    # cid in the received HTML must name the received attachment
+    $m = [regex]::Match($rh, 'src="cid:([^"]+)"')
+    "received cid: $($m.Groups[1].Value)"
+}
+
+$p.StandardInput.Close()
+$null = $p.WaitForExit(30000)
+"server exit code: $($p.ExitCode)"
+"MARKER: $marker"

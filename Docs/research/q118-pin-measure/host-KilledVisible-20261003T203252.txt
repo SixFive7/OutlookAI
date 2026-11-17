@@ -1,0 +1,26 @@
+run level: Limited - this token is NOT elevated (read before the work ran)
+[+   0,0s] begin     scenario KilledVisible on OAI-UNINDEXED as vmadmin; server C:\OutlookAI-Q5\server\Outloo
+kAI.McpServer.exe (99.99.99.0+fd2c58b1bfe90b99d01fb8d4522438d5900a7dae); Outlook 16.0.17932.20996
+[+   1,2s] session   A: server pid 7232 initialized in 993 ms
+[+   1,4s] tool      A: list_folders answered OutlookStarting at 181 ms (try 1); retrying in 2 s
+[+   5,9s] tool      A: list_folders ok in 4574 ms, 4429 bytes; COM host pid 8324
+[+   7,3s] state     killedvisible: A started Outlook (A alive): Explorers 1 (visible 0, hidden 1); ActiveExp
+lorer(): null; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 0 visible / 1 rctrl_renwnd32; top-
+level windows 0 visible / 24; dialogs 0
+[+   7,8s] kill      A: COM host 8324 terminated (gone)
+[+   8,7s] state     killedvisible: A's COM host killed: Explorers 1 (visible 0, hidden 1); ActiveExplorer():
+ null; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 0 visible / 1 rctrl_renwnd32; top-level wi
+ndows 0 visible / 24; dialogs 0
+[+   8,7s] end       A: stdin closed; server exited after 30 ms (exit code 0); its COM host was never seen
+[+  14,8s] state     killedvisible: A's server ended, 5 s on: Explorers 1 (visible 0, hidden 1); ActiveExplor
+er(): null; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 0 visible / 2 rctrl_renwnd32; top-lev
+el windows 0 visible / 25; dialogs 0
+[+  36,0s] outlook   user opens the window of the running Outlook start: window up after 1,1 s, settled at 21
+,1 s (pid 2504)
+[+  36,9s] state     killedvisible: the user has the window open: Explorers 2 (visible 1, hidden 1); ActiveEx
+plorer(): Explorer #2, visible; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 1 visible / 3 rct
+rl_renwnd32; top-level windows 3 visible / 31; dialogs 0
+[+  40,0s] end-ol    killedvisible: File > Exit by UI Automation: File (Invoke) then Exit (Invoke), Exit was 
+ id= -> OUTLOOK.EXE EXITED 0,3 s after the action returned (1672 ms to return)
+[+  40,0s] done      scenario KilledVisible; OUTLOOK.EXE not running
+log: C:\OutlookAI-Q5\q118\q118-KilledVisible-20261003T203210.jsonl
