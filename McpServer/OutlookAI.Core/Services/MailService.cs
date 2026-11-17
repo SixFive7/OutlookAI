@@ -5275,8 +5275,10 @@ namespace OutlookAI.Core.Services
             "Outlook's Word compose surface could not be obtained, so this draft was composed by the HTMLBody fallback: "
             + "the body sits outside Outlook's own WordSection1 container (it does not inherit the message style), "
             + "an explicit signature override could not be applied, and a signature's linked images were not embedded. "
-            + "The draft was still created and nothing was lost. Retry once - if it keeps happening, Outlook is in a state "
-            + "that refuses an editor; opening any Outlook window (goto_folder) makes the full compose path available again.";
+            + "The draft was still created and nothing was lost. Retry once. If it keeps happening, composeSurfaceError carries "
+            + "Outlook's own error code, and outlook_health says whether Outlook is starting or busy. An open Outlook window "
+            + "(goto_folder) helps only while it stays open: the editor was measured to come back with a window and to be lost "
+            + "again when that window closed.";
 
         // ------------------------------------------------------------------ update / discard drafts (D46, soak fix 19)
 
@@ -5796,7 +5798,14 @@ namespace OutlookAI.Core.Services
                 return RefuseDraft(DiscardNotStartedRefusal, operation, entryId, DescribeDiscardNotStarted(earlyFailure));
             }
 
-            switch (comError)
+            // The editor's refusal carries its HRESULT since 2026-11-17 (NoWordEditor:<failure>, or
+            // ActivateFailed:<failure> when the promotion's Activate failed too - Q149); either is matched as a
+            // token and quoted whole, so the refusal says which failure it was.
+            string? refusal = Com.ComErrorTokens.TryRead(comError, Com.ComErrorTokens.NoWordEditor, out _)
+                || Com.ComErrorTokens.TryRead(comError, Com.ComErrorTokens.ActivateFailed, out _)
+                ? Com.ComErrorTokens.NoWordEditor
+                : comError;
+            switch (refusal)
             {
                 case "NotAMailItem":
                     return RefuseDraft("not_a_mail_item", operation, entryId,
@@ -5817,7 +5826,7 @@ namespace OutlookAI.Core.Services
                         + "say which folder that is - so it was refused rather than assumed to be a draft. This server "
                         + "never creates a folder to answer that question. Retry when Outlook is responsive (see outlook_health).");
                 case "NoInspector":
-                case "NoWordEditor":
+                case Com.ComErrorTokens.NoWordEditor:
                     return RefuseDraft("compose_surface_unavailable", operation, entryId,
                         "Outlook would not open the draft's editor (" + comError + "), so the body could not be replaced. "
                         + "The draft is unchanged. This usually means Outlook is still starting up or is busy - retry in a "

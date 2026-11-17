@@ -244,6 +244,34 @@ its mailbox tests on, and change nothing you install.
   folder while Outlook is not answering, `find_folder`'s ordering and cap, every `create_folder`
   outcome, and the refusal of every argument this release removed.
 
+- 📝 **The probe the D49 design rests on, and the raw Q118 pin logs, are kept in Docs/research.**
+  The 2026-07-31 probe behind the invisible compose surface and the lifetime pin, recovered from its
+  session transcript, and the raw logs of the Q118 pin measurement of 2026-10-03 were each in one
+  scratch folder until now. Identifiers are replaced, and the probe's scripts and sources are kept as
+  text so nothing runs them. Read against the probe's own results, the D49 record overstates in four
+  ways, now written down beside them: it gives no sample sizes (22 runs in all), three of its runs
+  attached to an Outlook an earlier run had started instead of a fresh one, rows 3, 7, 8 and 9
+  overstate survival, and its 53-79 ms to an editor leaves out the 314-611 ms Activate before it. A
+  TODO note saying an Outlook that outlived its holder without a pin weakened the pin's case is
+  corrected: a holder's death releases references, and the pin guards against a window closing.
+
+- ✅ **The Q149 measurement of how drafts are written runs as live tests on the test machines.**
+  Three T2 classes in a collection of their own measure, on Office LTSC 2024, whether closing a
+  draft's hidden compose window ends an Outlook that has no window when no lifetime pin holds it,
+  whether Word's editor can be had, or an edit committed, without activating that window, and
+  whether a draft written as HTML alone matches today's when opened in Outlook and when received
+  through the test machine's mail sink. Every attempt is one JSON line carrying its HRESULT. The
+  suite ends and restarts Outlook dozens of times, so it runs only in a run that selects it alone
+  and reports NOT RUN in any other. Its runs of 2026-11-17, on both kinds of test guest, found that
+  without the pin the compose window's close ended a window-less Outlook in 40 of 40 drafts. An
+  inspector never activated refused its editor in every trial (86 of 86, waits of 30 seconds and of
+  180 included), and no Windows-level show of a window changed that, but after one activation in a
+  process every later inspector handed it out (120 of 120). An edit made that way reached the draft
+  when committed with ModifiedFormPages and Close(olSave) (60 of 60 in a window-less Outlook, 40 of
+  40 in a windowed one), and not with CurrentItem.Save (0 of 100). No draft written as HTML alone
+  looked the same as today's, opened in Outlook or as received. The merged plan, its decision rules,
+  every attempt line and the results are in Docs/research/q149-draft-text.
+
 - ✅ **Tests that can read the machine's time zone run again in Central European time (Q144).**
   The build machine runs the suite in UTC (Q126), where the machine's zone and UTC are one zone, so
   a test that compares a local time with a UTC one only proved them equal. After the suite, every
@@ -675,6 +703,17 @@ its mailbox tests on, and change nothing you install.
   OutlookAI does not edit or delete their copies or change the account's defaults, because Outlook
   would overwrite the change or copy it into the mailbox, and says to use Outlook instead. Roaming on
   Microsoft 365 Apps itself is not tested: the test machines run perpetual Office only.
+
+- 📝 **The README's section on Outlook's lifetime and tray icon describes the lifetime pin.**
+  It was written before pins existed. It now says a session that finds Outlook with no window holds a
+  hidden one while it is connected, that the session which started Outlook closes it on the way out
+  and Outlook ends at once, and that a pin left behind keeps Outlook running past Application.Quit()
+  and past closing a window opened over it, while File > Exit ends it. The 10-12 minute exit is now
+  given as what it was: one measurement, on Office LTSC 2021, before pins. What Exit Now does with a
+  pin present is said to be unmeasured, where the old text claimed it disconnects and exits at once.
+  And where it said every draft is written in a compose window nobody sees, it now says what Q149
+  measured on Office LTSC 2024: with no Outlook window open, that window shows at the top left of the
+  screen for 130 to 650 ms and has the foreground while it is there.
 
 - 📦 **The release page lists each change's icon and headline, linked to its full entry (Q123).**
   The maintainer decided it on 2026-10-03, in his words: *"copy the release notes style and system
@@ -1245,6 +1284,20 @@ its mailbox tests on, and change nothing you install.
   a folder when its ID is looked up, and the search says so in its advice and with
   `scope.pathShared`; `find_folder` lists both folders, each with its own ID, and says they share a
   path.
+
+- 🐛 **A draft's audit line says Outlook's editor was promoted only when Outlook had no window.**
+  Since the compose crash fix every draft is written through an activated inspector, and the audit
+  line's composeSurface read wordEditorPromoted for all of them, so it said nothing. It now reads
+  wordEditorPromoted only when no Outlook window was on screen as the editor was promoted, and
+  wordEditor otherwise. A refused editor keeps its cause as well: NoWordEditor and ActivateFailed carry
+  the failure's type and HRESULT after a colon - in the audit line, on the wire and in update_draft's
+  compose_surface_unavailable refusal - where the bare word made every refusal look the same.
+
+- 🐛 **A draft written without Word's editor no longer advises that opening a window fixes it for good.**
+  The advice said opening any Outlook window makes the full compose path available again. Measured
+  on Office LTSC 2021 (D48), the editor came back with a window and was lost again when that window
+  closed. It now says a window helps only while it stays open, and points at composeSurfaceError,
+  which carries Outlook's own error code, and at outlook_health.
 
 - 🐛 **Signatures are read from and written to the folder Outlook uses.**
   Outlook records the folder it keeps signatures in, which an Outlook in another language can name in

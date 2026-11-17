@@ -285,18 +285,21 @@ The copied command deliberately spells out the real path rather than `${LOCALAPP
 
 ### Outlook Lifetime and the Tray Icon
 
-When an agent needs Outlook and it is not running, the server starts it **headless**: no window appears — just an Outlook icon in the system tray whose tooltip reads *"Another program is using Outlook. To disconnect programs and exit Outlook, click the Outlook icon and then click Exit Now."* This is normal Outlook behavior for a programmatically started instance, and it is by design the server's preferred state: a headless Outlook syncs mail and feeds the Windows Search index like a normal one, without being in your way.
+When an agent needs Outlook and it is not running, the server starts it **without a window**: the only sign is Outlook's icon in the notification area, whose tooltip reads *"Another program is using Outlook. To disconnect programs and exit Outlook, click the Outlook icon and then click Exit Now."* That is Outlook's own mode for an instance a program started, and the server's preferred one: it syncs mail and feeds the Windows Search index like a windowed Outlook, without being in your way.
 
-How the lifetime behaves (measured on a current classic Outlook build):
+**The hidden window a session holds.** A session that finds Outlook with no window at all adds one hidden Outlook window of its own, a "lifetime pin", and keeps it while it is connected. Every draft is written in a compose window, and in an Outlook with no window, closing that compose window ended Outlook even with agents connected (measured on Office LTSC 2021, and in 40 of 40 drafts on Office LTSC 2024); the pin is what stops that. With your Outlook open, a session makes no pin, and the compose window stays off the screen. With no Outlook window, it shows at the top left of the screen for a fraction of a second (130 to 650 ms on Office LTSC 2024) and has the foreground while it is there; `Docs/research/q149-draft-text` has the measurements.
 
-- **While any agent session is connected**, the headless Outlook keeps running. Server processes are per-agent-session and release their connection when the session ends.
-- **After the last connection is released**, a headless Outlook keeps running for roughly **10-12 minutes** and then exits on its own. The tray tooltip may still show the "another program" message during that grace period even though nothing is connected anymore.
-- **Want a normal Outlook?** Just launch Outlook the usual way — the *same* headless process promotes itself to a full windowed session within a couple of seconds (watch the taskbar rather than the tray). No conflict, nothing to close first.
-- **Closing the window** (yours or a promoted one) exits Outlook within seconds — even while agent sessions are still connected. Outlook has deliberately not let external programs keep it alive after a user closes it since Outlook 2007 SP2. The server simply reconnects — and restarts Outlook headless — the next time an agent needs mail access.
-- **Exit Now** on the tray icon force-disconnects clients and exits the headless Outlook immediately; agents likewise reconnect on demand later.
-- The server itself **never closes or restarts Outlook** under any circumstances.
+How the lifetime behaves:
 
-One rule for other automation on the machine: do not drive `Application.Quit()` while agent sessions are attached — Outlook then tears down and parks indefinitely, waiting for the attached clients (that is what the tray tooltip is warning about). The parked state resolves itself a few seconds after the attached sessions release (for agent sessions: when they end). Prefer closing Outlook's window, or stop the agent sessions first.
+- **While any agent session is connected**, the window-less Outlook keeps running.
+- **When the session that started Outlook ends**, it closes its pin and Outlook ends at once, as though OutlookAI had never started it. Other sessions still using it get Outlook back, again without a window, on their next call, a few seconds later.
+- **A pin can be left behind**, by a session whose process was killed, or by one that connected while another was still starting Outlook and so did not start it itself. A left pin keeps the window-less Outlook running after every agent has gone. `Application.Quit()` does not end it, and nor does closing a window you opened over it; **File > Exit** does. What **Exit Now** on the tray icon does with a pin present has not been measured. The fix is tracked in `TODO.md`.
+- **Want a normal Outlook?** Launch Outlook the usual way: the same process becomes a full windowed Outlook within a second or two, pin or no pin.
+- **Closing your Outlook window** ends Outlook within seconds even while agent sessions are connected - since Outlook 2007 SP2, programs cannot keep Outlook alive after the user closes it - unless a pin was left behind (above). The server starts Outlook again, without a window, the next time an agent needs mail.
+- **With no pin and nothing connected**, a window-less Outlook ends by itself after a delay. It took about 11.5 minutes on Office LTSC 2021, measured once, before pins existed; it has not been measured on Office 2024.
+- The server never quits or kills Outlook. A session that started Outlook only closes the hidden window it made.
+
+One rule for other automation on the machine: do not call `Application.Quit()` while agent sessions are attached to a window-less Outlook. Outlook then parks, waiting for them, until they end, and an Outlook held by a pin is not ended by `Quit()` at all. Prefer File > Exit, or stop the agent sessions first.
 
 ---
 
