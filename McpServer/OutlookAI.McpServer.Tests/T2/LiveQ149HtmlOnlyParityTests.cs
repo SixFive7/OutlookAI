@@ -337,9 +337,15 @@ public sealed class LiveQ149HtmlOnlyParityTests
             .Set("productAttachments", new[] { p.Attachments, (int)Math.Min(int.MaxValue, p.AttachmentBytes), p.HiddenAttachments })
             .Set("htmlOnlyAttachments", new[] { h.Attachments, (int)Math.Min(int.MaxValue, h.AttachmentBytes), h.HiddenAttachments });
 
+        // Each aspect counts as the same only when today's draft has it AND the HTML-only one does: two drafts
+        // that both lack a signature are not evidence that (c) places one as Word does.
+        bool productSignature = SignatureWhole(pf, p.HiddenAttachments, p.AttachmentBytes);
+        bool htmlOnlySignature = SignatureWhole(hf, h.HiddenAttachments, h.AttachmentBytes);
+        attempt.Set("productBodyInsideWordSection1", Inside(pf)).Set("htmlOnlyBodyInsideWordSection1", Inside(hf))
+            .Set("productSignatureWhole", productSignature).Set("htmlOnlySignatureWhole", htmlOnlySignature);
         Record(Q149Cells.C2, "the stylesheet (" + what + ")", pf.StylesheetHash != null && pf.StylesheetHash == hf.StylesheetHash);
-        Record(Q149Cells.C2, "the body inside WordSection1 (" + what + ")", Inside(hf) == Inside(pf));
-        Record(Q149Cells.C2, "the signature with its pictures (" + what + ")", SignatureWhole(pf, p.HiddenAttachments, p.AttachmentBytes) == SignatureWhole(hf, h.HiddenAttachments, h.AttachmentBytes));
+        Record(Q149Cells.C2, "the body inside WordSection1 (" + what + ")", Inside(pf) && Inside(hf));
+        Record(Q149Cells.C2, "the signature with its pictures (" + what + ")", productSignature && htmlOnlySignature);
         if (what is "reply" or "forward")
         {
             bool productQuote = pf.HeaderBlockAt > pf.TokenAt["body"] || pf.MailOriginalAt > pf.TokenAt["body"];
