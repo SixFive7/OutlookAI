@@ -3918,6 +3918,7 @@ in `.work\guest-live-runs\<run>\` of the branch's worktree).
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 1 | `6b84aab`, master `3ae6eae` merged | `CP-08-ADDIN-READY`, both .ost files set aside | 87 | 35 | 52 | 4 m 59 s | started by the run; the activation wizard closed once |
 | 2 | `8a66b74`, the addresses read at run time | carried forward | 1 (`LiveDraftTests.NewDraft_Hub_LandsInHubDrafts_...`) | 0 | 1 | 20 s | already running, no dialog open |
+| 5 | `40c64f8`, `Writes=Nothing` only (decision 206) | `CP-08-ADDIN-READY`, both .ost files set aside, the search index rebuilt | 25 | 23 | 2 | 49 s | started by the run; the activation wizard closed once |
 
 Both runs left no tagged item behind (run 1 swept every store to zero; run 2 created nothing), the
 count tripwire found no change outside the test account, Outlook did not crash, and the mailbox
@@ -3951,6 +3952,20 @@ from the credential files at render time (Q189 (b)), checked against the guest's
   `LiveMailServiceTests.Thread_IndexPath_AndComFallback` read index state the failed seeds left behind;
   `LiveDisconnectRecoveryTests.OutlookExit_..._GatewayReattaches` quit Outlook, whose next start at
   19:45 left the Activation Wizard open with no Outlook window, found there at 19:49.
+
+**Run 5: the selection while decision 206 is open.** Runs 3 and 4 (`1c35f6a`, `cafbba7`) tried a
+first form of the index step, which recorded the roots before the set-aside and waited for a new one
+per store: run 3 stopped before its tests, because Windows Search refused queries 20 s after the boot
+(`0x80041820`), and run 4 found the new roots at once and still failed the same six scope tests - the
+old roots stayed beside them. Run 5, with the catalog rebuilt from nothing, passed all six, and 23 of
+the 25 tests that write nothing. Its two failures: `LiveHealthTests.Health_OnThisMachine_ReportsOkWithFullDetail`,
+the automapped entry (a question to the maintainer), and
+`LiveMailServiceTests.Thread_IndexPath_AndComFallback`: the thread's one index member could not be
+opened by subject and time by either route (`NoSubjectTimeMatch`), on a catalog rebuilt minutes before,
+so not a stale row - a question for the product's open-by-index path, not analysed further here. Five
+tests proved nothing for want of data on this machine: an index frontier younger than its UTC offset,
+an indexed mail with an attachment in the first indexed store, and a resume token from an exhaustive
+scan of the empty hub.
 
 ### 4.5 The frozen guest clocks - both Outlook guests, 2026-10-03 (Q130 (a) and (b))
 
