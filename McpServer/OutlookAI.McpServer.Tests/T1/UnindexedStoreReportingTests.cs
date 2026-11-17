@@ -251,9 +251,6 @@ public sealed class UnindexedStoreReportingTests
         return new SearchRequest
         {
             Query = "test",
-
-            // Anchored to the stubbed frontier, as the store-scoped test below is: "90 days before now"
-            // crossed the fixed frontier on 2026-11-16, and from then on the sweep was needed after all.
             BeforeUtc = Frontier.AddDays(-90),
             Top = 25,
             SnippetChars = 0,

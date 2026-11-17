@@ -1093,12 +1093,6 @@ its mailbox tests on, and change nothing you install.
   Items - beside the mail, and none of them could be opened. On the test machine they were 21 of the
   first 100 results.
 
-- ✅ **Two search tests pass again: since 2026-11-16 "90 days ago" was later than their fixed index date.**
-  UnindexedStoreReportingTests asked for mail from before 90 days ago against a stub index whose
-  frontier is fixed at 2026-08-18, so on 2026-11-16 the question moved past the frontier, the sweep
-  became needed, and the two tests that expect it not to be failed on every build. The question is
-  now anchored to the stub's frontier, as the store-scoped test in the same class already was.
-
 - 📝 **The draft tools' descriptions say which drafts the tools can reach.**
   `update_draft` can revise any unsent draft in a Drafts folder, including one you wrote yourself,
   and a draft it revised can then be discarded by the same session. The descriptions used to say
@@ -1700,6 +1694,12 @@ its mailbox tests on, and change nothing you install.
   next - the cost was the accumulating hidden window, not a broken Outlook. This also cannot help
   when the assistant kills the helper outright, which is what happens when Outlook has genuinely
   stopped responding and when a session ends abruptly.
+
+- ✅ **Two index-coverage tests pass on any date, not only before 2026-11-16.**
+  `UnindexedStoreReportingTests` searched for mail older than today minus 90 days while its stub index
+  stays at 2026-08-18, so from 2026-11-16 the search reached past the stub's frontier and the two
+  tests that expect no sweep failed on every machine, master included. The search now ends 90 days
+  before the stub's frontier, as the file's store-scoped test already did.
 
 - ✅ **The live-test runner deletes the build it made for each run instead of leaving 180 MB behind.**
   Git unregistered the commit's build tree after every run but left its directory, so every run of the
