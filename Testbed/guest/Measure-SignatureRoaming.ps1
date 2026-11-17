@@ -349,13 +349,21 @@ function Invoke-Button($Button) {
     $Button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
 }
 
-# Closes a dialog with its own Cancel button - the one way this probe ever closes anything.
+# Closes a dialog as Cancel does - the one way this probe ever closes anything: its own Cancel button, or,
+# where UI Automation shows none (the Signatures dialog, class bosa_sdm_Mso96, measured 2026-11-17),
+# WM_CLOSE to that one window, which a dialog treats as Cancel.
 function Close-WithCancel($Window, [string] $What) {
     $cancel = Find-Named $Window ([System.Windows.Automation.ControlType]::Button) 'Cancel'
-    if (-not $cancel) { Say "  NOTE: no Cancel button on $What - left open"; return $false }
-    Invoke-Button $cancel
-    Start-Sleep -Seconds 2
-    return $true
+    if ($cancel) { Invoke-Button $cancel; Start-Sleep -Seconds 2; return $true }
+    if (-not ('OaiProbeWin' -as [type])) {
+        Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class OaiProbeWin { [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l); [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr h); }'
+    }
+    $handle = [IntPtr]$Window.Current.NativeWindowHandle
+    [void][OaiProbeWin]::PostMessage($handle, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)
+    Start-Sleep -Seconds 3
+    $closed = -not [OaiProbeWin]::IsWindow($handle)
+    Say ("  {0}: no Cancel button through UI Automation; WM_CLOSE to the dialog's own window - closed {1}" -f $What, $closed)
+    return $closed
 }
 
 function Select-NavigationPage($Options, [string] $Page) {
@@ -366,48 +374,99 @@ function Select-NavigationPage($Options, [string] $Page) {
     return $true
 }
 
+# A helper process of its own for each command that opens a modal dialog: the command returns only when
+# the dialog closes, so the probe must be free to read and Cancel it meanwhile.
+function Start-Helper([string] $Script) {
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($Script))
+    return Start-Process -FilePath powershell.exe -ArgumentList '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-EncodedCommand', $encoded -WindowStyle Hidden -PassThru
+}
+
+# The helper that opens the Signatures dialog by its own command. GetLabelMso('SignaturesStationeryDialog')
+# reads 'Signatures...' and enabled from the explorer, ApplicationOptionsDialog disabled (measured 2026-11-17).
+$SignaturesHelper = @'
+$app = [Runtime.InteropServices.Marshal]::GetActiveObject('Outlook.Application')
+try { $app.ActiveExplorer().CommandBars.ExecuteMso('SignaturesStationeryDialog') } finally { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($app) }
+'@
+
+# The helper that opens Options through the File tab: the tab is invoked, then the backstage's Options.
+$OptionsHelper = @'
+Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+$ae = [System.Windows.Automation.AutomationElement]
+$main = $ae::RootElement.FindFirst([System.Windows.Automation.TreeScope]::Children, (New-Object System.Windows.Automation.PropertyCondition($ae::ClassNameProperty, 'rctrl_renwnd32')))
+$file = $main.FindFirst([System.Windows.Automation.TreeScope]::Descendants, (New-Object System.Windows.Automation.PropertyCondition($ae::NameProperty, 'File Tab')))
+if (-not $file) { $file = $main.FindFirst([System.Windows.Automation.TreeScope]::Descendants, (New-Object System.Windows.Automation.PropertyCondition($ae::NameProperty, 'File'))) }
+$file.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+$until = (Get-Date).AddSeconds(20); $opt = $null
+while (-not $opt -and (Get-Date) -lt $until) { Start-Sleep -Milliseconds 500; $opt = $main.FindFirst([System.Windows.Automation.TreeScope]::Descendants, (New-Object System.Windows.Automation.PropertyCondition($ae::NameProperty, 'Options'))) }
+$p = $null
+if ($opt.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref] $p)) { $p.Invoke() }
+elseif ($opt.TryGetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern, [ref] $p)) { $p.Select() }
+'@
+
 function Invoke-R1 {
     Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
     $null = Get-Outlook
-    Say '== R1: Outlook''s Options, opened through ExecuteMso(''ApplicationOptionsDialog'') =='
-    $helper = @'
-$app = [Runtime.InteropServices.Marshal]::GetActiveObject('Outlook.Application')
-try { $app.ActiveExplorer().CommandBars.ExecuteMso('ApplicationOptionsDialog') } finally { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($app) }
-'@
-    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($helper))
-    $process = Start-Process -FilePath powershell.exe -ArgumentList '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-EncodedCommand', $encoded -WindowStyle Hidden -PassThru
-    $options = Find-TopWindow 'Outlook Options' $DialogWaitSeconds
-    if (-not $options) { Say "  NOT-FOUND: no 'Outlook Options' window within $DialogWaitSeconds s (helper pid $($process.Id))"; return }
-    Say ("  'Outlook Options' open (class {0})" -f $options.Current.ClassName)
     $signatureNames = @(); $generalNames = @()
-    try {
-        if (Select-NavigationPage $options 'Mail') {
-            $button = Find-Named $options ([System.Windows.Automation.ControlType]::Button) 'Signatures...'
-            if (-not $button) { $button = Find-Named $options ([System.Windows.Automation.ControlType]::Button) ('Signatures' + [char]0x2026) }
-            if ($button) {
-                Invoke-Button $button
-                $dialog = Find-TopWindow 'Signatures and Stationery' $DialogWaitSeconds
-                if ($dialog) {
-                    $signatureNames = @(Get-UiaNames $dialog)
-                    Say ("  'Signatures and Stationery' (class {0}): {1} named controls" -f $dialog.Current.ClassName, $signatureNames.Count)
-                    foreach ($n in $signatureNames) { Say ("    {0}" -f $n) }
-                    [void](Close-WithCancel $dialog 'Signatures and Stationery')
-                }
-                else { Say "  NOT-FOUND: 'Signatures and Stationery' did not open" }
+
+    Say '== R1: the Signatures dialog, opened through ExecuteMso(''SignaturesStationeryDialog'') =='
+    $process = Start-Helper $SignaturesHelper
+    $dialog = Find-TopWindow 'Signatures and Stationery' $DialogWaitSeconds
+    if ($dialog) {
+        try {
+            $signatureNames = @(Get-UiaNames $dialog)
+            Say ("  'Signatures and Stationery' (class {0}): {1} named controls" -f $dialog.Current.ClassName, $signatureNames.Count)
+            foreach ($n in $signatureNames) { Say ("    {0}" -f $n) }
+        }
+        finally { [void](Close-WithCancel $dialog 'Signatures and Stationery') }
+    }
+    else { Say "  NOT-FOUND: 'Signatures and Stationery' did not open within $DialogWaitSeconds s (helper pid $($process.Id))" }
+    if (-not $process.WaitForExit(15000)) { Say "  NOTE: the helper (pid $($process.Id)) is still waiting - the dialog may still be open" }
+
+    # Options may be switched off in this Outlook altogether: measured 2026-11-17, ApplicationOptionsDialog
+    # reads disabled and the File tab shows Options greyed. Read that, and the privacy policies the testbed
+    # sets (connected experiences off), which bear on any cloud feature.
+    $app = Get-Outlook
+    $optionsEnabled = $null
+    try { $optionsEnabled = [bool]$app.ActiveExplorer().CommandBars.GetEnabledMso('ApplicationOptionsDialog') } catch { }
+    Say ("  File > Options enabled: {0}" -f $(if ($null -eq $optionsEnabled) { 'could not be read' } else { $optionsEnabled }))
+    $privacy = 'HKCU:\Software\Policies\Microsoft\Office\16.0\Common\Privacy'
+    foreach ($n in 'disconnectedstate', 'usercontentdisabled', 'downloadcontentdisabled', 'controllerconnectedservicesenabled') {
+        $val = $null
+        try { $val = (Get-ItemProperty -LiteralPath $privacy -Name $n -ErrorAction Stop).$n } catch { }
+        Say ("  privacy policy {0} = {1}" -f $n, $(if ($null -eq $val) { '(absent)' } else { $val }))
+    }
+    Say '== R1: Outlook''s Options, General page, through the File tab =='
+    if ($optionsEnabled -eq $false) {
+        Say '  NOT READ: Options is disabled in this Outlook, so "Store my Outlook settings in the cloud" cannot be looked for there'
+        $copies = @((Get-SignatureFiles).Files | ForEach-Object { Get-RoamingCopyAddress ([IO.Path]::GetFileNameWithoutExtension($_.Name)) } | Where-Object { $_ })
+        $v = Get-RoamingVerdict $signatureNames @() $copies
+        Say ("VERDICT R1: roams={0} - {1}; 'Store my Outlook settings in the cloud' not readable (Options disabled)" -f $v.Roams, $v.Why)
+        return
+    }
+    $process = Start-Helper $OptionsHelper
+    $options = Find-TopWindow 'Outlook Options' ($DialogWaitSeconds + 20)
+    if ($options) {
+        try {
+            Say ("  'Outlook Options' open (class {0})" -f $options.Current.ClassName)
+            if (Select-NavigationPage $options 'General') {
+                $generalNames = @(Get-UiaNames $options)
+                $cloud = @($generalNames | Where-Object { $_ -match '(?i)settings in the cloud|roam' })
+                Say ("  General page: {0} named controls; about cloud settings: {1}" -f $generalNames.Count, $(if ($cloud.Count) { $cloud -join ' | ' } else { 'none' }))
             }
-            else { Say "  NOT-FOUND: no 'Signatures...' button on the Mail page" }
+            else { Say "  NOT-FOUND: no 'General' page in Options' navigation" }
         }
-        else { Say "  NOT-FOUND: no 'Mail' page in Options' navigation" }
-        if (Select-NavigationPage $options 'General') {
-            $generalNames = @(Get-UiaNames $options)
-            $cloud = @($generalNames | Where-Object { $_ -match '(?i)settings in the cloud|roam' })
-            Say ("  General page: {0} named controls; about cloud settings: {1}" -f $generalNames.Count, $(if ($cloud.Count) { $cloud -join ' | ' } else { 'none' }))
-        }
+        finally { [void](Close-WithCancel $options 'Outlook Options') }
     }
-    finally {
-        [void](Close-WithCancel $options 'Outlook Options')
-        if (-not $process.WaitForExit(15000)) { Say "  NOTE: the ExecuteMso helper (pid $($process.Id)) is still waiting - Options may still be open" }
+    else { Say "  NOT-FOUND: no 'Outlook Options' window (helper pid $($process.Id))" }
+    if (-not $process.WaitForExit(15000)) { Say "  NOTE: the helper (pid $($process.Id)) is still waiting" }
+    # Back out of the File tab's backstage, by its own Back button.
+    try {
+        $main = [System.Windows.Automation.AutomationElement]::RootElement.FindFirst([System.Windows.Automation.TreeScope]::Children, (New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ClassNameProperty, 'rctrl_renwnd32')))
+        $back = Find-Named $main ([System.Windows.Automation.ControlType]::Button) 'Back'
+        if ($back) { Invoke-Button $back; Say '  left the File tab by its Back button' }
     }
+    catch { Say ('  NOTE: the File tab could not be left: ' + $_.Exception.Message) }
+
     $copies = @((Get-SignatureFiles).Files | ForEach-Object { Get-RoamingCopyAddress ([IO.Path]::GetFileNameWithoutExtension($_.Name)) } | Where-Object { $_ })
     $v = Get-RoamingVerdict $signatureNames $generalNames $copies
     Say ("VERDICT R1: roams={0} - {1}; 'Store my Outlook settings in the cloud' offered={2}" -f $v.Roams, $v.Why, $v.CloudSettingOffered)
@@ -416,37 +475,55 @@ try { $app.ActiveExplorer().CommandBars.ExecuteMso('ApplicationOptionsDialog') }
 # ---------------------------------------------------------------------------------------------
 # R2 - the hidden folder, in the test account's store only.
 # ---------------------------------------------------------------------------------------------
+function Get-StoreRecordKey($Store) {
+    try { return [string]$Store.PropertyAccessor.BinaryToString($Store.PropertyAccessor.GetProperty('http://schemas.microsoft.com/mapi/proptag/0x0FFA0102')) } catch { return $null }
+}
+
+# One entry of the test mailbox, walked read-only: its non-IPM root, ApplicationDataRoot, the roaming folder.
+# The test account's folder names are its own test data, and are printed as they are.
+function Read-RoamingFolder($Ns, $Store, [string] $Label) {
+    Say ("== R2: {0} - entry '{1}' (ExchangeStoreType {2}, cached {3}) ==" -f $Label, [string]$Store.DisplayName, [int]$Store.ExchangeStoreType, $Store.IsCachedExchange)
+    $ipm = $Store.GetRootFolder()
+    $parentHex = $null
+    try { $parentHex = $ipm.PropertyAccessor.BinaryToString($ipm.PropertyAccessor.GetProperty('http://schemas.microsoft.com/mapi/proptag/0x0E090102')) } catch { }
+    if (-not $parentHex) { return 'the top folder''s parent id could not be read - the non-IPM root is out of reach' }
+    $root = $null
+    try { $root = $Ns.GetFolderFromID($parentHex, $Store.StoreID) } catch { return ('the non-IPM root did not open: ' + $_.Exception.Message) }
+    $top = @(); foreach ($f in $root.Folders) { $top += [string]$f.Name }
+    Say ("  non-IPM root '{0}': {1} folder(s): {2}" -f [string]$root.Name, $top.Count, ($top -join ', '))
+    $appData = $null
+    foreach ($f in $root.Folders) { if ([string]$f.Name -eq 'ApplicationDataRoot') { $appData = $f } }
+    if (-not $appData) { return 'ApplicationDataRoot is NOT there' }
+    $children = @(); foreach ($f in $appData.Folders) { $children += [string]$f.Name }
+    Say ("  ApplicationDataRoot: {0} subfolder(s): {1}" -f $children.Count, ($children -join ', '))
+    $roam = $null
+    foreach ($f in $appData.Folders) { if ([string]$f.Name -ieq $RoamingFolderGuid) { $roam = $f } }
+    if (-not $roam) { return "ApplicationDataRoot is there, but $RoamingFolderGuid is NOT" }
+    $sigFolders = @($roam.Folders)
+    Say ("  {0}: {1} subfolder(s), {2} hidden item(s) of its own" -f $RoamingFolderGuid, $sigFolders.Count, (Get-HiddenCount $roam))
+    Write-HiddenItems $roam '    (the folder itself) '
+    foreach ($sf in $sigFolders) {
+        Say ("    subfolder {0}: container class '{1}', {2} hidden item(s), {3} item(s)" -f (Get-PrintableName ([string]$sf.Name) $Bystander), $(try { [string]$sf.PropertyAccessor.GetProperty('http://schemas.microsoft.com/mapi/proptag/0x3613001F') } catch { '-' }), (Get-HiddenCount $sf), [int]$sf.Items.Count)
+        Write-HiddenItems $sf '      '
+    }
+    return ("{0} is there, with {1} subfolder(s)" -f $RoamingFolderGuid, $sigFolders.Count)
+}
+
 function Invoke-R2 {
     $app = Get-Outlook
     $ns = $app.Session
     $store = $null
     foreach ($s in $ns.Stores) { if ([string]$s.DisplayName -ieq $Hub) { $store = $s } }
     if (-not $store) { Say "  NOT-FOUND: no store named '$Hub'"; return }
-    Say ("== R2: store '{0}' (ExchangeStoreType {1}, cached {2}) ==" -f $Hub, [int]$store.ExchangeStoreType, $store.IsCachedExchange)
-    $ipm = $store.GetRootFolder()
-    $parentHex = $null
-    try { $parentHex = $ipm.PropertyAccessor.BinaryToString($ipm.PropertyAccessor.GetProperty('http://schemas.microsoft.com/mapi/proptag/0x0E090102')) } catch { }
-    if (-not $parentHex) { Say '  the top folder''s parent id could not be read - the non-IPM root is out of reach'; return }
-    $root = $null
-    try { $root = $ns.GetFolderFromID($parentHex, $store.StoreID) } catch { Say ('  the non-IPM root did not open: ' + $_.Exception.Message); return }
-    $top = @(); foreach ($f in $root.Folders) { $top += [string]$f.Name }
-    Say ("  non-IPM root '{0}': {1} folder(s): {2}" -f (Get-PrintableName ([string]$root.Name) $Bystander), $top.Count, (($top | ForEach-Object { Get-PrintableName $_ $Bystander }) -join ', '))
-    $appData = $null
-    foreach ($f in $root.Folders) { if ([string]$f.Name -eq 'ApplicationDataRoot') { $appData = $f } }
-    if (-not $appData) { Say 'VERDICT R2: ApplicationDataRoot is NOT in this store''s offline copy'; return }
-    $children = @(); foreach ($f in $appData.Folders) { $children += [string]$f.Name }
-    Say ("  ApplicationDataRoot: {0} subfolder(s)" -f $children.Count)
-    $roam = $null
-    foreach ($f in $appData.Folders) { if ([string]$f.Name -ieq $RoamingFolderGuid) { $roam = $f } }
-    if (-not $roam) { Say "VERDICT R2: ApplicationDataRoot is there, but $RoamingFolderGuid is NOT"; return }
-    $sigFolders = @($roam.Folders)
-    Say ("  {0}: {1} subfolder(s), {2} hidden item(s) of its own" -f $RoamingFolderGuid, $sigFolders.Count, (Get-HiddenCount $roam))
-    Write-HiddenItems $roam '    (the folder itself)'
-    foreach ($sf in $sigFolders) {
-        Say ("    subfolder {0}: container class '{1}', {2} hidden item(s), {3} item(s)" -f (Get-PrintableName ([string]$sf.Name) $Bystander), $(try { [string]$sf.PropertyAccessor.GetProperty('http://schemas.microsoft.com/mapi/proptag/0x3613001F') } catch { '-' }), (Get-HiddenCount $sf), [int]$sf.Items.Count)
-        Write-HiddenItems $sf '      '
-    }
-    Say ("VERDICT R2: {0} is in the test account's offline copy, with {1} subfolder(s)" -f $RoamingFolderGuid, $sigFolders.Count)
+    $offline = Read-RoamingFolder $ns $store 'the offline copy (the test account''s own cached store)'
+    Say ('VERDICT R2 offline copy: ' + $offline)
+    # The same mailbox, read on the server: the online entry Exchange automapped (2026-11-17), found by its
+    # record key - read-only, as everything here. It tells "not synced into the .ost" from "not in the mailbox".
+    $key = Get-StoreRecordKey $store
+    $online = $null
+    foreach ($s in $ns.Stores) { if ([int]$s.ExchangeStoreType -eq 1 -and $key -and (Get-StoreRecordKey $s) -eq $key) { $online = $s } }
+    if ($online) { Say ('VERDICT R2 on the server (the online entry of the same mailbox): ' + (Read-RoamingFolder $ns $online 'the server, through the online entry')) }
+    else { Say 'VERDICT R2 on the server: not read - no online entry of the same mailbox in this profile' }
 }
 
 function Get-HiddenCount($Folder) {

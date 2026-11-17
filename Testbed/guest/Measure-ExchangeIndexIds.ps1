@@ -77,6 +77,14 @@ function ConvertFrom-ExchangeFolderId([string] $Hex) {
 # System.ProviderItemID's spelling of a node id: 'N' and ten decimal digits (measured on the PST guests).
 function ConvertTo-ProviderItemId([uint64] $Node) { return 'N' + $Node.ToString('D10', [Globalization.CultureInfo]::InvariantCulture) }
 
+# The parent of an index path, without a trailing slash: '/0/A/B' -> '/0/A'.
+function Get-ParentPath([string] $Path) {
+    $p = ([string]$Path).TrimEnd('/')
+    $i = $p.LastIndexOf('/')
+    if ($i -le 0) { return '' }
+    return $p.Substring(0, $i)
+}
+
 # The candidates one folder offers, by name.
 function Get-Candidates([string] $EntryIdHex, [string] $RecordKeyHex) {
     $c = [ordered]@{}
@@ -138,8 +146,11 @@ function Invoke-SelfTest {
     Check 'every folder by its record key only: THROUGH-OUTLOOK' ((Get-RouteVerdict @('record-key', 'record-key')) -eq 'THROUGH-OUTLOOK (record-key)')
     Check 'one folder by nothing: DOES-NOT-WORK' ((Get-RouteVerdict @('record-key', '')) -eq 'DOES-NOT-WORK')
     Check 'nothing compared: NOT-MEASURED' ((Get-RouteVerdict @()) -eq 'NOT-MEASURED')
+    Check 'the parent of /0/Top/Inbox is /0/Top' ((Get-ParentPath '/0/Top/Inbox') -eq '/0/Top')
+    Check 'and a trailing slash changes nothing' ((Get-ParentPath '/0/Top/Inbox/') -eq '/0/Top')
     $ast = [System.Management.Automation.Language.Parser]::ParseFile($PSCommandPath, [ref] $null, [ref] $null)
-    $members = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.InvokeMemberExpressionAst] }, $true) | ForEach-Object { $_.Member.Extent.Text.Trim("'", '"') })
+    # The index's ADODB recordset and connection are closed, and nothing else is: $rs and $conn are the only Close targets allowed.
+    $members = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.InvokeMemberExpressionAst] }, $true) | Where-Object { -not ($_.Member.Extent.Text -eq 'Close' -and @('$rs', '$conn') -contains $_.Expression.Extent.Text) } | ForEach-Object { $_.Member.Extent.Text.Trim("'", '"') })
     $bad = @($members | Where-Object { $_ -match '^(Delete|Save|Move|Send|SetProperty|SetProperties|DeleteProperties|Remove|Copy|Close|Quit|Display|SaveAs|ExecuteMso)$' })
     Check ('no late-bound member that changes anything: ' + ($bad -join ', ')) ($bad.Count -eq 0)
     $commands = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true) | ForEach-Object { $_.GetCommandName() } | Where-Object { $_ -match '^(Set-|New-Item|Remove-|Rename-|Move-|Add-Content|Out-File)' })
@@ -175,6 +186,7 @@ try {
     if (-not $store) { throw "no store named '$Hub'" }
     Say ("store '{0}': ExchangeStoreType {1}, cached {2}, data file {3}" -f $Hub, [int]$store.ExchangeStoreType, $store.IsCachedExchange, $(if ($store.FilePath) { Split-Path -Leaf $store.FilePath } else { '-' }))
     $top = $store.GetRootFolder()
+    $topName = [string]$top.Name
     $folders = @()
     foreach ($f in $top.Folders) {
         $folders += [pscustomobject]@{ Name = [string]$f.Name; EntryId = [string]$f.EntryID; RecordKey = (Get-BinaryHex $f.PropertyAccessor '0x0FF90102'); SourceKey = (Get-BinaryHex $f.PropertyAccessor '0x65E00102'); Items = [int]$f.Items.Count }
@@ -209,14 +221,20 @@ try {
 
     foreach ($g in $roots) {
         Say ("== root {0} ==" -f $g.Name)
+        # Every folder row of the test account's own store, as the index files it: the path under the root,
+        # the row's name and its System.ProviderItemID. Folder names of the test account only.
+        foreach ($r in @($g.Group | Sort-Object Path)) { Say ("  row {0} name '{1}' ProviderItemID {2}" -f $r.Path, $r.Name, $(if ($r.ProviderItemId) { $r.ProviderItemId } else { '(none)' })) }
+        # The top folder's own row is the one named as Outlook names it; a top-level folder's row is one level under it.
+        # The top folder is /0 - the IPM subtree; /1 is the store's other subtree (measured 2026-11-17).
+        $topPath = '/0'
         $perFolder = @()
         foreach ($folder in $folders) {
-            $own = @($g.Group | Where-Object { $_.Name -eq $folder.Name -and ($_.Path -match '^/0/[^/]+/?$') -and $_.Type -match '(?i)folder' })
-            if ($own.Count -eq 0) { $own = @($g.Group | Where-Object { $_.Name -eq $folder.Name -and ($_.Path -match '^/0/[^/]+/?$') }) }
+            # A folder row's path is /0/<names> and its System.ItemNameDisplay the whole names path, store first (measured 2026-11-17).
+            $own = @($g.Group | Where-Object { $_.Path.TrimEnd('/') -eq ($topPath + '/' + $folder.Name) })
             $candidates = Get-Candidates $folder.EntryId $folder.RecordKey
             $layout = ConvertFrom-ExchangeFolderId $folder.EntryId
             $idText = if ($layout) { "46-byte id, type $($layout.FolderType), counter $($layout.GlobalCounter)" } else { "$($folder.EntryId.Length / 2)-byte id" }
-            if ($own.Count -eq 0) { Say ("  '{0}' ({1} items, {2}): no own row at /0/<name>" -f $folder.Name, $folder.Items, $idText); continue }
+            if ($own.Count -eq 0) { Say ("  '{0}' ({1} items, {2}): no own row at /0/<its name>" -f $folder.Name, $folder.Items, $idText); continue }
             $rowId = $own[0].ProviderItemId
             $matched = @(Get-Matches $candidates $rowId)
             $perFolder += ($matched -join ',')
