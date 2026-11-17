@@ -1,0 +1,11 @@
+run level: Limited - this token is NOT elevated (read before the work ran)
+[+   0,1s] begin     scenario ControlClose on OAI-UNINDEXED as vmadmin; server C:\OutlookAI-Q5\server\Outlook
+AI.McpServer.exe (99.99.99.0+fd2c58b1bfe90b99d01fb8d4522438d5900a7dae); Outlook 16.0.17932.20996
+[+  24,6s] outlook   user start: window up after 4,3 s, settled at 24,3 s (pid 5832)
+[+  26,2s] state     controlclose: baseline, no OutlookAI session in this Outlook: Explorers 1 (visible 1, hi
+dden 0); ActiveExplorer(): Explorer #1, visible; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 
+1 visible / 2 rctrl_renwnd32; top-level windows 3 visible / 29; dialogs 0
+[+  27,5s] end-ol    controlclose: window close by UI Automation: WindowPattern.Close on the one visible Outl
+ook window -> OUTLOOK.EXE EXITED 0,2 s after the action returned (193 ms to return)
+[+  27,5s] done      scenario ControlClose; OUTLOOK.EXE not running
+log: C:\OutlookAI-Q5\q118\q118-ControlClose-20261003T204339.jsonl

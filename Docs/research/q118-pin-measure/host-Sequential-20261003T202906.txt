@@ -1,0 +1,14 @@
+run level: Limited - this token is NOT elevated (read before the work ran)
+[+   0,0s] begin     scenario Sequential on OAI-UNINDEXED as vmadmin; server C:\OutlookAI-Q5\server\OutlookAI
+.McpServer.exe (99.99.99.0+fd2c58b1bfe90b99d01fb8d4522438d5900a7dae); Outlook 16.0.17932.20996
+[+   0,6s] session   A: server pid 7304 initialized in 512 ms
+[+   0,7s] tool      A: list_folders answered OutlookStarting at 102 ms (try 1); retrying in 2 s
+[+   4,9s] tool      A: list_folders ok in 4151 ms, 4429 bytes; COM host pid 3652
+[+   6,1s] state     sequential: A started Outlook and is ready (A alive): Explorers 1 (visible 0, hidden 1);
+ ActiveExplorer(): null; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 0 visible / 1 rctrl_renw
+nd32; top-level windows 0 visible / 24; dialogs 0
+[+   6,4s] end       A: stdin closed; server exited after 260 ms (exit code 0); its COM host gone
+[+   6,4s] state     sequential: A, the session that started Outlook, ended normally: no OUTLOOK.EXE
+[+   6,4s] end-ol    sequential: OUTLOOK.EXE exited 0 s after A's end was read, with no session attached
+[+   6,4s] done      scenario Sequential; OUTLOOK.EXE not running
+log: C:\OutlookAI-Q5\q118\q118-Sequential-20261003T202859.jsonl

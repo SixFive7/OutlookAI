@@ -1,0 +1,43 @@
+{
+    "Attached":  true,
+    "AttachError":  null,
+    "ExplorerCount":  3,
+    "Explorers":  [
+                      {
+                          "Index":  1,
+                          "Hwnd":  656680,
+                          "Visible":  "hidden",
+                          "Caption":  "Inbox - tier@vm.invalid - Outlook",
+                          "WindowState":  0,
+                          "Identity":  2230562218096
+                      },
+                      {
+                          "Index":  2,
+                          "Hwnd":  1770334,
+                          "Visible":  "hidden",
+                          "Caption":  "Inbox - tier@vm.invalid - Outlook",
+                          "WindowState":  2,
+                          "Identity":  2230562216704
+                      },
+                      {
+                          "Index":  3,
+                          "Hwnd":  1376902,
+                          "Visible":  "hidden",
+                          "Caption":  "Inbox - tier@vm.invalid - Outlook",
+                          "WindowState":  2,
+                          "Identity":  2230562214848
+                      }
+                  ],
+    "InspectorCount":  0,
+    "DefaultOutbox":  0,
+    "OutboxTotal":  0,
+    "OutboxStores":  2,
+    "OutboxErrors":  "store 3: TargetInvocationException; store 4: TargetInvocationException; ",
+    "Active":  "null",
+    "ActiveIndex":  -1,
+    "ActiveHwnd":  0,
+    "ActiveVisible":  "unknown",
+    "Errors":  "",
+    "QuitResult":  "",
+    "Closed":  -1
+}

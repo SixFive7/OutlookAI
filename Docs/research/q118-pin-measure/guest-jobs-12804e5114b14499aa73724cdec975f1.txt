@@ -1,0 +1,26 @@
+run level: Limited - this token is NOT elevated (read before the work ran)
+[+   0,0s] begin     scenario StarterLeaves on OAI-UNINDEXED as vmadmin; server C:\OutlookAI-Q5\server\Outloo
+kAI.McpServer.exe (99.99.99.0+fd2c58b1bfe90b99d01fb8d4522438d5900a7dae); Outlook 16.0.17932.20996
+[+   0,7s] session   A: server pid 1496 initialized in 590 ms
+[+   0,8s] tool      A: list_folders answered OutlookStarting at 98 ms (try 1); retrying in 2 s
+[+   5,1s] tool      A: list_folders ok in 4229 ms, 4429 bytes; COM host pid 9948
+[+   5,7s] session   B: server pid 2460 initialized in 566 ms
+[+   7,1s] tool      B: list_folders ok in 1328 ms, 4429 bytes; COM host pid 5344
+[+   8,0s] state     starterleaves: A started Outlook, B attached (both alive): Explorers 1 (visible 0, hidde
+n 1); ActiveExplorer(): null; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 0 visible / 1 rctrl
+_renwnd32; top-level windows 0 visible / 24; dialogs 0
+[+   8,3s] end       A: stdin closed; server exited after 219 ms (exit code 0); its COM host gone
+[+   8,3s] end-ol    starterleaves: A ended normally while B was attached -> OUTLOOK.EXE EXITED 0 s later
+[+   8,3s] state     starterleaves: after A ended (B alive): no OUTLOOK.EXE
+[+   8,3s] tool      B: list_folders answered OutlookStarting at 10 ms (try 1); retrying in 2 s
+[+  11,4s] tool      B: list_folders ok in 3123 ms, 4429 bytes; COM host pid 5344
+[+  11,4s] note      starterleaves: B's next list_folders ran against OUTLOOK.EXE pid 9548 (before A ended: 4
+744)
+[+  12,3s] state     starterleaves: after B called again: Explorers 1 (visible 0, hidden 1); ActiveExplorer()
+: null; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 0 visible / 1 rctrl_renwnd32; top-level w
+indows 0 visible / 24; dialogs 0
+[+  12,6s] end       B: stdin closed; server exited after 243 ms (exit code 0); its COM host gone
+[+  12,6s] state     starterleaves: B ended normally: no OUTLOOK.EXE
+[+  12,6s] done      scenario StarterLeaves; OUTLOOK.EXE not running
+log: C:\OutlookAI-Q5\q118\q118-StarterLeaves-20261003T204829.jsonl
+

@@ -1,0 +1,45 @@
+run level: Limited - this token is NOT elevated (read before the work ran)
+[+   0,0s] begin     scenario Killed on OAI-UNINDEXED as vmadmin; server C:\OutlookAI-Q5\server\OutlookAI.Mcp
+Server.exe (99.99.99.0+fd2c58b1bfe90b99d01fb8d4522438d5900a7dae); Outlook 16.0.17932.20996
+[+   0,9s] session   A: server pid 8840 initialized in 731 ms
+[+   1,1s] tool      A: list_folders answered OutlookStarting at 128 ms (try 1); retrying in 2 s
+[+   5,5s] tool      A: list_folders ok in 4491 ms, 4429 bytes; COM host pid 8700
+[+   6,9s] state     killed: A started Outlook (A alive): Explorers 1 (visible 0, hidden 1); ActiveExplorer()
+: null; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 0 visible / 1 rctrl_renwnd32; top-level w
+indows 0 visible / 24; dialogs 0
+[+   7,4s] kill      A: COM host 8700 terminated (gone)
+[+   8,2s] state     killed: A's COM host killed: Explorers 1 (visible 0, hidden 1); ActiveExplorer(): null; 
+Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 0 visible / 1 rctrl_renwnd32; top-level windows 0
+ visible / 24; dialogs 0
+[+   8,3s] end       A: stdin closed; server exited after 35 ms (exit code 0); its COM host was never seen
+[+  14,0s] state     killed: A's server ended, 5 s on: Explorers 1 (visible 0, hidden 1); ActiveExplorer(): n
+ull; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 0 visible / 2 rctrl_renwnd32; top-level wind
+ows 0 visible / 25; dialogs 0
+[+  14,4s] session   B: server pid 8776 initialized in 380 ms
+[+  15,4s] tool      B: list_folders ok in 1006 ms, 4429 bytes; COM host pid 9660
+[+  15,5s] end       B: stdin closed; server exited after 43 ms (exit code 0); its COM host gone
+[+  16,1s] state     killed: B ended normally: Explorers 1 (visible 0, hidden 1); ActiveExplorer(): null; Ins
+pectors 0; Outbox default 0, all 0 over 2 stores; frames 0 visible / 2 rctrl_renwnd32; top-level windows 0 vi
+sible / 25; dialogs 0
+[+  16,9s] session   C: server pid 5300 initialized in 752 ms
+[+  17,5s] session   D: server pid 4560 initialized in 602 ms
+[+  19,0s] tool      C: list_folders ok in 1514 ms, 4429 bytes; COM host pid 4276
+[+  19,0s] tool      D: list_folders ok in 1539 ms, 4429 bytes; COM host pid 4080
+[+  19,8s] state     killed: C and D alive at once: Explorers 1 (visible 0, hidden 1); ActiveExplorer(): null
+; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 0 visible / 2 rctrl_renwnd32; top-level windows
+ 0 visible / 25; dialogs 0
+[+  19,9s] end       C: stdin closed; server exited after 48 ms (exit code 0); its COM host gone
+[+  19,9s] end       D: stdin closed; server exited after 51 ms (exit code 0); its COM host gone
+[+  20,7s] state     killed: C and D ended normally: Explorers 1 (visible 0, hidden 1); ActiveExplorer(): nul
+l; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 0 visible / 2 rctrl_renwnd32; top-level window
+s 0 visible / 25; dialogs 0
+[+ 142,5s] end-ol    killed: Application.Quit(): quit-called -> OUTLOOK.EXE STILL RUNNING 120 s after the act
+ion (680 ms to return)
+[+ 143,4s] state     killed: after Quit, Outlook still up (this reading attaches): Explorers 1 (visible 0, hi
+dden 1); ActiveExplorer(): null; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 0 visible / 2 rc
+trl_renwnd32; top-level windows 0 visible / 25; dialogs 0
+[+ 145,5s] end-ol    killed leftover: closed 1 hidden Explorer(s) -> OUTLOOK.EXE EXITED 0,3 s after the actio
+n returned (1012 ms to return)
+[+ 145,5s] done      scenario Killed; OUTLOOK.EXE not running
+log: C:\OutlookAI-Q5\q118\q118-Killed-20261003T202925.jsonl
+

@@ -1,0 +1,46 @@
+staged: 500 files
+run level: Limited - this token is NOT elevated (read before the work ran)
+  Determining projects to restore...
+  Restored C:\OutlookAI-Q5\src-q118\McpServer\OutlookAI.RemediationTools\OutlookAI.RemediationTools.csproj (in 644 ms).
+  Restored C:\OutlookAI-Q5\src-q118\McpServer\OutlookAI.ComHost\OutlookAI.ComHost.csproj (in 644 ms).
+  Restored C:\OutlookAI-Q5\src-q118\McpServer\OutlookAI.Core\OutlookAI.Core.csproj (in 644 ms).
+  Restored C:\OutlookAI-Q5\src-q118\McpServer\OutlookAI.McpServer\OutlookAI.McpServer.csproj (in 1,16 sec).
+  Restored C:\OutlookAI-Q5\src-q118\McpServer\OutlookAI.McpServer.Tests\OutlookAI.McpServer.Tests.csproj (in 1,33 sec).
+  OutlookAI.Core -> C:\OutlookAI-Q5\src-q118\McpServer\OutlookAI.Core\bin\Release\net10.0-windows\OutlookAI.Core.dll
+  OutlookAI.ComHost -> C:\OutlookAI-Q5\src-q118\McpServer\OutlookAI.ComHost\bin\Release\net10.0-windows\OutlookAI.ComHost.dll
+  OutlookAI.RemediationTools -> C:\OutlookAI-Q5\src-q118\McpServer\OutlookAI.RemediationTools\bin\Release\net10.0-windows\OutlookAI.RemediationTools.dll
+  OutlookAI.McpServer -> C:\OutlookAI-Q5\src-q118\McpServer\OutlookAI.McpServer\bin\Release\net10.0-windows\OutlookAI.McpServer.dll
+  OutlookAI.McpServer.Tests -> C:\OutlookAI-Q5\src-q118\McpServer\OutlookAI.McpServer.Tests\bin\Release\net10.0-windows\OutlookAI.McpServer.Tests.dll
+Test run for C:\OutlookAI-Q5\src-q118\McpServer\OutlookAI.McpServer.Tests\bin\Release\net10.0-windows\OutlookAI.McpServer.Tests.dll (.NETCoreApp,Version=v10.0)
+A total of 1 test files matched the specified pattern.
+[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v3.1.5+1b188a7b0a (64-bit .NET 10.0.12)
+[xUnit.net 00:00:04.84]   Discovering: OutlookAI.McpServer.Tests (app domain = off, method display = ClassAndMethod, method display options = None)
+[xUnit.net 00:00:05.46]   Discovered:  OutlookAI.McpServer.Tests (3650 test cases to be run)
+[xUnit.net 00:00:05.50]   Starting:    OutlookAI.McpServer.Tests (parallel test collections = off, stop on fail = off, explicit = off)
+[preflight] Outlook responsive (0 of 3 UI windows hung) - live tier may run.
+[sink] submission 127.0.0.1:25 and retrieval 127.0.0.1:110 both answering.
+[sink] submission 127.0.0.1:25 greets as SMTP and retrieval 127.0.0.1:110 as POP3.
+[tripwire] live-test settings: machineProfile=Portable, writes=hub allowlist, stores=3, indexed=0, delegateStores=0, bystanders=1, probeTerm=none, subjectOnlyProbe=none, corpus=none, mailSink=127.0.0.1:25.
+[tripwire] watch soundness: 1 declared bystander(s), 1 store(s) this census can fail on, 1 watched store(s) the suite may still write to.
+[tripwire] retry policy None: NO RETRIES - the post-run census is the verdict.
+[tripwire] baseline census of 'tier@vm.invalid': 18 mail folder(s), 18 folder(s) measured, 0 folder(s), 0 item(s) identified, 464 ms.
+[tripwire] baseline census of 'bystander@vm.invalid': 5 mail folder(s), 5 folder(s) measured, 4 folder(s), 300 item(s) identified, 479 ms.
+[tripwire] baseline census of 'identity@vm.invalid': 8 mail folder(s), 8 folder(s) measured, 7 folder(s), 8 item(s) identified, 411 ms.
+[tripwire] baseline: 3 stores, 31 mail folders, identified 11 folder(s)/308 item(s), 1356 ms.
+[xUnit.net 00:00:08.85]     OutlookAI.McpServer.Tests.T2.LivePinWindowTests.ASecondSession_FindingAnExplorer_AddsNoPin_AndLeavesNoExplorerBehind [PASS]
+[xUnit.net 00:00:08.85]       Output:
+[xUnit.net 00:00:08.85]         before: Explorers 1 (visible 1, hidden 0, unreadable 0); ActiveExplorer(): a visible Explorer
+[xUnit.net 00:00:08.85]         second session: pinned=False startedOutlook=False; Explorers while it was connected: 1
+[xUnit.net 00:00:08.85]         after it ended: Explorers 1 (visible 1, hidden 0, unreadable 0); ActiveExplorer(): a visible Explorer
+  Passed OutlookAI.McpServer.Tests.T2.LivePinWindowTests.ASecondSession_FindingAnExplorer_AddsNoPin_AndLeavesNoExplorerBehind [1 s]
+[tripwire] post-run census of 'tier@vm.invalid': 18 mail folder(s), 18 folder(s) measured, 0 folder(s), 0 item(s) identified, 353 ms.
+[tripwire] post-run census of 'bystander@vm.invalid': 5 mail folder(s), 5 folder(s) measured, 4 folder(s), 300 item(s) identified, 266 ms.
+[tripwire] post-run census of 'identity@vm.invalid': 8 mail folder(s), 8 folder(s) measured, 7 folder(s), 8 item(s) identified, 286 ms.
+[tripwire] post-run census in 906 ms (identified 11 folder(s)/308 item(s)); 0 failure(s), 0 note(s); retry: none needed.
+[xUnit.net 00:00:20.45]   Finished:    OutlookAI.McpServer.Tests
+
+Test Run Successful.
+Total tests: 1
+     Passed: 1
+ Total time: 24,0197 Seconds
+Results File: C:\OutlookAI-Q5\src-q118\McpServer\OutlookAI.McpServer.Tests\TestResults\q118-live.trx

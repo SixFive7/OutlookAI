@@ -1,0 +1,41 @@
+run level: Limited - this token is NOT elevated (read before the work ran)
+[+   0,0s] begin     scenario Headless on OAI-UNINDEXED as vmadmin; server C:\OutlookAI-Q5\server\OutlookAI.M
+cpServer.exe (99.99.99.0+fd2c58b1bfe90b99d01fb8d4522438d5900a7dae); Outlook 16.0.17932.20996
+[+   3,2s] holder    headless: plain COM client pid 5268 holds Outlook (3,1 s)
+[+  24,6s] state     headless: Outlook started by a plain COM client, no OutlookAI session yet: Explorers 0 (
+visible 0, hidden 0); ActiveExplorer(): null; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 0 v
+isible / 1 rctrl_renwnd32; top-level windows 0 visible / 17; dialogs 0
+[+  33,9s] session   H1: server pid 6700 initialized in 9.277 ms
+[+  34,7s] session   H2: server pid 2576 initialized in 783 ms
+[+  35,5s] session   H3: server pid 3400 initialized in 813 ms
+[+  41,2s] tool      H1: list_folders ok in 5578 ms, 4429 bytes; COM host pid 7120
+[+  41,3s] tool      H2: list_folders ok in 5688 ms, 4429 bytes; COM host pid 888
+[+  41,3s] tool      H3: list_folders ok in 5755 ms, 4429 bytes; COM host pid 9520
+[+  43,5s] state     headless: H1-H3 alive at once: Explorers 3 (visible 0, hidden 3); ActiveExplorer(): null
+; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 0 visible / 4 rctrl_renwnd32; top-level windows
+ 0 visible / 33; dialogs 0
+[+  43,7s] end       H1: stdin closed; server exited after 70 ms (exit code 0); its COM host gone
+[+  43,7s] end       H2: stdin closed; server exited after 90 ms (exit code 0); its COM host gone
+[+  43,8s] end       H3: stdin closed; server exited after 117 ms (exit code 0); its COM host gone
+[+  44,6s] state     headless: H1-H3 ended normally: Explorers 3 (visible 0, hidden 3); ActiveExplorer(): nul
+l; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 0 visible / 4 rctrl_renwnd32; top-level window
+s 0 visible / 33; dialogs 0
+[+  45,2s] session   H4: server pid 8524 initialized in 560 ms
+[+  46,4s] tool      H4: list_folders ok in 1236 ms, 4429 bytes; COM host pid 3020
+[+  46,5s] end       H4: stdin closed; server exited after 65 ms (exit code 0); its COM host gone
+[+  47,4s] state     headless: H4 ended normally: Explorers 3 (visible 0, hidden 3); ActiveExplorer(): null; 
+Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 0 visible / 4 rctrl_renwnd32; top-level windows 0
+ visible / 33; dialogs 0
+[+  47,7s] holder    headless: holder let go and exited
+[+  58,6s] state     headless: holder gone, 10 s on: Explorers 3 (visible 0, hidden 3); ActiveExplorer(): nul
+l; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 0 visible / 4 rctrl_renwnd32; top-level window
+s 0 visible / 33; dialogs 0
+[+ 181,5s] end-ol    headless: Application.Quit(): quit-called -> OUTLOOK.EXE STILL RUNNING 120 s after the a
+ction (1224 ms to return)
+[+ 183,4s] state     headless: after Quit, Outlook still up (this reading attaches): Explorers 3 (visible 0, 
+hidden 3); ActiveExplorer(): null; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 0 visible / 4 
+rctrl_renwnd32; top-level windows 0 visible / 33; dialogs 0
+[+ 186,5s] end-ol    headless leftover: closed 3 hidden Explorer(s) -> OUTLOOK.EXE EXITED 0 s after the actio
+n returned (1728 ms to return)
+[+ 186,6s] done      scenario Headless; OUTLOOK.EXE not running
+log: C:\OutlookAI-Q5\q118\q118-Headless-20261003T204413.jsonl

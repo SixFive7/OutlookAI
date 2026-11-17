@@ -1,0 +1,27 @@
+{
+    "Attached":  true,
+    "AttachError":  null,
+    "ExplorerCount":  1,
+    "Explorers":  [
+                      {
+                          "Index":  1,
+                          "Hwnd":  590536,
+                          "Visible":  "visible",
+                          "Caption":  "Inbox - tier@vm.invalid - Outlook",
+                          "WindowState":  0,
+                          "Identity":  1721913113264
+                      }
+                  ],
+    "InspectorCount":  0,
+    "DefaultOutbox":  0,
+    "OutboxTotal":  0,
+    "OutboxStores":  2,
+    "OutboxErrors":  "store 3: TargetInvocationException; store 4: TargetInvocationException; ",
+    "Active":  "explorer",
+    "ActiveIndex":  1,
+    "ActiveHwnd":  590536,
+    "ActiveVisible":  "visible",
+    "Errors":  "",
+    "QuitResult":  "",
+    "Closed":  -1
+}

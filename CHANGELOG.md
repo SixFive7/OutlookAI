@@ -171,6 +171,17 @@ its mailbox tests on, and change nothing you install.
   check fails, the reason is written out in full here rather than hidden behind a link. Both
   indicators now take their wording from one place, so they cannot disagree.
 
+- 📝 **The probe the D49 design rests on, and the raw Q118 pin logs, are kept in Docs/research.**
+  The 2026-07-31 probe behind the invisible compose surface and the lifetime pin, recovered from its
+  session transcript, and the raw logs of the Q118 pin measurement of 2026-10-03 were each in one
+  scratch folder until now. Identifiers are replaced, and the probe's scripts and sources are kept as
+  text so nothing runs them. Read against the probe's own results, the D49 record overstates in four
+  ways, now written down beside them: it gives no sample sizes (22 runs in all), three of its runs
+  attached to an Outlook an earlier run had started instead of a fresh one, rows 3, 7, 8 and 9
+  overstate survival, and its 53-79 ms to an editor leaves out the 314-611 ms Activate before it. A
+  TODO note saying an Outlook that outlived its holder without a pin weakened the pin's case is
+  corrected: a holder's death releases references, and the pin guards against a window closing.
+
 - ✅ **The Q149 measurement of how drafts are written runs as live tests on the test machines.**
   Three T2 classes in a collection of their own measure, on Office LTSC 2024, whether closing a
   draft's hidden compose window ends an Outlook that has no window when no lifetime pin holds it,

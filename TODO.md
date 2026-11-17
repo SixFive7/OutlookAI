@@ -2723,8 +2723,13 @@
       throughout. So a host killed while holding a pin leaves an invisible window behind: a slow
       accumulation over many kills, and an irritation to a human who then tries to exit Outlook
       and finds it will not go. It is not a wedge and it is not why anything blocked. Note also
-      that **in the first trial `OUTLOOK.EXE` survived the holder's death with NO pin at all** -
-      which weakens the pin's own justification, since the pin exists to keep Outlook alive.
+      that **in the first trial `OUTLOOK.EXE` survived the holder's death with NO pin at all.** That
+      does not weaken the pin's justification, as this note used to say (corrected 2026-11-17, Q149):
+      a holder's death releases its references, which only starts Outlook's reference-counted wait -
+      about 11.5 minutes on Office LTSC 2021 - while what the pin guards against is a WINDOW closing:
+      the hidden compose inspector's close, which ends a window-less Outlook at once even with
+      references held (D49 row 1, 2 of 2 on LTSC 2021; measured on LTSC 2024 by Q149's cell L1,
+      `Docs/research/q149-draft-text/`).
 
       **DECIDED 2026-09-15: do not chase the sink now.** It is the only one of the three where a
       pointer is handed **into** Outlook rather than held by us, which is why it is worth testing

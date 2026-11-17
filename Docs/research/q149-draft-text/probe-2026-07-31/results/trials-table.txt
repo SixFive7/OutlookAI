@@ -1,0 +1,24 @@
+transcriptLine | utc | state | pid | cold(startMs>1000) | explorersAtStart->afterSetup | path | wordEditor | closeMs | aliveAfterClose(300ms) | verifyError | deleteError | aliveAtEnd(after Quit+<=20s)
+L105 | 2026-07-31T06:33:41.783Z | headless | 48156 | True | 0->0 | htmlFallback | False | None | False |  |  | False
+L128 | 2026-07-31T06:36:02.646Z | inspector-activate | 11368 | True | 0->0 | wordEditor | True | 127 | True | COMException: The RPC server is unavailable. (0x800706BA) | COMException: The RPC server is unavailable. (0x800706BA) | False
+L128 | 2026-07-31T06:36:02.646Z | inspector-display-hide | 20220 | True | 0->0 | wordEditor | True | 111 | False |  |  | False
+L128 | 2026-07-31T06:36:02.646Z | explorer-nodisplay | 23928 | True | 0->1 | htmlFallback | False | None | True |  |  | True
+L128 | 2026-07-31T06:36:02.646Z | explorer-min | 23928 | False | 1->2 | wordEditor | True | 39 | True | COMException: Could not open the item. Try again. | COMException: Could not open the item. Try again. | False
+L128 | 2026-07-31T06:36:02.646Z | explorer-offscreen | 66968 | True | 0->1 | wordEditor | True | 57 | True | COMException: Could not open the item. Try again. | COMException: Could not open the item. Try again. | False
+L128 | 2026-07-31T06:36:02.646Z | htmlnative | 72092 | True | 0->0 | None | None | None | None |  |  | None | fatal: NotSupportedException: No data is available for encoding 1252. For information on defining
+L128 | 2026-07-31T06:36:02.646Z | explorer-then-close | 72304 | True | 0->0 | None | None | None | None |  |  | None | fatal: MissingMemberException: Could not get dispatch ID for Items (error: 0x800706BA)).
+L155 | 2026-07-31T06:37:52.750Z | headless | 5708 | True | 0->0 | htmlFallback | False | None | False |  |  | False
+L155 | 2026-07-31T06:37:52.750Z | inspector-activate | 11788 | True | 0->0 | wordEditor | True | 116 | False |  |  | False
+L155 | 2026-07-31T06:37:52.750Z | inspector-activate | 40564 | True | 0->0 | wordEditor | True | 120 | False |  |  | False
+L175 | 2026-07-31T06:39:46.979Z | htmlnative | 53800 | True | 0->0 | htmlnative | False | None | True |  |  | True
+L175 | 2026-07-31T06:39:46.979Z | offscreen-activate | 53800 | False | 0->0 | wordEditor | True | 126 | True |  |  | False
+L184 | 2026-07-31T06:41:05.718Z | offscreen-activate | 61716 | True | 0->0 | wordEditor | True | 137 | False |  |  | False
+L184 | 2026-07-31T06:41:05.718Z | pinned-headless | 70448 | True | 0->1 | htmlFallback | False | None | True |  |  | True
+L201 | 2026-07-31T06:42:46.312Z | pinned-hidden-activate | 2788 | True | 0->1 | wordEditor | True | 57 | True |  |  | False
+L201 | 2026-07-31T06:42:46.312Z | hidden-activate | 55512 | True | 0->0 | wordEditor | True | 72 | True |  | COMException: Could not complete the deletion. The items may | False
+L201 | 2026-07-31T06:42:46.312Z | pinned-hidden-activate | 67832 | True | 0->1 | wordEditor | True | 53 | True |  |  | False
+L219 | 2026-07-31T06:44:07.466Z | pin-then-launch | 46988 | True | 0->None | None | None | None | None |  |  | None
+L219 | 2026-07-31T06:44:07.466Z | hidden-explorer | 72536 | True | 0->1 | wordEditor | True | 42 | True |  |  | False
+L184 | 2026-07-31T06:41:05.718Z | pinned-offscreen-activate | 65444 | True | 0->1 | wordEditor | True | 114 | True | (row printed truncated at 1300 chars by the 07-31 agent; fields after aliveAfterClose not recoverable)
+L184 | 2026-07-31T06:41:05.718Z | pinned-offscreen-activate | 24292 | True | 0->1 | wordEditor | True | 155 | True | (truncated as above)
+L184 | 2026-07-31T06:41:05.718Z | inspector-activate-saved | 70448 | False | 1->1 (leftover pin of the pinned-headless run, same pid) | wordEditor | True | 87 | True | verify ok, artifactDeleted true (truncated after)
