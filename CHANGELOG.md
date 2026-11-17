@@ -1777,8 +1777,9 @@ its mailbox tests on, and change nothing you install.
   another, and the test failed on both. It now checks what the product promises instead: every line
   written without the lock says so, exactly as many per writer as that writer's own count of
   appends that ran out the wait, the lines written under the lock are in time order, and most lines
-  were written under it. How many lines waited it out goes to the test's output. The lock's wait is
-  unchanged.
+  were written under it. How many lines waited it out goes to the test's output. A new test holds
+  the lock until three writers have each run out the wait, so that path is checked on every build,
+  not only on a busy machine. The lock's wait is unchanged.
 
 - ✅ **The signature test swaps one signature for another and checks the first is gone.**
   The test meant to prove that a draft's signature can be replaced applied the same signature a

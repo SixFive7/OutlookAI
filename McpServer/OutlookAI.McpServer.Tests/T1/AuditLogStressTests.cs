@@ -19,7 +19,8 @@ namespace OutlookAI.McpServer.Tests.T1;
 /// <para>
 /// What is asserted, run by run: with the lock, every line whole, each writer's lines complete and in
 /// its own order, every line written without the lock marked so, and the lines written under it in time
-/// order; with the lock DISABLED, every line still whole and none
+/// order - on a quiet machine, on a starved one, and with the lock held past its wait on purpose; with
+/// the lock DISABLED, every line still whole and none
 /// lost - the measurement of whether two append-only writes can interleave their bytes, which Windows
 /// does not document; and with a writer killed in the middle of an append (holding the lock, half a
 /// line written), exactly one fragment, detected, the next line on a line of its own, the lock passed
@@ -113,24 +114,7 @@ public sealed class AuditLogStressTests : IDisposable
             + "; time inversions among the locked lines: " + lockedInversions.ToString(CultureInfo.InvariantCulture)
             + ", in the file as a whole: " + fileInversions.ToString(CultureInfo.InvariantCulture));
 
-        // With the lock on, a line was written under it, or says its writer ran out the wait.
-        Assert.All(lines, line => Assert.True(
-            line.WriterLock == null || line.WriterLock == AuditLog.LockTimeout,
-            Field(line, "writer") + " line " + Field(line, "n") + " says lock=\"" + line.WriterLock + "\""));
-
-        // Every append that ran out the wait says so: per writer, the lines marked timeout are exactly
-        // the appends that writer's own counter saw time out - none unmarked, none marked for nothing.
-        foreach (Writer writer in writers)
-        {
-            long marked = lines.Count(l => Field(l, "writer") == writer.Name && l.WriterLock == AuditLog.LockTimeout);
-            Assert.True(
-                marked == writer.LockTimeouts(),
-                writer.Name + ": " + marked.ToString(CultureInfo.InvariantCulture) + " line(s) marked timeout, and the writer counted "
-                    + writer.LockTimeouts().ToString(CultureInfo.InvariantCulture) + " append(s) that ran out the wait - " + writer.Transcript());
-        }
-
-        // Ordered where it promises order: the timestamp is taken while the lock is held.
-        Assert.Equal(0, lockedInversions);
+        AssertTheLocksPromise(lines, writers);
 
         // And the lock worked: a lock nobody could take would mark every line.
         Assert.True(
@@ -141,6 +125,48 @@ public sealed class AuditLogStressTests : IDisposable
         // And had any of it been lost, it would show: the same log with lines taken out and lines
         // damaged reports exactly those, by writer and number.
         LossOnThisLogIsVisible(writers);
+    }
+
+    /// <summary>
+    /// The case the lock-on run meets only on a starved machine, made to happen: this process takes the
+    /// writer lock before three writers start and holds it until each has appended a line, so each one's
+    /// first append ran out <see cref="AuditLog.WriterLockWaitMilliseconds"/> and appended anyway -
+    /// marked <c>lock="timeout"</c>, and counted by the writer - and once the lock is let go the rest
+    /// are written under it, in time order.
+    /// </summary>
+    [Fact]
+    public void WritersHeldOffPastTheLocksWait_AppendAnyway_MarkTheLine_AndCountIt()
+    {
+        Writer[] writers = StartWriters("held", lockOn: true, net10: 2, net48: 1, lines: 10);
+        Stopwatch elapsed;
+        using (AuditLog.AuditWriterLock held = AuditLog.AuditWriterLock.Acquire(LogPath))
+        {
+            Assert.True(held.Owned, "this process could not take the writer lock to hold it");
+            elapsed = Go(writers);
+
+            // Held until every writer has a line in the log - which, while this process holds the lock,
+            // only an append that ran out the wait can write. However slow the machine, then.
+            Stopwatch waited = Stopwatch.StartNew();
+            while (writers.Any(w => CountLinesOf(w.Name) == 0))
+            {
+                Assert.True(waited.Elapsed < RunTimeout, "not every writer appended while the lock was held");
+                Thread.Sleep(250);
+            }
+        }
+
+        WaitAll(writers);
+        elapsed.Stop();
+
+        Report("lock held past the wait", writers, elapsed);
+        List<AuditLogEntry> lines = VerifyEveryLine(writers, out AuditLogScan scan);
+        _output.WriteLine("  lines written without the lock (marked timeout): " + scan.LinesWithoutWriterLock.ToString(CultureInfo.InvariantCulture));
+
+        foreach (Writer writer in writers)
+        {
+            Assert.True(writer.LockTimeouts() >= 1, writer.Name + " never ran out the wait, although the lock was held past it: " + writer.Transcript());
+        }
+
+        AssertTheLocksPromise(lines, writers);
     }
 
     [Fact]
@@ -487,6 +513,30 @@ public sealed class AuditLogStressTests : IDisposable
 
         AuditLogScan scan = AuditLogReader.Read(LogPath, new AuditLogFilter(null, null, null, null), 100_000);
         return scan.Entries.Count(e => Field(e, "writer") == writer);
+    }
+
+    /// <summary>
+    /// What the writer lock promises, with the lock on: a line was written under it or says its writer
+    /// ran out the wait; per writer, the lines marked <c>timeout</c> are exactly the appends that writer's
+    /// own <see cref="AuditLog.WriterLockTimeouts"/> counted - none unmarked, none marked for nothing; and
+    /// the lines written under it are in time order, because the timestamp is taken while it is held.
+    /// </summary>
+    private static void AssertTheLocksPromise(List<AuditLogEntry> lines, Writer[] writers)
+    {
+        Assert.All(lines, line => Assert.True(
+            line.WriterLock == null || line.WriterLock == AuditLog.LockTimeout,
+            Field(line, "writer") + " line " + Field(line, "n") + " says lock=\"" + line.WriterLock + "\""));
+
+        foreach (Writer writer in writers)
+        {
+            long marked = lines.Count(l => Field(l, "writer") == writer.Name && l.WriterLock == AuditLog.LockTimeout);
+            Assert.True(
+                marked == writer.LockTimeouts(),
+                writer.Name + ": " + marked.ToString(CultureInfo.InvariantCulture) + " line(s) marked timeout, and the writer counted "
+                    + writer.LockTimeouts().ToString(CultureInfo.InvariantCulture) + " append(s) that ran out the wait - " + writer.Transcript());
+        }
+
+        Assert.Equal(0, CountTimeInversions(lines, lockedOnly: true));
     }
 
     private static int CountTimeInversions(List<AuditLogEntry> lines, bool lockedOnly)
