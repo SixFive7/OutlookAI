@@ -129,7 +129,7 @@ namespace OutlookAI.Core.Services
                 return "the default is set for every account by " + SignaturePolicy.Describe(policy.NewMessageSource ?? policy.ReplyForwardSource);
             }
 
-            if (entry.AccountKind == MailAccountKind.Exchange && environment.Roaming.MayRoam)
+            if (entry.AccountKind == MailAccountKind.Exchange && environment.Roaming.MayRoamFor(entry.Address))
             {
                 return "an Exchange account whose signatures may roam (" + environment.Roaming.Reason + "): change its defaults in Outlook";
             }

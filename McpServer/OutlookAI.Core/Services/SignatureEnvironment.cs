@@ -384,26 +384,42 @@ namespace OutlookAI.Core.Services
         }
     }
 
-    /// <summary>Whether this Outlook can roam signatures through the mailbox (Q152).</summary>
+    /// <summary>Whether this Outlook roams signatures through the mailbox (Q152).</summary>
     public enum SignatureRoamingState
     {
-        /// <summary>It cannot: switched off, or an Office that predates the feature. Local files are authoritative.</summary>
+        /// <summary>
+        /// It does not, as far as can be told: switched off, an Office that predates the feature, or a
+        /// perpetual Office (LTSC, retail) showing no sign of it. The signature files on this machine are
+        /// authoritative.
+        /// </summary>
         Off,
 
         /// <summary>Microsoft 365 Apps on a build that roams: an Exchange Online account's signatures may live in its mailbox.</summary>
         Possible,
 
-        /// <summary>Not known for this Office (LTSC 2024, retail perpetual Office, an unreadable build): treated as Possible.</summary>
-        Unknown,
+        /// <summary>
+        /// Outlook keeps local copies of roaming signatures here - signatures named
+        /// <c>Name (address)</c> after an Exchange account of this computer's profiles - whatever the
+        /// Office: those accounts' signatures live in their mailboxes.
+        /// </summary>
+        Evident,
     }
 
     /// <summary>
     /// Roaming signatures, as far as this machine can say without the mailbox (Q152 (a)). Microsoft:
     /// "available for Outlook build 2303 or higher", for "mailboxes on Microsoft 365 or Outlook.com",
-    /// switched off by <c>DisableRoamingSignatures</c> (DWORD 1) under <c>Outlook\Setup</c> or its
-    /// policy copy; <c>DisableRoamingSignaturesTemporaryToggle</c> is the earlier name and "either key
-    /// works" (slipstick). Outlook keeps a local copy of each roaming signature named
+    /// switched off by <c>DisableRoamingSignatures</c> (DWORD 1) under <c>Outlook\Setup</c> or its policy
+    /// copy; <c>DisableRoamingSignaturesTemporaryToggle</c> is the earlier name and "either key works"
+    /// (slipstick). Outlook keeps a local copy of each roaming signature named
     /// <c>&lt;name&gt; (&lt;address&gt;)</c>.
+    /// <para>
+    /// <b>Generic on purpose (2026-11-17).</b> Office LTSC 2024 showed no sign of roaming on the
+    /// Exchange test machine - Outlook's classic Signatures dialog, no account selector, no copies
+    /// (stream A's R1) - but that is not proof, so a perpetual Office is OFF only until Outlook's own
+    /// copies say otherwise: <see cref="WithEvidence"/> turns it EVIDENT for exactly the Exchange
+    /// accounts that have them. Microsoft 365 Apps is POSSIBLE on Microsoft's word alone. Switched
+    /// off, or an Office too old for the feature, stays off whatever files lie about.
+    /// </para>
     /// </summary>
     public sealed class SignatureRoaming
     {
@@ -417,12 +433,20 @@ namespace OutlookAI.Core.Services
         public const string DisableTemporaryToggleValueName = "DisableRoamingSignaturesTemporaryToggle";
 
         /// <summary>Creates the view.</summary>
-        public SignatureRoaming(SignatureRoamingState state, string reason, string? switchedOffAt, OfficeBuildInfo build)
+        public SignatureRoaming(
+            SignatureRoamingState state,
+            string reason,
+            string? switchedOffAt,
+            OfficeBuildInfo build,
+            bool evidenceDecides = false,
+            IReadOnlyList<string>? evidentAccounts = null)
         {
             State = state;
             Reason = reason;
             SwitchedOffAt = switchedOffAt;
             Build = build;
+            EvidenceDecides = evidenceDecides;
+            EvidentAccounts = evidentAccounts ?? Array.Empty<string>();
         }
 
         /// <summary>The verdict.</summary>
@@ -437,11 +461,27 @@ namespace OutlookAI.Core.Services
         /// <summary>What Click-to-Run says this Office is.</summary>
         public OfficeBuildInfo Build { get; }
 
-        /// <summary>True unless roaming is ruled out: suffixed signatures are then local copies of mailbox signatures.</summary>
+        /// <summary>True when Outlook's own local copies decide it - a perpetual Office, or an unreadable build.</summary>
+        public bool EvidenceDecides { get; }
+
+        /// <summary>The Exchange accounts with local copies of roaming signatures on this computer.</summary>
+        public IReadOnlyList<string> EvidentAccounts { get; }
+
+        /// <summary>True when any account's signatures may live in its mailbox.</summary>
         public bool MayRoam => State != SignatureRoamingState.Off;
 
-        /// <summary>The state in the answers' vocabulary: off, possible, unknown.</summary>
-        public string Token => State == SignatureRoamingState.Off ? "off" : State == SignatureRoamingState.Possible ? "possible" : "unknown";
+        /// <summary>The state in the answers' vocabulary: off, possible, evident.</summary>
+        public string Token => State == SignatureRoamingState.Off ? "off" : State == SignatureRoamingState.Possible ? "possible" : "evident";
+
+        /// <summary>
+        /// True when THIS account's signatures may live in its mailbox: every account where roaming is
+        /// possible, only the accounts with copies where it is evident.
+        /// </summary>
+        public bool MayRoamFor(string? account)
+        {
+            return State == SignatureRoamingState.Possible
+                || (State == SignatureRoamingState.Evident && EvidentAccounts.Any(a => ProfileAccountEntries.AddressEquals(a, account)));
+        }
 
         /// <summary>HKCU paths of the two Setup keys that can carry the switch.</summary>
         public static IReadOnlyList<string> SwitchKeyPaths(string officeVersion)
@@ -453,7 +493,7 @@ namespace OutlookAI.Core.Services
             };
         }
 
-        /// <summary>Reads and decides for one Office major.</summary>
+        /// <summary>Reads and decides for one Office major, before any evidence.</summary>
         public static SignatureRoaming Read(ISignatureSettingsRegistry registry, string officeVersion)
         {
             if (registry == null)
@@ -484,7 +524,7 @@ namespace OutlookAI.Core.Services
                 : value is string text && string.Equals(text.Trim(), "1", StringComparison.Ordinal);
         }
 
-        /// <summary>The decision itself. Pure.</summary>
+        /// <summary>The decision from the settings alone. Pure.</summary>
         public static SignatureRoaming Decide(string officeVersion, OfficeBuildInfo build, string? switchedOffAt)
         {
             if (build == null)
@@ -512,23 +552,52 @@ namespace OutlookAI.Core.Services
                     + "), the first that roams signatures; the signature files on this machine are authoritative", null, build);
             }
 
-            if (build.Build == null)
-            {
-                return new SignatureRoaming(SignatureRoamingState.Unknown,
-                    "the Office build could not be read, so roaming signatures cannot be ruled out", null, build);
-            }
-
-            if (build.IsMicrosoft365)
+            if (build.Build != null && build.IsMicrosoft365)
             {
                 return new SignatureRoaming(SignatureRoamingState.Possible,
                     "Microsoft 365 Apps " + build.Version + " roams the signatures of Exchange Online and Outlook.com accounts unless "
                     + DisableValueName + " is set", null, build);
             }
 
-            return new SignatureRoaming(SignatureRoamingState.Unknown,
-                "Office " + (build.ProductReleaseIds ?? "(product unknown)") + " " + build.Version
-                + " is not Microsoft 365 Apps; whether it roams signatures has not been measured, so it is treated as if it may",
-                null, build);
+            return new SignatureRoaming(SignatureRoamingState.Off,
+                (build.Build == null
+                    ? "the Office build could not be read"
+                    : "Office " + (build.ProductReleaseIds ?? "(product unknown)") + " " + build.Version + " is not Microsoft 365 Apps")
+                + ", so the signature files on this machine are authoritative - unless Outlook keeps roaming copies here (signatures "
+                + "named 'Name (address)' after an Exchange account), which would show that it roams after all",
+                null, build, evidenceDecides: true);
+        }
+
+        /// <summary>
+        /// This verdict with Outlook's own local copies taken into account: where the files decide, a
+        /// signature named after an EXCHANGE account of this computer's profiles - <c>Name (address)</c>,
+        /// the only accounts that roam - makes it EVIDENT for those accounts. A final verdict (switched
+        /// off, too old, Microsoft 365) is returned unchanged. Pure.
+        /// </summary>
+        public SignatureRoaming WithEvidence(IEnumerable<string> signatureNames, IEnumerable<string> exchangeAccounts)
+        {
+            if (!EvidenceDecides)
+            {
+                return this;
+            }
+
+            List<string> exchange = (exchangeAccounts ?? Array.Empty<string>()).ToList();
+            List<string> evident = (signatureNames ?? Array.Empty<string>())
+                .Select(AccountSuffixOf)
+                .Where(a => a != null && exchange.Any(e => ProfileAccountEntries.AddressEquals(e, a)))
+                .Select(a => a!)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(a => a, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (evident.Count == 0)
+            {
+                return this;
+            }
+
+            return new SignatureRoaming(SignatureRoamingState.Evident,
+                "Outlook keeps local copies of roaming signatures of " + string.Join(", ", evident) + " here (signatures named "
+                + "'Name (address)'), so those accounts' signatures live in their mailboxes",
+                SwitchedOffAt, Build, evidenceDecides: true, evidentAccounts: evident);
         }
 
         /// <summary>
@@ -667,7 +736,7 @@ namespace OutlookAI.Core.Services
         /// </summary>
         public bool IsManagedInMailbox(SignatureInfo signature)
         {
-            return signature != null && signature.ScopeAccount != null && Roaming.MayRoam;
+            return signature != null && signature.ScopeAccount != null && Roaming.MayRoamFor(signature.ScopeAccount);
         }
 
         /// <summary>The live environment, read now.</summary>
@@ -713,7 +782,16 @@ namespace OutlookAI.Core.Services
                 SignatureRoaming.Decide(officeVersion, OfficeBuildInfo.Unknown, null), "the roaming-signature settings", problems);
             IReadOnlyList<SignatureInfo> signatures = Guard(
                 () => SignatureCatalog.ListSignatures(folder.Path), Array.Empty<SignatureInfo>(), "the signature folder", problems);
+            roaming = roaming.WithEvidence(signatures.Select(s => s.Name), ExchangeAddresses(entries));
             return new SignatureEnvironment(folder, profiles, entries, policy, roaming, signatures, problems, officeVersion);
+        }
+
+        /// <summary>The addresses of every profile's Exchange accounts - the only ones whose signatures roam.</summary>
+        public static IEnumerable<string> ExchangeAddresses(IEnumerable<ProfileAccountEntry> entries)
+        {
+            return entries
+                .Where(e => e.Kind == ProfileEntryKind.MailAccount && e.AccountKind == MailAccountKind.Exchange && e.Address != null)
+                .Select(e => e.Address!);
         }
 
         private static T Guard<T>(Func<T> read, T fallback, string what, List<string> problems)

@@ -1841,6 +1841,43 @@
   Exchange test VM. Once it does: enable them there, and move test writes from telefonie into the
   shared mailbox wherever a test allows it (Q110).
 
+- [ ] **Match a reply from a shared or delegate mailbox to Outlook's own signature (Q160, after
+  Q109).** Such a reply has no sending account of the profile, so OutlookAI puts no default signature
+  in and the draft's signatureReason says so (`Core/Services/SignatureSelection.cs`, the delegate
+  branch of `EffectiveDefault`); a named signature still goes in. Once the shared test mailbox exists,
+  measure what Outlook itself inserts in a reply from it, through a tagged live-tier draft, and make
+  the delegate branch do the same.
+
+- [ ] **Measure whether Outlook lets one message use another signature, or none, under a policy-forced
+  default (Q156, G2's policy half).** Until it is measured, OutlookAI refuses a different signature and
+  "none" while Group Policy or Cloud Policy forces a default (`SignatureSelector.ForcedConflict`). The
+  live tier cannot set a policy: `HKCU\Software\Policies` is read-only for the user (its ACL grants
+  ReadKey, checked on the workstation 2026-11-17), and the suite runs at RunLevel Limited. It needs an
+  elevated step on a PST guest before the suite - a parameter of `Invoke-LiveTierOnGuest.ps1` that
+  writes the policy values over PowerShell Direct, undone by the checkpoint restore - then a live test
+  that reads Outlook's own view (`LiveOutlookTestMailer.ReadSignatureEngine`) and its compose window's
+  Signature menu. The maintainer decides whether the runner gets that step.
+
+- [ ] **Decide whether OutlookAI reads the mailbox's own signature folder (Q152), once stream A's R3
+  lands.** Q152 (a) is built: OutlookAI reads only what Outlook copies into the local folder, works out
+  whether an account's signatures may roam (`SignatureRoaming`: possible on Microsoft 365 Apps 2303+,
+  on perpetual Office only where Outlook's `Name (address)` copies of an Exchange account show it), and
+  then leaves those copies and that account's defaults to Outlook. R1 on the Exchange VM (2026-11-17)
+  saw no roaming on Office LTSC 2024; R3 creates a real cloud signature in Outlook on the web and shows
+  whether a copy appears. If it does, LTSC 2024 roams and the evidence rule already covers it; reading
+  the hidden `ApplicationDataRoot` folder itself stays a separate decision. The mailbox's signature
+  data is never written.
+
+- [ ] **The add-in's AI picks the signature by language (Q158 + Q162 (b)) - LATER, after the
+  code-sharing refactor (Q154).** Decided: behind a checkbox that is on by default, it picks when the
+  AI writes the body and when a reply or forward opens, and never replaces a signature someone chose.
+  It needs the add-in to reference Core. The Core API it is to call exists and the server uses it now:
+  `SignatureEnvironment.ReadCurrent()` for the folder, profiles, policy and roaming;
+  `SignatureSelector.Candidates(environment, account, runningProfile)` for the signatures that
+  account may use (with excerpts for the language), its effective defaults, and whether policy
+  disables or forces them; `SignatureSelector.Decide(...)` for the default and the reason. What the
+  add-in keeps for itself: knowing whether the signature in the open draft was put there by a person.
+
 - [ ] **Approve, amend or refuse the Exchange VM's Phase 2 write-safety design** (proposed
   2026-10-03, `Docs/live-tier-on-the-vm.md` section 4.4). Until then `OutlookAI-Exchange` is
   read-only - profile `ExchangeGuest` - and runs only `Writes=Nothing` tests (`Testbed/README.md`

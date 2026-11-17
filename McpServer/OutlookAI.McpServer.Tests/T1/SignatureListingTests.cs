@@ -84,11 +84,16 @@ public sealed class SignatureListingTests : IDisposable
         Assert.Equal("Corporate", forced.Policy!.NewMessage);
         Assert.Equal("groupPolicy", forced.Policy.NewMessageFrom);
 
-        SignaturesOutcome roaming = SignatureListing.Build(Environment(accounts, new FakeSignatureSettings().Ltsc2024()), "Outlook", null, null);
+        SignaturesOutcome roaming = SignatureListing.Build(Environment(accounts, new FakeSignatureSettings().Microsoft365()), "Outlook", null, null);
         Assert.True(roaming.Profiles[0].Accounts[0].DefaultsEditable);
         Assert.False(roaming.Profiles[0].Accounts[1].DefaultsEditable);
         Assert.Contains("may roam", roaming.Profiles[0].Accounts[1].DefaultsLocked, StringComparison.Ordinal);
-        Assert.Equal("unknown", roaming.Roaming.State);
+        Assert.Equal("possible", roaming.Roaming.State);
+
+        // The testbed's LTSC 2024 with no copies of Outlook's own: the local files decide, every default editable.
+        SignaturesOutcome ltsc = SignatureListing.Build(Environment(accounts, new FakeSignatureSettings().Ltsc2024()), "Outlook", null, null);
+        Assert.All(ltsc.Profiles[0].Accounts, a => Assert.True(a.DefaultsEditable));
+        Assert.Equal("off", ltsc.Roaming.State);
     }
 
     [Fact]

@@ -4978,6 +4978,15 @@ unrecorded or unverified.
   an Exchange server. Seven tests, named by the production-only filter in section 5. **Corrected
   2026-10-03:** the Exchange test VM can - it has an Exchange server (section 4.4); the delegate half
   waits for the shared test mailbox (Q109).
+* **Roaming signatures in classic Outlook on Microsoft 365 Apps are not tested, and cannot be here
+  (Q153, decided by the maintainer 2026-11-17: no Microsoft 365 Apps in the testbed).** OutlookAI's
+  handling of them - an account's copies (`Name (address)`) read-only and its defaults left to
+  Outlook where its signatures may roam - is proven in T1 only (`T1/SignatureEnvironmentTests`,
+  `SignatureManagerTests`, `SignatureSelectionTests`), against fakes of the registry and the folder.
+  Office LTSC 2024, which every test machine runs, showed no roaming on the Exchange test VM (stream
+  A's R1, 2026-11-17); whether a copy appears there once a cloud signature exists is R3's question.
+  The policy half of G2 is not measured either: a Group Policy or Cloud Policy signature value needs
+  an elevated step the live tier does not have (`TODO.md`).
 * **The guest's SDK is PINNED to whatever the host was running when the payload was staged**,
   and nothing enforces that they stay equal. 10.0.401 was chosen for sameness rather than for any
   requirement - no `global.json` exists - so the two can drift the

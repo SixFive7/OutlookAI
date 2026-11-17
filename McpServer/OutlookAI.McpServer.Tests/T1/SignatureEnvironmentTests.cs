@@ -148,13 +148,62 @@ public sealed class SignatureEnvironmentTests
     }
 
     [Fact]
-    public void Roaming_Ltsc2024_IsUnknown_AndTreatedAsPossible()
+    public void Roaming_Ltsc2024_IsOff_UnlessOutlooksOwnCopiesShowIt_ForThoseExchangeAccountsOnly()
     {
+        // R1 on the Exchange test machine (2026-11-17): Office LTSC 2024 showed no sign of roaming. Not a
+        // proof, so the verdict stays open to Outlook's own evidence.
         SignatureRoaming roaming = SignatureRoaming.Read(new FakeSignatureSettings().Ltsc2024(), "16.0");
+        Assert.Equal(SignatureRoamingState.Off, roaming.State);
+        Assert.True(roaming.EvidenceDecides);
+        Assert.Contains("authoritative", roaming.Reason, StringComparison.Ordinal);
 
-        Assert.Equal(SignatureRoamingState.Unknown, roaming.State);
-        Assert.True(roaming.MayRoam);
-        Assert.Equal("unknown", roaming.Token);
+        SignatureRoaming evident = roaming.WithEvidence(
+            new[] { "Work (jan@example.com)", "Home", "Old (pop@example.com)" }, new[] { "jan@example.com", "piet@example.com" });
+        Assert.Equal(SignatureRoamingState.Evident, evident.State);
+        Assert.Equal("evident", evident.Token);
+        Assert.Equal(new[] { "jan@example.com" }, evident.EvidentAccounts);
+        Assert.True(evident.MayRoamFor("JAN@example.com"));
+        Assert.False(evident.MayRoamFor("piet@example.com"));
+        Assert.False(evident.MayRoamFor("pop@example.com"));
+
+        // A copy named after a POP3 or IMAP account is just a name: only Exchange accounts roam.
+        Assert.Equal(SignatureRoamingState.Off, roaming.WithEvidence(new[] { "Old (pop@example.com)" }, Array.Empty<string>()).State);
+    }
+
+    [Fact]
+    public void Roaming_AFinalVerdict_IsNotChangedByFiles()
+    {
+        string[] copies = { "Work (jan@example.com)" };
+        string[] exchange = { "jan@example.com" };
+
+        Assert.Equal(SignatureRoamingState.Off, SignatureRoaming.Read(
+            new FakeSignatureSettings().Ltsc2024().RoamingSwitchedOff(), "16.0").WithEvidence(copies, exchange).State);
+        Assert.Equal(SignatureRoamingState.Off, SignatureRoaming.Read(new FakeSignatureSettings(), "16.0").WithEvidence(copies, exchange).State);
+        SignatureRoaming possible = SignatureRoaming.Read(new FakeSignatureSettings().Microsoft365(), "16.0").WithEvidence(copies, exchange);
+        Assert.Equal(SignatureRoamingState.Possible, possible.State);
+        Assert.True(possible.MayRoamFor("anyone@example.com"));
+    }
+
+    [Fact]
+    public void Roaming_TheEnvironmentWeighsItsOwnFolder_AgainstItsProfilesExchangeAccounts()
+    {
+        string folder = Path.Combine(Path.GetTempPath(), "OutlookAI-RoamEvidence-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        try
+        {
+            File.WriteAllText(Path.Combine(folder, "Work (jan@example.com).htm"), "<p>x</p>");
+            FakeProfileAccountRegistry accounts = new FakeProfileAccountRegistry()
+                .Add("Outlook", 1, FakeProfileAccountRegistry.Exchange("jan@example.com"));
+
+            SignatureEnvironment environment = SignatureEnvironment.Read(new FakeSignatureSettings().Ltsc2024(), accounts, "16.0", AppData, folder);
+
+            Assert.Equal(SignatureRoamingState.Evident, environment.Roaming.State);
+            Assert.True(environment.IsManagedInMailbox(Assert.Single(environment.Signatures)));
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
     }
 
     [Theory]
@@ -176,7 +225,8 @@ public sealed class SignatureEnvironmentTests
     public void Roaming_Outlook2013_AndAnUnreadableBuild()
     {
         Assert.Equal(SignatureRoamingState.Off, SignatureRoaming.Decide("15.0", OfficeBuildInfo.Unknown, null).State);
-        Assert.Equal(SignatureRoamingState.Unknown, SignatureRoaming.Decide("16.0", OfficeBuildInfo.Unknown, null).State);
+        Assert.Equal(SignatureRoamingState.Off, SignatureRoaming.Decide("16.0", OfficeBuildInfo.Unknown, null).State);
+        Assert.True(SignatureRoaming.Decide("16.0", OfficeBuildInfo.Unknown, null).EvidenceDecides);
         Assert.Equal(SignatureRoamingState.Off, SignatureRoaming.Decide("16.0", new OfficeBuildInfo("16.0.16226.20000", "O365ProPlusRetail"), null).State);
         Assert.Equal(SignatureRoamingState.Possible, SignatureRoaming.Decide("16.0", new OfficeBuildInfo("16.0.16227.20000", "O365ProPlusRetail"), null).State);
     }

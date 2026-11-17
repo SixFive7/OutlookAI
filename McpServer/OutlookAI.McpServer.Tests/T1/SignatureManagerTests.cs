@@ -670,20 +670,34 @@ public sealed class SignatureManagerTests : IDisposable
     }
 
     [Fact]
-    public void Roaming_AnExchangeAccountsDefaults_AreLeftToOutlook_WhileRoamingIsPossible()
+    public void Roaming_AnExchangeAccountsDefaults_AreLeftToOutlook_WhileItsSignaturesMayRoam()
     {
         SeedSignature("S", withResources: false);
         FakeDefaultsStore store = new FakeDefaultsStore()
             .Account(Profile, "k1", "jan@example.com", kind: MailAccountKind.Exchange)
             .Account(Profile, "k2", "pop@example.com", kind: MailAccountKind.Pop3);
-        FakeSignatureSettings ltsc2024 = new FakeSignatureSettings().Ltsc2024();
 
+        // Microsoft 365 Apps: possible for every Exchange account.
         SignatureRefusedException refusal = Assert.Throws<SignatureRefusedException>(
-            () => Manage(SetDefault("S", Profile, "jan@example.com"), store, settings: ltsc2024));
+            () => Manage(SetDefault("S", Profile, "jan@example.com"), store, settings: new FakeSignatureSettings().Microsoft365()));
         Assert.Equal("account_may_roam", refusal.Reason);
+        Manage(SetDefault("S", Profile, "pop@example.com"), store, settings: new FakeSignatureSettings().Microsoft365());
 
-        Manage(SetDefault("S", Profile, "pop@example.com"), store, settings: ltsc2024);
-        Assert.Equal(new[] { ("k2", SignatureManager.NewSignatureValueName, "S") }, store.Writes);
+        // Office LTSC 2024 with no copies of Outlook's own: the local files decide, so the default is written.
+        Manage(SetDefault("S", Profile, "jan@example.com"), store, settings: new FakeSignatureSettings().Ltsc2024());
+        Assert.Equal(
+            new[] { ("k2", SignatureManager.NewSignatureValueName, "S"), ("k1", SignatureManager.NewSignatureValueName, "S") },
+            store.Writes);
+
+        // ...until Outlook keeps a roaming copy for that account: then it is the mailbox's again.
+        SeedSignature("Work (jan@example.com)", withResources: false);
+        SignatureRefusedException evident = Assert.Throws<SignatureRefusedException>(
+            () => Manage(SetDefault("S", Profile, "jan@example.com"), store, settings: new FakeSignatureSettings().Ltsc2024()));
+        Assert.Equal("account_may_roam", evident.Reason);
+        Assert.Contains("local copies of roaming signatures", evident.Message, StringComparison.Ordinal);
+        SignatureRefusedException copy = Assert.Throws<SignatureRefusedException>(() => Manage(
+            new ManageSignatureRequest { Action = "delete", Name = "Work (jan@example.com)" }, store, settings: new FakeSignatureSettings().Ltsc2024()));
+        Assert.Equal("managed_in_mailbox", copy.Reason);
     }
 
     // ------------------------------------------------------------------ validation matrix

@@ -399,7 +399,16 @@ namespace OutlookAI.Core.Services
             string root = directory ?? SignatureFolder.Read(
                 registry, officeVersion, Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData)).Path;
             SignaturePolicy policy = SignaturePolicy.Read(registry, officeVersion);
+            ISignatureDefaultsStore store = defaultsStore ?? new ProfileSignatureDefaultsStore();
             SignatureRoaming roaming = SignatureRoaming.Read(registry, officeVersion);
+            if (roaming.EvidenceDecides)
+            {
+                // Outlook's own copies decide on a perpetual Office (Q152): the folder's names against the
+                // profiles' Exchange accounts.
+                roaming = roaming.WithEvidence(
+                    SignatureCatalog.ListSignatures(root).Select(s => s.Name),
+                    store.ReadAccounts().Where(r => r.AccountKind == MailAccountKind.Exchange).Select(r => r.Account));
+            }
 
             // The administrator's rule first: with signatures disabled nothing below runs (Q156).
             if (policy.SignaturesDisabled)
@@ -413,7 +422,7 @@ namespace OutlookAI.Core.Services
             ValidateShape(action, request);
             IReadOnlyList<string> existing = ExistingFileSet(root, name);
             string? scopeAccount = SignatureRoaming.AccountSuffixOf(name);
-            bool managedInMailbox = scopeAccount != null && roaming.MayRoam;
+            bool managedInMailbox = scopeAccount != null && roaming.MayRoamFor(scopeAccount);
 
             switch (action)
             {
@@ -463,12 +472,10 @@ namespace OutlookAI.Core.Services
             }
 
             // The default this call sets or clears, decided before anything is written.
-            ISignatureDefaultsStore? store = null;
             DefaultTarget? target = null;
             if (request.DefaultForAccount != null || request.DefaultForProfile != null || request.DefaultForScope != null
                 || action == "set_default" || action == "clear_default")
             {
-                store = defaultsStore ?? new ProfileSignatureDefaultsStore();
                 target = ResolveDefaultTarget(store, request, action, name, policy, roaming, scopeAccount);
             }
 
@@ -492,7 +499,7 @@ namespace OutlookAI.Core.Services
             if (action == "delete")
             {
                 outcome.FilesDeleted = DeleteFileSet(existing);
-                outcome.DefaultsCleared = ClearDanglingDefaults(defaultsStore ?? new ProfileSignatureDefaultsStore(), name, advice);
+                outcome.DefaultsCleared = ClearDanglingDefaults(store, name, advice);
                 if (outcome.DefaultsCleared is { Count: > 0 })
                 {
                     advice.Add(DefaultsRestartAdvice);
@@ -505,7 +512,7 @@ namespace OutlookAI.Core.Services
                 advice.AddRange(plan.Warnings);
             }
 
-            if (target != null && store != null)
+            if (target != null)
             {
                 outcome.DefaultsChanged = ApplyDefaults(store, target, action == "clear_default" ? null : name, plan != null);
                 outcome.Profile = target.Row.Profile;
@@ -780,7 +787,7 @@ namespace OutlookAI.Core.Services
                 }
             }
 
-            if (row.AccountKind == MailAccountKind.Exchange && roaming.MayRoam)
+            if (row.AccountKind == MailAccountKind.Exchange && roaming.MayRoamFor(row.Account))
             {
                 throw new SignatureRefusedException("account_may_roam",
                     row.Account + " is an Exchange account, and on this Outlook its signatures and defaults may be kept in its "
@@ -789,7 +796,7 @@ namespace OutlookAI.Core.Services
                     + "(File > Options > Mail > Signatures). Nothing was written.");
             }
 
-            if (action != "clear_default" && scopeAccount != null && roaming.MayRoam
+            if (action != "clear_default" && scopeAccount != null && roaming.MayRoamFor(scopeAccount)
                 && !ProfileAccountEntries.AddressEquals(scopeAccount, row.Account))
             {
                 throw new SignatureRefusedException("signature_of_another_account",

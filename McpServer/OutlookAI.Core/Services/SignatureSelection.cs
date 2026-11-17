@@ -272,7 +272,7 @@ namespace OutlookAI.Core.Services
                     if (effective.Name == null)
                     {
                         // Q155 (c): suggest what matches the sending account - its own roaming signature, when it has one.
-                        SignatureInfo? own = sendingAccount?.SmtpAddress == null || !environment.Roaming.MayRoam
+                        SignatureInfo? own = sendingAccount?.SmtpAddress == null || !environment.Roaming.MayRoamFor(sendingAccount.SmtpAddress)
                             ? null
                             : environment.Signatures.FirstOrDefault(
                                 s => ProfileAccountEntries.AddressEquals(s.ScopeAccount, sendingAccount.SmtpAddress));
@@ -487,7 +487,7 @@ namespace OutlookAI.Core.Services
         private static string? OwnerIfNotUsable(SignatureEnvironment environment, SignatureInfo signature, SignatureSendingAccount? account)
         {
             string? owner = signature.ScopeAccount;
-            if (owner == null || !environment.Roaming.MayRoam)
+            if (owner == null || !environment.Roaming.MayRoamFor(owner))
             {
                 return null;
             }
