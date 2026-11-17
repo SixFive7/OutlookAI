@@ -20,8 +20,11 @@ namespace OutlookAI.Core.Com
     /// (the maintainer's audit log, 20 of 21). What CAN be controlled is whether a HUMAN ever sees the
     /// window. The same questions on Office LTSC 2024 (16.0.17932) were measured by the Q149 (d) suite
     /// (<c>T2/LiveQ149WindowlessComposeTests</c>) on 2026-11-17, with its results in that folder: the editor
-    /// refused the same way (L2, 20 of 20 on the two test guests), and after one promotion in a process the
-    /// later never-activated inspectors handed it out (W6).
+    /// refused the same way (L2, 20 of 20 on the two test guests) - after 30 seconds of reads, and with a
+    /// window shown by Windows, as well (W2-W5) - and after one promotion in a process the later
+    /// never-activated inspectors handed it out (W6, 60 of 60), their edits committing through
+    /// <c>ModifiedFormPages.Add("Message")</c> and <c>Close(olSave)</c> (W7, 60 of 60) and not through
+    /// <c>CurrentItem.Save()</c> (W6, 0 of 60).
     /// </para>
     /// <para>
     /// So this class does exactly two things, and they fix two DIFFERENT problems that
