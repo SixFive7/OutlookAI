@@ -849,9 +849,9 @@ its mailbox tests on, and change nothing you install.
   Example` and `Archive Old.pst`, which test the same things - case, spaces and dots in a store
   name. Eight more used a third party's shared mailbox as the store in audit-log lines, a delegate's
   first and full name as store names, the maintainer's name in a signature and his surname as a
-  sender to search for, and a toy address at a real domain; they now use
-  `shared-mailbox@exchange-org.invalid`, `Ann` and `Ann van Example`, `Alex Example`, `example` and
-  `a@b.example`. Five live-test comments say "the hub" where they named the shared mailbox, and
+  sender to search for, and toy addresses at real domains, as two newer signature tests did too.
+  They now use `shared-mailbox@exchange-org.invalid`, `Ann` and `Ann van Example`, `Alex Example`,
+  `example` and addresses under `example.com` and `b.example`. Five live-test comments say "the hub" where they named the shared mailbox, and
   one no longer gives the item counts of a real mailbox. The testbed scripts' self-tests refuse a
   made-up workstation, `devuser` on `DEV-PC`, instead of the maintainer's own user and computer
   names, and the CodeQL script's licence fixture names `Alex Example`. The baseline of
