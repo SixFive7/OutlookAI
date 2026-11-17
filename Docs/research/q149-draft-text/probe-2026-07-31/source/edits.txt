@@ -1,0 +1,298 @@
+=== 2026-07-31T06:33:25.119Z EDIT Sta.cs (replace_all=False)
+--- old
+    private interface IOleMessageFilter
+--- new
+    internal interface IOleMessageFilter
+
+=== 2026-07-31T06:36:41.477Z EDIT Program.cs (replace_all=False)
+--- old
+string state = args.Length > 0 ? args[0] : "headless";
+var r = new Dictionary<string, object> { ["state"] = state };
+--- new
+Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+string state = args.Length > 0 ? args[0] : "headless";
+var r = new Dictionary<string, object> { ["state"] = state };
+IntPtr fgBefore = Win.GetForegroundWindow();
+
+=== 2026-07-31T06:36:49.129Z EDIT Program.cs (replace_all=False)
+--- old
+        else if (state == "inspector-activate")
+        {
+            try { sta.Run(() => inspector.Activate()); } catch (Exception ex) { Err("activateError", ex); }
+            Sta.PumpedWait(400);
+        }
+--- new
+        else if (state == "inspector-activate" || state == "inspector-activate-saved")
+        {
+            r["allWindowsBeforeActivate"] = Win.ProcessWindows("OUTLOOK", "WINWORD").Select(w => w.ToString()).ToList();
+            long ta = sw.ElapsedMilliseconds;
+            try { sta.Run(() => inspector.Activate()); } catch (Exception ex) { Err("activateError", ex); }
+            r["activateMs"] = sw.ElapsedMilliseconds - ta;
+            Sta.PumpedWait(400);
+            r["allWindowsAfterActivate"] = Win.ProcessWindows("OUTLOOK", "WINWORD").Select(w => w.ToString()).ToList();
+            r["foregroundStolen"] = Win.GetForegroundWindow() != fgBefore;
+        }
+
+=== 2026-07-31T06:36:57.654Z EDIT Program.cs (replace_all=False)
+--- old
+        dynamic mi = hubDrafts.Items.Add(0);
+        mi.Subject = subject;
+        mi.To = Hub;
+        return mi;
+    });
+--- new
+        dynamic mi = hubDrafts.Items.Add(0);
+        mi.Subject = subject;
+        mi.To = Hub;
+        return mi;
+    });
+
+    if (state == "inspector-activate-saved")
+    {
+        // model update_draft: the item is an EXISTING saved draft re-opened by EntryID
+        string savedId = sta.Run<string>(() => { item.Save(); return (string)item.EntryID; });
+        Sta.PumpedWait(200);
+        item = sta.Run<dynamic>(() => app.GetNamespace("MAPI").GetItemFromID(savedId));
+    }
+
+=== 2026-07-31T06:37:06.773Z EDIT Program.cs (replace_all=False)
+--- old
+    Sta.PumpedWait(300);
+    r["outlookAliveAfterClose"] = Process.GetProcessesByName("OUTLOOK").Any();
+--- new
+    Sta.PumpedWait(300);
+    r["outlookAliveAfterClose"] = Process.GetProcessesByName("OUTLOOK").Any();
+    // EntryIDs change when an unsaved item is committed - re-find by subject.
+    if (Process.GetProcessesByName("OUTLOOK").Any())
+    {
+        try
+        {
+            string found = sta.Run<string>(() =>
+            {
+                foreach (dynamic it in hubDrafts.Items)
+                {
+                    string s = null;
+                    try { s = (string)it.Subject; } catch { }
+                    if (s != null && s.Contains(subject, StringComparison.Ordinal)) return (string)it.EntryID;
+                }
+                return null;
+            });
+            if (found != null) entryId = found;
+        }
+        catch (Exception ex) { Err("refindError", ex); }
+    }
+
+=== 2026-07-31T06:37:21.844Z EDIT Probe.csproj (replace_all=False)
+--- old
+    <NoWarn>CS0168;CS0169;CA1416</NoWarn>
+  </PropertyGroup>
+--- new
+    <NoWarn>CS0168;CS0169;CA1416;CS0219</NoWarn>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="Sta.cs" />
+    <Compile Include="Win.cs" />
+  </ItemGroup>
+
+=== 2026-07-31T06:38:31.498Z EDIT Program.cs (replace_all=False)
+--- old
+        else if (state == "inspector-activate" || state == "inspector-activate-saved")
+        {
+--- new
+        else if (state == "offscreen-activate" || state == "pinned-offscreen-activate")
+        {
+            // The hidden Inspector ALREADY owns an (invisible) window. Move it off-screen
+            // BEFORE promoting it, so Activate() can never paint it where a user sees it.
+            var pre = Win.ProcessWindows("OUTLOOK").Where(w => w.Cls == "rctrl_renwnd32").ToList();
+            r["inspectorWindowsBefore"] = pre.Select(w => w.ToString()).ToList();
+            foreach (var w in pre) Win.MoveOffScreen(w.H);
+            long ta2 = sw.ElapsedMilliseconds;
+            try { sta.Run(() => inspector.Activate()); } catch (Exception ex) { Err("activateError", ex); }
+            r["activateMs"] = sw.ElapsedMilliseconds - ta2;
+            // A promoted window can be repositioned by Outlook - shove it back out.
+            foreach (var w in Win.ProcessWindows("OUTLOOK").Where(w => w.Cls == "rctrl_renwnd32")) Win.MoveOffScreen(w.H);
+            Sta.PumpedWait(300);
+            foreach (var w in Win.ProcessWindows("OUTLOOK").Where(w => w.Cls == "rctrl_renwnd32" && w.OnScreen)) Win.MoveOffScreen(w.H);
+            r["allInspectorWindowsAfter"] = Win.ProcessWindows("OUTLOOK").Where(w => w.Cls == "rctrl_renwnd32").Select(w => w.ToString()).ToList();
+            r["foregroundStolen"] = Win.GetForegroundWindow() != fgBefore;
+        }
+        else if (state == "inspector-activate" || state == "inspector-activate-saved")
+        {
+
+=== 2026-07-31T06:38:48.681Z EDIT Program.cs (replace_all=False)
+--- old
+        case "inspector-display-hide":
+        case "inspector-activate":
+        case "htmlnative":
+            break;
+--- new
+        case "inspector-display-hide":
+        case "inspector-activate":
+        case "inspector-activate-saved":
+        case "offscreen-activate":
+        case "htmlnative":
+            break;
+        case "pinned-offscreen-activate":
+        case "pinned-headless":
+            // A NON-DISPLAYED Explorer pins the process without showing anything.
+            explorer = sta.Run<dynamic>(() => app.Explorers.Add(hubDrafts, 0));
+            break;
+
+=== 2026-07-31T06:38:58.943Z EDIT Program.cs (replace_all=False)
+--- old
+        sta.Run(() =>
+        {
+            dynamic atts = item.Attachments;
+            dynamic att = atts.Add(imgFile, 1 /*olByValue*/, 0 /*position 0 = hidden/inline*/, "image001.png");
+            dynamic pa = att.PropertyAccessor;
+            pa.SetProperty("http://schemas.microsoft.com/mapi/proptag/0x3712001F", cid);          // PR_ATTACH_CONTENT_ID
+            pa.SetProperty("http://schemas.microsoft.com/mapi/proptag/0x7FFE000B", true);          // PR_ATTACHMENT_HIDDEN
+            pa.SetProperty("http://schemas.microsoft.com/mapi/proptag/0x370E001F", "image/png");   // PR_ATTACH_MIME_TAG
+            pa.SetProperty("http://schemas.microsoft.com/mapi/proptag/0x37140003", 4);             // PR_ATTACH_FLAGS = ATT_MHTML_REF
+        });
+--- new
+        var tagResults = sta.Run<Dictionary<string, string>>(() =>
+        {
+            var res = new Dictionary<string, string>();
+            dynamic atts = item.Attachments;
+            dynamic att = atts.Add(imgFile, 1 /*olByValue*/, 0 /*position 0 = hidden/inline*/, "image001.png");
+            dynamic pa = att.PropertyAccessor;
+            void Try(string name, string tag, object val)
+            {
+                try { pa.SetProperty("http://schemas.microsoft.com/mapi/proptag/" + tag, val); res[name] = "ok"; }
+                catch (Exception ex) { res[name] = ex.GetType().Name; }
+            }
+            Try("PR_ATTACH_CONTENT_ID", "0x3712001F", cid);
+            Try("PR_ATTACHMENT_HIDDEN", "0x7FFE000B", true);
+            Try("PR_ATTACH_MIME_TAG", "0x370E001F", "image/png");
+            Try("PR_ATTACH_FLAGS", "0x37140003", 4);
+            Try("PR_ATTACH_CONTENT_LOCATION", "0x3713001F", "image001.png");
+            return res;
+        });
+        r["proptagWrites"] = tagResults;
+
+=== 2026-07-31T06:39:32.712Z EDIT Program.cs (replace_all=False)
+--- old
+        case "pinned-offscreen-activate":
+        case "pinned-headless":
+--- new
+        case "hidden-explorer":
+            // Promote ONCE per session, then hide the window outright (no taskbar button).
+            explorer = sta.Run<dynamic>(() => { dynamic e = app.Explorers.Add(hubDrafts, 0); e.Display(); return e; });
+            Sta.PumpedWait(700);
+            r["explorerWindows"] = Win.ProcessWindows("OUTLOOK").Where(w => w.Cls == "rctrl_renwnd32").Select(w => w.ToString()).ToList();
+            foreach (var w in Win.ProcessWindows("OUTLOOK").Where(w => w.Cls == "rctrl_renwnd32" && w.Visible))
+            { Win.MoveOffScreen(w.H); Win.ShowWindow(w.H, 0 /*SW_HIDE*/); }
+            Sta.PumpedWait(300);
+            r["explorerWindowsAfterHide"] = Win.ProcessWindows("OUTLOOK").Where(w => w.Cls == "rctrl_renwnd32").Select(w => w.ToString()).ToList();
+            break;
+        case "hidden-activate":
+        case "pinned-offscreen-activate":
+        case "pinned-headless":
+
+=== 2026-07-31T06:39:42.023Z EDIT Program.cs (replace_all=False)
+--- old
+        else if (state == "offscreen-activate" || state == "pinned-offscreen-activate")
+        {
+--- new
+        else if (state == "hidden-activate")
+        {
+            // Off-screen FIRST so a promotion can never paint where a user sees it,
+            // then Activate to materialise WordEditor, then hide outright (no taskbar).
+            foreach (var w in Win.ProcessWindows("OUTLOOK").Where(w => w.Cls == "rctrl_renwnd32")) Win.MoveOffScreen(w.H);
+            long th = sw.ElapsedMilliseconds;
+            try { sta.Run(() => inspector.Activate()); } catch (Exception ex) { Err("activateError", ex); }
+            foreach (var w in Win.ProcessWindows("OUTLOOK").Where(w => w.Cls == "rctrl_renwnd32"))
+            { Win.MoveOffScreen(w.H); Win.ShowWindow(w.H, 0 /*SW_HIDE*/); }
+            r["activateMs"] = sw.ElapsedMilliseconds - th;
+            Sta.PumpedWait(250);
+            foreach (var w in Win.ProcessWindows("OUTLOOK").Where(w => w.Cls == "rctrl_renwnd32" && w.Visible)) Win.ShowWindow(w.H, 0);
+            r["inspectorWindowsAfter"] = Win.ProcessWindows("OUTLOOK").Where(w => w.Cls == "rctrl_renwnd32").Select(w => w.ToString()).ToList();
+            r["foregroundStolen"] = Win.GetForegroundWindow() != fgBefore;
+        }
+        else if (state == "offscreen-activate" || state == "pinned-offscreen-activate")
+        {
+
+=== 2026-07-31T06:41:56.646Z EDIT Program.cs (replace_all=False)
+--- old
+        case "hidden-activate":
+        case "pinned-offscreen-activate":
+        case "pinned-headless":
+--- new
+        case "pinned-hidden-activate":
+        case "pinned-offscreen-activate":
+        case "pinned-headless":
+
+=== 2026-07-31T06:42:00.463Z EDIT Program.cs (replace_all=False)
+--- old
+        else if (state == "hidden-activate")
+        {
+--- new
+        else if (state == "hidden-activate" || state == "pinned-hidden-activate")
+        {
+
+=== 2026-07-31T06:42:04.561Z EDIT Program.cs (replace_all=False)
+--- old
+        case "inspector-activate-saved":
+        case "offscreen-activate":
+        case "htmlnative":
+            break;
+--- new
+        case "inspector-activate-saved":
+        case "offscreen-activate":
+        case "hidden-activate":
+        case "htmlnative":
+            break;
+
+=== 2026-07-31T06:42:36.975Z EDIT Program.cs (replace_all=False)
+--- old
+    r["setupMs"] = sw.ElapsedMilliseconds - tSetup0;
+--- new
+    if (state == "pin-then-launch" || state == "hiddenexp-then-launch")
+    {
+        // D33 promotability: can the USER still get a normal Outlook window while the
+        // server holds an invisible surface? Launch outlook.exe the way a user would.
+        if (state == "pin-then-launch")
+        {
+            explorer = sta.Run<dynamic>(() => app.Explorers.Add(hubDrafts, 0));
+        }
+        else
+        {
+            explorer = sta.Run<dynamic>(() => { dynamic e = app.Explorers.Add(hubDrafts, 0); e.Display(); return e; });
+            Sta.PumpedWait(700);
+            foreach (var w in Win.ProcessWindows("OUTLOOK").Where(w => w.Cls == "rctrl_renwnd32" && w.Visible))
+            { Win.MoveOffScreen(w.H); Win.ShowWindow(w.H, 0); }
+            Sta.PumpedWait(300);
+        }
+        r["pinExplorers"] = sta.Run<int>(() => (int)app.Explorers.Count);
+        r["visibleBeforeLaunch"] = Win.UserVisible("OUTLOOK").Select(w => w.ToString()).ToList();
+        try
+        {
+            Process.Start(new ProcessStartInfo("outlook.exe") { UseShellExecute = true });
+        }
+        catch (Exception ex) { Err("launchError", ex); }
+        for (int i = 0; i < 20; i++) { Sta.PumpedWait(500); if (Win.UserVisible("OUTLOOK").Any()) break; }
+        r["visibleAfterLaunch"] = Win.UserVisible("OUTLOOK").Select(w => w.ToString()).ToList();
+        r["explorersAfterLaunch"] = sta.Run<int>(() => { try { return (int)app.Explorers.Count; } catch { return -1; } });
+        r["userGotAWindow"] = Win.UserVisible("OUTLOOK").Any();
+        r["totalMs"] = sw.ElapsedMilliseconds;
+        Console.WriteLine("RESULT " + JsonSerializer.Serialize(r));
+        return;
+    }
+
+    r["setupMs"] = sw.ElapsedMilliseconds - tSetup0;
+
+=== 2026-07-31T06:42:41.460Z EDIT Program.cs (replace_all=False)
+--- old
+        case "hidden-activate":
+        case "htmlnative":
+            break;
+--- new
+        case "hidden-activate":
+        case "htmlnative":
+        case "pin-then-launch":
+        case "hiddenexp-then-launch":
+            break;
+

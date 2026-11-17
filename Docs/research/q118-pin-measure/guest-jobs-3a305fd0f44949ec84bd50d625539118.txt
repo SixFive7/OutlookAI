@@ -1,0 +1,37 @@
+run level: Limited - this token is NOT elevated (read before the work ran)
+[+   0,0s] begin     scenario ShowMe on OAI-UNINDEXED as vmadmin; server C:\OutlookAI-Q5\server\OutlookAI.Mcp
+Server.exe (99.99.99.0+fd2c58b1bfe90b99d01fb8d4522438d5900a7dae); Outlook 16.0.17932.20996
+[+   1,5s] session   A: server pid 3932 initialized in 1.233 ms
+[+   1,7s] tool      A: list_folders answered OutlookStarting at 153 ms (try 1); retrying in 2 s
+[+   7,1s] tool      A: list_folders ok in 5278 ms, 4429 bytes; COM host pid 1420
+[+   8,8s] state     showme: A started Outlook (A alive): Explorers 1 (visible 0, hidden 1); ActiveExplorer()
+: null; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 0 visible / 1 rctrl_renwnd32; top-level w
+indows 0 visible / 24; dialogs 0
+[+   9,4s] kill      A: COM host 1420 terminated (gone)
+[+  10,8s] state     showme: A's COM host killed: Explorers 1 (visible 0, hidden 1); ActiveExplorer(): null; 
+Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 0 visible / 2 rctrl_renwnd32; top-level windows 0
+ visible / 25; dialogs 0
+[+  10,9s] end       A: stdin closed; server exited after 43 ms (exit code 0); its COM host was never seen
+[+  19,1s] state     showme: A's server ended, 5 s on: Explorers 1 (visible 0, hidden 1); ActiveExplorer(): n
+ull; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 0 visible / 2 rctrl_renwnd32; top-level wind
+ows 0 visible / 25; dialogs 0
+[+  42,7s] outlook   user opens the window of the running Outlook start: window up after 3,4 s, settled at 23
+,5 s (pid 5928)
+[+  44,4s] state     showme: the user has the window open: Explorers 2 (visible 1, hidden 1); ActiveExplorer(
+): Explorer #2, visible; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 1 visible / 3 rctrl_renw
+nd32; top-level windows 3 visible / 31; dialogs 0
+[+ 170,4s] end-ol    showme user close: window close by UI Automation: WindowPattern.Close on the one visible
+ Outlook window -> OUTLOOK.EXE STILL RUNNING 120 s after the action (3028 ms to return)
+[+ 174,3s] state     showme user close: after WindowClose, Outlook still up (this reading attaches): Explorer
+s 1 (visible 0, hidden 1); ActiveExplorer(): Explorer #1, hidden; Inspectors 0; Outbox default 0, all 0 over 
+2 stores; frames 0 visible / 3 rctrl_renwnd32; top-level windows 2 visible / 29; dialogs 0
+[+ 178,0s] showme    showme: EnsureVisibleExplorer's ActiveExplorer branch, emulated: ActiveExplorer() window
+ was hidden (WindowState 0); Activate() returned; window now visible
+[+ 179,4s] state     showme: after the emulated show-me call: Explorers 1 (visible 1, hidden 0); ActiveExplor
+er(): Explorer #1, visible; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 1 visible / 3 rctrl_r
+enwnd32; top-level windows 3 visible / 29; dialogs 0
+[+ 181,7s] end-ol    showme close of the shown pin: window close by UI Automation: WindowPattern.Close on the
+ one visible Outlook window -> OUTLOOK.EXE EXITED 0,5 s after the action returned (15 ms to return)
+[+ 181,8s] done      scenario ShowMe; OUTLOOK.EXE not running
+log: C:\OutlookAI-Q5\q118\q118-ShowMe-20261003T204026.jsonl
+

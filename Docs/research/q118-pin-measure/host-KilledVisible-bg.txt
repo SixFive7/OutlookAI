@@ -1,0 +1,7 @@
+job d15b20954c3c41a2a6ab63403c865e4d -> C:\OutlookAI-Q5\jobs\d15b20954c3c41a2a6ab63403c865e4d
+run level: Limited - the work runs NOT elevated, and refuses (exit 4) if its token is elevated anyway
+
+exit 0   (job d15b20954c3c41a2a6ab63403c865e4d)
+job directory kept at C:\OutlookAI-Q5\jobs\d15b20954c3c41a2a6ab63403c865e4d
+
+[exited with code 0]

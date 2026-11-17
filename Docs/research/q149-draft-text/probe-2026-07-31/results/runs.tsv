@@ -1,0 +1,30 @@
+# D49 Phase-1 probe runs, 2026-07-31, maintainer workstation (Office LTSC 2021 16.0.14334). Reconstructed from transcript
+# C:/Users/<user>/.claude/projects/c--Source-SixFive7-OutlookAI/4c7933b0-f029-49ca-9620-03b9a9c1e0fb/subagents/agent-af823410b60d8ba15.jsonl
+# startMs ~90 = attached to an Outlook already running (NOT a fresh cold start). Times are ms since probe start.
+ts	state	outlookPid	startMs	explorersAtStart	explorersAfterSetup	getInspectorMs	activateMs	isWordMail	wordEditor	wordEditorError	wordEditorMs	path	foregroundStolen	outlookAliveAfterClose	hiddenWordWindows	verify_htmlLen	verify_inWordSection	verify_bodyAboveSignature	verify_attachments	templateHtmlLen	templateHasWordSection	userGotAWindow	explorersAfterLaunch	fatal
+2026-07-31T06:33:41.783Z	headless	48156	3353	0	0	4091		true	false	COMException: The operation failed.	185	htmlFallback		false	0									
+2026-07-31T06:36:02.646Z	explorer-nodisplay	23928	3391	0	1	4694		true	false	COMException: The operation failed.	191	htmlFallback		true	1	37609	true	false	[]					
+2026-07-31T06:36:02.646Z	explorer-min	23928	90	1	2	1287		true	true		116	wordEditor		true	2									
+2026-07-31T06:36:02.646Z	explorer-offscreen	66968	3102	0	1	5056		true	true		240	wordEditor		true	2									
+2026-07-31T06:36:02.646Z	explorer-then-close	72304	3149	0	0																			MissingMemberException: Could not get dispatch ID for Items (error: 0x800706BA)).
+2026-07-31T06:36:02.646Z	inspector-display-hide	20220	3189	0	0	3739		true	true		77	wordEditor		false	0									
+2026-07-31T06:36:02.646Z	inspector-activate	11368	3102	0	0	3696		true	true		69	wordEditor		true	0									
+2026-07-31T06:36:02.646Z	htmlnative	72092	3137	0	0																			NotSupportedException: No data is available for encoding 1252. For information on defining a custom encoding, see the do
+2026-07-31T06:37:52.750Z	headless	5708	3155	0	0	3735		true	false	COMException: The operation failed.	101	htmlFallback		false	0									
+2026-07-31T06:37:52.750Z	inspector-activate	11788	3270	0	0	3804	352	true	true		91	wordEditor	false	false	0									
+2026-07-31T06:37:52.750Z	inspector-activate	40564	3248	0	0	3807	336	true	true		81	wordEditor	false	false	0									
+2026-07-31T06:38:38.834Z	inspector-activate-saved	58120	3285	0																				ArgumentException: unknown state inspector-activate-saved
+2026-07-31T06:38:38.834Z	inspector-activate-saved	58120	90	0																				ArgumentException: unknown state inspector-activate-saved
+2026-07-31T06:38:38.834Z	htmlnative	58120	92	0	0																			UnauthorizedAccessException: The property \
+2026-07-31T06:39:46.979Z	htmlnative	53800	3224	0	0				false			htmlnative		true	0	4715	true	true	["image001.png=2834b cid=probeimg001@ad90815b"]	241	false			
+2026-07-31T06:39:46.979Z	offscreen-activate	53800	94	0	0	608	320	true	true		56	wordEditor	false	true	2	42641	true	false	["image001.png=0b cid=image001.png@01DD20C8.1D650290"]					
+2026-07-31T06:41:05.718Z	offscreen-activate	61716	3243	0	0	3829	324	true	true		76	wordEditor	false	false	0									
+2026-07-31T06:41:05.718Z	pinned-offscreen-activate	65444	2704	0	1	3858	494	true	true		73	wordEditor	false	true										
+2026-07-31T06:41:05.718Z	pinned-offscreen-activate	24292	2763	0	1	3879	394	true	true		71	wordEditor	false	true										
+2026-07-31T06:41:05.718Z	pinned-headless	70448	2734	0	1	3856		true	false	COMException: The operation failed.	168	htmlFallback		true	1	37609	true	false	[]					
+2026-07-31T06:41:05.718Z	inspector-activate-saved	70448	90	1	1	480	314	true	true		48	wordEditor	false	true	2	42243	true	true	["image001.png=0b cid=image001.png@01DD20C8.4BDC4DE0"]					
+2026-07-31T06:42:46.312Z	hidden-activate	55512	2929	0	0	3446	335	true	true		58	wordEditor	false	true	2	42641	true	false	["image001.png=0b cid=image001.png@01DD20C8.7D3E0EF0"]					
+2026-07-31T06:42:46.312Z	pinned-hidden-activate	67832	2824	0	1	3931	435	true	true		79	wordEditor	false	true	2	42243	true	true	["image001.png=0b cid=image001.png@01DD20C8.859F71B0"]					
+2026-07-31T06:42:46.312Z	pinned-hidden-activate	2788	2756	0	1	3867	611	true	true		53	wordEditor	false	true	2	42243	true	true	["image001.png=0b cid=image001.png@01DD20C8.8BE8C9E0"]					
+2026-07-31T06:44:07.466Z	hidden-explorer	72536	2984	0	1	5196		true	true		131	wordEditor		true	2	42243	true	true	["image001.png=0b cid=image001.png@01DD20C8.B2B00110"]					
+2026-07-31T06:44:07.466Z	pin-then-launch	46988	2956	0																		true	2	

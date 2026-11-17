@@ -1,0 +1,36 @@
+param([string] $Zip, [switch] $NoStart, [switch] $NoStage)
+$ErrorActionPreference = 'Stop'
+$wt = "C:\Source\SixFive7\OutlookAI\.claude\worktrees\agent-a704d527d248b5c92"
+$ev = "$wt\.work\q118-pin-measure"
+if (-not $Zip) { $Zip = "$ev\src-01ce15f.zip" }
+$vm = 'OutlookAI-Unindexed'
+$cred = & "$wt\Testbed\host\Get-GuestCredential.ps1" -VMName $vm -RepoRoot "C:\Source\SixFive7\OutlookAI"
+$s = New-PSSession -VMName $vm -Credential $cred
+if (-not $NoStage) { Copy-Item -ToSession $s -Path $Zip -Destination 'C:\OutlookAI-Q5\src-q118.zip' -Force }
+foreach ($f in 'Register-InteractiveTask.ps1', 'OutlookMapiInterop.ps1') { Copy-Item -ToSession $s -Path "$wt\Testbed\guest\$f" -Destination "C:\OutlookAI-Q5\q118\$f" -Force }
+$out = Invoke-Command -Session $s -ArgumentList $NoStart.IsPresent, $NoStage.IsPresent -ScriptBlock {
+    param($noStart, $noStage)
+    Set-ExecutionPolicy -Scope Process Bypass -Force
+    if (-not $noStage) {
+        if (Test-Path C:\OutlookAI-Q5\src-q118) { Remove-Item C:\OutlookAI-Q5\src-q118 -Recurse -Force }
+        Expand-Archive -Path C:\OutlookAI-Q5\src-q118.zip -DestinationPath C:\OutlookAI-Q5\src-q118
+        Copy-Item C:\OutlookAI-Q5\src\NuGet.config C:\OutlookAI-Q5\src-q118\NuGet.config
+        New-Item -ItemType Directory -Force C:\OutlookAI-Q5\src-q118\McpServer\OutlookAI.McpServer.Tests\live-fixtures | Out-Null
+        Copy-Item C:\OutlookAI-Q5\src\McpServer\OutlookAI.McpServer.Tests\live-fixtures\live-test-settings.json C:\OutlookAI-Q5\src-q118\McpServer\OutlookAI.McpServer.Tests\live-fixtures\live-test-settings.json
+        "staged: " + (Get-ChildItem C:\OutlookAI-Q5\src-q118 -Recurse -File | Measure-Object).Count + " files"
+    }
+    if (-not $noStart -and -not (Get-Process OUTLOOK -ErrorAction SilentlyContinue)) {
+        & C:\OutlookAI-Q5\Start-OutlookUnelevated.ps1 -Profile OutlookAI-Tier 2>&1 | ForEach-Object { "$_" }
+    }
+    "OUTLOOK.EXE before the run: " + ((Get-Process OUTLOOK -ErrorAction SilentlyContinue | ForEach-Object { $_.Id }) -join ',')
+    Set-Location C:\OutlookAI-Q5\q118
+    .\Register-InteractiveTask.ps1 -RunLevel Limited -TimeoutSeconds 1500 -KeepJob -TaskName 'OutlookAI-Q118Live' -Script @"
+`$env:OUTLOOKAI_LIVE_OPT_IN = 'OAI-UNINDEXED'
+Set-Location C:\OutlookAI-Q5\src-q118
+dotnet test McpServer\OutlookAI.McpServer.Tests\OutlookAI.McpServer.Tests.csproj -c Release --filter "Category=Live&FullyQualifiedName~LivePinWindowTests" --logger "console;verbosity=normal" --logger "trx;LogFileName=q118-live.trx"
+"@ 2>&1 | ForEach-Object { "$_" }
+    "OUTLOOK.EXE after the run: " + ((Get-Process OUTLOOK -ErrorAction SilentlyContinue | ForEach-Object { $_.Id }) -join ',')
+}
+$out | Set-Content "$ev\guest-live-test-$((Get-Date).ToString('yyyyMMddTHHmmss')).txt"
+Remove-PSSession $s
+$out

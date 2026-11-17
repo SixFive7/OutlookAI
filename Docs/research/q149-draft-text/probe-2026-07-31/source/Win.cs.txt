@@ -1,0 +1,64 @@
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Text;
+
+namespace HeadlessProbe;
+
+internal static class Win
+{
+    internal sealed record WinInfo(IntPtr H, string Cls, string Title, bool Visible, int L, int T, int R, int B, bool Cloaked, bool Minimized)
+    {
+        public bool OnScreen => Visible && !Cloaked && !Minimized && R > 0 && B > 0 && L < 20000 && T < 20000 && (R - L) > 0 && (B - T) > 0;
+        public override string ToString() => $"{Cls} '{Title}' vis={Visible} cloak={Cloaked} min={Minimized} rect=({L},{T},{R},{B})";
+    }
+
+    internal static List<WinInfo> ProcessWindows(params string[] processNames)
+    {
+        var pids = new HashSet<int>();
+        foreach (string n in processNames)
+            foreach (Process p in Process.GetProcessesByName(n))
+                pids.Add(p.Id);
+
+        var result = new List<WinInfo>();
+        EnumWindows((h, l) =>
+        {
+            GetWindowThreadProcessId(h, out uint pid);
+            if (!pids.Contains((int)pid)) return true;
+            var cls = new StringBuilder(256); GetClassName(h, cls, cls.Capacity);
+            var txt = new StringBuilder(512); GetWindowText(h, txt, txt.Capacity);
+            GetWindowRect(h, out RECT r);
+            int cloaked = 0;
+            try { DwmGetWindowAttribute(h, 14 /*DWMWA_CLOAKED*/, out cloaked, sizeof(int)); } catch { }
+            var pl = new WINDOWPLACEMENT { length = Marshal.SizeOf<WINDOWPLACEMENT>() };
+            GetWindowPlacement(h, ref pl);
+            result.Add(new WinInfo(h, cls.ToString(), txt.ToString(), IsWindowVisible(h), r.Left, r.Top, r.Right, r.Bottom, cloaked != 0, pl.showCmd == 2));
+            return true;
+        }, IntPtr.Zero);
+        return result;
+    }
+
+    /// <summary>Windows a HUMAN would see: visible, not cloaked, not minimized, intersecting the virtual screen.</summary>
+    internal static List<WinInfo> UserVisible(params string[] processNames)
+        => ProcessWindows(processNames).Where(w => w.OnScreen && w.R > 0 && w.B > 0 && !(w.L <= -30000 || w.T <= -30000)).ToList();
+
+    internal const uint SWP_NOSIZE = 0x0001, SWP_NOZORDER = 0x0004, SWP_NOACTIVATE = 0x0010, SWP_SHOWWINDOW = 0x0040;
+
+    internal static void MoveOffScreen(IntPtr h) => SetWindowPos(h, IntPtr.Zero, -32000, -32000, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+
+    [DllImport("user32.dll")] internal static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
+    [DllImport("user32.dll")] internal static extern bool ShowWindow(IntPtr h, int cmd);
+    [DllImport("user32.dll")] private static extern bool EnumWindows(EnumProc cb, IntPtr l);
+    [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+    [DllImport("user32.dll")] private static extern int GetClassName(IntPtr h, StringBuilder s, int max);
+    [DllImport("user32.dll")] private static extern int GetWindowText(IntPtr h, StringBuilder s, int max);
+    [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr h, out RECT r);
+    [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr h);
+    [DllImport("user32.dll")] private static extern bool GetWindowPlacement(IntPtr h, ref WINDOWPLACEMENT p);
+    [DllImport("dwmapi.dll")] private static extern int DwmGetWindowAttribute(IntPtr h, int attr, out int val, int size);
+    [DllImport("user32.dll")] internal static extern IntPtr GetForegroundWindow();
+
+    private delegate bool EnumProc(IntPtr h, IntPtr l);
+    [StructLayout(LayoutKind.Sequential)] private struct RECT { public int Left, Top, Right, Bottom; }
+    [StructLayout(LayoutKind.Sequential)] private struct WINDOWPLACEMENT { public int length, flags, showCmd; public POINT min, max; public RECT normal; }
+    [StructLayout(LayoutKind.Sequential)] private struct POINT { public int X, Y; }
+}

@@ -1,0 +1,42 @@
+# Completes the D49 external round-trip check: pull the RECEIVED copy's inline image
+# through the product's own save_attachment and compare it byte-for-byte with the
+# signature source on disk.
+$ErrorActionPreference = 'Stop'
+$exe = 'C:\Source\SixFive7\OutlookAI-v3\McpServer\OutlookAI.McpServer\bin\Release\net10.0-windows\OutlookAI.McpServer.exe'
+$sigSource = "$env:APPDATA\Microsoft\Signatures\VoIP Fabric_files\image001.png"
+
+$psi = New-Object Diagnostics.ProcessStartInfo
+$psi.FileName = $exe; $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true
+$psi.RedirectStandardError = $true; $psi.UseShellExecute = $false
+$p = [Diagnostics.Process]::Start($psi)
+function Send($o) { $p.StandardInput.WriteLine(($o | ConvertTo-Json -Depth 12 -Compress)); $p.StandardInput.Flush() }
+function Recv() { while ($true) { $l = $p.StandardOutput.ReadLine(); if ($null -eq $l) { return $null }; if ($l.Trim().StartsWith('{')) { return ($l | ConvertFrom-Json) } } }
+$script:i = 0
+function Call($n, $a) { $script:i++; Send @{ jsonrpc='2.0'; id=$script:i; method='tools/call'; params=@{ name=$n; arguments=$a } }; ($(Recv).result.content[0].text | ConvertFrom-Json) }
+
+Send @{ jsonrpc='2.0'; id=0; method='initialize'; params=@{ protocolVersion='2024-11-05'; capabilities=@{}; clientInfo=@{ name='d49-recv'; version='1' } } }
+$null = Recv
+Send @{ jsonrpc='2.0'; method='notifications/initialized' }
+
+$found = Call 'search' @{ query='D49'; store='account-a@example.invalid'; folder='Inbox'; top=5; snippet_chars=0 }
+$hit = @($found.hits) | Where-Object { $_.subject -like '*OutlookAI-McpTest*D49*' } | Select-Object -First 1
+if (-not $hit) { "NO RECEIVED COPY FOUND"; $p.StandardInput.Close(); exit 1 }
+"received hit: $($hit.id) subject='$($hit.subject)'"
+
+$rd = Call 'read' @{ id=$hit.id; include_html=$true; max_body_chars=0 }
+$rh = $rd.bodyHtml
+$m = [regex]::Match($rh, 'src="cid:([^"]+)"')
+"received cid: $($m.Groups[1].Value)"
+"received html: cid=$($rh.Contains('cid:')) fileUrl=$($rh.Contains('file:///')) userPath=$($rh.Contains('C:\Users')) vrect=$($rh.Contains('<v:rect'))"
+
+$outDir = 'C:\Users\<user>\Downloads\tmp-outlookai-headless-probe\received'
+New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+$saved = Call 'save_attachment' @{ id=$hit.id; attachment_index=1; target_dir=$outDir }
+$f = Get-Item $saved.savedPath
+$bytes = [IO.File]::ReadAllBytes($f.FullName)
+$magic = ($bytes[0..7] | ForEach-Object { $_.ToString('X2') }) -join ' '
+$same = (Get-FileHash $sigSource -Algorithm SHA256).Hash -eq (Get-FileHash $f.FullName -Algorithm SHA256).Hash
+"saved: name=$($f.Name) bytes=$($f.Length) magic='$magic' byteIdenticalToSignatureSource=$same"
+
+$p.StandardInput.Close(); $null = $p.WaitForExit(30000)
+"server exit: $($p.ExitCode)"
