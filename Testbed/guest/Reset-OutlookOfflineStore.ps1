@@ -182,7 +182,7 @@ if ($SelfTest) {
     Check 'an old root does not count' 'hub@example.invalid|real@example.invalid' ((Get-StoresWithoutNewRoot $stores $before @('REAL@example.invalid($65e0d53e)')) -join '|')
     Check 'a new root does, ignoring case' 'real@example.invalid' ((Get-StoresWithoutNewRoot $stores $before @('real@example.invalid($65e0d53e)', 'Hub@Example.invalid($1a2b3c4d)')) -join '|')
     Check 'every store with a new root leaves none' 0 @(Get-StoresWithoutNewRoot $stores $before @('hub@example.invalid($1)', 'real@example.invalid($2)')).Count
-    Check 'a root of a longer name is not the store''s' 'hub@example.invalid' ((Get-StoresWithoutNewRoot @('hub@example.invalid') @() @('hub@example.invalid.extra($1)')) -join '|')
+    Check 'a root of a longer name is not the store''s' 'hub@example.invalid' ((Get-StoresWithoutNewRoot @('hub@example.invalid') @() @('hub@example.invalid.test($1)')) -join '|')
     Check 'the indexed stores are read from the staged settings' 'hub@example.invalid|real@example.invalid' ((Get-SettingsList '{ "indexedStoreDisplayNames": [ "hub@example.invalid", "", "real@example.invalid" ] }' 'indexedStoreDisplayNames') -join '|')
     Check 'an absent list is empty' 0 @(Get-SettingsList '{ "probeTerm": "" }' 'indexedStoreDisplayNames').Count
     Write-Host ''
