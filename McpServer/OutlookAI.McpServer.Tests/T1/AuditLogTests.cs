@@ -18,12 +18,12 @@ public sealed class AuditLogTests
         string line = AuditLog.FormatLine(Ts, "new_draft", new (string, string?)[]
         {
             ("entryId", "00AB"),
-            ("store", "telefonie@xxlnet.nl"),
+            ("store", "shared-mailbox@exchange-org.invalid"),
             ("displayed", "false"),
         });
 
         Assert.Equal(
-            "ts=2026-07-23T10:11:12.345Z op=new_draft entryId=\"00AB\" store=\"telefonie@xxlnet.nl\" displayed=\"false\"",
+            "ts=2026-07-23T10:11:12.345Z op=new_draft entryId=\"00AB\" store=\"shared-mailbox@exchange-org.invalid\" displayed=\"false\"",
             line);
     }
 

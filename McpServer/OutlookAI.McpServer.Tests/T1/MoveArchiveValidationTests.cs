@@ -147,9 +147,9 @@ public sealed class MoveArchiveValidationTests
     [Fact]
     public void ToStoreRelativeFolderPath_StoreNamePrefixCollision_FallsBackToSegmentDrop()
     {
-        // "Jan" must not eat the front of "Jan van Linge" - the store name has to be
+        // "Ann" must not eat the front of "Ann van Example" - the store name has to be
         // the WHOLE first segment.
-        Assert.Equal("Inbox", OutlookComSession.ToStoreRelativeFolderPath("\\\\Jan van Linge\\Inbox", "Jan"));
+        Assert.Equal("Inbox", OutlookComSession.ToStoreRelativeFolderPath("\\\\Ann van Example\\Inbox", "Ann"));
     }
 
     // ------------------------------------------------------------ archive resolution parsing

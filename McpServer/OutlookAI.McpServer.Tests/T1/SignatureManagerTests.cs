@@ -277,14 +277,14 @@ public sealed class SignatureManagerTests : IDisposable
     public void SetDefaultFor_SingleScope_WritesOnlyThatValue(string scope, string expectedValueName)
     {
         FakeDefaultsStore store = new FakeDefaultsStore();
-        store.Rows.Add(new SignatureDefaultsRow("k", "a@b.nl", null, null));
+        store.Rows.Add(new SignatureDefaultsRow("k", "a@b.example", null, null));
 
         Manage(new ManageSignatureRequest
         {
             Action = "create",
             Name = "One" + scope,
             BodyText = "x",
-            DefaultForAccount = "a@b.nl",
+            DefaultForAccount = "a@b.example",
             DefaultForScope = scope,
         }, store);
 
@@ -340,10 +340,10 @@ public sealed class SignatureManagerTests : IDisposable
     [InlineData("create", "dot.", "b", null, null, null)]             // trailing dot
     [InlineData("create", "X", null, null, null, null)]               // create without any body
     [InlineData("delete", "X", "b", null, null, null)]                // delete with body
-    [InlineData("create", "X", "b", null, "a@b.nl", null)]            // account without scope
+    [InlineData("create", "X", "b", null, "a@b.example", null)]            // account without scope
     [InlineData("create", "X", "b", null, null, "new")]               // scope without account
-    [InlineData("create", "X", "b", null, "a@b.nl", "everything")]    // bad scope
-    [InlineData("delete", "X", null, null, "a@b.nl", "new")]          // set_default_for on delete
+    [InlineData("create", "X", "b", null, "a@b.example", "everything")]    // bad scope
+    [InlineData("delete", "X", null, null, "a@b.example", "new")]          // set_default_for on delete
     public void InvalidRequests_AreRejected_WithArgumentException(
         string action, string name, string? bodyText, string? bodyHtml, string? account, string? scope)
     {

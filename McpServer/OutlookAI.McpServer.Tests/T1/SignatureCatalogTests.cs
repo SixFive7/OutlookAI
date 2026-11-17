@@ -64,12 +64,12 @@ public sealed class SignatureCatalogTests : IDisposable
     {
         // Outlook writes signature .txt files as UTF-16LE with BOM (observed live).
         string path = Path.Combine(_dir, "Dutch.txt");
-        File.WriteAllText(path, "\r\nMet vriendelijke groet,\r\nJori Huisman\r\n\r\nMore below", Encoding.Unicode);
+        File.WriteAllText(path, "\r\nMet vriendelijke groet,\r\nAlex Example\r\n\r\nMore below", Encoding.Unicode);
         File.WriteAllText(Path.Combine(_dir, "Dutch.htm"), "<html><body>ignored - txt wins</body></html>");
 
         IReadOnlyList<SignatureInfo> signatures = SignatureCatalog.ListSignatures(_dir);
 
-        Assert.Equal("Met vriendelijke groet, / Jori Huisman", Assert.Single(signatures).Excerpt);
+        Assert.Equal("Met vriendelijke groet, / Alex Example", Assert.Single(signatures).Excerpt);
     }
 
     [Fact]

@@ -64,7 +64,7 @@ public sealed class AuditLogReaderTests : IDisposable
         {
             ("entryId", "00AB"),
             ("value", value),
-            ("store", "telefonie@xxlnet.nl"),
+            ("store", "shared-mailbox@exchange-org.invalid"),
         });
 
         AuditLogEntry? entry = AuditLogReader.ParseLine(line);
@@ -81,7 +81,7 @@ public sealed class AuditLogReaderTests : IDisposable
             expected.Add(new("value", value));
         }
 
-        expected.Add(new("store", "telefonie@xxlnet.nl"));
+        expected.Add(new("store", "shared-mailbox@exchange-org.invalid"));
         Assert.Equal(expected, entry.Fields);
     }
 

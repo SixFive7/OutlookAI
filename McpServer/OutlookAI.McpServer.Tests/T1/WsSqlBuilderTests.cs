@@ -483,12 +483,12 @@ public sealed class WsSqlBuilderTests
     public void Build_SenderFilter_MatchesAddressOrDisplayName()
     {
         var query = BaseQuery();
-        query.SenderContains = "huisman";
+        query.SenderContains = "example";
 
         string sql = WsSqlBuilder.Build(query);
 
         Assert.Contains(
-            "(CONTAINS(System.Message.FromAddress, '\"huisman\"') OR CONTAINS(System.Message.FromName, '\"huisman\"'))",
+            "(CONTAINS(System.Message.FromAddress, '\"example\"') OR CONTAINS(System.Message.FromName, '\"example\"'))",
             sql,
             StringComparison.Ordinal);
     }
@@ -503,7 +503,7 @@ public sealed class WsSqlBuilderTests
     public void Build_SenderFilter_IsParenthesisedSoItCannotWidenTheStatement()
     {
         var query = BaseQuery();
-        query.SenderContains = "huisman";
+        query.SenderContains = "example";
         query.ReceivedOnOrAfterUtc = new DateTime(2026, 7, 1, 0, 0, 0, DateTimeKind.Utc);
 
         string sql = WsSqlBuilder.Build(query);
