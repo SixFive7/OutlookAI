@@ -4399,8 +4399,13 @@ namespace OutlookAI.Core.Com
         /// <summary>
         /// Store-relative folder path from an OOM <c>Folder.FolderPath</c>
         /// (<c>\\Store Display Name\A\B</c> becomes <c>A/B</c>, the list_folders
-        /// convention; the store root itself becomes an empty string). Pure logic,
-        /// public for T1.
+        /// convention; the store root itself becomes an empty string). Each name is given back
+        /// as Outlook holds it: <c>FolderPath</c> escapes three characters inside a name -
+        /// <c>%</c> as <c>%25</c>, <c>\</c> as <c>%5C</c>, <c>/</c> as <c>%2F</c> (measured,
+        /// <c>Docs/live-tier-on-the-vm.md</c> section 8 item 28) - and since <c>%</c> itself is
+        /// escaped, undoing those three is exact: a move into the folder <c>a/b</c> that
+        /// create_folder made reads <c>Parent/a/b</c> here, as it does in list_folders and
+        /// find_folder. Pure logic, public for T1.
         /// </summary>
         public static string ToStoreRelativeFolderPath(string? folderPath, string? storeDisplayName)
         {
@@ -4436,7 +4441,55 @@ namespace OutlookAI.Core.Com
                 }
             }
 
-            return path.TrimStart('\\').Replace('\\', '/');
+            string relative = path.TrimStart('\\');
+            if (relative.IndexOf('%') < 0)
+            {
+                return relative.Replace('\\', '/');
+            }
+
+            string[] names = relative.Split('\\');
+            for (int i = 0; i < names.Length; i++)
+            {
+                names[i] = UnescapeFolderPathName(names[i]);
+            }
+
+            return string.Join("/", names);
+        }
+
+        /// <summary>
+        /// One name of a <c>Folder.FolderPath</c> as the folder's own name: <c>%25</c>, <c>%5C</c> and
+        /// <c>%2F</c> undone in one pass, left to right, and nothing else touched - Outlook escapes no other
+        /// character, so a name's own <c>%2A</c> is written <c>%252A</c> and comes back as <c>%2A</c>. Pure.
+        /// </summary>
+        public static string UnescapeFolderPathName(string? name)
+        {
+            if (string.IsNullOrEmpty(name) || name!.IndexOf('%') < 0)
+            {
+                return name ?? string.Empty;
+            }
+
+            StringBuilder unescaped = new StringBuilder(name.Length);
+            for (int i = 0; i < name.Length; i++)
+            {
+                if (name[i] == '%' && i + 2 < name.Length)
+                {
+                    string code = name.Substring(i + 1, 2);
+                    char? decoded = string.Equals(code, "25", StringComparison.Ordinal) ? '%'
+                        : string.Equals(code, "5C", StringComparison.OrdinalIgnoreCase) ? '\\'
+                        : string.Equals(code, "2F", StringComparison.OrdinalIgnoreCase) ? '/'
+                        : (char?)null;
+                    if (decoded.HasValue)
+                    {
+                        _ = unescaped.Append(decoded.Value);
+                        i += 2;
+                        continue;
+                    }
+                }
+
+                _ = unescaped.Append(name[i]);
+            }
+
+            return unescaped.ToString();
         }
 
         /// <summary>

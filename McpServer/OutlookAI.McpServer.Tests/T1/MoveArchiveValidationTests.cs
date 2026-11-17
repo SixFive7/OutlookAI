@@ -153,6 +153,23 @@ public sealed class MoveArchiveValidationTests
         Assert.Equal(expected, OutlookComSession.ToStoreRelativeFolderPath(folderPath, store));
     }
 
+    [Theory]
+    [InlineData("\\\\My Store\\Parent\\a%2Fb", "Parent/a/b")]
+    [InlineData("\\\\My Store\\50%25 off", "50% off")]
+    [InlineData("\\\\My Store\\back%5Cslash", "back\\slash")]
+    [InlineData("\\\\My Store\\%252A not a star", "%2A not a star")]
+    [InlineData("\\\\My Store\\a%2F%2Fb\\trail%2F", "a//b/trail/")]
+    [InlineData("\\\\My Store\\star*\\why?\\100%25*? mix", "star*/why?/100%*? mix")]
+    [InlineData("\\\\My Store\\lone %\\%2", "lone %/%2")]
+    public void ToStoreRelativeFolderPath_GivesEachNameBackAsOutlookHoldsIt(string folderPath, string expected)
+    {
+        // Outlook's FolderPath escapes %, \ and / inside a name (measured, runbook section 8 item 28: '50% off'
+        // -> '50%25 off', 'back\slash' -> 'back%5Cslash', 'a/b' -> 'a%2Fb', '%2A not a star' -> '%252A not a
+        // star', 'star*' and 'why?' unchanged). Undone exactly, a move into a folder create_folder named 'a/b'
+        // reads the path list_folders and find_folder show - names joined by '/'.
+        Assert.Equal(expected, OutlookComSession.ToStoreRelativeFolderPath(folderPath, "My Store"));
+    }
+
     [Fact]
     public void ToStoreRelativeFolderPath_StoreNamePrefixCollision_FallsBackToSegmentDrop()
     {

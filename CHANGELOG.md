@@ -1093,6 +1093,13 @@ its mailbox tests on, and change nothing you install.
 
 ### Fixed
 
+- 🐛 **A move names a folder whose name holds `/`, `\` or `%` the way list_folders does.**
+  `move_mail` and `archive_mail` printed the folders an item left and went to as Outlook writes them,
+  with those three characters coded: a move into the folder `a/b` that `create_folder` had just made
+  answered `Parent/a%2Fb`, while `list_folders` and `find_folder` show `Parent/a/b`. Outlook codes
+  only those three and codes `%` itself, so undoing them is exact (measured on the indexed test
+  machine, runbook section 8 item 28), and a move now prints a folder as those two do.
+
 - 🐛 **A search of one folder whose name ends with a space finds that folder's mail in the index.**
   Outlook allows such a name and the index keeps the space, in the folder's address and in its path,
   but OutlookAI trimmed it, so a search of that folder alone found nothing in the index. The space

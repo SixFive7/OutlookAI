@@ -292,7 +292,7 @@ public sealed class LiveFolderScopeTests
             // for the item means it stays quiet; and a hub that is not indexed has no folder bound
             // to fail at all.
             bool guardSpoke = (outcome.Advice ?? Array.Empty<string>())
-                .Any(a => a.Contains("matched NOTHING in the index", StringComparison.Ordinal));
+                .Any(a => a.Contains("has NO rows in the index", StringComparison.Ordinal));
             bool indexServedIt = outcome.Hits.Any(h => h.Subject == seedSubject && h.Source == "index");
             Assert.Equal(outcome.Index?.FolderNotIndexed == true, guardSpoke);
             Assert.False(indexServedIt && guardSpoke, "the index served the item, yet the guard says the folder matched nothing in it");

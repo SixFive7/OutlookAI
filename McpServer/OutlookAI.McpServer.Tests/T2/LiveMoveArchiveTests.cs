@@ -111,6 +111,35 @@ public sealed class LiveMoveArchiveTests
         }
     }
 
+    /// <summary>
+    /// A folder of one of <paramref name="stores"/> that move_mail takes as a target - read through the test's own
+    /// read-only session (<see cref="OutlookComSession.TryDescribeFolder"/>): not a store's top, not refused by the
+    /// move guard (Deleted Items or under it, the Outbox, not a mail folder). Fails when none of them has one.
+    /// </summary>
+    private (string Store, string FolderId) AFolderAMoveCouldTarget(IEnumerable<string> stores)
+    {
+        foreach (string store in stores)
+        {
+            foreach (FolderView folder in LiveIds.Folders(Service, store))
+            {
+                if (folder.FolderId == null
+                    || !OutlookAI.Core.Mapi.OutlookIds.TryDecodeFolderId(folder.FolderId, "folder", out string hex, out _))
+                {
+                    continue;
+                }
+
+                ComFolderDetail? detail = _fixture.VerifySession.TryDescribeFolder(hex, out _);
+                if (detail != null && !detail.IsStoreRoot && detail.RefusedAsTarget == null)
+                {
+                    return (store, folder.FolderId);
+                }
+            }
+        }
+
+        throw new InvalidOperationException(
+            "No store but the hub has a folder move_mail could target, so the cross-store refusal cannot be shown here.");
+    }
+
     /// <summary>A store's folder paths, walked from the root - a walk that creates nothing.</summary>
     private IReadOnlyList<string> FolderPathsOf(string store)
     {
@@ -216,10 +245,14 @@ public sealed class LiveMoveArchiveTests
             _output.WriteLine("move 2 ok: undo via fromFolderId landed back in Inbox");
 
             // --- cross-store guard (READ-ONLY for the other store): a target folder in another store is
-            // refused per item, and the hub item stays untouched. The other store's Inbox is only read.
-            string otherStore = _fixture.Settings.ExpectedStoreDisplayNames
-                .First(s => !string.Equals(s, Hub, StringComparison.OrdinalIgnoreCase));
-            MoveMailOutcome cross = Service.MoveMail(new[] { currentEntryId }, LiveIds.FolderId(Service, otherStore, "Inbox"));
+            // refused per item, and the hub item stays untouched. The other store's folder is only read:
+            // any folder a move could otherwise go to - not its top, not Deleted Items, not the Outbox, a
+            // mail folder - since a refused target refuses the whole call before any item is looked at.
+            // A data file added to the profile need not have an Inbox (the guests' bystander has none).
+            (string otherStore, string otherFolderId) = AFolderAMoveCouldTarget(
+                _fixture.Settings.ExpectedStoreDisplayNames.Where(s => !string.Equals(s, Hub, StringComparison.OrdinalIgnoreCase)));
+            _output.WriteLine("cross-store target: a folder of '" + otherStore + "'");
+            MoveMailOutcome cross = Service.MoveMail(new[] { currentEntryId }, otherFolderId);
             Assert.False(cross.Items[0].Ok);
             Assert.Contains("same-store only", cross.Items[0].Error, StringComparison.Ordinal);
             Assert.NotNull(_fixture.VerifySession.TryOpenItem(currentEntryId, _fixture.GetStoreId(Hub), out _));

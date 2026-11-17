@@ -118,6 +118,10 @@ public sealed class LiveDisconnectRecoveryTests
                 + ", last health reading: " + lastHealth);
 
         _ = clock.Step("first service call (list_accounts)", service.ListAccounts);
+
+        // The hub's ID, read while Outlook answers: the degraded search below runs with Outlook gone and
+        // its start held off, and a store ID is looked up through Outlook (list_accounts).
+        string hubStoreId = LiveIds.StoreId(service, _fixture.Hub);
         int stores = clock.Step(
             "count stores through the independent gateway",
             () => independentGateway.Run(s => ((OutlookComSession)s).GetStores().Count));
@@ -433,7 +437,7 @@ public sealed class LiveDisconnectRecoveryTests
                             () => service.Search(new SearchRequest
                             {
                                 Query = "oaimcpDegradationProbe" + _fixture.RunMarker,
-                                StoreId = LiveIds.StoreId(service, _fixture.Hub),
+                                StoreId = hubStoreId,
                                 Top = 5,
                                 SnippetChars = 0,
                             }));

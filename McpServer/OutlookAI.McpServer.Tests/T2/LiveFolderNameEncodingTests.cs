@@ -454,7 +454,7 @@ public sealed class LiveFolderNameEncodingTests
         }
 
         bool unresolved = (outcome.Advice ?? Array.Empty<string>())
-            .Any(a => a.Contains("matched NOTHING in the index", StringComparison.Ordinal));
+            .Any(a => a.Contains("has NO rows in the index", StringComparison.Ordinal));
         HitSummary? hit = outcome.Hits.FirstOrDefault(h => h.Subject == c.Subject);
         if (hit == null)
         {
@@ -610,7 +610,7 @@ public sealed class LiveFolderNameEncodingTests
                 + (Error ?? (Found
                     ? "FOUND, hit folder='" + HitFolder + "' source=" + Source + " locatedVia=" + LocatedVia
                     : "not found"))
-                + (Unresolved ? " [advice: folder matched NOTHING in the index]" : string.Empty);
+                + (Unresolved ? " [advice: the folder has NO rows in the index]" : string.Empty);
         }
     }
 
