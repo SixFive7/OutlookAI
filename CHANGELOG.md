@@ -2124,6 +2124,17 @@ its mailbox tests on, and change nothing you install.
 
 ### Security
 
+- 🔒 **The installer removes the leaked old signing certificate from every certificate store it can change.**
+  That certificate signed OutlookAI v1.0.0.1 to v2.3.1.111, and its private key became public, so no
+  computer should trust it. Installing or updating already removed it from your Trusted Publishers
+  store. Every install, update and uninstall now also removes it from your Trusted Root
+  Certification Authorities, Intermediate Certification Authorities and Trusted People stores, and
+  from the computer's stores too when the installer runs with administrator rights. It is found by
+  its thumbprint, E205060633DD7062D4F90033130542948A69D068, and nothing else. Windows guards your
+  Trusted Root store, so if the certificate is in it, Windows may ask you to confirm the removal;
+  the installer does not wait for your answer and looks again next time. The installer carries no
+  copy of the certificate and never adds it to the Disallowed store (decision 193 (b)).
+
 - 🔒 **The add-in and the MCP server load Windows DLLs only from System32.**
   Each of their P/Invoke declarations names a Windows DLL by file name alone, and Windows looked for
   such a DLL in the program's own folder first: for an installed copy, the per-user install folder
