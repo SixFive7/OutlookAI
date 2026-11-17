@@ -263,7 +263,7 @@ the exit code covers both passes. A pass that selects no test is no failure: a r
 Q144 marks none, and a narrow `-Filter` may select none of the marked tests. What makes the marks
 complete is `T1/TimeZoneMarkerTests`, which fails a test that can read the machine's zone and
 carries none: it walks the compiled code of the whole solution from every non-live test, and
-`T1/MachineZoneReads.cs` says how and what it cannot see. On 2026-11-17 it found 323 of 2,595 test
+`T1/MachineZoneReads.cs` says how and what it cannot see. On 2026-11-17 it found 323 of 2,676 test
 methods, in 39 classes - 145 of them only through a product conversion that reads the zone for a
 local time alone. AGENTS.md has the rule for them: rewrite a marked test to set its own zone when
 you next touch it, and drop its mark once the check no longer finds it.

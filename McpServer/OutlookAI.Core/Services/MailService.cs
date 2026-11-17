@@ -4746,7 +4746,7 @@ namespace OutlookAI.Core.Services
             ComDraftBody draftBody = ResolveDraftBody(body, bodyHtml, "the signature", out IReadOnlyList<string> htmlAdjustments);
             IReadOnlyList<DraftAttachmentFile> files = DraftAttachments.Validate(attachments);
 
-            ComSignatureOverride? signatureOverride = ResolveSignatureOverride(signature);
+            ComSignatureOverride? signatureOverride = ResolveSignatureOverride(signature, account, replyOrForward: false);
             ComDraftOptions options = new(
                 ccList, bccList, subjectOverride: null, ParseImportance(importance), requestReadReceipt,
                 files.Select(f => f.Path).ToList());
@@ -4951,7 +4951,9 @@ namespace OutlookAI.Core.Services
 
             RequireSubjectWithinCap(subject, nameof(subject));
 
-            ComSignatureOverride? signatureOverride = ResolveSignatureOverride(signature);
+            // The sending account of a reply or forward is the one delivering to the source's store -
+            // known only in the COM host, which checks that account can use the signature (Q157 (a)).
+            ComSignatureOverride? signatureOverride = ResolveSignatureOverride(signature, knownSendingAccount: null, replyOrForward: true);
             ComDraftOptions options = new(
                 Text.HtmlBodyComposer.SplitRecipients(cc),
                 Text.HtmlBodyComposer.SplitRecipients(bcc),
@@ -5012,32 +5014,26 @@ namespace OutlookAI.Core.Services
         }
 
         /// <summary>
-        /// Validates and resolves the optional draft-tool signature name BEFORE any COM
-        /// work: null stays null (account default), an unknown name is rejected with
-        /// the available names listed (agent self-correction), a known one becomes the
-        /// COM override request carrying the preferred file (.htm - Word converts and
-        /// embeds natively).
+        /// Validates the draft tools' <c>signature</c> argument BEFORE any COM work (Q157 (a)): left out
+        /// stays null - the sending account's effective default, decided in the COM host where the
+        /// account and the running profile are known (update_draft: keep the signature); "none" is no
+        /// signature (update_draft: remove it); a name must be installed, allowed by policy (Q156) and -
+        /// when the sending account is already known, as for new_draft - one that account can use.
+        /// Refusals list what IS usable, so the agent can correct itself.
         /// </summary>
-        private static ComSignatureOverride? ResolveSignatureOverride(string? signature)
+        private static ComSignatureOverride? ResolveSignatureOverride(string? signature, string? knownSendingAccount, bool? replyOrForward)
         {
-            if (string.IsNullOrWhiteSpace(signature))
+            SignatureRequest request = SignatureRequest.Parse(signature);
+            if (request.Kind == SignatureRequestKind.AccountDefault)
             {
                 return null;
             }
 
-            SignatureInfo? resolved = SignatureCatalog.TryResolve(signature!);
-            if (resolved?.PreferredFilePath == null)
-            {
-                IReadOnlyList<SignatureInfo> available = SignatureCatalog.ListSignatures();
-                throw new ArgumentException(
-                    "signature '" + signature!.Trim() + "' was not found"
-                    + (available.Count > 0
-                        ? ". Available signatures: " + string.Join(", ", available.Select(s => s.Name)) + ". Use list_signatures for details."
-                        : " - no signatures are installed (see list_signatures)."),
-                    nameof(signature));
-            }
-
-            return new ComSignatureOverride(resolved.Name, resolved.PreferredFilePath!);
+            SignatureInfo? resolved = SignatureSelector.Validate(
+                SignatureEnvironment.ReadCurrent(), request, knownSendingAccount, replyOrForward);
+            return request.Kind == SignatureRequestKind.None
+                ? ComSignatureOverride.NoSignature()
+                : new ComSignatureOverride(resolved!.Name, resolved.PreferredFilePath!);
         }
 
         /// <summary>
@@ -5131,6 +5127,12 @@ namespace OutlookAI.Core.Services
                 return new OperationOutcomeException(Com.MutationOutcome.Unchanged, DescribeDraftNotStarted(earlyFailure));
             }
 
+            if (Com.ComErrorTokens.TryRead(error, Com.ComErrorTokens.SignatureRefused, out string signatureRefusal))
+            {
+                // Decided above the compose: no draft exists.
+                return new SignatureRefusedException("signature_not_usable", signatureRefusal + " No draft was created.");
+            }
+
             return new OperationOutcomeException(Com.MutationOutcome.Unknown, DescribeDraftCreationOutcomeUnknown(error, savedDraftEntryId));
         }
 
@@ -5177,6 +5179,13 @@ namespace OutlookAI.Core.Services
                 return new OperationOutcomeException(
                     Com.MutationOutcome.Unchanged,
                     "The source mail could not be opened, so no draft was created. Re-run search - the item may have moved.");
+            }
+
+            if (Com.ComErrorTokens.TryRead(error, Com.ComErrorTokens.SignatureRefused, out string signatureRefusal))
+            {
+                // Q157 (a): the sending account - known only once the source's store was - cannot use the
+                // signature, or policy forbids it. Decided above the compose, so no draft exists.
+                return new SignatureRefusedException("signature_not_usable", signatureRefusal + " No draft was created.");
             }
 
             if (Com.ComErrorTokens.TryRead(error, Com.ComErrorTokens.DraftNotStarted, out string earlyFailure))
@@ -5247,6 +5256,8 @@ namespace OutlookAI.Core.Services
                     ("signatureInjected", created.SignatureInjected ? "true" : "false"),
                     ("signature", created.SignatureOverrideName),
                     ("signatureApplied", created.SignatureOverrideName != null ? (created.SignatureOverrideApplied ? "true" : "false") : null),
+                    ("signatureSource", created.SignatureOutcome?.Source),
+                    ("signatureProfile", created.SignatureOutcome?.Profile),
                     ("bodyPlacement", created.BodyPlacedViaWordEditor ? "wordEditor" : "html"),
                     // D49: the compose surface is audited on EVERY draft - "promoted" is the
                     // headless-but-fully-capable case, and a degraded composition names its
@@ -5312,6 +5323,11 @@ namespace OutlookAI.Core.Services
                 Signature = created.SignatureOverrideName,
                 SignatureApplied = created.SignatureOverrideName != null ? created.SignatureOverrideApplied : (bool?)null,
                 SignatureError = created.SignatureOverrideName != null ? created.SignatureOverrideError : null,
+                SignatureSource = created.SignatureOutcome?.Source,
+                SignatureReason = DescribeSignatureOutcome(created),
+                SignatureProfile = created.SignatureOutcome?.Profile,
+                SignatureSuggestion = created.SignatureOutcome?.Suggestion,
+                SignatureSuggestionReason = created.SignatureOutcome?.SuggestionReason,
                 Displayed = created.Displayed,
                 ConversationId = created.Draft.ConversationId,
                 Recipients = recipients,
@@ -5331,6 +5347,25 @@ namespace OutlookAI.Core.Services
                 ComposeSurfaceAdvice = created.BodyPlacedViaWordEditor ? null : ComposeSurfaceDegradedAdvice,
                 HtmlAdjustments = htmlAdjustments.Count > 0 ? htmlAdjustments : null,
             };
+        }
+
+        /// <summary>
+        /// The draft result's <c>signatureReason</c>: the decision's sentence, plus - when the chosen
+        /// signature could not be inserted - that the draft has none and how to retry. Since the
+        /// 2026-10-04 crash fix nothing puts the default in its place, which the description used to
+        /// promise.
+        /// </summary>
+        private static string? DescribeSignatureOutcome(ComDraftCreateResult created)
+        {
+            string? reason = created.SignatureOutcome?.Reason;
+            if (created.SignatureOverrideName == null || created.SignatureOverrideApplied)
+            {
+                return reason;
+            }
+
+            return (reason == null ? string.Empty : reason + "; ")
+                + "it could not be inserted (" + (created.SignatureOverrideError ?? "unknown") + "), so the draft has NO signature - "
+                + "update_draft with signature=\"" + created.SignatureOverrideName + "\" retries it";
         }
 
         /// <summary>
@@ -5420,7 +5455,7 @@ namespace OutlookAI.Core.Services
             }
 
             int? parsedImportance = ParseImportance(importance);
-            ComSignatureOverride? signatureOverride = ResolveSignatureOverride(signature);
+            ComSignatureOverride? signatureOverride = ResolveSignatureOverride(signature, knownSendingAccount: null, replyOrForward: null);
             IReadOnlyList<DraftAttachmentFile> files = DraftAttachments.Validate(attachments);
             IReadOnlyList<string> removeNames = DraftAttachments.ValidateRemoveNames(removeAttachments);
 
@@ -5890,6 +5925,9 @@ namespace OutlookAI.Core.Services
                 case "SignatureFileMissing":
                     return RefuseDraft("signature_file_missing", operation, entryId,
                         "The requested signature's file is missing on disk. The draft is unchanged; see list_signatures.");
+                case string refused when Com.ComErrorTokens.TryRead(refused, Com.ComErrorTokens.SignatureRefused, out string why):
+                    // Q157 (a): decided before the editor was touched, so the draft is as it was.
+                    return RefuseDraft("signature_not_usable", operation, entryId, why + " The draft is unchanged.");
                 case "ItemNotFound":
                     return new InvalidOperationException(
                         "The draft could not be opened - it may have been deleted, moved or already sent. "
@@ -5953,6 +5991,7 @@ namespace OutlookAI.Core.Services
                     ("bodyFormat", body?.FormatName),
                     ("bodyPlacement", updated.BodyReplaced ? (updated.BodyPlacedViaWordEditor ? "wordEditor" : "html") : null),
                     ("signature", updated.SignatureOverrideName),
+                    ("signatureRemoved", updated.SignatureOutcome?.Removed?.ToString().ToLowerInvariant()),
                     ("attachmentsAdded", updated.AttachmentsAdded.Count > 0
                         ? updated.AttachmentsAdded.Count.ToString(CultureInfo.InvariantCulture)
                         : null),
@@ -6048,7 +6087,12 @@ namespace OutlookAI.Core.Services
                 Importance = ImportanceName(updated.Draft.Importance) is string name && name != "normal" ? name : null,
                 ReadReceiptRequested = updated.Draft.ReadReceiptRequested ? true : (bool?)null,
                 Signature = updated.SignatureOverrideName,
-                SignatureApplied = updated.SignatureOverrideName != null ? updated.SignatureOverrideApplied : (bool?)null,
+                SignatureApplied = updated.SignatureOverrideName != null && updated.SignatureOutcome?.Removed == null
+                    ? updated.SignatureOverrideApplied
+                    : (bool?)null,
+                SignatureRemoved = updated.SignatureOutcome?.Removed,
+                SignatureReason = updated.SignatureOutcome?.Reason,
+                SignatureSuggestion = updated.SignatureOutcome?.Suggestion,
                 BodyFormat = body?.FormatName,
                 BodyPlacement = updated.BodyReplaced ? (updated.BodyPlacedViaWordEditor ? "wordEditor" : "html") : null,
                 HtmlAdjustments = htmlAdjustments.Count > 0 ? htmlAdjustments : null,
@@ -8108,57 +8152,54 @@ namespace OutlookAI.Core.Services
         }
 
         /// <summary>
-        /// Signature landscape (list_signatures - soak fix D37, R5 steering): installed
-        /// signatures with plain-text excerpts (language/purpose detection) plus the
-        /// registry-determined per-account default assignments. Pure filesystem +
-        /// registry - no COM, never starts Outlook. Assignments degrade to unknown
-        /// (absent fields + note) when the registry does not carry them - never guessed.
+        /// list_signatures (soak fix D37; Q147, Q155 (c), Q159): every Outlook profile with its mail
+        /// accounts and their own and effective defaults, the signature folder Outlook uses, the
+        /// policy, roaming, and every signature with its renditions and pictures - or, with
+        /// <paramref name="name"/>, that one signature in full. Filesystem and registry, read fresh;
+        /// the one COM call is the running profile's name, made only when Outlook is ALREADY running
+        /// (attach, bounded like health) - this never starts Outlook.
         /// </summary>
-        public SignaturesOutcome ListSignatures()
+        public SignaturesOutcome ListSignatures(string? name = null)
         {
-            IReadOnlyList<SignatureInfo> signatures = SignatureCatalog.ListSignatures();
-            IReadOnlyList<SignatureAssignment> assignments = SignatureCatalog.ReadAccountAssignments();
-
-            List<SignatureView> signatureViews = signatures
-                .Select(s => new SignatureView { Name = s.Name, Excerpt = s.Excerpt })
-                .ToList();
-
-            List<SignatureAccountView>? accountViews = assignments.Count > 0
-                ? assignments.Select(a => new SignatureAccountView
-                {
-                    Account = a.Account,
-                    NewMessage = a.NewMessageSignature,
-                    ReplyForward = a.ReplyForwardSignature,
-                }).ToList()
-                : null;
-
-            string? note = null;
-            if (assignments.Count == 0)
-            {
-                note = "Per-account default assignments could not be read from the profile registry - defaults are unknown "
-                    + "(they may be roaming-managed). Omitting the signature parameter still applies whatever default Outlook uses.";
-            }
-            else if (assignments.Any(a => a.NewMessageSignature == null && a.ReplyForwardSignature == null))
-            {
-                note = "Accounts without listed assignments have no registry-recorded default - unknown (possibly no signature, "
-                    + "possibly roaming-managed). Omitting the signature parameter applies whatever default Outlook uses.";
-            }
-
-            return new SignaturesOutcome
-            {
-                Signatures = signatureViews,
-                Accounts = accountViews,
-                Note = note,
-            };
+            SignatureEnvironment environment = SignatureEnvironment.ReadCurrent();
+            string? running = TryReadRunningProfile(out string? runningNote);
+            return SignatureListing.Build(environment, running, runningNote, name);
         }
 
         /// <summary>
-        /// Signature management (manage_signature - soak fix D38): create/update/delete
-        /// the signature file set under %APPDATA%\Microsoft\Signatures with the
-        /// ALWAYS-ON pre-modification backup and optional per-account default
-        /// assignment. Pure filesystem + registry - no COM, never starts Outlook. The
-        /// audit line is load-bearing: a write that cannot be audited surfaces the
-        /// failure (with the outcome preserved in the message) instead of hiding it.
+        /// The profile the running Outlook has open, or null with the reason - asked only of an Outlook
+        /// that is already running, within the health probe's budget, so a closed Outlook is never
+        /// started for it and a busy one never holds the answer up.
+        /// </summary>
+        private string? TryReadRunningProfile(out string? note)
+        {
+            if (!ComGateway.IsOutlookRunning())
+            {
+                note = "Outlook is not running, so no profile is open: the draft tools will use the profile it starts with - "
+                    + "the default profile, unless it is started on another.";
+                return null;
+            }
+
+            try
+            {
+                string profile = _gateway.Run(s => s.GetProfileName(), HealthProbeBudgetMs);
+                note = null;
+                return string.IsNullOrWhiteSpace(profile) ? null : profile;
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                note = "Outlook is running but did not say which profile it has open (" + ex.GetType().Name + "); the draft tools "
+                    + "read it again when they compose.";
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Signature management (manage_signature - soak fix D38; Q147, Q159): create, edit in place,
+        /// delete, set and clear defaults, with the ALWAYS-ON pre-modification backup and the policy and
+        /// roaming refusals. Pure filesystem + registry - no COM, never starts Outlook. The audit line is
+        /// load-bearing: a write that cannot be audited surfaces the failure (with the outcome preserved
+        /// in the message) instead of hiding it.
         /// </summary>
         public ManageSignatureOutcome ManageSignature(ManageSignatureRequest request)
         {
@@ -8170,13 +8211,18 @@ namespace OutlookAI.Core.Services
                     ("action", outcome.Action),
                     ("name", outcome.Name),
                     ("filesWritten", outcome.FilesWritten?.Count.ToString(CultureInfo.InvariantCulture)),
+                    ("formatsWritten", outcome.FormatsWritten != null ? string.Join("+", outcome.FormatsWritten) : null),
+                    ("picturesAdded", outcome.PicturesAdded?.Count.ToString(CultureInfo.InvariantCulture)),
+                    ("picturesReplaced", outcome.PicturesReplaced?.Count.ToString(CultureInfo.InvariantCulture)),
+                    ("picturesRemoved", outcome.PicturesRemoved?.Count.ToString(CultureInfo.InvariantCulture)),
+                    ("replacements", outcome.Replacements?.Count.ToString(CultureInfo.InvariantCulture)),
                     ("filesDeleted", outcome.FilesDeleted?.Count.ToString(CultureInfo.InvariantCulture)),
                     ("backupPath", outcome.BackupPath),
+                    ("profile", outcome.Profile),
                     ("defaultAccount", outcome.DefaultSetForAccount),
                     ("defaultScope", outcome.DefaultSetScope),
-                    ("defaultsCleared", outcome.DefaultsClearedForAccounts != null
-                        ? string.Join(";", outcome.DefaultsClearedForAccounts)
-                        : null));
+                    ("defaultsChanged", Describe(outcome.DefaultsChanged)),
+                    ("defaultsCleared", Describe(outcome.DefaultsCleared)));
             }
             catch (InvalidOperationException ex)
             {
@@ -8188,6 +8234,14 @@ namespace OutlookAI.Core.Services
             }
 
             return outcome;
+        }
+
+        /// <summary>Default changes for the audit line: account@profile:scope=value, ';'-separated.</summary>
+        private static string? Describe(IReadOnlyList<SignatureDefaultChange>? changes)
+        {
+            return changes == null || changes.Count == 0
+                ? null
+                : string.Join(";", changes.Select(c => c.Account + "@" + c.Profile + ":" + c.Scope + "=" + (c.Now ?? "(none)")));
         }
 
         /// <summary>

@@ -23,7 +23,7 @@ namespace OutlookAI.McpServer.Tests.T1;
 /// member or static field a walked body touches; and an interface or virtual member of ours is
 /// followed into every implementation in this test assembly, which is where the fakes a T1 test runs
 /// against live. A test reads the machine's zone when the walk reaches one of the framework members
-/// <see cref="ReadOf"/> lists. Run on 2026-11-17 it walked 10,832 methods in under a second.
+/// <see cref="ReadOf"/> lists. Run on 2026-11-17 it walked 11,667 methods in about a second.
 /// </para>
 /// <para>
 /// <b>What it counts as a read</b> is a framework member that reads the machine's zone for a value of

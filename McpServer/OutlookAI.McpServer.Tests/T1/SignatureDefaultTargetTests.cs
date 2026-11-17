@@ -187,9 +187,8 @@ public sealed class SignatureDefaultTargetTests : IDisposable
         Assert.Null(registry.Value(IdentityAccountKey, NewSig));
 
         // The fixed read-back, on this SAME state, no longer confirms it.
-        SignatureAssignment identity = Assert.Single(
-            SignatureCatalog.ReadAccountAssignments(registry.ValueSets), a => a.Account == Identity);
-        Assert.Null(identity.NewMessageSignature);
+        ProfileAccountEntry identity = Assert.Single(MailAccounts(registry), a => a.Address == Identity);
+        Assert.Null(identity.NewSignature);
     }
 
     // ------------------------------------------------------------------ the fix
@@ -216,11 +215,11 @@ public sealed class SignatureDefaultTargetTests : IDisposable
 
         // list_signatures reads the same entry back: both accounts by their Email, no data file,
         // no address book.
-        IReadOnlyList<SignatureAssignment> assignments = SignatureCatalog.ReadAccountAssignments(registry.ValueSets);
-        Assert.Equal(new[] { Tier, Identity }, assignments.Select(a => a.Account));
-        Assert.Equal(scope == "reply" ? null : SignatureName, assignments[1].NewMessageSignature);
+        IReadOnlyList<ProfileAccountEntry> assignments = MailAccounts(registry);
+        Assert.Equal(new[] { Tier, Identity }, assignments.Select(a => a.Address));
+        Assert.Equal(scope == "reply" ? null : SignatureName, assignments[1].NewSignature);
         Assert.Equal(scope == "new" ? null : SignatureName, assignments[1].ReplyForwardSignature);
-        Assert.Null(assignments[0].NewMessageSignature);
+        Assert.Null(assignments[0].NewSignature);
     }
 
     [Fact]
@@ -254,7 +253,7 @@ public sealed class SignatureDefaultTargetTests : IDisposable
         ArgumentException refusal = Assert.Throws<ArgumentException>(() => Manage(
             CreateWithDefault(Identity, "new"), new ProfileSignatureDefaultsStore(registry)));
 
-        Assert.Contains("was not found", refusal.Message, StringComparison.Ordinal);
+        Assert.Contains("is not a mail account of Outlook profile 'OutlookAI-Tier'", refusal.Message, StringComparison.Ordinal);
         Assert.Contains("data file", refusal.Message, StringComparison.Ordinal);
         Assert.Contains(Tier, refusal.Message, StringComparison.Ordinal);
         Assert.Empty(registry.Sets);
@@ -369,7 +368,7 @@ public sealed class SignatureDefaultTargetTests : IDisposable
         ManageSignatureOutcome outcome = Manage(
             new ManageSignatureRequest { Action = "delete", Name = SignatureName }, new ProfileSignatureDefaultsStore(registry));
 
-        Assert.Equal(new[] { Identity }, outcome.DefaultsClearedForAccounts);
+        Assert.Equal(new[] { ("OutlookAI-Tier", Identity, "new") }, outcome.DefaultsCleared!.Select(c => (c.Profile, c.Account, c.Scope)));
         Assert.Equal(new[] { (IdentityAccountKey, NewSig) }, registry.Deletes);
         Assert.Null(registry.Value(IdentityAccountKey, NewSig));
 
@@ -381,7 +380,7 @@ public sealed class SignatureDefaultTargetTests : IDisposable
 
     private ManageSignatureOutcome Manage(ManageSignatureRequest request, ISignatureDefaultsStore store)
     {
-        return SignatureManager.Manage(request, _dir, _backupRoot, store);
+        return SignatureManager.Manage(request, _dir, _backupRoot, store, settings: new FakeSignatureSettings());
     }
 
     private static ManageSignatureRequest CreateWithDefault(string account, string scope)
@@ -391,9 +390,16 @@ public sealed class SignatureDefaultTargetTests : IDisposable
             Action = "create",
             Name = SignatureName,
             BodyText = "OutlookAI testbed identity account.",
+            DefaultForProfile = "OutlookAI-Tier",
             DefaultForAccount = account,
             DefaultForScope = scope,
         };
+    }
+
+    /// <summary>The mail accounts as list_signatures reads them back: every entry classified, mail accounts only.</summary>
+    private static IReadOnlyList<ProfileAccountEntry> MailAccounts(IProfileAccountRegistry registry)
+    {
+        return ProfileAccountEntries.ReadAll(registry).Where(e => e.Kind == ProfileEntryKind.MailAccount).ToList();
     }
 
     /// <summary>
@@ -521,6 +527,11 @@ public sealed class SignatureDefaultTargetTests : IDisposable
                 .ToList();
         }
 
+        public ProfileList ReadProfiles()
+        {
+            return _registry.ReadProfiles();
+        }
+
         public ProfileAccountEntry? ReadEntry(string accountKey)
         {
             return _fixedReader.ReadEntry(accountKey);
@@ -552,9 +563,14 @@ public sealed class SignatureDefaultTargetTests : IDisposable
         /// <summary>When set, a write is recorded and changes nothing - a write that silently did not happen.</summary>
         public bool DropWrites { get; set; }
 
-        /// <summary>list_signatures' seam, fed from this same registry.</summary>
-        public Func<IReadOnlyList<IReadOnlyDictionary<string, object?>>> ValueSets =>
-            () => ReadEntries().Select(e => e.Values).ToList();
+        /// <summary>The profiles the entries' keys name (the measured guest records OutlookAI-Tier as its default).</summary>
+        public ProfileList ReadProfiles()
+        {
+            return new ProfileList(
+                "OutlookAI-Tier",
+                _entries.Select(e => ProfileAccountEntries.ProfileNameOf(e.Key)).Where(p => p != null).Select(p => p!)
+                    .Distinct(StringComparer.OrdinalIgnoreCase).ToList());
+        }
 
         public FakeProfileRegistry Add(string key, Dictionary<string, object?> values)
         {

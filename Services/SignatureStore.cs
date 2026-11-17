@@ -11,7 +11,8 @@ namespace OutlookAI.Services
     /// Read-only enumeration of the installed Outlook signatures for the task pane's
     /// "Select the best signature" action (D38). Deliberately self-contained in the
     /// add-in (NO OutlookAI.Core reference - the Phase-6 no-coupling choice): reads
-    /// %APPDATA%\Microsoft\Signatures, groups the rendition files by base name, and
+    /// the signature folder Outlook records (<see cref="SignatureFolderLocation"/>, the
+    /// rule the server shares), groups the rendition files by base name, and
     /// derives a short plain-text excerpt (language/purpose detection hint for the AI)
     /// from the .txt rendition (BOM-aware) or a crude HTML strip of the .htm.
     /// Exception-safe: every public member degrades to empty instead of throwing.
@@ -41,14 +42,17 @@ namespace OutlookAI.Services
             public string FilePath { get; }
         }
 
-        /// <summary>The Outlook signatures directory (%APPDATA%\Microsoft\Signatures).</summary>
+        /// <summary>
+        /// The Outlook signatures directory: the folder Outlook records under
+        /// <c>Common\General\Signatures</c>, or <c>%APPDATA%\Microsoft\Signatures</c> when none is
+        /// recorded. Read on every call - Outlook can move it while the add-in runs.
+        /// </summary>
         internal static string SignatureDirectory
         {
             get
             {
-                return Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                    "Microsoft", "Signatures");
+                bool fromRecordedValue;
+                return SignatureFolderLocation.CurrentFolder(OfficeVersions.DetectOutlookVersion(), out fromRecordedValue);
             }
         }
 

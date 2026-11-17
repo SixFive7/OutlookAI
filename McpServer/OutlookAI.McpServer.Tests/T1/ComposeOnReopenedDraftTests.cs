@@ -74,15 +74,15 @@ public sealed class ComposeOnReopenedDraftTests
     [Fact]
     public void InspectorsAreOpened_OnlyOnItemsOpenedByEntryId()
     {
-        // Every GetInspector in the session sits in one of two members ...
+        // Every GetInspector in the session sits in one member. (A second, the live signature tests'
+        // TryApplySignatureOverrideToDraft, was removed on 2026-11-17: it committed with Close(olSave) on
+        // an already-saved draft, the shape measured to keep nothing, so the test that used it proved
+        // nothing - LiveSignatureTests now swaps signatures through update_draft itself.)
         Assert.Equal(
-            new[] { "ReviseHeldDocument", "TryApplySignatureOverrideToDraft" },
+            new[] { "ReviseHeldDocument" },
             MembersContaining("GetInspector").OrderBy(m => m, StringComparer.Ordinal).ToArray());
 
-        // ... one opens its own item by EntryID ...
-        Assert.Contains(".GetItemFromID(", CodeOnly(MemberBody("TryApplySignatureOverrideToDraft")), StringComparison.Ordinal);
-
-        // ... and the other is handed one only by update_draft, which opens it by EntryID, and by
+        // ... and it is handed an item only by update_draft, which opens it by EntryID, and by
         // ComposeReopened, which re-opens it.
         Assert.Equal(
             new[] { "ComposeReopened", "TryUpdateDraft" },
