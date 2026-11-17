@@ -266,7 +266,7 @@ namespace OutlookAI.Core.Services
                 List<string> lines = new List<string>(2);
                 foreach (string rawLine in plain!.Split('\n'))
                 {
-                    string line = rawLine.Trim().Trim('﻿', '￾');
+                    string line = rawLine.Trim().Trim('\uFEFF', '\uFFFE');
                     if (line.Length > 0)
                     {
                         lines.Add(line);

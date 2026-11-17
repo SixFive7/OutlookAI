@@ -521,7 +521,7 @@ public sealed class SignatureManagerTests : IDisposable
 
         ArgumentException noProfile = Assert.Throws<ArgumentException>(() => Manage(SetDefault("S", null, "jan@example.com"), store));
         Assert.Contains("profile is required", noProfile.Message, StringComparison.Ordinal);
-        Assert.Contains("'Home', 'Work'", noProfile.Message, StringComparison.Ordinal);
+        Assert.Contains("list_signatures lists the profiles", noProfile.Message, StringComparison.Ordinal);
 
         ArgumentException unknownProfile = Assert.Throws<ArgumentException>(() => Manage(SetDefault("S", "Elsewhere", "jan@example.com"), store));
         Assert.Contains("does not exist", unknownProfile.Message, StringComparison.Ordinal);
@@ -773,7 +773,7 @@ public sealed class SignatureManagerTests : IDisposable
         Assert.Contains(@"a\\b", rtf, StringComparison.Ordinal);
         Assert.Contains(@"\{c\}", rtf, StringComparison.Ordinal);
         Assert.Contains(@"\'e9", rtf, StringComparison.Ordinal);
-        Assert.Contains(@" 3?", rtf, StringComparison.Ordinal);
+        Assert.Contains(@"\u20013?", rtf, StringComparison.Ordinal); // 中, outside the code page
         Assert.Contains(@"\par second", rtf, StringComparison.Ordinal);
         Assert.EndsWith("}", rtf, StringComparison.Ordinal);
     }

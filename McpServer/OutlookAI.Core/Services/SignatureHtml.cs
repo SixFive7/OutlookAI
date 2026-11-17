@@ -266,18 +266,18 @@ namespace OutlookAI.Core.Services
 
         private static readonly Dictionary<char, string> OtherEntities = new Dictionary<char, string>
         {
-            ['€'] = "euro",
-            ['–'] = "ndash",
-            ['—'] = "mdash",
-            ['‘'] = "lsquo",
-            ['’'] = "rsquo",
-            ['‚'] = "sbquo",
-            ['“'] = "ldquo",
-            ['”'] = "rdquo",
-            ['„'] = "bdquo",
-            ['•'] = "bull",
-            ['…'] = "hellip",
-            ['™'] = "trade",
+            ['\u20AC'] = "euro",
+            ['\u2013'] = "ndash",
+            ['\u2014'] = "mdash",
+            ['\u2018'] = "lsquo",
+            ['\u2019'] = "rsquo",
+            ['\u201A'] = "sbquo",
+            ['\u201C'] = "ldquo",
+            ['\u201D'] = "rdquo",
+            ['\u201E'] = "bdquo",
+            ['\u2022'] = "bull",
+            ['\u2026'] = "hellip",
+            ['\u2122'] = "trade",
         };
 
         /// <summary>
@@ -423,11 +423,11 @@ namespace OutlookAI.Core.Services
             bool inSpace = false;
             foreach (char ch in find)
             {
-                if (ch == ' ' || ch == ' ' || ch == '\t')
+                if (ch == ' ' || ch == '\u00A0' || ch == '\t')
                 {
                     if (!inSpace)
                     {
-                        pattern.Append(@"(?:[ \t\r\n ]|&nbsp;|&#160;|&#[xX]0*[aA]0;)+");
+                        pattern.Append(@"(?:[ \t\r\n\u00A0]|&nbsp;|&#160;|&#[xX]0*[aA]0;)+");
                         inSpace = true;
                     }
 
@@ -481,7 +481,7 @@ namespace OutlookAI.Core.Services
 
         private static string Collapse(string text)
         {
-            return Regex.Replace(text.Replace(' ', ' '), @"\s+", " ", RegexOptions.None, TimeSpan.FromSeconds(2));
+            return Regex.Replace(text.Replace('\u00A0', ' '), @"\s+", " ", RegexOptions.None, TimeSpan.FromSeconds(2));
         }
     }
 }
