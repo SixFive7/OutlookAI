@@ -412,10 +412,13 @@ way that it does not touch [non-test] data in the mailbox and in such a way that
 clean after the tests"*; *"legitimate mail in there should not disappear and it should not be buried
 in test mail forever"* - read, as he confirmed (Q129 (a)), as **touch nothing that is not test data**:
 tests create, change and delete only their own tagged items, and remove every one of them again.
-Until he approves the Phase 2 write-safety design (runbook §4.4), its profile, `ExchangeGuest`,
-refuses every write and only `Writes=Nothing` tests run there. A checkpoint undoes nothing on the
+Since 2026-10-08 the VM also holds his dedicated test account, `telefonie-ai-test@xxlnet.nl`, which
+he settled as its writable hub on 2026-10-11 (Q137): the live tier writes there and nowhere else,
+under the Phase 2 write-safety design as built (runbook §4.4a, profile `ExchangeTestAccount`), and
+telefonie@ is a read-only bystander no test writes - its one exception the single leftover of Q138 (c),
+deleted by a tested one-off helper once he has confirmed its id. A checkpoint undoes nothing on the
 Exchange server: every write there is permanent, and its cleanup rests on the tested sweep alone.
-Nothing may be sent or addressed to anyone but the mailbox itself (Q110). The rules below bind every
+Nothing may be sent or addressed to anyone but the test account itself (Q110). The rules below bind every
 live run, on every VM.
 
 `Category=Live` tests run against the developer's **real production Outlook profile**: real mail accounts plus delegate/shared mailboxes **to which the profile has full write access**. Treat every live run as an operation on production data. A past incident mass-deleted real mail (fully recovered) because an agent improvised a cleanup script — these rules exist so that never repeats. They are non-negotiable and apply to every agent, every session, whether or not live tests are the task:

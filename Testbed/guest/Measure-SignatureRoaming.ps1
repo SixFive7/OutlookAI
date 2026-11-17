@@ -491,6 +491,12 @@ function Read-RoamingFolder($Ns, $Store, [string] $Label) {
     try { $root = $Ns.GetFolderFromID($parentHex, $Store.StoreID) } catch { return ('the non-IPM root did not open: ' + $_.Exception.Message) }
     $top = @(); foreach ($f in $root.Folders) { $top += [string]$f.Name }
     Say ("  non-IPM root '{0}': {1} folder(s): {2}" -f [string]$root.Name, $top.Count, ($top -join ', '))
+    # Where else a mailbox keeps settings: the hidden (associated) items of the non-IPM root and of the top of
+    # the information store - message classes and which probed tags they carry, no value.
+    Say ("  hidden items of the non-IPM root: {0}" -f (Get-HiddenCount $root))
+    Write-HiddenItems $root '    '
+    Say ("  hidden items of the top of the information store: {0}" -f (Get-HiddenCount $ipm))
+    Write-HiddenItems $ipm '    '
     $appData = $null
     foreach ($f in $root.Folders) { if ([string]$f.Name -eq 'ApplicationDataRoot') { $appData = $f } }
     if (-not $appData) { return 'ApplicationDataRoot is NOT there' }
