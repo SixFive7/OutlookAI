@@ -216,7 +216,9 @@ function Invoke-Export {
 function Read-Export([string] $Name) {
     $path = Join-Path $Root "$Name.json"
     $map = @{}
-    foreach ($e in @(Get-Content -LiteralPath $path -Raw | ConvertFrom-Json)) { $map[[string]$e.k] = [string]$e.v }
+    # Assigned first: Windows PowerShell 5.1's ConvertFrom-Json hands a JSON array down the pipeline as ONE object.
+    $data = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+    foreach ($e in $data) { $map[[string]$e.k] = [string]$e.v }
     return $map
 }
 
@@ -297,8 +299,9 @@ function Get-Texts($Element) {
     return @($Element.FindAll([System.Windows.Automation.TreeScope]::Descendants, (New-Object System.Windows.Automation.PropertyCondition($ae::ControlTypeProperty, [System.Windows.Automation.ControlType]::Text))) | ForEach-Object { [string]$_.Current.Name } | Where-Object { $_ })
 }
 
-function Close-Window($Element, [string] $What) {
-    $h = [IntPtr]$Element.Current.NativeWindowHandle
+function Close-Window($Element, [string] $What) { Close-Handle ([IntPtr]$Element.Current.NativeWindowHandle) $What }
+
+function Close-Handle([IntPtr] $h, [string] $What) {
     [void][OaiQ145]::PostMessage($h, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)
     Start-Sleep -Seconds 2
     Say ("  {0} closed by WM_CLOSE (its Cancel): {1}" -f $What, (-not [OaiQ145]::IsWindow($h)))
@@ -333,14 +336,17 @@ function Open-ChangeDialog {
     if (-not $dialog) { throw "the Change dialog did not open within $DialogWaitSeconds s" }
     $texts = @(Get-Texts $dialog)
     if (-not ($texts -contains $Hub)) { Close-Window $dialog 'the Change dialog'; throw "the Change dialog is not the test account's (its texts: $($texts -join ' | '))" }
-    return [pscustomobject]@{ Account = $acct; Dialog = $dialog; Helper = $process }
+    # The handles are read once, here: a closed dialog's element has none to give.
+    return [pscustomobject]@{ Account = $acct; Dialog = $dialog; Helper = $process; AccountHandle = [IntPtr]$acct.Current.NativeWindowHandle; DialogHandle = [IntPtr]$dialog.Current.NativeWindowHandle }
 }
 
 function Close-AccountSettings($Open) {
-    $close = Get-ById $Open.Account '1113'
+    $close = $null
+    try { $close = Get-ById $Open.Account '1113' } catch { }
     if ($close) { [void][OaiQ145]::PostMessage([IntPtr]$close.Current.NativeWindowHandle, 0x00F5, [IntPtr]::Zero, [IntPtr]::Zero) }
+    else { [void][OaiQ145]::PostMessage($Open.AccountHandle, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero) }
     Start-Sleep -Seconds 2
-    Say ("  Account Settings closed with its Close button: {0}; helper ended {1}" -f (-not [OaiQ145]::IsWindow([IntPtr]$Open.Account.Current.NativeWindowHandle)), $Open.Helper.WaitForExit(15000))
+    Say ("  Account Settings closed with its Close button: {0}; helper ended {1}" -f (-not [OaiQ145]::IsWindow($Open.AccountHandle)), $Open.Helper.WaitForExit(15000))
 }
 
 function Read-Slider($Dialog) {
@@ -358,7 +364,7 @@ function Invoke-Read {
         Say ("READ: slider position {0} of {1}..{2}, label '{3}'" -f $s.Value, $s.Min, $s.Max, $s.Label)
     }
     finally {
-        Close-Window $open.Dialog 'the Change dialog'
+        if ([OaiQ145]::IsWindow($open.DialogHandle)) { Close-Handle $open.DialogHandle 'the Change dialog' }
         Close-AccountSettings $open
     }
 }
@@ -379,7 +385,7 @@ function Invoke-Set {
         # The pages after Next: printed, and finished with their own Done / Finish / OK.
         for ($page = 1; $page -le 4; $page++) {
             Start-Sleep -Seconds 4
-            if (-not [OaiQ145]::IsWindow([IntPtr]$open.Dialog.Current.NativeWindowHandle)) { $confirmed = $true; break }
+            if (-not [OaiQ145]::IsWindow($open.DialogHandle)) { $confirmed = $true; break }
             Say ("  page {0}: {1}" -f $page, ((Get-Texts $open.Dialog) -join ' | '))
             $done = $null
             foreach ($n in 'Done', 'Finish', 'OK', 'Close') { if (-not $done) { $done = Find-In $open.Dialog ([System.Windows.Automation.ControlType]::Button) $n } }
@@ -389,7 +395,7 @@ function Invoke-Set {
         if ($box) { Say ('  message box: ' + ((Get-Texts $box) -join ' | ')); $ok = Find-In $box ([System.Windows.Automation.ControlType]::Button) 'OK'; if ($ok) { [void][OaiQ145]::PostMessage([IntPtr]$ok.Current.NativeWindowHandle, 0x00F5, [IntPtr]::Zero, [IntPtr]::Zero) } }
     }
     finally {
-        if (-not $confirmed -and [OaiQ145]::IsWindow([IntPtr]$open.Dialog.Current.NativeWindowHandle)) { Close-Window $open.Dialog 'the Change dialog, NOT confirmed' }
+        if (-not $confirmed -and [OaiQ145]::IsWindow($open.DialogHandle)) { Close-Handle $open.DialogHandle 'the Change dialog, NOT confirmed' }
         Close-AccountSettings $open
     }
     Say ("RESULT: position {0} {1}" -f $Position, $(if ($confirmed) { 'confirmed - the Change dialog closed after its last page' } else { 'NOT confirmed' }))
@@ -419,5 +425,5 @@ try {
         'WriteMonths' { Invoke-WriteMonths }
     }
 }
-catch { Say ('FAILED: ' + $_.Exception.Message) }
+catch { Say ('FAILED: ' + $_.Exception.Message); Say ('  at ' + (($_.ScriptStackTrace -split "`n") -join ' <- ')) }
 finally { [System.IO.File]::WriteAllLines($resultPath, $lines); [System.IO.File]::WriteAllLines((Join-Path $Root 'last.txt'), $lines) }

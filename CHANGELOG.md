@@ -171,6 +171,52 @@ its mailbox tests on, and change nothing you install.
   check fails, the reason is written out in full here rather than hidden behind a link. Both
   indicators now take their wording from one place, so they cannot disagree.
 
+- ✅ **The Exchange test machine writes in a dedicated test account, and only there.**
+  The maintainer's Microsoft 365 account `telefonie-ai-test@xxlnet.nl`, which he gave for extensive
+  testing, joined the machine's Outlook profile beside `telefonie@xxlnet.nl` and is the hub its live
+  tests may write in (Q137, settled 2026-10-11); telefonie, real mail, is a read-only bystander the
+  count tripwire watches. The write-safety design proposed on 2026-10-03 is built for that account:
+  every address a test hands to Outlook, in-process or through the MCP server, must be the test
+  account's own; every item a run makes carries the test tag and a run marker the host records before
+  the run starts; a reply, a send, a move or a delete touches only the run's own tagged items in the
+  test account; and the sweep takes back only items of a recorded run, by tag and marker, so an aborted
+  run's leftovers go with the next run and never by a subject pattern. Exchange also maps the test
+  mailbox into the profile a second time, as an online entry reached through telefonie's Full Access;
+  before every baseline the tripwire now proves by the store's record key that the hub's name is the
+  test account's own store and that the second entry is neither censused nor written through, or the
+  run refuses. The live runner runs this machine with the broadest filter it can honestly run, carries
+  its state from run to run, because a restored offline data file is older than the server, and sets
+  the data files aside when a checkpoint is restored. A tagged item that was already in a read-only
+  mailbox before a run is reported and left alone instead of failing every run.
+
+- ✅ **A second Microsoft 365 account signs in on the Exchange test machine, and an MFA page stops it.**
+  The sign-in script opens Outlook's own Add Account dialog in the running Outlook and types the
+  address and the password through the machine's virtual keyboard, as for the first account; each
+  account keeps its own encrypted credential file, picked by address, and a verification-code secret
+  is optional. After the password the script reads the page Microsoft shows before it types anything:
+  a request for a second factor, or for one to be registered, stops it with a message for the
+  maintainer, and nothing is clicked on his behalf. The test account signed in on 2026-10-08 without a
+  second factor; its code secret has been stored since, so a code page would be answered.
+
+- ✅ **Three probes measure signatures, the offline window and index ids on the Exchange test machine.**
+  `Measure-SignatureRoaming.ps1` reads the machine's Office build, licence and signature settings,
+  opens Outlook's Signatures dialog and closes it with Cancel, and looks for the hidden folder roaming
+  signatures live in: on 2026-11-17 Office LTSC 2024 16.0.17932.21000 showed the classic dialog with no
+  sign of roaming, and the test mailbox has no such folder, on the server or offline.
+  `Measure-OfflineWindow.ps1` moves the test account's "Download email for the past" slider through its
+  eleven positions and reads the profile after each: the months are property 0x6649 and the days
+  0x665A, always written as a pair, and LTSC 2024 offers 3 and 5 years. `Measure-ExchangeIndexIds.ps1`
+  found that a cached Exchange folder's id does not lead to its Windows Search row the way a PST
+  folder's does: the row carries the offline file's own node id, which the id lacks and which changes
+  when the file is rebuilt. Each probe has a self-test, and the slider probe changes nothing but the
+  test account's own setting, on that machine, before its checkpoint is restored.
+
+- ✅ **The OutlookAI add-in is installed on the Exchange test machine, and its tests run there.**
+  Installed on 2026-11-17 at the maintainer's decision (Q140 (b)) through the testbed's own two-phase
+  installer, it reached ADDIN-READY with 8 of its 13 Outlook settings applied, the five Cached Mode
+  policy values left to an administrator as everywhere else. The machine's live-run filter stops
+  leaving out the tests that read the add-in's registry state. Checkpoint `CP-08-ADDIN-READY`.
+
 - ✅ **The Outlook test machines keep a full crash dump whenever Outlook crashes in a live run.**
   The one-call runner switches Windows Error Reporting's own crash dumps on at every run, on the
   frozen checkpoints as they are, brings every dump back with the run's results, and reads each one
@@ -490,6 +536,31 @@ its mailbox tests on, and change nothing you install.
   the log rather than passing quietly.
 
 ### Changed
+
+- ✅ **A live run that starts Outlook closes Office's activation wizard and records it.**
+  Past Office's 30-day activation grace, which the Exchange test machine's real clock has crossed,
+  every start of Outlook with a window raises the modal Microsoft Office Activation Wizard before the
+  main window, and the main window waits for it: one start sat 277 seconds on 2026-11-17 until it was
+  closed by hand. The script that starts Outlook for a run now closes that one window with its own
+  Close button, says so, and fails if it stays up, and the run's summary records how many times it
+  was closed. On that machine the runner also starts Outlook no sooner than 240 seconds after a boot:
+  started 38 and 79 seconds after one, Outlook put its programmatic-access prompt in front of the
+  first address read although the antivirus read up to date, and started 2 and 8 minutes after one it
+  did not.
+
+- ✅ **The Exchange test machine leaves out the signature tests until signature roaming is measured.**
+  A signature or a default signature set on the test account could be carried into the mailbox by an
+  Outlook that roams signatures, where no sweep removes it. Until that is measured for this Office
+  (Q147, decided by the maintainer 2026-11-17), the tests that write a signature or touch an account's
+  default declare a new capability, `LocalSignatures`, which the machine's filter leaves out, and the
+  test-side MCP client there refuses `manage_signature` whatever its action.
+
+- 📝 **An agent may sign in to Outlook on the web on the Exchange test machine, on six conditions.**
+  The maintainer's decision Q161 (c), 2026-11-17, now in AGENTS.md beside the machine's internet
+  exception: that machine only; the test account only, never telefonie; Windows' own browser, Edge;
+  the password and the code typed as keystrokes from the host's encrypted store, as the sign-in
+  script does; "Stay signed in" and device registration declined; signed out afterwards and the
+  machine restored to its checkpoint. It exists to measure roaming signatures.
 
 - 📦 **The release page lists each change's icon and headline, linked to its full entry (Q123).**
   The maintainer decided it on 2026-10-03, in his words: *"copy the release notes style and system
@@ -1651,6 +1722,20 @@ its mailbox tests on, and change nothing you install.
   next - the cost was the accumulating hidden window, not a broken Outlook. This also cannot help
   when the assistant kills the helper outright, which is what happens when Outlook has genuinely
   stopped responding and when a session ends abruptly.
+
+- ✅ **The Exchange test machine's guest account no longer expires, so PowerShell Direct reaches it.**
+  The account the testbed signs in to its machines with is created by the testbed's answer file, which
+  never set its password to never expire, so Windows' default 42-day maximum ran out on 2026-11-14 for
+  the machines built on 2026-10-03, and PowerShell Direct then refused it as "The credential is
+  invalid". On the Exchange test machine it was set never to expire from its console, the password
+  itself unchanged, and checkpoint `CP-07-TEST-ACCOUNT-READY` holds that. The build machine's fix went
+  in separately.
+
+- ✅ **A test-machine restart refuses Outlook's own Office dialogs instead of waiting behind them.**
+  The restart script refused only classic Windows dialogs, so Outlook's start-up "Check out our new
+  look" theme dialog went unseen on the Exchange test machine on 2026-10-08: Outlook ignored the
+  request to quit for half an hour, and had never added the new mailbox to Windows Search either. The
+  script now names and refuses that kind of dialog too.
 
 - ✅ **The live-test runner deletes the build it made for each run instead of leaving 180 MB behind.**
   Git unregistered the commit's build tree after every run but left its directory, so every run of the

@@ -356,11 +356,13 @@ Everything else is the other guests' media, unchanged (`MEDIA.md`).
 | E9 | The settings | `host/New-LiveTestSettings.ps1 -VMName OutlookAI-Exchange`, then the `host/Copy-ToGuest.ps1` line it prints | `machineProfile` `ExchangeGuest`: read-only |
 | E10 | The read-only run | §4e; checkpoint `CP-04-SUITE-READONLY-RUN` | |
 | E11 | The branch's final commit staged, the preflight passed, the read-only run again | E8 and E9 again, `host/Invoke-ExchangeSignIn.ps1 -Mode Preflight`, §4e; checkpoint `CP-05-PREFLIGHT-READONLY-RUN`, then the VM saved | |
-| E12 | The test account, 2026-10-08 | From `CP-05`: `host/Invoke-ExchangeSignIn.ps1 -VMName OutlookAI-Exchange -Mode AddAccount -Account telefonie-ai-test@xxlnet.nl -RepoRoot <main checkout>` - Outlook's own Add Account command (`ExecuteMso('AddAccount')`) opens the same "Email Account Setup" dialog, then the address, the password, "No, this app only" and Done. Outlook says "You need to restart Outlook": `host/Restart-Guest.ps1 -Execute`, `guest/Start-OutlookUnelevated.ps1 -Profile Outlook`, then `-Mode Preflight`, which checks every account `exchangeVm.accounts` records | Password only, no MFA asked, device registration declined. Two Exchange accounts, both mode 700; the test account's mailbox `ExchangeStoreType` 4 (an additional account's own mailbox), indexed as `telefonie-ai-test@xxlnet.nl($9b7b502)`. Checkpoint `CP-06-TEST-ACCOUNT-ADDED`, the resting one |
+| E12 | The test account, 2026-10-08 | From `CP-05`: `host/Invoke-ExchangeSignIn.ps1 -VMName OutlookAI-Exchange -Mode AddAccount -Account telefonie-ai-test@xxlnet.nl -RepoRoot <main checkout>` - Outlook's own Add Account command (`ExecuteMso('AddAccount')`) opens the same "Email Account Setup" dialog, then the address, the password, "No, this app only" and Done. Outlook says "You need to restart Outlook": `host/Restart-Guest.ps1 -Execute`, `guest/Start-OutlookUnelevated.ps1 -Profile Outlook`, then `-Mode Preflight`, which checks every account `exchangeVm.accounts` records | Password accepted, no second factor asked, device registration declined (a TOTP secret has been stored since, and a code page would be answered). Two Exchange accounts, both mode 700; the test account's mailbox `ExchangeStoreType` 4 (an additional account's own mailbox), indexed as `telefonie-ai-test@xxlnet.nl($9b7b502)`; Exchange automaps it a second time as the online entry `Telefonie XXLNet` (item 6 below). Checkpoint `CP-06-TEST-ACCOUNT-ADDED` |
+| E13 | 40 days later, 2026-11-17 | The guest account's password had expired on 2026-11-14 (Windows' default 42-day maximum; `New-AnswerFile.ps1` never set "never expires"), and PowerShell Direct refused it as "The credential is invalid": on the console, `Set-LocalUser -Name vmadmin -PasswordNeverExpires $true` from an elevated prompt, the password itself unchanged. Then `host/Restart-Guest.ps1 -Execute`, `guest/Reset-OutlookOfflineStore.ps1 -Execute` (the .ost files were older than the server after the 2026-10-08 runs), `-Mode Preflight -DefenderOnly`, `guest/Start-OutlookUnelevated.ps1 -Profile Outlook`, `-Mode Preflight` | `net user vmadmin`: Password expires Never. Both accounts `SIGNED-IN`, both .ost files rebuilt from the server. Checkpoint `CP-07-TEST-ACCOUNT-READY` |
+| E14 | The add-in, 2026-11-17 (Q140 (b)) | `host/Publish-AddInPayload.ps1 -VstoRuntimePath <main checkout>\Redist\vstor_redist.exe`, the payload, the VSTO runtime and the same commit's `Source.zip` copied in, then `guest/Install-OutlookAIAddIn.ps1 -Phase Install -Execute` from the elevated task and `-Phase FirstRun -Execute` at `-RunLevel Limited` (§1 steps 5b and 7c); a restart, Outlook started with the Defender preflight first and 240 s after the boot (item 7 below), `-Mode Preflight` | `ADDIN-READY`: 8 of 13 tuning values applied, the five Cached Mode policy values left to an administrator. Checkpoint `CP-08-ADDIN-READY`, the newest |
 
 **The sign-in, and where the secrets go.** Each account's credential is its own gitignored file in
 `live-fixtures/` (§4) - `exchange-credentials.json` for telefonie, password and TOTP;
-`exchange-credentials-ai-test.json` for the test account, password only - read only by
+`exchange-credentials-ai-test.json` for the test account, password and TOTP - read only by
 `host/Get-ExchangeCredential.ps1 -Account <address>`, in memory, on the host, at the moment each secret
 is typed; `host/Invoke-ExchangeSignIn.ps1` types a password only for an account `testbed.json`'s
 `exchangeVm.accounts` records. After the password it READS the next page before it types anything
@@ -417,6 +419,20 @@ sign-in Outlook raises. Measured 2026-10-03: `CP-04`, restored ten minutes after
    delegate store under telefonie's account, which therefore holds Full Access to it. It is the
    maintainer's tenant setting, not the VM's (TODO.md). The settings leave it undeclared: it IS the hub,
    so a census of it would read the hub's own churn as a loss, and the write guards refuse it by name.
+   Measured 2026-11-17: its `PR_STORE_RECORD_KEY` and the mailbox DN in its StoreID equal the test
+   account's own store's, and differ from telefonie@'s. Since then the tripwire proves it by identity
+   before every baseline (`T2/LiveMailboxIdentity.cs`): the hub's name must be the store the test
+   account delivers to, not a delegate entry; an entry with the hub's record key may be neither watched
+   nor declared a bystander; and no two watched stores may be one mailbox - or the tier refuses.
+7. **Past Office's activation grace, and right after a boot (2026-11-17, after 40 days saved).** Every
+   start of Outlook with a window raised Office's modal Activation Wizard before the Explorer window, and
+   the Explorer waited for it: `guest/Start-OutlookUnelevated.ps1` closes it with its own Close button and
+   says so, and the runner's summary records the count (`Testbed/MEDIA.md`, "The Exchange VM past
+   grace"). And an Outlook started 38 s and 79 s after a boot met the Object Model Guard prompt on its
+   first out-of-process address read although Defender read up to date before the start; started 2 min
+   and 8 min after a boot it did not - so the runner starts Outlook here no sooner than 240 s after the
+   boot (`-MinUptimeSeconds 240`), with Defender's preflight first. The maintainer keeps that preflight
+   as the only remedy, no auto-approve policy (Q139 (a), 2026-10-11).
 
 ---
 
@@ -1235,10 +1251,12 @@ joined the VM's profile that day (§1d, E12). Its settings declare `machineProfi
   out. A permanent tagged population would read as a leftover to every zero-artifact proof, and its
   corpus tag is one `T2/LiveExchangeHubArtifactTests` refuses in a real mailbox.
 
-**The run is one call** - the guests' runner, which restores `CP-06-TEST-ACCOUNT-ADDED` (Outlook
-running, both accounts signed in), stages the commit with that Outlook left running, runs
-`host/Invoke-ExchangeSignIn.ps1 -Mode Preflight` instead of a restart, records the marker and runs the
-suite:
+**The run is one call** - the guests' runner, which on this VM restores NO checkpoint: it resumes the
+VM as its last run left it, because a restored .ost is older than the server (`-Checkpoint <name>`
+restores one, restarts Windows and sets the .ost files aside first). It stages the commit with Outlook
+left running - or, when Outlook is not running, brings Defender's signatures up to date and starts it
+NOT elevated, at least 240 s after the boot, closing Office's activation wizard (item 7 below) - runs
+`host/Invoke-ExchangeSignIn.ps1 -Mode Preflight`, records the marker and runs the suite:
 
 ```powershell
 pwsh -File Testbed/host/Invoke-LiveTierOnGuest.ps1 -VMName OutlookAI-Exchange [<commit-or-branch>]
@@ -1246,10 +1264,15 @@ pwsh -File Testbed/host/Invoke-LiveTierOnGuest.ps1 -VMName OutlookAI-Exchange [<
 
 Its filter is `Category=Live&Requires!=LocalSignatures&Requires!=DelegateStore&Requires!=GeneratedPopulation&Requires!=IdentityAccount&Requires!=ProbePopulation&Requires!=PstStore`
 (`LiveRunFilters.ExchangeTestAccount`, pinned by `T1/LiveTierInventoryTests`): the broadest the VM can
-honestly run - every live test, read and write, except those that need the add-in (not installed), a
-delegate store (until the shared test mailbox exists, Q109), the PST guests' generated population or
-their curated probe population (the test account holds neither), an identity account (the other
-mailbox is a bystander) or a data file. The runbook's §4.4a records what it found.
+honestly run - every live test, read and write, except those that write a signature or touch an
+account's default one (`LocalSignatures`: until it is measured whether this Office roams signatures,
+Q147 R1, decided by the maintainer 2026-11-17 - and the test-side MCP client refuses `manage_signature`
+here outright), a delegate store (until the shared test mailbox exists, Q109), the PST guests'
+generated population or their curated probe population (the test account holds neither), an identity
+account (the other mailbox is a bystander) or a data file. The add-in's tests run: it is installed
+(E14). Before the baseline census the tripwire proves the hub's name is the test account's own store
+and that the automapped online entry of the same mailbox is neither watched nor a bystander
+(`T2/LiveMailboxIdentity.cs`). The runbook's §4.4a records what it found.
 
 **The read-only run (Q108 to Q111), for a settings file that declares `ExchangeGuest`.** Before
 2026-10-08 the VM's one mailbox was also its hub, and it ran only tests that write nothing. That
