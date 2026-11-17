@@ -2,16 +2,17 @@ namespace OutlookAI.Services
 {
     /// <summary>
     /// ===================================================================================
-    /// THE SEAM: AN EXISTING ACCOUNT'S OWN OFFLINE PERIOD. NOT BUILT YET, ON PURPOSE.
+    /// THE SEAM: AN EXISTING ACCOUNT'S OWN OFFLINE PERIOD. THE WRITER IS BUILT, IN CORE;
+    /// THE ADD-IN CANNOT CALL IT YET.
     /// ===================================================================================
     ///
     /// <para>
     /// WHAT IT IS FOR. Outlook keeps the offline period ("Download email for the past") of an account
     /// that already exists in that account's section of the Outlook profile, and the user's own
     /// <c>SyncWindowSetting</c> reaches only accounts added later (KB 3115009). Q145 (a), decided by
-    /// the maintainer: until it is measured, OutlookAI TELLS the user how to set it in Account
-    /// Settings (<see cref="CachedModeSettings.ExistingAccountPeriodSteps"/>), and writing it waits
-    /// for that measurement. Two callers are waiting on an implementation of this interface:
+    /// the maintainer: until OutlookAI can write it, it TELLS the user how to set it in Account
+    /// Settings (<see cref="CachedModeSettings.ExistingAccountPeriodSteps"/>). Two callers are
+    /// waiting on an implementation of this interface:
     /// </para>
     /// <list type="bullet">
     ///   <item>the settings dialog, which can then set every account to the chosen period instead of
@@ -23,16 +24,28 @@ namespace OutlookAI.Services
     /// </list>
     ///
     /// <para>
-    /// WHAT IS KNOWN, AND WHAT IS NOT. Read on the maintainer's workstation, read-only, 2026-10-11
-    /// (<c>.work\research-2026-10-11\q145-admin\</c>): each Exchange account's EMSMDB profile section,
+    /// WHAT IS KNOWN. MEASURED on the Exchange VM, 2026-11-17, Office LTSC 2024, the test account
+    /// only (Testbed/guest/Measure-OfflineWindow.ps1): the period lives in the account's own Exchange
+    /// provider section of the profile,
     /// <c>HKCU\Software\Microsoft\Office\&lt;major&gt;\Outlook\Profiles\&lt;profile&gt;\&lt;section&gt;</c>,
-    /// holds property 0x6649 (<c>00036649</c>, PR_RULE_ACTION_TYPE's tag) as the period in months - 0
-    /// on three accounts, 12 on the fourth - which a Microsoft escalation engineer's MAPIToolkit
-    /// (<c>CachedMode.cpp</c>) sets through the profile section; and a policy period stands over it
-    /// without changing it (the fourth account's 12, under a policy of 0). NOT known: where a day
-    /// period is kept (0x665A is a candidate), and whether Outlook honours a value written with
-    /// Outlook closed. The measurement belongs to the Exchange VM, the one test machine with an
-    /// Exchange account (TODO.md).
+    /// the one that also carries the account's address, as property 0x6649 (months) and 0x665A (days),
+    /// which Outlook always writes as a pair - one of the eleven (<see cref="OfflinePeriods"/>). A
+    /// pair written with Outlook closed, and one written while it RAN, were both honoured at the next
+    /// start, and Outlook did not overwrite either on exit; whether a running Outlook applies one
+    /// before it restarts was not measured, and its own dialog asks for a restart. Read before that
+    /// on the maintainer's workstation, read-only (2026-10-11): a policy period stands over an
+    /// account's own without changing it.
+    /// </para>
+    ///
+    /// <para>
+    /// WHAT IS BUILT, AND WHAT WAITS. The writer is <c>OutlookAI.Core.Services.AccountOfflinePeriodWriter</c>
+    /// - in Core, beside the profile's account reader, because logic both sides need lives there (Q154);
+    /// T1 AccountOfflinePeriodWriterTests pins it. The add-in cannot reference Core until the
+    /// code-sharing refactor's first stage, which waits on the maintainer's answers to Q163 to Q172.
+    /// Then this interface gets its implementation: every Exchange account of the default profile
+    /// (<c>ProfileAccountEntries</c>), each written with <c>AccountOfflinePeriodWriter.Write</c>, and
+    /// the user told that the new period takes effect when Outlook next starts. Until then, Account
+    /// Settings is the user's way.
     /// </para>
     ///
     /// <para>
@@ -42,7 +55,7 @@ namespace OutlookAI.Services
     /// </summary>
     internal interface IAccountOfflinePeriods
     {
-        /// <summary>Whether this build can set an existing account's own period. False until the measurement.</summary>
+        /// <summary>Whether this build can set an existing account's own period. False until the add-in can call Core's writer.</summary>
         bool CanSetEveryAccount { get; }
 
         /// <summary>Why it cannot, in a sentence; empty when it can.</summary>
@@ -50,7 +63,7 @@ namespace OutlookAI.Services
 
         /// <summary>
         /// Sets the own period of every Exchange account in the current Outlook profile to
-        /// <paramref name="period"/>, which is one of <see cref="CachedModeSettings.OfflinePeriods"/>.
+        /// <paramref name="period"/>, which is one of the eleven (<see cref="OfflinePeriods"/>).
         /// Never throws: a failure is the answer's.
         /// </summary>
         AccountPeriodChange SetEveryAccount(OfflinePeriod period);
@@ -83,8 +96,8 @@ namespace OutlookAI.Services
     }
 
     /// <summary>
-    /// THIS BUILD'S ANSWER: it cannot. The one implementation there is until the Exchange VM
-    /// measurement says how to write an account's own period; replace it then, in
+    /// THIS BUILD'S ANSWER: it cannot. The one implementation there is until the add-in can call
+    /// Core's <c>AccountOfflinePeriodWriter</c>; replace it then, in
     /// <c>OutlookTuningService.AccountPeriods</c>, and the dialog and the removal path follow.
     /// </summary>
     internal sealed class AccountOfflinePeriodsNotYetBuilt : IAccountOfflinePeriods
@@ -92,8 +105,7 @@ namespace OutlookAI.Services
         internal static readonly AccountOfflinePeriodsNotYetBuilt Instance = new AccountOfflinePeriodsNotYetBuilt();
 
         internal const string Reason =
-            "OutlookAI cannot set an existing account's own offline period yet: where Outlook keeps it in "
-            + "the profile has not been measured. Set it in Outlook's Account Settings.";
+            "OutlookAI cannot set an existing account's own offline period yet. Set it in Outlook's Account Settings.";
 
         private AccountOfflinePeriodsNotYetBuilt()
         {

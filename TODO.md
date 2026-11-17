@@ -1778,19 +1778,21 @@
   designation from a freshly opened store in the verify session; (3) read it in the product the way
   the verify session does, after creating. Recommended: (1) first.
 
-- [ ] **Let OutlookAI set an existing account's own offline period, once the Exchange VM shows how
+- [ ] **Let the add-in set an existing account's own offline period, once it can call Core
   (Q145 (a)).** OutlookAI writes the offline period as the user's own `SyncWindowSetting`, which only
   accounts added later take (KB 3115009). An account that already exists keeps its own period in its
-  Outlook profile, so OutlookAI Settings tells the user how to set it in Account Settings. The profile
-  value is the account's EMSMDB section property 0x6649, in months - read on the maintainer's
-  workstation, never written, and undocumented by Microsoft. Before OutlookAI writes it, a measurement
-  on `OutlookAI-Exchange`, the one test machine with an Exchange account, has to show four things:
-  that 0x6649 follows the slider through all eleven periods; where a day period is kept (0x665A is
-  the candidate); that a value written with Outlook closed takes effect; and what Outlook does with a
-  policy of 36, 60, (12, 7) or 18. It changes only that guest's Outlook profile, which a checkpoint
-  restores, and needs the maintainer's OK, because Phase 1 made no profile writes there. Then
-  implement `IAccountOfflinePeriods` (`Services/AccountOfflinePeriods.cs`, which says what it must do)
-  and set it in `OutlookTuningService.AccountPeriods`. The dialog and the removal below both use it.
+  Outlook profile, so OutlookAI Settings tells the user how to set it in Account Settings. Measured on
+  `OutlookAI-Exchange` on 2026-11-17, test account only: the period is the pair 0x6649 (months) and
+  0x665A (days) in the account's own Exchange provider section, Outlook's eleven slider positions
+  are the eleven pairs of Q143, and a pair written with Outlook closed or while it runs is honoured
+  at its next start. The writer is built, in Core: `AccountOfflinePeriodWriter`, with T1
+  `AccountOfflinePeriodWriterTests`. What waits: the add-in referencing Core, which is the
+  code-sharing refactor's first stage and waits on Q163 to Q172. Then implement
+  `IAccountOfflinePeriods` (`Services/AccountOfflinePeriods.cs`, which says what it must do), set it
+  in `OutlookTuningService.AccountPeriods`, and tell the user the new period takes effect when
+  Outlook next starts. The dialog and the removal below both use it. Not measured: whether a running
+  Outlook applies a written pair before it restarts, and whether Outlook then really downloads that
+  much more mail.
 
 - [ ] **Remove the Cached Mode policy values an earlier OutlookAI wrote, when the maintainer asks
   (Q151 (a)).** Versions 3.0.0.319 to 3.1.0.325 wrote five Cached Mode values as Group Policy wherever

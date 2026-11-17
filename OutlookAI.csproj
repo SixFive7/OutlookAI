@@ -188,6 +188,7 @@
     <Compile Include="Services\McpRegistrationService.cs" />
     <Compile Include="Services\ModelCatalog.cs" />
     <Compile Include="Services\OfficeVersions.cs" />
+    <Compile Include="Services\OfflinePeriods.cs" />
     <Compile Include="Services\OutlookTuningService.cs" />
     <Compile Include="Services\PromptDefaults.cs" />
     <Compile Include="Services\PromptLint.cs" />

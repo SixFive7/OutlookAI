@@ -115,7 +115,7 @@ public sealed class EarlierPolicyRemovalTests
         EarlierPolicyRemovalResult result = EarlierPolicyRemoval.Remove(store, Office, accounts);
 
         Assert.Equal(string.Empty, result.Refusal);
-        Assert.Same(CachedModeSettings.All, Assert.Single(accounts.Asked));
+        Assert.Same(OfflinePeriods.All, Assert.Single(accounts.Asked));
         Assert.Equal(0, accounts.DeletesBeforeAsked);
         Assert.True(result.AccountsSetToAll);
         Assert.Equal(Names, result.Removed);

@@ -131,26 +131,7 @@ namespace OutlookAI.Services
             "An earlier OutlookAI set how much mail Outlook keeps offline as a policy, for every account, "
             + "so Outlook's Account Settings shows that setting greyed out. OutlookAI leaves it in place.";
 
-        // ===== The eleven offline periods (Q143) =====
-
-        /// <summary>All mail: the shipped default, and what OutlookAI's search needs (D25).</summary>
-        internal static readonly OfflinePeriod All = new OfflinePeriod(0, 0, "All");
-
-        // In the slider's order, shortest first: the administrative template's eleven items.
-        private static readonly OfflinePeriod[] Periods =
-        {
-            new OfflinePeriod(0, 3, "3 days"),
-            new OfflinePeriod(0, 7, "1 week"),
-            new OfflinePeriod(0, 14, "2 weeks"),
-            new OfflinePeriod(1, 0, "1 month"),
-            new OfflinePeriod(3, 0, "3 months"),
-            new OfflinePeriod(6, 0, "6 months"),
-            new OfflinePeriod(12, 0, "1 year"),
-            new OfflinePeriod(24, 0, "2 years"),
-            new OfflinePeriod(36, 0, "3 years"),
-            new OfflinePeriod(60, 0, "5 years"),
-            All,
-        };
+        // ===== The eleven offline periods (Q143) live in Services\OfflinePeriods.cs, which Core links too. =====
 
         private static readonly SwitchChoice[] OnOff = { new SwitchChoice(1, "On"), new SwitchChoice(0, "Off") };
 
@@ -191,10 +172,16 @@ namespace OutlookAI.Services
             get { return Array.AsReadOnly(Settings); }
         }
 
-        /// <summary>The eleven periods, shortest first, All last.</summary>
-        internal static IReadOnlyList<OfflinePeriod> OfflinePeriods
+        /// <summary>The eleven periods, shortest first, All last (<see cref="OfflinePeriods"/>).</summary>
+        internal static IReadOnlyList<OfflinePeriod> AllPeriods
         {
-            get { return Array.AsReadOnly(Periods); }
+            get
+            {
+                var periods = new List<OfflinePeriod>(OfflinePeriods.Count);
+                for (int i = 0; i < OfflinePeriods.Count; i++)
+                    periods.Add(OfflinePeriods.At(i));
+                return periods;
+            }
         }
 
         /// <summary>On, then Off: the values a switch offers.</summary>
@@ -206,18 +193,13 @@ namespace OutlookAI.Services
         /// <summary>The position of (months, days) among the eleven periods, or -1 for a pair Outlook does not document.</summary>
         internal static int IndexOfPeriod(int months, int days)
         {
-            for (int i = 0; i < Periods.Length; i++)
-            {
-                if (Periods[i].Months == months && Periods[i].Days == days)
-                    return i;
-            }
-            return -1;
+            return OfflinePeriods.IndexOf(months, days);
         }
 
         /// <summary>True for exactly the eleven (months, days) pairs Microsoft documents (Q143).</summary>
         internal static bool IsOfferedPeriod(int months, int days)
         {
-            return IndexOfPeriod(months, days) >= 0;
+            return OfflinePeriods.IsOffered(months, days);
         }
 
         /// <summary>True for 1 and 0, the two values a switch offers.</summary>
@@ -243,8 +225,8 @@ namespace OutlookAI.Services
             var labels = new List<string>();
             if (setting.IsPeriod)
             {
-                foreach (OfflinePeriod p in Periods)
-                    labels.Add(p.Label);
+                for (int i = 0; i < OfflinePeriods.Count; i++)
+                    labels.Add(OfflinePeriods.At(i).Label);
             }
             else
             {
@@ -264,10 +246,10 @@ namespace OutlookAI.Services
             var values = new List<KeyValuePair<string, int>>();
             if (setting.IsPeriod)
             {
-                if (choiceIndex < 0 || choiceIndex >= Periods.Length)
+                if (choiceIndex < 0 || choiceIndex >= OfflinePeriods.Count)
                     return values;
-                values.Add(new KeyValuePair<string, int>(EntryIdPrefix + SyncWindowSetting, Periods[choiceIndex].Months));
-                values.Add(new KeyValuePair<string, int>(EntryIdPrefix + SyncWindowSettingDays, Periods[choiceIndex].Days));
+                values.Add(new KeyValuePair<string, int>(EntryIdPrefix + SyncWindowSetting, OfflinePeriods.At(choiceIndex).Months));
+                values.Add(new KeyValuePair<string, int>(EntryIdPrefix + SyncWindowSettingDays, OfflinePeriods.At(choiceIndex).Days));
                 return values;
             }
             if (choiceIndex < 0 || choiceIndex >= OnOff.Length)
@@ -314,9 +296,9 @@ namespace OutlookAI.Services
             var entries = new List<TuningEntry>
             {
                 new TuningEntry(EntryIdPrefix + SyncWindowSetting, TuningReconciler.GroupCaching, userKey,
-                                SyncWindowSetting, All.Months, policyKeys, periodNames, periodOffered),
+                                SyncWindowSetting, OfflinePeriods.All.Months, policyKeys, periodNames, periodOffered),
                 new TuningEntry(EntryIdPrefix + SyncWindowSettingDays, TuningReconciler.GroupCaching, userKey,
-                                SyncWindowSettingDays, All.Days, policyKeys, periodNames, periodOffered),
+                                SyncWindowSettingDays, OfflinePeriods.All.Days, policyKeys, periodNames, periodOffered),
             };
             foreach (string name in new[] { DownloadSharedFolders, CacheOthersMail, DisableSyncSliderForSharedMailbox })
             {
@@ -330,8 +312,8 @@ namespace OutlookAI.Services
         /// <summary>True when the two desired halves of the period, read together, are one of the eleven.</summary>
         internal static bool IsDesiredPeriodOffered(ITuningStore store)
         {
-            return IsOfferedPeriod(DesiredOf(store, EntryIdPrefix + SyncWindowSetting, All.Months),
-                                   DesiredOf(store, EntryIdPrefix + SyncWindowSettingDays, All.Days));
+            return IsOfferedPeriod(DesiredOf(store, EntryIdPrefix + SyncWindowSetting, OfflinePeriods.All.Months),
+                                   DesiredOf(store, EntryIdPrefix + SyncWindowSettingDays, OfflinePeriods.All.Days));
         }
 
         // As TuningReconciler.ReadDesired reads it: the stored desired number, else the shipped default.
@@ -390,8 +372,8 @@ namespace OutlookAI.Services
             if (setting.IsPeriod)
             {
                 inEffect = DescribePeriod(readings[0].Effective, readings[1].Effective);
-                int months = DesiredOf(store, EntryIdPrefix + SyncWindowSetting, All.Months);
-                int days = DesiredOf(store, EntryIdPrefix + SyncWindowSettingDays, All.Days);
+                int months = DesiredOf(store, EntryIdPrefix + SyncWindowSetting, OfflinePeriods.All.Months);
+                int days = DesiredOf(store, EntryIdPrefix + SyncWindowSettingDays, OfflinePeriods.All.Days);
                 desiredIndex = IndexOfPeriod(months, days);
                 userMatchesDesired = readings[0].User == months && readings[1].User == days;
                 refused = refusedIds.Contains(EntryIdPrefix + SyncWindowSetting) || refusedIds.Contains(EntryIdPrefix + SyncWindowSettingDays);
@@ -465,7 +447,7 @@ namespace OutlookAI.Services
             {
                 int i = IndexOfPeriod(months.Value, days.HasValue ? days.Value : 0);
                 if (i >= 0)
-                    return Periods[i].Label;
+                    return OfflinePeriods.At(i).Label;
             }
             return "months " + Number(months) + ", days " + Number(days) + " (not one of Outlook's periods)";
         }
@@ -486,30 +468,6 @@ namespace OutlookAI.Services
         private static string Number(int? value)
         {
             return value.HasValue ? value.Value.ToString(CultureInfo.InvariantCulture) : "not set";
-        }
-    }
-
-    /// <summary>One of the eleven offline periods: what Outlook calls it, and the pair it is written as.</summary>
-    internal sealed class OfflinePeriod
-    {
-        internal OfflinePeriod(int months, int days, string label)
-        {
-            Months = months;
-            Days = days;
-            Label = label;
-        }
-
-        /// <summary><c>SyncWindowSetting</c>: 0 with days for the three day periods and for All.</summary>
-        internal int Months { get; }
-
-        /// <summary><c>SyncWindowSettingDays</c>: 3, 7 or 14 with months 0; 0 for every other period.</summary>
-        internal int Days { get; }
-
-        internal string Label { get; }
-
-        public override string ToString()
-        {
-            return Label;
         }
     }
 

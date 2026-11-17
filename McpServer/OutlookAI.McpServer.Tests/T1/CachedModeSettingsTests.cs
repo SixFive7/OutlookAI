@@ -73,9 +73,9 @@ public sealed class CachedModeSettingsTests
     [Fact]
     public void TheOfflinePeriods_AreExactlyTheElevenMicrosoftDocuments_InTheSlidersOrder()
     {
-        Assert.Equal(Eleven, CachedModeSettings.OfflinePeriods.Select(p => (p.Label, p.Months, p.Days)).ToArray());
+        Assert.Equal(Eleven, CachedModeSettings.AllPeriods.Select(p => (p.Label, p.Months, p.Days)).ToArray());
         Assert.Equal(Eleven.Select(e => e.Label), CachedModeSettings.ChoiceLabels(CachedModeSettings.Setting(CachedModeSettings.OfflinePeriodKey)));
-        Assert.Same(CachedModeSettings.All, CachedModeSettings.OfflinePeriods.Last());
+        Assert.Same(OfflinePeriods.All, CachedModeSettings.AllPeriods.Last());
     }
 
     [Theory]
@@ -123,7 +123,7 @@ public sealed class CachedModeSettingsTests
         CachedModeSetting period = CachedModeSettings.Setting(CachedModeSettings.OfflinePeriodKey);
         for (int i = 0; i < 11; i++)
         {
-            OfflinePeriod p = CachedModeSettings.OfflinePeriods[i];
+            OfflinePeriod p = CachedModeSettings.AllPeriods[i];
             Assert.Equal(
                 new[]
                 {
@@ -464,7 +464,7 @@ public sealed class CachedModeSettingsTests
 
         Assert.False(seam.CanSetEveryAccount);
         Assert.Contains("Account Settings", seam.WhyNot, StringComparison.Ordinal);
-        AccountPeriodChange change = seam.SetEveryAccount(CachedModeSettings.All);
+        AccountPeriodChange change = seam.SetEveryAccount(OfflinePeriods.All);
         Assert.False(change.Done);
         Assert.Equal(seam.WhyNot, change.Detail);
     }

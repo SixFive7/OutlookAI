@@ -86,7 +86,7 @@ namespace OutlookAI.Services
                                          + accounts.WhyNot;
                         return result;
                     }
-                    AccountPeriodChange change = accounts.SetEveryAccount(CachedModeSettings.All);
+                    AccountPeriodChange change = accounts.SetEveryAccount(OfflinePeriods.All);
                     if (!change.Done)
                     {
                         result.Refusal = "Nothing was removed: setting every account's own period to All did not succeed. " + change.Detail;

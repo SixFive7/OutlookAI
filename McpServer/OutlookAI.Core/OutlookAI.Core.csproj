@@ -78,6 +78,13 @@
       OutlookProfileRegistry re-exports what callers outside Core need.
     -->
     <Compile Include="..\..\Services\OfficeVersions.cs" Link="Linked\OfficeVersions.cs" />
+    <!--
+      And the eleven offline periods Outlook documents (Q143): the add-in writes the user's own
+      period for new accounts from this table, and AccountOfflinePeriodWriter here writes an
+      existing account's own pair from it - one table, linked under the same rules (Q154: no
+      duplicated code). The test project reaches this copy through InternalsVisibleTo.
+    -->
+    <Compile Include="..\..\Services\OfflinePeriods.cs" Link="Linked\OfflinePeriods.cs" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(TargetFramework)' == 'net48'">
