@@ -1195,19 +1195,22 @@ namespace OutlookAI.Core.Com
                             string? smtp = TryGetString(() => (string?)acc.SmtpAddress);
                             string? display = TryGetString(() => (string?)acc.DisplayName);
                             string? deliveryName = null;
+                            string? deliveryStoreId = null;
                             try
                             {
                                 deliveryStore = acc.DeliveryStore;
                                 if (deliveryStore != null)
                                 {
-                                    deliveryName = (string)((dynamic)deliveryStore).DisplayName;
+                                    object delivery = deliveryStore;
+                                    deliveryName = (string)((dynamic)delivery).DisplayName;
+                                    deliveryStoreId = TryGetString(() => (string?)((dynamic)delivery).StoreID);
                                 }
                             }
                             catch (COMException)
                             {
                             }
 
-                            result.Add(new ComAccountInfo(smtp, display, deliveryName));
+                            result.Add(new ComAccountInfo(smtp, display, deliveryName, deliveryStoreId));
                         }
                         finally
                         {
@@ -1312,11 +1315,24 @@ namespace OutlookAI.Core.Com
                             // is measured), and an Exchange store's root folder can cost a round trip
                             // to the server. Optional like the rest: a store whose root folder will
                             // not answer is still listed, and is then tied to no index store.
-                            string? ownName = exchangeType == OlNotExchange ? TryGetRootFolderName((object)store) : null;
+                            //
+                            // The same read gives the root folder's entry id, which the store's ID is
+                            // built from (Q133) - for every store but an Exchange store Outlook does not
+                            // cache, whose root folder is the server round trip this used to avoid for
+                            // all Exchange stores. That one is addressed by its own entry id instead
+                            // (OutlookIds.StoreIdOf). A cached Exchange store's root is in its .ost.
+                            string? ownName = null;
+                            string? rootFolderEntryId = null;
+                            bool uncachedExchange = exchangeType.HasValue && exchangeType.Value != OlNotExchange && cached != true;
+                            if (!uncachedExchange)
+                            {
+                                TryReadRootFolder((object)store, out string? rootName, out rootFolderEntryId);
+                                ownName = exchangeType == OlNotExchange ? rootName : null;
+                            }
 
                             result.Add(new ComStoreDetail(
                                 displayName, storeId, exchangeType, cached, nameUnreadable, filePath, mappingSignature, profileSection,
-                                ownName));
+                                ownName, rootFolderEntryId));
                         }
                         catch (Exception ex) when (IsComCallFailure(ex))
                         {
@@ -1338,21 +1354,28 @@ namespace OutlookAI.Core.Com
         }
 
         /// <summary>
-        /// <c>Store.GetRootFolder().Name</c> - the store's own name, which the search index files it
-        /// under - or null when the root folder or its name would not read. Read-only.
+        /// <c>Store.GetRootFolder()</c>'s name - the store's own name, which the search index files it
+        /// under - and its entry id, which the store's ID is built from (Q133); each null when it would
+        /// not read. Read-only.
         /// </summary>
-        private static string? TryGetRootFolderName(object store)
+        private static void TryReadRootFolder(object store, out string? name, out string? entryId)
         {
+            name = null;
+            entryId = null;
             object? root = null;
             try
             {
                 root = ((dynamic)store).GetRootFolder();
-                string? name = root == null ? null : TryGetString(() => (string?)((dynamic)root).Name);
-                return string.IsNullOrEmpty(name) ? null : name;
+                if (root != null)
+                {
+                    object rootFolder = root;
+                    string? read = TryGetString(() => (string?)((dynamic)rootFolder).Name);
+                    name = string.IsNullOrEmpty(read) ? null : read;
+                    entryId = TryReadFolderEntryId(rootFolder);
+                }
             }
             catch (Exception ex) when (IsComCallFailure(ex))
             {
-                return null;
             }
             finally
             {
@@ -1369,7 +1392,7 @@ namespace OutlookAI.Core.Com
         /// <paramref name="absoluteWalkCap"/> (a pathological-store guard, v3.MD
         /// section 12) - the per-call page bound lives in MailService.
         /// </summary>
-        public ComFolderTree ListFolders(string? storeDisplayName, int absoluteWalkCap)
+        public ComFolderTree ListFolders(string? storeEntryId, int absoluteWalkCap)
         {
             EnsureNotDisposed();
             if (absoluteWalkCap < 1)
@@ -1384,8 +1407,10 @@ namespace OutlookAI.Core.Com
                 FolderWalkBounds bounds = new FolderWalkBounds();
                 dynamic stores = ns.Stores;
                 List<(string Name, int Index)> storeOrder = new List<(string, int)>();
+                List<ComStoreRoot> walkedStores = new List<ComStoreRoot>();
+                HashSet<int> unnamedIndexes = new HashSet<int>();
                 int unnamed = 0;
-                int unnamedExcluded = 0;
+                const int unnamedExcluded = 0;
                 try
                 {
                     int count = stores.Count;
@@ -1395,6 +1420,18 @@ namespace OutlookAI.Core.Com
                         try
                         {
                             probe = stores[i];
+
+                            // A SCOPED listing names its store by the store's own entry id (Q133):
+                            // never by a name, which two stores may share and an unnamed store
+                            // cannot be matched against - so an unnamed store is no longer left out
+                            // of a scope that is its own (unnamedExcluded stays 0).
+                            if (storeEntryId != null
+                                && !string.Equals(
+                                    TryGetString(() => (string?)((dynamic)probe!).StoreID), storeEntryId, StringComparison.OrdinalIgnoreCase))
+                            {
+                                continue;
+                            }
+
                             string? name = TryGetString(() => (string?)((dynamic)probe!).DisplayName);
                             if (string.IsNullOrEmpty(name))
                             {
@@ -1405,26 +1442,12 @@ namespace OutlookAI.Core.Com
                                 // its folders are listed and the fact that the label is not
                                 // a name travels with them.
                                 unnamed++;
-                                if (storeDisplayName != null)
-                                {
-                                    // A SCOPED listing cannot include it - the requested
-                                    // name can be neither matched nor ruled out against a
-                                    // store that will not say its own. Counted separately,
-                                    // because "left out of your scope" and "listed under a
-                                    // label" are different things to tell a caller.
-                                    unnamedExcluded++;
-                                    continue;
-                                }
-
+                                unnamedIndexes.Add(i);
                                 storeOrder.Add((StoreNaming.LabelForUnnamedStore(i), i));
                                 continue;
                             }
 
-                            if (string.Equals(name, storeDisplayName, StringComparison.OrdinalIgnoreCase)
-                                || storeDisplayName == null)
-                            {
-                                storeOrder.Add((name!, i));
-                            }
+                            storeOrder.Add((name!, i));
                         }
                         catch (Exception ex) when (IsComCallFailure(ex))
                         {
@@ -1457,7 +1480,11 @@ namespace OutlookAI.Core.Com
                         try
                         {
                             store = stores[index];
+                            object walkedStore = store!;
+                            string? walkedStoreId = TryGetString(() => (string?)((dynamic)walkedStore).StoreID);
                             root = ((dynamic)store!).GetRootFolder();
+                            walkedStores.Add(new ComStoreRoot(
+                                name, walkedStoreId, TryReadFolderEntryId(root!), unnamedIndexes.Contains(index)));
                             CollectFolders(root!, name, string.Empty, 1, absoluteWalkCap, result, bounds);
                         }
                         catch (Exception ex) when (IsComCallFailure(ex))
@@ -1476,7 +1503,7 @@ namespace OutlookAI.Core.Com
                 }
 
                 return new ComFolderTree(
-                    result, bounds.WalkCapReached, bounds.DepthLimitReached, unnamed, unnamedExcluded);
+                    result, bounds.WalkCapReached, bounds.DepthLimitReached, unnamed, unnamedExcluded, walkedStores);
             });
         }
 
@@ -1992,7 +2019,8 @@ namespace OutlookAI.Core.Com
             IReadOnlyList<string>? folderPath = null,
             bool includeSubfolders = true,
             IReadOnlyDictionary<string, DateTime>? perStoreSinceUtc = null,
-            int timeBudgetMs = 0)
+            int timeBudgetMs = 0,
+            string? folderEntryId = null)
         {
             EnsureNotDisposed();
             if (perFolderCap < 1)
@@ -2021,6 +2049,26 @@ namespace OutlookAI.Core.Com
                 // path can produce these - a folder-scoped sweep was asked for a NAMED
                 // folder, and a named folder that does not resolve is a skip.
                 int absent = 0;
+
+                if (!string.IsNullOrEmpty(folderEntryId))
+                {
+                    // The folder by its ID (Q131-Q136): opened by entry id, its store read off the
+                    // folder itself - never looked up by a name two stores may share.
+                    string scopedStore = SweepScopedFolderById(
+                        ns, folderEntryId!, onlyStoreDisplayName, windows, sinceUtc, perFolderCap, includeBodies,
+                        includeSubfolders, items, sweptFolders, ref skipped, tally);
+                    return BuildSweepResult(
+                        tally,
+                        items,
+                        sweptFolders,
+                        foldersSkipped: skipped,
+                        foldersAbsent: 0,
+                        perStore: new[]
+                        {
+                            new ComStoreSweepCounters(
+                                scopedStore, sweptFolders.Count, skipped, tally.Failed, 0, tally.RowsUnreadable),
+                        });
+                }
 
                 if (folderPath != null && folderPath.Count > 0)
                 {
@@ -2679,6 +2727,59 @@ namespace OutlookAI.Core.Com
             }
         }
 
+        /// <summary>
+        /// STA-side: the sweep of ONE folder named by its entry id, and its subfolders when asked. The
+        /// store - its name for the counters, its id for re-opening the hits - is read off the folder. A
+        /// folder that will not open is one skipped folder, exactly as a path that did not resolve was.
+        /// Returns the store's display name (the hint when the folder would not open).
+        /// </summary>
+        private string SweepScopedFolderById(
+            dynamic ns,
+            string folderEntryId,
+            string? storeNameHint,
+            IReadOnlyDictionary<string, DateTime> windows,
+            DateTime sinceUtc,
+            int perFolderCap,
+            bool includeBodies,
+            bool includeSubfolders,
+            List<ComMailBrief> items,
+            List<string> sweptFolders,
+            ref int skipped,
+            SweepTally tally)
+        {
+            object? folder = OpenFolderByEntryId(ns, folderEntryId, null);
+            if (folder == null)
+            {
+                skipped++;
+                return storeNameHint ?? string.Empty;
+            }
+
+            object? store = null;
+            try
+            {
+                object opened = folder;
+                store = ((dynamic)opened).Store;
+                object storeObject = store!;
+                // The caller's name for the store when it gave one - the name its search filters and counts
+                // under, which the index may spell differently (an ANSI PST, a store named in the profile only).
+                string storeName = storeNameHint ?? TryGetString(() => (string?)((dynamic)storeObject).DisplayName) ?? string.Empty;
+                string storeId = TryGetString(() => (string?)((dynamic)storeObject).StoreID) ?? string.Empty;
+                TryReadRootFolder(storeObject, out _, out string? rootEntryId);
+                List<string> segments = ReadPathSegments(opened, TryReadFolderEntryId(opened) ?? folderEntryId, rootEntryId).Segments;
+                SweepFolderTree(
+                    ns, opened, storeName, storeId, string.Join("/", segments),
+                    WindowFor(windows, storeName, sinceUtc), perFolderCap, includeBodies, includeSubfolders,
+                    0, new ScopedSweepWalk(tally), // depth 0 = the scoped root
+                    items, sweptFolders, ref skipped, tally);
+                return storeName;
+            }
+            finally
+            {
+                Release(store);
+                Release(folder);
+            }
+        }
+
         private void SweepFolderTree(
             dynamic ns,
             object folderObject,
@@ -2988,12 +3089,12 @@ namespace OutlookAI.Core.Com
         /// sets ActiveExplorer().CurrentFolder to it and returns the resulting explorer
         /// state for verification.
         /// </summary>
-        public ComExplorerState? TryGotoFolder(string storeDisplayName, IReadOnlyList<string>? folderPath, out string? error)
+        public ComExplorerState? TryGotoFolder(string? folderEntryId, string? storeEntryId, out string? error)
         {
             EnsureNotDisposed();
-            if (string.IsNullOrWhiteSpace(storeDisplayName))
+            if (string.IsNullOrWhiteSpace(folderEntryId) && string.IsNullOrWhiteSpace(storeEntryId))
             {
-                throw new ArgumentException("Store display name must not be blank.", nameof(storeDisplayName));
+                throw new ArgumentException("A folder or a store to navigate to is required.", nameof(folderEntryId));
             }
 
             string? capturedError = null;
@@ -3003,7 +3104,7 @@ namespace OutlookAI.Core.Com
                 object? explorer = null;
                 try
                 {
-                    folder = ResolveNavigationFolder(storeDisplayName, folderPath, out string? folderError);
+                    folder = ResolveNavigationFolder(folderEntryId, storeEntryId, out string? folderError);
                     if (folder == null)
                     {
                         capturedError = folderError;
@@ -3066,8 +3167,8 @@ namespace OutlookAI.Core.Com
         public ComExplorerState? TryShowSearchResults(
             string query,
             int olSearchScope,
-            string? storeDisplayName,
-            IReadOnlyList<string>? folderPath,
+            string? folderEntryId,
+            string? storeEntryId,
             out string? error)
         {
             EnsureNotDisposed();
@@ -3083,9 +3184,9 @@ namespace OutlookAI.Core.Com
                 object? explorer = null;
                 try
                 {
-                    if (storeDisplayName != null)
+                    if (folderEntryId != null || storeEntryId != null)
                     {
-                        folder = ResolveNavigationFolder(storeDisplayName, folderPath, out string? folderError);
+                        folder = ResolveNavigationFolder(folderEntryId, storeEntryId, out string? folderError);
                         if (folder == null)
                         {
                             capturedError = folderError;
@@ -3398,15 +3499,26 @@ namespace OutlookAI.Core.Com
         /// so navigating to a store that has none never gives it one (Q84). Returns a folder
         /// RCW (CALLER must Release) or null + error.
         /// </summary>
-        private object? ResolveNavigationFolder(string storeDisplayName, IReadOnlyList<string>? folderPath, out string? error)
+        private object? ResolveNavigationFolder(string? folderEntryId, string? storeEntryId, out string? error)
         {
-            if (folderPath != null && folderPath.Count > 0)
+            if (!string.IsNullOrEmpty(folderEntryId))
             {
-                return WalkToFolder(storeDisplayName, folderPath, out error);
+                object? byId = OpenFolderByEntryId(_namespace!, folderEntryId!, storeEntryId);
+                error = byId == null ? "FolderNotFound" : null;
+                return byId;
             }
 
             error = null;
-            dynamic? store = FindStoreByDisplayName(storeDisplayName);
+            dynamic? store = null;
+            try
+            {
+                store = ((dynamic)_namespace!).GetStoreFromID(storeEntryId);
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+                store = null;
+            }
+
             if (store == null)
             {
                 error = "StoreNotFound";
@@ -3604,6 +3716,7 @@ namespace OutlookAI.Core.Com
 
             string? folderPath = null;
             string? folderName = null;
+            string? folderEntryId = null;
             object? current = null;
             try
             {
@@ -3612,6 +3725,7 @@ namespace OutlookAI.Core.Com
                 {
                     folderPath = TryGetString(() => (string?)((dynamic)current).FolderPath);
                     folderName = TryGetString(() => (string?)((dynamic)current).Name);
+                    folderEntryId = TryReadFolderEntryId(current);
                 }
             }
             catch (Exception ex) when (IsComCallFailure(ex))
@@ -3622,7 +3736,7 @@ namespace OutlookAI.Core.Com
                 Release(current);
             }
 
-            return new ComExplorerState(caption, folderPath, folderName, windowState);
+            return new ComExplorerState(caption, folderPath, folderName, windowState, folderEntryId);
         }
 
         internal static string DescribeComFailure(Exception ex)
@@ -4435,54 +4549,35 @@ namespace OutlookAI.Core.Com
         }
 
         /// <summary>
-        /// Moves one mail item to a folder path WITHIN ITS OWN STORE (D39 v1:
-        /// same-store only - the target is resolved inside the store the item already
-        /// lives in, so a cross-store move cannot happen by construction; when
-        /// <paramref name="requireStoreDisplayName"/> is given and the item lives
-        /// elsewhere the move is refused with <c>CrossStoreTarget:&lt;store&gt;</c>).
-        /// Missing target segments are created only when <paramref name="createMissing"/>
-        /// (mail folders, parents included). Refused targets: Deleted Items and its
-        /// subtree (deletion semantics - the server has no delete surface), the Outbox,
-        /// non-mail folders, and the item's current folder. The result carries old/new
-        /// EntryIDs (EntryIDs CHANGE on any move) and the source path as undo address.
-        /// <para>
-        /// <b>The refusals are not free.</b> Folders are resolved and created BEFORE the
-        /// target guard runs, so "Refused: moving to Deleted Items is deletion semantics"
-        /// can be answered over a folder this call just created inside Deleted Items - and
-        /// a multi-segment path can fail at segment two having created segment one.
-        /// <paramref name="createdFolderPaths"/> is reported on every path for that reason.
-        /// The order is not accidental and is not worth swapping: the guard needs the
-        /// resolved target folder object to check what it is.
-        /// </para>
+        /// Moves one mail item into the folder <paramref name="targetFolderEntryId"/> WITHIN ITS OWN
+        /// STORE (D39 v1: same-store only - a target in another store is refused with
+        /// <c>CrossStoreTarget:&lt;store&gt;</c>). The target is opened by its entry id (Q131-Q136):
+        /// nothing is resolved by name and nothing is created - since Q134 (i) a folder is made only by
+        /// <see cref="TryCreateFolder"/>, so the refusals below are free again (a move by path used to
+        /// create folders before its guard ran). Refused targets: the store's root
+        /// (<c>TargetIsStoreRoot</c>), Deleted Items and its subtree (deletion semantics - the server has
+        /// no delete surface), the Outbox, non-mail folders, and the item's current folder. The result
+        /// carries old/new EntryIDs (EntryIDs CHANGE on any move) and the source folder - its path and
+        /// its entry id - as the undo address.
         /// </summary>
-        public ComMoveItemResult? TryMoveItemToPath(
+        public ComMoveItemResult? TryMoveItemToFolder(
             string entryIdHex,
             string? storeId,
-            IReadOnlyList<string> targetSegments,
-            bool createMissing,
-            string? requireStoreDisplayName,
-            out IReadOnlyList<string>? createdFolderPaths,
+            string targetFolderEntryId,
             out string? error)
         {
             EnsureNotDisposed();
-            createdFolderPaths = null;
             if (string.IsNullOrWhiteSpace(entryIdHex))
             {
                 throw new ArgumentException("EntryID must not be blank.", nameof(entryIdHex));
             }
 
-            if (targetSegments == null || targetSegments.Count == 0)
+            if (string.IsNullOrWhiteSpace(targetFolderEntryId))
             {
-                throw new ArgumentException("Target folder path must have at least one segment.", nameof(targetSegments));
+                throw new ArgumentException("Target folder entry id must not be blank.", nameof(targetFolderEntryId));
             }
 
             string? capturedError = null;
-
-            // Declared OUT HERE, not inside the work item, because it has to survive the
-            // failure paths. Folder creation happens before the target guard runs, so a
-            // refused move can already have made folders - and while this was a local it
-            // died with the null return and the caller was never told.
-            List<string> capturedCreatedPaths = new List<string>();
             ComMoveItemResult? result = _runner.Run<ComMoveItemResult?>(() =>
             {
                 dynamic ns = _namespace!;
@@ -4490,6 +4585,7 @@ namespace OutlookAI.Core.Com
                 object? parent = null;
                 object? itemStore = null;
                 object? targetFolder = null;
+                object? targetStore = null;
                 try
                 {
                     try
@@ -4518,30 +4614,42 @@ namespace OutlookAI.Core.Com
                     itemStore = parentFolder.Store;
                     dynamic ownStore = itemStore!;
                     string ownStoreName = (string)ownStore.DisplayName;
+                    string ownStoreId = (string)ownStore.StoreID;
 
-                    if (requireStoreDisplayName != null
-                        && !string.Equals(ownStoreName, requireStoreDisplayName, StringComparison.OrdinalIgnoreCase))
+                    targetFolder = OpenFolderByEntryId(ns, targetFolderEntryId, ownStoreId);
+                    if (targetFolder == null)
+                    {
+                        capturedError = "TargetFolderNotFound";
+                        return null;
+                    }
+
+                    object openedTarget = targetFolder;
+                    targetStore = ((dynamic)openedTarget).Store;
+                    object targetStoreObject = targetStore!;
+                    string? targetStoreId = TryGetString(() => (string?)((dynamic)targetStoreObject).StoreID);
+                    if (!string.Equals(targetStoreId, ownStoreId, StringComparison.OrdinalIgnoreCase))
                     {
                         capturedError = "CrossStoreTarget:" + ownStoreName;
                         return null;
                     }
 
-                    List<string> createdPaths = capturedCreatedPaths;
-                    targetFolder = ResolveOrCreateFolder(ownStore, targetSegments, createMissing, createdPaths, out string? resolveError);
-                    if (targetFolder == null)
+                    TryReadRootFolder(itemStore!, out _, out string? rootEntryId);
+                    if (rootEntryId != null
+                        && string.Equals(TryReadFolderEntryId(openedTarget), rootEntryId, StringComparison.OrdinalIgnoreCase))
                     {
-                        capturedError = resolveError;
+                        capturedError = "TargetIsStoreRoot";
                         return null;
                     }
 
-                    string? guardError = VerifyMoveTarget(ownStore, (object)ns, targetFolder, parentEntryId);
+                    string? guardError = VerifyMoveTarget(ownStore, (object)ns, openedTarget, parentEntryId);
                     if (guardError != null)
                     {
                         capturedError = guardError;
                         return null;
                     }
 
-                    return ExecuteMove(mail, targetFolder!, entryIdHex, ownStoreName, fromFolderPath, createdPaths);
+                    return ExecuteMove(
+                        mail, openedTarget, entryIdHex, ownStoreName, fromFolderPath, Array.Empty<string>(), parentEntryId);
                 }
                 catch (Exception ex) when (IsComCallFailure(ex))
                 {
@@ -4550,6 +4658,7 @@ namespace OutlookAI.Core.Com
                 }
                 finally
                 {
+                    Release(targetStore);
                     Release(targetFolder);
                     Release(itemStore);
                     Release(parent);
@@ -4557,9 +4666,399 @@ namespace OutlookAI.Core.Com
                 }
             });
 
-            createdFolderPaths = capturedCreatedPaths.Count > 0 ? capturedCreatedPaths : null;
             error = capturedError;
             return result;
+        }
+
+        /// <summary>
+        /// Describes one folder opened by its entry id (Q131-Q136). Read-only: the folder is opened with
+        /// <c>GetFolderFromID</c> (<see cref="OpenFolderByEntryId"/>), which creates nothing, and the guard
+        /// it reports is the move guard's own non-creating lookup (Q84).
+        /// </summary>
+        public ComFolderDetail? TryDescribeFolder(string folderEntryId, out string? error)
+        {
+            EnsureNotDisposed();
+            if (string.IsNullOrWhiteSpace(folderEntryId))
+            {
+                throw new ArgumentException("Folder entry id must not be blank.", nameof(folderEntryId));
+            }
+
+            string? capturedError = null;
+            ComFolderDetail? result = _runner.Run<ComFolderDetail?>(() =>
+            {
+                object? folder = OpenFolderByEntryId(_namespace!, folderEntryId, null);
+                if (folder == null)
+                {
+                    capturedError = "FolderNotFound";
+                    return null;
+                }
+
+                try
+                {
+                    ComFolderDetail? described = DescribeFolderObject(_namespace!, folder, out string? describeError);
+                    capturedError = describeError;
+                    return described;
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                    capturedError = DescribeComFailure(ex);
+                    return null;
+                }
+                finally
+                {
+                    Release(folder);
+                }
+            });
+
+            error = capturedError;
+            return result;
+        }
+
+        /// <summary>
+        /// create_folder (Q134 (i)): one MAIL folder (<c>Folders.Add</c> type 6) named
+        /// <paramref name="name"/> - verbatim; a <c>/</c> is part of the name - directly under the folder
+        /// <paramref name="parentFolderEntryId"/>. Everything is checked BEFORE anything is made: a
+        /// parent that will not open (<c>ParentFolderNotFound</c>), the move guard's refusals - a parent
+        /// that is not a mail folder, Deleted Items or anything under it, the Outbox - and a sibling of
+        /// the same name, compared the way Outlook compares (case-insensitively):
+        /// <c>FolderExists:&lt;its entry id&gt;</c>. When <c>Folders.Add</c> itself fails, the parent is
+        /// looked at again: a folder of that name there now is the one this call made, and is described
+        /// as made; none there means nothing was made (<c>CreateFailed:</c> and Outlook's failure).
+        /// </summary>
+        public ComFolderDetail? TryCreateFolder(string parentFolderEntryId, string name, out string? error)
+        {
+            EnsureNotDisposed();
+            if (string.IsNullOrWhiteSpace(parentFolderEntryId))
+            {
+                throw new ArgumentException("Parent folder entry id must not be blank.", nameof(parentFolderEntryId));
+            }
+
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                throw new ArgumentException("Folder name must not be blank.", nameof(name));
+            }
+
+            string? capturedError = null;
+            ComFolderDetail? result = _runner.Run<ComFolderDetail?>(() =>
+            {
+                object session = _namespace!;
+                object? parent = OpenFolderByEntryId(_namespace!, parentFolderEntryId, null);
+                if (parent == null)
+                {
+                    capturedError = "ParentFolderNotFound";
+                    return null;
+                }
+
+                object? store = null;
+                object? children = null;
+                object? created = null;
+                try
+                {
+                    object parentFolder = parent;
+                    string parentEntryId = TryReadFolderEntryId(parentFolder) ?? parentFolderEntryId;
+                    int? itemType = null;
+                    try
+                    {
+                        itemType = (int)((dynamic)parentFolder).DefaultItemType;
+                    }
+                    catch (Exception ex) when (IsComCallFailure(ex))
+                    {
+                    }
+
+                    store = ((dynamic)parentFolder).Store;
+                    string? refusal = TargetRefusal(store!, session, parentFolder, parentEntryId, itemType);
+                    if (refusal != null)
+                    {
+                        capturedError = refusal;
+                        return null;
+                    }
+
+                    children = ((dynamic)parentFolder).Folders;
+                    string? existing = FindChildFolderEntryId(children!, name);
+                    if (existing != null)
+                    {
+                        capturedError = "FolderExists:" + existing;
+                        return null;
+                    }
+
+                    try
+                    {
+                        created = ((dynamic)children!).Add(name, OlFolderMailType);
+                    }
+                    catch (Exception ex) when (IsComCallFailure(ex))
+                    {
+                        // Did Folders.Add make it before it failed? The parent had no folder of this
+                        // name a moment ago, so one there now is this call's.
+                        string? madeAnyway = FindChildFolderEntryId(children!, name);
+                        if (madeAnyway == null)
+                        {
+                            capturedError = "CreateFailed:" + DescribeComFailure(ex);
+                            return null;
+                        }
+
+                        created = OpenFolderByEntryId(_namespace!, madeAnyway, null);
+                        if (created == null)
+                        {
+                            capturedError = "CreatedUnreadable:" + madeAnyway;
+                            return null;
+                        }
+                    }
+
+                    ComFolderDetail? described = DescribeFolderObject(session, created!, out string? describeError);
+                    if (described == null)
+                    {
+                        capturedError = "CreatedUnreadable:" + (TryReadFolderEntryId(created!) ?? string.Empty);
+                    }
+
+                    return described;
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                    capturedError = DescribeComFailure(ex);
+                    return null;
+                }
+                finally
+                {
+                    Release(created);
+                    Release(children);
+                    Release(store);
+                    Release(parent);
+                }
+            });
+
+            error = capturedError;
+            return result;
+        }
+
+        /// <summary><c>Folders.Add</c>'s type for a mail folder (<c>olFolderInbox</c>).</summary>
+        private const int OlFolderMailType = 6;
+
+        /// <summary>
+        /// STA-side: opens a folder by its entry id - <c>GetFolderFromID</c> with the store's id when one is
+        /// known, then the one-argument form (measured to open every PST folder id on nine stores, Q114),
+        /// and last the two-argument form with each store's id in turn, for a store that needs its own (a
+        /// delegate or shared mailbox). CALLER releases. Null when nothing opens it. Creates nothing.
+        /// </summary>
+        private static object? OpenFolderByEntryId(dynamic ns, string folderEntryId, string? storeEntryIdHint)
+        {
+            if (!string.IsNullOrEmpty(storeEntryIdHint))
+            {
+                try
+                {
+                    return ns.GetFolderFromID(folderEntryId, storeEntryIdHint);
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                }
+            }
+
+            try
+            {
+                return ns.GetFolderFromID(folderEntryId);
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+            }
+
+            object? stores = null;
+            try
+            {
+                stores = ns.Stores;
+                dynamic all = stores!;
+                int count = all.Count;
+                for (int i = 1; i <= count; i++)
+                {
+                    object? store = null;
+                    try
+                    {
+                        store = all[i];
+                        object probe = store!;
+                        string? storeId = TryGetString(() => (string?)((dynamic)probe).StoreID);
+                        if (string.IsNullOrEmpty(storeId)
+                            || string.Equals(storeId, storeEntryIdHint, StringComparison.OrdinalIgnoreCase))
+                        {
+                            continue;
+                        }
+
+                        try
+                        {
+                            return ns.GetFolderFromID(folderEntryId, storeId);
+                        }
+                        catch (Exception ex) when (IsComCallFailure(ex))
+                        {
+                        }
+                    }
+                    finally
+                    {
+                        Release(store);
+                    }
+                }
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+            }
+            finally
+            {
+                Release(stores);
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// STA-side: a folder's snapshot for the tools - its entry id, name, names up to its store's root,
+        /// store, counts and the move guard's verdict on it. Null with <paramref name="error"/> when its own
+        /// entry id will not read. Releases nothing it was given.
+        /// </summary>
+        private static ComFolderDetail? DescribeFolderObject(object session, object folderObject, out string? error)
+        {
+            error = null;
+            string? entryId = TryReadFolderEntryId(folderObject);
+            if (entryId == null)
+            {
+                error = "FolderUnreadable";
+                return null;
+            }
+
+            string name = TryGetString(() => (string?)((dynamic)folderObject).Name) ?? string.Empty;
+            int? defaultItemType = null;
+            try
+            {
+                defaultItemType = (int)((dynamic)folderObject).DefaultItemType;
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+            }
+
+            long? itemCount = TryGetPropertyLong(folderObject, "http://schemas.microsoft.com/mapi/proptag/0x36020003");
+            long? unread = TryGetPropertyLong(folderObject, "http://schemas.microsoft.com/mapi/proptag/0x36030003");
+
+            object? store = null;
+            try
+            {
+                store = ((dynamic)folderObject).Store;
+                object storeObject = store!;
+                string storeName = TryGetString(() => (string?)((dynamic)storeObject).DisplayName) ?? string.Empty;
+                string? storeEntryId = TryGetString(() => (string?)((dynamic)storeObject).StoreID);
+                TryReadRootFolder(storeObject, out _, out string? rootEntryId);
+                (List<string> segments, bool complete) = ReadPathSegments(folderObject, entryId, rootEntryId);
+                bool isRoot = rootEntryId != null && string.Equals(entryId, rootEntryId, StringComparison.OrdinalIgnoreCase);
+                string? refused = TargetRefusal(storeObject, session, folderObject, entryId, defaultItemType);
+                return new ComFolderDetail(
+                    entryId, name, segments, storeName, storeEntryId, rootEntryId, defaultItemType, itemCount, unread, isRoot,
+                    refused, complete);
+            }
+            finally
+            {
+                Release(store);
+            }
+        }
+
+        /// <summary>
+        /// STA-side: the folder's NAMES from the top of its store down, the folder itself last and the
+        /// store's root left out - read by walking <c>Parent</c>, never by splitting Outlook's
+        /// <c>FolderPath</c>, which escapes characters inside names (Q99). Stops at the folder whose entry
+        /// id is <paramref name="rootEntryId"/>, or - when that is unknown - at the top of the hierarchy,
+        /// whose parent (the NameSpace) has no entry id. Complete is false when the walk stopped short:
+        /// a parent that would not answer, or <see cref="FolderWalkDepthGuard"/>.
+        /// </summary>
+        private static (List<string> Segments, bool Complete) ReadPathSegments(object folderObject, string folderEntryId, string? rootEntryId)
+        {
+            List<string> names = new List<string>();
+            object? above = null;
+            try
+            {
+                object current = folderObject;
+                string? currentEntryId = folderEntryId;
+                for (int depth = 0; depth <= FolderWalkDepthGuard; depth++)
+                {
+                    if (rootEntryId != null && string.Equals(currentEntryId, rootEntryId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        names.Reverse();
+                        return (names, true);
+                    }
+
+                    object here = current;
+                    string? name = TryGetString(() => (string?)((dynamic)here).Name);
+                    object? up = null;
+                    try
+                    {
+                        up = ((dynamic)here).Parent;
+                    }
+                    catch (Exception ex) when (IsComCallFailure(ex))
+                    {
+                        up = null;
+                    }
+
+                    string? upEntryId = up == null ? null : TryReadFolderEntryId(up);
+                    if (upEntryId == null)
+                    {
+                        // The top of the hierarchy: the store's root, never one of the names. It is the
+                        // expected root only when the root's id is unknown - a top reached past an
+                        // expected root that never matched is a walk that stopped short.
+                        Release(up);
+                        names.Reverse();
+                        return (names, rootEntryId == null);
+                    }
+
+                    names.Add(name ?? string.Empty);
+                    Release(above);
+                    above = up;
+                    current = up!;
+                    currentEntryId = upEntryId;
+                }
+
+                names.Reverse();
+                return (names, false);
+            }
+            finally
+            {
+                Release(above);
+            }
+        }
+
+        /// <summary>
+        /// STA-side: the entry id of the child of a folder whose name is <paramref name="name"/>, compared
+        /// case-insensitively the way Outlook refuses a duplicate - or null when there is none. Reads every
+        /// child's name rather than <c>Folders[name]</c>, whose answer for a name holding <c>/</c> is not
+        /// the folder's (Q99).
+        /// </summary>
+        private static string? FindChildFolderEntryId(object folderCollection, string name)
+        {
+            dynamic children = folderCollection;
+            int count;
+            try
+            {
+                count = children.Count;
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+                return null;
+            }
+
+            for (int i = 1; i <= count; i++)
+            {
+                object? child = null;
+                try
+                {
+                    child = children[i];
+                    object probe = child!;
+                    string? childName = TryGetString(() => (string?)((dynamic)probe).Name);
+                    if (string.Equals(childName, name, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return TryReadFolderEntryId(probe);
+                    }
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                }
+                finally
+                {
+                    Release(child);
+                }
+            }
+
+            return null;
         }
 
         /// <summary>
@@ -4648,7 +5147,7 @@ namespace OutlookAI.Core.Com
                         return null;
                     }
 
-                    return ExecuteMove(mail, targetFolder!, entryIdHex, ownStoreName, fromFolderPath, Array.Empty<string>());
+                    return ExecuteMove(mail, targetFolder!, entryIdHex, ownStoreName, fromFolderPath, Array.Empty<string>(), parentEntryId);
                 }
                 catch (Exception ex) when (IsComCallFailure(ex))
                 {
@@ -4666,85 +5165,6 @@ namespace OutlookAI.Core.Com
 
             error = capturedError;
             return result;
-        }
-
-        /// <summary>
-        /// STA-side: walks <paramref name="segments"/> from the store root, creating
-        /// missing MAIL folders (Folders.Add type 6) when allowed. Returns the target
-        /// folder RCW (caller releases) or null with a content-free error; created
-        /// store-relative paths are appended to <paramref name="createdPaths"/>.
-        /// </summary>
-        private static object? ResolveOrCreateFolder(
-            dynamic store,
-            IReadOnlyList<string> segments,
-            bool createMissing,
-            List<string> createdPaths,
-            out string? error)
-        {
-            error = null;
-            object? current;
-            try
-            {
-                current = store.GetRootFolder();
-            }
-            catch (Exception ex) when (IsComCallFailure(ex))
-            {
-                error = "RootFolderUnavailable";
-                return null;
-            }
-
-            string pathSoFar = string.Empty;
-            foreach (string segment in segments)
-            {
-                pathSoFar = pathSoFar.Length == 0 ? segment : pathSoFar + "/" + segment;
-                object? next = null;
-                object? folders = null;
-                try
-                {
-                    folders = ((dynamic)current!).Folders;
-                    try
-                    {
-                        next = ((dynamic)folders!)[segment];
-                    }
-                    catch (Exception ex) when (IsComCallFailure(ex))
-                    {
-                        next = null;
-                    }
-
-                    if (next == null)
-                    {
-                        if (!createMissing)
-                        {
-                            error = "TargetFolderNotFound";
-                            Release(current);
-                            return null;
-                        }
-
-                        try
-                        {
-                            // 6 = olFolderInbox: forces an IPF.Note (mail) folder
-                            // regardless of the parent's type.
-                            next = ((dynamic)folders!).Add(segment, 6);
-                            createdPaths.Add(pathSoFar);
-                        }
-                        catch (Exception ex) when (IsComCallFailure(ex))
-                        {
-                            error = "TargetFolderCreateFailed";
-                            Release(current);
-                            return null;
-                        }
-                    }
-                }
-                finally
-                {
-                    Release(folders);
-                }
-
-                Release(current);
-                current = next;
-            }
-
-            return current;
         }
 
         /// <summary>
@@ -4771,19 +5191,31 @@ namespace OutlookAI.Core.Com
                 return "AlreadyInTargetFolder";
             }
 
+            int? itemType = null;
             try
             {
-                if ((int)target.DefaultItemType != 0)
-                {
-                    return "TargetNotAMailFolder";
-                }
+                itemType = (int)target.DefaultItemType;
             }
             catch (Exception ex) when (IsComCallFailure(ex))
+            {
+            }
+
+            return TargetRefusal((object)store, session, targetFolderObject, targetEntryId, itemType);
+        }
+
+        /// <summary>
+        /// STA-side: why mail may not go INTO <paramref name="targetFolderObject"/> - or a folder be made
+        /// under it (create_folder) - or null: <c>TargetNotAMailFolder</c> for anything but a mail folder
+        /// (an unreadable type included), then the move guard's own refusals, looked up WITHOUT creating
+        /// anything (Q84): Deleted Items and every folder under it, the Outbox.
+        /// </summary>
+        private static string? TargetRefusal(object storeObject, object session, object targetFolderObject, string targetEntryId, int? defaultItemType)
+        {
+            if (defaultItemType != 0)
             {
                 return "TargetNotAMailFolder";
             }
 
-            object storeObject = store;
             string? storeId = TryGetString(() => (string?)((dynamic)storeObject).StoreID);
             ComSpecialFolderStore special = new ComSpecialFolderStore(storeObject, session, storeId);
 
@@ -4870,10 +5302,12 @@ namespace OutlookAI.Core.Com
             string oldEntryId,
             string storeDisplayName,
             string fromFolderPath,
-            IReadOnlyList<string> createdPaths)
+            IReadOnlyList<string> createdPaths,
+            string? fromFolderEntryId)
         {
             dynamic target = targetFolderObject;
             string toFolderPath = ToStoreRelativeFolderPath((string?)target.FolderPath, storeDisplayName);
+            string? toFolderEntryId = TryReadFolderEntryId(targetFolderObject);
             object? moved = null;
             try
             {
@@ -4885,7 +5319,9 @@ namespace OutlookAI.Core.Com
                     storeDisplayName,
                     ToStoreRelativeFolderPath(fromFolderPath, storeDisplayName),
                     toFolderPath,
-                    createdPaths);
+                    createdPaths,
+                    fromFolderEntryId,
+                    toFolderEntryId);
             }
             finally
             {
@@ -5639,7 +6075,8 @@ namespace OutlookAI.Core.Com
                         info.StoreDisplayName,
                         info.ParentFolderName,
                         deletedItemsName,
-                        info.Subject);
+                        info.Subject,
+                        info.ParentFolderEntryId);
                 }
                 catch (Exception ex) when (IsComCallFailure(ex))
                 {
@@ -7873,10 +8310,11 @@ namespace OutlookAI.Core.Com
             int timeBudgetMs,
             SearchIn searchIn = SearchInValues.Default,
             bool includeSubfolders = false,
-            ComScanCursor? resumeFrom = null)
+            ComScanCursor? resumeFrom = null,
+            string? folderEntryId = null)
         {
             EnsureNotDisposed();
-            if (string.IsNullOrWhiteSpace(storeDisplayName))
+            if (string.IsNullOrWhiteSpace(storeDisplayName) && string.IsNullOrWhiteSpace(folderEntryId))
             {
                 throw new ArgumentException("Store display name must not be blank.", nameof(storeDisplayName));
             }
@@ -7893,47 +8331,99 @@ namespace OutlookAI.Core.Com
 
             return _runner.Run(() =>
             {
-                dynamic? store = FindStoreByDisplayName(storeDisplayName);
-                if (store == null)
-                {
-                    throw new InvalidOperationException(
-                        "Store '" + storeDisplayName + "' was not found in Outlook. Use list_accounts for store names.");
-                }
-
                 string storeId;
                 bool instantSearch = false;
                 object? scanRoot = null;
-                try
+                string scanRootPath;
+                bool folderScoped;
+                if (!string.IsNullOrEmpty(folderEntryId))
                 {
-                    storeId = (string)store.StoreID;
-                    try
-                    {
-                        instantSearch = (bool)store.IsInstantSearchEnabled;
-                    }
-                    catch (Exception ex) when (IsComCallFailure(ex))
-                    {
-                        // Property unavailable - treat as no instant search (LIKE engine).
-                    }
-
-                    if (folderPath == null || folderPath.Count == 0)
-                    {
-                        scanRoot = store.GetRootFolder();
-                    }
-                }
-                finally
-                {
-                    Release(store);
-                }
-
-                if (scanRoot == null)
-                {
-                    scanRoot = WalkToFolder(storeDisplayName, folderPath!, out string? walkError);
+                    // The folder by its ID (Q131-Q136): opened by entry id, its store - name, id and
+                    // instant-search state - read off the folder itself.
+                    scanRoot = OpenFolderByEntryId(_namespace!, folderEntryId!, null);
                     if (scanRoot == null)
                     {
                         throw new InvalidOperationException(
-                            "Folder '" + string.Join("/", folderPath!) + "' was not found in store '" + storeDisplayName
-                            + "' (" + (walkError ?? "unknown") + "). Use list_folders for paths.");
+                            "The folder was not found in Outlook: no store of this profile opens its ID any more. "
+                            + "Get a current ID from find_folder or list_folders.");
                     }
+
+                    object? folderStore = null;
+                    try
+                    {
+                        object opened = scanRoot;
+                        folderStore = ((dynamic)opened).Store;
+                        object storeObject = folderStore!;
+                        storeId = (string)((dynamic)storeObject).StoreID;
+                        storeDisplayName = TryGetString(() => (string?)((dynamic)storeObject).DisplayName) ?? storeDisplayName;
+                        try
+                        {
+                            instantSearch = (bool)((dynamic)storeObject).IsInstantSearchEnabled;
+                        }
+                        catch (Exception ex) when (IsComCallFailure(ex))
+                        {
+                        }
+
+                        TryReadRootFolder(storeObject, out _, out string? rootEntryId);
+                        scanRootPath = string.Join(
+                            "/", ReadPathSegments(opened, TryReadFolderEntryId(opened) ?? folderEntryId!, rootEntryId).Segments);
+                    }
+                    catch
+                    {
+                        Release(scanRoot);
+                        throw;
+                    }
+                    finally
+                    {
+                        Release(folderStore);
+                    }
+
+                    folderScoped = true;
+                }
+                else
+                {
+                    dynamic? store = FindStoreByDisplayName(storeDisplayName);
+                    if (store == null)
+                    {
+                        throw new InvalidOperationException(
+                            "Store '" + storeDisplayName + "' was not found in Outlook. Use list_accounts for store ids.");
+                    }
+
+                    try
+                    {
+                        storeId = (string)store.StoreID;
+                        try
+                        {
+                            instantSearch = (bool)store.IsInstantSearchEnabled;
+                        }
+                        catch (Exception ex) when (IsComCallFailure(ex))
+                        {
+                            // Property unavailable - treat as no instant search (LIKE engine).
+                        }
+
+                        if (folderPath == null || folderPath.Count == 0)
+                        {
+                            scanRoot = store.GetRootFolder();
+                        }
+                    }
+                    finally
+                    {
+                        Release(store);
+                    }
+
+                    if (scanRoot == null)
+                    {
+                        scanRoot = WalkToFolder(storeDisplayName, folderPath!, out string? walkError);
+                        if (scanRoot == null)
+                        {
+                            throw new InvalidOperationException(
+                                "Folder '" + string.Join("/", folderPath!) + "' was not found in store '" + storeDisplayName
+                                + "' (" + (walkError ?? "unknown") + "). Use find_folder for folder ids.");
+                        }
+                    }
+
+                    scanRootPath = folderPath == null || folderPath.Count == 0 ? string.Empty : string.Join("/", folderPath);
+                    folderScoped = folderPath != null && folderPath.Count > 0;
                 }
 
                 ExhaustiveScanState state = new ExhaustiveScanState(
@@ -7957,7 +8447,7 @@ namespace OutlookAI.Core.Com
                     // caller's include_subfolders flag (soak fix 15 - before it, a
                     // folder-scoped exhaustive scan was unconditionally shallow while the
                     // index tier's folder scope was recursive).
-                    bool recurse = folderPath == null || folderPath.Count == 0 || includeSubfolders;
+                    bool recurse = !folderScoped || includeSubfolders;
 
                     // PASS 1 - enumerate the mail folders in scope, in the stable order, and
                     // nothing else. It buys three things one combined pass cannot: a real
@@ -7969,7 +8459,7 @@ namespace OutlookAI.Core.Com
                     // the same deadline.
                     EnumerateScanFolders(
                         scanRoot,
-                        folderPath == null || folderPath.Count == 0 ? string.Empty : string.Join("/", folderPath),
+                        scanRootPath,
                         recurse,
                         state,
                         folders,
@@ -8664,7 +9154,7 @@ namespace OutlookAI.Core.Com
                         ComMailBrief brief;
                         try
                         {
-                            brief = SnapshotBrief(ns, member!, null, folderName, false, storeName, storeId);
+                            brief = SnapshotBrief(ns, member!, null, folderName, false, storeName, storeId, null, reference.EntryId);
                         }
                         catch (Exception ex) when (IsComCallFailure(ex))
                         {
@@ -9420,6 +9910,7 @@ namespace OutlookAI.Core.Com
             sortRefused = false;
             dynamic folder = folderObject;
             string? folderName = TryGetString(() => (string?)folder.Name);
+            string? sweptFolderEntryId = TryReadFolderEntryId(folderObject);
             // Year-first UTC literal (DaslDateLiteral). This one is the dangerous one to get
             // wrong: a sweep whose window is misparsed into the future selects nothing while
             // the caller still reports foldersSwept and freshness "live" - a silent empty
@@ -9498,7 +9989,7 @@ namespace OutlookAI.Core.Com
                         try
                         {
                             brief = SnapshotBrief(
-                                ns, member!, folderKind, folderName, includeBodies, storeName, storeId, tally);
+                                ns, member!, folderKind, folderName, includeBodies, storeName, storeId, tally, sweptFolderEntryId);
                         }
                         catch (Exception ex) when (IsComCallFailure(ex))
                         {
@@ -9538,7 +10029,8 @@ namespace OutlookAI.Core.Com
             bool includeBody,
             string? storeNameHint = null,
             string? storeIdHint = null,
-            SweepTally? bodyBudget = null)
+            SweepTally? bodyBudget = null,
+            string? folderEntryIdHint = null)
         {
             dynamic item = itemObject;
             string entryId = (string)item.EntryID;
@@ -9606,7 +10098,8 @@ namespace OutlookAI.Core.Com
             string? storeName = storeNameHint;
             string? storeId = storeIdHint;
             string? resolvedFolderName = folderName;
-            if (storeName == null || resolvedFolderName == null)
+            string? folderEntryId = folderEntryIdHint;
+            if (storeName == null || resolvedFolderName == null || folderEntryId == null)
             {
                 object? parent = null;
                 object? parentStore = null;
@@ -9616,6 +10109,7 @@ namespace OutlookAI.Core.Com
                     if (parent != null)
                     {
                         resolvedFolderName ??= TryGetString(() => (string?)((dynamic)parent).Name);
+                        folderEntryId ??= TryReadFolderEntryId(parent);
                         if (storeName == null)
                         {
                             parentStore = ((dynamic)parent).Store;
@@ -9669,7 +10163,8 @@ namespace OutlookAI.Core.Com
                 size,
                 body,
                 messageClass,
-                bodyTruncated);
+                bodyTruncated,
+                folderEntryId);
         }
 
         private ComItemDetail SnapshotDetail(object itemObject, bool includeHeaders, bool includeBody, bool includeHtml = false)
@@ -9844,6 +10339,7 @@ namespace OutlookAI.Core.Com
 
             // Folder + store.
             string? folderPath = null;
+            string? folderEntryId = null;
             string? storeName = null;
             object? parent = null;
             object? parentStore = null;
@@ -9853,6 +10349,7 @@ namespace OutlookAI.Core.Com
                 if (parent != null)
                 {
                     folderPath = TryGetString(() => (string?)((dynamic)parent).FolderPath);
+                    folderEntryId = TryReadFolderEntryId(parent);
                     parentStore = ((dynamic)parent).Store;
                     if (parentStore != null)
                     {
@@ -9897,7 +10394,8 @@ namespace OutlookAI.Core.Com
                 conversationId,
                 internetMessageId,
                 headers,
-                htmlBody);
+                htmlBody,
+                folderEntryId);
         }
 
         /// <summary>
@@ -10266,7 +10764,8 @@ namespace OutlookAI.Core.Com
                             Release(grandChildren);
                         }
 
-                        result.Add(new ComFolderInfo(storeDisplayName, path, name, itemCount, unread, childCount));
+                        result.Add(new ComFolderInfo(
+                            storeDisplayName, path, name, itemCount, unread, childCount, TryReadFolderEntryId(child!)));
                         if (childCount > 0)
                         {
                             CollectFolders(child, storeDisplayName, path, depth + 1, absoluteWalkCap, result, bounds);

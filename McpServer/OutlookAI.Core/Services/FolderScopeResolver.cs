@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 
 using OutlookAI.Core.Mapi;
 
@@ -196,23 +197,94 @@ namespace OutlookAI.Core.Services
         /// </summary>
         public static FolderScopeResolution ForPrimaryStore(string storePrefix, string? folder, bool includeSubfolders)
         {
+            // The path as a plain '/'-split, empty parts kept where they are - byte for byte the
+            // scope this method always built from a string.
+            string? normalized = NormalizeFolder(folder);
+            return ForPrimaryStoreSegments(storePrefix, normalized?.Split('/'), includeSubfolders);
+        }
+
+        /// <summary>
+        /// As <see cref="ForPrimaryStore(string, string?, bool)"/>, for a folder given as its NAMES from
+        /// the store's top down - what Outlook reports for a folder opened by its ID (Q131-Q136). A name
+        /// may hold <c>/</c>: each name is encoded on its own (<see cref="MapiUrlSegment.Encode"/>), so the
+        /// folder <c>a/b</c> is scoped as <c>.../a%2Fb</c>, the index's own spelling, and never as two
+        /// folders (salvaged from the Q99 follow-up, branch <c>q99-name-encoding-followup</c>).
+        /// <see cref="FolderScopeResolution.RequestedFolder"/> is the names joined by <c>/</c>, for
+        /// reading only.
+        /// </summary>
+        public static FolderScopeResolution ForPrimaryStoreSegments(
+            string storePrefix, IReadOnlyList<string>? folderSegments, bool includeSubfolders)
+        {
             if (string.IsNullOrWhiteSpace(storePrefix))
             {
                 throw new ArgumentException("Store prefix is required.", nameof(storePrefix));
             }
 
-            string? normalized = NormalizeFolder(folder);
-            if (normalized == null)
+            if (folderSegments == null || folderSegments.Count == 0)
             {
                 return new FolderScopeResolution(
                     FolderScopeKind.WholeStore, storePrefix, storePrefix, null, false, null, null, false);
             }
 
-            string scope = storePrefix + "/0/" + MapiUrlSegment.EncodePath(normalized);
+            return BuildPrimary(storePrefix, folderSegments.Select(MapiUrlSegment.Encode).ToList(), folderSegments, includeSubfolders);
+        }
+
+        /// <summary>
+        /// A folder found by its OWN index row (Q132 (i)): <paramref name="folderRowUrl"/> is the URL the
+        /// index files the folder under, read off the row whose <c>System.ProviderItemID</c> is the node id
+        /// its ID carries - so it is spelled the index's way already, and it is where the index has the
+        /// folder's mail NOW, a rename or move the index has not re-filed yet included (measured: a row and
+        /// its folder's items move together, never at both paths and never at neither). Its names, for the
+        /// non-recursive bound and for reading, are the URL's segments decoded. Refused when the URL is not
+        /// a folder of <paramref name="storePrefix"/>.
+        /// </summary>
+        public static FolderScopeResolution ForIndexedFolder(string storePrefix, string folderRowUrl, bool includeSubfolders)
+        {
+            if (string.IsNullOrWhiteSpace(storePrefix))
+            {
+                throw new ArgumentException("Store prefix is required.", nameof(storePrefix));
+            }
+
+            string prefix = storePrefix.TrimEnd('/') + "/0/";
+            string url = (folderRowUrl ?? string.Empty).TrimEnd('/');
+            if (!url.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) || url.Length == prefix.Length)
+            {
+                throw new ArgumentException("The folder row's URL is not a folder of the store: " + folderRowUrl, nameof(folderRowUrl));
+            }
+
+            List<string> encoded = url.Substring(prefix.Length).Split('/').ToList();
+            List<string> names = encoded.Select(MapiUrlSegment.Decode).ToList();
+            return BuildPrimary(storePrefix.TrimEnd('/'), encoded, names, includeSubfolders);
+        }
+
+        /// <summary>The names of a folder joined by <c>/</c> - how a folder is shown, never read back.</summary>
+        public static string JoinNames(IReadOnlyList<string>? names)
+        {
+            return names == null ? string.Empty : string.Join("/", names);
+        }
+
+        /// <summary>
+        /// The one builder of a primary store's folder scope, from the folder's segments spelled the
+        /// index's way and the same segments as names.
+        /// <para>
+        /// A folder whose name ENDS with whitespace (Outlook keeps such a name, and the index keeps the
+        /// space in the URL and the display path - measured on guest one, runbook section 8 item 30 of the
+        /// Q99 follow-up): its own URL as a SCOPE ends with that space, which the index does not match. So
+        /// the recursive scope keeps its separator, and the non-recursive one is the parent's scope
+        /// narrowed by the folder's display path, which holds the space exactly; a parent whose own name
+        /// ends with whitespace is scoped with its separator too.
+        /// </para>
+        /// </summary>
+        private static FolderScopeResolution BuildPrimary(
+            string storePrefix, IReadOnlyList<string> encodedSegments, IReadOnlyList<string> names, bool includeSubfolders)
+        {
+            string requested = JoinNames(names);
+            string scope = storePrefix + "/0/" + string.Join("/", encodedSegments);
+            bool endsWithSpace = EndsWithWhitespace(names[names.Count - 1]);
             if (includeSubfolders)
             {
                 return new FolderScopeResolution(
-                    FolderScopeKind.PrimaryRecursive, scope, storePrefix, null, false, normalized, null, false);
+                    FolderScopeKind.PrimaryRecursive, endsWithSpace ? scope + "/" : scope, storePrefix, null, false, requested, null, false);
             }
 
             if (!MapiItemUrl.TryBuildFolderPathDisplay(scope, out string? displayPath) || displayPath == null)
@@ -220,12 +292,32 @@ namespace OutlookAI.Core.Services
                 // Unreachable for a well-formed store prefix; degrade to the recursive
                 // scope rather than dropping the folder bound altogether.
                 return new FolderScopeResolution(
-                    FolderScopeKind.PrimaryRecursive, scope, storePrefix, null, false, normalized, null, false);
+                    FolderScopeKind.PrimaryRecursive, scope, storePrefix, null, false, requested, null, false);
+            }
+
+            string boundScope = scope;
+            if (endsWithSpace)
+            {
+                boundScope = storePrefix;
+                if (encodedSegments.Count > 1)
+                {
+                    boundScope = storePrefix + "/0/" + string.Join("/", encodedSegments.Take(encodedSegments.Count - 1));
+                    if (EndsWithWhitespace(names[names.Count - 2]))
+                    {
+                        boundScope += "/";
+                    }
+                }
             }
 
             return new FolderScopeResolution(
-                FolderScopeKind.PrimaryNonRecursive, scope, storePrefix, new[] { displayPath },
-                false, normalized, null, false);
+                FolderScopeKind.PrimaryNonRecursive, boundScope, storePrefix, new[] { displayPath },
+                false, requested, null, false);
+        }
+
+        /// <summary>Whether a folder name ends with whitespace, which a SCOPE ending there does not match.</summary>
+        private static bool EndsWithWhitespace(string name)
+        {
+            return name.Length > 0 && char.IsWhiteSpace(name[name.Length - 1]);
         }
 
         /// <summary>
@@ -423,12 +515,11 @@ namespace OutlookAI.Core.Services
         /// <summary>Advice text for the non-silent zero-row guard (v3.MD constraint C7).</summary>
         public static string DescribeUnresolvedFolder(string? folder, string store)
         {
-            return "No results, and the folder path '" + folder + "' matched NOTHING in the index for store '"
-                + store + "' although the store itself has indexed mail - so this looks like a folder-resolution "
-                + "problem rather than an empty folder (a folder created minutes ago can also still be missing from "
-                + "the index). Check the path with list_folders (delegate mailboxes are indexed by folder NAME, and "
-                + "Outlook may show a localized name the index does not use), or retry with exhaustive:true to scan "
-                + "the folder through Outlook directly.";
+            return "No results, and the folder '" + folder + "' has NO rows in the index for store '" + store
+                + "' although the store itself has indexed mail - so the index may not cover this folder yet rather "
+                + "than the folder being empty: a folder created, renamed or moved a moment ago is re-filed within "
+                + "seconds, and one that has never held indexed mail has no rows at all. Retry shortly, or search "
+                + "with exhaustive:true to scan the folder through Outlook directly.";
         }
 
         private static IEnumerable<string> Quote(IReadOnlyList<string> names)

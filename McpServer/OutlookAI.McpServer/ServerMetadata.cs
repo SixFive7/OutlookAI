@@ -15,8 +15,9 @@ namespace OutlookAI.McpServer;
 public static class ServerMetadata
 {
     public const string Instructions =
-        "Local Outlook email access: search and read mail across all accounts, folders, and "
-        + "delegate mailboxes; follow threads; save/read attachments; open results in Outlook. "
-        + "Use these tools whenever an answer may live in the user's email or inbox. "
-        + "Reply/forward/new drafts open in Outlook for the user to review; send is confirmation-gated.";
+        "Local Outlook email access: search and read mail across all accounts, folders and delegate "
+        + "mailboxes; follow threads; save/read attachments. Use them whenever an answer may live in the "
+        + "user's email or inbox. Folders and stores are addressed by ID, not name: find_folder, list_folders "
+        + "and list_accounts give the IDs. Drafts open in Outlook for the user to review; send is "
+        + "confirmation-gated.";
 }

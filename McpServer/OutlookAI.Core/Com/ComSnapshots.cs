@@ -73,9 +73,11 @@ namespace OutlookAI.Core.Com
             string? conversationId,
             string? internetMessageId,
             string? headers,
-            string? htmlBody = null)
+            string? htmlBody = null,
+            string? folderEntryId = null)
         {
             HtmlBody = htmlBody;
+            FolderEntryId = folderEntryId;
             EntryId = entryId;
             StoreDisplayName = storeDisplayName;
             FolderPath = folderPath;
@@ -160,14 +162,22 @@ namespace OutlookAI.Core.Com
 
         /// <summary>Raw transport headers when requested (may be capped by the caller).</summary>
         public string? Headers { get; }
+
+        /// <summary>
+        /// <c>Folder.EntryID</c> of the folder the item is in - what the tools hand back as the
+        /// folder's ID (<see cref="OutlookAI.Core.Mapi.OutlookIds"/>). Null when it would not read.
+        /// </summary>
+        public string? FolderEntryId { get; }
     }
 
     /// <summary>One profile account (COM-free data).</summary>
     public sealed class ComAccountInfo
     {
         /// <summary>Creates an account snapshot.</summary>
-        public ComAccountInfo(string? smtpAddress, string? displayName, string? deliveryStoreDisplayName)
+        public ComAccountInfo(
+            string? smtpAddress, string? displayName, string? deliveryStoreDisplayName, string? deliveryStoreEntryId = null)
         {
+            DeliveryStoreEntryId = deliveryStoreEntryId;
             SmtpAddress = smtpAddress;
             DisplayName = displayName;
             DeliveryStoreDisplayName = deliveryStoreDisplayName;
@@ -181,6 +191,9 @@ namespace OutlookAI.Core.Com
 
         /// <summary>Display name of the store new mail for this account lands in.</summary>
         public string? DeliveryStoreDisplayName { get; }
+
+        /// <summary><c>Store.StoreID</c> of that store - what ties the account to its store's ID (Q133); null when it would not read.</summary>
+        public string? DeliveryStoreEntryId { get; }
     }
 
     /// <summary>Detailed store description for list_accounts (COM-free data).</summary>
@@ -196,10 +209,12 @@ namespace OutlookAI.Core.Com
             string? filePath = null,
             string? mappingSignatureHex = null,
             string? exchangeProfileSectionHex = null,
-            string? ownName = null)
+            string? ownName = null,
+            string? rootFolderEntryId = null)
         {
             DisplayName = displayName;
             StoreId = storeId;
+            RootFolderEntryId = rootFolderEntryId;
             ExchangeStoreType = exchangeStoreType;
             IsCachedExchange = isCachedExchange;
             NameUnreadable = nameUnreadable;
@@ -267,6 +282,15 @@ namespace OutlookAI.Core.Com
         /// its pre-Q113 match until Q113 (b) is measured, and when it would not read.
         /// </summary>
         public string? OwnName { get; }
+
+        /// <summary>
+        /// <c>Store.GetRootFolder().EntryID</c>: its bytes 4..19 are the provider UID every entry id
+        /// in the store carries, which is what the store's ID is built from
+        /// (<see cref="OutlookAI.Core.Mapi.OutlookIds.StoreIdOf"/>, Q133). Not read for an Exchange
+        /// store Outlook does not cache - its root folder is a server round trip - which is then
+        /// addressed by its own entry id instead; null too when it would not read.
+        /// </summary>
+        public string? RootFolderEntryId { get; }
     }
 
     /// <summary>
@@ -282,8 +306,10 @@ namespace OutlookAI.Core.Com
             bool walkCapReached = false,
             bool depthLimitReached = false,
             int storesUnnamed = 0,
-            int storesUnnamedExcluded = 0)
+            int storesUnnamedExcluded = 0,
+            IReadOnlyList<ComStoreRoot>? stores = null)
         {
+            Stores = stores ?? Array.Empty<ComStoreRoot>();
             Folders = folders;
             WalkCapReached = walkCapReached;
             DepthLimitReached = depthLimitReached;
@@ -293,6 +319,12 @@ namespace OutlookAI.Core.Com
 
         /// <summary>The folders the walk collected, in the stable traversal order.</summary>
         public IReadOnlyList<ComFolderInfo> Folders { get; }
+
+        /// <summary>
+        /// Every store the walk entered, in walk order, with its own entry id and its root folder's -
+        /// what a store's ID is built from (Q133), listed even when the store has no folder to show.
+        /// </summary>
+        public IReadOnlyList<ComStoreRoot> Stores { get; }
 
         /// <summary>True when the absolute walk cap stopped the traversal short of the tree.</summary>
         public bool WalkCapReached { get; }
@@ -351,8 +383,11 @@ namespace OutlookAI.Core.Com
     public sealed class ComFolderInfo
     {
         /// <summary>Creates a folder snapshot.</summary>
-        public ComFolderInfo(string storeDisplayName, string path, string name, long? itemCount, long? unreadCount, int childFolderCount)
+        public ComFolderInfo(
+            string storeDisplayName, string path, string name, long? itemCount, long? unreadCount, int childFolderCount,
+            string? entryId = null)
         {
+            EntryId = entryId;
             StoreDisplayName = storeDisplayName;
             Path = path;
             Name = name;
@@ -378,6 +413,117 @@ namespace OutlookAI.Core.Com
 
         /// <summary>Number of direct child folders.</summary>
         public int ChildFolderCount { get; }
+
+        /// <summary><c>Folder.EntryID</c> - what the folder's ID is built from (Q131); null when it would not read.</summary>
+        public string? EntryId { get; }
+    }
+
+    /// <summary>One store a folder walk entered (COM-free data).</summary>
+    public sealed class ComStoreRoot
+    {
+        /// <summary>Creates a store-root snapshot.</summary>
+        public ComStoreRoot(string displayName, string? storeEntryId, string? rootFolderEntryId, bool nameUnreadable = false)
+        {
+            DisplayName = displayName;
+            StoreEntryId = storeEntryId;
+            RootFolderEntryId = rootFolderEntryId;
+            NameUnreadable = nameUnreadable;
+        }
+
+        /// <summary>The store's display name, or its <see cref="StoreNaming"/> label when <see cref="NameUnreadable"/>.</summary>
+        public string DisplayName { get; }
+
+        /// <summary><c>Store.StoreID</c>; null when it would not read.</summary>
+        public string? StoreEntryId { get; }
+
+        /// <summary><c>Store.GetRootFolder().EntryID</c>; null when it would not read.</summary>
+        public string? RootFolderEntryId { get; }
+
+        /// <summary>True when Outlook would not report the store's name (gap G2).</summary>
+        public bool NameUnreadable { get; }
+    }
+
+    /// <summary>
+    /// One folder opened by its entry id (Q131-Q136): who it is, where it is, and what it may be used
+    /// for - the answer of <see cref="IOutlookSession.TryDescribeFolder"/> and
+    /// <see cref="IOutlookSession.TryCreateFolder"/>. COM-free data.
+    /// </summary>
+    public sealed class ComFolderDetail
+    {
+        /// <summary>Creates a folder snapshot.</summary>
+        public ComFolderDetail(
+            string entryId,
+            string name,
+            IReadOnlyList<string> pathSegments,
+            string storeDisplayName,
+            string? storeEntryId,
+            string? rootFolderEntryId,
+            int? defaultItemType,
+            long? itemCount,
+            long? unreadCount,
+            bool isStoreRoot,
+            string? refusedAsTarget,
+            bool pathComplete = true)
+        {
+            EntryId = entryId;
+            Name = name;
+            PathSegments = pathSegments;
+            StoreDisplayName = storeDisplayName;
+            StoreEntryId = storeEntryId;
+            RootFolderEntryId = rootFolderEntryId;
+            DefaultItemType = defaultItemType;
+            ItemCount = itemCount;
+            UnreadCount = unreadCount;
+            IsStoreRoot = isStoreRoot;
+            RefusedAsTarget = refusedAsTarget;
+            PathComplete = pathComplete;
+        }
+
+        /// <summary><c>Folder.EntryID</c> as Outlook reports it.</summary>
+        public string EntryId { get; }
+
+        /// <summary>The folder's own name. May hold <c>/</c>: Outlook allows it.</summary>
+        public string Name { get; }
+
+        /// <summary>
+        /// The folder's names from the top of its store down, the folder itself last - empty for the
+        /// store's root. Names, never a joined path, because a name may hold <c>/</c>.
+        /// </summary>
+        public IReadOnlyList<string> PathSegments { get; }
+
+        /// <summary>Display name of the folder's store.</summary>
+        public string StoreDisplayName { get; }
+
+        /// <summary><c>Store.StoreID</c> of the folder's store; null when it would not read.</summary>
+        public string? StoreEntryId { get; }
+
+        /// <summary>Entry id of the store's root folder - what the store's ID is built from; null when it would not read.</summary>
+        public string? RootFolderEntryId { get; }
+
+        /// <summary><c>Folder.DefaultItemType</c>: 0 for a mail folder; null when it would not read.</summary>
+        public int? DefaultItemType { get; }
+
+        /// <summary>Total items (PR_CONTENT_COUNT) when available.</summary>
+        public long? ItemCount { get; }
+
+        /// <summary>Unread items (PR_CONTENT_UNREAD) when available.</summary>
+        public long? UnreadCount { get; }
+
+        /// <summary>True when the folder is its store's root folder (the top of the folder tree).</summary>
+        public bool IsStoreRoot { get; }
+
+        /// <summary>
+        /// Why mail may not be moved INTO this folder, nor a folder made under it: the move guard's own
+        /// refusal token (Deleted Items or anything under it, the Outbox) or <c>TargetNotAMailFolder</c>
+        /// - or null when nothing refuses it.
+        /// </summary>
+        public string? RefusedAsTarget { get; }
+
+        /// <summary>
+        /// False when the walk up to the store's root stopped short (a parent would not answer, or the
+        /// depth guard): <see cref="PathSegments"/> then holds only the part below the stop.
+        /// </summary>
+        public bool PathComplete { get; }
     }
 
     /// <summary>
@@ -404,9 +550,11 @@ namespace OutlookAI.Core.Com
             long? sizeBytes,
             string? body,
             string? messageClass = null,
-            bool? bodyTruncated = null)
+            bool? bodyTruncated = null,
+            string? folderEntryId = null)
         {
             BodyTruncated = bodyTruncated;
+            FolderEntryId = folderEntryId;
             EntryId = entryId;
             StoreDisplayName = storeDisplayName;
             StoreId = storeId;
@@ -434,6 +582,9 @@ namespace OutlookAI.Core.Com
 
         /// <summary>Containing folder display name (localized, matches index URL segments).</summary>
         public string? FolderName { get; }
+
+        /// <summary><c>Folder.EntryID</c> of the containing folder - what a hit's folderId is built from; null where the producer did not read it.</summary>
+        public string? FolderEntryId { get; }
 
         /// <summary>"inbox" or "sent" for sweep results; null elsewhere.</summary>
         public string? FolderKind { get; }
@@ -503,8 +654,11 @@ namespace OutlookAI.Core.Com
     public sealed class ComExplorerState
     {
         /// <summary>Creates an explorer state snapshot.</summary>
-        public ComExplorerState(string? caption, string? currentFolderPath, string? currentFolderName, int? windowState)
+        public ComExplorerState(
+            string? caption, string? currentFolderPath, string? currentFolderName, int? windowState,
+            string? currentFolderEntryId = null)
         {
+            CurrentFolderEntryId = currentFolderEntryId;
             Caption = caption;
             CurrentFolderPath = currentFolderPath;
             CurrentFolderName = currentFolderName;
@@ -522,6 +676,9 @@ namespace OutlookAI.Core.Com
 
         /// <summary>OlWindowState (0 maximized, 1 minimized, 2 normal) when readable.</summary>
         public int? WindowState { get; }
+
+        /// <summary><c>Folder.EntryID</c> of the folder now on screen; null when it would not read.</summary>
+        public string? CurrentFolderEntryId { get; }
     }
 
     /// <summary>One open Inspector window (COM-free data).</summary>
@@ -1628,8 +1785,12 @@ namespace OutlookAI.Core.Com
             string storeDisplayName,
             string fromFolderPath,
             string toFolderPath,
-            IReadOnlyList<string> createdFolderPaths)
+            IReadOnlyList<string> createdFolderPaths,
+            string? fromFolderEntryId = null,
+            string? toFolderEntryId = null)
         {
+            FromFolderEntryId = fromFolderEntryId;
+            ToFolderEntryId = toFolderEntryId;
             OldEntryId = oldEntryId;
             NewEntryId = newEntryId;
             StoreDisplayName = storeDisplayName;
@@ -1655,6 +1816,12 @@ namespace OutlookAI.Core.Com
 
         /// <summary>Store-relative paths of folders created for this move (create_folder=true), outermost first.</summary>
         public IReadOnlyList<string> CreatedFolderPaths { get; }
+
+        /// <summary><c>Folder.EntryID</c> of the folder the item came FROM - the undo address; null when it would not read.</summary>
+        public string? FromFolderEntryId { get; }
+
+        /// <summary><c>Folder.EntryID</c> of the folder the item is in now; null when it would not read.</summary>
+        public string? ToFolderEntryId { get; }
     }
 
     /// <summary>
@@ -2068,8 +2235,10 @@ namespace OutlookAI.Core.Com
             string? storeDisplayName,
             string? fromFolder,
             string? toFolder,
-            string? subject)
+            string? subject,
+            string? fromFolderEntryId = null)
         {
+            FromFolderEntryId = fromFolderEntryId;
             OldEntryId = oldEntryId;
             NewEntryId = newEntryId;
             StoreDisplayName = storeDisplayName;
@@ -2092,6 +2261,9 @@ namespace OutlookAI.Core.Com
 
         /// <summary>Deleted Items folder name (localized) it was moved to.</summary>
         public string? ToFolder { get; }
+
+        /// <summary><c>Folder.EntryID</c> of the Drafts folder the draft was discarded FROM - where move_mail puts it back; null when it would not read.</summary>
+        public string? FromFolderEntryId { get; }
 
         /// <summary>The discarded draft's subject (echoed so the agent can confirm what went).</summary>
         public string? Subject { get; }
