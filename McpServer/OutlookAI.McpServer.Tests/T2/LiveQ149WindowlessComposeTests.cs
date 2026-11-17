@@ -138,7 +138,9 @@ public sealed class LiveQ149WindowlessComposeTests
         for (int i = 1; i <= trials; i++)
         {
             Q149Attempt attempt = new(cell, i);
+            Run.Log(cell + " #" + i.ToString(CultureInfo.InvariantCulture) + ": stopping Outlook");
             LiveComposeProbe.StopOutlook(Run.Settings, Run.Log);
+            Run.Log(cell + " #" + i.ToString(CultureInfo.InvariantCulture) + ": cold start");
             Stopwatch clock = Stopwatch.StartNew();
             long goneAt = -1;
             OutlookComSession session = OutlookComSession.Connect(
@@ -167,6 +169,7 @@ public sealed class LiveQ149WindowlessComposeTests
 
                 string token = Token("L1", i, pin);
                 windows = new Q149WindowWatch(watch.Pid);
+                Run.Log(cell + " #" + i.ToString(CultureInfo.InvariantCulture) + ": composing (" + clock.ElapsedMilliseconds.ToString(CultureInfo.InvariantCulture) + " ms into the trial)");
                 long started = clock.ElapsedMilliseconds;
                 ComDraftUpdateResult? result = null;
                 string? error = null;
@@ -194,6 +197,7 @@ public sealed class LiveQ149WindowlessComposeTests
                     .Set("composeMs", returned - started)
                     .Set("bodyPlacement", result == null ? null : (result.BodyPlacedViaWordEditor ? "wordEditor" : "html"));
 
+                Run.Log(cell + " #" + i.ToString(CultureInfo.InvariantCulture) + ": composed in " + (returned - started).ToString(CultureInfo.InvariantCulture) + " ms; watching Outlook");
                 Q149Lifetime lifetime = WatchLifetime(attempt, watch, windows, clock, started, returned, pin ? 10_000 : 30_000,
                     quitEventSeen: () => session.GoneSignal == OutlookComSession.GoneByQuitEvent);
                 attempt.Set("goneSignal", session.GoneSignal)
@@ -246,7 +250,9 @@ public sealed class LiveQ149WindowlessComposeTests
         for (int i = 1; i <= trials; i++)
         {
             Q149Attempt attempt = new(cell, i);
+            Run.Log(cell + " #" + i.ToString(CultureInfo.InvariantCulture) + ": stopping Outlook");
             LiveComposeProbe.StopOutlook(Run.Settings, Run.Log);
+            Run.Log(cell + " #" + i.ToString(CultureInfo.InvariantCulture) + ": cold start");
             Stopwatch clock = Stopwatch.StartNew();
             Q149OutlookClient client = Q149OutlookClient.Connect(clock, allowStart: true);
             Q149ProcessWatch? watch = null;
@@ -339,6 +345,7 @@ public sealed class LiveQ149WindowlessComposeTests
                 });
 
                 long closed = clock.ElapsedMilliseconds;
+                Run.Log(cell + " #" + i.ToString(CultureInfo.InvariantCulture) + ": editor " + (read.Ok ? "obtained" : "refused") + ", inspector closed; watching Outlook");
                 attempt.Set("editorOk", read.Ok)
                     .Set("editorMs", read.Ms)
                     .Set("editorPolls", read.Polls)
@@ -407,6 +414,7 @@ public sealed class LiveQ149WindowlessComposeTests
         int afterExplorerOk = 0;
         for (int p = 1; p <= processes; p++)
         {
+            Run.Log(Q149Cells.W6 + " process " + p.ToString(CultureInfo.InvariantCulture) + ": stopping Outlook");
             LiveComposeProbe.StopOutlook(Run.Settings, Run.Log);
             Stopwatch clock = Stopwatch.StartNew();
             Q149OutlookClient client = Q149OutlookClient.Connect(clock, allowStart: true);
@@ -728,6 +736,7 @@ public sealed class LiveQ149WindowlessComposeTests
             return;
         }
 
+        Run.Log(cell + ": verifying " + written.Count.ToString(CultureInfo.InvariantCulture) + " stored draft(s)");
         Stopwatch clock = Stopwatch.StartNew();
         using Q149OutlookClient holder = Q149OutlookClient.Connect(clock, allowStart: true);
         int committed = 0;

@@ -59,9 +59,13 @@ public sealed class Q149Run
         Console.WriteLine(line);
     }
 
+    /// <summary>One timestamped progress line, to the test output and the console capture both - so a run whose results
+    /// cannot be fetched whole still says how far each step got, and when.</summary>
     public void Log(string line)
     {
-        _write("q149: " + line);
+        string stamped = "q149 " + DateTime.UtcNow.ToString("HH:mm:ss.fff", CultureInfo.InvariantCulture) + ": " + line;
+        _write(stamped);
+        Console.WriteLine(stamped);
     }
 }
 

@@ -130,6 +130,7 @@ public static class LiveComposeProbe
 
         // The S7 counts first, whatever is on screen: every rung below ends Outlook.
         (int inspectors, int outbox) = ReadSafetyCounts();
+        log("stop: S7 counts read - " + inspectors.ToString(CultureInfo.InvariantCulture) + " Inspector(s), " + outbox.ToString(CultureInfo.InvariantCulture) + " item(s) in the Outboxes");
         if (inspectors != 0)
         {
             throw new InvalidOperationException(
@@ -158,6 +159,7 @@ public static class LiveComposeProbe
                 throw new InvalidOperationException("Q149: stood aside for a user at the keyboard - the measurement did not run.");
             }
 
+            log("stop: WM_CLOSE to " + visible.Count.ToString(CultureInfo.InvariantCulture) + " visible window(s)");
             foreach (IntPtr window in visible)
             {
                 LiveDisconnectRecoveryTests.WindowProbe.PostClose(window);
@@ -173,6 +175,7 @@ public static class LiveComposeProbe
 
         if (LiveDisconnectRecoveryTests.WindowProbe.VisibleOutlookWindows().Count == 0)
         {
+            log("stop: closing hidden Explorers");
             int closed = CloseHiddenExplorers();
             if (closed > 0 && WaitForNoOutlook(TimeSpan.FromSeconds(30)))
             {
@@ -182,6 +185,7 @@ public static class LiveComposeProbe
             }
         }
 
+        log("stop: Application.Quit() from a client holding nothing else");
         QuitFromAnEmptyClient();
         if (!WaitForNoOutlook(StopBudget))
         {
