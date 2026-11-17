@@ -215,12 +215,19 @@ its mailbox tests on, and change nothing you install.
 - ✅ **The Q149 measurement of how drafts are written runs as live tests on the test machines.**
   Three T2 classes in a collection of their own measure, on Office LTSC 2024, whether closing a
   draft's hidden compose window ends an Outlook that has no window when no lifetime pin holds it,
-  whether Word's editor can be had, or an edit committed, without activating that window, and whether
-  a draft written as HTML alone matches today's when opened in Outlook and when received through the
-  test machine's mail sink. Every attempt is one JSON line carrying its HRESULT. The suite ends and
-  restarts Outlook dozens of times, so it runs only in a run that selects it alone and reports NOT RUN
-  in any other. The merged plan, its decision rules and the results are in
-  Docs/research/q149-draft-text.
+  whether Word's editor can be had, or an edit committed, without activating that window, and
+  whether a draft written as HTML alone matches today's when opened in Outlook and when received
+  through the test machine's mail sink. Every attempt is one JSON line carrying its HRESULT. The
+  suite ends and restarts Outlook dozens of times, so it runs only in a run that selects it alone
+  and reports NOT RUN in any other. Its runs of 2026-11-17, on both kinds of test guest, found that
+  without the pin the compose window's close ended a window-less Outlook in 40 of 40 drafts. An
+  inspector never activated refused its editor in every trial (86 of 86, waits of 30 seconds and of
+  180 included), and no Windows-level show of a window changed that, but after one activation in a
+  process every later inspector handed it out (120 of 120). An edit made that way reached the draft
+  when committed with ModifiedFormPages and Close(olSave) (60 of 60 in a window-less Outlook, 40 of
+  40 in a windowed one), and not with CurrentItem.Save (0 of 100). No draft written as HTML alone
+  looked the same as today's, opened in Outlook or as received. The merged plan, its decision rules,
+  every attempt line and the results are in Docs/research/q149-draft-text.
 
 - ✅ **Tests that can read the machine's time zone run again in Central European time (Q144).**
   The build machine runs the suite in UTC (Q126), where the machine's zone and UTC are one zone, so
@@ -642,6 +649,9 @@ its mailbox tests on, and change nothing you install.
   and past closing a window opened over it, while File > Exit ends it. The 10-12 minute exit is now
   given as what it was: one measurement, on Office LTSC 2021, before pins. What Exit Now does with a
   pin present is said to be unmeasured, where the old text claimed it disconnects and exits at once.
+  And where it said every draft is written in a compose window nobody sees, it now says what Q149
+  measured on Office LTSC 2024: with no Outlook window open, that window shows at the top left of the
+  screen for 130 to 650 ms and has the foreground while it is there.
 
 - 📦 **The release page lists each change's icon and headline, linked to its full entry (Q123).**
   The maintainer decided it on 2026-10-03, in his words: *"copy the release notes style and system

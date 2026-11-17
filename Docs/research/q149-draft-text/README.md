@@ -159,7 +159,184 @@ cell. No inspector is ever opened on an object `Items.Add`, `Reply` or `Forward`
 
 ## Results
 
-Not run yet.
+Measured on 2026-11-17 on Office LTSC 2024 (16.0.17932), on the four Outlook guests: `OutlookAI-Unindexed`
+and its clone `OutlookAI-Unindexed2` from `CP-16B-FROZEN-CLOCK`, `OutlookAI-Indexed` and `OutlookAI-Indexed2`
+from `CP-22C-FROZEN-CLOCK`. One run per group of cells and kind of guest; every run passed. Every attempt
+line of every run is in `results/`, one file per run, named after the run's folder.
+
+| Cells | Unindexed guest | Indexed guest |
+| --- | --- | --- |
+| L1, L1c, L2 | `20261117-185607-unindexed-916755eda809` | `20261117-185655-indexed-916755eda809` |
+| W2, W3, W4 | `20261117-190436-unindexed-3c5a63e47a1e` | `20261117-190553-indexed-3c5a63e47a1e` |
+| W5, W6 | `20261117-190725-unindexed-3c5a63e47a1e` | `20261117-190841-indexed-3c5a63e47a1e` |
+| W7 | `20261117-193747-unindexed-a7d41bc39928` | `20261117-193829-indexed-a7d41bc39928` |
+| B0-B3, C1-C5 | `20261117-190159-unindexed-3c5a63e47a1e` | `20261117-190318-indexed-3c5a63e47a1e` |
+| B4, once | - | `20261117-181203-indexed-ee5fc276b528` (its one B4 line) |
+
+The L runs are of `916755e`, before master's signature work was merged into `3c5a63e`. That merge added
+a signature decision ahead of `ReviseHeldDocument`'s inspector work and left the inspector work itself -
+`GetInspector`, the promotion, the edit, `CurrentItem.Save`, `Close(olDiscard)` - as it was, so they were
+not run again. The two kinds of guest agree in every cell. Where two numbers stand together below, they
+are the unindexed guest's and the indexed guest's.
+
+### Stage 1: an Outlook with no window
+
+| Cell | n per guest | Outlook after the close | The editor | On screen | The edit stored |
+| --- | --- | --- | --- | --- | --- |
+| L1 | 20 | ended in 20 and 20 | through the product's promotion | the compose window, 20 and 20 | 20 and 20 |
+| L1c | 5 | running in 5 and 5 | through the product's promotion | the compose window, 5 and 5 | 5 and 5 |
+| L2 | 10 | ended in 10 and 10 | refused in 10 and 10 | nothing | - |
+| W2 | 10 | ended in 10 and 10 | refused in 10 and 10, 114-116 reads over 30 s | nothing | - |
+| W3 | 3 | ended in 3 and 3 | refused in 3 and 3, reads from 180 s after the start | nothing | - |
+| W4 | 10 | ended in 10 and 10 | refused in 10 and 10 | the inspector's window, off-screen, 10 and 10 | - |
+| W5 | 10 | running in 10 and 10 (the pin) | refused in 10 and 10 | the pin's window in 1 and 1 trial | - |
+| W6 | 3 x 11 | running (the pin) | the promotion 3 and 3; then a direct read 30 and 30 of 30 | the compose window at each promotion | promoted 3 and 3; read directly 0 and 0 of 30 |
+| W7 | 3 x 11 | running (the pin) | the promotion 3 and 3; then a direct read 30 and 30 of 30 | the compose window at each promotion | all 33 and 33, no side effect |
+
+- **L1, the decisive cell.** Without the pin, the window-less Outlook ended at the close of the compose
+  window in 20 of 20 trials on each guest. Its Quit event fired and the process exited with code 0,
+  1.9 to 4.0 seconds after the compose began. Every edit reached the stored draft, but update_draft
+  reported a failure in all 40, because Outlook was gone when it read the draft back:
+  `MissingMemberException` 38 times, `COMException 0x800706BE` twice. With the pin (L1c) Outlook kept
+  running in 10 of 10, and every compose returned, placed by Word.
+- **The promotion is on screen.** Every product compose in a window-less Outlook, the 50 of L1 and
+  L1c, showed the compose window at (25,25), 768 x 519, for 158-335 ms (median 207) on the unindexed
+  guest and 130-646 ms (median 147) on the indexed one, and gave Outlook the foreground. The promotion
+  parks the window off-screen before `Activate()`, and `Activate()` puts it back where Outlook keeps
+  it; the sweep after it parks and hides it again. After the run's first compose on each guest the
+  foreground stayed on an Outlook window although none was visible. In a windowed Outlook the window
+  stayed off-screen (B0, 40 of 40). That first compose, L1c's first trial, took 13.0 and 46.4 s; every
+  other one 1.9 to 4.8 s.
+- **L2.** An inspector never activated refused its editor in 10 of 10 on each guest:
+  `COMException 0x80004005`, "The operation failed.", within 39 ms, although `IsWordMail()` was true,
+  `EditorType` was 4 (Word) and Word's `OpusApp` window existed. Fetching the inspector changed
+  nothing in the item: 241 bytes of HTML and no stylesheet, before and after. Its close ended Outlook
+  in 10 of 10, with its Quit event and exit code 0: an inspector that was never activated ends a
+  window-less Outlook as surely as the shipped compose.
+- **W2, W3.** Waiting did not help. Read every 250 ms for 30 seconds, 114 to 116 reads, the editor
+  was refused at every read of every trial, 10 of 10 on each guest, and so it was when the reads began
+  180 seconds after the cold start (W3, 3 of 3). Outlook ended at every close.
+- **W4.** Nor did Windows showing the inspector's own window, found through `IOleWindow`, off-screen
+  and without activating it, with no change of foreground: refused in 10 of 10 on each guest, over 5
+  seconds of reads. Outlook ended at every close. In one trial on the indexed guest its Quit event and
+  exit came 8.2 and 9.7 s into a treatment that took 14.9 s, before the trial's close had returned.
+- **W5.** Showing the pin's window through Windows (`SW_SHOWNOACTIVATE`, no change of foreground) did
+  not unlock the editor: refused in 10 of 10 on each guest, after 19 or 20 reads over 5 seconds. The
+  window was shown off-screen except in the first trial on each guest, where it was on screen at
+  Outlook's own place for 244 and 133 ms.
+- **W6.** After the product's promotion of a process's first draft, every later inspector that was
+  never activated handed out its editor at the first read - 27 of 27 on each guest, with no window
+  shown - and still did after a displayed Explorer was opened and closed (3 of 3). But none of those
+  edits reached the stored draft through `CurrentItem.Save()` and `Close(olDiscard)`: 0 of 30 on each
+  guest, which is B1's result in a window-less Outlook. The three promoted drafts' edits did. (The W6
+  runs' `oldAbsent` field means nothing: the old text was keyed by the draft's number and checked by its
+  iteration, fixed in `a7d41bc`. `tokenPresent`, the new text, is right.)
+- **W7.** W6 with B3's commit: every later draft's edit reached the stored draft, 30 of 30 on each
+  guest, with the old text gone, the message class `IPM.Note`, no form-definition property, and no
+  window shown; with the promoted drafts, 33 of 33. One promotion per Outlook process is enough, the
+  commit included.
+
+**D1: the pin is required for as long as drafts go through an inspector.** L1 ended Outlook in 20 of 20
+on each guest.
+
+**D2: promote once per process, not per compose.** Waiting did not bring the editor (W2 and W3, 0 of 13
+on each guest), and nor did Windows showing a window (W4 and W5, 0 of 20 on each guest), so the rule's
+first two branches fail. After one promotion, every later inspector in the process handed out its
+editor (W6 and W7, 60 of 60 on each guest), and W7 committed each such edit with B3's commit. The
+compose window then shows once per Outlook process instead of once per draft, as long as the process
+outlives the draft: a session-long pin, as today, gives that, and a pin made only while drafting would
+not, since closing the last pin ends a window-less Outlook (Q118).
+
+### Stage 2: committing an edit on a re-opened draft without Activate
+
+| Cell | n per guest | Committed | Editor read without Activate | Message class or form properties changed |
+| --- | --- | --- | --- | --- |
+| B0 | 20 | 20 and 20 | - (it activates) | 0 and 0 |
+| B1 | 20 | 0 and 0 | 20 and 20 | 0 and 0 |
+| B2 | 20 | 0 and 0 | 20 and 20 | 0 and 0 |
+| B3 | 20 | 20 and 20 | 20 and 20 | 0 and 0 |
+| B4 | 1, indexed only | 0 | 1 | - |
+
+- B1 and B2 read the editor and made the edit with no error, and the stored draft still held the old
+  text.
+- B3 committed 40 of 40. The message class stayed `IPM.Note` and no form-definition property
+  appeared. One B3 trial on the indexed guest counted two windows on screen; the commit cells count
+  windows and do not log them, so which they were is not known.
+- B4 ran once. Word's `Document.Save()` put one window on screen, did not return within the step's
+  180 seconds, and committed nothing. Word documents `Save()` on a document never saved as a file as
+  prompting with its Save As dialog, which waits for a person; it was not repeated.
+
+**D3: B3 commits every draft with no side effect, so a windowed Outlook can drop the per-compose
+`Activate()`.**
+
+### Stage 3: the HTML-only draft against today's
+
+Two ways of styling the HTML-only draft were measured, each against the same draft of today's:
+**Message** gives every bare paragraph the message's `MsoNormal` class, and **AsImported** leaves the
+markup as it came, as Word's HTML import receives it. Both guests gave the same result in every aspect,
+down to the number of differences.
+
+| Aspect | New mail (5 pairs) | Reply (3) | Forward (3) | update_draft (2 sets) | As received (2 pairs) |
+| --- | --- | --- | --- | --- | --- |
+| The stylesheet | same in 5 (borrowed) | same in 0 | same in 0 | - | same in 2 |
+| The body inside `WordSection1` | same in 5 | same in 3 | same in 3 | - | - |
+| The signature with its pictures | same in 5 | same in 3 | same in 3 | kept in all | the pictures same in 2 |
+| Looks the same, Message | 0 (16 or 19 differences) | 0 (36) | 0 (36) | 0 (6 or 16) | 0 (16 or 19) |
+| Looks the same, AsImported | 0 (4 or 7) | 0 (21) | 0 (21) | - | 0 (4 or 7) |
+
+- **A new mail, AsImported, the closest.** Today's draft has one paragraph more, an empty one after
+  the signature, and its blank line between the body and the signature is Word's "Normal (Web)" style,
+  5 pt before and after, where the HTML-only draft's is "Normal" with none. With a plain-text body
+  the text's own paragraph differs the same way. That is all of it: 4 differences with an HTML body,
+  7 with a text body.
+- **A new mail, Message.** The same, and every paragraph of an HTML body differs that way too: today's
+  draft lays out the body's paragraphs as "Normal (Web)", 5 pt before and after.
+- **A reply and a forward.** Today's drafts put the body and the signature inside the quoted original's
+  header block, under the line that separates it: Word lays out their first eleven paragraphs with that
+  block's top border, and the first of them, the body's heading, in Times New Roman where the HTML-only
+  draft's is Aptos. The HTML-only drafts leave the body where `Reply()` and `Forward()` leave room for
+  it, above the header block. Both differ from today's in every pair: 36 aspects (Message) and 21
+  (AsImported).
+- **What `Reply()` and `Forward()` hand over without an inspector (C4).** The quoted original and its
+  header block whole (6 of 6), no `_MailAutoSig` (6 of 6), and the original's stylesheet, not the one
+  Word writes into today's reply (0 of 6 the same).
+- **update_draft (C3).** Every update replaced the text and kept the signature and its pictures. Against
+  Word's update of a Word draft, today's, the HTML-only update of a Word draft differs in 6 aspects
+  (the new paragraphs' style), the HTML-only update of an HTML-only draft in 16, and Word's own update
+  of an HTML-only draft in 16 as well.
+- **As received (C5)**, sent through the loopback sink with the product's two-step send: the same
+  differences as opened in Outlook, the stylesheet and the pictures the same.
+- **What a new item made with no inspector holds (C1).** 241 bytes of HTML from `Items.Add`, no
+  stylesheet and no `WordSection1` (0 of 5): (c) would have to bring the whole `<head>` itself. The
+  HTML-only drafts here borrowed today's, their best case.
+
+**D4: no HTML-only draft looks the same as today's, opened in Outlook or as received, so by the rule
+the answer is (b).**
+
+### Found on the way
+
+- **Today's replies and forwards put the agent's text under the quoted original's separator line**
+  (above). `ApplySignatureToDocument` places a signature at the start of `_MailOriginal` when the
+  draft has no `_MailAutoSig`, and a reply made with no inspector has none; that anchor sits inside the
+  header block's bordered `div`, and the body then goes above the signature, inside the same block. A
+  reply without a signature was not measured.
+- **Today's body paragraphs are "Normal (Web)", 5 pt before and after,** where a paragraph of the
+  message's own `MsoNormal` class is "Normal" with none. What Outlook's own compose window makes of a
+  typed paragraph was not measured.
+- **The promotion is visible in a window-less Outlook** (above). The code and the D49 record call it
+  invisible; on Office LTSC 2024 the window is on screen for 130-646 ms and takes the foreground.
+- **The first new_draft of the parity class fell back to the HTML path in both stage 2-3 runs**:
+  `NoWordEditor` with `COMException 0x80004005`, a draft without its signature; the same call again
+  went through Word. It came right after the commit class had closed 60 inspectors without activating
+  them in the same Outlook; the cause was not isolated.
+
+### Not measured
+
+- A third HTML-only style copying today's markup - a bare `<p>` for the body and the blank line, and
+  an empty `MsoNormal` paragraph after the signature. The differences above are exactly those, so it
+  may match a new mail; a reply could match today's only by copying its misplacement.
+- What Outlook's own compose window makes of the same text, as a yardstick beside today's drafts.
+- Office LTSC 2021, and Microsoft 365 Apps: the guests run Office LTSC 2024 only.
 
 ## Corrections to the D49 record
 
