@@ -137,6 +137,12 @@ namespace OutlookAI.Core.Com
         /// </summary>
         private object? _composeSurfacePin;
 
+        /// <summary>
+        /// False only for a session the Q149 measurement connects without a lifetime pin
+        /// (<see cref="Connect(bool, Action{OutlookComSession}, bool)"/>); every product session pins.
+        /// </summary>
+        private bool _lifetimePinAllowed = true;
+
         private OutlookComSession(PumpedStaRunner runner, bool startedOutlook)
         {
             _runner = runner;
@@ -279,7 +285,7 @@ namespace OutlookAI.Core.Com
         /// </summary>
         private void EnsureComposeSurfacePin()
         {
-            if (_composeSurfacePin != null || _application == null || _namespace == null)
+            if (!_lifetimePinAllowed || _composeSurfacePin != null || _application == null || _namespace == null)
             {
                 return;
             }
@@ -342,6 +348,18 @@ namespace OutlookAI.Core.Com
         /// </summary>
         public static OutlookComSession Connect(bool allowStartingOutlook = true, Action<OutlookComSession>? onOutlookGone = null)
         {
+            return Connect(allowStartingOutlook, onOutlookGone, lifetimePin: true);
+        }
+
+        /// <summary>
+        /// <see cref="Connect(bool, Action{OutlookComSession})"/>, with the D49 lifetime pin optional. Only the
+        /// Q149 (d) measurement passes <paramref name="lifetimePin"/> false (T2 <c>LiveQ149WindowlessComposeTests</c>):
+        /// it runs the shipped compose with and without a pin to measure whether the pin is what keeps a
+        /// window-less Outlook alive. Internal, so nothing outside Core and its tests can make a session that
+        /// composes without one.
+        /// </summary>
+        internal static OutlookComSession Connect(bool allowStartingOutlook, Action<OutlookComSession>? onOutlookGone, bool lifetimePin)
+        {
             bool wasRunning = IsOutlookProcessRunning();
             if (!wasRunning)
             {
@@ -360,6 +378,7 @@ namespace OutlookAI.Core.Com
             PumpedStaRunner runner = new PumpedStaRunner("OutlookAI.ComGateway.Sta");
             OutlookComSession session = new OutlookComSession(runner, startedOutlook: !wasRunning);
             session._onOutlookGone = onOutlookGone;
+            session._lifetimePinAllowed = lifetimePin;
             try
             {
                 runner.Run(() =>
@@ -3837,7 +3856,7 @@ namespace OutlookAI.Core.Com
                         conversationTopicPreserved: null,
                         attachments: SnapshotAttachments(mail!),
                         composeSurfacePromoted: surfacePromoted,
-                        composeSurfaceError: wordPlaced ? null : overrideError ?? "NoWordEditor");
+                        composeSurfaceError: wordPlaced ? null : overrideError ?? ComErrorTokens.NoWordEditor);
                 }
                 catch (Exception ex) when (IsComCallFailure(ex))
                 {
@@ -4106,7 +4125,7 @@ namespace OutlookAI.Core.Com
                         topicPreserved,
                         SnapshotAttachments(mail!),
                         composeSurfacePromoted: surfacePromoted,
-                        composeSurfaceError: wordPlaced ? null : overrideError ?? "NoWordEditor");
+                        composeSurfaceError: wordPlaced ? null : overrideError ?? ComErrorTokens.NoWordEditor);
                 }
                 catch (Exception ex) when (IsComCallFailure(ex))
                 {
@@ -5320,7 +5339,7 @@ namespace OutlookAI.Core.Com
 
                     if (body != null || signatureOverride != null)
                     {
-                        (bool ok, string? composeError) = ReviseHeldDocument(item!, body, signatureOverride, measureSignatureInjection: false, out _, out _, signatureIsAccountDefault: false, out _);
+                        (bool ok, string? composeError) = ReviseHeldDocument(item!, body, signatureOverride, measureSignatureInjection: false, out _, out _, signatureIsAccountDefault: false, out _, out _);
                         if (!ok)
                         {
                             capturedError = composeError ?? "BodyReplaceFailed";
@@ -5789,11 +5808,13 @@ namespace OutlookAI.Core.Com
             out long textBeforeTouch,
             out long textAfterTouch,
             bool signatureIsAccountDefault,
-            out bool accountDefaultApplied)
+            out bool accountDefaultApplied,
+            out bool promotedWindowless)
         {
             textBeforeTouch = 0;
             textAfterTouch = 0;
             accountDefaultApplied = false;
+            promotedWindowless = false;
             dynamic draft = draftObject;
             object? inspector = null;
             object? document = null;
@@ -5863,10 +5884,16 @@ namespace OutlookAI.Core.Com
                 // the headless path then died anyway. ComposeSurface parks the window
                 // off-screen FIRST, activates, hides whatever became visible, and hands
                 // back the WordEditor. Nothing is user-visible at any point.
-                document = ComposeSurface.PromoteForWordEditor(inspector!, out string? promoteError);
+                document = ComposeSurface.PromoteForWordEditor(inspector!, out string? promoteError, out bool windowless);
                 if (document == null)
                 {
-                    error = promoteError ?? "NoWordEditor";
+                    error = promoteError ?? ComErrorTokens.NoWordEditor;
+                }
+                else
+                {
+                    // What the audit line's composeSurface means by "wordEditorPromoted": Outlook had no
+                    // window a person could see, and the invisible promotion is what produced the editor.
+                    promotedWindowless = windowless;
                 }
 
                 if (error == null && signatureOverride != null)
@@ -6512,7 +6539,7 @@ namespace OutlookAI.Core.Com
                 : null;
             (bool placed, string? error) = ReviseHeldDocument(
                 mail!, body, signatureOverride ?? accountDefault, measureSignatureInjection: true,
-                out long textBefore, out long textAfter, signatureIsAccountDefault: accountDefault != null, out bool defaultApplied);
+                out long textBefore, out long textAfter, signatureIsAccountDefault: accountDefault != null, out bool defaultApplied, out bool promotedWindowless);
             if (!placed)
             {
                 // The fallback the in-place compose had: the agent's text is not lost because the editor
@@ -6521,7 +6548,9 @@ namespace OutlookAI.Core.Com
                 ComposeByHtmlSplice(draft, body);
             }
 
-            return (textAfter > textBefore || defaultApplied, textBefore, textAfter, placed && signatureOverride != null, placed ? null : error, placed, placed);
+            // SurfacePromoted: the editor was had through the invisible promotion of an Outlook with no window on
+            // screen. It used to read "placed", so every Word compose since 2026-10-04 audited as promoted.
+            return (textAfter > textBefore || defaultApplied, textBefore, textAfter, placed && signatureOverride != null, placed ? null : error, placed, placed && promotedWindowless);
         }
 
         /// <summary>
@@ -7168,7 +7197,7 @@ namespace OutlookAI.Core.Com
                         document = ComposeSurface.PromoteForWordEditor(inspector, out string? promoteError);
                         if (document == null)
                         {
-                            capturedError = promoteError ?? "NoWordEditor";
+                            capturedError = promoteError ?? ComErrorTokens.NoWordEditor;
                             return false;
                         }
                     }

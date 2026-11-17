@@ -231,7 +231,25 @@ namespace OutlookAI.Core.Com
         /// </summary>
         internal static object? PromoteForWordEditor(object inspectorObject, out string? error)
         {
+            return PromoteForWordEditor(inspectorObject, out error, out _);
+        }
+
+        /// <summary>
+        /// <see cref="PromoteForWordEditor(object, out string)"/>, also saying whether Outlook had no window a
+        /// person could see when the promotion began - the case the promotion exists for, and the one the
+        /// audit line's <c>composeSurface</c> reports as <c>wordEditorPromoted</c>. Since 2026-10-04 every
+        /// compose promotes, windowed or not, because an edit on a re-opened draft commits only through an
+        /// activated inspector; this is what still tells the two apart.
+        /// <para>
+        /// A refusal keeps its cause: <paramref name="error"/> is <see cref="ComErrorTokens.NoWordEditor"/>
+        /// or <see cref="ComErrorTokens.ActivateFailed"/> with the failure's type and HRESULT after the colon
+        /// (<see cref="ComErrorTokens.With"/>), where it used to be the bare word.
+        /// </para>
+        /// </summary>
+        internal static object? PromoteForWordEditor(object inspectorObject, out string? error, out bool outlookWasWindowless)
+        {
             error = null;
+            outlookWasWindowless = false;
             if (inspectorObject == null)
             {
                 error = "NoInspector";
@@ -242,6 +260,7 @@ namespace OutlookAI.Core.Com
             try
             {
                 before = SnapshotOutlookWindows();
+                outlookWasWindowless = !before.Any(w => w.Visible);
                 foreach (IntPtr h in SelectWindowsToPark(before))
                 {
                     Park(h);
@@ -260,7 +279,7 @@ namespace OutlookAI.Core.Com
             }
             catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
             {
-                error = "ActivateFailed";
+                error = ComErrorTokens.With(ComErrorTokens.ActivateFailed, OutlookComSession.DescribeComFailure(ex));
             }
 
             HideAnythingThatBecameVisible(before);
@@ -271,18 +290,22 @@ namespace OutlookAI.Core.Com
             HideAnythingThatBecameVisible(before);
 
             object? document = null;
+            string? editorFailure = null;
             try
             {
                 document = ((dynamic)inspectorObject).WordEditor;
             }
             catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
             {
-                // Headless throws here rather than returning null (Phase-1 finding 1).
+                // A window-less Outlook throws here rather than returning null - on Office LTSC
+                // 2021 COMException "The operation failed." (D49). Kept with its HRESULT: the
+                // bare word made every refusal in the audit log undiagnosable.
+                editorFailure = OutlookComSession.DescribeComFailure(ex);
             }
 
             if (document == null && error == null)
             {
-                error = "NoWordEditor";
+                error = ComErrorTokens.With(ComErrorTokens.NoWordEditor, editorFailure ?? "returned null");
             }
 
             return document;

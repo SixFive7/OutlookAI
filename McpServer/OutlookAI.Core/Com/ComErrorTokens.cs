@@ -74,6 +74,22 @@ namespace OutlookAI.Core.Com
         public const string DiscardNotStarted = "DiscardNotStarted";
 
         /// <summary>
+        /// Outlook would not hand over a compose inspector's Word editor, even after the invisible
+        /// promotion (<c>ComposeSurface.PromoteForWordEditor</c>). Written as
+        /// <c>NoWordEditor:&lt;COM failure&gt;</c> since 2026-11-17 (Q149): the bare word it used to be
+        /// threw the HRESULT away, so no refused editor in an audit log could be told from another.
+        /// update_draft refuses on it as <c>compose_surface_unavailable</c>; a new draft falls back to
+        /// the HTML splice and reports it.
+        /// </summary>
+        public const string NoWordEditor = "NoWordEditor";
+
+        /// <summary>
+        /// The promotion's <c>Inspector.Activate()</c> failed. Written as <c>ActivateFailed:&lt;COM
+        /// failure&gt;</c>; it is the error only when no editor was had afterwards either.
+        /// </summary>
+        public const string ActivateFailed = "ActivateFailed";
+
+        /// <summary>
         /// A token with its detail, in the <c>Token:detail</c> shape the service layer reads back
         /// with <see cref="TryRead"/>. The detail is content-free (a COM failure's type and
         /// HRESULT), never a subject, a body or a name.

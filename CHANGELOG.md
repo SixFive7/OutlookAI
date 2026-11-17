@@ -171,6 +171,16 @@ its mailbox tests on, and change nothing you install.
   check fails, the reason is written out in full here rather than hidden behind a link. Both
   indicators now take their wording from one place, so they cannot disagree.
 
+- ✅ **The Q149 measurement of how drafts are written runs as live tests on the test machines.**
+  Three T2 classes in a collection of their own measure, on Office LTSC 2024, whether closing a
+  draft's hidden compose window ends an Outlook that has no window when no lifetime pin holds it,
+  whether Word's editor can be had, or an edit committed, without activating that window, and whether
+  a draft written as HTML alone matches today's when opened in Outlook and when received through the
+  test machine's mail sink. Every attempt is one JSON line carrying its HRESULT. The suite ends and
+  restarts Outlook dozens of times, so it runs only in a run that selects it alone and reports NOT RUN
+  in any other. The merged plan, its decision rules and the results are in
+  Docs/research/q149-draft-text.
+
 - ✅ **The Outlook test machines keep a full crash dump whenever Outlook crashes in a live run.**
   The one-call runner switches Windows Error Reporting's own crash dumps on at every run, on the
   frozen checkpoints as they are, brings every dump back with the run's results, and reads each one
@@ -1019,6 +1029,14 @@ its mailbox tests on, and change nothing you install.
   and is not something anyone using this product experiences.
 
 ### Fixed
+
+- 🐛 **A draft's audit line says Outlook's editor was promoted only when Outlook had no window.**
+  Since the compose crash fix every draft is written through an activated inspector, and the audit
+  line's composeSurface read wordEditorPromoted for all of them, so it said nothing. It now reads
+  wordEditorPromoted only when no Outlook window was on screen as the editor was promoted, and
+  wordEditor otherwise. A refused editor keeps its cause as well: NoWordEditor and ActivateFailed carry
+  the failure's type and HRESULT after a colon - in the audit line, on the wire and in update_draft's
+  compose_surface_unavailable refusal - where the bare word made every refusal look the same.
 
 - 🐛 **Writing a new draft, reply or forward no longer crashes Outlook now and then.**
   OutlookAI wrote each draft in a hidden compose window opened on the item Outlook had just created,
