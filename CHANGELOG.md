@@ -1091,7 +1091,9 @@ its mailbox tests on, and change nothing you install.
 - 🐛 **Changing a signature keeps its pictures and its other versions.**
   An update deleted the signature's picture folder and rebuilt its RTF version from the plain text, so
   editing a signature Outlook had made with a logo lost the logo, and Rich Text mail lost its
-  formatting. An update now touches only the files it is asked to change.
+  formatting. An update now touches only the files it is asked to change. When it replaces one
+  version whole, the answer says which versions still read as before, because Outlook puts the HTML
+  version in HTML mail, the RTF version in Rich Text mail and the text version in plain-text mail.
 
 - 🐛 **A draft whose signature could not be added says it has none.**
   Since the crash fix, a draft whose chosen signature could not be put in came out with no signature

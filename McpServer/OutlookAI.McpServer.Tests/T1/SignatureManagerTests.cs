@@ -200,6 +200,9 @@ public sealed class SignatureManagerTests : IDisposable
         Assert.Equal(resourceBytes, File.ReadAllBytes(Path.Combine(outcome.BackupPath!, "Rich_files", "img.png")));
 
         Assert.Equal(new[] { "text" }, outcome.FormatsWritten);
+        Assert.Contains("Only the text rendition changed: the html and rtf renditions still read as before", outcome.Advice,
+            StringComparison.Ordinal);
+        Assert.Contains("send body_html or body_rtf edited", outcome.Advice, StringComparison.Ordinal);
         Assert.Equal("Replaced content", File.ReadAllText(Path.Combine(Dir, "Rich.txt")));
         Assert.Equal(htmBefore, File.ReadAllBytes(Path.Combine(Dir, "Rich.htm")));
         Assert.Equal(rtfBefore, File.ReadAllBytes(Path.Combine(Dir, "Rich.rtf")));

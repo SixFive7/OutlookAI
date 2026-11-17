@@ -64,6 +64,7 @@ public sealed class LiveManageSignatureTests
             // UPDATE: pre-update bytes must land byte-identical in the returned backup.
             byte[] htmBefore = File.ReadAllBytes(Path.Combine(directory, name + ".htm"));
             byte[] txtBefore = File.ReadAllBytes(Path.Combine(directory, name + ".txt"));
+            byte[] rtfBefore = File.ReadAllBytes(Path.Combine(directory, name + ".rtf"));
             ManageSignatureOutcome updated = Service.ManageSignature(new ManageSignatureRequest
             {
                 Action = "update",
@@ -75,8 +76,13 @@ public sealed class LiveManageSignatureTests
             Assert.StartsWith(SignatureManager.DefaultBackupRoot, updated.BackupPath!, StringComparison.OrdinalIgnoreCase);
             Assert.Equal(htmBefore, File.ReadAllBytes(Path.Combine(updated.BackupPath!, name + ".htm")));
             Assert.Equal(txtBefore, File.ReadAllBytes(Path.Combine(updated.BackupPath!, name + ".txt")));
-            string derivedText = File.ReadAllText(Path.Combine(directory, name + ".txt"));
-            Assert.Contains("Updated rendition", derivedText, StringComparison.Ordinal);
+            // In place (Q159): only the rendition sent changes - nothing is rebuilt from it - and the
+            // outcome says the other two still read as before.
+            Assert.Equal(new[] { SignatureFormats.Html }, updated.FormatsWritten);
+            Assert.Contains("Updated rendition", File.ReadAllText(Path.Combine(directory, name + ".htm")), StringComparison.Ordinal);
+            Assert.Equal(txtBefore, File.ReadAllBytes(Path.Combine(directory, name + ".txt")));
+            Assert.Equal(rtfBefore, File.ReadAllBytes(Path.Combine(directory, name + ".rtf")));
+            Assert.Contains("the rtf and text renditions still read as before", updated.Advice, StringComparison.Ordinal);
 
             // DELETE: second backup, file set gone, catalog no longer lists it.
             ManageSignatureOutcome deleted = Service.ManageSignature(new ManageSignatureRequest

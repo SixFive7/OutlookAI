@@ -1360,6 +1360,39 @@ namespace OutlookAI.Core.Services
                 plan.FormatsWritten.Add(SignatureFormats.Text);
             }
 
+            // A rendition sent whole is not copied into the others (nothing is rebuilt from another, Q159), so
+            // the renditions can now say different things - and each mail format inserts only its own.
+            if (!string.IsNullOrWhiteSpace(request.BodyHtml) || !string.IsNullOrWhiteSpace(request.BodyRtf)
+                || !string.IsNullOrWhiteSpace(request.BodyText))
+            {
+                List<string> unchanged = new List<string>();
+                if (!htmlChanged && htmlBefore != null)
+                {
+                    unchanged.Add(SignatureFormats.Html);
+                }
+
+                if (!rtfChanged && rtfBefore != null)
+                {
+                    unchanged.Add(SignatureFormats.Rtf);
+                }
+
+                if (!textChanged && textBefore != null)
+                {
+                    unchanged.Add(SignatureFormats.Text);
+                }
+
+                if (unchanged.Count > 0)
+                {
+                    bool several = unchanged.Count > 1;
+                    plan.Warnings.Add(
+                        "Only the " + string.Join(" and ", plan.FormatsWritten) + (plan.FormatsWritten.Count > 1 ? " renditions" : " rendition")
+                        + " changed: the " + string.Join(" and ", unchanged) + (several ? " renditions still read" : " rendition still reads")
+                        + " as before, and Outlook inserts each rendition in mail of its own format. To change "
+                        + (several ? "them" : "it") + " too, send " + string.Join(" or ", unchanged.Select(f => "body_" + f))
+                        + " edited, or change text in every rendition at once with replace.");
+                }
+            }
+
             if ((plan.PicturesReplaced.Count > 0 || plan.PicturesToRemove.Count > 0) && !rtfChanged && rtfBefore != null
                 && SignatureRtf.FindPictures(rtfBefore).Count > 0)
             {
