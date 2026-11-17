@@ -2999,14 +2999,19 @@ namespace OutlookAI.Core.Services
         /// <summary>True when a tuning change still needs an Outlook restart to take effect.</summary>
         public bool? RestartNeeded { get; set; }
 
-        /// <summary>Group-policy conflicts the reconciler backed off from (';'-joined; null when none).</summary>
+        /// <summary>
+        /// Tuning values the add-in's last reconcile left alone because a policy sets them -
+        /// Microsoft 365 Cloud Policy or Group Policy, an organization's or one an earlier OutlookAI
+        /// wrote (';'-joined entry ids; null when none).
+        /// </summary>
         public string? PolicyConflicts { get; set; }
 
         /// <summary>
-        /// Tuning values the add-in's last reconcile could not write without an administrator
-        /// (';'-joined entry ids; null when none) - in practice the five Cached Mode values under
-        /// HKCU\Software\Policies, which a NOT elevated Outlook can read and not write. The reconcile
-        /// skips them and finishes; OutlookAI Settings applies them through UAC (Q128).
+        /// Tuning values whose write Windows refused the add-in's last reconcile for lack of rights
+        /// (';'-joined entry ids; null when none). The reconcile skips them and finishes. Since
+        /// Q145 (a) the add-in writes only the user's own settings and never asks for an
+        /// administrator, so this is normally null; under Q128 it listed the five Cached Mode values
+        /// the add-in then wrote under HKCU\Software\Policies.
         /// </summary>
         public string? NeedsAdministrator { get; set; }
 

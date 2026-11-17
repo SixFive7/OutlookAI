@@ -8,14 +8,34 @@ namespace OutlookAI.Services
     /// <summary>One Outlook value the tuning service keeps applied: where it lives, which group owns it, and its shipped default.</summary>
     internal sealed class TuningEntry
     {
-        public TuningEntry(string id, string groupId, string keyPath, string valueName, int defaultDesired, bool isPolicyHive)
+        private static readonly string[] NoPolicy = new string[0];
+
+        private static readonly Func<ITuningStore, bool> AnyDesiredValue = store => true;
+
+        /// <summary>A value no policy governs, any desired number of which may be written.</summary>
+        public TuningEntry(string id, string groupId, string keyPath, string valueName, int defaultDesired)
+            : this(id, groupId, keyPath, valueName, defaultDesired, NoPolicy, NoPolicy, AnyDesiredValue)
+        {
+        }
+
+        /// <summary>
+        /// A value a policy may set: while any of <paramref name="policyValueNames"/> holds a DWORD
+        /// under any of <paramref name="policyKeyPaths"/>, the walk leaves this value alone. And one
+        /// written only while <paramref name="desiredIsOffered"/> says its desired number - read
+        /// from the store it is handed, with whatever else it belongs with - is one the product
+        /// offers.
+        /// </summary>
+        public TuningEntry(string id, string groupId, string keyPath, string valueName, int defaultDesired,
+                           IList<string> policyKeyPaths, IList<string> policyValueNames, Func<ITuningStore, bool> desiredIsOffered)
         {
             Id = id;
             GroupId = groupId;
             KeyPath = keyPath;
             ValueName = valueName;
             DefaultDesired = defaultDesired;
-            IsPolicyHive = isPolicyHive;
+            PolicyKeyPaths = new List<string>(policyKeyPaths ?? NoPolicy);
+            PolicyValueNames = new List<string>(policyValueNames ?? NoPolicy);
+            DesiredIsOffered = desiredIsOffered ?? AnyDesiredValue;
         }
 
         public string Id { get; }
@@ -30,23 +50,37 @@ namespace OutlookAI.Services
         public int DefaultDesired { get; }
 
         /// <summary>
-        /// Under <c>HKCU\Software\Policies</c>: a GPO may own it (a revert is backed off from, never
-        /// fought), and a NOT elevated token may only read it (a write is refused, and recorded as
-        /// needing an administrator).
+        /// The policy keys that outrank this value - Microsoft 365 Cloud Policy's and Group Policy's
+        /// mirror of its key - relative to HKEY_CURRENT_USER; empty when no policy is consulted. Read
+        /// only: since Q145 (a) nothing in this product writes under <c>HKCU\Software\Policies</c>.
         /// </summary>
-        public bool IsPolicyHive { get; }
+        public IReadOnlyList<string> PolicyKeyPaths { get; }
+
+        /// <summary>
+        /// The value names under <see cref="PolicyKeyPaths"/> that set this value. More than one
+        /// where Outlook reads a pair as one setting: either half of the offline period, set by a
+        /// policy, takes the whole period out of the user's hands.
+        /// </summary>
+        public IReadOnlyList<string> PolicyValueNames { get; }
+
+        /// <summary>
+        /// Whether the desired number is one the product writes, asked of the store before every
+        /// write. A desired value typed into the registry by hand that is not one of them is
+        /// skipped and listed in <see cref="TuningReconcileResult.NotOffered"/>, never written.
+        /// </summary>
+        public Func<ITuningStore, bool> DesiredIsOffered { get; }
     }
 
     /// <summary>One catalog value as the settings dialog shows it: desired against live, and why they differ.</summary>
     internal sealed class TuningValueState
     {
-        public TuningValueState(TuningEntry entry, int desired, int? live, bool groupEnabled, bool backedOff, bool needsAdministrator)
+        public TuningValueState(TuningEntry entry, int desired, int? live, bool groupEnabled, bool setByPolicy, bool needsAdministrator)
         {
             Entry = entry;
             Desired = desired;
             Live = live;
             GroupEnabled = groupEnabled;
-            BackedOff = backedOff;
+            SetByPolicy = setByPolicy;
             NeedsAdministrator = needsAdministrator;
         }
 
@@ -61,8 +95,8 @@ namespace OutlookAI.Services
             get { return Live.HasValue && Live.Value == Desired; }
         }
 
-        /// <summary>A policy reverted it after it was applied: left alone, never re-fought.</summary>
-        public bool BackedOff { get; }
+        /// <summary>A policy sets this value now: the reconcile leaves it alone.</summary>
+        public bool SetByPolicy { get; }
 
         /// <summary>The last reconcile was refused the write for lack of rights, and it is still not in effect.</summary>
         public bool NeedsAdministrator { get; }
@@ -85,9 +119,10 @@ namespace OutlookAI.Services
 
         public List<TuningValueState> Values { get; } = new List<TuningValueState>();
 
+        /// <summary>Entry ids the last reconcile left alone because a policy sets them.</summary>
         public List<string> PolicyConflicts { get; } = new List<string>();
 
-        /// <summary>Entry ids the last reconcile could not write without an administrator.</summary>
+        /// <summary>Entry ids whose write Windows refused the last reconcile, for lack of rights.</summary>
         public List<string> NeedsAdministrator { get; } = new List<string>();
     }
 
@@ -98,11 +133,17 @@ namespace OutlookAI.Services
 
         public bool RestartNeeded { get; internal set; }
 
-        /// <summary>Policy values a GPO reverted after they were applied: backed off from.</summary>
+        /// <summary>
+        /// Values a policy sets - Microsoft 365 Cloud Policy or Group Policy, an organization's or
+        /// one an earlier OutlookAI wrote: left alone, never written over.
+        /// </summary>
         public List<string> PolicyConflicts { get; } = new List<string>();
 
         /// <summary>Values whose write Windows refused for lack of rights: skipped, and the walk went on.</summary>
         public List<string> NeedsAdministrator { get; } = new List<string>();
+
+        /// <summary>Values whose desired number is not one the product writes (typed into the registry by hand): skipped.</summary>
+        public List<string> NotOffered { get; } = new List<string>();
 
         /// <summary>Values whose write failed for any other reason: skipped, and the walk went on.</summary>
         public List<string> Failed { get; } = new List<string>();
@@ -131,6 +172,13 @@ namespace OutlookAI.Services
 
         /// <summary>Writes a REG_SZ, creating the key. Throws like <see cref="WriteDword"/>.</summary>
         void WriteString(string keyPath, string valueName, string value);
+
+        /// <summary>
+        /// Deletes a value; nothing when the key or the value is absent. Throws like
+        /// <see cref="WriteDword"/> when Windows refuses. Only the removal of an earlier OutlookAI's
+        /// policy values calls it (<c>EarlierPolicyRemoval</c>), and nothing calls that yet (Q151 (a)).
+        /// </summary>
+        void DeleteValue(string keyPath, string valueName);
     }
 
     /// <summary>
@@ -139,16 +187,15 @@ namespace OutlookAI.Services
     /// <para>
     /// IT NEVER STOPS EARLY - decided by the maintainer 2026-10-03 (Q128). Until then the whole walk
     /// sat in one try block, and the first write that threw ended it: D25's five Cached Mode values
-    /// under <c>HKCU\Software\Policies</c> are the fifth to ninth values of the catalog, a NOT
-    /// elevated token may only read that key, so in the Outlook a user actually runs the first of
-    /// them threw - and the two user Cached Mode values, the two OST sizes, the restart flag,
-    /// PolicyConflicts and LastReconcileUtc were never written (Docs/live-tier-on-the-vm.md section
-    /// 2.3, measured on a guest with a control). Now:
+    /// were then written under <c>HKCU\Software\Policies</c>, a NOT elevated token may only read that
+    /// key, so in the Outlook a user actually runs the first of them threw - and the two user Cached
+    /// Mode values, the two OST sizes, the restart flag, PolicyConflicts and LastReconcileUtc were
+    /// never written (Docs/live-tier-on-the-vm.md section 2.3, measured on a guest with a control).
+    /// Now:
     /// </para>
     /// <list type="bullet">
     ///   <item>a value Windows refuses to write for lack of rights is SKIPPED and recorded in
-    ///   <c>NeedsAdministrator</c>, which the settings dialog and <c>outlook_health</c> report - and
-    ///   the dialog can apply through UAC (<c>OutlookAI.PolicyWriter.exe</c>);</item>
+    ///   <c>NeedsAdministrator</c>, which the settings dialog and <c>outlook_health</c> report;</item>
     ///   <item>a value that fails for any other reason is skipped too, and the walk goes on;</item>
     ///   <item>the bookkeeping - RestartNeeded, PolicyConflicts, NeedsAdministrator, and
     ///   LastReconcileUtc LAST - is written in a <c>finally</c>, each write on its own, so a
@@ -156,10 +203,22 @@ namespace OutlookAI.Services
     /// </list>
     ///
     /// <para>
-    /// The rest is as it always was: idempotent (only actual differences are written);
-    /// GPO-respecting (a policy value that reverts after it was applied is backed off from and
-    /// flagged, never fought); restart-aware (a write takes effect at the NEXT Outlook start, so it
-    /// sets RestartNeeded, which the first startup reconcile that writes nothing clears).
+    /// IT WRITES ONLY THE USER'S OWN SETTINGS, AND LEAVES A VALUE A POLICY SETS ALONE - Q145 (a),
+    /// decided by the maintainer: no administrator, ever. Nothing in the catalog lives under
+    /// <c>HKCU\Software\Policies</c> any more, so in practice nothing is refused for lack of rights.
+    /// An entry that names policy keys (<see cref="TuningEntry.PolicyKeyPaths"/>) is skipped while a
+    /// policy - Microsoft 365 Cloud Policy or Group Policy, an organization's or one an earlier
+    /// OutlookAI wrote - sets its value, and listed in PolicyConflicts: the policy outranks the
+    /// user's setting, and Outlook keeps the user's setting for when the policy goes. Found at once,
+    /// by reading the policy keys - not, as before, only after the reconcile had applied a value and
+    /// seen it reverted. And a desired number that is not one the product writes is skipped too
+    /// (<see cref="TuningEntry.DesiredIsOffered"/>; Q143 for the offline period).
+    /// </para>
+    ///
+    /// <para>
+    /// The rest is as it always was: idempotent (only actual differences are written); restart-aware
+    /// (a write takes effect at the NEXT Outlook start, so it sets RestartNeeded, which the first
+    /// startup reconcile that writes nothing clears).
     /// </para>
     ///
     /// <para>
@@ -211,27 +270,30 @@ namespace OutlookAI.Services
 
         private static void ReconcileEntry(ITuningStore store, TuningEntry entry, TuningReconcileResult result)
         {
+            if (IsSetByPolicy(store, entry))
+            {
+                // A policy outranks the user's setting this would write: leave both alone, and say
+                // so. Never fought, never written over (Q145 (a)).
+                result.PolicyConflicts.Add(entry.Id);
+                return;
+            }
+
+            if (!entry.DesiredIsOffered(store))
+            {
+                // A desired number typed into the registry by hand that the product does not
+                // write - an offline period that is not one of Outlook's eleven, say (Q143).
+                result.NotOffered.Add(entry.Id);
+                return;
+            }
+
             int desired = ReadDesired(store, entry);
             int? live = store.ReadDword(entry.KeyPath, entry.ValueName);
 
             if (live.HasValue && live.Value == desired)
             {
-                // Desired state is in effect. Record it as applied so a later revert of a
-                // Policies-hive value is recognized as an external (GPO) override we must not fight.
+                // Desired state is in effect.
                 TryRecordApplied(store, entry, desired, result);
                 return;
-            }
-
-            if (entry.IsPolicyHive)
-            {
-                int? applied = store.ReadDword(AppliedKeyPath, entry.Id);
-                if (applied.HasValue && applied.Value == desired)
-                {
-                    // We had this value applied before and something reverted it: real policy
-                    // management. Back off and flag; never re-fight.
-                    result.PolicyConflicts.Add(entry.Id);
-                    return;
-                }
             }
 
             try
@@ -240,8 +302,9 @@ namespace OutlookAI.Services
             }
             catch (Exception ex) when (IsAccessDenied(ex))
             {
-                // A NOT elevated token under HKCU\Software\Policies - the measured case. Skip it,
-                // say so, and go on: nothing after it depends on it.
+                // Windows refused the write for lack of rights - as under HKCU\Software\Policies, the
+                // case Q128 measured before Q145 (a) took every catalog value out of that key. Skip
+                // it, say so, and go on: nothing after it depends on it.
                 result.NeedsAdministrator.Add(entry.Id);
                 return;
             }
@@ -326,12 +389,30 @@ namespace OutlookAI.Services
                     desired,
                     live,
                     snapshot.MasterEnabled && IsToggleOn(store, ToggleName(entry.GroupId)),
-                    conflicts.Contains(entry.Id),
-                    // Recorded by the last reconcile AND still not in effect: an administrator, a
-                    // GPO or the helper may have set it since.
+                    // Read now, not from the last reconcile's list: a policy may have come or gone since.
+                    IsSetByPolicy(store, entry),
+                    // Recorded by the last reconcile AND still not in effect: somebody may have set
+                    // it since.
                     needsAdministrator.Contains(entry.Id) && !inSync));
             }
             return snapshot;
+        }
+
+        /// <summary>
+        /// True while any of the entry's <see cref="TuningEntry.PolicyValueNames"/> holds a DWORD
+        /// under any of its <see cref="TuningEntry.PolicyKeyPaths"/> - whoever wrote it. Reads only.
+        /// </summary>
+        internal static bool IsSetByPolicy(ITuningStore store, TuningEntry entry)
+        {
+            foreach (string keyPath in entry.PolicyKeyPaths)
+            {
+                foreach (string valueName in entry.PolicyValueNames)
+                {
+                    if (store.ReadDword(keyPath, valueName).HasValue)
+                        return true;
+                }
+            }
+            return false;
         }
 
         /// <summary>

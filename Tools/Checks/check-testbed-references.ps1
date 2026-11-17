@@ -157,6 +157,16 @@ $intentionallyAbsent = @(
         Why        = 'DELETED 2026-09-15. A tracked snapshot of the live-tier traits that had gone stale in a way that misled: it printed the RETIRED LiveTier trait, and printed Requires as a PER-CLASS UNION - the exact shape that once turned a real floor of six impossible tests into a reported 96. Nothing generated it and nothing checked it. The traits on the tests are the authority and "dotnet test --list-tests" answers the same question from the source of truth. Docs/research/pop3-account-routes.md still names it because that note is a dated snapshot and is deliberately not edited to stay current.'
     }
     @{
+        Path       = 'Services/CachedModePolicy.cs'
+        MustIgnore = $false
+        Why        = 'DELETED 2026-11-17 by Q145 (a), with the elevated helper it served: OutlookAI writes the Cached Mode values as the user''s own settings now (Services/CachedModeSettings.cs) and needs no administrator. Docs/live-tier-on-the-vm.md still names it because its Q128 record says what was built and measured then, and is deliberately not rewritten.'
+    }
+    @{
+        Path       = 'Services/PolicyWriterRequest.cs'
+        MustIgnore = $false
+        Why        = 'DELETED 2026-11-17 by Q145 (a): the elevated helper''s command line, gone with the helper (PolicyWriter/). Docs/live-tier-on-the-vm.md still names it in its Q128 record, deliberately not rewritten.'
+    }
+    @{
         Path       = 'McpServer/OutlookAI.McpServer.Tests/live-fixtures/live-test-settings.json'
         MustIgnore = $true
         Why        = 'Machine-local. Names real stores, and this repository is public. Testbed/live-test-settings.example.json is the committed shape.'

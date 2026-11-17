@@ -86,10 +86,11 @@ public sealed class HealthReportingTests
     }
 
     /// <summary>
-    /// Q128: the values the add-in's reconcile could not write without an administrator - in
-    /// practice the five Cached Mode values under HKCU\Software\Policies on a NOT elevated
-    /// Outlook - reach outlook_health as tuning.needsAdministrator, ';'-joined as the add-in wrote
-    /// them, and null when there are none. The reconcile still finished, so lastReconcileUtc is set.
+    /// Q128: the values Windows refused the add-in's reconcile for lack of rights - under Q128 the
+    /// five Cached Mode values it then wrote under HKCU\Software\Policies, on a NOT elevated Outlook;
+    /// since Q145 (a), which writes only the user's own settings, normally none - reach outlook_health
+    /// as tuning.needsAdministrator, ';'-joined as the add-in wrote them, and null when there are
+    /// none. The reconcile still finished, so lastReconcileUtc is set.
     /// </summary>
     [Fact]
     public void ReadTuningState_NeedsAdministrator_IsReported_AndEmptyIsNull()

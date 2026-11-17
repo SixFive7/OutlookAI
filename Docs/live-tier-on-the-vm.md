@@ -675,9 +675,20 @@ runs: `.work\q128-proof\` in the main checkout (the second pass in `second-pass\
 **Not settled by it:** a standard user approving the prompt with ANOTHER account's credentials - every
 guest has one account, so step 10's requester and helper were the same user; the helper's check and
 its `HKEY_USERS\<SID>` target are what make that case right, pinned by T1 `PolicyWriterRunTests`, not
-measured. The prompt itself was never clicked: steps 8 to 10 and 15 to 16 stood in for it from
+measured. (That question, Q142, went with the helper: see the note below.) The prompt itself was never clicked: steps 8 to 10 and 15 to 16 stood in for it from
 session 0, and steps 15 and 16 chose from the list by its own messages, not by a mouse. And, as before,
 the indexed guest and the two live tests on a guest installed this way.
+
+**Superseded by Q145 (a), decided by the maintainer - no administrator, ever.** The helper,
+`PolicyWriter/`, its UAC path and **Apply as administrator** are gone, and so is every write under
+`HKCU\Software\Policies`: the add-in writes the Cached Mode values as the user's own settings
+(`HKCU\Software\Microsoft\Office\<major>\Outlook\Cached Mode`), reads Microsoft 365 Cloud Policy and
+Group Policy only to show a value an organization sets - or one an earlier OutlookAI wrote, told apart
+by `Tuning\Applied` (Q151 (a)) - and leaves such a value alone. So the reconcile above lists nothing in
+`Tuning\NeedsAdministrator`, and the walk is 11 values, not 13. An existing account's own offline period
+lives in its Outlook profile, which OutlookAI does not write yet: the settings dialog says how to set it
+in Account Settings (`Services/CachedModeSettings.cs`, `Services/AccountOfflinePeriods.cs`). Not yet run
+on a guest. The record above stays as what was measured then.
 
 **Checkpoint `CP-03-OUTLOOKAI-INSTALLED` once `-Phase FirstRun` prints `ADDIN-READY`.** `CP-05-ADDIN-TRUSTED`
 is no longer a separate manual step - the trust entry is part of the scripted install - and the name
