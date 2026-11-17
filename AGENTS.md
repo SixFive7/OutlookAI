@@ -187,6 +187,17 @@ run either script's `-SelfTest` here.
 - The non-live suite (`dotnet test --filter "Category!=Live"`) runs only on the build VM - next section. Tests marked `Category=Live` need Outlook and a mailbox: they run on the test VMs - the ones that need Exchange on the Exchange VM, `OutlookAI-Exchange` - and never on this workstation (Q116 (a), Mailbox Safety below).
 - Developer documentation: `McpServer/README.md`.
 
+## Shared code (Q154)
+
+**As a rule, no code is duplicated.** Decided by the maintainer 2026-11-17 (Q154), in his words:
+*"refactor everything to bring this pattern everywhere relevant. I want as much code shared as
+possible. And as a rule no code duplicated."* So share code instead of copying it: before writing
+something, look for it, and use what is there. Logic that both the add-in and the MCP server use
+belongs in `McpServer/OutlookAI.Core`, which the add-in references through its net48 build, behind
+a small interface - this ends the "Phase-6 no-coupling choice" that kept the add-in apart from
+Core. The copies that exist today are folded together by the refactor in `TODO.md`, and the
+questions from Q163 on decide how.
+
 ## Tests run on the build VM, never on this workstation (Q94, Q102)
 
 **Non-live tests and script self-tests run only through `Testbed/host/Invoke-TestsOnBuildVm.ps1`,
