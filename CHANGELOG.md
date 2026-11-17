@@ -778,7 +778,9 @@ its mailbox tests on, and change nothing you install.
   sender to search for, and a toy address at a real domain; they now use
   `shared-mailbox@exchange-org.invalid`, `Ann` and `Ann van Example`, `Alex Example`, `example` and
   `a@b.example`. Five live-test comments say "the hub" where they named the shared mailbox, and
-  one no longer gives the item counts of a real mailbox. The baseline of
+  one no longer gives the item counts of a real mailbox. The testbed scripts' self-tests refuse a
+  made-up workstation, `devuser` on `DEV-PC`, instead of the maintainer's own user and computer
+  names, and the CodeQL script's licence fixture names `Alex Example`. The baseline of
   `Tools/Checks/check-personal-data.ps1` comes down with every such change, and is empty once the
   tests and the testbed need no real value at all.
 

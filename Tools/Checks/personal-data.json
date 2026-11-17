@@ -45,13 +45,6 @@
     { "path": "McpServer/OutlookAI.RemediationTools/Program.cs", "rule": "pd02", "count": 1 },
     { "path": "McpServer/OutlookAI.RemediationTools/RemediationRules.cs", "rule": "pd02", "count": 5 },
     { "path": "McpServer/OutlookAI.RemediationTools/RemediationRules.cs", "rule": "pd06", "count": 2 },
-    { "path": "Testbed/guest/autounattend.template.xml", "rule": "pd09", "count": 1 },
-    { "path": "Testbed/guest/Install-OutlookAIAddIn.ps1", "rule": "pd06", "count": 2 },
-    { "path": "Testbed/guest/Install-OutlookAIAddIn.ps1", "rule": "pd09", "count": 2 },
-    { "path": "Testbed/guest/Set-OutlookProgrammaticAccess.ps1", "rule": "pd06", "count": 2 },
-    { "path": "Testbed/guest/Set-OutlookProgrammaticAccess.ps1", "rule": "pd09", "count": 2 },
-    { "path": "Testbed/host/Publish-AddInPayload.ps1", "rule": "pd06", "count": 1 },
-    { "path": "Testbed/host/Publish-AddInPayload.ps1", "rule": "pd09", "count": 2 },
     { "path": "Testbed/MEDIA.md", "rule": "pd08", "count": 6 },
     { "path": "Testbed/MEDIA.md", "rule": "pd09", "count": 1 },
     { "path": "Testbed/README.md", "rule": "email", "count": 2 },
@@ -65,8 +58,6 @@
     { "path": "TODO.md", "rule": "email", "count": 2 },
     { "path": "TODO.md", "rule": "pd01", "count": 2 },
     { "path": "TODO.md", "rule": "pd02", "count": 3 },
-    { "path": "TODO.md", "rule": "pd03", "count": 1 },
-    { "path": "Tools/Invoke-CodeQL.ps1", "rule": "pd06", "count": 1 },
-    { "path": "Tools/Invoke-CodeQL.ps1", "rule": "pd07", "count": 1 }
+    { "path": "TODO.md", "rule": "pd03", "count": 1 }
   ]
 }

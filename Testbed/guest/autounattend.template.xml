@@ -25,7 +25,7 @@
 
   The guest must match the MAINTAINER'S OWN MACHINE, not some notional clean default. That
   configuration is where most of the userbase sits, so it is what the live tier has to be
-  testing against. The table below was MEASURED on the host (PC657) on 2026-08-25; see
+  testing against. The table below was MEASURED on the host (the maintainer's workstation) on 2026-08-25; see
   Testbed/MEDIA.md, section "The host configuration the guests match", for the full survey and
   the command each value was read with.
 
