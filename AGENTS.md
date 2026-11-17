@@ -92,13 +92,39 @@ git push origin <sha>:refs/heads/master      # for each, in that order
 Each step advances `master` by exactly one mainline commit, and a merge carries its whole
 branch with it. Measured 2026-09-17 on a 16-commit backlog: 12 mainline steps, all clean.
 
+## Personal data (Q185, Q190)
+
+**Nothing personal is committed: placeholders only, in every tracked file, commit message, TODO
+item and release note.** Decided by the maintainer 2026-11-17 (Q190 (c)), after an audit found a
+third party's shared mailbox, a delegate's name, a colleague's first name and his own machine and
+mailbox details in this public repository - nearly all of it written by agents. That covers
+people's names, e-mail addresses outside the reserved domains (`example.com`, `*.example`,
+`*.invalid`, `*.test`), Windows user and computer names, paths under a real user's profile, account
+SIDs, store and mailbox names from a real Outlook profile, real mail subjects, and keys and
+certificates. Write `<user>`, `<computer>`, an address under a reserved domain, or "the Exchange
+VM's mailbox" instead. The real values are in one place only: the maintainer's checkout,
+`.work/personal-data/identifiers.json`, which maps each to the placeholder written in its stead.
+Never copy a value out of it, nor out of `.work/history-audit-2026-11/`. The maintainer's name stays
+in LICENSE and as the author and committer of his commits (Q186 (a)).
+
+- **`Tools/Checks/check-personal-data.ps1` is the fifth guard** (Q190 (a)): the release runs it, and
+  its `-SelfTest` runs on the build VM. It matches the identifiers by their SHA-256 in
+  `Tools/Checks/personal-data.json`, never by value, plus generic shapes. Until Q189 is done, that
+  file's baseline lets HEAD keep, per file, the occurrences it still has - and not one more.
+- **Git hooks run it on every commit and push** (Q190 (b)): `pwsh -File Tools/Install-GitHooks.ps1
+  -Execute` puts them in the main repository's `.git/hooks`, which every worktree shares. A hook that
+  refuses names the file, line and rule, never the value: write the placeholder and commit again.
+  Never `--no-verify`.
+- A new identifier goes into the private list first; `-HashIdentifiers -Execute` then writes its
+  hash into the committed list.
+
 ## Build and Release
 
 **There is no CI.** Decided by the maintainer 2026-10-03, in his words: *"Remove the git CI
 pipeline. I want only the build and test suite to run on my pc. No CI pipelines on github."*
 Nothing runs on GitHub: no build on a pull request, no CodeQL scan, no dependency review, no
 Dependabot version updates, no release workflow. Tests and self-tests run on the build VM (the
-section after next); builds and the four guards run on this workstation; and a release is
+section after next); builds and the five guards run on this workstation; and a release is
 `Tools/Publish-Release.ps1`, run here.
 
 **Security scanning replaced CodeQL's and the dependency review's, here (Q125, decided by the
@@ -131,7 +157,7 @@ everything except publishing; `-Execute` publishes. In order, it:
    refuses with `-Execute` (a dry run only notes that);
 4. checks that the certificate `OutlookAI.csproj` pins is in `Cert:\CurrentUser\My` with its private
    key and not expired;
-5. runs the four guards under `pwsh` and `powershell.exe`, then `check-pinned-constants.ps1` against
+5. runs the five guards under `pwsh` and `powershell.exe`, then `check-pinned-constants.ps1` against
    that certificate;
 6. runs **D7 (c)** (below), and refuses to release if either comparison fails;
 7. runs the security step (Q125): `Tools/Test-VulnerablePackages.ps1`, then `Tools/Invoke-CodeQL.ps1`
@@ -244,7 +270,7 @@ why. Run it in the background or with a timeout of an hour or more.
 
 **What stays on this workstation - this, and nothing else:**
 
-- the four static guards, `Tools/Checks/check-*.ps1`, which only read files - run them under
+- the five static guards, `Tools/Checks/check-*.ps1`, which only read files - run them under
   both `powershell.exe` and `pwsh`;
 - builds - `dotnet build` by csproj path, and the add-in build, which needs Visual Studio,
   through the two scripts "The add-in on the maintainer's workstation (Q81)" below names;
@@ -362,6 +388,19 @@ and it may be used for the scan CodeQL used to run on GitHub. Conditions, all of
   `LICENSE` is MIT and origin is on github.com; were the repository made private, the release gate
   would have to go.
 It does not generalise to other GitHub tools, nor to "free to use is fine".
+
+**A fourth exception, decided by the maintainer 2026-11-17 (Q187): git filter-repo, for the one
+history rewrite of Q185.** `git filter-repo` 2.47.0 is a single Python script under the MIT licence,
+already installed on this workstation through pip together with the Python it runs on. Conditions,
+all of them:
+- **that tool, for that rewrite**: the one that takes Q185's personal data out of the history, at
+  the quiet point Q191 names, and its trial runs. Nothing else, and not again without a new decision;
+- **on this workstation only**, on a fresh `--mirror` clone under the gitignored `.work\`, with its
+  rules there too, because they hold the values. Never committed, never installed into the product or
+  put in the installer, never staged on a VM, never run by a script in this repository;
+- **proven before anything is pushed**: the same number of commits, and the audit's scanner finding
+  no value in the result. The force-push needs the maintainer's explicit word (Q191).
+It does not generalise to "Python is fine", nor to other history tools.
 
 ## The add-in on the maintainer's workstation (Q81)
 

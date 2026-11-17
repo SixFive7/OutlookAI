@@ -171,6 +171,37 @@ its mailbox tests on, and change nothing you install.
   check fails, the reason is written out in full here rather than hidden behind a link. Both
   indicators now take their wording from one place, so they cannot disagree.
 
+- ✅ **A fifth guard fails a release or a build-VM run that finds personal data in the repository.**
+  An audit of 2026-11-17 found a third party's shared mailbox, a delegate's name, a colleague's first
+  name and the maintainer's own user name, computer name and mailbox details in this public
+  repository, most of them written there by agents. `Tools/Checks/check-personal-data.ps1` looks
+  for them in every tracked file: by SHA-256 against `Tools/Checks/personal-data.json`, which holds
+  no value, and by shape - an e-mail address outside the reserved domains, a profile path with a
+  real-looking user name, a private key, a key or certificate file, a Windows default computer
+  name, and the names of the machine it runs on. A finding names the file, the line and the rule,
+  never the value. The release runs it under both PowerShells, and its self-test runs on the build
+  VM. Until the tests and the testbed stop needing the values (Q189), a baseline lets HEAD keep, per
+  file, the occurrences it has and not one more. `.gitignore` now also keeps out `*.p12`, `*.snk`,
+  `*.pem` and `*.key` beside `*.pfx`, and the guard fails if those rules go (Q190).
+
+- ✅ **Git hooks refuse a commit, a commit message or a push that would publish personal data.**
+  `Tools/Install-GitHooks.ps1 -Execute` puts pre-commit, commit-msg and pre-push hooks into the main
+  repository's `.git/hooks`, which every worktree shares, with a copy of the guard for them to run,
+  so a worktree on an older branch is checked as well. Besides the committed hashes they read the
+  private list of real values in the maintainer's checkout. A commit fails only when it adds an
+  occurrence to a file, so an edit next to a value HEAD still holds goes through. Tried in a scratch
+  repository on 2026-11-17: a value in a file, in a commit message and in a pushed commit was
+  refused, from the main checkout and from a linked worktree, and a clean commit and push went
+  through (Q190).
+
+- 📝 **AGENTS.md says to write placeholders, never personal data, in everything committed.**
+  That covers every tracked file, commit message, TODO item and release note: `<user>`,
+  `<computer>`, an address under a reserved domain, or "the Exchange VM's mailbox". The real values
+  are kept only in the maintainer's checkout, in `.work/personal-data/identifiers.json`. AGENTS.md
+  also holds the one-off exception for `git filter-repo`, the tool of the coming history rewrite
+  (Q187), and QUESTIONS.md records the maintainer's answers of 2026-11-17 on personal data in the
+  public history, Q183 to Q193.
+
 - ✅ **The Outlook test machines keep a full crash dump whenever Outlook crashes in a live run.**
   The one-call runner switches Windows Error Reporting's own crash dumps on at every run, on the
   frozen checkpoints as they are, brings every dump back with the run's results, and reads each one

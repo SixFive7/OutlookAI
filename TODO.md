@@ -1,127 +1,31 @@
 # TODO
 
-- [ ] **Audit the whole git history of this public repository for personal data, decide with the
-  maintainer what has to go, then rewrite the history and force-push.**
-  **Read this first.** Written on 2026-11-16 by an agent OUTSIDE this project, at the maintainer's
-  request: *"make fully checking the history and rewriting the history another todo item. reference
-  the violations you found without adding violations."* So this item names files, commits and kinds
-  of data, never the values themselves. The values can be read at the places listed below. Never
-  copy them into a committed file, this one included.
-
-  **Why.** The repository is public on GitHub. On 2026-11-16 the Outlook-hang item below this one
-  was redacted before it was pushed (f546cd4): its personal identifiers became placeholders, and
-  the real values went into `.work/outlook-hang-2026-11-15-identifiers.md`, which is ignored and
-  exists only in the maintainer's local clone. The scan done for that redaction found personal data
-  in older items of this file that was already public. A few more substring searches at HEAD found
-  it in other files and in commit messages too. None of this is a full audit.
-
-  **Kinds of data found.** The values are left out on purpose.
-  - K1: the maintainer's own identifiers: full name, personal mail domain, business mail domain,
-    Windows user name (inside paths) and the development PC's name.
-  - K2: a third-party organisation's mail domain, mailbox addresses on it (a shared mailbox, and
-    the planned shared test mailbox of Q109), and the shared mailbox's local part, a Dutch word
-    that is also used as a display name.
-  - K3: a third person's first name: the person the Q109 item says will create the shared test
-    mailbox.
-  Some of it may be intended: LICENSE names its copyright holder, and the tests and the testbed may
-  need real tenant details to run. What stays is the maintainer's decision (step 3 below).
-
-  **Where at HEAD f546cd4.** Counted with `git grep -c -i <value> HEAD`: matching lines per file,
-  substring matches. One of the values is also a substring of ordinary English words, so the K1
-  user-name counts include false positives. CHANGELOG.md had no hits.
-  - K2 domain: AGENTS.md 1; Docs/live-tier-on-the-vm.md 3;
-    McpServer/OutlookAI.McpServer.Tests/T1/AuditLogReaderTests.cs 2;
-    McpServer/OutlookAI.McpServer.Tests/T1/AuditLogTests.cs 2; TODO.md 2; Testbed/README.md 2;
-    Testbed/testbed.json 7.
-  - K2 Dutch word: AGENTS.md 1; Docs/live-tier-on-the-vm.md 5;
-    McpServer/OutlookAI.McpServer.Tests/T1/AuditLogReaderTests.cs 2;
-    McpServer/OutlookAI.McpServer.Tests/T1/AuditLogTests.cs 2;
-    McpServer/OutlookAI.McpServer.Tests/T1/RemediationRulesTests.cs 7;
-    McpServer/OutlookAI.McpServer.Tests/T2/LiveFreshModeTests.cs 1;
-    McpServer/OutlookAI.McpServer.Tests/T2/LiveOutlookTestMailer.cs 1;
-    McpServer/OutlookAI.McpServer.Tests/T2/LivePhase5Fixture.cs 1;
-    McpServer/OutlookAI.McpServer.Tests/T2/LiveShowMeTests.cs 1;
-    McpServer/OutlookAI.RemediationTools/McpMoveClient.cs 1;
-    McpServer/OutlookAI.RemediationTools/Program.cs 5;
-    McpServer/OutlookAI.RemediationTools/RemediationRules.cs 9; TODO.md 3; Testbed/README.md 2;
-    Testbed/testbed.json 7.
-  - K3 first name: TODO.md 1, in the item "Waiting for the shared test mailbox (Q109)".
-  - K1 Windows user name: Docs/autonomous-session-log.md 2; Docs/magic-numbers.md 2;
-    Docs/measurement-gate.md 1; Docs/vm-coverage-analysis.md 1; LICENSE 1;
-    McpServer/OutlookAI.Core/Mapi/MailItemAdmission.cs 1;
-    McpServer/OutlookAI.McpServer.Tests/T1/ComHostProtocolTests.cs 1;
-    McpServer/OutlookAI.McpServer.Tests/T1/IndexHonestyTests.cs 5;
-    McpServer/OutlookAI.McpServer.Tests/T1/ItemClassAdmissionTests.cs 1;
-    McpServer/OutlookAI.McpServer.Tests/T1/SignatureCatalogTests.cs 2;
-    McpServer/OutlookAI.RemediationTools/RemediationRules.cs 2; McpServer/README.md 1;
-    Testbed/guest/Install-OutlookAIAddIn.ps1 2; Testbed/guest/Set-OutlookProgrammaticAccess.ps1 2;
-    Testbed/host/Publish-AddInPayload.ps1 1.
-  - K1 surname (also matches the personal mail domain): Docs/autonomous-session-log.md 1;
-    LICENSE 1; McpServer/OutlookAI.McpServer.Tests/T1/ComHostProtocolTests.cs 1;
-    McpServer/OutlookAI.McpServer.Tests/T1/IndexHonestyTests.cs 5;
-    McpServer/OutlookAI.McpServer.Tests/T1/SignatureCatalogTests.cs 2;
-    McpServer/OutlookAI.McpServer.Tests/T1/WsSqlBuilderTests.cs 3; Tools/Invoke-CodeQL.ps1 1.
-  - K1 business mail domain: Docs/autonomous-session-log.md 2; Docs/live-tier-on-the-vm.md 1;
-    Testbed/MEDIA.md 6; Testbed/README.md 1; Testbed/testbed.json 1.
-  - K1 PC name: Docs/autonomous-session-log.md 1; Testbed/MEDIA.md 1;
-    Testbed/guest/Install-OutlookAIAddIn.ps1 2; Testbed/guest/Set-OutlookProgrammaticAccess.ps1 2;
-    Testbed/guest/autounattend.template.xml 1; Testbed/host/Publish-AddInPayload.ps1 2.
-  - An unfiltered e-mail-address regex matches many more files at HEAD. Those hits were not
-    triaged.
-
-  **In the history, beyond HEAD.** Hashes as of 2026-11-16, before any rewrite.
-  - K2 domain: first appears in 11160fb (2026-07-23). `git log --all -S` on the shared mailbox
-    address also lists 532268f, 055eeee, 01713f7, 659a61f, b456e26, 7651315, 091b582 and 47c0c9f.
-    The Q109 test mailbox address arrived in 659a61f (2026-10-03).
-  - K3 first name: added to TODO.md in b5da70f (2026-10-08) and touched again in 25cae1a. The
-    subject line of b5da70f contains it as well.
-  - Commit messages: the subjects of b5da70f (K3), d67f507 (K2 Dutch word) and 5d9f40f (K1
-    business domain) contain values, and some message bodies match too. That scan was rough. Redo
-    it with `git log --all --format='%H%x00%B%x00'`.
-  - Author and committer fields: every commit carries the maintainer's full name and personal
-    e-mail address. Probably intended. If they should change (for example to a GitHub noreply
-    address with `git filter-repo --mailmap`), do it in the same rewrite, because a second rewrite
-    costs as much as the first.
-  - Size: 945 commits reachable from all refs, 35 tags (the GitHub releases hang off them), 2
-    remote branches.
-
-  **Not violations.** Keep these out of the audit's hits: `bystander@vm.invalid` and other
-  addresses in reserved test domains (`.invalid`, `.example`, `.test`, `example.com`); the
-  placeholders `<user>`, `<computer>`, `<mailbox-A>` to `<mailbox-D>`, `<store-D-online>`,
-  `<delegate-mailbox-1>`, `<delegate-mailbox-2>` and `<custom-addin>` in the Outlook-hang item.
-
-  **Local only, never pushed.** 3ee7ca8, the unredacted first version of the Outlook-hang item,
-  is unreachable and lives only in the maintainer's local reflog. A scratch copy sits in a folder
-  outside the repository that is cleaned automatically after 31 days; its path is in the `.work`
-  identifiers file. To purge the local commit: `git reflog expire --expire-unreachable=now --all`,
-  then `git gc --prune=now`.
-
-  **Suggested steps.** These are guesses from outside the project; the trade-offs are yours.
-  1. Audit every blob of every commit reachable from all refs, every commit and tag message, and
-     the author and committer fields. Search for the kinds above and for generic patterns: e-mail
-     addresses outside reserved domains, `C:\Users\<name>` paths, machine names, Windows SIDs
-     (`S-1-5-21-`), IPv4 addresses, phone numbers, Exchange legacyDN/X500 (`/o=`,
-     `cn=Recipients`), tenant names and people's names. The `.work` identifiers file holds concrete
-     values to search for; use it as a search list only. gitleaks or trufflehog in history mode
-     also catch secrets and tokens.
-  2. Check the GitHub-side copies a git rewrite does not reach: release notes and release assets
-     (binaries can embed build paths), the released sections of CHANGELOG.md (AGENTS.md forbids
-     changing them, so a hit there needs a decision), issues, pull requests, Actions logs, the wiki
-     and forks.
-  3. Decide with the maintainer which kinds stay (LICENSE, the author fields), where the tests and
-     the testbed get their tenant details once those leave the repository (an ignored file in
-     `.work/`, environment variables, or something else), and when to rewrite.
-  4. Rewrite on a fresh `git clone --mirror` with `git filter-repo --replace-text <rules>`, keeping
-     the rules in `.work/` and never committing them, plus `--mailmap` if decided. Re-run the audit
-     on the result. Force-push all branches and tags: that is outside AGENTS.md's push-every-commit
-     rule and needs the maintainer's explicit go-ahead. Re-point the releases at the rewritten
-     tags. Every existing clone, other agents' working copies included, has to re-clone.
-  5. After the force-push, GitHub still serves the old commits by SHA and through cached views
-     until it purges them. GitHub's guide "Removing sensitive data from a repository" covers asking
-     GitHub Support to do that. Forks and existing clones keep the data, and nothing can change
-     that.
-  6. Stop it coming back: a check that refuses a commit or push containing any value from the
-     ignored `.work` identifiers list.
+- [ ] **Take the personal data out of the public history (Q183 to Q193): HEAD stops needing it,
+  then the history is rewritten at a quiet point and force-pushed.**
+  The audit of 2026-11-17 and the maintainer's answers are in QUESTIONS.md's decision log; the
+  inventory with the values stays in `.work/history-audit-2026-11/` of the maintainer's checkout,
+  and no value goes into a committed file, this one included (AGENTS.md, Personal data). Done: the
+  purge of the 198 commits left over from the earlier rewrites was asked of GitHub Support (Q183);
+  the old signing key is out of his store and on his untrusted list (Q184); Q190's safeguards are in -
+  `Tools/Checks/check-personal-data.ps1`, the hooks of `Tools/Install-GitHooks.ps1`, the AGENTS.md
+  rule and the key-file patterns in `.gitignore`. Left, in order:
+  1. HEAD stops needing the values (Q189): tests and self-tests use placeholders; live and testbed
+     runs read the Exchange VM's mailbox from the gitignored live-test settings file and check it
+     against the guest's Outlook at run time; `Testbed/testbed.json` holds a placeholder. The
+     baseline in `Tools/Checks/personal-data.json` lists every file and rule still to go, and is
+     empty when this step is done.
+  2. The rewrite (Q185 (b), Q187 (a), Q188 (a), Q191 (a)), only at a quiet point: the in-flight
+     branches landed and work frozen; `git filter-repo` on a fresh `--mirror` clone, with the rules in
+     `.work/history-rewrite/` of the maintainer's checkout; the audit's scanner run on the result,
+     finding nothing, and the commit count unchanged; then the force-push of master and the moved
+     tags - as updates of the same tag names, never a delete and a re-create - on his word; then every
+     clone and worktree made again. His name and e-mail stay as author and committer (Q186 (a)).
+  3. After the force-push: `gh api repos/SixFive7/OutlookAI/releases/latest` still names the newest
+     release; a second Support request names the commits the rewrite replaced; the 522 old Actions run
+     records are deleted and the leftover "Dependabot Updates" workflow is disabled through the API;
+     and one normal commit repoints the commit IDs cited in tracked files, from filter-repo's commit
+     map. Locally, the unpushed 3ee7ca8 still sits in the reflog until
+     `git reflog expire --expire-unreachable=now --all` and `git gc --prune=now`.
 
 - [ ] **Investigate whether OutlookAI can do anything about the Outlook hang of 2026-11-15: its MCP
   server cold-started `OUTLOOK.EXE -Embedding` through COM, that Outlook deadlocked 5 s into its

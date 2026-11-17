@@ -369,6 +369,84 @@ spelling".** See the decision log below.
 
 ## Decision log
 
+### 2026-11-17 - the maintainer's answers to Q183 to Q193: personal data in the public history
+
+**What this is.** Questions asked and answered in conversation on 2026-11-17, after a read-only
+audit of everything this public repository has ever published: the 923 commits of master, the 198
+commits GitHub still serves by ID from the history rewrites of 2026-03-24 and 2026-08-24, every
+blob, message and author field, and the GitHub side - releases, Actions runs, the activity feed.
+The audit, with the values, stays in `.work\history-audit-2026-11\` of the maintainer's checkout;
+this record holds none of them, and nor may any other committed file (Q190 (c)). Words in quotes
+are the maintainer's; "rec" took the recommendation he had been given, spelled out below. In chat
+these are numbered 183 to 193 (Q192).
+
+**Primer.** The audit found two credentials, both only in the 198 left-over commits: the
+code-signing key of releases v1.0.0.1 to v2.3.1.111, which opens with no password, and an old
+test-VM password, changed since. In master it found personal data, most of it written by agents
+into documents, tests, TODO items and commit messages: a third party's shared mailbox, its mail
+domain and its use for the tests; a delegate's full name beside an incident in that person's
+mailbox; a colleague's first name; one possibly real mail subject; and the maintainer's own e-mail
+in file contents, his Windows user name, his computer name and facts about his mailboxes.
+
+- **Q183 - the left-over commits, now.** *"183 a - send it for me."* **Decided: (a)**: GitHub Support
+  is asked to purge the 198 commits and their cached pages. GitHub takes such a request only through
+  its support form, from the repository owner's account; it is being sent from his account on
+  2026-11-17. Not chosen: making the repository private first (installed copies could not update,
+  and the CodeQL licence of Q125 needs a public repository), deleting and re-creating it (that loses
+  issue #1, the release dates and the download counts), and waiting for the rewrite.
+- **Q184 - the old signing key.** *"184 a"*. **Decided: (a)**, treat it as compromised: it was
+  deleted from his certificate store and put on Windows' untrusted list for his user, both on
+  2026-11-17. Q193 replaced the half that concerned the installer.
+- **Q185 - what comes out.** *"185 b"*. **Decided: (b)**: the third parties' data - the
+  organisation's shared mailbox, its domain, its local part and display name, the planned test
+  mailbox, the delegate's name and the incident line, the colleague's first name and the possibly
+  real subject - and his own machine and mailbox details: his e-mail in file contents, his Windows
+  user name, his computer name, the facts about his mailboxes, and his name outside LICENSE. It comes
+  out of every commit since it first appeared; the audit counted 764 of the 923 commits and 3
+  release tags. The upstream author's MIT attribution and his own already-public data stay.
+- **Q186 - his name and e-mail as author.** *"186 a"*. **Decided: (a)**: both stay as author and
+  committer, and his name stays in LICENSE. That drops Q190 (d), GitHub's setting that blocks a push
+  exposing his e-mail: it would block his own pushes.
+- **Q187 - the tool.** *"187 a"*. **Decided: (a)**: `git filter-repo`, under a written one-off
+  exception, now in `AGENTS.md` (Dependencies). Not chosen: `git filter-branch`, which git's own
+  documentation warns against; git's export and import with a transformer of our own; BFG.
+- **Q188 - tags and releases.** *"188 a - we will provide a new install and update after this all
+  anyway. the updater of existing installations needs to keep working however."* **Decided: (a)**:
+  the rewritten tags replace the old ones under the same names; the releases and their installers
+  stay. Checked the same day: every release with an updater, v1.1.0.61 onwards, asks GitHub for the
+  latest release by owner and repository name, reads its tag name and downloads the asset named
+  after it, and none reads a commit ID. GitHub's API orders releases by the date of the tagged
+  commit, which the rewrite keeps.
+- **Q189 - where tests get the real values.** *"189 rec"*. **Decided: (a) + (b), with (d) as a
+  cross-check**: tests and self-tests use placeholders; live and testbed runs read the Exchange VM's
+  mailbox from the gitignored live-test settings file and check it against the guest's Outlook at
+  run time; `Testbed/testbed.json` holds a placeholder; `AGENTS.md` says "the Exchange VM's
+  mailbox". Until that is done, the baseline in `Tools/Checks/personal-data.json` counts what HEAD
+  still holds.
+- **Q190 - keeping it out.** *"190 rec"*. **Decided: (a) + (b) + (c) + (e)**, built the same day:
+  (a) `Tools/Checks/check-personal-data.ps1`, the fifth guard, which the release runs and whose
+  self-test runs on the build VM. It matches the identifiers by their salted SHA-256 in
+  `Tools/Checks/personal-data.json`, never by value, plus generic shapes: e-mail addresses outside
+  the reserved domains, profile paths with a real-looking user name, private keys, key files,
+  Windows default computer names, and the names of the machine it runs on. (b) Git hooks -
+  pre-commit, commit-msg and pre-push - installed by `Tools/Install-GitHooks.ps1` into the main
+  repository's `.git/hooks`, which every worktree shares; they also read the private list of real
+  values, `.work/personal-data/identifiers.json` in the maintainer's checkout. (c) The rule in
+  `AGENTS.md` (Personal data): placeholders only, in every tracked file, commit message, TODO item
+  and release note. (e) `*.p12`, `*.snk`, `*.pem` and `*.key` in `.gitignore`, beside `*.pfx`.
+- **Q191 - when.** *"191 rec"*. **Decided: (d), then (a)**: the purge of Q183 now; the content
+  rewrite at a quiet point - the in-flight branches landed, work frozen, the rewrite, its proof,
+  the force-push, every clone made again - followed by one commit that repoints the commit IDs
+  cited in tracked files, from filter-repo's commit map.
+- **Q192 - question numbers.** The maintainer asked for numbers without the "Q" everywhere; asked how
+  far that should reach, *"a"*. **Decided: (a)**: in chat a question is "183"; the repository keeps
+  "Q183", because a bare number cannot be searched - it also matches every count, version and date.
+- **Q193 - the installer half of Q184.** Putting the old certificate on users' untrusted lists needs
+  the installer to carry a copy, and the certificate's subject names his computer and his user -
+  details Q185 removes. *"b"*. **Decided: (b)**: the next installer removes the old certificate from
+  every trust store by its thumbprint, `E205060633DD7062D4F90033130542948A69D068`, and ships no copy;
+  the untrusted-list entry stays on his own PC, where it is done.
+
 ### 2026-10-11 and 2026-11-17 - the maintainer's answers to Q118, Q131 to Q136, Q138 to Q140, Q142 to Q147 and Q149 to Q162
 
 **What this is.** These questions were asked and answered in conversation, not in this file, and
