@@ -83,7 +83,7 @@ public sealed class InstallerCompromisedCertificateTests
         string iss = Installer();
 
         Assert.Contains("RemoveCompromisedCertificate;", Procedure(iss, "CurStepChanged"));
-        Assert.Matches(@"if CurUninstallStep = usUninstall then\s+RemoveCompromisedCertificate;", Procedure(iss, "CurUninstallStepChanged"));
+        Assert.Matches(@"if CurUninstallStep = usUninstall then\s+begin(?:\s+\w+;)*\s+RemoveCompromisedCertificate;\s+end;", Procedure(iss, "CurUninstallStepChanged"));
     }
 
     [Fact]

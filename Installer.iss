@@ -33,6 +33,13 @@
 #define CompromisedCertThumbprint "E205060633DD7062D4F90033130542948A69D068"
 #define CompromisedCertUserStores "TrustedPublisher TrustedPeople CA Root"
 #define CompromisedCertMachineStores "TrustedPublisher TrustedPeople CA AuthRoot Root"
+; ITS PUBLIC KEY, for the VSTO trust entries that name the key and not the certificate: the RSA
+; modulus, 1024 bits, as base64 in exactly the form .NET writes it in the <Modulus> of the
+; <RSAKeyValue> the VSTO runtime stores. A public key names nobody. Read 2026-11-17 from the
+; public half of the certificate above, which is not in this repository. Removed by
+; RemoveCompromisedTrustEntries on every install, update and uninstall; T1
+; InstallerCompromisedTrustEntryTests pins it by its SHA-256.
+#define CompromisedKeyModulus "uG6emg3rYVFe+OpNdO5oBsRtIb5MLBiCOKamIZ0V3QntBawNEC7948U8KeGAeiuUZwZ4pqGCRh4vIZ/Yv0GIz8DBjvuleWcckI+MSL1LZheVyBcBPm7UOmfd/i2aYAKqxdvtQrODDb81000zefQg4owVdYaweuT/uOvgryhnXjk="
 
 [Setup]
 AppId={{78AF2871-0CEB-4451-B80D-455552E37C91}
@@ -138,7 +145,8 @@ Root: HKCU; Subkey: "Software\Microsoft\Office\17.0\Outlook\Resiliency\DoNotDisa
 [UninstallRun]
 Filename: "certutil"; Parameters: "-user -delstore TrustedPublisher OutlookAI"; Flags: runhidden
 ; The compromised certificate is removed by thumbprint from every trust store on uninstall as
-; on install: CurUninstallStepChanged runs RemoveCompromisedCertificate.
+; on install, and the VSTO trust entries for its key with it: CurUninstallStepChanged runs
+; RemoveCompromisedTrustEntries and RemoveCompromisedCertificate.
 
 [Code]
 // Setup is a 32-bit process, so these HKLM reads pass through the WOW64 redirector and
@@ -540,6 +548,52 @@ begin
     DeleteCompromisedCertificateFromStores('', '{#CompromisedCertMachineStores}');
 end;
 
+// VSTO'S TRUST ENTRIES FOR THE COMPROMISED KEY. Clicking Install on Office's "Publisher cannot be
+// verified" prompt for v1.0.0.1 to v2.3.1.111 left an entry under VstoInclusionKey\<guid>: Url, the
+// location of the .vsto, and PublicKey, the key that signed it, as <RSAKeyValue>. From then on the
+// VSTO runtime loads ANY add-in at that location whose manifests are signed with that key, with no
+// prompt - it compares the location and the key and never looks at the certificate - and that key's
+// private half is public. So every entry holding the compromised key goes, wherever it points, on
+// every install, update and uninstall. Docs/live-tier-on-the-vm.md section 4.8 has the evidence.
+//
+//  * Matched on the public key alone: its modulus, found in the value once the value's white space
+//    is out. The runtime reads the value with .NET's FromXmlString and compares the two keys'
+//    bytes, so a namespace, a prefix, another element order or a line break inside the base64 is
+//    still this key to it - and to this test. Never on the Url, which names a user's folders.
+//  * Only this key: the entry the current release's own prompt wrote for the same folder, and every
+//    other add-in's, stay. Removing an entry costs at most one more prompt; keeping this one lets
+//    anything signed with the leaked key load from that folder unasked.
+//  * Best effort: no key, no entry or no PublicKey is the normal case and changes nothing.
+const
+  VstoInclusionKey = 'Software\Microsoft\VSTO\Security\Inclusion';
+
+// S with every space, tab, carriage return and line feed taken out - the white space .NET's
+// base64 decoder skips.
+function WithoutWhiteSpace(const S: String): String;
+var
+  I: Integer;
+begin
+  Result := '';
+  for I := 1 to Length(S) do
+    if (S[I] <> ' ') and (S[I] <> #9) and (S[I] <> #10) and (S[I] <> #13) then
+      Result := Result + S[I];
+end;
+
+procedure RemoveCompromisedTrustEntries;
+var
+  Names: TArrayOfString;
+  PublicKey: String;
+  I: Integer;
+begin
+  if not RegGetSubkeyNames(HKCU, VstoInclusionKey, Names) then
+    exit;
+  for I := 0 to GetArrayLength(Names) - 1 do
+    if RegQueryStringValue(HKCU, VstoInclusionKey + '\' + Names[I], 'PublicKey', PublicKey) then
+      if Pos('{#CompromisedKeyModulus}', WithoutWhiteSpace(PublicKey)) > 0 then
+        if RegDeleteKeyIncludingSubkeys(HKCU, VstoInclusionKey + '\' + Names[I]) then
+          Log('Removed the VSTO trust entry ' + Names[I] + ', which trusted the compromised key.');
+end;
+
 procedure DownloadAndInstallNetRuntime10;
 var
   TempPath: string;
@@ -630,16 +684,20 @@ begin
     end;
 
     InstallCertificate;
-    // Runs on every install and every silent auto-update, so machines that still trust
-    // the exposed certificate are cleaned up as they update.
+    // Run on every install and every silent auto-update, so machines that still trust the
+    // exposed key are cleaned up as they update: its VSTO trust entries, then its certificate.
+    RemoveCompromisedTrustEntries;
     RemoveCompromisedCertificate;
   end;
 end;
 
-// Uninstalling removes the compromised certificate from every trust store too: an uninstall is
-// no reason to go on trusting it.
+// Uninstalling removes the compromised key's VSTO trust entries and its certificate too: an
+// uninstall is no reason to go on trusting it.
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if CurUninstallStep = usUninstall then
+  begin
+    RemoveCompromisedTrustEntries;
     RemoveCompromisedCertificate;
+  end;
 end;
