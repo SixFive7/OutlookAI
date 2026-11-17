@@ -60,3 +60,33 @@ function Get-TestbedLease {
     if ($expiresUnix -le [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()) { return $null }
     return $lease
 }
+
+function Enter-TestbedLeaseClaim {
+    <#
+    .SYNOPSIS
+        An exclusive hold on a VM's lease while a caller decides whether to take it. Dispose it as
+        soon as the lease is written.
+    .DESCRIPTION
+        Reading a lease and writing one are two steps, and Set-TestbedLease.ps1 writes over
+        whatever is there. Two callers that find the same VM free in the same moment would both
+        take it, and the one that wrote first would find out only when its next renewal read the
+        other's lease - after it had restored a checkpoint under the other's run. With pools
+        (TestbedPool.ps1, 2026-11-17) runs that ask for a kind of guest look for the same free VM,
+        so the read and the write are made one step here: a file beside the lease, opened with no
+        sharing, held from the read to the write. A person taking a lease by hand reads it first
+        and does not need this.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)] [string] $VMName, [int] $TimeoutSeconds = 60)
+
+    if ($VMName -notmatch '^[A-Za-z0-9._-]{1,64}$') { throw "VM name '$VMName' is not a plain name; refusing to build a path from it." }
+    $path = Join-Path (Get-TestbedLeaseDirectory) "$VMName.claim"
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ($true) {
+        try { return [System.IO.File]::Open($path, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None) }
+        catch [System.IO.IOException] {
+            if ((Get-Date) -ge $deadline) { throw "the lease claim on $VMName stayed held for $TimeoutSeconds s" }
+            Start-Sleep -Milliseconds 200
+        }
+    }
+}

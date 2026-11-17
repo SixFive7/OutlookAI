@@ -192,6 +192,19 @@ its mailbox tests on, and change nothing you install.
   in any other. The merged plan, its decision rules and the results are in
   Docs/research/q149-draft-text.
 
+- ✅ **Three build machines and two of each Outlook test machine now take test runs at once.**
+  Eight agents were queueing on one build machine and the two Outlook test machines, and the
+  maintainer asked for as much parallel work as the host allows, extra machines included. The build
+  machine has two copies, `OutlookAI-Build2` and `OutlookAI-Build3`, and each Outlook test machine
+  one, `OutlookAI-Indexed2` and `OutlookAI-Unindexed2`, each made in about two minutes from the
+  checkpoint its source's runner restores, with the same computer name, account, mailboxes and
+  frozen clock (`Testbed/host/New-TestbedClone.ps1`). The build runner takes whichever build machine
+  is free and names it in its summary; the live runner takes a machine by name as before, or the
+  first free one of a kind with `-Kind Indexed` or `-Kind Unindexed`. A copy is started only while
+  the host has its memory and 16 GB more available, so the maintainer's own work keeps its memory;
+  a resting copy holds disk and no memory. The idle-saver watches every copy. The Exchange test
+  machine is never copied: it holds a real Microsoft 365 sign-in.
+
 - ✅ **The Outlook test machines keep a full crash dump whenever Outlook crashes in a live run.**
   The one-call runner switches Windows Error Reporting's own crash dumps on at every run, on the
   frozen checkpoints as they are, brings every dump back with the run's results, and reads each one
@@ -1694,6 +1707,18 @@ its mailbox tests on, and change nothing you install.
   next - the cost was the accumulating hidden window, not a broken Outlook. This also cannot help
   when the assistant kills the helper outright, which is what happens when Outlook has genuinely
   stopped responding and when a session ends abruptly.
+
+- ✅ **The test machines' account password never expires, so runs on the build machine log on again.**
+  Windows expires a password after 42 days, and nothing in the testbed said otherwise. The build
+  machine was installed on 2026-10-03, so its base checkpoint would have refused every run's
+  PowerShell Direct logon from 2026-11-14, the day the Exchange machine's did ("The credential is
+  invalid"). The Outlook test machines' passwords would have expired on 2026-10-27, after their
+  frozen clocks' instants, so only a run from an unfrozen checkpoint met it. The flag is now set in
+  every checkpoint a runner restores: the build machine's `CP-03-SDK-TEST-READY-UTC`, made again
+  under its own name from the old one with its clock held back so the password still worked, and
+  the Outlook machines' new frozen checkpoints `CP-22C-FROZEN-CLOCK` and `CP-16B-FROZEN-CLOCK`,
+  whose frozen instants moved 27 and 28 seconds. A new test machine sets it at its first logon, and
+  the answer-file builder refuses to build one whose first-logon script would not.
 
 - ✅ **Two index-coverage tests pass on any date, not only before 2026-11-16.**
   `UnindexedStoreReportingTests` searched for mail older than today minus 90 days while its stub index
