@@ -70,6 +70,62 @@ public sealed class FolderIdToolTests
         Assert.Equal(FolderScopeKind.WholeStore, FolderScopeResolver.ForPrimaryStoreSegments(Prefix, null, true).Kind);
     }
 
+    [Fact]
+    public void AFolderNameEndingWithASpace_KeepsItsSpace_InTheIndexScopeAndInTheFolderEquality()
+    {
+        // Salvaged with its fix from the Q99 follow-up (runbook section 8 item 30, measured on guest one):
+        // the index keeps a trailing space in the URL and in System.ItemFolderPathDisplay, and a SCOPE ending
+        // with it matches no row. So the space is kept everywhere, the recursive scope keeps its separator,
+        // and the non-recursive one is the PARENT narrowed by the folder's exact display path.
+        IReadOnlyList<string> folder = new[] { "Edge", "trail space " };
+        FolderScopeResolution own = FolderScopeResolver.ForPrimaryStoreSegments(Prefix, folder, includeSubfolders: false);
+        FolderScopeResolution deep = FolderScopeResolver.ForPrimaryStoreSegments(Prefix, folder, includeSubfolders: true);
+
+        Assert.Equal(new[] { "/tier@vm.invalid/Edge/trail space " }, own.FolderPaths!);
+        Assert.Equal(Prefix + "/0/Edge", own.Scope);
+        Assert.Equal(Prefix + "/0/Edge/trail space /", deep.Scope);
+        Assert.Equal(Prefix, FolderScopeResolver.ForPrimaryStoreSegments(Prefix, new[] { "top " }, includeSubfolders: false).Scope);
+
+        string ownSql = WsSqlBuilder.Build(new IndexQuery { Scope = own.Scope, FolderPathsAnyOf = own.FolderPaths, Terms = new[] { "probe" } });
+        string deepSql = WsSqlBuilder.Build(new IndexQuery { Scope = deep.Scope, Terms = new[] { "probe" } });
+        Assert.Contains("System.ItemFolderPathDisplay='/tier@vm.invalid/Edge/trail space '", ownSql, StringComparison.Ordinal);
+        Assert.Contains("SCOPE='" + Prefix + "/0/Edge'", ownSql, StringComparison.Ordinal);
+        Assert.Contains("SCOPE='" + Prefix + "/0/Edge/trail space /'", deepSql, StringComparison.Ordinal);
+
+        // A parent whose own name ends with a space is scoped WITH the separator too.
+        FolderScopeResolution nestedOwn = FolderScopeResolver.ForPrimaryStoreSegments(Prefix, new[] { "Archive ", "2026 " }, false);
+        Assert.Equal(Prefix + "/0/Archive /", nestedOwn.Scope);
+        Assert.Equal(new[] { "/tier@vm.invalid/Archive /2026 " }, nestedOwn.FolderPaths!);
+        Assert.Equal(Prefix + "/0/Archive /2026 /", FolderScopeResolver.ForPrimaryStoreSegments(Prefix, new[] { "Archive ", "2026 " }, true).Scope);
+        Assert.Equal(Prefix + "/0/Archive /2026", FolderScopeResolver.ForPrimaryStoreSegments(Prefix, new[] { "Archive ", "2026" }, false).Scope);
+
+        // Every other name keeps its own folder URL as the scope, byte for byte.
+        Assert.Equal(Prefix + "/0/Edge/plain", FolderScopeResolver.ForPrimaryStoreSegments(Prefix, new[] { "Edge", "plain" }, false).Scope);
+        Assert.Equal(Prefix + "/0/Edge/plain", FolderScopeResolver.ForPrimaryStoreSegments(Prefix, new[] { "Edge", "plain" }, true).Scope);
+
+        // A trailing '/' is still a separator, and still dropped: a '/' inside a name is %2F.
+        Assert.True(MapiItemUrl.TryBuildFolderPathDisplay(Prefix + "/0/Edge/trail space /", out string? display));
+        Assert.Equal("/tier@vm.invalid/Edge/trail space ", display);
+    }
+
+    [Theory]
+    [InlineData("Inbox/Fun")]
+    [InlineData("50% off/x*")]
+    [InlineData("/A//B/")]
+    public void TheStringOverload_IsTheSegmentOverloadOverThePlainSplit(string folder)
+    {
+        foreach (bool includeSubfolders in new[] { true, false })
+        {
+            FolderScopeResolution fromString = FolderScopeResolver.ForPrimaryStore(Prefix, folder, includeSubfolders);
+            FolderScopeResolution fromNames = FolderScopeResolver.ForPrimaryStoreSegments(
+                Prefix, folder.Trim().Trim('/').Split('/'), includeSubfolders);
+
+            Assert.Equal(fromString.Scope, fromNames.Scope);
+            Assert.Equal(fromString.RequestedFolder, fromNames.RequestedFolder);
+            Assert.Equal(fromString.FolderPaths, fromNames.FolderPaths);
+        }
+    }
+
     // ------------------------------------------------------------------ find_folder
 
     private static ComFolderTree Tree(params (string Store, string Path)[] folders)
