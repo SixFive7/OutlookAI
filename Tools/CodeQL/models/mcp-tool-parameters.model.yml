@@ -1,0 +1,20 @@
+# Every parameter of every OutlookAI MCP tool is untrusted input (Q146 (d)).
+#
+# An agent fills in a tool's parameters from its context, and that context holds other people's
+# mail, so a stranger can steer any of them. CodeQL cannot see this by itself: the MCP SDK reads
+# the request and binds the arguments inside its own assembly, which build-mode none does not
+# analyse. To CodeQL a tool method is a method nobody calls.
+#
+# One row covers every tool. "Attribute" selects each method that carries the attribute the first
+# two columns name, and "Parameter" makes each of its parameters a source. The kind is "remote",
+# the kind CodeQL gives the parameters of an ASP.NET action. That keeps the tools in scope under
+# CodeQL's default threat model as well as under the release's.
+#
+# Tools/Invoke-CodeQL.ps1 checks on every run that CodeQL counts this many tools as covered as the
+# source declares, so a row that stops matching fails the run.
+extensions:
+  - addsTo:
+      pack: codeql/csharp-all
+      extensible: sourceModel
+    data:
+      - ["ModelContextProtocol.Server", "McpServerToolAttribute", False, "", "", "Attribute", "Parameter", "remote", "manual"]
