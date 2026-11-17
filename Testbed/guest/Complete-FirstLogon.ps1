@@ -11,7 +11,7 @@
     and runs it. Running it again by hand later is safe: every step is idempotent.
 
     WHY IT EXISTS AT ALL. The answer file already sets SystemLocale, UserLocale, UILanguage and
-    the time zone. Three things it cannot set, and one it should not:
+    the time zone. Four things it cannot set, and one it should not:
 
     1. THE PREFERRED LANGUAGE LIST, because en-NL is a TRANSIENT language. Windows hands
        English (Netherlands) an LCID out of the 0x2000 transient block at runtime; on the host
@@ -29,7 +29,12 @@
        that "shut down" holding a stale kernel session, which is the wrong thing entirely when
        the point of the machine is that a rebuild is reproducible.
 
-    4. WHAT IT DELIBERATELY DOES NOT DO: Set-WinUILanguageOverride. The host has no override.
+    4. THE ACCOUNT'S PASSWORD NEVER EXPIRES (2026-11-17). Windows' default maximum password age
+       is 42 days, and an expired password ends PowerShell Direct and the autologon - every
+       testbed VM built before this step stopped answering 42 days after its install, or would
+       have, until the flag was set in its checkpoints (Testbed/README.md section 4).
+
+    5. WHAT IT DELIBERATELY DOES NOT DO: Set-WinUILanguageOverride. The host has no override.
        Its display language is en-GB because en-NL has no MUI and Windows falls back, and
        reproducing that fallback rather than pinning past it is the whole point. Pinning en-GB
        would produce the same string from Get-UICulture by a different mechanism, and the first
@@ -267,6 +272,20 @@ Invoke-Step "user locale / formats = $UserLocaleName" {
 }
 
 # ---------------------------------------------------------------------------------------------
+# The account. Its password never expires (2026-11-17). Windows' default maximum password age is
+# 42 days, and an answer file has no setting for an account's expiry. A password that expires ends
+# PowerShell Direct - "The credential is invalid" - and the autologon that keeps session 1 alive:
+# OutlookAI-Build, installed 2026-10-03, would have stopped answering any run on 2026-11-14, and
+# OutlookAI-Exchange did, the same day (Testbed/README.md section 4).
+# ---------------------------------------------------------------------------------------------
+
+Invoke-Step "the password of '$env:USERNAME' never expires" {
+    Set-LocalUser -Name $env:USERNAME -PasswordNeverExpires $true
+    $account = Get-LocalUser -Name $env:USERNAME
+    if ($null -ne $account.PasswordExpires) { throw "PasswordExpires still reads $($account.PasswordExpires) after Set-LocalUser" }
+}
+
+# ---------------------------------------------------------------------------------------------
 # Power. A testbed that sleeps mid-run is a mystery failure.
 # ---------------------------------------------------------------------------------------------
 
@@ -323,6 +342,7 @@ foreach ($probe in @(
         @{ What = 'system locale (Get-WinSystemLocale)'; Body = { (Get-WinSystemLocale).Name } }
         @{ What = 'home location (Get-WinHomeLocation)'; Body = { (Get-WinHomeLocation).GeoId } }
         @{ What = 'time zone (Get-TimeZone)'; Body = { (Get-TimeZone).Id } }
+        @{ What = "password expires ($env:USERNAME)"; Body = { $a = Get-LocalUser -Name $env:USERNAME; if ($null -eq $a.PasswordExpires) { 'never' } else { $a.PasswordExpires.ToString('yyyy-MM-dd HH:mm') } } }
         @{ What = 'language list'; Body = {
                 ((Get-WinUserLanguageList) | ForEach-Object {
                     $_.LanguageTag + ' [' + (($_.InputMethodTips) -join ',') + ']'

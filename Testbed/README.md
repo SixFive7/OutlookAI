@@ -319,6 +319,13 @@ travels with the disk), settle and replace `CP-03-SDK-TEST-READY-UTC` (`Remove-V
 `Checkpoint-VM` under the same name, as B7 and B9 take theirs), and record the commit in
 `testbed.json`'s `buildVm.baseFeedStagedFrom`.
 
+**The base was made again on 2026-11-17**, so that `vmadmin`'s password never expires (section 4):
+the old `CP-03-SDK-TEST-READY-UTC` restored with time synchronisation off, so that its clock stood before
+the expiry and PowerShell Direct still logged on, the flag set, time sync back on, and a new checkpoint
+taken under the same name, so every runner uses it unchanged. The old one is kept as
+`CP-03-SDK-TEST-READY-UTC-PW-EXPIRES`; `CP-01` and `CP-02` keep the old expiry. A VM installed from an
+answer volume built after that day sets the flag at its first logon. Runbook section 4.5a.
+
 ---
 
 ## 1d. The fourth machine: `OutlookAI-Exchange`, where the Exchange-only tests run
@@ -753,7 +760,7 @@ it once** - it survives in git history and had to be rotated.
 
 | What | Where it lives | How to create it |
 | --- | --- | --- |
-| Guest account password (PowerShell Direct, autologon) | `McpServer/OutlookAI.McpServer.Tests/live-fixtures/vm-credentials.json`, gitignored | Set it when you create the account. Set it to **never expire**: a maximum password age silently breaks the tier and recreates this problem. |
+| Guest account password (PowerShell Direct, autologon) | `McpServer/OutlookAI.McpServer.Tests/live-fixtures/vm-credentials.json`, gitignored | Set it when you create the account. It must **never expire**: Windows' default maximum age is 42 days, and an expired password ends PowerShell Direct ("The credential is invalid") and the autologon. `guest/Complete-FirstLogon.ps1` sets it at a new guest's first logon (`Set-LocalUser -PasswordNeverExpires`), and `host/New-AnswerFile.ps1` refuses a volume whose first-logon script does not. Until 2026-11-17 nothing did: `OutlookAI-Exchange`'s expired on 2026-11-14, `OutlookAI-Build`'s base checkpoint would have refused every run from the same day, and the Outlook guests' would have expired on 2026-10-27 - after their frozen instants, so only an unfrozen checkpoint met it. The flag is set in every checkpoint a runner restores: the build VM's `CP-03-SDK-TEST-READY-UTC`, replaced under its own name, and the guests' new frozen checkpoints (`Docs/live-tier-on-the-vm.md` section 4.5a). Older checkpoints keep the old expiry. |
 | Live-test machine coordinates (store names, manifest path, sink ports) | `McpServer/OutlookAI.McpServer.Tests/live-fixtures/live-test-settings.json`, gitignored | **On a test guest:** rendered by `host/New-LiveTestSettings.ps1` from `Testbed/live-test-settings.template.json` and the guest's `liveTestSettings` section of `testbed.json` - committable only because a guest's stores are synthetic. **Anywhere else, the maintainer's machine above all:** copy `Testbed/live-test-settings.example.json` and fill it in by hand. The renderer never writes into any `live-fixtures` directory on the host. |
 | Dummy mail account password | wherever the sink is configured; the sink accepts anything | Anything. It is a loopback sink with no authentication. |
 | The Exchange VM's Microsoft 365 sign-in (Q108): the account, its password and its TOTP secret | `McpServer/OutlookAI.McpServer.Tests/live-fixtures/exchange-credentials.json`, gitignored: `account`, `passwordDpapi` and `totpUriDpapi` (an `otpauth://totp/...` URI), the two secrets DPAPI-encrypted for the maintainer's Windows user on his workstation | By the maintainer. Read only by `host/Get-ExchangeCredential.ps1`, in memory, at the moment of a sign-in; never printed, logged or written anywhere else (§1d) |
@@ -1033,8 +1040,9 @@ every other machine. Run it in the background or with a timeout of an hour or mo
 the indexed guest takes about 40 minutes. What it does, step by step, is what follows.
 
 **Its default checkpoints are the FROZEN ones (Q130 (a), decided by the maintainer 2026-10-03):**
-`testbed.json`'s `frozenClocks` names them - `CP-20C-FROZEN-CLOCK` on `OutlookAI-Indexed`,
-`CP-14B-FROZEN-CLOCK` on `OutlookAI-Unindexed` - each with time synchronisation off and its clock
+`testbed.json`'s `frozenClocks` names them - `CP-22C-FROZEN-CLOCK` on `OutlookAI-Indexed`,
+`CP-16B-FROZEN-CLOCK` on `OutlookAI-Unindexed` (since 2026-11-17, when `CP-20C` and `CP-14B` were
+made again with the password flag below) - each with time synchronisation off and its clock
 standing just after the guest's test data was built, so every run starts at that same instant and
 the data is never older than it was on the first run. A run from one never restarts the guest and
 never runs step 9a: a restart brings the clock back at the real date - `host/Restart-Guest.ps1`

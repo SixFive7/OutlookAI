@@ -151,8 +151,8 @@ if (Test-Path Variable:\PSNativeCommandUseErrorActionPreference) {
 $Guests = [ordered]@{
     # The resting checkpoints are the FROZEN ones (Q130 (a), decided 2026-10-03): testbed.json's
     # frozenClocks records them, and -SelfTest holds these two names to that record.
-    'OutlookAI-Indexed'   = [ordered]@{ ComputerName = 'OAI-INDEXED'; Indexed = $true; Checkpoint = 'CP-20C-FROZEN-CLOCK' }
-    'OutlookAI-Unindexed' = [ordered]@{ ComputerName = 'OAI-UNINDEXED'; Indexed = $false; Checkpoint = 'CP-14B-FROZEN-CLOCK' }
+    'OutlookAI-Indexed'   = [ordered]@{ ComputerName = 'OAI-INDEXED'; Indexed = $true; Checkpoint = 'CP-22C-FROZEN-CLOCK' }
+    'OutlookAI-Unindexed' = [ordered]@{ ComputerName = 'OAI-UNINDEXED'; Indexed = $false; Checkpoint = 'CP-16B-FROZEN-CLOCK' }
 }
 # Hyper-V's Time Synchronization integration service, by component id (Set-GuestClockFrozen.ps1).
 $TimeSyncComponentId = '2497F4DE-E9FA-4204-80E4-4B75C46419C0'
@@ -488,10 +488,10 @@ function Invoke-SelfTest {
 
     Write-Host '== the guests =='
     $i = Get-GuestFacts 'OutlookAI-Indexed'
-    Check 'the indexed guest is a test guest, resting on its frozen checkpoint' 'OAI-INDEXED|True|CP-20C-FROZEN-CLOCK' @($i.ComputerName, $i.Indexed, $i.Checkpoint)
+    Check 'the indexed guest is a test guest, resting on its frozen checkpoint' 'OAI-INDEXED|True|CP-22C-FROZEN-CLOCK' @($i.ComputerName, $i.Indexed, $i.Checkpoint)
     $u = Get-GuestFacts 'outlookai-unindexed'
     Check 'the unindexed guest is one, in any case' 'OutlookAI-Unindexed|OAI-UNINDEXED|False' @($u.Name, $u.ComputerName, $u.Indexed)
-    Check 'the unindexed guest rests on its frozen checkpoint' 'CP-14B-FROZEN-CLOCK' $u.Checkpoint
+    Check 'the unindexed guest rests on its frozen checkpoint' 'CP-16B-FROZEN-CLOCK' $u.Checkpoint
     Write-Host '== a frozen start (Q130 (a)) =='
     Check 'a frozen start is verified and handed Outlook as 9a would, not restarted or rebuilt' 'frozen-clock guard|Outlook NOT elevated' (Get-PrepareSteps -StartIsFrozen $true -SkipHubReset $false)
     Check 'and -SkipHubReset changes nothing there' 'frozen-clock guard|Outlook NOT elevated' (Get-PrepareSteps -StartIsFrozen $true -SkipHubReset $true)

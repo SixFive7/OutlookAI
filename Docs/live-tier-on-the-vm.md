@@ -3945,6 +3945,61 @@ of its items on every run - and, only where no corpus is declared, the last 30 d
 test computes no window of its own). On a frozen guest the two coincide; on a real clock the test now keeps timing
 a date predicate over the big store after 2026-11-01.
 
+### 4.5a The guest account's password, set never to expire - every checkpoint a runner restores, 2026-11-17
+
+**Why this section exists.** Windows' default maximum password age is 42 days, and nothing in the testbed
+said otherwise for `vmadmin` - although `Testbed/README.md` section 4 always said its password must never
+expire. On 2026-11-14 `OutlookAI-Exchange`'s expired and PowerShell Direct answered "The credential is
+invalid" (stream A set the flag through that VM's console). The other three VMs were read the same day, each
+from the checkpoint its runner restores, with time synchronisation off so that the guest stood at the
+checkpoint's own instant and the old password still logged on:
+
+| VM | Password last set | Expires | The checkpoint a runner restores, and its clock | Met it? |
+| --- | --- | --- | --- | --- |
+| `OutlookAI-Build` | 2026-10-03T01:46:16Z | 2026-11-14T01:46:16Z | `CP-03-SDK-TEST-READY-UTC`, 2026-10-03T22:10:40Z, then time sync to the real date | **every run from 2026-11-14** |
+| `OutlookAI-Indexed` | 2026-09-15T13:47:55Z | 2026-10-27T13:47:55Z | `CP-20C-FROZEN-CLOCK`, frozen at 2026-10-03T17:43:06Z | no - 24 days after the frozen instant; only an unfrozen checkpoint, which syncs to the real date, meets it |
+| `OutlookAI-Unindexed` | 2026-09-15T17:49:26Z | 2026-10-27T17:49:26Z | `CP-14B-FROZEN-CLOCK`, frozen at 2026-10-03T14:50:12Z | no - as above |
+
+Maximum password age read 42 days on all three (`net accounts`). Raw logs: `.work\vm-pool\` of the worktree
+`stream-f-vm-pool`.
+
+**The build VM: its base made again under its own name**, so every worktree's runner uses it unchanged. Under
+the runner's lock and a lease: the old `CP-03-SDK-TEST-READY-UTC` restored onto the saved VM, time sync
+turned OFF while it was saved, resumed - the guest at 2026-10-03T22:10:40Z; `Set-LocalUser -Name vmadmin
+-PasswordNeverExpires $true`, read back as never; saved, time sync ON while saved, resumed - the runner's own
+path to the real date, the clock within 0.1 s in 4 s - and a fresh PowerShell Direct logon at
+2026-11-17T15:20:01Z, after the old expiry, read never too. It did not settle in 15 minutes: Windows
+Defender's Scheduled Scan, overdue after the 44-day clock jump, held its CPU at 2 to 5 % - the jump every run
+of the old base made too - so the new checkpoint was taken during it. The old checkpoint was renamed
+`CP-03-SDK-TEST-READY-UTC-PW-EXPIRES` and kept; the new `CP-03-SDK-TEST-READY-UTC`, its child, was taken
+running at 16:35:09 local, with time sync on in it, restored and saved. Proved by the runner's full run of
+master `9f4646d` (below). `CP-01-WIN-CLEAN` and `CP-02-SDK-TEST-READY` keep the old expiry: no runner restores
+them, and a step that does - a rebuild from `CP-01`, or `CP-02` for a W. Europe base - sets the flag the same
+way first.
+
+**The two Outlook guests: new frozen checkpoints**, by section 4.5's "Making a new frozen checkpoint", each
+under a lease: the frozen checkpoint restored (time sync off travels with it), the flag set and read back,
+OUTLOOK.EXE not running, an ordinary running checkpoint taken of that, and `Set-GuestClockFrozen.ps1
+-FromCheckpoint <it> -NewCheckpoint <new> -Execute`:
+
+| Guest | Old frozen | Ordinary | New frozen | Frozen instant | Offset held over 20 s | Proving restore |
+| --- | --- | --- | --- | --- | --- | --- |
+| `OutlookAI-Indexed` | `CP-20C-FROZEN-CLOCK` | `CP-21C-PW-NEVER-EXPIRES` | `CP-22C-FROZEN-CLOCK` | 2026-10-03T17:43:33Z (1791049413), 27 s after the old one | 0.0 s | 1.2 s before the instant |
+| `OutlookAI-Unindexed` | `CP-14B-FROZEN-CLOCK` | `CP-15B-PW-NEVER-EXPIRES` | `CP-16B-FROZEN-CLOCK` | 2026-10-03T14:50:40Z (1791039040), 28 s after the old one | 0.0 s | 0.3 s before the instant |
+
+Nothing else changed - the hubs, bystanders, identity stores and Corpus A are the old checkpoints' - so each
+`hubPopulation` record stands, and `T1/FrozenGuestClockTests` proves the date checks from the new instants as
+from the old: half a minute closer to the 115-minute frontier margin, 108.2 and 104.2 minutes at the end of
+the longest run. `testbed.json`'s `frozenClocks` and `Testbed/host/Invoke-LiveTierOnGuest.ps1` name the new
+checkpoints. The old frozen ones are kept, unchanged, for the branches whose runner still names them: their
+password expires 24 days after their instant, so they keep working.
+
+**A new guest sets the flag at its first logon**: `Testbed/guest/Complete-FirstLogon.ps1` has a step for it
+and reads it back, and `Testbed/host/New-AnswerFile.ps1` refuses to build an answer volume whose first-logon
+script does not set it, read from the script's syntax tree; its new `-SelfTest` pins both on the committed
+template and script. Not yet proved by an install: that takes a fresh unattended install from a volume built
+after this change.
+
 ### 4.6 Crash dumps, and the compose crash they caught - both Outlook guests, 2026-10-04
 
 **Why this section exists.** OUTLOOK.EXE died now and then in the compose tests on both guests - `wwlib.dll`

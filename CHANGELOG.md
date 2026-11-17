@@ -1652,6 +1652,18 @@ its mailbox tests on, and change nothing you install.
   when the assistant kills the helper outright, which is what happens when Outlook has genuinely
   stopped responding and when a session ends abruptly.
 
+- ✅ **The test machines' account password never expires, so runs on the build machine log on again.**
+  Windows expires a password after 42 days, and nothing in the testbed said otherwise. The build
+  machine was installed on 2026-10-03, so its base checkpoint would have refused every run's
+  PowerShell Direct logon from 2026-11-14, the day the Exchange machine's did ("The credential is
+  invalid"). The Outlook test machines' passwords would have expired on 2026-10-27, after their
+  frozen clocks' instants, so only a run from an unfrozen checkpoint met it. The flag is now set in
+  every checkpoint a runner restores: the build machine's `CP-03-SDK-TEST-READY-UTC`, made again
+  under its own name from the old one with its clock held back so the password still worked, and
+  the Outlook machines' new frozen checkpoints `CP-22C-FROZEN-CLOCK` and `CP-16B-FROZEN-CLOCK`,
+  whose frozen instants moved 27 and 28 seconds. A new test machine sets it at its first logon, and
+  the answer-file builder refuses to build one whose first-logon script would not.
+
 - ✅ **The live-test runner deletes the build it made for each run instead of leaving 180 MB behind.**
   Git unregistered the commit's build tree after every run but left its directory, so every run of the
   test machines' runner kept about 180 MB of build output in its results folder. The runner now deletes
