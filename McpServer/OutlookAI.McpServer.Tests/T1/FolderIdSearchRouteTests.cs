@@ -13,7 +13,13 @@ namespace OutlookAI.McpServer.Tests.T1;
 /// the ID carries - with no Outlook call at all; an Exchange folder only through Outlook, refused with
 /// a clear message while Outlook is not answering; and a folder_id and store_id that contradict each
 /// other refused before anything is searched. Every id and URL here is synthetic.
+/// <para>
+/// Marked for the machine's zone (Q144) as a class: every test here goes through
+/// <c>MailService.Search</c>, whose staleness report converts a time with <c>DateTime.ToUniversalTime</c>,
+/// and <c>Search</c> takes no zone a test could set - so these run a second time in W. Europe.
+/// </para>
 /// </summary>
+[Trait("TimeZone", "Machine")]
 public sealed class FolderIdSearchRouteTests
 {
     private const string Store = "tier@vm.invalid";

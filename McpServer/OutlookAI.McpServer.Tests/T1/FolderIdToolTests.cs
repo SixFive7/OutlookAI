@@ -86,8 +86,10 @@ public sealed class FolderIdToolTests
         Assert.Equal(Prefix + "/0/Edge/trail space /", deep.Scope);
         Assert.Equal(Prefix, FolderScopeResolver.ForPrimaryStoreSegments(Prefix, new[] { "top " }, includeSubfolders: false).Scope);
 
-        string ownSql = WsSqlBuilder.Build(new IndexQuery { Scope = own.Scope, FolderPathsAnyOf = own.FolderPaths, Terms = new[] { "probe" } });
-        string deepSql = WsSqlBuilder.Build(new IndexQuery { Scope = deep.Scope, Terms = new[] { "probe" } });
+        // The statements through the builder's own validators, in the one statement that carries the scope
+        // and the folder paths and nothing else - no dates, so no reading of the machine's zone (Q144).
+        string ownSql = WsSqlBuilder.BuildFolderScopeExistenceProbe(own.Scope, own.FolderPaths);
+        string deepSql = WsSqlBuilder.BuildFolderScopeExistenceProbe(deep.Scope, null);
         Assert.Contains("System.ItemFolderPathDisplay='/tier@vm.invalid/Edge/trail space '", ownSql, StringComparison.Ordinal);
         Assert.Contains("SCOPE='" + Prefix + "/0/Edge'", ownSql, StringComparison.Ordinal);
         Assert.Contains("SCOPE='" + Prefix + "/0/Edge/trail space /'", deepSql, StringComparison.Ordinal);
