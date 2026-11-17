@@ -28,10 +28,10 @@ namespace OutlookAI.Services
     /// <c>HKCU\Software\Microsoft\Office\&lt;major&gt;\Outlook\Profiles\&lt;profile&gt;\&lt;section&gt;</c>,
     /// holds property 0x6649 (<c>00036649</c>, PR_RULE_ACTION_TYPE's tag) as the period in months - 0
     /// on three accounts, 12 on the fourth - which a Microsoft escalation engineer's MAPIToolkit
-    /// (<c>CachedMode.cpp</c>) sets through the profile section. NOT known: where a day period is kept
-    /// (0x665A is a candidate), whether Outlook honours a value written with Outlook closed, and
-    /// whether a policy's value overrides it without changing it (measured here: it does, for 12 vs a
-    /// policy of 0). The measurement belongs to the Exchange VM, the one test machine with an
+    /// (<c>CachedMode.cpp</c>) sets through the profile section; and a policy period stands over it
+    /// without changing it (the fourth account's 12, under a policy of 0). NOT known: where a day
+    /// period is kept (0x665A is a candidate), and whether Outlook honours a value written with
+    /// Outlook closed. The measurement belongs to the Exchange VM, the one test machine with an
     /// Exchange account (TODO.md).
     /// </para>
     ///
