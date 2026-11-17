@@ -4375,9 +4375,12 @@ rest kept, the registration gone. Two earlier runs did not count. At `-RunLevel 
 uninstaller ended with exit 1 after two minutes having done nothing, while elevated it worked; this
 guest's add-in was first installed from an elevated task (`Install-OutlookAIAddIn.ps1 -Phase
 Install`), and the likeliest reading - not tested further - is that its uninstaller asked Windows for
-elevation and nobody answered. And the probe once read the uninstaller's log while the uninstaller's
-second phase, `_unins.tmp`, still held it open, before it learned to wait for the log and the
-registration; that log shows the same three removals.
+elevation and nobody answered. That run's probe then stalled writing its JSON - the setup log's lines,
+read with `Get-Content`, carried objects `ConvertTo-Json` walked to 2.8 GB - and was ended by writing
+its job's exit file by hand, after which the driver restored and saved the guest as on every run; the
+probe now reads logs as plain strings. And the probe once read the uninstaller's log while the
+uninstaller's second phase, `_unins.tmp`, still held it open, before it learned to wait for the log
+and the registration; that log shows the same three removals.
 
 **Not measured:** the leaked certificate itself - a throwaway stood in for it, in the same store with
 the same command and the same thumbprint-addressed removal, so that no copy of the leaked one went
