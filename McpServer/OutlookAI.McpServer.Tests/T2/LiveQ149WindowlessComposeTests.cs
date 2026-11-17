@@ -22,6 +22,8 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// the pin Explorer's - then the editor read.</item>
 /// <item><b>W6</b>: the product's promotion once in a process, then later drafts read and committed with no
 /// Activate; then a displayed Explorer opened and closed, and read again.</item>
+/// <item><b>W7</b>: W6 with B3's commit on every later draft - <c>ModifiedFormPages.Add("Message")</c> before
+/// the read, <c>Close(olSave)</c> after the edit - the one promotion per process tried end to end.</item>
 /// </list>
 /// Why L1 goes through update_draft and not new_draft: new_draft sets the subject only after the compose, so
 /// an Outlook that ends at the compose's close would leave an UNTAGGED draft behind (rule 2). The inspector
@@ -153,7 +155,20 @@ public sealed class LiveQ149WindowlessComposeTests
             return;
         }
 
-        PromoteOnce(ProcessesW6, DraftsPerProcessW6);
+        PromoteOnce(Q149Cells.W6, ProcessesW6, DraftsPerProcessW6, formPageCommit: false);
+    }
+
+    [Fact]
+    [Trait("Requires", "MailAccount")]
+    [Trait("Requires", "InteractiveDesktop")]
+    public void W7_OnePromotionPerProcess_ThenTheFormPageCommit()
+    {
+        if (!_fixture.Begin(_output))
+        {
+            return;
+        }
+
+        PromoteOnce(Q149Cells.W7, ProcessesW6, DraftsPerProcessW6, formPageCommit: true);
     }
 
     [Fact]
@@ -172,7 +187,8 @@ public sealed class LiveQ149WindowlessComposeTests
         FetchOnly(Q149Cells.W2, 1, readBudgetMs: 3_000, firstReadAfterStartMs: 0, show: ShowKind.None);
         FetchOnly(Q149Cells.W4, 1, readBudgetMs: 2_000, firstReadAfterStartMs: 0, show: ShowKind.Inspector);
         FetchOnly(Q149Cells.W5, 1, readBudgetMs: 2_000, firstReadAfterStartMs: 0, show: ShowKind.Pin);
-        PromoteOnce(1, 3);
+        PromoteOnce(Q149Cells.W6, 1, 3, formPageCommit: false);
+        PromoteOnce(Q149Cells.W7, 1, 3, formPageCommit: true);
     }
 
     // ------------------------------------------------------------------ L1: the shipped compose
@@ -450,10 +466,17 @@ public sealed class LiveQ149WindowlessComposeTests
         Assert.Equal(trials, observed);
     }
 
-    // ------------------------------------------------------------------ W6: one promotion per process
+    // ------------------------------------------------------------------ W6, W7: one promotion per process
 
-    private void PromoteOnce(int processes, int draftsPerProcess)
+    /// <summary>
+    /// The product's promotion on a process's first draft, then the editor read directly on every later one.
+    /// W6 commits those as B1 does (<c>CurrentItem.Save</c>, <c>Close(olDiscard)</c>); W7
+    /// (<paramref name="formPageCommit"/>) as B3 does (<c>ModifiedFormPages.Add("Message")</c> before the
+    /// read, <c>Close(olSave)</c> after the edit).
+    /// </summary>
+    private void PromoteOnce(string cell, int processes, int draftsPerProcess, bool formPageCommit)
     {
+        string label = cell == Q149Cells.W7 ? "W7" : "W6";
         _fixture.ReleaseService();
         List<(string EntryId, string StoreId, string Token, int Iteration)> written = new();
         int directReads = 0;
@@ -462,14 +485,14 @@ public sealed class LiveQ149WindowlessComposeTests
         int afterExplorerOk = 0;
         for (int p = 1; p <= processes; p++)
         {
-            Run.Log(Q149Cells.W6 + " process " + p.ToString(CultureInfo.InvariantCulture) + ": stopping Outlook");
+            Run.Log(cell + " process " + p.ToString(CultureInfo.InvariantCulture) + ": stopping Outlook");
             LiveComposeProbe.StopOutlook(Run.Settings, Run.Log);
             Stopwatch clock = Stopwatch.StartNew();
             Q149OutlookClient client = Q149OutlookClient.Connect(clock, allowStart: true);
             Q149ProcessWatch? watch = null;
             Q149WindowWatch? windows = null;
             object? pin = null;
-            Q149Attempt process = new(Q149Cells.W6 + "-process", p);
+            Q149Attempt process = new(cell + "-process", p);
             try
             {
                 watch = RequireColdStart(process, clock);
@@ -484,12 +507,14 @@ public sealed class LiveQ149WindowlessComposeTests
                         OpenAndCloseADisplayedExplorer(client, process);
                     }
 
-                    Q149Attempt attempt = new(Q149Cells.W6, (p * 100) + d);
+                    Q149Attempt attempt = new(cell, (p * 100) + d);
+                    bool formPage = formPageCommit && d > 1;
                     attempt.Set("process", p).Set("draft", d).Set("pid", watch.Pid)
-                        .Set("mode", d == 1 ? "product-promotion" : afterExplorer ? "direct-after-displayed-explorer" : "direct");
+                        .Set("mode", d == 1 ? "product-promotion" : afterExplorer ? "direct-after-displayed-explorer" : "direct")
+                        .Set("commit", formPage ? "formpage-close-olsave" : "save-close-oldiscard");
                     (string entryId, string storeId, _) = Q149Drafts.CreateTaggedDraft(
-                        Run, client, "w6-" + p.ToString(CultureInfo.InvariantCulture) + "-" + d.ToString(CultureInfo.InvariantCulture), OldBody(d), addressToHub: false);
-                    string token = Token("W6", (p * 100) + d, pin: true);
+                        Run, client, label.ToLowerInvariant() + "-" + p.ToString(CultureInfo.InvariantCulture) + "-" + d.ToString(CultureInfo.InvariantCulture), OldBody(d), addressToHub: false);
+                    string token = Token(label, (p * 100) + d, pin: true);
                     int showsBefore = windows.Shows;
                     client.Run<object?>((app, ns) =>
                     {
@@ -508,13 +533,31 @@ public sealed class LiveQ149WindowlessComposeTests
                             }
                             else
                             {
+                                if (formPage)
+                                {
+                                    Q149Editor.AddMessageFormPage((object)inspector, attempt);
+                                }
+
                                 Q149EditorRead read = Q149Editor.ReadEditor((object)inspector, 0, 0);
                                 document = read.Document;
                                 attempt.Set("editorFailure", read.Failure);
                             }
 
                             attempt.Set("editorOk", document != null);
-                            if (document != null)
+                            if (document != null && formPage)
+                            {
+                                Q149Editor.ReplaceText(document, token);
+                                try
+                                {
+                                    inspector.Close(LiveComposeProbe.OlSave);
+                                    return null;
+                                }
+                                catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+                                {
+                                    attempt.Set("commitFailure", Q149Com.Failure(ex));
+                                }
+                            }
+                            else if (document != null)
                             {
                                 Q149Editor.ReplaceText(document, token);
                                 dynamic current = inspector.CurrentItem;
@@ -532,7 +575,16 @@ public sealed class LiveQ149WindowlessComposeTests
                                 }
                             }
 
-                            inspector.Close(LiveComposeProbe.OlDiscard);
+                            try
+                            {
+                                inspector.Close(LiveComposeProbe.OlDiscard);
+                            }
+                            catch (Exception ex) when (formPage && OutlookComSession.IsComCallFailure(ex))
+                            {
+                                // Only after a failed Close(olSave): recorded, and the cell goes on.
+                                attempt.Set("closeFailure", Q149Com.Failure(ex));
+                            }
+
                             return null;
                         }
                         finally
@@ -582,14 +634,17 @@ public sealed class LiveQ149WindowlessComposeTests
             }
         }
 
-        VerifyCommits(Q149Cells.W6, written);
-        Summary(Q149Cells.W6, processes, string.Format(
+        (int committed, int changedForm) = VerifyCommits(cell, written);
+        Summary(cell, processes, string.Format(
             CultureInfo.InvariantCulture,
-            "direct reads after one promotion: {0} of {1}; after a displayed Explorer was opened and closed: {2} of {3}",
+            "direct reads after one promotion: {0} of {1}; after a displayed Explorer was opened and closed: {2} of {3}; edits in the stored draft {4} of {5}, {6} with a message class or form properties changed",
             directOk,
             directReads,
             afterExplorerOk,
-            afterExplorerReads));
+            afterExplorerReads,
+            committed,
+            written.Count,
+            changedForm));
     }
 
     // ------------------------------------------------------------------ shared steps
@@ -779,27 +834,37 @@ public sealed class LiveQ149WindowlessComposeTests
     /// Whether each trial's edit reached the store - read in a fresh window-less Outlook through a separate
     /// client - then every draft deleted by EntryID, tag and marker.
     /// </summary>
-    private void VerifyCommits(string cell, IReadOnlyList<(string EntryId, string StoreId, string Token, int Iteration)> written)
+    /// <summary>
+    /// Re-reads every written draft through a separate client: the new text in, the old out, and - what B3's
+    /// commit could leave behind - the message class and the form-definition properties. Returns how many
+    /// carried the edit and how many came back changed.
+    /// </summary>
+    private (int Committed, int ChangedForm) VerifyCommits(string cell, IReadOnlyList<(string EntryId, string StoreId, string Token, int Iteration)> written)
     {
         if (written.Count == 0)
         {
-            return;
+            return (0, 0);
         }
 
         Run.Log(cell + ": verifying " + written.Count.ToString(CultureInfo.InvariantCulture) + " stored draft(s)");
         Stopwatch clock = Stopwatch.StartNew();
         using Q149OutlookClient holder = Q149OutlookClient.Connect(clock, allowStart: true);
         int committed = 0;
+        int changedForm = 0;
         foreach ((string entryId, string storeId, string token, int iteration) in written)
         {
             Q149Attempt attempt = new(cell + "-commit", iteration);
             try
             {
-                (string html, _, _, _, _, _, _) = Q149Drafts.Read(Run, entryId, storeId);
+                (string html, _, string messageClass, IReadOnlyList<string> formProperties, _, _, _) = Q149Drafts.Read(Run, entryId, storeId);
                 bool present = html.Contains(token, StringComparison.Ordinal);
                 bool oldGone = !html.Contains(OldToken(iteration), StringComparison.Ordinal);
-                attempt.Set("tokenPresent", present).Set("oldAbsent", oldGone).Set("html", Q149Html.Analyze(html).ToFields());
+                bool clean = string.Equals(messageClass, "IPM.Note", StringComparison.OrdinalIgnoreCase) && formProperties.Count == 0;
+                attempt.Set("tokenPresent", present).Set("oldAbsent", oldGone).Set("html", Q149Html.Analyze(html).ToFields())
+                    .Set("messageClass", messageClass)
+                    .Set("formPropertiesPresent", formProperties.Count == 0 ? null : formProperties.ToArray());
                 committed += present ? 1 : 0;
+                changedForm += clean ? 0 : 1;
             }
             catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex) || ex is InvalidOperationException)
             {
@@ -812,6 +877,7 @@ public sealed class LiveQ149WindowlessComposeTests
 
         Run.Log(cell + ": " + committed.ToString(CultureInfo.InvariantCulture) + " of " + written.Count.ToString(CultureInfo.InvariantCulture)
             + " edits are in the stored draft");
+        return (committed, changedForm);
     }
 
     private void Summary(string cell, int trials, string text)

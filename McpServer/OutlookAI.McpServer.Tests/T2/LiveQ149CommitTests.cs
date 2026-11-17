@@ -182,21 +182,7 @@ public sealed class LiveQ149CommitTests
                 inspector = item.GetInspector;
                 if (variant == Q149Cells.B3)
                 {
-                    dynamic pages = inspector.ModifiedFormPages;
-                    try
-                    {
-                        object page = pages.Add("Message");
-                        Q149Com.Release(page);
-                        attempt.Set("formPageAdded", true);
-                    }
-                    catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
-                    {
-                        attempt.Set("formPageFailure", Q149Com.Failure(ex));
-                    }
-                    finally
-                    {
-                        Q149Com.Release(pages);
-                    }
+                    Q149Editor.AddMessageFormPage((object)inspector, attempt);
                 }
 
                 Q149EditorRead read = Q149Editor.ReadEditor((object)inspector, 2_000, 250);

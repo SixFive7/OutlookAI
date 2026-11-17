@@ -616,6 +616,32 @@ internal static class Q149Editor
         return (isWordMail, editorType);
     }
 
+    /// <summary>
+    /// B3's commit, first half: <c>ModifiedFormPages.Add("Message")</c> on an inspector never activated, before
+    /// its editor is read; the second half is <c>Close(olSave)</c> after the edit. Records <c>formPageAdded</c>
+    /// or <c>formPageFailure</c> on <paramref name="attempt"/>.
+    /// </summary>
+    internal static void AddMessageFormPage(object inspectorObject, Q149Attempt attempt)
+    {
+        dynamic inspector = inspectorObject;
+        dynamic? pages = null;
+        try
+        {
+            pages = inspector.ModifiedFormPages;
+            object page = pages.Add("Message");
+            Q149Com.Release(page);
+            attempt.Set("formPageAdded", true);
+        }
+        catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+        {
+            attempt.Set("formPageFailure", Q149Com.Failure(ex));
+        }
+        finally
+        {
+            Q149Com.Release(pages);
+        }
+    }
+
     /// <summary>Replaces the whole text of a mail document with <paramref name="text"/> - the edit every commit cell makes.</summary>
     internal static void ReplaceText(object document, string text)
     {

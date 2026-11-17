@@ -59,6 +59,12 @@ public static class Q149Cells
     /// <summary>The product promotion once per process, then later drafts read directly (and committed without Activate).</summary>
     public const string W6 = "S1-W6-promote-once-per-process";
 
+    /// <summary>
+    /// As W6, every later draft committed as B3 commits - ModifiedFormPages.Add("Message") before the editor is
+    /// read, Close(olSave) after the edit - so one promotion per process is tried end to end, the commit included.
+    /// </summary>
+    public const string W7 = "S1-W7-promote-once-then-formpage-olsave";
+
     // Stage 2 - commits on re-opened drafts in a windowed Outlook.
 
     /// <summary>The product update_draft, with its Activate: the control.</summary>
