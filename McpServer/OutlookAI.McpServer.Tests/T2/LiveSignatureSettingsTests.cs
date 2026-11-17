@@ -55,7 +55,9 @@ public sealed class LiveSignatureSettingsTests
         }
 
         string? other = before.Profiles.Select(p => p.Name).FirstOrDefault(n => !ProfileAccountEntries.ProfileEquals(n, running));
-        object? recordedDefault = ReadValue(OutlookProfileRegistry.OutlookRootKeyPath, LiveProfileAccountRegistry.DefaultProfileValueName, out RegistryValueKind defaultKind);
+        RawRegistryValues recordedDefault = RawRegistryValues.Capture(
+            OutlookProfileRegistry.OutlookRootKeyPath, LiveProfileAccountRegistry.DefaultProfileValueName);
+        RawRegistryValues hubDefaults = HubDefaults(hubRow);
         using TestSignature sig = TestSignature.Create(Marker, "G1");
         string? draftId = null;
         try
@@ -107,9 +109,11 @@ public sealed class LiveSignatureSettingsTests
         finally
         {
             DeleteDraft(draftId);
-            RestoreValue(OutlookProfileRegistry.OutlookRootKeyPath, LiveProfileAccountRegistry.DefaultProfileValueName, recordedDefault, defaultKind);
-            RestoreDefaults(hubRow);
+            recordedDefault.Restore();
+            hubDefaults.Restore();
         }
+
+        AssertHubDefaultsAre(hubRow);
 
         Assert.Equal(0, LiveOutlookTestMailer.CountTaggedArtifacts(Hub, Marker));
     }
@@ -128,14 +132,15 @@ public sealed class LiveSignatureSettingsTests
         }
 
         string preferenceKey = SignaturePolicy.KeyPath(SignaturePolicySource.Preference, OutlookProfileRegistry.OfficeVersion);
-        object? original = ReadValue(preferenceKey, SignaturePolicy.NewSignatureValueName, out RegistryValueKind originalKind);
-        if (original != null)
+        RawRegistryValues original = RawRegistryValues.Capture(preferenceKey, SignaturePolicy.NewSignatureValueName);
+        if (SignaturePolicy.Read(new LiveSignatureSettingsRegistry(), OutlookProfileRegistry.OfficeVersion).NewMessage != null)
         {
             _output.WriteLine("PROVED NOTHING: this machine already deploys a new-message default in Common\\MailSettings; "
                 + "the test does not overwrite a real setting.");
             return;
         }
 
+        RawRegistryValues hubDefaults = HubDefaults(hubRow);
         using TestSignature deployed = TestSignature.Create(Marker, "Pref");
         using TestSignature own = TestSignature.Create(Marker, "Own");
         List<string> drafts = new();
@@ -188,9 +193,11 @@ public sealed class LiveSignatureSettingsTests
                 DeleteDraft(draft);
             }
 
-            RestoreValue(preferenceKey, SignaturePolicy.NewSignatureValueName, original, originalKind);
-            RestoreDefaults(hubRow);
+            original.Restore();
+            hubDefaults.Restore();
         }
+
+        AssertHubDefaultsAre(hubRow);
 
         Assert.Equal(0, LiveOutlookTestMailer.CountTaggedArtifacts(Hub, Marker));
     }
@@ -200,7 +207,8 @@ public sealed class LiveSignatureSettingsTests
     public void G3_ARelocatedSignatureFolder_IsWhereSignaturesAreListedWrittenAndInserted()
     {
         string key = SignatureFolder.RegistryKeyPath;
-        object? original = ReadValue(key, SignatureFolder.RegistryValueName, out RegistryValueKind originalKind);
+        RawRegistryValues original = RawRegistryValues.Capture(key, SignatureFolder.RegistryValueName);
+        bool wasRecorded = SignatureFolder.Current().FromRegistry;
         string defaultFolder = SignatureCatalog.DefaultSignatureDirectory;
         string relocatedName = SignatureCatalog.TestSignaturePrefix + "Folder" + Marker;
         string relocatedPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Microsoft", relocatedName);
@@ -240,7 +248,7 @@ public sealed class LiveSignatureSettingsTests
         finally
         {
             DeleteDraft(draftId);
-            RestoreValue(key, SignatureFolder.RegistryValueName, original, originalKind);
+            original.Restore();
             if (Directory.Exists(relocatedPath) && Path.GetFileName(relocatedPath).StartsWith(SignatureCatalog.TestSignaturePrefix, StringComparison.Ordinal))
             {
                 Directory.Delete(relocatedPath, recursive: true);
@@ -248,7 +256,7 @@ public sealed class LiveSignatureSettingsTests
         }
 
         Assert.False(Directory.Exists(relocatedPath), "the relocated test folder must be gone");
-        Assert.Equal(original == null ? "default" : "registry", Service.ListSignatures().Folder.Source);
+        Assert.Equal(wasRecorded ? "registry" : "default", Service.ListSignatures().Folder.Source);
         Assert.Equal(0, LiveOutlookTestMailer.CountTaggedArtifacts(Hub, Marker));
     }
 
@@ -272,79 +280,26 @@ public sealed class LiveSignatureSettingsTests
         });
     }
 
-    /// <summary>The hub's two defaults exactly as they were - written back raw, not through manage_signature.</summary>
-    private static void RestoreDefaults(SignatureDefaultsRow row)
+    /// <summary>The hub entry's two default values exactly as they stand - kind and data, or absent.</summary>
+    private static RawRegistryValues HubDefaults(SignatureDefaultsRow row)
     {
-        ProfileSignatureDefaultsStore store = new ProfileSignatureDefaultsStore();
-        Restore(store, row.AccountKey, SignatureManager.NewSignatureValueName, row.NewMessage);
-        Restore(store, row.AccountKey, SignatureManager.ReplyForwardSignatureValueName, row.ReplyForward);
-        SignatureDefaultsRow? now = store.ReadAccounts().FirstOrDefault(r => ProfileAccountEntries.KeyEquals(r.AccountKey, row.AccountKey));
-        Assert.Equal(row.NewMessage, now?.NewMessage);
-        Assert.Equal(row.ReplyForward, now?.ReplyForward);
+        return RawRegistryValues.Capture(row.AccountKey, SignatureManager.NewSignatureValueName, SignatureManager.ReplyForwardSignatureValueName);
     }
 
-    private static void Restore(ProfileSignatureDefaultsStore store, string accountKey, string valueName, string? original)
+    /// <summary>After the restore, the product reads the hub's defaults as it did before the test.</summary>
+    private static void AssertHubDefaultsAre(SignatureDefaultsRow before)
     {
-        if (original != null)
-        {
-            store.WriteDefault(accountKey, valueName, original);
-        }
-        else
-        {
-            store.ClearDefault(accountKey, valueName);
-        }
+        SignatureDefaultsRow? now = new ProfileSignatureDefaultsStore().ReadAccounts()
+            .FirstOrDefault(r => ProfileAccountEntries.KeyEquals(r.AccountKey, before.AccountKey));
+        Assert.Equal(before.NewMessage, now?.NewMessage);
+        Assert.Equal(before.ReplyForward, now?.ReplyForward);
     }
 
-    private static object? ReadValue(string key, string valueName, out RegistryValueKind kind)
+    /// <summary>Sets one value; the test's RawRegistryValues capture puts it back.</summary>
+    private static void WriteValue(string key, string valueName, object value, RegistryValueKind kind)
     {
-        using RegistryKey? opened = Registry.CurrentUser.OpenSubKey(key, writable: false);
-        object? value = opened?.GetValue(valueName, null, RegistryValueOptions.DoNotExpandEnvironmentNames);
-        kind = value == null ? RegistryValueKind.String : opened!.GetValueKind(valueName);
-        return value;
-    }
-
-    private readonly HashSet<string> _keysCreated = new(StringComparer.OrdinalIgnoreCase);
-
-    private void WriteValue(string key, string valueName, object value, RegistryValueKind kind)
-    {
-        using (RegistryKey? existing = Registry.CurrentUser.OpenSubKey(key, writable: false))
-        {
-            if (existing == null)
-            {
-                _keysCreated.Add(key);
-            }
-        }
-
         using RegistryKey created = Registry.CurrentUser.CreateSubKey(key, writable: true);
         created.SetValue(valueName, value, kind);
-    }
-
-    /// <summary>
-    /// Puts a value back exactly: rewritten with its kind, or deleted when it was absent - and a key
-    /// this test had to create is removed again once it is empty.
-    /// </summary>
-    private void RestoreValue(string key, string valueName, object? original, RegistryValueKind kind)
-    {
-        if (original != null)
-        {
-            WriteValue(key, valueName, original, kind);
-            return;
-        }
-
-        using (RegistryKey? opened = Registry.CurrentUser.OpenSubKey(key, writable: true))
-        {
-            opened?.DeleteValue(valueName, throwOnMissingValue: false);
-        }
-
-        if (_keysCreated.Remove(key))
-        {
-            using RegistryKey? left = Registry.CurrentUser.OpenSubKey(key, writable: false);
-            if (left != null && left.ValueCount == 0 && left.SubKeyCount == 0)
-            {
-                left.Dispose();
-                Registry.CurrentUser.DeleteSubKey(key, throwOnMissingSubKey: false);
-            }
-        }
     }
 
     private void DeleteDraft(string? entryId)

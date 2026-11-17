@@ -138,9 +138,12 @@ public sealed class LiveManageSignatureTests
             return;
         }
 
-        // Read-first (restore-exact contract): remember the ORIGINAL values verbatim.
+        // Read-first (restore-exact contract): remember the ORIGINAL values verbatim - raw, kind and
+        // data, because the signature registry snapshot holds the run to exactly that.
         string? originalNew = hubRow.NewMessage;
         string? originalReply = hubRow.ReplyForward;
+        RawRegistryValues originals = RawRegistryValues.Capture(
+            hubRow.AccountKey, SignatureManager.NewSignatureValueName, SignatureManager.ReplyForwardSignatureValueName);
         _output.WriteLine($"hub originals in '{profile}': new={(originalNew ?? "<absent>")} reply={(originalReply ?? "<absent>")}");
         List<string> backupsToCleanUp = new();
 
@@ -211,10 +214,9 @@ public sealed class LiveManageSignatureTests
         }
         finally
         {
-            // Restore-exact: write the original values back (or remove what we added
+            // Restore-exact: write the original values back raw (or remove what we added
             // when the original was absent) - THEN assert the restoration held.
-            RestoreValue(store, hubRow.AccountKey, SignatureManager.NewSignatureValueName, originalNew);
-            RestoreValue(store, hubRow.AccountKey, SignatureManager.ReplyForwardSignatureValueName, originalReply);
+            originals.Restore();
             DeleteTestSignatureFiles(directory, name);
             foreach (string backup in backupsToCleanUp)
             {
@@ -306,19 +308,6 @@ public sealed class LiveManageSignatureTests
             0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE,
             0x42, 0x60, 0x82,
         };
-    }
-
-    private static void RestoreValue(
-        ProfileSignatureDefaultsStore store, string accountKey, string valueName, string? original)
-    {
-        if (original != null)
-        {
-            store.WriteDefault(accountKey, valueName, original);
-        }
-        else
-        {
-            store.ClearDefault(accountKey, valueName);
-        }
     }
 
     /// <summary>Exact-name deletion of the test signature's possible file set (no patterns beyond the pinned prefix name).</summary>

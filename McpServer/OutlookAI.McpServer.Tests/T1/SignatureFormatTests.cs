@@ -144,7 +144,7 @@ public sealed class SignatureFormatTests
     [Fact]
     public void RtfReplace_InsideARun_InTheDocumentsOwnEscaping_AcrossSourceLineBreaks()
     {
-        string rtf = "{\\rtf1\\ansi\\ansicpg1252 Jan Modaal\\par Caf\\'e9 de\r\nBuren\\par Tel 010 123}";
+        string rtf = "{\\rtf1\\ansi\\ansicpg1252 Jan Modaal\\par Caf\\'e9 de \r\nBuren\\par Tel 010 123}";
 
         SignatureTextReplacement cafe = SignatureRtf.ReplaceText(rtf, "Café de Buren", "Bar é中");
         Assert.Equal(1, cafe.Replaced);
