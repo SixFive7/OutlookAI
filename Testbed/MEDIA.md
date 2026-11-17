@@ -14,7 +14,7 @@ been unrebuildable. Hence the rule at the bottom of this file.
 | | Needed | On this machine (checked 2026-08-24) |
 | --- | --- | --- |
 | Windows | A Windows 11 x64 image | **STAGED 2026-08-24**: `.work/media/Win11_25H2_EnglishInternational_x64_v2.iso` (7.9 GB, gitignored). Consumer multi-edition, volume label `CCCOMA_X64FRE_EN-GB_DV9`, so it carries Pro. |
-| Office | Office Deployment Tool + a configuration | **STAGED**: `.work/office-odt/` (gitignored), holding `setup.exe` and `VoIPFabric.xml`. A testbed-specific `Testbed.xml` sits beside them — see below. |
+| Office | Office Deployment Tool + a configuration | **STAGED**: `.work/office-odt/` (gitignored), holding `setup.exe` and `Workstation.xml`. A testbed-specific `Testbed.xml` sits beside them — see below. |
 | .NET SDK | The .NET 10 SDK, **win-x64**, as the `.exe` installer | **STAGED 2026-09-17**: `.work/media/dotnet-sdk-10.0.401-win-x64.exe` (215,437,248 bytes, gitignored), SHA-512 **matched against Microsoft's published hash**. It is what lets a guest run `dotnet test` at all — see "The .NET SDK" below for the version, the source and the hash. |
 | Mail sink | Inbucket **3.1.1**, the Windows x64 release zip | **STAGED 2026-09-24**: `.work/media/inbucket_3.1.1_windows_amd64.zip` (11,444,052 bytes, gitignored), SHA-256 **matched three ways** - the maintainers' own checksums file, GitHub's asset digest, and the file itself. The one third-party program on the guests, by the maintainer's decision - see "The mail sink" below. `Testbed/host/Get-MailSinkMedia.ps1` stages it. |
 | VSTO runtime | `vstor_redist.exe` 10.0.60917.00, the Visual Studio 2010 Tools for Office runtime redistributable — **the same file every release compiles into its installer** | **Declared 2026-09-24; its home is `.work/media/vstor_redist.exe`.** On this machine an identical copy (same SHA-256, Microsoft-signed) sits at `Redist/vstor_redist.exe`, where a local release build expects it, and that is what the first host builds used. See "The add-in" below. |
@@ -59,7 +59,7 @@ en-US default, not a "sensible" configuration: that machine's configuration is w
 userbase sits, so it is what the live tier should be testing against. A testbed set up the tidy
 way would be a testbed that cannot reproduce the bugs the userbase hits.
 
-**Measured on the host (PC657) on 2026-08-25.** These are readings, not intentions — the command
+**Measured on the host (the maintainer's workstation) on 2026-08-25.** These are readings, not intentions — the command
 behind each is in the last column so any of them can be checked rather than believed.
 
 | Setting | Value | Read with |
@@ -120,7 +120,7 @@ anything.
 | File | What it is |
 | --- | --- |
 | `.work/office-odt/setup.exe` | The Office Deployment Tool. 7.2 MB, dated 2024-08-09. |
-| `.work/office-odt/VoIPFabric.xml` | The **maintainer's workstation** configuration. Carries product keys. |
+| `.work/office-odt/Workstation.xml` | The **maintainer's workstation** configuration. Carries product keys. |
 | `.work/office-odt/Testbed.xml` | The **testbed** configuration, narrower — see below. Carries a product key. |
 
 **THIS IS A PRECONDITION, NOT AN ARTEFACT.** Nothing in this repository regenerates it, and
@@ -131,7 +131,7 @@ recreate the configuration from the table below plus the product key, which live
 maintainer and nowhere else. The Windows ISO in `.work/media/` has exactly the same standing.
 
 **The configuration files contain product keys and are therefore not reproduced here.** What the
-**existing** guest was built with — `VoIPFabric.xml`, the workstation configuration, because at
+**existing** guest was built with — `Workstation.xml`, the workstation configuration, because at
 the time there was no other (*noted 2026-09-27: "existing" is the original guest, `OutlookAI-TestVM`,
 the one the published measurements were taken on - the only guest when this was written, on
 2026-08-24, and retired and deleted on 2026-10-03. `Testbed/README.md` section 6 item 3 had it as
@@ -155,7 +155,7 @@ client does not provide.
 ### The testbed configuration — `.work/office-odt/Testbed.xml`
 
 **A testbed configuration is narrower than the maintainer's**, and as of 2026-09-15 it exists as
-its own file rather than as an argument in this document. `VoIPFabric.xml` installs Visio, Project
+its own file rather than as an argument in this document. `Workstation.xml` installs Visio, Project
 and proofing tools because it is a workstation configuration. A testbed wants `ProPlus2024Volume`
 alone — Outlook is required, Word is worth keeping because HTML signatures are rendered through
 it, and the rest is install time and disk for nothing.
@@ -169,14 +169,14 @@ never anywhere tracked. `Tools/Checks/check-testbed-references.ps1` fails the bu
 credential-shaped literal under `Testbed/`, but do not rely on that as the guard — the file simply
 does not belong in the repository at all.
 
-**What is in it, so a rebuilder can reconstruct it without the key.** It is `VoIPFabric.xml` with
+**What is in it, so a rebuilder can reconstruct it without the key.** It is `Workstation.xml` with
 the three extra products deleted; nothing else is changed except the two cosmetic identifiers in
 the last row:
 
 | | Value |
 | --- | --- |
 | Products | `ProPlus2024Volume` **only** — `VisioPro2024Volume`, `ProjectPro2024Volume` and `ProofingTools` removed |
-| `PIDKEY` | the same volume key `VoIPFabric.xml` carries for `ProPlus2024Volume`. **Not written down anywhere in this repository** |
+| `PIDKEY` | the same volume key `Workstation.xml` carries for `ProPlus2024Volume`. **Not written down anywhere in this repository** |
 | Channel | `PerpetualVL2024` |
 | Edition | `OfficeClientEdition="64"` |
 | Languages | `en-us`, `MatchOS`, `nl-nl` |

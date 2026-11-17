@@ -769,6 +769,14 @@ its mailbox tests on, and change nothing you install.
   network clears the backoff and checks shortly after, and "Check for updates" always runs straight
   away.
 
+- 📝 **The documents and the TODO list name no real person, address or machine any more (Q189).**
+  They quoted the maintainer's computer name, his user name in paths under his profile, his
+  personal and business addresses, the item counts of his mailboxes, a colleague's first name, and,
+  in AGENTS.md, the Exchange VM's real mailbox. They now say "the maintainer's workstation",
+  `C:\Users\<user>\`, addresses under reserved domains, rounded counts, "a colleague" and "the
+  Exchange VM's mailbox". `Testbed/MEDIA.md` calls the Office configuration the workstation was
+  built from `Workstation.xml`.
+
 - ✅ **Tests use placeholder stores, names and addresses instead of real ones (Q189).**
   Twelve tests named their example stores after the maintainer's own Outlook profile: his address,
   his name and a real archive's file name. They now use `maintainer@personal.invalid`, `Alex

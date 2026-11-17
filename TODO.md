@@ -1841,11 +1841,11 @@
   Recommended: (2), with (3) for each test as it is next touched.
 
 - [ ] **Waiting for the shared test mailbox (Q109).** The maintainer requested a free shared
-  mailbox in his Microsoft 365 tenant on 2026-10-03 (for example `outlookai-test@xxlnet.nl`, with
-  full access for `telefonie@xxlnet.nl`). On 2026-10-08 it did not exist yet; creating it lies with
-  Melvin. Until it exists, the six `Requires=DelegateStore` Exchange tests stay disabled on the
-  Exchange test VM. Once it does: enable them there, and move test writes from telefonie into the
-  shared mailbox wherever a test allows it (Q110).
+  mailbox in his Microsoft 365 tenant on 2026-10-03, with full access for the Exchange VM's
+  mailbox. On 2026-10-08 it did not exist yet; creating it lies with a colleague. Until it exists,
+  the six `Requires=DelegateStore` Exchange tests stay disabled on the Exchange test VM. Once it
+  does: enable them there, and move test writes from the Exchange VM's mailbox into the shared
+  mailbox wherever a test allows it (Q110).
   Then also read which signature, if any, Outlook itself puts in a reply from that mailbox, and give
   OutlookAI's reply drafts there the same (Q160, decided 2026-11-17). Until then a reply from a
   delegate or shared mailbox gets no signature, and its result says so.
@@ -1855,7 +1855,7 @@
   read-only - profile `ExchangeGuest` - and runs only `Writes=Nothing` tests (`Testbed/README.md`
   section 4e). Nothing in the design is built.
 
-- [ ] **Decide how the one tagged leftover in telefonie's Sent Items goes.** The Exchange VM's
+- [ ] **Decide how the one tagged leftover in the Exchange mailbox's Sent Items goes.** The Exchange VM's
   read-only count (`T2/LiveExchangeHubArtifactTests`) found one item whose subject carries
   `OutlookAI-McpTest` in the mailbox's Sent Items on 2026-10-03 - from the workstation years, not from
   the VM. It fails that test on every run until it is gone, and only a tested sweep on an approved

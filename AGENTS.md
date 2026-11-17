@@ -462,7 +462,7 @@ beneath it as a floor - a Production profile refuses every in-process write and 
 MCP tool. **Never edit the workstation's settings file, never re-declare its profile, and never set
 the live opt-in there.** `Testbed/README.md` section 4d.
 
-**The Exchange VM, `OutlookAI-Exchange`, holds a REAL mailbox** (Q108): `telefonie@xxlnet.nl`,
+**The Exchange VM, `OutlookAI-Exchange`, holds a REAL mailbox** (Q108), with
 production mail of lower value than the maintainer's others. Every live test needing Exchange runs
 there (`Testbed/README.md` section 4e), and his conditions bind it, in his words - only *"in such a
 way that it does not touch [non-test] data in the mailbox and in such a way that it keeps the mailbox

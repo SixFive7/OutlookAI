@@ -620,7 +620,7 @@ and downgraded rather than closed.
 folder set deliberately EXCLUDES the Archive folder (id 39) because "business-store archives hold
 ~100k items and a LIKE count over them takes minutes - adding 39 here made the cross-account sweeps
 time out (live-bitten 2026-07-26)". A restriction that is instant on a 10,000-item folder takes
-minutes on a 108,144-item one, and nothing about the query changes. **A generated corpus of 20,000
+minutes on a 100,000-item one, and nothing about the query changes. **A generated corpus of 20,000
 items per store is, by construction, below every threshold of this kind that this project has hit.**
 
 **(e) Provider and object-model behaviour that differs by store type.** `[R]` Four already paid for:
@@ -853,7 +853,7 @@ delegate access to the other, and real transport between them.
   that closes the 15-method hard floor. It also makes the sends real, which retires the Outbox
   problem in 2.3(b) entirely.
 - **Against:** a tenant costs money and administration; cached-mode OST behaviour on a small fresh
-  mailbox is not the same as on a 108,144-item Archive, so it closes the *semantics* gap but only
+  mailbox is not the same as on a 100,000-item Archive, so it closes the *semantics* gap but only
   narrows the *scale* gap; and it is the largest amount of new infrastructure on this list.
 - **Cost:** `[I]` two M365 Business Basic seats is on the order of tens of euros a year, plus initial
   setup and a second VM's disk and checkpoints, plus keeping a second guest patched.
@@ -1122,7 +1122,7 @@ constants.
    both the dummy-account and three-store decisions. Its section 2.3 recommends a **two**-PST layout
    with the corpus as hub, which the 2026-08-20 three-store decision supersedes. Its section 7
    "Known limits" is still accurate and still useful.
-2. **`C:\Users\jori\Downloads\tmp-aitrace\failing-now.txt`** holds stale output from before `03a0857`:
+2. **`C:\Users\<user>\Downloads\tmp-aitrace\failing-now.txt`** holds stale output from before `03a0857`:
    `T1/SweepSortPropertyTests` failing on the namespace-reference sort. That defect is fixed; the file
    is misleading if read now and should be deleted with the rest of the scratch folder.
 3. **`corpus-measurement-plan.md` step 5 (exhaustive scan throughput) has never been run**, on either

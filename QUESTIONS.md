@@ -286,7 +286,7 @@ folder and 3,000 per store. It was set when the walk cost five cross-process cal
 fifteen calls instead of fifteen thousand. So the reason the budget is where it is has largely gone,
 and the budget was deliberately left alone because moving it changes what the guard proves.
 
-**Why it matters.** At 500 per folder, a 4,918-item Sent Items and a 108,144-item Archive are
+**Why it matters.** At 500 per folder, a 4,918-item Sent Items and a 100,000-item Archive are
 counted and not identified. In those folders the guard can see that items left but not which ones,
 cannot tell a deletion from a filing, and is blind to a deletion masked by an arrival. Those are
 exactly the folders a runaway test would do the most damage in.
@@ -297,7 +297,7 @@ covers Sent Items and most working folders and costs roughly 125 table calls per
 the per-folder limit but keep a tight per-store budget, so one huge folder cannot consume the whole
 allowance. *(d)* Raise only for non-delegate stores, on the reasoning that delegate stores are the
 slow ones and the least likely to be written to. *(e)* Identify everything, no budget - honest but
-unbounded, and a 108,144-item Archive is roughly 550 table calls and tens of MB of EntryIDs held
+unbounded, and a 100,000-item Archive is roughly 550 table calls and tens of MB of EntryIDs held
 twice.
 
 **Recommendation.** *(b)*, once one live run has printed what the census actually costs. The whole

@@ -55,7 +55,7 @@ discipline — see [Why the numbers are local-only](#why-the-numbers-are-local-o
     README.txt                       written on first use: what this is, why it is not in the repo
 ```
 
-On this machine that resolves to `C:\Users\jori\AppData\Local\OutlookAI\Measurements\`. The
+On this machine that resolves to `C:\Users\<user>\AppData\Local\OutlookAI\Measurements\`. The
 directory is created on first use. Override with `-StoreRoot`, but see below — the gate will
 refuse a great many paths on purpose.
 
