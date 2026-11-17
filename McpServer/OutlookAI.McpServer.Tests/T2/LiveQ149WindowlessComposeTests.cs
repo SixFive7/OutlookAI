@@ -646,7 +646,9 @@ public sealed class LiveQ149WindowlessComposeTests
             .Set("windowShows", windows.Shows)
             .Set("onScreenShows", windows.OnScreenShows)
             .Set("shownClasses", windows.ShownClasses.Distinct(StringComparer.Ordinal).ToArray())
+            .Set("windowEvents", windows.Events.ToArray())
             .Set("foregroundToOutlook", windows.ForegroundToOutlook)
+            .Set("foregroundOutlookAfter", Q149Native.ForegroundOutlookClass())
             .Set("userVisibleAfter", watch.HasExited ? 0 : ComposeSurface.CountUserVisibleWindows());
         return lifetime;
     }

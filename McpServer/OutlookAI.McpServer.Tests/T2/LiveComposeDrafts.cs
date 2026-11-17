@@ -677,6 +677,7 @@ internal static class Q149Editor
 
                     look.Add(new WordParagraphLook(
                         Q149WordLook.NormalizeText((string?)range.Text),
+                        TopBorder(paragraph),
                         StyleName(paragraph),
                         (string?)font.Name ?? string.Empty,
                         Convert.ToDouble(font.Size, CultureInfo.InvariantCulture),
@@ -756,6 +757,28 @@ internal static class Q149Editor
                 Q149Com.Release(item);
             }
         });
+    }
+
+    /// <summary>The paragraph's top border line style (wdBorderTop), 0 for none - a reply's separator line is one.</summary>
+    private static int TopBorder(dynamic paragraph)
+    {
+        dynamic? borders = null;
+        dynamic? top = null;
+        try
+        {
+            borders = paragraph.Borders;
+            top = borders.Item(-1);
+            return Convert.ToInt32(top.LineStyle, CultureInfo.InvariantCulture);
+        }
+        catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+        {
+            return -1;
+        }
+        finally
+        {
+            Q149Com.Release(top);
+            Q149Com.Release(borders);
+        }
     }
 
     private static string StyleName(dynamic paragraph)

@@ -810,6 +810,21 @@ public static class HtmlOnlyDraftComposer
     /// </summary>
     public static string ParagraphsFromHtml(string fragment)
     {
+        return ParagraphsFromHtml(fragment, HtmlOnlyStyle.Message);
+    }
+
+    /// <summary>
+    /// The fragment as the given <paramref name="style"/> places it: <see cref="HtmlOnlyStyle.Message"/> gives every
+    /// bare paragraph the message's <c>MsoNormal</c>; <see cref="HtmlOnlyStyle.AsImported"/> leaves the markup as it
+    /// came, the way Word's HTML import receives it when it inserts a file.
+    /// </summary>
+    public static string ParagraphsFromHtml(string fragment, HtmlOnlyStyle style)
+    {
+        if (style == HtmlOnlyStyle.AsImported)
+        {
+            return fragment ?? string.Empty;
+        }
+
         return ParagraphStart.Replace(fragment ?? string.Empty, m =>
             m.Groups["attrs"].Value.Contains("class", StringComparison.OrdinalIgnoreCase)
                 ? m.Value
@@ -824,6 +839,12 @@ public static class HtmlOnlyDraftComposer
     /// </summary>
     public static string SignatureBlock(string signatureHtm, Func<string, string?> srcToCid)
     {
+        return SignatureBlock(signatureHtm, srcToCid, HtmlOnlyStyle.Message);
+    }
+
+    /// <summary><see cref="SignatureBlock(string, Func{string, string})"/> in the given <paramref name="style"/>.</summary>
+    public static string SignatureBlock(string signatureHtm, Func<string, string?> srcToCid, HtmlOnlyStyle style)
+    {
         ArgumentNullException.ThrowIfNull(srcToCid);
         Match inner = BodyInner.Match(signatureHtm ?? string.Empty);
         string content = inner.Success ? inner.Groups["inner"].Value : signatureHtm ?? string.Empty;
@@ -832,7 +853,7 @@ public static class HtmlOnlyDraftComposer
             string? cid = srcToCid(m.Groups["src"].Value);
             return cid == null ? m.Value : m.Groups[1].Value + "\"cid:" + cid + "\"";
         });
-        content = ParagraphsFromHtml(content);
+        content = ParagraphsFromHtml(content, style);
         return "<a name=\"_MailAutoSig\"></a>" + content.Trim();
     }
 
@@ -955,9 +976,20 @@ public static class HtmlOnlyDraftComposer
     }
 }
 
+/// <summary>How the HTML-only draft styles what it places.</summary>
+public enum HtmlOnlyStyle
+{
+    /// <summary>Bare paragraphs given the message's <c>MsoNormal</c> class, so they take the message's own style.</summary>
+    Message = 0,
+
+    /// <summary>The markup left as it came, as Word's HTML import receives it from an inserted file.</summary>
+    AsImported = 1,
+}
+
 /// <summary>One paragraph as Word lays it out when Outlook opens the item - what a reader sees, not the markup.</summary>
 public sealed record WordParagraphLook(
     string Text,
+    int TopBorder,
     string Style,
     string Font,
     double Size,
@@ -978,7 +1010,7 @@ public sealed record WordParagraphLook(
     {
         return string.Format(
             CultureInfo.InvariantCulture,
-            "len={0} h={1} style='{2}' font='{3}' {4}pt b={5} i={6} color={7} align={8} before={9} after={10} line={11} indent={12} shapes={13} {14}x{15}",
+            "len={0} h={1} border={16} style='{2}' font='{3}' {4}pt b={5} i={6} color={7} align={8} before={9} after={10} line={11} indent={12} shapes={13} {14}x{15}",
             Text.Length,
             Q149Html.Hash(Text),
             Style,
@@ -994,7 +1026,8 @@ public sealed record WordParagraphLook(
             LeftIndent,
             InlineShapes,
             ShapeWidth,
-            ShapeHeight);
+            ShapeHeight,
+            TopBorder);
     }
 }
 
@@ -1079,6 +1112,7 @@ public static class Q149WordLook
                 Note(where + "text " + Q149Html.Hash(e.Text) + "/" + e.Text.Length + " vs " + Q149Html.Hash(a.Text) + "/" + a.Text.Length);
             }
 
+            Field(where + "topBorder", e.TopBorder, a.TopBorder);
             Field(where + "style", e.Style, a.Style);
             Field(where + "font", e.Font, a.Font);
             Number(where + "size", e.Size, a.Size);

@@ -103,7 +103,7 @@ public sealed class LiveQ149HtmlOnlyParityTests
         });
 
         // C2: a new mail, both ways.
-        List<(string Product, string HtmlOnly, string Token)> newMail = new();
+        List<(string Product, string Message, string AsImported, string Token)> newMail = new();
         for (int i = 1; i <= newPairs; i++)
         {
             newMail.Add(NewMailPair(client, storeId, signature, i, html: i % 2 == 1));
@@ -144,38 +144,71 @@ public sealed class LiveQ149HtmlOnlyParityTests
 
     // ------------------------------------------------------------------ C2: a new mail
 
-    private (string Product, string HtmlOnly, string Token) NewMailPair(Q149OutlookClient client, string storeId, TestSignature signature, int i, bool html)
+    /// <summary>The two ways (c) may style what it places, each compared with today's draft on its own line.</summary>
+    private static readonly HtmlOnlyStyle[] Styles = { HtmlOnlyStyle.Message, HtmlOnlyStyle.AsImported };
+
+    private (string Product, string Message, string AsImported, string Token) NewMailPair(Q149OutlookClient client, string storeId, TestSignature signature, int i, bool html)
     {
-        Q149Attempt attempt = new(Q149Cells.C2, i);
         string token = "Q149BODY" + i.ToString(CultureInfo.InvariantCulture) + Run.Marker;
         (string? text, string? fragment) = Body(token, html);
-        attempt.Set("bodyFormat", html ? "html" : "text");
-
-        LiveStoreWriteGuard.Assert(Run.Hub, StoreWriteKind.Draft, "q149 C2 product draft");
-        DraftOutcome product = Service.NewDraft(
-            Run.Hub, Run.Hub, cc: null, Run.TaggedSubject("c2-product-" + i.ToString(CultureInfo.InvariantCulture)), text, display: false,
-            signature: signature.Name, bodyHtml: fragment);
-        Run.Allow(product.EntryId);
-        attempt.Set("productPlacement", product.BodyPlacement).Set("productSignatureApplied", product.SignatureApplied)
-            .Set("productComposeError", product.ComposeSurfaceError);
+        Q149Attempt productAttempt = new(Q149Cells.C2 + "-product", i);
+        DraftOutcome product = ProductDraftWithRetry(
+            productAttempt,
+            label => Service.NewDraft(Run.Hub, Run.Hub, cc: null, Run.TaggedSubject(label), text, display: false, signature: signature.Name, bodyHtml: fragment),
+            "c2-product-" + i.ToString(CultureInfo.InvariantCulture));
+        Run.Write(productAttempt);
         string productHtml = Q149Drafts.Read(Run, product.EntryId, storeId).Html;
-
         (string, string, string)? frame = HtmlOnlyDraftComposer.ReadFrame(productHtml);
         Assert.True(frame != null, "Q149: today's draft has no <html>, <head> and <body> to take the stylesheet from");
-        string cid = "image001.png@" + Run.Marker;
-        string signatureBlock = HtmlOnlyDraftComposer.SignatureBlock(File.ReadAllText(signature.FilePath), src => SignaturePicture(src, cid));
-        string paragraphs = html ? HtmlOnlyDraftComposer.ParagraphsFromHtml(fragment!) : HtmlOnlyDraftComposer.ParagraphsFromText(text!);
-        (string htmlOnly, Q149HtmlFacts stub) = Q149Drafts.CreateHtmlOnlyDraft(
-            Run, client, "c2-htmlonly-" + i.ToString(CultureInfo.InvariantCulture), Pictures(signature, cid),
-            _ => HtmlOnlyDraftComposer.ComposeNew(frame!.Value, paragraphs, signatureBlock));
 
-        // C1: what a new item holds with no inspector ever - the stylesheet (c) would have to bring itself.
-        attempt.Set("noInspectorTemplate", stub.ToFields());
-        Record(Q149Cells.C1, "a stylesheet for a new mail without Word", stub.StyleBlocks > 0 && stub.WordSectionAt >= 0);
+        List<string> made = new();
+        foreach (HtmlOnlyStyle style in Styles)
+        {
+            Q149Attempt attempt = new(Q149Cells.C2, (i * 10) + (int)style);
+            attempt.Set("bodyFormat", html ? "html" : "text").Set("variant", style.ToString())
+                .Set("productPlacement", product.BodyPlacement).Set("productComposeError", product.ComposeSurfaceError);
+            string cid = "image001.png@" + Run.Marker + style.ToString();
+            string signatureBlock = HtmlOnlyDraftComposer.SignatureBlock(File.ReadAllText(signature.FilePath), src => SignaturePicture(src, cid), style);
+            string paragraphs = html ? HtmlOnlyDraftComposer.ParagraphsFromHtml(fragment!, style) : HtmlOnlyDraftComposer.ParagraphsFromText(text!);
+            (string htmlOnly, Q149HtmlFacts stub) = Q149Drafts.CreateHtmlOnlyDraft(
+                Run, client, "c2-htmlonly-" + style.ToString() + "-" + i.ToString(CultureInfo.InvariantCulture), Pictures(signature, cid),
+                _ => HtmlOnlyDraftComposer.ComposeNew(frame!.Value, paragraphs, signatureBlock));
 
-        Compare(attempt, client, storeId, product.EntryId, htmlOnly, token, "new mail");
-        Run.Write(attempt);
-        return (product.EntryId, htmlOnly, token);
+            // C1: what a new item holds with no inspector ever - the stylesheet (c) would have to bring itself.
+            attempt.Set("noInspectorTemplate", stub.ToFields());
+            if (style == HtmlOnlyStyle.Message)
+            {
+                Record(Q149Cells.C1, "a stylesheet for a new mail without Word", stub.StyleBlocks > 0 && stub.WordSectionAt >= 0);
+            }
+
+            Compare(attempt, client, storeId, product.EntryId, htmlOnly, token, "new mail, " + style.ToString());
+            Run.Write(attempt);
+            made.Add(htmlOnly);
+        }
+
+        return (product.EntryId, made[0], made[1], token);
+    }
+
+    /// <summary>
+    /// Today's draft, asked of the product. A draft it composed by the HTML fallback is no "today's draft" to
+    /// compare with, so that is recorded - Outlook's own error code with it - and the draft asked for once more.
+    /// </summary>
+    private DraftOutcome ProductDraftWithRetry(Q149Attempt attempt, Func<string, DraftOutcome> compose, string label)
+    {
+        LiveStoreWriteGuard.Assert(Run.Hub, StoreWriteKind.Draft, "q149 product draft");
+        DraftOutcome draft = compose(label);
+        Run.Allow(draft.EntryId);
+        attempt.Set("placement1", draft.BodyPlacement).Set("composeError1", draft.ComposeSurfaceError).Set("signatureApplied1", draft.SignatureApplied);
+        if (string.Equals(draft.BodyPlacement, "wordEditor", StringComparison.Ordinal))
+        {
+            return draft;
+        }
+
+        Run.Log(label + ": the product composed by the HTML fallback (" + (draft.ComposeSurfaceError ?? "no error") + "); asking once more");
+        draft = compose(label + "-again");
+        Run.Allow(draft.EntryId);
+        attempt.Set("placement2", draft.BodyPlacement).Set("composeError2", draft.ComposeSurfaceError).Set("signatureApplied2", draft.SignatureApplied);
+        return draft;
     }
 
     // ------------------------------------------------------------------ C4: reply and forward
@@ -194,40 +227,50 @@ public sealed class LiveQ149HtmlOnlyParityTests
     private void DerivedPair(Q149OutlookClient client, string storeId, TestSignature signature, string sourceEntryId, string quoteToken, bool forward, int i)
     {
         string kind = forward ? "forward" : "reply";
-        Q149Attempt attempt = new(Q149Cells.C4, (forward ? 100 : 0) + i);
-        attempt.Set("kind", kind);
         string token = "Q149BODY" + kind + i.ToString(CultureInfo.InvariantCulture) + Run.Marker;
         (string? text, string? fragment) = Body(token, html: true);
-
-        LiveStoreWriteGuard.Assert(Run.Hub, StoreWriteKind.Draft, "q149 C4 product " + kind);
-        DraftOutcome product = forward
-            ? Service.ForwardDraft(sourceEntryId, text, to: Run.Hub, display: false, signature: signature.Name, bodyHtml: fragment)
-            : Service.ReplyDraft(sourceEntryId, text, replyAll: false, display: false, signature: signature.Name, bodyHtml: fragment);
-        Run.Allow(product.EntryId);
+        Q149Attempt productAttempt = new(Q149Cells.C4 + "-product", (forward ? 100 : 0) + i);
+        productAttempt.Set("kind", kind);
+        DraftOutcome product = ProductDraftWithRetry(
+            productAttempt,
+            label => forward
+                ? Service.ForwardDraft(sourceEntryId, text, to: Run.Hub, display: false, signature: signature.Name, bodyHtml: fragment)
+                : Service.ReplyDraft(sourceEntryId, text, replyAll: false, display: false, signature: signature.Name, bodyHtml: fragment),
+            "c4-product-" + kind + "-" + i.ToString(CultureInfo.InvariantCulture));
+        Run.Write(productAttempt);
         string productHtml = Q149Drafts.Read(Run, product.EntryId, storeId).Html;
-
-        // What the object model hands over with no inspector at all - the C4 question itself.
-        (string derived, string derivedHtml) = Q149Drafts.CreateDerivedWithoutInspector(Run, client, sourceEntryId, storeId, forward, "c4-" + kind + "-" + i.ToString(CultureInfo.InvariantCulture));
         Dictionary<string, string> quote = new(StringComparer.Ordinal) { ["quote"] = quoteToken };
-        Q149HtmlFacts bare = Q149Html.Analyze(derivedHtml, quote);
         Q149HtmlFacts today = Q149Html.Analyze(productHtml, quote);
-        attempt.Set("noInspector", bare.ToFields()).Set("today", today.ToFields())
-            .Set("noInspectorOutline", Q149Html.Outline(derivedHtml, quote))
-            .Set("productComposeError", product.ComposeSurfaceError)
-            .Set("productPlacement", product.BodyPlacement);
-        bool quoteHandedOver = bare.TokenAt["quote"] >= 0 && bare.WordSectionAt >= 0 && (bare.HeaderBlockAt >= 0 || bare.MailOriginalAt >= 0);
-        Record(Q149Cells.C4, "the quoted original without an inspector", quoteHandedOver);
-        Record(Q149Cells.C4, "the stylesheet of a " + kind + " without an inspector", bare.StylesheetHash != null && bare.StylesheetHash == today.StylesheetHash);
 
-        string cid = "image001.png@" + Run.Marker + kind + i.ToString(CultureInfo.InvariantCulture);
-        string signatureBlock = HtmlOnlyDraftComposer.SignatureBlock(File.ReadAllText(signature.FilePath), src => SignaturePicture(src, cid));
-        Q149HtmlFacts placed = Q149Drafts.RewriteHtml(
-            Run, client, derived, storeId,
-            html => HtmlOnlyDraftComposer.InsertAboveQuote(html, HtmlOnlyDraftComposer.ParagraphsFromHtml(fragment!), signatureBlock),
-            Pictures(signature, cid));
-        attempt.Set("htmlOnlyPlaced", placed.ToFields());
-        Compare(attempt, client, storeId, product.EntryId, derived, token, kind);
-        Run.Write(attempt);
+        foreach (HtmlOnlyStyle style in Styles)
+        {
+            Q149Attempt attempt = new(Q149Cells.C4, (forward ? 100 : 0) + (i * 10) + (int)style);
+            attempt.Set("kind", kind).Set("variant", style.ToString())
+                .Set("productPlacement", product.BodyPlacement).Set("productComposeError", product.ComposeSurfaceError);
+
+            // What the object model hands over with no inspector at all - the C4 question itself.
+            (string derived, string derivedHtml) = Q149Drafts.CreateDerivedWithoutInspector(
+                Run, client, sourceEntryId, storeId, forward, "c4-" + kind + "-" + style.ToString() + "-" + i.ToString(CultureInfo.InvariantCulture));
+            Q149HtmlFacts bare = Q149Html.Analyze(derivedHtml, quote);
+            attempt.Set("noInspector", bare.ToFields()).Set("today", today.ToFields())
+                .Set("noInspectorOutline", Q149Html.Outline(derivedHtml, quote));
+            if (style == HtmlOnlyStyle.Message)
+            {
+                bool quoteHandedOver = bare.TokenAt["quote"] >= 0 && bare.WordSectionAt >= 0 && (bare.HeaderBlockAt >= 0 || bare.MailOriginalAt >= 0);
+                Record(Q149Cells.C4, "the quoted original without an inspector", quoteHandedOver);
+                Record(Q149Cells.C4, "the stylesheet of a " + kind + " without an inspector", bare.StylesheetHash != null && bare.StylesheetHash == today.StylesheetHash);
+            }
+
+            string cid = "image001.png@" + Run.Marker + kind + style.ToString() + i.ToString(CultureInfo.InvariantCulture);
+            string signatureBlock = HtmlOnlyDraftComposer.SignatureBlock(File.ReadAllText(signature.FilePath), src => SignaturePicture(src, cid), style);
+            Q149HtmlFacts placed = Q149Drafts.RewriteHtml(
+                Run, client, derived, storeId,
+                html => HtmlOnlyDraftComposer.InsertAboveQuote(html, HtmlOnlyDraftComposer.ParagraphsFromHtml(fragment!, style), signatureBlock),
+                Pictures(signature, cid));
+            attempt.Set("htmlOnlyPlaced", placed.ToFields());
+            Compare(attempt, client, storeId, product.EntryId, derived, token, kind + ", " + style.ToString());
+            Run.Write(attempt);
+        }
     }
 
     // ------------------------------------------------------------------ C3: update_draft
@@ -286,11 +329,11 @@ public sealed class LiveQ149HtmlOnlyParityTests
 
     // ------------------------------------------------------------------ C5: as received
 
-    private void ReceivedPair(Q149OutlookClient client, string storeId, (string Product, string HtmlOnly, string Token) pair, int i)
+    private void ReceivedPair(Q149OutlookClient client, string storeId, (string Product, string Message, string AsImported, string Token) pair, int i)
     {
         Q149Attempt attempt = new(Q149Cells.C5, i);
-        List<string> received = new();
-        foreach ((string label, string entryId) in new[] { ("product", pair.Product), ("htmlOnly", pair.HtmlOnly) })
+        Dictionary<string, string> received = new(StringComparer.Ordinal);
+        foreach ((string label, string entryId) in new[] { ("product", pair.Product), ("Message", pair.Message), ("AsImported", pair.AsImported) })
         {
             (_, IReadOnlyList<string> recipients, _, _, _, _, _) = Q149Drafts.Read(Run, entryId, storeId);
             Q149Drafts.Refuse(Q149ProbeGuards.RefuseRecipients(recipients, Run.HubAddress));
@@ -304,7 +347,7 @@ public sealed class LiveQ149HtmlOnlyParityTests
             using OutlookComSession session = OutlookComSession.Connect(allowStartingOutlook: false, onOutlookGone: null, lifetimePin: false);
             ComMailBrief arrived = LiveInboxArrival.WaitFor(session, Run.Hub, subject, sentUtc.AddSeconds(-5));
             Run.Allow(arrived.EntryId);
-            received.Add(arrived.EntryId);
+            received[label] = arrived.EntryId;
             (string html, _, _, _, int attachments, long bytes, int hidden) = Q149Drafts.Read(Run, arrived.EntryId, storeId);
             Dictionary<string, string> tokens = new(StringComparer.Ordinal) { ["body"] = pair.Token, ["sig"] = SignatureWord };
             attempt.Set(label + "Received", new Dictionary<string, object>(StringComparer.Ordinal)
@@ -313,16 +356,21 @@ public sealed class LiveQ149HtmlOnlyParityTests
                 ["attachmentBytes"] = bytes,
                 ["hiddenAttachments"] = hidden,
                 ["html"] = Q149Html.Analyze(html, tokens).ToFields(),
+                ["outline"] = Q149Html.Outline(html, tokens),
             });
         }
 
-        Q149HtmlFacts productFacts = Q149Html.Analyze(Q149Drafts.Read(Run, received[0], storeId).Html);
-        Q149HtmlFacts htmlOnlyFacts = Q149Html.Analyze(Q149Drafts.Read(Run, received[1], storeId).Html);
-        (int differences, IReadOnlyList<string> listed) = LookDifference(client, storeId, received[0], received[1]);
-        attempt.Set("receivedLookDifferences", differences).Set("receivedFirstDifferences", listed.ToArray());
-        Record(Q149Cells.C5, "looks the same as received", differences == 0);
-        Record(Q149Cells.C5, "pictures as received", productFacts.CidImages == htmlOnlyFacts.CidImages && htmlOnlyFacts.FileLinks == 0);
-        Record(Q149Cells.C5, "stylesheet as received", productFacts.StylesheetHash == htmlOnlyFacts.StylesheetHash);
+        Q149HtmlFacts productFacts = Q149Html.Analyze(Q149Drafts.Read(Run, received["product"], storeId).Html);
+        foreach (string variant in new[] { "Message", "AsImported" })
+        {
+            Q149HtmlFacts variantFacts = Q149Html.Analyze(Q149Drafts.Read(Run, received[variant], storeId).Html);
+            (int differences, IReadOnlyList<string> listed) = LookDifference(client, storeId, received["product"], received[variant]);
+            attempt.Set("receivedLookDifferences" + variant, differences).Set("receivedFirstDifferences" + variant, listed.ToArray());
+            Record(Q149Cells.C5, "looks the same as received (" + variant + ")", differences == 0);
+            Record(Q149Cells.C5, "pictures as received (" + variant + ")", productFacts.CidImages >= 1 && productFacts.CidImages == variantFacts.CidImages && variantFacts.FileLinks == 0);
+            Record(Q149Cells.C5, "stylesheet as received (" + variant + ")", productFacts.StylesheetHash != null && productFacts.StylesheetHash == variantFacts.StylesheetHash);
+        }
+
         Run.Write(attempt);
     }
 
@@ -398,11 +446,17 @@ public sealed class LiveQ149HtmlOnlyParityTests
         Run.Log(cell + " " + aspect + ": " + (same ? "same" : "DIFFERENT"));
     }
 
+    private int _productDrafts;
+
     private string ProductDraft(TestSignature signature, string text, string label)
     {
-        LiveStoreWriteGuard.Assert(Run.Hub, StoreWriteKind.Draft, "q149 C3 product draft");
-        DraftOutcome draft = Service.NewDraft(Run.Hub, Run.Hub, cc: null, Run.TaggedSubject(label), text, display: false, signature: signature.Name);
-        Run.Allow(draft.EntryId);
+        Q149Attempt attempt = new(Q149Cells.C3 + "-product", ++_productDrafts);
+        attempt.Set("label", label);
+        DraftOutcome draft = ProductDraftWithRetry(
+            attempt,
+            l => Service.NewDraft(Run.Hub, Run.Hub, cc: null, Run.TaggedSubject(l), text, display: false, signature: signature.Name),
+            label);
+        Run.Write(attempt);
         return draft.EntryId;
     }
 

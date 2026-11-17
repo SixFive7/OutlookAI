@@ -384,14 +384,15 @@ public sealed class Q149ComposeMeasurementTests
     [Fact]
     public void TwoLayoutsDifferInEveryPropertyAReaderCanSee_AndOnlyThere()
     {
-        WordParagraphLook a = new("Hallo", "Normal", "Aptos", 11, 0, 0, -16777216, 0, 0, 0, 12, 0, 0, 0, 0);
+        WordParagraphLook a = new("Hallo", 0, "Normal", "Aptos", 11, 0, 0, -16777216, 0, 0, 0, 12, 0, 0, 0, 0);
         Assert.Equal(0, Q149WordLook.Compare(new[] { a }, new[] { a with { } }).Count);
         Assert.Equal(0, Q149WordLook.Compare(new[] { a }, new[] { a with { Size = 11.04 } }).Count);
 
         (int count, IReadOnlyList<string> listed) = Q149WordLook.Compare(
             new[] { a, a },
-            new[] { a with { Style = "Normal (Web)", SpaceBefore = 14, SpaceAfter = 14 }, a with { Text = "Hallo!" } });
-        Assert.Equal(4, count);
+            new[] { a with { Style = "Normal (Web)", SpaceBefore = 14, SpaceAfter = 14 }, a with { Text = "Hallo!", TopBorder = 1 } });
+        Assert.Equal(5, count);
+        Assert.Contains(listed, d => d.StartsWith("p2 topBorder 0 vs 1", StringComparison.Ordinal));
         Assert.Contains(listed, d => d.StartsWith("p1 style", StringComparison.Ordinal));
         Assert.Contains(listed, d => d.StartsWith("p2 text", StringComparison.Ordinal));
         Assert.DoesNotContain(listed, d => d.Contains("Hallo", StringComparison.Ordinal));

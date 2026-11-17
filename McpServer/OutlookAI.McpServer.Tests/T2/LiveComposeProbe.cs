@@ -682,6 +682,8 @@ internal sealed class Q149WindowWatch : IDisposable
     private readonly ManualResetEventSlim _ready = new(false);
     private Q149Native.WinEventProc? _callback;
     private uint _threadId;
+    private readonly List<string> _events = new();
+    private readonly System.Diagnostics.Stopwatch _since = System.Diagnostics.Stopwatch.StartNew();
     private int _shows;
     private int _onScreenShows;
     private int _foregroundToOutlook;
@@ -728,6 +730,22 @@ internal sealed class Q149WindowWatch : IDisposable
         }
     }
 
+    /// <summary>
+    /// Every show, hide and move of an Outlook top-level window, in order, at most 60: milliseconds since the
+    /// watch began, the event, the class, and where the window was - "+120 show rctrl_renwnd32 on 140,90 1200x800".
+    /// Enough to say how long a window was where a person could see it, and nothing about what it showed.
+    /// </summary>
+    public IReadOnlyList<string> Events
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _events.ToList();
+            }
+        }
+    }
+
     public IReadOnlyList<string> ShownClasses
     {
         get
@@ -743,7 +761,8 @@ internal sealed class Q149WindowWatch : IDisposable
     {
         _threadId = Q149Native.GetCurrentThreadId();
         _callback = OnEvent;
-        IntPtr show = Q149Native.SetWinEventHook(Q149Native.EventObjectShow, Q149Native.EventObjectShow, IntPtr.Zero, _callback, _pid, 0, Q149Native.WinEventOutOfContext);
+        IntPtr show = Q149Native.SetWinEventHook(Q149Native.EventObjectShow, Q149Native.EventObjectHide, IntPtr.Zero, _callback, _pid, 0, Q149Native.WinEventOutOfContext);
+        IntPtr moved = Q149Native.SetWinEventHook(Q149Native.EventObjectLocationChange, Q149Native.EventObjectLocationChange, IntPtr.Zero, _callback, _pid, 0, Q149Native.WinEventOutOfContext);
         IntPtr foreground = Q149Native.SetWinEventHook(Q149Native.EventSystemForeground, Q149Native.EventSystemForeground, IntPtr.Zero, _callback, _pid, 0, Q149Native.WinEventOutOfContext);
         _ready.Set();
         while (Q149Native.GetMessage(out Q149Native.MSG msg, IntPtr.Zero, 0, 0) > 0)
@@ -755,6 +774,11 @@ internal sealed class Q149WindowWatch : IDisposable
         if (show != IntPtr.Zero)
         {
             Q149Native.UnhookWinEvent(show);
+        }
+
+        if (moved != IntPtr.Zero)
+        {
+            Q149Native.UnhookWinEvent(moved);
         }
 
         if (foreground != IntPtr.Zero)
@@ -777,9 +801,35 @@ internal sealed class Q149WindowWatch : IDisposable
 
         lock (_gate)
         {
+            string what = eventType switch
+            {
+                Q149Native.EventSystemForeground => "foreground",
+                Q149Native.EventObjectShow => "show",
+                Q149Native.EventObjectHide => "hide",
+                Q149Native.EventObjectLocationChange => "move",
+                _ => "other",
+            };
+
+            if (what == "move" && !Q149Native.IsWindowVisible(hwnd))
+            {
+                // A hidden window moving - the product's own parking - is nothing anyone could see.
+                return;
+            }
+
+            if (_events.Count < 60)
+            {
+                _events.Add("+" + _since.ElapsedMilliseconds.ToString(System.Globalization.CultureInfo.InvariantCulture) + " " + what + " "
+                    + Q149Native.ClassOf(hwnd) + " " + Q149Native.DescribePlace(hwnd));
+            }
+
             if (eventType == Q149Native.EventSystemForeground)
             {
                 _foregroundToOutlook++;
+                return;
+            }
+
+            if (eventType != Q149Native.EventObjectShow)
+            {
                 return;
             }
 
@@ -808,6 +858,8 @@ internal sealed class Q149WindowWatch : IDisposable
 internal static class Q149Native
 {
     internal const uint EventObjectShow = 0x8002;
+    internal const uint EventObjectHide = 0x8003;
+    internal const uint EventObjectLocationChange = 0x800B;
     internal const uint EventSystemForeground = 0x0003;
     internal const uint WinEventOutOfContext = 0x0000;
     internal const uint GaRoot = 2;
@@ -918,6 +970,39 @@ internal static class Q149Native
         }
 
         return !(r.Left <= ComposeSurface.ParkX / 2 && r.Top <= ComposeSurface.ParkY / 2);
+    }
+
+    /// <summary>"on|off|hidden left,top widthxheight" - where a window is, and whether a person could see it there.</summary>
+    internal static string DescribePlace(IntPtr hwnd)
+    {
+        if (!GetWindowRect(hwnd, out RECT r))
+        {
+            return "unknown";
+        }
+
+        string state = !IsWindowVisible(hwnd) ? "hidden" : IsOnScreen(hwnd) ? "on" : "off";
+        return string.Format(System.Globalization.CultureInfo.InvariantCulture, "{0} {1},{2} {3}x{4}", state, r.Left, r.Top, r.Right - r.Left, r.Bottom - r.Top);
+    }
+
+    /// <summary>Whether the foreground window belongs to an OUTLOOK.EXE, and its class - null when there is none.</summary>
+    internal static string? ForegroundOutlookClass()
+    {
+        IntPtr foreground = GetForegroundWindow();
+        if (foreground == IntPtr.Zero)
+        {
+            return null;
+        }
+
+        _ = GetWindowThreadProcessId(foreground, out uint pid);
+        try
+        {
+            using Process owner = Process.GetProcessById((int)pid);
+            return string.Equals(owner.ProcessName, "OUTLOOK", StringComparison.OrdinalIgnoreCase) ? ClassOf(foreground) : null;
+        }
+        catch (ArgumentException)
+        {
+            return null;
+        }
     }
 
     internal static void Park(IntPtr hwnd)
