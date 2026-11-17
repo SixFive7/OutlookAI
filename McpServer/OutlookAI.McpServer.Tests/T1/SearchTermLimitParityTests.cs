@@ -21,6 +21,7 @@ namespace OutlookAI.McpServer.Tests.T1;
 /// the boundary and one past it.
 /// </para>
 /// </summary>
+[Trait("TimeZone", "Machine")]
 public sealed class SearchTermLimitParityTests
 {
     private static string TermOfLength(int length) => new string('a', length);

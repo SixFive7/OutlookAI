@@ -47,7 +47,8 @@ namespace OutlookAI.Core.Audit
     /// sharing violation is retried <see cref="WriteRetries"/> times, 15 ms apart, before the
     /// operation reports it. Each line, terminator included, goes out in ONE write. A named mutex
     /// still serializes the appends to one log across processes - now for ORDER only: the line's
-    /// timestamp is taken while it is held, so the file is in time order. The mutex holds no file
+    /// timestamp is taken while it is held, so the lines written under it are in time order, and a
+    /// writer that runs out the wait appends anyway and says so on its line. The mutex holds no file
     /// handle, so it changes nothing about renaming the file.
     /// </para>
     ///

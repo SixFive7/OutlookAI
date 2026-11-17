@@ -9,6 +9,7 @@ namespace OutlookAI.McpServer.Tests.T1;
 /// DBNull/missing columns, provider array shapes, and derive EntryID/attachment mapping
 /// from the item URL.
 /// </summary>
+[Trait("TimeZone", "Machine")]
 public sealed class IndexRowMapperTests
 {
     private const string Sid = "{S-1-5-21-1111111111-2222222222-3333333333-1001}";

@@ -73,6 +73,7 @@ public sealed class AuditLogToolTests
     };
 
     [Theory]
+    [Trait("TimeZone", "Machine")]
     [MemberData(nameof(RefusedArguments))]
     public void BadArguments_AreRefusedBeforeTheLogIsOpened(string? after, string? before, string? operation, string? entryId)
     {
@@ -85,6 +86,7 @@ public sealed class AuditLogToolTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void ValidArguments_DoOpenTheLog_TheControlForTheTestAbove()
     {
         using (LockTheThrowawayLog())
@@ -117,6 +119,7 @@ public sealed class AuditLogToolTests
     // ================================================================== end to end, in-process
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public async Task TheTool_ReturnsWhatThisProcessAppended_NewestFirst_FollowingTheItemThroughAMove()
     {
         RequireIsolation();
@@ -156,6 +159,7 @@ public sealed class AuditLogToolTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public async Task MoreMatchesThanTop_AreCut_AndTheAnswerSaysSo()
     {
         RequireIsolation();
@@ -176,6 +180,7 @@ public sealed class AuditLogToolTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public async Task ATopAboveTheCap_IsReduced_AndTheAnswerSaysSo()
     {
         RequireIsolation();
@@ -188,6 +193,7 @@ public sealed class AuditLogToolTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public async Task AnUnparsableDate_IsAnInvalidArgument_OnTheToolsOwnErrorShape()
     {
         CallToolResult result = await OutlookTools.AuditLog(after: "not a date");
@@ -198,6 +204,7 @@ public sealed class AuditLogToolTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public async Task ALogArchivedBesideTheLiveOne_IsNeverRead()
     {
         // The maintainer's clean-up renames the old log to audit.until-<date>.log next to the new
@@ -256,6 +263,7 @@ public sealed class AuditLogToolTests
     // ================================================================== paging (Q119)
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public async Task TheToolPages_ThroughEveryEntryOnce_UntilNextTokenIsAbsent()
     {
         RequireIsolation();
@@ -291,6 +299,7 @@ public sealed class AuditLogToolTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public async Task AResumeTokenUsedWithOtherFilters_IsRefused_NamingWhatChanged()
     {
         RequireIsolation();
@@ -317,6 +326,7 @@ public sealed class AuditLogToolTests
     }
 
     [Theory]
+    [Trait("TimeZone", "Machine")]
     [InlineData("scan-0123456789abcdef0123456789abcdef", "another tool")]
     [InlineData("not a token", "not a token audit_log issued")]
     [InlineData("pg1.AAAA.00000000", "not a token audit_log issued")]
@@ -330,6 +340,7 @@ public sealed class AuditLogToolTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void AnotherToolsPagingToken_IsRefusedAsAnotherTools()
     {
         string foreign = Paging.IssueToken("list_folders", new PagingFingerprint().ToString(), new[] { "5" });

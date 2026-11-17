@@ -41,6 +41,7 @@ public sealed class IndexOrderDisplacementTests
     // ------------------------------------------------------------------ the pure decisions
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void OrderKeyPresence_IsAComparison_BecauseWsSqlHasNoNullTest()
     {
         // A comparison plus three-valued logic is the only null test WS-SQL offers: a row
@@ -54,6 +55,7 @@ public sealed class IndexOrderDisplacementTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void ThePresencePredicate_IsNeverOnTheStatementThatAnswersTheSearch()
     {
         IndexQuery query = new() { Scope = StoreScope, Kinds = KindFilter.MessagesOnly, Top = 5 };
@@ -74,6 +76,7 @@ public sealed class IndexOrderDisplacementTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void HasOrderKey_ReadsTheColumnTheOrderingActuallyRanksBy()
     {
         IndexHit dated = Row("a", Noon, 100);
@@ -107,6 +110,7 @@ public sealed class IndexOrderDisplacementTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void RankableFirst_PutsUnrankableRowsLast_AndKeepsProviderOrderOnTies()
     {
         IndexHit newest = Row("newest", Noon, 10);
@@ -124,6 +128,7 @@ public sealed class IndexOrderDisplacementTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void RankableFirst_RanksBySizeWhenThatIsTheOrdering()
     {
         IndexHit big = Row("big", null, 900);
@@ -136,6 +141,7 @@ public sealed class IndexOrderDisplacementTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void Merge_IsAUnion_SoARefetchCanOnlyEverAdd()
     {
         IndexHit shared = Row("shared", Noon, 10);
@@ -151,6 +157,7 @@ public sealed class IndexOrderDisplacementTests
     // ------------------------------------------------------- the guarantee, end to end
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void NullsFirstProvider_CannotHideMailBehindUndatedRows()
     {
         // THE REGRESSION THIS EXISTS FOR. The statement fills its whole TOP with undated
@@ -168,6 +175,7 @@ public sealed class IndexOrderDisplacementTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void NullsLastProvider_PaysForNoSecondStatement()
     {
         // The likely collation, and the reason the guard is conditional rather than a second
@@ -182,6 +190,7 @@ public sealed class IndexOrderDisplacementTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void RowsAlreadyInHand_AreNotThrownAwayByTheTrim()
     {
         // The second displacement point, and the one no refetch can fix: the statement was
@@ -201,6 +210,7 @@ public sealed class IndexOrderDisplacementTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void AFailedRefetch_StillAnswers_ButSaysTheListMayBeShort()
     {
         // The recovery query is the one statement whose shape this repo has not run against
@@ -219,6 +229,7 @@ public sealed class IndexOrderDisplacementTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void CountersCoverEveryRowBothStatementsReturned()
     {
         // rowsScanned/rowsDropped reach the payload, so they have to mean what their names

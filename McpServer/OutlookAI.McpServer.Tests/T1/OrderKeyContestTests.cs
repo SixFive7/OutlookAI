@@ -66,6 +66,7 @@ public sealed class OrderKeyContestTests
     }
 
     [Theory]
+    [Trait("TimeZone", "Machine")]
     [InlineData(12)]
     [InlineData(14)]
     [InlineData(42)]
@@ -87,6 +88,7 @@ public sealed class OrderKeyContestTests
     }
 
     [Theory]
+    [Trait("TimeZone", "Machine")]
     [InlineData(12)]
     [InlineData(14)]
     [InlineData(42)]
@@ -112,6 +114,7 @@ public sealed class OrderKeyContestTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void AdmittedDatedRows_CountsOnlyRowsTheSearchWouldAdmit_AndCanRank()
     {
         IndexHit attachment = IndexRowMapper.Map(new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)

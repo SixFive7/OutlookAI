@@ -1891,28 +1891,24 @@
   Windows, Program Files, AppData - the same weakness by folder; (5) leave it: the agent acts as
   the user, who approves its tool calls. Recommended: (1).
 
-- [ ] **`T1.AuditLogStressTests`' lock-on test fails on a CPU-starved machine: writers wait out the
-  2 s writer lock and append without it (2026-11-17).** The test
-  `EightWriterProcesses_OnBothRuntimes_WithTheLock_KeepEveryLineWhole_AndTheFileInTimeOrder`
-  failed on both build clones while three build runs
-  and four Outlook guests ran at once (host CPU 82 to 100 %; runs `20261117-172008-00acbed007ec` and
-  `20261117-172021-00acbed007ec` of the worktree `stream-f-vm-pool`), and the four stress tests passed
-  4 of 4 alone on one of those clones three minutes later (`20261117-174013-00acbed007ec`). The
-  assertion that failed is the first, `LinesWithoutWriterLock` 0 - 12 lines on one clone, 1 on the
-  other - not the time order. The test's own output says why: each writer's append took 550 to 600 ms
-  at the median and 2.0 to 2.4 s at p99 (max 3.3 s), against milliseconds on a quiet machine, so
-  writers waited longer than `AuditLog.WriterLockWaitMilliseconds` (2,000) and appended without the
-  lock, as designed and marked `lock="timeout"` on the line (`lockTimeouts` per writer 0 to 2, summing
-  to the 12). The 5 time inversions on the first clone (0 on the second) came with those lines; the
-  timestamp itself is taken under the lock (`AuditLog.WriteOneLine`, inside `AppendTo`'s `using` of
-  the lock), so a stamp taken before the lock is ruled out by the code - that the inversions are
-  exactly the unlocked lines is consistent with the numbers, not proven, because the log is deleted
-  with the test. Directions: (1) the test asserts what the product promises - every line without
-  the lock says `timeout`, and the LOCKED lines are in time order (`CountTimeInversions` with
-  `lockedOnly: true`, as its other test already does) - and reports the rest; (2) it measures its own
-  append latency and says NOT PROVEN instead of failing when the machine is starved; (3) a longer lock
-  wait in the product - longer stalls of drafts and sends behind a slow writer; (4) the stress tests
-  in a pass of their own, alone on the VM. Recommended: (1).
+- [ ] **Decide how wide the time-zone check's line is (Q144 follow-up, 2026-11-17).**
+  `T1/TimeZoneMarkerTests` fails a test that can read the machine's zone and is not marked
+  `[Trait("TimeZone", "Machine")]`, and the build VM runs the marked ones again in W. Europe. It reads
+  compiled code, which cannot show a value's kind, so it counts a test that CAN reach a read, not
+  only one that does: 145 of the 323 marked tests reach the zone only through five product
+  conversions that convert a value already marked Local and nothing else - `WsSqlBuilder.FormatUtc`,
+  `DaslDateLiteral.FormatUtc`, `IndexRowMapper.AsUtcDateTime`, `IndexSearchService.GetStaleness`,
+  `ComDateValue.FromTableValue`. Under the rule that a marked test is rewritten to set its own zone
+  when next touched, those 145 can lose their marks only if the product changes. Measured
+  2026-11-17 with a scratch copy of the walk. Directions: (1) keep the line as it is -
+  nothing to maintain, 323 marks, and the 383 marked cases take about a second of test time; (2)
+  trust the five conversions through a reviewed list and count making a Local value
+  (`DateTime.SpecifyKind(x, DateTimeKind.Local)`, `new DateTime(..., DateTimeKind.Local)`) as a read
+  instead - 178 marks, and a list kept true by hand, as `ReadOnlyProductApi` is; (3) give the five a
+  zone parameter, as `ComDateValue.FromItemValue` got in Q95, so their tests name a zone of their
+  own - product work in five functions; (4) count only the tests' own code - 28 marks, and it misses
+  every test whose product call converts in the machine's zone, `MailService.ToUtc` (122 tests)
+  among them, the Q95 kind. Recommended: (1) now, and (3) for each function as it is next changed.
 
 - [ ] **Decide whether the VM pools keep CPU free for the maintainer, as they keep memory free
   (2026-11-17).** The pools (`Testbed/host/TestbedPool.ps1`) start a member other than the first only
@@ -1928,27 +1924,6 @@
   smaller clones - one build clone, or clones with 2 virtual processors. Recommended: (2), at 75 %:
   it keeps every run the pools allow today when the PC is quiet, and stops adding load when it is not.
 
-- [ ] **Decide how the non-live suite keeps a non-UTC zone, now that it runs only in UTC (after
-  Q126 (a), 2026-10-03).** The build VM is UTC and nothing else runs the suite (Q94), so tests that
-  use the machine's own zone as the "other" zone - build a `Local` value, compare it with the `Utc`
-  one - prove only the identity: a product bug that mixes local and UTC times passes them in UTC
-  and would have failed them in W. Europe. Found by searching T1 for reads of the machine's zone,
-  which is not exhaustive: `FreshMergeTests` (Outlook's local received time against the index's
-  UTC one), `ComHostProtocolTests` (a date's kind over the wire), `DaslDateLiteralTests`'s
-  local-kind case, `CensusTableRowTests`'s local-kind fingerprint, and two `ComDateValueTests` -
-  whose conversion is also pinned in a zone of the test's own (Q95), the pattern that holds in any
-  zone. The first UTC run passed whole, so nothing
-  is known broken. Directions: (1) both zones on every run - the runner runs the suite again after
-  switching the guest to W. Europe inside the run (the restore throws that away): complete, about
-  3 more minutes a run; (2) the same, but the second pass runs only tests tagged as reading the
-  machine's zone, with a T1 guard that finds such tests by their IL and fails an untagged one:
-  seconds a run; (3) make those tests zone-explicit, as `ComDateValueTests` is - the product
-  function takes a `TimeZoneInfo`, the machine overload passes `TimeZoneInfo.Local` (pinned by IL),
-  and the test uses a zone of its own: right in any zone, but product refactoring per function;
-  (4) an odd-offset zone with daylight saving instead of UTC (D4's other alternative): every test
-  keeps a non-zero offset, but loses what UTC catches - a test that assumes the offset is not zero,
-  Q95's kind; (5) accept it - the live tier on the W. Europe guests drives Outlook's real dates.
-  Recommended: (2), with (3) for each test as it is next touched.
 
 - [ ] **Waiting for the shared test mailbox (Q109).** The maintainer requested a free shared
   mailbox in his Microsoft 365 tenant on 2026-10-03 (for example `outlookai-test@xxlnet.nl`, with

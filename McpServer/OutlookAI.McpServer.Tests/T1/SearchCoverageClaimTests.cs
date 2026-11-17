@@ -135,6 +135,7 @@ public sealed class SearchCoverageClaimTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void AnUnsortedCap_ReachesTheSearchPayload_AndDegradesIt()
     {
         // End to end, because the COM layer is where the fact is measured and the payload is
@@ -152,6 +153,7 @@ public sealed class SearchCoverageClaimTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void ASortedCap_ReachesTheSamePayloadWithTheOtherSentence()
     {
         using MailService service = Service(Index(), _ => CappedComSweep(unsorted: false));
@@ -193,6 +195,7 @@ public sealed class SearchCoverageClaimTests
     // ================================================================== G5
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void AFolderTheIndexCannotAddress_IsReported_EvenWhenTheSweepFoundSomething()
     {
         // THE DEFECT. The sweep returns one item, so the merged answer is not empty, and the
@@ -209,6 +212,7 @@ public sealed class SearchCoverageClaimTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void AFolderTheIndexCanAddress_ReportsNothing()
     {
         // The probe pair still has to stay quiet over a folder that merely holds no match,
@@ -224,6 +228,7 @@ public sealed class SearchCoverageClaimTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void AStoreWithNoIndexedRowsAtAll_DoesNotGetBlamedOnItsFolderPath()
     {
         // The store probe is the second half of the guard for a reason: with no rows for the
@@ -237,6 +242,7 @@ public sealed class SearchCoverageClaimTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void AnEmptyAnswerOverAnUnaddressableFolder_StillReportsIt()
     {
         // The case that always worked, kept working: widening the trigger must not narrow it.
@@ -251,6 +257,7 @@ public sealed class SearchCoverageClaimTests
     // ================================================================== B2
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void ADefaultSearch_SaysTheSweepCannotSeeInsideAttachments()
     {
         // freshness reads "live" and is not wrong about what the sweep checked - it is
@@ -267,6 +274,7 @@ public sealed class SearchCoverageClaimTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void ASubjectOnlySearch_SaysNothingAboutAttachments()
     {
         // Nothing was asked of the body scope, so no tier could have matched an attachment
@@ -288,6 +296,7 @@ public sealed class SearchCoverageClaimTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void AnEmptyFreshnessWindow_CarriesTheFieldAndSkipsTheSentence()
     {
         // The field is a fact about the TIER, so it holds whatever arrived; the sentence is
@@ -306,6 +315,7 @@ public sealed class SearchCoverageClaimTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void TheAttachmentOnlyRefusal_IsNotSaidTwice()
     {
         // That case already had a sentence, and it names the same asymmetry. A second one
@@ -345,6 +355,7 @@ public sealed class SearchCoverageClaimTests
     // ================================================================== F3
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void AnExhaustiveScanCappedBeforeItsFilterRan_SaysSo()
     {
         // 25 candidates matched the subject/body filter, the cap closed the walk, and 'from'
@@ -367,6 +378,7 @@ public sealed class SearchCoverageClaimTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void AnUncappedScan_RaisesNothing_EvenWithAPostFilter()
     {
         // With no cap the filter saw the whole matched set and removed exactly what the
@@ -382,6 +394,7 @@ public sealed class SearchCoverageClaimTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void ACappedScanWithNoPostFilter_RaisesOnlyTheResultCap()
     {
         // Nothing thinned the list after the cap, so the cap truncated results rather than

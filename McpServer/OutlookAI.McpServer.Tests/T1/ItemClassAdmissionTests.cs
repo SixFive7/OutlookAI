@@ -153,6 +153,7 @@ public sealed class ItemClassAdmissionTests
     /// the reason attached.
     /// </summary>
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void IndexTier_AdmitsMessageRowsOfEveryClass_InEverySearchShape()
     {
         const string messageUrl = "mapi16://{SID}/alice@example.com($ab12)/0/Inbox/item";
@@ -176,6 +177,7 @@ public sealed class ItemClassAdmissionTests
     /// matches every class rather than one.
     /// </summary>
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void ExhaustiveTier_SendsNoClassPredicate()
     {
         string bounded = ExhaustiveDaslFilter.Build(

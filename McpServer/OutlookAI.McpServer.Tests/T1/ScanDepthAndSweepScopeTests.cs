@@ -103,6 +103,7 @@ public sealed class ScanDepthAndSweepScopeTests
     // ================================================================ F4: through the tool
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void AnExhaustiveSearchWhoseWalkHitTheGuard_ReportsItOnEveryField()
     {
         using MailService service = Service(scan: DeepScan);
@@ -119,6 +120,7 @@ public sealed class ScanDepthAndSweepScopeTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void AnOrdinaryExhaustiveSearch_SaysNothingAboutDepth()
     {
         using MailService service = Service(scan: PlainScan);
@@ -181,6 +183,7 @@ public sealed class ScanDepthAndSweepScopeTests
     // ================================================================ E2: through the tool
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void AnUnscopedSearch_SaysItSweptTheShallowDefaultSet()
     {
         using MailService service = Service();
@@ -192,6 +195,7 @@ public sealed class ScanDepthAndSweepScopeTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void TheShallowDefaultSet_IsNotACoverageHole_AndDoesNotDegradeTheSearch()
     {
         // The decision this row turned on. It is the breadth of the tier rather than a hole
@@ -208,6 +212,7 @@ public sealed class ScanDepthAndSweepScopeTests
     }
 
     [Theory]
+    [Trait("TimeZone", "Machine")]
     [InlineData(true, MailService.SweepScopeFolder)]
     [InlineData(false, MailService.SweepScopeFolderOnly)]
     public void AFolderScopedSearch_ReportsWhichOfTheTwoFolderBreadthsItUsed(
@@ -230,6 +235,7 @@ public sealed class ScanDepthAndSweepScopeTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void ASweepThatCouldNotRun_ClaimsNoBreadthAtAll()
     {
         // Paired with sweep.scope, which has always been absent here: "it covered the default
