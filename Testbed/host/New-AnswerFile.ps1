@@ -48,6 +48,13 @@
     signature at the standard offset) and deleted if that check fails, because a broken answer
     volume presents as an install that stops on the language page for no visible reason.
 
+    THE ACCOUNT'S PASSWORD NEVER EXPIRES (2026-11-17). Windows' default maximum password age is 42
+    days and an answer file has no setting for an account's expiry, so the first-logon script sets
+    it (Set-LocalUser -PasswordNeverExpires). Until then nothing did: OutlookAI-Build, installed
+    2026-10-03, would have refused every run's PowerShell Direct logon from 2026-11-14, and
+    OutlookAI-Exchange did, the same day. This script refuses to build a volume whose first-logon
+    script does not set it (Get-AnswerVolumeProblems), and -SelfTest pins that refusal.
+
     WHAT COMES OUT, ALL OF IT IN SCRATCH AND ALL OF IT HOLDING A CREDENTIAL:
 
         <OutDir>\answer-volume\autounattend.xml        the filled answer file
@@ -138,33 +145,173 @@
     Replace an answer ISO that is already at the output path. Without it the script refuses,
     before it reads the credential or writes anything - see IT REFUSES TO REPLACE above.
 
+.PARAMETER SelfTest
+    Fills the committed template with synthetic values and checks the volume it would build with
+    the committed first-logon script - the checks every build makes on what it is about to write,
+    the password-never-expires step among them (2026-11-17) - and that each check refuses what it
+    should. Reads the two files; no credential, no output, no ISO. Runs on the build VM with every
+    other -SelfTest.
+
 .EXAMPLE
     pwsh -File Testbed/host/New-AnswerFile.ps1 -VMName OutlookAI-Indexed
 
 .EXAMPLE
     pwsh -File Testbed/host/New-AnswerFile.ps1 -VMName OutlookAI-Unindexed -ComputerName OAI-UNIDX
 #>
-[CmdletBinding()]
+[CmdletBinding(DefaultParameterSetName = 'Build')]
 param(
-    [string] $RepoRoot,
-    [Parameter(Mandatory = $true)] [string] $VMName,
-    [string] $ComputerName,
-    [string] $ImageName = 'Windows 11 Pro',
-    [string] $TemplatePath,
-    [string] $FirstLogonScriptPath,
-    [string] $OutDir,
-    [string] $VolumeLabel = 'UNATTEND',
-    [ValidateSet('Auto', 'Oscdimg', 'Imapi')] [string] $IsoBuilder = 'Auto',
-    [string] $OscdimgPath,
-    [switch] $KeepStaging,
-    [switch] $Replace
+    [Parameter(ParameterSetName = 'Build')] [string] $RepoRoot,
+    [Parameter(Mandatory = $true, ParameterSetName = 'Build')] [string] $VMName,
+    [Parameter(ParameterSetName = 'Build')] [string] $ComputerName,
+    [Parameter(ParameterSetName = 'Build')] [string] $ImageName = 'Windows 11 Pro',
+    [Parameter(ParameterSetName = 'Build')] [string] $TemplatePath,
+    [Parameter(ParameterSetName = 'Build')] [string] $FirstLogonScriptPath,
+    [Parameter(ParameterSetName = 'Build')] [string] $OutDir,
+    [Parameter(ParameterSetName = 'Build')] [string] $VolumeLabel = 'UNATTEND',
+    [Parameter(ParameterSetName = 'Build')] [ValidateSet('Auto', 'Oscdimg', 'Imapi')] [string] $IsoBuilder = 'Auto',
+    [Parameter(ParameterSetName = 'Build')] [string] $OscdimgPath,
+    [Parameter(ParameterSetName = 'Build')] [switch] $KeepStaging,
+    [Parameter(ParameterSetName = 'Build')] [switch] $Replace,
+    [Parameter(Mandatory = $true, ParameterSetName = 'SelfTest')] [switch] $SelfTest
 )
+
+$ErrorActionPreference = 'Stop'
+
+# =============================================================================================
+# PURE: the template filled, and what makes an answer volume unusable. The build calls both on what
+# it is about to write; -SelfTest calls them on the committed template and first-logon script with
+# synthetic values - no credential is read and nothing is written.
+# =============================================================================================
+
+# The template with every token filled, or a throw naming what is wrong: a token the template lacks
+# (it has changed shape, and filling it would build an answer file that is quietly wrong), or one
+# left over that nothing fills.
+function Get-FilledAnswerFile {
+    param([string] $TemplateText, [System.Collections.IDictionary] $Substitutions, [string] $TemplatePath)
+    $filled = $TemplateText
+    foreach ($name in $Substitutions.Keys) {
+        $token = '{{' + $name + '}}'
+        if (-not $filled.Contains($token)) {
+            throw "The template does not contain the token $token. It has changed shape, and filling it now would produce an answer file that is quietly wrong. Template: $TemplatePath"
+        }
+        $filled = $filled.Replace($token, [string]$Substitutions[$name])
+    }
+    $leftover = @([regex]::Matches($filled, '\{\{[A-Za-z0-9_]+\}\}') | ForEach-Object { $_.Value } | Sort-Object -Unique)
+    if ($leftover.Count -gt 0) {
+        throw ('The template still has unfilled tokens after substitution: ' + ($leftover -join ', ') +
+            ". Teach this script what they mean, or take them out of $TemplatePath.")
+    }
+    return $filled
+}
+
+# Whether a Set-LocalUser call sets -PasswordNeverExpires to $true - written either way PowerShell
+# takes it, '-PasswordNeverExpires $true' or '-PasswordNeverExpires:$true'.
+function Test-SetsPasswordNeverExpires {
+    param([System.Management.Automation.Language.CommandAst] $Command)
+    $elements = @($Command.CommandElements)
+    for ($i = 1; $i -lt $elements.Count; $i++) {
+        $p = $elements[$i]
+        if ($p -isnot [System.Management.Automation.Language.CommandParameterAst] -or $p.ParameterName -ne 'PasswordNeverExpires') { continue }
+        $value = $p.Argument
+        if ($null -eq $value -and $i + 1 -lt $elements.Count) { $value = $elements[$i + 1] }
+        if ($value -is [System.Management.Automation.Language.VariableExpressionAst] -and $value.VariablePath.UserPath -eq 'true') { return $true }
+    }
+    return $false
+}
+
+# Why the volume would build a guest the testbed cannot use, one line each - or nothing:
+#   * the filled answer file is not XML Setup can parse;
+#   * it lacks the local account's or the autologon's password, or one is empty;
+#   * its first logon does not run Complete-FirstLogon.ps1;
+#   * that script does not set the account's password never to expire (2026-11-17). Windows expires
+#     a password after 42 days, and PowerShell Direct and the autologon end with it: every VM built
+#     from here before this check stopped answering, or would have, 42 days after its install. Read
+#     from the script's syntax tree - a Set-LocalUser call with -PasswordNeverExpires $true - so a
+#     comment or a string that mentions it does not count.
+function Get-AnswerVolumeProblems {
+    param([string] $FilledText, [string] $FirstLogonText)
+    $problems = New-Object System.Collections.Generic.List[string]
+    $doc = New-Object System.Xml.XmlDocument
+    try { $doc.LoadXml($FilledText) }
+    catch {
+        $problems.Add("The filled answer file is not well-formed XML: $($_.Exception.Message)")
+        return $problems.ToArray()
+    }
+    $passwordValues = @($doc.SelectNodes('//*') | Where-Object {
+            $_.LocalName -eq 'Value' -and $_.ParentNode -and
+            ($_.ParentNode.LocalName -eq 'Password' -or $_.ParentNode.LocalName -eq 'AdministratorPassword')
+        })
+    if ($passwordValues.Count -lt 2) {
+        $problems.Add("The filled answer file has $($passwordValues.Count) password value(s); expected the local account's and the autologon's.")
+    }
+    if (@($passwordValues | Where-Object { [string]::IsNullOrWhiteSpace($_.InnerText) }).Count -gt 0) {
+        $problems.Add('The filled answer file has an empty password value.')
+    }
+    $runsFirstLogon = @($doc.SelectNodes('//*') | Where-Object {
+            $_.LocalName -eq 'CommandLine' -and $_.ParentNode -and $_.ParentNode.LocalName -eq 'SynchronousCommand' -and
+            $_.InnerText.Contains('Complete-FirstLogon.ps1')
+        })
+    if ($runsFirstLogon.Count -lt 1) {
+        $problems.Add('The filled answer file has no first-logon command that runs Complete-FirstLogon.ps1 - and that script is what sets the account''s password never to expire.')
+    }
+    $ast = [System.Management.Automation.Language.Parser]::ParseInput([string]$FirstLogonText, [ref] $null, [ref] $null)
+    $sets = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Set-LocalUser' }, $true) |
+            Where-Object { Test-SetsPasswordNeverExpires $_ })
+    if ($sets.Count -lt 1) {
+        $problems.Add('The first-logon script does not set the account''s password never to expire (Set-LocalUser -PasswordNeverExpires $true). Windows would expire it after 42 days, and PowerShell Direct and the autologon with it.')
+    }
+    return $problems.ToArray()
+}
+
+function Invoke-SelfTest {
+    $script:stChecks = 0
+    $script:stFailures = @()
+    function Check([string] $What, $Expected, $Actual) {
+        $script:stChecks++
+        if ([string]$Expected -ceq [string]$Actual) { Write-Host "  OK   $What" }
+        else { $script:stFailures += $What; Write-Host "  FAIL $What - expected [$Expected], got [$Actual]" }
+    }
+    Write-Host "New-AnswerFile.ps1 -SelfTest under PowerShell $($PSVersionTable.PSVersion). The committed template and first-logon script, synthetic values: no credential, nothing written."
+    $guestDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'guest'
+    $template = [System.IO.File]::ReadAllText((Join-Path $guestDir 'autounattend.template.xml'))
+    $firstLogon = [System.IO.File]::ReadAllText((Join-Path $guestDir 'Complete-FirstLogon.ps1'))
+    $synthetic = [ordered]@{ GUEST_USERNAME = 'vmadmin'; GUEST_PASSWORD = 'synthetic-not-a-password'; COMPUTER_NAME = 'OAI-SELFTEST'; IMAGE_NAME = 'Windows 11 Pro' }
+
+    Write-Host '== the template =='
+    $filled = Get-FilledAnswerFile -TemplateText $template -Substitutions $synthetic -TemplatePath 'the committed template'
+    Check 'the committed template fills, every token used and none left' $true ($filled.Contains('<ComputerName>OAI-SELFTEST</ComputerName>') -and -not $filled.Contains('{{'))
+    $threw = ''
+    try { [void](Get-FilledAnswerFile -TemplateText $template.Replace('{{COMPUTER_NAME}}', 'X') -Substitutions $synthetic -TemplatePath 't') } catch { $threw = $_.Exception.Message }
+    Check 'a template that lost a token is refused, naming it' $true $threw.Contains('{{COMPUTER_NAME}}')
+    $threw = ''
+    try { [void](Get-FilledAnswerFile -TemplateText ($template + '<!-- {{SURPRISE}} -->') -Substitutions $synthetic -TemplatePath 't') } catch { $threw = $_.Exception.Message }
+    Check 'a token nothing fills is refused, naming it' $true $threw.Contains('{{SURPRISE}}')
+
+    Write-Host '== the volume: the answer file and the first-logon script beside it =='
+    Check 'the committed pair has no problem' '' (@(Get-AnswerVolumeProblems -FilledText $filled -FirstLogonText $firstLogon) -join ' | ')
+    $noFlag = (@($firstLogon -split "`r?`n") | Where-Object { $_ -notmatch 'Set-LocalUser' }) -join "`n"
+    Check 'a first-logon script that does not set the password never to expire is refused (2026-11-17)' $true ((@(Get-AnswerVolumeProblems -FilledText $filled -FirstLogonText $noFlag) -join ' ').Contains('never to expire'))
+    $false_ = 'Set-LocalUser -Name $env:USERNAME -PasswordNeverExpires $false'
+    Check 'so is one that sets it to $false' 1 @(Get-AnswerVolumeProblems -FilledText $filled -FirstLogonText $false_).Count
+    Check 'and one that only mentions it in a comment' 1 @(Get-AnswerVolumeProblems -FilledText $filled -FirstLogonText '# Set-LocalUser -Name x -PasswordNeverExpires $true').Count
+    Check '-PasswordNeverExpires:$true counts' 0 @(Get-AnswerVolumeProblems -FilledText $filled -FirstLogonText 'Set-LocalUser -Name $env:USERNAME -PasswordNeverExpires:$true').Count
+    Check 'an answer file whose first logon does not run Complete-FirstLogon.ps1 is refused' $true ((@(Get-AnswerVolumeProblems -FilledText $filled.Replace('Complete-FirstLogon.ps1', 'Other.ps1') -FirstLogonText $firstLogon) -join ' ').Contains('runs Complete-FirstLogon.ps1'))
+    $emptied = ([regex]'<Value>synthetic-not-a-password</Value>').Replace($filled, '<Value></Value>', 1)
+    Check 'an empty password is refused' $true ((@(Get-AnswerVolumeProblems -FilledText $emptied -FirstLogonText $firstLogon) -join ' ').Contains('empty password'))
+    Check 'an answer file that does not parse is refused' $true ((@(Get-AnswerVolumeProblems -FilledText '<unattend>' -FirstLogonText $firstLogon) -join ' ').Contains('not well-formed'))
+
+    Write-Host ''
+    Write-Host "$($script:stChecks) check(s), $($script:stFailures.Count) failure(s)."
+    if ($script:stFailures.Count -gt 0) { return 1 }
+    return 0
+}
+
+if ($SelfTest) { exit (Invoke-SelfTest) }
+
 # Defaults that need $PSScriptRoot are set HERE, not in param(). Windows PowerShell 5.1 leaves
 # $PSScriptRoot empty while param() defaults are evaluated under -File, so a default built from
 # it threw before the script ran. Measured 2026-09-24; this repository targets 5.1 (Q78).
 if (-not $PSBoundParameters.ContainsKey('RepoRoot')) { $RepoRoot = (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) }
-
-$ErrorActionPreference = 'Stop'
 if (Test-Path Variable:\PSNativeCommandUseErrorActionPreference) {
     $PSNativeCommandUseErrorActionPreference = $false
 }
@@ -286,39 +433,14 @@ $substitutions = [ordered]@{
     'IMAGE_NAME'     = $ImageName
 }
 
-$filled = $templateText
-foreach ($name in $substitutions.Keys) {
-    $token = '{{' + $name + '}}'
-    if (-not $filled.Contains($token)) {
-        throw "The template does not contain the token $token. It has changed shape, and filling it now would produce an answer file that is quietly wrong. Template: $TemplatePath"
-    }
-    $filled = $filled.Replace($token, $substitutions[$name])
-}
+$filled = Get-FilledAnswerFile -TemplateText $templateText -Substitutions $substitutions -TemplatePath $TemplatePath
 
-$leftover = @([regex]::Matches($filled, '\{\{[A-Za-z0-9_]+\}\}') |
-        ForEach-Object { $_.Value } | Sort-Object -Unique)
-if ($leftover.Count -gt 0) {
-    throw ('The template still has unfilled tokens after substitution: ' + ($leftover -join ', ') +
-        ". Teach this script what they mean, or take them out of $TemplatePath.")
-}
-
-# Parse what is about to be written, not what was read: an answer file Setup cannot parse is
-# indistinguishable, from the VM console, from one it never found.
-$doc = New-Object System.Xml.XmlDocument
-try { $doc.LoadXml($filled) }
-catch { throw "The filled answer file is not well-formed XML: $($_.Exception.Message)" }
-
-$passwordValues = @($doc.SelectNodes('//*') | Where-Object {
-        $_.LocalName -eq 'Value' -and $_.ParentNode -and
-        ($_.ParentNode.LocalName -eq 'Password' -or $_.ParentNode.LocalName -eq 'AdministratorPassword')
-    })
-if ($passwordValues.Count -lt 2) {
-    throw "The filled answer file has $($passwordValues.Count) password value(s); expected the local account's and the autologon's. Template: $TemplatePath"
-}
-foreach ($node in $passwordValues) {
-    if ([string]::IsNullOrWhiteSpace($node.InnerText)) {
-        throw 'The filled answer file has an empty password value.'
-    }
+# Check what is about to be written, not what was read - the answer file AND the first-logon script
+# beside it: an answer file Setup cannot parse is indistinguishable, from the VM console, from one it
+# never found, and a guest whose password expires stops answering 42 days later.
+$volumeProblems = @(Get-AnswerVolumeProblems -FilledText $filled -FirstLogonText ([System.IO.File]::ReadAllText($FirstLogonScriptPath)))
+if ($volumeProblems.Count -gt 0) {
+    throw ("Refusing to build this answer volume:`n  " + ($volumeProblems -join "`n  ") + "`nTemplate: $TemplatePath`nFirst-logon script: $FirstLogonScriptPath")
 }
 
 # ---------------------------------------------------------------------------------------------

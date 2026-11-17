@@ -1759,6 +1759,43 @@
   the only direction that covers the real input, and work of its own. Recommended: (2) once the
   helper question is decided, then (4).
 
+- [ ] **`T1.AuditLogStressTests`' lock-on test fails on a CPU-starved machine: writers wait out the
+  2 s writer lock and append without it (2026-11-17).** The test
+  `EightWriterProcesses_OnBothRuntimes_WithTheLock_KeepEveryLineWhole_AndTheFileInTimeOrder`
+  failed on both build clones while three build runs
+  and four Outlook guests ran at once (host CPU 82 to 100 %; runs `20261117-172008-00acbed007ec` and
+  `20261117-172021-00acbed007ec` of the worktree `stream-f-vm-pool`), and the four stress tests passed
+  4 of 4 alone on one of those clones three minutes later (`20261117-174013-00acbed007ec`). The
+  assertion that failed is the first, `LinesWithoutWriterLock` 0 - 12 lines on one clone, 1 on the
+  other - not the time order. The test's own output says why: each writer's append took 550 to 600 ms
+  at the median and 2.0 to 2.4 s at p99 (max 3.3 s), against milliseconds on a quiet machine, so
+  writers waited longer than `AuditLog.WriterLockWaitMilliseconds` (2,000) and appended without the
+  lock, as designed and marked `lock="timeout"` on the line (`lockTimeouts` per writer 0 to 2, summing
+  to the 12). The 5 time inversions on the first clone (0 on the second) came with those lines; the
+  timestamp itself is taken under the lock (`AuditLog.WriteOneLine`, inside `AppendTo`'s `using` of
+  the lock), so a stamp taken before the lock is ruled out by the code - that the inversions are
+  exactly the unlocked lines is consistent with the numbers, not proven, because the log is deleted
+  with the test. Directions: (1) the test asserts what the product promises - every line without
+  the lock says `timeout`, and the LOCKED lines are in time order (`CountTimeInversions` with
+  `lockedOnly: true`, as its other test already does) - and reports the rest; (2) it measures its own
+  append latency and says NOT PROVEN instead of failing when the machine is starved; (3) a longer lock
+  wait in the product - longer stalls of drafts and sends behind a slow writer; (4) the stress tests
+  in a pass of their own, alone on the VM. Recommended: (1).
+
+- [ ] **Decide whether the VM pools keep CPU free for the maintainer, as they keep memory free
+  (2026-11-17).** The pools (`Testbed/host/TestbedPool.ps1`) start a member other than the first only
+  while the host has its memory and 16 GB more available, and nothing looks at CPU. From 17:20 to 17:40
+  that day three build runs and four Outlook guests ran at once: the host's 32 logical processors read
+  82 to 100 % busy for the whole minute sampled, each build run took 17 to 19 minutes instead of 9 to
+  10, and one timing-sensitive test (`T1.AuditLogStressTests`, eight writers checked for time order)
+  failed on both build clones and passed alone minutes later (`Docs/live-tier-on-the-vm.md` section
+  4.7). Directions: (1) leave it - the most runs at once, a busy PC while they overlap; (2) a CPU gate
+  beside the memory one: a member other than the first starts only while the host's CPU, sampled over
+  a few seconds, is under a threshold, else the run waits; (3) cap each testbed VM with Hyper-V
+  (`Set-VMProcessor -Maximum`), so no VM can take all of its virtual processors' share; (4) fewer or
+  smaller clones - one build clone, or clones with 2 virtual processors. Recommended: (2), at 75 %:
+  it keeps every run the pools allow today when the PC is quiet, and stops adding load when it is not.
+
 - [ ] **Decide how the non-live suite keeps a non-UTC zone, now that it runs only in UTC (after
   Q126 (a), 2026-10-03).** The build VM is UTC and nothing else runs the suite (Q94), so tests that
   use the machine's own zone as the "other" zone - build a `Local` value, compare it with the `Utc`
