@@ -1787,6 +1787,10 @@
   replaces a signature someone chose by hand, and never changes a mail as it is sent (Q162 (b)). It
   uses Core's signature code, not the add-in's own copy, so it waits for the Core reference above
   (Q154). Today the task pane's "Select the best signature" does this by hand, through that copy.
+  The Core code it is to call is in place, and the server's drafts use it:
+  `SignatureEnvironment.ReadCurrent()`, then `SignatureSelector.Candidates(...)` for the signatures
+  the sending account can use, with excerpts to judge the language by, and `SignatureSelector.Decide(...)`
+  for the default and why (`QUESTIONS.md` decision log, 2026-11-17, Q147 carried out, item 10).
 
 - [ ] **Remove the Cached Mode policy values OutlookAI 3.0.0.319 to 3.1.0.325 wrote, when the
   maintainer says so (Q151 (a), decided 2026-11-17).** Those versions wrote the five values as
@@ -1922,7 +1926,32 @@
   shared mailbox wherever a test allows it (Q110).
   Then also read which signature, if any, Outlook itself puts in a reply from that mailbox, and give
   OutlookAI's reply drafts there the same (Q160, decided 2026-11-17). Until then a reply from a
-  delegate or shared mailbox gets no signature, and its result says so.
+  delegate or shared mailbox gets no default signature, and its result says so; a signature the
+  agent names still goes in (`QUESTIONS.md` decision log, 2026-11-17, Q147 carried out, item 7).
+
+- [ ] **Measure whether Outlook lets one message use another signature, or none, under a policy-forced
+  default (Q156, G2's policy half).** Until it is measured, OutlookAI refuses a different signature and
+  "none" while Group Policy or Cloud Policy forces a default (`SignatureSelector.ForcedConflict`). The
+  live tier cannot set a policy: `HKCU\Software\Policies` is read-only for the user (its ACL grants
+  ReadKey, checked on the workstation 2026-11-17), and the suite runs at RunLevel Limited. It needs an
+  elevated step on a PST guest before the suite - a parameter of `Invoke-LiveTierOnGuest.ps1` that
+  writes the policy values over PowerShell Direct, undone by the checkpoint restore - then a live test
+  that reads Outlook's own view (`LiveOutlookTestMailer.ReadSignatureEngine`) and its compose window's
+  Signature menu. The maintainer decides whether the runner gets that step. The same step settles G2's
+  other half, a default deployed for every account in `Common\MailSettings` (QUESTIONS.md, 2026-11-17,
+  item 5): its first run, on OAI-UNINDEXED on 2026-11-17, could not tell what Outlook does with it -
+  Outlook's signature settings, read through a draft's editor, reported no default with it or without
+  it - and the value had been written while Outlook ran, which Outlook may read only when it starts.
+
+- [ ] **Decide whether OutlookAI reads the mailbox's own signature folder (Q152), once stream A's R3
+  lands.** Q152 (a) is built: OutlookAI reads only what Outlook copies into the local folder, works out
+  whether an account's signatures may roam (`SignatureRoaming`: possible on Microsoft 365 Apps 2303+,
+  on perpetual Office only where Outlook's `Name (address)` copies of an Exchange account show it), and
+  then leaves those copies and that account's defaults to Outlook. R1 on the Exchange VM (2026-11-17)
+  saw no roaming on Office LTSC 2024; R3 creates a real cloud signature in Outlook on the web and shows
+  whether a copy appears. If it does, LTSC 2024 roams and the evidence rule already covers it; reading
+  the hidden `ApplicationDataRoot` folder itself stays a separate decision. The mailbox's signature
+  data is never written.
 
 - [ ] **Approve, amend or refuse the Exchange VM's Phase 2 write-safety design** (proposed
   2026-10-03, `Docs/live-tier-on-the-vm.md` section 4.4). Until then `OutlookAI-Exchange` is
