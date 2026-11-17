@@ -149,6 +149,20 @@ function Read-IndexRoots {
     return @($roots.Keys | Sort-Object)
 }
 
+# Read-IndexRoots, again every 10 s for at most $Seconds while Windows Search refuses the query: right
+# after a restart it answers 0x80041820 for a while (measured 2026-11-17, 20 s after the boot).
+function Read-IndexRootsPatiently {
+    param([int] $Seconds)
+    $deadline = (Get-Date).AddSeconds($Seconds)
+    while ($true) {
+        try { return @(Read-IndexRoots) }
+        catch {
+            if ((Get-Date) -ge $deadline) { throw }
+            Start-Sleep -Seconds 10
+        }
+    }
+}
+
 if ($SelfTest) {
     Write-Host "Reset-OutlookOfflineStore.ps1 -SelfTest under PowerShell $($PSVersionTable.PSVersion). No guest, no Outlook."
     $script:fails = 0
@@ -182,7 +196,7 @@ if ($SelfTest) {
 Assert-TestbedGuest -ExpectedUser $ExpectedUser
 
 if ($RecordIndexRoots) {
-    $roots = @(Read-IndexRoots)
+    $roots = @(Read-IndexRootsPatiently 300)
     [System.IO.File]::WriteAllLines($RootsFile, [string[]]$roots)
     Write-Host "INDEX-ROOTS-RECORDED $($roots.Count)"
     exit 0
@@ -194,11 +208,14 @@ if ($WaitForIndexRoots) {
     $before = @()
     if (Test-Path -LiteralPath $RootsFile) { $before = @(Get-Content -LiteralPath $RootsFile | Where-Object { $_ }) }
     $t0 = Get-Date
+    $lastError = ''
     while ($true) {
-        $missing = @(Get-StoresWithoutNewRoot $stores $before @(Read-IndexRoots))
+        $now = @()
+        try { $now = @(Read-IndexRoots); $lastError = '' } catch { $lastError = " (the last query failed: $($_.Exception.Message))" }
+        $missing = @(Get-StoresWithoutNewRoot $stores $before $now)
         $waited = [int]((Get-Date) - $t0).TotalSeconds
         if ($missing.Count -eq 0) { Write-Host "INDEX-ROOTS-READY $waited"; exit 0 }
-        if ($waited -ge $TimeoutSeconds) { Write-Host "INDEX-ROOTS-TIMEOUT ${waited}: $($missing.Count) of $($stores.Count) indexed store(s) still have no new index root"; exit 0 }
+        if ($waited -ge $TimeoutSeconds) { Write-Host "INDEX-ROOTS-TIMEOUT ${waited}: $($missing.Count) of $($stores.Count) indexed store(s) still have no new index root$lastError"; exit 0 }
         Start-Sleep -Seconds 20
     }
 }

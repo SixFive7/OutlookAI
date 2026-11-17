@@ -1250,7 +1250,7 @@ Copy-Item -LiteralPath '$GuestPayloadDir\live-test-settings.json' -Destination '
                 if ($LASTEXITCODE -ne 0) { throw "Restart-Guest.ps1 did not complete ($LASTEXITCODE) - restart.log" }
                 # New data files are new stores to Windows Search, with new index roots: the old ones are
                 # recorded first, so the wait below can tell a new root from one the old files left.
-                $o = Invoke-Guest 'index-before' "& '$GuestRoot\Reset-OutlookOfflineStore.ps1' -RecordIndexRoots" 300
+                $o = Invoke-Guest 'index-before' "& '$GuestRoot\Reset-OutlookOfflineStore.ps1' -RecordIndexRoots" 480
                 if ($o -notmatch 'INDEX-ROOTS-RECORDED \d+') { throw 'Reset-OutlookOfflineStore.ps1 -RecordIndexRoots did not record the index roots - guest\index-before.log' }
                 $o = Invoke-Guest 'reset-ost' "& '$GuestRoot\Reset-OutlookOfflineStore.ps1' -Execute; `"RESET-OST-EXIT `$LASTEXITCODE`"" 300 -Session0
                 if ($o -notmatch 'RESET-OST-EXIT 0') { throw 'Reset-OutlookOfflineStore.ps1 did not set the data files aside - guest\reset-ost.log' }
