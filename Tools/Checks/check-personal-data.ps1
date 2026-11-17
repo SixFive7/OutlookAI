@@ -1241,7 +1241,8 @@ function Invoke-SelfTest {
     Test-Case 'a line moved within a file adds nothing' 0 @(Get-DiffFindings @(ConvertFrom-UnifiedDiff $moved) $catalog).Count
     $msg = "Fix the zebrafinch thing`n`nCo-Authored-By: Claude <noreply$($at)anthropic.com>`n# ------------------------ >8 ------------------------`n+ lorem ipsum"
     Test-Case 'a message is cut at the scissors line' $false ((Get-MessageText $msg).Contains('lorem'))
-    Test-Case 'and its identifiers are found, the trailer''s address is not' 'pdx1' (@(Get-MessageFindings (Get-MessageText $msg) $catalog '(commit message)') | ForEach-Object { ($_ -split '\s+')[1] })
+    $messageFindings = @(Get-MessageFindings (Get-MessageText $msg) $catalog '(commit message)')
+    Test-Case 'and its identifiers are found, the trailer''s address is not' '1 True' "$($messageFindings.Count) $($messageFindings[0].StartsWith('(commit message):1  pdx1 - '))"
     $push = "refs/heads/master 1234567890123456789012345678901234567890 refs/heads/master abcdefabcdefabcdefabcdefabcdefabcdefabcd`nrefs/heads/gone 0000000000000000000000000000000000000000 refs/heads/gone 1111111111111111111111111111111111111111`n"
     $refs = @(ConvertFrom-PrePushInput $push)
     Test-Case 'a push is its refs, deletions left out' '1 refs/heads/master 1234567890123456789012345678901234567890' ("$($refs.Count) $($refs[0].LocalRef) $($refs[0].LocalOid)")
