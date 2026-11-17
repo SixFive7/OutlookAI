@@ -1,0 +1,11 @@
+# The model pack Tools/Invoke-CodeQL.ps1 runs with (Q146 (d)): it makes the parameters of
+# OutlookAI's MCP tools untrusted input. It is never published or fetched. Each run copies
+# Tools\CodeQL into its run folder and names this pack with --additional-packs and --model-packs.
+# CodeQL refuses dependencies in a model pack, so the census query lives in ..\census.
+name: outlookai/mcp-tool-sources
+version: 0.0.0
+library: true
+extensionTargets:
+  codeql/csharp-all: "*"
+dataExtensions:
+  - "*.model.yml"
