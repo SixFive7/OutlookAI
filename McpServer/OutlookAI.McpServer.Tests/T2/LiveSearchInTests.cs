@@ -284,8 +284,7 @@ public sealed class LiveSearchInTests
     {
         Query = Probe.SubjectTerm,
         SearchIn = searchIn,
-        Store = Probe.StoreDisplayName,
-        Folder = Probe.FolderPath,
+        FolderId = LiveIds.FolderId(Service, Probe.StoreDisplayName, Probe.FolderPath),
         Top = MailService.SearchTopCap,
         SnippetChars = 0,
     };
@@ -294,7 +293,7 @@ public sealed class LiveSearchInTests
     {
         Query = term,
         SearchIn = searchIn,
-        Store = Hub,
+        StoreId = LiveIds.StoreId(Service, Hub),
         IncludeAttachmentHits = false,
         Top = MailService.SearchTopCap,
         SnippetChars = 0,

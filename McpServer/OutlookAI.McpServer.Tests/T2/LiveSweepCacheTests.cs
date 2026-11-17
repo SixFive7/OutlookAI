@@ -44,9 +44,10 @@ public sealed class LiveSweepCacheTests
         MailService service = _fixture.Service;
         string hub = _fixture.Settings.TestHubStoreDisplayName;
 
+        string hubId = LiveIds.StoreId(service, hub);
         SearchRequest MakeRequest() => new()
         {
-            Store = hub,
+            StoreId = hubId,
             Top = 5,
             SnippetChars = 0,
         };

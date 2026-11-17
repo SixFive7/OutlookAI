@@ -653,7 +653,10 @@ public sealed class DraftUpdateReentrancyTests : IDisposable
             switch (method.Name)
             {
                 case nameof(IOutlookSession.GetStoreDetails):
-                    return Array.Empty<ComStoreDetail>();
+                    return TestFolders.WithRoots(Array.Empty<ComStoreDetail>());
+
+                case nameof(IOutlookSession.TryDescribeFolder):
+                    return TestFolders.Describe(args);
                 case nameof(IOutlookSession.TryGetMailInfo):
                     return Snapshot();
                 case nameof(IOutlookSession.SnapshotAttachmentsById):

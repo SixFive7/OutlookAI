@@ -101,10 +101,10 @@ public sealed class FolderEntryIdLayout
     /// </summary>
     public string? PstProviderItemId => Nid is uint nid ? ProviderItemIdOf(nid) : null;
 
-    /// <summary>The <c>System.ProviderItemID</c> spelling of a node id: <c>N</c> and ten decimal digits.</summary>
+    /// <summary>The <c>System.ProviderItemID</c> spelling of a node id: <c>N</c> and ten decimal digits - the product's own (<see cref="OutlookIds.ProviderItemIdOf"/>).</summary>
     public static string ProviderItemIdOf(uint nid)
     {
-        return "N" + nid.ToString("D10", CultureInfo.InvariantCulture);
+        return OutlookIds.ProviderItemIdOf(nid);
     }
 
     /// <summary>
@@ -214,25 +214,10 @@ public sealed class FolderEntryIdLayout
         return sb.ToString();
     }
 
+    /// <summary>The layout, as the product's folder IDs read it (<see cref="OutlookIds.Classify"/>): one rule, not two.</summary>
     private static FolderEntryIdKind Classify(byte[] bytes)
     {
-        bool zeroFlags = bytes.Length >= 4 && bytes[0] == 0 && bytes[1] == 0 && bytes[2] == 0 && bytes[3] == 0;
-        if (!zeroFlags)
-        {
-            return FolderEntryIdKind.Unknown;
-        }
-
-        if (bytes.Length == 24)
-        {
-            return FolderEntryIdKind.Pst;
-        }
-
-        if (bytes.Length == 46 && bytes[44] == 0 && bytes[45] == 0)
-        {
-            return FolderEntryIdKind.ExchangeFolder;
-        }
-
-        return FolderEntryIdKind.Unknown;
+        return (FolderEntryIdKind)(int)OutlookIds.Classify(bytes);
     }
 
     private static int IndexOf(byte[] haystack, byte[] needle)

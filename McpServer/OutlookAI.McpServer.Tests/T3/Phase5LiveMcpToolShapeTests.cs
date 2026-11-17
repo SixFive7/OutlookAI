@@ -199,7 +199,7 @@ public sealed class Phase5LiveMcpToolShapeTests
             JsonElement search = await client.CallToolAsync("search", new
             {
                 query = Marker,
-                store = Hub,
+                store_id = WireIds.StoreId(Hub),
                 include_attachment_hits = false,
                 top = 25,
             });

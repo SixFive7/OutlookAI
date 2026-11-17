@@ -123,7 +123,7 @@ public sealed class LiveSweepScopeTests
 
             // --- fix 2: file the seed into a folder no default sweep covers.
             string probeTerm = subjectTerm;
-            MoveMailOutcome moved = Service.MoveMail(new[] { entryId }, _fixture.TestFolderName, createFolder: true);
+            MoveMailOutcome moved = Service.MoveMail(new[] { entryId }, LiveIds.EnsureTestFolder(Service, Hub, _fixture.TestFolderName));
             MoveItemView movedItem = Assert.Single(moved.Items);
             Assert.True(movedItem.Ok, movedItem.Error);
             entryId = movedItem.NewEntryId!;
@@ -135,7 +135,7 @@ public sealed class LiveSweepScopeTests
             SearchOutcome storeWide = Service.Search(new SearchRequest
             {
                 Query = probeTerm,
-                Store = Hub,
+                StoreId = LiveIds.StoreId(Service, Hub),
                 Top = MailService.SearchTopCap,
                 SnippetChars = 0,
             });
@@ -155,8 +155,8 @@ public sealed class LiveSweepScopeTests
             SearchOutcome folderScoped = Service.Search(new SearchRequest
             {
                 Query = probeTerm,
-                Store = Hub,
-                Folder = _fixture.TestFolderName,
+                StoreId = LiveIds.StoreId(Service, Hub),
+                FolderId = LiveIds.FolderId(Service, Hub, _fixture.TestFolderName),
                 Top = MailService.SearchTopCap,
                 SnippetChars = 0,
             });
@@ -208,7 +208,7 @@ public sealed class LiveSweepScopeTests
             SearchOutcome afterScoped = Service.Search(new SearchRequest
             {
                 Query = probeTerm,
-                Store = Hub,
+                StoreId = LiveIds.StoreId(Service, Hub),
                 Top = MailService.SearchTopCap,
                 SnippetChars = 0,
             });
@@ -223,8 +223,8 @@ public sealed class LiveSweepScopeTests
             SearchOutcome repeat = Service.Search(new SearchRequest
             {
                 Query = probeTerm,
-                Store = Hub,
-                Folder = _fixture.TestFolderName,
+                StoreId = LiveIds.StoreId(Service, Hub),
+                FolderId = LiveIds.FolderId(Service, Hub, _fixture.TestFolderName),
                 Top = MailService.SearchTopCap,
                 SnippetChars = 0,
             });
@@ -260,25 +260,22 @@ public sealed class LiveSweepScopeTests
 
     [Fact]
     [Trait("Requires", "OutlookInstance")]
-    public void FolderScopedSweep_UnknownFolder_DegradesWithAdvice_NeverThrows()
+    public void FolderScopedSweep_AnUnknownFolderId_IsRefusedBeforeAnythingIsSwept()
     {
+        // Before Q131-Q136 a folder PATH that matched nothing reached the sweep, which skipped it with
+        // advice. A folder ID is looked up first - through the index for a local mail file, through
+        // Outlook otherwise - and one no folder has is refused with nothing searched.
         Service.ClearSweepCache();
-        SearchOutcome outcome = Service.Search(new SearchRequest
+        ArgumentException refused = Assert.Throws<ArgumentException>(() => Service.Search(new SearchRequest
         {
             Query = "sfxnothing" + Marker,
-            Store = Hub,
-            Folder = "OutlookAI-McpTest-NoSuchFolder",
+            FolderId = LiveIds.UnknownFolderIdIn(Service, Hub),
             Top = 10,
             SnippetChars = 0,
-        });
+        }));
 
-        Assert.NotNull(outcome.Sweep);
-        Assert.True(outcome.Sweep!.Performed);
-        Assert.Equal(0, outcome.Sweep.FoldersSwept);
-        Assert.True(outcome.Sweep.FoldersSkipped >= 1);
-        Assert.NotNull(outcome.Advice);
-        Assert.Contains(outcome.Advice!, a => a.Contains("could not be opened in Outlook", StringComparison.Ordinal));
-        _output.WriteLine($"unknown folder: swept={outcome.Sweep.FoldersSwept} skipped={outcome.Sweep.FoldersSkipped}, advice present");
+        Assert.Contains("No folder in this Outlook profile has the ID", refused.Message, StringComparison.Ordinal);
+        _output.WriteLine("unknown folder ID refused: " + refused.Message);
     }
 
     [Fact]
@@ -327,7 +324,7 @@ public sealed class LiveSweepScopeTests
         {
             Query = query,
             SearchIn = searchIn,
-            Store = Hub,
+            StoreId = LiveIds.StoreId(Service, Hub),
             IncludeAttachmentHits = false,
             Top = MailService.SearchTopCap,
             SnippetChars = 0,

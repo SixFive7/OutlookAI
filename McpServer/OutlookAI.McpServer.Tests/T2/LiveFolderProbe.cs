@@ -20,7 +20,7 @@ internal static class LiveFolderProbe
         int offset = 0;
         while (true)
         {
-            FoldersOutcome page = service.ListFolders(store, offset);
+            FoldersOutcome page = service.ListFolders(LiveIds.StoreId(service, store), offset);
             foreach (StoreFoldersView view in page.Stores)
             {
                 all.AddRange(view.Folders);

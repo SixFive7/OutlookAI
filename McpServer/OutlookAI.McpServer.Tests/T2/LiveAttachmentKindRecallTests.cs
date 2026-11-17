@@ -230,7 +230,7 @@ public sealed class LiveAttachmentKindRecallTests
         {
             SearchOutcome outcome = service.Search(new SearchRequest
             {
-                Store = store,
+                StoreId = LiveIds.StoreId(service, store),
                 AttachmentHitsOnly = true,
                 Top = AttachmentProbeTop,
                 SnippetChars = 0,
@@ -518,7 +518,7 @@ public sealed class LiveAttachmentKindRecallTests
     {
         SearchOutcome outcome = service.Search(new SearchRequest
         {
-            Store = store,
+            StoreId = LiveIds.StoreId(service, store),
             AttachmentHitsOnly = true,
             Top = AttachmentProbeTop,
             SnippetChars = 0,
