@@ -391,7 +391,12 @@ The maintainer's answers, and what was built on them (`McpServer/README.md` load
 Decided on the maintainer's behalf while building it: the target of `move_mail` is checked once, before
 any item, so a refused folder refuses the whole call; a store whose name several index stores carry is
 refused when nothing ties it by hash (stream A's stale-.ost finding); a folder whose path a namesake
-shares is reported (`scope.pathShared`), not refused. Open follow-ups are in `TODO.md`.
+shares is reported (`scope.pathShared`), not refused; a data file's folder ID is looked up in the index
+first even while Outlook runs, so a search goes where the index files the folder now; an Exchange
+folder ID is resolved through Outlook, which is started for it as for the search's sweep (D17), and
+refused only when Outlook does not answer; `find_folder` carries the read-only tool annotations
+`audit_log` carries, and `create_folder`, like every other write tool, none. Open follow-ups are in
+`TODO.md`.
 
 ### 2026-10-04, autonomous - the compose crash: dumps on the guests, the cause, and a compose that never hands Outlook that close
 
