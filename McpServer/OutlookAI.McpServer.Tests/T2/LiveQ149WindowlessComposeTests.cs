@@ -513,7 +513,7 @@ public sealed class LiveQ149WindowlessComposeTests
                         .Set("mode", d == 1 ? "product-promotion" : afterExplorer ? "direct-after-displayed-explorer" : "direct")
                         .Set("commit", formPage ? "formpage-close-olsave" : "save-close-oldiscard");
                     (string entryId, string storeId, _) = Q149Drafts.CreateTaggedDraft(
-                        Run, client, label.ToLowerInvariant() + "-" + p.ToString(CultureInfo.InvariantCulture) + "-" + d.ToString(CultureInfo.InvariantCulture), OldBody(d), addressToHub: false);
+                        Run, client, label.ToLowerInvariant() + "-" + p.ToString(CultureInfo.InvariantCulture) + "-" + d.ToString(CultureInfo.InvariantCulture), OldBody((p * 100) + d), addressToHub: false);
                     string token = Token(label, (p * 100) + d, pin: true);
                     int showsBefore = windows.Shows;
                     client.Run<object?>((app, ns) =>
