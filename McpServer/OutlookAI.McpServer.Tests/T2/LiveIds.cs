@@ -40,6 +40,24 @@ internal static class LiveIds
         return folder?.FolderId;
     }
 
+    /// <summary>
+    /// The folderId of the ONE folder of the store whose own name is <paramref name="name"/>, as find_folder
+    /// offers it (an exact match); fails on none or several - a test names a folder it knows to be unique.
+    /// </summary>
+    internal static string FolderIdByName(MailService service, string storeDisplayName, string name)
+    {
+        List<FolderCandidateView> exact = service.FindFolder(name, StoreId(service, storeDisplayName)).Candidates
+            .Where(c => c.Match == "exact")
+            .ToList();
+        if (exact.Count != 1)
+        {
+            throw new InvalidOperationException(
+                "find_folder offers " + exact.Count + " folders named '" + name + "' in '" + storeDisplayName + "' - a test names exactly one.");
+        }
+
+        return exact[0].FolderId;
+    }
+
     /// <summary>Every folder list_folders shows for the store, all pages (<see cref="LiveFolderProbe.FolderTree"/>).</summary>
     internal static IReadOnlyList<FolderView> Folders(MailService service, string storeDisplayName)
     {
@@ -118,7 +136,20 @@ internal static class LiveIds
         return OutlookAI.Core.Mapi.OutlookIds.FolderIdFromEntryId(bytes);
     }
 
+    /// <summary>
+    /// The stores list_accounts showed, by display name, for the rest of the run: a store's ID does not change
+    /// while it stays attached, and list_accounts probes the index once per store, which a test asking for IDs
+    /// inside a loop would otherwise pay on every call.
+    /// </summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, StoreView> Stores =
+        new(StringComparer.OrdinalIgnoreCase);
+
     private static StoreView Store(MailService service, string storeDisplayName)
+    {
+        return Stores.GetOrAdd(storeDisplayName, name => LookUpStore(service, name));
+    }
+
+    private static StoreView LookUpStore(MailService service, string storeDisplayName)
     {
         List<StoreView> named = service.ListAccounts().Stores
             .Where(s => string.Equals(s.DisplayName, storeDisplayName, StringComparison.OrdinalIgnoreCase))

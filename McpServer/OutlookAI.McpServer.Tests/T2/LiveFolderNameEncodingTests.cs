@@ -407,8 +407,9 @@ public sealed class LiveFolderNameEncodingTests
     /// The product end to end, index tier only - the sweep would find a just-filed item whatever
     /// the scope, which is exactly how a wrong scope stayed invisible: a folder search, recursive
     /// and not, the folder the hit reports, the zero-row guard, and how <c>read</c> located it.
-    /// A name holding <c>/</c> cannot be ASKED for - every product folder path splits on it - so
-    /// its item is searched for through its parent, and the direct request is reported.
+    /// A name holding <c>/</c> could not be asked for while folders were named by path - every path split
+    /// on it - so its item is searched for through its parent too; since Q131-Q136 the folder is named by
+    /// its ID like any other, and the direct request must find it.
     /// </summary>
     private void SearchThroughTheProduct(EncodingCase c)
     {
@@ -502,6 +503,11 @@ public sealed class LiveFolderNameEncodingTests
             if (!c.NeedsHelper)
             {
                 Check(problems, c, "non-recursive", c.NonRecursive, reportedFolder);
+            }
+            else
+            {
+                // Q131-Q136: a folder whose own name holds '/' is searched by its ID like any other.
+                Check(problems, c, "by its own ID", c.DirectRequestOfASlashName, reportedFolder);
             }
 
             if (c.FromParentWithSubfolders != null)
