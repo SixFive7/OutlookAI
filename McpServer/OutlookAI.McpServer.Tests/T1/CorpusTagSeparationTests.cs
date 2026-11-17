@@ -242,6 +242,7 @@ public sealed class CorpusTagSeparationTests
     // ------------------------------------------------------------------ re-anchoring is retired
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void ReanchorRefusesAndSaysRebuildingIsTheMaintenancePath()
     {
         // Decision 2, 2026-08-25. The notice is in the TOOL, not only in the docs - and it is
@@ -259,6 +260,7 @@ public sealed class CorpusTagSeparationTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void ReanchorRefusesEvenWhenEveryArgumentIsPresent()
     {
         // No COM is reached: the refusal is ahead of Vet(), which is what makes this testable
@@ -278,6 +280,7 @@ public sealed class CorpusTagSeparationTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void TheDiagnosticEscapeHatchStillPrintsTheNotice()
     {
         // Kept so the write path can be diagnosed, which is the stated condition for

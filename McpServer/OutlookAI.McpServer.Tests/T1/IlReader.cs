@@ -7,7 +7,9 @@ namespace OutlookAI.McpServer.Tests.T1;
 /// <param name="Op">The opcode.</param>
 /// <param name="Method">The method a call, callvirt, newobj, ldftn or ldvirtftn names; null otherwise or when it cannot be resolved.</param>
 /// <param name="Text">The string an ldstr pushes; null otherwise.</param>
-internal readonly record struct IlInstruction(OpCode Op, MethodBase? Method, string? Text);
+/// <param name="Field">The field an ldfld, ldsfld, ldflda, ldsflda, stfld or stsfld names - only in a
+/// <see cref="IlReader.Read(MethodBase, bool)"/> that asked for fields; null otherwise.</param>
+internal readonly record struct IlInstruction(OpCode Op, MethodBase? Method, string? Text, FieldInfo? Field = null);
 
 /// <summary>
 /// A real opcode walk over compiled method bodies, for the T1 pins that have to read what the code
@@ -31,6 +33,20 @@ internal static class IlReader
     /// A bodiless method (abstract, extern, an interface member) has none.
     /// </summary>
     public static IReadOnlyList<IlInstruction> Read(MethodBase method)
+    {
+        return Read(method, withFields: false);
+    }
+
+    /// <summary>
+    /// <see cref="Read(MethodBase)"/>, and with <paramref name="withFields"/> the instructions that
+    /// name a field as well.
+    /// <para>
+    /// Fields only when asked for: a caller that reads the list as "every instruction here is a call
+    /// or a string" - <c>WritePathAnalyzer</c> takes one with neither for a call it could not resolve
+    /// - must not meet them. A field that cannot be resolved is left out.
+    /// </para>
+    /// </summary>
+    public static IReadOnlyList<IlInstruction> Read(MethodBase method, bool withFields)
     {
         byte[]? il;
         try
@@ -91,6 +107,23 @@ internal static class IlReader
                 }
 
                 found.Add(new IlInstruction(op, target, null));
+            }
+            else if (withFields && op.OperandType == OperandType.InlineField)
+            {
+                FieldInfo? field;
+                try
+                {
+                    field = method.Module.ResolveField(BitConverter.ToInt32(il, operand), typeArguments, methodArguments);
+                }
+                catch (Exception ex) when (ex is ArgumentException or BadImageFormatException or TypeLoadException)
+                {
+                    field = null;
+                }
+
+                if (field != null)
+                {
+                    found.Add(new IlInstruction(op, null, null, field));
+                }
             }
         }
 

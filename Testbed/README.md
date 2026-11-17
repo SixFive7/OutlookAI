@@ -249,6 +249,25 @@ VM back. The zone lives in the base checkpoint (B9 below), and the runner refuse
 guest that reads any other zone than `testbed.json`'s `buildVm.timeZone`; its summary's `machine`
 line prints the zone every run had.
 
+**The tests that can read the machine's zone run a second time, in W. Europe Standard Time** - the
+zone pass, decided by the maintainer 2026-10-11 (Q144). In UTC the machine's zone and UTC are one
+zone, so a test that builds a local time and compares it with a UTC one proves only that they are
+equal. Such a test carries `[Trait("TimeZone", "Machine")]`. After the suite, the guest script
+switches the VM to W. Europe Standard Time, asks a new process which zone it sees, runs
+`Category!=Live&TimeZone=Machine` (ANDed with `-Filter`, like the suite) into `vm\trx\zone.trx`,
+and switches back in a `finally`, checked the same way, before the self-tests. Every run does it
+but a `-SkipSuite` one, on the base checkpoint - no second checkpoint. Its `zone pass` line in
+`summary.txt` gives its counts and the zone a new process read in it and after it, `summary.json`
+has a `zonePass` object, a test that fails only there is listed under `FAILED IN THE ZONE PASS`, and
+the exit code covers both passes. A pass that selects no test is no failure: a revision from before
+Q144 marks none, and a narrow `-Filter` may select none of the marked tests. What makes the marks
+complete is `T1/TimeZoneMarkerTests`, which fails a test that can read the machine's zone and
+carries none: it walks the compiled code of the whole solution from every non-live test, and
+`T1/MachineZoneReads.cs` says how and what it cannot see. On 2026-11-17 it found 323 of 2,676 test
+methods, in 39 classes - 145 of them only through a product conversion that reads the zone for a
+local time alone. AGENTS.md has the rule for them: rewrite a marked test to set its own zone when
+you next touch it, and drop its mark once the check no longer finds it.
+
 **Using it** - from any checkout or worktree, Windows PowerShell 5.1 or PowerShell 7:
 
     pwsh -File Testbed/host/Invoke-TestsOnBuildVm.ps1                  # this checkout's HEAD: the suite and every self-test
@@ -258,12 +277,14 @@ line prints the zone every run had.
 
 It tests a COMMIT - a HEAD with uncommitted changes is tested as committed, and the run says how
 many it left out - so commit first; a work-in-progress commit is fine. The exit code is the
-verdict: 0 pass; 1 a test or self-test failed, the suite hung, or the filter selected nothing;
+verdict: 0 pass; 1 a test or self-test failed - in the suite or the zone pass - the suite or the
+zone pass hung, or the filter selected nothing;
 2 the revision does not restore or build; 3 no result came back (the VM, the lock, a time limit)
 and nothing was tested - a run whose `run.json` and TRX file came back is judged by them, whatever
 went wrong on this side; 4 refused. Everything lands in `.work\build-vm-runs\<run>\` of the
-checkout it ran from: `summary.txt`, `summary.json`, `vm\trx\suite.trx`, `vm\run.log` and every
-build, test and self-test log. **A full run took 4 min 05 s** on 2026-10-03 (`e4b00fa`: 3,005 of
+checkout it ran from: `summary.txt`, `summary.json`, `vm\trx\suite.trx`, `vm\trx\zone.trx`,
+`vm\run.log` and every build, test and self-test log.
+**A full run took 4 min 05 s** on 2026-10-03 (`e4b00fa`: 3,005 of
 3,005 passed, 18 of 18 self-tests): 9 s to restore and resume the VM, 2 s to stage, in the VM 2 s
 expanding, 2 s restoring, 29 s building, 2 min 18 s testing and 44 s of self-tests, then 1 s
 fetching and 8 s restoring it again. Master at `3e7b861` the same night: 3,346 of 3,346 in

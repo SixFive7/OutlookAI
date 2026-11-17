@@ -21,6 +21,7 @@ public sealed class Phase3ValidationTests : IDisposable
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void Exhaustive_WithoutStore_Throws()
     {
         ArgumentException ex = Assert.Throws<ArgumentException>(() => _service.Search(new SearchRequest
@@ -32,6 +33,7 @@ public sealed class Phase3ValidationTests : IDisposable
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void Exhaustive_WithoutFolderOrAfterBound_Throws()
     {
         ArgumentException ex = Assert.Throws<ArgumentException>(() => _service.Search(new SearchRequest
@@ -44,6 +46,7 @@ public sealed class Phase3ValidationTests : IDisposable
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void Exhaustive_WithRecipientFilter_Throws()
     {
         Assert.Throws<ArgumentException>(() => _service.Search(new SearchRequest
@@ -56,6 +59,7 @@ public sealed class Phase3ValidationTests : IDisposable
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void Exhaustive_WithAttachmentHitsOnly_Throws()
     {
         Assert.Throws<ArgumentException>(() => _service.Search(new SearchRequest
