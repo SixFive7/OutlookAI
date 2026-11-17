@@ -369,6 +369,30 @@ spelling".** See the decision log below.
 
 ## Decision log
 
+### 2026-10-11 - Q131-Q136 ANSWERED: folders and stores addressed by ID, carried out 2026-11-17
+
+The maintainer's answers, and what was built on them (`McpServer/README.md` load-bearing fact 18):
+
+- **Q131 (b), the ID format:** the folder's whole entry id, re-encoded shorter with a check character -
+  `Core/Mapi/OutlookIds.cs`: a kind letter, Crockford base32 without the constant bytes, and a GF(32) check
+  that refuses every single wrong character and every swap of two characters fewer than 31 apart. 34
+  characters for a folder in a data file, 66 for an Exchange folder. Nothing stored, no table.
+- **Q132 (i), one folder while Outlook is closed:** found through the index by `System.ProviderItemID` for a
+  data file's folder. Exchange measured by stream A on `OutlookAI-Exchange` (2026-11-17): the route does not
+  work there - the row's id is the .ost's own node id, not in the 46-byte folder id, and it changes on an
+  .ost rebuild - so such a search is refused with that reason. No learned maps.
+- **Q133 (i), stores:** a 28-character `store_id` (`S` and the provider UID every entry id in the store
+  carries), or `T` and the store's own entry id where the root was not read; display names beside it.
+- **Q134 (i):** `create_folder(parent_id, name)`, a `/` part of the name; `move_mail` creates nothing.
+- **Q135 (i):** a clean break: names and paths are refused with a pointer to `find_folder`, and the retired
+  arguments by a call-tool filter, since the SDK would otherwise ignore them.
+- **Q136 (ii):** `find_folder(name)`, read-only, candidates only.
+
+Decided on the maintainer's behalf while building it: the target of `move_mail` is checked once, before
+any item, so a refused folder refuses the whole call; a store whose name several index stores carry is
+refused when nothing ties it by hash (stream A's stale-.ost finding); a folder whose path a namesake
+shares is reported (`scope.pathShared`), not refused. Open follow-ups are in `TODO.md`.
+
 ### 2026-10-04, autonomous - the compose crash: dumps on the guests, the cause, and a compose that never hands Outlook that close
 
 **Primer.** OUTLOOK.EXE crashed now and then in the live compose tests on both Outlook guests (runbook
