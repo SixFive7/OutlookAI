@@ -1,0 +1,20 @@
+{
+    "Attached":  true,
+    "AttachError":  null,
+    "ExplorerCount":  0,
+    "Explorers":  [
+
+                  ],
+    "InspectorCount":  0,
+    "DefaultOutbox":  0,
+    "OutboxTotal":  0,
+    "OutboxStores":  2,
+    "OutboxErrors":  "store 3: TargetInvocationException; store 4: TargetInvocationException; ",
+    "Active":  "null",
+    "ActiveIndex":  -1,
+    "ActiveHwnd":  0,
+    "ActiveVisible":  "unknown",
+    "Errors":  "",
+    "QuitResult":  "",
+    "Closed":  -1
+}

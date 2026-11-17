@@ -74,6 +74,22 @@ namespace OutlookAI.Core.Com
         public const string DiscardNotStarted = "DiscardNotStarted";
 
         /// <summary>
+        /// Outlook would not hand over a compose inspector's Word editor, even after the invisible
+        /// promotion (<c>ComposeSurface.PromoteForWordEditor</c>). Written as
+        /// <c>NoWordEditor:&lt;COM failure&gt;</c> since 2026-11-17 (Q149): the bare word it used to be
+        /// threw the HRESULT away, so no refused editor in an audit log could be told from another.
+        /// update_draft refuses on it as <c>compose_surface_unavailable</c>; a new draft falls back to
+        /// the HTML splice and reports it.
+        /// </summary>
+        public const string NoWordEditor = "NoWordEditor";
+
+        /// <summary>
+        /// The promotion's <c>Inspector.Activate()</c> failed. Written as <c>ActivateFailed:&lt;COM
+        /// failure&gt;</c>; it is the error only when no editor was had afterwards either.
+        /// </summary>
+        public const string ActivateFailed = "ActivateFailed";
+
+        /// <summary>
         /// A draft tool's signature request was refused in the COM host - the one place the sending
         /// account of a reply, forward or revised draft is known (Q157 (a): only a signature the account
         /// can use; Q156: policy). Set BEFORE anything that can save a draft, so no draft exists and

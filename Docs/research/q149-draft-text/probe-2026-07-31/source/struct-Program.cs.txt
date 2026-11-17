@@ -1,0 +1,226 @@
+using System.Diagnostics;
+using System.Text;
+using System.Text.Json;
+using HeadlessProbe;
+
+// Phase-1 structure probe: what does Outlook's NATIVE (headless) compose actually
+// write into HTMLBody, and can that structure be edited without Word?
+// SAFETY: writes tagged drafts only; each is deleted at the end of its run.
+
+const string Tag = "[OutlookAI-McpTest]";
+const int olFolderDrafts = 16, olSave = 0, olDiscard = 1;
+string outDir = @"C:\Users\<user>\Downloads\tmp-outlookai-headless-probe\dumps";
+Directory.CreateDirectory(outDir);
+
+string mode = args.Length > 0 ? args[0] : "native";
+string account = args.Length > 1 ? args[1] : "account-b@example.invalid";
+var r = new Dictionary<string, object> { ["mode"] = mode, ["account"] = account };
+var sw = Stopwatch.StartNew();
+using var sta = new Sta();
+
+try
+{
+    dynamic app = sta.Run(() =>
+    {
+        Type t = Type.GetTypeFromProgID("Outlook.Application")!;
+        dynamic a = Activator.CreateInstance(t)!;
+        a.GetNamespace("MAPI").Logon(Type.Missing, Type.Missing, false, false);
+        return a;
+    });
+    r["startMs"] = sw.ElapsedMilliseconds;
+    r["explorers"] = sta.Run<int>(() => (int)app.Explorers.Count);
+
+    dynamic accountObj = sta.Run<dynamic>(() =>
+    {
+        foreach (dynamic a in app.Session.Accounts)
+            if (string.Equals((string)a.SmtpAddress, account, StringComparison.OrdinalIgnoreCase)) return a;
+        throw new InvalidOperationException("account not found: " + account);
+    });
+    dynamic drafts = sta.Run<dynamic>(() =>
+    {
+        dynamic store = accountObj.DeliveryStore;
+        return store.GetDefaultFolder(olFolderDrafts);
+    });
+
+    string subject = $"{Tag} struct-probe {mode} {Guid.NewGuid():N}";
+    string entryId = null;
+
+    dynamic item = sta.Run<dynamic>(() =>
+    {
+        dynamic mi = drafts.Items.Add(0);
+        typeof(object).GetType();
+        // SendUsingAccount is PROPERTYPUTREF (v3.MD section 12)
+        System.Runtime.InteropServices.Marshal.GetIDispatchForObject(mi);
+        mi.GetType().InvokeMember("SendUsingAccount",
+            System.Reflection.BindingFlags.PutRefDispProperty, null, mi, new object[] { accountObj });
+        mi.Subject = subject;
+        mi.To = account;
+        return mi;
+    });
+
+    // The GetInspector touch = Outlook's own native signature injection.
+    long t0 = sw.ElapsedMilliseconds;
+    dynamic inspector = sta.Run<dynamic>(() => item.GetInspector);
+    r["getInspectorMs"] = sw.ElapsedMilliseconds - t0;
+    Sta.PumpedWait(400);
+
+    string html = sta.Run<string>(() => { try { return (string)item.HTMLBody ?? ""; } catch { return ""; } });
+    r["nativeHtmlLen"] = html.Length;
+    Landmarks(html, "native");
+    File.WriteAllText(Path.Combine(outDir, $"{mode}-{account.Replace("@", "_")}-native.html"), html);
+
+    if (mode == "native")
+    {
+        // Now do the HTML-native compose: splice a body ABOVE the signature anchor.
+        string bodyHtml = "<div><h1>Struct probe heading</h1><p>Agent <b>body</b>.</p>"
+            + "<table border=1><tr><td>cell</td></tr></table></div>";
+        string spliced = SpliceAboveSignature(html, bodyHtml);
+        r["splicedChanged"] = spliced != html;
+        sta.Run(() => { item.HTMLBody = spliced; item.Save(); });
+        entryId = sta.Run<string>(() => (string)item.EntryID);
+        // close the hidden inspector without letting it re-save
+        try { sta.Run(() => inspector.Close(olDiscard)); } catch (Exception ex) { r["closeErr"] = ex.GetType().Name; }
+        Sta.PumpedWait(400);
+        r["outlookAlive"] = Process.GetProcessesByName("OUTLOOK").Any();
+
+        if (Process.GetProcessesByName("OUTLOOK").Any())
+        {
+            string after = sta.Run<string>(() =>
+            {
+                dynamic mi = app.GetNamespace("MAPI").GetItemFromID(entryId);
+                return (string)mi.HTMLBody ?? "";
+            });
+            File.WriteAllText(Path.Combine(outDir, $"{mode}-{account.Replace("@", "_")}-after.html"), after);
+            Landmarks(after, "after");
+            r["after_bodyPos"] = after.IndexOf("Struct probe heading", StringComparison.OrdinalIgnoreCase);
+            r["after_h1Real"] = after.Contains("<h1", StringComparison.OrdinalIgnoreCase);
+            r["after_tableReal"] = after.Contains("<table", StringComparison.OrdinalIgnoreCase);
+            var att = sta.Run<List<string>>(() =>
+            {
+                dynamic mi = app.GetNamespace("MAPI").GetItemFromID(entryId);
+                var l = new List<string>();
+                int n = (int)mi.Attachments.Count;
+                for (int i = 1; i <= n; i++)
+                {
+                    dynamic a = mi.Attachments[i];
+                    string cid = "";
+                    try { cid = (string)a.PropertyAccessor.GetProperty("http://schemas.microsoft.com/mapi/proptag/0x3712001F"); } catch { }
+                    l.Add($"{a.FileName}={a.Size}b cid={cid}");
+                }
+                return l;
+            });
+            r["attachmentsAfter"] = att;
+
+            // ---- HTML-native UPDATE: replace the draft region only ----
+            string updated = ReplaceDraftRegion(after, "<div><p>REVISED agent body.</p></div>");
+            sta.Run(() =>
+            {
+                dynamic mi = app.GetNamespace("MAPI").GetItemFromID(entryId);
+                mi.HTMLBody = updated;
+                mi.Save();
+            });
+            string after2 = sta.Run<string>(() =>
+            {
+                dynamic mi = app.GetNamespace("MAPI").GetItemFromID(entryId);
+                return (string)mi.HTMLBody ?? "";
+            });
+            File.WriteAllText(Path.Combine(outDir, $"{mode}-{account.Replace("@", "_")}-updated.html"), after2);
+            Landmarks(after2, "updated");
+            r["upd_hasRevised"] = after2.Contains("REVISED agent body", StringComparison.OrdinalIgnoreCase);
+            r["upd_oldBodyGone"] = !after2.Contains("Struct probe heading", StringComparison.OrdinalIgnoreCase);
+            var att2 = sta.Run<List<string>>(() =>
+            {
+                dynamic mi = app.GetNamespace("MAPI").GetItemFromID(entryId);
+                var l = new List<string>();
+                int n = (int)mi.Attachments.Count;
+                for (int i = 1; i <= n; i++) { dynamic a = mi.Attachments[i]; l.Add($"{a.FileName}={a.Size}b"); }
+                return l;
+            });
+            r["attachmentsAfterUpdate"] = att2;
+        }
+    }
+    else if (mode == "reply")
+    {
+        // structure of a reply (quoted original) - hub only
+        r["skipped"] = "reply mode handled separately";
+        try { sta.Run(() => inspector.Close(olDiscard)); } catch { }
+        entryId = sta.Run<string>(() => (string)item.EntryID);
+    }
+
+    // cleanup
+    if (entryId != null && Process.GetProcessesByName("OUTLOOK").Any())
+    {
+        try
+        {
+            sta.Run(() =>
+            {
+                dynamic mi = app.GetNamespace("MAPI").GetItemFromID(entryId);
+                if (((string)mi.Subject).Contains(Tag, StringComparison.Ordinal)) mi.Delete();
+            });
+            r["deleted"] = true;
+        }
+        catch (Exception ex) { r["deleteErr"] = ex.Message[..Math.Min(120, ex.Message.Length)]; }
+    }
+
+    try { sta.Run(() => { try { app.Quit(); } catch { } }); } catch { }
+    for (int i = 0; i < 30 && Process.GetProcessesByName("OUTLOOK").Any(); i++) Sta.PumpedWait(500);
+}
+catch (Exception ex)
+{
+    r["fatal"] = ex.GetType().Name + ": " + ex.Message[..Math.Min(220, ex.Message.Length)];
+}
+
+r["totalMs"] = sw.ElapsedMilliseconds;
+Console.WriteLine("RESULT " + JsonSerializer.Serialize(r));
+
+void Landmarks(string h, string prefix)
+{
+    r[prefix + "_MailAutoSig"] = h.IndexOf("_MailAutoSig", StringComparison.OrdinalIgnoreCase);
+    r[prefix + "_MailOriginal"] = h.IndexOf("_MailOriginal", StringComparison.OrdinalIgnoreCase);
+    r[prefix + "_WordSection1"] = h.IndexOf("WordSection1", StringComparison.OrdinalIgnoreCase);
+    r[prefix + "_Signature"] = h.IndexOf("id=\"Signature\"", StringComparison.OrdinalIgnoreCase);
+    r[prefix + "_cid"] = h.IndexOf("cid:", StringComparison.OrdinalIgnoreCase);
+    r[prefix + "_fileUrl"] = h.IndexOf("file:///", StringComparison.OrdinalIgnoreCase);
+    r[prefix + "_imgCount"] = CountOf(h, "<img");
+    r[prefix + "_len"] = h.Length;
+    // what wraps the signature?
+    int sig = h.IndexOf("_MailAutoSig", StringComparison.OrdinalIgnoreCase);
+    if (sig > 0) r[prefix + "_sigContext"] = h.Substring(Math.Max(0, sig - 220), Math.Min(420, h.Length - Math.Max(0, sig - 220)));
+    int ws = h.IndexOf("WordSection1", StringComparison.OrdinalIgnoreCase);
+    if (ws > 0) r[prefix + "_wsContext"] = h.Substring(Math.Max(0, ws - 60), Math.Min(340, h.Length - Math.Max(0, ws - 60)));
+}
+
+static int CountOf(string s, string needle)
+{
+    int n = 0, i = 0;
+    while ((i = s.IndexOf(needle, i, StringComparison.OrdinalIgnoreCase)) >= 0) { n++; i += needle.Length; }
+    return n;
+}
+
+// Insert the agent body at the top of the WordSection1 container, i.e. above the
+// signature Outlook natively injected (which lives inside that same container).
+static string SpliceAboveSignature(string html, string bodyHtml)
+{
+    int idx = html.IndexOf("class=WordSection1", StringComparison.OrdinalIgnoreCase);
+    if (idx < 0) idx = html.IndexOf("class=\"WordSection1\"", StringComparison.OrdinalIgnoreCase);
+    if (idx < 0)
+    {
+        int b = html.IndexOf("<body", StringComparison.OrdinalIgnoreCase);
+        int o = b >= 0 ? html.IndexOf('>', b) : -1;
+        return o > 0 ? html[..(o + 1)] + Wrap(bodyHtml) + html[(o + 1)..] : html + Wrap(bodyHtml);
+    }
+    int open = html.IndexOf('>', idx);
+    return html[..(open + 1)] + Wrap(bodyHtml) + html[(open + 1)..];
+}
+
+static string Wrap(string bodyHtml) =>
+    "<!--OutlookAI:body:start-->" + bodyHtml + "<!--OutlookAI:body:end-->";
+
+static string ReplaceDraftRegion(string html, string newBodyHtml)
+{
+    const string s = "<!--OutlookAI:body:start-->", e = "<!--OutlookAI:body:end-->";
+    int i = html.IndexOf(s, StringComparison.OrdinalIgnoreCase);
+    int j = html.IndexOf(e, StringComparison.OrdinalIgnoreCase);
+    if (i >= 0 && j > i) return html[..i] + s + newBodyHtml + e + html[(j + e.Length)..];
+    return SpliceAboveSignature(html, newBodyHtml);
+}

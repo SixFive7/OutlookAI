@@ -1,0 +1,73 @@
+run level: Limited - this token is NOT elevated (read before the work ran)
+[+   0,0s] begin     scenario KilledVisible on OAI-UNINDEXED as vmadmin; server C:\OutlookAI-Q5\server\Outloo
+kAI.McpServer.exe (99.99.99.0+fd2c58b1bfe90b99d01fb8d4522438d5900a7dae); Outlook 16.0.17932.20996
+[+   0,9s] session   A: server pid 6472 initialized in 784 ms
+[+   1,1s] tool      A: list_folders answered OutlookStarting at 140 ms (try 1); retrying in 2 s
+[+   7,4s] tool      A: list_folders ok in 5650 ms, 4429 bytes; COM host pid 10048
+[+   9,1s] state     killedvisible-FileExit: A started Outlook (A alive): Explorers 1 (visible 0, hidden 1); 
+ActiveExplorer(): null; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 0 visible / 1 rctrl_renwn
+d32; top-level windows 0 visible / 24; dialogs 0
+[+   9,7s] kill      A: COM host 10048 terminated (gone)
+[+  11,2s] state     killedvisible-FileExit: A's COM host killed: Explorers 1 (visible 0, hidden 1); ActiveEx
+plorer(): null; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 0 visible / 2 rctrl_renwnd32; top
+-level windows 0 visible / 25; dialogs 0
+[+  11,3s] end       A: stdin closed; server exited after 64 ms (exit code 0); its COM host was never seen
+[+  17,6s] state     killedvisible-FileExit: A's server ended, 5 s on: Explorers 1 (visible 0, hidden 1); Act
+iveExplorer(): null; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 0 visible / 2 rctrl_renwnd32
+; top-level windows 0 visible / 25; dialogs 0
+[+  38,3s] outlook   user opens the window of the running Outlook start: window up after 0,6 s, settled at 20
+,6 s (pid 8492)
+[+  39,1s] state     killedvisible-FileExit: the user has the window open: Explorers 2 (visible 1, hidden 1);
+ ActiveExplorer(): Explorer #2, visible; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 1 visibl
+e / 3 rctrl_renwnd32; top-level windows 3 visible / 31; dialogs 0
+[+  41,8s] end-ol    killedvisible-FileExit: File > Exit by UI Automation: File (Invoke) then Exit (Invoke), 
+Exit was  id= -> OUTLOOK.EXE EXITED 0,3 s after the action returned (1367 ms to return)
+[+  42,4s] session   A: server pid 9536 initialized in 519 ms
+[+  42,5s] tool      A: list_folders answered OutlookStarting at 77 ms (try 1); retrying in 2 s
+[+  47,2s] tool      A: list_folders ok in 4815 ms, 4429 bytes; COM host pid 4552
+[+  48,5s] state     killedvisible-Quit: A started Outlook (A alive): Explorers 1 (visible 0, hidden 1); Acti
+veExplorer(): null; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 0 visible / 1 rctrl_renwnd32;
+ top-level windows 0 visible / 24; dialogs 0
+[+  49,0s] kill      A: COM host 4552 terminated (gone)
+[+  49,9s] state     killedvisible-Quit: A's COM host killed: Explorers 1 (visible 0, hidden 1); ActiveExplor
+er(): null; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 0 visible / 1 rctrl_renwnd32; top-lev
+el windows 0 visible / 24; dialogs 0
+[+  50,0s] end       A: stdin closed; server exited after 41 ms (exit code 0); its COM host was never seen
+[+  56,0s] state     killedvisible-Quit: A's server ended, 5 s on: Explorers 1 (visible 0, hidden 1); ActiveE
+xplorer(): null; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 0 visible / 2 rctrl_renwnd32; to
+p-level windows 0 visible / 25; dialogs 0
+[+  76,6s] outlook   user opens the window of the running Outlook start: window up after 0,5 s, settled at 20
+,5 s (pid 5776)
+[+  77,5s] state     killedvisible-Quit: the user has the window open: Explorers 2 (visible 1, hidden 1); Act
+iveExplorer(): Explorer #2, visible; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 1 visible / 
+3 rctrl_renwnd32; top-level windows 1 visible / 30; dialogs 0
+[+  79,4s] end-ol    killedvisible-Quit: Application.Quit(): quit-called -> OUTLOOK.EXE EXITED 0,3 s after th
+e action returned (761 ms to return)
+[+  80,0s] session   A: server pid 8984 initialized in 610 ms
+[+  80,1s] tool      A: list_folders answered OutlookStarting at 98 ms (try 1); retrying in 2 s
+[+  84,2s] tool      A: list_folders ok in 4179 ms, 4429 bytes; COM host pid 2144
+[+  85,4s] state     killedvisible-WindowClose: A started Outlook (A alive): Explorers 1 (visible 0, hidden 1
+); ActiveExplorer(): null; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 0 visible / 1 rctrl_re
+nwnd32; top-level windows 0 visible / 24; dialogs 0
+[+  85,9s] kill      A: COM host 2144 terminated (gone)
+[+  87,1s] state     killedvisible-WindowClose: A's COM host killed: Explorers 1 (visible 0, hidden 1); Activ
+eExplorer(): null; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 0 visible / 1 rctrl_renwnd32; 
+top-level windows 0 visible / 24; dialogs 0
+[+  87,2s] end       A: stdin closed; server exited after 43 ms (exit code 0); its COM host was never seen
+[+  93,2s] state     killedvisible-WindowClose: A's server ended, 5 s on: Explorers 1 (visible 0, hidden 1); 
+ActiveExplorer(): null; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 0 visible / 2 rctrl_renwn
+d32; top-level windows 0 visible / 25; dialogs 0
+[+ 113,9s] outlook   user opens the window of the running Outlook start: window up after 0,5 s, settled at 20
+,5 s (pid 6868)
+[+ 114,9s] state     killedvisible-WindowClose: the user has the window open: Explorers 2 (visible 1, hidden 
+1); ActiveExplorer(): Explorer #2, visible; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 1 vis
+ible / 3 rctrl_renwnd32; top-level windows 1 visible / 30; dialogs 0
+[+ 236,0s] end-ol    killedvisible-WindowClose: window close by UI Automation: WindowPattern.Close on the one
+ visible Outlook window -> OUTLOOK.EXE STILL RUNNING 120 s after the action (48 ms to return)
+[+ 236,9s] state     killedvisible-WindowClose: after WindowClose, Outlook still up (this reading attaches): 
+Explorers 1 (visible 0, hidden 1); ActiveExplorer(): Explorer #1, hidden; Inspectors 0; Outbox default 0, all
+ 0 over 2 stores; frames 0 visible / 3 rctrl_renwnd32; top-level windows 0 visible / 28; dialogs 0
+[+ 238,7s] end-ol    killedvisible-WindowClose leftover: closed 1 hidden Explorer(s) -> OUTLOOK.EXE EXITED 0 
+s after the action returned (1020 ms to return)
+[+ 238,7s] done      scenario KilledVisible; OUTLOOK.EXE not running
+log: C:\OutlookAI-Q5\q118\q118-KilledVisible-20261003T203357.jsonl

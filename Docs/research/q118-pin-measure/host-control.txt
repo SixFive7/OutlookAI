@@ -1,0 +1,12 @@
+run level: Limited - this token is NOT elevated (read before the work ran)
+[+   0,0s] begin     scenario Control on OAI-UNINDEXED as vmadmin; server C:\OutlookAI-Q5\server\OutlookAI.Mc
+pServer.exe (99.99.99.0+fd2c58b1bfe90b99d01fb8d4522438d5900a7dae); Outlook 16.0.17932.20996
+[+  23,9s] outlook   user start: window up after 3,3 s, settled at 23,4 s (pid 1836)
+[+  25,1s] state     control: baseline, no OutlookAI session ever attached: Explorers 1 (visible 1, hidden 0)
+; ActiveExplorer(): Explorer #1, visible; Inspectors 0; Outbox 0 over 2 stores; frames 1 visible / 2 rctrl_re
+nwnd32; top-level windows 3 visible / 29; dialogs 0
+[+  25,7s] refused   control: Quit REFUSED under rule 7: a store's Outbox could not be read: store 3: TargetI
+nvocationException; store 4: TargetInvocationException; 
+[+  25,8s] leftover  control: Outlook left running WITH a visible window; nothing closed
+[+  25,8s] done      scenario Control; OUTLOOK.EXE running (pid 1836)
+log: C:\OutlookAI-Q5\q118\q118-Control-20261003T201929.jsonl

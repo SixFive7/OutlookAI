@@ -1,0 +1,521 @@
+using System.Diagnostics;
+using System.Text;
+using System.Text.Json;
+using HeadlessProbe;
+
+// Phase-1 empirical matrix probe for v3.MD D49 (headless compose surface).
+// SAFETY: every write targets hub@example.invalid Drafts, subject carries the
+// [OutlookAI-McpTest] tag, and each artifact is deleted at the end of its run.
+
+const string Tag = "[OutlookAI-McpTest]";
+const string Hub = "hub@example.invalid";
+const int olFolderDrafts = 16, olFolderInbox = 6, olSave = 0, olDiscard = 1;
+string sigPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+    "Microsoft", "Signatures", "VoIP Fabric.htm");
+
+Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+string state = args.Length > 0 ? args[0] : "headless";
+var r = new Dictionary<string, object> { ["state"] = state };
+IntPtr fgBefore = Win.GetForegroundWindow();
+var sw = Stopwatch.StartNew();
+using var sta = new Sta();
+
+void Mark(string k) => r[k + "Ms"] = sw.ElapsedMilliseconds;
+void Err(string k, Exception ex) => r[k] = ex.GetType().Name + ": " + (ex.Message.Length > 160 ? ex.Message[..160] : ex.Message);
+
+try
+{
+    dynamic app = sta.Run(() =>
+    {
+        Type t = Type.GetTypeFromProgID("Outlook.Application") ?? throw new InvalidOperationException("no progid");
+        dynamic a = Activator.CreateInstance(t)!;
+        a.GetNamespace("MAPI").Logon(Type.Missing, Type.Missing, false, false);
+        return a;
+    });
+    Mark("start");
+    r["outlookPid"] = Process.GetProcessesByName("OUTLOOK").FirstOrDefault()?.Id ?? -1;
+
+    // -------- state setup --------
+    dynamic explorer = null;
+    r["explorersAtStart"] = sta.Run<int>(() => (int)app.Explorers.Count);
+
+    dynamic hubDrafts = sta.Run<dynamic>(() =>
+    {
+        dynamic ns = app.GetNamespace("MAPI");
+        foreach (dynamic s in ns.Stores)
+            if (string.Equals((string)s.DisplayName, Hub, StringComparison.OrdinalIgnoreCase))
+                return s.GetDefaultFolder(olFolderDrafts);
+        throw new InvalidOperationException("hub store not found");
+    });
+
+    long tSetup0 = sw.ElapsedMilliseconds;
+    switch (state)
+    {
+        case "headless":
+            break;
+        case "explorer-nodisplay":
+            explorer = sta.Run<dynamic>(() => app.Explorers.Add(hubDrafts, 0));
+            break;
+        case "explorer-min":
+            explorer = sta.Run<dynamic>(() => { dynamic e = app.Explorers.Add(hubDrafts, 0); e.Display(); return e; });
+            Sta.PumpedWait(600);
+            sta.Run(() => { explorer.WindowState = 1; }); // olMinimized
+            break;
+        case "explorer-offscreen":
+            explorer = sta.Run<dynamic>(() => { dynamic e = app.Explorers.Add(hubDrafts, 0); e.Display(); return e; });
+            Sta.PumpedWait(600);
+            foreach (var w in Win.ProcessWindows("OUTLOOK").Where(w => w.Cls == "rctrl_renwnd32" && w.Visible))
+                Win.MoveOffScreen(w.H);
+            break;
+        case "explorer-then-close":
+            explorer = sta.Run<dynamic>(() => { dynamic e = app.Explorers.Add(hubDrafts, 0); e.Display(); return e; });
+            Sta.PumpedWait(800);
+            sta.Run(() => explorer.Close());
+            explorer = null;
+            Sta.PumpedWait(500);
+            break;
+        case "inspector-display-hide":
+        case "inspector-activate":
+        case "inspector-activate-saved":
+        case "offscreen-activate":
+        case "hidden-activate":
+        case "htmlnative":
+        case "pin-then-launch":
+        case "hiddenexp-then-launch":
+            break;
+        case "hidden-explorer":
+            // Promote ONCE per session, then hide the window outright (no taskbar button).
+            explorer = sta.Run<dynamic>(() => { dynamic e = app.Explorers.Add(hubDrafts, 0); e.Display(); return e; });
+            Sta.PumpedWait(700);
+            r["explorerWindows"] = Win.ProcessWindows("OUTLOOK").Where(w => w.Cls == "rctrl_renwnd32").Select(w => w.ToString()).ToList();
+            foreach (var w in Win.ProcessWindows("OUTLOOK").Where(w => w.Cls == "rctrl_renwnd32" && w.Visible))
+            { Win.MoveOffScreen(w.H); Win.ShowWindow(w.H, 0 /*SW_HIDE*/); }
+            Sta.PumpedWait(300);
+            r["explorerWindowsAfterHide"] = Win.ProcessWindows("OUTLOOK").Where(w => w.Cls == "rctrl_renwnd32").Select(w => w.ToString()).ToList();
+            break;
+        case "pinned-hidden-activate":
+        case "pinned-offscreen-activate":
+        case "pinned-headless":
+            // A NON-DISPLAYED Explorer pins the process without showing anything.
+            explorer = sta.Run<dynamic>(() => app.Explorers.Add(hubDrafts, 0));
+            break;
+        default: throw new ArgumentException("unknown state " + state);
+    }
+    if (state == "pin-then-launch" || state == "hiddenexp-then-launch")
+    {
+        // D33 promotability: can the USER still get a normal Outlook window while the
+        // server holds an invisible surface? Launch outlook.exe the way a user would.
+        if (state == "pin-then-launch")
+        {
+            explorer = sta.Run<dynamic>(() => app.Explorers.Add(hubDrafts, 0));
+        }
+        else
+        {
+            explorer = sta.Run<dynamic>(() => { dynamic e = app.Explorers.Add(hubDrafts, 0); e.Display(); return e; });
+            Sta.PumpedWait(700);
+            foreach (var w in Win.ProcessWindows("OUTLOOK").Where(w => w.Cls == "rctrl_renwnd32" && w.Visible))
+            { Win.MoveOffScreen(w.H); Win.ShowWindow(w.H, 0); }
+            Sta.PumpedWait(300);
+        }
+        r["pinExplorers"] = sta.Run<int>(() => (int)app.Explorers.Count);
+        r["visibleBeforeLaunch"] = Win.UserVisible("OUTLOOK").Select(w => w.ToString()).ToList();
+        try
+        {
+            Process.Start(new ProcessStartInfo("outlook.exe") { UseShellExecute = true });
+        }
+        catch (Exception ex) { Err("launchError", ex); }
+        for (int i = 0; i < 20; i++) { Sta.PumpedWait(500); if (Win.UserVisible("OUTLOOK").Any()) break; }
+        r["visibleAfterLaunch"] = Win.UserVisible("OUTLOOK").Select(w => w.ToString()).ToList();
+        r["explorersAfterLaunch"] = sta.Run<int>(() => { try { return (int)app.Explorers.Count; } catch { return -1; } });
+        r["userGotAWindow"] = Win.UserVisible("OUTLOOK").Any();
+        r["totalMs"] = sw.ElapsedMilliseconds;
+        Console.WriteLine("RESULT " + JsonSerializer.Serialize(r));
+        return;
+    }
+
+    r["setupMs"] = sw.ElapsedMilliseconds - tSetup0;
+    r["explorersAfterSetup"] = sta.Run<int>(() => (int)app.Explorers.Count);
+    r["visibleAfterSetup"] = Win.UserVisible("OUTLOOK").Select(w => w.ToString()).ToList();
+
+    // -------- create the draft --------
+    string subject = $"{Tag} headless-probe {state} {Guid.NewGuid():N}";
+    dynamic item = sta.Run<dynamic>(() =>
+    {
+        dynamic mi = hubDrafts.Items.Add(0);
+        mi.Subject = subject;
+        mi.To = Hub;
+        return mi;
+    });
+
+    if (state == "inspector-activate-saved")
+    {
+        // model update_draft: the item is an EXISTING saved draft re-opened by EntryID
+        string savedId = sta.Run<string>(() => { item.Save(); return (string)item.EntryID; });
+        Sta.PumpedWait(200);
+        item = sta.Run<dynamic>(() => app.GetNamespace("MAPI").GetItemFromID(savedId));
+    }
+
+    string entryId = null;
+    if (state == "htmlnative")
+    {
+        // ---------- HTML-native compose: no Word, no Inspector ----------
+        long t0 = sw.ElapsedMilliseconds;
+        string sigDir = Path.Combine(Path.GetDirectoryName(sigPath)!, Path.GetFileNameWithoutExtension(sigPath) + "_files");
+        string sigHtml = File.ReadAllText(sigPath, Encoding.GetEncoding(1252));
+        string imgFile = Path.Combine(sigDir, "image001.png");
+        string cid = "probeimg001@" + Guid.NewGuid().ToString("N")[..8];
+
+        // rewrite the relative src to a cid: reference
+        string rel = Uri.EscapeDataString(Path.GetFileName(sigDir)).Replace("%20", "%20") + "/image001.png";
+        string relEnc = Path.GetFileName(sigDir).Replace(" ", "%20") + "/image001.png";
+        sigHtml = sigHtml.Replace(relEnc, "cid:" + cid).Replace(Path.GetFileName(sigDir) + "/image001.png", "cid:" + cid);
+        r["srcRewritten"] = sigHtml.Contains("cid:" + cid);
+
+        // strip the outer html/head so the signature body can be spliced
+        string sigBody = Between(sigHtml, "<body", "</body>");
+        int gt = sigBody.IndexOf('>');
+        if (gt >= 0) sigBody = sigBody[(gt + 1)..];
+
+        var tagResults = sta.Run<Dictionary<string, string>>(() =>
+        {
+            var res = new Dictionary<string, string>();
+            dynamic atts = item.Attachments;
+            dynamic att = atts.Add(imgFile, 1 /*olByValue*/, 0 /*position 0 = hidden/inline*/, "image001.png");
+            dynamic pa = att.PropertyAccessor;
+            void Try(string name, string tag, object val)
+            {
+                try { pa.SetProperty("http://schemas.microsoft.com/mapi/proptag/" + tag, val); res[name] = "ok"; }
+                catch (Exception ex) { res[name] = ex.GetType().Name; }
+            }
+            Try("PR_ATTACH_CONTENT_ID", "0x3712001F", cid);
+            Try("PR_ATTACHMENT_HIDDEN", "0x7FFE000B", true);
+            Try("PR_ATTACH_MIME_TAG", "0x370E001F", "image/png");
+            Try("PR_ATTACH_FLAGS", "0x37140003", 4);
+            Try("PR_ATTACH_CONTENT_LOCATION", "0x3713001F", "image001.png");
+            return res;
+        });
+        r["proptagWrites"] = tagResults;
+        r["attachSetMs"] = sw.ElapsedMilliseconds - t0;
+
+        string existing = sta.Run<string>(() => { try { return (string)item.HTMLBody; } catch { return ""; } });
+        r["templateHtmlLen"] = existing?.Length ?? 0;
+        r["templateHasWordSection"] = existing != null && existing.Contains("WordSection1");
+
+        string bodyHtml = "<div><h1>Probe heading</h1><p>Agent <b>body</b> paragraph.</p><table border=1><tr><td>cell</td></tr></table></div>";
+        string composed = HtmlSplice(existing, bodyHtml, sigBody);
+        sta.Run(() => { item.HTMLBody = composed; item.Save(); });
+        r["composeMs"] = sw.ElapsedMilliseconds - t0;
+        entryId = sta.Run<string>(() => (string)item.EntryID);
+        r["wordEditor"] = false;
+        r["path"] = "htmlnative";
+    }
+    else
+    {
+        // ---------- held-Inspector Word compose ----------
+        dynamic inspector = sta.Run<dynamic>(() => item.GetInspector);
+        Mark("getInspector");
+
+        if (state == "inspector-display-hide")
+        {
+            sta.Run(() => inspector.Display(false));
+            Sta.PumpedWait(700);
+            r["visibleWithInspector"] = Win.UserVisible("OUTLOOK").Select(w => w.ToString()).ToList();
+            foreach (var w in Win.ProcessWindows("OUTLOOK").Where(w => w.Visible && w.OnScreen))
+                Win.MoveOffScreen(w.H);
+            Sta.PumpedWait(200);
+        }
+        else if (state == "hidden-activate" || state == "pinned-hidden-activate")
+        {
+            // Off-screen FIRST so a promotion can never paint where a user sees it,
+            // then Activate to materialise WordEditor, then hide outright (no taskbar).
+            foreach (var w in Win.ProcessWindows("OUTLOOK").Where(w => w.Cls == "rctrl_renwnd32")) Win.MoveOffScreen(w.H);
+            long th = sw.ElapsedMilliseconds;
+            try { sta.Run(() => inspector.Activate()); } catch (Exception ex) { Err("activateError", ex); }
+            foreach (var w in Win.ProcessWindows("OUTLOOK").Where(w => w.Cls == "rctrl_renwnd32"))
+            { Win.MoveOffScreen(w.H); Win.ShowWindow(w.H, 0 /*SW_HIDE*/); }
+            r["activateMs"] = sw.ElapsedMilliseconds - th;
+            Sta.PumpedWait(250);
+            foreach (var w in Win.ProcessWindows("OUTLOOK").Where(w => w.Cls == "rctrl_renwnd32" && w.Visible)) Win.ShowWindow(w.H, 0);
+            r["inspectorWindowsAfter"] = Win.ProcessWindows("OUTLOOK").Where(w => w.Cls == "rctrl_renwnd32").Select(w => w.ToString()).ToList();
+            r["foregroundStolen"] = Win.GetForegroundWindow() != fgBefore;
+        }
+        else if (state == "offscreen-activate" || state == "pinned-offscreen-activate")
+        {
+            // The hidden Inspector ALREADY owns an (invisible) window. Move it off-screen
+            // BEFORE promoting it, so Activate() can never paint it where a user sees it.
+            var pre = Win.ProcessWindows("OUTLOOK").Where(w => w.Cls == "rctrl_renwnd32").ToList();
+            r["inspectorWindowsBefore"] = pre.Select(w => w.ToString()).ToList();
+            foreach (var w in pre) Win.MoveOffScreen(w.H);
+            long ta2 = sw.ElapsedMilliseconds;
+            try { sta.Run(() => inspector.Activate()); } catch (Exception ex) { Err("activateError", ex); }
+            r["activateMs"] = sw.ElapsedMilliseconds - ta2;
+            // A promoted window can be repositioned by Outlook - shove it back out.
+            foreach (var w in Win.ProcessWindows("OUTLOOK").Where(w => w.Cls == "rctrl_renwnd32")) Win.MoveOffScreen(w.H);
+            Sta.PumpedWait(300);
+            foreach (var w in Win.ProcessWindows("OUTLOOK").Where(w => w.Cls == "rctrl_renwnd32" && w.OnScreen)) Win.MoveOffScreen(w.H);
+            r["allInspectorWindowsAfter"] = Win.ProcessWindows("OUTLOOK").Where(w => w.Cls == "rctrl_renwnd32").Select(w => w.ToString()).ToList();
+            r["foregroundStolen"] = Win.GetForegroundWindow() != fgBefore;
+        }
+        else if (state == "inspector-activate" || state == "inspector-activate-saved")
+        {
+            r["allWindowsBeforeActivate"] = Win.ProcessWindows("OUTLOOK", "WINWORD").Select(w => w.ToString()).ToList();
+            long ta = sw.ElapsedMilliseconds;
+            try { sta.Run(() => inspector.Activate()); } catch (Exception ex) { Err("activateError", ex); }
+            r["activateMs"] = sw.ElapsedMilliseconds - ta;
+            Sta.PumpedWait(400);
+            r["allWindowsAfterActivate"] = Win.ProcessWindows("OUTLOOK", "WINWORD").Select(w => w.ToString()).ToList();
+            r["foregroundStolen"] = Win.GetForegroundWindow() != fgBefore;
+        }
+
+        long tw0 = sw.ElapsedMilliseconds;
+        bool isWordMail = false;
+        try { isWordMail = sta.Run<bool>(() => (bool)inspector.IsWordMail()); } catch (Exception ex) { Err("isWordMailError", ex); }
+        r["isWordMail"] = isWordMail;
+
+        dynamic doc = null;
+        try { doc = sta.Run<dynamic>(() => inspector.WordEditor); } catch (Exception ex) { Err("wordEditorError", ex); }
+        r["wordEditorMs"] = sw.ElapsedMilliseconds - tw0;
+        r["wordEditor"] = doc != null;
+        r["visibleAtWordEditor"] = Win.UserVisible("OUTLOOK", "WINWORD").Select(w => w.ToString()).ToList();
+
+        if (doc != null)
+        {
+            long tc0 = sw.ElapsedMilliseconds;
+            // 1. signature insertion (mimics ApplySignatureToDocument on a marker-free doc)
+            try
+            {
+                sta.Run(() =>
+                {
+                    int end = (int)doc.Content.End;
+                    dynamic rng = doc.Range(end - 1, end - 1);
+                    rng.InsertFile(sigPath, Type.Missing, false, false, false);
+                    int newEnd = (int)doc.Content.End;
+                    doc.Bookmarks.Add("_MailAutoSig", doc.Range(end - 1, newEnd - 1));
+                });
+                r["signatureInserted"] = true;
+            }
+            catch (Exception ex) { r["signatureInserted"] = false; Err("signatureError", ex); }
+            r["signatureMs"] = sw.ElapsedMilliseconds - tc0;
+
+            // 2. EmbedLinkedPictures
+            long te0 = sw.ElapsedMilliseconds;
+            try
+            {
+                var counts = sta.Run<int[]>(() =>
+                {
+                    int shapes = 0, linked = 0, broken = 0;
+                    dynamic inlines = doc.InlineShapes;
+                    int n = (int)inlines.Count;
+                    for (int i = 1; i <= n; i++)
+                    {
+                        shapes++;
+                        dynamic sh = inlines[i];
+                        dynamic lf = null;
+                        try { lf = sh.LinkFormat; } catch { }
+                        if (lf == null) continue;
+                        linked++;
+                        try { lf.SavePictureWithDocument = true; lf.BreakLink(); broken++; } catch { }
+                    }
+                    return new[] { shapes, linked, broken };
+                });
+                r["inlineShapes"] = counts[0]; r["linkedShapes"] = counts[1]; r["brokenLinks"] = counts[2];
+            }
+            catch (Exception ex) { Err("embedError", ex); }
+            r["embedMs"] = sw.ElapsedMilliseconds - te0;
+
+            // 3. the D44 bookmark dance: body above the signature
+            long tb0 = sw.ElapsedMilliseconds;
+            try
+            {
+                sta.Run(() =>
+                {
+                    dynamic marks = doc.Bookmarks;
+                    int boundary = 0;
+                    if ((bool)marks.Exists("_MailAutoSig"))
+                    {
+                        dynamic bm = marks["_MailAutoSig"];
+                        boundary = (int)bm.Range.Start;
+                        bm.Delete();
+                    }
+                    int before = (int)doc.Content.End;
+                    dynamic target = doc.Range(0, boundary);
+                    target.Delete();
+                    dynamic ins = doc.Range(0, 0);
+                    ins.InsertBefore("Probe body line one.\r");
+                    int after = (int)doc.Content.End;
+                    int newBoundary = boundary + (after - before) + (before - (int)doc.Content.End);
+                    // recreate the marker over everything after the inserted body
+                    int bodyLen = (int)ins.End;
+                    doc.Bookmarks.Add("_MailAutoSig", doc.Range(bodyLen, (int)doc.Content.End - 1));
+                });
+                r["bookmarkDance"] = true;
+            }
+            catch (Exception ex) { r["bookmarkDance"] = false; Err("bookmarkError", ex); }
+            r["bookmarkMs"] = sw.ElapsedMilliseconds - tb0;
+
+            // 4. close(olSave)
+            long tcl0 = sw.ElapsedMilliseconds;
+            entryId = sta.Run<string>(() => (string)item.EntryID);
+            try { sta.Run(() => inspector.Close(olSave)); r["closed"] = true; }
+            catch (Exception ex) { r["closed"] = false; Err("closeError", ex); }
+            r["closeMs"] = sw.ElapsedMilliseconds - tcl0;
+            r["composeMs"] = sw.ElapsedMilliseconds - tc0;
+            r["path"] = "wordEditor";
+        }
+        else
+        {
+            // fallback shape - what the product does today
+            try
+            {
+                sta.Run(() =>
+                {
+                    string html = "";
+                    try { html = (string)item.HTMLBody; } catch { }
+                    item.HTMLBody = "<div>Probe body line one.</div>" + html;
+                    item.Save();
+                });
+                r["path"] = "htmlFallback";
+            }
+            catch (Exception ex) { Err("fallbackError", ex); }
+            entryId = sta.Run<string>(() => (string)item.EntryID);
+            try { sta.Run(() => inspector.Close(olDiscard)); } catch { }
+        }
+    }
+
+    Sta.PumpedWait(300);
+    r["outlookAliveAfterClose"] = Process.GetProcessesByName("OUTLOOK").Any();
+    // EntryIDs change when an unsaved item is committed - re-find by subject.
+    if (Process.GetProcessesByName("OUTLOOK").Any())
+    {
+        try
+        {
+            string found = sta.Run<string>(() =>
+            {
+                foreach (dynamic it in hubDrafts.Items)
+                {
+                    string s = null;
+                    try { s = (string)it.Subject; } catch { }
+                    if (s != null && s.Contains(subject, StringComparison.Ordinal)) return (string)it.EntryID;
+                }
+                return null;
+            });
+            if (found != null) entryId = found;
+        }
+        catch (Exception ex) { Err("refindError", ex); }
+    }
+    r["visibleAfterClose"] = Win.UserVisible("OUTLOOK", "WINWORD").Select(w => w.ToString()).ToList();
+    r["hiddenWordWindows"] = Win.ProcessWindows("OUTLOOK", "WINWORD").Count(w => w.Cls == "OpusApp");
+
+    // -------- verify from a SEPARATE call (D48 ordering rule) --------
+    if (entryId != null && Process.GetProcessesByName("OUTLOOK").Any())
+    {
+        try
+        {
+            var v = sta.Run<Dictionary<string, object>>(() =>
+            {
+                dynamic ns = app.GetNamespace("MAPI");
+                dynamic mi = ns.GetItemFromID(entryId);
+                string html = "";
+                try { html = (string)mi.HTMLBody ?? ""; } catch { }
+                var d = new Dictionary<string, object>
+                {
+                    ["htmlLen"] = html.Length,
+                    ["hasCid"] = html.Contains("src=\"cid:", StringComparison.OrdinalIgnoreCase) || html.Contains("src=cid:", StringComparison.OrdinalIgnoreCase),
+                    ["hasFileUrl"] = html.Contains("file:///", StringComparison.OrdinalIgnoreCase),
+                    ["hasUserProfilePath"] = html.Contains("C:\\Users", StringComparison.OrdinalIgnoreCase) || html.Contains("C:/Users", StringComparison.OrdinalIgnoreCase),
+                    ["imgTags"] = CountOf(html, "<img"),
+                    ["vShapes"] = CountOf(html, "<v:"),
+                    ["inWordSection"] = html.Contains("WordSection1"),
+                    ["recipientCount"] = (int)mi.Recipients.Count,
+                };
+                int bodyPos = html.IndexOf("Probe body line one", StringComparison.OrdinalIgnoreCase);
+                if (bodyPos < 0) bodyPos = html.IndexOf("Probe heading", StringComparison.OrdinalIgnoreCase);
+                int sigPos = html.IndexOf("_MailAutoSig", StringComparison.OrdinalIgnoreCase);
+                int sigContent = html.IndexOf("VoIP Fabric", StringComparison.OrdinalIgnoreCase);
+                d["bodyPos"] = bodyPos; d["sigAnchorPos"] = sigPos; d["sigContentPos"] = sigContent;
+                d["bodyAboveSignature"] = bodyPos >= 0 && sigContent > bodyPos;
+                var sizes = new List<string>();
+                int ac = (int)mi.Attachments.Count;
+                for (int i = 1; i <= ac; i++)
+                {
+                    dynamic a = mi.Attachments[i];
+                    string cidv = "";
+                    try { cidv = (string)a.PropertyAccessor.GetProperty("http://schemas.microsoft.com/mapi/proptag/0x3712001F"); } catch { }
+                    sizes.Add($"{a.FileName}={a.Size}b cid={cidv}");
+                }
+                d["attachments"] = sizes;
+                d["attachmentCount"] = ac;
+                return d;
+            });
+            foreach (var kv in v) r["verify_" + kv.Key] = kv.Value;
+        }
+        catch (Exception ex) { Err("verifyError", ex); }
+
+        // -------- clean up the artifact --------
+        try
+        {
+            sta.Run(() =>
+            {
+                dynamic ns = app.GetNamespace("MAPI");
+                dynamic mi = ns.GetItemFromID(entryId);
+                if (((string)mi.Subject).Contains(Tag, StringComparison.Ordinal)) mi.Delete();
+            });
+            r["artifactDeleted"] = true;
+        }
+        catch (Exception ex) { r["artifactDeleted"] = false; Err("deleteError", ex); }
+    }
+
+    // -------- graceful shutdown (S7: Quit, never kill) --------
+    try
+    {
+        sta.Run(() => { try { app.Quit(); } catch { } });
+        for (int i = 0; i < 40 && Process.GetProcessesByName("OUTLOOK").Any(); i++) Sta.PumpedWait(500);
+    }
+    catch { }
+    r["outlookAliveAtEnd"] = Process.GetProcessesByName("OUTLOOK").Any();
+}
+catch (Exception ex)
+{
+    Err("fatal", ex);
+    r["fatalStack"] = (ex.StackTrace ?? "").Split('\n').FirstOrDefault()?.Trim() ?? "";
+}
+
+r["totalMs"] = sw.ElapsedMilliseconds;
+Console.WriteLine("RESULT " + JsonSerializer.Serialize(r));
+
+static int CountOf(string s, string needle)
+{
+    int n = 0, i = 0;
+    while ((i = s.IndexOf(needle, i, StringComparison.OrdinalIgnoreCase)) >= 0) { n++; i += needle.Length; }
+    return n;
+}
+
+static string Between(string s, string a, string b)
+{
+    int i = s.IndexOf(a, StringComparison.OrdinalIgnoreCase);
+    if (i < 0) return s;
+    int j = s.IndexOf(b, i, StringComparison.OrdinalIgnoreCase);
+    return j < 0 ? s[i..] : s[i..j];
+}
+
+// Splices agent body + signature into Outlook's own compose template, INSIDE WordSection1.
+static string HtmlSplice(string template, string bodyHtml, string signatureHtml)
+{
+    string payload = bodyHtml + "<p class=MsoNormal><o:p>&nbsp;</o:p></p>" +
+        "<div id=\"x_probeSig\">" + signatureHtml + "</div>";
+    if (string.IsNullOrEmpty(template)) return "<html><body><div class=WordSection1>" + payload + "</div></body></html>";
+    int idx = template.IndexOf("class=WordSection1", StringComparison.OrdinalIgnoreCase);
+    if (idx < 0) idx = template.IndexOf("class=\"WordSection1\"", StringComparison.OrdinalIgnoreCase);
+    if (idx >= 0)
+    {
+        int open = template.IndexOf('>', idx);
+        if (open > 0) return template[..(open + 1)] + payload + template[(open + 1)..];
+    }
+    int b = template.IndexOf("<body", StringComparison.OrdinalIgnoreCase);
+    if (b >= 0)
+    {
+        int open = template.IndexOf('>', b);
+        if (open > 0) return template[..(open + 1)] + "<div class=WordSection1>" + payload + "</div>" + template[(open + 1)..];
+    }
+    return template + payload;
+}

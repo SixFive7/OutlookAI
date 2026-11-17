@@ -1,0 +1,28 @@
+# Graceful Outlook shutdown for cold-start verification (S7: Quit, never kill).
+# Uses Windows PowerShell 5.1 so Marshal::GetActiveObject exists - we must attach to the
+# RUNNING instance, not create a new one (creating one and quitting it leaves a fresh
+# headless remnant behind).
+$ErrorActionPreference = 'SilentlyContinue'
+if (-not (Get-Process OUTLOOK -ErrorAction SilentlyContinue)) { 'outlook not running'; exit 0 }
+try {
+    $ol = [System.Runtime.InteropServices.Marshal]::GetActiveObject('Outlook.Application')
+    # S7 guard: never quit with unsent compose windows open or a non-empty Outbox.
+    $inspectors = $ol.Inspectors.Count
+    $ns = $ol.GetNamespace('MAPI')
+    $outbox = 0
+    foreach ($store in $ns.Stores) {
+        try { $outbox += $store.GetDefaultFolder(4).Items.Count } catch { }
+    }
+    if ($outbox -gt 0) { "REFUSED: outbox has $outbox item(s)"; exit 1 }
+    "inspectors=$inspectors outbox=$outbox - quitting"
+    $ol.Quit()
+    [System.Runtime.InteropServices.Marshal]::ReleaseComObject($ns) | Out-Null
+    [System.Runtime.InteropServices.Marshal]::ReleaseComObject($ol) | Out-Null
+} catch { "attach/quit: $($_.Exception.Message)" }
+[GC]::Collect(); [GC]::WaitForPendingFinalizers()
+for ($i = 0; $i -lt 40; $i++) {
+    if (-not (Get-Process OUTLOOK -ErrorAction SilentlyContinue)) { "outlook exited after $($i * 0.5)s"; exit 0 }
+    Start-Sleep -Milliseconds 500
+}
+"STILL RUNNING: $((Get-Process OUTLOOK).Id)"
+exit 1

@@ -1,0 +1,28 @@
+param([string] $Scenario, [switch] $Restore, [int] $TimeoutSeconds = 560)
+$ErrorActionPreference = 'Stop'
+$wt = "C:\Source\SixFive7\OutlookAI\.claude\worktrees\agent-a704d527d248b5c92"
+$ev = "C:\Source\SixFive7\OutlookAI\.claude\worktrees\agent-a704d527d248b5c92\.work\q118-pin-measure"
+$vm = 'OutlookAI-Unindexed'
+if ($Restore) {
+    Restore-VMSnapshot -VMName $vm -Name CP-13B-LIVE-GREEN -Confirm:$false
+    Start-VM -Name $vm
+    "restored CP-13B-LIVE-GREEN and resumed at $((Get-Date).ToString('HH:mm:ss'))"
+}
+$cred = & "$wt\Testbed\host\Get-GuestCredential.ps1" -VMName $vm -RepoRoot "C:\Source\SixFive7\OutlookAI"
+$s = $null
+for ($i = 0; $i -lt 30 -and -not $s; $i++) { try { $s = New-PSSession -VMName $vm -Credential $cred -ErrorAction Stop } catch { Start-Sleep -Seconds 2 } }
+Invoke-Command -Session $s { New-Item -ItemType Directory -Force -Path C:\OutlookAI-Q5\q118 | Out-Null }
+foreach ($f in 'Measure-PinWindows.ps1', 'Register-InteractiveTask.ps1', 'OutlookMapiInterop.ps1') { Copy-Item -ToSession $s -Path "$wt\Testbed\guest\$f" -Destination "C:\OutlookAI-Q5\q118\$f" -Force }
+$out = Invoke-Command -Session $s -ArgumentList $Scenario, $TimeoutSeconds -ScriptBlock {
+    param($sc, $to)
+    Set-ExecutionPolicy -Scope Process Bypass -Force
+    Set-Location C:\OutlookAI-Q5\q118
+    .\Register-InteractiveTask.ps1 -RunLevel Limited -TimeoutSeconds $to -KeepJob -Script "& 'C:\OutlookAI-Q5\q118\Measure-PinWindows.ps1' -Scenario $sc" 2>&1 | ForEach-Object { "$_" }
+}
+$stamp = (Get-Date).ToString('yyyyMMddTHHmmss')
+$out | Set-Content "$ev\host-$Scenario-$stamp.txt"
+New-Item -ItemType Directory -Force -Path "$ev\guest" | Out-Null
+Copy-Item -FromSession $s -Path 'C:\OutlookAI-Q5\q118\*.jsonl', 'C:\OutlookAI-Q5\q118\child-*.json' -Destination "$ev\guest" -Force -ErrorAction SilentlyContinue
+Remove-PSSession $s
+$out
+

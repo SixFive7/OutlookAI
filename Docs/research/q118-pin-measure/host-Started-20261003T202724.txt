@@ -1,0 +1,57 @@
+run level: Limited - this token is NOT elevated (read before the work ran)
+[+   0,0s] begin     scenario Started on OAI-UNINDEXED as vmadmin; server C:\OutlookAI-Q5\server\OutlookAI.Mc
+pServer.exe (99.99.99.0+fd2c58b1bfe90b99d01fb8d4522438d5900a7dae); Outlook 16.0.17932.20996
+[+   0,5s] session   A: server pid 1056 initialized in 406 ms
+[+   0,7s] tool      A: list_folders isError in 72 ms, 1211 bytes; COM host pid 10124
+[+   0,7s] state     started: A started Outlook (A alive): no OUTLOOK.EXE
+[+   1,2s] session   B: server pid 4732 initialized in 525 ms
+[+   4,2s] tool      B: list_folders ok in 2957 ms, 4429 bytes; COM host pid 2728
+[+   5,0s] state     started: B attached (A and B alive): Explorers 2 (visible 0, hidden 2); ActiveExplorer()
+: null; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 0 visible / 2 rctrl_renwnd32; top-level w
+indows 0 visible / 28; dialogs 0
+[+   5,1s] end       B: stdin closed; server exited after 42 ms (exit code 0); its COM host gone
+[+   5,8s] state     started: B ended normally (A alive): Explorers 2 (visible 0, hidden 2); ActiveExplorer()
+: null; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 0 visible / 2 rctrl_renwnd32; top-level w
+indows 0 visible / 28; dialogs 0
+[+   5,9s] end       A: stdin closed; server exited after 84 ms (exit code 0); its COM host gone
+[+   6,6s] state     started: A, the session that started Outlook, ended normally: Explorers 1 (visible 0, hi
+dden 1); ActiveExplorer(): null; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 0 visible / 2 rc
+trl_renwnd32; top-level windows 0 visible / 26; dialogs 0
+[+  51,7s] note      started: Outlook is still up 45 s after its starter ended - the lingering headless Outlo
+ok
+[+  52,7s] session   C1: server pid 7540 initialized in 915 ms
+[+  53,6s] session   C2: server pid 8172 initialized in 907 ms
+[+  54,5s] session   C3: server pid 2884 initialized in 905 ms
+[+  58,5s] tool      C1: list_folders ok in 3909 ms, 4429 bytes; COM host pid 6420
+[+  58,6s] tool      C2: list_folders ok in 4020 ms, 4429 bytes; COM host pid 7956
+[+  58,7s] tool      C3: list_folders ok in 4114 ms, 4429 bytes; COM host pid 3600
+[+  60,7s] state     started: C1-C3 alive at once on the lingering Outlook: Explorers 1 (visible 0, hidden 1)
+; ActiveExplorer(): null; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 0 visible / 3 rctrl_ren
+wnd32; top-level windows 0 visible / 27; dialogs 0
+[+  61,0s] end       C1: stdin closed; server exited after 124 ms (exit code 0); its COM host gone
+[+  61,0s] end       C2: stdin closed; server exited after 129 ms (exit code 0); its COM host gone
+[+  61,0s] end       C3: stdin closed; server exited after 170 ms (exit code 0); its COM host gone
+[+  63,0s] state     started: C1-C3 ended normally: Explorers 1 (visible 0, hidden 1); ActiveExplorer(): null
+; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 0 visible / 3 rctrl_renwnd32; top-level windows
+ 0 visible / 27; dialogs 0
+[+  64,0s] session   D: server pid 10148 initialized in 1.009 ms
+[+  66,6s] tool      D: list_folders ok in 2559 ms, 4429 bytes; COM host pid 7492
+[+  66,8s] end       D: stdin closed; server exited after 111 ms (exit code 0); its COM host gone
+[+  68,6s] state     started: D ended normally: Explorers 1 (visible 0, hidden 1); ActiveExplorer(): null; In
+spectors 0; Outbox default 0, all 0 over 2 stores; frames 0 visible / 3 rctrl_renwnd32; top-level windows 0 v
+isible / 27; dialogs 0
+[+  69,5s] session   E: server pid 7844 initialized in 929 ms
+[+  71,9s] tool      E: list_folders ok in 2391 ms, 4429 bytes; COM host pid 10032
+[+  72,1s] end       E: stdin closed; server exited after 100 ms (exit code 0); its COM host gone
+[+  73,5s] state     started: E ended normally: Explorers 1 (visible 0, hidden 1); ActiveExplorer(): null; In
+spectors 0; Outbox default 0, all 0 over 2 stores; frames 0 visible / 3 rctrl_renwnd32; top-level windows 0 v
+isible / 27; dialogs 0
+[+ 195,6s] end-ol    started: Application.Quit(): quit-called -> OUTLOOK.EXE STILL RUNNING 120 s after the ac
+tion (617 ms to return)
+[+ 197,1s] state     started: after Quit, Outlook still up (this reading attaches): Explorers 1 (visible 0, h
+idden 1); ActiveExplorer(): null; Inspectors 0; Outbox default 0, all 0 over 2 stores; frames 0 visible / 3 r
+ctrl_renwnd32; top-level windows 0 visible / 27; dialogs 0
+[+ 200,3s] end-ol    started leftover: closed 1 hidden Explorer(s) -> OUTLOOK.EXE EXITED 0 s after the action
+ returned (1743 ms to return)
+[+ 200,3s] done      scenario Started; OUTLOOK.EXE not running
+log: C:\OutlookAI-Q5\q118\q118-Started-20261003T202403.jsonl
