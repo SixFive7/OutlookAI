@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.InteropServices;
+using OutlookAI.Core.Com;
 using OutlookAI.Core.IndexSearch;
 using OutlookAI.Core.Mapi;
 using OutlookAI.Core.Services;
@@ -556,6 +557,197 @@ public sealed class LiveFolderIdentityTests
 
         Assert.Equal(0, liveTestFolders);
         _output.WriteLine(_fixture.VerifyHubReconciled());
+    }
+
+    // ------------------------------------------------------------------ 4. the folder ID the tools take (Q131-Q136)
+
+    [Fact]
+    public void AFolderId_IsFoundMadeAndMovedInto_ThroughTheTools_AndSurvivesARename()
+    {
+        // Every step through the PRODUCT's tools, as an agent takes them: find_folder finds nothing,
+        // create_folder makes a parent and inside it a folder whose name holds '/', find_folder finds that
+        // one by its name, move_mail files a tagged draft into it by its ID, search by the same ID finds the
+        // draft - and after the folder is renamed (tested helper) the same ID still opens it, still takes
+        // mail and is still searched.
+        LiveOutlookTestMailer.DeleteTestFolders(Hub);
+        string parentName = Prefix + "-Fid";
+        string childName = Prefix + "-Fid a/b";
+        string renamed = Prefix + "-Fid renamed";
+        List<string> entryIds = new();
+        try
+        {
+            string hubId = LiveIds.StoreId(Service, Hub);
+            Assert.DoesNotContain(Service.FindFolder(parentName, hubId).Candidates, c => c.Match == "exact");
+
+            CreateFolderOutcome parent = LiveIds.CreateTestFolder(Service, Hub, LiveIds.RootFolderId(Service, Hub), parentName);
+            CreateFolderOutcome child = LiveIds.CreateTestFolder(Service, Hub, parent.FolderId, childName);
+            Assert.Equal(childName, child.Name);
+            Assert.Equal(parentName + "/" + childName, child.Folder);
+            Assert.Equal(hubId, child.StoreId);
+            Assert.Equal(parent.FolderId, child.ParentId);
+            _output.WriteLine("create_folder: " + child.Folder + " -> " + child.FolderId + " (" + child.FolderId.Length + " characters)");
+            FolderCandidateView found = Assert.Single(Service.FindFolder(childName, hubId).Candidates, c => c.Match == "exact");
+            Assert.Equal(child.FolderId, found.FolderId);
+            Assert.Equal(child.Folder, found.Folder);
+
+            string subject = _fixture.TaggedSubject("folder id " + Marker);
+            DraftOutcome draft = Service.NewDraft(
+                LiveStoreWriteGuard.Writable(Hub, StoreWriteKind.Draft, "new_draft"), to: Hub, cc: null, subject: subject,
+                body: "Folder ID probe (Q131-Q136).", display: false);
+            entryIds.Add(draft.EntryId);
+            LiveStoreWriteGuard.Writable(Hub, StoreWriteKind.Move, "move_mail");
+            MoveItemView moved = Assert.Single(Service.MoveMail(new[] { draft.EntryId }, child.FolderId).Items);
+            Assert.True(moved.Ok, moved.Error);
+            entryIds.Add(moved.NewEntryId!);
+            Assert.Equal(child.FolderId, moved.ToFolderId);
+            Assert.Equal(child.Folder, moved.ToFolder);
+
+            SearchOutcome before = SearchFolder(child.FolderId, subject);
+            Assert.Contains(before.Hits, h => h.Subject == subject);
+            Assert.Equal(child.FolderId, before.Scope!.FolderId);
+            _output.WriteLine("search by folder_id before the rename: found via " + before.Scope.FolderFoundVia + ", folder '" + before.Scope.Folder + "'");
+
+            string childEntryId = DecodedEntryId(child.FolderId);
+            TestFolderChange change = LiveOutlookTestMailer.RenameTestFolder(Hub, childEntryId, renamed);
+            Assert.True(FolderEntryIdLayout.SameBytes(change.EntryIdAfter ?? childEntryId, childEntryId), "a rename changed the folder's id");
+            SearchOutcome after = SearchFolder(child.FolderId, subject);
+            Assert.Contains(after.Hits, h => h.Subject == subject);
+            FolderCandidateView afterRename = Assert.Single(Service.FindFolder(renamed, hubId).Candidates, c => c.Match == "exact");
+            Assert.Equal(child.FolderId, afterRename.FolderId);
+            _output.WriteLine("after the rename: the same ID found the mail via " + after.Scope!.FolderFoundVia
+                + " and find_folder shows it as '" + afterRename.Folder + "'");
+        }
+        finally
+        {
+            CleanUp(entryIds);
+        }
+
+        AssertHubClean();
+    }
+
+    [Fact]
+    [Trait("Requires", "SearchIndex")]
+    public void AFolderId_IsSearchedThroughTheIndexAlone_WithNoOutlookCall()
+    {
+        // Q132 (i), "searching one folder while Outlook is closed", proven with the product's own search and
+        // the machine's real index, while Outlook - for this one service - answers nothing: its gateway
+        // refuses every call. A local data file's folder is found by its own index row; an Exchange folder
+        // is refused, saying it needs Outlook (measured: the index keeps nothing its ID leads to).
+        LiveOutlookTestMailer.DeleteTestFolders(Hub);
+        List<string> entryIds = new();
+        try
+        {
+            CreateFolderOutcome folder = LiveIds.CreateTestFolder(Service, Hub, LiveIds.RootFolderId(Service, Hub), Prefix + "-FidIdx");
+            string subject = _fixture.TaggedSubject("folder id index " + Marker);
+            DraftOutcome draft = Service.NewDraft(
+                LiveStoreWriteGuard.Writable(Hub, StoreWriteKind.Draft, "new_draft"), to: Hub, cc: null, subject: subject,
+                body: "Folder ID index probe (Q132).", display: false);
+            entryIds.Add(draft.EntryId);
+            LiveStoreWriteGuard.Writable(Hub, StoreWriteKind.Move, "move_mail");
+            MoveItemView moved = Assert.Single(Service.MoveMail(new[] { draft.EntryId }, folder.FolderId).Items);
+            Assert.True(moved.Ok, moved.Error);
+            entryIds.Add(moved.NewEntryId!);
+
+            using MailService withoutOutlook = new MailService(new NoOutlookGateway(), null, IndexClientFactory.CreateAuto(out _));
+            SearchRequest request = new SearchRequest
+            {
+                Query = Marker,
+                FolderId = folder.FolderId,
+                IndexOnly = true,
+                Top = 10,
+                SnippetChars = 0,
+            };
+
+            if (folder.FolderId[0] != OutlookIds.PstFolderKind)
+            {
+                ArgumentException refused = Assert.Throws<ArgumentException>(() => withoutOutlook.Search(request));
+                Assert.Contains("needs Outlook", refused.Message, StringComparison.Ordinal);
+                _output.WriteLine("an Exchange folder without Outlook: refused - " + refused.Message);
+                return;
+            }
+
+            Stopwatch waited = Stopwatch.StartNew();
+            SearchOutcome? outcome = null;
+            while (waited.Elapsed.TotalSeconds < IndexWaitSeconds)
+            {
+                try
+                {
+                    outcome = withoutOutlook.Search(request);
+                    if (outcome.Hits.Any(h => h.Subject == subject))
+                    {
+                        break;
+                    }
+                }
+                catch (ArgumentException ex) when (ex.Message.Contains("no row for the folder itself", StringComparison.Ordinal))
+                {
+                    // The index has not filed the new folder yet.
+                }
+
+                Thread.Sleep(TimeSpan.FromSeconds(IndexPollSeconds));
+            }
+
+            Assert.True(outcome != null && outcome.Hits.Any(h => h.Subject == subject),
+                "the folder's mail was not found through the index alone within " + IndexWaitSeconds + " s");
+            Assert.Equal("index", outcome!.Scope!.FolderFoundVia);
+            Assert.Equal(Prefix + "-FidIdx", outcome.Scope.Folder);
+            _output.WriteLine("MEASURED: a folder search with no Outlook call found the mail after " + waited.Elapsed.TotalSeconds.ToString("0.0", CultureInfo.InvariantCulture)
+                + " s, through the folder's own index row (" + outcome.IndexElapsedMs + " ms in the index tier)");
+        }
+        finally
+        {
+            CleanUp(entryIds);
+        }
+
+        AssertHubClean();
+    }
+
+    /// <summary>A search of one folder by its ID, through the full product (index and freshness sweep).</summary>
+    private SearchOutcome SearchFolder(string folderId, string subject)
+    {
+        Service.ClearSweepCache();
+        return Service.Search(new SearchRequest
+        {
+            Query = Marker,
+            FolderId = folderId,
+            Top = 10,
+            SnippetChars = 0,
+        });
+    }
+
+    /// <summary>The entry id (hex) a folder ID carries.</summary>
+    private static string DecodedEntryId(string folderId)
+    {
+        Assert.True(OutlookIds.TryDecodeFolderId(folderId, "folder_id", out string hex, out string? problem), problem);
+        return hex;
+    }
+
+    /// <summary>An Outlook that answers nothing: every call throws, as when Outlook is not running.</summary>
+    private sealed class NoOutlookGateway : IComGateway
+    {
+        public event Action? OutlookGone
+        {
+            add { }
+            remove { }
+        }
+
+        public bool IsConnected => false;
+
+        public bool? QuitSinkActive => null;
+
+        public bool ProbeConnected() => false;
+
+        public T Run<T>(Func<IOutlookSession, T> operation) => throw new TimeoutException("Outlook is not running (test).");
+
+        public T Run<T>(Func<IOutlookSession, T> operation, ComSessionRecovery recovery) => throw new TimeoutException("Outlook is not running (test).");
+
+        public T Run<T>(Func<IOutlookSession, T> operation, int budgetMilliseconds, bool allowConnectFloor = false)
+            => throw new TimeoutException("Outlook is not running (test).");
+
+        public ComHostDiagnostics GetDiagnostics() => new ComHostDiagnostics("in-process", "stopped");
+
+        public void Dispose()
+        {
+        }
     }
 
     // ------------------------------------------------------------------ helpers: the index
