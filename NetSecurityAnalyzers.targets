@@ -1,16 +1,17 @@
 <Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <!--
-    THE .NET SDK'S SECURITY ANALYSERS, FOR THE TWO OLD-STYLE PROJECTS - OutlookAI.csproj and
-    PolicyWriter\OutlookAI.PolicyWriter.csproj, which both import this file. Decided by the
-    maintainer 2026-10-03 (Q125 (b)): with the GitHub CI went CodeQL's scan, so the builds run the
-    security analysers that ship with the .NET SDK instead. The MCP server's projects get the same
-    rules, at the same level, from McpServer\Directory.Build.props; this is the add-in's way to them.
+    THE .NET SDK'S SECURITY ANALYSERS, FOR THE OLD-STYLE PROJECT - OutlookAI.csproj, which imports
+    this file (the elevated helper's project did too, until Q145 (a) removed the helper). Decided
+    by the maintainer 2026-10-03 (Q125 (b)): with the GitHub CI went CodeQL's scan, so the builds
+    run the security analysers that ship with the .NET SDK instead. The MCP server's projects get
+    the same rules, at the same level, from McpServer\Directory.Build.props; this is the add-in's
+    way to them.
 
     WHY AN SDK IMPORT AND NOT A PACKAGE. The analysers are part of the .NET SDK
     (<sdk>\Sdks\Microsoft.NET.Sdk\analyzers), which is where an SDK-style project takes them from.
-    These two projects are not SDK-style, and both build scripts run MSBuild with no restore step
-    (PolicyWriter's project file says why), so a PackageReference would never resolve - and a package
-    is a download this needs no more than the Dependencies rule wants it. The import at the bottom
+    The add-in's project is not SDK-style, and both build scripts (Testbed\host\Publish-AddInPayload.ps1
+    and Tools\Switch-AddInBuild.ps1) run MSBuild with no restore step, so a PackageReference would
+    never resolve - and a package is a download this needs no more than the Dependencies rule wants it. The import at the bottom
     asks Visual Studio's MSBuild to resolve Microsoft.NET.Sdk - the SDK the MCP server builds with,
     found the same way - and imports that SDK's own analyser targets, so these projects run the
     SDK's analysers from the SDK's own rule-set files. Measured 2026-10-04: Visual Studio 18.10.3
@@ -27,7 +28,7 @@
         would bury the few that matter. That is not what Q125 asked for.
       * pinned at 10.0, not "latest": an SDK update must not change the rule set under a build
         that passed. A newer level is a deliberate edit of this number and of the props file.
-    Every finding is an ERROR. These two projects do not otherwise treat warnings as errors, and a
+    Every finding is an ERROR. The add-in does not otherwise treat warnings as errors, and a
     finding that only warns in a scripted build is one nobody reads - so
     CodeAnalysisTreatWarningsAsErrors makes the SDK pick its "_warnaserror" rule-set files.
     A real finding is fixed. A false positive is suppressed AT ITS SITE, with

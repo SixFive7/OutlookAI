@@ -108,9 +108,10 @@ namespace OutlookAI.Services
         }
 
         /// <summary>
-        /// HKCU path of the POLICIES-hive mirror of <see cref="OutlookKeyPath"/> for one Office
-        /// major. A different root, the same shape, and both trees build paths under it: the
-        /// add-in writes D25's five sync-slider values under <c>...\Outlook\Cached Mode</c> here,
+        /// HKCU path of the GROUP POLICY mirror of <see cref="OutlookKeyPath"/> for one Office
+        /// major. A different root, the same shape, and both trees read paths under it: the
+        /// add-in reads D25's Cached Mode values under <c>...\Outlook\Cached Mode</c> here, to
+        /// show a value an organization sets as theirs (it writes nothing here since Q145 (a)),
         /// and the server reads <c>...\Outlook\Search</c> here because a policy value outranks
         /// the user hive and a health report that ignored it would call a policy-disabled machine
         /// tuned. Two hand-built copies of this prefix is the same drift
@@ -119,6 +120,19 @@ namespace OutlookAI.Services
         internal static string PolicyOutlookKeyPath(string version)
         {
             return @"Software\Policies\Microsoft\Office\" + version + @"\Outlook";
+        }
+
+        /// <summary>
+        /// HKCU path of the MICROSOFT 365 CLOUD POLICY mirror of <see cref="OutlookKeyPath"/> for one
+        /// Office major: <c>Software\Policies\Microsoft\Cloud\Office\&lt;major&gt;\Outlook</c>. Cloud
+        /// Policy writes only under this root and outranks Group Policy and the user's own settings
+        /// alike, so a reader that consulted <see cref="PolicyOutlookKeyPath"/> alone would call a
+        /// value the organization's cloud policy sets the user's. Read by the add-in only, for the
+        /// Cached Mode values (Q145 (a)); nothing in this product writes here.
+        /// </summary>
+        internal static string CloudPolicyOutlookKeyPath(string version)
+        {
+            return @"Software\Policies\Microsoft\Cloud\Office\" + version + @"\Outlook";
         }
 
         /// <summary>
