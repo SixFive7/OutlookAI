@@ -213,8 +213,8 @@ public sealed class UnindexedStoreReportingTests
         Assert.True(outcome.Sweep!.IndexFrontierMissing);
         Assert.Equal(new[] { PstStore }, outcome.Sweep.StoresWithoutIndex);
 
-        // One read only: the store-scope resolution that A4 added. Not a second one for a
-        // list this path cannot use.
+        // One read only: the store-scope resolution that A4 added - which is also where the store's ID
+        // is looked up since Q133. Not a second one for a list this path cannot use.
         Assert.Equal(1, ProfileSession.StoreListReads);
     }
 
@@ -512,7 +512,10 @@ public sealed class UnindexedStoreReportingTests
 
                 case nameof(IOutlookSession.GetStoreDetails):
                     System.Threading.Interlocked.Increment(ref _storeListReads);
-                    return _stores;
+                    return TestFolders.WithRoots(_stores);
+
+                case nameof(IOutlookSession.TryDescribeFolder):
+                    return TestFolders.Describe(args);
 
                 // Argument 3 is onlyStoreDisplayName; see IOutlookSession.SweepFoldersNewerThan.
                 case nameof(IOutlookSession.SweepFoldersNewerThan):

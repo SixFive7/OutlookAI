@@ -334,16 +334,17 @@ public sealed class FolderScopeResolverTests
     }
 
     [Fact]
-    public void UnresolvedFolderAdvice_NamesTheResolutionProblem_NotAnEmptyFolder()
+    public void UnresolvedFolderAdvice_NamesTheIndexsGap_NotAnEmptyFolder()
     {
+        // Since Q131-Q136 the folder is named by its ID and is known to exist, so the guard no longer
+        // blames a path: it says the index has no rows for the folder although the store has some.
         string advice = FolderScopeResolver.DescribeUnresolvedFolder("Inbox/Typo", "Sam Delegate");
 
-        Assert.Contains("matched NOTHING in the index", advice, StringComparison.Ordinal);
-        Assert.Contains("folder-resolution problem rather than an empty folder", advice, StringComparison.Ordinal);
-        // The one honest alternative explanation is named too - a folder created minutes
-        // ago has no index rows yet, and the guard must not present that as a defect.
-        Assert.Contains("created minutes ago", advice, StringComparison.Ordinal);
-        Assert.Contains("list_folders", advice, StringComparison.Ordinal);
+        Assert.Contains("has NO rows in the index", advice, StringComparison.Ordinal);
+        Assert.Contains("rather than the folder being empty", advice, StringComparison.Ordinal);
+        // The honest explanations are named - a folder created, renamed or moved a moment ago is re-filed
+        // within seconds - and the remedy that does not need the index.
+        Assert.Contains("a moment ago", advice, StringComparison.Ordinal);
         Assert.Contains("exhaustive:true", advice, StringComparison.Ordinal);
     }
 }

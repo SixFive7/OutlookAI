@@ -45,12 +45,15 @@ internal static class TestFolders
     /// <summary>A folder's ID as the tools show it.</summary>
     internal static string FolderId(string store, string path) => OutlookIds.FolderIdFromEntryId(FolderEntryId(store, path))!;
 
-    /// <summary>The detail, given the root folder entry id of its store.</summary>
+    /// <summary>
+    /// The detail, given the root folder entry id of its store - the one it was made with, when it was made
+    /// with one (two stores of one name are told apart that way), else one drawn from its display name.
+    /// </summary>
     internal static ComStoreDetail WithRoot(ComStoreDetail d)
     {
         return new ComStoreDetail(
             d.DisplayName, d.StoreId, d.ExchangeStoreType, d.IsCachedExchange, d.NameUnreadable, d.FilePath,
-            d.MappingSignatureHex, d.ExchangeProfileSectionHex, d.OwnName, RootEntryId(d.DisplayName));
+            d.MappingSignatureHex, d.ExchangeProfileSectionHex, d.OwnName, d.RootFolderEntryId ?? RootEntryId(d.DisplayName));
     }
 
     /// <summary>Every detail given its root folder entry id.</summary>

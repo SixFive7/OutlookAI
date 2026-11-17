@@ -559,7 +559,7 @@ public sealed class AtomicityClaimsTests
         // The case no wording could repair: Ok=false over an item that MOVED. The message has
         // always said so and it travelled through a field documented as "nothing was moved
         // for this item".
-        Assert.Equal(MutationOutcome.Unchanged, MailService.MoveFailureOutcome("TargetFolderCreateFailed"));
+        Assert.Equal(MutationOutcome.Unchanged, MailService.MoveFailureOutcome("TargetIsStoreRoot"));
         Assert.Equal(MutationOutcome.Unchanged, MailService.MoveFailureOutcome("CrossStoreTarget:Work"));
         Assert.Equal(MutationOutcome.Unknown, MailService.MoveFailureOutcome(null));
         Assert.Equal(MutationOutcome.Unknown, MailService.MoveFailureOutcome("COMException 0x80004005"));

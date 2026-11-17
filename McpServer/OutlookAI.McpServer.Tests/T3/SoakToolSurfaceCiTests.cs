@@ -40,7 +40,7 @@ public sealed class SoakToolSurfaceCiTests
             .ToArray();
 
         Assert.Equal(ExpectedTools.OrderBy(n => n, StringComparer.Ordinal).ToArray(), names);
-        Assert.Equal(22, names.Length);
+        Assert.Equal(24, names.Length);
     }
 
     [Fact]

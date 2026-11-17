@@ -90,7 +90,6 @@ public sealed class MoveArchiveCiToolShapeTests
         Assert.Contains("createdFolders", description, StringComparison.Ordinal);
         Assert.DoesNotContain("NOTHING is created", description, StringComparison.Ordinal);
         Assert.Contains("fromFolderId", description, StringComparison.Ordinal);
-        Assert.Contains("create_folder", description, StringComparison.Ordinal);
         Assert.Contains("newEntryId", description, StringComparison.Ordinal);
     }
 

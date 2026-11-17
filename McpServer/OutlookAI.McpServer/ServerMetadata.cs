@@ -16,8 +16,8 @@ public static class ServerMetadata
 {
     public const string Instructions =
         "Local Outlook email access: search and read mail across all accounts, folders and delegate "
-        + "mailboxes; follow threads; save/read attachments. Use them whenever an answer may live in the "
+        + "mailboxes; follow threads; save/read attachments. Use them when an answer may live in the "
         + "user's email or inbox. Folders and stores are addressed by ID, not name: find_folder, list_folders "
-        + "and list_accounts give the IDs. Drafts open in Outlook for the user to review; send is "
+        + "and list_accounts give the IDs. New, reply and forward drafts open in Outlook for review; send is "
         + "confirmation-gated.";
 }

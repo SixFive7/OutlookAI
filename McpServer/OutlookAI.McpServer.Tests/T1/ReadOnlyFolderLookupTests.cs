@@ -1357,7 +1357,8 @@ public sealed class ReadOnlyFolderLookupTests
     }
 
     [Theory]
-    [InlineData("VerifyMoveTarget", "SpecialFolderGuards.MoveTargetRefusal(")]
+    [InlineData("TargetRefusal", "SpecialFolderGuards.MoveTargetRefusal(")]
+    [InlineData("VerifyMoveTarget", "TargetRefusal(")]
     [InlineData("CheckInDraftsFolder", "SpecialFolderGuards.DraftsFolderRefusal(")]
     public void EveryWriteToolGuard_GoesThroughTheNonCreatingGuard(string member, string guard)
     {
