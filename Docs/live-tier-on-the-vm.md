@@ -4390,7 +4390,9 @@ selects every live test it has the capabilities for, read and write:
 
 and only a test that needs a delegate store must still carry `Writes=Nothing`
 (`EveryDelegateStoreTest_DeclaresWritesNothing`): a delegate or shared mailbox is read-only for every
-test, on every machine.
+test, on every machine. Until decision 206 (2026-11-17) the runner narrows it to the tests that write
+nothing, `Category=Live&Requires!=LocalSignatures&Requires!=DelegateStore&Requires!=GeneratedPopulation&Requires!=IdentityAccount&Requires!=ProbePopulation&Requires!=PstStore&Writes=Nothing`, because the VM's Office creates no item since its activation grace ran out
+(section 4.4a).
 
 **The three buckets, all computed:**
 

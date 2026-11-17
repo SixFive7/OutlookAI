@@ -454,9 +454,22 @@ public sealed class LiveTierInventoryTests
     }
 
     [Fact]
+    public void TheExchangeVmsInterimFilter_IsTheWriteFilterWithWritesNothing()
+    {
+        // Decision 206 (2026-11-17): until Office on the Exchange VM can create items again it runs only the
+        // tests of its own filter that write nothing. Literal on purpose, like the filter it narrows.
+        Assert.Equal(
+            "Category=Live&Requires!=LocalSignatures&Requires!=DelegateStore&Requires!=GeneratedPopulation&Requires!=IdentityAccount&Requires!=ProbePopulation&Requires!=PstStore&Writes=Nothing",
+            LiveRunFilters.ExchangeTestAccountWritesNothing);
+        Assert.StartsWith(LiveRunFilters.ExchangeTestAccount + "&", LiveRunFilters.ExchangeTestAccountWritesNothing, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void EveryQuotedExchangeTestAccountFilter_IsTheDerivedOne()
     {
-        // The places a person reads the Exchange VM's write run from, and the runner that types it.
+        // The places a person reads the Exchange VM's run from, and the runner that types it: the write run,
+        // or its writes-nothing narrowing while decision 206 is open - and the runner the narrowing alone.
+        string[] derived = { LiveRunFilters.ExchangeTestAccount, LiveRunFilters.ExchangeTestAccountWritesNothing };
         List<string> problems = new();
         foreach (string file in new[] { "Testbed/README.md", "Docs/live-tier-on-the-vm.md", "Testbed/host/Invoke-LiveTierOnGuest.ps1" })
         {
@@ -466,12 +479,20 @@ public sealed class LiveTierInventoryTests
                 problems.Add(file + " never quotes the Exchange VM's write-run filter " + LiveRunFilters.ExchangeTestAccount);
             }
 
+            List<string> quotedValues = new();
             foreach (System.Text.RegularExpressions.Match quoted in System.Text.RegularExpressions.Regex.Matches(text, @"Category=Live&Requires!=LocalSignatures[^\s`""']*"))
             {
-                if (!string.Equals(quoted.Value, LiveRunFilters.ExchangeTestAccount, StringComparison.Ordinal))
+                quotedValues.Add(quoted.Value);
+                if (!derived.Contains(quoted.Value, StringComparer.Ordinal))
                 {
-                    problems.Add(file + " quotes '" + quoted.Value + "', not the derived " + LiveRunFilters.ExchangeTestAccount);
+                    problems.Add(file + " quotes '" + quoted.Value + "', not the derived " + string.Join(" or ", derived));
                 }
+            }
+
+            if (file.EndsWith(".ps1", StringComparison.Ordinal) && !quotedValues.SequenceEqual(new[] { LiveRunFilters.ExchangeTestAccountWritesNothing }, StringComparer.Ordinal))
+            {
+                problems.Add(file + " must type the writes-nothing filter " + LiveRunFilters.ExchangeTestAccountWritesNothing
+                    + " and nothing else while decision 206 is open; it quotes " + string.Join(", ", quotedValues));
             }
 
             // The filter before the add-in was installed there (2026-10-08 to 2026-11-17) started with
@@ -508,7 +529,7 @@ public sealed class LiveTierInventoryTests
                 .Select(a => (string)a.ConstructorArguments[0].Value!),
             StringComparer.Ordinal);
 
-        foreach (string filter in new[] { LiveRunFilters.Guest, LiveRunFilters.GuestUnindexed, LiveRunFilters.ExchangeGuest, LiveRunFilters.ExchangeTestAccount })
+        foreach (string filter in new[] { LiveRunFilters.Guest, LiveRunFilters.GuestUnindexed, LiveRunFilters.ExchangeGuest, LiveRunFilters.ExchangeTestAccount, LiveRunFilters.ExchangeTestAccountWritesNothing })
         {
             foreach (string key in System.Text.RegularExpressions.Regex.Matches(filter, @"([A-Za-z]+)!?=").Select(m => m.Groups[1].Value))
             {
@@ -532,7 +553,7 @@ public sealed class LiveTierInventoryTests
             "the Writes trait's value is 'None', which VSTest also gives every test that lacks the trait");
         Assert.DoesNotContain(AllCapabilities, c => string.Equals(c, "None", StringComparison.OrdinalIgnoreCase));
 
-        foreach (string filter in new[] { LiveRunFilters.Guest, LiveRunFilters.GuestUnindexed, LiveRunFilters.ExchangeGuest, LiveRunFilters.ExchangeTestAccount })
+        foreach (string filter in new[] { LiveRunFilters.Guest, LiveRunFilters.GuestUnindexed, LiveRunFilters.ExchangeGuest, LiveRunFilters.ExchangeTestAccount, LiveRunFilters.ExchangeTestAccountWritesNothing })
         {
             Assert.False(
                 System.Text.RegularExpressions.Regex.IsMatch(filter, @"!?=None\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase),

@@ -54,7 +54,9 @@
     saves it as it is. With -Checkpoint, the checkpoint is restored, the guest restarted gracefully and
     its .ost files set aside (guest\Reset-OutlookOfflineStore.ps1) before Outlook starts and downloads
     the mailboxes afresh. STAGE leaves a running Outlook running (the swap replaces only the suite and
-    its server, which Outlook does not use). Its filter is LiveRunFilters.ExchangeTestAccount. And every run gets a RUN MARKER - 'oair' and
+    its server, which Outlook does not use). Its filter is LiveRunFilters.ExchangeTestAccountWritesNothing - the
+    write run's own filter, narrowed to the tests that write nothing until decision 206 (2026-11-17) settles
+    how the VM's never-activated Office gets back the ability to create items. And every run gets a RUN MARKER - 'oair' and
     the UTC start to the second - recorded in the host's ledger, C:\OutlookAI-Testbed\exchange-runs\
     ledger.jsonl, BEFORE the suite starts, and handed to the run in OUTLOOKAI_LIVE_RUN_MARKER with the
     markers of earlier runs that never reported a clean sweep in OUTLOOKAI_LIVE_PRIOR_RUN_MARKERS: every
@@ -211,8 +213,10 @@ $SdkInstallerName = 'dotnet-sdk-10.0.401-win-x64.exe'
 $SdkSha512 = 'f0d8f8e7ec24efb05172a65dd80c4a9b1ef17efcebdbf0f57c15f436eea417960a7eeb6726c473a042373d6a8b94ac1adc7d680decbf7d2c45fa5c5662d62265'
 $FilterBase = 'Category=Live&Requires!=DelegateStore&Requires!=CachedExchange'
 $FilterUnindexedExtra = '&Requires!=SearchIndex'
-# The Exchange VM with its test account as the hub - LiveRunFilters.ExchangeTestAccount.
-$FilterExchange = 'Category=Live&Requires!=LocalSignatures&Requires!=DelegateStore&Requires!=GeneratedPopulation&Requires!=IdentityAccount&Requires!=ProbePopulation&Requires!=PstStore'
+# The Exchange VM with its test account as the hub: LiveRunFilters.ExchangeTestAccount, and of it only the
+# tests that write nothing (LiveRunFilters.ExchangeTestAccountWritesNothing) until decision 206 settles how
+# its Office gets back the ability to create items (Docs/live-tier-on-the-vm.md section 4.4a).
+$FilterExchange = 'Category=Live&Requires!=LocalSignatures&Requires!=DelegateStore&Requires!=GeneratedPopulation&Requires!=IdentityAccount&Requires!=ProbePopulation&Requires!=PstStore&Writes=Nothing'
 # The host's record of the Exchange VM's run markers: beside the leases, machine state, not the repository.
 $ExchangeLedgerRelative = 'exchange-runs\ledger.jsonl'
 $LeaseReasonPrefix = 'Invoke-LiveTierOnGuest'
@@ -385,7 +389,7 @@ function New-RunId {
 # named - restored, restarted and its data files set aside.
 function Get-ExchangeStartPlan {
     param([bool] $CheckpointNamed)
-    if ($CheckpointNamed) { return @('restore the named checkpoint', 'restart', 'set the .ost files aside', 'Outlook NOT elevated', 'preflight') }
+    if ($CheckpointNamed) { return @('restore the named checkpoint', 'restart', 'record the index roots', 'set the .ost files aside', 'Outlook NOT elevated', 'wait for the new index roots', 'preflight') }
     return @('resume as the last run left it', 'Outlook NOT elevated if it is not running', 'preflight')
 }
 
@@ -672,10 +676,12 @@ function Invoke-SelfTest {
     $f = Get-LiveFilter $true '' '&FullyQualifiedName~X'
     Check 'a suffix narrows it' 'Category=Live&Requires!=DelegateStore&Requires!=CachedExchange&FullyQualifiedName~X|True' @($f.Filter, $f.Narrowed)
     $f = Get-LiveFilter $true '' '' $true
-    Check 'the Exchange VM runs LiveRunFilters.ExchangeTestAccount' $FilterExchange $f.Filter
+    Check 'the Exchange VM runs LiveRunFilters.ExchangeTestAccountWritesNothing' $FilterExchange $f.Filter
+    Check 'which writes nothing while decision 206 is open' $true $FilterExchange.EndsWith('&Writes=Nothing')
     Check 'and that run is not narrowed' $false $f.Narrowed
     Check 'the Exchange VM carries its state forward by default' 'resume as the last run left it|Outlook NOT elevated if it is not running|preflight' (Get-ExchangeStartPlan $false)
     Check 'and a named checkpoint is restored and its data files set aside' $true ((Get-ExchangeStartPlan $true) -contains 'set the .ost files aside')
+    Check 'with the index roots recorded first, and the new ones waited for after Outlook starts' 'record the index roots|set the .ost files aside|Outlook NOT elevated|wait for the new index roots' ((@(Get-ExchangeStartPlan $true) | Select-Object -Skip 2 -First 4) -join '|')
     $os = Get-OutlookStartFacts "  ACTIVATION-WIZARD-DISMISSED 8 s: class NUIDialog, by its Close button`r`nOK: OUTLOOK.EXE pid 9548`r`nACTIVATION-WIZARD-DISMISSALS 1`r`nSTART-OUTLOOK-EXIT 0" 'Outlook'
     Check 'a start that closed the activation wizard records one dismissal' 1 $os['activationWizardDismissed']
     Check 'and the summary line says so' "outlook    started by this run, NOT elevated, on profile 'Outlook'; Office's activation wizard dismissed 1 time(s)" (Format-OutlookStartLine $os)
@@ -990,6 +996,7 @@ $checkpointActions = [ordered]@{ start = $Checkpoint; resting = $RestingCheckpoi
 $crashDumpState = [ordered]@{ armed = $false; proven = $null; guestFolder = $GuestDumpDir; fetched = $false; files = @() }
 # Set when this run starts Outlook itself: what the start met, Office's activation wizard included.
 $outlookStart = $null
+$indexRoots = $null
 $script:dumpsFound = @()
 $suiteStarted = $false
 $stage = ''
@@ -1241,6 +1248,10 @@ Copy-Item -LiteralPath '$GuestPayloadDir\live-test-settings.json' -Destination '
                 # ps51-native-stderr-ok: a PowerShell script, not a program - every program it starts goes through its own Invoke-NativeCommand, under 'Continue' inside a try
                 & (Join-Path $PSScriptRoot 'Restart-Guest.ps1') -VMName $facts.Name -Execute -RepoRoot $CredentialRepoRoot -LogPath (Join-Path $runDir 'restart.log') *> (Join-Path $runDir 'restart.out.log')
                 if ($LASTEXITCODE -ne 0) { throw "Restart-Guest.ps1 did not complete ($LASTEXITCODE) - restart.log" }
+                # New data files are new stores to Windows Search, with new index roots: the old ones are
+                # recorded first, so the wait below can tell a new root from one the old files left.
+                $o = Invoke-Guest 'index-before' "& '$GuestRoot\Reset-OutlookOfflineStore.ps1' -RecordIndexRoots" 300
+                if ($o -notmatch 'INDEX-ROOTS-RECORDED \d+') { throw 'Reset-OutlookOfflineStore.ps1 -RecordIndexRoots did not record the index roots - guest\index-before.log' }
                 $o = Invoke-Guest 'reset-ost' "& '$GuestRoot\Reset-OutlookOfflineStore.ps1' -Execute; `"RESET-OST-EXIT `$LASTEXITCODE`"" 300 -Session0
                 if ($o -notmatch 'RESET-OST-EXIT 0') { throw 'Reset-OutlookOfflineStore.ps1 did not set the data files aside - guest\reset-ost.log' }
             }
@@ -1254,6 +1265,17 @@ Copy-Item -LiteralPath '$GuestPayloadDir\live-test-settings.json' -Destination '
                 if ($o -notmatch 'START-OUTLOOK-EXIT 0') { throw 'Start-OutlookUnelevated.ps1 did not start Outlook NOT elevated on the profile Outlook - guest\start-outlook.log' }
                 $outlookStart = Get-OutlookStartFacts $o 'Outlook'
                 Say ((Format-OutlookStartLine $outlookStart) -replace '^outlook\s+', 'Outlook ')
+            }
+            if (-not $exchangeCarry) {
+                # Every indexed store needs its NEW root before an index test runs (2026-11-17: none for the
+                # test account 8 minutes after the start, and six tests failed for it). Bounded; a store still
+                # unindexed at the end is the tests' to report.
+                $o = Invoke-Guest 'index-roots' "& '$GuestRoot\Reset-OutlookOfflineStore.ps1' -WaitForIndexRoots -TimeoutSeconds 1200" 1500
+                $m = [regex]::Match($o, 'INDEX-ROOTS-(READY|TIMEOUT) (\d+)')
+                $indexRoots = 'not reported (guest\index-roots.log)'
+                if ($m.Success -and $m.Groups[1].Value -eq 'READY') { $indexRoots = "every indexed store has its new root after $($m.Groups[2].Value) s" }
+                elseif ($m.Success) { $indexRoots = "NOT every indexed store has a new root after $($m.Groups[2].Value) s - index tests may fail for it" }
+                Say "index      $indexRoots"
             }
             # Defender current and every account SIGNED-IN, or no run (Testbed/README.md section 4e).
             # ps51-native-stderr-ok: a PowerShell script, not a program - every program it starts goes through its own Invoke-NativeCommand, under 'Continue' inside a try
@@ -1426,6 +1448,7 @@ $timings['total'] = Format-Seconds ((Get-Date) - $started).TotalSeconds
 $summary = New-LiveRunSummary -RunId $runId -Verdict $verdict -Revision $revision -Guest $facts.Name -Filter $runFilter -Narrowed $narrowed -Trx $trx -Console $consoleFacts -Crashes $crashes -SuiteExit $suiteExit -Checkpoints $checkpointActions -Timings $timings -Results $runDir -CrashDumps $crashDumpState
 if ($facts.Exchange) { $summary['runMarker'] = [ordered]@{ marker = $runMarker; priors = @($priorMarkers); ledger = $ledgerPath; clean = $ledgerOutcome } }
 $summary['outlookStart'] = $outlookStart
+$summary['indexRoots'] = $indexRoots
 [System.IO.File]::WriteAllText((Join-Path $runDir 'summary.json'), ($summary | ConvertTo-Json -Depth 8))
 
 $lines = New-Object System.Collections.Generic.List[string]
@@ -1461,6 +1484,7 @@ if ($dumpList.Count -gt 0) {
 elseif ($crashDumpState['armed']) { $dumpText += ', none written' }
 $lines.Add("outlook    crashes during the run: $crashText; crash dumps: $dumpText")
 $lines.Add((Format-OutlookStartLine $outlookStart))
+if ($indexRoots) { $lines.Add("index      $indexRoots") }
 $endLine = "guest end  rested on $($checkpointActions['restedOn']); settings staged=$($checkpointActions['settingsStaged']); saved=$($checkpointActions['saved'])"
 if ($checkpointActions['green']) { $endLine += "; green checkpoint $($checkpointActions['green'])" }
 $lines.Add($endLine)

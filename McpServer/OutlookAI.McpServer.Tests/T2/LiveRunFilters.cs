@@ -133,4 +133,15 @@ public static class LiveRunFilters
     /// </summary>
     public static string ExchangeTestAccount { get; } =
         "Category=Live" + string.Concat(ExchangeTestAccountLacks.Select(c => "&Requires!=" + c));
+
+    /// <summary>
+    /// The filter the Exchange VM runs until the maintainer decides how its Office gets back the ability to
+    /// create items (decision 206, asked 2026-11-17): <see cref="ExchangeTestAccount"/>, and of it only the
+    /// tests that carry <see cref="WritesTrait"/>=<see cref="WritesNothing"/>. Its Office LTSC 2024 was never
+    /// activated, and since the grace ran out Outlook there creates no item through its object model: on
+    /// 2026-11-17 every test that seeds a mail or makes a draft failed at its first item, and every test that
+    /// only reads passed (<c>Docs/live-tier-on-the-vm.md</c> section 4.4a). Once 206 is settled the runner goes
+    /// back to <see cref="ExchangeTestAccount"/>.
+    /// </summary>
+    public static string ExchangeTestAccountWritesNothing { get; } = ExchangeTestAccount + "&" + WritesTrait + "=" + WritesNothing;
 }

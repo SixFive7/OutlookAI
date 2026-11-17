@@ -233,7 +233,8 @@ its mailbox tests on, and change nothing you install.
   check refuses a run whose settings name an account the machine's Outlook has not signed in. The
   live runner runs this machine with the broadest filter it can honestly run, carries
   its state from run to run, because a restored offline data file is older than the server, and sets
-  the data files aside when a checkpoint is restored. A tagged item that was already in a read-only
+  the data files aside when a checkpoint is restored, then waits until every indexed mailbox has its
+  new search-index root before the tests start. A tagged item that was already in a read-only
   mailbox before a run is reported and left alone instead of failing every run.
 
 - ✅ **A second Microsoft 365 account signs in on the Exchange test machine, and an MFA page stops it.**
@@ -668,7 +669,8 @@ its mailbox tests on, and change nothing you install.
   started 38 and 79 seconds after one, Outlook put its programmatic-access prompt in front of the
   first address read although the antivirus read up to date, and started 2 and 8 minutes after one it
   did not. Past the grace Outlook there also created no item through its object model on 2026-11-17,
-  so the machine's write tests fail until that is settled (TODO.md).
+  so until the maintainer settles how it gets that back (decision 206, TODO.md) the runner gives the
+  machine only the tests that write nothing.
 
 - ✅ **The Exchange test machine leaves out the signature tests until signature roaming is measured.**
   A signature or a default signature set on the test account could be carried into the mailbox by an
