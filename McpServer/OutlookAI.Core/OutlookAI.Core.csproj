@@ -79,6 +79,14 @@
     -->
     <Compile Include="..\..\Services\OfficeVersions.cs" Link="Linked\OfficeVersions.cs" />
     <!--
+      And where Outlook keeps the signature files (Common\General\Signatures, relative to
+      %APPDATA%\Microsoft). The add-in's task pane and this server read and write the same files,
+      so the folder rule is one file both compile - the literal %APPDATA%\Microsoft\Signatures it
+      replaces was typed out in both trees and in a live fixture (Q147). Same rules as above;
+      SignatureFolder re-exports it.
+    -->
+    <Compile Include="..\..\Services\SignatureFolderLocation.cs" Link="Linked\SignatureFolderLocation.cs" />
+    <!--
       And the eleven offline periods Outlook documents (Q143): the add-in writes the user's own
       period for new accounts from this table, and AccountOfflinePeriodWriter here writes an
       existing account's own pair from it - one table, linked under the same rules (Q154: no

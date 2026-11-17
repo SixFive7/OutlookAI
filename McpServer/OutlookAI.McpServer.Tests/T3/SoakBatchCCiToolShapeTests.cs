@@ -213,8 +213,12 @@ public sealed class SoakBatchCCiToolShapeTests
         JsonElement result = await client.CallToolAsync(
             "update_draft", new { id = "h424242", signature = "OutlookAI-NoSuchSignature-CI" });
 
+        // Q157 (a): the refusal update_draft shares with the draft creators - its own type, the
+        // machine-readable reason, the draft untouched - and it comes before the id is even resolved.
         JsonElement error = result.GetProperty("error");
-        Assert.Equal("InvalidArgument", error.GetProperty("type").GetString());
+        Assert.Equal("SignatureRefused", error.GetProperty("type").GetString());
+        Assert.Equal("signature_not_usable", error.GetProperty("reason").GetString());
+        Assert.Equal("unchanged", error.GetProperty("outcome").GetString());
         Assert.Contains("was not found", error.GetProperty("message").GetString()!, StringComparison.Ordinal);
     }
 
