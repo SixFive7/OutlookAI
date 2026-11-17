@@ -1803,7 +1803,17 @@
   policy overrides an account's own period without changing it: one account on his workstation
   reads 12 months under the policy's All, and removing the policy alone would make Outlook drop that
   account's offline mail older than 12 months (inferred from Microsoft's KB 2733062).
-  `Tuning\Applied` records which values OutlookAI wrote itself.
+  `Tuning\Applied` records which values OutlookAI wrote itself. The removal is built and tested, and
+  nothing calls it (`Services/EarlierPolicyRemoval.cs`, `OutlookTuningService.RemoveEarlierPolicyValues`,
+  T1 `EarlierPolicyRemovalTests`): it sets every account's own period to All first, through
+  `IAccountOfflinePeriods`, and refuses whole until the add-in can (the item on the account's own
+  period, below). Wiring it to a button or to startup is the change his word will be. **Open before
+  then:** the policy's `DownloadSharedFolders` = 1 also overrides each account's own "Download shared
+  folders" box. If an account has that box off, removing the policy drops its shared folders from the
+  offline copy. Directions: (1) the removal first turns every account's box on, through the same seam
+  (the box is bit 0x800 of the profile section's config flags, read on all four of the workstation's
+  accounts); (2) it leaves that one policy value in place; (3) it removes it anyway, since the box is
+  on by default. Recommended: (1).
 
 - [ ] **Read the next `wwlib.dll` crash's dump, if there is one, and say whether it was the compose crash**
   (runbook 4.6, item 8). OUTLOOK.EXE died once in Word on `OutlookAI-Indexed` (4.2f run 4, 2026-10-03), in
@@ -1825,39 +1835,61 @@
   designation from a freshly opened store in the verify session; (3) read it in the product the way
   the verify session does, after creating. Recommended: (1) first.
 
-- [ ] **Decide whether the elevated Cached Mode helper may keep running from the per-user install
-  folder (found during Q125, 2026-10-04).** `OutlookAI.PolicyWriter.exe` runs as administrator
-  through UAC (Q128), but the installer is per-user (`PrivilegesRequired=lowest`), so it lives in
-  `%LOCALAPPDATA%\OutlookAI\Setup`, and the add-in starts the copy beside itself or under the HKCU
-  `InstallDir` - all writable by any process of the user's. Q125 closed the DLL route (its P/Invokes
-  load from System32 only), but such a process can still replace the helper, or repoint
-  `InstallDir`, and be elevated by the prompt the user expects to see - a prompt that names no
-  verified publisher either way. For a standard user typing an administrator's password that is an
-  elevation of privilege. Directions: (1) install the helper per machine, under Program Files,
-  through an elevated part of the installer; (2) elevate no file of ours at all - write the five
-  validated values with Windows' own `reg.exe add HKU\<SID>\...`, one per value, chained in one
-  elevated `cmd.exe` for one prompt, which then names a Microsoft-signed program; (3) accept and
-  document it - the escalation needs the user's own approval, and anything running as the user
-  already holds the user's mail. Recommended: (2), if its prompt text is acceptable to him; (1)
-  otherwise.
+- [ ] **Let the add-in set an existing account's own offline period, once it can call Core
+  (Q145 (a)).** OutlookAI writes the offline period as the user's own `SyncWindowSetting`, which only
+  accounts added later take (KB 3115009). An account that already exists keeps its own period in its
+  Outlook profile, so OutlookAI Settings tells the user how to set it in Account Settings. Measured on
+  `OutlookAI-Exchange` on 2026-11-17, test account only: the period is the pair 0x6649 (months) and
+  0x665A (days) in the account's own Exchange provider section, Outlook's eleven slider positions
+  are the eleven pairs of Q143, and a pair written with Outlook closed or while it runs is honoured
+  at its next start. The writer is built, in Core: `AccountOfflinePeriodWriter`, with T1
+  `AccountOfflinePeriodWriterTests`. What waits: the add-in referencing Core, which is the
+  code-sharing refactor's first stage and waits on Q163 to Q172. Then implement
+  `IAccountOfflinePeriods` (`Services/AccountOfflinePeriods.cs`, which says what it must do), set it
+  in `OutlookTuningService.AccountPeriods`, and tell the user the new period takes effect when
+  Outlook next starts. The dialog and the removal below both use it. Not measured: whether a running
+  Outlook applies a written pair before it restarts, and whether Outlook then really downloads that
+  much more mail.
 
-- [ ] **Decide whether the release's CodeQL run should count local input as untrusted (Q125
-  follow-up, 2026-10-04).** The release runs CodeQL's default threat model, where untrusted data
-  comes from the network - which this product does not read, so the scan finds nothing (0 results
-  over 0ccf5df). The MCP server's real input is standard input written by an agent that reads other
-  people's mail, but `-ThreatModel stdin` finds nothing either - inferred, not proven: the MCP SDK
-  reads that input outside the analysed source, so CodeQL never sees it reach a tool's arguments.
-  Measured over 0ccf5df with `Tools/Invoke-CodeQL.ps1 -ThreatModel ...`: `local` gives 174 results
-  (169 cs/path-injection, 4 cs/command-line-injection, 1 cs/sql-injection), nearly all paths built
-  from the user's own profile folders and TEMP, which the user's own processes control anyway;
-  `local,!environment` gives 6,
-  from HKCU and HKLM values and a tool's command line - one of them real: `PolicyElevation` takes
-  the ELEVATED helper's path from HKCU `InstallDir` (the item above). Directions: (1) keep the
-  default; (2) add `local,!environment` to the release and triage its 6 - one is the helper
-  question, five look like the user's own settings; (3) add all of `local` and triage 174; (4) model
-  the MCP tools' parameters as sources in a CodeQL model pack, so the scan sees what agents send -
-  the only direction that covers the real input, and work of its own. Recommended: (2) once the
-  helper question is decided, then (4).
+- [ ] **Decide whether CodeQL should follow an agent's arguments beyond the MCP tools themselves
+  (Q146 follow-up, 2026-11-17).** Since Q146 the release's CodeQL scan treats every MCP tool's
+  parameters as untrusted input (`Tools/CodeQL`), and its census proves the model reaches all 22
+  tools. But scratch queries over 9f4646d show the taint stopping early in two places. None of it
+  reaches the COM host's session (0 of `OutlookComSession`'s parameters): `MailService` hands the
+  work to that process through a gateway lambda and a pipe, which CodeQL does not follow, so what
+  the COM host does with an agent's text - the folders it creates, the files it writes, the
+  filters it builds - is outside the scan. And the eight list parameters (`ids`, `attachments`,
+  `remove_attachments`) lose it at the call into `MailService`, where each becomes an
+  `IReadOnlyList`. A scratch run that also made the parameters of the COM session's 27 operations
+  sources found three more results, all of them `save_attachment`'s target folder (the next item).
+  Directions: (1) one models-as-data row per COM-session operation, as Q146 (d) did for the tools,
+  with the census counting them too - the same mechanism, but the rows must follow the contract
+  (`IOutlookSession`) as it grows, and the list parameters stay uncovered; (2) a small CodeQL
+  library in `Tools/CodeQL` that defines the sources in code - every tool parameter with its list
+  elements, and every parameter of an `IOutlookSession` implementation - complete, with nothing
+  to keep in step, but query code where (d) chose data; (3) keep the scan as it is, with the gaps
+  written down in `Tools/Invoke-CodeQL.ps1` - free, but its silence about those two places then
+  means nothing. Recommended: (1), once the next item is decided, because its three results would
+  stop every release until then; (2) only if the list parameters turn out to matter.
+
+- [ ] **Decide where `save_attachment` may write (found by Q146's scan, 2026-11-17).** It writes
+  one attachment of a mail into whatever absolute folder the agent names in `target_dir`.
+  `MailService` only checks that the path is rooted; the COM host creates the folder and saves the
+  file under the attachment's own name, with characters a file name cannot hold replaced, never
+  overwriting. That name and the content come from whoever sent the mail, and the folder from an
+  agent that reads it. So a mail that says "save the attachment to the Startup folder" can put a
+  file the sender chose, under a name the sender chose, where Windows opens it at the next
+  sign-in, with nothing in the way but the agent client's approval of tool calls, if it asks at
+  all. Not measured: whether Outlook's blocking of dangerous attachment types (its Level 1 list)
+  stops this save, which goes through the object model. Directions: (1) only the default
+  folder, `%LOCALAPPDATA%\OutlookAI\scratch\attachments`, and folders under it - closes the hole,
+  and an agent that wants the file elsewhere copies it with its own file tools, under their own
+  approval; (2) the default folder plus folders the user lists in OutlookAI Settings - as safe and
+  more flexible, at the cost of a setting to build; (3) any folder, but no executable or script
+  types outside the default one - keeps the convenience, but such a list is never complete
+  (`.lnk`, `.url`, `.hta`, Office files with macros); (4) any folder but a deny-list - Startup,
+  Windows, Program Files, AppData - the same weakness by folder; (5) leave it: the agent acts as
+  the user, who approves its tool calls. Recommended: (1).
 
 - [ ] **`T1.AuditLogStressTests`' lock-on test fails on a CPU-starved machine: writers wait out the
   2 s writer lock and append without it (2026-11-17).** The test

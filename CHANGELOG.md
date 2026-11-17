@@ -41,8 +41,8 @@ mailboxes without creating folders in them, and it no longer hangs when Outlook 
 assistant can now read OutlookAI's audit log and continue an exhaustive search where it stopped.
 
 In the add-in, OutlookAI Settings has tabs, and you can edit every prompt and quick button. You can
-also pick the Claude model, check for updates yourself, and set Outlook's Cached Mode policy
-settings through one administrator prompt.
+also pick the Claude model, check for updates yourself, and see and change Outlook's Cached Mode
+settings without administrator rights.
 
 Releases are now built and signed on the maintainer's own computer, so they no longer carry GitHub's
 build-provenance attestation. Many of the entries are about the test machines the project now runs
@@ -83,12 +83,15 @@ its mailbox tests on, and change nothing you install.
   same millisecond are no longer skipped, which paging by time could not avoid, and a token is
   refused with a clear reason if the log was archived or edited in between.
 
-- ✨ **OutlookAI Settings shows Outlook's five Cached Mode policy settings and can change them.**
-  Each shows its current value, the value OutlookAI wants, and whether it is in effect or needs an
-  administrator. **Apply as administrator** writes the ones that need it through one Windows
-  administrator prompt. A small helper installed with OutlookAI does the writing; it accepts those
-  five settings and nothing else, and always writes them for you, also when an administrator types
-  their own password into the prompt. Cancelling the prompt changes nothing and says so.
+- ✨ **OutlookAI Settings shows Outlook's Cached Mode settings and who sets them, and can change them.**
+  There are four: how much mail Outlook keeps offline in accounts you add later, caching shared
+  folders and other people's mail in new profiles, and keeping shared mailboxes fully cached. Each
+  row shows what Outlook uses, the value OutlookAI sets, and whether that is in effect. The offline
+  period offers the eleven periods Microsoft documents, 3 days to All, 3 and 5 years among them, and
+  nothing else (Q143). A value your organization sets by policy, through Microsoft 365 Cloud Policy
+  or Group Policy, comes first in Outlook, so the row says "Set by your organization" and cannot be
+  changed. An account you already have keeps its own offline period, and the window says how to set
+  it in Outlook's Account Settings. None of it needs administrator rights (Q145 (a)).
 
 - ✨ **Your AI assistant can read OutlookAI's audit log, so it can tell you what it did.**
   The new `audit_log` tool returns the record OutlookAI keeps of every change it makes - drafts
@@ -264,6 +267,22 @@ its mailbox tests on, and change nothing you install.
   `Tools/Test-VulnerablePackages.ps1` asks nuget.org about every package of the server's projects,
   direct or brought in by another, and a run that could not ask fails too. The first runs found
   nothing: no CodeQL result in 432 C# files, and no known-vulnerable package in six projects.
+  CodeQL had little chance to, though: by default it trusts everything but the network, and
+  OutlookAI reads nothing from the network. So since Q146 (decided 2026-10-11) it also distrusts
+  standard input, files, the command line and the registry. Environment variables stay trusted:
+  over 0ccf5df they alone made 168 of the 174 results, nearly all paths under the user's own
+  profile and TEMP. And `Tools/CodeQL` tells it that every argument an agent passes to an MCP tool
+  is untrusted, because the agent fills them in from mail other people wrote. CodeQL cannot see
+  that for itself: the MCP SDK hands the arguments over inside a library it does not analyse. A
+  census query on every run counts the tools that model reached, and the run fails if one is
+  missing, so a model that stopped matching cannot pass a release unnoticed: 22 of 22 on
+  2026-11-17. That run found six results. Five are safe, and `Tools/codeql-accepted.json` says
+  why: the search index's SQL, which six arguments of the search and thread tools reach only
+  through `WsSqlBuilder`'s allow-list and doubled quotes, and four reads of registry values that
+  only the user or an administrator can set. The sixth was real: the elevated helper's install
+  path, which Q145 removes along with the helper. What the scan still cannot see, measured: the
+  work the COM host process does with the arguments, and the eight list arguments past the
+  server's first call (TODO.md).
 
 - ✅ **Every build runs the .NET SDK's security analysers, and any finding fails the build (Q125).**
   GitHub's CI went on 2026-10-03, and the CodeQL scan with it; the maintainer chose the analysers
@@ -565,6 +584,18 @@ its mailbox tests on, and change nothing you install.
   the log rather than passing quietly.
 
 ### Changed
+
+- 🔧 **OutlookAI writes Outlook's Cached Mode settings as your own settings, never as policy.**
+  Versions 3.0.0.319 to 3.1.0.325 wrote five of them under Windows' policy key for Outlook, which on
+  most computers only an administrator may change. Where Windows refused, the tuning stopped; where
+  it let them through, they took the offline period slider in Outlook's Account Settings away from
+  you, and could overwrite a value your organization had set there. OutlookAI now writes them where
+  your own Outlook settings live, and only reads the two policy keys, Microsoft 365 Cloud Policy's
+  and Group Policy's, to show and leave alone a value your organization sets. Cloud Policy comes
+  first, as it does in Outlook; it used to be ignored. Values an earlier OutlookAI wrote as policy
+  stay where they are, shown as "Set by an earlier OutlookAI". The health report's policyConflicts
+  names every tuning value a policy sets, found by reading both keys, where it used to name only a
+  value OutlookAI had applied and then seen changed.
 
 - 🔧 **Drafts use the defaults of the profile Outlook is running, and every profile is listed.**
   OutlookAI read only the profile recorded as Outlook's default, and when none was recorded it merged
@@ -1203,12 +1234,13 @@ its mailbox tests on, and change nothing you install.
   OutlookAI could only ever change or delete drafts it had made itself.
 
 - 🐛 **Outlook tuning no longer stops halfway where Outlook runs without administrator rights.**
-  That is how almost everyone runs it. Five of the Cached Mode settings OutlookAI keeps applied are
+  That is how almost everyone runs it. Five of the Cached Mode settings OutlookAI kept applied were
   Outlook *policy* settings, which Windows lets you read but only an administrator change, and the
   first of them stopped the whole run: the Cached Mode and mailbox-size settings after it were never
-  applied, and the mail server's health report said the tuning had never run. OutlookAI now skips a
-  setting it may not change, applies everything else, always records when it ran, and reports the
-  skipped settings as needing an administrator - in OutlookAI Settings and in the health report.
+  applied, and the mail server's health report said the tuning had never run. OutlookAI now writes
+  those settings as your own instead, and a setting Windows refuses for any reason is skipped while
+  everything else is applied, the run is always recorded, and the health report names what was
+  refused.
 
 - 🐛 **OutlookAI releases the Outlook objects it adds as soon as it has added them.**
   They are a column it adds to one of Outlook's tables while it searches, and a bookmark it places
@@ -2280,15 +2312,23 @@ its mailbox tests on, and change nothing you install.
 
 ### Security
 
-- 🔒 **The add-in, its elevated helper and the MCP server load Windows DLLs only from System32.**
+- 🔒 **The installer removes the leaked old signing certificate from every certificate store it can change.**
+  That certificate signed OutlookAI v1.0.0.1 to v2.3.1.111, and its private key became public, so no
+  computer should trust it. Installing or updating already removed it from your Trusted Publishers
+  store. Every install, update and uninstall now also removes it from your Trusted Root
+  Certification Authorities, Intermediate Certification Authorities and Trusted People stores, and
+  from the computer's stores too when the installer runs with administrator rights. It is found by
+  its thumbprint, E205060633DD7062D4F90033130542948A69D068, and nothing else. Windows guards your
+  Trusted Root store, so if the certificate is in it, Windows may ask you to confirm the removal;
+  the installer does not wait for your answer and looks again next time. The installer carries no
+  copy of the certificate and never adds it to the Disallowed store (decision 193 (b)).
+
+- 🔒 **The add-in and the MCP server load Windows DLLs only from System32.**
   Each of their P/Invoke declarations names a Windows DLL by file name alone, and Windows looked for
   such a DLL in the program's own folder first: for an installed copy, the per-user install folder
-  under `%LOCALAPPDATA%`, which any of the user's own processes can write. The Cached Mode helper
-  runs as administrator from that folder, and `wtsapi32.dll`, which it calls, is not one of the DLLs
-  Windows protects (the KnownDLLs), so a copy planted beside the helper would have been loaded into
-  it as administrator. Every assembly of the add-in, the helper and the server now carries
-  `DefaultDllImportSearchPaths(System32)`. The .NET SDK's security analysers found it (CA5392) the
-  day they were turned on.
+  under `%LOCALAPPDATA%`, which any of the user's own processes can write. Every assembly of the
+  add-in and the server now carries `DefaultDllImportSearchPaths(System32)`. The .NET SDK's security
+  analysers found it (CA5392) the day they were turned on.
 
 - 🔒 **A send confirmation token no longer outlives its two-minute limit when the clock moves backwards.**
   That can be a time sync, a daylight-saving change or a virtual machine resuming. The token's
