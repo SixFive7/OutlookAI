@@ -196,7 +196,10 @@ its mailbox tests on, and change nothing you install.
   is optional. After the password the script reads the page Microsoft shows before it types anything:
   a request for a second factor, or for one to be registered, stops it with a message for the
   maintainer, and nothing is clicked on his behalf. The test account signed in on 2026-10-08 without a
-  second factor; its code secret has been stored since, so a code page would be answered.
+  second factor; its code secret has been stored since, so a code page would be answered. Since
+  2026-11-17 the same script also signs the test account, and only it, in to Outlook on the web in an
+  InPrivate Edge window on that machine, for the roaming-signature measurement the maintainer allowed
+  (Q161 (c)), answers "Stay signed in?" with No, and signs it out again.
 
 - ✅ **Three probes measure signatures, the offline window and index ids on the Exchange test machine.**
   `Measure-SignatureRoaming.ps1` reads the machine's Office build, licence and signature settings,
@@ -205,7 +208,9 @@ its mailbox tests on, and change nothing you install.
   sign of roaming, and the test mailbox has no such folder, on the server or offline.
   `Measure-OfflineWindow.ps1` moves the test account's "Download email for the past" slider through its
   eleven positions and reads the profile after each: the months are property 0x6649 and the days
-  0x665A, always written as a pair, and LTSC 2024 offers 3 and 5 years. `Measure-ExchangeIndexIds.ps1`
+  0x665A, always written as a pair, and LTSC 2024 offers 3 and 5 years; a pair written into the profile
+  while Outlook runs, as the add-in would, is kept when Outlook quits and shown at its next start.
+  `Measure-ExchangeIndexIds.ps1`
   found that a cached Exchange folder's id does not lead to its Windows Search row the way a PST
   folder's does: the row carries the offline file's own node id, which the id lacks and which changes
   when the file is rebuilt. Each probe has a self-test, and the slider probe changes nothing but the

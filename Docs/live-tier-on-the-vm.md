@@ -3787,6 +3787,88 @@ shared mailbox's Drafts is exactly what the first run there must read. `move_mai
 move items wherever they are, so a population built in the shared mailbox can stay there.
 `manage_signature` writes no mailbox at all.
 
+### 4.4a The test account - `OutlookAI-Exchange`, 2026-10-08 and 2026-11-17 (Phase 2 built for it, Q137)
+
+**Why this section exists.** On 2026-10-08 the maintainer added a dedicated Microsoft 365 account,
+`telefonie-ai-test@xxlnet.nl` (display name "Telefonie XXLNet"), in his words *"the account you can use
+extensively for tests. Add it to ... the test VMs."* This section records how it joined the Exchange VM,
+what the Phase 2 write-safety design of section 4.4 became once it was built for that account, what the
+write runs found, and the session of 2026-11-17 after the VM had stood saved for 40 days.
+`Testbed/README.md` sections 1d (E12 to E14) and 4e are the procedure.
+
+**Only the Exchange VM.** The account is NOT added to `OutlookAI-Indexed` or `OutlookAI-Unindexed`, by
+decision: they are offline by design (AGENTS.md, Dependencies; Q111 is the Exchange VM's alone) and run
+on frozen clocks (Q130 (a)), and a Microsoft 365 sign-in needs the internet and the real time - a token
+checked against a clock frozen days back fails, and a mailbox that syncs would age the frozen data.
+
+**The roles (Q137, settled by the maintainer 2026-10-11).** The test account is the writable hub;
+`telefonie@xxlnet.nl` is a read-only bystander, watched by the count tripwire and written by nothing -
+with one exception the maintainer decided on 2026-11-17 (Q138 (c)): its one leftover tagged item from
+the workstation years, in Sent Items, goes by a one-off tested helper once he has confirmed its id.
+
+**The design as built (2026-10-08).** Profile `ExchangeTestAccount`: in-process writes only to the hub
+(`StoreWriteAllowlist`, no identity grant); every address a test hands to Outlook, in-process
+(`LiveRecipientGuard`) or through the MCP server (`T3/StdioHubOnlyGate`), is the test account's own,
+its plus addresses, or an unresolvable name carrying the run marker; every item a run makes carries the
+tag and the run marker, which the host records in a ledger before the suite starts
+(`C:\OutlookAI-Testbed\exchange-runs\ledger.jsonl`); a reply, send, move, archive, discard or open
+touches only the run's own tagged items in the hub; the sweep deletes by recorded marker and tag, from
+Drafts, Inbox, Sent Items, Outbox, Deleted Items, Junk Email and the Sync Issues subtree, test folders
+deepest first, and never by a subject pattern; an aborted run's items go with the next run, whose
+ledger hands it the marker. Populations are not kept: a test seeds what it needs and the sweep removes
+it - a permanent tagged population would read as a leftover to every zero-artifact proof.
+
+**The automapped second entry (measured 2026-10-08 and 2026-11-17).** Exchange maps the test mailbox
+into the profile a second time, as the online entry `Telefonie XXLNet` (`ExchangeStoreType` 1) under
+telefonie's account, through its Full Access. Its `PR_STORE_RECORD_KEY` and the mailbox DN in its
+StoreID equal the test account's own cached store's and differ from telefonie's. At the coordinator's
+direction, while the maintainer decides between keeping it (for the delegate-store tests) and having
+automapping switched off: the two entries are one test mailbox, writes are allowlisted by the test
+account's identity, nothing is ever written through the online entry, and the tripwire never counts
+one mailbox as two stores. `T2/LiveMailboxIdentity.cs` proves that before every baseline and refuses
+the tier otherwise.
+
+**2026-11-17, after 40 days saved.**
+
+| What | Found | Done |
+| --- | --- | --- |
+| PowerShell Direct | "The credential is invalid": `vmadmin`'s password had expired on 2026-11-14 (42-day default; the answer file never set "never expires") | set never to expire from the console; the build VM's own fix went to the VM-pool stream |
+| The .ost files | older than the server: run 3 of 2026-10-08 had restored `CP-06` after two write runs | set aside (`guest/Reset-OutlookOfflineStore.ps1`), rebuilt from the server; checkpoint `CP-07-TEST-ACCOUNT-READY` |
+| Windows Search | keeps the set-aside .ost's roots beside the new ones: two roots per store, the same folder paths | recorded for the folder-id stream (Q132) |
+| Office | 30-day activation grace past; every windowed start raised the Activation Wizard before the Explorer | `guest/Start-OutlookUnelevated.ps1` closes it and the runner records it (`Testbed/MEDIA.md`) |
+| Object Model Guard | prompted when Outlook started 38 s and 79 s after a boot, not 2 and 8 min after | the runner starts Outlook here no sooner than 240 s after a boot |
+| The add-in (Q140 (b)) | `ADDIN-READY`, 8 of 13 tuning values, the five Cached Mode policy values left to an administrator | checkpoint `CP-08-ADDIN-READY`; `AddInRegistry` no longer left out |
+
+**The measurements of 2026-11-17** (each through a committed probe with a self-test, the test account
+only):
+
+- **Q147 R0-R2** (`guest/Measure-SignatureRoaming.ps1`): Office LTSC 2024 ProPlus2024Volume x64
+  16.0.17932.21000, channel `Production::LTSC2024`, updates off; licence status 5. No signature setting
+  set anywhere, no signature folder. R1: the classic Signatures and Stationery dialog - no account
+  selector, no "Signatures on this device"; File > Options is disabled here, so "Store my Outlook
+  settings in the cloud" could not be read; the testbed's own policies turn Office's connected
+  experiences off (`disconnectedstate` 2), which may bear on any cloud feature. R2: no
+  `ApplicationDataRoot` in the test mailbox, neither in the offline copy nor on the server (read through
+  the online entry).
+- **Q132** (`guest/Measure-ExchangeIndexIds.ps1`): DOES NOT WORK for a cached Exchange store. Every
+  folder's own index row carries the .ost's node id in `System.ProviderItemID`; the 46-byte folder id
+  holds no such number, the record key is the long-term id, and the node ids change when the .ost is
+  rebuilt (16 of 21 folders differed between the old and the new root).
+- **Q145** (`guest/Measure-OfflineWindow.ps1`): the months are property 0x6649 and
+  the days 0x665A (PT_LONG, value names `00036649` and `0003665a`), in the account's own Exchange provider
+  section of the profile - the one that holds the account's address - always written as a pair. The
+  slider has positions 1 to 11, labelled exactly as Microsoft's eleven windows: 3 days (0, 3), 1 week
+  (0, 7), 2 weeks (0, 14), 1 month (1, 0), 3 months, 6 months, 1 year (12, the starting value), 2 years,
+  3 years (36), 5 years (60), All (0, 0). 36 and 60 set in the UI read back as 3 and 5 years after an
+  Outlook restart. 0x6649 = 0 written with Outlook closed read back as All. The pair (3, 0) written while
+  Outlook RAN - the add-in's own case - was not overwritten when Outlook quit, and the next start showed
+  3 months; whether a running session applies it before a restart was not measured. The test account
+  only; telefonie's 0x6649 stayed 12 throughout; the VM went back to its checkpoint afterwards.
+
+RESULTS-R3
+
+RESULTS-LIVE
+
 ### 4.5 The frozen guest clocks - both Outlook guests, 2026-10-03 (Q130 (a) and (b))
 
 **Why this section exists.** The maintainer's answer of 2026-10-03 to Q130
