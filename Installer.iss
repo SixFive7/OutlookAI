@@ -25,6 +25,14 @@
 ; runtime is missing to the same page, one from setup and one from OutlookAI Settings.
 ; Compared by Tools/Checks/check-pinned-constants.ps1.
 #define NetRuntime10ManualUrl "https://dotnet.microsoft.com/download/dotnet/10.0"
+; THE COMPROMISED SIGNING CERTIFICATE (decision 193 (b)): the one that signed v1.0.0.1 to
+; v2.3.1.111, whose private key became public. Named by its SHA-1 thumbprint and by nothing
+; else, and removed by thumbprint from these trust stores - the user's always, the computer's
+; when setup runs with administrator rights - by RemoveCompromisedCertificate, on every install,
+; update and uninstall. T1 InstallerCompromisedCertificateTests pins all three.
+#define CompromisedCertThumbprint "E205060633DD7062D4F90033130542948A69D068"
+#define CompromisedCertUserStores "TrustedPublisher TrustedPeople CA Root"
+#define CompromisedCertMachineStores "TrustedPublisher TrustedPeople CA AuthRoot Root"
 
 [Setup]
 AppId={{78AF2871-0CEB-4451-B80D-455552E37C91}
@@ -129,9 +137,8 @@ Root: HKCU; Subkey: "Software\Microsoft\Office\17.0\Outlook\Resiliency\DoNotDisa
 
 [UninstallRun]
 Filename: "certutil"; Parameters: "-user -delstore TrustedPublisher OutlookAI"; Flags: runhidden
-; Belt and braces: also remove the superseded certificate explicitly by thumbprint, in
-; case the subject match above does not catch it.
-Filename: "certutil"; Parameters: "-user -delstore TrustedPublisher E205060633DD7062D4F90033130542948A69D068"; Flags: runhidden
+; The compromised certificate is removed by thumbprint from every trust store on uninstall as
+; on install: CurUninstallStepChanged runs RemoveCompromisedCertificate.
 
 [Code]
 // Setup is a 32-bit process, so these HKLM reads pass through the WOW64 redirector and
@@ -460,17 +467,77 @@ begin
   end;
 end;
 
-// An earlier OutlookAI signing certificate had its private key exposed publicly, so it
-// must no longer be trusted. Delete it by THUMBPRINT, never by subject: it shares
-// CN=OutlookAI with the current certificate, so a subject match would also remove the
-// one just installed above. Best effort - on most machines it was never present, and a
-// "not found" result is the normal case, so all failures are ignored silently.
-procedure RemoveCompromisedCertificate;
+// THE COMPROMISED SIGNING CERTIFICATE - the one that signed v1.0.0.1 to v2.3.1.111, whose
+// private key became public - must no longer be trusted anywhere, so it is removed from every
+// certificate TRUST store setup can write (decision 193 (b), 2026-11-17). Before that, from the
+// user's TrustedPublisher store only.
+//
+//  * By THUMBPRINT, its one identifier here, never by subject: it shares CN=OutlookAI with the
+//    current certificate, so a subject match would also remove the one just installed above.
+//    No copy of it is shipped, and none may enter the repository.
+//  * The user's stores always - this per-user installer can write them. The computer's stores
+//    only when setup runs with administrator rights, the one case it can write them. Trust
+//    stores only: TrustedPublisher, TrustedPeople, CA (intermediates, which chains are built
+//    from), Root, and the computer's AuthRoot. Never added to Disallowed: that is for the
+//    maintainer's own computer, where it is done by hand.
+//  * Root LAST, ONLY WHEN IT IS THERE, AND NOT WAITED FOR. Windows guards the user's Root store,
+//    and a change to it can put up Windows' own confirmation (adding one does: measured, see
+//    InstallCertificate). On a silent auto-update nobody may be there to answer it, so setup
+//    never waits on it: the confirmation, if one comes, stays up until the user answers, and the
+//    next install looks again. Reading the store first means the normal machine - the
+//    certificate in no Root store at all - never sees a certutil -delstore Root at all.
+//  * Best effort throughout: on most machines it is in none of these stores, and "not found" is
+//    the normal answer, so every result is ignored. Install and uninstall run the same removal.
+procedure DeleteCompromisedCertificate(const Scope, Store: String);
 var
   ResultCode: Integer;
-  Executed: Boolean;
+  Wait: TExecWait;
 begin
-  Executed := Exec('certutil', '-user -delstore TrustedPublisher E205060633DD7062D4F90033130542948A69D068', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Wait := ewWaitUntilTerminated;
+  if (Store = 'Root') or (Store = 'AuthRoot') then
+  begin
+    // certutil -store exits 0 when it lists the certificate, and non-zero when it is not there.
+    if not Exec('certutil', Scope + '-store ' + Store + ' {#CompromisedCertThumbprint}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+      exit;
+    if ResultCode <> 0 then
+      exit;
+    Wait := ewNoWait;
+  end;
+  if not Exec('certutil', Scope + '-delstore ' + Store + ' {#CompromisedCertThumbprint}', '', SW_HIDE, Wait, ResultCode) then
+    exit;
+end;
+
+// Each store in a space-separated list, in order.
+procedure DeleteCompromisedCertificateFromStores(const Scope, Stores: String);
+var
+  Rest: String;
+  Store: String;
+  P: Integer;
+begin
+  Rest := Stores;
+  while Rest <> '' do
+  begin
+    P := Pos(' ', Rest);
+    if P = 0 then
+    begin
+      Store := Rest;
+      Rest := '';
+    end
+    else
+    begin
+      Store := Copy(Rest, 1, P - 1);
+      Rest := Copy(Rest, P + 1, Length(Rest));
+    end;
+    if Store <> '' then
+      DeleteCompromisedCertificate(Scope, Store);
+  end;
+end;
+
+procedure RemoveCompromisedCertificate;
+begin
+  DeleteCompromisedCertificateFromStores('-user ', '{#CompromisedCertUserStores}');
+  if IsAdmin then
+    DeleteCompromisedCertificateFromStores('', '{#CompromisedCertMachineStores}');
 end;
 
 procedure DownloadAndInstallNetRuntime10;
@@ -567,4 +634,12 @@ begin
     // the exposed certificate are cleaned up as they update.
     RemoveCompromisedCertificate;
   end;
+end;
+
+// Uninstalling removes the compromised certificate from every trust store too: an uninstall is
+// no reason to go on trusting it.
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if CurUninstallStep = usUninstall then
+    RemoveCompromisedCertificate;
 end;

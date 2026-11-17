@@ -663,17 +663,19 @@ function Get-TuningView {
     return [pscustomobject]$view
 }
 
-# Since Q128 (2026-10-03) the add-in's reconcile skips a value Windows will not let it write - D25's
-# five Cached Mode values under HKCU\Software\Policies, in a NOT elevated Outlook - and lists it in
-# Tuning\NeedsAdministrator, which outlook_health reports. That is the designed state of a fresh
-# guest, not a fault, so it is a NOTE: neither live test reads it, and ADDIN-READY does not wait on it.
+# Since Q128 (2026-10-03) the add-in's reconcile skips a value Windows will not let it write, and
+# lists it in Tuning\NeedsAdministrator, which outlook_health reports. Under Q128 that was D25's five
+# Cached Mode values under HKCU\Software\Policies, in a NOT elevated Outlook; since Q145 (a) the
+# add-in writes only the user's own settings and asks for no administrator, so it is normally empty.
+# Either way the reconcile finished, so it is a NOTE: neither live test reads it, and ADDIN-READY does
+# not wait on it.
 function Get-NeedsAdministratorNote {
     param($View)
     if ($null -eq $View -or -not $View.NeedsAdministrator) { return $null }
     $ids = @(([string]$View.NeedsAdministrator).Split(';') | Where-Object { $_ })
-    return ("the add-in skipped $($ids.Count) value(s) it may not write without an administrator, and finished its reconcile (Q128): " +
-            ($ids -join ', ') + '. By design on a NOT elevated Outlook; OutlookAI Settings applies them through UAC, and ' +
-            'OutlookAI.PolicyWriter.exe beside the add-in applies them when run elevated.')
+    return ("the add-in skipped $($ids.Count) value(s) Windows refused it, and finished its reconcile (Q128): " +
+            ($ids -join ', ') + '. Since Q145 (a) the add-in writes only the user''s own settings, so a build that has it ' +
+            'should list none: a refused one there is a permission on the user''s own Outlook key.')
 }
 
 # What the two tests would fail on, in their own terms.

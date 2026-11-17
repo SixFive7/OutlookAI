@@ -12,20 +12,20 @@ namespace OutlookAI.Services
     /// HKCU\Software\OutlookAI\Tuning. On every Outlook start (and on demand from the
     /// settings dialog) the live registry is reconciled against desired state - by
     /// <see cref="TuningReconciler"/>, which holds the walk and says what it guarantees:
-    /// idempotent, GPO-respecting, restart-aware, and - since Q128 - never stopped early by a
-    /// value it cannot write.
+    /// idempotent, restart-aware, never stopped early by a value it cannot write (Q128), and
+    /// never writing over a value a policy sets (Q145 (a)).
     ///
     /// THIS CLASS is the add-in's half: the catalog for the Office version actually installed,
     /// the HKEY_CURRENT_USER store the reconcile runs against, the lock, and the surface the
     /// settings dialog calls. Nothing here throws out of its public surface.
     ///
-    /// NOT EVERYTHING IS WRITABLE. Four groups of values live in the user's own hive and the add-in
-    /// can always write them; D25's five Cached Mode values live under HKCU\Software\Policies, which
-    /// a NOT elevated token may only read - and the Outlook a user runs is NOT elevated. Those are
-    /// skipped and recorded as needing an administrator; the settings dialog applies them through
-    /// the elevated helper (<see cref="PolicyElevation"/>, OutlookAI.PolicyWriter.exe) when the user
-    /// asks. Disabling a group (or the master switch) stops managing its values; already-written
-    /// Outlook values are left in place, mirroring the uninstall behavior described in the plan.
+    /// EVERYTHING IT WRITES IS THE USER'S OWN - Q145 (a), decided by the maintainer: no
+    /// administrator, no UAC prompt, no elevated helper. The Cached Mode values are written as the
+    /// user's own settings, and Microsoft 365 Cloud Policy and Group Policy are only READ, to show a
+    /// value an organization sets - or one an earlier OutlookAI wrote as policy - as such and leave
+    /// it alone (<see cref="CachedModeSettings"/>). Disabling a group (or the master switch) stops
+    /// managing its values; already-written Outlook values are left in place, mirroring the
+    /// uninstall behavior described in the plan.
     /// </summary>
     internal static class OutlookTuningService
     {
@@ -59,23 +59,16 @@ namespace OutlookAI.Services
         /// </summary>
         private static readonly string SearchKeyPath = OfficeVersions.OutlookSearchKeyPath(OfficeVersion);
 
-        // The other three are the add-in's alone - the server neither reads nor reports them -
-        // but the HIVE ROOTS are not: the Policies prefix in particular is built on both sides
-        // (here for D25's sync-slider values, through CachedModePolicy.KeyPath, which the
-        // elevated helper builds its path with too; in HealthReporting for the Search policy).
-        // So the roots come from OfficeVersions, and this file spells no Office hive path.
-        private static readonly string CachedModePolicyKeyPath = CachedModePolicy.KeyPath(OfficeVersion);
-        private static readonly string CachedModeUserKeyPath =
-            OfficeVersions.OutlookKeyPath(OfficeVersion) + @"\" + CachedModePolicy.SubKeyName;
+        // The other keys are the add-in's alone - the server neither reads nor reports them - but
+        // the HIVE ROOTS are not: the Policies roots in particular are read on both sides (here,
+        // through CachedModeSettings, for the Cached Mode values; in HealthReporting for the Search
+        // policy). So the roots come from OfficeVersions, and this file spells no Office hive path.
         private static readonly string PstKeyPath =
             OfficeVersions.OutlookKeyPath(OfficeVersion) + @"\PST";
 
         internal const string GroupSearch = TuningReconciler.GroupSearch;
         internal const string GroupCaching = TuningReconciler.GroupCaching;
         internal const string GroupOst = TuningReconciler.GroupOst;
-
-        /// <summary>The id prefix of D25's five Policies-hive entries; the rest of each id is the value name.</summary>
-        internal const string PolicyEntryIdPrefix = "caching.policy.";
 
         /// <summary>
         /// The OST size cap, in the megabytes Outlook stores it as. Named because the settings
@@ -93,50 +86,46 @@ namespace OutlookAI.Services
 
         private static readonly ITuningStore Store = new CurrentUserStore();
 
+        /// <summary>
+        /// THE SEAM for an existing account's own offline period (Q145 (a)): this build cannot write
+        /// it, so the dialog tells the user how and the removal of an earlier OutlookAI's policy
+        /// values refuses. Replace it with the writer the Exchange VM measurement makes possible -
+        /// <see cref="IAccountOfflinePeriods"/> says what it must do.
+        /// </summary>
+        private static readonly IAccountOfflinePeriods AccountPeriods = AccountOfflinePeriodsNotYetBuilt.Instance;
+
         // The full desired-state catalog (defaults per v3 plan D22/D24/D25). The registry
         // stores the desired NUMBERS (self-healing, future-tunable); this catalog is the
         // authoritative structure: which value lives in which key, and its default.
-        private static readonly TuningEntry[] Catalog = new[]
+        private static readonly TuningEntry[] Catalog = BuildCatalog();
+
+        private static TuningEntry[] BuildCatalog()
         {
-            // Search (D22) — the user's proven local-search setup.
-            new TuningEntry("search.DisableServerAssistedSearch", GroupSearch, SearchKeyPath, AddInServerContract.DisableServerAssistedSearchValueName, 1, false),
-            new TuningEntry("search.SearchResultsCap",            GroupSearch, SearchKeyPath, "SearchResultsCap",            0, false),
-            new TuningEntry("search.IncludeDeletedItems",         GroupSearch, SearchKeyPath, "IncludeDeletedItems",         1, false),
-            new TuningEntry("search.DefaultSearchScope",          GroupSearch, SearchKeyPath, "DefaultSearchScope",          2, false),
+            var catalog = new List<TuningEntry>
+            {
+                // Search (D22) - the user's proven local-search setup.
+                new TuningEntry("search.DisableServerAssistedSearch", GroupSearch, SearchKeyPath, AddInServerContract.DisableServerAssistedSearchValueName, 1),
+                new TuningEntry("search.SearchResultsCap",            GroupSearch, SearchKeyPath, "SearchResultsCap",            0),
+                new TuningEntry("search.IncludeDeletedItems",         GroupSearch, SearchKeyPath, "IncludeDeletedItems",         1),
+                new TuningEntry("search.DefaultSearchScope",          GroupSearch, SearchKeyPath, "DefaultSearchScope",          2),
+            };
 
-            // Full caching (D25) — sync slider = All for existing accounts (Policies hive)
-            // and future accounts (user hive), plus shared-folder caching. The five policy values,
-            // their defaults and the values a user may choose come from CachedModePolicy, the list
-            // the elevated helper enforces.
-            PolicyEntry(CachedModePolicy.SyncWindowSetting),
-            PolicyEntry(CachedModePolicy.SyncWindowSettingDays),
-            PolicyEntry(CachedModePolicy.DownloadSharedFolders),
-            PolicyEntry(CachedModePolicy.CacheOthersMail),
-            PolicyEntry(CachedModePolicy.DisableSyncSliderForSharedMailbox),
-            new TuningEntry("caching.user.SyncWindowSetting",     GroupCaching, CachedModeUserKeyPath, CachedModePolicy.SyncWindowSetting,     0, false),
-            new TuningEntry("caching.user.SyncWindowSettingDays", GroupCaching, CachedModeUserKeyPath, CachedModePolicy.SyncWindowSettingDays, 0, false),
+            // Full caching (D25) - the offline period All for accounts added from now on, and
+            // shared-folder caching, as the user's own settings; each left alone while a policy sets
+            // it. The five values, their defaults and the values a user may choose come from
+            // CachedModeSettings, which the test suite pins.
+            catalog.AddRange(CachedModeSettings.CatalogEntries(OfficeVersion));
 
-            // OST headroom (D25) — 100 GB max / ~94 GB warn so full caching never stalls at
+            // OST headroom (D25) - 100 GB max / ~94 GB warn so full caching never stalls at
             // the default 50 GB cap. Outlook stores both as megabytes.
-            new TuningEntry(OstMaxEntryId,           GroupOst, PstKeyPath, "MaxLargeFileSize",  OstMaxDefaultMb,  false),
-            new TuningEntry("ost.WarnLargeFileSize", GroupOst, PstKeyPath, "WarnLargeFileSize", OstWarnDefaultMb, false),
-        };
-
-        private static TuningEntry PolicyEntry(string valueName)
-        {
-            return new TuningEntry(PolicyEntryIdPrefix + valueName, GroupCaching, CachedModePolicyKeyPath, valueName,
-                                   CachedModePolicy.ShippedDefault(valueName), true);
+            catalog.Add(new TuningEntry(OstMaxEntryId,           GroupOst, PstKeyPath, "MaxLargeFileSize",  OstMaxDefaultMb));
+            catalog.Add(new TuningEntry("ost.WarnLargeFileSize", GroupOst, PstKeyPath, "WarnLargeFileSize", OstWarnDefaultMb));
+            return catalog.ToArray();
         }
 
         internal static IReadOnlyList<TuningEntry> Entries
         {
             get { return Catalog; }
-        }
-
-        /// <summary>The Office major the policy values are written for - what the elevated helper is told.</summary>
-        internal static string PolicyOfficeVersion
-        {
-            get { return OfficeVersion; }
         }
 
         // ===== Public operations =====
@@ -149,7 +138,7 @@ namespace OutlookAI.Services
         }
 
         /// <summary>Mid-session reconcile (settings dialog): applies diffs; only ever SETS the
-        /// restart-needed flag — a mid-session "everything matches" must not clear it because
+        /// restart-needed flag - a mid-session "everything matches" must not clear it because
         /// the running Outlook may still be on pre-change values.</summary>
         public static TuningReconcileResult ReconcileFromUi()
         {
@@ -166,7 +155,9 @@ namespace OutlookAI.Services
                     if (result.Problem.Length > 0)
                         System.Diagnostics.Debug.WriteLine("Tuning reconcile: " + result.Problem);
                     if (result.NeedsAdministrator.Count > 0)
-                        System.Diagnostics.Debug.WriteLine("Tuning reconcile: needs an administrator for " + string.Join(", ", result.NeedsAdministrator));
+                        System.Diagnostics.Debug.WriteLine("Tuning reconcile: Windows refused " + string.Join(", ", result.NeedsAdministrator));
+                    if (result.NotOffered.Count > 0)
+                        System.Diagnostics.Debug.WriteLine("Tuning reconcile: desired value not offered, left unwritten: " + string.Join(", ", result.NotOffered));
                     return result;
                 }
                 catch (Exception ex)
@@ -219,63 +210,82 @@ namespace OutlookAI.Services
             lock (_gate) { try { return Store.ReadDword(TuningKeyPath, AddInServerContract.TuningRestartNeededValueName) == 1; } catch { return false; } }
         }
 
-        /// <summary>
-        /// Something other than the reconcile changed a live value under a running Outlook - the
-        /// elevated helper - so the restart flag goes up, exactly as for a write of the reconcile's
-        /// own. The next startup reconcile that writes nothing clears it, as always.
-        /// </summary>
-        public static void MarkRestartNeeded()
-        {
-            lock (_gate) { try { Store.WriteDword(TuningKeyPath, AddInServerContract.TuningRestartNeededValueName, 1); } catch (Exception ex) { System.Diagnostics.Debug.WriteLine("MarkRestartNeeded: " + ex.Message); } }
-        }
+        // ===== The Cached Mode settings (Q145 (a), Q143, Q151 (a)) =====
 
         /// <summary>
-        /// The settings dialog's choice for one of the five policy values: stored as its DESIRED
-        /// value, which is the add-in's own key and always writable. Writing the live value is the
-        /// reconcile's job - and, where it needs an administrator, the helper's. Refuses (false) a
-        /// name or value <see cref="CachedModePolicy"/> does not offer, so the dialog can never set
-        /// up a request the helper would refuse.
+        /// The Cached Mode settings as the dialog lists them: what Outlook uses and who sets it, the
+        /// value OutlookAI writes, and the state - read now, from the user's own key and both policy
+        /// keys. Empty if even that read fails.
         /// </summary>
-        public static bool SetPolicyDesired(string valueName, int value)
+        public static List<CachedModeSettingState> GetCachedModeStates(TuningSnapshot snapshot)
         {
-            if (!CachedModePolicy.IsAllowed(valueName, value))
-                return false;
             lock (_gate)
             {
                 try
                 {
+                    bool managed = snapshot.MasterEnabled && snapshot.CachingEnabled;
+                    return CachedModeSettings.ReadStates(Store, OfficeVersion, managed, snapshot.NeedsAdministrator);
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine("Cached Mode states: " + ex.Message);
+                    return new List<CachedModeSettingState>();
+                }
+            }
+        }
+
+        /// <summary>
+        /// The settings dialog's choice for one Cached Mode setting, stored as its DESIRED value -
+        /// the add-in's own key, always writable; the period as its (months, days) pair. Writing the
+        /// live value is the reconcile's job. Refuses (false) a setting or a position the setting
+        /// does not offer, so nothing but one of its values is ever stored from here (Q143).
+        /// </summary>
+        public static bool SetCachedModeChoice(string settingKey, int choiceIndex)
+        {
+            lock (_gate)
+            {
+                try
+                {
+                    List<KeyValuePair<string, int>> desired = CachedModeSettings.DesiredFor(CachedModeSettings.Setting(settingKey), choiceIndex);
+                    if (desired.Count == 0)
+                        return false;
                     TuningReconciler.EnsureInitialized(Store, Catalog);
-                    Store.WriteDword(TuningReconciler.DesiredKeyPath, PolicyEntryIdPrefix + valueName, value);
+                    foreach (KeyValuePair<string, int> value in desired)
+                        Store.WriteDword(TuningReconciler.DesiredKeyPath, value.Key, value.Value);
                     return true;
                 }
                 catch (Exception ex)
                 {
-                    System.Diagnostics.Debug.WriteLine("SetPolicyDesired: " + ex.Message);
+                    System.Diagnostics.Debug.WriteLine("SetCachedModeChoice: " + ex.Message);
                     return false;
                 }
             }
         }
 
-        /// <summary>
-        /// What the elevated helper should write: each policy value the last reconcile could not
-        /// write, whose group is on and which is still not in effect, with its desired number - in
-        /// catalog order. A desired number the helper would refuse (one typed into the registry by
-        /// hand) is left out and named in <paramref name="notOffered"/> instead.
-        /// </summary>
-        public static List<KeyValuePair<string, int>> PolicyValuesNeedingAdministrator(out List<string> notOffered)
+        /// <summary>Whether this build can set an existing account's own offline period. False until the seam is filled.</summary>
+        public static bool CanSetExistingAccountPeriods
         {
-            var request = new List<KeyValuePair<string, int>>();
-            notOffered = new List<string>();
-            foreach (TuningValueState v in GetSnapshot().Values)
+            get { return AccountPeriods.CanSetEveryAccount; }
+        }
+
+        /// <summary>
+        /// REMOVES THE CACHED MODE POLICY VALUES AN EARLIER OUTLOOKAI WROTE - and NOTHING CALLS IT
+        /// (Q151 (a)): those values stay until the maintainer asks for their removal, and wiring this
+        /// to a button or a startup is that request's change. What it does, and why it refuses while
+        /// the seam above cannot set every account's own period to All first, is
+        /// <see cref="EarlierPolicyRemoval"/>'s to say. Reconciles afterwards, so the user's own
+        /// settings the policy values stood over are written at once.
+        /// </summary>
+        public static EarlierPolicyRemovalResult RemoveEarlierPolicyValues()
+        {
+            EarlierPolicyRemovalResult result;
+            lock (_gate)
             {
-                if (!v.Entry.IsPolicyHive || !v.GroupEnabled || !v.NeedsAdministrator)
-                    continue;
-                if (CachedModePolicy.IsAllowed(v.Entry.ValueName, v.Desired))
-                    request.Add(new KeyValuePair<string, int>(v.Entry.ValueName, v.Desired));
-                else
-                    notOffered.Add(v.Entry.ValueName + "=" + v.Desired);
+                result = EarlierPolicyRemoval.Remove(Store, OfficeVersion, AccountPeriods);
             }
-            return request;
+            if (result.Removed.Count > 0)
+                ReconcileFromUi();
+            return result;
         }
 
         /// <summary>
@@ -316,8 +326,7 @@ namespace OutlookAI.Services
 
         /// <summary>
         /// HKCU, as the reconcile sees it. Reads never throw; writes DO, so the reconcile can tell a
-        /// value Windows refused for lack of rights (HKCU\Software\Policies under a filtered token)
-        /// from one it wrote.
+        /// value Windows refused for lack of rights from one it wrote.
         /// </summary>
         private sealed class CurrentUserStore : ITuningStore
         {
@@ -365,6 +374,18 @@ namespace OutlookAI.Services
                     if (key == null)
                         throw new InvalidOperationException("HKCU\\" + keyPath + " could not be opened for writing.");
                     key.SetValue(valueName, value ?? string.Empty, RegistryValueKind.String);
+                }
+            }
+
+            public void DeleteValue(string keyPath, string valueName)
+            {
+                // Opened writable only when it exists: a key that is not there holds nothing to
+                // delete, and opening one writable that the user may only read throws
+                // SecurityException - which the caller reads as a refusal, as it should.
+                using (var key = Registry.CurrentUser.OpenSubKey(keyPath, writable: true))
+                {
+                    if (key != null)
+                        key.DeleteValue(valueName, throwOnMissingValue: false);
                 }
             }
         }
