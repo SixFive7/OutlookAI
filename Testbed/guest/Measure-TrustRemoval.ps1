@@ -6,13 +6,14 @@
     installer removes VSTO's trust entries for the leaked key, and only those.
 
 .DESCRIPTION
-    RUN ON AN OUTLOOK TEST GUEST, in the interactive session, NOT elevated - the token a per-user
-    installer gets - through guest/Register-InteractiveTask.ps1 at -RunLevel Limited, staged beside
-    it and beside guest/OutlookMapiInterop.ps1:
-        .\Register-InteractiveTask.ps1 -RunLevel Limited -TimeoutSeconds 1800 -Script "& 'C:\OutlookAI-Q5\trust-removal\Measure-TrustRemoval.ps1' -Scenario RootStorePrompt -Execute"
-    Then restore the guest's checkpoint: everything either scenario changes is the guest's own, and
-    the checkpoint takes it all back. Docs/live-tier-on-the-vm.md section 4.8 is the procedure and
-    the record.
+    RUN ON AN OUTLOOK TEST GUEST, in the interactive session, through
+    Testbed/host/Invoke-TrustRemovalProbe.ps1, which leases the guest, restores its frozen
+    checkpoint, stages this file beside guest/Register-InteractiveTask.ps1 and
+    guest/OutlookMapiInterop.ps1, runs it, and restores the checkpoint afterwards - everything
+    either scenario changes is the guest's own, and the checkpoint takes it all back.
+    RootStorePrompt runs NOT elevated (-RunLevel Limited), the token a per-user installer gets;
+    InstallerCleanup runs elevated on these guests, whose add-in was first installed from an
+    elevated task (see that script). Docs/live-tier-on-the-vm.md section 4.8 is the record.
 
     WHY (Q193 (b), the maintainer's, 2026-11-17). The certificate that signed v1.0.0.1 to v2.3.1.111
     leaked with its private key. Installer.iss removes it by thumbprint from every trust store, and
@@ -58,8 +59,9 @@
                         dialog exists a moment before it is shown. Then nothing of the certificate
                         is left in the store.
 
-      InstallerCleanup  The product's installer, -InstallerPath, run /VERYSILENT the way the
-                        add-in's updater runs it, and then its uninstaller /VERYSILENT, each with
+      InstallerCleanup  The product's installer, -InstallerPath, run /VERYSILENT - a silent run to
+                        its code, as the add-in's /SILENT updates are - and then its uninstaller
+                        /VERYSILENT, each with
                         VSTO trust entries planted under
                         HKCU\Software\Microsoft\VSTO\Security\Inclusion first: three for the
                         leaked key - its public key spelled three ways the VSTO runtime reads as
