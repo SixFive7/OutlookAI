@@ -1,4 +1,40 @@
 {
-  "_note": "CodeQL results triaged as false positives (Q125). Tools/Invoke-CodeQL.ps1 fails on every result NOT listed here, and reports an entry that no longer matches any result as stale. One entry per result: rule, path (repository-relative), lineHash (the result's partialFingerprints.primaryLocationLineHash in results.sarif, which follows the line's text, not its number), the reason it is safe, and the date it was triaged. A real finding is fixed, never listed.",
-  "accepted": []
+  "_note": "CodeQL results triaged as false positives (Q125). Tools/Invoke-CodeQL.ps1 fails on every result NOT listed here, and reports an entry that no longer matches any result as stale. One entry per result: rule, path (repository-relative), lineHash (the result's partialFingerprints.primaryLocationLineHash in results.sarif, which follows the line's text, not its number), the reason it is safe, and the date it was triaged. A real finding is fixed, never listed. An entry matches every source that reaches its line, so its reason has to hold for every value that can get there.",
+  "accepted": [
+    {
+      "rule": "cs/sql-injection",
+      "path": "McpServer/OutlookAI.Core/IndexSearch/IndexClients.cs",
+      "lineHash": "67ce790b250d2d21:1",
+      "reason": "The OLE DB command runs only statements that WsSqlBuilder builds, and every value reaches SQL through it: a scope only as a mapi URL with no control characters and its single quotes doubled (ValidateScope); a folder path only starting with '/', without control characters and with its single quotes doubled (ValidateFolderPath, EscapeSqlLiteral); a search, sender or recipient term only from an allow-list - letters, digits, space and @ . _ - ' +, with '*' only last - inside phrase quotes, its single quotes doubled (ValidateTerm, QuotedContainsValue); a conversation id without control characters, its single quotes doubled; dates, numbers and flags formatted by the builder. Search.CollatorDSO takes no command parameters, so escaping is the only way a value can travel, and WS-SQL is SELECT-only over the user's own security-trimmed index. The CA2100 suppression on ExecuteRows makes the same case. The sources CodeQL traced here on 2026-11-17: the search tool's store, folder, from and to, the thread tool's conversation_id and store, and RemediationTools' command line.",
+      "triaged": "2026-11-17"
+    },
+    {
+      "rule": "cs/command-line-injection",
+      "path": "Services/ClaudeServices.cs",
+      "lineHash": "f6701823db3927b3:1",
+      "reason": "The command line carries the model the user chose in the settings window, read back from HKCU\\Software\\OutlookAI. ConfiguredModel passes it on only if ModelCatalog.IsWellFormedModelId admits it - letters, digits and . - _ [ ] - so inside its quoted --model argument it can neither close the quotes nor add an argument. It is the user's own setting, and the CLI it reaches runs as that same user.",
+      "triaged": "2026-11-17"
+    },
+    {
+      "rule": "cs/path-injection",
+      "path": "Services/McpRegistrationService.cs",
+      "lineHash": "cf7c0606d098db4a:1",
+      "reason": "The path is HKCU\\Software\\OutlookAI InstallDir, which the per-user installer writes, joined with the server's fixed relative path. The add-in only checks that the file exists before writing that path into the user's own agent configuration, which then starts the server as the same user. Anything that can change the value already runs as that user, and could edit the configuration or run its own program directly: no privilege boundary is crossed.",
+      "triaged": "2026-11-17"
+    },
+    {
+      "rule": "cs/path-injection",
+      "path": "Services/McpRegistrationService.cs",
+      "lineHash": "310f409ab8967eca:1",
+      "reason": "The path is HKLM\\SOFTWARE\\dotnet\\Setup\\InstalledVersions\\x64\\sharedhost Path, which only an administrator or the .NET installer can write, joined with a fixed folder name. The add-in only asks whether that folder exists, to decide whether a .NET 10 runtime is installed.",
+      "triaged": "2026-11-17"
+    },
+    {
+      "rule": "cs/path-injection",
+      "path": "Services/McpRegistrationService.cs",
+      "lineHash": "b323a7276389c344:1",
+      "reason": "The same HKLM .NET sharedhost path as the line above, which only an administrator or the .NET installer can write. The add-in lists the names of its subfolders to find a 10.x runtime, and opens nothing in it.",
+      "triaged": "2026-11-17"
+    }
+  ]
 }
