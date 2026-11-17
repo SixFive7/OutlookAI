@@ -1992,10 +1992,12 @@
   sessions and the pins they made, by owner PID and pin window handle; the last session out closes
   the pin; the pins of dead sessions are closed; `outlook_health` lists the sessions; and a
   machine-wide lock, so sessions that start Outlook at once make one pin. The window handles also let
-  the show-me path recognise a pin (S6, below). On hold because Q149 (d) measures first and then
-  chooses between keeping Word with pins made only while drafting - then build (a) for those pins -
-  and writing drafts as HTML with no compose window and no pins - then this item goes
-  (`QUESTIONS.md` decision log, 2026-10-11 and 2026-11-17). **Measured** 2026-10-03 on
+  the show-me path recognise a pin (S6, below). On hold for the maintainer's choice between keeping
+  Word with pins made only while drafting - then build (a) for those pins - and writing drafts as HTML
+  with no compose window and no pins - then this item goes (`QUESTIONS.md` decision log, 2026-10-11
+  and 2026-11-17). Q149 (d) measured on 2026-11-17 that pins stay for as long as drafts go through
+  Word: without one, the compose window's close ended a window-less Outlook in 40 of 40 drafts on
+  Office LTSC 2024 (`Docs/research/q149-draft-text`). **Measured** 2026-10-03 on
   `OAI-UNINDEXED` (`McpServer/Docs/com-host.md`, "Pins left behind, measured"): a session pins only
   when it finds no Explorer, so against a user's open Outlook no
   pin is ever made (11 sessions, 0 pins). A pin is LEFT when its maker did not start Outlook - sessions
@@ -2013,10 +2015,30 @@
   another session lives, adopt a dead session's pin rather than close it, since closing the only
   Explorer ends Outlook under everyone; let any session that hears Quit close the shared pin, so the
   user's exit wins for every session; mark "Outlook is exiting" across processes, so a new server's
-  first call waits for that process to end instead of starting another; have `outlook_health` also
-  say who started Outlook and what will end it; and rewrite `README.md`'s "Outlook Lifetime and the
-  Tray Icon", which predates pins. Never measured: the tray icon in any of these states, and what its
-  Exit Now does to a pinned Outlook.
+  first call waits for that process to end instead of starting another; and have `outlook_health`
+  also say who started Outlook and what will end it. Never measured: the tray icon in any of these
+  states, and what its Exit Now does to a pinned Outlook.
+
+- [ ] **Put a reply's or forward's text above the quoted original's header block, not inside it.**
+  Measured on 2026-11-17 by Q149 (`Docs/research/q149-draft-text`, "Found on the way"): all 12
+  replies and forwards the product wrote with a signature, on both Office LTSC 2024 test guests, had
+  the body and the signature under the line that heads the quoted original. Word lays out their first
+  eleven paragraphs with that block's top border, and the first of them in Times New Roman. A reply
+  made with no inspector - every reply since the re-opened-draft compose (`c4595b1`) - has no
+  `_MailAutoSig`, so `ApplySignatureToDocument` places the signature at the start of `_MailOriginal`,
+  which sits inside the header block's bordered `div`, and `InsertBodyAboveSignature` then writes the
+  body above the signature, inside the same block. A reply without a signature was not measured. Cell
+  C4 of `T2/LiveQ149HtmlOnlyParityTests` shows it: today's reply against one laid out as `Reply()`
+  leaves it.
+
+- [ ] **Stop the compose window showing on screen in an Outlook with no window.** Measured on
+  2026-11-17 by Q149 (`Docs/research/q149-draft-text`, cells L1 and L1c): in 50 of 50 drafts on the
+  two Office LTSC 2024 test guests, the editor promotion showed the compose window at (25,25),
+  768 x 519, for 130-646 ms, and gave Outlook the foreground. `ComposeSurface.PromoteForWordEditor`
+  parks the window off-screen before `Activate()`, and `Activate()` puts it back where Outlook keeps
+  it; the sweep after it hides it again. With an Outlook window open it stays off-screen (40 of 40).
+  How to fix it depends on Q149's decision: writing drafts as HTML shows nothing, and one promotion
+  per Outlook process (cells W6 and W7) would show it once per process instead of once per draft.
 
 - [ ] **Let the count tripwire's census read a table date by its column spelling too.**
   `CensusTableRow.ReadUtc` still calls the one-argument `ComDateValue.FromTableValue`, which takes every

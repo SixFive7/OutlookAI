@@ -79,10 +79,11 @@ public sealed class LiveQ149CommitTests
         tallies.Add(Variant(Q149Cells.B0, drafts, windows, ProductUpdate));
         using (Q149OutlookClient client = Q149OutlookClient.Connect(clock, allowStart: false))
         {
-            // B4 (Word's Document.Save) is not repeated: measured once on 2026-11-17 (OutlookAI-Indexed), it put Word's
-            // Save As dialog on screen, modal, and held the call until the step's three-minute budget - and that dialog
-            // then refused the editor to every compose after it in the same Outlook. One observation of a modal
-            // dialog is the whole answer, and a second would wreck the cells after it.
+            // B4 (Word's Document.Save) is not repeated: measured once on 2026-11-17 (OutlookAI-Indexed, run
+            // 20261117-181203-indexed-ee5fc276b528), it put one window on screen, did not return within the step's
+            // three-minute budget, and committed nothing. Word documents Save() on a document never saved as a file as
+            // prompting with its Save As dialog, a modal wait for a person; a second observation would only hold every
+            // cell after it.
             foreach (string variant in new[] { Q149Cells.B1, Q149Cells.B2, Q149Cells.B3 })
             {
                 tallies.Add(Variant(variant, drafts, windows, (entryId, storeId, token, attempt) => EditWithoutActivate(client, variant, entryId, storeId, token, attempt)));

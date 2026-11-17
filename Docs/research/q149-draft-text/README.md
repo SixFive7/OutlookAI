@@ -50,6 +50,7 @@ Outlook. Class `T2/LiveQ149WindowlessComposeTests`.
 | W4 | The inspector's own window parked off-screen, shown by Windows (`SW_SHOWNOACTIVATE`), hidden again - no Outlook `Activate` - then read | 10 | editor A4 |
 | W5 | The same Windows-level show of the pin Explorer's window, then the inspector read | 10 | editor A5 |
 | W6 | The product's promotion on the first draft of a process, then nine more drafts read and committed with no Activate; then a displayed Explorer opened and closed, and one more read | 3 x 10 | editor A6, A6b, B1 after a warm-up |
+| W7 | W6 with B3's commit on every later draft: `ModifiedFormPages.Add("Message")` before the read, `Close(olSave)` after the edit | 3 x 10 | added on 2026-11-17, when W6's reads worked and its commits did not |
 
 L1 goes through update_draft rather than new_draft for one reason: new_draft sets the subject after the
 compose, so an Outlook that ends at the compose's close would leave an untagged draft behind (mailbox
@@ -69,7 +70,7 @@ the new text present and the old text gone. Class `T2/LiveQ149CommitTests`.
 | B1 | Editor read without Activate; `CurrentItem.Save()`; `Close(olDiscard)` | 20 |
 | B2 | Editor read without Activate; `Close(olSave)` | 20 |
 | B3 | `ModifiedFormPages.Add("Message")` first; `Close(olSave)`; then the message class and the form-definition properties | 20 |
-| B4 | Word's `Document.Save()`; `Close(olDiscard)` | 20 |
+| B4 | Word's `Document.Save()`; `Close(olDiscard)` | 1 (see the results) |
 
 ### Stage 3 - the HTML-only draft against today's
 
@@ -128,11 +129,12 @@ pwsh -File Testbed/host/Invoke-LiveTierOnGuest.ps1 -VMName OutlookAI-Unindexed <
 ```
 
 and each class's `Smoke_*` test runs every cell once (`&FullyQualifiedName~Smoke` instead). Every
-window-less cell is a test of its own (`L1_...`, `L1c_...`, `L2_...`, `W2_...` to `W6_...`), so a run can
-take a group of them by name - `&(FullyQualifiedName~.L1_|FullyQualifiedName~.L1c_)` - and stay short:
-on the frozen checkpoints of 2026-10-03 a run's guest account stopped answering about 40 minutes after
-the restore (the first smoke run lost its results that way), so until the checkpoints with the
-never-expiring password are recorded, each run is kept well inside that.
+window-less cell is a test of its own (`L1_...`, `L1c_...`, `L2_...`, `W2_...` to `W7_...`), so a run can
+take a group of them by name - `&(FullyQualifiedName~.L1_|FullyQualifiedName~.L1c_)` - and stay short.
+The measurement was run that way: one group of cells per run, with `-Kind Unindexed` or `-Kind Indexed`
+so that the runs spread over both guests of a kind. On the frozen checkpoints of 2026-10-03 a run's guest
+account stopped answering about 40 minutes after the restore, and the first smoke run lost its results
+that way; every run in the results is on the checkpoints recorded since, `CP-16B` and `CP-22C`.
 
 **Every attempt is one JSON line** (`Q149-ATTEMPT {...}`), in the test output and the console capture,
 with the fields the plans name: the cell and iteration, Outlook's version, process id, whether it was a

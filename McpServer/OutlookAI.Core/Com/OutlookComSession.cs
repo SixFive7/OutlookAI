@@ -278,7 +278,7 @@ namespace OutlookAI.Core.Com
         /// Explorers collection or default folders ready when Connect runs, so the attempt
         /// can fail and leave the session unpinned - and an unpinned session is one whose
         /// own compose call kills the Outlook it is composing in (D49 probe row 1, 2 of 2 cold starts on
-        /// Office LTSC 2021; measured on LTSC 2024 by Q149's cell L1, Docs/research/q149-draft-text). Every
+        /// Office LTSC 2021; on Office LTSC 2024 40 of 40, Q149's cell L1, Docs/research/q149-draft-text). Every
         /// compose therefore re-ensures it first; when a pin already exists the cost is one
         /// field test.
         /// </para>
@@ -419,7 +419,7 @@ namespace OutlookAI.Core.Com
                     }
 
                     // D49 THE PROCESS PIN. A window-less Outlook EXITS the moment the only
-                    // Inspector closes (D49 probe row 1, Office LTSC 2021) - which is the compose path's own
+                    // Inspector closes (D49 probe row 1, Office LTSC 2021; Q149 L1, 40 of 40 on LTSC 2024) - the compose path's own
                     // last step, so every headless draft was killing the instance it had
                     // just used, taking update_draft (com_failure) and three live-suite
                     // collections (RPC_S_SERVER_UNAVAILABLE) with it. A NON-DISPLAYED
