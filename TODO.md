@@ -1803,7 +1803,17 @@
   policy overrides an account's own period without changing it: one account on his workstation
   reads 12 months under the policy's All, and removing the policy alone would make Outlook drop that
   account's offline mail older than 12 months (inferred from Microsoft's KB 2733062).
-  `Tuning\Applied` records which values OutlookAI wrote itself.
+  `Tuning\Applied` records which values OutlookAI wrote itself. The removal is built and tested, and
+  nothing calls it (`Services/EarlierPolicyRemoval.cs`, `OutlookTuningService.RemoveEarlierPolicyValues`,
+  T1 `EarlierPolicyRemovalTests`): it sets every account's own period to All first, through
+  `IAccountOfflinePeriods`, and refuses whole until the add-in can (the item on the account's own
+  period, below). Wiring it to a button or to startup is the change his word will be. **Open before
+  then:** the policy's `DownloadSharedFolders` = 1 also overrides each account's own "Download shared
+  folders" box. If an account has that box off, removing the policy drops its shared folders from the
+  offline copy. Directions: (1) the removal first turns every account's box on, through the same seam
+  (the box is bit 0x800 of the profile section's config flags, read on all four of the workstation's
+  accounts); (2) it leaves that one policy value in place; (3) it removes it anyway, since the box is
+  on by default. Recommended: (1).
 
 - [ ] **Read the next `wwlib.dll` crash's dump, if there is one, and say whether it was the compose crash**
   (runbook 4.6, item 8). OUTLOOK.EXE died once in Word on `OutlookAI-Indexed` (4.2f run 4, 2026-10-03), in
@@ -1825,21 +1835,21 @@
   designation from a freshly opened store in the verify session; (3) read it in the product the way
   the verify session does, after creating. Recommended: (1) first.
 
-- [ ] **Decide whether the elevated Cached Mode helper may keep running from the per-user install
-  folder (found during Q125, 2026-10-04).** `OutlookAI.PolicyWriter.exe` runs as administrator
-  through UAC (Q128), but the installer is per-user (`PrivilegesRequired=lowest`), so it lives in
-  `%LOCALAPPDATA%\OutlookAI\Setup`, and the add-in starts the copy beside itself or under the HKCU
-  `InstallDir` - all writable by any process of the user's. Q125 closed the DLL route (its P/Invokes
-  load from System32 only), but such a process can still replace the helper, or repoint
-  `InstallDir`, and be elevated by the prompt the user expects to see - a prompt that names no
-  verified publisher either way. For a standard user typing an administrator's password that is an
-  elevation of privilege. Directions: (1) install the helper per machine, under Program Files,
-  through an elevated part of the installer; (2) elevate no file of ours at all - write the five
-  validated values with Windows' own `reg.exe add HKU\<SID>\...`, one per value, chained in one
-  elevated `cmd.exe` for one prompt, which then names a Microsoft-signed program; (3) accept and
-  document it - the escalation needs the user's own approval, and anything running as the user
-  already holds the user's mail. Recommended: (2), if its prompt text is acceptable to him; (1)
-  otherwise.
+- [ ] **Let the add-in set an existing account's own offline period, once it can call Core
+  (Q145 (a)).** OutlookAI writes the offline period as the user's own `SyncWindowSetting`, which only
+  accounts added later take (KB 3115009). An account that already exists keeps its own period in its
+  Outlook profile, so OutlookAI Settings tells the user how to set it in Account Settings. Measured on
+  `OutlookAI-Exchange` on 2026-11-17, test account only: the period is the pair 0x6649 (months) and
+  0x665A (days) in the account's own Exchange provider section, Outlook's eleven slider positions
+  are the eleven pairs of Q143, and a pair written with Outlook closed or while it runs is honoured
+  at its next start. The writer is built, in Core: `AccountOfflinePeriodWriter`, with T1
+  `AccountOfflinePeriodWriterTests`. What waits: the add-in referencing Core, which is the
+  code-sharing refactor's first stage and waits on Q163 to Q172. Then implement
+  `IAccountOfflinePeriods` (`Services/AccountOfflinePeriods.cs`, which says what it must do), set it
+  in `OutlookTuningService.AccountPeriods`, and tell the user the new period takes effect when
+  Outlook next starts. The dialog and the removal below both use it. Not measured: whether a running
+  Outlook applies a written pair before it restarts, and whether Outlook then really downloads that
+  much more mail.
 
 - [ ] **Decide whether CodeQL should follow an agent's arguments beyond the MCP tools themselves
   (Q146 follow-up, 2026-11-17).** Since Q146 the release's CodeQL scan treats every MCP tool's

@@ -53,8 +53,8 @@ namespace OutlookAI.Services
 
         /// <summary>
         /// The tuning key, under HKEY_CURRENT_USER - the add-in's own state, which it can always
-        /// write. (Five of the Outlook values it manages are NOT always writable: see
-        /// <see cref="TuningNeedsAdministratorValueName"/>.)
+        /// write. (Since Q145 (a) every Outlook value it manages is the user's own setting too; one
+        /// Windows refuses anyway is listed in <see cref="TuningNeedsAdministratorValueName"/>.)
         /// </summary>
         internal const string TuningKeyPath = @"Software\OutlookAI\Tuning";
 
@@ -77,13 +77,19 @@ namespace OutlookAI.Services
         /// <summary>DWORD: a write has landed that only takes effect on the NEXT Outlook start.</summary>
         internal const string TuningRestartNeededValueName = "RestartNeeded";
 
-        /// <summary>String: ';'-joined entry ids the reconciler backed off from because a policy reverted them.</summary>
+        /// <summary>
+        /// String: ';'-joined entry ids the last reconcile left alone because a policy sets their
+        /// value - Microsoft 365 Cloud Policy or Group Policy, an organization's or one an earlier
+        /// OutlookAI wrote (Q145 (a)). Until then: the ids it backed off from because a policy
+        /// reverted a value it had applied.
+        /// </summary>
         internal const string TuningPolicyConflictsValueName = "PolicyConflicts";
 
         /// <summary>
         /// String: ';'-joined entry ids whose write the last reconcile was REFUSED for lack of rights,
-        /// and skipped (Q128, 2026-10-03). In practice D25's five Cached Mode values under
-        /// <c>HKCU\Software\Policies</c>, which a NOT elevated Outlook may read and not write. Empty
+        /// and skipped (Q128, 2026-10-03). Then D25's five Cached Mode values under
+        /// <c>HKCU\Software\Policies</c>, which a NOT elevated Outlook may read and not write; since
+        /// Q145 (a) the add-in writes only the user's own settings, so it is normally empty. Empty
         /// when there are none. <c>outlook_health</c> reports it as <c>tuning.needsAdministrator</c>.
         /// </summary>
         internal const string TuningNeedsAdministratorValueName = "NeedsAdministrator";
