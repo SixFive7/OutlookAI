@@ -117,8 +117,8 @@ public sealed class LiveStaleIndexRowTests
 
         SearchOutcome outcome = _fixture.Service.Search(new SearchRequest
         {
-            Store = probe.StoreDisplayName,
-            Folder = probe.FolderName,
+            StoreId = LiveIds.StoreId(_fixture.Service, probe.StoreDisplayName),
+            FolderId = LiveIds.FolderId(_fixture.Service, probe.StoreDisplayName, probe.FolderName),
             Top = 3,
             SnippetChars = 0,
         });

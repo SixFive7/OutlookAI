@@ -152,25 +152,43 @@ public sealed class LiveMoveArchiveTests
                 Hub, seedSubject, "D39 move/archive seed body " + Marker, null);
             currentEntryId = LiveInboxArrival.WaitFor(_fixture.VerifySession, Hub, seedSubject, sentUtc).EntryId;
             _output.WriteLine("seed arrived in hub Inbox");
+            string hubStoreId = LiveIds.StoreId(Service, Hub);
 
-            // --- guard live: target folder missing without create_folder.
-            MoveMailOutcome missing = Service.MoveMail(new[] { currentEntryId }, _fixture.TestFolderName);
-            Assert.Equal(0, missing.Moved);
-            Assert.False(missing.Items[0].Ok);
-            Assert.Contains("create_folder=true", missing.Items[0].Error, StringComparison.Ordinal);
+            // --- the target is looked up by NAME first, the way an agent does it (Q136 (ii)): find_folder
+            // offers no such folder yet, and nothing was created by asking.
+            FindFolderOutcome before = Service.FindFolder(_fixture.TestFolderName, hubStoreId);
+            Assert.DoesNotContain(before.Candidates, c => string.Equals(c.Name, _fixture.TestFolderName, StringComparison.OrdinalIgnoreCase));
 
-            // --- move 1: Inbox -> test folder, created on demand.
-            MoveMailOutcome move1 = Service.MoveMail(new[] { currentEntryId }, _fixture.TestFolderName, createFolder: true);
+            // --- create_folder makes it, at the top of the hub, and gives its ID (Q134 (i)).
+            CreateFolderOutcome made = LiveIds.CreateTestFolder(
+                Service, Hub, LiveIds.RootFolderId(Service, Hub), _fixture.TestFolderName);
+            Assert.True(made.Created);
+            Assert.Equal(_fixture.TestFolderName, made.Name);
+            Assert.Equal(_fixture.TestFolderName, made.Folder);
+            Assert.Equal(hubStoreId, made.StoreId);
+            string testFolderId = made.FolderId;
+            FindFolderOutcome after = Service.FindFolder(_fixture.TestFolderName, hubStoreId);
+            Assert.Equal(testFolderId, Assert.Single(after.Candidates, c => c.Match == "exact").FolderId);
+            OperationOutcomeException secondCreate = Assert.Throws<OperationOutcomeException>(
+                () => LiveIds.CreateTestFolder(Service, Hub, LiveIds.RootFolderId(Service, Hub), _fixture.TestFolderName));
+            Assert.Equal(MutationOutcome.Unchanged, secondCreate.Outcome);
+            Assert.Contains(testFolderId, secondCreate.Message, StringComparison.Ordinal);
+            _output.WriteLine("create_folder made the test folder, find_folder found it by name, a second create was refused naming it");
+
+            // --- move 1: Inbox -> test folder, by its ID.
+            MoveMailOutcome move1 = Service.MoveMail(new[] { currentEntryId }, testFolderId);
             Assert.Equal(1, move1.Moved);
             MoveItemView item1 = Assert.Single(move1.Items);
             Assert.True(item1.Ok, item1.Error);
             Assert.Equal(Hub, item1.Store, ignoreCase: true);
+            Assert.Equal(hubStoreId, item1.StoreId);
             Assert.Equal("Inbox", item1.FromFolder);
+            Assert.Equal(LiveIds.FolderId(Service, Hub, "Inbox"), item1.FromFolderId);
             Assert.Equal(_fixture.TestFolderName, item1.ToFolder);
+            Assert.Equal(testFolderId, item1.ToFolderId);
+            Assert.Equal(testFolderId, move1.TargetFolderId);
             Assert.Equal(currentEntryId, item1.OldEntryId, ignoreCase: true);
             Assert.NotEqual(item1.OldEntryId, item1.NewEntryId, StringComparer.OrdinalIgnoreCase); // EntryIDs change on ANY move
-            Assert.NotNull(move1.CreatedFolders);
-            Assert.Contains(_fixture.TestFolderName, move1.CreatedFolders!);
             Assert.NotNull(move1.Advice);
             Assert.Contains(MailService.MoveEntryIdAdvice, move1.Advice!);
 
@@ -186,29 +204,33 @@ public sealed class LiveMoveArchiveTests
             ComOpenResult? staleOpen = _fixture.VerifySession.TryOpenItem(item1.OldEntryId!, _fixture.GetStoreId(Hub), out string? staleError);
             _output.WriteLine($"move 1 ok: Inbox -> test folder, EntryID changed; old id open -> {(staleOpen == null ? "stale (" + staleError + ")" : "still mapped")}");
 
-            // --- move 2 (UNDO): back to fromFolder using ONLY the result's undo info.
-            MoveMailOutcome move2 = Service.MoveMail(new[] { item1.NewEntryId! }, item1.FromFolder!);
+            // --- move 2 (UNDO): back to fromFolderId using ONLY the result's undo info.
+            MoveMailOutcome move2 = Service.MoveMail(new[] { item1.NewEntryId! }, item1.FromFolderId!);
             MoveItemView item2 = Assert.Single(move2.Items);
             Assert.True(item2.Ok, item2.Error);
             Assert.Equal(_fixture.TestFolderName, item2.FromFolder);
+            Assert.Equal(testFolderId, item2.FromFolderId);
             Assert.Equal("Inbox", item2.ToFolder);
             Assert.NotEqual(item2.OldEntryId, item2.NewEntryId, StringComparer.OrdinalIgnoreCase);
             currentEntryId = item2.NewEntryId!;
-            _output.WriteLine("move 2 ok: undo via fromFolder landed back in Inbox");
+            _output.WriteLine("move 2 ok: undo via fromFolderId landed back in Inbox");
 
-            // --- cross-store guard (READ-ONLY for the other store): requesting another
-            // store as target refuses per-item, the hub item stays untouched.
+            // --- cross-store guard (READ-ONLY for the other store): a target folder in another store is
+            // refused per item, and the hub item stays untouched. The other store's Inbox is only read.
             string otherStore = _fixture.Settings.ExpectedStoreDisplayNames
                 .First(s => !string.Equals(s, Hub, StringComparison.OrdinalIgnoreCase));
-            MoveMailOutcome cross = Service.MoveMail(new[] { currentEntryId }, "Inbox", createFolder: false, store: otherStore);
+            MoveMailOutcome cross = Service.MoveMail(new[] { currentEntryId }, LiveIds.FolderId(Service, otherStore, "Inbox"));
             Assert.False(cross.Items[0].Ok);
             Assert.Contains("same-store only", cross.Items[0].Error, StringComparison.Ordinal);
             Assert.NotNull(_fixture.VerifySession.TryOpenItem(currentEntryId, _fixture.GetStoreId(Hub), out _));
 
-            // --- Deleted Items target refusal (S1 v2: moves must never become deletes).
-            MoveMailOutcome trash = Service.MoveMail(new[] { currentEntryId }, "Deleted Items");
-            Assert.False(trash.Items[0].Ok);
-            Assert.Contains("deletion semantics", trash.Items[0].Error, StringComparison.Ordinal);
+            // --- Deleted Items target refusal (S1 v2: moves must never become deletes): the folder is
+            // checked once, before any item, and the whole call is refused with nothing moved.
+            OperationOutcomeException trash = Assert.Throws<OperationOutcomeException>(
+                () => Service.MoveMail(new[] { currentEntryId }, LiveIds.FolderId(Service, Hub, "Deleted Items")));
+            Assert.Equal(MutationOutcome.Unchanged, trash.Outcome);
+            Assert.Contains("deletion semantics", trash.Message, StringComparison.Ordinal);
+            Assert.NotNull(_fixture.VerifySession.TryOpenItem(currentEntryId, _fixture.GetStoreId(Hub), out _));
 
             // --- archive: lands in the hub's DESIGNATED Archive folder. Whether the hub HAS one
             // yet decides what archive_mail must report (Q84): a PST hub - the test guests - has
@@ -243,7 +265,10 @@ public sealed class LiveMoveArchiveTests
             Assert.Equal(hubArchive.StoreRelativePath, archivedItem.ToFolder);
             ArchiveFolderView hubView = Assert.Single(archived.ArchiveFolders!);
             Assert.Equal(Hub, hubView.Store, ignoreCase: true);
+            Assert.Equal(hubStoreId, hubView.StoreId);
             Assert.Equal(hubArchive.StoreRelativePath, hubView.Folder);
+            Assert.Equal(OutlookAI.Core.Mapi.OutlookIds.FolderIdFromEntryId(hubArchive.EntryId), hubView.FolderId);
+            Assert.Equal(hubView.FolderId, archivedItem.ToFolderId);
 
             // The MOVE path resolves exactly as archive_mail always did, on every store type.
             Assert.Equal(ArchiveFolderResolution.ViaOutlookDefaultFolder, hubView.Via);

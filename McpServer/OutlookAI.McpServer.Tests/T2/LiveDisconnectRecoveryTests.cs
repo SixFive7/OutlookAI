@@ -270,7 +270,9 @@ public sealed class LiveDisconnectRecoveryTests
             "promote Outlook with one Explorer window (goto hub)",
             () => independentGateway.Run(s =>
             {
-                ComExplorerState? state = s.TryGotoFolder(_fixture.Hub, null, out string? error);
+                string hubStoreEntryId = s.GetStoreDetails()
+                    .Single(d => string.Equals(d.DisplayName, _fixture.Hub, StringComparison.OrdinalIgnoreCase)).StoreId;
+                ComExplorerState? state = s.TryGotoFolder(null, hubStoreEntryId, out string? error);
                 Assert.True(state != null, "TryGotoFolder failed: " + (error ?? "unknown"));
                 return state;
             }));
@@ -431,7 +433,7 @@ public sealed class LiveDisconnectRecoveryTests
                             () => service.Search(new SearchRequest
                             {
                                 Query = "oaimcpDegradationProbe" + _fixture.RunMarker,
-                                Store = _fixture.Hub,
+                                StoreId = LiveIds.StoreId(service, _fixture.Hub),
                                 Top = 5,
                                 SnippetChars = 0,
                             }));

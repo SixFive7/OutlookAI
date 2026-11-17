@@ -204,7 +204,7 @@ public sealed class UnindexedStoreReportingTests
         SearchOutcome outcome = service.Search(new SearchRequest
         {
             Query = "test",
-            Store = PstStore,
+            StoreId = TestFolders.StoreId(PstStore),
             BeforeUtc = Frontier.AddDays(-90),
             Top = 25,
             SnippetChars = 0,

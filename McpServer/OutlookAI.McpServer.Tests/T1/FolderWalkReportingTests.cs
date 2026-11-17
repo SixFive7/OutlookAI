@@ -308,8 +308,8 @@ public sealed class FolderWalkReportingTests
         SearchOutcome outcome = service.Search(new SearchRequest
         {
             Query = "test",
-            Store = DelegateStore,
-            Folder = "Archive",
+            StoreId = TestFolders.StoreId(DelegateStore),
+            FolderId = TestFolders.FolderId(DelegateStore, "Archive"),
             Top = 25,
             SnippetChars = 0,
         });
@@ -331,8 +331,8 @@ public sealed class FolderWalkReportingTests
         SearchOutcome outcome = service.Search(new SearchRequest
         {
             Query = "test",
-            Store = DelegateStore,
-            Folder = "Archive",
+            StoreId = TestFolders.StoreId(DelegateStore),
+            FolderId = TestFolders.FolderId(DelegateStore, "Archive"),
             Top = 25,
             SnippetChars = 0,
         });

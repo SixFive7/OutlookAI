@@ -394,7 +394,7 @@ public sealed class SweepBodyCapTests
         {
             Query = query,
             SearchIn = searchIn,
-            Store = store,
+            StoreId = store == null ? null : TestFolders.StoreId(store),
             From = from,
             Top = 25,
             SnippetChars = 0,
@@ -603,7 +603,10 @@ public sealed class SweepBodyCapTests
                     return "T1 stand-in profile";
 
                 case nameof(IOutlookSession.GetStoreDetails):
-                    return _stores;
+                    return TestFolders.WithRoots(_stores);
+
+                case nameof(IOutlookSession.TryDescribeFolder):
+                    return TestFolders.Describe(args);
 
                 // Argument 3 is onlyStoreDisplayName; see IOutlookSession.SweepFoldersNewerThan.
                 case nameof(IOutlookSession.SweepFoldersNewerThan):

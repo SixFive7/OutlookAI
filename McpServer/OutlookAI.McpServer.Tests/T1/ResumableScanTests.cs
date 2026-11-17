@@ -213,8 +213,8 @@ public sealed class ResumableScanTests
         {
             ("terms", Request(), new[] { "different" }),
             ("searchIn", With(r => r.SearchIn = SearchIn.SubjectOnly), new[] { "test" }),
-            ("store", With(r => r.Store = "bob@example.com"), new[] { "test" }),
-            ("folder", With(r => r.Folder = "Archive"), new[] { "test" }),
+            ("store", With(r => r.StoreId = TestFolders.StoreId("bob@example.com")), new[] { "test" }),
+            ("folder", With(r => r.FolderId = TestFolders.FolderId(Store, "Archive")), new[] { "test" }),
             ("includeSubfolders", With(r => r.IncludeSubfolders = false), new[] { "test" }),
             ("after", With(r => r.AfterUtc = Frontier.AddDays(-30)), new[] { "test" }),
             ("before", With(r => r.BeforeUtc = Frontier), new[] { "test" }),
@@ -247,7 +247,7 @@ public sealed class ResumableScanTests
         // unprotected.
         ExhaustiveScanCursors store = new ExhaustiveScanCursors();
         string original = ExhaustiveScanCursors.FingerprintOf(Request(), new[] { "test" });
-        string different = ExhaustiveScanCursors.FingerprintOf(With(r => r.Folder = "Archive"), new[] { "test" });
+        string different = ExhaustiveScanCursors.FingerprintOf(With(r => r.FolderId = TestFolders.FolderId(Store, "Archive")), new[] { "test" });
         string token = store.Issue(null, original, Position(), 7, out _);
 
         Assert.Equal(ScanTokenDecision.Valid, store.Resolve(token, original, out _));
@@ -674,11 +674,11 @@ public sealed class ResumableScanTests
         return new SearchRequest
         {
             Query = "test",
-            Store = Store,
+            StoreId = TestFolders.StoreId(Store),
 
             // An exhaustive scan refuses to run unbounded, so the request carries the bound
             // its own validation demands.
-            Folder = "Inbox",
+            FolderId = TestFolders.FolderId(Store, "Inbox"),
             Exhaustive = true,
             Top = 25,
             SnippetChars = 0,
@@ -932,7 +932,10 @@ public sealed class ResumableScanTests
                     return "T1 stand-in profile";
 
                 case nameof(IOutlookSession.GetStoreDetails):
-                    return _stores;
+                    return TestFolders.WithRoots(_stores);
+
+                case nameof(IOutlookSession.TryDescribeFolder):
+                    return TestFolders.Describe(args);
 
                 // Argument 3 is onlyStoreDisplayName; see IOutlookSession.SweepFoldersNewerThan.
                 case nameof(IOutlookSession.SweepFoldersNewerThan):

@@ -148,7 +148,7 @@ public sealed class UnindexedStoreScopeTests
         // rather than reporting "folder", which would describe a narrowing that never happened.
         using MailService service = Service(NothingIndexed());
         SearchRequest request = Request(PstStore);
-        request.Folder = "Inbox";
+        request.FolderId = TestFolders.FolderId(PstStore, "Inbox");
 
         SearchOutcome outcome = service.Search(request);
 
@@ -264,7 +264,7 @@ public sealed class UnindexedStoreScopeTests
         // the catch alone, so the fix would have made half of C3 silent again.
         using MailService service = Service(NothingIndexed());
 
-        ThreadOutcome outcome = service.Thread("conv-1", id: null, store: PstStore);
+        ThreadOutcome outcome = service.Thread("conv-1", id: null, storeId: TestFolders.StoreId(PstStore));
 
         Assert.True(outcome.ScopeWidened);
         Assert.Contains(
@@ -277,7 +277,7 @@ public sealed class UnindexedStoreScopeTests
 
     private static SearchRequest Request(string store)
     {
-        return new SearchRequest { Query = "test", Store = store, Top = 25, SnippetChars = 0 };
+        return new SearchRequest { Query = "test", StoreId = TestFolders.StoreId(store), Top = 25, SnippetChars = 0 };
     }
 
     private static MailService Service(StubIndexClient index)
@@ -539,7 +539,8 @@ public sealed class UnindexedStoreScopeTests
             return targetMethod?.Name switch
             {
                 nameof(IOutlookSession.GetProfileName) => "T1 stand-in profile",
-                nameof(IOutlookSession.GetStoreDetails) => _stores,
+                nameof(IOutlookSession.GetStoreDetails) => TestFolders.WithRoots(_stores),
+                nameof(IOutlookSession.TryDescribeFolder) => TestFolders.Describe(args),
                 // Argument 3 is onlyStoreDisplayName; see IOutlookSession.SweepFoldersNewerThan.
                 nameof(IOutlookSession.SweepFoldersNewerThan) => _sweep(args?[3] as string),
                 _ => throw new NotSupportedException(

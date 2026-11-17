@@ -218,8 +218,8 @@ public sealed class ScanDepthAndSweepScopeTests
         SearchOutcome outcome = service.Search(new SearchRequest
         {
             Query = "test",
-            Store = Store,
-            Folder = "Projects/2026",
+            StoreId = TestFolders.StoreId(Store),
+            FolderId = TestFolders.FolderId(Store, "Projects/2026"),
             IncludeSubfolders = includeSubfolders,
             Top = 25,
             SnippetChars = 0,
@@ -268,11 +268,11 @@ public sealed class ScanDepthAndSweepScopeTests
         return new SearchRequest
         {
             Query = "test",
-            Store = Store,
+            StoreId = TestFolders.StoreId(Store),
 
             // An exhaustive scan refuses to run unbounded, so the request carries the bound
             // its own validation demands.
-            Folder = "Inbox",
+            FolderId = TestFolders.FolderId(Store, "Inbox"),
             Exhaustive = true,
             Top = 25,
             SnippetChars = 0,
@@ -441,7 +441,10 @@ public sealed class ScanDepthAndSweepScopeTests
                     return "T1 stand-in profile";
 
                 case nameof(IOutlookSession.GetStoreDetails):
-                    return _stores;
+                    return TestFolders.WithRoots(_stores);
+
+                case nameof(IOutlookSession.TryDescribeFolder):
+                    return TestFolders.Describe(args);
 
                 // Argument 3 is onlyStoreDisplayName; see IOutlookSession.SweepFoldersNewerThan.
                 case nameof(IOutlookSession.SweepFoldersNewerThan):

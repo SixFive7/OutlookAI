@@ -168,7 +168,7 @@ public sealed class SweepCacheKeyTests
         service.Search(Unscoped());
         WaitForTheWallClockToTick();
         SearchOutcome scoped = service.Search(
-            new SearchRequest { Query = "test", Store = IndexedStore, Top = 25, SnippetChars = 0 });
+            new SearchRequest { Query = "test", StoreId = TestFolders.StoreId(IndexedStore), Top = 25, SnippetChars = 0 });
 
         Assert.Equal(1, session.SweepCount);
         Assert.True(scoped.Sweep!.Cached);
@@ -461,7 +461,10 @@ public sealed class SweepCacheKeyTests
                         return "T1 stand-in profile";
 
                     case nameof(IOutlookSession.GetStoreDetails):
-                        return ProfileStores;
+                        return TestFolders.WithRoots(ProfileStores);
+
+                    case nameof(IOutlookSession.TryDescribeFolder):
+                        return TestFolders.Describe(args);
 
                     // Arguments 0 and 6 are sinceUtc and perStoreSinceUtc; see
                     // IOutlookSession.SweepFoldersNewerThan.

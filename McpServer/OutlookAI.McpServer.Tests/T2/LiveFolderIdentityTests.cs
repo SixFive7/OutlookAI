@@ -434,7 +434,7 @@ public sealed class LiveFolderIdentityTests
             body: "Folder identity probe " + label + " (Q114).", display: false);
         Assert.False(string.IsNullOrEmpty(draft.EntryId));
         entryIds.Add(draft.EntryId);
-        MoveMailOutcome moved = Service.MoveMail(new[] { draft.EntryId }, path, createFolder: true);
+        MoveMailOutcome moved = Service.MoveMail(new[] { draft.EntryId }, LiveIds.EnsureTestFolder(Service, Hub, path));
         MoveItemView item = Assert.Single(moved.Items);
         Assert.True(item.Ok && item.NewEntryId != null, "move_mail did not file the probe into '" + path + "': " + item.Error);
         entryIds.Add(item.NewEntryId!);

@@ -349,7 +349,7 @@ public sealed class StoreIndexHashScopeTests
 
     private static SearchRequest Request(string store)
     {
-        return new SearchRequest { Query = "test", Store = store, Top = 25, SnippetChars = 0 };
+        return new SearchRequest { Query = "test", StoreId = TestFolders.StoreId(store), Top = 25, SnippetChars = 0 };
     }
 
     private static SearchRequest Unscoped()
@@ -553,7 +553,8 @@ public sealed class StoreIndexHashScopeTests
             return targetMethod?.Name switch
             {
                 nameof(IOutlookSession.GetProfileName) => "T1 stand-in profile",
-                nameof(IOutlookSession.GetStoreDetails) => _stores,
+                nameof(IOutlookSession.GetStoreDetails) => TestFolders.WithRoots(_stores),
+                nameof(IOutlookSession.TryDescribeFolder) => TestFolders.Describe(args),
                 nameof(IOutlookSession.SweepFoldersNewerThan) => _sweep(args?[3] as string),
                 _ => throw new NotSupportedException(
                     "The stand-in session was asked for " + (targetMethod?.Name ?? "an unnamed member")

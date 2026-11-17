@@ -76,13 +76,13 @@ public sealed class LiveHeadlessGuaranteeTests
         _output.WriteLine($"baseline visible Outlook windows: {baseline}");
 
         AssertNoNewWindow(baseline, "list_accounts (repeat)", () => service.ListAccounts());
-        AssertNoNewWindow(baseline, "list_folders", () => service.ListFolders(hub));
+        AssertNoNewWindow(baseline, "list_folders", () => service.ListFolders(LiveIds.StoreId(service, hub)));
         AssertNoNewWindow(baseline, "outlook_health", () => service.Health());
         AssertNoNewWindow(baseline, "list_signatures", () => service.ListSignatures());
 
         SearchOutcome search = AssertNoNewWindow(baseline, "search (hub-scoped, always-fresh)", () => service.Search(new SearchRequest
         {
-            Store = hub,
+            StoreId = LiveIds.StoreId(service, hub),
             Top = 3,
             SnippetChars = 0,
         }));
@@ -130,7 +130,7 @@ public sealed class LiveHeadlessGuaranteeTests
                 _output.WriteLine);
             if (conversations.Count > 0)
             {
-                AssertNoNewWindow(baseline, "thread", () => service.Thread(conversations[0], id: null, store: hub, top: 5));
+                AssertNoNewWindow(baseline, "thread", () => service.Thread(conversations[0], id: null, storeId: LiveIds.StoreId(service, hub), top: 5));
             }
         }
 

@@ -363,7 +363,7 @@ public sealed class TierSemanticsReportingTests
 
     private static SearchRequest ScopedRequest()
     {
-        return new SearchRequest { Query = "test", Store = Store, Top = 25, SnippetChars = 0 };
+        return new SearchRequest { Query = "test", StoreId = TestFolders.StoreId(Store), Top = 25, SnippetChars = 0 };
     }
 
     private static SearchRequest ExhaustiveRequest()
@@ -371,8 +371,8 @@ public sealed class TierSemanticsReportingTests
         return new SearchRequest
         {
             Query = "test",
-            Store = Store,
-            Folder = "Inbox",
+            StoreId = TestFolders.StoreId(Store),
+            FolderId = TestFolders.FolderId(Store, "Inbox"),
             Exhaustive = true,
             Top = 25,
             SnippetChars = 0,
@@ -545,7 +545,10 @@ public sealed class TierSemanticsReportingTests
                     return "T1 stand-in profile";
 
                 case nameof(IOutlookSession.GetStoreDetails):
-                    return _stores;
+                    return TestFolders.WithRoots(_stores);
+
+                case nameof(IOutlookSession.TryDescribeFolder):
+                    return TestFolders.Describe(args);
 
                 // Argument 3 is onlyStoreDisplayName; see IOutlookSession.SweepFoldersNewerThan.
                 case nameof(IOutlookSession.SweepFoldersNewerThan):

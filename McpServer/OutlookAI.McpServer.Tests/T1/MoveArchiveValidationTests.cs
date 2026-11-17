@@ -65,27 +65,36 @@ public sealed class MoveArchiveValidationTests
     [Fact]
     public void DescribeMoveFailure_CrossStore_NamesTheItemStore_AndV1Restriction()
     {
-        string text = MailService.DescribeMoveFailure("CrossStoreTarget:Some Store", "Target", "Other Store", createFolder: false);
+        string text = MailService.DescribeMoveFailure("CrossStoreTarget:Some Store", "Target");
         Assert.Contains("Some Store", text, StringComparison.Ordinal);
-        Assert.Contains("Other Store", text, StringComparison.Ordinal);
+        Assert.Contains("'Target'", text, StringComparison.Ordinal);
         Assert.Contains("same-store only", text, StringComparison.Ordinal);
+        Assert.Contains("find_folder", text, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void DescribeMoveFailure_TargetNotFound_PointsAtCreateFolder_OnlyWhenNotCreating()
+    public void DescribeMoveFailure_TargetNotFound_PointsAtACurrentFolderId()
     {
-        string withoutCreate = MailService.DescribeMoveFailure("TargetFolderNotFound", "A/B", null, createFolder: false);
-        Assert.Contains("create_folder=true", withoutCreate, StringComparison.Ordinal);
-        Assert.Contains("A/B", withoutCreate, StringComparison.Ordinal);
+        // move_mail no longer creates folders (Q134 (i)), so a missing target points at find_folder.
+        string text = MailService.DescribeMoveFailure("TargetFolderNotFound", "A/B");
+        Assert.Contains("A/B", text, StringComparison.Ordinal);
+        Assert.Contains("find_folder", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("create_folder=true", text, StringComparison.Ordinal);
+    }
 
-        string withCreate = MailService.DescribeMoveFailure("TargetFolderNotFound", "A/B", null, createFolder: true);
-        Assert.DoesNotContain("create_folder=true", withCreate, StringComparison.Ordinal);
+    [Fact]
+    public void DescribeMoveFailure_TheTopOfAStore_IsRefusedAsNoFolderMailLivesIn()
+    {
+        string text = MailService.DescribeMoveFailure("TargetIsStoreRoot", "Top");
+        Assert.Contains("top of the store", text, StringComparison.Ordinal);
+        Assert.Contains("create_folder", text, StringComparison.Ordinal);
+        Assert.Equal(MutationOutcome.Unchanged, MailService.MoveFailureOutcome("TargetIsStoreRoot"));
     }
 
     [Fact]
     public void DescribeMoveFailure_DeletedItemsTarget_IsRefusedAsDeletionSemantics()
     {
-        string text = MailService.DescribeMoveFailure("TargetIsDeletedItems", "Deleted Items", null, createFolder: false);
+        string text = MailService.DescribeMoveFailure("TargetIsDeletedItems", "Deleted Items");
         Assert.Contains("deletion semantics", text, StringComparison.Ordinal);
         Assert.Contains("no delete surface", text, StringComparison.Ordinal);
     }
@@ -99,7 +108,7 @@ public sealed class MoveArchiveValidationTests
     [InlineData(null, "unknown")]
     public void DescribeMoveFailure_KnownReasons_MapToActionableText(string? reason, string expectedFragment)
     {
-        string text = MailService.DescribeMoveFailure(reason, "T", null, createFolder: false);
+        string text = MailService.DescribeMoveFailure(reason, "T");
         Assert.Contains(expectedFragment, text, StringComparison.OrdinalIgnoreCase);
     }
 

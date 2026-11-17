@@ -186,7 +186,7 @@ public sealed class LiveDraftTests
         // makes the instance EXIT (D43 idle-self-exit hazard), which kills the rest of the
         // live tier with RPC_S_SERVER_UNAVAILABLE. Give it a hub-scoped Explorer first
         // (S5-safe) so the close can never be the last window.
-        Service.GotoFolder(Hub);
+        Service.GotoFolder(storeId: LiveIds.StoreId(Service, Hub));
 
         // The .Display() case (D4 default behavior; S5: the window shows only
         // agent-authored content plus the hub's own signature).

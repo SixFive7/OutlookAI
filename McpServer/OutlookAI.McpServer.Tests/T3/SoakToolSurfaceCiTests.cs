@@ -16,12 +16,12 @@ namespace OutlookAI.McpServer.Tests.T3;
 /// </summary>
 public sealed class SoakToolSurfaceCiTests
 {
-    /// <summary>The 22 advertised tools after Q93 (exact - a change here is a reviewed surface decision).</summary>
+    /// <summary>The 24 advertised tools after Q134/Q136 added find_folder and create_folder (exact - a change here is a reviewed surface decision).</summary>
     private static readonly string[] ExpectedTools =
     [
         "search", "thread", "read", "save_attachment",
         "move_mail", "archive_mail",
-        "list_accounts", "list_folders", "list_signatures", "manage_signature",
+        "list_accounts", "list_folders", "find_folder", "create_folder", "list_signatures", "manage_signature",
         "open_in_outlook", "goto_folder", "show_search_results",
         "new_draft", "reply_draft", "replyall_draft", "forward_draft",
         "update_draft", "discard_draft",
@@ -29,7 +29,7 @@ public sealed class SoakToolSurfaceCiTests
     ];
 
     [Fact]
-    public async Task ToolCount_IsExactlyTwentyTwo_WithTheExpectedRoster()
+    public async Task ToolCount_IsExactlyTwentyFour_WithTheExpectedRoster()
     {
         await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();
 

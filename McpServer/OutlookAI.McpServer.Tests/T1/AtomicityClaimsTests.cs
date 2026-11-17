@@ -87,7 +87,7 @@ public sealed class AtomicityClaimsTests
     [InlineData(nameof(IOutlookSession.TrySendDraft))]
     [InlineData(nameof(IOutlookSession.TryUpdateDraft))]
     [InlineData(nameof(IOutlookSession.TryDiscardDraft))]
-    [InlineData(nameof(IOutlookSession.TryMoveItemToPath))]
+    [InlineData(nameof(IOutlookSession.TryMoveItemToFolder))]
     [InlineData(nameof(IOutlookSession.TryCreateNewDraft))]
     public void AnInterruptedMUTATION_SaysTheOutcomeIsUnknown(string operation)
     {
@@ -154,7 +154,7 @@ public sealed class AtomicityClaimsTests
         // Row 7. The deadline path is the COMMON way out of a killed child and it was the one
         // without the treatment: nine tools got "the next call starts clean", a statement
         // about the HOST that reads as a statement about the mail.
-        string mutating = OutlookTools.TimeoutAdvice(nameof(IOutlookSession.TryMoveItemToPath));
+        string mutating = OutlookTools.TimeoutAdvice(nameof(IOutlookSession.TryMoveItemToFolder));
 
         Assert.Contains("UNKNOWN", mutating, StringComparison.Ordinal);
         Assert.Contains("look at the current state", mutating, StringComparison.Ordinal);
@@ -269,41 +269,39 @@ public sealed class AtomicityClaimsTests
         Assert.Contains("Nothing was created", failure.Message, StringComparison.Ordinal);
     }
 
-    // ---------------------------------------------------------------- row 6: folders made before a refusal
+    // ---------------------------------------------------------------- row 6: a refused target moves nothing
 
     [Fact]
-    public void AMoveRefusedAfterCreatingFolders_NamesTheFoldersItMade()
+    public void AMoveIntoDeletedItems_IsRefusedForTheWholeCall_BeforeAnyItemIsTouched()
     {
-        // move_mail to 'Deleted Items/foo' with create_folder:true really does create foo
-        // inside Deleted Items and then refuse, because the folder is resolved before the
-        // guard that inspects it. The folder used to be created and never mentioned.
-        RecordingSession session = new RecordingSession
-        {
-            MoveRefusal = "TargetIsDeletedItems",
-            CreatedFolderPaths = new[] { "Deleted Items/foo" },
-        };
+        // Row 6 was a move by PATH with create_folder:true, which made 'foo' inside Deleted Items and
+        // then refused the move. Since Q134 (i) move_mail creates nothing and its target is a folder ID,
+        // opened and checked ONCE before any item: a refused target refuses the call with nothing moved.
+        RecordingSession session = new RecordingSession { DescribedRefusal = "TargetIsDeletedItems" };
         using MailService service = new MailService(new DirectGateway(session.AsSession));
 
-        MoveMailOutcome outcome = service.MoveMail(new[] { ItemId }, "Deleted Items/foo", createFolder: true);
+        OperationOutcomeException failure = Assert.Throws<OperationOutcomeException>(
+            () => service.MoveMail(new[] { ItemId }, TestFolders.FolderId("Work", "Deleted Items/foo")));
 
-        MoveItemView item = Assert.Single(outcome.Items);
-        Assert.False(item.Ok);
-        Assert.Contains("Deleted Items/foo", item.Error!, StringComparison.Ordinal);
-        Assert.Contains("CREATED before this failed", item.Error!, StringComparison.Ordinal);
-        Assert.Equal(new[] { "Deleted Items/foo" }, outcome.CreatedFolders);
+        Assert.Equal(MutationOutcome.Unchanged, failure.Outcome);
+        Assert.Contains("deletion semantics", failure.Message, StringComparison.Ordinal);
+        Assert.Contains("Nothing was moved", failure.Message, StringComparison.Ordinal);
+        Assert.Equal(0, session.MoveCalls);
     }
 
     [Fact]
-    public void AMoveThatFailedWithoutCreatingAnything_SaysNothingAboutFolders()
+    public void AMoveRefusedPerItem_SaysWhy_AndThatNothingMoved()
     {
         RecordingSession session = new RecordingSession { MoveRefusal = "TargetIsOutbox" };
         using MailService service = new MailService(new DirectGateway(session.AsSession));
 
-        MoveMailOutcome outcome = service.MoveMail(new[] { ItemId }, "Outbox", createFolder: true);
+        MoveMailOutcome outcome = service.MoveMail(new[] { ItemId }, TestFolders.FolderId("Work", "Outbox"));
 
         MoveItemView item = Assert.Single(outcome.Items);
-        Assert.DoesNotContain("CREATED before", item.Error!, StringComparison.Ordinal);
-        Assert.Null(outcome.CreatedFolders);
+        Assert.False(item.Ok);
+        Assert.Equal(MutationOutcome.Unchanged, item.Outcome);
+        Assert.Contains("Outbox", item.Error!, StringComparison.Ordinal);
+        Assert.DoesNotContain("CREATED", item.Error!, StringComparison.Ordinal);
     }
 
     // ---------------------------------------------------------------- rows 4 and 16: Ok is a boolean over three states
@@ -314,7 +312,7 @@ public sealed class AtomicityClaimsTests
         RecordingSession session = new RecordingSession { MoveRefusal = "AlreadyInTargetFolder" };
         using MailService service = new MailService(new DirectGateway(session.AsSession));
 
-        MoveItemView item = Assert.Single(service.MoveMail(new[] { ItemId }, "Archive").Items);
+        MoveItemView item = Assert.Single(service.MoveMail(new[] { ItemId }, TestFolders.FolderId("Work", "Archive")).Items);
 
         Assert.False(item.Ok);
         Assert.Equal(MutationOutcome.Unchanged, item.Outcome);
@@ -329,7 +327,7 @@ public sealed class AtomicityClaimsTests
         RecordingSession session = new RecordingSession { MoveRefusal = SpecialFolderGuards.TargetGuardUnreadable };
         using MailService service = new MailService(new DirectGateway(session.AsSession));
 
-        MoveItemView item = Assert.Single(service.MoveMail(new[] { ItemId }, "Projects").Items);
+        MoveItemView item = Assert.Single(service.MoveMail(new[] { ItemId }, TestFolders.FolderId("Work", "Projects")).Items);
 
         Assert.False(item.Ok);
         Assert.Equal(MutationOutcome.Unchanged, item.Outcome);
@@ -548,7 +546,7 @@ public sealed class AtomicityClaimsTests
         RecordingSession session = new RecordingSession { MoveRefusal = "COMException 0x800706BE" };
         using MailService service = new MailService(new DirectGateway(session.AsSession));
 
-        MoveItemView item = Assert.Single(service.MoveMail(new[] { ItemId }, "Archive").Items);
+        MoveItemView item = Assert.Single(service.MoveMail(new[] { ItemId }, TestFolders.FolderId("Work", "Archive")).Items);
 
         Assert.False(item.Ok);
         Assert.Equal(MutationOutcome.Unknown, item.Outcome);
@@ -638,22 +636,37 @@ public sealed class AtomicityClaimsTests
         RecordingSession session = new RecordingSession { NavigationRefusal = "COMException 0x80004005" };
         using MailService service = new MailService(new DirectGateway(session.AsSession));
 
-        OperationOutcomeException failure = Assert.Throws<OperationOutcomeException>(() => service.GotoFolder("Work", "Inbox"));
+        OperationOutcomeException failure = Assert.Throws<OperationOutcomeException>(() => service.GotoFolder(TestFolders.FolderId("Work", "Inbox")));
 
         Assert.Equal(MutationOutcome.Unknown, failure.Outcome);
         Assert.Contains("MAY HAVE MOVED ANYWAY", failure.Message, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void AStoreThatDoesNotExist_StillProvesTheWindowDidNotMove()
+    public void AFolderOutlookCannotOpen_StillProvesTheWindowDidNotMove()
     {
-        RecordingSession session = new RecordingSession { NavigationRefusal = "StoreNotFound" };
+        // The folder's ID was good a moment ago (it was read), and Outlook then would not open it.
+        RecordingSession session = new RecordingSession { NavigationRefusal = "FolderNotFound" };
         using MailService service = new MailService(new DirectGateway(session.AsSession));
 
-        OperationOutcomeException failure = Assert.Throws<OperationOutcomeException>(() => service.GotoFolder("Ghost"));
+        OperationOutcomeException failure = Assert.Throws<OperationOutcomeException>(
+            () => service.GotoFolder(TestFolders.FolderId("Work", "Gone")));
 
         Assert.Equal(MutationOutcome.Unchanged, failure.Outcome);
         Assert.Contains("nothing was opened or moved on screen", failure.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AStoreIdThatNoStoreHas_IsRefusedBeforeTheWindowIsTouched()
+    {
+        RecordingSession session = new RecordingSession();
+        using MailService service = new MailService(new DirectGateway(session.AsSession));
+
+        ArgumentException failure = Assert.Throws<ArgumentException>(
+            () => service.GotoFolder(storeId: TestFolders.StoreId("Ghost")));
+
+        Assert.Contains("No store in this Outlook profile has the ID", failure.Message, StringComparison.Ordinal);
+        Assert.Equal(0, session.NavigationCalls);
     }
 
     [Fact]
@@ -665,7 +678,7 @@ public sealed class AtomicityClaimsTests
         RecordingSession session = new RecordingSession { MoveTimeout = true };
         using MailService service = new MailService(new DirectGateway(session.AsSession));
 
-        MoveItemView item = Assert.Single(service.MoveMail(new[] { ItemId }, "Archive").Items);
+        MoveItemView item = Assert.Single(service.MoveMail(new[] { ItemId }, TestFolders.FolderId("Work", "Archive")).Items);
 
         Assert.False(item.Ok);
         Assert.Equal(MutationOutcome.Unknown, item.Outcome);
@@ -939,7 +952,11 @@ public sealed class AtomicityClaimsTests
 
         internal string? MoveRefusal { get; set; }
 
-        internal IReadOnlyList<string>? CreatedFolderPaths { get; set; }
+        internal string? DescribedRefusal { get; set; }
+
+        internal int MoveCalls { get; private set; }
+
+        internal int NavigationCalls { get; private set; }
 
         internal string? AttachmentRefusal { get; set; }
 
@@ -967,7 +984,15 @@ public sealed class AtomicityClaimsTests
             switch (method.Name)
             {
                 case nameof(IOutlookSession.GetStoreDetails):
-                    return Array.Empty<ComStoreDetail>();
+                    return TestFolders.WithRoots(Array.Empty<ComStoreDetail>());
+
+                case nameof(IOutlookSession.TryDescribeFolder):
+                    ComFolderDetail? described = TestFolders.Describe(args);
+                    return described == null || DescribedRefusal == null
+                        ? described
+                        : new ComFolderDetail(
+                            described.EntryId, described.Name, described.PathSegments, described.StoreDisplayName,
+                            described.StoreEntryId, described.RootFolderEntryId, 0, null, null, false, DescribedRefusal);
 
                 case nameof(IOutlookSession.TryCreateNewDraft):
                 case nameof(IOutlookSession.TryCreateDerivedDraft):
@@ -989,13 +1014,13 @@ public sealed class AtomicityClaimsTests
 
                     return new ComDraftDiscardResult(DraftId, DraftId, "Work", "Drafts", "Deleted Items", "A subject");
 
-                case nameof(IOutlookSession.TryMoveItemToPath):
-                    SetOut(method, args, "createdFolderPaths", CreatedFolderPaths);
+                case nameof(IOutlookSession.TryMoveItemToFolder):
+                    MoveCalls++;
                     if (MoveTimeout)
                     {
                         // What a killed COM host looks like from the parent: no answer, and
                         // no report of what was applied.
-                        throw new TimeoutException("Outlook did not respond to 'TryMoveItemToPath' within 240000 ms.");
+                        throw new TimeoutException("Outlook did not respond to 'TryMoveItemToFolder' within 240000 ms.");
                     }
 
                     if (MoveRefusal != null)
@@ -1045,6 +1070,7 @@ public sealed class AtomicityClaimsTests
 
                 case nameof(IOutlookSession.TryGotoFolder):
                 case nameof(IOutlookSession.TryShowSearchResults):
+                    NavigationCalls++;
                     SetOut(method, args, "error", NavigationRefusal);
                     return null;
 

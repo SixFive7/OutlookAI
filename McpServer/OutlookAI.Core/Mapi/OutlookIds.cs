@@ -137,6 +137,16 @@ namespace OutlookAI.Core.Mapi
         /// <summary>The longest entry id an ID may carry. Store entry ids run to a few hundred bytes; this is far above any.</summary>
         private const int MaxEntryIdBytes = 4096;
 
+        /// <summary>
+        /// The shortest entry id an R or T ID may carry: four flag bytes and a provider UID make every
+        /// MAPI entry id at least this long, so a shorter payload - a word that happens to start with R or T
+        /// and pass the check - is never read as an ID.
+        /// </summary>
+        private const int MinRawEntryIdBytes = 20;
+
+        /// <summary>The shortest spelling that is taken for an attempt at an ID rather than a name, in a refusal.</summary>
+        private const int MinIdLookingLength = 20;
+
         // x^5 + x^2 + 1 as a bit mask, the modulus of the check's field.
         private const int FieldModulus = 0x25;
 
@@ -316,7 +326,7 @@ namespace OutlookAI.Core.Mapi
                         entryId = new byte[ExchangeEntryIdLength];
                         Array.Copy(payload, 0, entryId, 4, 40);
                         break;
-                    case RawFolderKind when payload.Length > 0 && payload.Length <= MaxEntryIdBytes:
+                    case RawFolderKind when payload.Length >= MinRawEntryIdBytes && payload.Length <= MaxEntryIdBytes:
                         entryId = payload;
                         break;
                 }
@@ -351,7 +361,7 @@ namespace OutlookAI.Core.Mapi
             {
                 parts = new StoreIdParts(canonical, ToHex(payload, 0, payload.Length), null);
             }
-            else if (payload != null && canonical[0] == RawStoreKind && payload.Length > 0 && payload.Length <= MaxEntryIdBytes)
+            else if (payload != null && canonical[0] == RawStoreKind && payload.Length >= MinRawEntryIdBytes && payload.Length <= MaxEntryIdBytes)
             {
                 parts = new StoreIdParts(canonical, null, ToHex(payload, 0, payload.Length));
             }
@@ -397,7 +407,7 @@ namespace OutlookAI.Core.Mapi
                     + pointer;
             }
 
-            if (TryReadSymbols(input, out string canonical, out int[] values) && values.Length >= 3)
+            if (LooksLikeAnId(input!) && TryReadSymbols(input, out string canonical, out int[] values))
             {
                 if (!CheckHolds(values))
                 {
@@ -446,7 +456,7 @@ namespace OutlookAI.Core.Mapi
                 return "'" + parameterName + "' is empty. " + pointer;
             }
 
-            if (TryReadSymbols(input, out string canonical, out int[] values) && values.Length >= 3)
+            if (LooksLikeAnId(input!) && TryReadSymbols(input, out string canonical, out int[] values))
             {
                 if (!CheckHolds(values))
                 {
@@ -642,6 +652,30 @@ namespace OutlookAI.Core.Mapi
             }
 
             return written == byteCount && buffer == 0 ? bytes : null;
+        }
+
+        /// <summary>
+        /// Whether a value that is not an ID was MEANT as one - long, upper case, symbols of the alphabet
+        /// only, a kind first - so its refusal talks about a mistyped ID. Everything else is a name or a
+        /// path ("Inbox" spells valid symbols too), and its refusal points at find_folder.
+        /// </summary>
+        private static bool LooksLikeAnId(string input)
+        {
+            string trimmed = input.Trim();
+            if (trimmed.Length < MinIdLookingLength || "PXRST".IndexOf(trimmed[0]) < 0)
+            {
+                return false;
+            }
+
+            foreach (char c in trimmed)
+            {
+                if (c != '-' && Alphabet.IndexOf(c) < 0)
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
 
         private static bool LooksLikeHexEntryId(string input)

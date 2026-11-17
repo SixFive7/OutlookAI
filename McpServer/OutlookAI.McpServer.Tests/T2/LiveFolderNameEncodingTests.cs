@@ -175,14 +175,14 @@ public sealed class LiveFolderNameEncodingTests
 
         if (!c.NeedsHelper)
         {
-            MoveMailOutcome moved = Service.MoveMail(new[] { draft.EntryId }, c.ProductPath, createFolder: true);
+            MoveMailOutcome moved = Service.MoveMail(new[] { draft.EntryId }, LiveIds.EnsureTestFolder(Service, Hub, c.ProductPath));
             MoveItemView item = Assert.Single(moved.Items);
             if (item.Ok && item.NewEntryId != null)
             {
                 c.Placed = true;
                 c.EntryId = item.NewEntryId;
                 entryIds.Add(item.NewEntryId);
-                c.Creation = "move_mail created [" + string.Join(", ", moved.CreatedFolders ?? Array.Empty<string>()) + "]";
+                c.Creation = "create_folder made it, move_mail filed into its ID " + item.ToFolderId;
             }
             else
             {
@@ -439,8 +439,8 @@ public sealed class LiveFolderNameEncodingTests
             outcome = Service.Search(new SearchRequest
             {
                 Query = c.Term,
-                Store = Hub,
-                Folder = folder,
+                StoreId = LiveIds.StoreId(Service, Hub),
+                FolderId = LiveIds.FolderId(Service, Hub, folder),
                 IncludeSubfolders = includeSubfolders,
                 IndexOnly = true,
                 Top = 10,

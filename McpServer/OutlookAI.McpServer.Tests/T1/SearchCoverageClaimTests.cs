@@ -420,8 +420,8 @@ public sealed class SearchCoverageClaimTests
         return new SearchRequest
         {
             Query = "test",
-            Store = Store,
-            Folder = UnindexedFolder,
+            StoreId = TestFolders.StoreId(Store),
+            FolderId = TestFolders.FolderId(Store, UnindexedFolder),
             Top = 25,
             SnippetChars = 0,
         };
@@ -432,8 +432,8 @@ public sealed class SearchCoverageClaimTests
         return new SearchRequest
         {
             Query = "test",
-            Store = Store,
-            Folder = "Inbox",
+            StoreId = TestFolders.StoreId(Store),
+            FolderId = TestFolders.FolderId(Store, "Inbox"),
             Exhaustive = true,
             From = from,
             Top = 25,
@@ -685,7 +685,10 @@ public sealed class SearchCoverageClaimTests
                     return "T1 stand-in profile";
 
                 case nameof(IOutlookSession.GetStoreDetails):
-                    return _stores;
+                    return TestFolders.WithRoots(_stores);
+
+                case nameof(IOutlookSession.TryDescribeFolder):
+                    return TestFolders.Describe(args);
 
                 // Argument 3 is onlyStoreDisplayName; see IOutlookSession.SweepFoldersNewerThan.
                 case nameof(IOutlookSession.SweepFoldersNewerThan):

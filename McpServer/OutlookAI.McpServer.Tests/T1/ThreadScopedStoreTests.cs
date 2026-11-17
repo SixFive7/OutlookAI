@@ -248,7 +248,7 @@ public sealed class ThreadScopedStoreTests
         // other. The answer used to be freshness "live" with degraded absent.
         using MailService service = Service(BothIndexed());
 
-        ThreadOutcome outcome = service.Thread(conversationId: "conv-1", id: AnchorId, store: AliceStore);
+        ThreadOutcome outcome = service.Thread(conversationId: "conv-1", id: AnchorId, storeId: TestFolders.StoreId(AliceStore));
 
         Assert.Equal(new[] { BobStore }, outcome.Live!.StoresNotQueried);
         Assert.Contains(FreshMerge.ThreadGapUnqueriedStore, outcome.Live.CoverageGaps!);
@@ -266,7 +266,7 @@ public sealed class ThreadScopedStoreTests
         // the stronger claim off evidence it can now actually see.
         using MailService service = Service(BothIndexed());
 
-        ThreadOutcome outcome = service.Thread(conversationId: "conv-1", id: AnchorId, store: null);
+        ThreadOutcome outcome = service.Thread(conversationId: "conv-1", id: AnchorId, storeId: null);
 
         Assert.Null(outcome.Live!.StoresNotQueried);
         Assert.Null(outcome.ScopeStore);
@@ -281,7 +281,7 @@ public sealed class ThreadScopedStoreTests
         using MailService service = Service(
             BothIndexed(), new[] { new ComStoreDetail(AliceStore, "store-alice", 0, true) });
 
-        ThreadOutcome outcome = service.Thread(conversationId: "conv-1", id: AnchorId, store: AliceStore);
+        ThreadOutcome outcome = service.Thread(conversationId: "conv-1", id: AnchorId, storeId: TestFolders.StoreId(AliceStore));
 
         Assert.Null(outcome.Live!.StoresNotQueried);
         Assert.Null(outcome.Live.CoverageGaps);
@@ -303,7 +303,7 @@ public sealed class ThreadScopedStoreTests
                 new ComStoreDetail(PstStore, "store-pst", 3, null),
             });
 
-        ThreadOutcome outcome = service.Thread(conversationId: "conv-1", id: AnchorId, store: AliceStore);
+        ThreadOutcome outcome = service.Thread(conversationId: "conv-1", id: AnchorId, storeId: TestFolders.StoreId(AliceStore));
 
         Assert.Equal(new[] { PstStore }, outcome.Live!.StoresWithoutIndex);
         Assert.Null(outcome.Live.StoresNotQueried);
@@ -328,7 +328,7 @@ public sealed class ThreadScopedStoreTests
             new SearchRequest { Query = "test", Top = 25, SnippetChars = 0 });
         string hitId = Assert.Single(search.Hits).Id;
 
-        ThreadOutcome outcome = service.Thread(conversationId: null, id: hitId, store: null);
+        ThreadOutcome outcome = service.Thread(conversationId: null, id: hitId, storeId: null);
 
         Assert.Null(outcome.ScopeStore);
         Assert.True(outcome.ScopeStoreDerived);
@@ -352,7 +352,7 @@ public sealed class ThreadScopedStoreTests
             new SearchRequest { Query = "test", Top = 25, SnippetChars = 0 });
         string hitId = Assert.Single(search.Hits).Id;
 
-        ThreadOutcome outcome = service.Thread(conversationId: null, id: hitId, store: AliceStore);
+        ThreadOutcome outcome = service.Thread(conversationId: null, id: hitId, storeId: TestFolders.StoreId(AliceStore));
 
         Assert.Equal(AliceStore, outcome.ScopeStore);
         Assert.Null(outcome.ScopeStoreDerived);
@@ -375,7 +375,7 @@ public sealed class ThreadScopedStoreTests
                 new ComStoreDetail(PstStore, "store-pst", 3, null),
             });
 
-        ThreadOutcome outcome = service.Thread(conversationId: "conv-1", id: AnchorId, store: PstStore);
+        ThreadOutcome outcome = service.Thread(conversationId: "conv-1", id: AnchorId, storeId: TestFolders.StoreId(PstStore));
 
         Assert.True(outcome.ScopeWidened);
         Assert.Null(outcome.ScopeStore);
@@ -558,7 +558,10 @@ public sealed class ThreadScopedStoreTests
                     return "T1 stand-in profile";
 
                 case nameof(IOutlookSession.GetStoreDetails):
-                    return _stores;
+                    return TestFolders.WithRoots(_stores);
+
+                case nameof(IOutlookSession.TryDescribeFolder):
+                    return TestFolders.Describe(args);
 
                 case nameof(IOutlookSession.SweepFoldersNewerThan):
                     return new ComSweepResult(
