@@ -5342,8 +5342,10 @@ namespace OutlookAI.Core.Services
             "Outlook's Word compose surface could not be obtained, so this draft was composed by the HTMLBody fallback: "
             + "the body sits outside Outlook's own WordSection1 container (it does not inherit the message style), "
             + "an explicit signature override could not be applied, and a signature's linked images were not embedded. "
-            + "The draft was still created and nothing was lost. Retry once - if it keeps happening, Outlook is in a state "
-            + "that refuses an editor; opening any Outlook window (goto_folder) makes the full compose path available again.";
+            + "The draft was still created and nothing was lost. Retry once. If it keeps happening, composeSurfaceError carries "
+            + "Outlook's own error code, and outlook_health says whether Outlook is starting or busy. An open Outlook window "
+            + "(goto_folder) helps only while it stays open: the editor was measured to come back with a window and to be lost "
+            + "again when that window closed.";
 
         // ------------------------------------------------------------------ update / discard drafts (D46, soak fix 19)
 

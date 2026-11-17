@@ -1049,6 +1049,12 @@ its mailbox tests on, and change nothing you install.
   the failure's type and HRESULT after a colon - in the audit line, on the wire and in update_draft's
   compose_surface_unavailable refusal - where the bare word made every refusal look the same.
 
+- 🐛 **A draft written without Word's editor no longer advises that opening a window fixes it for good.**
+  The advice said opening any Outlook window makes the full compose path available again. Measured
+  on Office LTSC 2021 (D48), the editor came back with a window and was lost again when that window
+  closed. It now says a window helps only while it stays open, and points at composeSurfaceError,
+  which carries Outlook's own error code, and at outlook_health.
+
 - 🐛 **Writing a new draft, reply or forward no longer crashes Outlook now and then.**
   OutlookAI wrote each draft in a hidden compose window opened on the item Outlook had just created,
   and closed that window when it was done. Closing it crashed Outlook, inside Outlook itself, about once
