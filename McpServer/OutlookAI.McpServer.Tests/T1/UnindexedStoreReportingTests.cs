@@ -252,7 +252,7 @@ public sealed class UnindexedStoreReportingTests
         return new SearchRequest
         {
             Query = "test",
-            BeforeUtc = DateTime.UtcNow - TimeSpan.FromDays(90),
+            BeforeUtc = Frontier.AddDays(-90),
             Top = 25,
             SnippetChars = 0,
         };

@@ -1758,6 +1758,49 @@
     - the system32 session: `C--WINDOWS-system32\6c9c2c07-aff8-4d3a-b38c-fe8a18e27fd6.jsonl`;
     - the earlier outlookai use: `C--Users-<user>-Downloads\19c2d4d8-e339-4d1b-a4c4-0d75b56f8e30.jsonl`.
 
+- [ ] **Fold every duplicated piece of code into one copy, and let the add-in use OutlookAI.Core
+  (Q154, decided 2026-11-17).** The maintainer: *"Q154 b - refactor everything to bring this pattern
+  everywhere relevant. I want as much code shared as possible. And as a rule no code duplicated."*
+  (`AGENTS.md`, Shared code; `QUESTIONS.md` decision log, 2026-10-11 and 2026-11-17). First the
+  add-in references Core's net48 build behind a small interface, which ends the "Phase-6 no-coupling
+  choice" (the gitignored v3.MD, lines 64, 79-80, 144, 184 and 264, and the comment at the top of the
+  add-in's signature catalog). Q162's signature choice is built on that reference, and Q145's writer
+  of an account's offline period goes into Core for the same reason. Then the copies go. A read-only
+  survey of master 9f4646d, made 2026-11-17, found 73 groups: the add-in against Core (A01-A12, the
+  signature catalog and the signature and draft-region bookmark code among them), the add-in's
+  linked source files (L01-L13), the server's own repetition (S01-S14), test doubles and helpers
+  (T01-T16), PowerShell helpers restated across scripts (P01-P13, of which P13 lists same-named
+  functions that are NOT duplicates) and values mirrored across languages (X01-X05). Each group has
+  its copies, how they diverged, a target home, its blockers and a stage of the survey's refactor
+  plan. It is in `.work\dup-survey-2026-11\` of the maintainer's checkout - README.txt,
+  inventory.tsv (one row a group), members.tsv (every copy's file and lines) and the detectors' raw
+  output - which is gitignored, so not in a clone. How far, and in what order, is asked as Q163
+  onwards, not answered yet.
+
+- [ ] **Let the add-in's AI choose the signature by itself, once the add-in uses OutlookAI.Core (Q158
+  and Q162, decided 2026-11-17).** Signatures are managed through the MCP server only; the add-in
+  gets no editor, list or dropdown, because Outlook has its own (Q158). It gets one checkbox
+  instead, "Allow the AI to automatically choose the correct signature", on by default. With it on,
+  the AI picks the signature when it writes or rewrites the body, and when a reply or forward opens,
+  matching the language of the mail being answered - the maintainer's example is his "kind regards"
+  and "vriendelijke groeten" signatures - from the signatures the sending account can use. It never
+  replaces a signature someone chose by hand, and never changes a mail as it is sent (Q162 (b)). It
+  uses Core's signature code, not the add-in's own copy, so it waits for the Core reference above
+  (Q154). Today the task pane's "Select the best signature" does this by hand, through that copy.
+
+- [ ] **Remove the Cached Mode policy values OutlookAI 3.0.0.319 to 3.1.0.325 wrote, when the
+  maintainer says so (Q151 (a), decided 2026-11-17).** Those versions wrote the five values as
+  Outlook policies under `HKCU\Software\Policies` wherever the user's token could - the maintainer's
+  workstation since 2026-07-23. Under Q145 (a) OutlookAI writes no policies any more; these stay
+  where they are, labelled in OutlookAI Settings as "Set by an earlier OutlookAI". In his words:
+  *"Q151 a - So I can see how it looks in our gui. Then after I will tell you to remove them."* When
+  he does: first set each account's own offline period to All - in Account Settings, or through the
+  account's own profile value once OutlookAI writes it (Q145) - and only then remove the values. A
+  policy overrides an account's own period without changing it: one account on his workstation
+  reads 12 months under the policy's All, and removing the policy alone would make Outlook drop that
+  account's offline mail older than 12 months (inferred from Microsoft's KB 2733062).
+  `Tuning\Applied` records which values OutlookAI wrote itself.
+
 - [ ] **Read the next `wwlib.dll` crash's dump, if there is one, and say whether it was the compose crash**
   (runbook 4.6, item 8). OUTLOOK.EXE died once in Word on `OutlookAI-Indexed` (4.2f run 4, 2026-10-03), in
   `NewDraft_Hub_SignatureOverride`, before the guests kept dumps. Every crash caught since was
@@ -1831,12 +1874,53 @@
   every test whose product call converts in the machine's zone, `MailService.ToUtc` (122 tests)
   among them, the Q95 kind. Recommended: (1) now, and (3) for each function as it is next changed.
 
+- [ ] **`T1.AuditLogStressTests`' lock-on test fails on a CPU-starved machine: writers wait out the
+  2 s writer lock and append without it (2026-11-17).** The test
+  `EightWriterProcesses_OnBothRuntimes_WithTheLock_KeepEveryLineWhole_AndTheFileInTimeOrder`
+  failed on both build clones while three build runs
+  and four Outlook guests ran at once (host CPU 82 to 100 %; runs `20261117-172008-00acbed007ec` and
+  `20261117-172021-00acbed007ec` of the worktree `stream-f-vm-pool`), and the four stress tests passed
+  4 of 4 alone on one of those clones three minutes later (`20261117-174013-00acbed007ec`). The
+  assertion that failed is the first, `LinesWithoutWriterLock` 0 - 12 lines on one clone, 1 on the
+  other - not the time order. The test's own output says why: each writer's append took 550 to 600 ms
+  at the median and 2.0 to 2.4 s at p99 (max 3.3 s), against milliseconds on a quiet machine, so
+  writers waited longer than `AuditLog.WriterLockWaitMilliseconds` (2,000) and appended without the
+  lock, as designed and marked `lock="timeout"` on the line (`lockTimeouts` per writer 0 to 2, summing
+  to the 12). The 5 time inversions on the first clone (0 on the second) came with those lines; the
+  timestamp itself is taken under the lock (`AuditLog.WriteOneLine`, inside `AppendTo`'s `using` of
+  the lock), so a stamp taken before the lock is ruled out by the code - that the inversions are
+  exactly the unlocked lines is consistent with the numbers, not proven, because the log is deleted
+  with the test. Directions: (1) the test asserts what the product promises - every line without
+  the lock says `timeout`, and the LOCKED lines are in time order (`CountTimeInversions` with
+  `lockedOnly: true`, as its other test already does) - and reports the rest; (2) it measures its own
+  append latency and says NOT PROVEN instead of failing when the machine is starved; (3) a longer lock
+  wait in the product - longer stalls of drafts and sends behind a slow writer; (4) the stress tests
+  in a pass of their own, alone on the VM. Recommended: (1).
+
+- [ ] **Decide whether the VM pools keep CPU free for the maintainer, as they keep memory free
+  (2026-11-17).** The pools (`Testbed/host/TestbedPool.ps1`) start a member other than the first only
+  while the host has its memory and 16 GB more available, and nothing looks at CPU. From 17:20 to 17:40
+  that day three build runs and four Outlook guests ran at once: the host's 32 logical processors read
+  82 to 100 % busy for the whole minute sampled, each build run took 17 to 19 minutes instead of 9 to
+  10, and one timing-sensitive test (`T1.AuditLogStressTests`, eight writers checked for time order)
+  failed on both build clones and passed alone minutes later (`Docs/live-tier-on-the-vm.md` section
+  4.7). Directions: (1) leave it - the most runs at once, a busy PC while they overlap; (2) a CPU gate
+  beside the memory one: a member other than the first starts only while the host's CPU, sampled over
+  a few seconds, is under a threshold, else the run waits; (3) cap each testbed VM with Hyper-V
+  (`Set-VMProcessor -Maximum`), so no VM can take all of its virtual processors' share; (4) fewer or
+  smaller clones - one build clone, or clones with 2 virtual processors. Recommended: (2), at 75 %:
+  it keeps every run the pools allow today when the PC is quiet, and stops adding load when it is not.
+
+
 - [ ] **Waiting for the shared test mailbox (Q109).** The maintainer requested a free shared
   mailbox in his Microsoft 365 tenant on 2026-10-03 (for example `outlookai-test@xxlnet.nl`, with
   full access for `telefonie@xxlnet.nl`). On 2026-10-08 it did not exist yet; creating it lies with
   Melvin. Until it exists, the six `Requires=DelegateStore` Exchange tests stay disabled on the
   Exchange test VM. Once it does: enable them there, and move test writes from telefonie into the
   shared mailbox wherever a test allows it (Q110).
+  Then also read which signature, if any, Outlook itself puts in a reply from that mailbox, and give
+  OutlookAI's reply drafts there the same (Q160, decided 2026-11-17). Until then a reply from a
+  delegate or shared mailbox gets no signature, and its result says so.
 
 - [ ] **Approve, amend or refuse the Exchange VM's Phase 2 write-safety design** (proposed
   2026-10-03, `Docs/live-tier-on-the-vm.md` section 4.4). Until then `OutlookAI-Exchange` is
@@ -1872,9 +1956,17 @@
   instead of being filtered out. (3) The five `T2/LiveSearchInTests` throw NullReference when the
   settings carry no `subjectOnlyProbe` instead of refusing with the remedy.
 
-- [ ] **Stop D49's lifetime pins being left behind - and decide whether S6 needs anything of its own
-  (Q118, measured 2026-10-03 on `OAI-UNINDEXED`; `McpServer/Docs/com-host.md`, "Pins left behind,
-  measured").** A session pins only when it finds no Explorer, so against a user's open Outlook no
+- [ ] **Stop D49's lifetime pins being left behind, once Q149's measurement has said whether pins
+  stay (Q118 (a), approved 2026-10-11, on hold for Q149).** Approved: a per-user list of live
+  sessions and the pins they made, by owner PID and pin window handle; the last session out closes
+  the pin; the pins of dead sessions are closed; `outlook_health` lists the sessions; and a
+  machine-wide lock, so sessions that start Outlook at once make one pin. The window handles also let
+  the show-me path recognise a pin (S6, below). On hold because Q149 (d) measures first and then
+  chooses between keeping Word with pins made only while drafting - then build (a) for those pins -
+  and writing drafts as HTML with no compose window and no pins - then this item goes
+  (`QUESTIONS.md` decision log, 2026-10-11 and 2026-11-17). **Measured** 2026-10-03 on
+  `OAI-UNINDEXED` (`McpServer/Docs/com-host.md`, "Pins left behind, measured"): a session pins only
+  when it finds no Explorer, so against a user's open Outlook no
   pin is ever made (11 sessions, 0 pins). A pin is LEFT when its maker did not start Outlook - sessions
   that connect while Outlook is starting or running window-less all pin, and none of them closes its
   own (2 at once left 1, 3 at once left 3) - or when the maker's COM host is killed. A pin left keeps a
@@ -1882,16 +1974,18 @@
   the window they had opened over it (2 of 2); File > Exit did. **S6 is true in one state:** after
   that close, `ActiveExplorer()` returns the hidden pin, the show-me path's `Activate()` makes it
   visible, and the user's close of it ends Outlook - harmless there, because the close raised Quit
-  and dropped every attached session, so the pin had no live owner. Directions: (1) a pin lives as
-  long as the session that made it, closed on exit whether or not that session started Outlook;
-  (2) one pin per Outlook, made under a machine-wide mutex, so a cold-start race makes one;
-  (3) a per-user registry of live sessions and the pins they made, by owner PID and pin window
-  handle: the last session out closes the pins, and a session that finds a pin whose owner is dead
-  closes it - which also lets `outlook_health` name the other sessions and lets the show-me path
-  recognise a pin by its window (S6); (4) document it and leave the code. Recommended: (3) - (1)
-  alone makes a session's exit end Outlook under every other session, the cost measured for starters
-  today (the next call answers `OutlookStarting` and restarts it), and (2) alone still leaves the
-  winner's pin when the winner did not start Outlook.
+  and dropped every attached session, so the pin had no live owner. **What the research of
+  2026-10-11 found (a) also needs** (`.work\research-2026-10-11\q118-tray\report.md` of the
+  maintainer's checkout, gitignored): record who started this OUTLOOK.EXE once per process, not per
+  session, because a starter that leaves first ends Outlook under the others today; close only pins
+  recorded by window handle, never a visible window or another program's hidden Explorer; while
+  another session lives, adopt a dead session's pin rather than close it, since closing the only
+  Explorer ends Outlook under everyone; let any session that hears Quit close the shared pin, so the
+  user's exit wins for every session; mark "Outlook is exiting" across processes, so a new server's
+  first call waits for that process to end instead of starting another; have `outlook_health` also
+  say who started Outlook and what will end it; and rewrite `README.md`'s "Outlook Lifetime and the
+  Tray Icon", which predates pins. Never measured: the tray icon in any of these states, and what its
+  Exit Now does to a pinned Outlook.
 
 - [ ] **Let the count tripwire's census read a table date by its column spelling too.**
   `CensusTableRow.ReadUtc` still calls the one-argument `ComDateValue.FromTableValue`, which takes every
