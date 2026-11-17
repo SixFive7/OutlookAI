@@ -140,6 +140,8 @@ $WorkingDirectory = Join-Path $env:SystemRoot 'System32'
 $InclusionKey = 'Software\Microsoft\VSTO\Security\Inclusion'
 $RootCertificatesKey = 'Software\Microsoft\SystemCertificates\Root\Certificates'
 $StillActive = 259
+# The installer's uninstall registration: Installer.iss's AppId, per user.
+$UninstallKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{78AF2871-0CEB-4451-B80D-455552E37C91}_is1'
 
 $script:NativeSource = @'
 using System;
@@ -459,6 +461,8 @@ function Invoke-SelfTest {
         Check 'Installer.iss still deletes from the other stores with Scope + -delstore + Store + thumbprint' ($issText.Contains("Scope + '-delstore ' + Store + ' {#CompromisedCertThumbprint}'"))
         Check 'Installer.iss still gives the user scope as -user' ($issText.Contains("DeleteCompromisedCertificateFromStores('-user ', '{#CompromisedCertUserStores}');"))
         Check 'Installer.iss still names this Inclusion key' ($issText.Contains("'" + $InclusionKey + "'"))
+        $appId = [regex]::Match($issText, '(?m)^AppId=\{\{([0-9A-F-]{36})\}').Groups[1].Value
+        Check 'the uninstall registration this probe reads is Installer.iss''s AppId' ($appId -and $UninstallKey.EndsWith('\{' + $appId + '}_is1'))
         $modulus = $null
         try { $modulus = Get-CompromisedModulus $issText } catch { Write-Host "  $($_.Exception.Message)" }
         Check 'Installer.iss defines the leaked key''s modulus once, canonical, 128 bytes' ($null -ne $modulus -and ([Convert]::FromBase64String($modulus)).Length -eq 128)
@@ -948,7 +952,7 @@ function Wait-ProcessGone([string[]] $Names, [int] $Seconds) {
 function Start-InstallerRound([string] $Round, [string] $Log) {
     $arguments = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', ('/LOG="' + $Log + '"'))
     if ($Round -eq 'install') { return (Start-Process -FilePath $InstallerPath -ArgumentList $arguments -PassThru -WindowStyle Hidden) }
-    $u = Get-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{78AF2871-0CEB-4451-B80D-455552E37C91}_is1' -ErrorAction Stop
+    $u = Get-ItemProperty -LiteralPath $UninstallKey -ErrorAction Stop
     return (Start-Process -FilePath ([string]$u.UninstallString).Trim('"') -ArgumentList $arguments -PassThru -WindowStyle Hidden)
 }
 
@@ -976,15 +980,21 @@ function Invoke-InstallerCleanup {
         if ($ended) { $code = $p.ExitCode }
         $after = @(Get-InclusionNames)
         $verdict = Get-CleanupVerdict -Planted $planted -NamesAfter $after -KeptBefore $existing
+        # Whether the round did its job at all: installed, or uninstalled - its registration gone.
+        $registered = Test-Path -LiteralPath $UninstallKey
+        if ($round -eq 'install' -and -not $registered) { $verdict = [pscustomobject]@{ Verdict = 'FAIL'; Problems = @($verdict.Problems) + @('the installer left no uninstall registration - it did not install') } }
+        if ($round -eq 'uninstall' -and $registered) { $verdict = [pscustomobject]@{ Verdict = 'FAIL'; Problems = @($verdict.Problems) + @("the uninstaller did not uninstall (exit $code): on a testbed guest, whose add-in was first installed from an elevated task, run this scenario at -RunLevel Highest") } }
         if ($verdict.Verdict -ne 'PASS') { $allPass = $false }
         $removedLines = @()
-        if (Test-Path -LiteralPath $log) { $removedLines = @(Get-Content -LiteralPath $log | Where-Object { $_ -match 'VSTO trust entry|compromised' }) }
+        # Plain strings: Get-Content's lines carry their PSDrive and PSProvider, which ConvertTo-Json
+        # under Windows PowerShell 5.1 walks ten levels deep - gigabytes, measured on the first run.
+        if (Test-Path -LiteralPath $log) { $removedLines = @([System.IO.File]::ReadAllLines($log) | Where-Object { $_ -match 'VSTO trust entry|compromised' }) }
         Write-Host ("   {0} exit {1} after {2} s (settled {3}); entries after: {4}; verdict {5}" -f $round, $code, [Math]::Round($clock.Elapsed.TotalSeconds, 1), $settled, $after.Count, $verdict.Verdict)
         foreach ($pr in $verdict.Problems) { Write-Host "   PROBLEM: $pr" }
         foreach ($l in $removedLines) { Write-Host "   log: $l" }
         $result.rounds += [pscustomobject]@{
             name = $round; exitCode = $code; ended = $ended; settled = $settled; seconds = [Math]::Round($clock.Elapsed.TotalSeconds, 1)
-            existingBefore = $existing; planted = $planted; namesAfter = $after; verdict = $verdict.Verdict; problems = $verdict.Problems; logLines = $removedLines; log = $log
+            existingBefore = $existing; planted = $planted; namesAfter = $after; registeredAfter = $registered; verdict = $verdict.Verdict; problems = @($verdict.Problems); logLines = $removedLines; log = $log
         }
     }
     $result.verdict = $(if ($allPass) { 'PASS' } else { 'FAIL' })

@@ -2,9 +2,9 @@
 <#
 .SYNOPSIS
     Runs Testbed/guest/Measure-TrustRemoval.ps1 on an Outlook test guest in ONE call: the lease, the
-    guest's frozen checkpoint, the staging, the probe in the interactive session at RunLevel Limited,
-    the results fetched - and then the checkpoint restored, the guest saved and the lease released, on
-    every path.
+    guest's frozen checkpoint, the staging, the probe in the interactive session (RunLevel Limited
+    unless told otherwise), the results fetched - and then the checkpoint restored, the guest saved
+    and the lease released, on every path.
 
 .DESCRIPTION
     The probe adds a throwaway certificate to the guest user's Root store, plants VSTO trust entries
@@ -20,7 +20,8 @@
       4. STAGE   C:\OutlookAI-Q5\trust-removal\: the probe, Register-InteractiveTask.ps1 and
                  OutlookMapiInterop.ps1 from this checkout, and for InstallerCleanup the installer and
                  the Installer.iss it was compiled from.
-      5. RUN     the probe through Register-InteractiveTask.ps1 -RunLevel Limited, with -Execute.
+      5. RUN     the probe through Register-InteractiveTask.ps1 at -RunLevel (Limited unless
+                 -RunLevel says Highest), with -Execute.
       6. FETCH   its JSON, logs and certificate into .work\trust-removal-runs\<run>\ of this checkout.
       7. REST    the frozen checkpoint restored again, the guest SAVED, the lease released.
 
@@ -46,6 +47,12 @@
 .PARAMETER HoldSeconds
     RootStorePrompt: how long the probe leaves a removal prompt unanswered.
 
+.PARAMETER RunLevel
+    Limited (the default): not elevated, the token a per-user installer and an auto-update get.
+    Highest: elevated - for InstallerCleanup on a guest whose add-in was installed elevated
+    (Testbed/guest/Install-OutlookAIAddIn.ps1 -Phase Install runs the installer from an elevated
+    task), because that install's uninstaller asks Windows for elevation, which nobody answers there.
+
 .PARAMETER CredentialRepoRoot
     The checkout holding the gitignored guest credential (Get-GuestCredential.ps1). Default: the
     main checkout of this repository, found through git.
@@ -66,6 +73,7 @@ param(
     [ValidateSet('', 'RootStorePrompt', 'InstallerCleanup')] [string] $Scenario = '',
     [string] $InstallerPath,
     [int]    $HoldSeconds = 120,
+    [ValidateSet('Limited', 'Highest')] [string] $RunLevel = 'Limited',
     [string] $CredentialRepoRoot,
     [switch] $Execute,
     [switch] $SelfTest
@@ -228,7 +236,7 @@ $runId = '{0:yyyyMMdd-HHmmss}-{1}-{2}' -f (Get-Date), $Scenario, $sha.Substring(
 $runDir = Join-Path $repo ".work\trust-removal-runs\$runId"
 $command = Get-ProbeCommand -Scenario $Scenario -HoldSeconds $HoldSeconds -WithInstaller ($Scenario -eq 'InstallerCleanup') -InstallerName ([System.IO.Path]::GetFileName([string]$InstallerPath))
 
-Write-Host "== Invoke-TrustRemovalProbe: $Scenario on $VMName, from and resting on $checkpoint"
+Write-Host "== Invoke-TrustRemovalProbe: $Scenario on $VMName at RunLevel $RunLevel, from and resting on $checkpoint"
 Write-Host "   revision  $sha$(if ($dirty.Count -gt 0) { " - NOTE: $($dirty.Count) of the staged files differ from it; the run stages the working tree's copies" })"
 Write-Host "   probe     $command"
 Write-Host "   results   $runDir"
@@ -285,14 +293,14 @@ try {
     Say "staged $($stage.Count) file(s) in $GuestDir"
 
     & (Join-Path $PSScriptRoot 'Set-TestbedLease.ps1') -VMName $VMName -Minutes 60 -Reason "$LeaseReasonPrefix $runId" | Out-Null
-    Say "running the probe at RunLevel Limited (up to $ProbeTimeoutSeconds s)"
+    Say "running the probe at RunLevel $RunLevel (up to $ProbeTimeoutSeconds s)"
     $out = Invoke-Command -Session $session -ScriptBlock {
-        param($dir, $text, $timeout)
+        param($dir, $text, $timeout, $level)
         $ErrorActionPreference = 'Continue'
         Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
-        try { & (Join-Path $dir 'Register-InteractiveTask.ps1') -Script $text -TimeoutSeconds $timeout -RunLevel Limited *>&1 | Out-String -Width 400 } catch { "GUEST-CALL-THREW: $($_.Exception.Message)" }
+        try { & (Join-Path $dir 'Register-InteractiveTask.ps1') -Script $text -TimeoutSeconds $timeout -RunLevel $level *>&1 | Out-String -Width 400 } catch { "GUEST-CALL-THREW: $($_.Exception.Message)" }
         "PROBE-TASK-EXIT: $LASTEXITCODE"
-    } -ArgumentList $GuestDir, $command, $ProbeTimeoutSeconds 2>&1 | Out-String -Width 400
+    } -ArgumentList $GuestDir, $command, $ProbeTimeoutSeconds, $RunLevel 2>&1 | Out-String -Width 400
     [System.IO.File]::WriteAllText((Join-Path $runDir 'probe.out.txt'), $out)
     Write-Host $out
     $exit = Get-TaskExit $out

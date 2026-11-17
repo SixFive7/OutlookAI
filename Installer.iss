@@ -505,9 +505,10 @@ const
 // answer Windows' question.
 //
 //  * In it means in the user's own Root store: the certificate's key under UserRootCertificateKey,
-//    where certutil -user -addstore Root puts it. The user's view of Root also lists the computer's
-//    roots, which this user cannot remove - so the question is never put about one of those, and the
-//    normal machine, the certificate in no Root store, starts no certutil here at all.
+//    which is where a certificate the user added to Root is kept (measured). The user's view of Root
+//    also lists the computer's roots, which this user cannot remove - so the question is never put
+//    about one of those, and the normal machine, the certificate in no Root store, starts no
+//    certutil here at all.
 //  * An interactive install or uninstall says why in one sentence first, then lets Windows ask, and
 //    waits for the answer: the user is at the screen, and the setup window waits behind the question.
 //  * A silent run - the add-in's own updates are /SILENT - never asks and never waits: it leaves the
