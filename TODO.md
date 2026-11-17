@@ -1953,20 +1953,21 @@
   the hidden `ApplicationDataRoot` folder itself stays a separate decision. The mailbox's signature
   data is never written.
 
-- [ ] **Delete the one tagged leftover in telefonie's Sent Items once the maintainer has confirmed its id
-  (Q138 (c), decided 2026-11-17).** Found read-only on 2026-11-17: subject `[OutlookAI-McpTest]
+- [ ] **Delete the one tagged leftover in the Exchange VM mailbox's Sent Items once the maintainer has
+  confirmed its id (Q138 (c), decided 2026-11-17).** Found read-only on 2026-11-17: subject `[OutlookAI-McpTest]
   d3994a2ad25309442 d39 move seed`, sent 2026-07-26 03:46:54 (W. Europe), EntryID beginning
-  `000000009D47E954`, in telefonie@'s Sent Items; nothing else tagged in either mailbox. After his
+  `000000009D47E954`, in the real mailbox's Sent Items; nothing else tagged in either mailbox. After his
   confirmation: delete exactly that EntryID - EntryID allowlist AND ordinal tag match - through tested
-  helper code and the suite, then remove it from Deleted Items too. The only write telefonie@ ever gets.
+  helper code and the suite, then remove it from Deleted Items too. The only write the real mailbox
+  ever gets.
 
-- [ ] **Decide what to do about the test account's automapping into telefonie.** Since the test account
-  joined the profile, Outlook shows a THIRD store, "Telefonie XXLNet": the test account's mailbox once
-  more, as an online delegate store under telefonie's account - Exchange automaps a mailbox to a user
-  with Full Access to it, so telefonie holds Full Access to the test account (a tenant setting, not the
-  VM's). The settings leave it undeclared: it is the hub seen through another account, so a census of it
+- [ ] **Decide what to do about the test account's automapping into the Exchange VM's mailbox.** Since
+  the test account joined the profile, Outlook shows a THIRD store, named by the test account's display
+  name: the test account's mailbox once more, as an online delegate store under the real mailbox's
+  account - Exchange automaps a mailbox to a user with Full Access to it, so the real mailbox holds Full
+  Access to the test account (a tenant setting, not the VM's). The settings leave it undeclared: it is the hub seen through another account, so a census of it
   would read the hub's own test traffic as a loss, and the write guards refuse it by name. Directions:
-  (1) remove telefonie's Full Access, or re-grant it with automapping off (Melvin, in the tenant); (2)
+  (1) remove that Full Access, or re-grant it with automapping off (a colleague, in the tenant); (2)
   keep it and let it stand in for the shared test mailbox of Q109 for the read-only `DelegateStore`
   tests - it is a real delegate store, but its contents are the hub's churn, so the census would need to
   treat it as the hub; (3) keep it undeclared, as now. Recommended: (1) if the shared mailbox of Q109 is

@@ -64,8 +64,8 @@ if ($SelfTest) {
     function Check([string] $Name, $Expected, $Actual) {
         if ("$Expected" -ceq "$Actual") { Write-Host "  PASS  $Name" } else { $script:fails++; Write-Host "  FAIL  $Name - expected '$Expected', got '$Actual'" }
     }
-    $names = @('telefonie@xxlnet.nl.ost', 'b@x.ost', 'archive.pst', 'old.ost.stale-20261008T120000Z', 'x.nst', '', 'UPPER.OST')
-    Check 'only the .ost files are set aside, sorted' 'b@x.ost|telefonie@xxlnet.nl.ost|UPPER.OST' ((Get-StoresToSetAside $names) -join '|')
+    $names = @('mailbox@example.invalid.ost', 'b@example.com.ost', 'archive.pst', 'old.ost.stale-20261008T120000Z', 'x.nst', '', 'UPPER.OST')
+    Check 'only the .ost files are set aside, sorted' 'b@example.com.ost|mailbox@example.invalid.ost|UPPER.OST' ((Get-StoresToSetAside $names) -join '|')
     Check 'none in an empty folder' 0 @(Get-StoresToSetAside @()).Count
     Check 'the aside name carries the UTC stamp' 'a.ost.stale-20261008T153000Z' (Get-SetAsideName 'a.ost' ([DateTime]::SpecifyKind([DateTime]::new(2026, 10, 8, 15, 30, 0), [DateTimeKind]::Utc)))
     Write-Host ''

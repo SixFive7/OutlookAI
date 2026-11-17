@@ -146,6 +146,11 @@
     Replace an existing file OUTSIDE every git working tree. Inside one - which means under its
     .work\ - a previous render is replaced without it.
 
+.PARAMETER CredentialRoot
+    The Exchange VM only: the checkout whose gitignored live-fixtures hold its credential files, from
+    which the addresses its placeholders stand for are read (Q189 (b)). Default: the main checkout of
+    -RepoRoot's repository, which is where they live - a worktree has none.
+
 .PARAMETER SelfTest
     Run the decision tests and exit. Reads the committed template and testbed.json, and writes
     only a scratch directory under .work\ that it removes again: no guest, no COM, no registry,
@@ -171,6 +176,7 @@ param(
     [Parameter(Mandatory = $true, ParameterSetName = 'Render')] [string] $VMName,
     [Parameter(ParameterSetName = 'Render')] [string] $OutPath,
     [Parameter(ParameterSetName = 'Render')] [switch] $Force,
+    [Parameter(ParameterSetName = 'Render')] [string] $CredentialRoot,
     [Parameter(Mandatory = $true, ParameterSetName = 'SelfTest')] [switch] $SelfTest,
     [string] $RepoRoot,
     [string] $TemplatePath,
@@ -1636,6 +1642,90 @@ function ConvertTo-SelfTestText {
     return [string] $Value
 }
 
+<#
+    THE EXCHANGE VM'S ADDRESSES ARE NOT IN testbed.json (Q189 (b), decided by the maintainer
+    2026-11-17). Its mailboxes are real, so the record names each by a PLACEHOLDER under the reserved
+    .invalid domain - '<role>@exchange-vm.invalid', in exchangeVm.accounts and in the VM's
+    liveTestSettings section alike - and the address is read at render time from the account's own
+    gitignored credential file: the "account" field of exchangeVm.accounts' credentialFile, in the
+    main checkout's live-fixtures, through Get-ExchangeCredential.ps1 -AddressOf, which decrypts
+    nothing. The guest's Outlook is the cross-check at run time: T2/LiveMailboxIdentity.cs refuses
+    the tier unless the hub the rendered file names is an account signed in there (Q189 (d)).
+#>
+$script:ExchangeAddressPlaceholder = '^(?<role>[a-z]+)@exchange-vm\.invalid$'
+
+# Every placeholder a JSON node holds, anywhere in it, sorted and once each.
+function Get-ExchangeAddressPlaceholders {
+    param($Node)
+    $found = New-Object System.Collections.Generic.List[string]
+    $stack = New-Object System.Collections.Generic.Stack[object]
+    $stack.Push($Node)
+    while ($stack.Count -gt 0) {
+        $n = $stack.Pop()
+        if ($null -eq $n) { continue }
+        if ($n -is [string]) {
+            if ($n -cmatch $script:ExchangeAddressPlaceholder) { $found.Add($n) }
+            continue
+        }
+        if ($n -is [System.Array]) { foreach ($x in $n) { $stack.Push($x) }; continue }
+        if (Test-IsJsonObject $n) { foreach ($p in $n.PSObject.Properties) { $stack.Push($p.Value) } }
+    }
+    return @($found | Sort-Object -Unique)
+}
+
+# Role -> address, one per account exchangeVm.accounts records, each read by $AddressOf from the
+# account's credential file. Two roles naming one mailbox are refused: the hub and a bystander would
+# be the same store, written and watched at once.
+function Get-ExchangeAddressMap {
+    param([object[]] $Accounts, [scriptblock] $AddressOf)
+    $map = @{}
+    foreach ($a in @($Accounts | Where-Object { $null -ne $_ })) {
+        $role = [string]$a.role
+        $file = [string]$a.credentialFile
+        if (-not $role -or -not $file) { throw "REFUSING: every account exchangeVm.accounts records needs a role and a credentialFile (Q189 (b)); one has role '$role' and credentialFile '$file'." }
+        if ($map.ContainsKey($role)) { throw "REFUSING: exchangeVm.accounts records two accounts with the role '$role'." }
+        $address = ([string](& $AddressOf $file)).Trim()
+        if (-not $address) { throw "REFUSING: $file gives no address for the $role." }
+        $map[$role] = $address
+    }
+    $distinct = @($map.Values | ForEach-Object { $_.ToLowerInvariant() } | Sort-Object -Unique)
+    if ($distinct.Count -ne $map.Count) { throw "REFUSING: two of exchangeVm.accounts' credential files name the same address, so two roles would be one mailbox." }
+    return $map
+}
+
+# A value with every placeholder replaced by its role's address; a list stays a list. A placeholder
+# whose role no account has is a problem, and is left in place.
+function Resolve-ExchangeAddressPlaceholders {
+    param($Value, [hashtable] $Map, [System.Collections.Generic.List[string]] $Problems, [string] $Where)
+    if ($Value -is [string]) {
+        $m = [regex]::Match($Value, $script:ExchangeAddressPlaceholder)
+        if (-not $m.Success) { return $Value }
+        $role = $m.Groups['role'].Value
+        if ($Map.ContainsKey($role)) { return [string]$Map[$role] }
+        $Problems.Add("$Where holds '$Value', and exchangeVm.accounts records no account with the role '$role'.")
+        return $Value
+    }
+    if ($Value -is [System.Array]) {
+        $copy = New-Object object[] $Value.Length
+        for ($i = 0; $i -lt $Value.Length; $i++) { $copy[$i] = Resolve-ExchangeAddressPlaceholders -Value $Value[$i] -Map $Map -Problems $Problems -Where $Where }
+        return , $copy
+    }
+    return $Value
+}
+
+# The main checkout of the repository $Root belongs to - git's common directory's parent - which is
+# where the gitignored credential files live; a worktree has none.
+function Get-MainCheckout {
+    param([string] $Root)
+    # WINDOWS POWERSHELL 5.1: see Get-GitProvenance - git runs under 'Continue', judged by its exit code.
+    $saved = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { $common = @(& git -C $Root rev-parse --path-format=absolute --git-common-dir 2>$null) }
+    finally { $ErrorActionPreference = $saved }
+    if ($LASTEXITCODE -ne 0 -or $common.Count -eq 0) { throw "REFUSING: $Root is not a git checkout, so the main checkout that holds the Exchange VM's credential files is unknown. Pass -CredentialRoot." }
+    return (Split-Path -Parent ([System.IO.Path]::GetFullPath(([string]$common[0]).Trim())))
+}
+
 function Invoke-SelfTest {
     $script:SelfTestChecks = 0
     $script:SelfTestFailures = @()
@@ -2083,7 +2173,42 @@ function Invoke-SelfTest {
     Test-Case 'and no read-only note is left on it' $true ($null -eq (Get-ExactProperty $parsed '_exchangeGuest'))
     $found = New-Object System.Collections.Generic.List[string]
     Add-SettingsProblems -Settings $parsed -VMName $exchangeVm -Assigned $assigned -Populations $populations -Problems $found -ExchangeVmName $exchangeVm -ExchangeAccounts $accounts
-    Test-Case 'and the rendered test-account file breaks no rule' '' ($found -join ' | ')    Test-HasProblem 'a blank hub is refused' (Get-RuleProblems { param($s) $s.testHubStoreDisplayName = ' ' }) 'empty store name'
+    Test-Case 'and the rendered test-account file breaks no rule' '' ($found -join ' | ')
+
+    Write-Host ''
+    Write-Host '== the Exchange VM''s addresses, read at render time (Q189 (b)) =='
+    $fakeAddressOf = { param([string] $File) switch ($File) { 'exchange-credentials.json' { 'Real@example.test' } 'exchange-credentials-ai-test.json' { 'test-account@example.test' } default { throw "no $File" } } }
+    $recorded = @(
+        [pscustomobject]@{ address = 'bystander@exchange-vm.invalid'; credentialFile = 'exchange-credentials.json'; role = 'bystander' },
+        [pscustomobject]@{ address = 'hub@exchange-vm.invalid'; credentialFile = 'exchange-credentials-ai-test.json'; role = 'hub' })
+    $map = Get-ExchangeAddressMap -Accounts $recorded -AddressOf $fakeAddressOf
+    Test-Case 'each role''s address is its own credential file''s' 'Real@example.test|test-account@example.test' (@($map['bystander'], $map['hub']) -join '|')
+    $placeholderProblems = New-Object System.Collections.Generic.List[string]
+    Test-Case 'a placeholder becomes its role''s address' 'test-account@example.test' (Resolve-ExchangeAddressPlaceholders -Value 'hub@exchange-vm.invalid' -Map $map -Problems $placeholderProblems -Where 'x')
+    Test-Case 'in a list too, in its order' 'test-account@example.test|Real@example.test' ((Resolve-ExchangeAddressPlaceholders -Value @('hub@exchange-vm.invalid', 'bystander@exchange-vm.invalid') -Map $map -Problems $placeholderProblems -Where 'x') -join '|')
+    $single = Resolve-ExchangeAddressPlaceholders -Value @('bystander@exchange-vm.invalid') -Map $map -Problems $placeholderProblems -Where 'x'
+    Test-Case 'a one-entry list stays a list' $true ($single -is [System.Array])
+    Test-Case 'any other value is left alone' 'Synthetic Corpus' (Resolve-ExchangeAddressPlaceholders -Value 'Synthetic Corpus' -Map $map -Problems $placeholderProblems -Where 'x')
+    Test-Case 'and none of that was a problem' 0 $placeholderProblems.Count
+    [void](Resolve-ExchangeAddressPlaceholders -Value 'delegate@exchange-vm.invalid' -Map $map -Problems $placeholderProblems -Where 'x')
+    Test-Case 'a placeholder for a role no account has is a problem' 1 $placeholderProblems.Count
+    Test-Case 'the placeholders are found wherever they are' 'bystander@exchange-vm.invalid|hub@exchange-vm.invalid' (@(Get-ExchangeAddressPlaceholders ([pscustomobject]@{ a = 'hub@exchange-vm.invalid'; b = @('x', 'bystander@exchange-vm.invalid', 'hub@exchange-vm.invalid'); c = $null })) -join '|')
+    $threw = ''
+    try { [void](Get-ExchangeAddressMap -Accounts @($recorded[0], [pscustomobject]@{ address = 'hub@exchange-vm.invalid'; credentialFile = 'exchange-credentials.json'; role = 'hub' }) -AddressOf $fakeAddressOf) } catch { $threw = $_.Exception.Message }
+    Test-Case 'two roles naming one mailbox are refused' $true $threw.Contains('same address')
+    $threw = ''
+    try { [void](Get-ExchangeAddressMap -Accounts @($recorded[0], [pscustomobject]@{ address = 'hub@exchange-vm.invalid'; credentialFile = 'exchange-credentials-gone.json'; role = 'hub' }) -AddressOf $fakeAddressOf) } catch { $threw = $_.Exception.Message }
+    Test-Case 'a credential file that is not there is refused' $true $threw.Contains('exchange-credentials-gone.json')
+    $exchangeRecordNow = Get-ExactProperty $testbed 'exchangeVm'
+    if ($null -ne $exchangeRecordNow) {
+        $exchangeName = [string]$exchangeRecordNow.Value.vmName
+        Test-Case 'the committed testbed.json names the Exchange VM''s accounts only by placeholder' 'bystander@exchange-vm.invalid|hub@exchange-vm.invalid' (@($exchangeRecordNow.Value.accounts | ForEach-Object { [string]$_.address }) -join '|')
+        Test-Case 'and its live-test settings too' 'bystander@exchange-vm.invalid|hub@exchange-vm.invalid' (@(Get-ExchangeAddressPlaceholders $testbed.liveTestSettings.$exchangeName) -join '|')
+        $otherSections = @($testbed.liveTestSettings.PSObject.Properties | Where-Object { -not $_.Name.StartsWith('_') -and $_.Name -cne $exchangeName })
+        Test-Case 'and no other guest holds one' 0 @($otherSections | ForEach-Object { Get-ExchangeAddressPlaceholders $_.Value }).Count
+    }
+
+    Test-HasProblem 'a blank hub is refused' (Get-RuleProblems { param($s) $s.testHubStoreDisplayName = ' ' }) 'empty store name'
     Test-HasProblem 'a hub that is not an address is refused' (Get-RuleProblems { param($s) $s.testHubStoreDisplayName = 'Hub Store'; $s.expectedStoreDisplayNames = @('Hub Store', 'Synthetic Corpus', 'Synthetic Bystander') }) 'not shaped like an SMTP address'
     Test-HasProblem 'a hub with a trailing space is refused' (Get-RuleProblems { param($s) $s.testHubStoreDisplayName = 'hub@render.invalid ' }) 'leading or trailing whitespace'
     Test-HasProblem 'a hub missing from the census list is refused' (Get-RuleProblems { param($s) $s.expectedStoreDisplayNames = @('Synthetic Corpus', 'Synthetic Bystander') }) 'does not name the hub'
@@ -2251,6 +2376,27 @@ if ($null -ne $exchangeRecord -and (Test-IsJsonObject $exchangeRecord.Value)) {
     if ($null -ne $accountsProperty -and $null -ne $accountsProperty.Value) { $exchangeAccounts = @($accountsProperty.Value) }
 }
 
+# The Exchange VM's real addresses, read now from its credential files (Q189 (b); see
+# Get-ExchangeAddressPlaceholders): testbed.json holds only placeholders for them.
+$placeholders = @(Get-ExchangeAddressPlaceholders $guestProperty.Value) + @(Get-ExchangeAddressPlaceholders @($exchangeAccounts | ForEach-Object { $_.address }))
+if ($placeholders.Count -gt 0) {
+    if (-not $isExchangeVm) {
+        throw "REFUSING: liveTestSettings.$VMName holds $(@($placeholders | Sort-Object -Unique) -join ', '), the Exchange VM's address placeholders, and '$VMName' is not the Exchange VM. Nothing was written."
+    }
+    if (-not $CredentialRoot) { $CredentialRoot = Get-MainCheckout -Root $repoFull }
+    $addressOf = { param([string] $File) & (Join-Path $PSScriptRoot 'Get-ExchangeCredential.ps1') -RepoRoot $CredentialRoot -AddressOf $File }
+    $addressMap = Get-ExchangeAddressMap -Accounts $exchangeAccounts -AddressOf $addressOf
+    $placeholderProblems = New-Object System.Collections.Generic.List[string]
+    foreach ($property in @($guestProperty.Value.PSObject.Properties)) {
+        $property.Value = Resolve-ExchangeAddressPlaceholders -Value $property.Value -Map $addressMap -Problems $placeholderProblems -Where "liveTestSettings.$VMName.$($property.Name)"
+    }
+    $exchangeAccounts = @($exchangeAccounts | ForEach-Object {
+            [pscustomobject]@{ address = (Resolve-ExchangeAddressPlaceholders -Value ([string]$_.address) -Map $addressMap -Problems $placeholderProblems -Where 'exchangeVm.accounts'); role = $_.role; credentialFile = $_.credentialFile }
+        })
+    if ($placeholderProblems.Count -gt 0) { throw ("REFUSING: " + ($placeholderProblems -join ' ') + ' Nothing was written.') }
+    Write-Host "The Exchange VM's $($addressMap.Count) addresses: read from their credential files in $CredentialRoot (Q189 (b))."
+}
+
 $resolved = Resolve-GuestValues -Fields $shape.Fields -Guest $guestProperty.Value -Where "liveTestSettings.$VMName"
 if ($resolved.Problems.Count -gt 0) {
     $message = "REFUSING to render live-test settings for '$VMName': $($resolved.Problems.Count) value(s) in the liveTestSettings.$VMName section of $valuesShown are not ready:`n  - " +
@@ -2308,10 +2454,19 @@ if ($isExchangeVm) {
     Write-Host "Live-test settings for '$VMName' - the Exchange test VM:"
     Write-Host ("  file        {0}" -f $outFull)
     Write-Host ("  sha256      {0}" -f $hash)
-    Write-Host ("  profile     {0}   - READ-ONLY: every in-process write and every write-capable MCP tool is refused" -f $parsed.machineProfile)
-    Write-Host ("  hub         {0}   - the one mailbox; real mail, censused item by item on this read-only machine" -f $parsed.testHubStoreDisplayName)
-    Write-Host ("  indexed     {0}" -f (@($parsed.indexedStoreDisplayNames) -join ', '))
-    Write-Host '  no delegate (Q109), no bystander, no population, no probe term, no corpus, no sink'
+    if (([string]$parsed.machineProfile) -ceq 'ExchangeTestAccount') {
+        Write-Host ("  profile     {0}   - writes in the test account alone, mail to it alone (Phase 2 as built, Q137)" -f $parsed.machineProfile)
+        Write-Host ("  hub         {0}   - the test account" -f $parsed.testHubStoreDisplayName)
+        Write-Host ("  bystanders  {0}   - real mail, censused item by item, never written" -f (@($parsed.bystanderStoreDisplayNames) -join ', '))
+        Write-Host ("  indexed     {0}" -f (@($parsed.indexedStoreDisplayNames) -join ', '))
+        Write-Host '  no delegate (Q109), no population, no probe term, no corpus, no sink'
+    }
+    else {
+        Write-Host ("  profile     {0}   - READ-ONLY: every in-process write and every write-capable MCP tool is refused" -f $parsed.machineProfile)
+        Write-Host ("  hub         {0}   - the one mailbox; real mail, censused item by item on this read-only machine" -f $parsed.testHubStoreDisplayName)
+        Write-Host ("  indexed     {0}" -f (@($parsed.indexedStoreDisplayNames) -join ', '))
+        Write-Host '  no delegate (Q109), no bystander, no population, no probe term, no corpus, no sink'
+    }
     Write-Host ''
     Write-Host 'NOT CHECKED HERE - only the guest can answer these, and a wrong answer refuses the tier:'
     Write-Host '  * that the profile Outlook runs holds exactly this one store, under exactly this name'

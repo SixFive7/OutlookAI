@@ -3789,9 +3789,9 @@ move items wherever they are, so a population built in the shared mailbox can st
 
 ### 4.4a The test account - `OutlookAI-Exchange`, 2026-10-08 and 2026-11-17 (Phase 2 built for it, Q137)
 
-**Why this section exists.** On 2026-10-08 the maintainer added a dedicated Microsoft 365 account,
-`telefonie-ai-test@xxlnet.nl` (display name "Telefonie XXLNet"), in his words *"the account you can use
-extensively for tests. Add it to ... the test VMs."* This section records how it joined the Exchange VM,
+**Why this section exists.** On 2026-10-08 the maintainer added a dedicated Microsoft 365 account, the
+test account, in his words *"the account you can use extensively for tests. Add it to ... the test
+VMs."* This section records how it joined the Exchange VM,
 what the Phase 2 write-safety design of section 4.4 became once it was built for that account, what the
 write runs found, and the session of 2026-11-17 after the VM had stood saved for 40 days.
 `Testbed/README.md` sections 1d (E12 to E14) and 4e are the procedure.
@@ -3802,9 +3802,20 @@ on frozen clocks (Q130 (a)), and a Microsoft 365 sign-in needs the internet and 
 checked against a clock frozen days back fails, and a mailbox that syncs would age the frozen data.
 
 **The roles (Q137, settled by the maintainer 2026-10-11).** The test account is the writable hub;
-`telefonie@xxlnet.nl` is a read-only bystander, watched by the count tripwire and written by nothing -
+the Exchange VM's mailbox is a read-only bystander, watched by the count tripwire and written by nothing -
 with one exception the maintainer decided on 2026-11-17 (Q138 (c)): its one leftover tagged item from
 the workstation years, in Sent Items, goes by a one-off tested helper once he has confirmed its id.
+
+**The addresses come in at run time (Q189, 2026-11-17).** Neither mailbox's address is in this
+repository. `Testbed/testbed.json` names each account by a placeholder under the reserved `.invalid`
+domain - `hub@exchange-vm.invalid`, `bystander@exchange-vm.invalid` - beside its role and its
+`credentialFile`; the address is that gitignored credential file's
+`account` field, read on the host at run time, with nothing decrypted for it:
+`Testbed/host/New-LiveTestSettings.ps1` puts it into the VM's rendered live-test settings, and
+`Testbed/host/Invoke-ExchangeSignIn.ps1` signs in by role (`-Account hub`). Probes on the guest take the
+hub from the staged settings file. The guest's Outlook is the cross-check: before every baseline
+`T2/LiveMailboxIdentity.cs` refuses the tier unless an account signed in there carries the name the
+settings give the hub and delivers to that store, and every watched store is there exactly once.
 
 **The design as built (2026-10-08).** Profile `ExchangeTestAccount`: in-process writes only to the hub
 (`StoreWriteAllowlist`, no identity grant); every address a test hands to Outlook, in-process
@@ -3819,9 +3830,10 @@ ledger hands it the marker. Populations are not kept: a test seeds what it needs
 it - a permanent tagged population would read as a leftover to every zero-artifact proof.
 
 **The automapped second entry (measured 2026-10-08 and 2026-11-17).** Exchange maps the test mailbox
-into the profile a second time, as the online entry `Telefonie XXLNet` (`ExchangeStoreType` 1) under
-telefonie's account, through its Full Access. Its `PR_STORE_RECORD_KEY` and the mailbox DN in its
-StoreID equal the test account's own cached store's and differ from telefonie's. At the coordinator's
+into the profile a second time, as an online entry named by the test account's display name
+(`ExchangeStoreType` 1) under the real mailbox's account, through that mailbox's Full Access. Its
+`PR_STORE_RECORD_KEY` and the mailbox DN in its StoreID equal the test account's own cached store's and
+differ from the real mailbox's. At the coordinator's
 direction, while the maintainer decides between keeping it (for the delegate-store tests) and having
 automapping switched off: the two entries are one test mailbox, writes are allowlisted by the test
 account's identity, nothing is ever written through the online entry, and the tripwire never counts
@@ -3863,7 +3875,7 @@ only):
   Outlook restart. 0x6649 = 0 written with Outlook closed read back as All. The pair (3, 0) written while
   Outlook RAN - the add-in's own case - was not overwritten when Outlook quit, and the next start showed
   3 months; whether a running session applies it before a restart was not measured. The test account
-  only; telefonie's 0x6649 stayed 12 throughout; the VM went back to its checkpoint afterwards.
+  only; the real mailbox's 0x6649 stayed 12 throughout; the VM went back to its checkpoint afterwards.
 
 RESULTS-R3
 

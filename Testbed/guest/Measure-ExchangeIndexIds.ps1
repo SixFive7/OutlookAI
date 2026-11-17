@@ -33,7 +33,11 @@
     Written 2026-11-17 for the maintainer's queue (Q132), test account only.
 
 .PARAMETER Hub
-    The test account's store. Default telefonie-ai-test@xxlnet.nl.
+    The test account's store. Default: the hub the staged live-test settings name (-SettingsPath).
+
+.PARAMETER SettingsPath
+    The live-test settings the live runner stages on this guest (gitignored). Without -Hub the hub is
+    the store they name; no real mailbox's address is written in this repository (Q189 (b)).
 
 .PARAMETER OutPath
     Where the result is written. Default C:\OutlookAI-Q5\measure\exchange-index-ids.txt.
@@ -43,7 +47,8 @@
 #>
 [CmdletBinding()]
 param(
-    [string] $Hub = 'telefonie-ai-test@xxlnet.nl',
+    [string] $Hub,
+    [string] $SettingsPath = 'C:\OutlookAI-Q5\src\McpServer\OutlookAI.McpServer.Tests\live-fixtures\live-test-settings.json',
     [string] $OutPath = 'C:\OutlookAI-Q5\measure\exchange-index-ids.txt',
     [string[]] $ExpectedUser = @('vmadmin'),
     [string] $ExpectedComputerNamePrefix = 'OAI-EXCHANGE',
@@ -123,6 +128,21 @@ function Get-RouteVerdict([string[]] $PerFolderMatches) {
     return 'DOES-NOT-WORK'
 }
 
+# Q189 (b): no real mailbox's address is written in this repository. The first non-empty string of one
+# field of the staged live-test settings - testHubStoreDisplayName, or the first of a list - or $null
+# when the file or the field is absent.
+function Get-SettingsValue([string] $Json, [string] $Field) {
+    $settings = $Json | ConvertFrom-Json
+    if (-not ($settings.PSObject.Properties.Name -contains $Field)) { return $null }
+    $values = @($settings.$Field | Where-Object { $_ -is [string] -and $_ })
+    if ($values.Count -eq 0) { return $null }
+    return [string]$values[0]
+}
+function Get-StagedSettingsValue([string] $Path, [string] $Field) {
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return $null }
+    return (Get-SettingsValue (Get-Content -LiteralPath $Path -Raw) $Field)
+}
+
 function Invoke-SelfTest {
     $script:p = 0; $script:f = 0
     function Check([string] $Name, [bool] $Ok) { if ($Ok) { $script:p++; Write-Host "  PASS  $Name" } else { $script:f++; Write-Host "  FAIL  $Name" } }
@@ -156,12 +176,20 @@ function Invoke-SelfTest {
     $commands = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true) | ForEach-Object { $_.GetCommandName() } | Where-Object { $_ -match '^(Set-|New-Item|Remove-|Rename-|Move-|Add-Content|Out-File)' })
     Check ('no cmdlet that writes: ' + ($commands -join ', ')) ($commands.Count -eq 0)
     Write-Host ''
+    $staged = '{ "testHubStoreDisplayName": "hub@example.invalid", "bystanderStoreDisplayNames": [ "", "real@example.invalid" ], "probeTerm": "" }'
+    Check 'without -Hub, the hub is the one the staged settings name' ((Get-SettingsValue $staged 'testHubStoreDisplayName') -eq 'hub@example.invalid')
+    Check 'a list gives its first non-empty name' ((Get-SettingsValue $staged 'bystanderStoreDisplayNames') -eq 'real@example.invalid')
+    Check 'an empty field gives nothing' ($null -eq (Get-SettingsValue $staged 'probeTerm'))
+    Check 'an absent field gives nothing' ($null -eq (Get-SettingsValue $staged 'mailSink'))
+    Check 'no staged settings give nothing' ($null -eq (Get-StagedSettingsValue (Join-Path ([System.IO.Path]::GetTempPath()) ('no-such-settings-' + [guid]::NewGuid().ToString('N') + '.json')) 'testHubStoreDisplayName'))
     Write-Host ("SelfTest: {0} passed, {1} failed." -f $script:p, $script:f)
     if ($script:f -gt 0) { exit 1 }
     exit 0
 }
 
 if ($SelfTest) { Invoke-SelfTest }
+if (-not $Hub) { $Hub = Get-StagedSettingsValue $SettingsPath 'testHubStoreDisplayName' }
+if (-not $Hub) { throw "No -Hub, and no staged live-test settings at $SettingsPath name one: give the test account's address, or stage the settings (Invoke-LiveTierOnGuest.ps1 does on every run)." }
 
 function Assert-TestbedGuestLocal {
     $machineOk = $env:COMPUTERNAME -and $ExpectedComputerNamePrefix -and $env:COMPUTERNAME.StartsWith($ExpectedComputerNamePrefix, [StringComparison]::OrdinalIgnoreCase)

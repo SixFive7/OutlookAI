@@ -63,9 +63,11 @@
     typing a mailbox password into a VM nobody meant is the mistake it exists to make impossible.
 
 .PARAMETER Account
-    The mailbox to sign in, by address. Must be one testbed.json's exchangeVm.accounts lists - the
-    script refuses any other. Mandatory with -Mode AddAccount; elsewhere the default is the VM's first
-    account (telefonie@xxlnet.nl), and -Mode Preflight checks EVERY listed account.
+    The mailbox to sign in: the role testbed.json's exchangeVm.accounts gives it - hub or bystander - or
+    its address. The script refuses any other. The record names no address (Q189 (b)): each account's is
+    the "account" field of its own gitignored credential file, which Get-ExchangeCredential.ps1
+    -AddressOf reads at run time. Mandatory with -Mode AddAccount; elsewhere the default is the VM's
+    first account, the bystander, and -Mode Preflight checks EVERY listed account.
 
 .PARAMETER Mode
     NewProfile, AddAccount, Reauth or Preflight. Preflight types nothing: before every live run it brings Defender's
@@ -85,7 +87,7 @@
     password and - if asked - a TOTP code exactly as the other modes do, answers "Stay signed in?" with
     No, and waits for the mail page. OwaSignOut signs out through Outlook on the web's own sign-out and
     closes every InPrivate window. THE TEST ACCOUNT ONLY: both refuse any account testbed.json does not
-    record with the role "hub" - never telefonie@xxlnet.nl. The VM is restored to its checkpoint
+    record with the role "hub" - never the VM's real mailbox. The VM is restored to its checkpoint
     afterwards by whoever ran it (AGENTS.md, Q161 (c)).
 
 .PARAMETER DefenderOnly
@@ -160,36 +162,45 @@ function Get-ExchangeVmProblem {
     return $null
 }
 
-# The accounts this may type a password for: exactly the ones testbed.json's exchangeVm.accounts lists,
-# compared ignoring case (an address is case-insensitive). Returns the recorded spelling, or the refusal.
+# The accounts this may type a password for: exactly the ones testbed.json's exchangeVm.accounts lists.
+# Q189 (b): the record names each by its role and its credential file, never by its address - the
+# address is that gitignored file's "account" field, which $AddressOf reads at run time
+# (Get-ExchangeCredential.ps1 -AddressOf). In the record's order: the first is the default.
 function Get-ExchangeAccounts {
-    param($Testbed)
+    param($Testbed, [scriptblock] $AddressOf)
     if ($null -eq $Testbed -or -not ($Testbed.PSObject.Properties.Name -contains 'exchangeVm')) { return @() }
     $vm = $Testbed.exchangeVm
     if ($null -eq $vm -or -not ($vm.PSObject.Properties.Name -contains 'accounts')) { return @() }
-    return @($vm.accounts | Where-Object { $null -ne $_ -and ($_.address -is [string]) -and $_.address } | ForEach-Object { [string]$_.address })
-}
-function Resolve-ExchangeAccount {
-    param([string] $Account, $Testbed)
-    $known = @(Get-ExchangeAccounts $Testbed)
-    if ($known.Count -eq 0) { return [pscustomobject]@{ Account = $null; Problem = 'REFUSING: Testbed/testbed.json records no exchangeVm.accounts, so no mailbox is this VM''s to sign in.' } }
-    if ([string]::IsNullOrWhiteSpace($Account)) { return [pscustomobject]@{ Account = $known[0]; Problem = $null } }
-    foreach ($k in $known) {
-        if ([string]::Equals($k, $Account.Trim(), [StringComparison]::OrdinalIgnoreCase)) { return [pscustomobject]@{ Account = $k; Problem = $null } }
+    $list = New-Object System.Collections.Generic.List[object]
+    foreach ($a in @($vm.accounts)) {
+        if ($null -eq $a -or -not ($a.credentialFile -is [string]) -or -not $a.credentialFile) { continue }
+        $address = [string](& $AddressOf ([string]$a.credentialFile))
+        $list.Add([pscustomobject]@{ Role = [string]$a.role; CredentialFile = [string]$a.credentialFile; Address = $address })
     }
-    return [pscustomobject]@{ Account = $null; Problem = "REFUSING: '$Account' is not an account testbed.json's exchangeVm.accounts records ($($known -join ', ')). This script types a mailbox password; it types one only for a mailbox the record names." }
+    return $list.ToArray()
+}
+# -Account as a role or an address, compared ignoring case (an address is case-insensitive). Returns the
+# address as its credential file spells it, and its role - or the refusal, which names roles, never addresses.
+function Resolve-ExchangeAccount {
+    param([string] $Account, [object[]] $Known)
+    $Known = @($Known | Where-Object { $null -ne $_ })
+    if ($Known.Count -eq 0) { return [pscustomobject]@{ Account = $null; Role = $null; Problem = 'REFUSING: Testbed/testbed.json records no exchangeVm.accounts, so no mailbox is this VM''s to sign in.' } }
+    if ([string]::IsNullOrWhiteSpace($Account)) { return [pscustomobject]@{ Account = $Known[0].Address; Role = $Known[0].Role; Problem = $null } }
+    $given = $Account.Trim()
+    foreach ($k in $Known) {
+        if ([string]::Equals([string]$k.Role, $given, [StringComparison]::OrdinalIgnoreCase) -or [string]::Equals([string]$k.Address, $given, [StringComparison]::OrdinalIgnoreCase)) {
+            return [pscustomobject]@{ Account = $k.Address; Role = $k.Role; Problem = $null }
+        }
+    }
+    return [pscustomobject]@{ Account = $null; Role = $null; Problem = "REFUSING: '$Account' is neither the role nor the address of an account testbed.json's exchangeVm.accounts records (roles: $(@($Known | ForEach-Object { $_.Role }) -join ', ')). This script types a mailbox password; it types one only for a mailbox the record names." }
 }
 
 # Q161 (c): Outlook on the web signs in the TEST account only - the one testbed.json records as the hub.
 function Get-OwaAccountProblem {
-    param([string] $Account, $Testbed)
-    $hub = @()
-    if ($null -ne $Testbed -and ($Testbed.PSObject.Properties.Name -contains 'exchangeVm') -and ($Testbed.exchangeVm.PSObject.Properties.Name -contains 'accounts')) {
-        $hub = @($Testbed.exchangeVm.accounts | Where-Object { $null -ne $_ -and [string]$_.role -eq 'hub' } | ForEach-Object { [string]$_.address })
-    }
-    if ([string]::IsNullOrWhiteSpace($Account)) { return 'REFUSING: Outlook on the web needs -Account <address>, and only the test account may be given (Q161 (c)).' }
-    foreach ($h in $hub) { if ([string]::Equals($h, $Account.Trim(), [StringComparison]::OrdinalIgnoreCase)) { return $null } }
-    return "REFUSING: Outlook on the web signs in the test account only (Q161 (c)); '$Account' is not the account testbed.json records as the hub ($($hub -join ', '))."
+    param([string] $Account, $Resolved)
+    if ([string]::IsNullOrWhiteSpace($Account)) { return 'REFUSING: Outlook on the web needs -Account hub (or the test account''s address), and only the test account may be given (Q161 (c)).' }
+    if ($null -ne $Resolved -and $null -eq $Resolved.Problem -and ([string]$Resolved.Role) -ceq 'hub') { return $null }
+    return "REFUSING: Outlook on the web signs in the test account only (Q161 (c)); '$Account' is not the account testbed.json records as the hub."
 }
 
 # What a -Step Page status says: the page kind and its texts.
@@ -239,13 +250,22 @@ if ($SelfTest) {
     Check 'no record refuses' $true ((Get-ExchangeVmProblem 'OutlookAI-Exchange' ([pscustomobject]@{ vmName = 'x' })) -like 'REFUSING*')
     $real = Get-Content -LiteralPath (Join-Path (Split-Path -Parent $PSScriptRoot) 'testbed.json') -Raw | ConvertFrom-Json
     Check 'and testbed.json records the Exchange VM this script is for' '' ([string](Get-ExchangeVmProblem 'OutlookAI-Exchange' $real))
-    $two = [pscustomobject]@{ exchangeVm = [pscustomobject]@{ vmName = 'OutlookAI-Exchange'; accounts = @([pscustomobject]@{ address = 'first@example.invalid' }, [pscustomobject]@{ address = 'Second@example.invalid' }) } }
-    Check 'no -Account means the first recorded account' 'first@example.invalid' (Resolve-ExchangeAccount '' $two).Account
-    Check 'a recorded account is accepted, in its recorded spelling' 'Second@example.invalid' (Resolve-ExchangeAccount 'second@EXAMPLE.invalid' $two).Account
-    Check 'an unrecorded account is refused' $true ((Resolve-ExchangeAccount 'third@example.invalid' $two).Problem -like 'REFUSING*')
-    Check 'no accounts on record refuses' $true ((Resolve-ExchangeAccount 'first@example.invalid' $record).Problem -like 'REFUSING*')
-    Check 'testbed.json records the test account' 'telefonie-ai-test@xxlnet.nl' (Resolve-ExchangeAccount 'telefonie-ai-test@xxlnet.nl' $real).Account
-    Check 'and telefonie, first' 'telefonie@xxlnet.nl' (Resolve-ExchangeAccount '' $real).Account
+    $fakeAddressOf = { param([string] $File) switch ($File) { 'exchange-credentials.json' { 'first@example.invalid' } 'exchange-credentials-two.json' { 'Second@example.invalid' } default { throw "no $File" } } }
+    $two = [pscustomobject]@{ exchangeVm = [pscustomobject]@{ vmName = 'OutlookAI-Exchange'; accounts = @(
+                [pscustomobject]@{ address = 'bystander@exchange-vm.invalid'; credentialFile = 'exchange-credentials.json'; role = 'bystander' },
+                [pscustomobject]@{ address = 'hub@exchange-vm.invalid'; credentialFile = 'exchange-credentials-two.json'; role = 'hub' }) } }
+    $known = @(Get-ExchangeAccounts $two $fakeAddressOf)
+    Check 'each account''s address is read from its own credential file' 'first@example.invalid|Second@example.invalid' (@($known | ForEach-Object { $_.Address }) -join '|')
+    Check 'no -Account means the first recorded account' 'first@example.invalid' (Resolve-ExchangeAccount '' $known).Account
+    Check 'a recorded account is accepted by address, in its file''s spelling' 'Second@example.invalid' (Resolve-ExchangeAccount 'second@EXAMPLE.invalid' $known).Account
+    Check 'and by its role' 'Second@example.invalid|hub' ((Resolve-ExchangeAccount 'HUB' $known) | ForEach-Object { "$($_.Account)|$($_.Role)" })
+    Check 'an unrecorded account is refused' $true ((Resolve-ExchangeAccount 'third@example.invalid' $known).Problem -like 'REFUSING*')
+    Check 'and the refusal lists roles, never a recorded address' $false ((Resolve-ExchangeAccount 'third@example.invalid' $known).Problem -like '*first@*')
+    Check 'no accounts on record refuses' $true ((Resolve-ExchangeAccount 'first@example.invalid' @(Get-ExchangeAccounts $record $fakeAddressOf)).Problem -like 'REFUSING*')
+    $realAccounts = @($real.exchangeVm.accounts)
+    Check 'testbed.json records the bystander first and the hub' 'bystander|hub' (@($realAccounts | ForEach-Object { [string]$_.role }) -join '|')
+    Check 'and names each by a placeholder, never by an address (Q189 (b))' 'bystander@exchange-vm.invalid|hub@exchange-vm.invalid' (@($realAccounts | ForEach-Object { [string]$_.address }) -join '|')
+    Check 'each with a credential file -AddressOf will read' 2 @($realAccounts | Where-Object { [string]$_.credentialFile -cmatch '^exchange-credentials(-[A-Za-z0-9-]+)?\.json$' }).Count
     Check 'a page status is read' 'MFA' (Get-PageKind (ConvertFrom-StepStatus @('STATE DONE', 'AT x', 'PAGE MFA', 'window "x"', 'TEXT More information required')))
     Check 'an unread page' 'UNREAD' (Get-PageKind (ConvertFrom-StepStatus @('STATE TIMEOUT', 'AT x')))
     Check 'an MFA page stops for the maintainer' 'STOP-MAINTAINER' (Get-AfterPasswordAction 'MFA' $true)
@@ -255,10 +275,11 @@ if ($SelfTest) {
     Check 'an error page fails' 'FAIL' (Get-AfterPasswordAction 'ERROR' $true)
     Check 'the device offer continues' 'CONTINUE' (Get-AfterPasswordAction 'DEVICE' $false)
     Check 'no page continues' 'CONTINUE' (Get-AfterPasswordAction 'NONE' $false)
-    $owaTestbed = [pscustomobject]@{ exchangeVm = [pscustomobject]@{ accounts = @([pscustomobject]@{ address = 'real@x.nl'; role = 'bystander' }, [pscustomobject]@{ address = 'test@x.nl'; role = 'hub' }) } }
-    Check 'Outlook on the web signs in the hub' $true ($null -eq (Get-OwaAccountProblem 'test@x.nl' $owaTestbed))
-    Check 'and never the bystander' $true ([string](Get-OwaAccountProblem 'real@x.nl' $owaTestbed)).StartsWith('REFUSING')
-    Check 'nor an account given by nobody' $true ([string](Get-OwaAccountProblem '' $owaTestbed)).StartsWith('REFUSING')
+    Check 'Outlook on the web signs in the hub' $true ($null -eq (Get-OwaAccountProblem 'hub' (Resolve-ExchangeAccount 'hub' $known)))
+    Check 'given by its address too' $true ($null -eq (Get-OwaAccountProblem 'second@example.invalid' (Resolve-ExchangeAccount 'second@example.invalid' $known)))
+    Check 'and never the bystander' $true ([string](Get-OwaAccountProblem 'first@example.invalid' (Resolve-ExchangeAccount 'first@example.invalid' $known))).StartsWith('REFUSING')
+    Check 'nor by its role' $true ([string](Get-OwaAccountProblem 'bystander' (Resolve-ExchangeAccount 'bystander' $known))).StartsWith('REFUSING')
+    Check 'nor an account given by nobody' $true ([string](Get-OwaAccountProblem '' (Resolve-ExchangeAccount '' $known))).StartsWith('REFUSING')
     Write-Host ''
     if ($script:fails -gt 0) { Write-Host "$script:fails FAILED"; exit 1 }
     Write-Host 'All passed.'
@@ -278,11 +299,15 @@ function Say([string] $m) { Write-Host ('[{0:HH:mm:ss}] {1}' -f (Get-Date), $m) 
 
 if ($Mode -eq 'AddAccount' -and [string]::IsNullOrWhiteSpace($Account)) { Write-Host 'REFUSING: -Mode AddAccount needs -Account <address>: which mailbox to add is never a default.'; exit 4 }
 $owa = ($Mode -eq 'OwaSignIn' -or $Mode -eq 'OwaSignOut')
-if ($owa) { $owaProblem = Get-OwaAccountProblem $Account $testbed; if ($null -ne $owaProblem) { Write-Host $owaProblem; exit 4 } }
+# Q189 (b): every recorded account's address, read from its credential file in the main checkout.
+$addressOf = { param([string] $File) & (Join-Path $PSScriptRoot 'Get-ExchangeCredential.ps1') -RepoRoot $RepoRoot -AddressOf $File }
+try { $known = @(Get-ExchangeAccounts $testbed $addressOf) }
+catch { Write-Host "REFUSING: an account's address could not be read from its credential file - $($_.Exception.Message)"; exit 4 }
+$resolved = Resolve-ExchangeAccount $Account $known
+if ($owa) { $owaProblem = Get-OwaAccountProblem $Account $resolved; if ($null -ne $owaProblem) { Write-Host $owaProblem; exit 4 } }
 # Every guest step of the Outlook-on-the-web modes reads the InPrivate Edge window instead of Outlook's.
 $GuestFlags = ''
 if ($owa) { $GuestFlags = ' -Browser' }
-$resolved = Resolve-ExchangeAccount $Account $testbed
 if ($null -ne $resolved.Problem) { Write-Host $resolved.Problem; exit 4 }
 $guestCred = & (Join-Path $PSScriptRoot 'Get-GuestCredential.ps1') -RepoRoot $RepoRoot -VMName $VMName
 $credential = & (Join-Path $PSScriptRoot 'Get-ExchangeCredential.ps1') -RepoRoot $RepoRoot -Account $resolved.Account
@@ -399,11 +424,12 @@ try {
         Say ('  up to date (productState 0x{0:X6}); signatures {1} day(s) old' -f $av.State, $av.Age)
         if ($DefenderOnly) { exit 0 }
         $allSignedIn = $true
-        foreach ($recorded in @(Get-ExchangeAccounts $testbed)) {
-            Say "preflight 2: is $recorded still signed in?"
+        foreach ($recordedAccount in $known) {
+            $recorded = $recordedAccount.Address
+            Say "preflight 2: is the $($recordedAccount.Role) ($recorded) still signed in?"
             $v = Invoke-GuestStep "-Step Verify -Account '$recorded' -WaitSeconds 60"
             Say "  $($v.State) $($v.Detail -join ' | ')"
-            if ($v.State -ne 'SIGNED-IN') { Say "  not signed in - run this script with -Mode Reauth -Account $recorded"; $allSignedIn = $false }
+            if ($v.State -ne 'SIGNED-IN') { Say "  not signed in - run this script with -Mode Reauth -Account $($recordedAccount.Role)"; $allSignedIn = $false }
         }
         if (-not $allSignedIn) { exit 1 }
         exit 0

@@ -11,7 +11,7 @@
 
     The files - ONE PER ACCOUNT, since 2026-10-08, when the maintainer added a dedicated test account:
 
-        McpServer/OutlookAI.McpServer.Tests/live-fixtures/exchange-credentials.json          (telefonie@xxlnet.nl)
+        McpServer/OutlookAI.McpServer.Tests/live-fixtures/exchange-credentials.json          (the VM's first mailbox)
         McpServer/OutlookAI.McpServer.Tests/live-fixtures/exchange-credentials-<name>.json   (any other account)
 
     gitignored by the `McpServer/**/live-fixtures/` rule, beside vm-credentials.json. Each one's shape:
@@ -27,6 +27,11 @@
     exchange-credentials*.json whose "account" field is that address, compared ignoring case - and it
     refuses when none is, or when more than one is, rather than guess between two passwords for one
     mailbox. Only the "account" field is read to choose; no secret is decrypted until the file is chosen.
+
+    THE ADDRESS ITSELF (Q189 (b), 2026-11-17). No real mailbox's address is written in this repository:
+    Testbed/testbed.json names each account of the Exchange VM by its role and its credential file, and
+    -AddressOf <file name> returns that file's "account" field - nothing else is read and nothing is
+    decrypted. New-LiveTestSettings.ps1 and Invoke-ExchangeSignIn.ps1 ask it at run time.
 
     THE TOTP SECRET IS OPTIONAL. An account whose file carries none (an empty or absent totpUriDpapi)
     signs in with its password alone; -TotpCode for it REFUSES with a message beginning
@@ -55,6 +60,8 @@
 
       (default)   returns [pscustomobject] @{ Account = <string>; Password = <SecureString>; HasTotp = <bool> }.
                   The TOTP secret is not part of it - only whether the file holds one.
+      -AddressOf  returns the "account" field of the one credential file named, as a string. No secret
+                  is read; it refuses a name that is not exchange-credentials[-<name>].json.
       -TotpCode   returns [pscustomobject] @{ Code = <6 digits>; ValidUntilUtc = <DateTime> }. If the
                   current code would expire within -MinimumValiditySeconds, it waits for the next
                   step first, so a code is never typed with a second left on it.
@@ -69,6 +76,10 @@
     The sign-in address whose credential file to read (see WHICH FILE). Without it,
     exchange-credentials.json.
 
+.PARAMETER AddressOf
+    The file name of one credential file - exchange-credentials.json or exchange-credentials-<name>.json -
+    whose "account" field to return. Nothing is decrypted.
+
 .PARAMETER TotpCode
     Return a fresh TOTP code instead of the credential.
 
@@ -82,7 +93,7 @@
     $cred = & Testbed/host/Get-ExchangeCredential.ps1 -RepoRoot C:\Source\SixFive7\OutlookAI
 
 .EXAMPLE
-    $cred = & Testbed/host/Get-ExchangeCredential.ps1 -RepoRoot C:\Source\SixFive7\OutlookAI -Account telefonie-ai-test@xxlnet.nl
+    $cred = & Testbed/host/Get-ExchangeCredential.ps1 -RepoRoot <main checkout> -Account (& Testbed/host/Get-ExchangeCredential.ps1 -RepoRoot <main checkout> -AddressOf exchange-credentials-ai-test.json)
 
 .EXAMPLE
     (& Testbed/host/Get-ExchangeCredential.ps1 -RepoRoot C:\Source\SixFive7\OutlookAI -TotpCode).Code
@@ -94,7 +105,9 @@
 param(
     [Parameter(ParameterSetName = 'Credential')]
     [Parameter(ParameterSetName = 'Totp')]
+    [Parameter(ParameterSetName = 'Address')]
     [string] $RepoRoot,
+    [Parameter(Mandatory = $true, ParameterSetName = 'Address')] [string] $AddressOf,
     [Parameter(ParameterSetName = 'Credential')]
     [Parameter(ParameterSetName = 'Totp')]
     [string] $Account,
@@ -252,6 +265,18 @@ function Select-ExchangeCredentialFile {
 
 # The fields a parsed credential file is missing for what is asked of it: the account and the password
 # always, the TOTP URI only for a code. Names only.
+# -AddressOf: the "account" field of exactly the credential file named (Q189 (b)). The name must be a
+# credential file's, so nothing else in live-fixtures - the maintainer's own live-test settings above
+# all - can be asked for.
+function Select-AccountAddress {
+    param([object[]] $Entries, [string] $File)
+    if ($File -cnotmatch '^exchange-credentials(-[A-Za-z0-9-]+)?\.json$') { throw "'$File' is not an Exchange credential file's name (exchange-credentials.json or exchange-credentials-<name>.json)." }
+    $own = @($Entries | Where-Object { $null -ne $_ -and [string]::Equals([string]$_.File, $File, [StringComparison]::OrdinalIgnoreCase) })
+    if ($own.Count -ne 1) { throw "No $File among the Exchange credential files (read: $(@($Entries | ForEach-Object { $_.File }) -join ', ')). The maintainer stores it; see the header of this script for its shape." }
+    if ([string]::IsNullOrWhiteSpace([string]$own[0].Account)) { throw "$File has no ""account"" field." }
+    return ([string]$own[0].Account).Trim()
+}
+
 function Get-CredentialShapeProblems {
     param([object] $Json, [bool] $NeedTotp)
     $required = @('account', 'passwordDpapi')
@@ -344,6 +369,14 @@ if ($SelfTest) {
     CheckThrows 'two files naming one account are refused' { Select-ExchangeCredentialFile -Entries ($entries + [pscustomobject]@{ File = 'exchange-credentials-copy.json'; Account = 'mailbox@example.invalid' }) -Account 'mailbox@example.invalid' } '*refusing to choose*'
     CheckThrows 'no original file and no -Account is refused' { Select-ExchangeCredentialFile -Entries @($entries[1]) -Account '' } '*without -Account*'
 
+    # -AddressOf (Q189 (b)): the account field of exactly the file named, and only a credential file's.
+    Check '-AddressOf gives the account the file names' 'Test-Box@example.invalid' (Select-AccountAddress -Entries $entries -File 'exchange-credentials-test.json')
+    Check '-AddressOf ignores the case of the file name' 'mailbox@example.invalid' (Select-AccountAddress -Entries $entries -File 'Exchange-Credentials.json')
+    CheckThrows '-AddressOf refuses a file that is not there' { Select-AccountAddress -Entries $entries -File 'exchange-credentials-other.json' } 'No exchange-credentials-other.json*'
+    CheckThrows '-AddressOf refuses any other file of live-fixtures' { Select-AccountAddress -Entries $entries -File 'live-test-settings.json' } '*is not an Exchange credential file*'
+    CheckThrows '-AddressOf refuses a path' { Select-AccountAddress -Entries $entries -File '..\exchange-credentials.json' } '*is not an Exchange credential file*'
+    CheckThrows '-AddressOf refuses a file without an account' { Select-AccountAddress -Entries @([pscustomobject]@{ File = 'exchange-credentials.json'; Account = '' }) -File 'exchange-credentials.json' } '*has no "account" field*'
+
     # The shape: the TOTP URI is required only for a code.
     $noTotp = [pscustomobject]@{ account = 'a@example.invalid'; passwordDpapi = 'x'; totpUriDpapi = '' }
     $withTotp = [pscustomobject]@{ account = 'a@example.invalid'; passwordDpapi = 'x'; totpUriDpapi = 'y' }
@@ -389,6 +422,7 @@ $entries = foreach ($candidate in $candidates) {
     try { $accountField = [string](Get-Content -LiteralPath $candidate.FullName -Raw | ConvertFrom-Json).account } catch { $accountField = '' }
     [pscustomobject]@{ File = $candidate.Name; Account = $accountField }
 }
+if ($PSCmdlet.ParameterSetName -eq 'Address') { return (Select-AccountAddress -Entries @($entries) -File $AddressOf) }
 $fileName = Select-ExchangeCredentialFile -Entries @($entries) -Account $Account
 $path = Join-Path $fixtures $fileName
 

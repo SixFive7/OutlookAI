@@ -1119,7 +1119,7 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "Publish-LiveTierPayload.ps1 failed ($LASTEXITCODE) - publish-livetier.log" }
         # A clone's settings are its source's (Get-GuestFacts): its stores, corpus and sink are copies.
         # ps51-native-stderr-ok: a PowerShell script, not a program - every program it starts goes through its own Invoke-NativeCommand, under 'Continue' inside a try
-        & (Join-Path $PSScriptRoot 'New-LiveTestSettings.ps1') -VMName $facts.Source -RepoRoot $tree -OutPath (Join-Path $runDir 'live-test-settings.json') *> (Join-Path $runDir 'settings.log')
+        & (Join-Path $PSScriptRoot 'New-LiveTestSettings.ps1') -VMName $facts.Source -RepoRoot $tree -CredentialRoot $CredentialRepoRoot -OutPath (Join-Path $runDir 'live-test-settings.json') *> (Join-Path $runDir 'settings.log')
         if ($LASTEXITCODE -ne 0) { throw "New-LiveTestSettings.ps1 refused this guest's settings ($LASTEXITCODE) - settings.log" }
     }
     catch { $stage = 'BUILD'; $stageWhy = $_.Exception.Message; throw }

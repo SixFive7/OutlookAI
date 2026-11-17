@@ -8,9 +8,9 @@
 .DESCRIPTION
     RUN ON THE GUEST OutlookAI-Exchange, in session 1 through Testbed/guest/Register-InteractiveTask.ps1
     -RunLevel Limited (Windows PowerShell 5.1). THE TEST ACCOUNT'S SETTING ONLY, AND ONLY ON THIS VM: it
-    changes the offline window of telefonie-ai-test@xxlnet.nl in the VM's own Outlook profile, which the
+    changes the offline window of the test account in the VM's own Outlook profile, which the
     maintainer allowed for this measurement on the condition that the VM's checkpoint is restored
-    afterwards (2026-11-17). No mailbox item is read or written; telefonie@xxlnet.nl's setting is never
+    afterwards (2026-11-17). No mailbox item is read or written; the real mailbox's setting is never
     changed - the account row is chosen by the hub's address, and the dialog's own header is checked
     against it before the slider is touched.
 
@@ -52,7 +52,8 @@ param(
     [int]    $Months = -1,
     [int]    $Days = -1,
     [switch] $WhileRunning,
-    [string] $Hub = 'telefonie-ai-test@xxlnet.nl',
+    [string] $Hub,
+    [string] $SettingsPath = 'C:\OutlookAI-Q5\src\McpServer\OutlookAI.McpServer.Tests\live-fixtures\live-test-settings.json',
     [string] $ProfileName = 'Outlook',
     [string] $Root = 'C:\OutlookAI-Q5\measure\q145',
     [int]    $DialogWaitSeconds = 25,
@@ -137,6 +138,21 @@ function Test-SectionIsTheHubs($SectionValues, [string] $HubAddress) {
     return $false
 }
 
+# Q189 (b): no real mailbox's address is written in this repository. The first non-empty string of one
+# field of the staged live-test settings - testHubStoreDisplayName, or the first of a list - or $null
+# when the file or the field is absent.
+function Get-SettingsValue([string] $Json, [string] $Field) {
+    $settings = $Json | ConvertFrom-Json
+    if (-not ($settings.PSObject.Properties.Name -contains $Field)) { return $null }
+    $values = @($settings.$Field | Where-Object { $_ -is [string] -and $_ })
+    if ($values.Count -eq 0) { return $null }
+    return [string]$values[0]
+}
+function Get-StagedSettingsValue([string] $Path, [string] $Field) {
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return $null }
+    return (Get-SettingsValue (Get-Content -LiteralPath $Path -Raw) $Field)
+}
+
 function Invoke-SelfTest {
     $script:p = 0; $script:f = 0
     function Check([string] $Name, [bool] $Ok) { if ($Ok) { $script:p++; Write-Host "  PASS  $Name" } else { $script:f++; Write-Host "  FAIL  $Name" } }
@@ -147,17 +163,17 @@ function Invoke-SelfTest {
     Check 'a 4-byte value prints as its number' ((Format-ProfileValue '0C000000') -eq '12 (0x0C000000)')
     Check 'and 36 as 36' ((Format-ProfileValue (ConvertTo-LongHex 36)) -eq '36 (0x24000000)')
     Check 'a long value prints by length and hash only' ((Format-ProfileValue ('AB' * 40)) -match '^40 bytes, sha256 [0-9a-f]{8}$')
-    Check 'a string value prints by hash only' ((Format-ProfileValue 'STR:telefonie') -match '^a string, sha256 [0-9a-f]{8}$')
+    Check 'a string value prints by hash only' ((Format-ProfileValue 'STR:mailbox') -match '^a string, sha256 [0-9a-f]{8}$')
     $d = @(Compare-ProfileExport @{ 'S|00036649' = '0C000000'; 'S|x' = 'AA' } @{ 'S|00036649' = '24000000'; 'S|x' = 'AA'; 'S|y' = '01' })
     Check 'the diff finds a changed value and a new one, and nothing else' ($d.Count -eq 2 -and ($d | Where-Object { $_.Key -eq 'S|00036649' }).After -eq '24000000')
     Check 'eleven windows' ($Windows.Count -eq 11)
     Check 'position 7 is one year, 12 months' (($Windows | Where-Object { $_.Position -eq 7 }).Months -eq 12)
     Check 'positions 9 and 10 are 36 and 60 months' (($Windows | Where-Object { $_.Position -eq 9 }).Months -eq 36 -and ($Windows | Where-Object { $_.Position -eq 10 }).Months -eq 60)
     Check 'the day windows carry months 0' (@($Windows | Where-Object { $_.Days -gt 0 -and $_.Months -ne 0 }).Count -eq 0)
-    $hubHex = ConvertTo-Utf16Hex 'hub@x.nl'
-    Check 'a section with 0x6649 and the hub''s address may be written' (Test-SectionIsTheHubs @{ '00036649' = '0C000000'; '001f6641' = $hubHex } 'hub@x.nl')
-    Check 'one with 0x6649 and another address may not' (-not (Test-SectionIsTheHubs @{ '00036649' = '0C000000'; '001f6641' = (ConvertTo-Utf16Hex 'other@x.nl') } 'hub@x.nl'))
-    Check 'one with the hub''s address and no 0x6649 may not' (-not (Test-SectionIsTheHubs @{ '001f6641' = $hubHex } 'hub@x.nl'))
+    $hubHex = ConvertTo-Utf16Hex 'hub@example.invalid'
+    Check 'a section with 0x6649 and the hub''s address may be written' (Test-SectionIsTheHubs @{ '00036649' = '0C000000'; '001f6641' = $hubHex } 'hub@example.invalid')
+    Check 'one with 0x6649 and another address may not' (-not (Test-SectionIsTheHubs @{ '00036649' = '0C000000'; '001f6641' = (ConvertTo-Utf16Hex 'other@example.invalid') } 'hub@example.invalid'))
+    Check 'one with the hub''s address and no 0x6649 may not' (-not (Test-SectionIsTheHubs @{ '001f6641' = $hubHex } 'hub@example.invalid'))
     $ast = [System.Management.Automation.Language.Parser]::ParseFile($PSCommandPath, [ref] $null, [ref] $null)
     $writes = @($ast.FindAll({ param($x) $x -is [System.Management.Automation.Language.CommandAst] -and $x.GetCommandName() -match '^(Set-ItemProperty|New-ItemProperty|Remove-ItemProperty|Remove-Item)$' }, $true))
     Check 'the one registry write is Set-ItemProperty, once' ($writes.Count -eq 1 -and $writes[0].GetCommandName() -eq 'Set-ItemProperty')
@@ -171,12 +187,20 @@ function Invoke-SelfTest {
     $strings = @($ast.FindAll({ param($x) $x -is [System.Management.Automation.Language.StringConstantExpressionAst] -and $x.Value -match '^(Remove|Repair\.\.\.|New\.\.\.|Set as Default|More Settings)$' }, $true))
     Check 'no button but Change..., Next, the finish page''s and Close is ever looked for' ($strings.Count -eq 0)
     Write-Host ''
+    $staged = '{ "testHubStoreDisplayName": "hub@example.invalid", "bystanderStoreDisplayNames": [ "", "real@example.invalid" ], "probeTerm": "" }'
+    Check 'without -Hub, the hub is the one the staged settings name' ((Get-SettingsValue $staged 'testHubStoreDisplayName') -eq 'hub@example.invalid')
+    Check 'a list gives its first non-empty name' ((Get-SettingsValue $staged 'bystanderStoreDisplayNames') -eq 'real@example.invalid')
+    Check 'an empty field gives nothing' ($null -eq (Get-SettingsValue $staged 'probeTerm'))
+    Check 'an absent field gives nothing' ($null -eq (Get-SettingsValue $staged 'mailSink'))
+    Check 'no staged settings give nothing' ($null -eq (Get-StagedSettingsValue (Join-Path ([System.IO.Path]::GetTempPath()) ('no-such-settings-' + [guid]::NewGuid().ToString('N') + '.json')) 'testHubStoreDisplayName'))
     Write-Host ("SelfTest: {0} passed, {1} failed." -f $script:p, $script:f)
     if ($script:f -gt 0) { exit 1 }
     exit 0
 }
 
 if ($SelfTest) { Invoke-SelfTest }
+if (-not $Hub) { $Hub = Get-StagedSettingsValue $SettingsPath 'testHubStoreDisplayName' }
+if (-not $Hub) { throw "No -Hub, and no staged live-test settings at $SettingsPath name one: give the test account's address, or stage the settings (Invoke-LiveTierOnGuest.ps1 does on every run)." }
 if (-not $Step) { throw '-Step is mandatory.' }
 
 function Assert-TestbedGuestLocal {

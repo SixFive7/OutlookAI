@@ -39,10 +39,16 @@
     R0, R1 or R2. One per run.
 
 .PARAMETER Hub
-    The test account's store - the only store R2 reads. Default telefonie-ai-test@xxlnet.nl.
+    The test account's store - the only store R2 reads. Default: the hub the staged live-test settings
+    name (-SettingsPath).
 
 .PARAMETER Bystander
-    The address whose appearance in a file or control name is hashed before it is printed.
+    The address whose appearance in a file or control name is hashed before it is printed. Default: the
+    first bystander the staged live-test settings name.
+
+.PARAMETER SettingsPath
+    The live-test settings the live runner stages on this guest (gitignored). Without -Hub the hub is
+    the store they name; no real mailbox's address is written in this repository (Q189 (b)).
 
 .PARAMETER OutPath
     Where the result is written (the task's own output is short). Default C:\OutlookAI-Q5\measure\signatures-<step>.txt.
@@ -53,8 +59,9 @@
 [CmdletBinding()]
 param(
     [ValidateSet('R0', 'R1', 'R2')] [string] $Step,
-    [string] $Hub = 'telefonie-ai-test@xxlnet.nl',
-    [string] $Bystander = 'telefonie@xxlnet.nl',
+    [string] $Hub,
+    [string] $Bystander,
+    [string] $SettingsPath = 'C:\OutlookAI-Q5\src\McpServer\OutlookAI.McpServer.Tests\live-fixtures\live-test-settings.json',
     [string] $OutPath,
     [int]    $DialogWaitSeconds = 20,
     [string[]] $ExpectedUser = @('vmadmin'),
@@ -135,16 +142,31 @@ function Get-RoamingVerdict([string[]] $SignatureDialogNames, [string[]] $Genera
 # SELF-TEST
 # =============================================================================================
 
+# Q189 (b): no real mailbox's address is written in this repository. The first non-empty string of one
+# field of the staged live-test settings - testHubStoreDisplayName, or the first of a list - or $null
+# when the file or the field is absent.
+function Get-SettingsValue([string] $Json, [string] $Field) {
+    $settings = $Json | ConvertFrom-Json
+    if (-not ($settings.PSObject.Properties.Name -contains $Field)) { return $null }
+    $values = @($settings.$Field | Where-Object { $_ -is [string] -and $_ })
+    if ($values.Count -eq 0) { return $null }
+    return [string]$values[0]
+}
+function Get-StagedSettingsValue([string] $Path, [string] $Field) {
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return $null }
+    return (Get-SettingsValue (Get-Content -LiteralPath $Path -Raw) $Field)
+}
+
 function Invoke-SelfTest {
     $script:p = 0; $script:f = 0
     function Check([string] $Name, [bool] $Ok) { if ($Ok) { $script:p++; Write-Host "  PASS  $Name" } else { $script:f++; Write-Host "  FAIL  $Name" } }
 
-    Check 'a test-prefixed signature name prints as it is' ((Get-PrintableName 'OutlookAI-McpTest-Roam1117' 'b@x.nl') -eq 'OutlookAI-McpTest-Roam1117')
-    Check 'a GUID-shaped folder name prints as it is' ((Get-PrintableName '49499048-0129-47f5-b95e-f9d315b861a6' 'b@x.nl') -eq '49499048-0129-47f5-b95e-f9d315b861a6')
-    Check 'any other name is hashed' ((Get-PrintableName 'Jori work' 'b@x.nl') -match '^name#[0-9a-f]{8}$')
-    Check 'a name carrying the bystander''s address is hashed and says so' ((Get-PrintableName 'Sig (b@x.nl)' 'b@x.nl') -match '^name#[0-9a-f]{8} \(carries the bystander')
-    Check 'even a test-prefixed one, when it carries the bystander''s address' ((Get-PrintableName 'OutlookAI-McpTest-X (b@x.nl)' 'b@x.nl') -match '^name#')
-    Check 'the roaming copy''s address is read off "<name> (<address>)"' ((Get-RoamingCopyAddress 'Work (a@b.nl)') -eq 'a@b.nl')
+    Check 'a test-prefixed signature name prints as it is' ((Get-PrintableName 'OutlookAI-McpTest-Roam1117' 'b@example.invalid') -eq 'OutlookAI-McpTest-Roam1117')
+    Check 'a GUID-shaped folder name prints as it is' ((Get-PrintableName '49499048-0129-47f5-b95e-f9d315b861a6' 'b@example.invalid') -eq '49499048-0129-47f5-b95e-f9d315b861a6')
+    Check 'any other name is hashed' ((Get-PrintableName 'Alex work' 'b@example.invalid') -match '^name#[0-9a-f]{8}$')
+    Check 'a name carrying the bystander''s address is hashed and says so' ((Get-PrintableName 'Sig (b@example.invalid)' 'b@example.invalid') -match '^name#[0-9a-f]{8} \(carries the bystander')
+    Check 'even a test-prefixed one, when it carries the bystander''s address' ((Get-PrintableName 'OutlookAI-McpTest-X (b@example.invalid)' 'b@example.invalid') -match '^name#')
+    Check 'the roaming copy''s address is read off "<name> (<address>)"' ((Get-RoamingCopyAddress 'Work (a@example.com)') -eq 'a@example.com')
     Check 'a plain name has none' ($null -eq (Get-RoamingCopyAddress 'Work'))
     Check 'nor a bracketed word that is no address' ($null -eq (Get-RoamingCopyAddress 'Work (old)'))
     $utf16 = [System.Text.Encoding]::Unicode.GetBytes('Work' + [char]0)
@@ -156,7 +178,7 @@ function Invoke-SelfTest {
     Check '"Signatures on this device" reads as roaming' ($v.Roams -and $v.OnDevice)
     $v = Get-RoamingVerdict @('Select account') @() @()
     Check 'an account selector reads as roaming' ($v.Roams -and $v.AccountSelector)
-    $v = Get-RoamingVerdict @() @() @('a@b.nl')
+    $v = Get-RoamingVerdict @() @() @('a@example.com')
     Check 'a "(address)" file alone reads as roaming' ($v.Roams -and $v.RoamingCopies -eq 1)
     $v = Get-RoamingVerdict @() @('Store my Outlook settings in the cloud') @()
     Check 'the cloud-settings checkbox is reported, apart from the verdict' ($v.CloudSettingOffered -and -not $v.Roams)
@@ -177,12 +199,21 @@ function Invoke-SelfTest {
     Check 'the Signatures dialog and Options are closed with Cancel' ((Get-Content -LiteralPath $PSCommandPath -Raw) -match "Close-WithCancel")
 
     Write-Host ''
+    $staged = '{ "testHubStoreDisplayName": "hub@example.invalid", "bystanderStoreDisplayNames": [ "", "real@example.invalid" ], "probeTerm": "" }'
+    Check 'without -Hub, the hub is the one the staged settings name' ((Get-SettingsValue $staged 'testHubStoreDisplayName') -eq 'hub@example.invalid')
+    Check 'a list gives its first non-empty name' ((Get-SettingsValue $staged 'bystanderStoreDisplayNames') -eq 'real@example.invalid')
+    Check 'an empty field gives nothing' ($null -eq (Get-SettingsValue $staged 'probeTerm'))
+    Check 'an absent field gives nothing' ($null -eq (Get-SettingsValue $staged 'mailSink'))
+    Check 'no staged settings give nothing' ($null -eq (Get-StagedSettingsValue (Join-Path ([System.IO.Path]::GetTempPath()) ('no-such-settings-' + [guid]::NewGuid().ToString('N') + '.json')) 'testHubStoreDisplayName'))
     Write-Host ("SelfTest: {0} passed, {1} failed." -f $script:p, $script:f)
     if ($script:f -gt 0) { exit 1 }
     exit 0
 }
 
 if ($SelfTest) { Invoke-SelfTest }
+if (-not $Hub) { $Hub = Get-StagedSettingsValue $SettingsPath 'testHubStoreDisplayName' }
+if (-not $Hub) { throw "No -Hub, and no staged live-test settings at $SettingsPath name one: give the test account's address, or stage the settings (Invoke-LiveTierOnGuest.ps1 does on every run)." }
+if (-not $Bystander) { $Bystander = Get-StagedSettingsValue $SettingsPath 'bystanderStoreDisplayNames' }
 if (-not $Step) { throw '-Step is mandatory: R0, R1 or R2.' }
 
 # The guest guard: the autologon account on the Exchange VM, both.

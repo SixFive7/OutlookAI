@@ -77,9 +77,11 @@ public enum LiveMachineProfile
     ExchangeGuest = 2,
 
     /// <summary>
-    /// The Exchange test VM with a DEDICATED TEST ACCOUNT as its hub (2026-10-08): the maintainer's
-    /// <c>telefonie-ai-test@xxlnet.nl</c>, "the account you can use extensively for tests", added to the
-    /// VM's one Outlook profile beside the real mailbox <c>telefonie@xxlnet.nl</c>. The Phase 2
+    /// The Exchange test VM with a DEDICATED TEST ACCOUNT as its hub (2026-10-08): the maintainer's test
+    /// account, "the account you can use extensively for tests", added to the VM's one Outlook profile
+    /// beside the real mailbox. Neither address is in the repository: the settings file the testbed renders
+    /// names both at run time (Q189), and <see cref="LiveMailboxIdentity"/> checks them against the guest's
+    /// Outlook before every baseline. The Phase 2
     /// write-safety design (<c>Docs/live-tier-on-the-vm.md</c> section 4.4) built for that account:
     /// <list type="bullet">
     /// <item><b>The hub may be written, and nothing else</b>: every other store the settings name is a

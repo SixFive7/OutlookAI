@@ -179,7 +179,7 @@ public sealed record HubLeftovers(int Total, IReadOnlyDictionary<string, int> Fr
 
 /// <summary>
 /// The tagged items each store the sweep may NOT delete from held before the run - so that a tagged item
-/// that was already in a read-only bystander (on the Exchange VM: one in telefonie's Sent Items, from the
+/// that was already in a read-only bystander (on the Exchange VM: one in the real mailbox's Sent Items, from the
 /// workstation years) is reported and left alone, while one that ARRIVES during the run still fails it.
 /// Captured once per process, before any test writes, on the Exchange VM's test account only; empty
 /// everywhere else, where every such store must hold none, as before.

@@ -23,7 +23,7 @@ public sealed class RecipientAllowlistTests
     [InlineData("SMTP:test-account@example.invalid", true)]
     [InlineData("someone@example.invalid", false)]
     [InlineData("Test Account", false)]
-    [InlineData("test-account@example.invalid.evil", false)]
+    [InlineData("test-account@example.invalid.test", false)]
     [InlineData("", false)]
     [InlineData(null, false)]
     public void OnlyTheHubsOwnAddressIsAllowed(string? entry, bool allowed)

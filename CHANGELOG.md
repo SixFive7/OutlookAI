@@ -213,19 +213,20 @@ its mailbox tests on, and change nothing you install.
   without it, written while Outlook ran, so that measurement stays open.
 
 - ✅ **The Exchange test machine writes in a dedicated test account, and only there.**
-  The maintainer's Microsoft 365 account `telefonie-ai-test@xxlnet.nl`, which he gave for extensive
-  testing, joined the machine's Outlook profile beside `telefonie@xxlnet.nl` and is the hub its live
-  tests may write in (Q137, settled 2026-10-11); telefonie, real mail, is a read-only bystander the
-  count tripwire watches. The write-safety design proposed on 2026-10-03 is built for that account:
+  A Microsoft 365 account the maintainer gave for extensive testing joined the machine's Outlook
+  profile beside the mailbox it already held, and is the hub its live tests may write in (Q137,
+  settled 2026-10-11); that mailbox, real mail, is a read-only bystander the count tripwire watches. The write-safety design proposed on 2026-10-03 is built for that account:
   every address a test hands to Outlook, in-process or through the MCP server, must be the test
   account's own; every item a run makes carries the test tag and a run marker the host records before
   the run starts; a reply, a send, a move or a delete touches only the run's own tagged items in the
   test account; and the sweep takes back only items of a recorded run, by tag and marker, so an aborted
   run's leftovers go with the next run and never by a subject pattern. Exchange also maps the test
-  mailbox into the profile a second time, as an online entry reached through telefonie's Full Access;
-  before every baseline the tripwire now proves by the store's record key that the hub's name is the
-  test account's own store and that the second entry is neither censused nor written through, or the
-  run refuses. The live runner runs this machine with the broadest filter it can honestly run, carries
+  mailbox into the profile a second time, as an online entry reached through the real mailbox's Full
+  Access; before every baseline the tripwire now proves by the store's record key that the hub's name
+  is the test account's own store and that the second entry is neither censused nor written through,
+  or the run refuses. Neither address is in the repository: `Testbed/testbed.json` names each account
+  by its role, a run reads the address from that account's gitignored credential file, and the same
+  check refuses a run whose settings name an account the machine's Outlook has not signed in. The live runner runs this machine with the broadest filter it can honestly run, carries
   its state from run to run, because a restored offline data file is older than the server, and sets
   the data files aside when a checkpoint is restored. A tagged item that was already in a read-only
   mailbox before a run is reported and left alone instead of failing every run.
@@ -641,7 +642,7 @@ its mailbox tests on, and change nothing you install.
 
 - 📝 **An agent may sign in to Outlook on the web on the Exchange test machine, on six conditions.**
   The maintainer's decision Q161 (c), 2026-11-17, now in AGENTS.md beside the machine's internet
-  exception: that machine only; the test account only, never telefonie; Windows' own browser, Edge;
+  exception: that machine only; the test account only, never the real mailbox; Windows' own browser, Edge;
   the password and the code typed as keystrokes from the host's encrypted store, as the sign-in
   script does; "Stay signed in" and device registration declined; signed out afterwards and the
   machine restored to its checkpoint. It exists to measure roaming signatures.

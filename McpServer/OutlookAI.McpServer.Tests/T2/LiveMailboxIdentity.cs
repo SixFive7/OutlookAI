@@ -59,8 +59,8 @@ public sealed class MailboxIdentityReport
 
 /// <summary>
 /// The Exchange VM's test mailbox by IDENTITY, not by name (2026-11-17). The profile there holds the test
-/// account's mailbox twice: its own cached store, <c>telefonie-ai-test@xxlnet.nl</c> (ExchangeStoreType 4), and
-/// an online entry Exchange automapped through telefonie@'s Full Access, <c>Telefonie XXLNet</c>
+/// account's mailbox twice: its own cached store, named by its address (ExchangeStoreType 4), and an online
+/// entry Exchange automapped through the real mailbox's Full Access, named by the test account's display name
 /// (ExchangeStoreType 1). Both carry the same <c>PR_STORE_RECORD_KEY</c>, and the bystander's differs - measured
 /// on the VM that day. The coordinator's direction, the maintainer's question still open: the two entries are
 /// ONE test mailbox; writes are allowlisted by the test account's identity, never by a store's name; nothing is

@@ -354,9 +354,9 @@ have internet". Since 2026-11-17 the OutlookAI add-in itself is installed there 
 
 **Q161 (c), decided by the maintainer 2026-11-17: Outlook on the web on the Exchange VM, to measure
 roaming signatures.** An agent may sign in to Outlook on the web there. Conditions, all of them:
-`OutlookAI-Exchange` only; the test account `telefonie-ai-test@xxlnet.nl` only, never
-`telefonie@xxlnet.nl`; Windows' own browser, Edge; the password and the TOTP code typed as keystrokes
-from the host's DPAPI store, as `Testbed/host/Invoke-ExchangeSignIn.ps1` does; "Stay signed in" and
+`OutlookAI-Exchange` only; the test account only - the account `Testbed/testbed.json` records as the
+hub - never the Exchange VM's mailbox; Windows' own browser, Edge; the password and the TOTP code typed
+as keystrokes from the host's DPAPI store, as `Testbed/host/Invoke-ExchangeSignIn.ps1` does; "Stay signed in" and
 device registration declined; signed out afterwards, and the VM restored to its checkpoint.
 
 **A third exception, decided by the maintainer 2026-10-03 (Q125): CodeQL, run locally.** The
@@ -434,11 +434,11 @@ way that it does not touch [non-test] data in the mailbox and in such a way that
 clean after the tests"*; *"legitimate mail in there should not disappear and it should not be buried
 in test mail forever"* - read, as he confirmed (Q129 (a)), as **touch nothing that is not test data**:
 tests create, change and delete only their own tagged items, and remove every one of them again.
-Since 2026-10-08 the VM also holds his dedicated test account, `telefonie-ai-test@xxlnet.nl`, which
-he settled as its writable hub on 2026-10-11 (Q137): the live tier writes there and nowhere else,
-under the Phase 2 write-safety design as built (runbook §4.4a, profile `ExchangeTestAccount`), and
-telefonie@ is a read-only bystander no test writes - its one exception the single leftover of Q138 (c),
-deleted by a tested one-off helper once he has confirmed its id. A checkpoint undoes nothing on the
+Since 2026-10-08 the VM also holds his dedicated test account, which he settled as its writable hub
+on 2026-10-11 (Q137): the live tier writes there and nowhere else, under the Phase 2 write-safety
+design as built (runbook §4.4a, profile `ExchangeTestAccount`), and the real mailbox is a read-only
+bystander no test writes - its one exception the single leftover of Q138 (c), deleted by a tested
+one-off helper once he has confirmed its id. A checkpoint undoes nothing on the
 Exchange server: every write there is permanent, and its cleanup rests on the tested sweep alone.
 Nothing may be sent or addressed to anyone but the test account itself (Q110). The rules below bind every
 live run, on every VM.

@@ -94,7 +94,7 @@ public sealed class LiveRunItemCheck
         if (item == null && storeId == null && HubStoreId(session) is { } hubStoreId)
         {
             // An EntryID handed in without its store opens against the DEFAULT store, and the hub is not
-            // that one here (telefonie is the profile's first account): ask the hub as well, so an item of
+            // that one here (the real mailbox is the profile's first account): ask the hub as well, so an item of
             // the hub is judged rather than passed for want of a store.
             item = session.TryReadItem(entryId, hubStoreId, false, false, out _);
         }

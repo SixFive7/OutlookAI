@@ -12,9 +12,9 @@ namespace OutlookAI.McpServer.Tests.T1;
 /// </summary>
 public sealed class MailboxIdentityTests
 {
-    private const string Hub = "telefonie-ai-test@xxlnet.nl";
-    private const string Bystander = "telefonie@xxlnet.nl";
-    private const string Alias = "Telefonie XXLNet";
+    private const string Hub = "test-account@example.invalid";
+    private const string Bystander = "real-mailbox@example.invalid";
+    private const string Alias = "Test Account";
     private const string HubKey = "0000000038A1BB1005E5101AA1BB08002B2A56C20000454D534D44422E444C4C00000000";
     private const string BystanderKey = "0000000038A1BB1005E5101AA1BB08002B2A56C20000454D534D44422E444C4C00000001";
 
