@@ -60,6 +60,7 @@ namespace OutlookAI.McpServer.Tests.T1;
 /// never widens. <see cref="TheIndexTierIsSkippedRatherThanWidened"/> is that guarantee.
 /// </para>
 /// </summary>
+[Trait("TimeZone", "Machine")]
 public sealed class UnindexedStoreScopeTests
 {
     private const string Sid = "{S-1-5-21-1111111111-2222222222-3333333333-1001}";

@@ -35,6 +35,7 @@ namespace OutlookAI.McpServer.Tests.T1;
 /// every time.
 /// </para>
 /// </summary>
+[Trait("TimeZone", "Machine")]
 public sealed class StoreIndexHashScopeTests
 {
     private static readonly string UserRoot = IndexSearchService.CurrentUserMapiRoot();

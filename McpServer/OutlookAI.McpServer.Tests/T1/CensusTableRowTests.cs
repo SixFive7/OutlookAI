@@ -33,6 +33,7 @@ public sealed class CensusTableRowTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void ACompleteRow_BecomesAnIdentifiableItem()
     {
         CensusItem? item = CensusTableRow.Project(
@@ -46,6 +47,7 @@ public sealed class CensusTableRowTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void ARowThatNamesNoItem_IsRejectedRatherThanSkipped()
     {
         // A skipped row would read exactly like an item that had been deleted, which is the
@@ -59,6 +61,7 @@ public sealed class CensusTableRowTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void AnUnusableColumnMap_ProjectsNothing()
     {
         // A table that cannot say when an item arrived, how big it is or whether it is the
@@ -74,12 +77,14 @@ public sealed class CensusTableRowTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void ARowShorterThanTheMapPromised_IsRejected()
     {
         Assert.Null(CensusTableRow.Project(new object?[] { "ID" }, Map()));
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void TheSuitesOwnMailIsRecognisedByItsTag_CaseInsensitively()
     {
         // Attribution turns on this boolean: a tagged item leaving a mailbox the suite may
@@ -99,6 +104,7 @@ public sealed class CensusTableRowTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void ASubjectNeverSurvivesTheProjection()
     {
         // S3/S4: the census may not carry another mailbox's content anywhere a log or a
@@ -113,6 +119,7 @@ public sealed class CensusTableRowTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void AnItemWithNoReceivedTimeOrNoSize_IsStillCensusedButCannotBeTracedAcrossAMove()
     {
         // Drafts and report items have no received time. They keep their EntryID, so a
@@ -128,6 +135,7 @@ public sealed class CensusTableRowTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void AnUnspecifiedKindIsReadAsUtc_SoTwoCensusesAgree()
     {
         // The Table object reports date-time values in UTC, and this solution already takes
@@ -147,6 +155,7 @@ public sealed class CensusTableRowTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void EverySizeShapeATableCanHandBackReadsTheSame()
     {
         // A variant carrying a MAPI long is not contractually one CLR type, and a
@@ -245,6 +254,7 @@ public sealed class CensusTableRowTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void ABlockOfRowsProjectsInOrder_AndOneBadRowAbandonsTheFolder()
     {
         DateTime moment = new(2026, 8, 20, 9, 30, 0, DateTimeKind.Utc);
@@ -274,6 +284,7 @@ public sealed class CensusTableRowTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void ABlockWithANonZeroOrigin_IsReadFromItsOwnBounds()
     {
         // A SAFEARRAY may declare any origin, and an assumed zero would shift every row.
@@ -289,6 +300,7 @@ public sealed class CensusTableRowTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void AFiledItemProjectedFromTwoTableReadsIsStillRecognisedAsFiled()
     {
         // End to end over the projection: the exoneration the census exists to be able to

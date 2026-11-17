@@ -44,6 +44,7 @@ namespace OutlookAI.McpServer.Tests.T1;
 /// Conversation object really does stop at the anchor's store.
 /// </para>
 /// </summary>
+[Trait("TimeZone", "Machine")]
 public sealed class ThreadDerivedStoreScopeTests
 {
     private const string Sid = "{S-1-5-21-1111111111-2222222222-3333333333-1001}";

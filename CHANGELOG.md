@@ -201,6 +201,19 @@ its mailbox tests on, and change nothing you install.
   check fails, the reason is written out in full here rather than hidden behind a link. Both
   indicators now take their wording from one place, so they cannot disagree.
 
+- ✅ **Tests that can read the machine's time zone run again in Central European time (Q144).**
+  The build machine runs the suite in UTC (Q126), where the machine's zone and UTC are one zone, so
+  a test that compares a local time with a UTC one only proved them equal. After the suite, every
+  run now switches the machine to W. Europe Standard Time, runs the tests marked
+  `[Trait("TimeZone", "Machine")]` once more, and switches it back before the self-checks. The
+  summary, its JSON and the exit code report both runs. A new check, `T1/TimeZoneMarkerTests`,
+  fails any unmarked test whose code, or the code it calls in the product, reads the machine's zone,
+  and names the call chain to the read. It found 323 of the 2,676 test methods, in 39 classes; 145
+  of them reach the zone only through a product conversion that reads it for a local time alone,
+  which a reading of the code cannot tell apart. All 323 are marked; their 383 test cases took
+  1.2 s between them in a recent full run. As the maintainer decided, a marked test is rewritten to
+  set its own zone when it is next changed, and then loses its mark.
+
 - ✅ **The signature tests try the profile, folder and default settings on a test machine.**
   Three live tests set a value the user could set themselves, check what OutlookAI does with it,
   record what Outlook's own signature editor reports, and put the value back: Outlook running on a
@@ -887,7 +900,7 @@ its mailbox tests on, and change nothing you install.
   GitHub's UTC runner used to catch time-zone bugs, the way the Q95 one was found, and it went with
   the CI. `OutlookAI-Build` now rests on `CP-03-SDK-TEST-READY-UTC`, the runner refuses a guest in
   any other zone, and the first runs passed 3,818 of 3,818 with no zone bug found. Tests that use
-  the machine's own zone as the other one now prove less; how to cover them is open (Q144).
+  the machine's own zone as the other one prove less there, so they run again in Central European time (Q144).
 
 - ✅ **The indexed test machine's test mailboxes hold calendar entries, contacts and tasks again.**
   There are four of each in the hub and fourteen in the bystander, as the maintainer decided (D62
@@ -1841,6 +1854,18 @@ its mailbox tests on, and change nothing you install.
   next - the cost was the accumulating hidden window, not a broken Outlook. This also cannot help
   when the assistant kills the helper outright, which is what happens when Outlook has genuinely
   stopped responding and when a session ends abruptly.
+
+- ✅ **The audit log's eight-writer test passes on a busy machine, and still checks the lock's promise.**
+  With the writer lock on, it demanded that no line was ever written without the lock and that the
+  whole file was in time order. On 2026-11-17, with three build runs and four Outlook test machines
+  on one host, writers waited longer than the lock's 2 s and appended without it, as the product
+  does by design, marking the line `lock="timeout"`: 12 of 1,000 lines on one build machine and 1 on
+  another, and the test failed on both. It now checks what the product promises instead: every line
+  written without the lock says so, exactly as many per writer as that writer's own count of
+  appends that ran out the wait, the lines written under the lock are in time order, and most lines
+  were written under it. How many lines waited it out goes to the test's output. A new test holds
+  the lock until three writers have each run out the wait, so that path is checked on every build,
+  not only on a busy machine. The lock's wait is unchanged.
 
 - ✅ **The signature test swaps one signature for another and checks the first is gone.**
   The test meant to prove that a draft's signature can be replaced applied the same signature a

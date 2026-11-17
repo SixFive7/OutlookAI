@@ -20,6 +20,7 @@ namespace OutlookAI.McpServer.Tests.T1;
 public sealed class ComHostProtocolTests
 {
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void PerStoreSweepWindows_SurviveTheWire_WithTheirStoreNamesIntact()
     {
         // The freshness sweep now carries one window PER STORE, keyed on the store display

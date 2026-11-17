@@ -175,6 +175,7 @@ public sealed class FolderNameEncodingTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void AHitFromAnEncodedFolder_IsLocatedByItsRealFolderNames()
     {
         IndexHit hit = Hit(Prefix + "/0/Clients/50%25 off/" + EntryIdCodecTests.SyntheticEncodedTail());
@@ -185,6 +186,7 @@ public sealed class FolderNameEncodingTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void ASweptItem_IsRecognisedAsTheIndexHitOfTheSameMail()
     {
         // The duplicate check compares the swept item's folder NAME with the hit's last segment;

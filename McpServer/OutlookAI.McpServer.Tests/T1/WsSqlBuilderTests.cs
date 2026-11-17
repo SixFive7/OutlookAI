@@ -29,6 +29,7 @@ public sealed class WsSqlBuilderTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void Build_DefaultShape_MatchesProvenProbeQuery()
     {
         string sql = WsSqlBuilder.Build(BaseQuery());
@@ -60,6 +61,7 @@ public sealed class WsSqlBuilderTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void Build_NeverEmitsUnqualifiedContains_Sf6RecallBug()
     {
         // SF-6 (measured 2026-07-26): a bare CONTAINS('term') searches
@@ -81,6 +83,7 @@ public sealed class WsSqlBuilderTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void Build_SubjectOnlySearchIn_QueriesSubjectColumnAlone()
     {
         var query = BaseQuery();
@@ -93,6 +96,7 @@ public sealed class WsSqlBuilderTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void Build_BodyOnlySearchIn_QueriesContentsColumnAlone()
     {
         var query = BaseQuery();
@@ -111,6 +115,7 @@ public sealed class WsSqlBuilderTests
     // ------------------------------------- cross-column AND (soak fix 13, user 2026-07-26)
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void Build_MultipleTerms_AndAcrossTheColumns_NotInsideOne()
     {
         // The shipped shape until soak fix 13 ANDed the terms INSIDE each column and ORed
@@ -132,6 +137,7 @@ public sealed class WsSqlBuilderTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void Build_ThreeTerms_EmitOnePairPerTerm()
     {
         var query = BaseQuery();
@@ -154,6 +160,7 @@ public sealed class WsSqlBuilderTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void Build_SingleTerm_ShapeUnchangedByTheCrossColumnFix()
     {
         string sql = WsSqlBuilder.Build(BaseQuery());
@@ -166,6 +173,7 @@ public sealed class WsSqlBuilderTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void Build_NarrowedSearchIn_StaysSingleColumn_WithMultipleTerms()
     {
         // Narrowed scopes need no OR pair: an in-column AND is equivalent and cheaper.
@@ -187,6 +195,7 @@ public sealed class WsSqlBuilderTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void Build_PrefixStar_SurvivesInBothColumns()
     {
         var query = BaseQuery();
@@ -199,6 +208,7 @@ public sealed class WsSqlBuilderTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void Build_PrefixStar_WorksInEveryTermPosition()
     {
         var query = BaseQuery();
@@ -233,6 +243,7 @@ public sealed class WsSqlBuilderTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void Build_EscapesSingleQuotesInBothColumns()
     {
         var query = BaseQuery();
@@ -245,6 +256,7 @@ public sealed class WsSqlBuilderTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void Build_RejectsUnknownSearchIn()
     {
         var query = BaseQuery();
@@ -296,6 +308,7 @@ public sealed class WsSqlBuilderTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void Build_MailKindOnly_IsTheOnlyShapeThatStillNarrowsByKind()
     {
         // The store-DISCOVERY probe, and nothing else. It used to be what `search` emitted
@@ -313,6 +326,7 @@ public sealed class WsSqlBuilderTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void Build_AttachmentsOnly_EmitsNoKindPredicateUnderAScope()
     {
         // attachment_hits_only used to mean Kind='document', which is exactly the filter
@@ -339,6 +353,7 @@ public sealed class WsSqlBuilderTests
     /// </para>
     /// </summary>
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void Build_MessagesOnly_EmitsNoKindPredicateUnderAScope()
     {
         var query = BaseQuery();
@@ -350,6 +365,7 @@ public sealed class WsSqlBuilderTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void Build_MessagesOnly_Unscoped_StillEnumeratesKinds()
     {
         string sql = WsSqlBuilder.Build(new IndexQuery
@@ -363,6 +379,7 @@ public sealed class WsSqlBuilderTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void Build_Unscoped_EnumeratesTheAttachmentKinds_SoTheFileSystemStaysOut()
     {
         // With no SCOPE there is no namespace fence, so the provider still gets a kind
@@ -383,6 +400,7 @@ public sealed class WsSqlBuilderTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void Build_TopOverride_EmitsTheOverFetchedTop_NotTheRequestedOne()
     {
         var query = BaseQuery();
@@ -395,6 +413,7 @@ public sealed class WsSqlBuilderTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void Build_NeverSelectsForbiddenColumns()
     {
         string sql = WsSqlBuilder.Build(BaseQuery());
@@ -414,6 +433,7 @@ public sealed class WsSqlBuilderTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void Build_NeverEmitsLike_AntiPattern()
     {
         var query = new IndexQuery
@@ -440,6 +460,7 @@ public sealed class WsSqlBuilderTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void Build_AllFilters_ComposeIntoOneStatement()
     {
         var query = new IndexQuery
@@ -480,6 +501,7 @@ public sealed class WsSqlBuilderTests
     /// index and the answer was whatever the sweep window caught, reported as complete.
     /// </summary>
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void Build_SenderFilter_MatchesAddressOrDisplayName()
     {
         var query = BaseQuery();
@@ -500,6 +522,7 @@ public sealed class WsSqlBuilderTests
     /// recall fix and is a correctness bug.
     /// </summary>
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void Build_SenderFilter_IsParenthesisedSoItCannotWidenTheStatement()
     {
         var query = BaseQuery();
@@ -522,6 +545,7 @@ public sealed class WsSqlBuilderTests
 
     /// <summary>Both sender columns go through the same term validation - one escape, not two.</summary>
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void Build_SenderFilter_EscapesQuotesInBothColumns()
     {
         var query = BaseQuery();
@@ -534,6 +558,7 @@ public sealed class WsSqlBuilderTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void Build_SubjectAndBodySearchIn_UsesColumnScopedContains()
     {
         var query = BaseQuery();
@@ -548,6 +573,7 @@ public sealed class WsSqlBuilderTests
     }
 
     [Theory]
+    [Trait("TimeZone", "Machine")]
     [InlineData("*")]
     [InlineData("  *  ")]
     public void Build_RejectsBareStarTerm_ContainsStarIsInvalid(string term)
@@ -559,6 +585,7 @@ public sealed class WsSqlBuilderTests
     }
 
     [Theory]
+    [Trait("TimeZone", "Machine")]
     [InlineData("fac*tuur")]
     [InlineData("*factuur")]
     [InlineData("fac\"tuur")]
@@ -575,6 +602,7 @@ public sealed class WsSqlBuilderTests
     }
 
     [Theory]
+    [Trait("TimeZone", "Machine")]
     [InlineData("file:///c:/temp")]
     [InlineData("csc://{S-1-5-21-1}/x")]
     [InlineData("/alice@example.com/Inbox")]
@@ -590,6 +618,7 @@ public sealed class WsSqlBuilderTests
     // ------------------------------------------------- escaping (soak fix 15, item 3)
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void Build_EscapesSingleQuotesInTheScope_InsteadOfThrowing()
     {
         // Was: ValidateScope THREW on any scope containing an apostrophe, which made a
@@ -607,6 +636,7 @@ public sealed class WsSqlBuilderTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void Build_EscapesSingleQuotesInTheFolderPathLiteral()
     {
         var query = BaseQuery();
@@ -619,6 +649,7 @@ public sealed class WsSqlBuilderTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void Build_LeavesEveryOtherCharacterLiteralUnderEquality()
     {
         // Proved live: '=' is not LIKE - '%', '_', '[', ']', '{', '}', '"' are literal,
@@ -636,6 +667,7 @@ public sealed class WsSqlBuilderTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void Build_RejectsControlCharactersInTheScope()
     {
         var query = BaseQuery();
@@ -647,6 +679,7 @@ public sealed class WsSqlBuilderTests
     // ------------------------------- non-recursive folder predicate (soak fix 15, item 4)
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void Build_EmitsFolderPathEquality_NotDirectory_ForANonRecursiveScope()
     {
         var query = BaseQuery();
@@ -667,6 +700,7 @@ public sealed class WsSqlBuilderTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void Build_OrsMultipleFolderPaths_ForAFlatDelegateSubtree()
     {
         var query = BaseQuery();
@@ -687,6 +721,7 @@ public sealed class WsSqlBuilderTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void Build_CollapsesDuplicateFolderPaths()
     {
         var query = BaseQuery();
@@ -704,6 +739,7 @@ public sealed class WsSqlBuilderTests
     }
 
     [Theory]
+    [Trait("TimeZone", "Machine")]
     [InlineData("alice@example.com/Inbox")] // no leading slash
     [InlineData("")]
     [InlineData("   ")]
@@ -717,6 +753,7 @@ public sealed class WsSqlBuilderTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void Build_RefusesAnOverlongFolderPathOrSet()
     {
         // MEASURED: the provider executes a 95-literal OR-set and FAILS OUTRIGHT
@@ -756,6 +793,7 @@ public sealed class WsSqlBuilderTests
     }
 
     [Theory]
+    [Trait("TimeZone", "Machine")]
     [InlineData(0)]
     [InlineData(-1)]
     [InlineData(5001)]
@@ -768,6 +806,7 @@ public sealed class WsSqlBuilderTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void Build_RejectsInvertedDateRange()
     {
         var query = BaseQuery();
@@ -778,6 +817,7 @@ public sealed class WsSqlBuilderTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void Build_RejectsUnsafeSenderAndRecipientFilters()
     {
         var withBadSender = BaseQuery();
@@ -790,6 +830,7 @@ public sealed class WsSqlBuilderTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void Build_NoAggregatesOrJoinsEverEmitted()
     {
         string sql = WsSqlBuilder.Build(BaseQuery());
@@ -830,6 +871,7 @@ public sealed class WsSqlBuilderTests
     }
 
     [Fact]
+    [Trait("TimeZone", "Machine")]
     public void Build_TreatsUnspecifiedDateKindAsUtc()
     {
         var query = BaseQuery();
