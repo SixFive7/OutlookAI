@@ -270,7 +270,8 @@ function Select-ExchangeCredentialFile {
 # all - can be asked for.
 function Select-AccountAddress {
     param([object[]] $Entries, [string] $File)
-    if ($File -cnotmatch '^exchange-credentials(-[A-Za-z0-9-]+)?\.json$') { throw "'$File' is not an Exchange credential file's name (exchange-credentials.json or exchange-credentials-<name>.json)." }
+    # Ignoring case, as Windows does for a file's name; the pattern is what keeps every other file out.
+    if ($File -notmatch '^exchange-credentials(-[A-Za-z0-9-]+)?\.json$') { throw "'$File' is not an Exchange credential file's name (exchange-credentials.json or exchange-credentials-<name>.json)." }
     $own = @($Entries | Where-Object { $null -ne $_ -and [string]::Equals([string]$_.File, $File, [StringComparison]::OrdinalIgnoreCase) })
     if ($own.Count -ne 1) { throw "No $File among the Exchange credential files (read: $(@($Entries | ForEach-Object { $_.File }) -join ', ')). The maintainer stores it; see the header of this script for its shape." }
     if ([string]::IsNullOrWhiteSpace([string]$own[0].Account)) { throw "$File has no ""account"" field." }
