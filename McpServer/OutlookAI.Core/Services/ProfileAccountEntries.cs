@@ -91,7 +91,7 @@ namespace OutlookAI.Core.Services
 
         /// <summary>
         /// The account's OWN email address - the one <c>list_accounts</c> reports and
-        /// <c>set_default_for.account</c> is matched against. Null unless <see cref="Kind"/> is
+        /// <c>default_for.account</c> is matched against. Null unless <see cref="Kind"/> is
         /// <see cref="ProfileEntryKind.MailAccount"/> and the value that carries the address is
         /// address-shaped.
         /// </summary>
@@ -285,7 +285,7 @@ namespace OutlookAI.Core.Services
     /// <summary>
     /// Which entries of a profile's account-manager key (<c>9375CFF0413111d3B88A00104B2A6676</c>)
     /// are MAIL ACCOUNTS, and which email address each belongs to. The one rule behind every
-    /// signature-default read and write: <c>manage_signature</c>'s <c>set_default_for</c>, its
+    /// signature-default read and write: <c>manage_signature</c>'s <c>default_for</c>, its
     /// delete sweep, the read-back that verifies a write, and <c>list_signatures</c>.
     /// <para>
     /// <b>Why it exists - the defect it replaces, measured 2026-09-24 on OAI-UNINDEXED.</b> The

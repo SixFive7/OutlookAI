@@ -432,6 +432,15 @@ for. The add-in's signature button reads the folder through the one linked rule
 (`Services/SignatureFolderLocation.cs`) - the add-in otherwise unchanged, as Q158 asks - because the
 folder defect was named in all three places. **Undo:** each is one change.
 
+**10. What the add-in's own pick will call (Q158 + Q162, built later).** *Options:* (a) the code the
+server decides with, as it stands in Core; (b) a separate facade for the add-in. **Decided: (a)** -
+one copy (Q154), and the server exercises it on every draft: `SignatureEnvironment.ReadCurrent()` for
+the folder, profiles, policy and roaming; `SignatureSelector.Candidates(environment, account,
+runningProfile)` for the signatures that account may use, with excerpts to judge the language by, its
+effective defaults, and whether policy disables or forces them; `SignatureSelector.Decide(...)` for
+the default and the reason. The add-in keeps one thing for itself: whether the signature in the open
+draft was put there by a person. **Undo:** nothing is built on it yet.
+
 ### 2026-10-04, autonomous - the compose crash: dumps on the guests, the cause, and a compose that never hands Outlook that close
 
 **Primer.** OUTLOOK.EXE crashed now and then in the live compose tests on both Outlook guests (runbook
