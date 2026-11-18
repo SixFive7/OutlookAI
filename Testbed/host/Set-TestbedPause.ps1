@@ -164,7 +164,9 @@ function Invoke-SelfTest {
         Write-TestbedStarts @([pscustomobject]@{ unix = 5; share = 12.5; vm = 'OutlookAI-Build'; run = 'a' })
         Check 'one start is written as an array of one and read back as one' $true (([System.IO.File]::ReadAllText((Join-Path $scratch 'starts.json'))).TrimStart().StartsWith('[') -and @(Read-TestbedStarts).Count -eq 1)
         Write-TestbedStarts @()
-        Check 'none is written as an empty array' '[]' ([System.IO.File]::ReadAllText((Join-Path $scratch 'starts.json')).Trim())
+        # Without its white space: Windows PowerShell 5.1 writes an empty array as '[', two line breaks
+        # and ']', where PowerShell 7 writes '[]' (build VM run 20261118-081540-450d0af33ff9).
+        Check 'none is written as an empty array' '[]' (([System.IO.File]::ReadAllText((Join-Path $scratch 'starts.json'))) -replace '\s', '')
         [System.IO.File]::WriteAllText((Join-Path $scratch 'starts.json'), 'not json')
         Check 'an unreadable starts file is no starts' 0 @(Read-TestbedStarts).Count
         Write-TestbedStarts @()
