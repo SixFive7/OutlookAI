@@ -683,34 +683,32 @@ $q164 = 'the add-in reaches OutlookAI.Core only through OutlookAI.Core.AddIn, wh
 $facadeNamespace = 'OutlookAI.Core.AddIn'
 $coreDirRel = 'McpServer/OutlookAI.Core'
 $facadeDirRel = 'McpServer/OutlookAI.Core/AddIn'
-# One pass over a C# text for its comments and its string and character literals; the leftmost match
-# wins, so a // inside a string stays in the string. A comment becomes a space, a literal stays or
-# becomes "", and every line break stays, so a line number still points into the source.
-$csCommentsAndLiterals = New-Object System.Text.RegularExpressions.Regex('(?<comment>//[^\n]*|/\*[\s\S]*?\*/)|(?<literal>"{3,}[\s\S]*?"{3,}|@\$?"(?:[^"]|"")*"|\$@"(?:[^"]|"")*"|\$?"(?:[^"\\\n]|\\.)*"|''(?:[^''\\\n]|\\.)+'')')
+# One regex over a C# text for its comments and its string and character literals; the leftmost match
+# wins, so a // inside a string stays in the string. Two of .NET's own replacements, with no script
+# code per match, which kept this check from taking minutes on a busy machine: every comment becomes a
+# space, and every literal stays, followed by a space, or becomes "" ('' for a character). A space
+# rather than nothing, so that two tokens a comment separated stay apart.
+$csCommentsAndLiterals = New-Object System.Text.RegularExpressions.Regex('//[^\n]*|/\*[\s\S]*?\*/|(?<lit>(?<q>")"{2,}[\s\S]*?"{3,}|@\$?(?<q>")(?:[^"]|"")*"|\$@(?<q>")(?:[^"]|"")*"|\$?(?<q>")(?:[^"\\\n]|\\.)*"|(?<q>'')(?:[^''\\\n]|\\.)+'')')
 function Get-CSharpCode([string] $Text, [switch] $KeepStrings) {
-    $sb = New-Object System.Text.StringBuilder
-    $at = 0
-    foreach ($m in $csCommentsAndLiterals.Matches($Text)) {
-        [void]$sb.Append($Text, $at, $m.Index - $at)
-        $breaks = [string]::new([char]10, ($m.Value.Split([char]10).Count - 1))
-        if ($m.Groups['comment'].Success) { [void]$sb.Append(' ' + $breaks) }
-        elseif ($KeepStrings) { [void]$sb.Append($m.Value) }
-        else { [void]$sb.Append('""' + $breaks) }
-        $at = $m.Index + $m.Length
-    }
-    [void]$sb.Append($Text, $at, $Text.Length - $at)
-    return $sb.ToString()
+    if ($KeepStrings) { return $csCommentsAndLiterals.Replace($Text, '${lit} ') }
+    return $csCommentsAndLiterals.Replace($Text, '${q}${q} ')
 }
-# Every match of a pattern as "file:line: text".
+# Every match of a pattern as "file: what it found", the rest of its line included.
 function Find-CodeMatches([string] $Code, [string] $Pattern, [string] $Rel, [switch] $IgnoreCase) {
     $options = [System.Text.RegularExpressions.RegexOptions]::None
     if ($IgnoreCase) { $options = [System.Text.RegularExpressions.RegexOptions]::IgnoreCase }
     $out = @()
     foreach ($m in [regex]::Matches($Code, $Pattern, $options)) {
-        $line = $Code.Substring(0, $m.Index).Split([char]10).Count
-        $out += ('{0}:{1}: {2}' -f $Rel, $line, ($m.Value -replace '\s+', ''))
+        $end = $Code.IndexOf([char]10, $m.Index)
+        if ($end -lt 0) { $end = $Code.Length }
+        $snippet = $Code.Substring($m.Index, [Math]::Min($end - $m.Index, 60))
+        $out += ('{0}: {1}' -f $Rel, ($snippet.Trim() -replace '\s+', ' '))
     }
     return $out
+}
+# The namespaces a text declares, block-scoped or file-scoped.
+function Get-DeclaredNamespaces([string] $Text) {
+    return @([regex]::Matches($Text, '(?m)^\s*namespace\s+([A-Za-z_][\w.]*)\s*[;{]') | ForEach-Object { $_.Groups[1].Value })
 }
 # OutlookAI.Core named anywhere, unless .AddIn follows it.
 $namesCoreButNotFacade = '(?<![\w.])OutlookAI\s*\.\s*Core\b(?!\s*\.\s*AddIn\b)'
@@ -779,10 +777,14 @@ if ($null -ne $addinProjText -and $null -ne $coreProjText) {
     foreach ($rel in $coreFiles) {
         $text = Read-Source $rel
         if ($null -eq $text) { continue }
-        $code = Get-CSharpCode $text
         $inFacadeDir = $rel.StartsWith($facadeDirRel + '/', [System.StringComparison]::OrdinalIgnoreCase)
         if ($inFacadeDir) { $facadeFiles += $rel }
-        $declared = @([regex]::Matches($code, '(?m)^\s*namespace\s+([A-Za-z_][\w.]*)\s*[;{]') | ForEach-Object { $_.Groups[1].Value })
+        # Read from the raw text, which is cheap; a file in the folder, and any other whose declarations
+        # would break the rule, is read again without its comments and literals, so a namespace in a
+        # comment is not a declaration.
+        $declared = @(Get-DeclaredNamespaces $text)
+        $suspect = @($declared | Where-Object { $_ -ceq 'OutlookAI.Core' -or $_ -ceq $facadeNamespace -or $_.StartsWith($facadeNamespace + '.', [System.StringComparison]::Ordinal) })
+        if ($inFacadeDir -or $suspect.Count -gt 0) { $declared = @(Get-DeclaredNamespaces (Get-CSharpCode $text)) }
         foreach ($n in $declared) {
             $inFacade = ($n -ceq $facadeNamespace -or $n.StartsWith($facadeNamespace + '.', [System.StringComparison]::Ordinal))
             if ($inFacade -and -not $inFacadeDir) { $q164Problems += "(b) $rel declares $n outside $facadeDirRel/ - the add-in could use it, and part (c) would never read it." }
