@@ -4,7 +4,7 @@ using System.IO;
 using System.Text;
 using System.Text.RegularExpressions;
 
-namespace OutlookAI.Core.Services
+namespace OutlookAI.Core.AddIn
 {
     /// <summary>A signature file decoded: its text and how it was stored, so a rewrite can store it the same way.</summary>
     public sealed class DecodedSignatureText

@@ -4244,7 +4244,7 @@ namespace OutlookAI.Core.Com
 
                     // Q157 (a): the signature is decided here, where the sending account and the profile
                     // Outlook runs on are known, and above the compose - a refusal leaves no draft.
-                    Services.SignatureDecision signature = DecideSignature(signatureOverride, account, replyOrForward: false);
+                    AddIn.SignatureDecision signature = DecideSignature(signatureOverride, account, replyOrForward: false);
                     if (signature.Refusal != null)
                     {
                         capturedError = ComErrorTokens.With(ComErrorTokens.SignatureRefused, signature.Refusal);
@@ -4477,7 +4477,7 @@ namespace OutlookAI.Core.Com
 
                     // Q157 (a) and Q160: decided with the account delivering to the source's store - none
                     // for a delegate or shared mailbox - and above the compose, so a refusal leaves no draft.
-                    Services.SignatureDecision signature = DecideSignature(signatureOverride, account, replyOrForward: true);
+                    AddIn.SignatureDecision signature = DecideSignature(signatureOverride, account, replyOrForward: true);
                     if (signature.Refusal != null)
                     {
                         capturedError = ComErrorTokens.With(ComErrorTokens.SignatureRefused, signature.Refusal);
@@ -6303,7 +6303,7 @@ namespace OutlookAI.Core.Com
 
                     // Q157 (a): a signature swap or removal is decided for the account the draft sends
                     // from - before the editor is touched, so a refusal leaves the draft as it was.
-                    Services.SignatureDecision? signature = null;
+                    AddIn.SignatureDecision? signature = null;
                     ComSignatureOverride? toInsert = null;
                     ComSignatureOutcome? signatureOutcome = null;
                     if (signatureOverride != null)
@@ -7497,7 +7497,7 @@ namespace OutlookAI.Core.Com
             ref object? mail,
             string? storeId,
             ComDraftBody body,
-            Services.SignatureDecision signature)
+            AddIn.SignatureDecision signature)
         {
             dynamic created = mail!;
             created.Save();
@@ -7565,19 +7565,19 @@ namespace OutlookAI.Core.Com
         /// account delivers to) and the profile Outlook runs on - read fresh, as are the policy, the
         /// roaming state and the signature folder.
         /// </summary>
-        private Services.SignatureDecision DecideSignature(ComSignatureOverride? requested, object? account, bool? replyOrForward)
+        private AddIn.SignatureDecision DecideSignature(ComSignatureOverride? requested, object? account, bool? replyOrForward)
         {
-            Services.SignatureRequest request = requested == null
-                ? Services.SignatureRequest.AccountDefault
-                : requested.None ? Services.SignatureRequest.NoSignature : Services.SignatureRequest.Named(requested.Name);
-            Services.SignatureSendingAccount? sending = account == null
+            AddIn.SignatureRequest request = requested == null
+                ? AddIn.SignatureRequest.AccountDefault
+                : requested.None ? AddIn.SignatureRequest.NoSignature : AddIn.SignatureRequest.Named(requested.Name);
+            AddIn.SignatureSendingAccount? sending = account == null
                 ? null
-                : new Services.SignatureSendingAccount(
+                : new AddIn.SignatureSendingAccount(
                     TryGetString(() => (string?)((dynamic)account).SmtpAddress),
                     TryGetString(() => (string?)((dynamic)account).DisplayName));
             string? runningProfile = TryGetString(() => (string?)((dynamic)_namespace!).CurrentProfileName);
-            return Services.SignatureSelector.Decide(
-                Services.SignatureEnvironment.ReadCurrent(), request, sending, replyOrForward, runningProfile);
+            return AddIn.SignatureSelector.Decide(
+                AddIn.SignatureEnvironment.ReadCurrent(), request, sending, replyOrForward, runningProfile);
         }
 
         /// <summary>
@@ -7585,7 +7585,7 @@ namespace OutlookAI.Core.Com
         /// to the draft's store - the identity send verifies - and whether it is a reply is not known, so
         /// a policy forcing either default is honoured.
         /// </summary>
-        private Services.SignatureDecision DecideSignatureForDraft(object draft, ComSignatureOverride requested)
+        private AddIn.SignatureDecision DecideSignatureForDraft(object draft, ComSignatureOverride requested)
         {
             object? parent = null;
             object? store = null;
@@ -8222,7 +8222,7 @@ namespace OutlookAI.Core.Com
                 return 0;
             }
 
-            string text = OutlookAI.Core.Text.HtmlToText.Convert(html);
+            string text = OutlookAI.Core.AddIn.HtmlToText.Convert(html);
             long count = 0;
             foreach (char c in text)
             {
@@ -10809,7 +10809,7 @@ namespace OutlookAI.Core.Com
                     string? html = TryGetString(() => (string?)item.HTMLBody);
                     if (!string.IsNullOrEmpty(html))
                     {
-                        body = OutlookAI.Core.Text.HtmlToText.Convert(html);
+                        body = OutlookAI.Core.AddIn.HtmlToText.Convert(html);
                         bodyOrigin = "html-converted";
                     }
                 }

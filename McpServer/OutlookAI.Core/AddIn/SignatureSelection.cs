@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 
-namespace OutlookAI.Core.Services
+namespace OutlookAI.Core.AddIn
 {
     /// <summary>What a draft tool's <c>signature</c> argument asks for (Q157 (a)).</summary>
     public enum SignatureRequestKind
@@ -50,6 +50,9 @@ namespace OutlookAI.Core.Services
             return new SignatureRequest(SignatureRequestKind.Named, name.Trim());
         }
 
+        /// <summary>The reserved word the draft tools read as "no signature"; never a signature name.</summary>
+        public const string NoSignatureKeyword = "none";
+
         /// <summary>Null or blank is the default, "none" (any case) is no signature, anything else a name. Pure.</summary>
         public static SignatureRequest Parse(string? argument)
         {
@@ -59,7 +62,7 @@ namespace OutlookAI.Core.Services
             }
 
             string trimmed = argument!.Trim();
-            return string.Equals(trimmed, SignatureManager.NoSignatureKeyword, StringComparison.OrdinalIgnoreCase)
+            return string.Equals(trimmed, NoSignatureKeyword, StringComparison.OrdinalIgnoreCase)
                 ? NoSignature
                 : Named(trimmed);
         }
@@ -588,5 +591,23 @@ namespace OutlookAI.Core.Services
 
         /// <summary>True when policy forces a default: an automatic pick must leave it alone (Q156).</summary>
         public bool DefaultsForced { get; }
+    }
+
+    /// <summary>A manage_signature refusal made for a reason outside the request's own shape: policy, roaming.</summary>
+    public sealed class SignatureRefusedException : ArgumentException
+    {
+        /// <summary>Creates the refusal.</summary>
+        public SignatureRefusedException(string reason, string message)
+            : base(message)
+        {
+            Reason = reason;
+        }
+
+        /// <summary>
+        /// Machine-readable reason: <c>signatures_disabled_by_policy</c>, <c>default_set_by_policy</c>,
+        /// <c>managed_in_mailbox</c>, <c>account_may_roam</c>, <c>signature_forced_by_policy</c>,
+        /// <c>signature_of_another_account</c>.
+        /// </summary>
+        public string Reason { get; }
     }
 }

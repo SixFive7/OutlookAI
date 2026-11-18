@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 
 using Microsoft.Win32;
+using OutlookAI.Core.AddIn;
 
 // The one definition of everything the add-in and this server have to agree about: the HKCU keys
 // the add-in writes and this file reads, and the Claude Code configuration both of them look at.

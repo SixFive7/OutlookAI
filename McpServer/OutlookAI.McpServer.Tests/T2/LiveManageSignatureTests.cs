@@ -1,5 +1,6 @@
 using OutlookAI.Core.Audit;
 using OutlookAI.Core.Services;
+using OutlookAI.Core.AddIn;
 using Xunit;
 using Xunit.Abstractions;
 

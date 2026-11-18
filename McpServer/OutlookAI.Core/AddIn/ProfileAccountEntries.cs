@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Win32;
 
-namespace OutlookAI.Core.Services
+namespace OutlookAI.Core.AddIn
 {
     /// <summary>
     /// What one entry of a profile's account-manager key is. <see cref="ProfileAccountEntries"/>

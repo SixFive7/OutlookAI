@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Win32;
 using OutlookAI.Core.Services;
+using OutlookAI.Core.AddIn;
 
 namespace OutlookAI.McpServer.Tests.T2;
 

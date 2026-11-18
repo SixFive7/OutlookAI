@@ -2,7 +2,7 @@ using System;
 using System.Text;
 using System.Text.RegularExpressions;
 
-namespace OutlookAI.Core.Text
+namespace OutlookAI.Core.AddIn
 {
     /// <summary>
     /// Minimal HTML-to-plain-text conversion for mail bodies whose plain-text rendering

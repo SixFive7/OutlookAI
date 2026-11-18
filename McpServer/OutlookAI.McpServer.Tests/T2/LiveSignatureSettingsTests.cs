@@ -1,5 +1,6 @@
 using Microsoft.Win32;
 using OutlookAI.Core.Services;
+using OutlookAI.Core.AddIn;
 using Xunit;
 using Xunit.Abstractions;
 

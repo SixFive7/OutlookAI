@@ -9,6 +9,7 @@ using System.Linq;
 using OutlookAI.Core.Com;
 using OutlookAI.Core.IndexSearch;
 using OutlookAI.Core.Mapi;
+using OutlookAI.Core.AddIn;
 
 namespace OutlookAI.Core.Services
 {

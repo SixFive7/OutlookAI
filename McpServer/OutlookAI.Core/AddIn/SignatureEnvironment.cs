@@ -4,10 +4,8 @@ using System.Globalization;
 using System.Linq;
 using Microsoft.Win32;
 
-using OfficeVersions = global::OutlookAI.Core.AddIn.OfficeVersions;
-using SignatureFolderLocation = global::OutlookAI.Core.AddIn.SignatureFolderLocation;
 
-namespace OutlookAI.Core.Services
+namespace OutlookAI.Core.AddIn
 {
     /// <summary>Which registry hive a signature setting lives in.</summary>
     public enum SignatureRegistryHive

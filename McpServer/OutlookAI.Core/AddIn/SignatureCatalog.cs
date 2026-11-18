@@ -4,7 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 
-namespace OutlookAI.Core.Services
+namespace OutlookAI.Core.AddIn
 {
     /// <summary>
     /// One signature as installed in the Outlook Signatures folder (data only).
@@ -251,7 +251,7 @@ namespace OutlookAI.Core.Services
                 }
                 else if (htmlPath != null && File.Exists(htmlPath))
                 {
-                    plain = Text.HtmlToText.Convert(SignatureText.ReadHtml(htmlPath).Text);
+                    plain = HtmlToText.Convert(SignatureText.ReadHtml(htmlPath).Text);
                 }
                 else if (rtfPath != null && File.Exists(rtfPath))
                 {
