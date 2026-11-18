@@ -1437,7 +1437,7 @@ namespace OutlookAI.Core.Com
         /// <summary>The signature that went in, or null.</summary>
         public string? Name { get; }
 
-        /// <summary>requested | accountDefault | policyDefault | none.</summary>
+        /// <summary>requested | accountDefault | none (policyDefault is gone since 2026-11-18: Outlook was measured not to use one).</summary>
         public string Source { get; }
 
         /// <summary>Why, in one sentence.</summary>

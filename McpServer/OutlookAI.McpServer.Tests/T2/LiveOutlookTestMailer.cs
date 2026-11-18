@@ -178,29 +178,7 @@ public static class LiveOutlookTestMailer
             {
                 session = app.Session;
                 accounts = session.Accounts;
-                object? sendingAccount = null;
-                int count = accounts.Count;
-                for (int i = 1; i <= count; i++)
-                {
-                    dynamic account = accounts[i];
-                    string? accountSmtp = null;
-                    try
-                    {
-                        accountSmtp = (string?)account.SmtpAddress;
-                    }
-                    catch (COMException)
-                    {
-                    }
-
-                    if (string.Equals(accountSmtp, smtpAddress, StringComparison.OrdinalIgnoreCase))
-                    {
-                        sendingAccount = account;
-                        break;
-                    }
-
-                    Release(account);
-                }
-
+                object? sendingAccount = FindAccountBySmtp(accounts, smtpAddress);
                 if (sendingAccount == null)
                 {
                     throw new InvalidOperationException(
@@ -3388,6 +3366,36 @@ public static class LiveOutlookTestMailer
         internal static extern bool IsWindowVisible(IntPtr hWnd);
     }
 
+    /// <summary>
+    /// The account of the profile whose SMTP address is <paramref name="smtpAddress"/>, or null. Every other account
+    /// the walk touched is released; the one returned is the caller's to release.
+    /// </summary>
+    private static object? FindAccountBySmtp(dynamic accounts, string smtpAddress)
+    {
+        int count = accounts.Count;
+        for (int i = 1; i <= count; i++)
+        {
+            dynamic account = accounts[i];
+            string? accountSmtp = null;
+            try
+            {
+                accountSmtp = (string?)account.SmtpAddress;
+            }
+            catch (COMException)
+            {
+            }
+
+            if (string.Equals(accountSmtp, smtpAddress, StringComparison.OrdinalIgnoreCase))
+            {
+                return account;
+            }
+
+            Release(account);
+        }
+
+        return null;
+    }
+
     private static dynamic CreateOutlookApplication()
     {
         Type progIdType = Type.GetTypeFromProgID("Outlook.Application")
@@ -3469,9 +3477,6 @@ public static class LiveOutlookTestMailer
             dynamic? item = null;
             object? inspector = null;
             object? document = null;
-            dynamic? word = null;
-            dynamic? signature = null;
-            dynamic? entries = null;
             try
             {
                 ns = app.GetNamespace("MAPI");
@@ -3494,28 +3499,7 @@ public static class LiveOutlookTestMailer
                     return new OutlookSignatureEngineView(null, null, Array.Empty<string>(), "no editor: " + (promoteError ?? "unknown"));
                 }
 
-                word = ((dynamic)document).Application;
-                signature = word.EmailOptions.EmailSignature;
-                string? newMessage = TryRead(() => (string?)signature.NewMessageSignature);
-                string? reply = TryRead(() => (string?)signature.ReplyMessageSignature);
-                List<string> names = new();
-                entries = signature.EmailSignatureEntries;
-                int count = (int)entries.Count;
-                for (int i = 1; i <= count; i++)
-                {
-                    dynamic? entry = null;
-                    try
-                    {
-                        entry = entries.Item(i);
-                        names.Add((string)entry.Name);
-                    }
-                    finally
-                    {
-                        Release(entry);
-                    }
-                }
-
-                return new OutlookSignatureEngineView(newMessage, reply, names, null);
+                return ReadSignatureEngineOf(document);
             }
             catch (Exception ex) when (ex is COMException or RuntimeBinderException or InvalidCastException)
             {
@@ -3523,9 +3507,6 @@ public static class LiveOutlookTestMailer
             }
             finally
             {
-                Release(entries);
-                Release(signature);
-                Release(word);
                 if (inspector != null)
                 {
                     try
@@ -3546,6 +3527,249 @@ public static class LiveOutlookTestMailer
                 Release(app);
             }
         });
+    }
+
+    /// <summary>
+    /// Word's <c>EmailOptions.EmailSignature</c> as an open compose document reports it: the new-message and
+    /// reply/forward signatures and every signature it lists. Never throws: a failure is in the view's Error.
+    /// </summary>
+    private static OutlookSignatureEngineView ReadSignatureEngineOf(object document)
+    {
+        dynamic? word = null;
+        dynamic? signature = null;
+        dynamic? entries = null;
+        try
+        {
+            word = ((dynamic)document).Application;
+            signature = word.EmailOptions.EmailSignature;
+            string? newMessage = TryRead(() => (string?)signature.NewMessageSignature);
+            string? reply = TryRead(() => (string?)signature.ReplyMessageSignature);
+            List<string> names = new();
+            entries = signature.EmailSignatureEntries;
+            int count = (int)entries.Count;
+            for (int i = 1; i <= count; i++)
+            {
+                dynamic? entry = null;
+                try
+                {
+                    entry = entries.Item(i);
+                    names.Add((string)entry.Name);
+                }
+                finally
+                {
+                    Release(entry);
+                }
+            }
+
+            return new OutlookSignatureEngineView(newMessage, reply, names, null);
+        }
+        catch (Exception ex) when (ex is COMException or RuntimeBinderException or InvalidCastException)
+        {
+            return new OutlookSignatureEngineView(null, null, Array.Empty<string>(), ex.GetType().Name + ": " + ex.Message);
+        }
+        finally
+        {
+            Release(entries);
+            Release(signature);
+            Release(word);
+        }
+    }
+
+    /// <summary>
+    /// The compose ribbon's Signature button: where a person picks another signature, or the Signatures dialog, for
+    /// the one message open (Office's control id, as Outlook's mail compose ribbon carries it).
+    /// </summary>
+    public const string SignatureMenuControl = "SignatureInsertMenu";
+
+    /// <summary>
+    /// How often the editor of a compose window is asked for, a second apart, before the reading gives up. The first
+    /// compose window of an Outlook session answered NoWordEditor (0x80004005) while Word was still loading, on the
+    /// first -SignatureSettings run (2026-11-18), where the second and third, moments later, answered at once.
+    /// </summary>
+    internal const int EditorAttempts = 10;
+
+    /// <summary>
+    /// What Outlook ITSELF puts in a new mail, a reply or a forward (Q200 (a), Q201): the compose item made the way
+    /// Outlook's own New Email, Reply and Forward make one - an item added to the store's Drafts with the account
+    /// <paramref name="accountSmtpAddress"/> sending, or <c>Reply()</c> / <c>Forward()</c> on a mail of this run - and an
+    /// inspector opened ON THAT OBJECT, which is where Outlook inserts the default signature its settings name. Read
+    /// from it: the <c>_MailAutoSig</c> region Outlook filled and the document's text, for the caller to tell which
+    /// signature went in; whether the compose ribbon's Signature button (<see cref="SignatureMenuControl"/>) is
+    /// enabled and visible; the account the item sends from; and Word's <c>EmailSignature</c> view.
+    /// <para>
+    /// NOTHING IS SAVED: the subject carries the test tag and this run's marker (S3), the item is never saved, and its
+    /// inspector is closed DISCARDING. But an inspector opened on a creator's object, and closed, is the shape that
+    /// crashed Outlook about once in forty on 2026-10-04 (<c>OLMAPI32.DLL+0x2E411</c>, runbook 4.6) - why the product
+    /// never opens one, and why the live runner arms full crash dumps on every run. A failure comes back in
+    /// <see cref="OutlookOwnSignatureReading.Error"/>, never thrown: it is a measurement. A refused source mail throws.
+    /// </para>
+    /// </summary>
+    public static OutlookOwnSignatureReading ReadOutlookOwnSignature(
+        string storeDisplayName, string accountSmtpAddress, OutlookComposeKind kind, string? sourceEntryIdHex, string uniqueMarker)
+    {
+        if (string.IsNullOrWhiteSpace(uniqueMarker) || uniqueMarker.Length < 12)
+        {
+            throw new ArgumentException("Marker too weak for a safe item filter (S3).", nameof(uniqueMarker));
+        }
+
+        if (kind != OutlookComposeKind.New && string.IsNullOrWhiteSpace(sourceEntryIdHex))
+        {
+            throw new ArgumentException("A reply or a forward needs the mail of this run it answers.", nameof(sourceEntryIdHex));
+        }
+
+        return RunSta(() =>
+        {
+            dynamic app = CreateOutlookApplication();
+            dynamic? ns = null;
+            dynamic? stores = null;
+            dynamic? store = null;
+            dynamic? drafts = null;
+            dynamic? items = null;
+            dynamic? accounts = null;
+            object? account = null;
+            dynamic? source = null;
+            dynamic? item = null;
+            dynamic? sendUsing = null;
+            object? inspector = null;
+            object? document = null;
+            object? bookmarks = null;
+            object? region = null;
+            object? regionRange = null;
+            object? content = null;
+            object? commandBars = null;
+            try
+            {
+                ns = app.GetNamespace("MAPI");
+                stores = ns.Stores;
+                store = FindStore(stores, storeDisplayName)
+                    ?? throw new InvalidOperationException("Store not found for the signature reading.");
+                string storeId = (string)store.StoreID;
+                if (kind == OutlookComposeKind.New)
+                {
+                    accounts = ns.Accounts;
+                    account = FindAccountBySmtp(accounts, accountSmtpAddress)
+                        ?? throw new InvalidOperationException("The account of the signature reading is not in the profile.");
+                    drafts = store.GetDefaultFolder(16); // olFolderDrafts
+                    items = drafts.Items;
+                    item = items.Add(0); // olMailItem
+                    OutlookComSession.SetSendUsingAccount((object)item, account);
+                    item.Subject = SubjectTag + " " + uniqueMarker + " outlook-own-new";
+                }
+                else
+                {
+                    source = ns.GetItemFromID(sourceEntryIdHex, storeId);
+                    string? sourceSubject = (string?)source.Subject;
+                    if (!CarriesSubjectTag(sourceSubject)
+                        || !sourceSubject.Contains(uniqueMarker, StringComparison.OrdinalIgnoreCase))
+                    {
+                        throw new InvalidOperationException(
+                            "Refusing to answer the mail: its subject does not carry both the test tag and this run's marker (S3).");
+                    }
+
+                    item = kind == OutlookComposeKind.Reply ? source.Reply() : source.Forward();
+                }
+
+                string? sendingAccount = null;
+                try
+                {
+                    sendUsing = item.SendUsingAccount;
+                    sendingAccount = sendUsing != null ? (string?)sendUsing.SmtpAddress : null;
+                }
+                catch (COMException)
+                {
+                }
+
+                // HERE Outlook inserts the default signature its settings name: in the inspector of the object a
+                // creator returned, and only there (runbook 4.6, item 6).
+                inspector = item.GetInspector;
+                string? promoteError = null;
+                int editorAttempts = 0;
+                while (document == null && editorAttempts < EditorAttempts)
+                {
+                    if (editorAttempts > 0)
+                    {
+                        PumpedStaRunner.PumpedWait(1000);
+                    }
+
+                    editorAttempts++;
+                    document = ComposeSurface.PromoteForWordEditor(inspector!, out promoteError);
+                }
+
+                if (document == null)
+                {
+                    return OutlookOwnSignatureReading.Failed(
+                        kind, sendingAccount, "no editor after " + editorAttempts + " attempt(s): " + (promoteError ?? "unknown"));
+                }
+
+                bookmarks = ((dynamic)document).Bookmarks;
+                ((dynamic)bookmarks!).ShowHidden = true; // _MailAutoSig is a HIDDEN bookmark
+                bool regionFound = (bool)((dynamic)bookmarks).Exists("_MailAutoSig");
+                string? regionText = null;
+                if (regionFound)
+                {
+                    region = ((dynamic)bookmarks).Item("_MailAutoSig");
+                    regionRange = ((dynamic)region!).Range;
+                    regionText = (string?)((dynamic)regionRange!).Text;
+                }
+
+                content = ((dynamic)document).Content;
+                string? documentText = (string?)((dynamic)content!).Text;
+                commandBars = ((dynamic)inspector!).CommandBars;
+                (bool? enabled, string? enabledError) = TryMso(() => (bool)((dynamic)commandBars!).GetEnabledMso(SignatureMenuControl));
+                (bool? visible, string? visibleError) = TryMso(() => (bool)((dynamic)commandBars!).GetVisibleMso(SignatureMenuControl));
+                return new OutlookOwnSignatureReading(
+                    kind, sendingAccount, regionFound, regionText, documentText, enabled, visible, enabledError ?? visibleError,
+                    ReadSignatureEngineOf(document), null, editorAttempts);
+            }
+            catch (Exception ex) when (ex is COMException or RuntimeBinderException or InvalidCastException)
+            {
+                return OutlookOwnSignatureReading.Failed(kind, null, ex.GetType().Name + ": " + ex.Message);
+            }
+            finally
+            {
+                Release(commandBars);
+                Release(content);
+                Release(regionRange);
+                Release(region);
+                Release(bookmarks);
+                if (inspector != null)
+                {
+                    try
+                    {
+                        ((dynamic)inspector).Close(1); // olDiscard: nothing is saved
+                    }
+                    catch (COMException)
+                    {
+                    }
+                }
+
+                Release(document);
+                Release(inspector);
+                Release(sendUsing);
+                Release(item);
+                Release(source);
+                Release(items);
+                Release(drafts);
+                Release(account);
+                Release(accounts);
+                Release(store);
+                Release(stores);
+                Release(ns);
+                Release(app);
+            }
+        });
+    }
+
+    private static (bool? Value, string? Error) TryMso(Func<bool> read)
+    {
+        try
+        {
+            return (read(), null);
+        }
+        catch (Exception ex) when (ex is COMException or RuntimeBinderException or ArgumentException or InvalidCastException)
+        {
+            return (null, SignatureMenuControl + ": " + ex.GetType().Name + ": " + ex.Message);
+        }
     }
 
     /// <summary>
@@ -3733,6 +3957,46 @@ public sealed record OutlookSignatureEngineView(
     string? ReplyMessageSignature,
     IReadOnlyList<string> Entries,
     string? Error);
+
+/// <summary>Which compose window <see cref="LiveOutlookTestMailer.ReadOutlookOwnSignature"/> opens.</summary>
+public enum OutlookComposeKind
+{
+    /// <summary>A new mail: an item added to the store's Drafts.</summary>
+    New,
+
+    /// <summary>A reply: <c>Reply()</c> on a mail of this run.</summary>
+    Reply,
+
+    /// <summary>A forward: <c>Forward()</c> on a mail of this run.</summary>
+    Forward,
+}
+
+/// <summary>
+/// What Outlook itself put in a compose window it was given to fill (<see cref="LiveOutlookTestMailer.ReadOutlookOwnSignature"/>):
+/// its signature region and text, the account the item sends from, the Signature button's state - null where it could
+/// not be read, with <see cref="SignatureMenuError"/> saying why - and Word's signature engine.
+/// </summary>
+public sealed record OutlookOwnSignatureReading(
+    OutlookComposeKind Kind,
+    string? SendingAccount,
+    bool SignatureRegionFound,
+    string? SignatureRegionText,
+    string? DocumentText,
+    bool? SignatureMenuEnabled,
+    bool? SignatureMenuVisible,
+    string? SignatureMenuError,
+    OutlookSignatureEngineView Engine,
+    string? Error,
+    int EditorAttempts = 0)
+{
+    /// <summary>A reading that could not be taken, and why.</summary>
+    public static OutlookOwnSignatureReading Failed(OutlookComposeKind kind, string? sendingAccount, string error)
+    {
+        return new OutlookOwnSignatureReading(
+            kind, sendingAccount, false, null, null, null, null, null,
+            new OutlookSignatureEngineView(null, null, Array.Empty<string>(), "not read"), error);
+    }
+}
 
 /// <summary>
 /// What <see cref="LiveOutlookTestMailer.FileTaggedItemInNewTestFolder"/> did: whether Outlook made
