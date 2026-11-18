@@ -100,8 +100,6 @@ namespace OutlookAI.Core.Services
         /// <summary>The draft signature is the sending account's own default in the profile.</summary>
         public const string SourceAccountDefault = "accountDefault";
 
-        /// <summary>The draft signature is the default a policy or deployed setting gives every account.</summary>
-        public const string SourcePolicyDefault = "policyDefault";
 
         /// <summary>No signature, and why is in <see cref="Reason"/>.</summary>
         public const string SourceNone = "none";
@@ -139,7 +137,10 @@ namespace OutlookAI.Core.Services
         /// <summary>Its file to insert (.htm preferred), or null.</summary>
         public string? FilePath { get; }
 
-        /// <summary>requested | accountDefault | policyDefault | none.</summary>
+        /// <summary>
+        /// requested | accountDefault | none. (policyDefault, a policy's or deployed default, is gone since 2026-11-18:
+        /// Outlook was measured not to use one, <see cref="SignaturePolicy.EffectiveDefault"/>.)
+        /// </summary>
         public string Source { get; }
 
         /// <summary>Why, in one sentence a person can read.</summary>
@@ -161,7 +162,7 @@ namespace OutlookAI.Core.Services
         public bool RemoveExisting { get; }
 
         /// <summary>True when the signature is a default rather than the agent's pick (Outlook's own injection then stands).</summary>
-        public bool IsDefault => Source == SourceAccountDefault || Source == SourcePolicyDefault;
+        public bool IsDefault => Source == SourceAccountDefault;
     }
 
     /// <summary>
@@ -170,8 +171,8 @@ namespace OutlookAI.Core.Services
     /// once the add-in references Core).
     /// <list type="bullet">
     /// <item><b>Left out</b>: the sending account's EFFECTIVE default for new mail or for replies and
-    /// forwards - its own in the profile Outlook is RUNNING (else the recorded default profile), and a
-    /// policy's or deployed setting's only where it has none (<see cref="SignaturePolicy.EffectiveDefault"/>).</item>
+    /// forwards - its own in the profile Outlook is RUNNING (else the recorded default profile), whatever a
+    /// policy or deployed setting names, as Outlook does (<see cref="SignaturePolicy.EffectiveDefault"/>).</item>
     /// <item><b>"none"</b>: no signature.</item>
     /// <item><b>A name</b>: that signature - only one the sending account can use: any signature of
     /// this device, and a roaming copy only for its own account.</item>
@@ -438,14 +439,7 @@ namespace OutlookAI.Core.Services
             string? own = account != null && profile != null && entry != null
                 ? (reply ? entry.ReplyForwardSignature : entry.NewSignature)
                 : null;
-            string? name = policy.EffectiveDefault(reply, own, out SignaturePolicySource? source);
-            if (name != null && source != null)
-            {
-                return new Effective(name, SignatureDecision.SourcePolicyDefault,
-                    "'" + name + "' is the signature " + SignaturePolicy.Describe(source) + " sets for " + scope + ", used where "
-                    + (account == null ? "the mail's mailbox" : account.Label) + " has no default of its own");
-            }
-
+            string? name = policy.EffectiveDefault(reply, own);
             if (account == null)
             {
                 return new Effective(null, SignatureDecision.SourceNone,

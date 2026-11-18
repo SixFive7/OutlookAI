@@ -255,14 +255,14 @@ public sealed class SignatureSelectionTests : IDisposable
     }
 
     [Theory]
-    [InlineData(SignaturePolicySource.CloudPolicy, "Cloud Policy")]
-    [InlineData(SignaturePolicySource.GroupPolicy, "Group Policy")]
-    [InlineData(SignaturePolicySource.Preference, "a deployed Outlook setting")]
-    public void Policy_AnAdministratorsDefault_GivesWayToTheAccountsOwn_AndNamesTheDefaultOfAnAccountWithNone(
-        SignaturePolicySource source, string describedAs)
+    [InlineData(SignaturePolicySource.CloudPolicy)]
+    [InlineData(SignaturePolicySource.GroupPolicy)]
+    [InlineData(SignaturePolicySource.Preference)]
+    public void Policy_AnAdministratorsDefault_NeverDecidesTheDraftsDefault_TheAccountsOwnDoes(SignaturePolicySource source)
     {
-        // Q200 (a), Q201, measured 2026-11-18 on Office LTSC 2024: Outlook put the account's own default in a new mail,
-        // a reply and a forward, not the policy's or the deployed one's.
+        // Q200 (a), Q201, measured 2026-11-18 on Office LTSC 2024 with the values set before Outlook started: Outlook put
+        // the account's own default in a new mail, a reply and a forward, and nothing in a reply or a forward of an
+        // account with no reply default of its own - under a policy and under a deployed setting alike.
         SignatureEnvironment environment = Environment(
             Accounts().Add("Outlook", 1, FakeProfileAccountRegistry.Pop3(Jan, newSignature: "Office")),
             new FakeSignatureSettings().Policy(source, newMessage: "Corporate", reply: "Office short"));
@@ -271,11 +271,10 @@ public sealed class SignatureSelectionTests : IDisposable
         Assert.Equal("Office", own.Name);
         Assert.Equal(SignatureDecision.SourceAccountDefault, own.Source);
 
-        SignatureDecision fallback = Decide(environment, SignatureRequest.AccountDefault, true, "Outlook");
-        Assert.Equal("Office short", fallback.Name);
-        Assert.Equal(SignatureDecision.SourcePolicyDefault, fallback.Source);
-        Assert.Contains(describedAs, fallback.Reason, StringComparison.Ordinal);
-        Assert.Contains("used where " + Jan + " has no default of its own", fallback.Reason, StringComparison.Ordinal);
+        SignatureDecision none = Decide(environment, SignatureRequest.AccountDefault, true, "Outlook");
+        Assert.Null(none.Name);
+        Assert.Equal(SignatureDecision.SourceNone, none.Source);
+        Assert.Contains(Jan + " has no default signature for replies and forwards", none.Reason, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -284,21 +283,20 @@ public sealed class SignatureSelectionTests : IDisposable
         // Q200 (a), measured 2026-11-18: under the policy Outlook's compose window kept its Signature button open in a
         // new mail, a reply and a forward - one message may have another signature, or none.
         SignatureEnvironment environment = Environment(
-            Accounts().Add("Outlook", 1, FakeProfileAccountRegistry.Pop3(Jan)),
+            Accounts().Add("Outlook", 1, FakeProfileAccountRegistry.Pop3(Jan, newSignature: "Home")),
             new FakeSignatureSettings().Policy(SignaturePolicySource.CloudPolicy, newMessage: "Corporate", reply: "Corporate"));
 
-        SignatureDecision byDefault = Decide(environment, SignatureRequest.AccountDefault, false, "Outlook");
-        Assert.Equal("Corporate", byDefault.Name);
-        Assert.Equal(SignatureDecision.SourcePolicyDefault, byDefault.Source);
+        Assert.Equal("Home", Decide(environment, SignatureRequest.AccountDefault, false, "Outlook").Name);
         foreach (bool? kind in new bool?[] { false, true, null })
         {
             SignatureDecision other = Decide(environment, SignatureRequest.Named("Office"), kind, "Outlook");
             Assert.Null(other.Refusal);
             Assert.Equal("Office", other.Name);
             Assert.Null(Decide(environment, SignatureRequest.NoSignature, kind, "Outlook").Refusal);
+            Assert.Equal("Corporate", Decide(environment, SignatureRequest.Named("corporate"), kind, "Outlook").Name);
         }
 
-        Assert.Equal("Corporate", Decide(environment, SignatureRequest.Named("Office"), false, "Outlook").Suggestion);
+        Assert.Equal("Home", Decide(environment, SignatureRequest.Named("Office"), false, "Outlook").Suggestion);
         Assert.True(SignatureSelector.Candidates(environment, new SignatureSendingAccount(Jan, null), "Outlook").DefaultsForced);
     }
 

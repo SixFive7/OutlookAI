@@ -829,13 +829,14 @@ its mailbox tests on, and change nothing you install.
 - 🔧 **OutlookAI follows the administrator's signature settings the way Outlook itself does.**
   When Group Policy or Cloud Policy forbids signatures, a draft gets none and manage_signature changes
   nothing. A default that a policy, or Outlook's own settings (Common\MailSettings), names for new
-  mail or for replies and forwards ranks below the account's own default: a draft gets the account's
-  own, and the setting's only when the account has none. Outlook did that on the test machines on
-  2026-11-18 (Q200 (a), Q201), with the settings made before it started, as plain and as expandable
-  strings: it put the account's own default in a new mail, a reply and a forward, and kept its
-  Signature button open under a policy, so one message may have another signature or none there too.
-  manage_signature still changes no account's default while a policy names one (Q156), and now does
-  under a deployed default. OutlookAI never writes a policy.
+  mail or for replies and forwards no longer decides which signature a draft gets: the account's own
+  default does. Outlook did that on the test machines on 2026-11-18 (Q200 (a), Q201), with the
+  settings made before it started, as plain and as expandable strings: it put the account's own
+  default in a new mail, a reply and a forward, put nothing in a reply or a forward of an account
+  with no reply default of its own, and kept its Signature button open under a policy, so one message
+  may have another signature or none there too. manage_signature still changes no account's default
+  while a policy names one (Q156), and now does under a deployed default. OutlookAI never writes a
+  policy.
 
 - 🔧 **Signatures kept in an Exchange mailbox are left to Outlook.**
   Microsoft 365 Apps from Version 2303 can keep an Exchange Online account's signatures in its

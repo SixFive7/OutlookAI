@@ -87,8 +87,7 @@ namespace OutlookAI.Core.Services
             foreach (ProfileAccountEntry entry in environment.MailAccountsOf(profile).Where(e => e.Address != null))
             {
                 string? locked = DefaultsLocked(environment, entry);
-                string? effectiveNew = policy.EffectiveDefault(false, entry.NewSignature, out SignaturePolicySource? newFrom);
-                string? effectiveReply = policy.EffectiveDefault(true, entry.ReplyForwardSignature, out SignaturePolicySource? replyFrom);
+
                 accounts.Add(new SignatureAccountView
                 {
                     Account = entry.Address!,
@@ -98,10 +97,9 @@ namespace OutlookAI.Core.Services
                         : null,
                     NewMessage = entry.NewSignature,
                     ReplyForward = entry.ReplyForwardSignature,
-                    EffectiveNewMessage = policy.SignaturesDisabled ? null : effectiveNew,
-                    EffectiveReplyForward = policy.SignaturesDisabled ? null : effectiveReply,
-                    DefaultsFrom = policy.SignaturesDisabled ? SignaturePolicy.Token(policy.DisabledBy)
-                        : SignaturePolicy.Token(newFrom ?? replyFrom) ?? "account",
+                    EffectiveNewMessage = policy.SignaturesDisabled ? null : policy.EffectiveDefault(false, entry.NewSignature),
+                    EffectiveReplyForward = policy.SignaturesDisabled ? null : policy.EffectiveDefault(true, entry.ReplyForwardSignature),
+                    DefaultsFrom = policy.SignaturesDisabled ? SignaturePolicy.Token(policy.DisabledBy) : "account",
                     DefaultsEditable = locked == null,
                     DefaultsLocked = locked,
                 });

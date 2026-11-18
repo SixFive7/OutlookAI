@@ -132,16 +132,16 @@ namespace OutlookAI.Core.Services
     /// <list type="bullet">
     /// <item><c>DisableSignatures</c> (DWORD 1, the Group Policy "Do not allow signatures for e-mail
     /// messages") - no signature at all.</item>
-    /// <item><c>NewSignature</c> / <c>ReplySignature</c> (a string, a signature name) - a default for new mail
-    /// and for replies and forwards. From a policy source it is FORCED - OutlookAI does not change an account's
-    /// default under it (Q156); from the preference key it is a deployed default.</item>
+    /// <item><c>NewSignature</c> / <c>ReplySignature</c> (a string, a signature name) - a default an administrator
+    /// names for new mail and for replies and forwards. From a policy source it is FORCED - OutlookAI does not change
+    /// an account's default under it (Q156); from the preference key it is a deployed default.</item>
     /// </list>
-    /// Precedence: Cloud Policy over Group Policy (documented, ms-cloudpol) over the preference - and an account's
-    /// OWN default over all of them. MEASURED 2026-11-18 on Office LTSC 2024 (Q200 (a), Q201;
-    /// <c>Docs/live-tier-on-the-vm.md</c> section 4.9): with the values set before Outlook started, as REG_SZ or as
-    /// REG_EXPAND_SZ, Outlook put an account's own default in a new mail, a reply and a forward, not theirs, and kept
-    /// its Signature button open. They name the default of an account that has none of its own
-    /// (<see cref="EffectiveDefault"/>).
+    /// Precedence among them: Cloud Policy over Group Policy (documented, ms-cloudpol) over the preference. But they
+    /// do not decide which signature a draft gets. MEASURED 2026-11-18 on Office LTSC 2024 (Q200 (a), Q201;
+    /// <c>Docs/live-tier-on-the-vm.md</c> section 4.9), with the values set before Outlook started: Outlook put an
+    /// account's own default in a new mail, a reply and a forward, not theirs - as REG_SZ and as REG_EXPAND_SZ - put
+    /// nothing in a reply or a forward of an account with no reply default of its own, under the policy and under the
+    /// deployed setting alike, and kept its Signature button open (<see cref="EffectiveDefault"/>).
     /// </summary>
     public sealed class SignaturePolicy
     {
@@ -211,24 +211,12 @@ namespace OutlookAI.Core.Services
         public bool ForcedFor(bool replyOrForward) => replyOrForward ? ReplyForwardForced : NewMessageForced;
 
         /// <summary>
-        /// The default a draft of an account gets for one scope, given the account's own (null for none, or for no account),
-        /// and where it came from: <paramref name="source"/> is the policy or deployed setting it came from, null for the
-        /// account's own. The account's own comes first and the setting's only where it has none - what Outlook does
-        /// (measured 2026-11-18, Q200 (a), Q201; see the class). The ONE rule the draft tools
-        /// (<see cref="SignatureSelector"/>), list_signatures and manage_signature share (Q154).
+        /// The default a draft of an account gets for one scope, given the account's own (null for none, or for no
+        /// account): the account's own, whatever a policy or deployed setting names - what Outlook does (measured
+        /// 2026-11-18, Q200 (a), Q201; see the class). The ONE rule the draft tools (<see cref="SignatureSelector"/>),
+        /// list_signatures and manage_signature share (Q154), so a later Outlook that uses these values changes one place.
         /// </summary>
-        public string? EffectiveDefault(bool replyOrForward, string? accountsOwn, out SignaturePolicySource? source)
-        {
-            if (accountsOwn != null)
-            {
-                source = null;
-                return accountsOwn;
-            }
-
-            string? set = DefaultFor(replyOrForward);
-            source = set != null ? SourceFor(replyOrForward) : null;
-            return set;
-        }
+        public string? EffectiveDefault(bool replyOrForward, string? accountsOwn) => accountsOwn;
 
         /// <summary>
         /// True when a POLICY names that scope's default, so manage_signature refuses to change the account's own (Q156:

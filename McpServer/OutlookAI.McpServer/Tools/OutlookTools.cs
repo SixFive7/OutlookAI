@@ -561,7 +561,7 @@ public static partial class OutlookTools
     [McpServerTool(Name = "list_signatures")]
     [Description("List the Outlook email signatures and how drafts choose one. Returns every Outlook profile (the default "
         + "and the running one marked) with its mail accounts and, per account, its own defaults and the EFFECTIVE ones a "
-        + "draft gets (its own, else an administrator's); the signature folder; policy and roaming state; and every signature with "
+        + "draft gets (the account's own, as in Outlook); the signature folder; policy and roaming state; and every signature with "
         + "a short plain-text excerpt (use the excerpt to detect its language and purpose), its formats (html, rtf, text) "
         + "and pictures. Pass name to read ONE signature in full - its HTML, its RTF (pictures shown as [[picture:N]] tokens) "
         + "and its text, plus every picture with its file path - which is what editing it with manage_signature needs. Use "
@@ -751,8 +751,8 @@ public static partial class OutlookTools
     // instructions": the three values and what each does, which account decides, and where the
     // answer says what happened - on the parameter every draft tool shares, written once.
     private const string SignatureHint = "Which signature the draft gets. OMIT it for the sending account's EFFECTIVE default "
-        + "signature (for new mail, or for replies and forwards; from the profile Outlook is running; an administrator's only "
-        + "where the account has none). Pass \"none\" for no signature. Or pass a signature name from list_signatures that "
+        + "signature (for new mail, or for replies and forwards; from the profile Outlook is running - the account's own, which "
+        + "Outlook uses too). Pass \"none\" for no signature. Or pass a signature name from list_signatures that "
         + "the sending account can use: pick the BEST one for this message, e.g. match the recipient's or thread's language "
         + "using the excerpts; with a single signature the choice is trivial. The result's signature, signatureSource and "
         + "signatureReason say which went in and why, and signatureSuggestion names the account's own default when the draft "
