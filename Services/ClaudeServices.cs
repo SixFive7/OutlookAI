@@ -515,7 +515,7 @@ namespace OutlookAI.Services
         /// nothing else). The caller matches the answer against the installed names.
         /// </summary>
         internal static async Task<string> SelectSignatureAsync(
-            List<SignatureStore.SignatureOption> signatures,
+            IReadOnlyList<SignatureInfo> signatures,
             string draftText, string threadText, string recipientsText)
         {
             var prereqError = _lastPrerequisiteError;
@@ -528,7 +528,7 @@ namespace OutlookAI.Services
         }
 
         private static string BuildSignatureSelectionPrompt(
-            List<SignatureStore.SignatureOption> signatures,
+            IReadOnlyList<SignatureInfo> signatures,
             string draftText, string threadText, string recipientsText)
         {
             var sb = new StringBuilder();

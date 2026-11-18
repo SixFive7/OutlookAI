@@ -179,7 +179,6 @@
     <Compile Include="Services\McpRegistrationService.cs" />
     <Compile Include="Services\ModelCatalog.cs" />
     <Compile Include="Services\OutlookTuningService.cs" />
-    <Compile Include="Services\SignatureStore.cs" />
     <Compile Include="Services\ThemeService.cs" />
     <Compile Include="Services\UpdateService.cs" />
     <Compile Include="TaskPane\AITaskPane.cs">

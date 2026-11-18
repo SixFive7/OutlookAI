@@ -781,6 +781,17 @@ its mailbox tests on, and change nothing you install.
 
 ### Changed
 
+- 🔧 **The task pane chooses and inserts a signature with the mail server's code, pictures embedded.**
+  "Select the best signature" lists the signatures, and puts the chosen one in the mail, with the
+  code the MCP server's drafts use (the code-sharing refactor's stage S4, Q154). The signature's
+  pictures are embedded in the mail now, as the server's drafts embed them: the pane inserted them as
+  links to the signature's folder on this computer, which a recipient never sees (D47). The excerpts
+  the AI chooses by are read the way the server reads them: each file in its own encoding, the HTML
+  through the server's converter to text, and a signature that has only a Rich Text rendition
+  excerpted too. The recipients the pane tells the AI about carry the SMTP address of an
+  Exchange recipient where Outlook knows it, where the pane gave the Exchange (X.500) address. The
+  draft the pane writes is laid out as before, one paragraph a line.
+
 - 🔧 **The add-in changes only its own entry in `~/.claude.json`, and leaves every other server alone.**
   When it registers its mail server for all of your projects, the add-in read Claude Code's
   settings file with .NET's `JavaScriptSerializer` and wrote the whole `mcpServers` section back, so
@@ -1198,8 +1209,8 @@ its mailbox tests on, and change nothing you install.
   of Outlook's profile keys; the conversion of HTML to text; and the readers and writers of a
   signature's three renditions and its pictures move from `OutlookAI.Core.Services` and
   `OutlookAI.Core.Text` into `OutlookAI.Core.AddIn` (`McpServer/OutlookAI.Core/AddIn/`), the one part
-  of Core the add-in may use, so that its task pane can stop keeping a copy of its own (the
-  code-sharing refactor's stage S4, Q154). So does the code that reads and writes the regions of a
+  of Core the add-in may use (the code-sharing refactor's stage S4, Q154). So does the code that reads
+  and writes the regions of a
   compose document - the draft, the signature region Outlook marks `_MailAutoSig` and the quoted
   original it marks `_MailOriginal` - which the server had ported from the pane and fixed since, now
   `ComposeDocument`, with a choice between the server's soft line breaks and the pane's paragraphs;
@@ -1209,8 +1220,12 @@ its mailbox tests on, and change nothing you install.
   the server's two copies of that loop; and the Win32 window calls, now `NativeWindows`, which three
   files declared for themselves, each a different subset. The server and the tests use all of it from
   there, unchanged, and T1 `ComChildObjectReleaseTests` reads `ComposeDocument` for a discarded
-  `Bookmarks.Add` as it read `OutlookComSession`. Nothing in the namespace attaches to Outlook,
-  starts a COM thread or opens the search index, and check 15 holds that for all 27 of its files.
+  `Bookmarks.Add` as it read `OutlookComSession`. The add-in uses it in the place of its own copies:
+  `SignatureStore` is gone, the task pane reads and writes a draft through `ComposeDocument`, reads
+  recipients through `MailRecipients` and releases through `ComObjects`, and the MCP registration
+  prompt finds Outlook's windows through `NativeWindows`. Nothing in the namespace attaches to
+  Outlook, starts a COM thread or opens the search index, and check 15 holds that for all 27 of its
+  files.
   The word the draft tools read as "no signature" and the refusal a signature request can end in
   move with the rule, out of `SignatureManager`, which stays where it is: it writes signature files,
   and only the server does.

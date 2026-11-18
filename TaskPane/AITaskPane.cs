@@ -14,21 +14,6 @@ namespace OutlookAI.TaskPane
 {
     public partial class AITaskPane : UserControl
     {
-        /// <summary>
-        /// THE TWO WORD BOOKMARKS THE WHOLE PANE IS ANCHORED TO.
-        ///
-        /// Outlook puts <c>_MailAutoSig</c> around the signature it inserted and
-        /// <c>_MailOriginal</c> around the quoted thread, and the gap before the first of them
-        /// that exists IS the user's draft. Every read the pane makes and every write it
-        /// performs is positioned from these two names, on a real email - so a typo in one of
-        /// them does not fail, it silently reads or replaces the wrong region of somebody's
-        /// mail. They were hand-typed at ten separate call sites; now they are typed once.
-        /// </summary>
-        private const string BookmarkAutoSig = "_MailAutoSig";
-
-        /// <summary>The other half of <see cref="BookmarkAutoSig"/>: Outlook's quoted-thread marker.</summary>
-        private const string BookmarkOriginal = "_MailOriginal";
-
         /// <summary>Clicks on the version line, within <see cref="DebugClickWindowSeconds"/>, that turn debug mode on.</summary>
         private const int DebugClicksRequired = 7;
 
@@ -241,7 +226,7 @@ namespace OutlookAI.TaskPane
 
                     var bmks = doc.Bookmarks;
                     bmks.ShowHidden = true;
-                    foreach (var bmName in new[] { BookmarkAutoSig, BookmarkOriginal })
+                    foreach (var bmName in new[] { ComposeDocument.SignatureBookmark, ComposeDocument.OriginalBookmark })
                     {
                         if (bmks.Exists(bmName))
                         {
@@ -261,7 +246,7 @@ namespace OutlookAI.TaskPane
                     }
                     ThisAddIn.ReleaseCom((object)bmks);
 
-                    int draftEnd = FindDraftEnd(doc);
+                    int draftEnd = ComposeDocument.FindDraftEnd((object)doc);
                     var draftRange = doc.Range(0, draftEnd);
                     string draft = draftRange.Text ?? "";
                     ThisAddIn.ReleaseCom(draftRange);
@@ -302,7 +287,7 @@ namespace OutlookAI.TaskPane
         /// </summary>
         private void RefreshSignatureAvailability()
         {
-            _signaturesAvailable = SignatureStore.AnySignatureInstalled();
+            _signaturesAvailable = ListSignatures().Count > 0;
             btnSelectSignature.Enabled = _signaturesAvailable && !_isProcessing;
         }
 
@@ -770,7 +755,7 @@ namespace OutlookAI.TaskPane
             {
                 SetUIEnabled(false);
 
-                var signatures = SignatureStore.ListSignatures();
+                var signatures = ListSignatures();
                 if (signatures.Count == 0)
                 {
                     RefreshSignatureAvailability();
@@ -791,14 +776,10 @@ namespace OutlookAI.TaskPane
                         return;
                     }
 
-                    dynamic wordDoc = doc;
-                    var bmks = wordDoc.Bookmarks;
-                    bmks.ShowHidden = true;
-                    ThisAddIn.ReleaseCom((object)bmks);
-                    DebugLog("SelectSignature BEFORE read", wordDoc);
+                    DebugLog("SelectSignature BEFORE read", doc);
 
-                    draftText = ReadDraftText(wordDoc);
-                    threadText = ReadThreadText(wordDoc);
+                    draftText = ComposeDocument.ReadDraftText(doc);
+                    threadText = ComposeDocument.ReadThreadText(doc);
                     preAsyncDoc = doc;
                     doc = null;
                 }
@@ -809,7 +790,7 @@ namespace OutlookAI.TaskPane
 
                 string recipientsText = GetRecipientSummary();
 
-                SignatureStore.SignatureOption chosen;
+                SignatureInfo chosen;
                 if (signatures.Count == 1)
                 {
                     // One signature installed: the choice is trivial - no AI call.
@@ -820,7 +801,7 @@ namespace OutlookAI.TaskPane
                     ShowStatus("Selecting the best signature...", false);
                     string answer = await ClaudeService.SelectSignatureAsync(
                         signatures, draftText, threadText, recipientsText);
-                    chosen = SignatureStore.FindByName(signatures, answer);
+                    chosen = FindSignatureNamed(signatures, answer);
                     if (chosen == null)
                     {
                         string shown = answer ?? "";
@@ -834,7 +815,7 @@ namespace OutlookAI.TaskPane
                 InvokeOnUI(() =>
                 {
                     if (_disposed) return;
-                    if (ApplySignatureToDocument(capturedDoc, chosen.FilePath))
+                    if (ApplySignatureToDocument(capturedDoc, chosen.PreferredFilePath))
                         ShowStatus("Applied signature \"" + chosen.Name + "\".", false);
                 });
             }
@@ -856,111 +837,76 @@ namespace OutlookAI.TaskPane
         }
 
         /// <summary>
-        /// The signature-region bookmark dance (ADDITIVE reuse of the pane's proven
-        /// _MailAutoSig machinery - same pattern as Outlook's own Insert &gt; Signature
-        /// switcher): replace the _MailAutoSig region when it exists, else insert
-        /// above _MailOriginal (quoted thread), else at the end of the document; then
-        /// recreate the _MailAutoSig bookmark over the inserted content so the
-        /// draft/signature/thread split keeps working. The draft region [0, draftEnd)
-        /// and the quoted thread are never modified.
+        /// Puts the chosen signature in the signature region, through OutlookAI.Core's
+        /// <see cref="ComposeDocument.ApplySignature"/>: the region replaced when there is one, else
+        /// inserted above the quoted thread, else at the end, and the marker recreated over it. The
+        /// draft and the quoted thread are never modified. A picture Word inserted as a link to the
+        /// signature's folder is then embedded, so that the mail carries it (D47) - what the MCP
+        /// server's drafts have done since they were written, and what the pane did not do until the
+        /// code-sharing refactor's stage S4.
         /// </summary>
         private bool ApplySignatureToDocument(object capturedDoc, string signatureFilePath)
         {
-            object doc = capturedDoc;
-            dynamic bookmarks = null;
+            if (capturedDoc == null)
+            {
+                ShowStatus("Could not access email editor.", true);
+                return false;
+            }
+
+            DebugLog("ApplySignature BEFORE", capturedDoc);
+            var applied = ComposeDocument.ApplySignature(capturedDoc, signatureFilePath);
+            if (applied.Applied)
+                ComposeDocument.EmbedLinkedPictures(capturedDoc);
+            DebugLog("ApplySignature AFTER", capturedDoc);
+
+            if (applied.Applied)
+                return true;
+
+            Debug.WriteLine("ApplySignatureToDocument: " + applied.Error);
+            if (applied.Error == "SignatureFileMissing")
+                ShowStatus("The signature's file no longer exists.", true);
+            else if (applied.Error == "InsertFileAddedNothing")
+                ShowStatus("The signature file inserted no content.", true);
+            else
+                ShowStatus("Could not apply signature (" + applied.Error + ").", true);
+            return false;
+        }
+
+        /// <summary>
+        /// The installed signatures, name-sorted: OutlookAI.Core's catalog, the one the MCP server
+        /// reads. None when the folder cannot be read - the pane asks while it is being built, and
+        /// must not throw then.
+        /// </summary>
+        private static IReadOnlyList<SignatureInfo> ListSignatures()
+        {
             try
             {
-                if (doc == null)
-                {
-                    ShowStatus("Could not access email editor.", true);
-                    return false;
-                }
-
-                if (signatureFilePath == null || !System.IO.File.Exists(signatureFilePath))
-                {
-                    ShowStatus("The signature's file no longer exists.", true);
-                    return false;
-                }
-
-                dynamic wordDoc = doc;
-                bookmarks = wordDoc.Bookmarks;
-                bookmarks.ShowHidden = true;
-                DebugLog("ApplySignature BEFORE", wordDoc);
-
-                int insertAt;
-                if (bookmarks.Exists(BookmarkAutoSig))
-                {
-                    // Replace: drop the marker, then the old signature content itself.
-                    var bmk = bookmarks[BookmarkAutoSig];
-                    var range = bmk.Range;
-                    insertAt = range.Start;
-                    bmk.Delete();
-                    range.Delete();
-                    ThisAddIn.ReleaseCom(range);
-                    ThisAddIn.ReleaseCom(bmk);
-                }
-                else if (bookmarks.Exists(BookmarkOriginal))
-                {
-                    // No signature region yet: insert directly ABOVE the quoted thread.
-                    var bmk = bookmarks[BookmarkOriginal];
-                    var range = bmk.Range;
-                    insertAt = range.Start;
-                    ThisAddIn.ReleaseCom(range);
-                    ThisAddIn.ReleaseCom(bmk);
-                }
-                else
-                {
-                    // Plain new draft: end of document (before the final paragraph mark).
-                    var content = wordDoc.Content;
-                    insertAt = Math.Max(0, (int)content.End - 1);
-                    ThisAddIn.ReleaseCom(content);
-                }
-
-                var contentBefore = wordDoc.Content;
-                int endBefore = contentBefore.End;
-                ThisAddIn.ReleaseCom(contentBefore);
-
-                var insertRange = wordDoc.Range(insertAt, insertAt);
-                insertRange.InsertFile(signatureFilePath, Type.Missing, false, false, false);
-                ThisAddIn.ReleaseCom(insertRange);
-
-                var contentAfter = wordDoc.Content;
-                int endAfter = contentAfter.End;
-                ThisAddIn.ReleaseCom(contentAfter);
-                int newEnd = insertAt + Math.Max(0, endAfter - endBefore);
-
-                // Recreate the marker over the inserted content so Outlook and the
-                // pane's draft/signature/thread split keep working on this draft.
-                var newRange = wordDoc.Range(insertAt, newEnd);
-                bookmarks.Add(BookmarkAutoSig, newRange);
-                ThisAddIn.ReleaseCom(newRange);
-
-                DebugLog("ApplySignature AFTER", wordDoc);
-
-                if (endAfter <= endBefore)
-                {
-                    ShowStatus("The signature file inserted no content.", true);
-                    return false;
-                }
-
-                return true;
+                return SignatureCatalog.ListSignatures();
             }
-            catch (COMException ex)
+            catch (Exception ex)
             {
-                Debug.WriteLine("ApplySignatureToDocument COM error: " + ex.Message);
-                ShowStatus("Could not apply signature: " + ex.Message, true);
-                return false;
+                Debug.WriteLine("ListSignatures: " + ex.Message);
+                return new SignatureInfo[0];
             }
-            catch (InvalidOperationException ex)
+        }
+
+        /// <summary>
+        /// The listed signature the AI's answer names: case-insensitive, with the quotes and the full
+        /// stop a model may put around a name taken off. Null when it names none.
+        /// </summary>
+        private static SignatureInfo FindSignatureNamed(IReadOnlyList<SignatureInfo> signatures, string answer)
+        {
+            if (signatures == null || string.IsNullOrWhiteSpace(answer))
+                return null;
+
+            string trimmed = answer.Trim().Trim('"', '\'', '.');
+            foreach (var signature in signatures)
             {
-                Debug.WriteLine("ApplySignatureToDocument error: " + ex.Message);
-                ShowStatus("Could not apply signature: " + ex.Message, true);
-                return false;
+                if (string.Equals(signature.Name, trimmed, StringComparison.OrdinalIgnoreCase))
+                    return signature;
             }
-            finally
-            {
-                ThisAddIn.ReleaseCom((object)bookmarks);
-            }
+
+            return null;
         }
 
         /// <summary>The compose item behind the pane (Inspector item or the inline response).</summary>
@@ -994,72 +940,40 @@ namespace OutlookAI.TaskPane
         }
 
         /// <summary>
-        /// Compact "Name &lt;address&gt;" summary of ALL of the draft's recipients, as context for
-        /// the signature choice. Empty when unavailable - the choice then rests on draft/thread
-        /// language alone.
-        ///
-        /// There is deliberately no cap. There was one, at 20, and it truncated in silence: a
-        /// mail to 40 people sent the model the first 20 with nothing to say the list had been
-        /// cut, so it reasoned about an audience that did not exist. The cap's stated reason was
-        /// that "a distribution list would swamp the prompt", which is not how Outlook models a
-        /// DL - an unexpanded list is ONE recipient here, its own name, and the user has to
-        /// expand it by hand to get the members. What is actually being budgeted is a handful of
-        /// short strings, next to a prompt that already carries the whole draft, the quoted
-        /// thread and an excerpt of every installed signature.
+        /// The mail's recipients for the AI, one "Name &lt;address&gt;" a line, through OutlookAI.Core's
+        /// <see cref="MailRecipients"/>: an Exchange recipient's SMTP address where Outlook knows it,
+        /// not the X.500 address the pane read until the code-sharing refactor's stage S4.
         /// </summary>
         private string GetRecipientSummary()
         {
             object item = null;
-            object recipients = null;
             try
             {
                 item = GetCurrentMailItem();
                 if (item == null) return "";
 
-                recipients = ((dynamic)item).Recipients;
-                int count = ((dynamic)recipients).Count;
                 var sb = new StringBuilder();
-                for (int i = 1; i <= count; i++)
+                foreach (var recipient in MailRecipients.Read(item))
                 {
-                    object recipient = null;
-                    try
-                    {
-                        recipient = ((dynamic)recipients)[i];
-                        string name = null;
-                        string address = null;
-                        try { name = ((dynamic)recipient).Name as string; } catch (COMException) { }
-                        try { address = ((dynamic)recipient).Address as string; } catch (COMException) { }
-                        if (string.IsNullOrWhiteSpace(name) && string.IsNullOrWhiteSpace(address))
-                            continue;
+                    string name = recipient.Name;
+                    string address = recipient.Address;
+                    if (string.IsNullOrWhiteSpace(name) && string.IsNullOrWhiteSpace(address))
+                        continue;
 
-                        if (sb.Length > 0) sb.AppendLine();
-                        sb.Append(name ?? "");
-                        if (!string.IsNullOrWhiteSpace(address) && !string.Equals(address, name, StringComparison.OrdinalIgnoreCase))
-                            sb.Append(" <").Append(address).Append(">");
-                    }
-                    finally
-                    {
-                        ThisAddIn.ReleaseCom(recipient);
-                    }
+                    if (sb.Length > 0) sb.AppendLine();
+                    sb.Append(name ?? "");
+                    if (!string.IsNullOrWhiteSpace(address) && !string.Equals(address, name, StringComparison.OrdinalIgnoreCase))
+                        sb.Append(" <").Append(address).Append(">");
                 }
 
                 return sb.ToString();
             }
-            catch (COMException)
-            {
-                return "";
-            }
-            catch (InvalidCastException)
-            {
-                return "";
-            }
-            catch (Microsoft.CSharp.RuntimeBinder.RuntimeBinderException)
+            catch (Exception ex) when (ComObjects.IsCallFailure(ex))
             {
                 return "";
             }
             finally
             {
-                ThisAddIn.ReleaseCom(recipients);
                 ThisAddIn.ReleaseCom(item);
             }
         }
@@ -1100,19 +1014,15 @@ namespace OutlookAI.TaskPane
                         return;
                     }
 
-                    dynamic wordDoc = doc;
-                    var bmks = wordDoc.Bookmarks;
-                    bmks.ShowHidden = true;
-                    ThisAddIn.ReleaseCom((object)bmks);
-                    DebugLog($"ProcessAction({actionLabel}) BEFORE read", wordDoc);
+                    DebugLog($"ProcessAction({actionLabel}) BEFORE read", doc);
 
                     // Read signature/thread fresh on every action. Caching them across
                     // the pane lifetime sent stale context to the AI when Outlook reused
                     // an inspector window for a different mail item.
-                    signatureText = ReadSignatureText(wordDoc);
-                    threadText = ReadThreadText(wordDoc);
+                    signatureText = ComposeDocument.ReadSignatureText(doc);
+                    threadText = ComposeDocument.ReadThreadText(doc);
 
-                    draftText = ReadDraftText(wordDoc);
+                    draftText = ComposeDocument.ReadDraftText(doc);
                     preAsyncDoc = doc;
                     doc = null;
                 }
@@ -1208,100 +1118,18 @@ namespace OutlookAI.TaskPane
             }
         }
 
-        private int FindDraftEnd(dynamic doc)
-        {
-            var bookmarks = doc.Bookmarks;
-            try
-            {
-                if (bookmarks.Exists(BookmarkAutoSig))
-                {
-                    var bmk = bookmarks[BookmarkAutoSig];
-                    var range = bmk.Range;
-                    int pos = range.Start;
-                    ThisAddIn.ReleaseCom(range);
-                    ThisAddIn.ReleaseCom(bmk);
-                    return pos;
-                }
-                if (bookmarks.Exists(BookmarkOriginal))
-                {
-                    var bmk = bookmarks[BookmarkOriginal];
-                    var range = bmk.Range;
-                    int pos = range.Start;
-                    ThisAddIn.ReleaseCom(range);
-                    ThisAddIn.ReleaseCom(bmk);
-                    return pos;
-                }
-            }
-            finally
-            {
-                ThisAddIn.ReleaseCom((object)bookmarks);
-            }
-            var content = doc.Content;
-            int end = content.End;
-            ThisAddIn.ReleaseCom(content);
-            return end;
-        }
-
-        private string ReadDraftText(dynamic doc)
-        {
-            int draftEnd = FindDraftEnd(doc);
-
-            var range = doc.Range(0, draftEnd);
-            string text = range.Text ?? "";
-            ThisAddIn.ReleaseCom(range);
-
-            return text.Trim('\r', '\n');
-        }
-
-        private string ReadSignatureText(dynamic doc)
-        {
-            var bookmarks = doc.Bookmarks;
-            try
-            {
-                if (!bookmarks.Exists(BookmarkAutoSig))
-                    return "";
-
-                var bmk = bookmarks[BookmarkAutoSig];
-                var range = bmk.Range;
-                string text = range.Text ?? "";
-                ThisAddIn.ReleaseCom(range);
-                ThisAddIn.ReleaseCom(bmk);
-
-                return text.TrimEnd('\r', '\n');
-            }
-            finally
-            {
-                ThisAddIn.ReleaseCom((object)bookmarks);
-            }
-        }
-
-        private string ReadThreadText(dynamic doc)
-        {
-            var bookmarks = doc.Bookmarks;
-            try
-            {
-                if (!bookmarks.Exists(BookmarkOriginal))
-                    return "";
-
-                var bmk = bookmarks[BookmarkOriginal];
-                var range = bmk.Range;
-                string text = range.Text ?? "";
-                ThisAddIn.ReleaseCom(range);
-                ThisAddIn.ReleaseCom(bmk);
-
-                return text.TrimEnd('\r', '\n');
-            }
-            finally
-            {
-                ThisAddIn.ReleaseCom((object)bookmarks);
-            }
-        }
-
+        /// <summary>
+        /// Replaces the draft region with <paramref name="newDraftText"/>, through OutlookAI.Core's
+        /// <see cref="ComposeDocument.WriteDraftText"/>: the region before the signature or the quoted
+        /// thread, or the whole document when there is neither, with the boundary marker recreated
+        /// over the region below it. One paragraph a line, as the pane has always written; the MCP
+        /// server writes soft line breaks instead, and which of the two the pane should write is
+        /// measured on a test machine before it changes (Q165 (c)).
+        /// </summary>
         private bool WriteDraftToDocument(string newDraftText, object capturedDoc = null)
         {
             object doc = capturedDoc;
             bool ownDoc = false;
-            dynamic bookmarks = null;
             try
             {
                 if (doc == null)
@@ -1315,83 +1143,18 @@ namespace OutlookAI.TaskPane
                     return false;
                 }
 
-                dynamic wordDoc = doc;
-                bookmarks = wordDoc.Bookmarks;
-                bookmarks.ShowHidden = true;
-                DebugLog("WriteDraft BEFORE", wordDoc);
+                DebugLog("WriteDraft BEFORE", doc);
+                var written = ComposeDocument.WriteDraftText(
+                    doc, newDraftText, DraftTextLayout.Paragraphs, replaceToEndWhenNoBoundary: true);
+                DebugLog("WriteDraft AFTER", doc);
+                if (written.Inserted)
+                    return true;
 
-                string boundaryBookmark = null;
-                var contentRange = wordDoc.Content;
-                int draftEnd = contentRange.End;
-                ThisAddIn.ReleaseCom(contentRange);
-                int origBmkEnd = -1;
-
-                if (bookmarks.Exists(BookmarkAutoSig))
-                    boundaryBookmark = BookmarkAutoSig;
-                else if (bookmarks.Exists(BookmarkOriginal))
-                    boundaryBookmark = BookmarkOriginal;
-
-                if (boundaryBookmark != null)
-                {
-                    var bmk = bookmarks[boundaryBookmark];
-                    var bmkRange = bmk.Range;
-                    draftEnd = bmkRange.Start;
-                    origBmkEnd = bmkRange.End;
-                    ThisAddIn.ReleaseCom(bmkRange);
-                    bmk.Delete();
-                    ThisAddIn.ReleaseCom(bmk);
-                }
-
-                bool textReplaced = false;
-                int newDraftEnd = draftEnd;
-                try
-                {
-                    var range = wordDoc.Range(0, draftEnd);
-                    range.Text = newDraftText + "\r\n";
-                    newDraftEnd = range.End;
-                    textReplaced = true;
-                    ThisAddIn.ReleaseCom(range);
-
-                    if (boundaryBookmark != null && origBmkEnd >= 0)
-                    {
-                        int newBmkEnd = origBmkEnd + (newDraftEnd - draftEnd);
-                        if (newBmkEnd < newDraftEnd) newBmkEnd = newDraftEnd;
-                        var restoreRange = wordDoc.Range(newDraftEnd, newBmkEnd);
-                        bookmarks.Add(boundaryBookmark, restoreRange);
-                        ThisAddIn.ReleaseCom(restoreRange);
-                    }
-                }
-                catch
-                {
-                    // We deleted the boundary bookmark up front; if the write/recreate failed,
-                    // restore it so the signature/thread marker (and the context it anchors)
-                    // isn't silently lost. Re-throw so the normal error handling still runs.
-                    if (boundaryBookmark != null && origBmkEnd >= 0 && !bookmarks.Exists(boundaryBookmark))
-                    {
-                        try
-                        {
-                            int rs = textReplaced ? newDraftEnd : draftEnd;
-                            int re = textReplaced ? origBmkEnd + (newDraftEnd - draftEnd) : origBmkEnd;
-                            if (re < rs) re = rs;
-                            var restore = wordDoc.Range(rs, re);
-                            bookmarks.Add(boundaryBookmark, restore);
-                            ThisAddIn.ReleaseCom(restore);
-                        }
-                        catch { }
-                    }
-                    throw;
-                }
-
-                DebugLog("WriteDraft AFTER", wordDoc);
-                return true;
-            }
-            catch (COMException ex)
-            {
-                Debug.WriteLine("WriteDraftToDocument COM error: " + ex.Message);
-                ShowStatus("Could not update email: " + ex.Message, true);
+                Debug.WriteLine("WriteDraftToDocument: " + written.Error);
+                ShowStatus("Could not update email (" + written.Error + ").", true);
                 return false;
             }
-            catch (InvalidOperationException ex)
+            catch (Exception ex) when (ComObjects.IsCallFailure(ex) || ex is InvalidOperationException)
             {
                 Debug.WriteLine("WriteDraftToDocument error: " + ex.Message);
                 ShowStatus("Could not update email: " + ex.Message, true);
@@ -1399,7 +1162,6 @@ namespace OutlookAI.TaskPane
             }
             finally
             {
-                ThisAddIn.ReleaseCom((object)bookmarks);
                 if (ownDoc) ThisAddIn.ReleaseCom(doc);
             }
         }
