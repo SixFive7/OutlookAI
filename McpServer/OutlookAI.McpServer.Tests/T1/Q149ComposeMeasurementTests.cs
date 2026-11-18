@@ -185,7 +185,7 @@ public sealed class Q149ComposeMeasurementTests
         {
             CollectionAttribute? collection = type.GetCustomAttribute<CollectionAttribute>();
             Assert.NotNull(collection);
-            string source = File.ReadAllText(Path.Combine(TestProjectDir(), "T2", type.Name + ".cs"));
+            string source = File.ReadAllText(Path.Combine(RepoPaths.TestProjectDir(), "T2", type.Name + ".cs"));
             foreach (MethodInfo method in type.GetMethods().Where(m => m.GetCustomAttribute<FactAttribute>() != null))
             {
                 int at = source.IndexOf("public void " + method.Name + "(", StringComparison.Ordinal);
@@ -423,12 +423,5 @@ public sealed class Q149ComposeMeasurementTests
 
         Assert.Equal(1, Q149WordLook.Compare(new[] { a }, new[] { a, a }, max: 0).Count);
         Assert.Empty(Q149WordLook.Compare(new[] { a }, new[] { a, a }, max: 0).Listed);
-    }
-
-    private static string TestProjectDir()
-    {
-        return typeof(Q149ComposeMeasurementTests).Assembly
-            .GetCustomAttributes<AssemblyMetadataAttribute>()
-            .First(a => a.Key == "TestProjectDir").Value!;
     }
 }
