@@ -687,8 +687,33 @@ Group Policy only to show a value an organization sets - or one an earlier Outlo
 by `Tuning\Applied` (Q151 (a)) - and leaves such a value alone. So the reconcile above lists nothing in
 `Tuning\NeedsAdministrator`, and the walk is 11 values, not 13. An existing account's own offline period
 lives in its Outlook profile, which OutlookAI does not write yet: the settings dialog says how to set it
-in Account Settings (`Services/CachedModeSettings.cs`, `Services/AccountOfflinePeriods.cs`). Not yet run
-on a guest. The record above stays as what was measured then.
+in Account Settings (`Services/CachedModeSettings.cs`, `Services/AccountOfflinePeriods.cs`). Run on a
+guest on 2026-11-18 (the next record). The record above stays as what was measured then.
+
+**The add-in with OutlookAI.Core beside it (Q167 (a), the code-sharing refactor's first stage), against
+the build before it - `OutlookAI-Unindexed`, from `CP-08`, 2026-11-18.** Two payloads, built on the host
+by `Testbed/host/Publish-AddInPayload.ps1`: `56ac6fe`, whose add-in references Core, and `14907d3`,
+master just before it, which is also the first guest run of the Q145 build. Guard 3 `UNCHANGED` over
+318 host lines for both; the older commit's restore found nothing to do. For each, from a script under
+the guest's lease: `CP-08-MAIL-SINK` applied over the saved guest (time synchronisation off), the
+payload, its commit's `Source.zip` and guest scripts and the pinned `vstor_redist.exe` staged,
+`-Phase Install` from the default task, `-Phase FirstRun` three times at `-RunLevel Limited`, and
+Outlook's own `...\16.0\Outlook\AddInLoadTimes\OutlookAI` read once the last Outlook had exited. Then
+`CP-16B-FROZEN-CLOCK` restored, the guest saved and the lease released. The host ran three build VMs and
+the Exchange VM throughout, so every time here is a busy host's.
+
+| Payload | Install | FirstRun, three times | `{app}` | Load times Outlook recorded |
+| --- | --- | --- | --- | --- |
+| `14907d3` | `INSTALLED-NEVER-RAN`, 2, 85 s and 134 s in two passes | `ADDIN-READY`, 0, each time: COM start 41.3 s cold, then 3.7 s and 3.2 s; tuning walk 11 of the 11, nothing listed as needing an administrator | `OutlookAI.dll` and the two VSTO utility assemblies | 1,750 and 1,719 ms (and 1,890 in a first pass that read the value with the last Outlook still running) |
+| `56ac6fe` | `INSTALLED-NEVER-RAN`, 2, 146 s | `ADDIN-READY`, 0, each time: COM start 19.6 s cold, then 3.8 s and 3.9 s; the same walk | the same, and `OutlookAI.Core.dll` (1,014,272 bytes) and `System.Reflection.DispatchProxy.dll` (35,712) | 2,109 and 2,125 ms |
+
+The add-in loads with Core's assemblies beside it and reaches `ADDIN-READY` as before. Its recorded load
+times are 0.38 s longer, on one pass each in one order; the add-in uses none of Core yet, so the CLR does
+not load `OutlookAI.Core.dll`, and the warm COM starts are the same. Whether the difference is the busy
+host or the VSTO runtime handling two more listed assemblies is not settled by two samples; the stage
+that first calls Core at startup measures it again. (A first attempt applied `CP-08` over the guest while
+it still ran: it came back running but unreachable over PowerShell Direct for six minutes, and the
+script now saves a running guest before applying a checkpoint.)
 
 **Checkpoint `CP-03-OUTLOOKAI-INSTALLED` once `-Phase FirstRun` prints `ADDIN-READY`.** `CP-05-ADDIN-TRUSTED`
 is no longer a separate manual step - the trust entry is part of the scripted install - and the name

@@ -40,12 +40,12 @@ namespace OutlookAI.Services
     /// <para>
     /// WHAT IS BUILT, AND WHAT WAITS. The writer is <c>OutlookAI.Core.Services.AccountOfflinePeriodWriter</c>
     /// - in Core, beside the profile's account reader, because logic both sides need lives there (Q154);
-    /// T1 AccountOfflinePeriodWriterTests pins it. The add-in cannot reference Core until the
-    /// code-sharing refactor's first stage, which waits on the maintainer's answers to Q163 to Q172.
-    /// Then this interface gets its implementation: every Exchange account of the default profile
-    /// (<c>ProfileAccountEntries</c>), each written with <c>AccountOfflinePeriodWriter.Write</c>, and
-    /// the user told that the new period takes effect when Outlook next starts. Until then, Account
-    /// Settings is the user's way.
+    /// T1 AccountOfflinePeriodWriterTests pins it. The add-in references Core since the code-sharing
+    /// refactor's first stage (Q167 (a)), but may call only Core's namespace OutlookAI.Core.AddIn
+    /// (Q164 (a)), so the writer moves there first. Then this interface gets its implementation:
+    /// every Exchange account of the default profile (<c>ProfileAccountEntries</c>), each written
+    /// with <c>AccountOfflinePeriodWriter.Write</c>, and the user told that the new period takes
+    /// effect when Outlook next starts. Until then, Account Settings is the user's way.
     /// </para>
     ///
     /// <para>
