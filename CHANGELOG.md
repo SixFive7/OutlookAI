@@ -829,12 +829,12 @@ its mailbox tests on, and change nothing you install.
   look. The add-in writes a start-up stamp, `HKCU\Software\OutlookAI\AddIn`, at the end of its
   start; an older add-in is recognised by its tuning reconcile. A folder search of an Exchange
   mailbox that starts Outlook (Q212 (a)) goes through the same wait. Decided by the maintainer on
-  2026-11-18. Measured in two runs on the unindexed test machine, which has no add-in that could
-  deadlock: the disconnect test's four cold starts waited 18.0 to 18.6 s for Outlook to settle, the
-  20 s age being the last condition met, and connected in 21.8 to 22.2 s, where a cold start took
+  2026-11-18. Measured in three runs on the unindexed test machine, which has no add-in that could
+  deadlock: the disconnect test's six cold starts waited 18.0 to 18.6 s for Outlook to settle, the
+  20 s age being the last condition met, and connected in 21.7 to 22.2 s, where a cold start took
   about 4 s before; a connection to an Outlook already minutes old waited under 40 ms. In an Outlook
-  opened with its window, as a user opens it, the add-in had started 27.9 s in on one run and 14.2 s
-  in on the other, so such an Outlook can settle later than one OutlookAI starts.
+  opened with its window, as a user opens it, the add-in had started 6.2 s, 14.2 s and 27.9 s in, so
+  such an Outlook can settle later than one OutlookAI starts.
 
 - 💥 **Every tool addresses folders and stores by ID; names and paths are for display only (Q131-Q135).**
   Decided by the maintainer on 2026-10-11, after research found a folder's own Outlook ID unique
