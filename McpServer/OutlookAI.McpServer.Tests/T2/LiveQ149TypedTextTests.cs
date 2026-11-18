@@ -23,8 +23,11 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// product's drafts of the same text - with no signature, and with the test signature - are read the same way.
 /// </para>
 /// <para>
-/// <b>Q180 (b).</b> The windowed Outlook this class needs is started from cold - Outlook is stopped first - and that
-/// start is logged: the time until Outlook answered, its liveness verdicts and any hang (<see cref="Q180ColdStartWatch"/>).
+/// <b>Q180 (b).</b> When no Outlook with a window runs, this class starts one, and that cold start is logged: the time
+/// until Outlook answered, its liveness verdicts and any hang (<see cref="Q180ColdStartWatch"/>). One that runs is used
+/// as it is. The first version stopped it and started another, and both runs of it were held to their time limit with
+/// nothing to say where; so every step of a trial is bounded now (<see cref="Step{T}"/>), and a blocked one names
+/// the windows Outlook showed.
 /// </para>
 /// </summary>
 [Collection(LiveCollections.ComposeSurface)]
@@ -34,6 +37,12 @@ public sealed class LiveQ149TypedTextTests
     private const int Rounds = 2;
 
     private static readonly string[] Kinds = { "new", "reply", "forward" };
+
+    /// <summary>How long one step of a trial may take before Outlook is taken for blocked by a window that waits for a person.</summary>
+    private static readonly TimeSpan StepLimit = TimeSpan.FromSeconds(90);
+
+    /// <summary>Set once a step stayed blocked: nothing more is asked of Outlook in this class, not even a delete.</summary>
+    private bool _blocked;
 
     private readonly LiveQ149Fixture _fixture;
     private readonly ITestOutputHelper _output;
@@ -78,9 +87,11 @@ public sealed class LiveQ149TypedTextTests
 
     private void TypedText(int rounds)
     {
-        // Q180 (b): this windowed start is a cold start too, and is logged.
+        // Q180 (b): a windowed start this class makes is a cold start too, and is logged; an Outlook with a window that
+        // runs already - the runner's - is used as it is.
         _fixture.ReleaseService();
-        LiveComposeProbe.StopOutlook(Run.Settings, Run.Log);
+        _blocked = false;
+        Q149Attempt setup = new(Q149Cells.Q211 + "-process", 1);
         Q180ColdStartWatch start = new("windowed", Q149Cells.Q211, 1);
         try
         {
@@ -92,25 +103,77 @@ public sealed class LiveQ149TypedTextTests
         }
 
         using TestSignature signature = TestSignature.Create(Run.Marker);
-        using Q149OutlookClient client = Q149OutlookClient.Connect(new Stopwatch(), allowStart: false);
-        string storeId = Q149Drafts.HubStoreId(Run, client);
-        string sourceEntryId = Q149Drafts.SeedSelfSentSource(Run, "q211-source", out _);
+        Q149OutlookClient? client = null;
         List<string> rows = new();
-        for (int round = 1; round <= rounds; round++)
+        string? blocked = null;
+        try
         {
-            for (int k = 0; k < Kinds.Length; k++)
+            client = Step("connect a client", setup, () => Q149OutlookClient.Connect(new Stopwatch(), allowStart: false));
+            string storeId = Step("read the hub's StoreID", setup, () => Q149Drafts.HubStoreId(Run, client));
+            string sourceEntryId = Step("seed the mail to reply to", setup, () => Q149Drafts.SeedSelfSentSource(Run, "q211-source", out _), TimeSpan.FromMinutes(4));
+            for (int round = 1; round <= rounds; round++)
             {
-                string kind = Kinds[k];
-                rows.Add(Typed(client, storeId, sourceEntryId, kind, (round * 10) + k));
-                rows.Add(Product(client, storeId, sourceEntryId, kind, (round * 10) + k, signatureName: null));
-                rows.Add(Product(client, storeId, sourceEntryId, kind, (round * 10) + k, signature.Name));
+                for (int k = 0; k < Kinds.Length; k++)
+                {
+                    string kind = Kinds[k];
+                    rows.Add(Typed(client, storeId, sourceEntryId, kind, (round * 10) + k));
+                    rows.Add(Product(client, storeId, sourceEntryId, kind, (round * 10) + k, signatureName: null));
+                    rows.Add(Product(client, storeId, sourceEntryId, kind, (round * 10) + k, signature.Name));
+                }
             }
         }
+        catch (TimeoutException ex)
+        {
+            blocked = ex.Message;
+        }
+        finally
+        {
+            // A client whose thread is still blocked in Outlook is left as it is: its release would wait on it too.
+            if (!_blocked)
+            {
+                client?.Dispose();
+            }
 
-        string line = Q149Cells.SummaryPrefix + Q149Cells.Q211 + " n=" + rounds.ToString(CultureInfo.InvariantCulture) + ": " + string.Join("; ", rows.Distinct(StringComparer.Ordinal));
+            Run.Write(setup);
+        }
+
+        string line = Q149Cells.SummaryPrefix + Q149Cells.Q211 + " n=" + rounds.ToString(CultureInfo.InvariantCulture) + ": " + string.Join("; ", rows.Distinct(StringComparer.Ordinal))
+            + (blocked == null ? string.Empty : "; BLOCKED: " + blocked);
         _output.WriteLine(line);
         Console.WriteLine(line);
+        Assert.True(blocked == null, blocked);
         Assert.Equal(rounds * Kinds.Length * 3, rows.Count);
+    }
+
+    /// <summary>
+    /// Runs one step of a trial, bounded. Past <see cref="StepLimit"/> - or <paramref name="limit"/> - Outlook is taken for
+    /// blocked by a window that waits for a person: every window it shows goes on <paramref name="attempt"/> and the
+    /// log, each dialog among them is asked to close (WM_CLOSE: its Cancel, never its OK), and the step gets as long
+    /// again. One that still has not returned ends the class's trials, and nothing more is asked of Outlook.
+    /// </summary>
+    private T Step<T>(string name, Q149Attempt attempt, Func<T> work, TimeSpan? limit = null)
+    {
+        TimeSpan budget = limit ?? StepLimit;
+        Task<T> task = Task.Run(work);
+        if (task.Wait(budget))
+        {
+            return task.GetAwaiter().GetResult();
+        }
+
+        string[] windows = Q149Native.DescribeVisibleOutlookWindows();
+        int asked = Q149Native.CloseVisibleOutlookDialogs();
+        attempt.Set("blockedStep", name).Set("blockedBy", windows).Set("dialogsAskedToClose", asked);
+        Run.Log("Q211: '" + name + "' had not returned after " + budget.TotalSeconds.ToString("0", CultureInfo.InvariantCulture) + " s; Outlook shows "
+            + (windows.Length == 0 ? "no window" : string.Join("; ", windows)) + "; dialogs asked to close: " + asked.ToString(CultureInfo.InvariantCulture));
+        if (task.Wait(budget))
+        {
+            attempt.Set("returnedAfterTheDialogsClosed", true);
+            return task.GetAwaiter().GetResult();
+        }
+
+        _blocked = true;
+        throw new TimeoutException("Q211: '" + name + "' did not return, even after Outlook's dialogs were asked to close; Outlook showed "
+            + (windows.Length == 0 ? "no window" : string.Join("; ", windows)));
     }
 
     /// <summary>Outlook's own compose window, typed into: the draft saved with no inspector, re-opened, displayed, typed, read, discarded, deleted.</summary>
@@ -120,18 +183,35 @@ public sealed class LiveQ149TypedTextTests
         attempt.Set("kind", kind).Set("source", "outlook-typed");
         string token = "Q211TYPED" + kind.ToUpperInvariant() + iteration.ToString(CultureInfo.InvariantCulture) + Run.Marker;
         string label = "q211-typed-" + kind + "-" + iteration.ToString(CultureInfo.InvariantCulture);
-        string entryId = kind == "new"
-            ? Q149Drafts.CreateTaggedDraft(Run, client, label, htmlBody: null, addressToHub: true).EntryId
-            : Q149Drafts.CreateDerivedWithoutInspector(Run, client, sourceEntryId, storeId, kind == "forward", label).EntryId;
+        string entryId;
         try
         {
-            (List<WordParagraphLook>? look, int caret, string? failure) = client.Run<(List<WordParagraphLook>?, int, string?)>((_, ns) => TypeIntoTheComposeWindow((object)ns, entryId, storeId, token));
+            entryId = Step("save the " + kind + " draft", attempt, () => kind == "new"
+                ? Q149Drafts.CreateTaggedDraft(Run, client, label, htmlBody: null, addressToHub: true).EntryId
+                : Q149Drafts.CreateDerivedWithoutInspector(Run, client, sourceEntryId, storeId, kind == "forward", label).EntryId);
+        }
+        catch (TimeoutException)
+        {
+            Run.Write(attempt);
+            throw;
+        }
+
+        try
+        {
+            (List<WordParagraphLook>? look, int caret, string? failure) = Step(
+                "type into the " + kind + " compose window",
+                attempt,
+                () => client.Run<(List<WordParagraphLook>?, int, string?)>((_, ns) => TypeIntoTheComposeWindow((object)ns, entryId, storeId, token)));
             attempt.Set("caretAt", caret).Set("failure", failure);
             return Record(attempt, look, token, "outlook typed " + kind);
         }
         finally
         {
-            _ = LiveOutlookTestMailer.DeleteItemByEntryId(Run.Hub, entryId, Run.Marker);
+            if (!_blocked)
+            {
+                _ = LiveOutlookTestMailer.DeleteItemByEntryId(Run.Hub, entryId, Run.Marker);
+            }
+
             Run.Write(attempt);
         }
     }
@@ -146,23 +226,40 @@ public sealed class LiveQ149TypedTextTests
         string text = "Typed line one " + token + "\nTyped line two\n\nTyped paragraph two";
         string requested = signatureName ?? "none";
         LiveStoreWriteGuard.Assert(Run.Hub, StoreWriteKind.Draft, "q211 product draft");
-        DraftOutcome draft = kind switch
+        DraftOutcome draft;
+        try
         {
-            "new" => Service.NewDraft(Run.Hub, Run.Hub, cc: null, Run.TaggedSubject("q211-product-" + kind + "-" + iteration.ToString(CultureInfo.InvariantCulture)), text, display: false, signature: requested),
-            "reply" => Service.ReplyDraft(sourceEntryId, text, replyAll: false, display: false, signature: requested),
-            _ => Service.ForwardDraft(sourceEntryId, text, to: Run.Hub, display: false, signature: requested),
-        };
+            draft = Step("the product's " + kind + " draft (" + requested + ")", attempt, () => kind switch
+            {
+                "new" => Service.NewDraft(Run.Hub, Run.Hub, cc: null, Run.TaggedSubject("q211-product-" + kind + "-" + iteration.ToString(CultureInfo.InvariantCulture)), text, display: false, signature: requested),
+                "reply" => Service.ReplyDraft(sourceEntryId, text, replyAll: false, display: false, signature: requested),
+                _ => Service.ForwardDraft(sourceEntryId, text, to: Run.Hub, display: false, signature: requested),
+            }, LiveComposeProbe.StepBudget);
+        }
+        catch (TimeoutException)
+        {
+            Run.Write(attempt);
+            throw;
+        }
+
         Run.Allow(draft.EntryId);
         try
         {
             attempt.Set("placement", draft.BodyPlacement).Set("signatureApplied", draft.SignatureApplied).Set("composeError", draft.ComposeSurfaceError);
-            (List<WordParagraphLook>? look, string? failure) = Q149Editor.ReadLookOf(Run, client, draft.EntryId, storeId);
+            (List<WordParagraphLook>? look, string? failure) = Step(
+                "read the product's " + kind + " draft",
+                attempt,
+                () => Q149Editor.ReadLookOf(Run, client, draft.EntryId, storeId));
             attempt.Set("failure", failure);
             return Record(attempt, look, token, source.Replace('-', ' ') + " " + kind);
         }
         finally
         {
-            _ = LiveOutlookTestMailer.DeleteItemByEntryId(Run.Hub, draft.EntryId, Run.Marker);
+            if (!_blocked)
+            {
+                _ = LiveOutlookTestMailer.DeleteItemByEntryId(Run.Hub, draft.EntryId, Run.Marker);
+            }
+
             Run.Write(attempt);
         }
     }

@@ -1724,6 +1724,72 @@ internal static class Q149Native
         return name.ToString();
     }
 
+    /// <summary>
+    /// Every visible top-level window of every OUTLOOK.EXE, one line each: its class and place, and for a dialog the
+    /// labels of its buttons, which name it without quoting its text. What a blocked step finds Outlook showing.
+    /// </summary>
+    internal static string[] DescribeVisibleOutlookWindows()
+    {
+        return OutlookTopWindows()
+            .Where(w => w.Visible)
+            .Select(w => w.ClassName + " " + DescribePlace(w.Handle)
+                + (IsDialogClass(w.ClassName) ? " buttons " + string.Join("|", ButtonLabels(w.Handle)) : string.Empty))
+            .ToArray();
+    }
+
+    /// <summary>
+    /// Asks every visible dialog of every OUTLOOK.EXE to close (WM_CLOSE: a dialog's Cancel, never its OK) and returns
+    /// how many it asked - for a step blocked on a window meant for a person, on a test guest.
+    /// </summary>
+    internal static int CloseVisibleOutlookDialogs()
+    {
+        int asked = 0;
+        foreach (TopWindow w in OutlookTopWindows())
+        {
+            if (w.Visible && IsDialogClass(w.ClassName))
+            {
+                LiveDisconnectRecoveryTests.WindowProbe.PostClose(w.Handle);
+                asked++;
+            }
+        }
+
+        return asked;
+    }
+
+    /// <summary>Windows' own dialog class, Office's (NUIDialog) and Word's (bosa_sdm_...).</summary>
+    internal static bool IsDialogClass(string className)
+    {
+        return className == "#32770" || className == "NUIDialog" || className.StartsWith("bosa_sdm_", StringComparison.Ordinal);
+    }
+
+    private static List<string> ButtonLabels(IntPtr dialog)
+    {
+        const uint WmGetText = 0x000D;
+        const uint SmtoAbortIfHung = 0x0002;
+        List<string> labels = new();
+        _ = EnumChildWindows(dialog, (child, _) =>
+        {
+            if (labels.Count < 8 && string.Equals(ClassOf(child), "Button", StringComparison.Ordinal))
+            {
+                StringBuilder text = new(64);
+                if (SendMessageTimeout(child, WmGetText, (IntPtr)text.Capacity, text, SmtoAbortIfHung, 500, out _) != IntPtr.Zero)
+                {
+                    labels.Add(text.ToString().Replace("&", string.Empty, StringComparison.Ordinal));
+                }
+            }
+
+            return true;
+        }, IntPtr.Zero);
+        return labels;
+    }
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool EnumChildWindows(IntPtr parent, EnumWindowsProc callback, IntPtr lParam);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern IntPtr SendMessageTimeout(IntPtr hwnd, uint message, IntPtr wParam, StringBuilder lParam, uint flags, uint timeoutMs, out IntPtr result);
+
     /// <summary>Visible, of real size, and not parked far off the screen - where a person could see it.</summary>
     internal static bool IsOnScreen(IntPtr hwnd)
     {

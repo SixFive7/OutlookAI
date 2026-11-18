@@ -235,12 +235,16 @@ its mailbox tests on, and change nothing you install.
   indicators now take their wording from one place, so they cannot disagree.
 
 - ✅ **The compose measurement also runs the product's own drafting, Outlook's typed text, and cold starts.**
-  As the maintainer decided on 2026-11-18, the Q149 suite stays (Q210 (a)) and gains five cells.
+  As the maintainer decided on 2026-11-18, the Q149 suite stays (Q210 (a)) and gains seven cells.
   P1 runs the product's drafts in an Outlook with no window, three starts of ten drafts each,
   recording each draft's route, every window shown and every change of foreground, then ends the
   session and watches Outlook end. P2 has two sessions draft in one such Outlook and checks that the
   first to leave keeps the hidden window and the last closes it; P3 drafts in an Outlook a program
-  started in which a window was then shown, where nothing may be activated. Q211 opens drafts in
+  started in which a window was then shown, where nothing may be activated. In these a small window
+  of the test's own holds the foreground before each draft, standing in for the program a person
+  types in, and each draft records how long the foreground was elsewhere and where it went. P4 and
+  P5 repeat P1 and P3 while that window types a character no draft holds, 25 times a second, and
+  count the keys that did not reach it and those found in the stored drafts. Q211 opens drafts in
   Outlook's own compose window, types into it through Word, and reads the style and spacing of the
   typed paragraphs beside the product's drafts of the same text (Q211 (b)). Every cold start in these
   runs is logged for Q180 (b): the time until Outlook answered, Windows' verdict on it every 100 ms,
