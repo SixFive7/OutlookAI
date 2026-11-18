@@ -848,8 +848,13 @@ its mailbox tests on, and change nothing you install.
   Outlook that does not answer), `DeadGateway`, `RecordingGateway`, `StubIndexClient`, which the
   three suites whose index answers in its own way derive from, `IndexRows`, `RepoPaths`, moved
   there, and `ExampleLiveSettings`. `StoreIndexHashScopeTests` keeps its own index stand-in, which
-  answers different questions. No test changed what it checks: the build machine ran the same tests,
-  by name, before and after each step.
+  answers different questions. Thirteen of the checks that read the suite's own compiled code or
+  source carried private copies of the same reading helpers - a walk over a method's instructions,
+  the Category=Live trait, a collection attribute's argument, a live test's source file and the body
+  of one member in it - and now share `IlReader`, moved there from `T1/`, `Traits` and `SourceText`;
+  three of them read the instructions byte by byte, and now walk the opcodes as the others did. No
+  test changed what it checks: the build machine ran the same tests, by name, before and after each
+  step.
 
 - ✅ **A live run that starts Outlook closes Office's activation wizard and records it.**
   Past Office's 30-day activation grace, which the Exchange test machine's real clock has crossed,

@@ -231,7 +231,7 @@ public sealed class McpToolWriteClassificationTests
         // itself would reach it around the gate, so no live class may name the exe path at all -
         // neither the assembly-metadata key nor the client's property for it.
         List<string> problems = new();
-        foreach (Type type in typeof(LiveCollections).Assembly.GetTypes().Where(IsLiveClass))
+        foreach (Type type in typeof(LiveCollections).Assembly.GetTypes().Where(Traits.IsLiveClass))
         {
             if (IlReader.StringsOf(type).Contains("McpServerExePath"))
             {
@@ -262,13 +262,5 @@ public sealed class McpToolWriteClassificationTests
             .Select(name => name!)
             .OrderBy(name => name, StringComparer.Ordinal)
             .ToList();
-    }
-
-    private static bool IsLiveClass(Type type)
-    {
-        return type.IsClass && type.GetCustomAttributesData().Any(a => a.AttributeType == typeof(TraitAttribute)
-            && a.ConstructorArguments.Count == 2
-            && string.Equals(a.ConstructorArguments[0].Value as string, "Category", StringComparison.Ordinal)
-            && string.Equals(a.ConstructorArguments[1].Value as string, "Live", StringComparison.Ordinal));
     }
 }

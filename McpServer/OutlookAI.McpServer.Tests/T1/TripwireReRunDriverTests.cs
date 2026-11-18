@@ -618,15 +618,15 @@ public sealed class TripwireReRunDriverTests
         MethodInfo verify = Verify();
 
         Assert.Contains(
-            CalleesOf(verify),
+            IlReader.CalleesOf(verify),
             called => called.DeclaringType == typeof(TripwireRunVerdict)
                 && called.Name == nameof(TripwireRunVerdict.Enforce));
         Assert.Contains(
-            CalleesOf(verify),
+            IlReader.CalleesOf(verify),
             called => called.DeclaringType == typeof(TripwireRunVerdict)
                 && called.Name == nameof(TripwireRunVerdict.RefusalFor));
         Assert.DoesNotContain(
-            CalleesOf(verify),
+            IlReader.CalleesOf(verify),
             called => called.DeclaringType == typeof(InvalidOperationException) && called.IsConstructor);
     }
 
@@ -648,7 +648,7 @@ public sealed class TripwireReRunDriverTests
         MethodInfo launch = typeof(TripwireReRunDriver).GetMethod(
             "Launch", BindingFlags.NonPublic | BindingFlags.Static)!;
         Assert.Contains(
-            CalleesOf(launch),
+            IlReader.CalleesOf(launch),
             called => called.DeclaringType == typeof(TripwireReRunDriver)
                 && called.Name == nameof(TripwireReRunDriver.ChildEnvironment));
     }
@@ -660,7 +660,7 @@ public sealed class TripwireReRunDriverTests
         // failure direction is already safe and the loss is only in accuracy: every re-run
         // would report "no answer" instead of naming what happened.
         Assert.Contains(
-            CalleesOf(Verify()),
+            IlReader.CalleesOf(Verify()),
             called => called.DeclaringType == typeof(TripwireReRunDriver)
                 && called.Name == nameof(TripwireReRunDriver.RecordOwnVerdict));
     }
@@ -675,7 +675,7 @@ public sealed class TripwireReRunDriverTests
             BindingFlags.Public | BindingFlags.Static)!;
 
         Assert.Contains(
-            CalleesOf(ensureBaseline),
+            IlReader.CalleesOf(ensureBaseline),
             called => called.DeclaringType == typeof(TripwireRetryPolicy)
                 && called.Name == nameof(TripwireRetryPolicy.For));
     }
@@ -694,14 +694,14 @@ public sealed class TripwireReRunDriverTests
         MethodInfo reRun = source.GetMethod(nameof(ITripwireRetrySource.ReRun))!;
 
         Assert.Contains(
-            CalleesOf(reRun),
+            IlReader.CalleesOf(reRun),
             called => called.DeclaringType == typeof(TripwireReRunDriver)
                 && called.Name == nameof(TripwireReRunDriver.Run));
 
         MethodInfo launch = typeof(TripwireReRunDriver).GetMethod(
             "Launch", BindingFlags.NonPublic | BindingFlags.Static)!;
         Assert.Contains(
-            CalleesOf(launch),
+            IlReader.CalleesOf(launch),
             called => called.DeclaringType == typeof(System.Diagnostics.Process)
                 && called.Name == nameof(System.Diagnostics.Process.Start));
     }
@@ -716,7 +716,7 @@ public sealed class TripwireReRunDriverTests
             "Launch", BindingFlags.NonPublic | BindingFlags.Static)!;
 
         Assert.DoesNotContain(
-            CalleesOf(launch),
+            IlReader.CalleesOf(launch),
             called => called.DeclaringType == typeof(System.Diagnostics.Process)
                 && called.Name == nameof(System.Diagnostics.Process.Kill));
     }
@@ -762,41 +762,6 @@ public sealed class TripwireReRunDriverTests
             failures,
             Array.Empty<string>(),
             failures.Length > 0 ? "ATTRIBUTION: undecidable." : null);
-    }
-
-    /// <summary>
-    /// Every method and constructor one method calls, resolved from its IL. <c>call</c> is 0x28,
-    /// <c>callvirt</c> 0x6F and <c>newobj</c> 0x73, each followed by a 4-byte metadata token; the
-    /// token is RESOLVED rather than pattern-matched, so a stray operand byte cannot pass for an
-    /// instruction.
-    /// </summary>
-    private static List<MethodBase> CalleesOf(MethodInfo method)
-    {
-        byte[] il = method.GetMethodBody()!.GetILAsByteArray()!;
-        List<MethodBase> called = new();
-        for (int i = 0; i + 4 < il.Length; i++)
-        {
-            if (il[i] != 0x28 && il[i] != 0x6F && il[i] != 0x73)
-            {
-                continue;
-            }
-
-            int token = il[i + 1] | (il[i + 2] << 8) | (il[i + 3] << 16) | (il[i + 4] << 24);
-            try
-            {
-                MethodBase? resolved = method.Module.ResolveMethod(token);
-                if (resolved != null)
-                {
-                    called.Add(resolved);
-                }
-            }
-            catch (ArgumentException)
-            {
-                // Not a real call - the bytes happened to look like one.
-            }
-        }
-
-        return called;
     }
 
     /// <summary>
