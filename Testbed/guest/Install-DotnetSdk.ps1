@@ -262,7 +262,7 @@
     With -Execute only: install, write the machine environment and the NuGet.config, and stop -
     VERDICT: INSTALLED, exit 0 - without the four rungs. For a FROZEN guest (Q130 (a)), where
     every second between the restore and the next checkpoint moves the frozen instant: verify
-    with -Verify after that checkpoint is taken, as Docs/live-tier-on-the-vm.md section 4.11 does.
+    with -Verify after that checkpoint is taken, as Docs/live-tier-on-the-vm.md section 4.12 does.
     Nothing else should pass it; a run never does.
 
 .PARAMETER KeepProbe
