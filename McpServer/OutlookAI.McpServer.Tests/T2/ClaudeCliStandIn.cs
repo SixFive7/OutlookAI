@@ -138,6 +138,7 @@ internal sealed class ClaudeCliStandIn : IDisposable
             File.WriteAllText(sourcePath, source, new UTF8Encoding(false));
             Compile(sourcePath, CliPath);
             File.Delete(sourcePath);
+            SelfCheck(directory);
             return standIn;
         }
         catch
@@ -215,6 +216,47 @@ internal sealed class ClaudeCliStandIn : IDisposable
             }
         }
     }
+
+    /// <summary>
+    /// Runs the stand-in once, the way the add-in does - a prompt on stdin, the CLI's JSON on stdout - and
+    /// throws unless it answered: a stand-in that does not start, or that something on the machine removed,
+    /// would otherwise show only as the pane's "not found" two minutes later. Its prompt is taken out of the
+    /// log again, so the test reads only the pane's.
+    /// </summary>
+    private static void SelfCheck(string directory)
+    {
+        ProcessStartInfo start = new ProcessStartInfo(CliPath)
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        string output;
+        using (Process process = Process.Start(start)!)
+        {
+            process.StandardInput.Write("stand-in self-check");
+            process.StandardInput.Close();
+            output = process.StandardOutput.ReadToEnd();
+            if (!process.WaitForExit(30000) || process.ExitCode != 0)
+            {
+                throw new InvalidOperationException("The Claude CLI stand-in did not run: exit "
+                    + (process.HasExited ? process.ExitCode.ToString(System.Globalization.CultureInfo.InvariantCulture) : "none in 30 s")
+                    + ", stderr: " + process.StandardError.ReadToEnd());
+            }
+        }
+
+        if (!output.Contains("\"result\"", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException("The Claude CLI stand-in answered something the add-in cannot read: " + output);
+        }
+
+        File.Delete(Path.Combine(directory, PromptLogFileName));
+    }
+
+    /// <summary>Whether the stand-in is still where the add-in runs it.</summary>
+    public static bool IsInPlace => File.Exists(CliPath);
 
     private static void Compile(string sourcePath, string exePath)
     {

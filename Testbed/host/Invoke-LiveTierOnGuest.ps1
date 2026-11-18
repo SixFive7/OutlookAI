@@ -146,6 +146,18 @@
 .PARAMETER SkipHubReset
     Skips step 9a. For a narrowed run only: the frontier test fails on a hub nobody rebuilt.
 
+.PARAMETER WithAddIn
+    Installs the tested commit's add-in on the guest before Outlook starts, over the one its checkpoint
+    holds - for the tests that drive the add-in itself (T2 LivePaneTests, Q168 (b)); every other test
+    reads only the add-in's registry state, which any build writes the same. The add-in is built here by
+    Publish-AddInPayload.ps1, with its Q81 guards, installed as the guest's default task, elevated, and
+    started once NOT elevated, which must end in ADDIN-READY with Outlook closed again. A frozen-clock
+    guest only. Adds about three minutes.
+
+.PARAMETER VstoRuntimePath
+    With -WithAddIn: the staged vstor_redist.exe (Testbed/MEDIA.md). Default: .work\media\vstor_redist.exe
+    of the main checkout, else its Redist\vstor_redist.exe.
+
 .PARAMETER ProveCrashDumps
     After arming the crash dumps, proves them once in the run's own conditions - session 1, NOT
     elevated, as Outlook runs: guest\Set-OutlookCrashDumps.ps1 -Prove crashes a throwaway probe
@@ -181,6 +193,8 @@ param(
     [Parameter(ParameterSetName = 'Run')] [switch] $RestOnGreen,
     [Parameter(ParameterSetName = 'Run')] [switch] $SkipHubReset,
     [Parameter(ParameterSetName = 'Run')] [switch] $ProveCrashDumps,
+    [Parameter(ParameterSetName = 'Run')] [switch] $WithAddIn,
+    [Parameter(ParameterSetName = 'Run')] [string] $VstoRuntimePath,
     [Parameter(ParameterSetName = 'Run')] [string] $ResultsRoot,
     [Parameter(ParameterSetName = 'Run')] [string] $CredentialRepoRoot,
     [Parameter(ParameterSetName = 'Run')] [string] $SdkInstallerPath,
@@ -1153,6 +1167,11 @@ if (-not $CredentialRepoRoot) {
 $credentialFile = Join-Path $CredentialRepoRoot 'McpServer\OutlookAI.McpServer.Tests\live-fixtures\vm-credentials.json'
 if (-not (Test-Path -LiteralPath $credentialFile)) { Stop-Refused "no guest credential at $credentialFile. It lives in the main checkout only (gitignored); pass -CredentialRepoRoot." }
 if (-not $SdkInstallerPath) { $SdkInstallerPath = Join-Path $CredentialRepoRoot ".work\media\$SdkInstallerName" }
+if ($WithAddIn -and -not $VstoRuntimePath) {
+    $VstoRuntimePath = @((Join-Path $CredentialRepoRoot '.work\media\vstor_redist.exe'), (Join-Path $CredentialRepoRoot 'Redist\vstor_redist.exe')) |
+        Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+    if (-not $VstoRuntimePath) { throw "-WithAddIn needs the staged vstor_redist.exe (Testbed/MEDIA.md): not at .work\media\ or Redist\ of $CredentialRepoRoot - name it with -VstoRuntimePath" }
+}
 if (-not (Test-Path -LiteralPath $SdkInstallerPath)) { Stop-Refused "no SDK installer at $SdkInstallerPath (Testbed/MEDIA.md); pass -SdkInstallerPath." }
 
 $sha = (@(Invoke-NativeCommand { & git -C $repo rev-parse --verify "$Ref^{commit}" 2>&1 }) | Out-String).Trim()
@@ -1403,6 +1422,12 @@ try {
         # ps51-native-stderr-ok: a PowerShell script, not a program - every program it starts goes through its own Invoke-NativeCommand, under 'Continue' inside a try
         & (Join-Path $PSScriptRoot 'Publish-LiveTierPayload.ps1') -RepoRoot $tree -OutDir (Join-Path $runDir 'livetier') -Ref HEAD -SdkInstallerPath $SdkInstallerPath -ExpectedSha512 $SdkSha512 *> (Join-Path $runDir 'publish-livetier.log')
         if ($LASTEXITCODE -ne 0) { throw "Publish-LiveTierPayload.ps1 failed ($LASTEXITCODE) - publish-livetier.log" }
+        if ($WithAddIn) {
+            # The tested commit's add-in, built as a release is, with the Q81 guards: nothing of it reaches this host's Outlook.
+            # ps51-native-stderr-ok: a PowerShell script, not a program - every program it starts goes through its own Invoke-NativeCommand, under 'Continue' inside a try
+            & (Join-Path $PSScriptRoot 'Publish-AddInPayload.ps1') -RepoRoot $tree -Ref HEAD -OutDir (Join-Path $runDir 'addin') -VstoRuntimePath $VstoRuntimePath *> (Join-Path $runDir 'publish-addin.log')
+            if ($LASTEXITCODE -ne 0) { throw "Publish-AddInPayload.ps1 failed ($LASTEXITCODE) - publish-addin.log" }
+        }
         # A clone's settings are its source's (Get-GuestFacts): its stores, corpus and sink are copies.
         # ps51-native-stderr-ok: a PowerShell script, not a program - every program it starts goes through its own Invoke-NativeCommand, under 'Continue' inside a try
         & (Join-Path $PSScriptRoot 'New-LiveTestSettings.ps1') -VMName $facts.Source -RepoRoot $tree -CredentialRoot $CredentialRepoRoot -OutPath (Join-Path $runDir 'live-test-settings.json') *> (Join-Path $runDir 'settings.log')
@@ -1521,8 +1546,13 @@ try {
             Say "restored $Checkpoint"
         }
         $files = @((Join-Path $runDir 'payload\McpServer.zip'), (Join-Path $runDir 'payload\Tools.zip'), (Join-Path $runDir 'livetier\Source.zip'), (Join-Path $runDir 'livetier\NuGet.zip'), (Join-Path $runDir 'live-test-settings.json'))
+        if ($WithAddIn) { $files += (Join-Path $runDir 'addin\AddIn.zip') }
         # ps51-native-stderr-ok: a PowerShell script, not a program - every program it starts goes through its own Invoke-NativeCommand, under 'Continue' inside a try
         & (Join-Path $PSScriptRoot 'Copy-ToGuest.ps1') -VMName $facts.Name -RepoRoot $CredentialRepoRoot -Path $files -Destination $GuestPayloadDir *> (Join-Path $runDir 'copy.log')
+        if ($WithAddIn) {
+            # ps51-native-stderr-ok: a PowerShell script, not a program - every program it starts goes through its own Invoke-NativeCommand, under 'Continue' inside a try
+            & (Join-Path $PSScriptRoot 'Copy-ToGuest.ps1') -VMName $facts.Name -RepoRoot $CredentialRepoRoot -Path $VstoRuntimePath -Destination "$GuestRoot\media" *>> (Join-Path $runDir 'copy.log')
+        }
         # The commit's guest scripts - but the crash-dump arming is THIS checkout's, whatever commit is
         # tested, so an older commit (a bisection) is dumped the same way.
         $guestScripts = @(Get-ChildItem -LiteralPath (Join-Path $tree 'Testbed\guest') -File | Where-Object { $_.Name -ne $CrashDumpScript } | ForEach-Object { $_.FullName })
@@ -1543,6 +1573,7 @@ Expand-Archive -LiteralPath '$GuestPayloadDir\McpServer.zip' -DestinationPath '$
 Expand-Archive -LiteralPath '$GuestPayloadDir\Tools.zip' -DestinationPath '$GuestRoot\tools' -Force
 Expand-Archive -LiteralPath '$GuestPayloadDir\Source.zip' -DestinationPath '$GuestRoot\src' -Force
 Expand-Archive -LiteralPath '$GuestPayloadDir\NuGet.zip' -DestinationPath '$GuestRoot\nuget-offline' -Force
+if (Test-Path -LiteralPath '$GuestPayloadDir\AddIn.zip') { if (Test-Path -LiteralPath '$GuestRoot\addin') { Remove-Item -LiteralPath '$GuestRoot\addin' -Recurse -Force }; Expand-Archive -LiteralPath '$GuestPayloadDir\AddIn.zip' -DestinationPath '$GuestRoot\addin' -Force }
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent '$GuestSettingsPath') | Out-Null
 Copy-Item -LiteralPath '$GuestPayloadDir\live-test-settings.json' -Destination '$GuestSettingsPath' -Force
 "SWAP-DONE settings `$((Get-FileHash '$GuestSettingsPath').Hash)"
@@ -1575,6 +1606,7 @@ Copy-Item -LiteralPath '$GuestPayloadDir\live-test-settings.json' -Destination '
     $prepared = @(Get-PrepareSteps -StartIsFrozen $startIsFrozen -SkipHubReset ([bool]$SkipHubReset))
     try {
         Use-Lease 30
+        if ($WithAddIn -and ($facts.Exchange -or -not $startIsFrozen)) { throw '-WithAddIn installs the add-in on a frozen-clock Outlook guest only' }
         if ($facts.Exchange) {
             if (-not $exchangeCarry) {
                 # A restored checkpoint: its .ost files are older than the server. Outlook quits, Windows
@@ -1620,6 +1652,21 @@ Copy-Item -LiteralPath '$GuestPayloadDir\live-test-settings.json' -Destination '
             # ps51-native-stderr-ok: a PowerShell script, not a program - it starts no program at all
             & (Join-Path $PSScriptRoot 'Set-GuestClockFrozen.ps1') -VMName $facts.Name -Verify -RepoRoot $CredentialRepoRoot -LogPath (Join-Path $runDir 'frozen-clock.log') *> (Join-Path $runDir 'frozen-clock.out.log')
             if ($LASTEXITCODE -ne 0) { throw "the frozen-clock guard did not say FROZEN (exit $LASTEXITCODE) - the guest's clock left its frozen instant, or this is not its frozen checkpoint: frozen-clock.log" }
+            if ($WithAddIn) {
+                # The tested commit's add-in over the checkpoint's: installed as the guest's default task, elevated
+                # (exit 2, INSTALLED-NEVER-RAN), then started once NOT elevated (ADDIN-READY), and Outlook closed again.
+                $o = Invoke-Guest 'addin-install' "& '$GuestRoot\Register-InteractiveTask.ps1' -RunLevel Highest -Script `"& '$GuestRoot\Install-OutlookAIAddIn.ps1' -Phase Install -Execute`"; `"ADDIN-INSTALL-EXIT `$LASTEXITCODE`"" 900 -Session0
+                if ($o -notmatch 'ADDIN-INSTALL-EXIT 2') { throw 'the tested commit''s add-in did not install - guest\addin-install.log' }
+                $o = Invoke-Guest 'addin-firstrun' "& '$GuestRoot\Install-OutlookAIAddIn.ps1' -Phase FirstRun -Execute; exit `$LASTEXITCODE" 900
+                if ($o -notmatch 'ADDIN-READY') { throw 'the tested commit''s add-in did not reach ADDIN-READY - guest\addin-firstrun.log' }
+                $o = Invoke-Guest 'addin-outlook-closed' "`$until = (Get-Date).AddMinutes(4); while ((Get-Process OUTLOOK -ErrorAction SilentlyContinue) -and (Get-Date) -lt `$until) { Start-Sleep -Seconds 5 }; if (Get-Process OUTLOOK -ErrorAction SilentlyContinue) { 'OUTLOOK-STILL-RUNNING' } else { 'OUTLOOK-CLOSED' }" 300 -Session0
+                if ($o -notmatch 'OUTLOOK-CLOSED') { throw 'Outlook did not close after the add-in''s first start - guest\addin-outlook-closed.log' }
+                # What tells the tests that drive the add-in that this run's add-in is the tested commit's: a file in the
+                # suite's source folder, which the next run's swap renames away whatever checkpoint it starts from.
+                $o = Invoke-Guest 'addin-marker' "Set-Content -LiteralPath '$GuestRoot\src\.tested-addin' -Value '$sha' -Encoding ascii; 'ADDIN-MARKED'" 120 -Session0
+                if ($o -notmatch 'ADDIN-MARKED') { throw 'the tested add-in could not be marked for the tests - guest\addin-marker.log' }
+                Say "add-in     the tested commit's, installed over the checkpoint's: ADDIN-READY"
+            }
             # The state step 9a hands the suite over in, without its rebuild: Outlook running NOT elevated on
             # the tier profile, its window up. The frozen checkpoint holds Outlook closed so STAGE could swap.
             $o = Invoke-Guest 'start-outlook' "& '$GuestRoot\Start-OutlookUnelevated.ps1' -Profile '$TierProfileName'; `"START-OUTLOOK-EXIT `$LASTEXITCODE`"" 900 -Session0

@@ -49,6 +49,28 @@ public sealed class LivePaneTests
     [Trait("Requires", "LocalSignatures")]
     public void ThePaneRewritesTheDraftInParagraphs_ThenItsAIChoosesTheSignature_WithThePictureEmbedded()
     {
+        // A test machine's checkpoint holds the add-in of the day it was made; only a run that installed the tested
+        // commit's (Invoke-LiveTierOnGuest.ps1 -WithAddIn) has the pane this test means to drive, and that run marks it.
+        string mark = Path.Combine(RepoPaths.RepoRoot(), TestedAddInMark);
+        IReadOnlyList<string> testedAddIn = LivePopulationCoverage.Require(
+            _fixture.Settings,
+            File.Exists(mark) ? new[] { File.ReadAllText(mark).Trim() } : Array.Empty<string>(),
+            "the tested commit's add-in, installed on this machine for this run",
+            "driving the task pane",
+            "run Testbed/host/Invoke-LiveTierOnGuest.ps1 with -WithAddIn, which installs it before Outlook starts and marks it",
+            _output.WriteLine);
+        foreach (string commit in testedAddIn)
+        {
+            _output.WriteLine("the add-in under test: " + commit);
+            DriveThePane();
+        }
+    }
+
+    /// <summary>The file a run with -WithAddIn writes into the suite's source folder once the tested add-in is ready.</summary>
+    private const string TestedAddInMark = ".tested-addin";
+
+    private void DriveThePane()
+    {
         using TestSignature agentsChoice = TestSignature.Create(Marker);
         using TestSignature aisChoice = TestSignature.Create(Marker, "B");
         string body = "Stand-in draft, first line " + Marker + "\nStand-in draft, second line.\n\nStand-in draft, a paragraph of its own.";
@@ -102,7 +124,8 @@ public sealed class LivePaneTests
                 throw new TimeoutException(
                     ex.Message + "\npane status, in order: " + string.Join(" -> ", statuses.Select(st => "\"" + st + "\""))
                     + "\ninstruction box now: " + PaneControls.Describe(prompt) + "; button now: " + PaneControls.Describe(edit)
-                    + "\nprompts the stand-in received: " + standIn.Prompts().Count, ex);
+                    + "\nprompts the stand-in received: " + standIn.Prompts().Count
+                    + "; the stand-in is still at " + ClaudeCliStandIn.CliPath + ": " + ClaudeCliStandIn.IsInPlace, ex);
             }
             IReadOnlyList<string> prompts = standIn.Prompts();
             string status = PaneControls.ReadStatus(opened.Window);

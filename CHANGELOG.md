@@ -262,7 +262,12 @@ its mailbox tests on, and change nothing you install.
   checks that the pane still writes one paragraph a line, that its AI's signature choice (Q162 (b))
   follows the body and replaces the agent's signature, and that the chosen signature's picture is
   embedded (D47). `LiveOutlookTestMailer` gained the read of an open draft and the close that
-  discards it, both refusing a draft without this run's tag.
+  discards it, both refusing a draft without this run's tag. A test machine's checkpoint holds the
+  add-in of the day it was made, so `Testbed/host/Invoke-LiveTierOnGuest.ps1 -WithAddIn` builds the
+  tested commit's add-in with `Publish-AddInPayload.ps1`, installs it on the frozen guest before
+  Outlook starts - elevated, then one start NOT elevated to `ADDIN-READY` - and marks the run for the
+  test; a run without it gets a PROVED NOTHING line from the test, as a machine without a population
+  does.
 
 - ✅ **Test runs wait while the PC is 70 % busy or more, and a pause switch holds new ones back.**
   With every testbed machine running at once, the host's 32 logical processors were 82 to 100 % busy:
