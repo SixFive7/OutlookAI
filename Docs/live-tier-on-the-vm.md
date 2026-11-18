@@ -5533,6 +5533,23 @@ about 1.1 GB each, are kept whole in the run's `dumps\OutlookAI-Indexed\` with t
   debugger wrote event 1000 with `0xc0000005` and no dump: Windows reported them from the callback itself, a path on
   which no local dump was written.
 
+**The second hunt and the crashes beside it.** Run `20261118-153836-indexed-3c8d7619885c` (the same guest and
+checkpoint) caught a crash of the same component in another module, in round 10: an access violation WRITING freed
+memory at `dcomp.dll+0x26B0B` (DirectComposition), on a thread `mso40uiwin32client.dll` started itself
+(`+0x1A6140`), whose stack is `mso40uiwin32client` calling into `dcomp` - not in a window callback, so it stayed
+`0xC0000005` at the second chance and WER wrote its local dump of it, as it did of every earlier Outlook crash.
+Outlook's main thread was then in Outlook code called from `FM20.DLL` (Forms 2.0), and the product was at its reply
+with a signature in the typed-text test, past its save ("a draft may have been saved"). Two runs of stream R1 and U
+on `OutlookAI-Unindexed` (`CP-18B-FROZEN-CLOCK`), `20261118-152310-unindexed-d4637b195672` and
+`20261118-095132-unindexed-aa7f226fc8be`, crashed at `mso40uiwin32client.dll+0x11D8C7`, just before the function of
+the first catch, each six seconds or so into
+`LiveSignatureTests.ReplyDraft_WithSignature_InsertsAboveQuote_ThenUpdateSwapsItForAnother_ThenNoneRemovesIt`, with
+event 1000 reading `0xc0000005` and no local dump. R1's run kept WER's report: `IsFatal` -1 where the hunt's report of
+the first catch reads 1 - WER filed the crash that left no dump as one it did not count fatal, which fits the reading
+above. So five crashes: every one in `mso40uiwin32client.dll` or below it, every one while the product was creating
+a reply or a forward in an Outlook with its window, at its first call (`Forward()`) or after its save, with a
+signature or without; none in a new draft, which the same tests make as often.
+
 What OutlookAI does about it, if anything, is the maintainer's decision.
 
 
