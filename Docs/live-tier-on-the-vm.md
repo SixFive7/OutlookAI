@@ -5590,6 +5590,16 @@ Only the hunt's suite script sets the two variables that name a variant and its 
 also writes Office's Click-to-Run build, channel and update setting and the hunted module's file - its
 path, size, time and SHA-256 - to its console as `HUNT-OFFICE` lines, which the summary reads back.
 
+**OutlookAI's own add-in loads in every Outlook of these runs.** Every Outlook guest's frozen checkpoint holds
+it installed and loading (`LoadBehavior` 3), and the first catch's dump has the .NET runtime it needs, `clr.dll`,
+in OUTLOOK.EXE, with 653 .NET exceptions thrown inside Outlook in the debugger's count. Inside Outlook the
+add-in hooks every new inspector and, when one is activated - every compose window the typed-text tests
+display - adds its "AI Assistant" task pane to it, which Office's own UI code hosts; it removes the pane when
+the inspector closes. So `-HuntWithoutAddIn` turns it off for a hunting run: `LoadBehavior` 0, written in the
+session Outlook runs in before the Outlook the suite is handed starts, and the restore at REST brings the
+checkpoint's value back. Each round writes a `HUNT-OUTLOOK` line per OUTLOOK.EXE saying whether it holds
+`clr.dll`.
+
 
 ## 5. Which tests are in which bucket, and how to find out
 

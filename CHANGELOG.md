@@ -303,7 +303,11 @@ its mailbox tests on, and change nothing you install.
   route through the object model without the "Message" form page, and BareCreators calls Reply() or
   Forward() and releases the result unsaved. Only the hunt's suite script names a variant, so the loop
   makes nothing in any other run. Every hunting run also records Office's build and the hunted
-  module's file, and the summary shows both.
+  module's file, and the summary shows both. `-HuntWithoutAddIn` turns OutlookAI's own add-in off
+  for the run, LoadBehavior 0 before Outlook starts, and the restore after the run brings the
+  checkpoint's value back. Every Outlook guest's checkpoint holds the add-in installed and loading,
+  and inside Outlook it hooks every inspector and puts its task pane on each one that is activated.
+  Each round says whether Outlook holds the .NET runtime the add-in needs.
 
 - ✅ **A live run keeps Windows' own report of every Outlook crash beside its dumps.**
   Two Outlook crashes on 2026-11-18, both in `mso40uiwin32client.dll` while a draft was written,
