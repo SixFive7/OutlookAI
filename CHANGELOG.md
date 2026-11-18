@@ -860,7 +860,10 @@ its mailbox tests on, and change nothing you install.
   The maintainer moved OutlookAI to .NET 11 on 2026-11-18. Every project under `McpServer/` targets
   `net11.0-windows`, `OutlookAI.Core` and the audit-log stress writer keep their `net48` target
   beside it, and the security analysers run at `11.0-all`, whose 94 rules are the ones `10.0-all`
-  ran, so the build found nothing new. The VSTO add-in stays on .NET Framework 4.8, because a VSTO
+  ran, so the build found nothing new. System.Data.OleDb, Microsoft.Extensions.Hosting and
+  System.Drawing.Common move from 10.0.10 to 11.0.0 with it - OleDb's 11.0.0 still carries the
+  .NET Framework asset Core's `net48` build uses - and `Tools/Test-VulnerablePackages.ps1` finds no
+  known vulnerability in any package of the seven projects. The VSTO add-in stays on .NET Framework 4.8, because a VSTO
   add-in cannot run on modern .NET, and compiles as C# 15 instead of the C# 7.3 a .NET Framework
   project gets by default; `Properties/LanguageFeatureStandIns.cs` declares, as source, the few
   types records, init accessors, required members and argument-expression guards look up by name,

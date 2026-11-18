@@ -18,8 +18,9 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
     <!-- PNG encoding for the S5 screenshot evidence (T2 live tier only; Windows-only
-         like the rest of the test host). Pinned in the 10.0.x family (v3.MD D31). -->
-    <PackageReference Include="System.Drawing.Common" Version="10.0.10" />
+         like the rest of the test host). Pinned in the 11.0.x family (v3.MD D31; 10.0.x until
+         the move to .NET 11, Q172). -->
+    <PackageReference Include="System.Drawing.Common" Version="11.0.0" />
   </ItemGroup>
 
   <ItemGroup>

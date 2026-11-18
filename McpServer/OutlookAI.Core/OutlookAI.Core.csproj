@@ -23,9 +23,10 @@
     <!--
       SystemIndex access: OLE DB over Search.CollatorDSO (v3.MD section 4). Windows-only
       at runtime; the package carries a net462 asset for the net48 target. Pinned in the
-      10.0.x family alongside Microsoft.Extensions.Hosting (v3.MD D31 companion pins).
+      11.0.x family alongside Microsoft.Extensions.Hosting (v3.MD D31 companion pins; 10.0.x until
+      the move to .NET 11, Q172 - 11.0.0 still carries the net462 asset).
     -->
-    <PackageReference Include="System.Data.OleDb" Version="10.0.10" />
+    <PackageReference Include="System.Data.OleDb" Version="11.0.0" />
   </ItemGroup>
 
   <ItemGroup>
