@@ -399,7 +399,7 @@ public sealed class ThreadScopedStoreTests
         IReadOnlyList<ComStoreDetail>? profileStores = null)
     {
         return new MailService(
-            new DirectGateway(ScopedSession.Create(profileStores ?? TwoMailboxes)), null, index);
+            new DirectGateway(ScopedSession(profileStores ?? TwoMailboxes)), null, index);
     }
 
     private static StubIndexClient BothIndexed() => new(new[] { AlicePrefix, BobPrefix }, Frontier);
@@ -409,73 +409,39 @@ public sealed class ThreadScopedStoreTests
     /// <summary>
     /// A session that answers the store list, one freshness sweep (so a search can register a
     /// hit for the derived-store case) and one conversation walk, both anchored in Alice's
-    /// store. A <see cref="DispatchProxy"/> so a member added to the contract needs no change
-    /// here. Not sealed: DispatchProxy derives from its TProxy at runtime.
+    /// store, scripted on the shared <see cref="StandInSession"/>.
     /// </summary>
-    private class ScopedSession : DispatchProxy
+    private static IOutlookSession ScopedSession(IReadOnlyList<ComStoreDetail> stores) =>
+        StandInSession.Create(
+            stores,
+            _ => new ComSweepResult(
+                new[] { Member(1) },
+                foldersSwept: 4,
+                foldersSkipped: 0,
+                sweptFolders: new[] { AliceStore + "/Inbox" },
+                perStore: new[]
+                {
+                    new ComStoreSweepCounters(
+                        AliceStore, foldersSwept: 4, foldersSkipped: 0, foldersFailed: 0, foldersAbsent: 0),
+                }),
+            standIn => standIn.Answering(
+                nameof(IOutlookSession.TryGetConversationItems), _ => Enumerable.Range(1, 3).Select(Member).ToList()));
+
+    private static ComMailBrief Member(int i)
     {
-        private IReadOnlyList<ComStoreDetail> _stores = Array.Empty<ComStoreDetail>();
-
-        internal static IOutlookSession Create(IReadOnlyList<ComStoreDetail> stores)
-        {
-            object proxy = Create<IOutlookSession, ScopedSession>()
-                ?? throw new InvalidOperationException("DispatchProxy.Create returned null.");
-            ((ScopedSession)proxy)._stores = stores;
-            return (IOutlookSession)proxy;
-        }
-
-        /// <inheritdoc />
-        protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
-        {
-            switch (targetMethod?.Name)
-            {
-                case nameof(IOutlookSession.GetProfileName):
-                    return "T1 stand-in profile";
-
-                case nameof(IOutlookSession.GetStoreDetails):
-                    return TestFolders.WithRoots(_stores);
-
-                case nameof(IOutlookSession.TryDescribeFolder):
-                    return TestFolders.Describe(args);
-
-                case nameof(IOutlookSession.SweepFoldersNewerThan):
-                    return new ComSweepResult(
-                        new[] { Member(1) },
-                        foldersSwept: 4,
-                        foldersSkipped: 0,
-                        sweptFolders: new[] { AliceStore + "/Inbox" },
-                        perStore: new[]
-                        {
-                            new ComStoreSweepCounters(
-                                AliceStore, foldersSwept: 4, foldersSkipped: 0, foldersFailed: 0, foldersAbsent: 0),
-                        });
-
-                case nameof(IOutlookSession.TryGetConversationItems):
-                    return Enumerable.Range(1, 3).Select(Member).ToList();
-
-                default:
-                    throw new NotSupportedException(
-                        "The stand-in session was asked for " + (targetMethod?.Name ?? "an unnamed member")
-                        + ", which this test does not model.");
-            }
-        }
-
-        private static ComMailBrief Member(int i)
-        {
-            return new ComMailBrief(
-                entryId: "MEMBER" + i,
-                storeDisplayName: AliceStore,
-                storeId: "store-alice",
-                folderName: "Inbox",
-                folderKind: "inbox",
-                subject: "a test thread member",
-                senderName: "Bob",
-                senderAddress: "bob@example.com",
-                receivedTime: Frontier.AddMinutes(i),
-                isRead: true,
-                hasAttachments: false,
-                sizeBytes: 2048,
-                body: "test body");
-        }
+        return new ComMailBrief(
+            entryId: "MEMBER" + i,
+            storeDisplayName: AliceStore,
+            storeId: "store-alice",
+            folderName: "Inbox",
+            folderKind: "inbox",
+            subject: "a test thread member",
+            senderName: "Bob",
+            senderAddress: "bob@example.com",
+            receivedTime: Frontier.AddMinutes(i),
+            isRead: true,
+            hasAttachments: false,
+            sizeBytes: 2048,
+            body: "test body");
     }
 }

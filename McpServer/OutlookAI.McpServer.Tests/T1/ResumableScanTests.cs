@@ -809,7 +809,9 @@ public sealed class ResumableScanTests
         internal IOutlookSession Build(
             IReadOnlyList<ComStoreDetail> stores, Func<string?, ComSweepResult> sweep)
         {
-            return StandInSession.Create(stores, sweep, this);
+            // Argument 9 is resumeFrom; see IOutlookSession.ExhaustiveScan.
+            return StandInSession.Create(stores, sweep, standIn => standIn.Answering(
+                nameof(IOutlookSession.ExhaustiveScan), args => Next(args != null && args.Length > 9 ? args[9] as ComScanCursor : null)));
         }
 
         internal ComExhaustiveResult Next(ComScanCursor? cursor)
@@ -818,57 +820,6 @@ public sealed class ResumableScanTests
             return _results.Count > 0
                 ? _results.Dequeue()
                 : throw new InvalidOperationException("The script ran out of scan results.");
-        }
-    }
-
-    /// <summary>Answers the store list, the sweep and the scan; refuses everything else.</summary>
-    private class StandInSession : DispatchProxy
-    {
-        private IReadOnlyList<ComStoreDetail> _stores = Array.Empty<ComStoreDetail>();
-        private Func<string?, ComSweepResult> _sweep = _ => throw new NotSupportedException();
-        private ScriptedSession? _scan;
-
-        internal static IOutlookSession Create(
-            IReadOnlyList<ComStoreDetail> stores,
-            Func<string?, ComSweepResult> sweep,
-            ScriptedSession scan)
-        {
-            object proxy = Create<IOutlookSession, StandInSession>()
-                ?? throw new InvalidOperationException("DispatchProxy.Create returned null.");
-            ((StandInSession)proxy)._stores = stores;
-            ((StandInSession)proxy)._sweep = sweep;
-            ((StandInSession)proxy)._scan = scan;
-            return (IOutlookSession)proxy;
-        }
-
-        /// <inheritdoc />
-        protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
-        {
-            switch (targetMethod?.Name)
-            {
-                case nameof(IOutlookSession.GetProfileName):
-                    return "T1 stand-in profile";
-
-                case nameof(IOutlookSession.GetStoreDetails):
-                    return TestFolders.WithRoots(_stores);
-
-                case nameof(IOutlookSession.TryDescribeFolder):
-                    return TestFolders.Describe(args);
-
-                // Argument 3 is onlyStoreDisplayName; see IOutlookSession.SweepFoldersNewerThan.
-                case nameof(IOutlookSession.SweepFoldersNewerThan):
-                    return _sweep(args?[3] as string);
-
-                // Argument 9 is resumeFrom; see IOutlookSession.ExhaustiveScan.
-                case nameof(IOutlookSession.ExhaustiveScan):
-                    return _scan != null
-                        ? _scan.Next(args != null && args.Length > 9 ? args[9] as ComScanCursor : null)
-                        : throw new NotSupportedException("This fixture has no exhaustive scan.");
-
-                default:
-                    throw new NotSupportedException(
-                        "The stand-in session does not implement " + (targetMethod?.Name ?? "?") + ".");
-            }
         }
     }
 }

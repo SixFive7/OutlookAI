@@ -370,58 +370,32 @@ public sealed class ThreadDerivedStoreScopeTests
         /// A session that answers the store list, one freshness sweep, the hit locate an index
         /// hit needs before it can anchor a walk, and one conversation walk - all of it inside
         /// Alice's store, which is Outlook's own constraint and the reason Bob's member can
-        /// only ever come from the index. A <see cref="DispatchProxy"/> so a member added to
-        /// the contract needs no change here. Not sealed: DispatchProxy derives from its TProxy
-        /// at runtime.
+        /// only ever come from the index. Scripted on the shared <see cref="StandInSession"/>.
         /// </summary>
-        private class Session : DispatchProxy
+        private static class Session
         {
-            internal static IOutlookSession Create()
-            {
-                return (IOutlookSession)(Create<IOutlookSession, Session>()
-                    ?? throw new InvalidOperationException("DispatchProxy.Create returned null."));
-            }
-
-            /// <inheritdoc />
-            protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
-            {
-                switch (targetMethod?.Name)
-                {
-                    case nameof(IOutlookSession.GetProfileName):
-                        return "T1 stand-in profile";
-
-                    case nameof(IOutlookSession.GetStoreDetails):
-                        return TestFolders.WithRoots(TwoMailboxes);
-
-                    case nameof(IOutlookSession.TryDescribeFolder):
-                        return TestFolders.Describe(args);
-
-                    case nameof(IOutlookSession.SweepFoldersNewerThan):
-                        return new ComSweepResult(
-                            Array.Empty<ComMailBrief>(),
-                            foldersSwept: 8,
-                            foldersSkipped: 0,
-                            sweptFolders: new[] { AliceStore + "/Inbox", BobStore + "/Inbox" },
-                            perStore: new[]
-                            {
-                                new ComStoreSweepCounters(AliceStore, 4, 0, 0, 0),
-                                new ComStoreSweepCounters(BobStore, 4, 0, 0, 0),
-                            });
-
-                    // An index hit carries no EntryID, so the walk's anchor is located by
-                    // folder path first (HitLocator tier 1).
-                    case nameof(IOutlookSession.TryResolveByPath):
-                        return new ComOpenResult("MEMBER1", "a test thread member", AliceFrontier, 43);
-
-                    case nameof(IOutlookSession.TryGetConversationItems):
-                        return Enumerable.Range(1, 3).Select(Member).ToList();
-
-                    default:
-                        throw new NotSupportedException(
-                            "The stand-in session was asked for " + (targetMethod?.Name ?? "an unnamed member")
-                            + ", which this test does not model.");
-                }
-            }
+            internal static IOutlookSession Create() =>
+                StandInSession.Create(
+                    TwoMailboxes,
+                    _ => new ComSweepResult(
+                        Array.Empty<ComMailBrief>(),
+                        foldersSwept: 8,
+                        foldersSkipped: 0,
+                        sweptFolders: new[] { AliceStore + "/Inbox", BobStore + "/Inbox" },
+                        perStore: new[]
+                        {
+                            new ComStoreSweepCounters(AliceStore, 4, 0, 0, 0),
+                            new ComStoreSweepCounters(BobStore, 4, 0, 0, 0),
+                        }),
+                    standIn => standIn
+                        // An index hit carries no EntryID, so the walk's anchor is located by
+                        // folder path first (HitLocator tier 1).
+                        .Answering(
+                            nameof(IOutlookSession.TryResolveByPath),
+                            _ => new ComOpenResult("MEMBER1", "a test thread member", AliceFrontier, 43))
+                        .Answering(
+                            nameof(IOutlookSession.TryGetConversationItems),
+                            _ => Enumerable.Range(1, 3).Select(Member).ToList()));
         }
     }
 }

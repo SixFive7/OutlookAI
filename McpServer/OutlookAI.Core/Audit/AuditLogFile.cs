@@ -6,6 +6,7 @@ using System.Runtime.InteropServices;
 using System.Threading;
 using Microsoft.Win32.SafeHandles;
 using OutlookAI.Core.AddIn;
+using OutlookAI.Core.Interop;
 
 namespace OutlookAI.Core.Audit
 {
@@ -67,7 +68,7 @@ namespace OutlookAI.Core.Audit
         /// <param name="win32Error">0, or why the open failed.</param>
         internal static bool TryOpenForAppend(string path, bool writeThrough, out SafeFileHandle? handle, out int win32Error)
         {
-            SafeFileHandle opened = CreateFileW(
+            SafeFileHandle opened = Kernel32.CreateFileW(
                 Win32Path(path),
                 FileAppendData | FileReadData | FileReadAttributes | Synchronize,
                 FileShareRead | FileShareWrite,
@@ -193,7 +194,7 @@ namespace OutlookAI.Core.Audit
         /// <summary>This process's id, without <c>Environment.ProcessId</c> (which .NET Framework does not have).</summary>
         internal static int CurrentProcessId()
         {
-            return unchecked((int)GetCurrentProcessId());
+            return unchecked((int)NativeWindows.GetCurrentProcessId());
         }
 
         /// <summary>
@@ -247,16 +248,6 @@ namespace OutlookAI.Core.Audit
             public uint FileIndexLow;
         }
 
-        [DllImport("kernel32.dll", EntryPoint = "CreateFileW", CharSet = CharSet.Unicode, SetLastError = true)]
-        private static extern SafeFileHandle CreateFileW(
-            string lpFileName,
-            uint dwDesiredAccess,
-            uint dwShareMode,
-            IntPtr lpSecurityAttributes,
-            uint dwCreationDisposition,
-            uint dwFlagsAndAttributes,
-            IntPtr hTemplateFile);
-
         [DllImport("kernel32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
         private static extern bool WriteFile(
@@ -279,9 +270,6 @@ namespace OutlookAI.Core.Audit
         [DllImport("kernel32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
         private static extern bool GetFileInformationByHandle(SafeFileHandle hFile, out ByHandleFileInformation lpFileInformation);
-
-        [DllImport("kernel32.dll")]
-        private static extern uint GetCurrentProcessId();
 
         [DllImport("kernel32.dll")]
         private static extern void GetSystemTimePreciseAsFileTime(out long lpSystemTimeAsFileTime);

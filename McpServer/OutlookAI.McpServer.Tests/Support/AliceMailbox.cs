@@ -108,63 +108,10 @@ internal static class AliceMailbox
         Func<string?, ComExhaustiveResult>? scan = null)
     {
         return new MailService(
-            new DirectGateway(StandInSession.Create(ProfileStores, sweep ?? Sweep, scan)), null, index ?? Index());
-    }
-
-    /// <summary>
-    /// A session that answers the profile's store list, the freshness sweep and the exhaustive scan, and
-    /// refuses everything else. A <see cref="DispatchProxy"/> rather than a stub per member, so a member added
-    /// to the contract needs no change here. Not sealed: DispatchProxy derives from its TProxy at runtime and
-    /// refuses a sealed one.
-    /// </summary>
-    private class StandInSession : DispatchProxy
-    {
-        private IReadOnlyList<ComStoreDetail> _stores = Array.Empty<ComStoreDetail>();
-        private Func<string?, ComSweepResult> _sweep = _ => throw new NotSupportedException();
-        private Func<string?, ComExhaustiveResult>? _scan;
-
-        internal static IOutlookSession Create(
-            IReadOnlyList<ComStoreDetail> stores,
-            Func<string?, ComSweepResult> sweep,
-            Func<string?, ComExhaustiveResult>? scan)
-        {
-            object proxy = Create<IOutlookSession, StandInSession>()
-                ?? throw new InvalidOperationException("DispatchProxy.Create returned null.");
-            ((StandInSession)proxy)._stores = stores;
-            ((StandInSession)proxy)._sweep = sweep;
-            ((StandInSession)proxy)._scan = scan;
-            return (IOutlookSession)proxy;
-        }
-
-        /// <inheritdoc />
-        protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
-        {
-            switch (targetMethod?.Name)
-            {
-                case nameof(IOutlookSession.GetProfileName):
-                    return "T1 stand-in profile";
-
-                case nameof(IOutlookSession.GetStoreDetails):
-                    return TestFolders.WithRoots(_stores);
-
-                case nameof(IOutlookSession.TryDescribeFolder):
-                    return TestFolders.Describe(args);
-
-                // Argument 3 is onlyStoreDisplayName; see IOutlookSession.SweepFoldersNewerThan.
-                case nameof(IOutlookSession.SweepFoldersNewerThan):
-                    return _sweep(args?[3] as string);
-
+            new DirectGateway(StandInSession.Create(ProfileStores, sweep ?? Sweep, scan == null ? null
                 // Argument 0 is storeDisplayName; see IOutlookSession.ExhaustiveScan.
-                case nameof(IOutlookSession.ExhaustiveScan):
-                    return _scan != null
-                        ? _scan(args?[0] as string)
-                        : throw new NotSupportedException("This fixture has no exhaustive scan.");
-
-                default:
-                    throw new NotSupportedException(
-                        "The stand-in session was asked for " + (targetMethod?.Name ?? "an unnamed member")
-                        + ", which this test does not model.");
-            }
-        }
+                : standIn => standIn.Answering(nameof(IOutlookSession.ExhaustiveScan), args => scan(args?[0] as string)))),
+            null,
+            index ?? Index());
     }
 }
