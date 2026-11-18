@@ -102,5 +102,55 @@ namespace OutlookAI.Core.AddIn
         /// <summary>This process's id, as Windows numbers it.</summary>
         [DllImport("kernel32.dll")]
         public static extern uint GetCurrentProcessId();
+
+        /// <summary>
+        /// The window of an Outlook Explorer or Inspector, through <see cref="IOleWindow"/>; zero when Outlook will
+        /// not say. It reads the window only - nothing is shown, activated or created.
+        /// </summary>
+        public static IntPtr WindowOf(object? outlookWindowObject)
+        {
+            if (outlookWindowObject == null)
+            {
+                return IntPtr.Zero;
+            }
+
+            try
+            {
+                if (outlookWindowObject is IOleWindow window && window.GetWindow(out IntPtr handle) == 0)
+                {
+                    return handle;
+                }
+            }
+            catch (Exception ex) when (ex is InvalidCastException || ex is COMException || ex is InvalidComObjectException)
+            {
+            }
+
+            return IntPtr.Zero;
+        }
+
+        /// <summary>
+        /// Whether an Outlook Explorer or Inspector is on screen for a person: its window exists and has the visible
+        /// style. A compose window an agent's draft is written in without being shown is not.
+        /// </summary>
+        public static bool IsShown(object? outlookWindowObject)
+        {
+            IntPtr window = WindowOf(outlookWindowObject);
+            return window != IntPtr.Zero && IsWindowVisible(window);
+        }
+
+        /// <summary>The OLE window interface every Outlook Explorer and Inspector implements: the one way from one to its window.</summary>
+        [ComImport]
+        [Guid("00000114-0000-0000-C000-000000000046")]
+        [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        public interface IOleWindow
+        {
+            /// <summary>The window.</summary>
+            [PreserveSig]
+            int GetWindow(out IntPtr phwnd);
+
+            /// <summary>Context-sensitive help, never used here.</summary>
+            [PreserveSig]
+            int ContextSensitiveHelp([MarshalAs(UnmanagedType.Bool)] bool enterMode);
+        }
     }
 }

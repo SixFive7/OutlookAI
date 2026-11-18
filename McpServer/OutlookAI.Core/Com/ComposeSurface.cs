@@ -677,23 +677,7 @@ namespace OutlookAI.Core.Com
         /// </summary>
         internal static long TryGetWindowHandle(object? outlookWindowObject)
         {
-            if (outlookWindowObject == null)
-            {
-                return 0;
-            }
-
-            try
-            {
-                if (outlookWindowObject is IOleWindow window && window.GetWindow(out IntPtr handle) == 0)
-                {
-                    return handle.ToInt64();
-                }
-            }
-            catch (Exception ex) when (ex is InvalidCastException || ex is COMException || ex is InvalidComObjectException)
-            {
-            }
-
-            return 0;
+            return NativeWindows.WindowOf(outlookWindowObject).ToInt64();
         }
 
         /// <summary>
@@ -872,19 +856,6 @@ namespace OutlookAI.Core.Com
                 0,
                 0,
                 NativeWindows.SWP_NOSIZE | NativeWindows.SWP_NOZORDER | NativeWindows.SWP_NOACTIVATE);
-        }
-
-        /// <summary>The OLE window interface every Outlook Explorer and Inspector implements: the one way from one to its window.</summary>
-        [ComImport]
-        [Guid("00000114-0000-0000-C000-000000000046")]
-        [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-        internal interface IOleWindow
-        {
-            [PreserveSig]
-            int GetWindow(out IntPtr phwnd);
-
-            [PreserveSig]
-            int ContextSensitiveHelp([MarshalAs(UnmanagedType.Bool)] bool enterMode);
         }
     }
 

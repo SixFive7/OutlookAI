@@ -974,6 +974,16 @@ namespace OutlookAI.TaskPane
             bool replyOrForward = false;
             try
             {
+                // A compose window an agent's draft is written in without being shown has a pane too. Its Word
+                // editor is left alone: asking for it can put the window on screen, and the composition is not a
+                // person's to have a signature chosen for.
+                if (!_isInlineResponse && !NativeWindows.IsShown(_owningInspector))
+                {
+                    if (_openingSignatureAttempts >= OpeningSignatureAttempts)
+                        _openingSignatureTimer.Stop();
+                    return;
+                }
+
                 doc = GetWordDocument();
                 if (doc == null)
                 {
@@ -1043,6 +1053,8 @@ namespace OutlookAI.TaskPane
         private async Task ChooseSignatureAutomaticallyAsync(string trigger)
         {
             if (_disposed || IsDisposed || _autoSignatureBusy || !ClaudeService.AutoChooseSignature)
+                return;
+            if (!_isInlineResponse && !NativeWindows.IsShown(_owningInspector))
                 return;
 
             _autoSignatureBusy = true;

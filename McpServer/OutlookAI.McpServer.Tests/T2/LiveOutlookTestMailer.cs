@@ -3682,7 +3682,7 @@ public static class LiveOutlookTestMailer
         return RunSta<OpenDraftReading?>(() => WithOpenDraft(storeDisplayName, entryIdHex, uniqueMarker, (inspector, document) =>
         {
             IntPtr window = IntPtr.Zero;
-            if (inspector is ComposeSurface.IOleWindow ole && ole.GetWindow(out IntPtr handle) == 0)
+            if (inspector is NativeWindows.IOleWindow ole && ole.GetWindow(out IntPtr handle) == 0)
             {
                 window = handle;
             }
