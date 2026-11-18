@@ -115,13 +115,13 @@ its mailbox tests on, and change nothing you install.
 - ✨ **A signature can be read in full and changed in place, pictures included.**
   list_signatures with a name returns all three versions Outlook keeps of a signature - the HTML one
   for HTML mail, the RTF one for Rich Text mail and the plain text - and every picture with its file
-  path. manage_signature then changes only what it is asked to: a version sent back replaces that one
-  file, a replace edit changes a piece of text in every version that has it and keeps its
-  formatting, and pictures are added, replaced or removed one file at a time. Each file keeps the
-  encoding it was stored in. In the RTF version the pictures are embedded, and they show as
-  [[picture:1]] tokens: each token left in place becomes the same picture again, byte for byte, and
-  [[picture-file:logo.png]] embeds a new one. A new signature can be made with pictures, and its RTF
-  version then embeds them too.
+  path. manage_signature then changes only what it is asked to: the versions sent back replace their
+  own files, and an update that sends one sends every version the signature has; a replace edit
+  changes a piece of text in every version that has it and keeps its formatting; and pictures are
+  added, replaced or removed one file at a time. Each file keeps the encoding it was stored in. In
+  the RTF version the pictures are embedded, and they show as [[picture:1]] tokens: each token left
+  in place becomes the same picture again, byte for byte, and [[picture-file:logo.png]] embeds a new
+  one. A new signature can be made with pictures, and its RTF version then embeds them too.
 
 - ✨ **A default signature can be set or cleared on its own, for a named profile and account.**
   manage_signature has two new actions, set_default and clear_default. A default could only be set
@@ -134,8 +134,8 @@ its mailbox tests on, and change nothing you install.
   The draft tools take signature "none" for no signature, and update_draft takes it to remove the
   draft's signature. Left out, a draft gets the sending account's default; a named signature must be
   one the sending account can use. The answer names the signature, where it came from (asked for, the
-  account's default, a policy's default, or none), the reason in one sentence and the profile, and
-  suggests the account's own default when the draft got something else. A reply from a shared or
+  account's default, or none), the reason in one sentence and the profile, and suggests the
+  account's own default when the draft got something else. A reply from a shared or
   delegate mailbox gets no default, as before, and now says so. The tool descriptions and the
   server's instructions spell all of this out.
 
@@ -262,6 +262,32 @@ its mailbox tests on, and change nothing you install.
   last managed to look for a newer one, the same as the writing sidebar has always shown. When a
   check fails, the reason is written out in full here rather than hidden behind a link. Both
   indicators now take their wording from one place, so they cannot disagree.
+
+- ✅ **A live run can set a signature policy before Outlook starts, and measure what Outlook inserts.**
+  Outlook reads an administrator's signature policy, a default deployed in its general mail settings
+  and an account's own defaults when it starts, and the live tests run without administrator rights,
+  where a policy cannot be written. So the live runner takes `-SignatureSettings GroupPolicy` or
+  `-SignatureSettings Preference` (Q200 (a) and Q201, decided by the maintainer 2026-11-18): after
+  the clock guard and before Outlook starts, a new guest script, `Set-SignatureSettings.ps1`, run as
+  administrator, writes Group Policy's NewSignature and ReplySignature, or the same two in Outlook's
+  own MailSettings, makes the test signatures they name and gives the hub account its own defaults
+  beside them, through the shipped manage_signature. The run is narrowed to one live test, which
+  opens a new mail, a reply and a forward the way Outlook's own commands do, reads which signature
+  Outlook put in and whether its Signature button is open, and holds OutlookAI to the same. Those
+  compose windows are the kind that crashed Outlook on 2026-10-04, and the runner keeps full crash
+  dumps. The checkpoint the guest is restored to afterwards removes the setting, so the step runs
+  only from a frozen checkpoint, never on the Exchange test machine and never with a green
+  checkpoint. The values are written as expandable strings unless `-SignatureValueKind String` asks
+  for plain ones. The guest scripts that drive the MCP server share one stdio client now.
+  A third scenario, `-SignatureSettings PreferenceNoOwnNew`, gives the hub account its own default
+  for replies under the deployed setting, so a new mail shows what that setting does for an account
+  with no new-mail default of its own, and a fourth, `NoSetting`, gives it both own defaults and makes
+  no setting at all, as the control. With `-SignatureDialog` a run reads Outlook's own Signatures
+  dialog before the suite instead, through `Measure-SignatureDialog.ps1`, which presses nothing but
+  Cancel: whether its default boxes, its signature list and its buttons are open, which a second
+  live test holds OutlookAI's refusals to. It runs apart from the insert test because opening the
+  dialog under a setting rewrites the accounts' own defaults. The two probes that read Outlook's
+  dialogs share one copy of that code, `OutlookDialogUia.ps1`.
 
 - ✅ **Tests pin the start policy, lock, record, log and report, and live tests time the settle wait.**
   T1 runs every branch of the start policy over every combination of its facts, the record's and the
@@ -434,8 +460,9 @@ its mailbox tests on, and change nothing you install.
   `OutlookAI-Tier` and `CorpusProfile` recorded as the default, a draft got the running profile's
   default; a folder moved while Outlook ran was listed, written to and used by OutlookAI, and
   Outlook's own list of signatures showed what was in it. What Outlook makes of a default deployed
-  for every account could not be read: its signature settings reported no default with it or
-  without it, written while Outlook ran, so that measurement stays open.
+  for every account could not be read that way, written while Outlook ran: its signature settings
+  reported no default with it or without it. The live runner's -SignatureSettings step measured it
+  on 2026-11-18, with the setting made before Outlook starts.
 
 - ✅ **The Exchange test machine checks folders by ID without writing: 66-character IDs and find_folder.**
   Folders and stores addressed by ID (Q131-Q136) reached a real Exchange mailbox through T1 and one
@@ -1026,20 +1053,29 @@ its mailbox tests on, and change nothing you install.
   running one, and shows each account's own defaults beside the ones a draft actually gets. It asks a
   running Outlook which profile it has open, and still never starts Outlook.
 
-- 🔧 **OutlookAI follows the administrator's signature policy.**
+- 🔧 **OutlookAI follows the administrator's signature settings the way Outlook itself does.**
   When Group Policy or Cloud Policy forbids signatures, a draft gets none and manage_signature changes
-  nothing. When a policy sets the default for every account, a draft gets that one and changing an
-  account's default is refused with the reason. While such a default is in force a draft may not use
-  another signature or none, until it is measured whether Outlook allows that per message. A default
-  deployed in Outlook's own settings (Common\MailSettings) is used the same way but leaves the choice
-  per message free. OutlookAI never writes a policy.
+  nothing. A default that a policy, or Outlook's own settings (Common\MailSettings), names for new
+  mail or for replies and forwards no longer decides which signature a draft gets: the account's own
+  default does. Outlook did that on the test machines on 2026-11-18 (Q200 (a), Q201), with the
+  settings made before it started, as plain and as expandable strings: it put the account's own
+  default in a new mail, a reply and a forward, put nothing in a reply or a forward of an account
+  with no reply default of its own, and kept its Signature button open under a policy, so one message
+  may have another signature or none there too. manage_signature changes no account's default, and
+  deletes no signature, that a policy or a deployed default names (Q156): Outlook's own Signatures
+  dialog shuts its default choice, its signature list and its New button under either, and rewrites
+  every account's own defaults to the setting's as it opens, so after that the setting's signature
+  goes in. With no setting the dialog leaves all of it open and changes nothing. OutlookAI never
+  writes a policy.
 
 - 🔧 **Signatures kept in an Exchange mailbox are left to Outlook.**
   Microsoft 365 Apps from Version 2303 can keep an Exchange Online account's signatures in its
   mailbox, with a copy on the computer named "Name (address)". OutlookAI treats that as possible on
   Microsoft 365 Apps unless DisableRoamingSignatures is set, and on perpetual Office, such as the
-  Office LTSC 2024 the test machines run, only where Outlook's own copies show it: LTSC 2024 showed no
-  sign of it on the Exchange test machine. Where an account's signatures may live in its mailbox,
+  Office LTSC 2024 the test machines run, only where Outlook's own copies show it. LTSC 2024 roams
+  too: on the Exchange test machine it showed no sign of it while the testbed's connected-experience
+  policy values were set, and had a signature from Outlook on the web within about three minutes once
+  they were removed, as such a copy. Where an account's signatures may live in its mailbox,
   OutlookAI does not edit or delete their copies or change the account's defaults, because Outlook
   would overwrite the change or copy it into the mailbox, and says to use Outlook instead. Roaming on
   Microsoft 365 Apps itself is not tested: the test machines run perpetual Office only.
@@ -2016,9 +2052,14 @@ its mailbox tests on, and change nothing you install.
 - 🐛 **Changing a signature keeps its pictures and its other versions.**
   An update deleted the signature's picture folder and rebuilt its RTF version from the plain text, so
   editing a signature Outlook had made with a logo lost the logo, and Rich Text mail lost its
-  formatting. An update now touches only the files it is asked to change. When it replaces one
-  version whole, the answer says which versions still read as before, because Outlook puts the HTML
-  version in HTML mail, the RTF version in Rich Text mail and the text version in plain-text mail.
+  formatting. An update now touches only the files it is asked to change and converts nothing from
+  one version to another. Because Outlook puts the HTML version in HTML mail, the RTF version in Rich
+  Text mail and the text version in plain-text mail, an update that replaces a version whole must
+  send every version the signature has, and one that leaves a version out is refused with the
+  missing ones named (Q205 (d), decided by the maintainer 2026-11-18). Until then such an update wrote
+  the one version and said in its answer which versions still read as before. The test machines'
+  `Set-AccountSignature.ps1` takes an RTF body beside the HTML one for the same reason: run again on
+  a signature it made, it has to send all three.
 
 - 🐛 **A draft whose signature could not be added says it has none.**
   Since the crash fix, a draft whose chosen signature could not be put in came out with no signature

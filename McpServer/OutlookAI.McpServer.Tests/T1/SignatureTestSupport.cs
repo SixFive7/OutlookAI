@@ -44,7 +44,7 @@ internal sealed class FakeSignatureSettings : ISignatureSettingsRegistry
     /// <summary>Microsoft 365 Apps on a roaming build.</summary>
     public FakeSignatureSettings Microsoft365() => WithBuild("16.0.18129.20158", "O365ProPlusRetail");
 
-    /// <summary>Office LTSC 2024 - the testbed's: no roaming seen (R1), so off unless Outlook's own copies show it.</summary>
+    /// <summary>Office LTSC 2024, the testbed's: it roams where policy allows it (E2's R3 run 2), so off unless Outlook's own copies show it.</summary>
     public FakeSignatureSettings Ltsc2024() => WithBuild("16.0.17932.20884", "ProPlus2024Volume");
 
     public FakeSignatureSettings RoamingSwitchedOff(bool policy = false, bool temporaryToggleName = false)

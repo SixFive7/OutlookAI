@@ -592,6 +592,12 @@ property was stored; only Outlook reporting it proves the tests will see it, bec
 machine: on Microsoft 365 Apps 2303+ roaming signatures can overrule local files unless
 `DisableRoamingSignatures = 1`; **on Office LTSC, local files are authoritative**. The guests are
 LTSC 2024, so the local file set is the whole story and no roaming setting is needed.
+**Corrected 2026-11-18:** Office LTSC 2024 roams signatures too. With the testbed's four
+connected-experience policy values removed, it had a signature made in Outlook on the web within
+about three minutes, as a `Name (address)` copy, and made it the account's default for new mail;
+with them in place nothing came (stream E2's R3 run 2, decision 194 (b)). The policy, not the Office
+version, kept roaming away. OutlookAI treats a perpetual Office as roaming for an Exchange account
+wherever Outlook's own `Name (address)` copies show it (Q152 (a)).
 
 `Testbed/guest/Set-AccountSignature.ps1` therefore does not implement anything — it drives the
 shipped tool over stdio, using the JSON-RPC pattern already proven in
