@@ -282,8 +282,12 @@ if (-not $reading['refused'] -and -not $machineOk) {
     $reading['refused'] = "'$env:COMPUTERNAME' is not a test guest (its name must start with '$ExpectedComputerNamePrefix')"
 }
 if (-not $reading['refused']) {
-    try { $outlook = [Runtime.InteropServices.Marshal]::GetActiveObject('Outlook.Application'); [void][Runtime.InteropServices.Marshal]::ReleaseComObject($outlook) }
-    catch { $reading['refused'] = 'Outlook is not running in this session - the runner starts it before the suite' }
+    # An OUTLOOK.EXE in this session, by its process: GetActiveObject cannot tell, as an Outlook that has not lost
+    # the focus is not in the Running Object Table (OutlookDialogUia.ps1).
+    $session = (Get-Process -Id $PID).SessionId
+    if (@(Get-Process -Name OUTLOOK -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -eq $session }).Count -eq 0) {
+        $reading['refused'] = "no OUTLOOK.EXE runs in this session ($session) - the runner starts it before the suite"
+    }
 }
 if ($reading['refused']) {
     Write-Host "REFUSED: $($reading['refused'])"

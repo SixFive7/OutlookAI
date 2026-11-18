@@ -37,9 +37,15 @@ function Start-Helper([string] $Script) {
 }
 
 # The command that opens the Signatures dialog. GetLabelMso('SignaturesStationeryDialog') reads
-# 'Signatures...' and enabled from the explorer (measured 2026-11-17 on the Exchange VM).
+# 'Signatures...' and enabled from the explorer (measured 2026-11-17 on the Exchange VM). The helper
+# attaches to the Outlook running in its session by creating Outlook's application object - Outlook runs
+# one instance, and its class hands back the running one - never by GetActiveObject: an Outlook that has
+# not yet lost the focus is not in the Running Object Table (MK_E_UNAVAILABLE, the Outlook guests
+# 2026-11-18). It refuses, exit 3, when no OUTLOOK.EXE runs in its session, so it never starts one.
 $OutlookSignaturesDialogHelper = @'
-$app = [Runtime.InteropServices.Marshal]::GetActiveObject('Outlook.Application')
+$session = (Get-Process -Id $PID).SessionId
+if (@(Get-Process -Name OUTLOOK -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -eq $session }).Count -eq 0) { exit 3 }
+$app = New-Object -ComObject Outlook.Application
 try { $app.ActiveExplorer().CommandBars.ExecuteMso('SignaturesStationeryDialog') } finally { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($app) }
 '@
 
