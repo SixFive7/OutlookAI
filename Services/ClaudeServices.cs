@@ -260,6 +260,35 @@ namespace OutlookAI.Services
             return seconds == 1 ? "1 second" : seconds + " seconds";
         }
 
+        /// <summary>
+        /// Whether the AI may choose a draft's signature by itself (Q158, Q162 (b)): the tick box
+        /// "Allow the AI to automatically choose the correct signature", on unless it was unticked.
+        /// </summary>
+        internal static bool AutoChooseSignature
+        {
+            get { return SignatureAutoChoice.IsOn(ReadAppDword(SignatureAutoChoice.SettingValueName)); }
+        }
+
+        /// <summary>Stores the tick box; false when the value could not be written.</summary>
+        internal static bool SetAutoChooseSignature(bool on)
+        {
+            try
+            {
+                using (var key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(AppKeyPath))
+                {
+                    if (key == null)
+                        return false;
+                    key.SetValue(SignatureAutoChoice.SettingValueName, on ? 1 : 0, Microsoft.Win32.RegistryValueKind.DWord);
+                }
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine("Signature choice preference: " + ex.Message);
+                return false;
+            }
+        }
+
         private static string ReadAppString(string valueName)
         {
             try

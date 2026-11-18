@@ -65,6 +65,27 @@ namespace OutlookAI.TaskPane
         // D38: "Select the best signature" needs at least one installed signature.
         private bool _signaturesAvailable;
 
+        /// <summary>
+        /// The signature region's text when Outlook or this pane last put a signature in, and that
+        /// signature's name: what tells a signature a person chose from one the AI may still change
+        /// (Q162 (b)). Null until the pane has seen the draft.
+        /// </summary>
+        private string _signatureRegionWhenPut;
+        private string _signatureNamePut;
+
+        /// <summary>One automatic choice at a time.</summary>
+        private bool _autoSignatureBusy;
+
+        /// <summary>
+        /// Looks for the compose window's document after the pane opened, to see the signature
+        /// Outlook put in and, on a reply or forward, let the AI choose (Q162 (b)): the editor is
+        /// not there the moment the pane is.
+        /// </summary>
+        private Timer _openingSignatureTimer;
+        private int _openingSignatureAttempts;
+        private const int OpeningSignatureIntervalMs = 1000;
+        private const int OpeningSignatureAttempts = 15;
+
         // Debug: DebugClicksRequired clicks within DebugClickWindowSeconds to enable
         private bool _debug;
         private int _debugClickCount;
@@ -119,6 +140,7 @@ namespace OutlookAI.TaskPane
             _versionTimer.Tick += (s, ev) => UpdateVersionLabel();
             _versionTimer.Start();
             UpdateVersionLabel();
+            StartOpeningSignatureCheck();
         }
 
         /// <summary>
@@ -279,6 +301,7 @@ namespace OutlookAI.TaskPane
             _editHistory.Clear();
             _freshDraft = false;
             RefreshSignatureAvailability();
+            StartOpeningSignatureCheck();
         }
 
         /// <summary>
@@ -801,7 +824,7 @@ namespace OutlookAI.TaskPane
                     ShowStatus("Selecting the best signature...", false);
                     string answer = await ClaudeService.SelectSignatureAsync(
                         signatures, draftText, threadText, recipientsText);
-                    chosen = FindSignatureNamed(signatures, answer);
+                    chosen = SignatureAutoChoice.FindNamed(signatures, answer);
                     if (chosen == null)
                     {
                         string shown = answer ?? "";
@@ -816,7 +839,12 @@ namespace OutlookAI.TaskPane
                 {
                     if (_disposed) return;
                     if (ApplySignatureToDocument(capturedDoc, chosen.PreferredFilePath))
+                    {
+                        // Asked for by the user, but chosen by the AI: a later automatic choice
+                        // may still change it, as it may change the one Outlook put in.
+                        RememberSignature(capturedDoc, chosen.Name);
                         ShowStatus("Applied signature \"" + chosen.Name + "\".", false);
+                    }
                 });
             }
             catch (Exception ex)
@@ -890,25 +918,6 @@ namespace OutlookAI.TaskPane
             }
         }
 
-        /// <summary>
-        /// The listed signature the AI's answer names: case-insensitive, with the quotes and the full
-        /// stop a model may put around a name taken off. Null when it names none.
-        /// </summary>
-        private static SignatureInfo FindSignatureNamed(IReadOnlyList<SignatureInfo> signatures, string answer)
-        {
-            if (signatures == null || string.IsNullOrWhiteSpace(answer))
-                return null;
-
-            string trimmed = answer.Trim().Trim('"', '\'', '.');
-            foreach (var signature in signatures)
-            {
-                if (string.Equals(signature.Name, trimmed, StringComparison.OrdinalIgnoreCase))
-                    return signature;
-            }
-
-            return null;
-        }
-
         /// <summary>The compose item behind the pane (Inspector item or the inline response).</summary>
         private object GetCurrentMailItem()
         {
@@ -936,6 +945,220 @@ namespace OutlookAI.TaskPane
             catch (InvalidCastException)
             {
                 return null;
+            }
+        }
+
+        // === The AI's own signature choice (Q158, Q162 (b)) ===
+
+        private void StartOpeningSignatureCheck()
+        {
+            _signatureRegionWhenPut = null;
+            _signatureNamePut = null;
+            _openingSignatureAttempts = 0;
+            if (_openingSignatureTimer == null)
+            {
+                _openingSignatureTimer = new Timer();
+                _openingSignatureTimer.Interval = OpeningSignatureIntervalMs;
+                _openingSignatureTimer.Tick += OnOpeningSignatureTick;
+            }
+            _openingSignatureTimer.Stop();
+            _openingSignatureTimer.Start();
+        }
+
+        /// <summary>
+        /// Once the document is there: the signature Outlook put in is remembered, so that a later
+        /// change can be told for a person's, and on a reply or forward the AI may choose.
+        /// </summary>
+        private async void OnOpeningSignatureTick(object sender, EventArgs e)
+        {
+            if (_disposed || IsDisposed)
+            {
+                _openingSignatureTimer?.Stop();
+                return;
+            }
+
+            _openingSignatureAttempts++;
+            object doc = null;
+            bool replyOrForward = false;
+            try
+            {
+                doc = GetWordDocument();
+                if (doc == null)
+                {
+                    if (_openingSignatureAttempts >= OpeningSignatureAttempts)
+                        _openingSignatureTimer.Stop();
+                    return;
+                }
+
+                _openingSignatureTimer.Stop();
+                string region = ComposeDocument.ReadSignatureText(doc);
+                replyOrForward = ComposeDocument.ReadThreadText(doc).Length > 0;
+                _signatureRegionWhenPut = region;
+                if (region.Length > 0)
+                {
+                    SignatureCandidates available = ReadSignatureCandidates();
+                    if (available != null)
+                        _signatureNamePut = replyOrForward ? available.ReplyForwardDefault : available.NewMessageDefault;
+                }
+                DebugLog("Opening signature (" + (replyOrForward ? "reply or forward" : "new mail") + ")", doc);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine("Opening signature: " + ex.Message);
+                _openingSignatureTimer?.Stop();
+                return;
+            }
+            finally
+            {
+                ThisAddIn.ReleaseCom(doc);
+            }
+
+            if (replyOrForward)
+                await ChooseSignatureAutomaticallyAsync("a reply or forward opened");
+        }
+
+        /// <summary>
+        /// The AI chooses the draft's signature, when the tick box is on and
+        /// <see cref="SignatureAutoChoice.Plan"/> leaves it a choice: among the signatures the sending
+        /// account can use (<see cref="SignatureSelector.Candidates"/>, the MCP server's rule), with the
+        /// draft, the mail being answered and the recipients to judge by, through the same prompt as
+        /// "Select the best signature". A person's signature is never replaced, checked again after
+        /// the AI answered, and nothing here runs as a mail is sent. Never shown as an error: nobody
+        /// asked for it.
+        /// </summary>
+        private async Task ChooseSignatureAutomaticallyAsync(string trigger)
+        {
+            if (_disposed || IsDisposed || _autoSignatureBusy || !ClaudeService.AutoChooseSignature)
+                return;
+
+            _autoSignatureBusy = true;
+            try
+            {
+                IReadOnlyList<SignatureInfo> candidates;
+                string draftText;
+                string threadText;
+                object doc = GetWordDocument();
+                if (doc == null)
+                    return;
+                try
+                {
+                    string region = ComposeDocument.ReadSignatureText(doc);
+                    SignatureCandidates available = ReadSignatureCandidates();
+                    if (available == null)
+                        return;
+                    SignatureAutoChoicePlan plan = SignatureAutoChoice.Plan(
+                        true, available, region.Length > 0,
+                        SignatureAutoChoice.ChangedByPerson(region, _signatureRegionWhenPut));
+                    DebugLog("Automatic signature, " + trigger + ": " + plan.Outcome);
+                    if (plan.Outcome != SignatureAutoChoiceOutcome.Choose)
+                        return;
+                    candidates = plan.Candidates;
+                    draftText = ComposeDocument.ReadDraftText(doc);
+                    threadText = ComposeDocument.ReadThreadText(doc);
+                }
+                finally
+                {
+                    ThisAddIn.ReleaseCom(doc);
+                }
+
+                string recipientsText = GetRecipientSummary();
+                string answer = await ClaudeService.SelectSignatureAsync(candidates, draftText, threadText, recipientsText);
+                SignatureInfo chosen = SignatureAutoChoice.FindNamed(candidates, answer);
+                DebugLog("Automatic signature, the AI answered", extra: chosen == null ? "nothing on the list" : chosen.Name);
+                if (chosen == null || _disposed || IsDisposed
+                    || string.Equals(chosen.Name, _signatureNamePut, StringComparison.OrdinalIgnoreCase))
+                    return;
+
+                doc = GetWordDocument();
+                if (doc == null)
+                    return;
+                try
+                {
+                    // A person may have changed the signature while the AI chose: theirs stays.
+                    if (SignatureAutoChoice.ChangedByPerson(ComposeDocument.ReadSignatureText(doc), _signatureRegionWhenPut))
+                        return;
+                    if (ApplySignatureToDocument(doc, chosen.PreferredFilePath))
+                    {
+                        RememberSignature(doc, chosen.Name);
+                        ShowStatus("The AI chose the signature \"" + chosen.Name + "\".", false);
+                    }
+                }
+                finally
+                {
+                    ThisAddIn.ReleaseCom(doc);
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine("Automatic signature: " + ex.Message);
+            }
+            finally
+            {
+                _autoSignatureBusy = false;
+            }
+        }
+
+        /// <summary>What the signature region holds now that this pane put <paramref name="name"/> there.</summary>
+        private void RememberSignature(object doc, string name)
+        {
+            try
+            {
+                _signatureRegionWhenPut = ComposeDocument.ReadSignatureText(doc);
+                _signatureNamePut = name;
+            }
+            catch (Exception ex) when (ComObjects.IsCallFailure(ex))
+            {
+                _signatureRegionWhenPut = null;
+                _signatureNamePut = null;
+            }
+        }
+
+        /// <summary>
+        /// The signatures the draft's sending account can use, its defaults and the policy limits -
+        /// <see cref="SignatureSelector.Candidates"/>, the rule the MCP server's drafts use - for the
+        /// profile Outlook runs on. Null when they cannot be read.
+        /// </summary>
+        private SignatureCandidates ReadSignatureCandidates()
+        {
+            object item = null;
+            object account = null;
+            object session = null;
+            try
+            {
+                item = GetCurrentMailItem();
+                SignatureSendingAccount sending = null;
+                if (item != null)
+                {
+                    try
+                    {
+                        account = ((dynamic)item).SendUsingAccount;
+                        if (account != null)
+                            sending = new SignatureSendingAccount(
+                                (string)((dynamic)account).SmtpAddress, (string)((dynamic)account).DisplayName);
+                    }
+                    catch (Exception ex) when (ComObjects.IsCallFailure(ex)) { }
+                }
+
+                string profile = null;
+                try
+                {
+                    session = Globals.ThisAddIn.Application.Session;
+                    profile = (string)((dynamic)session).CurrentProfileName;
+                }
+                catch (Exception ex) when (ComObjects.IsCallFailure(ex)) { }
+
+                return SignatureSelector.Candidates(SignatureEnvironment.ReadCurrent(), sending, profile);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine("Signature candidates: " + ex.Message);
+                return null;
+            }
+            finally
+            {
+                ThisAddIn.ReleaseCom(session);
+                ThisAddIn.ReleaseCom(account);
+                ThisAddIn.ReleaseCom(item);
             }
         }
 
@@ -988,6 +1211,7 @@ namespace OutlookAI.TaskPane
         /// </summary>
         private async Task ProcessAction(string actionLabel, string selectedText = null)
         {
+            bool bodyWritten = false;
             if (_isProcessing) return;
             _isProcessing = true;
             object preAsyncDoc = null;
@@ -1051,6 +1275,7 @@ namespace OutlookAI.TaskPane
                     if (_disposed) return;
                     if (WriteDraftToDocument(result, capturedDoc))
                     {
+                        bodyWritten = true;
                         _editHistory.Add(new EditTurn
                         {
                             Label = actionLabel,
@@ -1085,6 +1310,9 @@ namespace OutlookAI.TaskPane
                 if (!_disposed && !IsDisposed)
                     SetUIEnabled(true);
             }
+
+            if (bodyWritten)
+                await ChooseSignatureAutomaticallyAsync("the AI wrote the body");
         }
 
         // === Word Object Model helpers ===
@@ -1357,6 +1585,8 @@ namespace OutlookAI.TaskPane
             this.FontChanged -= AITaskPane_FontChanged;
             _versionTimer?.Stop();
             _versionTimer?.Dispose();
+            _openingSignatureTimer?.Stop();
+            _openingSignatureTimer?.Dispose();
             _toolTip?.Dispose();
             // Shared by every quick button, so it outlives each individual button and is the
             // pane's to dispose. The buttons themselves go with the control tree.

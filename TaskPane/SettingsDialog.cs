@@ -125,6 +125,11 @@ namespace OutlookAI.TaskPane
 
         private readonly GroupBox grpClaude;
         private readonly CheckBox chkGlobalMcp;
+
+        // The AI's own signature choice (Q158, Q162 (b)).
+        private readonly GroupBox grpSignature;
+        private readonly CheckBox chkAutoSignature;
+        private readonly Label lblAutoSignatureHelp;
         private readonly Label lblGlobalMcpHelp;
         private readonly Label lblMcp;
         private readonly Button btnAddProject;
@@ -451,6 +456,16 @@ namespace OutlookAI.TaskPane
                                 lblModelHelp, cmbModel, lblModelIdCaption, txtModel,
                                 lblModelNote, lblModelState);
 
+            // --- Claude Code tab: the signature ---
+            chkAutoSignature = NewCheck("chkAutoSignature", "Allow the AI to automatically choose the correct signature");
+            lblAutoSignatureHelp = NewLabel(
+                "When the AI writes or rewrites a mail, and when you open a reply or a forward, it picks "
+                + "the signature that suits the mail - its language, for one - from the signatures the "
+                + "sending account can use. It never replaces a signature you chose yourself.",
+                LabelRole.Secondary, wrap: true);
+            lblAutoSignatureHelp.Name = "lblAutoSignatureHelp";
+            grpSignature = NewGroup("grpSignature", "Signature", chkAutoSignature, lblAutoSignatureHelp);
+
             // --- Claude Code tab: the mail server ---
             chkGlobalMcp = NewCheck("chkGlobalMcp", "Make available in all my Claude Code projects");
             lblGlobalMcpHelp = NewLabel(
@@ -491,7 +506,7 @@ namespace OutlookAI.TaskPane
                 NewScroller("outlookPage", NewStack("outlookStack",
                     lblHeader, chkMaster, grpSearch, grpCaching, grpOst, lblRestart)));
             _tabClaude = NewPage("Claude Code", "tabClaude",
-                NewScroller("claudePage", NewStack("claudeStack", grpModel, grpClaude)));
+                NewScroller("claudePage", NewStack("claudeStack", grpModel, grpSignature, grpClaude)));
             _tabPrompts = NewPage("Prompts", "tabPrompts", BuildSectionsPage());
             _tabButtons = NewPage("Buttons", "tabButtons", BuildButtonsPage());
             _tabUpdates = NewPage("Updates", "tabUpdates",
@@ -548,6 +563,7 @@ namespace OutlookAI.TaskPane
             // Deliberately NOT OnToggleChanged: this one owns a different service, and
             // toggling it must not drag the Outlook tuning reconcile along with it.
             chkGlobalMcp.CheckedChanged += OnGlobalMcpChanged;
+            chkAutoSignature.CheckedChanged += OnAutoSignatureChanged;
             cmbModel.SelectedIndexChanged += OnModelChoiceChanged;
             cmbModel.DrawItem += OnDrawModelChoice;
             // Three ways to finish typing an id, and none of them is a keystroke: leaving the
@@ -1309,6 +1325,15 @@ namespace OutlookAI.TaskPane
             lblExistingAccounts.Text = CachedModeSettings.ExistingAccountAdvice(periodSource);
         }
 
+        // The signature tick box (Q158, Q162 (b)) applies at once, like the mail server's: there is
+        // nothing for Apply now to wait for, and the next draft should already follow it.
+        private void OnAutoSignatureChanged(object sender, EventArgs e)
+        {
+            if (_updating)
+                return;
+            ClaudeService.SetAutoChooseSignature(chkAutoSignature.Checked);
+        }
+
         // The "all my projects" toggle. Ticking or unticking it IS the user declaring their
         // intent, so it applies immediately rather than waiting for Apply now - a user who
         // unticks it expects the entry gone now - and it never re-opens the question the startup
@@ -1918,6 +1943,7 @@ namespace OutlookAI.TaskPane
                 _preferredCommand = McpRegistrationService.ResolvePreferredCommand();
                 _resolvedServerPath = McpRegistrationService.ResolveInstalledServerPath() ?? "";
                 chkGlobalMcp.Checked = McpRegistrationService.GetSnapshot().GlobalRegistrationEnabled;
+                chkAutoSignature.Checked = ClaudeService.AutoChooseSignature;
                 bool haveServer = !string.IsNullOrEmpty(_preferredCommand);
                 btnAddProject.Enabled = haveServer;
                 btnCopyCommand.Enabled = haveServer && !string.IsNullOrEmpty(_resolvedServerPath);
