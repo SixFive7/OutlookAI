@@ -924,7 +924,7 @@ namespace OutlookAI.Core.Com
                 : OutlookComSession.DefaultFolderResolution.Absent;
         }
 
-        private static string ToHex(byte[] bytes)
+        internal static string ToHex(byte[] bytes)
         {
             StringBuilder sb = new StringBuilder(bytes.Length * 2);
             foreach (byte b in bytes)

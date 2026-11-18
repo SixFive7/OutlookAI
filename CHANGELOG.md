@@ -234,6 +234,22 @@ its mailbox tests on, and change nothing you install.
   check fails, the reason is written out in full here rather than hidden behind a link. Both
   indicators now take their wording from one place, so they cannot disagree.
 
+- ✅ **Test runs wait while the PC is 70 % busy or more, and a pause switch holds new ones back.**
+  With every testbed machine running at once, the host's 32 logical processors were 82 to 100 % busy:
+  the maintainer's own work slowed down, and every run took about twice as long. He decided on
+  2026-11-18 (Q195 (e)) that a run starts only while the processors were less than 70 % busy over the
+  last 30 seconds, and that he can stop new runs when he needs the PC, for gaming for example.
+  `pwsh -File Testbed/host/Set-TestbedPause.ps1 -On` holds every new run back until `-Off`, and runs
+  already going finish. The build runner looks at the switch and the load on every turn of its queue,
+  before it touches a build machine; the live runner before its build and on every turn of its wait
+  for a guest; the clone maker before it takes its source. A waiting run holds no machine's lock or
+  lease, keeps its place in the queue, sleeps until a file of the testbed changes or 30 seconds pass,
+  says what it waits for and since when once a minute, and is listed by `Set-TestbedPause.ps1`.
+  A machine another run took in the last two minutes counts at its full size, so the runs that waited
+  do not all start in the second the load dips. The load comes from kernel32's GetSystemTimes, which
+  counts the virtual machines here because Hyper-V runs its root scheduler on this host: it read 83 %
+  where the hypervisor's own counter read 85 %, of which 29 points were the machines'.
+
 - ✅ **The compose measurement also runs the product's own drafting, Outlook's typed text, and cold starts.**
   As the maintainer decided on 2026-11-18, the Q149 suite stays (Q210 (a)) and gains seven cells.
   P1 runs the product's drafts in an Outlook with no window, three starts of ten drafts each,
@@ -1772,6 +1788,17 @@ its mailbox tests on, and change nothing you install.
 
 ### Fixed
 
+- 🐛 **A paged exhaustive search of an Exchange mailbox returns no mail twice after Outlook restarts.**
+  An exhaustive search hands out its results a page at a time, and each page remembers which mail
+  the pages before it returned, so that none comes back. It remembered the ids the folder's table
+  gave, and on an Exchange mailbox Outlook keeps locally those are short-term ids, valid only until
+  Outlook restarts: a page after a restart could not recognise what earlier pages had returned.
+  Measured read-only on the Exchange test machine on 2026-11-18: the table's ids were 24 bytes, the
+  same in two tables of one session, and the column PR_LONGTERM_ENTRYID_FROM_TABLE gave each row's
+  70-byte long-term id, equal to the mail's own id in 25 of 25 rows. The scan reads that column and
+  keys its memory on it; a .pst data file's table has no such column, and its ids are long-term
+  already. Found by stream E2's Exchange runs.
+
 - 🐛 **OutlookAI's hidden window is no longer left behind, keeping Outlook running (Q118 (a)).**
   The hidden window that keeps an Outlook with no window running while agents draft was closed only
   by the session that had started Outlook. So it was left behind by a session that connected while
@@ -2540,6 +2567,36 @@ its mailbox tests on, and change nothing you install.
   next - the cost was the accumulating hidden window, not a broken Outlook. This also cannot help
   when the assistant kills the helper outright, which is what happens when Outlook has genuinely
   stopped responding and when a session ends abruptly.
+
+- ✅ **On a busy host the test machines give Outlook 20 minutes to open, and say why when it does not.**
+  Eight live runs on the two indexed test machines stopped on 2026-11-18, between 03:49 and 05:16
+  host time, because Outlook had not shown its window within the 10 minutes
+  `Testbed/guest/Start-OutlookUnelevated.ps1` gave it. Outlook there took 94 to 585 s on 2026-11-17
+  and 125 s at 02:50 that night; in that window the host's processors were saturated, the unindexed
+  machines' Outlook took 13 to 45 s instead of 6, and copying a run in took 6 to 12 minutes instead
+  of under 3. The starter waits 20 minutes now, and when the time runs out it records Outlook's
+  processor time, how much of it fell in the last minute, and its visible windows, so a slow start
+  can be told from one a dialog blocks. Its `-SelfTest` pins the default, the report and that no
+  wait reads the wall clock.
+
+- ✅ **The test machines' waits run on a stopwatch, so a guest clock that moves cannot end them early.**
+  Twice a live suite was taken for finished while it still ran: on the unindexed test machine, whose
+  clock is frozen, `Testbed/guest/Register-InteractiveTask.ps1` reported "No exit.txt after 7200 s"
+  40 min 17 s into one run and "after 9000 s" 34 min 50 s into another, because it read its deadline
+  off the guest's wall clock and that clock had moved ahead. Why it moved is open
+  (`Docs/live-tier-on-the-vm.md` section 4.5). That wait, and every wait in
+  `Start-OutlookUnelevated.ps1`, measure elapsed time with a stopwatch now.
+
+- ✅ **A test machine's .NET check no longer fails a working SDK because it could not read an exit code.**
+  `Testbed/guest/Install-DotnetSdk.ps1 -Verify` stopped two live runs on the indexed test machines
+  on 2026-11-18 with "dotnet --list-sdks exited " and an empty code, while the SDK it wanted was
+  listed on the next line. `Start-Process` keeps no handle to the process it starts, and reading
+  `.Handle` straight away narrows that gap without closing it: on a busy host, dotnet had already
+  gone. Each check passes on exit 0, or now on an unread code when its own output proves the step
+  (the SDK listed, the probe's sentinel printed, the tests counted) and says so in its log. An
+  unread code without that proof still fails, and the message reads `(unread)` instead of nothing.
+  Keeping the handle instead would have meant reading dotnet's output through pipes, which a build
+  server that inherits one holds open after dotnet exits.
 
 - ✅ **Test runs that wait for a test machine no longer ask Hyper-V every few seconds.**
   Every queued run asked Hyper-V about every machine it could use every 5 seconds, through the WMI
