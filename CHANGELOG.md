@@ -2017,6 +2017,20 @@ its mailbox tests on, and change nothing you install.
   Items - beside the mail, and none of them could be opened. On the test machine they were 21 of the
   first 100 results.
 
+- ✅ **The Exchange machine's preflight says when Outlook refused an old .ost, not that a sign-in lapsed.**
+  On 2026-11-18 the preflight stopped two live runs on the Exchange test machine: the real mailbox was
+  no longer signed in, it said, and it asked for `-Mode Reauth`, which then found no sign-in page to
+  answer. The machine had been restored to a checkpoint outside the runner with its .ost files left in
+  place, and at Outlook's next start Office raised "Outlook is using an old copy of your Outlook data
+  file (.ost)" (OAlerts event 300). From then on Outlook held that mailbox disconnected
+  (ExchangeConnectionMode 400), and the Windows AAD log held no token error at all. The preflight now
+  reads Office's alerts since the running Outlook started, and for an account at 400 after that alert
+  it says `OLD-OST` and names the remedy instead: the live runner's `-Checkpoint` path, or
+  `guest/Reset-OutlookOfflineStore.ps1`, each of which sets both .ost files aside. Its `-SelfTest` pins
+  the decision with that day's alert text and no real address. `Testbed/README.md` says a restore
+  outside the runner must set both .ost files aside as well: a restored .ost is older than the
+  server, and Outlook refuses it.
+
 - ✅ **A queued test run no longer stops when another run's ticket goes as it reads the queue.**
   Stream M's build run 20261118-092047 ended as not tested before it started: "An object at the
   specified path ...\queue\<ticket>.json does not exist". Two runs had found the same ended run's
