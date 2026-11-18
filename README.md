@@ -137,7 +137,7 @@ The dialog also carries a **Mail server in Claude Code** section — where the [
 - **Make available in all my Claude Code projects** — the opt-in for your personal Claude Code configuration. Outlook asks you this once rather than deciding for you; unticking it removes the entry it added.
 - **Add to a specific project…** — pick a folder and the server is registered for that project alone, via its `.mcp.json`. See [Registering for a Single Project](#registering-for-a-single-project).
 - **Copy CLI command** — the same registration as a `claude mcp add` line, for when you would rather type it.
-- a status line: what is registered and which executable it points at, or what is standing in the way (Claude Code not found, no server installed alongside the add-in, or the .NET 10 runtime missing, with the download link).
+- a status line: what is registered and which executable it points at, or what is standing in the way (Claude Code not found, no server installed alongside the add-in, or the mail server's .NET 11 runtime missing, with what to do about it).
 
 **Apply now** re-runs the tuning reconcile *and* the registration check, so something you have just fixed is picked up without restarting Outlook.
 
@@ -163,7 +163,7 @@ The add-in checks for updates automatically:
 - The version label at the bottom of the task pane shows update status: "up to date", "downloading v2.x.x…", or "v2.x.x ready — installs on close"
 - Click the "update error" link (if visible) to see error details
 
-The add-in and the [mail server](#mcp-server-mail-search-reading-and-drafting-for-ai-agents) ship in the same installer and carry the same version number, so one update covers both. A silent auto-update deliberately does **not** install missing prerequisites (.NET Framework 4.8, the VSTO runtime, the .NET 10 runtime) — it runs unattended after Outlook closes, and the elevation prompt would sit there unanswered. Prerequisites are installed when you run the installer yourself; until then the add-in reports what is missing in [OutlookAI Settings](#outlook-tuning-and-settings).
+The add-in and the [mail server](#mcp-server-mail-search-reading-and-drafting-for-ai-agents) ship in the same installer and carry the same version number, so one update covers both. A silent auto-update deliberately does **not** install missing system prerequisites (.NET Framework 4.8, the VSTO runtime) — it runs unattended after Outlook closes, and the elevation prompt would sit there unanswered. Those are installed when you run the installer yourself; until then the add-in reports what is missing in [OutlookAI Settings](#outlook-tuning-and-settings). The mail server's own .NET runtime is different: it lives in your profile and needs no elevation, so every install and every silent update puts it in place.
 
 ### Debug Mode
 
@@ -204,7 +204,7 @@ Developer documentation (architecture, test tiers, contributor facts): [`McpServ
 
 **The server ships with the add-in.** The installer places it next to the add-in at `%LOCALAPPDATA%\OutlookAI\Setup\McpServer\OutlookAI.McpServer.exe`. There is nothing to build, copy, or register by hand.
 
-**Prerequisite — the .NET 10 runtime.** The server is a framework-dependent .NET 10 application and needs the *base* .NET runtime (`Microsoft.NETCore.App` 10.x; **not** the Desktop runtime — the server uses no WinForms or WPF). The installer detects it and downloads/installs it on demand, exactly as it already does for .NET Framework 4.8 and the VSTO runtime, and only on an **interactive** install (see [Automatic Updates](#automatic-updates) for why a silent auto-update skips prerequisites). The add-in itself never needs it — if the runtime is missing, the compose sidebar keeps working and only the mail server is unavailable. The add-in says so in [OutlookAI Settings](#outlook-tuning-and-settings) and names the download page: <https://dotnet.microsoft.com/download/dotnet/10.0>. Install it, restart Outlook, and the registration completes itself.
+**Its .NET runtime — the installer brings it.** The server is a framework-dependent .NET 11 application and runs on the *base* .NET runtime (`Microsoft.NETCore.App` 11.x; **not** the Desktop runtime — the server uses no WinForms or WPF). The installer downloads Microsoft's own runtime package, about 40 MB, checks it against the SHA-512 Microsoft publishes for it, and unpacks it into `%LOCALAPPDATA%\OutlookAI\dotnet`: your profile, with no administrator rights and nothing installed machine-wide. It does that on every install and every silent update, and once the runtime is there it downloads nothing. The installer itself stays small, because the runtime is never inside it. On a machine without internet, put Microsoft's `dotnet-runtime-11.0.0-win-x64.zip` beside the installer and it is used instead, checked the same way. The server looks for its own copy first and then for a machine-wide .NET 11, if you have one; uninstalling removes its copy. The add-in itself never needs it — if the runtime is missing, the compose sidebar keeps working and only the mail server is unavailable. The add-in says so in [OutlookAI Settings](#outlook-tuning-and-settings): run the installer again, or install the .NET 11 runtime from <https://dotnet.microsoft.com/download/dotnet/11.0>, restart Outlook, and the registration completes itself.
 
 **Nothing is registered until you say so.** A fresh install registers the server with Claude Code *nowhere*. You choose where it applies, in [OutlookAI Settings](#outlook-tuning-and-settings) under **Mail server in Claude Code**:
 
@@ -230,7 +230,7 @@ The reconcile is deliberately conservative with a file it does not own:
 - the replacement is atomic and keeps the previous file as `~/.claude.json.outlookai-backup`
 - an entry that is already correct writes nothing at all — including a hand-written one that leaves `"type"` out, which is a perfectly valid way to spell a stdio server
 
-It also stands down and reports instead of guessing: when Claude Code is not installed on the machine, when there is no server next to the add-in (the developer case below), or when the .NET 10 runtime is missing.
+It also stands down and reports instead of guessing: when Claude Code is not installed on the machine, when there is no server next to the add-in (the developer case below), or when the mail server's .NET 11 runtime is missing.
 
 **Where the state is reported** — two places:
 
@@ -239,11 +239,11 @@ It also stands down and reports instead of guessing: when Claude Code is not ins
 
 **Updates and running server processes.** Claude Code spawns one server process per agent session, so several are typically running when an update lands. The installer stops the instances running from the install directory before it replaces any file — matched by executable path, so a build running from a source tree is left alone. A session whose server was stopped simply spawns a fresh one on its next mail call; nothing is persisted in the server process, so nothing is lost.
 
-**Developer setup (secondary path)** — building the server from source and pointing Claude Code at the build output still works and is what contributors do. It needs the .NET 10 SDK:
+**Developer setup (secondary path)** — building the server from source and pointing Claude Code at the build output still works and is what contributors do. It needs the .NET 11 SDK:
 
 ```
 dotnet build McpServer/OutlookAI.McpServer/OutlookAI.McpServer.csproj -c Release
-claude mcp add --scope user outlookai <repo>\McpServer\OutlookAI.McpServer\bin\Release\net10.0-windows\OutlookAI.McpServer.exe
+claude mcp add --scope user outlookai <repo>\McpServer\OutlookAI.McpServer\bin\Release\net11.0-windows\OutlookAI.McpServer.exe
 ```
 
 A developer add-in build has no server installed beside it, so the reconcile recognizes that case and leaves such a registration alone. If an installed OutlookAI is also present, it *will* take the registration over on the next Outlook start — that is the drift healing doing its job, and re-running the command above points it back at your build.
@@ -334,7 +334,7 @@ The compose sidebar is focused on email composition assistance. The following ar
 | **Outlook** | Microsoft Outlook 2016 or later (2016, 2019, 2021, 2024) — classic desktop version only. Outlook 2016 is the minimum supported version. |
 | **Runtime** | .NET Framework 4.8 |
 | **VSTO Runtime** | [Visual Studio Tools for Office Runtime](https://aka.ms/VSTORuntimeDownload) (downloaded and installed automatically if missing — requires admin elevation) |
-| **.NET 10 Runtime** | Base runtime only (`Microsoft.NETCore.App` 10.x — [download](https://dotnet.microsoft.com/download/dotnet/10.0)), required by the [mail server](#mcp-server-mail-search-reading-and-drafting-for-ai-agents), not by the add-in. Downloaded and installed automatically when you run the installer yourself (requires admin elevation). |
+| **.NET 11 Runtime** | Base runtime only (`Microsoft.NETCore.App` 11.x), required by the [mail server](#mcp-server-mail-search-reading-and-drafting-for-ai-agents), not by the add-in. The installer downloads the server's own copy into `%LOCALAPPDATA%\OutlookAI\dotnet` on every install and update — no admin elevation, nothing machine-wide. A machine-wide .NET 11 ([download](https://dotnet.microsoft.com/download/dotnet/11.0)) works too. |
 | **Claude Code CLI** | [Install instructions](https://code.claude.com/docs/en/setup) — requires a Claude Pro or Max subscription. Install it with the native installer: the add-in looks for the CLI at `%USERPROFILE%\.local\bin\claude.exe`, which is where that installer puts it. |
 
 ---
@@ -362,7 +362,7 @@ The compose sidebar is focused on email composition assistance. The following ar
 
 1. Download the latest `.exe` installer from [GitHub Releases](../../releases/latest)
 2. Run the installer — it installs to your local AppData with no admin privileges required
-3. If .NET Framework 4.8, the VSTO Runtime, or the .NET 10 Runtime is missing, the installer downloads and installs it automatically (admin elevation is prompted only for these system-level prerequisites)
+3. If .NET Framework 4.8 or the VSTO Runtime is missing, the installer downloads and installs it automatically (admin elevation is prompted only for these system-level prerequisites). The mail server's .NET 11 runtime it downloads into your profile, without elevation
 4. Open Outlook. The first time it starts after installing, Office shows a **Microsoft Office Customization Installer** dialog headed *"Publisher cannot be verified"* — click **Install**. This is expected, not an error: OutlookAI is signed with its own certificate rather than a commercial one, so Office cannot vouch for the publisher. You are asked once per machine; **Don't Install** leaves the add-in permanently unloaded. [Troubleshooting](#troubleshooting) explains the prompt in full, with the certificate thumbprint if you want to verify it before clicking.
 5. The **AI Assistant** button appears in the ribbon on compose windows
 6. The [mail server](#mcp-server-mail-search-reading-and-drafting-for-ai-agents) is installed alongside the add-in, but nothing is registered with Claude Code until you choose where. Outlook asks you shortly after it starts whether to make it available in all your Claude Code projects; you can also decide — or change your mind — in **OutlookAI Settings** on the Mail ribbon, under **Mail server in Claude Code**, where **Add to a specific project…** covers a single project instead. See [Setup and Registration](#setup-and-registration). (Upgrading from an earlier version? Your existing registration is kept, the tick box starts on, and you are asked nothing.)
@@ -375,7 +375,7 @@ The installer registers the add-in directly via the Windows registry and install
 - Visual Studio 2022
 - Office/SharePoint development workload
 - .NET desktop development workload
-- .NET 10 SDK (for the mail server, and for `OutlookAI.Core`, which the add-in references)
+- .NET 11 SDK (for the mail server, and for `OutlookAI.Core`, which the add-in references)
 
 **Steps:**
 1. Clone this repository
@@ -395,7 +395,7 @@ powershell -File Tools\Switch-AddInBuild.ps1 -Status                     # which
 
 Without `-Execute` the first two only show what they would change. The dev build is copied out of the build folder first, so later builds cannot change it underneath you; it carries version 99.99.99.0, so the add-in's updater leaves it alone; and it does not include the mail server. Changes take effect the next time Outlook starts — the script never starts or closes Outlook.
 
-The mail server is a separate .NET 10 project built with `dotnet`, not through the Visual Studio solution — see [`McpServer/README.md`](McpServer/README.md) for its build, test, and registration instructions. The release build publishes it (framework-dependent, win-x64) into the installer payload and stamps it with the **same version as the add-in**, so one release produces one version across the whole product; local developer builds of both carry `99.99.99.0`, which is also the marker the auto-updater uses to leave a developer build alone.
+The mail server is a separate .NET 11 project built with `dotnet`, not through the Visual Studio solution — see [`McpServer/README.md`](McpServer/README.md) for its build, test, and registration instructions. The release build publishes it (framework-dependent, win-x64) into the installer payload and stamps it with the **same version as the add-in**, so one release produces one version across the whole product; local developer builds of both carry `99.99.99.0`, which is also the marker the auto-updater uses to leave a developer build alone.
 
 ---
 
@@ -592,7 +592,7 @@ Only an npm install of Claude Code can produce this — the native installer shi
 Open **OutlookAI Settings** on the Mail ribbon and read the status line under **Mail server in Claude Code** — it names the actual cause:
 
 - *"Not registered for all your projects"* — that is the default on a fresh install. Tick **Make available in all my Claude Code projects**, or add the one project you need with **Add to a specific project…** (see [Setup and Registration](#setup-and-registration)).
-- *"needs the .NET 10 runtime"* — install the base runtime from [dotnet.microsoft.com](https://dotnet.microsoft.com/download/dotnet/10.0) and restart Outlook. This is the usual outcome after a silent auto-update, which does not install prerequisites.
+- *"needs the .NET 11 runtime"* — setup could not put the mail server's runtime in place: no internet when it ran, or the download failed. Run the installer again, or install the base runtime from [dotnet.microsoft.com](https://dotnet.microsoft.com/download/dotnet/11.0), then restart Outlook. Setup's log of it is `%LOCALAPPDATA%\OutlookAI\dotnet-setup.log`.
 - *"Claude Code was not found"* — install the Claude Code CLI (see [Claude Code Setup](#claude-code-setup)) and restart Outlook.
 - *"not installed alongside the add-in"* — you are running a developer build of the add-in; register a built server yourself (see [Setup and Registration](#setup-and-registration)).
 - *"Claude Code's configuration could not be read"* — `~/.claude.json` is not valid JSON. The add-in deliberately refuses to rewrite a file it cannot parse. Fix or restore the file, then press **Apply now**.

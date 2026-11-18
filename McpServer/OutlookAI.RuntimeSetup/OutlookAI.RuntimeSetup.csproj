@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      THE MAIL SERVER'S PRIVATE .NET RUNTIME, FETCHED ON DEMAND (Q172, decided by the maintainer
+      2026-11-18). The server runs on .NET 11 from a copy of Microsoft's own runtime package in
+      %LOCALAPPDATA%\OutlookAI\dotnet. Setup runs this helper after it copies its files - every
+      install and every silent update, with no administrator rights - and the helper downloads that
+      package, holds it to the length and SHA-512 Microsoft's release metadata publishes, and unpacks
+      it there. The runtime is never inside the installer: the updater refuses a download over 50 MB.
+      PrivateRuntime.cs is the one class that downloads, writes and deletes; Program.cs only reads
+      the arguments.
+
+      net48 because it runs BEFORE any .NET 11 is on the machine: .NET Framework 4.8 is part of every
+      Windows OutlookAI supports, and the add-in runs on it too. net11.0-windows as well, only so that
+      the test project can reference it and test PrivateRuntime; that build is never shipped.
+    -->
+    <OutputType>Exe</OutputType>
+    <TargetFrameworks>net48;net11.0-windows</TargetFrameworks>
+    <RootNamespace>OutlookAI.RuntimeSetup</RootNamespace>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Lets `dotnet build` compile the net48 target without a Visual Studio install, as for Core. -->
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net48'">
+    <!-- In the box on .NET 11, and not in net48's default reference set. -->
+    <Reference Include="System.IO.Compression" />
+    <Reference Include="System.IO.Compression.FileSystem" />
+    <Reference Include="System.Net.Http" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      Where the runtime goes, which version it is and when it is complete: OutlookAI.Core.AddIn's
+      ServerDotnetRuntime, the one copy the add-in asks too (Q154).
+    -->
+    <ProjectReference Include="..\OutlookAI.Core\OutlookAI.Core.csproj" />
+  </ItemGroup>
+
+</Project>

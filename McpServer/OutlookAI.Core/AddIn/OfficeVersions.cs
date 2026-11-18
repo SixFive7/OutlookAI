@@ -32,8 +32,8 @@ namespace OutlookAI.Core.AddIn
     /// Detection reports "nothing found" as a <c>bool</c> plus an <c>out</c> that is always
     /// assigned rather than a null string: the file was written to compile as C# 7.3 inside the
     /// add-in and nullable-enabled inside Core, before stage S3 of the code-sharing refactor moved
-    /// it here. The add-in still compiles as C# 7.3, so nothing here may need a newer language to
-    /// call.
+    /// it here. The add-in compiles as C# 15 on .NET Framework 4.8 since Q172 (2026-11-18), so nothing
+    /// here may need the modern runtime to call.
     /// </para>
     ///
     /// <para>

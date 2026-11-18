@@ -14,7 +14,8 @@ namespace OutlookAI.Core.AddIn
     /// ONE TABLE FOR BOTH (Q154: no duplicated code). <see cref="CachedModeSettings"/> writes the
     /// user's own period for new accounts from it, and Core's <c>AccountOfflinePeriodWriter</c>
     /// writes an existing account's own pair from it. OutlookAI.Core's, in the add-in namespace
-    /// (Q163 (a)); the add-in compiles as C# 7.3, so nothing here may need a newer language to use.
+    /// (Q163 (a)); the add-in compiles as C# 15 on .NET Framework 4.8 (C# 7.3 until Q172), so nothing
+    /// here may need the modern runtime to use.
     /// </para>
     /// </summary>
     public static class OfflinePeriods
