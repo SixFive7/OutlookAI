@@ -369,16 +369,16 @@ spelling".** See the decision log below.
 
 ## Decision log
 
-### 2026-11-18 - the maintainer's answers to Q138, Q163 to Q182 and Q194 to Q214
+### 2026-11-18 - the maintainer's answers to Q138, Q163 to Q182 and Q194 to Q215
 
 **What this is.** Forty-two questions went to the maintainer on 2026-11-18, and he sent 41 one-line
-answers the same day; a forty-third, Q214, raised by his answer to Q173, was asked and answered that
-day too. The questions as asked, each with its primer, context, directions and recommendation, are
-in `.work\open-questions-2026-11-18.md` of his checkout, which is gitignored, so not in a clone;
-what the decisions rest on is restated here, with placeholders where the questions named real
-mailboxes. Words in quotes are his, verbatim, spelling included. Where he answered "rec", the
-recommendation he had been given was taken, and it is spelled out. Five of the 42 did not end in a
-plain one-line decision:
+answers the same day; two more were asked and answered that day too: Q214, raised by his answer to
+Q173, and Q215, raised by the work on Q166. The questions as asked, each with its primer, context,
+directions and recommendation, are in `.work\open-questions-2026-11-18.md` of his checkout, which
+is gitignored, so not in a clone; what the decisions rest on is restated here, with placeholders
+where the questions named real mailboxes. Words in quotes are his, verbatim, spelling included.
+Where he answered "rec", the recommendation he had been given was taken, and it is spelled out.
+Five of the 42 did not end in a plain one-line decision:
 - **Q172 and Q173** drew questions back from him, and were decided the same day after follow-ups;
   the exchanges are quoted below.
 - **Q197 and Q199**, which concern CodeQL alone, are superseded by Q173 (b). Q197's line, which
@@ -388,12 +388,12 @@ plain one-line decision:
 One decision was taken on his behalf the same day, under his answer to Q131 and Q132; it is
 recorded with Q207.
 
-#### Code sharing - Q163 to Q172
+#### Code sharing - Q163 to Q172, Q215
 
 **Primer.** Q154 (2026-11-17) made "no code duplicated" a rule and let the add-in reference
 OutlookAI.Core's net48 build "behind a small interface". A read-only survey of master 9f4646d found
 73 groups of duplicated code (`.work\dup-survey-2026-11\` of his checkout). These ten asked how the
-refactor goes; `TODO.md` holds it.
+refactor goes, and Q215 followed from one of them; `TODO.md` holds the refactor.
 
 - **Q163 - logic only the add-in runs.** Some pure code is used by the add-in alone: the update
   schedule, the decision whether to register the MCP server, the prompt checks, the settings
@@ -415,7 +415,16 @@ refactor goes; `TODO.md` holds it.
   worst case is one wrapper, copied 15 times - because some scripts travel alone to a VM (the setup
   disk carries one file), and the Windows PowerShell 5.1 check sees only helpers in the same file.
   *"166 b"*. **Decided: (b)**: a module for the scripts that travel with others, and a check that
-  fails when a copy in a script that travels alone differs from the module.
+  fails when a copy in a script that travels alone differs from the module. The "module" became a
+  file the scripts dot-source: stream R2 measured that under Windows PowerShell 5.1 the helpers
+  cannot be a .psm1 module, because the module's scope loses the callers' error settings. Where the
+  file lives is Q215.
+- **Q215 - where Q166 (b)'s shared file lives.** A new question, raised by stream R2's work on
+  Q166 (b) and answered the same day. Directions: (a) `Testbed/guest/` - the routes that copy
+  scripts to the VMs stay as they are, and `Tools/` starts depending on `Testbed/`; (b) `Tools/`,
+  with every route that copies scripts to a guest also copying the file; (c) a new top-level folder,
+  delivered as in (b); (d) only the host's scripts share it, for now; (e) two files kept identical.
+  *"215 rec"*. **Decided: the recommendation, (a)**: the file lives in `Testbed/guest/`.
 - **Q167 - how the add-in's build gets Core.** The add-in is an old-style Office project, built only
   by the two scripts that keep it from registering itself in his Outlook (Q81). *"167 a"*.
   **Decided: (a)**: a project reference, as the add-in had to PolicyWriter until Q145 (a), with
