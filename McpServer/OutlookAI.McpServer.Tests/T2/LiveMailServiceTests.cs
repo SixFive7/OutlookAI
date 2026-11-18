@@ -334,7 +334,7 @@ public sealed class LiveMailServiceTests
         {
             Assert.True(File.Exists(saved.SavedPath), "saved attachment file must exist");
             Assert.True(saved.SizeBytes > 0);
-            _output.WriteLine($"saved: bytes={saved.SizeBytes} index={saved.AttachmentIndex} dirDefault={saved.SavedPath.StartsWith(MailService.DefaultAttachmentDirectory, StringComparison.OrdinalIgnoreCase)}");
+            _output.WriteLine($"saved: bytes={saved.SizeBytes} index={saved.AttachmentIndex} dirDefault={saved.SavedPath.StartsWith(AttachmentFileWriter.DownloadFolder, StringComparison.OrdinalIgnoreCase)}");
 
             string extension = Path.GetExtension(saved.SavedPath).ToLowerInvariant();
             if (extension is ".txt" or ".csv" or ".htm" or ".html" or ".xml" or ".json" or ".eml")

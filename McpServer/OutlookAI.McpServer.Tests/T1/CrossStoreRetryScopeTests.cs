@@ -119,9 +119,10 @@ public sealed class CrossStoreRetryScopeTests
                     _ = service.Read(BareEntryId);
                     break;
                 case nameof(IOutlookSession.TrySaveAttachment):
-                    // Rooted, because that is all the tool validates, and never touched: the
-                    // directory is created inside the COM session, which here is a stand-in.
-                    _ = service.SaveAttachment(BareEntryId, 1, @"C:\OutlookAI-test-never-written");
+                    // A folder inside the download folder, because that is the only kind the tool
+                    // accepts (Q198 (a)), and never made: the server only reads the disk to check it,
+                    // and the folder is created inside the COM session, which here is a stand-in.
+                    _ = service.SaveAttachment(BareEntryId, 1, "never-written");
                     break;
                 case nameof(IOutlookSession.TryDisplayItem):
                     _ = service.OpenInOutlook(BareEntryId);
