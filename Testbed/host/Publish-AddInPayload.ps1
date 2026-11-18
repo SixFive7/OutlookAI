@@ -1607,7 +1607,7 @@ try {
             # And the Core beside it, which a commit from before Q167 does not have.
             if ($Release -and (Test-Path -LiteralPath (Join-Path $publish 'OutlookAI.Core.dll'))) {
                 $coreDllVersion = (Get-Item -LiteralPath (Join-Path $publish 'OutlookAI.Core.dll')).VersionInfo.FileVersion
-                if ($coreDllVersion -ne $Version) { $buildProblems += "The flattened OutlookAI.Core.dll is $coreDllVersion, not $Version: the release's Version did not reach Core's build." }
+                if ($coreDllVersion -ne $Version) { $buildProblems += "The flattened OutlookAI.Core.dll is $coreDllVersion, not $Version - the release's Version did not reach Core's build." }
                 else { Say "  publish\OutlookAI.Core.dll carries $coreDllVersion" }
             }
             # The PUBLIC half only, DER - what the release workflow's Export-Certificate -Type CERT wrote. The
