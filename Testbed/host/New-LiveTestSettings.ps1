@@ -1673,6 +1673,17 @@ function Get-ExchangeAddressPlaceholders {
     return @($found | Sort-Object -Unique)
 }
 
+# The Exchange VM's address placeholders a render has to resolve: the guest's own settings', and - for the
+# Exchange VM alone - its accounts'. Another guest renders none of the accounts, so only a placeholder in its
+# own settings refuses it. Until 2026-11-18 the accounts' were counted for every guest, and every render of
+# the Outlook guests refused (found by stream K's runs on master c85becc).
+function Get-RenderPlaceholders {
+    param($GuestSettings, [object[]] $ExchangeAccounts, [bool] $IsExchangeVm)
+    $own = @(Get-ExchangeAddressPlaceholders $GuestSettings)
+    if (-not $IsExchangeVm) { return $own }
+    return @($own + @(Get-ExchangeAddressPlaceholders @($ExchangeAccounts | ForEach-Object { $_.address })))
+}
+
 # Role -> address, one per account exchangeVm.accounts records, each read by $AddressOf from the
 # account's credential file. Two roles naming one mailbox are refused: the hub and a bystander would
 # be the same store, written and watched at once.
@@ -2193,6 +2204,10 @@ function Invoke-SelfTest {
     [void](Resolve-ExchangeAddressPlaceholders -Value 'delegate@exchange-vm.invalid' -Map $map -Problems $placeholderProblems -Where 'x')
     Test-Case 'a placeholder for a role no account has is a problem' 1 $placeholderProblems.Count
     Test-Case 'the placeholders are found wherever they are' 'bystander@exchange-vm.invalid|hub@exchange-vm.invalid' (@(Get-ExchangeAddressPlaceholders ([pscustomobject]@{ a = 'hub@exchange-vm.invalid'; b = @('x', 'bystander@exchange-vm.invalid', 'hub@exchange-vm.invalid'); c = $null })) -join '|')
+    $accountsOnly = @([pscustomobject]@{ address = 'hub@exchange-vm.invalid'; credentialFile = 'exchange-credentials-ai-test.json'; role = 'hub' })
+    Test-Case 'another guest is not refused for the Exchange VM''s accounts' 0 @(Get-RenderPlaceholders ([pscustomobject]@{ testHubStoreDisplayName = 'tier@vm.invalid' }) $accountsOnly $false).Count
+    Test-Case 'but is for a placeholder in its own settings' 1 @(Get-RenderPlaceholders ([pscustomobject]@{ testHubStoreDisplayName = 'hub@exchange-vm.invalid' }) $accountsOnly $false).Count
+    Test-Case 'and the Exchange VM resolves its accounts'' too' 'hub@exchange-vm.invalid' (@(Get-RenderPlaceholders ([pscustomobject]@{ testHubStoreDisplayName = 'x@vm.invalid' }) $accountsOnly $true) -join '|')
     $threw = ''
     try { [void](Get-ExchangeAddressMap -Accounts @($recorded[0], [pscustomobject]@{ address = 'hub@exchange-vm.invalid'; credentialFile = 'exchange-credentials.json'; role = 'hub' }) -AddressOf $fakeAddressOf) } catch { $threw = $_.Exception.Message }
     Test-Case 'two roles naming one mailbox are refused' $true $threw.Contains('same address')
@@ -2378,7 +2393,7 @@ if ($null -ne $exchangeRecord -and (Test-IsJsonObject $exchangeRecord.Value)) {
 
 # The Exchange VM's real addresses, read now from its credential files (Q189 (b); see
 # Get-ExchangeAddressPlaceholders): testbed.json holds only placeholders for them.
-$placeholders = @(Get-ExchangeAddressPlaceholders $guestProperty.Value) + @(Get-ExchangeAddressPlaceholders @($exchangeAccounts | ForEach-Object { $_.address }))
+$placeholders = @(Get-RenderPlaceholders $guestProperty.Value $exchangeAccounts $isExchangeVm)
 if ($placeholders.Count -gt 0) {
     if (-not $isExchangeVm) {
         throw "REFUSING: liveTestSettings.$VMName holds $(@($placeholders | Sort-Object -Unique) -join ', '), the Exchange VM's address placeholders, and '$VMName' is not the Exchange VM. Nothing was written."
