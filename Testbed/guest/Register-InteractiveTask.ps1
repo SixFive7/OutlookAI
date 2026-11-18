@@ -297,8 +297,11 @@ Write-Host "job $jobId -> $jobDir"
 if ($RunLevel -ne 'Highest') { Write-Host "run level: $RunLevel - the work runs NOT elevated, and refuses (exit 4) if its token is elevated anyway" }
 Start-ScheduledTask -TaskName $TaskName
 
-$deadline = (Get-Date).AddSeconds($TimeoutSeconds)
-while ((Get-Date) -lt $deadline) {
+# The wait runs on a stopwatch, never on the wall clock: on a frozen-clock guest the wall clock has twice
+# moved far ahead in the middle of a live suite, and a wall-clock deadline then ended the wait while the
+# work still ran - "No exit.txt after 9000 s" 34 min 50 s in (Docs/live-tier-on-the-vm.md section 4.5).
+$waited = [System.Diagnostics.Stopwatch]::StartNew()
+while ($waited.Elapsed.TotalSeconds -lt $TimeoutSeconds) {
     if (Test-Path -LiteralPath $exitPath) { break }
     Start-Sleep -Seconds 2
 }

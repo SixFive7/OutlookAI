@@ -4149,6 +4149,16 @@ of its items on every run - and, only where no corpus is declared, the last 30 d
 test computes no window of its own). On a frozen guest the two coincide; on a real clock the test now keeps timing
 a date predicate over the big store after 2026-11-01.
 
+**An open observation, 2026-11-18: twice a frozen guest's wall clock moved ahead in the middle of a run.**
+`Testbed/guest/Register-InteractiveTask.ps1` waited for the suite on the guest's wall clock, and on
+`OutlookAI-Unindexed` it reported "No exit.txt after 7200 s" 40 min 17 s after the host started the call (a Q149 run,
+`20261117-165153-unindexed`) and "No exit.txt after 9000 s" 34 min 50 s in (another, `20261118-041455-unindexed`) -
+each time with the suite still running. So the clock moved at least 1 h 20 min and 1 h 55 min ahead; the first run
+then met "The credential is invalid", which is what the old checkpoint's password, expiring 24 days after its instant
+(section 4.5a), does on a clock moved to the real date. Time sync read off before both and before the next run on
+that guest, and neither branch sets the clock or the time zone. The cause is open. The guest scripts' waits run on a
+stopwatch since, so a moved clock no longer ends them early.
+
 ### 4.5a The guest account's password, set never to expire - every checkpoint a runner restores, 2026-11-17
 
 **Why this section exists.** Windows' default maximum password age is 42 days, and nothing in the testbed

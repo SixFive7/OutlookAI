@@ -2233,6 +2233,36 @@ its mailbox tests on, and change nothing you install.
   when the assistant kills the helper outright, which is what happens when Outlook has genuinely
   stopped responding and when a session ends abruptly.
 
+- ✅ **On a busy host the test machines give Outlook 20 minutes to open, and say why when it does not.**
+  Eight live runs on the two indexed test machines stopped on 2026-11-18, between 03:49 and 05:16
+  host time, because Outlook had not shown its window within the 10 minutes
+  `Testbed/guest/Start-OutlookUnelevated.ps1` gave it. Outlook there took 94 to 585 s on 2026-11-17
+  and 125 s at 02:50 that night; in that window the host's processors were saturated, the unindexed
+  machines' Outlook took 13 to 45 s instead of 6, and copying a run in took 6 to 12 minutes instead
+  of under 3. The starter waits 20 minutes now, and when the time runs out it records Outlook's
+  processor time, how much of it fell in the last minute, and its visible windows, so a slow start
+  can be told from one a dialog blocks. Its `-SelfTest` pins the default, the report and that no
+  wait reads the wall clock.
+
+- ✅ **The test machines' waits run on a stopwatch, so a guest clock that moves cannot end them early.**
+  Twice a live suite was taken for finished while it still ran: on the unindexed test machine, whose
+  clock is frozen, `Testbed/guest/Register-InteractiveTask.ps1` reported "No exit.txt after 7200 s"
+  40 min 17 s into one run and "after 9000 s" 34 min 50 s into another, because it read its deadline
+  off the guest's wall clock and that clock had moved ahead. Why it moved is open
+  (`Docs/live-tier-on-the-vm.md` section 4.5). That wait, and every wait in
+  `Start-OutlookUnelevated.ps1`, measure elapsed time with a stopwatch now.
+
+- ✅ **A test machine's .NET check no longer fails a working SDK because it could not read an exit code.**
+  `Testbed/guest/Install-DotnetSdk.ps1 -Verify` stopped two live runs on the indexed test machines
+  on 2026-11-18 with "dotnet --list-sdks exited " and an empty code, while the SDK it wanted was
+  listed on the next line. `Start-Process` keeps no handle to the process it starts, and reading
+  `.Handle` straight away narrows that gap without closing it: on a busy host, dotnet had already
+  gone. Each check passes on exit 0, or now on an unread code when its own output proves the step
+  (the SDK listed, the probe's sentinel printed, the tests counted) and says so in its log. An
+  unread code without that proof still fails, and the message reads `(unread)` instead of nothing.
+  Keeping the handle instead would have meant reading dotnet's output through pipes, which a build
+  server that inherits one holds open after dotnet exits.
+
 - ✅ **The index-refile measurement no longer fails when Outlook lists a moved folder late.**
   The live test that times how fast the index follows a folder rename and move reads the folder's
   ID under its new parent right after moving it. On the copy of the indexed test machine the parent
