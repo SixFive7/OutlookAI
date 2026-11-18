@@ -1703,6 +1703,8 @@
   (Q165 (c)), and the pane driven on a test machine (Q168 (b)); S6, the server's own repetition
   (S01-S14). In parallel: the rest of the shared test code (S5a), the PowerShell helpers (S7), and
   the rules restated in C# and PowerShell as shared C# source (Q171).
+  S7 also takes the two MCP stdio clients left beside `Testbed/guest/McpStdioClient.ps1`:
+  `Invoke-GuestMeasure.ps1`'s, kept as found, and `Measure-PinWindows.ps1`'s C# session class.
 
 - [ ] **Let the add-in's AI choose the signature by itself, once the add-in uses OutlookAI.Core (Q158
   and Q162, decided 2026-11-17).** Signatures are managed through the MCP server only; the add-in
