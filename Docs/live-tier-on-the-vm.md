@@ -4355,6 +4355,16 @@ of its items on every run - and, only where no corpus is declared, the last 30 d
 test computes no window of its own). On a frozen guest the two coincide; on a real clock the test now keeps timing
 a date predicate over the big store after 2026-11-01.
 
+**An open observation, 2026-11-18: twice a frozen guest's wall clock moved ahead in the middle of a run.**
+`Testbed/guest/Register-InteractiveTask.ps1` waited for the suite on the guest's wall clock, and on
+`OutlookAI-Unindexed` it reported "No exit.txt after 7200 s" 40 min 17 s after the host started the call (a Q149 run,
+`20261117-165153-unindexed`) and "No exit.txt after 9000 s" 34 min 50 s in (another, `20261118-041455-unindexed`) -
+each time with the suite still running. So the clock moved at least 1 h 20 min and 1 h 55 min ahead; the first run
+then met "The credential is invalid", which is what the old checkpoint's password, expiring 24 days after its instant
+(section 4.5a), does on a clock moved to the real date. Time sync read off before both and before the next run on
+that guest, and neither branch sets the clock or the time zone. The cause is open. The guest scripts' waits run on a
+stopwatch since, so a moved clock no longer ends them early.
+
 ### 4.5a The guest account's password, set never to expire - every checkpoint a runner restores, 2026-11-17
 
 **Why this section exists.** Windows' default maximum password age is 42 days, and nothing in the testbed
@@ -4595,8 +4605,9 @@ CPU read 82 to 100 % in twelve samples over a minute, with 35 GB of its 128 GB a
 run took 17 to 19 minutes, its tests 11 to 12, where a run alone took 9 to 10 and its tests 6 - so three
 runs finished in 19 minutes that would have taken about 30 one after another, and the one test that
 times eight writers against each other failed on both clones and passed alone. Memory, the one budget
-the pool guards, was never short; CPU was. Whether the pools should also keep CPU free for the
-maintainer is open: `TODO.md`.
+the pool guards, was never short; CPU was. On 2026-11-18 the maintainer decided that a run starts
+only while the host has processor time to spare, and that he can pause the testbed (Q195 (e)):
+section 4.9.
 
 ### 4.8 The leaked signing key: Windows' Root-store question and VSTO's trust entries - `OutlookAI-Unindexed2`, 2026-11-17 (Q193 follow-ups)
 
@@ -5068,6 +5079,93 @@ not running in `CP-09`); `CP-10-SDK11` taken running at 2026-11-18T05:01:38Z, a 
 `CP-09-OFFICE-REARMED`, and the VM saved. It is the newest checkpoint: the live runner's resting
 checkpoint for this VM, the one a run that names `-Checkpoint` restores; a run that names none carries
 the state forward as before.
+
+### 4.13 The load limit and the pause switch - every testbed VM, 2026-11-18 (Q195 (e))
+
+**Why this section exists.** Section 4.7 ended on an open question: the pools kept memory free for the
+maintainer and nothing kept processor time free, and with every member busy the host read 82 to 100 %
+busy. He decided on 2026-11-18 (Q195 (e)): a new run starts only while the host's processors are below
+about 70 % busy, measured over a sensible window, and otherwise waits and says so - the build-VM
+runner, the live-tier runner and the start of a clone alike; and a pause switch he can flip when he
+needs the PC, under which runs already going finish and no new one starts until it is flipped back.
+`Testbed/host/TestbedLoad.ps1` is the gate every runner reads, `Testbed/host/Set-TestbedPause.ps1` the
+switch, `Testbed/README.md` section 5b the contract. Raw logs: `.work\q-load\` of the worktree
+`stream-q-testbed-load-limit`.
+
+**What "busy" is measured with, and why.** Measured on this host on 2026-11-18, with other agents'
+runs and builds going, every reading over the same window:
+
+| Window | GetSystemTimes | `\Processor(_Total)\% Processor Time` | `% Processor Utility` (Task Manager's) | Hypervisor logical processors, `% Total Run Time` | of which guest VPs / root VPs |
+| --- | --- | --- | --- | --- | --- |
+| 11.0 s | 62.0 % | 62.1 % | 81.3 % | 65.3 % | - |
+| 10.0 s | 44.9 % | 44.8 % | 58.7 % | 46.9 % | - |
+| 10.0 s | 46.3 % | 46.4 % | 59.0 % | 47.1 % | - |
+| 11.1 s | 63.6 % | - | - | 64.9 % | 22.4 / 42.4 points |
+| 10.1 s | 83.3 % | - | - | 85.3 % | 29.2 / 56.0 points |
+
+`GetSystemTimes` - kernel32's idle, kernel and user time of every logical processor since boot - reads
+what the `% Processor Time` counter reads, without a counter name in the machine's language (this one
+was installed in Dutch). It includes the VMs because this host runs the hypervisor's ROOT scheduler
+(the System log's Hyper-V-Hypervisor event 2: "Hypervisor scheduler type is 0x4", client Windows'
+default), under which the guests' virtual processors run as the host's own threads: in the last row
+the root partition's own virtual processors were busy 56.0 points of 85.3 and the guests' 29.2, and
+`GetSystemTimes` read 83.3 - both together, less the hypervisor's own 2 points. Under the core
+scheduler it would not see the VMs at all. `% Processor Utility`, which Task Manager shows, weighs
+frequency boost in and read 13 to 19 points higher; the limit is on time busy, as the decision says.
+
+**The window: 30 seconds.** Sampled every second for four minutes at about 60 % busy (37 looks, one every
+5 s):
+
+| Window | lowest | highest | mean | looks at or over 70 % |
+| --- | --- | --- | --- | --- |
+| 1 s | 36.4 % | 86.0 % | 60.2 % | 8 of 37 |
+| 10 s | 40.0 % | 80.5 % | 60.8 % | 7 of 37 |
+| 30 s | 47.5 % | 73.3 % | 62.3 % | 8 of 37 |
+| 60 s | 48.5 % | 72.1 % | 63.5 % | 2 of 37 |
+
+A 10-second look swings 40 points within a minute and would let a run in on any dip; a 60-second one
+is the smoothest but costs every run a minute before it starts. Thirty seconds is the first look's
+cost; a run that waits looks again on every turn of its wait, at the last 30 seconds of its own
+readings, without waiting them out again.
+
+**Runs that waited must not all start at once.** When the switch is turned off, or the load dips, every
+run that waited sees the same reading in the same few seconds - and a new run's load shows only after
+its VM has resumed and its build begun. So a run that takes a VM writes its start - the VM, and its
+virtual processors' share of the host's, 12.5 % for a build VM and 18.75 % for an Outlook guest - and
+every run counts the VMs others took in the last 120 seconds on top of what it measured. Reading those
+starts, deciding and writing one's own is one step, under `Enter-TestbedLeaseClaim` on a name no VM has.
+While the host is quiet this changes nothing: three build runs at 30 % count 30, 42.5 and 55 % and all
+start, as before.
+
+**In the queue (2026-11-18, once the polling cut of section 4.10 had landed).** The gate now sits
+inside the testbed's queue. Every turn of a queued build run, and every turn of a live run's wait for a
+guest, looks at the switch and the load first - before its place in the queue, any lease or any lock -
+and a turn the gate holds back touches nothing but keeps the run's ticket, so the queue's order holds
+when it opens. Once a member's lock or a guest's lease is had, the start is decided under the gate's
+claim, as before. Between looks a run sleeps on the testbed's files - the switch's file, the starts,
+the leases, the locks' owner files, the tickets - for at most 30 s, as a queued run does, where it
+looked every 5 s; turning the switch off wakes every waiting run at once. The live run's wait before
+its build and the clone maker's wait before its export sleep the same way.
+
+**The proofs** - real runs of this branch, while about ten other agents' runs, on runners from before
+the gate, kept every build VM and two guests busy and the host at 93 to 100 % (the gate's own reading
+and `\Processor(_Total)\% Processor Time` alike):
+
+| Proof | Run | Result |
+| --- | --- | --- |
+| A build run waits for the load, holding nothing | `20261118-033327-156063d5f0c0`, `Invoke-TestsOnBuildVm.ps1` at `156063d` | Its first look took 30 s; at 03:34:00 it printed `queued: the host's processors were 99 % busy over the last 30 s, not under the 70 % limit`, and once a minute after that `still waiting, since 03:34:00 (n min)`. No lease, no owner file and no `runs.log` line named it; `Set-TestbedPause.ps1` listed it with what it waited for and since when. Stopped at 03:42 to make room for the run on the final commit: it left only `Source.zip` and `request.json`, and the next status dropped its waiting record as the record of a process that had ended. |
+| The pause switch holds back a waiting build run and a live run before its build | the run above, and `20261118-033611-indexed-156063d5f0c0`, `Invoke-LiveTierOnGuest.ps1 -Kind Indexed` at `156063d` | `Set-TestbedPause.ps1 -On -Reason 'stream Q proof'` at 03:35:57: the build run's next line read `still waiting, since 03:34:00 (2 min): the testbed is paused, since 2026-11-18 03:35 ('stream Q proof')`; the live run, started at 03:36:12, printed `waiting: the testbed is paused, ...` a second later and built nothing - its run directory held only `run.log` - and took no lease. `-Off` at 03:37: both went back to waiting for the load, 99 %. |
+
+
+**The proofs in the queue** - real runs of this branch once the polling cut of section 4.10 was in it,
+while other agents' runs, on runners without the gate, kept the three build VMs and two Outlook guests
+busy and the host at 70 to 99 % (the gate's own readings):
+
+| Proof | Run | Result |
+| --- | --- | --- |
+| A queued build run waits at the gate holding nothing, keeps its place, and starts once the load drops | `20261118-081540-450d0af33ff9`, `Invoke-TestsOnBuildVm.ps1` at `450d0af` | Its first look took 30 s: `queued: the host's processors were 81 % busy over the last 30 s, not under the 70 % limit` at 08:16:16, then once a minute `still waiting, since 08:16:16 (n min)` at 70 to 89 %. At 08:20:54 the gate was open and the turn went on to the queue: `OutlookAI-Build is wanted first by run 20261118-080556-4850cdab3697, queued before this one`. While it waited its ticket stayed first among the build runs' - ahead of `20261118-082703-fcbe65d4c97a`, queued after it at 08:27 - and `Set-TestbedPause.ps1` listed it at 08:29: `since 08:16:16 (13 min), pid 113472 ... for the host's processors were 75 % busy over the last 30 s`. At 08:30:56: `gate: open - the pause switch is off, and the host's processors were 52 % busy over the last 52 s, under the 70 % limit - after 10 m 55 s at the gate`, and `VM: OutlookAI-Build2 is ours after 4 m 19 s in the queue`. Then the suite passed, 4513 of 4513, and the zone pass, 391 of 391; of its 43 self-tests one check failed, `Set-TestbedPause.ps1`'s that no start is written as `[]` - Windows PowerShell 5.1 writes `[`, two line breaks and `]` - and with the check reading it without white space every self-test passed in `20261118-084230-8a5dbdb8f31b`, 43 of 43, after `2 m 22 s` at the gate. 25 m 44 s in all: `gate 10 m 55 s`, `queue 4 m 19 s`. |
+| A live run waits at the gate before its build, and looks again in its wait for a guest | `20261118-081544-indexed-450d0af33ff9`, `Invoke-LiveTierOnGuest.ps1 -Kind Indexed` at `450d0af` | Before its build: `waiting: the host's processors were 81 % busy` at 08:16:15, once a minute after at 85 to 89 %, and `gate: open - ... 69 % busy over the last 30 s ... (3 m 19 s)` at 08:19:04. In its wait for a guest, after its own build: `gate: open - ... 63 % busy` at 08:20:55, the lease on the clone `OutlookAI-Indexed2` a second later, and its start in `gate\starts.json`: `OutlookAI-Indexed2`, 6 processors, 18.75 % of the host's. PASS, 2 of 2, 13 m 53 s in all, `gate 3 m 19 s` on its time line. |
+| Two runs held for 12 and 13 minutes, then stopped when master moved | `20261118-080023-c822b3f4ac91` and `20261118-080241-indexed-c822b3f4ac91` at `c822b3f` | Both waited at 76 to 99 % from 08:01 and 08:03, the build run listed by `Set-TestbedPause.ps1` at 08:02 (`since 08:01:00 (1 min), pid 117576 ... for the host's processors were 96 % busy`); the live run's gate opened at 53 % at 08:14:41 (`11 m 59 s`), three seconds before both were stopped to merge master. Neither had taken a lease, a lock or a VM. |
 
 ## 5. Which tests are in which bucket, and how to find out
 

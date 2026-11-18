@@ -37,7 +37,16 @@
     The Outlook profile to open, exactly as named under HKCU\Software\Microsoft\Office\16.0\Outlook\Profiles.
 
 .PARAMETER MaxMinutes
-    How long to wait for Outlook's main window.
+    How long to wait for Outlook's main window: 20 minutes since 2026-11-18. The indexed guests' Outlook
+    took 94 to 585 s to show it on 2026-11-17, and more than the old 10 minutes in all eight runs that
+    started it between 03:49 and 05:16 host time on 2026-11-18, while the host's processors were saturated and the
+    unindexed guests' Outlook took 13 to 45 s instead of 6. When the time runs out the starter says what
+    Outlook was doing: its processor time, how much of it fell in the wait's last minute, and its visible
+    windows - so a slow start can be told from a blocked one.
+
+    EVERY WAIT HERE RUNS ON A MONOTONIC CLOCK (Stopwatch), never on the wall clock: on a frozen-clock guest
+    the wall clock has twice moved far ahead in the middle of a run (Docs/live-tier-on-the-vm.md section
+    4.5), which would end a wall-clock wait early.
 
 .PARAMETER MinUptimeSeconds
     Start Outlook only once the guest has been up this long; 0, the default, starts it at once. The
@@ -66,7 +75,7 @@
 [CmdletBinding()]
 param(
     [string]   $Profile,
-    [int]      $MaxMinutes = 10,
+    [int]      $MaxMinutes = 20,
     [int]      $MinUptimeSeconds = 0,
     [string[]] $ExpectedUser = @('vmadmin'),
     [string]   $ExpectedComputerNamePrefix = 'OAI-',
@@ -121,6 +130,18 @@ public static class OaiUnelevatedWin {
         }, IntPtr.Zero);
         return found;
     }
+    public static string[] Visible(uint pid) {
+        System.Collections.Generic.List<string> found = new System.Collections.Generic.List<string>();
+        EnumWindows(delegate (IntPtr h, IntPtr l) {
+            uint p; GetWindowThreadProcessId(h, out p);
+            if (p != pid || !IsWindowVisible(h)) return true;
+            StringBuilder c = new StringBuilder(256); GetClassName(h, c, 256);
+            StringBuilder t = new StringBuilder(512); GetWindowText(h, t, 512);
+            found.Add("class " + c.ToString() + ", title '" + t.ToString() + "'");
+            return found.Count < 10;
+        }, IntPtr.Zero);
+        return found.ToArray();
+    }
     public static IntPtr Titled(uint pid, string title) {
         IntPtr found = IntPtr.Zero;
         EnumWindows(delegate (IntPtr h, IntPtr l) {
@@ -138,7 +159,7 @@ public static class OaiUnelevatedWin {
 }
 '@
     }
-    function Close-ActivationWizard([IntPtr] `$h, [datetime] `$t0) {
+    function Close-ActivationWizard([IntPtr] `$h, [System.Diagnostics.Stopwatch] `$clock) {
         `$cls = [OaiUnelevatedWin]::ClassOf(`$h)
         `$how = `$null
         try {
@@ -149,39 +170,62 @@ public static class OaiUnelevatedWin {
             if (`$close) { `$close.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke(); `$how = 'its Close button' }
         }
         catch { `$how = `$null }
-        `$until = (Get-Date).AddSeconds(10)
-        while (`$how -and [OaiUnelevatedWin]::Shown(`$h) -and (Get-Date) -lt `$until) { Start-Sleep -Milliseconds 500 }
+        `$closing = [System.Diagnostics.Stopwatch]::StartNew()
+        while (`$how -and [OaiUnelevatedWin]::Shown(`$h) -and `$closing.Elapsed.TotalSeconds -lt 10) { Start-Sleep -Milliseconds 500 }
         if ([OaiUnelevatedWin]::Shown(`$h)) {
             [void][OaiUnelevatedWin]::PostClose(`$h)
             `$how = 'WM_CLOSE to that window' + `$(if (`$how) { ' (its Close button did not close it)' } else { ' (no Close button could be pressed)' })
-            `$until = (Get-Date).AddSeconds(10)
-            while ([OaiUnelevatedWin]::Shown(`$h) -and (Get-Date) -lt `$until) { Start-Sleep -Milliseconds 500 }
+            `$closing.Restart()
+            while ([OaiUnelevatedWin]::Shown(`$h) -and `$closing.Elapsed.TotalSeconds -lt 10) { Start-Sleep -Milliseconds 500 }
         }
-        if ([OaiUnelevatedWin]::Shown(`$h)) { return ('ACTIVATION-WIZARD-STUCK {0:N0} s: class {1} - neither its Close button nor WM_CLOSE closed it' -f ((Get-Date) - `$t0).TotalSeconds, `$cls) }
-        return ('ACTIVATION-WIZARD-DISMISSED {0:N0} s: class {1}, by {2}' -f ((Get-Date) - `$t0).TotalSeconds, `$cls, `$how)
+        if ([OaiUnelevatedWin]::Shown(`$h)) { return ('ACTIVATION-WIZARD-STUCK {0:N0} s: class {1} - neither its Close button nor WM_CLOSE closed it' -f `$clock.Elapsed.TotalSeconds, `$cls) }
+        return ('ACTIVATION-WIZARD-DISMISSED {0:N0} s: class {1}, by {2}' -f `$clock.Elapsed.TotalSeconds, `$cls, `$how)
     }
+    # The wall clock only names the moment; every interval is the stopwatch's.
     `$t0 = Get-Date
+    `$clock = [System.Diagnostics.Stopwatch]::StartNew()
     Start-Process -FilePath '$e' -ArgumentList @('/profile', '"$p"') | Out-Null
     `$lines.Add(('started OUTLOOK.EXE /profile "{0}" at {1:HH:mm:ss}' -f '$p', `$t0))
     `$window = `$null
     `$wizards = 0
-    while (((Get-Date) - `$t0).TotalMinutes -lt $Minutes) {
+    `$lastMinute = `$null
+    while (`$clock.Elapsed.TotalMinutes -lt $Minutes) {
         `$o = Get-Process -Name OUTLOOK -ErrorAction SilentlyContinue | Select-Object -First 1
         if (`$o) {
             `$h = [OaiUnelevatedWin]::Titled([uint32]`$o.Id, '$w')
-            if (`$h -ne [IntPtr]::Zero -and `$wizards -lt 5) { `$wizards++; `$lines.Add((Close-ActivationWizard `$h `$t0)) }
+            if (`$h -ne [IntPtr]::Zero -and `$wizards -lt 5) { `$wizards++; `$lines.Add((Close-ActivationWizard `$h `$clock)) }
             `$window = [OaiUnelevatedWin]::Explorer([uint32]`$o.Id); if (`$window) { break }
+            # Outlook's processor time as the wait's last minute begins, to tell a busy start from a blocked one.
+            if (`$null -eq `$lastMinute -and `$clock.Elapsed.TotalMinutes -ge ($Minutes - 1)) {
+                `$lastMinute = [pscustomobject]@{ Seconds = `$clock.Elapsed.TotalSeconds; Cpu = `$(try { `$o.TotalProcessorTime.TotalSeconds } catch { `$null }) }
+            }
         }
         Start-Sleep -Seconds 3
     }
     if (`$window) {
-        `$lines.Add(('EXPLORER-UP {0:N0} s: {1}' -f ((Get-Date) - `$t0).TotalSeconds, `$window))
+        `$lines.Add(('EXPLORER-UP {0:N0} s: {1}' -f `$clock.Elapsed.TotalSeconds, `$window))
         # A wizard raised just after the Explorer window is closed the same way.
         Start-Sleep -Seconds 5
         `$h = [OaiUnelevatedWin]::Titled([uint32]`$o.Id, '$w')
-        if (`$h -ne [IntPtr]::Zero -and `$wizards -lt 5) { `$wizards++; `$lines.Add((Close-ActivationWizard `$h `$t0)) }
+        if (`$h -ne [IntPtr]::Zero -and `$wizards -lt 5) { `$wizards++; `$lines.Add((Close-ActivationWizard `$h `$clock)) }
     }
-    else { `$lines.Add('NO-EXPLORER within $Minutes min') }
+    else {
+        `$lines.Add('NO-EXPLORER within $Minutes min')
+        # What Outlook was doing when the time ran out: still working (processor time rising in the last
+        # minute) or blocked (a window in front of the Explorer, or no processor time at all).
+        try {
+            `$o = Get-Process -Name OUTLOOK -ErrorAction SilentlyContinue | Select-Object -First 1
+            if (`$o) {
+                `$cpu = `$o.TotalProcessorTime.TotalSeconds
+                `$recent = if (`$lastMinute -and `$null -ne `$lastMinute.Cpu) { ', {0:N1} s of it in the last {1:N0} s' -f (`$cpu - `$lastMinute.Cpu), (`$clock.Elapsed.TotalSeconds - `$lastMinute.Seconds) } else { '' }
+                `$shown = @([OaiUnelevatedWin]::Visible([uint32]`$o.Id))
+                `$lines.Add(('OUTLOOK-AT-TIMEOUT pid {0}: {1:N1} s of processor time in {2:N0} s{3}; working set {4:N0} MB; {5} visible window(s)' -f `$o.Id, `$cpu, `$clock.Elapsed.TotalSeconds, `$recent, (`$o.WorkingSet64 / 1MB), `$shown.Count))
+                foreach (`$w in `$shown) { `$lines.Add('OUTLOOK-WINDOW ' + `$w) }
+            }
+            else { `$lines.Add('OUTLOOK-AT-TIMEOUT no OUTLOOK.EXE is running') }
+        }
+        catch { `$lines.Add('OUTLOOK-AT-TIMEOUT could not be read: ' + `$_.Exception.Message) }
+    }
 }
 catch { `$lines.Add('STARTER FAILED: ' + `$_.Exception.Message) }
 finally { Set-Content -LiteralPath '$r' -Value `$lines -Encoding UTF8 }
@@ -229,6 +273,8 @@ function Invoke-SelfTest {
     Check 'WM_CLOSE goes only to the wizard''s own window, and only when the button did not close it' (@([regex]::Matches($text, 'PostClose\(')).Count -eq 2 -and $text -match [regex]::Escape('if ([OaiUnelevatedWin]::Shown($h)) {') -and $text -match [regex]::Escape('[void][OaiUnelevatedWin]::PostClose($h)'))
     Check 'every dismissal, and a wizard that stayed up, is a line of the result' ($text -match 'ACTIVATION-WIZARD-DISMISSED' -and $text -match 'ACTIVATION-WIZARD-STUCK')
     Check 'a wizard raised again is dismissed at most five times' (@([regex]::Matches($text, [regex]::Escape('$wizards -lt 5'))).Count -eq 2)
+    Check 'the starter times its waits on a stopwatch, never on the wall clock' ($text -match [regex]::Escape('$clock.Elapsed.TotalMinutes -lt 7') -and $text -match [regex]::Escape('$closing.Elapsed.TotalSeconds -lt 10') -and -not ($text -match [regex]::Escape('(Get-Date) -')) -and -not ($text -match [regex]::Escape('(Get-Date).Add')))
+    Check 'when the time runs out it reports Outlook''s processor time, its last minute and its visible windows' ($text -match 'OUTLOOK-AT-TIMEOUT pid' -and $text -match 'OUTLOOK-AT-TIMEOUT no OUTLOOK.EXE' -and $text -match [regex]::Escape("OUTLOOK-WINDOW ' + `$w") -and $text -match [regex]::Escape('$o.TotalProcessorTime.TotalSeconds') -and $text -match [regex]::Escape('[OaiUnelevatedWin]::Visible([uint32]$o.Id)'))
     $tally = Get-ActivationWizardTally @('started OUTLOOK.EXE', 'ACTIVATION-WIZARD-DISMISSED 270 s: class NUIDialog, by its Close button', 'EXPLORER-UP 277 s: Inbox')
     Check 'the tally counts one dismissal and nothing stuck' ($tally.Dismissed -eq 1 -and $tally.Stuck -eq 0)
     $tally = Get-ActivationWizardTally @('ACTIVATION-WIZARD-STUCK 40 s: class X - neither', 'NO-EXPLORER within 10 min')
@@ -255,7 +301,12 @@ function Invoke-SelfTest {
         if (Get-Command -Name $name -ErrorAction SilentlyContinue) { continue }
         $unknown += "$name (line $($cmd.Extent.StartLineNumber))"
     }
-    Check ('every command this file calls exists' + $(if ($unknown.Count) { ': MISSING ' + ($unknown -join ', ') } else { '' })) ($unknown.Count -eq 0)    Write-Host ''
+    Check ('every command this file calls exists' + $(if ($unknown.Count) { ': MISSING ' + ($unknown -join ', ') } else { '' })) ($unknown.Count -eq 0)
+    $wallClockWaits = @($ast2.FindAll({ param($n) $n -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and $n.Expression.Extent.Text -eq '(Get-Date)' -and @('AddMinutes', 'AddSeconds') -contains $n.Member.Extent.Text }, $true))
+    Check 'no wait in this file runs on the wall clock' ($wallClockWaits.Count -eq 0)
+    $maxDefault = @($ast2.FindAll({ param($n) $n -is [System.Management.Automation.Language.ParameterAst] -and $n.Name.VariablePath.UserPath -eq 'MaxMinutes' }, $true) | ForEach-Object { $_.DefaultValue.Extent.Text })
+    Check 'Outlook gets 20 minutes to show its window by default' ((@($maxDefault) -join ',') -eq '20')
+    Write-Host ''
     Write-Host ("SelfTest: {0} passed, {1} failed." -f $script:p, $script:f)
     if ($script:f -gt 0) { exit 1 }
     exit 0
@@ -310,9 +361,10 @@ Register-ScheduledTask -TaskName $TaskName -Action $action -Principal $principal
 Start-ScheduledTask -TaskName $TaskName
 Write-Host "task $TaskName (Interactive, RunLevel Limited) started; job $jobDir"
 
-$deadline = (Get-Date).AddMinutes($MaxMinutes + 2)
-while ((Get-Date) -lt $deadline -and -not (Test-Path -LiteralPath $result)) { Start-Sleep -Seconds 2 }
-if (-not (Test-Path -LiteralPath $result)) { Write-Host "FAILED: the starter wrote nothing in $MaxMinutes min (job kept at $jobDir)."; exit 1 }
+# On the stopwatch, like the starter's own wait: a wall clock moved ahead would end it early.
+$waited = [System.Diagnostics.Stopwatch]::StartNew()
+while ($waited.Elapsed.TotalMinutes -lt ($MaxMinutes + 2) -and -not (Test-Path -LiteralPath $result)) { Start-Sleep -Seconds 2 }
+if (-not (Test-Path -LiteralPath $result)) { Write-Host "FAILED: the starter wrote nothing in $($MaxMinutes + 2) min (job kept at $jobDir)."; exit 1 }
 $lines = @(Get-Content -LiteralPath $result)
 foreach ($l in $lines) { Write-Host "  $l" }
 try { Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false } catch { }
