@@ -456,39 +456,20 @@ public sealed class FolderWalkReportingTests
     /// <summary>
     /// A session that answers the two folder walks, the profile store list and a sweep that
     /// found nothing. A <see cref="DispatchProxy"/> rather than a stub per contract method, so
-    /// a method added to <c>IOutlookSession</c> needs no change here. Not sealed:
-    /// DispatchProxy derives from its TProxy at runtime and refuses a sealed one.
+    /// a method added to <c>IOutlookSession</c> needs no change here: a script on the shared
+    /// <see cref="StandInSession"/>.
     /// </summary>
-    private class FolderSession : DispatchProxy
+    private static class FolderSession
     {
-        private ComFolderTree _tree = new ComFolderTree(Array.Empty<ComFolderInfo>());
-        private ComFolderPathList _paths = new ComFolderPathList(Array.Empty<string>());
-
-        internal static IOutlookSession Create(ComFolderTree tree, ComFolderPathList paths)
-        {
-            object proxy = Create<IOutlookSession, FolderSession>()
-                ?? throw new InvalidOperationException("DispatchProxy.Create returned null.");
-            ((FolderSession)proxy)._tree = tree;
-            ((FolderSession)proxy)._paths = paths;
-            return (IOutlookSession)proxy;
-        }
-
-        /// <inheritdoc />
-        protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
-        {
-            return targetMethod?.Name switch
-            {
-                nameof(IOutlookSession.GetProfileName) => "T1 stand-in profile",
-                nameof(IOutlookSession.GetStoreDetails) => TestFolders.WithRoots(new[]
+        internal static IOutlookSession Create(ComFolderTree tree, ComFolderPathList paths) =>
+            StandInSession.Create(
+                new[]
                 {
                     new ComStoreDetail(NamedStore, "store-a", 0, true),
                     new ComStoreDetail(Unnamed, "store-unnamed", 3, null, nameUnreadable: true),
                     new ComStoreDetail(DelegateStore, "store-delegate", 1, true),
-                }),
-                nameof(IOutlookSession.TryDescribeFolder) => TestFolders.Describe(args),
-                nameof(IOutlookSession.ListFolders) => _tree,
-                nameof(IOutlookSession.ListFolderPaths) => _paths,
-                nameof(IOutlookSession.SweepFoldersNewerThan) => new ComSweepResult(
+                },
+                store => new ComSweepResult(
                     Array.Empty<ComMailBrief>(),
                     foldersSwept: 4,
                     foldersSkipped: 0,
@@ -496,13 +477,11 @@ public sealed class FolderWalkReportingTests
                     perStore: new[]
                     {
                         new ComStoreSweepCounters(
-                            (args?[3] as string) ?? NamedStore,
+                            store ?? NamedStore,
                             foldersSwept: 4, foldersSkipped: 0, foldersFailed: 0, foldersAbsent: 0),
                     }),
-                _ => throw new NotSupportedException(
-                    "The stand-in session was asked for " + (targetMethod?.Name ?? "an unnamed member")
-                    + ", which this test does not model."),
-            };
-        }
+                standIn => standIn
+                    .Answering(nameof(IOutlookSession.ListFolders), _ => tree)
+                    .Answering(nameof(IOutlookSession.ListFolderPaths), _ => paths));
     }
 }

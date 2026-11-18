@@ -1461,12 +1461,13 @@ its mailbox tests on, and change nothing you install.
   the same one-mailbox profile - its SID, store, index prefix and frontier - and three of them its
   mail, its sweep, an exhaustive search of its Inbox and a session that answers the store list, the
   sweep and the scan as well: `AliceMailbox` holds it once, and `ThreadWalks` the conversation walks
-  three thread suites each built. Nine of the suite's stand-ins for the COM session answered the
-  same four members - the profile's name, its stores, a folder's description and the freshness
-  sweep - three of them word for word, and are one `StandInSession`, on which a test scripts any
-  other member it needs: `AliceMailbox` and the resumable scans their exhaustive scan, the sweep's
-  body cap its item read and the three thread suites their conversation walk. The live tier went
-  the same way. Its test tag is spelled once,
+  three thread suites each built. The suite's eighteen stand-ins for the COM session are two:
+  eleven that answered the same members - the profile's name, its stores, a folder's description
+  and, all but one, the freshness sweep - three of them word for word, are one `StandInSession`, on
+  which a test scripts any other member it needs, such as the exhaustive scan, an item read, a
+  conversation walk or the folder lists; and seven that handed every call to a fake of the test's
+  own, three of them giving each unanswered out argument and result its default, are one
+  `ForwardingSession`. The live tier went the same way. Its test tag is spelled once,
   in `LiveOutlookTestMailer.TagText`, which the bracketed subject tag and the test-folder prefix
   are made of, and the mailer's twelve inline ordinal tag checks, and four more elsewhere, now ask one
   ordinal predicate, `CarriesSubjectTag`; the reading filters that leave test items out of a

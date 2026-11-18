@@ -975,7 +975,7 @@ public sealed class AtomicityClaimsTests
     {
         internal RecordingSession()
         {
-            AsSession = Proxy.Create(this);
+            AsSession = ForwardingSession.Create(Handle);
         }
 
         internal IOutlookSession AsSession { get; }
@@ -1116,23 +1116,6 @@ public sealed class AtomicityClaimsTests
 
                 default:
                     return null;
-            }
-        }
-
-        internal class Proxy : DispatchProxy
-        {
-            private RecordingSession _owner = null!;
-
-            internal static IOutlookSession Create(RecordingSession owner)
-            {
-                object proxy = Create<IOutlookSession, Proxy>()!;
-                ((Proxy)proxy)._owner = owner;
-                return (IOutlookSession)proxy;
-            }
-
-            protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
-            {
-                return _owner.Handle(targetMethod!, args);
             }
         }
     }
