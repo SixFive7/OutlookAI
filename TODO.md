@@ -1820,6 +1820,14 @@
   every test whose product call converts in the machine's zone, `MailService.ToUtc` (122 tests)
   among them, the Q95 kind. Recommended: (1) now, and (3) for each function as it is next changed.
 
+- [ ] **Remove the testbed's .NET 10 checkpoints once every branch is on .NET 11 (Q172).**
+  `CP-03-SDK-TEST-READY-UTC` on the three build VMs, and `CP-22C-FROZEN-CLOCK` and
+  `CP-16B-FROZEN-CLOCK` on the Outlook guests, stay only for branches whose runners still name them
+  (Docs/live-tier-on-the-vm.md section 4.9). Once no branch does: remove them (`Remove-VMSnapshot`;
+  Hyper-V merges their disks), take them out of `Testbed/testbed.json`, and keep
+  `.work/media/dotnet-sdk-10.0.401-win-x64.exe` only while a checkpoint still needs it - recording it
+  in section 4.9. `OutlookAI-Exchange`'s older checkpoints are its rebuild points and stay.
+
 - [ ] **Decide whether the VM pools keep CPU free for the maintainer, as they keep memory free
   (2026-11-17).** The pools (`Testbed/host/TestbedPool.ps1`) start a member other than the first only
   while the host has its memory and 16 GB more available, and nothing looks at CPU. From 17:20 to 17:40

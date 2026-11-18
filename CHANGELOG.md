@@ -835,6 +835,26 @@ its mailbox tests on, and change nothing you install.
   measured on Office LTSC 2024: with no Outlook window open, that window shows at the top left of the
   screen for 130 to 650 ms and has the foreground while it is there.
 
+- ✅ **The test machines carry the .NET 11 SDK beside .NET 10, on new checkpoints (Q172).**
+  OutlookAI is moving to .NET 11 (Q172), and nothing on .NET 11 can be tested until the test
+  machines have its SDK. Each of the three build machines has a new base checkpoint,
+  `CP-04-SDK11-TEST-READY-UTC`, which the build runner now restores: SDK 11.0.100 and, beside it,
+  .NET 10's SDK 10.0.404, both staged as media and held to the SHA-512 in Microsoft's release
+  metadata. SDK 10.0.404 is there because a branch still on .NET 10 is built by the newest SDK on
+  the machine, and SDK 11 builds .NET 10 against the 10.0.15 targeting packs, which a machine with
+  no network has only from that SDK; it replaced 10.0.401 in place. Each build machine made its own
+  checkpoint by the same steps, one at a time, each under the runner's lock and a lease. The
+  Exchange test machine has both SDKs too, in a new checkpoint, `CP-10-SDK11`, made on the one with
+  Office re-armed. The two Outlook test machines have new frozen-clock checkpoints with
+  SDK 11 beside 10.0.401 (10.0.404's install took 7 minutes, more than the indexed machine's clock
+  margin allows); the live runner moves to them in the change that moves the code to .NET 11,
+  because there a .NET 10 branch would lack those packs. Every old checkpoint stays for the
+  branches whose runners still name it. `Install-DotnetSdk.ps1` installs SDK 11 by default, builds
+  its probe for the major it is asked about and pins that SDK there, and installs without verifying
+  for a frozen machine, where every second before the checkpoint moves its clock. The live runner
+  hashes the SDK 11 installer before every run, and a relative output folder no longer breaks the
+  live-tier payload's offline feed check.
+
 - ♻️ **The scripts share one copy of their program-call wrapper, in Testbed/guest/ScriptHelpers.ps1 (Q166).**
   Seventeen scripts each declared the same `Invoke-NativeCommand`, the wrapper every program call
   goes through so that Windows PowerShell 5.1 cannot end a script on the first line a program writes
