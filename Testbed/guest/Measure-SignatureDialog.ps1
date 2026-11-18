@@ -60,8 +60,8 @@ param(
 $ErrorActionPreference = 'Stop'
 # Outlook's dialogs through UI Automation, and the signature folder: one copy, shared with Measure-SignatureRoaming.ps1 (Q154).
 . (Join-Path $PSScriptRoot 'OutlookDialogUia.ps1')
-# The guest guard every testbed script calls before it touches Outlook (Assert-TestbedGuest).
-. (Join-Path $PSScriptRoot 'OutlookMapiInterop.ps1')
+# The guest guard, Assert-TestbedGuestIdentity, is one of the helpers the scripts share (Q154, S7c).
+. (Join-Path $PSScriptRoot 'ScriptHelpers.ps1')
 
 $TestPrefix = 'OutlookAI-McpTest-'
 $DialogName = 'Signatures and Stationery'
@@ -366,13 +366,11 @@ $reading = [ordered]@{
 }
 $errors = New-Object System.Collections.Generic.List[string]
 
-# The guest guard, before anything touches Outlook. Its refusal is written as the reading's, so the live test can say why.
-try { Assert-TestbedGuest -ExpectedUser $ExpectedUser }
-catch { $reading['refused'] = "'$env:USERNAME' is not a test guest's user ($($ExpectedUser -join ', '))" }
-$machineOk = $env:COMPUTERNAME -and $env:COMPUTERNAME.StartsWith($ExpectedComputerNamePrefix, [StringComparison]::OrdinalIgnoreCase)
-if (-not $reading['refused'] -and -not $machineOk) {
-    $reading['refused'] = "'$env:COMPUTERNAME' is not a test guest (its name must start with '$ExpectedComputerNamePrefix')"
-}
+# The guest guard, before anything touches Outlook: the shared one, by this script's $ExpectedUser and
+# $ExpectedComputerNamePrefix. Its refusal is written as the reading's, so the live test can say why.
+$GuestGuardWhy = 'It opens Outlook''s Signatures dialog and reads the signature settings; that belongs on an Outlook test guest.'
+try { Assert-TestbedGuestIdentity -Why $GuestGuardWhy }
+catch { $reading['refused'] = "'$env:USERNAME' on '$env:COMPUTERNAME' is not a test guest (users: $($ExpectedUser -join ', '); computer prefix '$ExpectedComputerNamePrefix')" }
 if (-not $reading['refused']) {
     # An OUTLOOK.EXE in this session, by its process: GetActiveObject cannot tell, as an Outlook that has not lost
     # the focus is not in the Running Object Table (OutlookDialogUia.ps1).
