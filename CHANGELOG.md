@@ -934,8 +934,22 @@ its mailbox tests on, and change nothing you install.
   the same one-mailbox profile - its SID, store, index prefix and frontier - and three of them its
   mail, its sweep, an exhaustive search of its Inbox and a session that answers the store list, the
   sweep and the scan as well: `AliceMailbox` holds it once, and `ThreadWalks` the conversation walks
-  three thread suites each built. No test changed what it checks: the build machine ran the same
-  tests, by name, before and after each step.
+  three thread suites each built. The live tier went the same way. Its test tag is spelled once,
+  in `LiveOutlookTestMailer.TagText`, which the bracketed subject tag and the test-folder prefix
+  are made of, and the mailer's ten inline ordinal tag checks, and four more elsewhere, now ask one
+  ordinal predicate, `CarriesSubjectTag`; the reading filters that leave test items out of a
+  search, a census or a ground truth ask `MentionsSubjectTag`, which ignores letter case as each of
+  them did. A test's tagged subject is built once (`TaggedSubject`). `LiveDraftChecks` holds the
+  draft suites' reads of a draft and of where its body sits, which seven suites restated in up to
+  four copies each; `LiveDraftCleanup` deletes their drafts and proves none is left; the folder
+  suites' clean-up and zero-artifact proof are methods of the fixture they share; the two
+  post-suite sweeps run one proof, `LiveArtifactSweep.ProveNoTaggedArtifactRemains`; `AuditLines`
+  reads the audit lines six suites counted, each still naming which log; the stdio suites read the
+  tool surface through `ToolShapes`; the corpus helpers live in `HubCorpus`, scratch files go
+  through `ScratchFiles`, a store's id through `LiveIds`, an index scope through `LiveIndexScopes`
+  and the registry through `RawRegistryValues`; and four fixtures read the test project's folder
+  through `RepoPaths`. No test changed what it checks: the build machine ran the same tests, by
+  name, before and after each step, and the 164 live test methods are the same 164.
 
 - ✅ **A live run that starts Outlook closes Office's activation wizard and records it.**
   Past Office's 30-day activation grace, which the Exchange test machine's real clock has crossed,

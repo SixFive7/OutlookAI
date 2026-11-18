@@ -27,7 +27,7 @@ public static class LiveArtifactSweep
     /// fragment). The same text the two sweeps always spelled out; <c>T1/CorpusTagSeparationTests</c> pins
     /// the corpus apart from it.
     /// </summary>
-    public const string TagText = "OutlookAI-McpTest";
+    public const string TagText = LiveOutlookTestMailer.TagText;
 
     /// <summary>
     /// The folders counted and swept on the Exchange VM: the hub's set with its archive folder, and Junk
@@ -50,6 +50,35 @@ public static class LiveArtifactSweep
     public static int[]? FoldersFor(LiveTestSettings settings)
     {
         return SweepsByRecordedMarkers(settings) ? ExchangeFolders : null;
+    }
+
+    /// <summary>
+    /// The post-suite proof (S3) both sweeping suites run - LiveDraftTests and LiveSendTests, also run explicitly
+    /// after the full suite: NO item tagged as a test artifact, from this or any earlier run, remains in
+    /// Drafts/Inbox/Sent/Outbox/Deleted or the SYNC ISSUES subtree (Sync Issues, Conflicts, Local Failures, Server
+    /// Failures - widened in soak fix 15 after a tagged item was found stranded in the hub's Local Failures folder,
+    /// where nothing had ever swept) of ANY store. Self-send copies of earlier collections can MATERIALIZE with lag
+    /// (Phase-2/Phase-4 documented race; worst on a store mid-resync), outliving their test's stable-zero window -
+    /// such stragglers are purged here first (S3-legal: tag-matched), then stable zero is asserted. Counts only (S4).
+    /// <para>
+    /// WHICH stores are visited, and which of them may be purged, is <see cref="ArtifactSweepPolicy"/>'s decision and
+    /// not this one's. It walks the COUNT TRIPWIRE'S OWN watched set - the primaries, the delegate/shared mailboxes
+    /// and the declared bystanders - so the two guards cover one set rather than two overlapping ones. Everything the
+    /// allowlist refuses a delete on is COUNTED and left alone, and a non-zero count in one of those FAILS the run
+    /// rather than being tidied away: nothing else would report it, because the count tripwire fires on a decrease and
+    /// an artifact arriving is an increase. On the Exchange VM's test account (2026-10-08) the purge takes the tag AND
+    /// a recorded run's marker only, and a store nothing may write to may keep the tagged items it held before the run
+    /// (<see cref="LiveArtifactBaseline"/>). The one copy of the two suites' test bodies (Q154).
+    /// </para>
+    /// </summary>
+    public static void ProveNoTaggedArtifactRemains(LiveTestSettings settings, Action<string> output)
+    {
+        ArtifactSweepPolicy.Run(
+            settings,
+            store => CountTagged(settings, store),
+            store => PurgeUntilStableZero(settings, store),
+            output,
+            LiveArtifactBaseline.Current);
     }
 
     /// <summary>Counts the tagged items in one store. Read-only.</summary>

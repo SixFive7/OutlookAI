@@ -282,10 +282,7 @@ public sealed class LiveTestSettings
         LiveRunOptIn.Require();
 
         string testProjectDir =
-            typeof(LiveTestSettings).Assembly
-                .GetCustomAttributes<AssemblyMetadataAttribute>()
-                .FirstOrDefault(a => a.Key == "TestProjectDir")?.Value
-            ?? throw new InvalidOperationException("AssemblyMetadata 'TestProjectDir' is missing.");
+            RepoPaths.TestProjectDir();
 
         string path = Path.Combine(testProjectDir, "live-fixtures", "live-test-settings.json");
         if (!File.Exists(path))

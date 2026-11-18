@@ -102,8 +102,8 @@ public sealed class LiveQ149Fixture : IDisposable
         // zero artifacts PROVEN for this narrowed run.
         ArtifactSweepPolicy.Run(
             Settings,
-            store => LiveOutlookTestMailer.CountTaggedArtifacts(store, "OutlookAI-McpTest"),
-            store => LiveOutlookTestMailer.DeleteTaggedArtifactsUntilStableZero(store, "OutlookAI-McpTest"),
+            store => LiveOutlookTestMailer.CountTaggedArtifacts(store, LiveArtifactSweep.TagText),
+            store => LiveOutlookTestMailer.DeleteTaggedArtifactsUntilStableZero(store, LiveArtifactSweep.TagText),
             Console.WriteLine);
     }
 }

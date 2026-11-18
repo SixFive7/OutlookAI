@@ -445,16 +445,23 @@ public sealed class ArtifactSweepPlanTests
     {
         // The one thing a pure function cannot pin: that the live tests still ASK it. Re-deriving
         // the walk from ExpectedStoreDisplayNames compiles, and would restore the delete aimed at
-        // a declared bystander exactly.
+        // a declared bystander exactly. Both sweeps run LiveArtifactSweep's one proof (Q154), so that is what
+        // each must call, and the proof is what must ask the policy.
         foreach (string file in new[] { "LiveDraftTests.cs", "LiveSendTests.cs" })
         {
             string path = Path.Combine(RepoPaths.TestProjectDir(), "T2", file);
             Assert.True(File.Exists(path), "artifact sweep source is missing: " + path);
             string source = File.ReadAllText(path);
 
-            Assert.Contains("ArtifactSweepPolicy.Run(", source, StringComparison.Ordinal);
+            Assert.Contains("LiveArtifactSweep.ProveNoTaggedArtifactRemains(", source, StringComparison.Ordinal);
             Assert.DoesNotContain("in _fixture.Settings.ExpectedStoreDisplayNames", source, StringComparison.Ordinal);
         }
+
+        string proof = SourceText.MemberBody(
+            SourceText.Lines(SourceText.LiveSource("LiveArtifactSweep.cs")),
+            "public static void ProveNoTaggedArtifactRemains(", "    ", "LiveArtifactSweep.cs");
+        Assert.Contains("ArtifactSweepPolicy.Run(", proof, StringComparison.Ordinal);
+        Assert.DoesNotContain("ExpectedStoreDisplayNames", proof, StringComparison.Ordinal);
     }
 
     // ------------------------------------------------------------------ helpers
