@@ -204,7 +204,7 @@ public sealed class DraftAttachmentsTests : IDisposable
 
     // ------------------------------------------------------------------ the paths Outlook cannot be handed
     //
-    // Measured on the unindexed test guest 2026-11-18 (runbook section 4.10): a \\?\ path crashed
+    // Measured on the unindexed test guest 2026-11-18 (runbook section 4.11): a \\?\ path crashed
     // OUTLOOK.EXE inside Attachments.Add four times out of four, whatever the file was called; Outlook
     // refused a file called CON.txt, an alternate data stream and a 304-character path; it attached the
     // right file from \\.\C:\... and \??\C:\... . Every spelling below is judged on its text, so most

@@ -46,7 +46,7 @@ namespace OutlookAI.Core.Services
     /// </para>
     /// <para>
     /// <b>The paths Outlook cannot be handed</b>, measured on the unindexed test guest
-    /// 2026-11-18 (Outlook 16.0.17932.20996, Windows 10.0.26200; runbook section 4.10), one draft
+    /// 2026-11-18 (Outlook 16.0.17932.20996, Windows 10.0.26200; runbook section 4.11), one draft
     /// per path, are refused on their text, before the disk is asked anything:
     /// a <c>\\?\</c> path crashed OUTLOOK.EXE inside <c>Attachments.Add</c> every time, four of four,
     /// whatever the file was called - an ordinary name, <c>CON.txt</c>, a name ending in dots and

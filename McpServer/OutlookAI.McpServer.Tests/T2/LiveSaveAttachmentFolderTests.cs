@@ -160,7 +160,7 @@ public sealed class LiveSaveAttachmentFolderTests
         // program can give a file: a direction control, a leading space, and a name too long for the
         // folder. A device's name and trailing dots and spaces only a \\?\ path can give a file, and
         // asking Outlook to attach any file from a \\?\ path crashes OUTLOOK.EXE (four of four, the same
-        // day, runbook section 4.10) - so those, path separators and ':' are T1's alone
+        // day, runbook section 4.11) - so those, path separators and ':' are T1's alone
         // (AttachmentFileWriterDiskTests), with every other name.
         string sources = Path.Combine(Path.GetTempPath(), Tag + "-names");
 

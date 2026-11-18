@@ -12,7 +12,7 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// <summary>
 /// The draft tools refuse the attachment paths Outlook crashed on or would not attach on the test
 /// guests, before Outlook is asked anything, and still attach ordinary files. Measured 2026-11-18
-/// (runbook section 4.10): a <c>\\?\</c> path crashed OUTLOOK.EXE inside <c>Attachments.Add</c> four
+/// (runbook section 4.11): a <c>\\?\</c> path crashed OUTLOOK.EXE inside <c>Attachments.Add</c> four
 /// times out of four, whatever the file was called; Outlook refused a file called <c>CON.txt</c>, an
 /// alternate data stream and a 304-character path; it attached the right file from <c>\\.\C:\...</c>
 /// and <c>\??\C:\...</c>. The spellings themselves are T1's (<c>DraftAttachmentsTests</c>); this is the
