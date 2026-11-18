@@ -138,7 +138,7 @@ namespace OutlookAI.Core.Services
     /// </list>
     /// Precedence among them: Cloud Policy over Group Policy (documented, ms-cloudpol) over the preference. But they
     /// do not decide which signature a draft gets. MEASURED 2026-11-18 on Office LTSC 2024 (Q200 (a), Q201;
-    /// <c>Docs/live-tier-on-the-vm.md</c> section 4.9), with the values set before Outlook started: Outlook put an
+    /// <c>Docs/live-tier-on-the-vm.md</c> section 4.10), with the values set before Outlook started: Outlook put an
     /// account's own default in a new mail, a reply and a forward, not theirs - as REG_SZ and as REG_EXPAND_SZ - put
     /// nothing in a reply or a forward of an account with no reply default of its own, under the policy and under the
     /// deployed setting alike, and kept its Signature button open (<see cref="EffectiveDefault"/>).

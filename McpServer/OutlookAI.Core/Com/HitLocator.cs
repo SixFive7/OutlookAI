@@ -215,12 +215,7 @@ namespace OutlookAI.Core.Com
                     return located;
                 }
 
-                // Keep the most informative reason: "the folder exists, the item is not in
-                // it" beats "no folder of that name".
-                if (leafError != null && !string.Equals(leafError, "FolderNotFound", StringComparison.Ordinal))
-                {
-                    error = leafError;
-                }
+                error = MoreInformative(error, leafError);
             }
 
             // Say WHICH shape of failure this was: no folder of that name anywhere, or a
@@ -231,6 +226,73 @@ namespace OutlookAI.Core.Com
             }
 
             return null;
+        }
+
+        /// <summary>
+        /// Seconds apart below which an item's time IS its index row's - the probe stops there instead of
+        /// looking for a closer one. Outlook's times carry fractions of a second, and items made in one batch
+        /// sit tenths of a second apart (the test account's holiday appointments, measured on the Exchange
+        /// guest 2026-11-18), so "within the tolerance" alone can name the wrong one of them.
+        /// </summary>
+        public const double ExactMatchSeconds = 0.05;
+
+        /// <summary>
+        /// The instant an item is matched on against its index row's <c>System.Message.DateReceived</c>: its
+        /// <c>ReceivedTime</c> when it has one, else its <c>CreationTime</c>. The index files an appointment's
+        /// and a task's creation time in that column (measured, Q98 (f), and for the Exchange guest's holiday
+        /// appointments on 2026-11-18, within a second), and since gap B3 the index tier returns such items -
+        /// which the locator could not open, because it compared their ReceivedTime, which they do not have.
+        /// Pure.
+        /// </summary>
+        public static DateTime? IndexTimeOf(DateTime? receivedLocal, DateTime? creationLocal)
+        {
+            return receivedLocal ?? creationLocal;
+        }
+
+        /// <summary>
+        /// How far an Outlook time (local wall clock) is from an index time (UTC), in seconds: the nearer of
+        /// the two readings <see cref="OutlookComSession.ReceivedTimeMatches"/> accepts - the time as local,
+        /// and as UTC already. Null when Outlook gave no time. Pure.
+        /// </summary>
+        public static double? SecondsApart(DateTime? comLocal, DateTime indexUtc)
+        {
+            return SecondsApart(comLocal, indexUtc, TimeZoneInfo.Local);
+        }
+
+        /// <summary>
+        /// <see cref="SecondsApart(DateTime?, DateTime)"/> with the zone the Outlook time is read in passed in, so a
+        /// test can hold it still; the product passes <see cref="TimeZoneInfo.Local"/> and nothing else. The local
+        /// reading is <see cref="ComDateValue.FromItemValue(DateTime?, TimeZoneInfo)"/>'s.
+        /// </summary>
+        public static double? SecondsApart(DateTime? comLocal, DateTime indexUtc, TimeZoneInfo localZone)
+        {
+            if (localZone == null)
+            {
+                throw new ArgumentNullException(nameof(localZone));
+            }
+
+            if (!comLocal.HasValue)
+            {
+                return null;
+            }
+
+            DateTime wallTime = DateTime.SpecifyKind(comLocal.Value, DateTimeKind.Unspecified);
+            double asLocal = Math.Abs((ComDateValue.FromItemValue(wallTime, localZone)!.Value - indexUtc).TotalSeconds);
+            double asUtc = Math.Abs((DateTime.SpecifyKind(wallTime, DateTimeKind.Utc) - indexUtc).TotalSeconds);
+            return Math.Min(asLocal, asUtc);
+        }
+
+        /// <summary>
+        /// Of two reasons a hit was not found, the one worth keeping: "the folder exists, the item is
+        /// not in it" - any reason but <c>FolderNotFound</c> - beats "no folder of that name", and a
+        /// later such reason replaces an earlier one. Shared by the delegate leaf walk and the walk
+        /// over every folder that shares a path (<see cref="OutlookComSession.TryResolveByPath"/>). Pure.
+        /// </summary>
+        public static string? MoreInformative(string? kept, string? candidate)
+        {
+            return candidate != null && !string.Equals(candidate, "FolderNotFound", StringComparison.Ordinal)
+                ? candidate
+                : kept;
         }
 
         /// <summary>

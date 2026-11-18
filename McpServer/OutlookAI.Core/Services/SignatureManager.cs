@@ -368,13 +368,6 @@ namespace OutlookAI.Core.Services
 
         private static readonly string[] Actions = { "create", "update", "delete", "set_default", "clear_default" };
 
-        private static readonly string[] ReservedDeviceNames =
-        {
-            "CON", "PRN", "AUX", "NUL",
-            "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
-            "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
-        };
-
         /// <summary>Default backup root: %LOCALAPPDATA%\OutlookAI\signature-backups.</summary>
         public static string DefaultBackupRoot =>
             Path.Combine(
@@ -573,9 +566,11 @@ namespace OutlookAI.Core.Services
                 throw new ArgumentException("name must not end with a dot.");
             }
 
-            if (ReservedDeviceNames.Contains(trimmed, StringComparer.OrdinalIgnoreCase))
+            // The signature's files are <name>.htm, .rtf and .txt, and Windows reads a device name
+            // before ANY extension as the device - so "CON" and "nul.backup" are refused alike.
+            if (WindowsFileNames.IsReservedDeviceName(trimmed))
             {
-                throw new ArgumentException("name '" + trimmed + "' is a reserved Windows device name.");
+                throw new ArgumentException("name '" + trimmed + "' is a reserved Windows device name (CON, NUL, COM1 and the like, alone or before a dot).");
             }
 
             if (string.Equals(trimmed, NoSignatureKeyword, StringComparison.OrdinalIgnoreCase))

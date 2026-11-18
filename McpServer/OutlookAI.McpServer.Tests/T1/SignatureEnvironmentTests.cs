@@ -105,7 +105,7 @@ public sealed class SignatureEnvironmentTests
     [Fact]
     public void EffectiveDefault_IsTheAccountsOwn_WhateverASettingNames_AndOnlyAPolicyLocksIt()
     {
-        // Q200 (a), Q201, measured 2026-11-18 (runbook 4.9): Outlook put an account's own default in, and nothing where the
+        // Q200 (a), Q201, measured 2026-11-18 (runbook 4.10): Outlook put an account's own default in, and nothing where the
         // account had none - never the policy's or the deployed one's.
         SignaturePolicy policy = SignaturePolicy.Read(new FakeSignatureSettings()
             .Policy(SignaturePolicySource.Preference, newMessage: "Deployed")

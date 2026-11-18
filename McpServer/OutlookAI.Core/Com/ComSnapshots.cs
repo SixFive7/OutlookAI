@@ -286,9 +286,10 @@ namespace OutlookAI.Core.Com
         /// <summary>
         /// <c>Store.GetRootFolder().EntryID</c>: its bytes 4..19 are the provider UID every entry id
         /// in the store carries, which is what the store's ID is built from
-        /// (<see cref="OutlookAI.Core.Mapi.OutlookIds.StoreIdOf"/>, Q133). Not read for an Exchange
-        /// store Outlook does not cache - its root folder is a server round trip - which is then
-        /// addressed by its own entry id instead; null too when it would not read.
+        /// (<see cref="OutlookAI.Core.Mapi.OutlookIds.StoreIdOf"/>, Q133). Read for every store since
+        /// 2026-11-18, an Exchange store Outlook does not cache included (its root is a server round
+        /// trip, measured at 2-3 ms on the Exchange guest); null when it would not read, and the store is
+        /// then addressed by its own entry id instead.
         /// </summary>
         public string? RootFolderEntryId { get; }
     }

@@ -165,7 +165,7 @@ public sealed class LiveSignatureSettingsTests
                 .Single(a => ProfileAccountEntries.AddressEquals(a.Account, hubRow.Account));
             Assert.Equal(own.Name, row.NewMessage);
 
-            // Q201, measured 2026-11-18 with the setting made before Outlook started (runbook 4.9): the account's own
+            // Q201, measured 2026-11-18 with the setting made before Outlook started (runbook 4.10): the account's own
             // default ranks above a deployed one. So it is the effective default, and it stays the account's to change.
             Assert.Equal(own.Name, row.EffectiveNewMessage);
             Assert.Equal("account", row.DefaultsFrom);
