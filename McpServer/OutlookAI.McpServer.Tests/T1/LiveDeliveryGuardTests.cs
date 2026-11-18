@@ -1,4 +1,3 @@
-using System.Reflection;
 using OutlookAI.McpServer.Tests.T2;
 using Xunit;
 
@@ -133,12 +132,12 @@ public sealed class LiveDeliveryGuardTests
 
     private static IEnumerable<string> LiveSourceFiles(string folder)
     {
-        return Directory.EnumerateFiles(Path.Combine(TestProjectDir(), folder), "*.cs", SearchOption.TopDirectoryOnly);
+        return Directory.EnumerateFiles(Path.Combine(RepoPaths.TestProjectDir(), folder), "*.cs", SearchOption.TopDirectoryOnly);
     }
 
     private static string MemberBody(string t2File, string declarationStart)
     {
-        string[] lines = File.ReadAllText(Path.Combine(TestProjectDir(), "T2", t2File))
+        string[] lines = File.ReadAllText(Path.Combine(RepoPaths.TestProjectDir(), "T2", t2File))
             .Split('\n').Select(l => l.TrimEnd('\r')).ToArray();
         int declaration = Array.FindIndex(lines, l => l.TrimStart().StartsWith(declarationStart, StringComparison.Ordinal));
         Assert.True(declaration >= 0, declarationStart + " was not found in " + t2File + " - this test has stopped proving anything");
@@ -146,13 +145,5 @@ public sealed class LiveDeliveryGuardTests
         int close = open < 0 ? -1 : Array.FindIndex(lines, open + 1, l => string.Equals(l, "    }", StringComparison.Ordinal));
         Assert.True(open > declaration && close > open, "could not find the body of " + declarationStart + " in " + t2File);
         return string.Join("\n", lines[(open + 1)..close]);
-    }
-
-    private static string TestProjectDir()
-    {
-        return typeof(LiveTestSettings).Assembly
-                .GetCustomAttributes<AssemblyMetadataAttribute>()
-                .FirstOrDefault(a => a.Key == "TestProjectDir")?.Value
-            ?? throw new InvalidOperationException("AssemblyMetadata 'TestProjectDir' is missing.");
     }
 }

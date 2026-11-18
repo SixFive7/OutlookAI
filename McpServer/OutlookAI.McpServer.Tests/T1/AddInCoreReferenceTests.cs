@@ -24,7 +24,7 @@ public sealed class AddInCoreReferenceTests
     [Fact]
     public void TheSolution_HoldsTheAddInAndCore()
     {
-        XDocument solution = XDocument.Load(Path.Combine(CachedModeSettingsTests.RepoRoot(), "OutlookAI.slnx"));
+        XDocument solution = XDocument.Load(Path.Combine(RepoPaths.RepoRoot(), "OutlookAI.slnx"));
 
         Assert.Equal(
             new[] { "OutlookAI.csproj", "McpServer/OutlookAI.Core/OutlookAI.Core.csproj" },
@@ -42,7 +42,7 @@ public sealed class AddInCoreReferenceTests
         Assert.False(string.Equals(Metadata(reference, "ReferenceOutputAssembly"), "false", StringComparison.OrdinalIgnoreCase), "the add-in must compile against Core");
         Assert.False(string.Equals(Metadata(reference, "Private"), "false", StringComparison.OrdinalIgnoreCase), "Core's assemblies must be copied beside OutlookAI.dll");
 
-        XDocument core = XDocument.Load(Path.Combine(CachedModeSettingsTests.RepoRoot(), CoreProject));
+        XDocument core = XDocument.Load(Path.Combine(RepoPaths.RepoRoot(), CoreProject));
         string frameworks = core.Descendants("TargetFrameworks").Single().Value;
         Assert.Contains("net48", frameworks.Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries));
     }
@@ -68,7 +68,7 @@ public sealed class AddInCoreReferenceTests
 
     private static IEnumerable<XElement> AddInProjectReferences()
     {
-        XDocument addIn = XDocument.Load(Path.Combine(CachedModeSettingsTests.RepoRoot(), "OutlookAI.csproj"));
+        XDocument addIn = XDocument.Load(Path.Combine(RepoPaths.RepoRoot(), "OutlookAI.csproj"));
         return addIn.Descendants(addIn.Root!.Name.Namespace + "ProjectReference");
     }
 

@@ -8,8 +8,8 @@ namespace OutlookAI.McpServer.Tests;
 /// (<c>AssemblyMetadata("TestProjectDir")</c> in the csproj), so the answer is the checkout that was
 /// built - the expanded archive on the build VM, a worktree here.
 /// <para>
-/// One copy, for the tests that read a repository file from now on. About thirty older tests carry
-/// a private copy of these two methods; they can move onto this one (Q154).
+/// The one copy (Q154): a test that needs either path calls this, and reads no assembly metadata
+/// of its own.
 /// </para>
 /// </summary>
 internal static class RepoPaths
