@@ -1555,6 +1555,17 @@ its mailbox tests on, and change nothing you install.
 
 ### Fixed
 
+- 🐛 **A paged exhaustive search of an Exchange mailbox returns no mail twice after Outlook restarts.**
+  An exhaustive search hands out its results a page at a time, and each page remembers which mail
+  the pages before it returned, so that none comes back. It remembered the ids the folder's table
+  gave, and on an Exchange mailbox Outlook keeps locally those are short-term ids, valid only until
+  Outlook restarts: a page after a restart could not recognise what earlier pages had returned.
+  Measured read-only on the Exchange test machine on 2026-11-18: the table's ids were 24 bytes, the
+  same in two tables of one session, and the column PR_LONGTERM_ENTRYID_FROM_TABLE gave each row's
+  70-byte long-term id, equal to the mail's own id in 25 of 25 rows. The scan reads that column and
+  keys its memory on it; a .pst data file's table has no such column, and its ids are long-term
+  already. Found by stream E2's Exchange runs.
+
 - 🐛 **A move names a folder whose name holds `/`, `\` or `%` the way list_folders does.**
   `move_mail` and `archive_mail` printed the folders an item left and went to as Outlook writes them,
   with those three characters coded: a move into the folder `a/b` that `create_folder` had just made
