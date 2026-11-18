@@ -45,7 +45,7 @@ public sealed class IdentityDraftCoverageTests
     {
         // Read off the committed example rather than retyped: this is the claim the whole file
         // rests on, and a hand-copied layout would keep passing after the real one changed.
-        LiveTestSettings settings = Example();
+        LiveTestSettings settings = ExampleLiveSettings.Load();
 
         IdentityDraftCoverageReport coverage = IdentityDraftCoverage.Assess(settings);
 
@@ -60,7 +60,7 @@ public sealed class IdentityDraftCoverageTests
     [Fact]
     public void OnThatLayoutTheRunSaysProvedNothingInsteadOfPassingQuietly()
     {
-        LiveTestSettings settings = Example();
+        LiveTestSettings settings = ExampleLiveSettings.Load();
         List<string> lines = new();
 
         IReadOnlyList<string> accounts = IdentityDraftCoverage.AccountsToDraftIn(
@@ -169,7 +169,7 @@ public sealed class IdentityDraftCoverageTests
         // throw at the guard halfway through a mailbox it was never entitled to touch.
         foreach (LiveTestSettings settings in new[]
                  {
-                     Example(),
+                     ExampleLiveSettings.Load(),
                      Settings(LiveMachineProfile.Production, new[] { Hub, Business, SecondBusiness }, null),
                      Settings(LiveMachineProfile.Portable, new[] { Hub, Business, Bystander }, Bystander),
                  })
@@ -230,7 +230,7 @@ public sealed class IdentityDraftCoverageTests
         // IdentityAccountsAmong would, and would restore the silent green pass exactly.
         foreach (string file in new[] { "LiveDraftTests.cs", "LiveDraftOptionsTests.cs" })
         {
-            string path = Path.Combine(TestProjectDir(), "T2", file);
+            string path = Path.Combine(RepoPaths.TestProjectDir(), "T2", file);
             Assert.True(File.Exists(path), "identity test source is missing: " + path);
             string source = File.ReadAllText(path);
 
@@ -288,24 +288,5 @@ public sealed class IdentityDraftCoverageTests
             ExpectedStoreDisplayNames = stores.ToList(),
             BystanderStoreDisplayNames = bystander == null ? new List<string>() : new List<string> { bystander },
         };
-    }
-
-    private static string TestProjectDir()
-    {
-        return typeof(LiveTestSettings).Assembly
-                .GetCustomAttributes<AssemblyMetadataAttribute>()
-                .FirstOrDefault(a => a.Key == "TestProjectDir")?.Value
-            ?? throw new InvalidOperationException("AssemblyMetadata 'TestProjectDir' is missing.");
-    }
-
-    /// <summary>The committed example settings, parsed by the real loader.</summary>
-    private static LiveTestSettings Example()
-    {
-        // <repo>/McpServer/OutlookAI.McpServer.Tests/ -> <repo>
-        string path = Path.Combine(
-            Path.GetFullPath(Path.Combine(TestProjectDir(), "..", "..")),
-            "Testbed", "live-test-settings.example.json");
-        Assert.True(File.Exists(path), "the committed example settings file is missing: " + path);
-        return LiveTestSettings.Parse(File.ReadAllText(path));
     }
 }

@@ -1,4 +1,3 @@
-using System.Reflection;
 using System.Text.RegularExpressions;
 using Xunit;
 
@@ -46,7 +45,7 @@ public sealed class ComChildObjectReleaseTests
     [MemberData(nameof(ScannedFiles))]
     public void NoCollectionAdd_DiscardsTheComObjectItReturns(string relativePath)
     {
-        string[] lines = File.ReadAllLines(Path.GetFullPath(Path.Combine(TestProjectDir(), "..", relativePath)));
+        string[] lines = File.ReadAllLines(Path.GetFullPath(Path.Combine(RepoPaths.TestProjectDir(), "..", relativePath)));
         Assert.True(lines.Length > 100, relativePath + " is too short to be the file this test reads");
 
         List<string> offenders = new List<string>();
@@ -82,15 +81,7 @@ public sealed class ComChildObjectReleaseTests
         // The inline chain the same fix took out: folder.Items.Count left the Items collection for
         // the garbage collector. Collections are held and released one by one there.
         string mailer = File.ReadAllText(Path.GetFullPath(Path.Combine(
-            TestProjectDir(), "..", "OutlookAI.McpServer.Tests", "T2", "LiveOutlookTestMailer.cs")));
+            RepoPaths.TestProjectDir(), "..", "OutlookAI.McpServer.Tests", "T2", "LiveOutlookTestMailer.cs")));
         Assert.DoesNotMatch(new Regex(@"\b\w+\.(Items|Folders|Attachments|Recipients|Columns)\.(Count|Add|Item)\b"), mailer);
-    }
-
-    private static string TestProjectDir()
-    {
-        return typeof(ComChildObjectReleaseTests).Assembly
-                .GetCustomAttributes<AssemblyMetadataAttribute>()
-                .FirstOrDefault(a => a.Key == "TestProjectDir")?.Value
-            ?? throw new InvalidOperationException("AssemblyMetadata 'TestProjectDir' is missing.");
     }
 }
