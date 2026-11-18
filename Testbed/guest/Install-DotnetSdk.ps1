@@ -256,6 +256,13 @@
     project (which it removes) and the test project's own build output - a build is not
     optional, since a build happening at all is part of what is being proven.
 
+.PARAMETER SkipVerify
+    With -Execute only: install, write the machine environment and the NuGet.config, and stop -
+    VERDICT: INSTALLED, exit 0 - without the four rungs. For a FROZEN guest (Q130 (a)), where
+    every second between the restore and the next checkpoint moves the frozen instant: verify
+    with -Verify after that checkpoint is taken, as Docs/live-tier-on-the-vm.md section 4.9 does.
+    Nothing else should pass it; a run never does.
+
 .PARAMETER KeepProbe
     Leave rung 2's throwaway project behind for inspection.
 
@@ -285,6 +292,7 @@ param(
     [int]      $BuildTimeoutMinutes       = 30,
     [switch]   $Execute,
     [switch]   $Verify,
+    [switch]   $SkipVerify,
     [switch]   $KeepProbe,
     [string]   $LogPath                   = 'C:\OutlookAI-Q5\install-dotnet-sdk.log'
 )
@@ -722,6 +730,13 @@ SHA-512, and update Testbed/MEDIA.md so the next rebuilder is not doing this aga
         Say '       The SDK is installed; the suite cannot be built until the source and the feed'
         Say '       are staged by Testbed/host/Publish-LiveTierPayload.ps1. Re-run -Execute after'
         Say '       copying them in, or write the config by hand.'
+    }
+
+    if ($SkipVerify) {
+        Say ''
+        Say 'VERDICT: INSTALLED'
+        Say '  -SkipVerify: the installer finished and nothing was proven. Run -Verify before relying on it.'
+        exit 0
     }
 }
 
