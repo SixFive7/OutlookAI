@@ -613,7 +613,7 @@ public sealed class AtomicityClaimsTests
         foreach (string outside in new[]
         {
             Path.GetTempPath(),
-            Environment.GetFolderPath(Environment.SpecialFolder.Startup),
+            Environment.GetFolderPath(Environment.SpecialFolder.Startup, Environment.SpecialFolderOption.DoNotVerify),
             Path.Combine(AttachmentFileWriter.DownloadFolder, "..", "..", ".."),
             @"\\server\share\inbox",
             @"\\?\" + AttachmentFileWriter.DownloadFolder,

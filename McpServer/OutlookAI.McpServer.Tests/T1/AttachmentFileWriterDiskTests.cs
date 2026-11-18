@@ -44,38 +44,14 @@ public sealed class AttachmentFileWriterDiskTests : IDisposable
 
     public void Dispose()
     {
-        // Links first, as links: deleting a folder recursively through one could follow it.
+        // Links first, as links - a file link as a file, a folder link as a folder - before the tree.
         foreach (string link in _links)
         {
-            try
-            {
-                if (File.Exists(link))
-                {
-                    File.Delete(link);
-                }
-                else if (Directory.Exists(link))
-                {
-                    Directory.Delete(link, recursive: false);
-                }
-            }
-            catch (IOException)
-            {
-            }
-            catch (UnauthorizedAccessException)
-            {
-            }
+            ScratchFiles.TryDeleteFile(link);
+            TestJunction.Remove(link);
         }
 
-        try
-        {
-            Directory.Delete(_scratch, recursive: true);
-        }
-        catch (IOException)
-        {
-        }
-        catch (UnauthorizedAccessException)
-        {
-        }
+        ScratchFiles.TryDeleteTree(_scratch);
     }
 
     // ------------------------------------------------------------------ the write

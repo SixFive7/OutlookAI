@@ -134,20 +134,20 @@ public sealed class LiveSaveAttachmentFolderTests
         {
             foreach (string path in saved)
             {
-                TryDeleteFile(path);
+                ScratchFiles.TryDeleteFile(path);
             }
 
             TestJunction.Remove(junction);
-            TryDeleteTree(ours);
-            TryDeleteTree(outside);
-            TryDeleteTree(sources);
+            ScratchFiles.TryDeleteTree(ours);
+            ScratchFiles.TryDeleteTree(outside);
+            ScratchFiles.TryDeleteTree(sources);
             if (entryId != null)
             {
-                CleanupDraft(entryId);
+                LiveDraftCleanup.DeleteDraft(Hub, Marker, entryId);
             }
         }
 
-        AssertNoTaggedArtifactsRemain();
+        LiveDraftCleanup.AssertNoTaggedArtifactsRemain(Hub, Marker, _output);
     }
 
     [Fact]
@@ -212,84 +212,21 @@ public sealed class LiveSaveAttachmentFolderTests
         {
             foreach (string path in saved)
             {
-                TryDeleteFile(path);
+                ScratchFiles.TryDeleteFile(path);
             }
 
-            TryDeleteTree(ours);
-            TryDeleteTree(sources);
+            ScratchFiles.TryDeleteTree(ours);
+            ScratchFiles.TryDeleteTree(sources);
             if (entryId != null)
             {
-                CleanupDraft(entryId);
+                LiveDraftCleanup.DeleteDraft(Hub, Marker, entryId);
             }
         }
 
-        AssertNoTaggedArtifactsRemain();
+        LiveDraftCleanup.AssertNoTaggedArtifactsRemain(Hub, Marker, _output);
     }
 
     // ------------------------------------------------------------------ support
-
-    private void CleanupDraft(string entryId)
-    {
-        for (int attempt = 0; attempt < 3; attempt++)
-        {
-            try
-            {
-                LiveOutlookTestMailer.DeleteItemByEntryId(Hub, entryId, Marker);
-                LiveOutlookTestMailer.DeleteTaggedArtifacts(Hub, Marker);
-                return;
-            }
-            catch (Exception) when (attempt < 2)
-            {
-                Thread.Sleep(1000);
-            }
-        }
-    }
-
-    private void AssertNoTaggedArtifactsRemain()
-    {
-        int remaining = LiveOutlookTestMailer.CountTaggedArtifactsAfterPurgingStragglers(
-            Hub, Marker, folderIds: null, out int stragglers);
-        if (stragglers > 0)
-        {
-            _output.WriteLine($"cleanup[{Hub}]: {stragglers} late-materialized artifact(s) purged (documented lag)");
-        }
-
-        Assert.Equal(0, remaining);
-    }
-
-    private static void TryDeleteFile(string path)
-    {
-        try
-        {
-            if (File.Exists(path))
-            {
-                File.Delete(path);
-            }
-        }
-        catch (IOException)
-        {
-        }
-        catch (UnauthorizedAccessException)
-        {
-        }
-    }
-
-    private static void TryDeleteTree(string path)
-    {
-        try
-        {
-            if (Directory.Exists(path))
-            {
-                Directory.Delete(path, recursive: true);
-            }
-        }
-        catch (IOException)
-        {
-        }
-        catch (UnauthorizedAccessException)
-        {
-        }
-    }
 
     private static string FirstSentence(string message)
     {
