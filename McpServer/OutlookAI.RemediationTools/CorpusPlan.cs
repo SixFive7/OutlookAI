@@ -488,8 +488,8 @@ public enum CorpusSubjectKind
 public sealed class CorpusPlan
 {
     /// <summary>
-    /// The tag every corpus item carries, and it is deliberately NOT
-    /// <see cref="RemediationRules.SubjectTag"/>.
+    /// The tag every corpus item carries, and it is deliberately NOT the live tier's artifact tag
+    /// (<c>LiveOutlookTestMailer.SubjectTag</c> in the test project).
     /// <para>
     /// <b>Why they differ.</b> They used to be the same string, which put the whole
     /// measurement corpus one sweep away from deletion. The live tier's post-run artifact
@@ -506,7 +506,7 @@ public sealed class CorpusPlan
     /// The property that has to hold is on the bracket-free FRAGMENT, not on the bracketed
     /// tag: the sweep counts with a DASL <c>LIKE '%OutlookAI-McpTest%'</c> prefilter and then
     /// a <c>Contains</c> on that same bracket-free text. So no corpus subject may contain
-    /// <see cref="RemediationRules.DaslCountFragment"/> anywhere, and no artifact subject may
+    /// the live sweep's fragment (<c>LiveArtifactSweep.TagText</c>) anywhere, and no artifact subject may
     /// contain <see cref="DaslCountFragment"/>. T1's <c>CorpusTagSeparationTests</c> holds
     /// both directions; a comment could not.
     /// </para>
@@ -520,8 +520,8 @@ public sealed class CorpusPlan
 
     /// <summary>
     /// The tag corpora built before 2026-08-25 carry in place of <see cref="SubjectTag"/>. A
-    /// frozen historical literal rather than a reference to
-    /// <see cref="RemediationRules.SubjectTag"/>: it records what is sitting in an old PST and
+    /// frozen historical literal rather than a reference to the live tier's artifact tag: it
+    /// records what is sitting in an old PST and
     /// must not move if the artifact tag ever does.
     /// <para>
     /// It exists so an old corpus is RECOGNISED rather than silently unmatched. Without it
@@ -745,7 +745,7 @@ public sealed class CorpusPlan
     /// carrying the id and the zero-padded ordinal, then readable words. Both tags come first
     /// so an ordinal Contains still finds them if a mail client later prepends its own "RE:".
     /// <para>
-    /// Neither tag contains <see cref="RemediationRules.DaslCountFragment"/>, which is what
+    /// Neither tag contains the live sweep's fragment (<c>LiveArtifactSweep.TagText</c>), which is what
     /// keeps a corpus item invisible to the live tier's artifact sweep.
     /// </para>
     /// </summary>

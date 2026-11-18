@@ -1334,9 +1334,9 @@ function Invoke-SelfTest {
 
     Write-Host '== the guard =='
     Test-Case 'vmadmin on OAI-INDEXED passes' $true (Test-GuestIdentity -UserName 'vmadmin' -ComputerName 'OAI-INDEXED' -Users @('vmadmin') -Prefix 'OAI-')
-    Test-Case 'the maintainer workstation is refused' $false (Test-GuestIdentity -UserName 'jori' -ComputerName 'PC657' -Users @('vmadmin') -Prefix 'OAI-')
-    Test-Case 'vmadmin on a non-guest name is refused' $false (Test-GuestIdentity -UserName 'vmadmin' -ComputerName 'PC657' -Users @('vmadmin') -Prefix 'OAI-')
-    Test-Case 'the right name as another user is refused' $false (Test-GuestIdentity -UserName 'jori' -ComputerName 'OAI-INDEXED' -Users @('vmadmin') -Prefix 'OAI-')
+    Test-Case 'the maintainer workstation is refused' $false (Test-GuestIdentity -UserName 'devuser' -ComputerName 'DEV-PC' -Users @('vmadmin') -Prefix 'OAI-')
+    Test-Case 'vmadmin on a non-guest name is refused' $false (Test-GuestIdentity -UserName 'vmadmin' -ComputerName 'DEV-PC' -Users @('vmadmin') -Prefix 'OAI-')
+    Test-Case 'the right name as another user is refused' $false (Test-GuestIdentity -UserName 'devuser' -ComputerName 'OAI-INDEXED' -Users @('vmadmin') -Prefix 'OAI-')
     Test-Case 'an empty prefix is refused, never "matches everything"' $false (Test-GuestIdentity -UserName 'vmadmin' -ComputerName 'OAI-X' -Users @('vmadmin') -Prefix '')
 
     Write-Host ''
