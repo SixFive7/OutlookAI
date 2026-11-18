@@ -1192,18 +1192,25 @@ its mailbox tests on, and change nothing you install.
   network clears the backoff and checks shortly after, and "Check for updates" always runs straight
   away.
 
-- ♻️ **The signature code is in OutlookAI.Core's add-in part, where the add-in may use it (Q164).**
+- ♻️ **The signature and compose-document code is in OutlookAI.Core's add-in part (Q164).**
   The signature catalog; the signature environment, which is the folder, the policy, roaming and the
   Office build; the rule that chooses a draft's signature; the readers of the profile's accounts and
   of Outlook's profile keys; the conversion of HTML to text; and the readers and writers of a
   signature's three renditions and its pictures move from `OutlookAI.Core.Services` and
   `OutlookAI.Core.Text` into `OutlookAI.Core.AddIn` (`McpServer/OutlookAI.Core/AddIn/`), the one part
   of Core the add-in may use, so that its task pane can stop keeping a copy of its own (the
-  code-sharing refactor's stage S4, Q154). The server and the tests use them from there, unchanged.
-  Nothing in them attaches to Outlook, starts a COM thread or opens the search index, and check 15
-  holds that for all 23 files of the namespace. The word the draft tools read as "no signature" and
-  the refusal a signature request can end in move with the rule, out of `SignatureManager`, which
-  stays where it is: it writes signature files, and only the server does.
+  code-sharing refactor's stage S4, Q154). So does the code that reads and writes the regions of a
+  compose document - the draft, the signature region Outlook marks `_MailAutoSig` and the quoted
+  original it marks `_MailOriginal` - which the server had ported from the pane and fixed since, now
+  `ComposeDocument`, with a choice between the server's soft line breaks and the pane's paragraphs;
+  and the release of a COM reference and the test for a failed COM call, now `ComObjects`, to which
+  `OutlookComSession`'s members of those names forward. The server and the tests use all of it from
+  there, unchanged, and T1 `ComChildObjectReleaseTests` reads `ComposeDocument` for a discarded
+  `Bookmarks.Add` as it read `OutlookComSession`. Nothing in the namespace attaches to Outlook,
+  starts a COM thread or opens the search index, and check 15 holds that for all 25 of its files.
+  The word the draft tools read as "no signature" and the refusal a signature request can end in
+  move with the rule, out of `SignatureManager`, which stays where it is: it writes signature files,
+  and only the server does.
 
 - ♻️ **The fourteen files the add-in shared by linking are OutlookAI.Core's, in one namespace (Q163).**
   The MCP server, Core and the test project compiled fourteen of the add-in's source files as

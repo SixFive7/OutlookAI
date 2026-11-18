@@ -1966,9 +1966,9 @@
   the body and the signature under the line that heads the quoted original. Word lays out their first
   eleven paragraphs with that block's top border, and the first of them in Times New Roman. A reply
   made with no inspector - every reply since the re-opened-draft compose (`c4595b1`) - has no
-  `_MailAutoSig`, so `ApplySignatureToDocument` places the signature at the start of `_MailOriginal`,
-  which sits inside the header block's bordered `div`, and `InsertBodyAboveSignature` then writes the
-  body above the signature, inside the same block. A reply without a signature was not measured. Cell
+  `_MailAutoSig`, so `ComposeDocument.ApplySignature` places the signature at the start of
+  `_MailOriginal`, which sits inside the header block's bordered `div`, and
+  `ComposeDocument.WriteDraftText` then writes the body above the signature, inside the same block. A reply without a signature was not measured. Cell
   C4 of `T2/LiveQ149HtmlOnlyParityTests` shows it: today's reply against one laid out as `Reply()`
   leaves it.
 

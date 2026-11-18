@@ -1160,7 +1160,7 @@ namespace OutlookAI.Core.Services
         private static void PlanCreate(
             string root, string name, ManageSignatureRequest request, ContentPlan plan, Func<string, byte[]?> pictureBytes, HashSet<string> picturesAfter)
         {
-            string? html = string.IsNullOrWhiteSpace(request.BodyHtml) ? null : EnsureHtmlDocument(request.BodyHtml!);
+            string? html = string.IsNullOrWhiteSpace(request.BodyHtml) ? null : SignatureText.EnsureHtmlDocument(request.BodyHtml!);
             string? rtf = string.IsNullOrWhiteSpace(request.BodyRtf) ? null : SignatureRtf.Expand(request.BodyRtf!, string.Empty, pictureBytes);
             string? text = string.IsNullOrWhiteSpace(request.BodyText) ? null : request.BodyText;
             if (rtf != null)
@@ -1216,7 +1216,7 @@ namespace OutlookAI.Core.Services
 
             if (!string.IsNullOrWhiteSpace(request.BodyHtml))
             {
-                html = EnsureHtmlDocument(request.BodyHtml!);
+                html = SignatureText.EnsureHtmlDocument(request.BodyHtml!);
                 htmlChanged = true;
             }
 
@@ -1675,22 +1675,6 @@ namespace OutlookAI.Core.Services
         }
 
         // ------------------------------------------------------------------ derivations (create only)
-
-        /// <summary>
-        /// Wraps an HTML fragment into a minimal document with a utf-8 charset meta;
-        /// a full document (contains &lt;html&gt;) is written as-is.
-        /// </summary>
-        public static string EnsureHtmlDocument(string html)
-        {
-            if (html.IndexOf("<html", StringComparison.OrdinalIgnoreCase) >= 0)
-            {
-                return html;
-            }
-
-            return "<html><head><meta http-equiv=\"Content-Type\" content=\"text/html; charset=utf-8\"></head><body>\r\n"
-                + html
-                + "\r\n</body></html>";
-        }
 
         /// <summary>Derives the HTML rendition from plain text (one &lt;p&gt; per line, escaped).</summary>
         public static string BuildHtmlFromText(string text)

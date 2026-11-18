@@ -36,6 +36,7 @@ public sealed class ComChildObjectReleaseTests
     public static TheoryData<string> ScannedFiles => new TheoryData<string>
     {
         Path.Combine("OutlookAI.Core", "Com", "OutlookComSession.cs"),
+        Path.Combine("OutlookAI.Core", "AddIn", "ComposeDocument.cs"),
         Path.Combine("OutlookAI.Core", "Com", "ComposeSurface.cs"),
         Path.Combine("OutlookAI.Core", "Com", "SpecialFolders.cs"),
         Path.Combine("OutlookAI.McpServer.Tests", "T2", "LiveOutlookTestMailer.cs"),
