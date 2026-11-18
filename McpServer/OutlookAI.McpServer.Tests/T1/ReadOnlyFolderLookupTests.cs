@@ -2009,33 +2009,21 @@ public sealed class ReadOnlyFolderLookupTests
                         "someone@example.com", null, "conv-1", Array.Empty<ComRecipientInfo>(), "A subject");
 
                 case nameof(IOutlookSession.TryResolveOrCreateArchiveFolder):
-                    SetOut(method, args, "createdFolderPath", CreatedFolderPath);
+                    ProxyArgs.SetOut(method, args, "createdFolderPath", CreatedFolderPath);
                     if (ResolveError != null)
                     {
-                        SetOut(method, args, "error", ResolveError);
+                        ProxyArgs.SetOut(method, args, "error", ResolveError);
                         return null;
                     }
 
                     return new ComArchiveFolderInfo(TierStore, "store-tier", "folder-archive", "Archive", "Archive", "outlookDefaultFolder");
 
                 case nameof(IOutlookSession.TryMoveItemToFolderId):
-                    SetOut(method, args, "error", MoveRefusal);
+                    ProxyArgs.SetOut(method, args, "error", MoveRefusal);
                     return null;
 
                 default:
                     return null;
-            }
-        }
-
-        private static void SetOut(MethodInfo method, object?[]? args, string name, object? value)
-        {
-            ParameterInfo[] parameters = method.GetParameters();
-            for (int i = 0; args != null && i < parameters.Length && i < args.Length; i++)
-            {
-                if (parameters[i].IsOut && string.Equals(parameters[i].Name, name, StringComparison.Ordinal))
-                {
-                    args[i] = value;
-                }
             }
         }
 

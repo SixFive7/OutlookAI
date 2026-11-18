@@ -835,6 +835,22 @@ its mailbox tests on, and change nothing you install.
   measured on Office LTSC 2024: with no Outlook window open, that window shows at the top left of the
   screen for 130 to 650 ms and has the foreground while it is there.
 
+- ♻️ **The scripts share one copy of their program-call wrapper, in Testbed/guest/ScriptHelpers.ps1 (Q166).**
+  Seventeen scripts each declared the same `Invoke-NativeCommand`, the wrapper every program call
+  goes through so that Windows PowerShell 5.1 cannot end a script on the first line a program writes
+  to stderr. Thirteen of them now dot-source it from `Testbed/guest/ScriptHelpers.ps1`, where
+  decision 215 (a) put the helpers the scripts share, so that every route that carries the guest
+  scripts to a test machine carries the file too; the two test runners and the two guest scripts
+  left fold with the steps that prove them by a real run. It is a dot-sourced file and not a module
+  because a module does not pass the caller's error settings through: measured 2026-11-18, a script
+  running a program through the wrapper from a module died on that first stderr line under Windows
+  PowerShell 5.1, and came back with the program's exit code when the same function was dot-sourced.
+  `Tools/Checks/check-powershell-51.ps1` now follows dot-sourced files, so a call through the shared
+  wrapper counts as one through a copy always did, and its new check 4 fails a copy of a shared
+  helper anywhere but in a script marked `# travels-alone:`, and there a copy that differs from the
+  shared one. Six cases that break those rules were run against it here, and it failed each.
+  `Testbed/README.md` names the file, and its step 4a stages it with the other guest scripts.
+
 - ♻️ **The test suite keeps one copy of each stand-in its files share, and of its paths (Q154).**
   Nineteen test files each declared a stand-in for Outlook's connection that runs an operation
   straight against a fake session, seventeen of them byte for byte, and the suite held six more
@@ -848,8 +864,16 @@ its mailbox tests on, and change nothing you install.
   Outlook that does not answer), `DeadGateway`, `RecordingGateway`, `StubIndexClient`, which the
   three suites whose index answers in its own way derive from, `IndexRows`, `RepoPaths`, moved
   there, and `ExampleLiveSettings`. `StoreIndexHashScopeTests` keeps its own index stand-in, which
-  answers different questions. No test changed what it checks: the build machine ran the same tests,
-  by name, before and after each step.
+  answers different questions. Thirteen of the checks that read the suite's own compiled code or
+  source carried private copies of the same reading helpers - a walk over a method's instructions,
+  the Category=Live trait, a collection attribute's argument, a live test's source file and the body
+  of one member in it - and now share `IlReader`, moved there from `T1/`, `Traits` and `SourceText`;
+  three of them read the instructions byte by byte, and now walk the opcodes as the others did.
+  Smaller copies went the same way: the in-memory prompt registry (`FakePromptRegistry`, which also
+  replaces the narrower one `PromptLintTests` kept), the setter of a stand-in's out parameter
+  (`ProxyArgs`), settings naming only the hub (`HubOnlyLiveSettings`) and a PST store's EntryID
+  (`TestFolders.PstStoreEntryId`). No test changed what it checks: the build machine ran the same
+  tests, by name, before and after each step.
 
 - ✅ **A live run that starts Outlook closes Office's activation wizard and records it.**
   Past Office's 30-day activation grace, which the Exchange test machine's real clock has crossed,
@@ -1549,6 +1573,15 @@ its mailbox tests on, and change nothing you install.
   folder - Calendar, Quick Step Settings, the mailbox's top level, emptied folders in Deleted
   Items - beside the mail, and none of them could be opened. On the test machine they were 21 of the
   first 100 results.
+
+- ✅ **The build machine's run summaries never print a duration as "1 m 60 s"; seconds round down.**
+  `Testbed/host/Invoke-TestsOnBuildVm.ps1` rounded the seconds of a duration to the nearest whole
+  one after taking the minutes, so 119.6 s read "1 m 60 s" in `summary.txt`, the run log and the
+  history line; under a minute it rounded too, so 59.6 s read "60 s". The live-tier runner's copy of
+  the same function rounded down. One copy is left, in `Testbed/guest/ScriptHelpers.ps1` with the
+  other helpers the scripts share, rounding down at every step, and the build-VM runner uses it; its
+  self-test now pins 59.6 s and 119.6 s. The live-tier runner keeps its copy until its own helpers
+  fold (S7d), which `Tools/Checks/check-powershell-51.ps1` check 4 lists.
 
 - 📝 **The draft tools' descriptions say which drafts the tools can reach.**
   `update_draft` can revise any unsent draft in a Drafts folder, including one you wrote yourself,

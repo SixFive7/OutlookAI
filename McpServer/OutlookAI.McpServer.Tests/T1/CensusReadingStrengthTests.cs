@@ -337,7 +337,7 @@ public sealed class CensusReadingStrengthTests
         // The one thing these pure tests cannot pin: that the COM census still asks. CaptureFolder
         // is driven by a live Outlook folder, so no test on a runner can enter it - and dropping
         // the reason there would restore the guess while leaving every assertion above green.
-        string source = LiveSource("LiveOutlookTestMailer.cs");
+        string source = SourceText.LiveSource("LiveOutlookTestMailer.cs");
 
         Assert.Contains(
             "plan.TryIdentify(key, isVolatile, count, out CensusCountReason refused)",
@@ -375,13 +375,5 @@ public sealed class CensusReadingStrengthTests
         }
 
         return census;
-    }
-
-    private static string LiveSource(string fileName)
-    {
-        string dir = RepoPaths.TestProjectDir();
-        string path = Path.Combine(dir, "T2", fileName);
-        Assert.True(File.Exists(path), "live census source is missing: " + path);
-        return File.ReadAllText(path);
     }
 }

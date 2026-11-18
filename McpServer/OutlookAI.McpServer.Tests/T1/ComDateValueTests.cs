@@ -368,7 +368,7 @@ public sealed class ComDateValueTests
         MethodInfo zoneLess = typeof(ComDateValue).GetMethod(
             nameof(ComDateValue.FromItemValue), new[] { typeof(DateTime?) })!;
 
-        List<MethodBase> called = CalleesOf(zoneLess);
+        List<MethodBase> called = IlReader.CalleesOf(zoneLess);
 
         Assert.Contains(called, m => IsMethod(m, typeof(TimeZoneInfo), "get_Local"));
         Assert.DoesNotContain(called, m => IsMethod(m, typeof(TimeZoneInfo), "get_Utc"));
@@ -386,40 +386,5 @@ public sealed class ComDateValueTests
         return method.DeclaringType == declaringType
             && string.Equals(method.Name, name, StringComparison.Ordinal)
             && method.GetParameters().Select(p => p.ParameterType).SequenceEqual(parameters);
-    }
-
-    /// <summary>
-    /// Every method one method calls, resolved from its IL (<c>call</c> 0x28, <c>callvirt</c>
-    /// 0x6F, <c>newobj</c> 0x73, each with a 4-byte token) - the reader
-    /// <c>TripwireReRunDriverTests.CalleesOf</c> uses. The token is resolved, so a stray operand
-    /// byte cannot pass for an instruction.
-    /// </summary>
-    internal static List<MethodBase> CalleesOf(MethodInfo method)
-    {
-        byte[] il = method.GetMethodBody()!.GetILAsByteArray()!;
-        List<MethodBase> called = new();
-        for (int i = 0; i + 4 < il.Length; i++)
-        {
-            if (il[i] != 0x28 && il[i] != 0x6F && il[i] != 0x73)
-            {
-                continue;
-            }
-
-            int token = il[i + 1] | (il[i + 2] << 8) | (il[i + 3] << 16) | (il[i + 4] << 24);
-            try
-            {
-                MethodBase? resolved = method.Module.ResolveMethod(token);
-                if (resolved != null)
-                {
-                    called.Add(resolved);
-                }
-            }
-            catch (ArgumentException)
-            {
-                // Not a real call - the bytes happened to look like one.
-            }
-        }
-
-        return called;
     }
 }

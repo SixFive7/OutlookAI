@@ -252,7 +252,7 @@ public sealed class AuditLogIsolationTests
         {
             foreach (MethodBase method in MethodsOf(type))
             {
-                byte[]? il = SafeIl(method);
+                byte[]? il = IlReader.SafeIl(method);
                 if (il == null)
                 {
                     continue;
@@ -316,7 +316,7 @@ public sealed class AuditLogIsolationTests
                 // The reason has to stay TRUE, not merely be written down: only an out-of-process
                 // reader in the live tier has one.
                 Type? type = tests.GetType(typeName, throwOnError: false);
-                if (type == null || type.Namespace != StdioNamespace || !IsLiveClass(type))
+                if (type == null || type.Namespace != StdioNamespace || !Traits.IsLiveClass(type))
                 {
                     problems.Add(typeName + " is allowlisted as a live stdio reader but is not a Category=Live class in "
                         + StdioNamespace + ".");
@@ -419,27 +419,6 @@ public sealed class AuditLogIsolationTests
         }
 
         return type;
-    }
-
-    private static bool IsLiveClass(Type type)
-    {
-        return type.GetCustomAttributesData().Any(a =>
-            a.AttributeType == typeof(TraitAttribute)
-            && a.ConstructorArguments.Count == 2
-            && string.Equals(a.ConstructorArguments[0].Value as string, "Category", StringComparison.Ordinal)
-            && string.Equals(a.ConstructorArguments[1].Value as string, "Live", StringComparison.Ordinal));
-    }
-
-    private static byte[]? SafeIl(MethodBase method)
-    {
-        try
-        {
-            return method.GetMethodBody()?.GetILAsByteArray();
-        }
-        catch (Exception ex) when (ex is InvalidOperationException || ex is NotSupportedException)
-        {
-            return null;
-        }
     }
 
     /// <summary>Reads a log the way the product's appends allow: shared, so a reader never blocks a writer.</summary>
