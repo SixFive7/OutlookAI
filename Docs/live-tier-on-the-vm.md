@@ -5086,6 +5086,21 @@ not running in `CP-09`); `CP-10-SDK11` taken running at 2026-11-18T05:01:38Z, a 
 checkpoint for this VM, the one a run that names `-Checkpoint` restores; a run that names none carries
 the state forward as before.
 
+**The mail server's own runtime (phase 3, 2026-11-18).** The installed server runs on a private copy of
+Microsoft's .NET 11 runtime in `%LOCALAPPDATA%\OutlookAI\dotnet`, which setup's helper,
+`OutlookAI.RuntimeSetup`, puts there on every install and every silent update (`McpServer/README.md`).
+Three things measured on the way, on this workstation with SDK 11.0.100, each on a scratch app or a
+scratch publish under `.work`:
+
+| What | Finding |
+| --- | --- |
+| The apphost's search options | `AppHostDotNetSearch` `AppRelative;Global` with `AppHostRelativeDotNet` set: the app ran on the copy beside it although a machine-wide .NET 11 was installed, and on the machine-wide one once the copy was gone; `AppRelative` alone and no copy, and it refused to start. The SDK writes the options into the **published** apphost only - a build's own keeps the default search - so a developer build and the test suite are unaffected. |
+| A referenced executable with those options | The server's publish **left out** `OutlookAI.ComHost.exe` (its publish apphost is made only when it is published itself); without the options the publish carries it. So only the server's apphost searches app-relative, and the server starts the COM host with `DOTNET_ROOT_X64` and `DOTNET_ROOT` naming its own runtime (`ComHostSupervisor.OwnRuntimeVariables`). |
+| The real download | `PrivateRuntime.Run` - the helper's own .NET Framework 4.8 code - against a scratch runtime folder: Microsoft's zip downloaded, 39,856,058 bytes and the SHA-512 as pinned, 202 entries unpacked and swapped in, 3 s in all; run again, `already installed`, nothing fetched. Nothing machine-wide was written. |
+
+The installer that carries the server and the helper, built by `Publish-AddInPayload.ps1 -WithServer`,
+is 43.7 MB - under the updater's 50 MB - because the runtime is never inside it.
+
 ## 5. Which tests are in which bucket, and how to find out
 
 The classification is **two traits on the test itself**, not a list in a document that can drift -
