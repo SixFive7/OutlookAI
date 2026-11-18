@@ -240,7 +240,8 @@ internal static class ScreenCapture
         return best;
     }
 
-    private static class NativeMethods
+    /// <summary>The test project's Win32 window imports: ScreenCapture's own, and UserVisibleWindows' too.</summary>
+    internal static class NativeMethods
     {
         [StructLayout(LayoutKind.Sequential)]
         internal struct RECT
@@ -285,5 +286,21 @@ internal static class ScreenCapture
 
         [DllImport("dwmapi.dll")]
         internal static extern int DwmGetWindowAttribute(IntPtr hwnd, int dwAttribute, out RECT pvAttribute, int cbAttribute);
+
+        /// <summary>Non-zero when DWM cloaks the window: drawn nowhere, though IsWindowVisible says TRUE.</summary>
+        internal const int DWMWA_CLOAKED = 14;
+
+        [DllImport("dwmapi.dll")]
+        internal static extern int DwmGetWindowAttribute(IntPtr hwnd, int dwAttribute, out int pvAttribute, int cbAttribute);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        internal static extern int GetWindowTextLengthW(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        internal static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal static extern bool IsIconic(IntPtr hWnd);
     }
 }
