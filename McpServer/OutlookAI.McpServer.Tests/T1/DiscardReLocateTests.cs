@@ -1,4 +1,3 @@
-using System.Reflection;
 using Xunit;
 
 namespace OutlookAI.McpServer.Tests.T1;
@@ -21,7 +20,7 @@ public sealed class DiscardReLocateTests
     [Fact]
     public void ANonExchangeStore_IsAskedForTheKeptIdBeforeAnyScan()
     {
-        string body = CoreMemberBody("private string? TryFindDiscardedCopy(");
+        string body = SourceText.MemberBody(SourceText.Lines(CoreSource()), "private string? TryFindDiscardedCopy(", "        ", "OutlookComSession.cs");
 
         int guard = body.IndexOf("if (!exchangeStore)", StringComparison.Ordinal);
         int kept = body.IndexOf("TryKeptEntryIdInFolder(oldEntryId, deletedItemsEntryId)", StringComparison.Ordinal);
@@ -37,7 +36,7 @@ public sealed class DiscardReLocateTests
     {
         // An id that still opens somewhere ELSE - in Drafts, say, because the discard did not move it
         // at all - is not a re-located copy, and must never be reported as one.
-        string body = CoreMemberBody("private string? TryKeptEntryIdInFolder(");
+        string body = SourceText.MemberBody(SourceText.Lines(CoreSource()), "private string? TryKeptEntryIdInFolder(", "        ", "OutlookComSession.cs");
 
         Assert.Contains("GetItemFromID(entryId)", body, StringComparison.Ordinal);
         Assert.Contains("string.Equals(parentId, folderEntryId, StringComparison.OrdinalIgnoreCase)", body, StringComparison.Ordinal);
@@ -59,24 +58,10 @@ public sealed class DiscardReLocateTests
 
     private static string CoreSource()
     {
-        string testProjectDir = typeof(DiscardReLocateTests).Assembly
-                .GetCustomAttributes<AssemblyMetadataAttribute>()
-                .FirstOrDefault(a => a.Key == "TestProjectDir")?.Value
-            ?? throw new InvalidOperationException("AssemblyMetadata 'TestProjectDir' is missing.");
+        string testProjectDir = RepoPaths.TestProjectDir();
 
         // <repo>/McpServer/OutlookAI.McpServer.Tests/ -> <repo>/McpServer/OutlookAI.Core/Com/OutlookComSession.cs
         return File.ReadAllText(Path.GetFullPath(
             Path.Combine(testProjectDir, "..", "OutlookAI.Core", "Com", "OutlookComSession.cs")));
-    }
-
-    private static string CoreMemberBody(string declarationStart)
-    {
-        string[] lines = CoreSource().Split('\n').Select(l => l.TrimEnd('\r')).ToArray();
-        int declaration = Array.FindIndex(lines, l => l.TrimStart().StartsWith(declarationStart, StringComparison.Ordinal));
-        Assert.True(declaration >= 0, declarationStart + " was not found - this test has stopped proving anything");
-        int open = Array.FindIndex(lines, declaration, l => string.Equals(l, "        {", StringComparison.Ordinal));
-        int close = open < 0 ? -1 : Array.FindIndex(lines, open + 1, l => string.Equals(l, "        }", StringComparison.Ordinal));
-        Assert.True(open > declaration && close > open, "could not find the body of " + declarationStart);
-        return string.Join("\n", lines[(open + 1)..close]);
     }
 }

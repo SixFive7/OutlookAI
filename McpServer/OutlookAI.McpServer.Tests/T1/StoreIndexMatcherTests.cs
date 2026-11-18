@@ -24,25 +24,18 @@ public sealed class StoreIndexMatcherTests
 {
     private const string Root = "mapi16://{S-1-5-21-1-2-3-1000}/";
 
-    private static byte[] Pst(string path)
-    {
-        byte[] header = Convert.FromHexString(
-            "0000000038A1BB1005E5101AA1BB08002B2A56C200006D737073742E646C6C00000000004E495441F9BFB80100AA0037D96E0000" + "0000");
-        return header.Concat(Encoding.Unicode.GetBytes(path + "\0")).ToArray();
-    }
-
     private static string Hex(byte[] bytes) => Convert.ToHexString(bytes);
 
     /// <summary>A PST as Outlook reports it: profile name, StoreID, not Exchange, a .pst path, and its own (root folder) name.</summary>
     private static StoreIndexIdentity PstStore(string displayName, string path, string? ownName = null)
-        => new(displayName, 3, StoreHash.Candidates(Hex(Pst(path)), false, false, null, null, null),
+        => new(displayName, 3, StoreHash.Candidates(Hex(TestFolders.PstStoreEntryId(path)), false, false, null, null, null),
             filePath: path, ownName: ownName ?? displayName);
 
     /// <summary>An index root as the DIRECTORY listing returns it: the store's own name and its hash.</summary>
     private static StoreScopeInfo IndexRoot(string ownName, uint hash)
         => StoreScopeInfo.FromStorePrefix(Root + ownName + "($" + hash.ToString("x", System.Globalization.CultureInfo.InvariantCulture) + ")")!;
 
-    private static StoreScopeInfo IndexRootOf(string ownName, string path) => IndexRoot(ownName, StoreHash.Compute(Pst(path)));
+    private static StoreScopeInfo IndexRootOf(string ownName, string path) => IndexRoot(ownName, StoreHash.Compute(TestFolders.PstStoreEntryId(path)));
 
     // ============================================================ the rule: name AND hash
 
@@ -245,7 +238,7 @@ public sealed class StoreIndexMatcherTests
         // superseded by Q113 (a)). Its input is documented, not measured, and its note says so.
         string path = @"C:\Users\a\AppData\Local\Microsoft\Outlook\bob@example.com.ost";
         var ost = new StoreIndexIdentity("bob@example.com", 3,
-            StoreHash.Candidates(Hex(Pst(path)), false, false, null, null, null), filePath: path, ownName: "bob@example.com");
+            StoreHash.Candidates(Hex(TestFolders.PstStoreEntryId(path)), false, false, null, null, null), filePath: path, ownName: "bob@example.com");
         Assert.False(ost.InExchangeException);
         Assert.False(ost.IsPstFile);
 
@@ -346,7 +339,7 @@ public sealed class StoreIndexMatcherTests
         string path = @"C:\a.pst";
         StoreScopeInfo root = IndexRootOf("a", path);
         StoreIndexIdentity pst = PstStore("a", path);
-        var exchange = new StoreIndexIdentity("b", 0, StoreHash.Candidates(Hex(Pst(path)), true, false, null, null, null));
+        var exchange = new StoreIndexIdentity("b", 0, StoreHash.Candidates(Hex(TestFolders.PstStoreEntryId(path)), true, false, null, null, null));
 
         StoreIndexMap map = StoreIndexMatcher.Match(new[] { pst, exchange }, new[] { root });
 
@@ -365,7 +358,7 @@ public sealed class StoreIndexMatcherTests
     public void ADelegateStore_IsNeverAStoreOfItsOwn()
     {
         StoreIndexIdentity host = PstStore("host", @"C:\h.pst");
-        var delegated = new StoreIndexIdentity("Ann", 1, StoreHash.Candidates(Hex(Pst(@"C:\h.pst")), true, false, null, null, null));
+        var delegated = new StoreIndexIdentity("Ann", 1, StoreHash.Candidates(Hex(TestFolders.PstStoreEntryId(@"C:\h.pst")), true, false, null, null, null));
         StoreScopeInfo root = IndexRootOf("host", @"C:\h.pst");
 
         StoreIndexMap map = StoreIndexMatcher.Match(new[] { host, delegated }, new[] { root });

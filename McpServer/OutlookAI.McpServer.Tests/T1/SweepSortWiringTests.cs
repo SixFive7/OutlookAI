@@ -171,7 +171,7 @@ public sealed class SweepSortWiringTests
         MethodInfo zoneLess = typeof(OutlookComSession).GetMethod(
             nameof(OutlookComSession.ScanCursorDate), new[] { typeof(DateTime?), typeof(DateTime?) })!;
 
-        List<MethodBase> called = ComDateValueTests.CalleesOf(zoneLess);
+        List<MethodBase> called = IlReader.CalleesOf(zoneLess);
 
         Assert.Contains(called, m => ComDateValueTests.IsMethod(m, typeof(TimeZoneInfo), "get_Local"));
         Assert.DoesNotContain(called, m => ComDateValueTests.IsMethod(m, typeof(TimeZoneInfo), "get_Utc"));
@@ -198,7 +198,7 @@ public sealed class SweepSortWiringTests
         // And that it is the MACHINE's overload (Q95): the zone-taking one exists for tests, and
         // a scan that called it with a zone of its own choosing would convert in the wrong zone
         // on every machine but one.
-        List<MethodBase> called = Walk("ScanSingleFolder").SelectMany(m => ComDateValueTests.CalleesOf(m)).ToList();
+        List<MethodBase> called = Walk("ScanSingleFolder").SelectMany(m => IlReader.CalleesOf(m)).ToList();
         Assert.Contains(called, m => ComDateValueTests.IsMethod(
             m, typeof(OutlookComSession), nameof(OutlookComSession.ScanCursorDate), typeof(DateTime?), typeof(DateTime?)));
         Assert.DoesNotContain(called, m => ComDateValueTests.IsMethod(

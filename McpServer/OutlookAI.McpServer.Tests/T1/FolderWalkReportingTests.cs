@@ -403,7 +403,7 @@ public sealed class FolderWalkReportingTests
         return new MailService(
             new DirectGateway(FolderSession.Create(tree, new ComFolderPathList(Array.Empty<string>()))),
             null,
-            new StubIndexClient(Array.Empty<string>(), delegateScope: null));
+            new DelegateIndexClient(Array.Empty<string>(), delegateScope: null));
     }
 
     /// <summary>
@@ -418,96 +418,25 @@ public sealed class FolderWalkReportingTests
         return new MailService(
             new DirectGateway(FolderSession.Create(new ComFolderTree(Array.Empty<ComFolderInfo>()), paths)),
             null,
-            new StubIndexClient(new[] { OwnerPrefix }, OwnerPrefix + "/1/" + DelegateStore));
+            new DelegateIndexClient(new[] { OwnerPrefix }, OwnerPrefix + "/1/" + DelegateStore));
     }
 
     /// <summary>
-    /// A Windows Search stand-in that answers the three probe statements by shape: the
-    /// store-discovery sample, the newest-received frontier, and scope existence - the last of
-    /// which is what decides whether a store resolves as a delegate subtree.
+    /// The index of the owner's stores, which also holds - the branch this fixture exists for - the
+    /// delegate's subtree, and whose reachability probe finds an item in whatever scope it names.
     /// </summary>
-    private sealed class StubIndexClient : IIndexClient
+    private sealed class DelegateIndexClient : StubIndexClient
     {
-        private const string DiscoveryTail = " System.ItemUrl FROM SystemIndex WHERE System.Kind='email'";
-
-        private readonly IReadOnlyList<string> _knownPrefixes;
         private readonly string? _delegateScope;
 
-        internal StubIndexClient(IReadOnlyList<string> knownPrefixes, string? delegateScope)
+        internal DelegateIndexClient(IReadOnlyList<string> knownPrefixes, string? delegateScope)
+            : base(knownPrefixes, FolderWalkReportingTests.Frontier)
         {
-            _knownPrefixes = knownPrefixes;
             _delegateScope = delegateScope;
         }
 
-        public IndexProviderKind Provider => IndexProviderKind.OleDb;
-
-        public IReadOnlyList<IReadOnlyDictionary<string, object?>> ExecuteRows(
-            string sql, int maxRows, int? commandTimeoutSeconds = null)
+        protected override bool Knows(string scope)
         {
-            if (sql.EndsWith(DiscoveryTail, StringComparison.Ordinal))
-            {
-                return _knownPrefixes
-                    .Select(p => (IReadOnlyDictionary<string, object?>)new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-                    {
-                        ["System.ItemUrl"] = p + "/0/Inbox/sampled-item",
-                    })
-                    .ToList();
-            }
-
-            if (sql.Contains("System.Message.DateReceived FROM SystemIndex", StringComparison.Ordinal))
-            {
-                return Known(sql)
-                    ? new[]
-                    {
-                        (IReadOnlyDictionary<string, object?>)new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-                        {
-                            ["System.Message.DateReceived"] = Frontier,
-                        },
-                    }
-                    : Array.Empty<IReadOnlyDictionary<string, object?>>();
-            }
-
-            if (sql.StartsWith("SELECT TOP 1 System.ItemUrl FROM SystemIndex WHERE", StringComparison.Ordinal))
-            {
-                return Known(sql)
-                    ? new[]
-                    {
-                        (IReadOnlyDictionary<string, object?>)new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-                        {
-                            ["System.ItemUrl"] = ScopeOf(sql) + "/probed-item",
-                        },
-                    }
-                    : Array.Empty<IReadOnlyDictionary<string, object?>>();
-            }
-
-            return Array.Empty<IReadOnlyDictionary<string, object?>>();
-        }
-
-        private static string ScopeOf(string sql)
-        {
-            int start = sql.IndexOf("SCOPE='", StringComparison.Ordinal);
-            if (start < 0)
-            {
-                return string.Empty;
-            }
-
-            start += "SCOPE='".Length;
-            int end = sql.IndexOf('\'', start);
-            return end < 0 ? sql.Substring(start) : sql.Substring(start, end - start);
-        }
-
-        /// <summary>
-        /// Whether a statement's SCOPE names something this index knows: a store root, a
-        /// folder beneath it, or - the branch this fixture exists for - the delegate subtree.
-        /// </summary>
-        private bool Known(string sql)
-        {
-            string scope = ScopeOf(sql);
-            if (scope.Length == 0)
-            {
-                return _knownPrefixes.Count > 0;
-            }
-
             if (_delegateScope != null
                 && (string.Equals(scope, _delegateScope, StringComparison.OrdinalIgnoreCase)
                     || scope.StartsWith(_delegateScope + "/", StringComparison.OrdinalIgnoreCase)))
@@ -515,45 +444,12 @@ public sealed class FolderWalkReportingTests
                 return true;
             }
 
-            return _knownPrefixes.Any(p =>
-                string.Equals(scope, p, StringComparison.OrdinalIgnoreCase)
-                || scope.StartsWith(p + "/0/", StringComparison.OrdinalIgnoreCase));
-        }
-    }
-
-    /// <summary>Runs operations straight against the stand-in session (no COM host, no pipe).</summary>
-    private sealed class DirectGateway : IComGateway
-    {
-        private readonly IOutlookSession _session;
-
-        internal DirectGateway(IOutlookSession session)
-        {
-            _session = session;
+            return base.Knows(scope);
         }
 
-        public event Action? OutlookGone
+        protected override string ProbedItemUrl(string sql)
         {
-            add { }
-            remove { }
-        }
-
-        public bool IsConnected => true;
-
-        public bool? QuitSinkActive => null;
-
-        public bool ProbeConnected() => true;
-
-        public T Run<T>(Func<IOutlookSession, T> operation) => operation(_session);
-
-        public T Run<T>(Func<IOutlookSession, T> operation, ComSessionRecovery recovery) => operation(_session);
-
-        public T Run<T>(Func<IOutlookSession, T> operation, int budgetMilliseconds, bool allowConnectFloor = false)
-            => operation(_session);
-
-        public ComHostDiagnostics GetDiagnostics() => new ComHostDiagnostics("in-process", "ready");
-
-        public void Dispose()
-        {
+            return (IndexRows.ScopeOf(sql) ?? string.Empty) + "/probed-item";
         }
     }
 

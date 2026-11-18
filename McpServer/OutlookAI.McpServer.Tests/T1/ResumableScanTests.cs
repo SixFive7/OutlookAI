@@ -804,7 +804,7 @@ public sealed class ResumableScanTests
     private static MailService Service(ScriptedSession scripted)
     {
         return new MailService(
-            new DirectGateway(scripted.Build(ProfileStores, Sweep)), null, new StubIndexClient());
+            new DirectGateway(scripted.Build(ProfileStores, Sweep)), null, new StubIndexClient(new[] { StorePrefix }, Frontier, everyScope: true));
     }
 
     /// <summary>
@@ -845,85 +845,6 @@ public sealed class ResumableScanTests
             return _results.Count > 0
                 ? _results.Dequeue()
                 : throw new InvalidOperationException("The script ran out of scan results.");
-        }
-    }
-
-    /// <summary>An index that knows this one store and holds no search rows.</summary>
-    private sealed class StubIndexClient : IIndexClient
-    {
-        private const string DiscoveryTail = " System.ItemUrl FROM SystemIndex WHERE System.Kind='email'";
-
-        public IndexProviderKind Provider => IndexProviderKind.OleDb;
-
-        public IReadOnlyList<IReadOnlyDictionary<string, object?>> ExecuteRows(
-            string sql, int maxRows, int? commandTimeoutSeconds = null)
-        {
-            if (sql.EndsWith(DiscoveryTail, StringComparison.Ordinal))
-            {
-                return Rows(new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-                {
-                    ["System.ItemUrl"] = StorePrefix + "/0/Inbox/sampled-item",
-                });
-            }
-
-            if (sql.Contains("System.Message.DateReceived FROM SystemIndex", StringComparison.Ordinal))
-            {
-                return Rows(new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-                {
-                    ["System.Message.DateReceived"] = Frontier,
-                });
-            }
-
-            if (sql.StartsWith("SELECT TOP 1 System.ItemUrl FROM SystemIndex WHERE", StringComparison.Ordinal))
-            {
-                return Rows(new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-                {
-                    ["System.ItemUrl"] = StorePrefix + "/0/Inbox/probed-item",
-                });
-            }
-
-            return Array.Empty<IReadOnlyDictionary<string, object?>>();
-        }
-
-        private static IReadOnlyList<IReadOnlyDictionary<string, object?>> Rows(
-            IReadOnlyDictionary<string, object?> row)
-        {
-            return new[] { row };
-        }
-    }
-
-    private sealed class DirectGateway : IComGateway
-    {
-        private readonly IOutlookSession _session;
-
-        internal DirectGateway(IOutlookSession session)
-        {
-            _session = session;
-        }
-
-        public event Action? OutlookGone
-        {
-            add { }
-            remove { }
-        }
-
-        public bool IsConnected => true;
-
-        public bool? QuitSinkActive => null;
-
-        public bool ProbeConnected() => true;
-
-        public T Run<T>(Func<IOutlookSession, T> operation) => operation(_session);
-
-        public T Run<T>(Func<IOutlookSession, T> operation, ComSessionRecovery recovery) => operation(_session);
-
-        public T Run<T>(Func<IOutlookSession, T> operation, int budgetMilliseconds, bool allowConnectFloor = false)
-            => operation(_session);
-
-        public ComHostDiagnostics GetDiagnostics() => new ComHostDiagnostics("in-process", "ready");
-
-        public void Dispose()
-        {
         }
     }
 

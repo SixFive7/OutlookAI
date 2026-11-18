@@ -135,7 +135,7 @@ public sealed class LiveRunOptInTests
     {
         // The message sends a refused run to Testbed/README.md section 4c. A pointer at a
         // heading that was renamed or never written is a refusal that explains nothing.
-        string readme = File.ReadAllText(Path.Combine(RepoRoot(), "Testbed", "README.md"));
+        string readme = File.ReadAllText(Path.Combine(RepoPaths.RepoRoot(), "Testbed", "README.md"));
 
         Assert.Contains("## 4c.", readme, StringComparison.Ordinal);
         Assert.Contains("$env:" + LiveRunOptIn.Variable + " = ", readme, StringComparison.Ordinal);
@@ -288,7 +288,7 @@ public sealed class LiveRunOptInTests
     private static List<string> FunnelProblems(Type liveClass)
     {
         List<string> problems = new();
-        string? collection = SingleAttributeArgument(liveClass, "CollectionAttribute");
+        string? collection = Traits.SingleAttributeArgument(liveClass, "CollectionAttribute");
         if (collection == null)
         {
             problems.Add(liveClass.Name + ": no [Collection], so xunit builds no fixture before its tests and nothing gates them");
@@ -452,24 +452,16 @@ public sealed class LiveRunOptInTests
     {
         return typeof(LiveCollections).Assembly.GetTypes()
             .Where(t => t.IsClass && !t.IsAbstract)
-            .Where(t => IsLive(t.GetCustomAttributesData())
+            .Where(t => Traits.IsLive(t.GetCustomAttributesData())
                 || t.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly)
                     .Where(m => m.GetCustomAttributes(typeof(FactAttribute), inherit: true).Length > 0)
-                    .Any(m => IsLive(m.GetCustomAttributesData())))
+                    .Any(m => Traits.IsLive(m.GetCustomAttributesData())))
             .OrderBy(t => t.FullName, StringComparer.Ordinal);
-    }
-
-    private static bool IsLive(IEnumerable<CustomAttributeData> attributes)
-    {
-        return attributes.Any(a => a.AttributeType == typeof(TraitAttribute)
-            && a.ConstructorArguments.Count == 2
-            && string.Equals(a.ConstructorArguments[0].Value as string, "Category", StringComparison.Ordinal)
-            && string.Equals(a.ConstructorArguments[1].Value as string, "Live", StringComparison.Ordinal));
     }
 
     private static IEnumerable<Type> FixturesBehind(Type liveClass)
     {
-        string? collection = SingleAttributeArgument(liveClass, "CollectionAttribute");
+        string? collection = Traits.SingleAttributeArgument(liveClass, "CollectionAttribute");
         Type? definition = collection == null ? null : CollectionDefinitionNamed(collection);
         IEnumerable<Type> collectionFixtures = definition == null ? Array.Empty<Type>() : FixturesOf(definition, typeof(ICollectionFixture<>));
         return collectionFixtures.Concat(FixturesOf(liveClass, typeof(IClassFixture<>)));
@@ -478,7 +470,7 @@ public sealed class LiveRunOptInTests
     private static Type? CollectionDefinitionNamed(string name)
     {
         return typeof(LiveCollections).Assembly.GetTypes()
-            .FirstOrDefault(t => string.Equals(SingleAttributeArgument(t, "CollectionDefinitionAttribute"), name, StringComparison.Ordinal));
+            .FirstOrDefault(t => string.Equals(Traits.SingleAttributeArgument(t, "CollectionDefinitionAttribute"), name, StringComparison.Ordinal));
     }
 
     private static List<Type> FixturesOf(Type type, Type openFixtureInterface)
@@ -489,21 +481,6 @@ public sealed class LiveRunOptInTests
             .ToList();
     }
 
-    private static string? SingleAttributeArgument(Type type, string attributeName)
-    {
-        return type.GetCustomAttributesData()
-            .Where(a => string.Equals(a.AttributeType.Name, attributeName, StringComparison.Ordinal))
-            .Where(a => a.ConstructorArguments.Count == 1)
-            .Select(a => a.ConstructorArguments[0].Value as string)
-            .FirstOrDefault(value => value != null);
-    }
-
-    /// <summary>Every opcode, by its value, so the walk below can step over operands of every size.</summary>
-    private static readonly Dictionary<ushort, OpCode> OpCodesByValue = typeof(OpCodes)
-        .GetFields(BindingFlags.Public | BindingFlags.Static)
-        .Select(f => (OpCode)f.GetValue(null)!)
-        .ToDictionary(op => unchecked((ushort)op.Value));
-
     /// <summary>
     /// The call, callvirt and newobj instructions of one method body, in order, with what each
     /// one calls. A real opcode walk rather than a byte search: a byte search reads operand bytes
@@ -511,62 +488,10 @@ public sealed class LiveRunOptInTests
     /// </summary>
     private static IEnumerable<(OpCode Op, MethodBase? Target)> CallsIn(MethodBase method)
     {
-        byte[] il = method.GetMethodBody()?.GetILAsByteArray() ?? Array.Empty<byte>();
-        Type[]? typeArguments = method.DeclaringType is { IsGenericType: true } declaring ? declaring.GetGenericArguments() : null;
-        Type[]? methodArguments = method is MethodInfo { IsGenericMethod: true } generic ? generic.GetGenericArguments() : null;
-
-        List<(OpCode, MethodBase?)> calls = new();
-        int position = 0;
-        while (position < il.Length)
-        {
-            ushort value = il[position++];
-            if (value == 0xFE)
-            {
-                value = (ushort)(0xFE00 | il[position++]);
-            }
-
-            OpCode op = OpCodesByValue[value];
-            int operand = position;
-            position += OperandSize(op.OperandType, il, operand);
-            if (op == OpCodes.Call || op == OpCodes.Callvirt || op == OpCodes.Newobj)
-            {
-                MethodBase? target;
-                try
-                {
-                    target = method.Module.ResolveMethod(BitConverter.ToInt32(il, operand), typeArguments, methodArguments);
-                }
-                catch (ArgumentException)
-                {
-                    target = null;
-                }
-
-                calls.Add((op, target));
-            }
-        }
-
-        return calls;
-    }
-
-    private static int OperandSize(OperandType type, byte[] il, int operand)
-    {
-        switch (type)
-        {
-            case OperandType.InlineNone:
-                return 0;
-            case OperandType.ShortInlineBrTarget:
-            case OperandType.ShortInlineI:
-            case OperandType.ShortInlineVar:
-                return 1;
-            case OperandType.InlineVar:
-                return 2;
-            case OperandType.InlineI8:
-            case OperandType.InlineR:
-                return 8;
-            case OperandType.InlineSwitch:
-                return 4 + (4 * BitConverter.ToInt32(il, operand));
-            default:
-                return 4;
-        }
+        return IlReader.Read(method)
+            .Where(i => i.Op == OpCodes.Call || i.Op == OpCodes.Callvirt || i.Op == OpCodes.Newobj)
+            .Select(i => (i.Op, i.Method))
+            .ToList();
     }
 
     // ------------------------------------------------------------------ plumbing
@@ -588,17 +513,6 @@ public sealed class LiveRunOptInTests
         {
             Environment.SetEnvironmentVariable(LiveRunOptIn.Variable, saved, EnvironmentVariableTarget.Process);
         }
-    }
-
-    private static string RepoRoot()
-    {
-        string testProjectDir = typeof(LiveRunOptInTests).Assembly
-                .GetCustomAttributes<AssemblyMetadataAttribute>()
-                .FirstOrDefault(a => a.Key == "TestProjectDir")?.Value
-            ?? throw new InvalidOperationException("AssemblyMetadata 'TestProjectDir' is missing.");
-
-        // <repo>/McpServer/OutlookAI.McpServer.Tests/ -> <repo>
-        return Path.GetFullPath(Path.Combine(testProjectDir, "..", ".."));
     }
 
     // ------------------------------------------------------------------ controls: never constructed

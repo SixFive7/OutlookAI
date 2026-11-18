@@ -248,11 +248,11 @@ public sealed class ThreadDerivedStoreScopeTests
         /// <summary>A raw EntryID hex: long enough to be accepted without any hit cache or COM locate.</summary>
         internal const string AnchorEntryId = "00000000AABBCCDDEEFF00112233445566778899AABBCCDD";
 
-        private readonly StubIndexClient _index;
+        private readonly ConversationIndexClient _index;
 
         internal StandIn()
         {
-            _index = new StubIndexClient();
+            _index = new ConversationIndexClient();
         }
 
         /// <summary>Every ConversationID statement the index was given, in order.</summary>
@@ -306,71 +306,46 @@ public sealed class ThreadDerivedStoreScopeTests
         }
 
         /// <summary>
-        /// A Windows Search stand-in that knows both mailboxes, answers each probe statement by
-        /// shape, and - the point of the fixture - returns the conversation's rows FILTERED BY
-        /// THE STATEMENT'S OWN SCOPE, exactly as the real index would. A scope that is applied
-        /// therefore costs Bob's member here too.
+        /// A Windows Search stand-in that knows both mailboxes and - the point of the fixture -
+        /// returns the conversation's rows FILTERED BY THE STATEMENT'S OWN SCOPE, exactly as the
+        /// real index would. A scope that is applied therefore costs Bob's member here too. The
+        /// reachability probe is the shared stand-in's: a store's root or its own /0/ subtree, and
+        /// nothing else - a looser rule answers YES to the DELEGATE probe '<owner>/1/<name>' as
+        /// well, so every unknown store name would resolve to a delegate scope that exists only in
+        /// the fixture.
         /// </summary>
-        private sealed class StubIndexClient : IIndexClient
+        private sealed class ConversationIndexClient : StubIndexClient
         {
-            private const string DiscoveryTail = " System.ItemUrl FROM SystemIndex WHERE System.Kind='email'";
-
             private readonly List<string> _conversationStatements = new List<string>();
+
+            internal ConversationIndexClient()
+                : base(new[] { AlicePrefix, BobPrefix }, AliceFrontier)
+            {
+            }
 
             internal IReadOnlyList<string> ConversationStatements => _conversationStatements;
 
-            public IndexProviderKind Provider => IndexProviderKind.OleDb;
-
-            public IReadOnlyList<IReadOnlyDictionary<string, object?>> ExecuteRows(
+            public override IReadOnlyList<IReadOnlyDictionary<string, object?>> ExecuteRows(
                 string sql, int maxRows, int? commandTimeoutSeconds = null)
             {
-                if (sql.EndsWith(DiscoveryTail, StringComparison.Ordinal))
+                if (!IsDiscovery(sql) && IsFreshness(sql))
                 {
-                    return new[] { AlicePrefix, BobPrefix }
-                        .Select(p => (IReadOnlyDictionary<string, object?>)new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-                        {
-                            ["System.ItemUrl"] = p + "/0/Inbox/sampled-item",
-                        })
-                        .ToList();
-                }
-
-                if (sql.Contains("System.Message.DateReceived FROM SystemIndex", StringComparison.Ordinal))
-                {
-                    string? scope = ScopeOf(sql);
+                    string? scope = IndexRows.ScopeOf(sql);
                     DateTime frontier = scope == null
                         ? BobFrontier // Profile-wide: the newest instant ANY store ingested.
                         : scope.StartsWith(BobPrefix, StringComparison.OrdinalIgnoreCase) ? BobFrontier : AliceFrontier;
-                    return new[]
-                    {
-                        (IReadOnlyDictionary<string, object?>)new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-                        {
-                            ["System.Message.DateReceived"] = frontier,
-                        },
-                    };
+                    return IndexRows.One("System.Message.DateReceived", frontier);
                 }
 
-                if (sql.StartsWith("SELECT TOP 1 System.ItemUrl FROM SystemIndex WHERE", StringComparison.Ordinal))
+                if (IsDiscovery(sql) || IsProbe(sql))
                 {
-                    // Exact prefix or the store's own /0/ subtree, and nothing else: a looser
-                    // rule answers YES to the DELEGATE probe '<owner>/1/<name>' as well, so
-                    // every unknown store name would resolve to a delegate scope that exists
-                    // only in the fixture.
-                    string? scope = ScopeOf(sql);
-                    return scope == null || IsStoreRoot(scope, AlicePrefix) || IsStoreRoot(scope, BobPrefix)
-                        ? new[]
-                        {
-                            (IReadOnlyDictionary<string, object?>)new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-                            {
-                                ["System.ItemUrl"] = AlicePrefix + "/0/Inbox/probed-item",
-                            },
-                        }
-                        : Array.Empty<IReadOnlyDictionary<string, object?>>();
+                    return base.ExecuteRows(sql, maxRows, commandTimeoutSeconds);
                 }
 
                 if (sql.Contains("System.Message.ConversationID=", StringComparison.Ordinal))
                 {
                     _conversationStatements.Add(sql);
-                    string? scope = ScopeOf(sql);
+                    string? scope = IndexRows.ScopeOf(sql);
                     List<IReadOnlyDictionary<string, object?>> rows = new List<IReadOnlyDictionary<string, object?>>();
                     if (scope == null || scope.StartsWith(AlicePrefix, StringComparison.OrdinalIgnoreCase))
                     {
@@ -388,61 +363,6 @@ public sealed class ThreadDerivedStoreScopeTests
                 // Everything else is the SEARCH statement: one indexed mail in Alice's store,
                 // carrying the conversation id, which is what makes a store derivable.
                 return new[] { Row(AlicePrefix, "member-alice", AliceFrontier) };
-            }
-
-            private static bool IsStoreRoot(string scope, string prefix)
-            {
-                return string.Equals(scope, prefix, StringComparison.OrdinalIgnoreCase)
-                    || scope.StartsWith(prefix + "/0/", StringComparison.OrdinalIgnoreCase);
-            }
-
-            private static string? ScopeOf(string sql)
-            {
-                int start = sql.IndexOf("SCOPE='", StringComparison.Ordinal);
-                if (start < 0)
-                {
-                    return null;
-                }
-
-                start += "SCOPE='".Length;
-                int end = sql.IndexOf('\'', start);
-                return end < 0 ? sql.Substring(start) : sql.Substring(start, end - start);
-            }
-        }
-
-        /// <summary>Runs operations straight against the stand-in session (no COM host, no pipe).</summary>
-        private sealed class DirectGateway : IComGateway
-        {
-            private readonly IOutlookSession _session;
-
-            internal DirectGateway(IOutlookSession session)
-            {
-                _session = session;
-            }
-
-            public event Action? OutlookGone
-            {
-                add { }
-                remove { }
-            }
-
-            public bool IsConnected => true;
-
-            public bool? QuitSinkActive => null;
-
-            public bool ProbeConnected() => true;
-
-            public T Run<T>(Func<IOutlookSession, T> operation) => operation(_session);
-
-            public T Run<T>(Func<IOutlookSession, T> operation, ComSessionRecovery recovery) => operation(_session);
-
-            public T Run<T>(Func<IOutlookSession, T> operation, int budgetMilliseconds, bool allowConnectFloor = false)
-                => operation(_session);
-
-            public ComHostDiagnostics GetDiagnostics() => new ComHostDiagnostics("in-process", "ready");
-
-            public void Dispose()
-            {
             }
         }
 

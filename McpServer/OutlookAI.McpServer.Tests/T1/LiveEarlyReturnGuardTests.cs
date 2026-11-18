@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Reflection;
 using System.Text.RegularExpressions;
 using OutlookAI.McpServer.Tests.T2;
 using OutlookAI.McpServer.Tests.T3;
@@ -119,7 +118,7 @@ public sealed class LiveEarlyReturnGuardTests
         List<string> lines = new();
 
         IReadOnlyList<string> tokens = LivePopulationCoverage.Require(
-            Settings(LiveMachineProfile.Portable), Array.Empty<string>(),
+            HubOnlyLiveSettings.For(LiveMachineProfile.Portable), Array.Empty<string>(),
             LiveResumableScanTests.ResumeTokenPopulation, "the changed-question refusal",
             LiveResumableScanTests.ResumeTokenRemedy, lines.Add);
 
@@ -142,7 +141,7 @@ public sealed class LiveEarlyReturnGuardTests
 
         InvalidOperationException refusal = Assert.Throws<InvalidOperationException>(
             () => LivePopulationCoverage.Require(
-                Settings(LiveMachineProfile.Production), Array.Empty<string>(),
+                HubOnlyLiveSettings.For(LiveMachineProfile.Production), Array.Empty<string>(),
                 population, "the superseded-token refusal", LiveResumableScanTests.ResumeTokenRemedy, lines.Add));
 
         Assert.Contains(population, refusal.Message, StringComparison.Ordinal);
@@ -155,7 +154,7 @@ public sealed class LiveEarlyReturnGuardTests
         List<string> lines = new();
 
         IReadOnlyList<string> tokens = LivePopulationCoverage.Require(
-            Settings(LiveMachineProfile.Production), new[] { "scan-0123456789abcdef0123456789abcdef" },
+            HubOnlyLiveSettings.For(LiveMachineProfile.Production), new[] { "scan-0123456789abcdef0123456789abcdef" },
             LiveResumableScanTests.ResumeTokenPopulation, "the resume-rung record",
             LiveResumableScanTests.ResumeTokenRemedy, lines.Add);
 
@@ -205,7 +204,7 @@ public sealed class LiveEarlyReturnGuardTests
 
         List<string> portable = new();
         _ = LivePopulationCoverage.Require(
-            Settings(LiveMachineProfile.Portable), topLevelOnly,
+            HubOnlyLiveSettings.For(LiveMachineProfile.Portable), topLevelOnly,
             LiveStaleIndexRowTests.NestedPathPopulation, "the delegate leaf-name locator assertion",
             LiveStaleIndexRowTests.NestedPathRemedy, portable.Add);
         string line = Assert.Single(portable, l => l.StartsWith("PROVED NOTHING:", StringComparison.Ordinal));
@@ -216,7 +215,7 @@ public sealed class LiveEarlyReturnGuardTests
         List<string> production = new();
         InvalidOperationException refusal = Assert.Throws<InvalidOperationException>(
             () => LivePopulationCoverage.Require(
-                Settings(LiveMachineProfile.Production), topLevelOnly,
+                HubOnlyLiveSettings.For(LiveMachineProfile.Production), topLevelOnly,
                 LiveStaleIndexRowTests.NestedPathPopulation, "the delegate leaf-name locator assertion",
                 LiveStaleIndexRowTests.NestedPathRemedy, production.Add));
         Assert.Contains(LiveStaleIndexRowTests.NestedPathPopulation, refusal.Message, StringComparison.Ordinal);
@@ -271,7 +270,7 @@ public sealed class LiveEarlyReturnGuardTests
     [Fact]
     public void TheOutboxBranchFailsTheTest_AndIsNotGatedOnTheProfile()
     {
-        string source = LiveSource("LiveDisconnectRecoveryTests.cs");
+        string source = SourceText.LiveSource("LiveDisconnectRecoveryTests.cs");
 
         // The branch: from the S7 Outbox count to the first look at Outlook's windows, which since
         // Q101 3(a) comes straight after the two counts. Both anchors are code, not comments.
@@ -391,7 +390,7 @@ public sealed class LiveEarlyReturnGuardTests
     {
         // One wrapper, and it adds nothing to the decision: the lines and the refusal are the
         // shared helper's, so this file's tests of that helper cover what the live run prints.
-        string helper = MemberBody("LiveResumableScanTests.cs", "private IReadOnlyList<string> RequireResumeTokens(");
+        string helper = SourceText.MemberBody(SourceLines("LiveResumableScanTests.cs"), "private IReadOnlyList<string> RequireResumeTokens(", "    ", "LiveResumableScanTests.cs");
         Assert.Contains("LivePopulationCoverage.Require(", helper, StringComparison.Ordinal);
         Assert.Contains("_fixture.Settings", helper, StringComparison.Ordinal);
         Assert.Contains("_output.WriteLine", helper, StringComparison.Ordinal);
@@ -424,7 +423,7 @@ public sealed class LiveEarlyReturnGuardTests
     {
         // Each of these was printed immediately before a green return, and was the whole of what
         // the run said about a test that had asserted nothing.
-        Assert.DoesNotContain(oldLine, LiveSource(file), StringComparison.Ordinal);
+        Assert.DoesNotContain(oldLine, SourceText.LiveSource(file), StringComparison.Ordinal);
     }
 
     // ============================ 5. Q101, the Q57 pattern: the real strings, through the real helper
@@ -475,7 +474,7 @@ public sealed class LiveEarlyReturnGuardTests
         List<string> lines = new();
 
         IReadOnlyList<string> found = LivePopulationCoverage.Require(
-            Settings(LiveMachineProfile.Portable), Array.Empty<string>(), population, whatWouldNotRun, remedy, lines.Add);
+            HubOnlyLiveSettings.For(LiveMachineProfile.Portable), Array.Empty<string>(), population, whatWouldNotRun, remedy, lines.Add);
 
         Assert.Empty(found);
         string provedNothing = Assert.Single(lines, l => l.StartsWith("PROVED NOTHING:", StringComparison.Ordinal));
@@ -494,7 +493,7 @@ public sealed class LiveEarlyReturnGuardTests
 
         InvalidOperationException refusal = Assert.Throws<InvalidOperationException>(
             () => LivePopulationCoverage.Require(
-                Settings(LiveMachineProfile.Production), Array.Empty<string>(), population, whatWouldNotRun, remedy, lines.Add));
+                HubOnlyLiveSettings.For(LiveMachineProfile.Production), Array.Empty<string>(), population, whatWouldNotRun, remedy, lines.Add));
 
         Assert.Contains(population, refusal.Message, StringComparison.Ordinal);
         Assert.DoesNotContain(lines, l => l.StartsWith("PROVED NOTHING:", StringComparison.Ordinal));
@@ -627,7 +626,7 @@ public sealed class LiveEarlyReturnGuardTests
         List<string> lines = new();
 
         LivePopulationCoverage.StandAsideForAUser(
-            Settings(LiveMachineProfile.Production), observed, whatDidNotRun, onAnUnattendedMachine, lines.Add);
+            HubOnlyLiveSettings.For(LiveMachineProfile.Production), observed, whatDidNotRun, onAnUnattendedMachine, lines.Add);
 
         string line = Assert.Single(lines);
         Assert.StartsWith("SKIP (user protection): ", line, StringComparison.Ordinal);
@@ -648,7 +647,7 @@ public sealed class LiveEarlyReturnGuardTests
 
             InvalidOperationException refusal = Assert.Throws<InvalidOperationException>(
                 () => LivePopulationCoverage.StandAsideForAUser(
-                    Settings(unattended), observed, whatDidNotRun, onAnUnattendedMachine, lines.Add));
+                    HubOnlyLiveSettings.For(unattended), observed, whatDidNotRun, onAnUnattendedMachine, lines.Add));
 
             // Nothing that could read as an acceptable skip is said before the failure.
             Assert.Empty(lines);
@@ -666,10 +665,10 @@ public sealed class LiveEarlyReturnGuardTests
         // later, before anybody decides what it means, gets the louder answer - a failure.
         foreach (LiveMachineProfile profile in Enum.GetValues<LiveMachineProfile>())
         {
-            Assert.Equal(profile == LiveMachineProfile.Production, Settings(profile).AUserMayBeAtTheKeyboard);
+            Assert.Equal(profile == LiveMachineProfile.Production, HubOnlyLiveSettings.For(profile).AUserMayBeAtTheKeyboard);
         }
 
-        Assert.False(Settings((LiveMachineProfile)93).AUserMayBeAtTheKeyboard);
+        Assert.False(HubOnlyLiveSettings.For((LiveMachineProfile)93).AUserMayBeAtTheKeyboard);
     }
 
     [Theory]
@@ -682,7 +681,7 @@ public sealed class LiveEarlyReturnGuardTests
         foreach (LiveMachineProfile profile in new[] { LiveMachineProfile.Production, LiveMachineProfile.Portable })
         {
             Assert.Throws<ArgumentException>(() => LivePopulationCoverage.StandAsideForAUser(
-                Settings(profile), observed, whatDidNotRun, onAnUnattendedMachine, _ => { }));
+                HubOnlyLiveSettings.For(profile), observed, whatDidNotRun, onAnUnattendedMachine, _ => { }));
         }
     }
 
@@ -794,7 +793,7 @@ public sealed class LiveEarlyReturnGuardTests
         // And what it hands on is still empty, so the Production refusal is exactly as before.
         IReadOnlyList<IReadOnlyList<string>> nested = LiveStaleIndexRowTests.NestedPaths(listing.Matches);
         Assert.Throws<InvalidOperationException>(() => LivePopulationCoverage.Require(
-            Settings(LiveMachineProfile.Production), nested, LiveStaleIndexRowTests.NestedPathPopulation,
+            HubOnlyLiveSettings.For(LiveMachineProfile.Production), nested, LiveStaleIndexRowTests.NestedPathPopulation,
             "the delegate leaf-name locator assertion", LiveStaleIndexRowTests.NestedPathRemedy, _ => { }));
     }
 
@@ -912,16 +911,6 @@ public sealed class LiveEarlyReturnGuardTests
     /// </summary>
     private const string WindowsBaseline = "IReadOnlyList<IntPtr> baselineWindows = WindowProbe.VisibleOutlookWindows();";
 
-    private static LiveTestSettings Settings(LiveMachineProfile profile)
-    {
-        return new LiveTestSettings
-        {
-            MachineProfile = profile,
-            TestHubStoreDisplayName = "hub@example.test",
-            ExpectedStoreDisplayNames = new List<string> { "hub@example.test" },
-        };
-    }
-
     private static IEnumerable<string> TestMethodNames(string[] lines)
     {
         for (int i = 0; i < lines.Length; i++)
@@ -955,44 +944,11 @@ public sealed class LiveEarlyReturnGuardTests
             return m.Success && string.Equals(m.Groups["name"].Value, method, StringComparison.Ordinal);
         });
         Assert.True(signature >= 0, method + " was not found in " + file + " - this test has stopped proving anything");
-        return BodyAfter(lines, signature, file, method);
-    }
-
-    private static string MemberBody(string file, string declarationStart)
-    {
-        string[] lines = SourceLines(file);
-        int declaration = Array.FindIndex(lines, l => l.TrimStart().StartsWith(declarationStart, StringComparison.Ordinal));
-        Assert.True(declaration >= 0, declarationStart + " was not found in " + file + " - this test has stopped proving anything");
-        return string.Join("\n", BodyAfter(lines, declaration, file, declarationStart));
-    }
-
-    private static string[] BodyAfter(string[] lines, int declaration, string file, string what)
-    {
-        int open = Array.FindIndex(lines, declaration, l => string.Equals(l, "    {", StringComparison.Ordinal));
-        int close = open < 0 ? -1 : Array.FindIndex(lines, open + 1, l => string.Equals(l, "    }", StringComparison.Ordinal));
-        Assert.True(open > declaration && close > open, "could not find the body of " + what + " in " + file);
-        return lines[(open + 1)..close];
+        return SourceText.BodyAfter(lines, signature, "    ", file, method);
     }
 
     private static string[] SourceLines(string fileName)
     {
-        return LiveSource(fileName).Split('\n').Select(l => l.TrimEnd('\r')).ToArray();
-    }
-
-    /// <summary>
-    /// A live test's source as it is on disk now. A bare name is under <c>T2/</c>; a name with a
-    /// folder (<c>T3/...</c>) is relative to the test project.
-    /// </summary>
-    private static string LiveSource(string fileName)
-    {
-        string dir = typeof(LiveTestSettings).Assembly
-                .GetCustomAttributes<AssemblyMetadataAttribute>()
-                .FirstOrDefault(a => a.Key == "TestProjectDir")?.Value
-            ?? throw new InvalidOperationException("AssemblyMetadata 'TestProjectDir' is missing.");
-        string path = fileName.Contains('/', StringComparison.Ordinal)
-            ? Path.Combine(dir, fileName.Replace('/', Path.DirectorySeparatorChar))
-            : Path.Combine(dir, "T2", fileName);
-        Assert.True(File.Exists(path), "live test source is missing: " + path);
-        return File.ReadAllText(path);
+        return SourceText.Lines(SourceText.LiveSource(fileName));
     }
 }

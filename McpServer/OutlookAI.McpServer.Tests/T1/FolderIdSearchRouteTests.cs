@@ -34,7 +34,7 @@ public sealed class FolderIdSearchRouteTests
         string folderEntryId = TestFolders.FolderEntryId(Store, "Projects/2026");
         string folderUrl = StorePrefix + "/0/Projects/2026";
         RecordingIndex index = new RecordingIndex(folderEntryId, folderUrl);
-        using MailService service = new MailService(new DirectGateway(RefusingSession.Create()), null, index);
+        using MailService service = new MailService(new DirectGateway(RefusingSession.Create(), connected: false), null, index);
 
         SearchOutcome outcome = service.Search(new SearchRequest
         {
@@ -62,7 +62,7 @@ public sealed class FolderIdSearchRouteTests
         exchange[20] = 1;
         exchange[43] = 9;
         RecordingIndex index = new RecordingIndex(null, null);
-        using MailService service = new MailService(new DirectGateway(RefusingSession.Create()), null, index);
+        using MailService service = new MailService(new DirectGateway(RefusingSession.Create(), connected: false), null, index);
 
         ArgumentException refused = Assert.Throws<ArgumentException>(() => service.Search(new SearchRequest
         {
@@ -81,7 +81,7 @@ public sealed class FolderIdSearchRouteTests
     {
         string folderEntryId = TestFolders.FolderEntryId(Store, "Brand new");
         RecordingIndex index = new RecordingIndex(folderEntryId, null);
-        using MailService service = new MailService(new DirectGateway(RefusingSession.Create()), null, index);
+        using MailService service = new MailService(new DirectGateway(RefusingSession.Create(), connected: false), null, index);
 
         ArgumentException refused = Assert.Throws<ArgumentException>(() => service.Search(new SearchRequest
         {
@@ -98,7 +98,7 @@ public sealed class FolderIdSearchRouteTests
     public void AFolderIdAndAStoreIdOfAnotherStore_AreRefusedBeforeAnythingIsSearched()
     {
         RecordingIndex index = new RecordingIndex(null, null);
-        using MailService service = new MailService(new DirectGateway(RefusingSession.Create()), null, index);
+        using MailService service = new MailService(new DirectGateway(RefusingSession.Create(), connected: false), null, index);
 
         ArgumentException refused = Assert.Throws<ArgumentException>(() => service.Search(new SearchRequest
         {
@@ -134,30 +134,22 @@ public sealed class FolderIdSearchRouteTests
             Statements.Add(sql);
             if (sql.Contains("DIRECTORY='" + UserRoot + "'", StringComparison.Ordinal))
             {
-                return Rows(StorePrefix);
+                return IndexRows.Urls(StorePrefix);
             }
 
             if (sql.Contains("System.ProviderItemID=", StringComparison.Ordinal))
             {
-                return _folderUrl == null ? Rows() : Rows(_folderUrl);
+                return _folderUrl == null ? IndexRows.Urls() : IndexRows.Urls(_folderUrl);
             }
 
             if (_folderEntryId != null && sql.StartsWith("SELECT TOP 200 System.ItemUrl FROM SystemIndex WHERE SCOPE='" + StorePrefix + "/'", StringComparison.Ordinal))
             {
                 byte[] item = Convert.FromHexString(_folderEntryId);
                 BitConverter.GetBytes(0x00200024u).CopyTo(item, 20); // a message node id in the same store
-                return Rows(StorePrefix + "/0/Inbox/" + EntryIdCodec.EncodeBytes(item));
+                return IndexRows.Urls(StorePrefix + "/0/Inbox/" + EntryIdCodec.EncodeBytes(item));
             }
 
-            return Rows();
-        }
-
-        private static IReadOnlyList<IReadOnlyDictionary<string, object?>> Rows(params string[] urls)
-        {
-            return urls.Select(u => (IReadOnlyDictionary<string, object?>)new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-            {
-                ["System.ItemUrl"] = u,
-            }).ToList();
+            return IndexRows.Urls();
         }
     }
 
@@ -173,41 +165,6 @@ public sealed class FolderIdSearchRouteTests
         protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
         {
             throw new TimeoutException("Outlook is not running; it is being started.");
-        }
-    }
-
-    private sealed class DirectGateway : IComGateway
-    {
-        private readonly IOutlookSession _session;
-
-        internal DirectGateway(IOutlookSession session)
-        {
-            _session = session;
-        }
-
-        public event Action? OutlookGone
-        {
-            add { }
-            remove { }
-        }
-
-        public bool IsConnected => false;
-
-        public bool? QuitSinkActive => null;
-
-        public bool ProbeConnected() => false;
-
-        public T Run<T>(Func<IOutlookSession, T> operation) => operation(_session);
-
-        public T Run<T>(Func<IOutlookSession, T> operation, ComSessionRecovery recovery) => operation(_session);
-
-        public T Run<T>(Func<IOutlookSession, T> operation, int budgetMilliseconds, bool allowConnectFloor = false)
-            => operation(_session);
-
-        public ComHostDiagnostics GetDiagnostics() => new ComHostDiagnostics("in-process", "ready");
-
-        public void Dispose()
-        {
         }
     }
 }

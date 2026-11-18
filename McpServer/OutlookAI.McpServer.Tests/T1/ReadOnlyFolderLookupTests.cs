@@ -1456,17 +1456,6 @@ public sealed class ReadOnlyFolderLookupTests
         return bytes;
     }
 
-    private static string RepoRoot()
-    {
-        string testProjectDir = typeof(ReadOnlyFolderLookupTests).Assembly
-                .GetCustomAttributes<AssemblyMetadataAttribute>()
-                .FirstOrDefault(a => a.Key == "TestProjectDir")?.Value
-            ?? throw new InvalidOperationException("AssemblyMetadata 'TestProjectDir' is missing.");
-
-        // <repo>/McpServer/OutlookAI.McpServer.Tests/ -> <repo>
-        return Path.GetFullPath(Path.Combine(testProjectDir, "..", ".."));
-    }
-
     /// <summary>A creating call, or one of the product's own creating entry points, on a line of code.</summary>
     private static readonly Regex CreatingLookup = new Regex(
         @"\.GetDefaultFolder\s*\(|\.GetSharedDefaultFolder\s*\(|\bGetDefaultFolderMayCreate\s*\(",
@@ -1487,7 +1476,7 @@ public sealed class ReadOnlyFolderLookupTests
     /// </summary>
     private static List<string> FindCreatingLookups()
     {
-        string root = RepoRoot();
+        string root = RepoPaths.RepoRoot();
         List<string> files = new List<string>();
         foreach (string project in new[] { "OutlookAI.Core", "OutlookAI.McpServer", "OutlookAI.ComHost" })
         {
@@ -1550,7 +1539,7 @@ public sealed class ReadOnlyFolderLookupTests
     /// <summary>The source of one member: its declaration line through the next member declaration.</summary>
     private static string MemberBody(string relativePath, string member)
     {
-        string[] lines = File.ReadAllLines(Path.Combine(RepoRoot(), relativePath));
+        string[] lines = File.ReadAllLines(Path.Combine(RepoPaths.RepoRoot(), relativePath));
         int start = Array.FindIndex(lines, line =>
         {
             Match declaration = MemberDeclaration.Match(line);
@@ -1982,42 +1971,6 @@ public sealed class ReadOnlyFolderLookupTests
         }
     }
 
-    /// <summary>Runs operations straight against the stand-in session, with no budget layer.</summary>
-    private sealed class DirectGateway : IComGateway
-    {
-        private readonly IOutlookSession _session;
-
-        internal DirectGateway(IOutlookSession session)
-        {
-            _session = session;
-        }
-
-        public event Action? OutlookGone
-        {
-            add { }
-            remove { }
-        }
-
-        public bool IsConnected => true;
-
-        public bool? QuitSinkActive => null;
-
-        public bool ProbeConnected() => true;
-
-        public T Run<T>(Func<IOutlookSession, T> operation) => operation(_session);
-
-        public T Run<T>(Func<IOutlookSession, T> operation, ComSessionRecovery recovery) => operation(_session);
-
-        public T Run<T>(Func<IOutlookSession, T> operation, int budgetMilliseconds, bool allowConnectFloor = false)
-            => operation(_session);
-
-        public ComHostDiagnostics GetDiagnostics() => new ComHostDiagnostics("in-process", "ready");
-
-        public void Dispose()
-        {
-        }
-    }
-
     /// <summary>
     /// The archive_mail side of the contract: one item in the tier store, a resolution that
     /// reports what it created, and a move that is refused - so no audit line is ever written.
@@ -2056,33 +2009,21 @@ public sealed class ReadOnlyFolderLookupTests
                         "someone@example.com", null, "conv-1", Array.Empty<ComRecipientInfo>(), "A subject");
 
                 case nameof(IOutlookSession.TryResolveOrCreateArchiveFolder):
-                    SetOut(method, args, "createdFolderPath", CreatedFolderPath);
+                    ProxyArgs.SetOut(method, args, "createdFolderPath", CreatedFolderPath);
                     if (ResolveError != null)
                     {
-                        SetOut(method, args, "error", ResolveError);
+                        ProxyArgs.SetOut(method, args, "error", ResolveError);
                         return null;
                     }
 
                     return new ComArchiveFolderInfo(TierStore, "store-tier", "folder-archive", "Archive", "Archive", "outlookDefaultFolder");
 
                 case nameof(IOutlookSession.TryMoveItemToFolderId):
-                    SetOut(method, args, "error", MoveRefusal);
+                    ProxyArgs.SetOut(method, args, "error", MoveRefusal);
                     return null;
 
                 default:
                     return null;
-            }
-        }
-
-        private static void SetOut(MethodInfo method, object?[]? args, string name, object? value)
-        {
-            ParameterInfo[] parameters = method.GetParameters();
-            for (int i = 0; args != null && i < parameters.Length && i < args.Length; i++)
-            {
-                if (parameters[i].IsOut && string.Equals(parameters[i].Name, name, StringComparison.Ordinal))
-                {
-                    args[i] = value;
-                }
             }
         }
 

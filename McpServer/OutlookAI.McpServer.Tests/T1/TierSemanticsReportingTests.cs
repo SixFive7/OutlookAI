@@ -400,7 +400,7 @@ public sealed class TierSemanticsReportingTests
             new DirectGateway(StandInSession.Create(ProfileStores, sweep, scan)), null, index);
     }
 
-    private static StubIndexClient Index() => new();
+    private static StubIndexClient Index() => new(new[] { StorePrefix }, Frontier, everyScope: true);
 
     /// <summary>A sweep that reaches the store and finds one mail.</summary>
     private static ComSweepResult Sweep(string? onlyStore)
@@ -437,90 +437,6 @@ public sealed class TierSemanticsReportingTests
             hasAttachments: false,
             sizeBytes: 2048,
             body: "test body");
-    }
-
-    /// <summary>
-    /// A Windows Search stand-in that knows one store and answers the probe statements by
-    /// shape, returning no SEARCH rows at all - the index tier contributes nothing and the
-    /// question here is what the answer SAYS about how each tier would have matched.
-    /// </summary>
-    private sealed class StubIndexClient : IIndexClient
-    {
-        private const string DiscoveryTail = " System.ItemUrl FROM SystemIndex WHERE System.Kind='email'";
-
-        public IndexProviderKind Provider => IndexProviderKind.OleDb;
-
-        public IReadOnlyList<IReadOnlyDictionary<string, object?>> ExecuteRows(
-            string sql, int maxRows, int? commandTimeoutSeconds = null)
-        {
-            if (sql.EndsWith(DiscoveryTail, StringComparison.Ordinal))
-            {
-                return Rows(new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-                {
-                    ["System.ItemUrl"] = StorePrefix + "/0/Inbox/sampled-item",
-                });
-            }
-
-            if (sql.Contains("System.Message.DateReceived FROM SystemIndex", StringComparison.Ordinal))
-            {
-                return Rows(new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-                {
-                    ["System.Message.DateReceived"] = Frontier,
-                });
-            }
-
-            if (sql.StartsWith("SELECT TOP 1 System.ItemUrl FROM SystemIndex WHERE", StringComparison.Ordinal))
-            {
-                return Rows(new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-                {
-                    ["System.ItemUrl"] = StorePrefix + "/0/Inbox/probed-item",
-                });
-            }
-
-            return Array.Empty<IReadOnlyDictionary<string, object?>>();
-        }
-
-        private static IReadOnlyList<IReadOnlyDictionary<string, object?>> Rows(
-            IReadOnlyDictionary<string, object?> row)
-        {
-            return new[] { row };
-        }
-    }
-
-    /// <summary>Runs operations straight against the stand-in session (no COM host, no pipe).</summary>
-    private sealed class DirectGateway : IComGateway
-    {
-        private readonly IOutlookSession _session;
-
-        internal DirectGateway(IOutlookSession session)
-        {
-            _session = session;
-        }
-
-        public event Action? OutlookGone
-        {
-            add { }
-            remove { }
-        }
-
-        public bool IsConnected => true;
-
-        public bool? QuitSinkActive => null;
-
-        public bool ProbeConnected() => true;
-
-        public T Run<T>(Func<IOutlookSession, T> operation) => operation(_session);
-
-        public T Run<T>(Func<IOutlookSession, T> operation, ComSessionRecovery recovery) => operation(_session);
-
-        public T Run<T>(Func<IOutlookSession, T> operation, int budgetMilliseconds, bool allowConnectFloor = false)
-            => operation(_session);
-
-        public ComHostDiagnostics GetDiagnostics() => new ComHostDiagnostics("in-process", "ready");
-
-        public void Dispose()
-        {
-        }
     }
 
     /// <summary>

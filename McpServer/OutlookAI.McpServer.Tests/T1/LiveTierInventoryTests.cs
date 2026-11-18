@@ -327,7 +327,7 @@ public sealed class LiveTierInventoryTests
         List<string> problems = new();
         foreach (string file in quoting)
         {
-            string text = File.ReadAllText(Path.Combine(RepoRoot(), file));
+            string text = File.ReadAllText(Path.Combine(RepoPaths.RepoRoot(), file));
             if (!text.Contains(LiveRunFilters.Guest, StringComparison.Ordinal))
             {
                 problems.Add(file + " never quotes the guest filter " + LiveRunFilters.Guest);
@@ -348,7 +348,7 @@ public sealed class LiveTierInventoryTests
             }
         }
 
-        string script = File.ReadAllText(Path.Combine(RepoRoot(), "Testbed", "guest", "Reset-HubPopulation.ps1"));
+        string script = File.ReadAllText(Path.Combine(RepoPaths.RepoRoot(), "Testbed", "guest", "Reset-HubPopulation.ps1"));
         if (!script.Contains("'" + LiveRunFilters.GuestUnindexed + "'", StringComparison.Ordinal))
         {
             problems.Add("Testbed/guest/Reset-HubPopulation.ps1 does not print the unindexed guest's filter " + LiveRunFilters.GuestUnindexed);
@@ -473,7 +473,7 @@ public sealed class LiveTierInventoryTests
         List<string> problems = new();
         foreach (string file in new[] { "Testbed/README.md", "Docs/live-tier-on-the-vm.md", "Testbed/host/Invoke-LiveTierOnGuest.ps1" })
         {
-            string text = File.ReadAllText(Path.Combine(RepoRoot(), file));
+            string text = File.ReadAllText(Path.Combine(RepoPaths.RepoRoot(), file));
             if (!text.Contains(LiveRunFilters.ExchangeTestAccount, StringComparison.Ordinal))
             {
                 problems.Add(file + " never quotes the Exchange VM's write-run filter " + LiveRunFilters.ExchangeTestAccount);
@@ -570,7 +570,7 @@ public sealed class LiveTierInventoryTests
         List<string> problems = new();
         foreach (string file in new[] { "Testbed/README.md", "Docs/live-tier-on-the-vm.md" })
         {
-            string text = File.ReadAllText(Path.Combine(RepoRoot(), file));
+            string text = File.ReadAllText(Path.Combine(RepoPaths.RepoRoot(), file));
             if (!text.Contains(LiveRunFilters.ExchangeGuest, StringComparison.Ordinal))
             {
                 problems.Add(file + " never quotes the Exchange VM's filter " + LiveRunFilters.ExchangeGuest);
@@ -664,7 +664,7 @@ public sealed class LiveTierInventoryTests
         List<string> problems = new();
         foreach (Type type in LiveTestClasses())
         {
-            string? collection = SingleAttributeArgument(type, "CollectionAttribute");
+            string? collection = Traits.SingleAttributeArgument(type, "CollectionAttribute");
             if (collection == null)
             {
                 problems.Add(type.Name + ": no [Collection] - runs outside every live-tier guard");
@@ -685,7 +685,7 @@ public sealed class LiveTierInventoryTests
         // ordered list are guarded. A collection missing from LiveCollections.All is invisible
         // to that question, so a run ending in it would never be verified.
         List<string> declared = typeof(LiveCollections).Assembly.GetTypes()
-            .Select(t => SingleAttributeArgument(t, "CollectionDefinitionAttribute"))
+            .Select(t => Traits.SingleAttributeArgument(t, "CollectionDefinitionAttribute"))
             .Where(name => name != null)
             .Select(name => name!)
             .OrderBy(name => name, StringComparer.Ordinal)
@@ -895,63 +895,7 @@ public sealed class LiveTierInventoryTests
     /// </summary>
     private static HashSet<string> StringLiteralsOf(Type type)
     {
-        HashSet<string> literals = new(StringComparer.Ordinal);
-        CollectStringLiterals(type, literals);
-        return literals;
-    }
-
-    private static void CollectStringLiterals(Type type, HashSet<string> literals)
-    {
-        const BindingFlags all = BindingFlags.Public | BindingFlags.NonPublic
-            | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
-
-        foreach (MethodBase method in type.GetMethods(all).Cast<MethodBase>().Concat(type.GetConstructors(all)))
-        {
-            byte[]? il = SafeIl(method);
-            if (il == null)
-            {
-                continue;
-            }
-
-            // ldstr is 0x72 followed by a 4-byte metadata token whose high byte is 0x70
-            // (the user-string heap). Requiring that byte is what keeps the scan from
-            // resolving random operand bytes, and ResolveString covers the rest by throwing.
-            for (int i = 0; i + 4 < il.Length; i++)
-            {
-                if (il[i] != 0x72 || il[i + 4] != 0x70)
-                {
-                    continue;
-                }
-
-                int token = il[i + 1] | (il[i + 2] << 8) | (il[i + 3] << 16) | (il[i + 4] << 24);
-                try
-                {
-                    literals.Add(type.Module.ResolveString(token));
-                }
-                catch (ArgumentException)
-                {
-                    // Not a real ldstr - the bytes happened to look like one.
-                }
-            }
-        }
-
-        foreach (Type nested in type.GetNestedTypes(BindingFlags.Public | BindingFlags.NonPublic))
-        {
-            CollectStringLiterals(nested, literals);
-        }
-    }
-
-    private static byte[]? SafeIl(MethodBase method)
-    {
-        try
-        {
-            return method.GetMethodBody()?.GetILAsByteArray();
-        }
-        catch (Exception ex) when (ex is InvalidOperationException || ex is NotSupportedException)
-        {
-            // Abstract, extern or otherwise bodiless.
-            return null;
-        }
+        return IlReader.StringsOf(type);
     }
 
     /// <summary>Every non-abstract class in this assembly that declares at least one test.</summary>
@@ -1020,29 +964,8 @@ public sealed class LiveTierInventoryTests
             .ToList();
     }
 
-    /// <summary>The one string argument of an attribute named <paramref name="attributeName"/>, or null.</summary>
-    private static string? SingleAttributeArgument(Type type, string attributeName)
-    {
-        return type.GetCustomAttributesData()
-            .Where(a => string.Equals(a.AttributeType.Name, attributeName, StringComparison.Ordinal))
-            .Where(a => a.ConstructorArguments.Count == 1)
-            .Select(a => a.ConstructorArguments[0].Value as string)
-            .FirstOrDefault(value => value != null);
-    }
-
     private static string Name(MethodInfo method)
     {
         return method.DeclaringType!.Name + "." + method.Name;
-    }
-
-    private static string RepoRoot()
-    {
-        string testProjectDir = typeof(LiveTierInventoryTests).Assembly
-                .GetCustomAttributes<AssemblyMetadataAttribute>()
-                .FirstOrDefault(a => a.Key == "TestProjectDir")?.Value
-            ?? throw new InvalidOperationException("AssemblyMetadata 'TestProjectDir' is missing.");
-
-        // <repo>/McpServer/OutlookAI.McpServer.Tests/ -> <repo>
-        return Path.GetFullPath(Path.Combine(testProjectDir, "..", ".."));
     }
 }

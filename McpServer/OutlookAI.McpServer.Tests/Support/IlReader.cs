@@ -1,7 +1,7 @@
 using System.Reflection;
 using System.Reflection.Emit;
 
-namespace OutlookAI.McpServer.Tests.T1;
+namespace OutlookAI.McpServer.Tests;
 
 /// <summary>One instruction of a method body that the static checks care about.</summary>
 /// <param name="Op">The opcode.</param>
@@ -128,6 +128,31 @@ internal static class IlReader
         }
 
         return found;
+    }
+
+    /// <summary>
+    /// The methods <paramref name="method"/> calls or constructs - its call, callvirt and newobj
+    /// instructions, in order - leaving out a target that cannot be resolved.
+    /// </summary>
+    public static List<MethodBase> CalleesOf(MethodBase method)
+    {
+        return Read(method)
+            .Where(i => i.Method != null && (i.Op == OpCodes.Call || i.Op == OpCodes.Callvirt || i.Op == OpCodes.Newobj))
+            .Select(i => i.Method!)
+            .ToList();
+    }
+
+    /// <summary>A method body's raw IL, for a scan of its own; null for a method the runtime gives none for.</summary>
+    public static byte[]? SafeIl(MethodBase method)
+    {
+        try
+        {
+            return method.GetMethodBody()?.GetILAsByteArray();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException || ex is NotSupportedException)
+        {
+            return null;
+        }
     }
 
     /// <summary>Every method, constructor and type initializer <paramref name="type"/> declares itself.</summary>

@@ -388,7 +388,7 @@ public sealed class ExchangeWritePathTests
     /// </summary>
     private static string CodeOf(string relativePath, string member)
     {
-        string[] lines = File.ReadAllLines(Path.Combine(RepoRoot(), relativePath));
+        string[] lines = File.ReadAllLines(Path.Combine(RepoPaths.RepoRoot(), relativePath));
         int start = Array.FindIndex(lines, line => DeclaredName(line) == member);
         Assert.True(start >= 0, member + " was not found in " + relativePath + " - this check has stopped proving anything.");
 
@@ -410,17 +410,6 @@ public sealed class ExchangeWritePathTests
         return declaration.Success ? declaration.Groups["name"].Value : null;
     }
 
-    private static string RepoRoot()
-    {
-        string testProjectDir = typeof(ExchangeWritePathTests).Assembly
-                .GetCustomAttributes<AssemblyMetadataAttribute>()
-                .FirstOrDefault(a => a.Key == "TestProjectDir")?.Value
-            ?? throw new InvalidOperationException("AssemblyMetadata 'TestProjectDir' is missing.");
-
-        // <repo>/McpServer/OutlookAI.McpServer.Tests/ -> <repo>
-        return Path.GetFullPath(Path.Combine(testProjectDir, "..", ".."));
-    }
-
     /// <summary>What the service asked the COM layer to send.</summary>
     private sealed record SendRequest(string EntryId, string? StoreId, string ExpectedContentHash, string? SentOnBehalfOfName);
 
@@ -432,42 +421,6 @@ public sealed class ExchangeWritePathTests
     {
         public StandInStoppedTheSend()
             : base("The stand-in session stops every confirmed send before it would answer.")
-        {
-        }
-    }
-
-    /// <summary>Runs operations straight against the stand-in session, with no budget layer.</summary>
-    private sealed class DirectGateway : IComGateway
-    {
-        private readonly IOutlookSession _session;
-
-        internal DirectGateway(IOutlookSession session)
-        {
-            _session = session;
-        }
-
-        public event Action? OutlookGone
-        {
-            add { }
-            remove { }
-        }
-
-        public bool IsConnected => true;
-
-        public bool? QuitSinkActive => null;
-
-        public bool ProbeConnected() => true;
-
-        public T Run<T>(Func<IOutlookSession, T> operation) => operation(_session);
-
-        public T Run<T>(Func<IOutlookSession, T> operation, ComSessionRecovery recovery) => operation(_session);
-
-        public T Run<T>(Func<IOutlookSession, T> operation, int budgetMilliseconds, bool allowConnectFloor = false)
-            => operation(_session);
-
-        public ComHostDiagnostics GetDiagnostics() => new ComHostDiagnostics("in-process", "ready");
-
-        public void Dispose()
         {
         }
     }
@@ -504,7 +457,7 @@ public sealed class ExchangeWritePathTests
             switch (method.Name)
             {
                 case nameof(IOutlookSession.TryGetSendableDraftState) when Draft != null:
-                    SetOut(method, args, "error", null);
+                    ProxyArgs.SetOut(method, args, "error", null);
                     return Draft;
 
                 case nameof(IOutlookSession.TrySendDraft) when Draft != null:
@@ -518,13 +471,13 @@ public sealed class ExchangeWritePathTests
                         throw new StandInStoppedTheSend();
                     }
 
-                    SetOut(method, args, "error", SendRefusal);
+                    ProxyArgs.SetOut(method, args, "error", SendRefusal);
                     return null;
 
                 case nameof(IOutlookSession.TryCreateDerivedDraft) when DerivedDraft != null:
-                    SetOut(method, args, "savedDraftEntryId", DerivedDraft.Draft.EntryId);
-                    SetOut(method, args, "createdFolder", null);
-                    SetOut(method, args, "error", null);
+                    ProxyArgs.SetOut(method, args, "savedDraftEntryId", DerivedDraft.Draft.EntryId);
+                    ProxyArgs.SetOut(method, args, "createdFolder", null);
+                    ProxyArgs.SetOut(method, args, "error", null);
                     return DerivedDraft;
 
                 default:
@@ -545,18 +498,6 @@ public sealed class ExchangeWritePathTests
             }
 
             throw new InvalidOperationException(method.Name + " has no parameter named '" + name + "'.");
-        }
-
-        private static void SetOut(MethodInfo method, object?[]? args, string name, object? value)
-        {
-            ParameterInfo[] parameters = method.GetParameters();
-            for (int i = 0; args != null && i < parameters.Length && i < args.Length; i++)
-            {
-                if (parameters[i].IsOut && string.Equals(parameters[i].Name, name, StringComparison.Ordinal))
-                {
-                    args[i] = value;
-                }
-            }
         }
 
         /// <summary>Not sealed: <see cref="DispatchProxy"/> derives from it at runtime.</summary>

@@ -20,15 +20,8 @@ public sealed class StoreIndexHealthRowTests
 {
     private const string Root = "mapi16://{S-1-5-21-1-2-3-1000}/";
 
-    private static byte[] Pst(string path)
-    {
-        byte[] header = Convert.FromHexString(
-            "0000000038A1BB1005E5101AA1BB08002B2A56C200006D737073742E646C6C00000000004E495441F9BFB80100AA0037D96E0000" + "0000");
-        return header.Concat(Encoding.Unicode.GetBytes(path + "\0")).ToArray();
-    }
-
     private static StoreIndexIdentity PstStore(string displayName, string path, string ownName)
-        => new(displayName, 3, StoreHash.Candidates(Convert.ToHexString(Pst(path)), false, false, null, null, null),
+        => new(displayName, 3, StoreHash.Candidates(Convert.ToHexString(TestFolders.PstStoreEntryId(path)), false, false, null, null, null),
             filePath: path, ownName: ownName);
 
     private static StoreScopeInfo IndexRoot(string ownName, uint hash)
@@ -45,10 +38,10 @@ public sealed class StoreIndexHealthRowTests
         StoreHash.Candidates("44556677", true, false, "0E0F1011", null, null), filePath: @"C:\Users\a\bob.ost");
     private static readonly StoreIndexIdentity Delegate = new("Ann", 1, Array.Empty<StoreHashCandidate>());
 
-    private static readonly StoreScopeInfo IdentityRoot = IndexRoot("Outlook Data File", StoreHash.Compute(Pst(@"C:\OutlookAI-Tier\identity.pst")));
+    private static readonly StoreScopeInfo IdentityRoot = IndexRoot("Outlook Data File", StoreHash.Compute(TestFolders.PstStoreEntryId(@"C:\OutlookAI-Tier\identity.pst")));
     private static readonly StoreScopeInfo AliceRoot = IndexRoot("alice@example.com", StoreHash.Compute(new byte[] { 0x0A, 0x0B, 0x0C, 0x0D }));
     private static readonly StoreScopeInfo BobRoot = IndexRoot("bob@example.com", 0x13579BDF);
-    private static readonly StoreScopeInfo OtherProfiles = IndexRoot("archive", StoreHash.Compute(Pst(@"C:\Other\archive.pst")));
+    private static readonly StoreScopeInfo OtherProfiles = IndexRoot("archive", StoreHash.Compute(TestFolders.PstStoreEntryId(@"C:\Other\archive.pst")));
 
     private static StoreIndexMap Map() => StoreIndexMatcher.Match(
         new[] { IdentityPst, MissingPst, HashedExchange, UndecidedExchange, Delegate },
@@ -107,7 +100,7 @@ public sealed class StoreIndexHealthRowTests
         // Two PSTs sharing both the name and the hash of one index store (the same entry ID, as a
         // stand-in for a 32-bit collision under one name).
         string path = @"C:\OutlookAI-Tier\shared.pst";
-        StoreScopeInfo shared = IndexRoot("Archive", StoreHash.Compute(Pst(path)));
+        StoreScopeInfo shared = IndexRoot("Archive", StoreHash.Compute(TestFolders.PstStoreEntryId(path)));
         StoreIndexMap map = StoreIndexMatcher.Match(
             new[] { PstStore("Archive A", path, "Archive"), PstStore("Archive B", path, "Archive") }, new[] { shared });
 
@@ -134,7 +127,7 @@ public sealed class StoreIndexHealthRowTests
     {
         // The store's hash under its OLD name only: not tied - the pre-Q113 rule took that root -
         // and the note says what the leftover is.
-        StoreScopeInfo leftover = IndexRoot("old name", StoreHash.Compute(Pst(@"C:\OutlookAI-Tier\identity.pst")));
+        StoreScopeInfo leftover = IndexRoot("old name", StoreHash.Compute(TestFolders.PstStoreEntryId(@"C:\OutlookAI-Tier\identity.pst")));
         StoreIndexMatch match = Assert.Single(StoreIndexMatcher.Match(new[] { IdentityPst }, new[] { leftover }).Stores);
 
         StoreStaleness row = MailService.DescribeStoreMatch(match, null);

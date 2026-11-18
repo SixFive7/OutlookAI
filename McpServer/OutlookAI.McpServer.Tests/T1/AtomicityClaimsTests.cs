@@ -894,42 +894,6 @@ public sealed class AtomicityClaimsTests
 
     // ---------------------------------------------------------------- support
 
-    /// <summary>Runs operations straight against the stand-in session, with no budget layer.</summary>
-    private sealed class DirectGateway : IComGateway
-    {
-        private readonly IOutlookSession _session;
-
-        internal DirectGateway(IOutlookSession session)
-        {
-            _session = session;
-        }
-
-        public event Action? OutlookGone
-        {
-            add { }
-            remove { }
-        }
-
-        public bool IsConnected => true;
-
-        public bool? QuitSinkActive => null;
-
-        public bool ProbeConnected() => true;
-
-        public T Run<T>(Func<IOutlookSession, T> operation) => operation(_session);
-
-        public T Run<T>(Func<IOutlookSession, T> operation, ComSessionRecovery recovery) => operation(_session);
-
-        public T Run<T>(Func<IOutlookSession, T> operation, int budgetMilliseconds, bool allowConnectFloor = false)
-            => operation(_session);
-
-        public ComHostDiagnostics GetDiagnostics() => new ComHostDiagnostics("in-process", "ready");
-
-        public void Dispose()
-        {
-        }
-    }
-
     /// <summary>
     /// A session that refuses whichever operation the test is about, in exactly the shape the
     /// COM layer refuses it: a null return plus a content-free token in the <c>error</c> out
@@ -996,10 +960,10 @@ public sealed class AtomicityClaimsTests
 
                 case nameof(IOutlookSession.TryCreateNewDraft):
                 case nameof(IOutlookSession.TryCreateDerivedDraft):
-                    SetOut(method, args, "savedDraftEntryId", SavedDraftEntryId);
+                    ProxyArgs.SetOut(method, args, "savedDraftEntryId", SavedDraftEntryId);
                     if (CreateRefusal != null)
                     {
-                        SetOut(method, args, "error", CreateRefusal);
+                        ProxyArgs.SetOut(method, args, "error", CreateRefusal);
                         return null;
                     }
 
@@ -1008,7 +972,7 @@ public sealed class AtomicityClaimsTests
                 case nameof(IOutlookSession.TryDiscardDraft):
                     if (DiscardRefusal != null)
                     {
-                        SetOut(method, args, "error", DiscardRefusal);
+                        ProxyArgs.SetOut(method, args, "error", DiscardRefusal);
                         return null;
                     }
 
@@ -1025,7 +989,7 @@ public sealed class AtomicityClaimsTests
 
                     if (MoveRefusal != null)
                     {
-                        SetOut(method, args, "error", MoveRefusal);
+                        ProxyArgs.SetOut(method, args, "error", MoveRefusal);
                         return null;
                     }
 
@@ -1035,9 +999,9 @@ public sealed class AtomicityClaimsTests
                     // A VALUE-TYPE out parameter has to be filled explicitly: DispatchProxy
                     // hands the args array to Invoke with null in every out slot, so leaving
                     // sizeBytes alone unboxes null into a long and the proxy throws.
-                    SetOut(method, args, "sizeBytes", 0L);
-                    SetOut(method, args, "attemptedPath", AttemptedPath);
-                    SetOut(method, args, "error", AttachmentRefusal);
+                    ProxyArgs.SetOut(method, args, "sizeBytes", 0L);
+                    ProxyArgs.SetOut(method, args, "attemptedPath", AttemptedPath);
+                    ProxyArgs.SetOut(method, args, "error", AttachmentRefusal);
                     return null;
 
                 case nameof(IOutlookSession.TryGetMailInfo):
@@ -1061,33 +1025,21 @@ public sealed class AtomicityClaimsTests
                         "me@example.com", Array.Empty<ComRecipientInfo>());
 
                 case nameof(IOutlookSession.TrySendDraft):
-                    SetOut(method, args, "error", SendRefusal);
+                    ProxyArgs.SetOut(method, args, "error", SendRefusal);
                     return null;
 
                 case nameof(IOutlookSession.TryDisplayItem):
-                    SetOut(method, args, "error", DisplayRefusal);
+                    ProxyArgs.SetOut(method, args, "error", DisplayRefusal);
                     return null;
 
                 case nameof(IOutlookSession.TryGotoFolder):
                 case nameof(IOutlookSession.TryShowSearchResults):
                     NavigationCalls++;
-                    SetOut(method, args, "error", NavigationRefusal);
+                    ProxyArgs.SetOut(method, args, "error", NavigationRefusal);
                     return null;
 
                 default:
                     return null;
-            }
-        }
-
-        private static void SetOut(MethodInfo method, object?[]? args, string name, object? value)
-        {
-            ParameterInfo[] parameters = method.GetParameters();
-            for (int i = 0; args != null && i < parameters.Length && i < args.Length; i++)
-            {
-                if (parameters[i].IsOut && string.Equals(parameters[i].Name, name, StringComparison.Ordinal))
-                {
-                    args[i] = value;
-                }
             }
         }
 

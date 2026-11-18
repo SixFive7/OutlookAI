@@ -1,4 +1,3 @@
-using System.Reflection;
 using OutlookAI.McpServer.Tests.T2;
 using Xunit;
 
@@ -49,7 +48,7 @@ public sealed class LivePopulationCoverageTests
         List<string> lines = new();
 
         IReadOnlyList<string> found = LivePopulationCoverage.Require(
-            Settings(LiveMachineProfile.Portable), Array.Empty<string>(),
+            HubOnlyLiveSettings.For(LiveMachineProfile.Portable), Array.Empty<string>(),
             Population, WhatWouldNotRun, Remedy, lines.Add);
 
         // Empty, and NOT a failure - this machine was never meant to run this test.
@@ -72,7 +71,7 @@ public sealed class LivePopulationCoverageTests
 
         InvalidOperationException refusal = Assert.Throws<InvalidOperationException>(
             () => LivePopulationCoverage.Require(
-                Settings(LiveMachineProfile.Production), Array.Empty<string>(),
+                HubOnlyLiveSettings.For(LiveMachineProfile.Production), Array.Empty<string>(),
                 Population, WhatWouldNotRun, Remedy, lines.Add));
 
         Assert.Contains(Population, refusal.Message, StringComparison.Ordinal);
@@ -93,7 +92,7 @@ public sealed class LivePopulationCoverageTests
         List<string> lines = new();
 
         IReadOnlyList<string> found = LivePopulationCoverage.Require(
-            Settings(profile), stores, Population, WhatWouldNotRun, Remedy, lines.Add);
+            HubOnlyLiveSettings.For(profile), stores, Population, WhatWouldNotRun, Remedy, lines.Add);
 
         Assert.Equal(stores, found);
 
@@ -113,7 +112,7 @@ public sealed class LivePopulationCoverageTests
         List<string> lines = new();
 
         IReadOnlyList<string> found = LivePopulationCoverage.Require<string>(
-            Settings(LiveMachineProfile.Portable), null,
+            HubOnlyLiveSettings.For(LiveMachineProfile.Portable), null,
             Population, WhatWouldNotRun, Remedy, lines.Add);
 
         Assert.Empty(found);
@@ -180,7 +179,7 @@ public sealed class LivePopulationCoverageTests
         Assert.Throws<ArgumentNullException>(() => LivePopulationCoverage.Require(
             null!, Array.Empty<string>(), Population, WhatWouldNotRun, Remedy, _ => { }));
         Assert.Throws<ArgumentNullException>(() => LivePopulationCoverage.Require(
-            Settings(LiveMachineProfile.Portable), Array.Empty<string>(),
+            HubOnlyLiveSettings.For(LiveMachineProfile.Portable), Array.Empty<string>(),
             Population, WhatWouldNotRun, Remedy, null!));
     }
 
@@ -197,8 +196,8 @@ public sealed class LivePopulationCoverageTests
         // The two delegate tests moved out of LiveFolderScopeTests into their own class on
         // 2026-10-03 (Q74 B1) - its collection fixture writes, and they run only on the read-only
         // workstation. The guard moved with them, and the old file keeps no copy of the read.
-        string folderScope = LiveSource("LiveDelegateFolderScopeTests.cs");
-        Assert.Equal(0, Occurrences(LiveSource("LiveFolderScopeTests.cs"), "ExpectedDelegateStoreDisplayNames"));
+        string folderScope = SourceText.LiveSource("LiveDelegateFolderScopeTests.cs");
+        Assert.Equal(0, Occurrences(SourceText.LiveSource("LiveFolderScopeTests.cs"), "ExpectedDelegateStoreDisplayNames"));
 
         // Exactly one read of the settings list in the whole file: the guard's own. Two would mean
         // the two delegate tests could answer the same question differently again, which is how
@@ -206,7 +205,7 @@ public sealed class LivePopulationCoverageTests
         Assert.Equal(1, Occurrences(folderScope, "ExpectedDelegateStoreDisplayNames"));
         Assert.Equal(2, Occurrences(folderScope, "DelegateStores(\""));
 
-        string signatures = LiveSource("LiveSignatureTests.cs");
+        string signatures = SourceText.LiveSource("LiveSignatureTests.cs");
         Assert.Contains("LivePopulationCoverage.Require(", signatures, StringComparison.Ordinal);
 
         // The exact line that was vacuous. Asserting over the raw nullable list is what an empty
@@ -215,16 +214,6 @@ public sealed class LivePopulationCoverageTests
     }
 
     // ------------------------------------------------------------------ helpers
-
-    private static LiveTestSettings Settings(LiveMachineProfile profile)
-    {
-        return new LiveTestSettings
-        {
-            MachineProfile = profile,
-            TestHubStoreDisplayName = "hub@example.test",
-            ExpectedStoreDisplayNames = new List<string> { "hub@example.test" },
-        };
-    }
 
     private static int Occurrences(string haystack, string needle)
     {
@@ -237,16 +226,5 @@ public sealed class LivePopulationCoverageTests
         }
 
         return count;
-    }
-
-    private static string LiveSource(string fileName)
-    {
-        string dir = typeof(LiveTestSettings).Assembly
-                .GetCustomAttributes<AssemblyMetadataAttribute>()
-                .FirstOrDefault(a => a.Key == "TestProjectDir")?.Value
-            ?? throw new InvalidOperationException("AssemblyMetadata 'TestProjectDir' is missing.");
-        string path = Path.Combine(dir, "T2", fileName);
-        Assert.True(File.Exists(path), "live test source is missing: " + path);
-        return File.ReadAllText(path);
     }
 }
