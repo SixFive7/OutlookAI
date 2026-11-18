@@ -781,6 +781,19 @@ its mailbox tests on, and change nothing you install.
 
 ### Changed
 
+- 📦 **Setup puts the mail server's own .NET 11 runtime in your profile, with no administrator rights.**
+  The mail server runs on .NET 11 since the maintainer moved OutlookAI to it on 2026-11-18 (Q172),
+  and the installer no longer installs a .NET runtime for the whole machine. On every install and
+  every silent update it downloads Microsoft's runtime package, about 40 MB, checks its length and
+  SHA-512 against what Microsoft publishes, and unpacks it into `%LOCALAPPDATA%\OutlookAI\dotnet`;
+  once the runtime is there, it downloads nothing. A silent update used to skip the runtime,
+  because installing it for the whole machine needed an administrator's answer. The installer stays
+  under the updater's 50 MB limit, since the runtime is never inside it. On a machine without
+  internet, Microsoft's `dotnet-runtime-11.0.0-win-x64.zip` beside the installer is used instead,
+  checked the same way. The server looks for its own copy first and then for a .NET 11 installed
+  for the whole machine, and uninstalling removes its copy. If setup could not put the runtime in
+  place, OutlookAI Settings says so and what to do.
+
 - 🔧 **`read` prints a mail's folder as every other tool does: its names joined by `/`.**
   It printed Outlook's own folder path, with the store's name in front, backslashes between the
   names and Outlook's codes for `%`, `/` and `\` inside them, while `list_folders`, `find_folder`,
