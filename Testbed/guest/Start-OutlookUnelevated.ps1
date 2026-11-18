@@ -153,18 +153,6 @@ public static class OaiUnelevatedWin {
         }, IntPtr.Zero);
         return found;
     }
-    public static string[] Visible(uint pid) {
-        System.Collections.Generic.List<string> found = new System.Collections.Generic.List<string>();
-        EnumWindows(delegate (IntPtr h, IntPtr l) {
-            uint p; GetWindowThreadProcessId(h, out p);
-            if (p != pid || !IsWindowVisible(h)) return true;
-            StringBuilder c = new StringBuilder(256); GetClassName(h, c, 256);
-            StringBuilder t = new StringBuilder(512); GetWindowText(h, t, 512);
-            found.Add(c.ToString() + " '" + t.ToString() + "'");
-            return true;
-        }, IntPtr.Zero);
-        return found.ToArray();
-    }
     public static string ClassOf(IntPtr h) { StringBuilder c = new StringBuilder(256); GetClassName(h, c, 256); return c.ToString(); }
     public static bool Shown(IntPtr h) { return IsWindow(h) && IsWindowVisible(h); }
     public static bool PostClose(IntPtr h) { return PostMessage(h, 0x0010, IntPtr.Zero, IntPtr.Zero); }
