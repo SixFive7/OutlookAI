@@ -94,8 +94,6 @@ namespace OutlookAI.Core.Com
     /// </summary>
     public static class OutlookLiveness
     {
-        private const string ProcessName = "OUTLOOK";
-
         /// <summary>The Explorer and Inspector window class - the windows a user sees.</summary>
         private const string ExplorerWindowClass = "rctrl_renwnd32";
 
@@ -136,7 +134,7 @@ namespace OutlookAI.Core.Com
             List<int> pids = new List<int>();
             try
             {
-                foreach (Process process in Process.GetProcessesByName(ProcessName))
+                foreach (Process process in OutlookProcesses.InThisSession())
                 {
                     try
                     {

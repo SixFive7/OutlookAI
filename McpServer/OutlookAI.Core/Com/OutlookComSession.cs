@@ -317,21 +317,13 @@ namespace OutlookAI.Core.Com
             ComposeSurfacePinError = pinError;
         }
 
-        /// <summary>True when an OUTLOOK.EXE process exists for this session's user.</summary>
+        /// <summary>
+        /// True when this user's Outlook is running: an OUTLOOK.EXE in the caller's own Windows session
+        /// (<see cref="OutlookProcesses"/>). Another user's Outlook on the same machine does not count.
+        /// </summary>
         public static bool IsOutlookProcessRunning()
         {
-            Process[] processes = Process.GetProcessesByName("OUTLOOK");
-            try
-            {
-                return processes.Length > 0;
-            }
-            finally
-            {
-                foreach (Process process in processes)
-                {
-                    process.Dispose();
-                }
-            }
+            return OutlookProcesses.AnyInThisSession();
         }
 
         /// <summary>
@@ -568,7 +560,7 @@ namespace OutlookAI.Core.Com
         {
             try
             {
-                Process[] processes = Process.GetProcessesByName("OUTLOOK");
+                Process[] processes = OutlookProcesses.InThisSession();
                 for (int i = 1; i < processes.Length; i++)
                 {
                     processes[i].Dispose();

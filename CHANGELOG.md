@@ -1631,6 +1631,13 @@ its mailbox tests on, and change nothing you install.
 
 ### Fixed
 
+- 🐛 **Another user's Outlook on the same computer is no longer taken for yours.**
+  OutlookAI counted every OUTLOOK.EXE on the computer. With someone else signed in to it, by fast
+  user switching or on a terminal server, their Outlook, whose windows are on another desktop,
+  looked like yours still starting, and health reported their process as yours. Only an OUTLOOK.EXE
+  in your own Windows session counts now: in the checks before a mailbox is opened, in health, in
+  the watch for Outlook exiting and in the count of its windows. Decided on 2026-11-18.
+
 - 🐛 **An Outlook that closes during a call is reported as a COM failure, with advice and an outcome.**
   When Outlook went away under a call and the mail server's exit watcher had released the session
   first, the agent was told "Cannot access a disposed object", with no advice and no outcome. That
