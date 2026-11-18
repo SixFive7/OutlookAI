@@ -5498,6 +5498,44 @@ named first, failed after it. Both crashes were the product's reply drafted with
 Outlook. Off by default and refused on the Exchange VM: a debugger changes what it is attached to, and a
 full dump holds the mailbox.
 
+**The first catch** - run `20261118-150312-indexed-3577d9a3f9fd` on `OutlookAI-Indexed` (`CP-24C-FROZEN-CLOCK`), in
+round 11 of 20, after ten rounds that passed. Outlook pid 5464 had been up 15.7 minutes, the same process through
+every round, when the debugger wrote `OUTLOOK.EXE.5464.firstchance.dmp` at the first-chance access violation, and
+`OUTLOOK.EXE.5464.secondchance.dmp` at the second chance; WER then wrote `OUTLOOK.EXE.5464.dmp` itself. All three,
+about 1.1 GB each, are kept whole in the run's `dumps\OutlookAI-Indexed\` with their reports, WER's report in its
+`wer\OutlookAI-Indexed\`, the debugger's log in its `results\OutlookAI-Indexed\first-chance.log`.
+
+* **The fault.** `mso40uiwin32client.dll+0x11DA7E`, in the function at `+0x11D910`: `lock inc dword ptr [rbx+8]`
+  (`F0 FF 43 08`) with `rbx` 0x40000, so a reference-count increment on an object pointer that is not one, WRITING
+  0x40008. The same offset as K2's crash of that morning; stream U's, at `+0x11D8C7`, lies just before this function.
+* **The stack**, from the bottom: Outlook's main thread; its message loop dispatching an incoming COM call -
+  `combase`, `rpcrt4!NdrStubCall2`, `oleaut32` - into Outlook's `IDispatch::Invoke` (`OUTLOOK.EXE+0x207C60`, the
+  slot 4.6 found), whose arguments on the stack read `wFlags` 3 and no argument; some fifteen Outlook frames; Word
+  (`WWLIB.DLL`) calling `SetWindowPos`; the kernel delivering the message that causes synchronously
+  (`ntdll!KiUserCallbackDispatcher`), through Office's window subclasses (`mso98win32client`, `mso20win32client`,
+  `comctl32`), into Word's window procedure (`WWLIB.DLL+0x256DC0`), which called `mso.dll` (`+0x1E9910`), which
+  called `mso40uiwin32client`.
+* **The call in flight.** The test was in `LiveQ149TypedTextTests.Q211_WhatOutlooksOwnComposeWindowMakesOfTypedText`,
+  at the product's forward of its source mail (`MailService.ForwardDraft`, `CreateDerived`), which failed with
+  `0x800706BE` "before Outlook was given anything to save": the derived draft's first call, `Forward()` on the source
+  item, a method with no argument, as the `Invoke` frame reads. Just before it the test had shown Outlook's own forward
+  window for the same mail, typed into it and closed it with `Close(olDiscard)`. Stream U's crash came six seconds into
+  `ReplyDraft_WithSignature_InsertsAboveQuote_ThenUpdateSwapsItForAnother_ThenNoneRemovesIt`, after product drafts
+  only; K2's earlier one at the product's reply in the same typed-text test.
+* **What it is not.** Not OutlookAI's use of Word's editor: `WordEditor` is not on the stack, and the draft had not
+  reached it. Not the timing after a fast restart: that Outlook had run 15.7 minutes and served ten rounds. It is
+  Office's own code - Word's window procedure handing a window message to `mso40uiwin32client`, whose object is bad -
+  reached while Outlook served the product's derived-draft call.
+* **Why the two crashes before left no dump** (inferred from three crashes' codes, events and dumps, not from Windows'
+  source). The access violation happens inside a kernel-to-user callback. Under the debugger it went to the debugger
+  first, then left the callback as `0xC000041D`, STATUS_FATAL_USER_CALLBACK_EXCEPTION, non-continuable, which took the
+  ordinary unhandled path: event 1000 read `0xc000041d`, and WER wrote its local dump. The two crashes without a
+  debugger wrote event 1000 with `0xc0000005` and no dump: Windows reported them from the callback itself, a path on
+  which no local dump was written.
+
+What OutlookAI does about it, if anything, is the maintainer's decision.
+
+
 ## 5. Which tests are in which bucket, and how to find out
 
 The classification is **two traits on the test itself**, not a list in a document that can drift -
