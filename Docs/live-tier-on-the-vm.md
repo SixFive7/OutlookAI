@@ -776,6 +776,19 @@ first two pane runs that day failed before this one: their add-in was the checkp
 add-in's new re-check of the CLI are for. Not measured here: the recipients' SMTP addresses, which only an
 Exchange recipient's X.500 one would change, and no PST guest has one.
 
+**The same test beside the headless ones, once the pane left a hidden compose window alone - 2026-11-18, runs
+`20261118-110304-unindexed-2973eb72c9e1` (`OutlookAI-Unindexed2`, from `CP-16B-FROZEN-CLOCK`) and
+`20261118-110304-indexed-2973eb72c9e1` (`OutlookAI-Indexed`, from `CP-22C-FROZEN-CLOCK`).** Both with
+`-WithAddIn` and the draft, signature, headless and pane tests: 49 of 49 passed on each, and on each the
+stand-in got two requests, the body's and the signature choice's. The first run with the tested add-in in
+place, at `6ba7b08` on `OutlookAI-Indexed2`, had failed `LiveHeadlessComposeParityTests`: the windows a person
+could see went from 1 to 3 while the MCP server composed a draft without showing it. That draft's compose
+window has a pane too, and the pane's look at the signature Outlook put in asked for the window's Word editor,
+which can put the window on screen. `48c7d6e` asked the inspector through `IOleWindow` whether its window was
+visible, and with that the choice after the body was never made - one request to the stand-in, on
+`OutlookAI-Indexed` and `OutlookAI-Unindexed` both; `2973eb7` asks the pane's own window, which is visible
+only when every window around it is.
+
 **Checkpoint `CP-03-OUTLOOKAI-INSTALLED` once `-Phase FirstRun` prints `ADDIN-READY`.** `CP-05-ADDIN-TRUSTED`
 is no longer a separate manual step - the trust entry is part of the scripted install - and the name
 survives only as the hand-built guest's history.

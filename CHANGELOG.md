@@ -301,7 +301,9 @@ its mailbox tests on, and change nothing you install.
   does. On `OutlookAI-Unindexed` on 2026-11-18, with the add-in of `8cf5431`, the pane wrote the
   stand-in's four lines as 4 paragraphs, its AI replaced the agent's signature with the one the
   stand-in named, and that signature's picture was embedded, 0 of 1 left a link (runbook section
-  2.3).
+  2.3). Run beside the headless tests, it caught the pane putting an agent's hidden compose window
+  on screen; once that was fixed, it passed on an indexed and an unindexed guest, with all 49 tests
+  of that selection.
 
 - ✅ **Tests pin the start policy, lock, record, log and report, and live tests time the settle wait.**
   T1 runs every branch of the start policy over every combination of its facts, the record's and the
