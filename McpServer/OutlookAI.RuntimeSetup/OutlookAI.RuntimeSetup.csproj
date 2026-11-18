@@ -37,7 +37,7 @@
   <ItemGroup>
     <!--
       Where the runtime goes, which version it is and when it is complete: OutlookAI.Core.AddIn's
-      ServerRuntime, the one copy the add-in asks too (Q154).
+      ServerDotnetRuntime, the one copy the add-in asks too (Q154).
     -->
     <ProjectReference Include="..\OutlookAI.Core\OutlookAI.Core.csproj" />
   </ItemGroup>

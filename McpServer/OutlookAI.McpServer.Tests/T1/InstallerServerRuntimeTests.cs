@@ -59,7 +59,7 @@ public sealed class InstallerServerRuntimeTests
     [Fact]
     public void TheUninstallerDeletesTheRuntimeItsWorkFoldersAndItsLog_AndNothingElseOfOutlookAIs()
     {
-        string root = @"{localappdata}\OutlookAI\" + ServerRuntime.FolderName;
+        string root = @"{localappdata}\OutlookAI\" + ServerDotnetRuntime.FolderName;
         string[] deletes = InstallerScript.Section(InstallerScript.Text(), "UninstallDelete");
 
         Assert.Equal(
@@ -78,6 +78,6 @@ public sealed class InstallerServerRuntimeTests
         string iss = InstallerScript.Text();
 
         Assert.DoesNotMatch(new Regex("NetRuntime10|IsNetRuntime10Installed|DownloadAndInstallNetRuntime|dotnet-runtime-10"), iss);
-        Assert.Equal("https://dotnet.microsoft.com/download/dotnet/" + ServerRuntime.Major + ".0", InstallerScript.Define(iss, "ServerRuntimeManualUrl"));
+        Assert.Equal("https://dotnet.microsoft.com/download/dotnet/" + ServerDotnetRuntime.Major + ".0", InstallerScript.Define(iss, "ServerRuntimeManualUrl"));
     }
 }

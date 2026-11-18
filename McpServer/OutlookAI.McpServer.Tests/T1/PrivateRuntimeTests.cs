@@ -26,13 +26,13 @@ public sealed class PrivateRuntimeTests : IDisposable
 
     public void Dispose() => ScratchFiles.TryDeleteTree(_scratch);
 
-    private string Root => Path.Combine(_scratch, "OutlookAI", ServerRuntime.FolderName);
+    private string Root => Path.Combine(_scratch, "OutlookAI", ServerDotnetRuntime.FolderName);
 
-    /// <summary>The two files <see cref="ServerRuntime.IsComplete"/> looks for, and one more, as Microsoft's zip has them.</summary>
+    /// <summary>The two files <see cref="ServerDotnetRuntime.IsComplete"/> looks for, and one more, as Microsoft's zip has them.</summary>
     private static readonly string[] RuntimeLayout =
     {
-        "host/fxr/" + ServerRuntime.Version + "/hostfxr.dll",
-        "shared/Microsoft.NETCore.App/" + ServerRuntime.Version + "/System.Private.CoreLib.dll",
+        "host/fxr/" + ServerDotnetRuntime.Version + "/hostfxr.dll",
+        "shared/Microsoft.NETCore.App/" + ServerDotnetRuntime.Version + "/System.Private.CoreLib.dll",
         "dotnet.exe",
     };
 
@@ -92,7 +92,7 @@ public sealed class PrivateRuntimeTests : IDisposable
     [Fact]
     public void ThePinnedPackageIsMicrosoftsRuntimeZip()
     {
-        Assert.Equal("11.0.0", ServerRuntime.Version);
+        Assert.Equal("11.0.0", ServerDotnetRuntime.Version);
         Assert.Equal("dotnet-runtime-11.0.0-win-x64.zip", PrivateRuntime.PackageFileName);
         Assert.Equal("https://builds.dotnet.microsoft.com/dotnet/Runtime/11.0.0/dotnet-runtime-11.0.0-win-x64.zip", PrivateRuntime.PinnedUrl);
         Assert.Equal(39856058, PrivateRuntime.PinnedLength);
@@ -110,7 +110,7 @@ public sealed class PrivateRuntimeTests : IDisposable
 
         Assert.Equal(PrivateRuntime.Outcome.Installed, Ensure(PackageOf(zip), download));
 
-        Assert.True(ServerRuntime.IsComplete(Root));
+        Assert.True(ServerDotnetRuntime.IsComplete(Root));
         Assert.Equal(1, download.Calls);
         Assert.Empty(WorkFolders());
         Assert.Contains("SHA-512 as pinned", Log(), StringComparison.Ordinal);
@@ -139,7 +139,7 @@ public sealed class PrivateRuntimeTests : IDisposable
         Assert.Equal(PrivateRuntime.Outcome.Installed, Ensure(PackageOf(zip), download, staged: zip));
 
         Assert.Equal(0, download.Calls);
-        Assert.True(ServerRuntime.IsComplete(Root));
+        Assert.True(ServerDotnetRuntime.IsComplete(Root));
         Assert.Contains("package from " + zip, Log(), StringComparison.Ordinal);
     }
 
@@ -215,7 +215,7 @@ public sealed class PrivateRuntimeTests : IDisposable
         Assert.Equal(PrivateRuntime.Outcome.UnpackFailed, Ensure(PackageOf(zip), new FileDownload(zip)));
 
         Assert.False(Directory.Exists(Root));
-        Assert.Contains("holds no runtime " + ServerRuntime.Version, Log(), StringComparison.Ordinal);
+        Assert.Contains("holds no runtime " + ServerDotnetRuntime.Version, Log(), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -227,7 +227,7 @@ public sealed class PrivateRuntimeTests : IDisposable
 
         Assert.Equal(PrivateRuntime.Outcome.Installed, Ensure(PackageOf(zip), new FileDownload(zip)));
 
-        Assert.True(ServerRuntime.IsComplete(Root));
+        Assert.True(ServerDotnetRuntime.IsComplete(Root));
         Assert.False(Directory.Exists(Path.Combine(Root, "shared", "Microsoft.NETCore.App", "10.9.9")));
         Assert.Empty(WorkFolders());
     }

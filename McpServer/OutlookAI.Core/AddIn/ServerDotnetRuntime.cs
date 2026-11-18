@@ -25,7 +25,7 @@ namespace OutlookAI.Core.AddIn
     /// COM or the index - a registry read and a few file probes.
     /// </para>
     /// </summary>
-    public static class ServerRuntime
+    public static class ServerDotnetRuntime
     {
         /// <summary>
         /// The Microsoft.NETCore.App version the server and its COM host ask for - their runtimeconfig

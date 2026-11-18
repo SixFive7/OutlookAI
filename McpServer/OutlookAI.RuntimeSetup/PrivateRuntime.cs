@@ -17,7 +17,7 @@ namespace OutlookAI.RuntimeSetup
     /// this helper makes is in here, so there is one place to vet them (stream S's rule that risky
     /// calls live in named classes).
     /// <list type="number">
-    /// <item>The package: Microsoft's own win-x64 runtime zip for <see cref="ServerRuntime.Version"/>,
+    /// <item>The package: Microsoft's own win-x64 runtime zip for <see cref="ServerDotnetRuntime.Version"/>,
     /// from its fixed address (<see cref="PinnedUrl"/>) - or, when one lies beside the installer under
     /// Microsoft's own name, that file - copied into a work folder beside the runtime folder, never
     /// more than one byte past the pinned length.</item>
@@ -25,7 +25,7 @@ namespace OutlookAI.RuntimeSetup
     /// metadata publishes for that file (<see cref="PinnedLength"/>, <see cref="PinnedSha512"/>).</item>
     /// <item>The unpack, into the work folder: every entry's place is worked out first, against the
     /// work folder's full path, and a package with one entry that would land outside it is refused
-    /// whole, with nothing written (zip-slip). Then <see cref="ServerRuntime.IsComplete"/> must hold
+    /// whole, with nothing written (zip-slip). Then <see cref="ServerDotnetRuntime.IsComplete"/> must hold
     /// for what was unpacked.</item>
     /// <item>The swap: the old runtime folder, when there is one, is renamed into the work folder, and
     /// the new one renamed into its place, so the runtime folder is the old copy or the whole new one,
@@ -39,17 +39,17 @@ namespace OutlookAI.RuntimeSetup
     public sealed class PrivateRuntime : IDisposable
     {
         /// <summary>
-        /// Microsoft's runtime package for <see cref="ServerRuntime.Version"/>, as
+        /// Microsoft's runtime package for <see cref="ServerDotnetRuntime.Version"/>, as
         /// https://builds.dotnet.microsoft.com/dotnet/release-metadata/11.0/releases.json lists it: release
         /// 11.0.0 (2026-11-10), <c>runtime.files[]</c>, the entry named <c>dotnet-runtime-win-x64.zip</c>.
         /// Read 2026-11-18; its length is that address's Content-Length the same day. A new version is a
         /// deliberate edit of all three from that file, never a hash computed from a download.
         /// </summary>
-        public const string PinnedUrl = "https://builds.dotnet.microsoft.com/dotnet/Runtime/" + ServerRuntime.Version
+        public const string PinnedUrl = "https://builds.dotnet.microsoft.com/dotnet/Runtime/" + ServerDotnetRuntime.Version
             + "/" + PackageFileName;
 
         /// <summary>The package's file name, as Microsoft publishes it - and as setup looks for it beside the installer.</summary>
-        public const string PackageFileName = "dotnet-runtime-" + ServerRuntime.Version + "-win-x64.zip";
+        public const string PackageFileName = "dotnet-runtime-" + ServerDotnetRuntime.Version + "-win-x64.zip";
 
         /// <summary>The package's length in bytes (<see cref="PinnedUrl"/>).</summary>
         public const long PinnedLength = 39856058;
@@ -109,7 +109,7 @@ namespace OutlookAI.RuntimeSetup
         private readonly Func<Uri, CancellationToken, Stream> _download;
         private readonly StreamWriter _log;
 
-        /// <param name="root">The runtime folder: <see cref="ServerRuntime.DefaultRoot"/> in setup, a scratch folder in a test.</param>
+        /// <param name="root">The runtime folder: <see cref="ServerDotnetRuntime.DefaultRoot"/> in setup, a scratch folder in a test.</param>
         /// <param name="package">What to fetch, and what it must hash to.</param>
         /// <param name="download">Opens the package's bytes: an HTTP GET in setup, a file in a test.</param>
         public PrivateRuntime(string root, Package package, Func<Uri, CancellationToken, Stream> download)
@@ -128,12 +128,12 @@ namespace OutlookAI.RuntimeSetup
         public static string WorkFolderPrefix(string root) => Path.GetFileName(root) + ".setup-";
 
         /// <summary>
-        /// What setup runs: the runtime into <see cref="ServerRuntime.DefaultRoot"/>, from the package
+        /// What setup runs: the runtime into <see cref="ServerDotnetRuntime.DefaultRoot"/>, from the package
         /// in <paramref name="from"/> (<see cref="PackageFileName"/>) when that file exists and from the
         /// network otherwise. Never throws: setup is waiting, and an unhandled exception could leave a
         /// crash dialog it waits on.
         /// </summary>
-        public static ExitCode Run(string? from) => Run(from, ServerRuntime.DefaultRoot());
+        public static ExitCode Run(string? from) => Run(from, ServerDotnetRuntime.DefaultRoot());
 
         /// <summary>
         /// <see cref="Run(string)"/> into another runtime folder: the whole of what setup gets - the real
@@ -187,14 +187,14 @@ namespace OutlookAI.RuntimeSetup
 
         /// <summary>
         /// Leaves a complete runtime in the runtime folder, or the folder as it was. Does nothing more
-        /// when the folder already holds <see cref="ServerRuntime.Version"/>.
+        /// when the folder already holds <see cref="ServerDotnetRuntime.Version"/>.
         /// </summary>
         /// <param name="stagedPackage">A package on disk to use instead of the network, when it exists.</param>
         public Outcome Ensure(string? stagedPackage, CancellationToken cancel)
         {
-            Log("OutlookAI.RuntimeSetup: .NET " + ServerRuntime.Version + " into " + _root);
+            Log("OutlookAI.RuntimeSetup: .NET " + ServerDotnetRuntime.Version + " into " + _root);
             RemoveWorkFolders();
-            if (ServerRuntime.IsComplete(_root))
+            if (ServerDotnetRuntime.IsComplete(_root))
             {
                 Log("already installed");
                 return Outcome.AlreadyInstalled;
@@ -336,9 +336,9 @@ namespace OutlookAI.RuntimeSetup
                 return Outcome.UnpackFailed;
             }
 
-            if (!ServerRuntime.IsComplete(target))
+            if (!ServerDotnetRuntime.IsComplete(target))
             {
-                Log("unpack failed: the package holds no runtime " + ServerRuntime.Version);
+                Log("unpack failed: the package holds no runtime " + ServerDotnetRuntime.Version);
                 return Outcome.UnpackFailed;
             }
 

@@ -44,7 +44,7 @@
       puts it in %LOCALAPPDATA%\OutlookAI\Setup\McpServer, so that is %LOCALAPPDATA%\OutlookAI\dotnet,
       the private copy of Microsoft's runtime setup downloads there - and then the machine-wide .NET.
       Not DOTNET_ROOT: a variable pointing at another .NET would shadow both. OutlookAI.Core.AddIn's
-      ServerRuntime names the folder and the version, and Tools/Checks/check-pinned-constants.ps1
+      ServerDotnetRuntime names the folder and the version, and Tools/Checks/check-pinned-constants.ps1
       holds the three together. Measured 2026-11-18 with SDK 11.0.100 on a scratch app: with the
       private copy there, the apphost ran on it although a machine-wide .NET 11 was installed; with
       it gone, on the machine-wide one; and with AppRelative alone and no copy, it refused to start.

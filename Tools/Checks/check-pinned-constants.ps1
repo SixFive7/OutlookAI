@@ -276,12 +276,12 @@ if ($addInStatuses -and $addInDocList) {
 # ---------------------------------------------------------------------------------------------
 # 8. The mail server's private .NET runtime (Q172, decided by the maintainer 2026-11-18).
 #    Four files name the same runtime, and no compiler sees more than one of them:
-#      * OutlookAI.Core.AddIn's ServerRuntime.Version - the version setup's helper installs, and
+#      * OutlookAI.Core.AddIn's ServerDotnetRuntime.Version - the version setup's helper installs, and
 #        the one the add-in looks for - must have the major of the target framework of both
 #        shipped executables, OutlookAI.McpServer and OutlookAI.ComHost: their runtimeconfig asks
 #        for that major and no other, so a private copy of another major is one they never use;
 #      * McpServer/Directory.Build.props' AppHostRelativeDotNet must be ..\..\ and
-#        ServerRuntime.FolderName - the folder setup fills, seen from {app}\McpServer - and
+#        ServerDotnetRuntime.FolderName - the folder setup fills, seen from {app}\McpServer - and
 #        AppHostDotNetSearch must look there first;
 #      * Installer.iss's [UninstallDelete] must delete that folder, in {localappdata}\OutlookAI;
 #      * and the manual download page both #5's copies name must be that major's.
@@ -289,10 +289,10 @@ if ($addInStatuses -and $addInDocList) {
 #    or to none, a runtime the uninstaller leaves behind, a page for the wrong .NET.
 # ---------------------------------------------------------------------------------------------
 $script:Checks++
-$runtimeVersion = Get-Pinned 'McpServer/OutlookAI.Core/AddIn/ServerRuntime.cs' `
-    'public const string Version = "([^"]+)";' 'private runtime version (ServerRuntime.cs)'
-$runtimeFolder = Get-Pinned 'McpServer/OutlookAI.Core/AddIn/ServerRuntime.cs' `
-    'public const string FolderName = "([^"]+)";' 'private runtime folder (ServerRuntime.cs)'
+$runtimeVersion = Get-Pinned 'McpServer/OutlookAI.Core/AddIn/ServerDotnetRuntime.cs' `
+    'public const string Version = "([^"]+)";' 'private runtime version (ServerDotnetRuntime.cs)'
+$runtimeFolder = Get-Pinned 'McpServer/OutlookAI.Core/AddIn/ServerDotnetRuntime.cs' `
+    'public const string FolderName = "([^"]+)";' 'private runtime folder (ServerDotnetRuntime.cs)'
 $serverTfm = Get-Pinned 'McpServer/OutlookAI.McpServer/OutlookAI.McpServer.csproj' `
     '<TargetFramework>net(\d+)\.0-windows</TargetFramework>' 'target framework (OutlookAI.McpServer.csproj)'
 $comHostTfm = Get-Pinned 'McpServer/OutlookAI.ComHost/OutlookAI.ComHost.csproj' `
@@ -306,7 +306,7 @@ if ($runtimeVersion -and $runtimeFolder -and $serverTfm -and $comHostTfm -and $r
     $major = $runtimeVersion.Split('.')[0]
     $problems = @()
     if ($serverTfm -ne $major -or $comHostTfm -ne $major) {
-        $problems += "ServerRuntime.Version is $runtimeVersion, but OutlookAI.McpServer targets net$serverTfm.0 and OutlookAI.ComHost net$comHostTfm.0: their runtimeconfig asks for their own major, and a private runtime of another is one they never start on."
+        $problems += "ServerDotnetRuntime.Version is $runtimeVersion, but OutlookAI.McpServer targets net$serverTfm.0 and OutlookAI.ComHost net$comHostTfm.0: their runtimeconfig asks for their own major, and a private runtime of another is one they never start on."
     }
     if ($relativeDotnet -cne ('..\..\' + $runtimeFolder)) {
         $problems += "AppHostRelativeDotNet is '$relativeDotnet', not '..\..\$runtimeFolder': from {app}\McpServer the apphost would look somewhere setup never puts the runtime."

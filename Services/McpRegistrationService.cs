@@ -517,10 +517,10 @@ namespace OutlookAI.Services
             }
 
             // (6) The server needs the .NET 11 runtime: the private copy setup downloads, or a
-            // machine-wide one (ServerRuntime). Registering a server that cannot start would
+            // machine-wide one (ServerDotnetRuntime). Registering a server that cannot start would
             // surface as a failed MCP server in every Claude session, so report instead and heal
             // on a later start once the runtime is there.
-            if (!ServerRuntime.IsAvailable())
+            if (!ServerDotnetRuntime.IsAvailable())
             {
                 snap.Status = StatusNoRuntime;
                 snap.Detail = RuntimeMissingDetail;
@@ -685,7 +685,7 @@ namespace OutlookAI.Services
                 return false;
             }
 
-            if (!ServerRuntime.IsAvailable())
+            if (!ServerDotnetRuntime.IsAvailable())
             {
                 status = StatusNoRuntime;
                 detail = RuntimeMissingDetail;
