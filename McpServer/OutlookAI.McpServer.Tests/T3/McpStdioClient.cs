@@ -252,6 +252,26 @@ public sealed class McpStdioClient : IAsyncDisposable
         await SendAsync(new { jsonrpc = "2.0", method });
     }
 
+    /// <summary>Sends a JSON-RPC notification that carries parameters - <c>notifications/cancelled</c>, say.</summary>
+    public async Task NotifyAsync(string method, object parameters)
+    {
+        RefuseBeforeSending(method, parameters);
+        await SendAsync(new { jsonrpc = "2.0", method, @params = parameters });
+    }
+
+    /// <summary>
+    /// Sends a request WITHOUT waiting for its answer, through the same gates as <see cref="RoundTripAsync"/>,
+    /// and returns its id - for a test that cancels a request in flight. A later round trip skips whatever
+    /// answer this one gets.
+    /// </summary>
+    public async Task<int> SendRequestAsync(string method, object parameters)
+    {
+        RefuseBeforeSending(method, parameters);
+        int id = Interlocked.Increment(ref _nextId);
+        await SendAsync(new { jsonrpc = "2.0", id, method, @params = parameters });
+        return id;
+    }
+
     /// <summary>Sends a request and returns the matching response envelope (throws on JSON-RPC error).</summary>
     public async Task<JsonElement> RoundTripAsync(string method, object parameters)
     {

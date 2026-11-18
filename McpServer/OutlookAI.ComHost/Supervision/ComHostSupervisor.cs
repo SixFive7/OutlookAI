@@ -54,6 +54,7 @@ namespace OutlookAI.ComHost.Supervision
         private long _lastStartAttemptTimestamp;
         private int _warmUpInFlight;
         private string _lastLivenessDetail = string.Empty;
+        private string? _lastGateLogged;
         private bool _disposed;
 
         internal ComHostSupervisor(bool allowStartingOutlook)
@@ -197,20 +198,41 @@ namespace OutlookAI.ComHost.Supervision
 
         private void GateOutlookLiveness()
         {
-            OutlookLivenessState liveness = OutlookLiveness.Probe(out string detail);
+            long sinceStart = MillisecondsSince(Volatile.Read(ref _lastStartAttemptTimestamp));
+            LivenessVerdict verdict;
+            string reason;
+            int retryAfter;
+            OutlookStartVerdict? start = null;
+            OutlookStartObservation? observation = null;
+
             if (LivenessOverride is OutlookLivenessState forced)
             {
-                liveness = forced;
-                detail = "forced by " + LivenessOverrideVariable;
+                // The test override decides from Windows' plain verdict, as it always has: the supervision
+                // tests run where no Outlook exists, and the start checks below would see none.
+                reason = "forced by " + LivenessOverrideVariable;
+                verdict = ComHostPolicy.DecideLiveness(forced, sinceStart, _allowStartingOutlook);
+                retryAfter = ComHostPolicy.RetryAfterSecondsFor(verdict, sinceStart);
             }
-            lock (_stateLock)
+            else
             {
-                _lastLivenessDetail = detail;
+                // Q175 (a) and Q176 (c): not only "is Outlook up", but has it settled since it started, is
+                // another OutlookAI connection starting it, and has its start run past the limit. Win32 and
+                // the registry only - nothing here can block on Outlook.
+                observation = OutlookStartObserver.Observe();
+                start = OutlookStartPolicy.Decide(observation.ToFacts());
+                OutlookStartRecord.NoteWhatWasSeen(observation, start);
+                LogGateTransition(observation, start);
+                reason = start.Reason;
+                verdict = ComHostPolicy.DecideLiveness(start.State, sinceStart, _allowStartingOutlook);
+                retryAfter = verdict == LivenessVerdict.Starting || verdict == LivenessVerdict.Hung
+                    ? start.RetryAfterSeconds
+                    : ComHostPolicy.RetryAfterSecondsFor(verdict, sinceStart);
             }
 
-            long sinceStart = MillisecondsSince(Volatile.Read(ref _lastStartAttemptTimestamp));
-            LivenessVerdict verdict = ComHostPolicy.DecideLiveness(liveness, sinceStart, _allowStartingOutlook);
-            int retryAfter = ComHostPolicy.RetryAfterSecondsFor(verdict, sinceStart);
+            lock (_stateLock)
+            {
+                _lastLivenessDetail = observation?.Describe() ?? reason;
+            }
 
             switch (verdict)
             {
@@ -218,12 +240,20 @@ namespace OutlookAI.ComHost.Supervision
                     return;
 
                 case LivenessVerdict.Hung:
-                    RecordFailure($"Outlook is not responding ({detail}); requests needing it are refused immediately.");
-                    throw new ComHostUnresponsiveException(detail, retryAfter);
+                    RecordFailure($"Outlook is not responding ({reason}); requests needing it are refused immediately.");
+                    if (start != null && observation != null)
+                    {
+                        // Q177 (a), Q178 (e): what is stuck and why, the process, how to end it and what
+                        // that risks - the user ends it; OutlookAI never does.
+                        throw new OutlookNotRespondingException(
+                            OutlookHangReport.DescribeNow(start, observation), retryAfter, observation.Windows.ProcessId);
+                    }
+
+                    throw new ComHostUnresponsiveException(reason, retryAfter);
 
                 case LivenessVerdict.Starting:
                     BeginWarmUp();
-                    throw new ComHostStartingException(retryAfter, detail);
+                    throw new ComHostStartingException(retryAfter, reason);
 
                 case LivenessVerdict.StartSuppressed:
                     if (!_allowStartingOutlook)
@@ -238,10 +268,41 @@ namespace OutlookAI.ComHost.Supervision
                 case LivenessVerdict.MayStart:
                 default:
                     Volatile.Write(ref _lastStartAttemptTimestamp, Stopwatch.GetTimestamp());
+                    OutlookStartLog.Write("gate.start", OutlookStartLog.Field("reason", "not-running"));
                     BeginWarmUp();
                     throw new ComHostStartingException(
                         ComHostPolicy.StartingRetryAfterSeconds, "Outlook was not running and is being started");
             }
+        }
+
+        /// <summary>
+        /// Writes the gate's verdict to the start log when it changes - per Outlook process and reason, not
+        /// per request, so a busy session does not fill the log with one line per tool call.
+        /// </summary>
+        private void LogGateTransition(OutlookStartObservation observation, OutlookStartVerdict start)
+        {
+            string key = (observation.Windows.ProcessId?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "-")
+                + "/" + start.ReasonCode;
+            lock (_stateLock)
+            {
+                if (string.Equals(_lastGateLogged, key, StringComparison.Ordinal))
+                {
+                    return;
+                }
+
+                _lastGateLogged = key;
+            }
+
+            OutlookStartLog.Write(
+                "gate.verdict",
+                OutlookStartLog.Field("state", start.ReasonCode),
+                OutlookStartLog.Field("outlook", observation.Windows.ProcessId),
+                OutlookStartLog.Field("ageMs", observation.AgeMilliseconds),
+                OutlookStartLog.Field("liveness", observation.Windows.State.ToString()),
+                OutlookStartLog.Field("hasWindow", observation.Windows.ProcessId == null ? null : observation.Windows.HasVisibleWindow),
+                OutlookStartLog.Field("addIn", observation.AddIn.Present ? "stamped" : observation.AddIn.Expected ? "expected" : "not-expected"),
+                OutlookStartLog.Field("lockHeldElsewhere", observation.ConnectLockHeldElsewhere ? true : (bool?)null),
+                OutlookStartLog.Field("lockAbandoned", observation.ConnectLockAbandoned ? true : (bool?)null));
         }
 
         /// <summary>
@@ -388,14 +449,39 @@ namespace OutlookAI.ComHost.Supervision
             }
 
             ComHostResponse response;
+            bool leftToWatchdog = false;
             try
             {
                 response = await pending.Completion.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
             }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested && !pending.Completion.Task.IsCompleted)
+            {
+                // Q179 (b), decided by the maintainer 2026-11-18: the CALLER stopped waiting, but the call
+                // may still be wedged inside Outlook, and the child serves serially. Until now this path
+                // removed the request and disposed its deadline with it, so a wedged call that nobody
+                // awaited any more held the host - and every later request - for good; on 2026-11-15 one
+                // stayed stuck for twelve minutes. The request is now left registered, its deadline armed:
+                // an answer clears it, the deadline reclaims the host, a lost host fails it - each cleans up.
+                pending.MarkCallerCancelled();
+                leftToWatchdog = true;
+                _ = pending.Completion.Task.ContinueWith(
+                    completed =>
+                    {
+                        _ = _pending.TryRemove(id, out PendingRequest? _);
+                        pending.Dispose();
+                    },
+                    CancellationToken.None,
+                    TaskContinuationOptions.ExecuteSynchronously,
+                    TaskScheduler.Default);
+                throw;
+            }
             finally
             {
-                _ = _pending.TryRemove(id, out _);
-                pending.Dispose();
+                if (!leftToWatchdog)
+                {
+                    _ = _pending.TryRemove(id, out _);
+                    pending.Dispose();
+                }
             }
 
             if (!response.Ok)
@@ -433,6 +519,28 @@ namespace OutlookAI.ComHost.Supervision
                         {
                             return;
                         }
+
+                        // The policy's call, so T1 pins it: past its deadline a request is reclaimed whether
+                        // or not its caller is still waiting (Q179 (b)); a host already gone is answered by
+                        // the connection-lost path instead.
+                        // Its delay IS the deadline, so it is at the deadline whatever a timer's resolution
+                        // made the stopwatch read a millisecond early.
+                        InFlightVerdict inFlight = ComHostPolicy.DecideInFlight(new InFlightInput(
+                            Math.Max(pending.ElapsedMilliseconds, pending.DeadlineMilliseconds),
+                            pending.DeadlineMilliseconds,
+                            IsChildAlive(generation),
+                            pending.CallerCancelled));
+                        if (inFlight != InFlightVerdict.TimeoutKillChild)
+                        {
+                            return;
+                        }
+
+                        OutlookStartLog.Write(
+                            "host.killed",
+                            OutlookStartLog.Field("operation", pending.Operation),
+                            OutlookStartLog.Field("deadlineMs", pending.DeadlineMilliseconds),
+                            OutlookStartLog.Field("callerCancelled", pending.CallerCancelled),
+                            OutlookStartLog.Field("comHost", ChildProcessId));
 
                         // The operation is still outstanding past its budget. Reclaim it
                         // the only way a blocked COM call can be reclaimed.
@@ -856,6 +964,27 @@ namespace OutlookAI.ComHost.Supervision
         /// </summary>
         private const int ShutdownExitGraceMilliseconds = 2000;
 
+        /// <summary>Whether the child of <paramref name="generation"/> is still the current one and running.</summary>
+        private bool IsChildAlive(int generation)
+        {
+            lock (_stateLock)
+            {
+                if (_generation != generation || _child == null)
+                {
+                    return false;
+                }
+
+                try
+                {
+                    return !_child.HasExited;
+                }
+                catch (Exception ex) when (ex is InvalidOperationException || ex is System.ComponentModel.Win32Exception)
+                {
+                    return false;
+                }
+            }
+        }
+
         /// <summary>
         /// Terminates the child that missed its deadline.
         /// <para>
@@ -1143,11 +1272,26 @@ namespace OutlookAI.ComHost.Supervision
 
         private sealed class PendingRequest : IDisposable
         {
+            private readonly Stopwatch _clock = Stopwatch.StartNew();
+            private int _callerCancelled;
+
             internal PendingRequest(string operation, long deadlineMilliseconds, bool countsTowardUnresponsive)
             {
                 Operation = operation;
                 DeadlineMilliseconds = deadlineMilliseconds;
                 CountsTowardUnresponsive = countsTowardUnresponsive;
+            }
+
+            /// <summary>How long the request has been outstanding.</summary>
+            internal long ElapsedMilliseconds => _clock.ElapsedMilliseconds;
+
+            /// <summary>Whether its caller stopped waiting for it (Q179 (b): its deadline still stands).</summary>
+            internal bool CallerCancelled => Volatile.Read(ref _callerCancelled) != 0;
+
+            /// <summary>Records that the caller stopped waiting.</summary>
+            internal void MarkCallerCancelled()
+            {
+                Volatile.Write(ref _callerCancelled, 1);
             }
 
             internal string Operation { get; }

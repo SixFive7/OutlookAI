@@ -1149,6 +1149,20 @@ public static partial class OutlookTools
     /// or as a read: the answer is that no outcome is being stated.
     /// </para>
     /// </summary>
+    /// <summary>
+    /// The shapes a call takes when its Outlook went away under it and the session's exit watcher released
+    /// the session first: disposed (<see cref="ObjectDisposedException"/>) or separated from its COM object
+    /// (<see cref="InvalidComObjectException"/>). <c>ComGateway</c> counts both as the same disconnect as a
+    /// <see cref="COMException"/>, and since 2026-11-18 an agent is told the same about all three: the
+    /// <c>ComFailure</c> error, its advice and its outcome, for a read and a write alike. Before, these two
+    /// reached the agent as "Cannot access a disposed object", with no advice and no outcome - and a read
+    /// meets them more often since its retry stopped starting Outlook again (Q179 (c)).
+    /// </summary>
+    internal static bool IsLostSession(Exception ex)
+    {
+        return ex is ObjectDisposedException || ex is InvalidComObjectException;
+    }
+
     internal static string ComFailureAdvice(string? operationName)
     {
         if (string.IsNullOrEmpty(operationName))
@@ -1278,6 +1292,16 @@ public static partial class OutlookTools
                 outcome: MutationOutcome.Unchanged,
                 retryAfterSeconds: ex.RetryAfterSeconds);
         }
+        catch (OutlookNotRespondingException ex)
+        {
+            // Q177 (a), Q178 (e): an Outlook that is not responding, or never finished starting. The message
+            // is the whole report - what is stuck and why, the process, how to end it and what that risks -
+            // and the type is the one agents already know for an unresponsive Outlook.
+            return Error("OutlookUnresponsive", ex.Message, OutlookNotRespondingException.AgentAdvice,
+                // Refused before anything was dispatched, at the gate or before a connection opened a mailbox.
+                outcome: MutationOutcome.Unchanged,
+                retryAfterSeconds: ex.RetryAfterSeconds);
+        }
         catch (ComHostUnresponsiveException ex)
         {
             return Error("OutlookUnresponsive", ex.Message,
@@ -1372,7 +1396,7 @@ public static partial class OutlookTools
         {
             return Error("InvalidArgument", ex.Message, null);
         }
-        catch (COMException ex)
+        catch (Exception ex) when (ex is COMException || IsLostSession(ex))
         {
             string? failedIn = ComHostRequestContext.LastOperationName;
             return Error(
