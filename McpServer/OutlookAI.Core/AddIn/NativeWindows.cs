@@ -128,16 +128,6 @@ namespace OutlookAI.Core.AddIn
             return IntPtr.Zero;
         }
 
-        /// <summary>
-        /// Whether an Outlook Explorer or Inspector is on screen for a person: its window exists and has the visible
-        /// style. A compose window an agent's draft is written in without being shown is not.
-        /// </summary>
-        public static bool IsShown(object? outlookWindowObject)
-        {
-            IntPtr window = WindowOf(outlookWindowObject);
-            return window != IntPtr.Zero && IsWindowVisible(window);
-        }
-
         /// <summary>The OLE window interface every Outlook Explorer and Inspector implements: the one way from one to its window.</summary>
         [ComImport]
         [Guid("00000114-0000-0000-C000-000000000046")]

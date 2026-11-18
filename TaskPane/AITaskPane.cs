@@ -977,7 +977,7 @@ namespace OutlookAI.TaskPane
                 // A compose window an agent's draft is written in without being shown has a pane too. Its Word
                 // editor is left alone: asking for it can put the window on screen, and the composition is not a
                 // person's to have a signature chosen for.
-                if (!_isInlineResponse && !NativeWindows.IsShown(_owningInspector))
+                if (!IsOnScreen())
                 {
                     if (_openingSignatureAttempts >= OpeningSignatureAttempts)
                         _openingSignatureTimer.Stop();
@@ -1022,6 +1022,16 @@ namespace OutlookAI.TaskPane
                 await ChooseSignatureAutomaticallyAsync("a reply or forward opened");
         }
 
+        /// <summary>
+        /// Whether this pane is on screen, and with it the compose window it sits in: its window and every window
+        /// around it have the visible style. The pane of a compose window an agent's draft is written in without
+        /// being shown is not.
+        /// </summary>
+        private bool IsOnScreen()
+        {
+            return !_disposed && !IsDisposed && IsHandleCreated && NativeWindows.IsWindowVisible(Handle);
+        }
+
         /// <summary>Whether the compose item has never been saved: Outlook gives it an entry id when it is.</summary>
         private bool IsNewItem()
         {
@@ -1054,7 +1064,7 @@ namespace OutlookAI.TaskPane
         {
             if (_disposed || IsDisposed || _autoSignatureBusy || !ClaudeService.AutoChooseSignature)
                 return;
-            if (!_isInlineResponse && !NativeWindows.IsShown(_owningInspector))
+            if (!IsOnScreen())
                 return;
 
             _autoSignatureBusy = true;
