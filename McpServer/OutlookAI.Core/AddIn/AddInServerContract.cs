@@ -78,8 +78,45 @@ namespace OutlookAI.Core.AddIn
         /// </summary>
         public const string TuningNeedsAdministratorValueName = "NeedsAdministrator";
 
-        /// <summary>String: ISO 8601 ("o") timestamp of the last reconcile.</summary>
+        /// <summary>
+        /// String: ISO 8601 ("o") timestamp of the last reconcile. Also the add-in's start-up stamp for an
+        /// add-in older than <see cref="AddInStartupCompleteUtcValueName"/>: the reconcile runs during every
+        /// start of the add-in, so a value no older than the running Outlook says its add-in has started.
+        /// </summary>
         public const string TuningLastReconcileUtcValueName = "LastReconcileUtc";
+
+        // ===== HKCU\Software\OutlookAI\AddIn =====
+        // Written by ThisAddIn at the end of every start of the add-in inside Outlook; read by the mail
+        // server, which opens no mailbox in an Outlook that has just started until this says the add-in
+        // has finished starting there (Q175 (a), decided by the maintainer 2026-11-18, after the hang of
+        // 2026-11-15: an Outlook started for an agent deadlocked while its add-ins were still starting).
+
+        /// <summary>The add-in's own start-up key, under HKEY_CURRENT_USER.</summary>
+        public const string AddInKeyPath = @"Software\OutlookAI\AddIn";
+
+        /// <summary>DWORD: the process id of the OUTLOOK.EXE whose add-in finished starting last.</summary>
+        public const string AddInStartupProcessIdValueName = "StartupProcessId";
+
+        /// <summary>
+        /// String: ISO 8601 ("o") UTC time that start finished. The pair is this Outlook's stamp only when
+        /// the id is this Outlook's and the time is not before it started, so a reader that comes between
+        /// the add-in's two writes, or after a process id was reused, sees no stamp rather than a wrong one.
+        /// </summary>
+        public const string AddInStartupCompleteUtcValueName = "StartupCompleteUtc";
+
+        // ===== HKCU\Software\Microsoft\Office\Outlook\Addins\OutlookAI =====
+        // Outlook's own registration of the add-in, written by the installer (Installer.iss). The server
+        // reads it to know whether a start-up stamp is coming at all: with the add-in not set to load, it
+        // does not wait for one.
+
+        /// <summary>The add-in's registration with Outlook, under HKEY_CURRENT_USER.</summary>
+        public const string OutlookAddInRegistrationKeyPath = @"Software\Microsoft\Office\Outlook\Addins\OutlookAI";
+
+        /// <summary>DWORD: how Outlook loads the add-in.</summary>
+        public const string OutlookAddInLoadBehaviorValueName = "LoadBehavior";
+
+        /// <summary>The <see cref="OutlookAddInLoadBehaviorValueName"/> that loads it at every Outlook start.</summary>
+        public const int OutlookAddInLoadAtStartup = 3;
 
         // ===== HKCU\Software\Microsoft\Office\<major>\Outlook\Search =====
         // OUTLOOK'S OWN key, not one of ours, and the only entry here that is not: the add-in's

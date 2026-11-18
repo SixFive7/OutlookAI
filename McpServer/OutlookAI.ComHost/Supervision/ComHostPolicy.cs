@@ -46,7 +46,10 @@ namespace OutlookAI.ComHost.Supervision
         /// <summary>The child process is gone - fail this request without a kill.</summary>
         FailChildDied = 2,
 
-        /// <summary>The MCP client cancelled - stop waiting; the SDK suppresses the response.</summary>
+        /// <summary>
+        /// The MCP client cancelled - stop waiting, the SDK suppresses the response - but leave the request
+        /// to its deadline, which still reclaims the host if the call is wedged (Q179 (b)).
+        /// </summary>
         AbandonClientCancelled = 3,
     }
 
@@ -356,8 +359,12 @@ namespace OutlookAI.ComHost.Supervision
         /// </summary>
         internal const long AutostartCooldownMilliseconds = 20_000;
 
-        /// <summary>How long to tell a caller to wait while Outlook is starting.</summary>
-        internal const int StartingRetryAfterSeconds = 15;
+        /// <summary>
+        /// How long to tell a caller to wait while Outlook is starting: the settle wait every start now
+        /// takes before a mailbox is opened (Q175 (a)), plus the connection after it. It was 15 s before
+        /// that wait existed.
+        /// </summary>
+        internal const int StartingRetryAfterSeconds = OutlookStartPolicy.StartRetryAfterSeconds;
 
         /// <summary>How long to tell a caller to wait while Outlook is unresponsive.</summary>
         internal const int UnresponsiveRetryAfterSeconds = 30;
@@ -376,18 +383,39 @@ namespace OutlookAI.ComHost.Supervision
             long millisecondsSinceLastStartAttempt,
             bool startingOutlookAllowed)
         {
-            switch (liveness)
+            OutlookStartState state = liveness switch
             {
-                case OutlookLivenessState.Responsive:
+                OutlookLivenessState.Responsive => OutlookStartState.Ready,
+                OutlookLivenessState.Hung => OutlookStartState.NotResponding,
+                OutlookLivenessState.Starting => OutlookStartState.Settling,
+                _ => OutlookStartState.NotRunning,
+            };
+            return DecideLiveness(state, millisecondsSinceLastStartAttempt, startingOutlookAllowed);
+        }
+
+        /// <summary>
+        /// The same decision, from the start policy's richer view (<see cref="OutlookStartPolicy"/>): an
+        /// Outlook that runs but has not settled since it started (Q175 (a)), or that another connection is
+        /// starting, is <see cref="LivenessVerdict.Starting"/> - retry guidance and a warm-up, no call - and
+        /// one stuck past the starting limit is <see cref="LivenessVerdict.Hung"/> (Q176 (c)).
+        /// </summary>
+        internal static LivenessVerdict DecideLiveness(
+            OutlookStartState state,
+            long millisecondsSinceLastStartAttempt,
+            bool startingOutlookAllowed)
+        {
+            switch (state)
+            {
+                case OutlookStartState.Ready:
                     return LivenessVerdict.Proceed;
 
-                case OutlookLivenessState.Hung:
+                case OutlookStartState.NotResponding:
                     return LivenessVerdict.Hung;
 
-                case OutlookLivenessState.Starting:
+                case OutlookStartState.Settling:
                     return LivenessVerdict.Starting;
 
-                case OutlookLivenessState.NotRunning:
+                case OutlookStartState.NotRunning:
                 default:
                     if (!startingOutlookAllowed)
                     {
@@ -523,15 +551,23 @@ namespace OutlookAI.ComHost.Supervision
                 || callerBudgetMilliseconds.Value >= DeadlineFor(operationClass, null);
         }
 
-        /// <summary>Decides the fate of a request that has not yet answered.</summary>
+        /// <summary>
+        /// Decides the fate of a request that has not yet answered. The deadline watchdog acts on it.
+        /// <para>
+        /// <b>A cancellation stops the waiting, never the deadline</b> (Q179 (b), decided by the maintainer
+        /// 2026-11-18). This used to put client cancellation above everything, on the grounds that the
+        /// SDK suppresses the response anyway - and the cancel path disarmed the request's deadline with
+        /// it, against the supervisor's own description. But the call may still be wedged inside Outlook,
+        /// and the child serves serially: on 2026-11-15 a request its client gave up on stayed stuck for
+        /// twelve minutes and, when that Outlook was ended, its retry started Outlook again. A cancelled
+        /// request now stops being awaited, and its deadline still reclaims the host.
+        /// </para>
+        /// </summary>
         internal static InFlightVerdict DecideInFlight(InFlightInput input)
         {
-            // Client cancellation outranks everything: the response is going to be
-            // suppressed by the SDK regardless, so there is nothing to be gained by
-            // killing a child that may still be perfectly healthy.
-            if (input.ClientCancelled)
+            if (input.ElapsedMilliseconds >= input.DeadlineMilliseconds)
             {
-                return InFlightVerdict.AbandonClientCancelled;
+                return input.ChildAlive ? InFlightVerdict.TimeoutKillChild : InFlightVerdict.FailChildDied;
             }
 
             if (!input.ChildAlive)
@@ -539,12 +575,7 @@ namespace OutlookAI.ComHost.Supervision
                 return InFlightVerdict.FailChildDied;
             }
 
-            if (input.ElapsedMilliseconds >= input.DeadlineMilliseconds)
-            {
-                return InFlightVerdict.TimeoutKillChild;
-            }
-
-            return InFlightVerdict.KeepWaiting;
+            return input.ClientCancelled ? InFlightVerdict.AbandonClientCancelled : InFlightVerdict.KeepWaiting;
         }
 
         /// <summary>
