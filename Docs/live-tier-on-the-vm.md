@@ -5170,16 +5170,46 @@ of the worktree `stream-u-dotnet11-runtime`.
 After A, the new installer's uninstaller removed the runtime folder and the helper's log, and left the
 user's own `audit.log`, `scratch`, `signature-backups` and `tmp` in `%LOCALAPPDATA%\OutlookAI`.
 
-Two things the first attempt, at 08:34, found about the guest rather than the product, and how the
-second worked round them. **The interactive wizard waits on its Install button** - it was killed
-after 4 minutes - so the fresh install ran `/SILENT`, as the updater runs it; `SetUpServerRuntime`
-runs the same on both paths, and only its failure message differs. **Inno's uninstaller, started from
-the Limited scheduled task, never reached its second phase** - no log, the uninstall key left -
-while the same command from the PowerShell Direct session, elevated, uninstalled at once; so each
-scenario's uninstall ran there. A user uninstalls from Settings, which is neither; that path is
-unmeasured. And `ConvertTo-Json` in Windows PowerShell 5.1 spent minutes of CPU on the `PSPath`
-notes `Get-Content` puts on every line, which stalled the first attempt's scenario-B check; the
-verdicts above come from the second attempt, at 09:12, which read files with `ReadAllLines`.
+**The interactive wizard waits on its Install button**, as it does for a user. The first attempt, at
+08:34, ran it with nobody at the guest and killed it after 4 minutes, so the fresh install ran
+`/SILENT`, as the updater runs it; `SetUpServerRuntime` runs the same on both paths, and only its
+failure message differs. And `ConvertTo-Json` in Windows PowerShell 5.1 spent minutes of CPU on the
+`PSPath` notes `Get-Content` puts on every line, which stalled the first attempt's scenario-B check;
+the verdicts above come from the second attempt, at 09:12, which read files with `ReadAllLines`.
+
+**The uninstaller as a user runs it (2026-11-18, the coordinator's follow-up).** Phase 4 uninstalled
+from the PowerShell Direct session, elevated, because this section said that Inno's uninstaller,
+started from the Limited scheduled task, never reached its second phase. The first attempt's own logs
+do not bear that out: both of its uninstalls from that task removed the uninstall key, after 597 s and
+130 s, for reasons not found, and the runs below took seconds. On `OutlookAI-Unindexed2` at
+`CP-16B-FROZEN-CLOCK`, restored for each scenario, the checkpoint's own OutlookAI was uninstalled from
+session 0 first; every other step ran through `Register-InteractiveTask.ps1 -RunLevel Limited`, the
+logged-on user's session, not elevated, which is the live tests' route. Each uninstall ran the
+uninstall key's `UninstallString` with only `/LOG` added, interactive, as Settings > Apps > Uninstall
+runs it. The step answered the uninstaller's two message boxes as a user would: Yes to "Are you sure
+you want to completely remove OutlookAI and all of its components?" and OK to "OutlookAI was
+successfully removed from your computer.". It pressed them by the buttons' ids through Win32
+messages, because UI Automation's managed client, from the task, saw no button in the first box.
+Driver and evidence: `.work\dotnet11\p5\runs\OutlookAI-Unindexed2-20261118-122609` of the worktree
+`stream-u-dotnet11-runtime`.
+
+| Installed, then uninstalled | The two phases | What the uninstall took away | Machine-wide .NET |
+| --- | --- | --- | --- |
+| v3.1.0.325 | phase 1, `unins000.exe`, the step's child; phase 2, `%TEMP%\is-*-uninstall.tmp\_unins.tmp /SECONDPHASE=...`, phase 1's child, which wrote the log; 2.4 s from phase 1 appearing to phase 2 ending, both message boxes answered | all its install added but Inno's temp folder; and all of `HKCU\Software\OutlookAI`, the user's settings with it | unchanged |
+| the build of `19d9993`, with the server | the same; 2.6 s | all its install added - the private runtime, 210 entries (`Deleting directory: ...\OutlookAI\dotnet`), and `dotnet-setup.log` among it - but Inno's temp folder and the testbed build's certificate; of `HKCU\Software\OutlookAI` only `InstallDir`, as Installer.iss has done since 7b17f2e | unchanged: Microsoft.NETCore.App 10.0.12, 5,579 files, the same registry values |
+| the same, `/VERYSILENT`, from a job that ended at once | phase 2 ran - its log spans 0.9 s | the same | unchanged |
+
+Of what the old uninstaller removed, the new one leaves only the user's settings, which it keeps on
+purpose. Two things stay after both, and neither is new. Inno's `is-*-uninstall.tmp` folder holds
+the second phase's own copy, which cannot delete itself; Inno's next run clears it ("Cleaning up any
+residual temporary files from previous Uninstall runs"). A testbed build also leaves its certificate
+in the user's TrustedPublisher store: setup adds `{app}\OutlookAI.cer` there, and the uninstaller
+deletes `OutlookAI` by name, which matches the release certificate (CN=OutlookAI, gone after the
+v3.1.0.325 uninstall) and not the testbed's (CN=OutlookAI Testbed). A process that a Limited
+interactive job starts outlives the job: `PING.EXE`, in the task's job, still ran 60 s after the job
+had ended (`p5\runs\probe-task-end-20261118-123401`). So the second phase can be driven from a task.
+Settings asks for its own confirmation and then starts the uninstaller from the shell, outside any
+task's job; from there the uninstaller runs as it did here.
 
 ### 4.13 The load limit and the pause switch - every testbed VM, 2026-11-18 (Q195 (e))
 
