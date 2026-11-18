@@ -1013,8 +1013,30 @@ namespace OutlookAI.TaskPane
                 ThisAddIn.ReleaseCom(doc);
             }
 
-            if (replyOrForward)
+            // A reply or forward a person just made in Outlook, never saved yet. A saved draft opened
+            // again - the person's own, or one an agent wrote through the MCP server, whose signature
+            // its own rule already chose or which it asked for by name - keeps the signature it has.
+            if (replyOrForward && IsNewItem())
                 await ChooseSignatureAutomaticallyAsync("a reply or forward opened");
+        }
+
+        /// <summary>Whether the compose item has never been saved: Outlook gives it an entry id when it is.</summary>
+        private bool IsNewItem()
+        {
+            object item = null;
+            try
+            {
+                item = GetCurrentMailItem();
+                return item != null && string.IsNullOrEmpty((string)((dynamic)item).EntryID);
+            }
+            catch (Exception ex) when (ComObjects.IsCallFailure(ex))
+            {
+                return false;
+            }
+            finally
+            {
+                ThisAddIn.ReleaseCom(item);
+            }
         }
 
         /// <summary>

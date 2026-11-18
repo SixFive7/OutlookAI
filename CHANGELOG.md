@@ -54,12 +54,13 @@ its mailbox tests on, and change nothing you install.
   Decided by the maintainer on 2026-11-17 (Q158, Q162 (b)): OutlookAI Settings has one tick box on
   its Claude Code tab, "Allow the AI to automatically choose the correct signature", on unless you
   untick it, and no signature editor, list or menu, since Outlook has its own. With it on, the AI
-  picks the signature when it writes or rewrites the body in the task pane and when a reply or
-  forward opens, from the signatures the sending account can use - by the language of the mail being
-  answered, so that a Dutch mail gets the Dutch signature, for one. It changes a signature Outlook or
-  the AI put in; it adds none to a mail that has none, leaves a policy's signature alone, and never
-  replaces one a person chose or changed, which it checks again after the AI answered. Nothing
-  happens as a mail is sent. The choice uses the rule the MCP server's drafts use for the account's
+  picks the signature when it writes or rewrites the body in the task pane and when you start a reply
+  or a forward, from the signatures the sending account can use - by the language of the mail being
+  answered, so that a Dutch mail gets the Dutch signature, for one. A draft opened again, yours or
+  one an agent wrote, keeps its signature until the AI rewrites its body. It changes a signature
+  Outlook or the AI put in; it adds none to a mail that has none, leaves a policy's signature alone,
+  and never replaces one a person chose or changed, which it checks again after the AI answered.
+  Nothing happens as a mail is sent. The choice uses the rule the MCP server's drafts use for the account's
   signatures (`SignatureSelector.Candidates`) and the prompt of "Select the best signature"; when it
   asks the AI at all is `SignatureAutoChoice`, in OutlookAI.Core, which T1 `SignatureAutoChoiceTests`
   pins. A reply or forward costs one more request to Claude Code as it opens.
