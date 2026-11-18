@@ -5088,9 +5088,26 @@ and as `10.0.12 x64` by SDK 10.0.401, each pinned. **What the new instants leave
 longest run a frozen record allows (its instant plus 90 minutes), the indexed hub's newest dated item
 (17:25:22Z) is 113.2 minutes old, under the 115-minute frontier margin - 1.8 minutes to spare, where the
 old instant left 6.8 - and the unindexed hub's about 109 minutes. `testbed.json`'s
-`frozenClocks._dotnet11Next` records both; they become the guests' `frozenClocks` records, and
-`T1/FrozenGuestClockTests` proves them, in the commit that moves the code to .NET 11, which also makes
-the clones again from them (section 4.7: a frozen guest's clone cannot make its own).
+`frozenClocks._dotnet11Next` recorded both until the commit that moved the code to .NET 11 made them
+the guests' `frozenClocks` records - where `T1/FrozenGuestClockTests` proves them - and the live
+runner's resting checkpoints. A frozen guest's clone cannot make its own (section 4.7), so the clones
+are new copies of them, made the same day by `New-TestbedClone.ps1` (the coordinator's choice, Q-U2
+(b)): `OutlookAI-Indexed3` from `CP-24C-FROZEN-CLOCK`, exported in 43 s and imported in 56 s once the
+source's lease was free, and `OutlookAI-Unindexed3` from `CP-18B-FROZEN-CLOCK`, 26 s and 44 s. Each
+was proven by a live run that named it, on the code moved to .NET 11: `20261118-083041-indexed-981f7cbbdde5`,
+**PASS, 152 of 152**, and `20261118-083911-unindexed-0e5c4c2a18e0`, **PASS, 105 of 105** - both with no
+artifact left, no census failure and no crash, the frozen-clock guard passing, the suite built on the
+guest by SDK 11 from the run's own offline feed. `TestbedPool.ps1` lists them; `CP-22C-FROZEN-CLOCK`
+and `CP-16B-FROZEN-CLOCK` stay on the two sources, and `OutlookAI-Indexed2` and `OutlookAI-Unindexed2`,
+copies of those, on the host, for the branches whose runner still names them (`testbed.json`,
+`vmPools._formerClones`; `TODO.md` removes all four).
+
+**The build machines' feed, once the code was on .NET 11.** The move took System.Data.OleDb,
+Microsoft.Extensions.Hosting and System.Drawing.Common to 11.0.0, which the base checkpoint's feed
+predates; the build runner stages a revision's missing packages for its run by itself (55 s in run
+`20261118-081531-088f77d5612c`), so no checkpoint changed. That run found the runner's second attempt
+blind to personal data: the first had moved the private list into the source tree, which the second
+expands afresh. The runner now stages the list again before the second attempt.
 
 **`OutlookAI-Exchange`: `CP-10-SDK11`.** Its runs carry its state forward, so the SDKs belong in a
 checkpoint a run can restore. Under a lease, and by the coordinator's direction of 05:43: the first
@@ -5106,6 +5123,52 @@ not running in `CP-09`); `CP-10-SDK11` taken running at 2026-11-18T05:01:38Z, a 
 `CP-09-OFFICE-REARMED`, and the VM saved. It is the newest checkpoint: the live runner's resting
 checkpoint for this VM, the one a run that names `-Checkpoint` restores; a run that names none carries
 the state forward as before.
+
+**The mail server's own runtime (phase 3, 2026-11-18).** The installed server runs on a private copy of
+Microsoft's .NET 11 runtime in `%LOCALAPPDATA%\OutlookAI\dotnet`, which setup's helper,
+`OutlookAI.RuntimeSetup`, puts there on every install and every silent update (`McpServer/README.md`).
+Three things measured on the way, on this workstation with SDK 11.0.100, each on a scratch app or a
+scratch publish under `.work`:
+
+| What | Finding |
+| --- | --- |
+| The apphost's search options | `AppHostDotNetSearch` `AppRelative;Global` with `AppHostRelativeDotNet` set: the app ran on the copy beside it although a machine-wide .NET 11 was installed, and on the machine-wide one once the copy was gone; `AppRelative` alone and no copy, and it refused to start. The SDK writes the options into the **published** apphost only - a build's own keeps the default search - so a developer build and the test suite are unaffected. |
+| A referenced executable with those options | The server's publish **left out** `OutlookAI.ComHost.exe` (its publish apphost is made only when it is published itself); without the options the publish carries it. So only the server's apphost searches app-relative, and the server starts the COM host with `DOTNET_ROOT_X64` and `DOTNET_ROOT` naming its own runtime (`ComHostSupervisor.OwnRuntimeVariables`). |
+| The real download | `PrivateRuntime.Run` - the helper's own .NET Framework 4.8 code - against a scratch runtime folder: Microsoft's zip downloaded, 39,856,058 bytes and the SHA-512 as pinned, 202 entries unpacked and swapped in, 3 s in all; run again, `already installed`, nothing fetched. Nothing machine-wide was written. |
+
+The installer that carries the server and the helper, built by `Publish-AddInPayload.ps1 -WithServer`,
+is 43.7 MB - under the updater's 50 MB - because the runtime is never inside it.
+
+**The proof on a guest (phase 4, 2026-11-18): a fresh install and a silent update both end with a
+working mail server on the private runtime, with no administrator rights and nothing machine-wide.**
+On `OutlookAI-Unindexed2`, restored to `CP-16B-FROZEN-CLOCK` for each scenario and put back after - a
+guest whose only machine-wide .NET is 10.0.12, so nothing but the private copy can start the .NET 11
+server. The installer, built by `-WithServer` from `bb0cf73`, and Microsoft's runtime zip beside it
+under its own name, as the guest has no network (the coordinator's choice, Q-U3 (a)); the real
+download was proven on the workstation instead (above). Every install and every check ran in session 1
+as the logged-on user with a NOT elevated token (`Register-InteractiveTask.ps1 -RunLevel Limited`), so
+an elevation prompt would have stalled it into its time limit; setup's own log says `User privileges:
+None`, `Administrative install mode: No`. Driver and evidence: `.work\dotnet11\p4\runs\OutlookAI-Unindexed2-20261118-091257`
+of the worktree `stream-u-dotnet11-runtime`.
+
+| Scenario | Steps | What setup left | The server | The COM host |
+| --- | --- | --- | --- | --- |
+| **A, fresh** | the guest's OutlookAI uninstalled; the new installer `/SILENT` (23 s) | the helper took the zip beside the installer, checked 39,856,058 bytes and the SHA-512, unpacked 202 entries into `%LOCALAPPDATA%\OutlookAI\dotnet` (83.1 MB) and swapped it in, in 2.5 s; no work folder left; the machine-wide .NET unchanged; the add-in's own check, `OutlookAI.Core.AddIn.ServerDotnetRuntime` from the installed `OutlookAI.Core.dll`: complete, not machine-wide, available | answered `initialize` (protocol 2025-06-18) and `tools/list` (24 tools) over stdio and exited 0 when stdin closed; its host trace: `Using app-relative location [...\OutlookAI\dotnet] as runtime location` | started as the server starts it - `DOTNET_ROOT_X64` naming the private runtime, `--no-autostart`, no pipe - it loaded the private runtime and ran OutlookAI's code, which refused for want of a pipe (exit 2); **without** the variable its apphost found only the machine-wide 10.0.12 and refused to start (`0x80008096`) |
+| **B, silent update** | the guest's OutlookAI uninstalled; the current release, **v3.1.0.325**, `/SILENT` (17 s, `DisplayVersion 3.1.0.325`); the new installer with the updater's own arguments, `/SILENT /SP- /NOCANCEL /NORESTART /NORESTARTAPPLICATIONS` (26 s) | the same as A: the zip, both checks, 202 entries, no work folder, the machine-wide .NET unchanged, the add-in's check available | the same as A | the same as A |
+
+After A, the new installer's uninstaller removed the runtime folder and the helper's log, and left the
+user's own `audit.log`, `scratch`, `signature-backups` and `tmp` in `%LOCALAPPDATA%\OutlookAI`.
+
+Two things the first attempt, at 08:34, found about the guest rather than the product, and how the
+second worked round them. **The interactive wizard waits on its Install button** - it was killed
+after 4 minutes - so the fresh install ran `/SILENT`, as the updater runs it; `SetUpServerRuntime`
+runs the same on both paths, and only its failure message differs. **Inno's uninstaller, started from
+the Limited scheduled task, never reached its second phase** - no log, the uninstall key left -
+while the same command from the PowerShell Direct session, elevated, uninstalled at once; so each
+scenario's uninstall ran there. A user uninstalls from Settings, which is neither; that path is
+unmeasured. And `ConvertTo-Json` in Windows PowerShell 5.1 spent minutes of CPU on the `PSPath`
+notes `Get-Content` puts on every line, which stalled the first attempt's scenario-B check; the
+verdicts above come from the second attempt, at 09:12, which read files with `ReadAllLines`.
 
 ### 4.13 The load limit and the pause switch - every testbed VM, 2026-11-18 (Q195 (e))
 

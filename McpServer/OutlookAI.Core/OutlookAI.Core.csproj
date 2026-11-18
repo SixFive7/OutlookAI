@@ -2,12 +2,12 @@
 
   <PropertyGroup>
     <!--
-      Multi-target (v3.MD D18 v2 / R10): net10.0-windows is the MCP server's; net48 is the
+      Multi-target (v3.MD D18 v2 / R10): net11.0-windows is the MCP server's; net48 is the
       VSTO add-in's (.NET Framework 4.8), which references Core since Q167 (a) - the reason
       the net48 target was built from day one. The add-in may use only the namespace
       OutlookAI.Core.AddIn (Q164 (a); Tools/Checks/check-pinned-constants.ps1, check 15).
     -->
-    <TargetFrameworks>net48;net10.0-windows</TargetFrameworks>
+    <TargetFrameworks>net48;net11.0-windows</TargetFrameworks>
     <RootNamespace>OutlookAI.Core</RootNamespace>
     <!--
       Implicit usings are disabled: the default set includes System.Net.Http, which is
@@ -23,9 +23,10 @@
     <!--
       SystemIndex access: OLE DB over Search.CollatorDSO (v3.MD section 4). Windows-only
       at runtime; the package carries a net462 asset for the net48 target. Pinned in the
-      10.0.x family alongside Microsoft.Extensions.Hosting (v3.MD D31 companion pins).
+      11.0.x family alongside Microsoft.Extensions.Hosting (v3.MD D31 companion pins; 10.0.x until
+      the move to .NET 11, Q172 - 11.0.0 still carries the net462 asset).
     -->
-    <PackageReference Include="System.Data.OleDb" Version="10.0.10" />
+    <PackageReference Include="System.Data.OleDb" Version="11.0.0" />
   </ItemGroup>
 
   <ItemGroup>
@@ -59,7 +60,7 @@
     <!-- dynamic (late-bound Outlook/ADODB COM) needs the C# runtime binder on .NET Framework. -->
     <Reference Include="Microsoft.CSharp" />
     <!--
-      System.Reflection.DispatchProxy is in the box on net10.0 and NOT in net48's default
+      System.Reflection.DispatchProxy is in the box on net11.0 and NOT in net48's default
       reference set, so BudgetedSessionProxy (added 2026-08-19 with the in-process budget)
       compiled on one target and broke the other. The net48 gate exists precisely so Core
       cannot acquire a dependency the v3.1 event host could not take, and this is what it

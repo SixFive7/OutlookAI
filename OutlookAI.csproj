@@ -27,6 +27,14 @@
     <RootNamespace>OutlookAI</RootNamespace>
     <AssemblyName>OutlookAI</AssemblyName>
     <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
+    <!--
+      C# 15 on .NET Framework 4.8 (Q172, decided by the maintainer 2026-11-18): the server moved to
+      .NET 11 and C# 15, and the add-in, which a VSTO add-in has to stay on .NET Framework, moved its
+      language with it - without this, a .NET Framework project gets C# 7.3. The few types newer
+      features look up by name are in Properties\LanguageFeatureStandIns.cs, as source; a feature
+      that needs the modern runtime the compiler refuses here, and none is used.
+    -->
+    <LangVersion>15.0</LangVersion>
     <DefineConstants>VSTO40</DefineConstants>
     <ResolveComReferenceSilent>true</ResolveComReferenceSilent>
     <PublishUrl>publish\</PublishUrl>
@@ -174,6 +182,7 @@
     <Compile Include="Properties\AssemblyInfo.cs">
       <SubType>Code</SubType>
     </Compile>
+    <Compile Include="Properties\LanguageFeatureStandIns.cs" />
 
     <Compile Include="Services\ClaudeServices.cs" />
     <Compile Include="Services\McpRegistrationService.cs" />

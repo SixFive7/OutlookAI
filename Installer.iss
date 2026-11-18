@@ -10,21 +10,18 @@
 ; load at all. A payload compiled into setup cannot 404.
 ; Where the failure messages send the user - a page to read, not a 40 MB direct download.
 #define VstoRuntimeManualUrl "https://www.microsoft.com/download/details.aspx?id=105890"
-; The MCP server is a framework-dependent net10.0-windows console app. Its runtimeconfig
-; asks for Microsoft.NETCore.App 10.0.0 only - it references no WinForms/WPF, so the BASE
-; .NET runtime is enough and the (much larger) Desktop runtime is NOT required.
-; Default roll-forward is Minor, i.e. any 10.x satisfies it but 11.x would not.
-; Still an aka.ms alias, and so exposed in principle to the same rot that broke the VSTO one -
-; but it is left as-is deliberately: it currently redirects straight to the versioned build
-; (builds.dotnet.microsoft.com/.../dotnet-runtime-10.0.10-win-x64.exe, 200, octet-stream), and
-; the whole point of this alias is that it tracks the newest 10.x patch without an edit here.
-; The MZ check in DownloadFile is what makes that safe - if it ever starts serving a page,
-; setup now says so instead of running it.
-#define NetRuntime10Url "https://aka.ms/dotnet/10.0/dotnet-runtime-win-x64.exe"
-; Same URL as McpRegistrationService.DotnetRuntimeDownloadUrl - both send a user whose
-; runtime is missing to the same page, one from setup and one from OutlookAI Settings.
-; Compared by Tools/Checks/check-pinned-constants.ps1.
-#define NetRuntime10ManualUrl "https://dotnet.microsoft.com/download/dotnet/10.0"
+; The MCP server is a framework-dependent net11.0-windows console app, and it runs on a PRIVATE
+; copy of Microsoft's .NET 11 runtime (Q172, decided by the maintainer 2026-11-18). Its
+; runtimeconfig asks for Microsoft.NETCore.App 11.0.0 only - the BASE runtime, not the Desktop one
+; - and its apphost looks first in ..\..\dotnet, which is {localappdata}\OutlookAI\dotnet, and then
+; at a machine-wide .NET 11 (McpServer\Directory.Build.props). SetUpServerRuntime fills that
+; folder on every install and every silent update, per user and with no administrator rights.
+; The runtime is never inside this installer: the updater refuses a download over 50 MB, and
+; Microsoft's package is nearly 40 MB on its own.
+; Where a failure sends the user to install it by hand: the same page as
+; McpRegistrationService.DotnetRuntimeDownloadUrl, one from setup and one from OutlookAI
+; Settings. Compared by Tools/Checks/check-pinned-constants.ps1.
+#define ServerRuntimeManualUrl "https://dotnet.microsoft.com/download/dotnet/11.0"
 ; THE COMPROMISED SIGNING CERTIFICATE (decision 193 (b)): the one that signed v1.0.0.1 to
 ; v2.3.1.111, whose private key became public. Named by its SHA-1 thumbprint and by nothing
 ; else, and removed by thumbprint from these trust stores - the user's always, the computer's
@@ -72,9 +69,10 @@ CreateAppDir=yes
 ; One recursive rule covers the whole payload: the VSTO publish output at the top level
 ; AND the MCP server, which the release build (Tools/Publish-Release.ps1, through
 ; Testbed/host/Publish-AddInPayload.ps1) publishes into publish\McpServer\ so it lands at
-; {app}\McpServer\. Deliberately NOT a second explicit entry - an entry naming
+; {app}\McpServer\, and the helper that sets up the server's runtime, in publish\RuntimeSetup\
+; and so {app}\RuntimeSetup\. Deliberately NOT more explicit entries - an entry naming
 ; publish\McpServer\* would make ISCC fail for the testbed build of the same script, whose
-; installer carries no server.
+; installer carries neither.
 Source: "publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 ; The Visual Studio 2010 Tools for Office Runtime redistributable, vstor_redist.exe
@@ -142,6 +140,15 @@ Root: HKCU; Subkey: "Software\Microsoft\Office\16.0\Outlook\Resiliency\DoNotDisa
 Root: HKCU; Subkey: "Software\Microsoft\Office\15.0\Outlook\Resiliency\DoNotDisableAddinList"; ValueType: dword; ValueName: "OutlookAI"; ValueData: "1"; Flags: uninsdeletevalue
 Root: HKCU; Subkey: "Software\Microsoft\Office\17.0\Outlook\Resiliency\DoNotDisableAddinList"; ValueType: dword; ValueName: "OutlookAI"; ValueData: "1"; Flags: uninsdeletevalue
 
+[UninstallDelete]
+; The mail server's private .NET runtime (Q172), which SetUpServerRuntime's helper put beside
+; {app} in OutlookAI's per-user folder: the runtime, any work folder a run left behind, and the
+; helper's log. Nothing else there - the audit log, signature backups and saved attachments are
+; the user's, and stay.
+Type: filesandordirs; Name: "{localappdata}\OutlookAI\dotnet"
+Type: filesandordirs; Name: "{localappdata}\OutlookAI\dotnet.setup-*"
+Type: files; Name: "{localappdata}\OutlookAI\dotnet-setup.log"
+
 [UninstallRun]
 Filename: "certutil"; Parameters: "-user -delstore TrustedPublisher OutlookAI"; Flags: runhidden
 ; The compromised certificate is removed by thumbprint from every trust store on uninstall as
@@ -172,67 +179,6 @@ var
 begin
   Result := RegQueryDWordValue(HKLM, 'SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full', 'Release', release)
     and (release >= 528040);
-end;
-
-// Where the shared frameworks live. The x64 sharedhost key carries the dotnet root on
-// machines that have any .NET 5+ installed; fall back to the default location. Note the
-// sibling 'sharedfx' key is NOT reliable - it is absent on machines that do have the
-// runtime (verified on the development machine, which has 10.0.10 installed), which is
-// why detection probes the filesystem rather than the registry.
-// HKLM64 / {commonpf64} deliberately: this setup is a 32-bit process, so a plain HKLM
-// read would be redirected into Wow6432Node and a plain {commonpf} would point at the
-// 32-bit Program Files - neither of which is where the x64 runtime lives. Both constants
-// exist only on 64-bit Windows, hence the IsWin64 guard (a 32-bit Windows cannot run this
-// x64 server at all, so reporting "not installed" there is correct).
-function DotnetSharedFrameworkRoot: string;
-var
-  base: string;
-begin
-  if not IsWin64 then
-  begin
-    Result := '';
-    exit;
-  end;
-
-  if RegQueryStringValue(HKLM64, 'SOFTWARE\dotnet\Setup\InstalledVersions\x64\sharedhost', 'Path', base) and (base <> '') then
-    Result := AddBackslash(base) + 'shared\Microsoft.NETCore.App'
-  else
-    Result := ExpandConstant('{commonpf64}\dotnet\shared\Microsoft.NETCore.App');
-end;
-
-// True when some Microsoft.NETCore.App 10.x is present. Exactly 10.x on purpose: the
-// server's default roll-forward policy (Minor) will use any newer 10.x but will NOT
-// accept a future 11.x, so accepting ">= 10" here would report a satisfied prerequisite
-// on a machine where the server cannot start.
-// Same question, same answer as McpRegistrationService.IsDotnetRuntime10Installed - one
-// asked by setup, one by the add-in in OutlookAI Settings. The '10.' prefix below and the
-// Copy length that reads it are compared against the C# side by
-// Tools/Checks/check-pinned-constants.ps1.
-function IsNetRuntime10Installed: Boolean;
-var
-  FindRec: TFindRec;
-  root: string;
-begin
-  Result := False;
-  root := DotnetSharedFrameworkRoot;
-  if (root = '') or (not DirExists(root)) then
-    exit;
-
-  if FindFirst(AddBackslash(root) + '*', FindRec) then
-  begin
-    try
-      repeat
-        if ((FindRec.Attributes and FILE_ATTRIBUTE_DIRECTORY) <> 0)
-          and (Copy(FindRec.Name, 1, 3) = '10.') then
-        begin
-          Result := True;
-          exit;
-        end;
-      until not FindNext(FindRec);
-    finally
-      FindClose(FindRec);
-    end;
-  end;
 end;
 
 // The MCP server is spawned once per agent session, so several copies of
@@ -281,105 +227,9 @@ begin
     '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;
 
-// An HTTP error page is still a *successful* download: the server answers 200, the bytes land
-// at the requested name, and nothing about the result says "this is not an installer". That is
-// precisely how v3.0.1 shipped broken - the VSTO alias began redirecting to a Download Center
-// landing page, setup wrote 127 KB of HTML to vstor_redist.exe and ran it, and the failure was
-// invisible. So prove the bytes are a Windows executable before anything executes them.
-// Two cheap tests, both from one open handle: every PE image begins with the 'MZ' signature
-// (0x4D 0x5A), and no prerequisite fetched here is remotely small - the smaller of the two is
-// the ~30 MB .NET runtime - so a 1 MB floor rejects error pages and truncated transfers while
-// staying far below any real payload. Failures are swallowed into a False result rather than
-// raised: a file that cannot even be opened is not one to execute, and an escaping exception
-// would abort the whole install instead of falling through to the "could not download" message.
-function IsWindowsExecutable(const Path: string): Boolean;
-var
-  Stream: TFileStream;
-  Header: AnsiString;
-begin
-  Result := False;
-
-  try
-    Stream := TFileStream.Create(Path, fmOpenRead or fmShareDenyNone);
-    try
-      // Read fills Header itself and returns how many bytes it actually got, so the two
-      // indexes below can never run past the end of a file too short to hold a signature.
-      if Stream.Size >= 1000000 then
-        if Stream.Read(Header, 2) = 2 then
-          Result := (Ord(Header[1]) = $4D) and (Ord(Header[2]) = $5A);
-    finally
-      Stream.Free;
-    end;
-  except
-    Result := False;
-  end;
-end;
-
-function DownloadFile(const Url, DestPath: string; var ErrorDetail: string): Boolean;
-var
-  ResultCode: Integer;
-  CmdLine: string;
-  AnsiContent: AnsiString;
-begin
-  Result := False;
-  ErrorDetail := '';
-
-  // -TimeoutSec, for the same reason StopRunningMcpServers is bounded: this Exec is
-  // synchronous and setup has no cancel button on the auto-update path. Without it, a
-  // server that accepts the connection and then never answers leaves the installer waiting
-  // for ever. Ten minutes is far longer than the ~30 MB payload needs on any usable link,
-  // and the failure path is already gentle - the .NET runtime is needed only by the mail
-  // server, so a timeout reports itself and setup carries on.
-  CmdLine := 'try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; '
-    + 'Invoke-WebRequest -Uri "' + Url + '" -OutFile "' + DestPath + '" -UseBasicParsing -TimeoutSec 600; '
-    + 'exit 0 } catch { $_.Exception.Message | Out-File "' + DestPath + '.err" -Encoding utf8; exit 1 }';
-
-  if not Exec('powershell.exe',
-    '-NoProfile -ExecutionPolicy Bypass -Command "' + CmdLine + '"',
-    '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
-  begin
-    ErrorDetail := 'Could not start PowerShell';
-    exit;
-  end;
-
-  if ResultCode <> 0 then
-  begin
-    if FileExists(DestPath + '.err') then
-      if LoadStringFromFile(DestPath + '.err', AnsiContent) then
-        ErrorDetail := Trim(String(AnsiContent));
-    if ErrorDetail = '' then
-      ErrorDetail := 'Download failed (exit code ' + IntToStr(ResultCode) + ')';
-    DeleteFile(DestPath + '.err');
-    exit;
-  end;
-
-  DeleteFile(DestPath + '.err');
-
-  if not FileExists(DestPath) then
-  begin
-    ErrorDetail := 'Download completed but file was not created';
-    exit;
-  end;
-
-  // Guards every prerequisite, not just the one that was caught rotting: this is the single
-  // point both DownloadAndInstall* procedures go through. Delete the file so no later step can
-  // execute it, then fail exactly like any other failed download - each caller already tells
-  // the user which prerequisite it was and where to install it by hand.
-  if not IsWindowsExecutable(DestPath) then
-  begin
-    DeleteFile(DestPath);
-    ErrorDetail := 'The download did not return an installer - the server sent a web page or '
-      + 'an incomplete file. The download link has probably changed.';
-    exit;
-  end;
-
-  Result := True;
-end;
-
-// No download, and so no DownloadFile / IsWindowsExecutable guard: the bytes are the ones
-// compiled into this installer, verified by hash when the release was built, and covered by
-// setup's own CRC check on extraction. There is no network step left here to rot or to
-// hand back a web page.
+// No download: the bytes are the ones compiled into this installer, verified by hash when the
+// release was built, and covered by setup's own CRC check on extraction. There is no network
+// step here to rot or to hand back a web page.
 procedure InstallVstoRuntime;
 var
   TempPath: string;
@@ -639,52 +489,66 @@ begin
           Log('Removed the VSTO trust entry ' + Names[I] + ', which trusted the compromised key.');
 end;
 
-procedure DownloadAndInstallNetRuntime10;
+// THE MAIL SERVER'S PRIVATE .NET RUNTIME (Q172). Runs on every install AND every silent update:
+// the helper copied with the server needs no administrator rights, so unlike the machine-wide
+// .NET 10 runtime setup used to install, an update nobody watches gets it too. It does nothing
+// when the runtime is already in place; otherwise it downloads Microsoft's runtime package - or
+// takes it from beside this installer, when it is there under Microsoft's own name - holds it to
+// the pinned length and SHA-512, and unpacks it into {localappdata}\OutlookAI\dotnet
+// (McpServer\OutlookAI.RuntimeSetup\PrivateRuntime.cs). Its exit code says how it went; its log,
+// {localappdata}\OutlookAI\dotnet-setup.log, says why. A failure is reported on an interactive
+// install and logged on a silent one - the add-in works without the mail server, OutlookAI
+// Settings says what is missing, and the next install or update tries again.
+// The folder goes in as '<src>\.' so that no backslash stands before the closing quote, where the
+// command line would read it as an escaped quote.
+procedure SetUpServerRuntime;
 var
-  TempPath: string;
-  ErrorCode: Integer;
-  ErrorDetail: string;
+  Helper: string;
+  ResultCode: Integer;
+  Reason: string;
 begin
-  TempPath := ExpandConstant('{tmp}\dotnet-runtime-10-win-x64.exe');
-
-  WizardForm.StatusLabel.Caption := 'Downloading .NET 10 Runtime...';
-  WizardForm.ProgressGauge.Style := npbstMarquee;
-
-  if not DownloadFile('{#NetRuntime10Url}', TempPath, ErrorDetail) then
+  Helper := ExpandConstant('{app}\RuntimeSetup\OutlookAI.RuntimeSetup.exe');
+  if not FileExists(Helper) then
   begin
-    WizardForm.ProgressGauge.Style := npbstNormal;
-    MsgBox('Could not download the .NET 10 Runtime:' + #13#10 +
-      ErrorDetail + #13#10 + #13#10 +
-      'The Outlook add-in will still work. The mail server that lets AI agents' + #13#10 +
-      'search and read your mail needs it, and will not start without it.' + #13#10 + #13#10 +
-      'You can install it later from:' + #13#10 +
-      '{#NetRuntime10ManualUrl}', mbError, MB_OK);
+    Log('No ' + Helper + ': this installer carries no mail server, so it sets up no runtime for one.');
     exit;
   end;
 
-  WizardForm.StatusLabel.Caption := 'Installing .NET 10 Runtime...';
-
-  if not ShellExec('runas', TempPath, '/quiet /norestart', '', SW_HIDE, ewWaitUntilTerminated, ErrorCode) then
+  if not WizardSilent then
   begin
+    WizardForm.StatusLabel.Caption := 'Setting up the mail server''s .NET runtime...';
+    WizardForm.ProgressGauge.Style := npbstMarquee;
+  end;
+
+  if not Exec(Helper, '--from "' + AddBackslash(ExpandConstant('{src}')) + '."', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    ResultCode := -1;
+
+  if not WizardSilent then
     WizardForm.ProgressGauge.Style := npbstNormal;
-    MsgBox('The .NET 10 Runtime could not be installed (error ' + IntToStr(ErrorCode) + ').' + #13#10 + #13#10 +
-      'The Outlook add-in will still work. The mail server that lets AI agents' + #13#10 +
-      'search and read your mail needs it, and will not start without it.' + #13#10 + #13#10 +
-      'You can install it later from:' + #13#10 +
-      '{#NetRuntime10ManualUrl}', mbError, MB_OK);
+
+  if ResultCode = 0 then
+  begin
+    Log('The mail server''s .NET runtime is in place.');
     exit;
   end;
 
-  WizardForm.ProgressGauge.Style := npbstNormal;
+  case ResultCode of
+    10: Reason := 'It could not be downloaded.';
+    11: Reason := 'The download was not the file Microsoft publishes, so it was not used.';
+    12: Reason := 'It could not be unpacked.';
+    13: Reason := 'It could not be put in place.';
+  else
+    Reason := 'Setting it up failed (code ' + IntToStr(ResultCode) + ').';
+  end;
+  Log('The mail server''s .NET runtime is not in place: ' + Reason + ' The helper''s log: '
+    + ExpandConstant('{localappdata}\OutlookAI\dotnet-setup.log'));
 
-  if not IsNetRuntime10Installed then
-  begin
-    MsgBox('The .NET 10 Runtime installation did not complete successfully.' + #13#10 + #13#10 +
+  if not WizardSilent then
+    MsgBox('The .NET runtime the mail server needs could not be set up. ' + Reason + #13#10 + #13#10 +
       'The Outlook add-in will still work. The mail server that lets AI agents' + #13#10 +
       'search and read your mail needs it, and will not start without it.' + #13#10 + #13#10 +
-      'You can install it later from:' + #13#10 +
-      '{#NetRuntime10ManualUrl}', mbError, MB_OK);
-  end;
+      'Run the installer again to retry, or install the .NET 11 runtime from:' + #13#10 +
+      '{#ServerRuntimeManualUrl}', mbError, MB_OK);
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
@@ -717,15 +581,6 @@ begin
       // would refuse to install anyway.
       if IsNetFramework48Installed and (not IsVstoInstalled) then
         InstallVstoRuntime;
-
-      // Needed only by the MCP server, never by the add-in itself - so a failure here is
-      // reported and then tolerated; setup still completes and Outlook still gets the
-      // add-in. Interactive runs only, like the prerequisite checks above: a silent
-      // auto-update runs unattended after Outlook closes, and the elevation prompt this
-      // needs would sit there unanswered, blocking the update. On that path the add-in
-      // detects the missing runtime instead and says so in OutlookAI Settings.
-      if not IsNetRuntime10Installed then
-        DownloadAndInstallNetRuntime10;
     end;
 
     InstallCertificate;
@@ -733,6 +588,11 @@ begin
     // exposed key are cleaned up as they update: its VSTO trust entries, then its certificate.
     RemoveCompromisedTrustEntries;
     RemoveCompromisedCertificate;
+
+    // Needed only by the mail server, never by the add-in itself, so a failure is reported and
+    // then tolerated: setup still completes and Outlook still gets the add-in. Last, because it
+    // is the one step that may wait on the network.
+    SetUpServerRuntime;
   end;
 end;
 

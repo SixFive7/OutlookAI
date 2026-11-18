@@ -82,7 +82,7 @@ public sealed class McpRegistrationHealthTests
         Assert.Equal(
             HealthReporting.RegistrationDrifted,
             HealthReporting.DescribeMcpRegistration(
-                @"C:\Source\OutlookAI-v3\McpServer\OutlookAI.McpServer\bin\Release\net10.0-windows\OutlookAI.McpServer.exe",
+                @"C:\Source\OutlookAI-v3\McpServer\OutlookAI.McpServer\bin\Release\net11.0-windows\OutlookAI.McpServer.exe",
                 ServerPath));
     }
 

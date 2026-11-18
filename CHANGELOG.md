@@ -984,6 +984,21 @@ its mailbox tests on, and change nothing you install.
   Exchange recipient where Outlook knows it, where the pane gave the Exchange (X.500) address. The
   draft the pane writes is laid out as before, one paragraph a line.
 
+- 📦 **Setup puts the mail server's own .NET 11 runtime in your profile, with no administrator rights.**
+  The mail server runs on .NET 11 since the maintainer moved OutlookAI to it on 2026-11-18 (Q172),
+  and the installer no longer installs a .NET runtime for the whole machine. On every install and
+  every silent update it downloads Microsoft's runtime package, about 40 MB, checks its length and
+  SHA-512 against what Microsoft publishes, and unpacks it into `%LOCALAPPDATA%\OutlookAI\dotnet`;
+  once the runtime is there, it downloads nothing. A silent update used to skip the runtime,
+  because installing it for the whole machine needed an administrator's answer. The installer stays
+  under the updater's 50 MB limit, since the runtime is never inside it. On a machine without
+  internet, Microsoft's `dotnet-runtime-11.0.0-win-x64.zip` beside the installer is used instead,
+  checked the same way. The server looks for its own copy first and then for a .NET 11 installed
+  for the whole machine, and uninstalling removes its copy. If setup could not put the runtime in
+  place, OutlookAI Settings says so and what to do. On a test machine whose only .NET is 10, a fresh
+  install and a silent update from v3.1.0.325 each left a mail server that answered on its own
+  runtime, with no administrator rights and nothing installed for the whole machine.
+
 - 🔧 **OutlookAI opens no mailbox in a newly started Outlook until it has settled (Q175).**
   Settled means at least 20 seconds old, the OutlookAI add-in finished starting inside it, and its
   main thread idle: under a tenth of a 500 ms sample, and answering a message within a second. On
@@ -1133,6 +1148,51 @@ its mailbox tests on, and change nothing you install.
   would overwrite the change or copy it into the mailbox, and says to use Outlook instead. Roaming on
   Microsoft 365 Apps itself is not tested: the test machines run perpetual Office only.
 
+- ✅ **The testbed can build an installer that carries the mail server, to test the installed product.**
+  `Testbed/host/Publish-AddInPayload.ps1 -WithServer` publishes the mail server and
+  `OutlookAI.RuntimeSetup` into a testbed build's installer, as a release does, signed with the
+  throwaway certificate and versioned 99.99.99.0 like every testbed build. It proved the private
+  .NET 11 runtime on `OutlookAI-Unindexed2` (Q172, runbook section 4.12): a fresh install and a
+  silent update from v3.1.0.325, each run as the logged-on user without administrator rights, left
+  the runtime in place, the server answering `initialize` and `tools/list` on it, and the COM host
+  starting on it through `DOTNET_ROOT`, which without that variable refused to start there.
+
+- ⬆️ **The mail server, its tests and its tools build for .NET 11, and the add-in as C# 15 (Q172).**
+  The maintainer moved OutlookAI to .NET 11 on 2026-11-18. Every project under `McpServer/` targets
+  `net11.0-windows`, `OutlookAI.Core` and the audit-log stress writer keep their `net48` target
+  beside it, and the security analysers run at `11.0-all`, whose 94 rules are the ones `10.0-all`
+  ran, so the build found nothing new. System.Data.OleDb, Microsoft.Extensions.Hosting and
+  System.Drawing.Common move from 10.0.10 to 11.0.0 with it - OleDb's 11.0.0 still carries the .NET
+  Framework asset Core's `net48` build uses - and `Tools/Test-VulnerablePackages.ps1` finds no known
+  vulnerability in any package of the seven projects. The VSTO add-in stays on .NET Framework 4.8,
+  because a VSTO add-in cannot run on modern .NET, and compiles as C# 15 instead of the C# 7.3 a
+  .NET Framework project gets by default; `Properties/LanguageFeatureStandIns.cs` declares, as
+  source, the few types records, init accessors, required members and argument-expression guards
+  look up by name, and a feature that needs the modern runtime the compiler refuses there. What a
+  user sees of it is the runtime setup now brings for the mail server.
+
+- ✅ **The test machines carry the .NET 11 SDK beside .NET 10, on new checkpoints (Q172).**
+  OutlookAI is moving to .NET 11 (Q172), and nothing on .NET 11 can be tested until the test
+  machines have its SDK. Each of the three build machines has a new base checkpoint,
+  `CP-04-SDK11-TEST-READY-UTC`, which the build runner now restores: SDK 11.0.100 and, beside it,
+  .NET 10's SDK 10.0.404, both staged as media and held to the SHA-512 in Microsoft's release
+  metadata. SDK 10.0.404 is there because a branch still on .NET 10 is built by the newest SDK on
+  the machine, and SDK 11 builds .NET 10 against the 10.0.15 targeting packs, which a machine with
+  no network has only from that SDK; it replaced 10.0.401 in place. Each build machine made its own
+  checkpoint by the same steps, one at a time, each under the runner's lock and a lease. The
+  Exchange test machine has both SDKs too, in a new checkpoint, `CP-10-SDK11`, made on the one with
+  Office re-armed. The two Outlook test machines have new frozen-clock checkpoints with
+  SDK 11 beside 10.0.401 (10.0.404's install took 7 minutes, more than the indexed machine's clock
+  margin allows); the live runner restores them since the code moved to .NET 11, because there a
+  .NET 10 branch would lack those packs, and the clones of those two machines are new copies of
+  them, `OutlookAI-Indexed3` and `OutlookAI-Unindexed3`. Every old checkpoint, and the clones that
+  copy the old ones, stay for the branches whose runners still name them. `Install-DotnetSdk.ps1`
+  installs SDK 11 by default, builds its probe for the major it is asked about and pins that SDK
+  there, and installs without verifying for a frozen machine, where every second before the
+  checkpoint moves its clock. The live runner
+  names the SDK each machine's install step must find, and a relative output folder no longer
+  breaks the live-tier payload's offline feed check.
+
 - 📝 **The README's section on Outlook's lifetime and tray icon describes the lifetime pin.**
   It was written before pins existed. It now says that the first draft written in an Outlook with no
   window adds one hidden window, which every agent session shares and connecting never adds; that the
@@ -1147,26 +1207,6 @@ its mailbox tests on, and change nothing you install.
   after each start of Outlook shows its compose window near the top left of the screen for 80 to 650
   ms, which on the test machines took neither the foreground nor a key from a person typing in
   another program, and no later draft shows anything.
-
-- ✅ **The test machines carry the .NET 11 SDK beside .NET 10, on new checkpoints (Q172).**
-  OutlookAI is moving to .NET 11 (Q172), and nothing on .NET 11 can be tested until the test
-  machines have its SDK. Each of the three build machines has a new base checkpoint,
-  `CP-04-SDK11-TEST-READY-UTC`, which the build runner now restores: SDK 11.0.100 and, beside it,
-  .NET 10's SDK 10.0.404, both staged as media and held to the SHA-512 in Microsoft's release
-  metadata. SDK 10.0.404 is there because a branch still on .NET 10 is built by the newest SDK on
-  the machine, and SDK 11 builds .NET 10 against the 10.0.15 targeting packs, which a machine with
-  no network has only from that SDK; it replaced 10.0.401 in place. Each build machine made its own
-  checkpoint by the same steps, one at a time, each under the runner's lock and a lease. The
-  Exchange test machine has both SDKs too, in a new checkpoint, `CP-10-SDK11`, made on the one with
-  Office re-armed. The two Outlook test machines have new frozen-clock checkpoints with
-  SDK 11 beside 10.0.401 (10.0.404's install took 7 minutes, more than the indexed machine's clock
-  margin allows); the live runner moves to them in the change that moves the code to .NET 11,
-  because there a .NET 10 branch would lack those packs. Every old checkpoint stays for the
-  branches whose runners still name it. `Install-DotnetSdk.ps1` installs SDK 11 by default, builds
-  its probe for the major it is asked about and pins that SDK there, and installs without verifying
-  for a frozen machine, where every second before the checkpoint moves its clock. The live runner
-  names the SDK each machine's install step must find, still .NET 10's until the code moves, and a
-  relative output folder no longer breaks the live-tier payload's offline feed check.
 
 - ♻️ **The scripts share one copy of the helpers they restated, in Testbed/guest/ScriptHelpers.ps1 (Q166).**
   Seventeen scripts each declared the same `Invoke-NativeCommand`, the wrapper every program call
@@ -1564,9 +1604,9 @@ its mailbox tests on, and change nothing you install.
   `SignatureStore` is gone, the task pane reads and writes a draft through `ComposeDocument`, reads
   recipients through `MailRecipients` and releases through `ComObjects`, and the MCP registration
   prompt finds Outlook's windows through `NativeWindows`. Inside the add-in, the five handlers that
-  each handed an event from another thread to their window share `UiThread.Post`. Nothing in the namespace attaches to
-  Outlook, starts a COM thread or opens the search index, and check 15 holds that for all 29 of its
-  files.
+  each handed an event from another thread to their window share `UiThread.Post`. Nothing in the
+  namespace attaches to Outlook, starts a COM thread or opens the search index, and check 15 holds
+  that for every file in it.
   The word the draft tools read as "no signature" and the refusal a signature request can end in
   move with the rule, out of `SignatureManager`, which stays where it is: it writes signature files,
   and only the server does.
@@ -2180,6 +2220,15 @@ its mailbox tests on, and change nothing you install.
   folder - Calendar, Quick Step Settings, the mailbox's top level, emptied folders in Deleted
   Items - beside the mail, and none of them could be opened. On the test machine they were 21 of the
   first 100 results.
+
+- ✅ **A build-machine run that has to stage packages checks the known personal data again.**
+  When the build machine's offline feed lacked a package a revision needs, the runner staged it and
+  ran the machine's half a second time. That second run expanded the source afresh, after the first
+  had moved the private list of personal data into it, so the known identifiers went unchecked and
+  the run's summary said so. Every run of the move to .NET 11 stages its 11.0.0 packages, so it hit
+  every one of them (Q172, 2026-11-18). The runner stages the list again before the second run, and
+  its self-test checks that it does; the next run that staged packages checked the list on its second
+  run.
 
 - ✅ **A queued test run no longer stops when another run's ticket goes as it reads the queue.**
   Stream M's build run 20261118-092047 ended as not tested before it started: "An object at the

@@ -1735,8 +1735,9 @@ namespace OutlookAI.TaskPane
                         text = "The mail server is not installed alongside the add-in; any existing registration was left unchanged.";
                         break;
                     case McpRegistrationService.StatusNoRuntime:
-                        text = "The mail server needs the .NET 10 runtime, which is not installed. Get it from "
-                               + McpRegistrationService.DotnetRuntimeDownloadUrl + " and restart Outlook.";
+                        text = "The mail server needs the .NET 11 runtime, which is not installed. OutlookAI's installer "
+                               + "downloads its own copy: run the installer again, or get the runtime from "
+                               + McpRegistrationService.DotnetRuntimeDownloadUrl + ", then restart Outlook.";
                         break;
                     case McpRegistrationService.StatusParseFailed:
                         text = "Claude Code's configuration could not be read, so it was left untouched.";

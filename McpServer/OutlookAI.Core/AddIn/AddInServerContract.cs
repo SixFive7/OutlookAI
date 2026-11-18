@@ -19,7 +19,8 @@ namespace OutlookAI.Core.AddIn
     ///
     /// <para>
     /// Constants only: no probes, no registry access, no logic, nothing to test. The add-in compiles
-    /// as C# 7.3, so nothing here may need a newer language to use.
+    /// as C# 15 on .NET Framework 4.8 (C# 7.3 until Q172, 2026-11-18), so nothing here may need the
+    /// modern runtime to use.
     /// </para>
     /// </summary>
     public static class AddInServerContract

@@ -660,6 +660,10 @@ namespace OutlookAI.ComHost.Supervision
             startInfo.Environment[ComHostProtocol.PipeNameVariable] = pipeName;
             startInfo.Environment[ComHostProtocol.ParentPidVariable] =
                 Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            foreach (KeyValuePair<string, string> variable in OwnRuntimeVariables())
+            {
+                startInfo.Environment[variable.Key] = variable.Value;
+            }
             if (!_allowStartingOutlook)
             {
                 startInfo.ArgumentList.Add("--no-autostart");
@@ -1175,6 +1179,32 @@ namespace OutlookAI.ComHost.Supervision
                     // The child exited; nothing further to drain.
                 }
             });
+        }
+
+        /// <summary>
+        /// DOTNET_ROOT_X64 and DOTNET_ROOT naming the .NET this process runs on, so that the child's
+        /// apphost starts on the same one (Q172): the installed server may run on the private runtime
+        /// setup puts in %LOCALAPPDATA%\OutlookAI\dotnet, which the child's default search would not
+        /// find - it reads these two before it looks at the machine-wide .NET. The runtime's root is
+        /// three folders above System.Private.CoreLib's (shared\Microsoft.NETCore.App\&lt;version&gt;);
+        /// none is named when that folder has no host resolver, which leaves the child on the default.
+        /// </summary>
+        /// <param name="coreLibDirectory">The folder of System.Private.CoreLib; this process's own when null.</param>
+        internal static IReadOnlyList<KeyValuePair<string, string>> OwnRuntimeVariables(string? coreLibDirectory = null)
+        {
+            string? directory = coreLibDirectory ?? Path.GetDirectoryName(typeof(object).Assembly.Location);
+            if (string.IsNullOrEmpty(directory))
+            {
+                return [];
+            }
+
+            string root = Path.GetFullPath(Path.Combine(directory, "..", "..", ".."));
+            if (!Directory.Exists(Path.Combine(root, "host", "fxr")))
+            {
+                return [];
+            }
+
+            return [new KeyValuePair<string, string>("DOTNET_ROOT_X64", root), new KeyValuePair<string, string>("DOTNET_ROOT", root)];
         }
 
         /// <summary>
