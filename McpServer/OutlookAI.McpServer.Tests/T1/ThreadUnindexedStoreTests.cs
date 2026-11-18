@@ -127,12 +127,7 @@ public sealed class ThreadUnindexedStoreTests
         ThreadLiveInfo live = Walked(IndexedStore);
         live.StoresWithoutIndex = new[] { PstStore };
 
-        Assert.Contains(
-            FreshMerge.ThreadGapUnindexedStore,
-            FreshMerge.DescribeThreadCoverageGaps(live, new[] { IndexedStore })!);
-        Assert.Equal(
-            FreshMerge.FreshnessPartial,
-            FreshMerge.ClassifyThreadFreshness(live, new[] { IndexedStore }));
+        ThreadWalks.AssertNamedStoresRaiseTheCode("the stores without an index", live, FreshMerge.ThreadGapUnindexedStore, IndexedStore);
     }
 
     [Fact]
@@ -145,13 +140,7 @@ public sealed class ThreadUnindexedStoreTests
         string line = Assert.Single(MailService.DescribeThreadCoverage(
             live, FreshMerge.FreshnessPartial, store: null, scopeWidened: false, top: 50)!);
 
-        Assert.Contains(PstStore, line, StringComparison.Ordinal);
-        Assert.Contains(IndexedStore, line, StringComparison.Ordinal);
-        Assert.Contains("TELL THE USER", line, StringComparison.Ordinal);
-
-        // The weaker claim is the honest one: this is "we could not ask", not "we asked and
-        // there was nothing there". An agent that reports the second has invented a fact.
-        Assert.Contains("cannot be established", line, StringComparison.Ordinal);
+        ThreadWalks.AssertSentenceNamesTheStoresAndWithdrawsTheStrongerClaim("the stores without an index", line, IndexedStore, PstStore);
     }
 
     [Fact]
@@ -166,11 +155,7 @@ public sealed class ThreadUnindexedStoreTests
         live.StoresWithoutIndexTotal = 30;
         live.CoverageGaps = new[] { FreshMerge.ThreadGapUnindexedStore };
 
-        string line = Assert.Single(MailService.DescribeThreadCoverage(
-            live, FreshMerge.FreshnessPartial, store: null, scopeWidened: false, top: 50)!);
-
-        Assert.Contains("and 18 more", line, StringComparison.Ordinal);
-        Assert.Contains("live.storesWithoutIndexTotal", line, StringComparison.Ordinal);
+        ThreadWalks.AssertCappedListSaysHowManyMore("the stores without an index", live, null, "live.storesWithoutIndexTotal");
     }
 
     // ============================================================ through the whole tool

@@ -174,12 +174,7 @@ public sealed class ThreadScopedStoreTests
         ThreadLiveInfo live = Walked(AliceStore);
         live.StoresNotQueried = new[] { BobStore };
 
-        Assert.Contains(
-            FreshMerge.ThreadGapUnqueriedStore,
-            FreshMerge.DescribeThreadCoverageGaps(live, new[] { AliceStore })!);
-        Assert.Equal(
-            FreshMerge.FreshnessPartial,
-            FreshMerge.ClassifyThreadFreshness(live, new[] { AliceStore }));
+        ThreadWalks.AssertNamedStoresRaiseTheCode("the unqueried stores", live, FreshMerge.ThreadGapUnqueriedStore, AliceStore);
     }
 
     [Fact]
@@ -188,12 +183,7 @@ public sealed class ThreadScopedStoreTests
         string line = Assert.Single(MailService.DescribeThreadCoverage(
             Unqueried(AliceStore, BobStore), FreshMerge.FreshnessPartial, AliceStore, scopeWidened: false, top: 50)!);
 
-        Assert.Contains(AliceStore, line, StringComparison.Ordinal);
-        Assert.Contains(BobStore, line, StringComparison.Ordinal);
-        Assert.Contains("TELL THE USER", line, StringComparison.Ordinal);
-
-        // "We could not ask", never "we asked and there was nothing there".
-        Assert.Contains("cannot be established", line, StringComparison.Ordinal);
+        ThreadWalks.AssertSentenceNamesTheStoresAndWithdrawsTheStrongerClaim("the unqueried stores", line, AliceStore, BobStore);
     }
 
     [Fact]
@@ -233,11 +223,7 @@ public sealed class ThreadScopedStoreTests
         live.StoresNotQueriedTotal = 30;
         live.CoverageGaps = new[] { FreshMerge.ThreadGapUnqueriedStore };
 
-        string line = Assert.Single(MailService.DescribeThreadCoverage(
-            live, FreshMerge.FreshnessPartial, AliceStore, scopeWidened: false, top: 50)!);
-
-        Assert.Contains("and 18 more", line, StringComparison.Ordinal);
-        Assert.Contains("live.storesNotQueriedTotal", line, StringComparison.Ordinal);
+        ThreadWalks.AssertCappedListSaysHowManyMore("the unqueried stores", live, AliceStore, "live.storesNotQueriedTotal");
     }
 
     // ============================================================ through the whole tool

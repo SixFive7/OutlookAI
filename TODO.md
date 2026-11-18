@@ -119,10 +119,10 @@
   purpose - it guards `AuditLog`'s, and a guard that borrowed the code under test would agree with
   its mistakes. L11 stays as it is: `StressLines.cs` is one source the stress tool compiles and the
   tests link, so they recompute every line they expect from the code that wrote it without loading
-  the tool's assembly. What remains of S5a is T06: the setups it counted are shared now - no run of
-  15 identical lines is left between two T1 files - and what is left are parallel tests of parallel
-  features, such as the two thread suites' capped lists of unqueried and unindexed stores, which a
-  [Theory] would fold only by renaming them. In parallel: the PowerShell helpers (S7), the two `Get-ShortHash`
+  the tool's assembly. T06 is done: the setups it counted
+  are shared since T03 and T05 - no run of 15 identical lines is left between two T1 files - and the
+  two thread suites' three pairs of parallel tests assert through `ThreadWalks`, keeping their
+  names. S5a is complete. In parallel: the PowerShell helpers (S7), the two `Get-ShortHash`
   functions of the guest's measurement scripts among them, and the rules restated in C# and
   PowerShell as shared C# source (Q171), the updater's 26 lines that `Tools/Publish-Release.ps1`
   restates among them.
