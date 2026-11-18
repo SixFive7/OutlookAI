@@ -870,10 +870,10 @@ its mailbox tests on, and change nothing you install.
 - ♻️ **The scripts share one copy of the helpers they restated, in Testbed/guest/ScriptHelpers.ps1 (Q166).**
   Seventeen scripts each declared the same `Invoke-NativeCommand`, the wrapper every program call
   goes through so that Windows PowerShell 5.1 cannot end a script on the first line a program writes
-  to stderr. Thirteen of them now dot-source it from `Testbed/guest/ScriptHelpers.ps1`, where
+  to stderr. Fifteen of them now dot-source it from `Testbed/guest/ScriptHelpers.ps1`, where
   decision 215 (a) put the helpers the scripts share, so that every route that carries the guest
-  scripts to a test machine carries the file too; the two test runners and the two guest scripts
-  left fold with the steps that prove them by a real run. It is a dot-sourced file and not a module
+  scripts to a test machine carries the file too; the two guest scripts left fold with the step
+  that proves them by a real run. It is a dot-sourced file and not a module
   because a module does not pass the caller's error settings through: measured 2026-11-18, a script
   running a program through the wrapper from a module died on that first stderr line under Windows
   PowerShell 5.1, and came back with the program's exit code when the same function was dot-sourced.
@@ -896,7 +896,17 @@ its mailbox tests on, and change nothing you install.
   without the time now share `Write-ReportLine`. The mail sink's installer, whose log starts only
   once its guards have passed, calls its own `Write-SinkLog`, and the build-VM runner, which
   reaches the VM on its own and appends to its log in a way the host can read while it grows, its
-  own `Write-RunLog`.
+  own `Write-RunLog`. `Say` appends only to the log of the script that calls it, read as
+  `$script:LogPath`: it used to take `$LogPath` from whichever script up the chain had one, so
+  `Publish-LiveTierPayload.ps1`, which keeps no log, wrote its progress into the live runner's
+  run.log as well, which a live run showed on 2026-11-18. The live tier's runner and the
+  trust-removal probe, the last two runners with copies, dot-source the file too, for their program
+  calls, `Say` and `Stop-Refused`, and share with the build-VM runner `Format-Seconds`, which in the
+  live runner had shown 59.6 s as "60 s", the run directory's name (`New-RunId`, which takes the
+  guest's kind or the probe's scenario as a label), the TRX reader (`ConvertFrom-TrxText`), the lease
+  decision (`Get-LeaseDecision`, now handed the run's whole lease reason) and the exit code of a
+  task on a guest (`Get-TaskExit`, whose line the probe now writes as the live runner does). The
+  clone maker's `Stop-Refused` went the same way.
 
 - 📝 **If Office's own grace reset fails, the Exchange test machine may get Microsoft 365 Apps (Q206).**
   The maintainer's decision Q206, 2026-11-18, now in AGENTS.md beside the machine's internet

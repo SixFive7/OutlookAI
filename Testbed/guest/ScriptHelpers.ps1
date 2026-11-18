@@ -134,16 +134,19 @@ function Test-IsElevated {
 
 # A line of progress: the time, then the message, on the console - and, where the calling script keeps
 # a log at $LogPath, the same line appended there, its folder made first. A log that cannot be written
-# does not stop the work it records. $LogPath is read as a dot-sourced function reads any variable: from
-# the script that called it, which declares it or does not.
+# does not stop the work it records. $LogPath is the calling script's own - its parameter, or a variable
+# it sets outside its functions - read as $script:LogPath. Read plainly, it was also found in a script
+# that ran the caller with &: Publish-LiveTierPayload.ps1, which keeps no log, wrote its lines into the
+# live runner's run.log too (measured 2026-11-18, in a live run and in both shells).
 function Say([string] $m) {
     $line = "[{0:HH:mm:ss}] {1}" -f (Get-Date), $m
     Write-Host $line
-    if ($LogPath) {
+    $log = $script:LogPath
+    if ($log) {
         try {
-            $dir = Split-Path -Parent $LogPath
+            $dir = Split-Path -Parent $log
             if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
-            Add-Content -LiteralPath $LogPath -Value $line -Encoding UTF8
+            Add-Content -LiteralPath $log -Value $line -Encoding UTF8
         }
         catch {
             # A log that cannot be written must not stop the work it was recording.
@@ -156,4 +159,81 @@ function Say([string] $m) {
 function Write-ReportLine([string] $Text = '') {
     Write-Host $Text
     [void] $ReportLines.Add($Text)
+}
+
+# A request refused before anything was touched: said as a line of progress, and the script ends with
+# 4, the exit code every runner here gives a refusal.
+function Stop-Refused([string] $Why) {
+    Say "REFUSED: $Why"
+    exit 4
+}
+
+# A run directory's name: when the run started, what it ran where the runner names that - a guest's
+# kind, a probe's scenario - and the first 12 characters of the commit. Sortable, unique per second and
+# commit, and readable in a directory listing. Anything but a commit id is refused.
+function New-RunId {
+    param([DateTime] $When, [string] $Sha, [string] $Label = '')
+    if ($Sha -notmatch '^[0-9a-f]{12,40}$') { throw "Not a commit id: '$Sha'." }
+    if ($Label) { return ('{0:yyyyMMdd-HHmmss}-{1}-{2}' -f $When, $Label, $Sha.Substring(0, 12)) }
+    return ('{0:yyyyMMdd-HHmmss}-{1}' -f $When, $Sha.Substring(0, 12))
+}
+
+# What a TRX file says. Outcomes are counted from the results themselves, and the file's own
+# counters are kept beside them so a disagreement can be seen; NotExecuted is how xUnit's skips
+# arrive. Failed tests carry the first line of their message.
+function ConvertFrom-TrxText {
+    param([string] $Text)
+    $doc = New-Object System.Xml.XmlDocument
+    $doc.LoadXml($Text)
+    $ns = New-Object System.Xml.XmlNamespaceManager($doc.NameTable)
+    $ns.AddNamespace('t', 'http://microsoft.com/schemas/VisualStudio/TeamTest/2010')
+    $results = @($doc.SelectNodes('//t:Results/t:UnitTestResult', $ns))
+    $counts = [ordered]@{ total = $results.Count; passed = 0; failed = 0; skipped = 0; other = 0 }
+    $failed = @()
+    $skipped = @()
+    foreach ($r in $results) {
+        $outcome = $r.GetAttribute('outcome')
+        if ($outcome -eq 'Passed') { $counts['passed']++ }
+        elseif ($outcome -eq 'Failed') {
+            $counts['failed']++
+            $message = ''
+            $node = $r.SelectSingleNode('t:Output/t:ErrorInfo/t:Message', $ns)
+            if ($null -ne $node) { $message = (($node.InnerText -split "`r?`n") | Where-Object { $_.Trim() } | Select-Object -First 1) }
+            $failed += [pscustomobject]@{ name = $r.GetAttribute('testName'); message = [string]$message }
+        }
+        elseif ($outcome -eq 'NotExecuted') { $counts['skipped']++; $skipped += $r.GetAttribute('testName') }
+        else { $counts['other']++; $failed += [pscustomobject]@{ name = $r.GetAttribute('testName'); message = "outcome $outcome" } }
+    }
+    $counters = $doc.SelectSingleNode('//t:ResultSummary/t:Counters', $ns)
+    $declared = $null
+    if ($null -ne $counters) {
+        $declared = [ordered]@{
+            total       = [int]$counters.GetAttribute('total')
+            passed      = [int]$counters.GetAttribute('passed')
+            failed      = [int]$counters.GetAttribute('failed')
+            notExecuted = [int]$counters.GetAttribute('notExecuted')
+        }
+    }
+    return [pscustomobject]@{ Counts = $counts; Declared = $declared; Failed = $failed; Skipped = $skipped }
+}
+
+# A test VM's lease, as Set-TestbedLease.ps1 writes it, judged for one run: 'free' when there is none,
+# it has expired or its expiry cannot be read (Testbed/host/TestbedLeasePath.ps1's rule); 'ours' when
+# its reason is exactly the run's own; 'theirs' otherwise, which a run never takes over.
+function Get-LeaseDecision {
+    param([object] $Lease, [string] $Reason, [long] $NowUnix)
+    if ($null -eq $Lease) { return 'free' }
+    $expires = 0L
+    try { $expires = [long]$Lease.expiresUnix } catch { return 'free' }
+    if ($expires -le $NowUnix) { return 'free' }
+    if (([string]$Lease.reason) -ceq $Reason) { return 'ours' }
+    return 'theirs'
+}
+
+# The exit code of work a runner ran on a guest through Register-InteractiveTask.ps1, from the line
+# the runner's own call writes after it: 'RUN-REGISTER-EXIT: <code>'. $null when there is no such line.
+function Get-TaskExit([string] $Text) {
+    $m = [regex]::Match($Text, 'RUN-REGISTER-EXIT: (-?\d+)')
+    if ($m.Success) { return [int]$m.Groups[1].Value }
+    return $null
 }

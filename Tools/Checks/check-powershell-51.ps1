@@ -371,8 +371,6 @@ $script:SharedHelperFiles = @('Testbed/guest/ScriptHelpers.ps1')
 # Copies not folded yet, each with what folds it. Reported, and only ever shortened: an entry for a
 # script that no longer restates a shared function fails.
 $script:RestatedUntilFolded = [ordered]@{
-    'Testbed/host/Invoke-LiveTierOnGuest.ps1'   = 'a runner, folded with the runner helpers (S7d) and proven by a live run'
-    'Testbed/host/Invoke-TrustRemovalProbe.ps1' = 'a runner, folded with the runner helpers (S7d) and proven by a real run'
     'Testbed/guest/Build-Corpus.ps1'            = 'a guest script, folded with the guest helpers (S7c) and proven by its -Verify under a lease'
     'Testbed/guest/Reset-HubPopulation.ps1'     = 'a guest script, folded with the guest helpers (S7c) and proven by its -Verify under a lease'
 }

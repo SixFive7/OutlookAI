@@ -309,11 +309,12 @@ $VerdictBroken    = 'BROKEN'
 function Say([string] $m) {
     $line = "[{0:HH:mm:ss}] {1}" -f (Get-Date), $m
     Write-Host $line
-    if ($LogPath) {
+    $log = $script:LogPath
+    if ($log) {
         try {
-            $dir = Split-Path -Parent $LogPath
+            $dir = Split-Path -Parent $log
             if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
-            Add-Content -LiteralPath $LogPath -Value $line -Encoding UTF8
+            Add-Content -LiteralPath $log -Value $line -Encoding UTF8
         }
         catch {
             # A log that cannot be written must not stop the work it was recording.

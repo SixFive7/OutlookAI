@@ -270,11 +270,9 @@ if ($SelfTest) { exit (Invoke-SelfTest) }
 # THE CLONES.
 # =============================================================================================
 . (Join-Path $PSScriptRoot 'TestbedLeasePath.ps1')
-# Say is one of the helpers the scripts share, dot-sourced from Testbed/guest/ScriptHelpers.ps1 (Q154,
-# Q166 (b), decision 215 (a)), which says why.
+# Say and Stop-Refused are among the helpers the scripts share, dot-sourced from
+# Testbed/guest/ScriptHelpers.ps1 (Q154, Q166 (b), decision 215 (a)), which says why.
 . (Join-Path $PSScriptRoot '..\guest\ScriptHelpers.ps1')
-
-function Stop-Refused([string] $Why) { Say "REFUSED: $Why"; exit 4 }
 
 function Get-TimeSyncEnabled($Services) {
     $ts = @($Services | Where-Object { ([string]$_.Id).ToUpperInvariant().EndsWith($TimeSyncComponentId) -or $_.Name -eq 'Time Synchronization' })
