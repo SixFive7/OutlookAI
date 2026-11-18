@@ -1863,18 +1863,6 @@
   Outlook's signature settings, read through a draft's editor, reported no default with it or without
   it - and the value had been written while Outlook ran, which Outlook may read only when it starts.
 
-- [ ] **Decide whether OutlookAI reads the mailbox's own signature folder (Q152), once stream A's R3
-  lands.** Q152 (a) is built: OutlookAI reads only what Outlook copies into the local folder, works out
-  whether an account's signatures may roam (`SignatureRoaming`: possible on Microsoft 365 Apps 2303+,
-  on perpetual Office only where Outlook's `Name (address)` copies of an Exchange account show it), and
-  then leaves those copies and that account's defaults to Outlook. R1 on the Exchange VM (2026-11-17)
-  saw no roaming on Office LTSC 2024, and R3 the same day found none either: a signature made the test
-  account's default in Outlook on the web had no copy in Outlook an hour later or after a restart
-  (runbook §4.4a). The object model's folder list did not show that signature on the server while it
-  existed, so reading the hidden `ApplicationDataRoot` folder would need another route, and stays a
-  separate decision. The mailbox's signature
-  data is never written.
-
 - [ ] **Decide how Office on the Exchange VM gets back the ability to create items (found 2026-11-17).**
   Its Office LTSC 2024 volume edition was never activated, its grace ran out in late October, and since
   then Outlook creates no item through its object model: 41 of a run's 87 tests failed at their first
