@@ -1183,6 +1183,9 @@ try {
     $takenGuest = $null
     $look = $null
     $leaseStart = $null
+    # The gate's readings from before the build are dropped: the first look here starts after it, so
+    # the build - this run's own load - is never what holds the run back.
+    $TestbedLoadReadings.Clear()
     try {
         while ($null -eq $takenGuest) {
             $why = @()
