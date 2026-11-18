@@ -132,6 +132,18 @@ public static class OaiUnelevatedWin {
         }, IntPtr.Zero);
         return found;
     }
+    public static string[] Visible(uint pid) {
+        System.Collections.Generic.List<string> found = new System.Collections.Generic.List<string>();
+        EnumWindows(delegate (IntPtr h, IntPtr l) {
+            uint p; GetWindowThreadProcessId(h, out p);
+            if (p != pid || !IsWindowVisible(h)) return true;
+            StringBuilder c = new StringBuilder(256); GetClassName(h, c, 256);
+            StringBuilder t = new StringBuilder(512); GetWindowText(h, t, 512);
+            found.Add(c.ToString() + " '" + t.ToString() + "'");
+            return true;
+        }, IntPtr.Zero);
+        return found.ToArray();
+    }
     public static string ClassOf(IntPtr h) { StringBuilder c = new StringBuilder(256); GetClassName(h, c, 256); return c.ToString(); }
     public static bool Shown(IntPtr h) { return IsWindow(h) && IsWindowVisible(h); }
     public static bool PostClose(IntPtr h) { return PostMessage(h, 0x0010, IntPtr.Zero, IntPtr.Zero); }
@@ -181,7 +193,12 @@ public static class OaiUnelevatedWin {
         `$h = [OaiUnelevatedWin]::Titled([uint32]`$o.Id, '$w')
         if (`$h -ne [IntPtr]::Zero -and `$wizards -lt 5) { `$wizards++; `$lines.Add((Close-ActivationWizard `$h `$t0)) }
     }
-    else { `$lines.Add('NO-EXPLORER within $Minutes min') }
+    else {
+        `$lines.Add('NO-EXPLORER within $Minutes min')
+        # What Outlook showed instead, class and title: a dialog in front of the Explorer window is what has kept it
+        # from opening every time so far (2026-11-18: a start under a deployed signature default).
+        if (`$o) { foreach (`$v in [OaiUnelevatedWin]::Visible([uint32]`$o.Id)) { `$lines.Add('WINDOW ' + `$v) } }
+    }
 }
 catch { `$lines.Add('STARTER FAILED: ' + `$_.Exception.Message) }
 finally { Set-Content -LiteralPath '$r' -Value `$lines -Encoding UTF8 }
@@ -229,6 +246,7 @@ function Invoke-SelfTest {
     Check 'WM_CLOSE goes only to the wizard''s own window, and only when the button did not close it' (@([regex]::Matches($text, 'PostClose\(')).Count -eq 2 -and $text -match [regex]::Escape('if ([OaiUnelevatedWin]::Shown($h)) {') -and $text -match [regex]::Escape('[void][OaiUnelevatedWin]::PostClose($h)'))
     Check 'every dismissal, and a wizard that stayed up, is a line of the result' ($text -match 'ACTIVATION-WIZARD-DISMISSED' -and $text -match 'ACTIVATION-WIZARD-STUCK')
     Check 'a wizard raised again is dismissed at most five times' (@([regex]::Matches($text, [regex]::Escape('$wizards -lt 5'))).Count -eq 2)
+    Check 'a start that shows no Explorer lists the windows Outlook showed instead' ($text -match [regex]::Escape("`$lines.Add('WINDOW ' + `$v)") -and $text -match [regex]::Escape('public static string[] Visible(uint pid)'))
     $tally = Get-ActivationWizardTally @('started OUTLOOK.EXE', 'ACTIVATION-WIZARD-DISMISSED 270 s: class NUIDialog, by its Close button', 'EXPLORER-UP 277 s: Inbox')
     Check 'the tally counts one dismissal and nothing stuck' ($tally.Dismissed -eq 1 -and $tally.Stuck -eq 0)
     $tally = Get-ActivationWizardTally @('ACTIVATION-WIZARD-STUCK 40 s: class X - neither', 'NO-EXPLORER within 10 min')
