@@ -3,7 +3,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using Microsoft.Win32;
-using AddInServerContract = OutlookAI.Services.AddInServerContract;
+using AddInServerContract = OutlookAI.Core.AddIn.AddInServerContract;
 
 namespace OutlookAI.Core.Com
 {
@@ -274,25 +274,14 @@ namespace OutlookAI.Core.Com
                 windows.ProcessId == null ? null : OutlookStartRecord.ReadNote(OutlookStartRecord.WindowSeenValueName));
         }
 
-        /// <summary>When the process started (UTC), read from Windows in UTC; null when it cannot be read.</summary>
+        /// <summary>
+        /// When the process started (UTC), read from Windows in UTC by <see cref="ProcessStamp"/>, the session registry's
+        /// reader of the same time; null when it cannot be read.
+        /// </summary>
         public static DateTime? TryGetProcessStartUtc(int processId)
         {
-            IntPtr process = NativeMethods.OpenProcess(NativeMethods.ProcessQueryLimitedInformation, false, (uint)processId);
-            if (process == IntPtr.Zero)
-            {
-                return null;
-            }
-
-            try
-            {
-                return NativeMethods.GetProcessTimes(process, out long created, out _, out _, out _) && created > 0
-                    ? DateTime.FromFileTimeUtc(created)
-                    : (DateTime?)null;
-            }
-            finally
-            {
-                _ = NativeMethods.CloseHandle(process);
-            }
+            long? created = ProcessStamp.CreationUtcTicks(processId);
+            return created == null ? (DateTime?)null : new DateTime(created.Value, DateTimeKind.Utc);
         }
 
         /// <summary>The CPU time a thread has used, in milliseconds; null when it cannot be read.</summary>
@@ -344,21 +333,13 @@ namespace OutlookAI.Core.Com
 
         private static class NativeMethods
         {
-            internal const uint ProcessQueryLimitedInformation = 0x1000;
             internal const uint ThreadQueryLimitedInformation = 0x0800;
             internal const uint WmNull = 0x0000;
             internal const uint SmtoAbortIfHung = 0x0002;
             internal const uint SmtoErrorOnExit = 0x0020;
 
             [DllImport("kernel32.dll", SetLastError = true)]
-            internal static extern IntPtr OpenProcess(uint desiredAccess, [MarshalAs(UnmanagedType.Bool)] bool inheritHandle, uint processId);
-
-            [DllImport("kernel32.dll", SetLastError = true)]
             internal static extern IntPtr OpenThread(uint desiredAccess, [MarshalAs(UnmanagedType.Bool)] bool inheritHandle, uint threadId);
-
-            [DllImport("kernel32.dll", SetLastError = true)]
-            [return: MarshalAs(UnmanagedType.Bool)]
-            internal static extern bool GetProcessTimes(IntPtr process, out long creation, out long exit, out long kernel, out long user);
 
             [DllImport("kernel32.dll", SetLastError = true)]
             [return: MarshalAs(UnmanagedType.Bool)]

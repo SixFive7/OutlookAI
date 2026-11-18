@@ -1,20 +1,24 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 
 using Microsoft.Win32;
 using OutlookAI.Core.Com;
 
 // The one definition of everything the add-in and this server have to agree about: the HKCU keys
 // the add-in writes and this file reads, and the Claude Code configuration both of them look at.
-// Services\AddInServerContract.cs is LINKED into this project (see OutlookAI.Core.csproj), so
-// these are not copies of the add-in's constants - they are the add-in's constants.
-using Contract = global::OutlookAI.Services.AddInServerContract;
+// Core's AddIn\AddInServerContract.cs, which the add-in takes them from too (Q163 (a), Q167 (a)),
+// so these are not copies of the add-in's constants - they are the add-in's constants.
+using Contract = global::OutlookAI.Core.AddIn.AddInServerContract;
 // And the Office majors, plus the hive paths built from whichever one this machine has.
-// Services\OfficeVersions.cs is LINKED here too, so the Outlook Search key this file reads is
+// Core's AddIn\OfficeVersions.cs is the add-in's too, so the Outlook Search key this file reads is
 // built by the same expression the add-in writes it with - see OutlookSearchUserKeyPath below.
-using OfficeVersions = global::OutlookAI.Services.OfficeVersions;
+using OfficeVersions = global::OutlookAI.Core.AddIn.OfficeVersions;
+using AddInServerContract = global::OutlookAI.Core.AddIn.AddInServerContract;
+using McpConfigEditor = global::OutlookAI.Core.AddIn.McpConfigEditor;
 
 namespace OutlookAI.Core.Services
 {
@@ -29,19 +33,15 @@ namespace OutlookAI.Core.Services
     {
         /// <summary>
         /// Registry path of the add-in's tuning state. NOT a copy of the add-in's constant - the
-        /// same one: <c>Services\AddInServerContract.cs</c> is compiled into this assembly as well
-        /// as into the add-in, so there is nothing here to keep in step. This member stays public
-        /// only because the contract type is internal (CS0436 - see that file's header) and
-        /// callers outside Core name this one.
+        /// same one, <see cref="AddInServerContract.TuningKeyPath"/>, which the add-in writes with,
+        /// so there is nothing here to keep in step.
         /// </summary>
         public const string TuningKeyPath = Contract.TuningKeyPath;
 
         /// <summary>
         /// The value name this file reads out of both Search keys below - NOT a copy of the
-        /// add-in's: <c>Services\AddInServerContract.cs</c> is compiled into this assembly as
-        /// well as into the add-in, so the name the tuning service writes and the name read back
-        /// here are one constant. Public only because the contract type is internal (CS0436 - see
-        /// that file's header) and the T2 live test that flips the value names this one.
+        /// add-in's: it is <see cref="AddInServerContract.DisableServerAssistedSearchValueName"/>,
+        /// so the name the tuning service writes and the name read back here are one constant.
         /// </summary>
         public const string DisableServerAssistedSearchValueName =
             Contract.DisableServerAssistedSearchValueName;
@@ -309,6 +309,113 @@ namespace OutlookAI.Core.Services
             }
         }
 
+        /// <summary>
+        /// outlook_health's sessions block (Q118 (a)), from a registry snapshot - pure, so T1 pins it. Only sessions
+        /// whose process <paramref name="isRunning"/> still finds, attached to <paramref name="runningOutlook"/>, are
+        /// listed; <paramref name="comHostPid"/> marks this server's own. Null when Outlook is not running and the
+        /// snapshot holds nothing for it. <paramref name="problem"/> is set when a pin is left with no session to
+        /// close it.
+        /// </summary>
+        public static OutlookSessionsHealthView? DescribeOutlookSessions(
+            SessionRegistryState? state,
+            ProcessStamp? runningOutlook,
+            bool outlookShowsAWindow,
+            Func<ProcessStamp, bool> isRunning,
+            int? comHostPid,
+            out string? problem)
+        {
+            problem = null;
+            if (isRunning == null)
+            {
+                throw new ArgumentNullException(nameof(isRunning));
+            }
+
+            if (runningOutlook == null)
+            {
+                return null;
+            }
+
+            ProcessStamp outlook = runningOutlook.Value;
+            RegisteredOutlook? record = state?.Find(outlook);
+            List<OutlookSessionHealthRow> attached = new List<OutlookSessionHealthRow>();
+            if (state != null)
+            {
+                foreach (RegisteredSession session in state.Sessions)
+                {
+                    if (session.Outlook != outlook || !isRunning(session.Process))
+                    {
+                        continue;
+                    }
+
+                    attached.Add(new OutlookSessionHealthRow
+                    {
+                        Pid = session.Process.Pid,
+                        SinceUtc = new DateTime(Math.Max(0, session.SinceUtcTicks), DateTimeKind.Utc),
+                        StartedOutlook = session.StartedOutlook,
+                        ThisServer = comHostPid.HasValue && session.Process.Pid == comHostPid.Value,
+                    });
+                }
+            }
+
+            attached.Sort((a, b) => a.SinceUtc.CompareTo(b.SinceUtc));
+            OutlookSessionsHealthView view = new OutlookSessionsHealthView
+            {
+                Attached = attached,
+                StartedByOutlookAI = record == null ? (bool?)null : record.StartedBy != null,
+                PromotedUtc = record == null || record.PromotedUtcTicks == 0 ? (DateTime?)null : new DateTime(record.PromotedUtcTicks, DateTimeKind.Utc),
+                NextDraftPromotes = record == null ? (bool?)null : record.DirectRefused,
+                WhatEndsOutlook = SessionRegistryRules.DescribeWhatEndsOutlook(true, outlookShowsAWindow, record, attached.Count),
+            };
+
+            if (record != null && record.PinWindow != 0)
+            {
+                view.PinWindow = "0x" + record.PinWindow.ToString("X", CultureInfo.InvariantCulture);
+                view.PinSinceUtc = record.PinSinceUtcTicks == 0 ? (DateTime?)null : new DateTime(record.PinSinceUtcTicks, DateTimeKind.Utc);
+                string? maker = record.PinMadeBy;
+                int makerPid = 0;
+                if (maker != null)
+                {
+                    int dot = maker.IndexOf('.');
+                    _ = int.TryParse(dot > 0 ? maker.Substring(0, dot) : maker, NumberStyles.None, CultureInfo.InvariantCulture, out makerPid);
+                }
+
+                view.PinMadeByPid = makerPid > 0 ? makerPid : (int?)null;
+                view.PinMakerAttached = maker != null && state!.Sessions.Any(s => s.Key == maker && s.Outlook == outlook && isRunning(s.Process));
+                if (attached.Count == 0 && !outlookShowsAWindow)
+                {
+                    problem = "Outlook is held open by a hidden OutlookAI window that no OutlookAI session is attached to any more "
+                        + "(its session ended without closing it). The next OutlookAI session to start takes it over and closes it "
+                        + "when it ends; File > Exit in Outlook ends Outlook now.";
+                }
+            }
+
+            return view;
+        }
+
+        /// <summary>The running OUTLOOK.EXE's stamp, or null when none runs or its start time cannot be read.</summary>
+        public static ProcessStamp? TryGetRunningOutlook()
+        {
+            try
+            {
+                Process[] processes = OutlookProcesses.InThisSession();
+                try
+                {
+                    return processes.Length == 0 ? null : ProcessStamp.Of(processes[0]);
+                }
+                finally
+                {
+                    foreach (Process process in processes)
+                    {
+                        process.Dispose();
+                    }
+                }
+            }
+            catch (Exception ex) when (!(ex is OutOfMemoryException))
+            {
+                return null;
+            }
+        }
+
         /// <summary>Registry DWORD (boxed int) to bool: nonzero true, zero false, anything else null.</summary>
         private static bool? AsBool(object? value)
         {
@@ -409,8 +516,8 @@ namespace OutlookAI.Core.Services
 
         /// <summary>
         /// Registry path of the add-in's registration state - the same constant the add-in's
-        /// <c>McpRegistrationService</c> writes with, from the linked contract file, not a mirror
-        /// of it. Public for the same reason as <see cref="TuningKeyPath"/>.
+        /// <c>McpRegistrationService</c> writes with, <see cref="AddInServerContract.McpKeyPath"/>,
+        /// not a mirror of it.
         /// </summary>
         public const string McpRegistrationKeyPath = Contract.McpKeyPath;
 
@@ -458,7 +565,7 @@ namespace OutlookAI.Core.Services
                 return RegistrationUnknown;
             }
 
-            string resolved = ExpandEnvironmentReferences(registeredCommand);
+            string resolved = McpConfigEditor.ExpandEnvironmentReferences(registeredCommand);
             if (string.IsNullOrWhiteSpace(resolved))
             {
                 // Every reference in it expanded to nothing: it names no file at all, which
@@ -466,118 +573,7 @@ namespace OutlookAI.Core.Services
                 return RegistrationDrifted;
             }
 
-            return SamePath(resolved, runningFrom!) ? RegistrationOk : RegistrationDrifted;
-        }
-
-        /// <summary>
-        /// Expands the <c>${VAR}</c> and <c>${VAR:-default}</c> forms Claude Code documents
-        /// for <c>command</c>, <c>args</c> and <c>env</c> (pure when given a
-        /// <paramref name="lookup"/>; T1-pinned). Anything else - a bare <c>$</c>, an
-        /// unterminated or empty <c>${}</c> - is literal text and is copied through, which is
-        /// the only safe reading for a value about to be compared against a real file.
-        ///
-        /// The add-in's <c>McpConfigEditor.ExpandEnvironmentReferences</c> is the same rule on
-        /// the writing side. This one stays a second IMPLEMENTATION rather than a shared file -
-        /// unlike the constants in <c>AddInServerContract</c>, which Core now links - because the
-        /// two signatures differ where it matters: this one is nullable-annotated and defaults its
-        /// lookup to the process environment, the add-in's takes a required non-nullable lookup,
-        /// and reconciling them would change a public surface on both sides for no behavioural
-        /// gain. They cannot drift apart unnoticed because
-        /// <c>EnvironmentExpansionParityTests</c> runs ONE shared corpus through BOTH
-        /// implementations and asserts they agree character for character. That claim used to
-        /// be made here and was false: each side had its own suite with its own fixture
-        /// literals and nothing ever fed one input to both, even though the test project
-        /// already compiles the add-in file.
-        /// </summary>
-        public static string ExpandEnvironmentReferences(string? value, Func<string, string?>? lookup = null)
-        {
-            // Bound to a non-nullable local once: net48's reference assemblies are not
-            // annotated, so the null-state of string.IsNullOrEmpty's argument does not flow
-            // there the way it does on net10, and Core compiles warning-free for both.
-            string text = value ?? "";
-            if (text.Length == 0 || text.IndexOf("${", StringComparison.Ordinal) < 0)
-            {
-                return text;
-            }
-
-            lookup ??= static name =>
-            {
-                try
-                {
-                    return Environment.GetEnvironmentVariable(name);
-                }
-                catch (Exception ex) when (!(ex is OutOfMemoryException))
-                {
-                    return null;
-                }
-            };
-
-            var sb = new System.Text.StringBuilder(text.Length);
-            int i = 0;
-            while (i < text.Length)
-            {
-                if (text[i] != '$' || i + 1 >= text.Length || text[i + 1] != '{')
-                {
-                    sb.Append(text[i]);
-                    i++;
-                    continue;
-                }
-
-                int close = text.IndexOf('}', i + 2);
-                if (close < 0)
-                {
-                    sb.Append(text, i, text.Length - i);
-                    break;
-                }
-
-                string inner = text.Substring(i + 2, close - i - 2);
-                string name = inner;
-                string fallback = "";
-                int marker = inner.IndexOf(":-", StringComparison.Ordinal);
-                if (marker >= 0)
-                {
-                    name = inner.Substring(0, marker);
-                    fallback = inner.Substring(marker + 2);
-                }
-
-                if (name.Length == 0)
-                {
-                    sb.Append(text, i, close - i + 1);
-                    i = close + 1;
-                    continue;
-                }
-
-                string resolved = "";
-                try
-                {
-                    resolved = lookup(name) ?? "";
-                }
-                catch (Exception ex) when (!(ex is OutOfMemoryException))
-                {
-                    resolved = "";
-                }
-
-                sb.Append(resolved.Length > 0 ? resolved : fallback);
-                i = close + 1;
-            }
-
-            return sb.ToString();
-        }
-
-        /// <summary>Whether two paths name the same file, tolerating case and separator differences.</summary>
-        public static bool SamePath(string a, string b)
-        {
-            try
-            {
-                return string.Equals(
-                    Path.GetFullPath(a).TrimEnd('\\'),
-                    Path.GetFullPath(b).TrimEnd('\\'),
-                    StringComparison.OrdinalIgnoreCase);
-            }
-            catch (Exception ex) when (!(ex is OutOfMemoryException))
-            {
-                return string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
-            }
+            return McpConfigEditor.SamePath(resolved, runningFrom!) ? RegistrationOk : RegistrationDrifted;
         }
 
         /// <summary>
@@ -635,26 +631,21 @@ namespace OutlookAI.Core.Services
             readable = true;
             try
             {
-                // Same file name, resolved the same way, as the add-in's
-                // McpRegistrationService.ClaudeConfigPath - from the shared contract.
-                string path = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                    Contract.ClaudeConfigFileName);
-
-                if (!File.Exists(path))
+                // The one place the path is built, for the add-in and for this report alike.
+                string path = McpConfigEditor.UserConfigPath();
+                bool exists = File.Exists(path);
+                string text = "";
+                if (exists)
                 {
-                    return null;
+                    // FileShare.ReadWrite: the Claude Code CLI owns this file and may hold it open.
+                    using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                    using (var reader = new StreamReader(stream))
+                    {
+                        text = reader.ReadToEnd();
+                    }
                 }
 
-                // FileShare.ReadWrite: the Claude Code CLI owns this file and may hold it open.
-                string text;
-                using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
-                using (var reader = new StreamReader(stream))
-                {
-                    text = reader.ReadToEnd();
-                }
-
-                return ExtractRegisteredCommand(text, out readable);
+                return ReadRegisteredCommand(exists, text, out readable);
             }
             catch (Exception ex) when (!(ex is OutOfMemoryException))
             {
@@ -664,263 +655,47 @@ namespace OutlookAI.Core.Services
         }
 
         /// <summary>
-        /// Pulls mcpServers -> outlookai -> command out of raw JSON text (pure, T1-pinned).
-        /// Hand-scanned rather than deserialized so this compiles on BOTH Core targets:
-        /// System.Text.Json is not available on net48, and Core takes no JSON dependency
-        /// (v3.MD D18 v2 / section 0.5.2 - Core must stay host-neutral and reference-light).
-        /// Read-only by construction: nothing here can modify the file.
-        /// <paramref name="readable"/> is false when the text is not a JSON object at all.
+        /// The registration a configuration file holds, judged by the rule the add-in repairs it by,
+        /// <see cref="McpConfigEditor.IsReadableConfig"/> (pure, T1-pinned). An ABSENT file is readable
+        /// and holds nothing. A file that is there but reads back empty is UNREADABLE, not
+        /// unregistered: the Claude Code CLI truncates the file before it flushes, and a read taken in
+        /// between is a failed read. Until stage S3 of the code-sharing refactor this report called
+        /// such a file "absent" while the add-in called it unreadable.
         /// </summary>
-        public static string? ExtractRegisteredCommand(string? json, out bool readable)
+        public static string? ReadRegisteredCommand(bool fileExists, string? text, out bool readable)
         {
-            readable = true;
-            if (string.IsNullOrWhiteSpace(json))
+            readable = McpConfigEditor.IsReadableConfig(fileExists, text);
+            if (!readable || !fileExists || text == null)
             {
                 return null;
             }
 
-            int i = SkipWhitespace(json!, 0);
-            if (i >= json!.Length || json[i] != '{')
+            return McpConfigEditor.TryReadServerCommand(text, out string command) ? command : null;
+        }
+
+        /// <summary>
+        /// Pulls mcpServers -> outlookai -> command out of raw JSON text (pure, T1-pinned), through the
+        /// add-in's own reader, <see cref="McpConfigEditor"/>: one scanner for the file the add-in
+        /// writes and this report reads, where until stage S3 of the code-sharing refactor there were
+        /// two (Q154). Read-only by construction: nothing here can modify the file.
+        /// <paramref name="readable"/> is false when the text is not one well-formed JSON object - the
+        /// add-in will not touch such a file either - and empty text is readable with no entry.
+        /// </summary>
+        public static string? ExtractRegisteredCommand(string? json, out bool readable)
+        {
+            readable = true;
+            if (json == null || json.Trim().Length == 0)
+            {
+                return null;
+            }
+
+            if (!McpConfigEditor.TryValidateJsonObject(json, out _))
             {
                 readable = false;
                 return null;
             }
 
-            // mcpServers / outlookai / command all come from the shared contract: the add-in
-            // WRITES these three names and this scanner READS them, so renaming our entry (which
-            // would deregister the server on every machine) can only ever be a one-place edit.
-            int servers = FindMemberValue(json, i, Contract.ServersProperty);
-            if (servers < 0 || json[servers] != '{')
-            {
-                return null;
-            }
-
-            int entry = FindMemberValue(json, servers, Contract.ServerName);
-            if (entry < 0 || json[entry] != '{')
-            {
-                return null;
-            }
-
-            int command = FindMemberValue(json, entry, Contract.CommandProperty);
-            if (command < 0 || json[command] != '"')
-            {
-                return null;
-            }
-
-            // (FindMemberValue never returns an index past the end, so the reads above are
-            // in bounds; truncated input yields -1 instead.)
-
-            int end = SkipString(json, command);
-            return end < 0 ? null : Unescape(json.Substring(command + 1, end - command - 2));
-        }
-
-        /// <summary>
-        /// Start index of the value of <paramref name="name"/> among the DIRECT members of the
-        /// object beginning at <paramref name="objectStart"/>, or -1. Members are walked one at
-        /// a time and each value is skipped whole, so a same-named key nested deeper can never
-        /// be mistaken for a direct member.
-        /// </summary>
-        private static int FindMemberValue(string json, int objectStart, string name)
-        {
-            int i = SkipWhitespace(json, objectStart + 1);
-            if (i < json.Length && json[i] == '}')
-            {
-                return -1;
-            }
-
-            while (i < json.Length)
-            {
-                if (json[i] != '"')
-                {
-                    return -1;
-                }
-
-                int keyEnd = SkipString(json, i);
-                if (keyEnd < 0)
-                {
-                    return -1;
-                }
-
-                string key = Unescape(json.Substring(i + 1, keyEnd - i - 2));
-
-                i = SkipWhitespace(json, keyEnd);
-                if (i >= json.Length || json[i] != ':')
-                {
-                    return -1;
-                }
-
-                int valueStart = SkipWhitespace(json, i + 1);
-                if (valueStart >= json.Length)
-                {
-                    // Truncated right after the colon: no value to point at.
-                    return -1;
-                }
-
-                if (key == name)
-                {
-                    return valueStart;
-                }
-
-                int valueEnd = SkipValue(json, valueStart);
-                if (valueEnd < 0)
-                {
-                    return -1;
-                }
-
-                i = SkipWhitespace(json, valueEnd);
-                if (i >= json.Length || json[i] != ',')
-                {
-                    return -1;
-                }
-
-                i = SkipWhitespace(json, i + 1);
-            }
-
-            return -1;
-        }
-
-        private static int SkipWhitespace(string json, int i)
-        {
-            while (i < json.Length && char.IsWhiteSpace(json[i]))
-            {
-                i++;
-            }
-
-            return i;
-        }
-
-        /// <summary>Index just past the closing quote of the string starting at i, or -1.</summary>
-        private static int SkipString(string json, int i)
-        {
-            i++;
-            while (i < json.Length)
-            {
-                char c = json[i];
-                if (c == '\\')
-                {
-                    i += 2;
-                    continue;
-                }
-
-                if (c == '"')
-                {
-                    return i + 1;
-                }
-
-                i++;
-            }
-
-            return -1;
-        }
-
-        /// <summary>Index just past the end of the value starting at i, or -1.</summary>
-        private static int SkipValue(string json, int i)
-        {
-            if (i >= json.Length)
-            {
-                return -1;
-            }
-
-            char c = json[i];
-            if (c == '"')
-            {
-                return SkipString(json, i);
-            }
-
-            if (c == '{' || c == '[')
-            {
-                int depth = 0;
-                while (i < json.Length)
-                {
-                    char d = json[i];
-                    if (d == '"')
-                    {
-                        int end = SkipString(json, i);
-                        if (end < 0)
-                        {
-                            return -1;
-                        }
-
-                        i = end;
-                        continue;
-                    }
-
-                    if (d == '{' || d == '[')
-                    {
-                        depth++;
-                    }
-                    else if (d == '}' || d == ']')
-                    {
-                        depth--;
-                        if (depth == 0)
-                        {
-                            return i + 1;
-                        }
-                    }
-
-                    i++;
-                }
-
-                return -1;
-            }
-
-            while (i < json.Length)
-            {
-                char d = json[i];
-                if (d == ',' || d == '}' || d == ']' || char.IsWhiteSpace(d))
-                {
-                    return i;
-                }
-
-                i++;
-            }
-
-            return i;
-        }
-
-        private static string Unescape(string s)
-        {
-            if (s.IndexOf('\\') < 0)
-            {
-                return s;
-            }
-
-            var sb = new System.Text.StringBuilder(s.Length);
-            for (int i = 0; i < s.Length; i++)
-            {
-                if (s[i] != '\\' || i + 1 >= s.Length)
-                {
-                    sb.Append(s[i]);
-                    continue;
-                }
-
-                i++;
-                char c = s[i];
-                switch (c)
-                {
-                    case 'n': sb.Append('\n'); break;
-                    case 'r': sb.Append('\r'); break;
-                    case 't': sb.Append('\t'); break;
-                    case 'b': sb.Append('\b'); break;
-                    case 'f': sb.Append('\f'); break;
-                    case 'u':
-                        if (i + 4 < s.Length
-                            && int.TryParse(s.Substring(i + 1, 4), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out int code))
-                        {
-                            sb.Append((char)code);
-                            i += 4;
-                        }
-                        else
-                        {
-                            sb.Append(c);
-                        }
-
-                        break;
-                    default: sb.Append(c); break;
-                }
-            }
-
-            return sb.ToString();
+            return McpConfigEditor.TryReadServerCommand(json, out string command) ? command : null;
         }
 
         /// <summary>

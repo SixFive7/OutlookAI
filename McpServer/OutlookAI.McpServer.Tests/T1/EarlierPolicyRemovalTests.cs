@@ -1,11 +1,11 @@
-using OutlookAI.Services;
+using OutlookAI.Core.AddIn;
 using Xunit;
 
 namespace OutlookAI.McpServer.Tests.T1;
 
 /// <summary>
 /// The removal of the Cached Mode policy values an earlier OutlookAI wrote,
-/// <c>Services\EarlierPolicyRemoval.cs</c>, LINKED, against a fabricated registry.
+/// Core's <c>AddIn\EarlierPolicyRemoval.cs</c>, the copy the add-in loads, against a fabricated registry.
 ///
 /// <para>
 /// Q151 (a), decided by the maintainer: the values OutlookAI 3.0.0.319 to 3.1.0.325 wrote as Group

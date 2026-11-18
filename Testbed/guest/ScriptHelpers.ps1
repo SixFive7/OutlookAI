@@ -131,3 +131,29 @@ function Test-IsElevated {
     $p = New-Object System.Security.Principal.WindowsPrincipal($id)
     return $p.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
 }
+
+# A line of progress: the time, then the message, on the console - and, where the calling script keeps
+# a log at $LogPath, the same line appended there, its folder made first. A log that cannot be written
+# does not stop the work it records. $LogPath is read as a dot-sourced function reads any variable: from
+# the script that called it, which declares it or does not.
+function Say([string] $m) {
+    $line = "[{0:HH:mm:ss}] {1}" -f (Get-Date), $m
+    Write-Host $line
+    if ($LogPath) {
+        try {
+            $dir = Split-Path -Parent $LogPath
+            if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+            Add-Content -LiteralPath $LogPath -Value $line -Encoding UTF8
+        }
+        catch {
+            # A log that cannot be written must not stop the work it was recording.
+        }
+    }
+}
+
+# A line of a report the calling script writes out whole at its end: printed as it is, with no time,
+# and kept in $ReportLines - the list the script makes before its first line.
+function Write-ReportLine([string] $Text = '') {
+    Write-Host $Text
+    [void] $ReportLines.Add($Text)
+}

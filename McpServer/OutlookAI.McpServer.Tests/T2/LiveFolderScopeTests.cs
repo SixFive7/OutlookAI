@@ -421,71 +421,7 @@ public sealed class LiveFolderScopeTests
 
     private static int DrainCount(IndexSearchService index, IndexQuery query) => LiveFolderProbe.DrainCount(index, query);
 
-    private void CleanUp(string? entryId)
-    {
-        if (entryId != null)
-        {
-            try
-            {
-                LiveOutlookTestMailer.DeleteItemByEntryId(Hub, entryId, Marker);
-            }
-            catch (Exception)
-            {
-                // The stable-zero sweep below is the authority.
-            }
-        }
+    private void CleanUp(string? entryId) => _fixture.CleanUpHub(new[] { entryId });
 
-        LiveOutlookTestMailer.DeleteTestFolders(Hub);
-        LiveOutlookTestMailer.DeleteTaggedArtifactsUntilStableZero(
-            Hub, Marker, folderIds: LiveOutlookTestMailer.HubSweepFolderIdsWithArchive);
-    }
-
-    private void AssertHubClean()
-    {
-        // Includes the Sync Issues subtree since soak fix 15 - a tagged artifact was once
-        // found stranded in Local Failures, where nothing had ever swept.
-        //
-        // Straggler-tolerant like the move/archive suites (batch A): the stable-zero sweep
-        // returns after its 10 s window, but under a full-suite load a seeded item can
-        // still materialize after it - which failed this class nondeterministically, a
-        // different test each run. Purge once more (S3-legal: tag AND this run's marker)
-        // and assert only what SURVIVES that.
-        // ONE purge pass is still not enough under full-suite load: a straggler can
-        // materialize between the purge and the count that follows it (measured - this
-        // class failed on exactly that, one surviving artifact, in an otherwise green
-        // run). Drive to a STABLE zero first, the way the self-send suites do, and only
-        // then apply the straggler-tolerant count.
-        LiveOutlookTestMailer.DeleteTaggedArtifactsUntilStableZero(
-            Hub, Marker, folderIds: LiveOutlookTestMailer.HubSweepFolderIdsWithArchive);
-
-        int remaining = LiveOutlookTestMailer.CountTaggedArtifactsAfterPurgingStragglers(
-            Hub, Marker, LiveOutlookTestMailer.HubSweepFolderIdsWithArchive, out int stragglersPurged);
-        if (stragglersPurged > 0)
-        {
-            _output.WriteLine($"cleanup[{Hub}]: {stragglersPurged} late-materialized artifact(s) purged (documented lag)");
-        }
-
-        Assert.Equal(0, remaining);
-
-        // FOLDERS: assert what the cleanup helper itself treats as clean, not the raw
-        // count. A test folder created and removed inside ONE Outlook session can wedge
-        // EMPTY in Deleted Items - Folders.Remove keeps failing with the synchronization
-        // error until Outlook restarts - and DeleteTestFolders documents that, reports it
-        // and returns successfully. Asserting the raw count failed the suite over exactly
-        // that remnant (live-caught: "[cleanup] 1 empty test folder(s) wedged ...", and
-        // this class's own assertions had all passed), which pins an Outlook limitation
-        // rather than a contract and depends on whether Outlook happened to restart. What
-        // must be zero is LIVE test folders: anything still holding items, or still
-        // sitting outside Deleted Items.
-        int liveTestFolders = LiveOutlookTestMailer.CountLiveTestFolders(Hub, out int wedgedEmpty);
-        if (wedgedEmpty > 0)
-        {
-            _output.WriteLine(
-                $"cleanup[{Hub}]: {wedgedEmpty} empty test folder(s) wedged in Deleted Items until Outlook restarts "
-                + "(documented same-session limitation, no items involved)");
-        }
-
-        Assert.Equal(0, liveTestFolders);
-        _output.WriteLine(_fixture.VerifyHubReconciled());
-    }
+    private void AssertHubClean() => _fixture.AssertHubClean(_output.WriteLine);
 }

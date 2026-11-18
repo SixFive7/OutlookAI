@@ -1,17 +1,17 @@
-using OutlookAI.Services;
+using OutlookAI.Core.AddIn;
 using Xunit;
 
-using Action = OutlookAI.Services.McpRegistrationDecision.RegistrationAction;
-using Entry = OutlookAI.Services.McpRegistrationDecision.EntryState;
-using Prompt = OutlookAI.Services.McpRegistrationDecision.PromptKind;
-using Window = OutlookAI.Services.McpRegistrationDecision.OutlookWindow;
+using Action = OutlookAI.Core.AddIn.McpRegistrationDecision.RegistrationAction;
+using Entry = OutlookAI.Core.AddIn.McpRegistrationDecision.EntryState;
+using Prompt = OutlookAI.Core.AddIn.McpRegistrationDecision.PromptKind;
+using Window = OutlookAI.Core.AddIn.McpRegistrationDecision.OutlookWindow;
 
 namespace OutlookAI.McpServer.Tests.T1;
 
 /// <summary>
 /// When the add-in may change Claude Code's user-scope MCP registration by itself, and when
-/// it has to stop and ask (<c>Services/McpRegistrationDecision.cs</c>, LINKED into this test
-/// project — see the tests csproj).
+/// it has to stop and ask (Core's <c>AddIn/McpRegistrationDecision.cs</c>, the copy the add-in
+/// loads).
 ///
 /// This is the rule "never act on inferred intent" made mechanical, and it is worth pinning
 /// exhaustively because both ways of getting it wrong are destructive: adopting an entry that

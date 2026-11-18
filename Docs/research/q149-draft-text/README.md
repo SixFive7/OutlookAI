@@ -106,6 +106,28 @@ and the reading pane.
 - **D4** (the decision itself). (c) replaces Word only if every compared aspect of stage 3 is the same,
   opened in Outlook and as received. Otherwise (b).
 
+### Stage 4 - after the decision (2026-11-18)
+
+The maintainer decided on these results: keep Word, with one promotion per Outlook process, no per-draft
+activation while Outlook shows a window, and the B3 commit (Q208 B); no pin at connect, the pin made when a
+draft first needs it (Q175 (b)); a reply's and forward's text above the quoted header block (Q209 (a)); keep
+this suite (Q210 (a)); measure what Outlook's own compose window makes of typed text (Q211 (b)); and log every
+cold start of that run (Q180 (b)). These cells measure the product as it then drafts, and the two questions.
+
+| Cell | What it does | n | Class |
+| --- | --- | --- | --- |
+| **P1** | The product's drafts in a window-less Outlook, through update_draft: each draft's route (direct or the promotion), every window Windows showed, every change of foreground; then the session ends - the last session out - and Outlook's exit is watched; the commits re-read | 3 starts x 10 | `LiveQ149WindowlessComposeTests` |
+| P2 | Two product sessions in one window-less Outlook: the first drafts and so makes the pin, the second drafts on it, the first leaves - Outlook must stay up - and the last out closes a pin it did not make | 1 start, 5 drafts | the same |
+| P3 | A COM-started Outlook in which an Explorer was then displayed (parked off-screen): every product draft must read directly, activate nothing and make no pin | 5 | the same |
+| P4 | P1 while a person types: a window of the test's own holds the foreground and types a character no draft holds, every 40 ms, from just before each draft until it returns; where every key went - that window, Outlook, or the stored draft | 2 starts x 5 | the same |
+| P5 | P3 while a person types, as in P4 | 5 | the same |
+| **Q211** | A draft saved with no inspector (new mail, reply, forward), re-opened and displayed - Outlook's own compose window - typed into at Outlook's insertion point through Word (`Selection.TypeText`, `TypeParagraph`), its layout read and the window closed discarding; beside it the product's drafts of the same text, with no signature and with the test signature | 2 rounds x 3 kinds x 3 | `LiveQ149TypedTextTests` |
+| Q180 | Every cold start of these cells: the time until Outlook first answered, `OutlookLiveness`'s verdict every 100 ms from the start request until 2 s after, the milestones, and any step that did not return within its budget; and every OUTLOOK.EXE that started during the run, from its creation until it answered | every start | both |
+
+In P1 to P5 a small window of the test's own takes the foreground before each draft, standing in for the
+program a person is typing in, and a hook on every foreground change of the desktop records where the
+foreground went during the draft and for how long it was not on that window.
+
 ### What is not run, and why
 
 - The editor plan's A7, an in-process read through the add-in: whether the add-in loads in a COM-started
@@ -120,7 +142,7 @@ and the reading pane.
 
 ## How it runs
 
-The three classes sit in one collection, `LiveComposeSurface`, whose fixture holds back every test in a
+The four classes sit in one collection, `LiveComposeSurface`, whose fixture holds back every test in a
 run that did not select the measurement alone - it bounces Outlook dozens of times and takes over an
 hour - so a whole-tier run reports each of them `NOT RUN`. A run selects it with:
 
@@ -132,7 +154,10 @@ and each class's `Smoke_*` test runs every cell once (`&FullyQualifiedName~Smoke
 window-less cell is a test of its own (`L1_...`, `L1c_...`, `L2_...`, `W2_...` to `W7_...`), so a run can
 take a group of them by name - `&(FullyQualifiedName~.L1_|FullyQualifiedName~.L1c_)` - and stay short.
 The measurement was run that way: one group of cells per run, with `-Kind Unindexed` or `-Kind Indexed`
-so that the runs spread over both guests of a kind. On the frozen checkpoints of 2026-10-03 a run's guest
+so that the runs spread over both guests of a kind. Stage 4 runs as two groups,
+`-FilterSuffix '&(FullyQualifiedName~.P1_|FullyQualifiedName~.P2_|FullyQualifiedName~.P3_|FullyQualifiedName~.P4_|FullyQualifiedName~.P5_)'`
+and `-FilterSuffix '&FullyQualifiedName~.Q211_'`: a run whose test process does not end is fetched with
+nothing, so a Q211 that blocked would take the P cells' lines with it. On the frozen checkpoints of 2026-10-03 a run's guest
 account stopped answering about 40 minutes after the restore, and the first smoke run lost its results
 that way; every run in the results is on the checkpoints recorded since, `CP-16B` and `CP-22C`.
 
@@ -313,18 +338,109 @@ down to the number of differences.
 **D4: no HTML-only draft looks the same as today's, opened in Outlook or as received, so by the rule
 the answer is (b).**
 
+### Stage 4: the product after the decision
+
+Measured on 2026-11-18 on `OutlookAI-Unindexed` and its clone `OutlookAI-Unindexed2`, from
+`CP-16B-FROZEN-CLOCK`, of the branch that makes the decision. The Indexed guests failed at preparation
+that day and were not used. Every run below passed.
+
+| Cells | Run |
+| --- | --- |
+| P1 | `20261118-054536-unindexed-e722b4eb788b` |
+| P1, P2, P3, with the holder | `20261118-060610-unindexed-25e36e988bc9` |
+| P1 to P5, with the foreground hook and the typist | `20261118-071241-unindexed-1deb859f4397` |
+| P1, P4, P5, with the foreground also asked for every 10 ms | `20261118-073742-unindexed-b95f0caf0270` |
+| Q211 | `20261118-072711-unindexed-dbe2be94ead0` |
+
+**One promotion per Outlook start (P1).** In 12 starts of 10 drafts, over four runs, the first draft of
+every start was promoted (12 of 12) and put its compose window on screen once, where Outlook places it
+(25,25 to 156,156, 768 x 519). Over the 15 promotions of P1, P2 and P4 whose window events were recorded,
+it was there for 81 to 410 ms. Every later draft read Word's editor directly (108 of 108) and showed no
+window. A first draft took 1.9 to 8.8 s, a later one 0.3 to 1.7 s. Every edit was in the stored draft
+(120 of 120), the old text gone, the message class IPM.Note and no form property added - and so in all
+170 drafts of P1 to P5. When the session ended - the last one out - it closed the pin and Outlook ended
+0.4 to 1.4 s later, exit code 0, in 12 of 12; no pin was left in the registry.
+
+**Two sessions, one pin (P2).** In two runs, the first session promoted and drafted, the second drafted
+directly on the same Outlook (3 drafts each run, one after the first session had left), the first to
+leave kept the pin ("other sessions still attached") and Outlook kept running, and the last out closed
+by its window a pin it had not made: Outlook ended 0.8 and 2.1 s later, exit code 0. One first draft
+took 17.6 s, its window on screen for 410 ms.
+
+**An Outlook that shows a window (P3, P5).** Every draft read its editor directly (20 of 20 over four
+runs, 10 of them with a person typing), showed no window and made no pin. Closing the displayed
+Explorer, its only window, ended Outlook through its Quit event (4 of 4).
+
+**The foreground, and a person typing (P1 to P5).** A small window of the test's own held the
+foreground before every draft and had it again after every one (140 of 140). In P4 and P5 it typed
+throughout: 1,090 keys in 30 drafts, 4 of them promotions, and every key reached it; none was found in a
+stored draft. In the last run Windows was also asked: GetForegroundWindow every 10 ms by the holder and
+before each key by the typist, with the foreground thread's keyboard focus (GetGUIThreadInfo). In none
+of its 45 drafts, the 5 promotions among them, did either name an Outlook window: 0 of 557 keys went out
+while one had the foreground or the focus. Yet the hook on EVENT_SYSTEM_FOREGROUND reported Outlook's
+windows in every promotion (three times: the hidden compose window, parked, then on screen), once in
+every draft read directly in an Outlook with no window except the first after each promotion (96 of
+108 in P1), and twice in every draft in an Outlook with a window (the hidden compose window, then the
+Explorer; 20 of 20). Windows announced those changes without making them, on guests whose foreground
+lock time-out never runs out (below). So what remains of the flash is the promoted window on screen
+once per start; it took neither the foreground nor a key here.
+
+**Q180: the cold starts.** 22 COM cold starts, every one through `OutlookComSession.Connect`:
+OUTLOOK.EXE seen 105 to 127 ms after the start request, `OutlookLiveness` Responsive 0.22 to 0.48 s
+after it, and the object model's first answer - connected and the first store read - 2.3 to 4.1 s after
+it. No sample was Hung and no step overran its budget. The run-wide observer logged every OUTLOOK.EXE
+that started in these runs (36, the re-reads' starts among them), every one a COM start
+(`-Embedding`): Responsive 0.2 to 0.5 s after the process was created, none hung, none ended before it
+answered. In one, the first sample still read the Outlook before it, which was ending. Q211 used the
+Outlook the runner had started with its window, so no windowed start was measured.
+
+**Q211: what Outlook's own compose window makes of typed text.** In two rounds of a new mail, a reply
+and a forward, text typed at the insertion point Outlook gave its compose window (the top, in all six)
+went into one paragraph per typed line, every one Word's "Normal" style, 0 pt before and after, single
+spacing, Aptos 12 pt. In a reply and a forward Outlook keeps one empty "Normal" paragraph between the
+typed text and the bordered header block. The product's drafts of the same text:
+
+| | Typed in Outlook | The product, no signature | The product, with a signature |
+| --- | --- | --- | --- |
+| The text's style | "Normal" | "Normal" | "Normal (Web)" |
+| Space before and after | 0 / 0 pt | 0 / 0 pt | 5 / 5 pt |
+| Font | Aptos 12 pt | Aptos 12 pt | Aptos 12 pt |
+| Lines | a paragraph each | one paragraph, its lines soft line breaks | one paragraph, its lines soft line breaks |
+| Between the text and what follows | (reply, forward) one empty "Normal" paragraph | one empty "Normal" paragraph | one empty "Normal (Web)" paragraph, 5 / 5 pt, then the signature, then an empty "Normal" one |
+| The first paragraph's top border | none | none | none |
+
+So the "Normal (Web)" spacing stage 3 found in today's body comes with the signature: the text goes in at
+the start of the signature's first paragraph and takes that paragraph's format, which is the
+signature's. A draft with no signature already matches what a person typing gets in style and spacing;
+its lines are soft line breaks (Shift+Enter) in one paragraph, where typed lines are paragraphs. Every reply's and
+forward's text and signature were above the header block (Q209 (a)), and no first paragraph had a top
+border (18 of 18 layouts).
+
+**Found in stage 4.**
+
+- **The first version of Q211 blocked, twice.** It stopped the Outlook the runner had started and
+  started its own (`OUTLOOK.EXE /profile`), and both runs of it were held to the run's time limit with
+  nothing fetched (`20261118-061830-unindexed-d0de2e91ecf6` and one before it), so where it blocked is not
+  known. The class now uses an Outlook with a window that runs, and bounds every step: past 90 s it
+  records the windows Outlook shows and asks its dialogs to close. Run `20261118-072711` needed neither.
+- **The guests' foreground lock time-out is 2147483647 ms** (`SPI_GETFOREGROUNDLOCKTIMEOUT`): it never
+  runs out, where Windows' default is 200 s. Whether that is the guests' setting or Office LTSC 2024's
+  doing is not known.
+
 ### Found on the way
 
 - **Today's replies and forwards put the agent's text under the quoted original's separator line**
   (above). `ApplySignatureToDocument` places a signature at the start of `_MailOriginal` when the
   draft has no `_MailAutoSig`, and a reply made with no inspector has none; that anchor sits inside the
   header block's bordered `div`, and the body then goes above the signature, inside the same block. A
-  reply without a signature was not measured.
+  reply without a signature was not measured. Q209 (a) moved them above the block; stage 4 measures it.
 - **Today's body paragraphs are "Normal (Web)", 5 pt before and after,** where a paragraph of the
-  message's own `MsoNormal` class is "Normal" with none. What Outlook's own compose window makes of a
-  typed paragraph was not measured.
+  message's own `MsoNormal` class is "Normal" with none. Stage 4 (Q211) finds that this comes with the
+  signature, and that text typed in Outlook's own compose window is "Normal" with none.
 - **The promotion is visible in a window-less Outlook** (above). The code and the D49 record call it
   invisible; on Office LTSC 2024 the window is on screen for 130-646 ms and takes the foreground.
+  Stage 4 finds the window on screen for 81-410 ms, and the foreground announced but not moved: the
+  count here is of announcements.
 - **The first new_draft of the parity class fell back to the HTML path in both stage 2-3 runs**:
   `NoWordEditor` with `COMException 0x80004005`, a draft without its signature; the same call again
   went through Word. It came right after the commit class had closed 60 inspectors without activating
@@ -335,7 +451,8 @@ the answer is (b).**
 - A third HTML-only style copying today's markup - a bare `<p>` for the body and the blank line, and
   an empty `MsoNormal` paragraph after the signature. The differences above are exactly those, so it
   may match a new mail; a reply could match today's only by copying its misplacement.
-- What Outlook's own compose window makes of the same text, as a yardstick beside today's drafts.
+- What Outlook's own compose window makes of the same text, as a yardstick beside today's drafts:
+  measured since, in stage 4 (Q211).
 - Office LTSC 2021, and Microsoft 365 Apps: the guests run Office LTSC 2024 only.
 
 ## Corrections to the D49 record

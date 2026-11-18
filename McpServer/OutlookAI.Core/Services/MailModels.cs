@@ -2967,6 +2967,13 @@ namespace OutlookAI.Core.Services
         /// Outlook that is hung or still starting.
         /// </summary>
         public OutlookStartHealthView? Start { get; set; }
+
+        /// <summary>
+        /// The OutlookAI sessions attached to this Outlook, its hidden lifetime pin and whether a compose window has
+        /// been promoted in it - as the per-user session registry records them (Q118 (a), Q208 B). Read from the
+        /// registry file, never through Outlook. Null when Outlook is not running and the registry holds nothing.
+        /// </summary>
+        public OutlookSessionsHealthView? Sessions { get; set; }
     }
 
     /// <summary>
@@ -3025,6 +3032,59 @@ namespace OutlookAI.Core.Services
 
         /// <summary>The start log, with no mail content - what a report about a hang needs.</summary>
         public string LogPath { get; set; } = string.Empty;
+    }
+
+    /// <summary>
+    /// outlook_health's view of the session registry (Q118 (a)): who uses this Outlook, what keeps it up, and what
+    /// will end it. Process ids and times only - nothing from the mailbox.
+    /// </summary>
+    public sealed class OutlookSessionsHealthView
+    {
+        /// <summary>The live OutlookAI sessions attached to the running Outlook, oldest first.</summary>
+        public IReadOnlyList<OutlookSessionHealthRow> Attached { get; set; } = Array.Empty<OutlookSessionHealthRow>();
+
+        /// <summary>True when an OutlookAI session started the running Outlook, false when something else did; null when unknown.</summary>
+        public bool? StartedByOutlookAI { get; set; }
+
+        /// <summary>The hidden lifetime pin's window handle (hex), or null when Outlook has none.</summary>
+        public string? PinWindow { get; set; }
+
+        /// <summary>The process of the session that made the pin.</summary>
+        public int? PinMadeByPid { get; set; }
+
+        /// <summary>Whether the session that made the pin is still attached; false means another session adopted it, or none is left.</summary>
+        public bool? PinMakerAttached { get; set; }
+
+        /// <summary>When the pin was made, UTC.</summary>
+        public DateTime? PinSinceUtc { get; set; }
+
+        /// <summary>
+        /// When OutlookAI first promoted a compose window in this Outlook - the one moment a draft can put a window on
+        /// screen in an Outlook with no window (Q208 B); null while none has been.
+        /// </summary>
+        public DateTime? PromotedUtc { get; set; }
+
+        /// <summary>True when a draft's editor was refused without a promotion, so the next draft promotes again.</summary>
+        public bool? NextDraftPromotes { get; set; }
+
+        /// <summary>What keeps Outlook running and what will end it, in one sentence.</summary>
+        public string WhatEndsOutlook { get; set; } = string.Empty;
+    }
+
+    /// <summary>One OutlookAI session attached to Outlook.</summary>
+    public sealed class OutlookSessionHealthRow
+    {
+        /// <summary>The process the session lives in - an OutlookAI COM host, one per agent session.</summary>
+        public int Pid { get; set; }
+
+        /// <summary>When it attached, UTC.</summary>
+        public DateTime SinceUtc { get; set; }
+
+        /// <summary>True when this session's connect started Outlook.</summary>
+        public bool StartedOutlook { get; set; }
+
+        /// <summary>True when it is this server's own COM host.</summary>
+        public bool ThisServer { get; set; }
     }
 
     /// <summary>Index block of the outlook_health report (Phase 7; per-store rows merged from index_status in D37).</summary>

@@ -5,6 +5,7 @@ using System.Text.Json;
 using OutlookAI.ComHost.Host;
 using OutlookAI.ComHost.Supervision;
 using Xunit;
+using static OutlookAI.McpServer.Tests.T3.ToolShapes;
 
 namespace OutlookAI.McpServer.Tests.T3;
 
@@ -64,12 +65,6 @@ public sealed class ComHostSupervisionCiTests
         return environment;
     }
 
-    private static async Task<JsonElement> CallRawAsync(McpStdioClient client, string tool, object arguments)
-    {
-        JsonElement envelope = await client.RoundTripAsync("tools/call", new { name = tool, arguments });
-        return envelope.GetProperty("result");
-    }
-
     /// <summary>
     /// Starts a server whose faulted operation is neutralised in the COM host, and says so.
     /// <para>
@@ -86,12 +81,6 @@ public sealed class ComHostSupervisionCiTests
     {
         return McpStdioClient.StartAndInitializeAsync(
             timeout, Fault(faultSpec), McpStdioClient.OutlookReachingToolsAllowed);
-    }
-
-    private static JsonElement PayloadOf(JsonElement result)
-    {
-        string text = result.GetProperty("content")[0].GetProperty("text").GetString()!;
-        return JsonDocument.Parse(text).RootElement;
     }
 
     [Fact]

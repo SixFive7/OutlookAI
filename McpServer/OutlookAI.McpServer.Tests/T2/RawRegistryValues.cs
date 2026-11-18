@@ -7,7 +7,8 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// a signature setting can put back exactly what was there. Writing back through the product would
 /// not: it writes REG_SZ where Outlook wrote REG_BINARY, and clears a value Outlook left present but
 /// empty, and the signature registry snapshot (<see cref="SignatureRegistrySnapshot"/>) fails the run
-/// on either. A key the capture did not find is removed again on restore, once it is empty.
+/// on either. A key the capture did not find is removed again on restore, once it is empty. The one
+/// copy (Q154) of the live tier's HKCU reads and writes: a value read raw, a value set, a capture put back.
 /// </summary>
 internal sealed class RawRegistryValues
 {
@@ -20,6 +21,20 @@ internal sealed class RawRegistryValues
         _keyPath = keyPath;
         _keyExisted = keyExisted;
         _values = values;
+    }
+
+    /// <summary>One value as it stands - its data, unexpanded - or null when it or its key is absent.</summary>
+    public static object? Read(string keyPath, string valueName)
+    {
+        using RegistryKey? key = Registry.CurrentUser.OpenSubKey(keyPath, writable: false);
+        return key?.GetValue(valueName, null, RegistryValueOptions.DoNotExpandEnvironmentNames);
+    }
+
+    /// <summary>Sets one value, making its key when it is not there; the test's capture puts it back.</summary>
+    public static void Write(string keyPath, string valueName, object value, RegistryValueKind kind)
+    {
+        using RegistryKey key = Registry.CurrentUser.CreateSubKey(keyPath, writable: true);
+        key.SetValue(valueName, value, kind);
     }
 
     /// <summary>The values as they stand now; absent ones are remembered as absent.</summary>

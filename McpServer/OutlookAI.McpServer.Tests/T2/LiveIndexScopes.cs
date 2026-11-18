@@ -1,4 +1,5 @@
 using OutlookAI.Core.IndexSearch;
+using Xunit;
 
 namespace OutlookAI.McpServer.Tests.T2;
 
@@ -69,6 +70,14 @@ internal static class LiveIndexScopes
     /// The one root of that name in <paramref name="roots"/>, or null when there is none - or more
     /// than one, which is never guessed between.
     /// </summary>
+    /// <summary>The scope of <paramref name="storeDisplayName"/>; the test fails when the index shows none.</summary>
+    public static StoreScopeInfo Require(IndexSearchService index, string storeDisplayName)
+    {
+        StoreScopeInfo? scope = Find(index, storeDisplayName);
+        Assert.True(scope != null, $"store scope of '{storeDisplayName}' not discoverable in the index");
+        return scope!;
+    }
+
     public static StoreScopeInfo? FindRoot(IReadOnlyList<StoreScopeInfo> roots, string storeDisplayName)
     {
         ArgumentNullException.ThrowIfNull(roots);

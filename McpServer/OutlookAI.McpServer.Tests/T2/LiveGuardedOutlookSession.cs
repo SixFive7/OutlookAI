@@ -61,8 +61,7 @@ public sealed class LiveRunItemCheck
     /// <summary>True when <paramref name="subject"/> carries the tag (ordinal) and this run's marker.</summary>
     public bool CarriesTagAndMarker(string? subject)
     {
-        return subject != null
-            && subject.Contains(LiveOutlookTestMailer.SubjectTag, StringComparison.Ordinal)
+        return LiveOutlookTestMailer.CarriesSubjectTag(subject)
             && subject.Contains(RunMarker, StringComparison.OrdinalIgnoreCase);
     }
 

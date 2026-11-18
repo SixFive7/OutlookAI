@@ -265,6 +265,15 @@ internal static class WritePathAnalyzer
                 string name = target.DeclaringType?.Assembly.GetName().Name ?? string.Empty;
                 if (ProductAssemblies.Contains(name))
                 {
+                    // A reviewed call into a product member that writes, keyed by the caller and the callee
+                    // ("...TrySave|SignatureManager.WriteFileSafely"): not followed from that caller, and followed - its
+                    // writes findings - from every other.
+                    if (ReadOnlyProductApi.InProductExemptions.ContainsKey(
+                        ReadOnlyProductApi.SourceKeyOf(method) + "|" + target.DeclaringType!.Name + "." + target.Name))
+                    {
+                        continue;
+                    }
+
                     Enqueue(target, method);
                     foreach (MethodBase implementation in ProductImplementationsOf(target))
                     {
@@ -286,9 +295,10 @@ internal static class WritePathAnalyzer
 
         static bool Exempt(MethodBase method, MethodBase target, IReadOnlyList<IlInstruction> body, int at)
         {
-            // Keyed by the source member and what it calls: a late-bound member's name, or - for a registry or
-            // file write - the framework member, such as RegistryKey.SetValue (the start record's own writes,
-            // 2026-11-18). A property SET on a COM object is never exempt.
+            // Keyed by the source member and what it calls: a late-bound member's name, or - for a file or registry
+            // write - the framework member ("...TrySave|File.Replace", "...WriteValue|RegistryKey.SetValue"), so one
+            // exemption never covers another member's writes, nor another call of the same member. A property SET
+            // on a COM object is never exempt.
             string called;
             if (target.DeclaringType?.FullName == "Microsoft.CSharp.RuntimeBinder.Binder")
             {

@@ -230,6 +230,33 @@ public sealed class BudgetCompositionTests
     }
 
     /// <summary>
+    /// The longest attachment path the draft tools take is quoted from the constant that refuses a longer
+    /// one (<see cref="WindowsFileNames.MaxPathChars"/>), on every tool that advertises it - Outlook would
+    /// not attach a 304-character path on the test guest (2026-11-18).
+    /// </summary>
+    [Fact]
+    public void AttachmentPathLimit_IsQuotedTruthfullyInTheToolSurface()
+    {
+        string expected = "a path longer than " + WindowsFileNames.MaxPathChars.ToString(CultureInfo.InvariantCulture) + " characters";
+
+        foreach (string tool in new[]
+                 {
+                     nameof(OutlookTools.NewDraft),
+                     nameof(OutlookTools.ReplyDraft),
+                     nameof(OutlookTools.ReplyAllDraft),
+                     nameof(OutlookTools.ForwardDraft),
+                     nameof(OutlookTools.UpdateDraft),
+                 })
+        {
+            string hint = ParameterDescription(tool, "attachments");
+            Assert.True(
+                hint.Contains(expected, System.StringComparison.Ordinal),
+                $"{tool}'s 'attachments' description must quote WindowsFileNames.MaxPathChars as \"{expected}\", because "
+                + $"that is the length the validation refuses above. The description reads: \"{hint}\"");
+        }
+    }
+
+    /// <summary>
     /// outlook_health's description quotes its COM probe budget, and that budget is the
     /// supervisor's own - not a third independent 5 000.
     /// </summary>

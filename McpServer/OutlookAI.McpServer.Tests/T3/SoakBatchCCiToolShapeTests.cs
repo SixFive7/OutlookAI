@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Xunit;
+using static OutlookAI.McpServer.Tests.T3.ToolShapes;
 
 namespace OutlookAI.McpServer.Tests.T3;
 
@@ -23,7 +24,7 @@ public sealed class SoakBatchCCiToolShapeTests
         "new_draft", "reply_draft", "replyall_draft", "forward_draft", "update_draft",
     ];
 
-    public static TheoryData<string> AllDraftToolNames => Names(AllDraftTools);
+    public static TheoryData<string> AllDraftToolNames => new(AllDraftTools);
 
     // ------------------------------------------------------------------ C3: attachments
 
@@ -48,6 +49,39 @@ public sealed class SoakBatchCCiToolShapeTests
         Assert.Contains("NOTHING is attached", hint, StringComparison.Ordinal);
         // The send interlock must be discoverable from the parameter itself.
         Assert.Contains("confirm_token", hint, StringComparison.Ordinal);
+        // So must the paths Outlook crashes on or will not attach (Q157 (a), measured 2026-11-18).
+        Assert.Contains(@"a path starting with \\?\", hint, StringComparison.Ordinal);
+        Assert.Contains("named after a Windows device (CON", hint, StringComparison.Ordinal);
+        Assert.Contains("an alternate data stream", hint, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [MemberData(nameof(AllDraftToolNames))]
+    public async Task Attachments_QuestionMarkPath_IsRejectedBeforeAnyComWork_GivingTheOrdinaryPath(string toolName)
+    {
+        // A \\?\ path crashed OUTLOOK.EXE inside Attachments.Add on the test guest, whatever the file was
+        // called (2026-11-18). The file here exists and is readable, which is exactly the path that used to
+        // pass every check and reach Outlook.
+        string file = Path.Combine(Path.GetTempPath(), "outlookai-ci-question-mark-" + Guid.NewGuid().ToString("N") + ".txt");
+        File.WriteAllText(file, "a file the draft tools must refuse to hand Outlook through \\\\?\\");
+        try
+        {
+            await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();
+            await client.PrimeWritingRulesGateAsync();
+
+            JsonElement result = await client.CallToolAsync(toolName, ArgumentsFor(toolName, new[] { @"\\?\" + file }));
+
+            JsonElement error = result.GetProperty("error");
+            Assert.Equal("InvalidArgument", error.GetProperty("type").GetString());
+            string message = error.GetProperty("message").GetString()!;
+            Assert.Contains(@"'\\?\" + file + @"': is a \\?\ path, and Outlook crashes", message, StringComparison.Ordinal);
+            Assert.Contains("give the file's ordinary path instead, '" + file + "'", message, StringComparison.Ordinal);
+            Assert.Contains("no draft was changed", message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            File.Delete(file);
+        }
     }
 
     [Theory]
@@ -337,44 +371,6 @@ public sealed class SoakBatchCCiToolShapeTests
         return arguments;
     }
 
-    private static TheoryData<string> Names(string[] names)
-    {
-        TheoryData<string> data = new();
-        foreach (string name in names)
-        {
-            data.Add(name);
-        }
-
-        return data;
-    }
-
-    private static void AssertOptional(JsonElement schema, string toolName, params string[] parameterNames)
-    {
-        if (!schema.TryGetProperty("required", out JsonElement required))
-        {
-            return;
-        }
-
-        string[] requiredNames = required.EnumerateArray().Select(r => r.GetString()!).ToArray();
-        foreach (string parameterName in parameterNames)
-        {
-            Assert.DoesNotContain(parameterName, requiredNames, StringComparer.Ordinal);
-        }
-    }
-
-    private static async Task<JsonElement> GetToolAsync(McpStdioClient client, string name)
-    {
-        JsonElement list = await client.RoundTripAsync("tools/list", new { });
-        foreach (JsonElement tool in list.GetProperty("result").GetProperty("tools").EnumerateArray())
-        {
-            if (tool.GetProperty("name").GetString() == name)
-            {
-                return tool;
-            }
-        }
-
-        throw new InvalidOperationException($"tool '{name}' is not advertised");
-    }
 }
 
 internal static class JsonElementDescriptionExtensions

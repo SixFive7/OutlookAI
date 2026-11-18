@@ -56,10 +56,7 @@ public sealed class LivePhase3Fixture : IDisposable
         get
         {
             string testProjectDir =
-                typeof(LivePhase3Fixture).Assembly
-                    .GetCustomAttributes<AssemblyMetadataAttribute>()
-                    .FirstOrDefault(a => a.Key == "TestProjectDir")?.Value
-                ?? throw new InvalidOperationException("AssemblyMetadata 'TestProjectDir' is missing.");
+                RepoPaths.TestProjectDir();
             return Path.Combine(testProjectDir, "screenshots");
         }
     }
@@ -106,12 +103,7 @@ public sealed class LivePhase3Collection : ICollectionFixture<LivePhase3Fixture>
 /// </summary>
 internal static class HubCorpus
 {
-    public const string TestArtifactTag = "[OutlookAI-McpTest]";
-
-    public static bool IsTestArtifact(string? subject)
-    {
-        return subject != null && subject.Contains(TestArtifactTag, StringComparison.OrdinalIgnoreCase);
-    }
+    public static bool IsTestArtifact(string? subject) => LiveOutlookTestMailer.MentionsSubjectTag(subject);
 
     public static string TextOf(ComWalkedItem item)
     {
@@ -167,7 +159,8 @@ internal static class HubCorpus
             .ToList();
     }
 
-    private static bool AllOccurrencesAreCleanWords(List<string> texts, string token)
+    /// <summary>Whether every occurrence of <paramref name="token"/> in <paramref name="texts"/> stands as a whole word.</summary>
+    internal static bool AllOccurrencesAreCleanWords(IReadOnlyList<string> texts, string token)
     {
         foreach (string text in texts)
         {

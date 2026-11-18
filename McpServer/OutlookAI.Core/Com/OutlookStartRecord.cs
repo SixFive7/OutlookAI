@@ -211,9 +211,6 @@ namespace OutlookAI.Core.Com
         /// <summary>Advising the Quit event sink.</summary>
         public const string QuitSink = "quit-sink";
 
-        /// <summary>Making the lifetime pin (D49), which opens the default Inbox.</summary>
-        public const string Pin = "pin";
-
         /// <summary>Connected: every step done.</summary>
         public const string Connected = "connected";
 
@@ -229,7 +226,6 @@ namespace OutlookAI.Core.Com
             return string.Equals(step, Namespace, StringComparison.Ordinal)
                 || string.Equals(step, Logon, StringComparison.Ordinal)
                 || string.Equals(step, QuitSink, StringComparison.Ordinal)
-                || string.Equals(step, Pin, StringComparison.Ordinal)
                 || string.Equals(step, Connected, StringComparison.Ordinal);
         }
 

@@ -57,7 +57,7 @@ namespace OutlookAI.Core.Services
     public static class AttachmentFileWriter
     {
         /// <summary>The longest path Windows' ordinary file calls take - 260 with the terminating null.</summary>
-        public const int MaxPathChars = 259;
+        public const int MaxPathChars = WindowsFileNames.MaxPathChars;
 
         /// <summary>The room a folder must leave for a file name, so a saved file stays within <see cref="MaxPathChars"/>.</summary>
         public const int MinFileNameChars = 32;
@@ -322,8 +322,8 @@ namespace OutlookAI.Core.Services
                 }
             }
 
-            bool absolute = path.Length >= 3 && IsAsciiLetter(path[0]) && path[1] == ':' && path[2] == Separator;
-            if (path.IndexOf(':', absolute ? 2 : 0) >= 0)
+            bool absolute = path.Length >= 3 && WindowsFileNames.IsAsciiLetter(path[0]) && path[1] == ':' && path[2] == Separator;
+            if (WindowsFileNames.HasColonBeyondTheDrive(path))
             {
                 throw Refuse(
                     asked,
@@ -366,7 +366,7 @@ namespace OutlookAI.Core.Services
                     continue;
                 }
 
-                if (part.EndsWith(".", StringComparison.Ordinal) || part.EndsWith(" ", StringComparison.Ordinal))
+                if (WindowsFileNames.EndsInDotOrSpace(part))
                 {
                     throw Refuse(
                         asked,
@@ -464,12 +464,12 @@ namespace OutlookAI.Core.Services
             parts = new List<string>();
             string normalized = path.Replace('/', Separator);
             string rest;
-            if (normalized.Length >= 3 && IsAsciiLetter(normalized[0]) && normalized[1] == ':' && normalized[2] == Separator)
+            if (normalized.Length >= 3 && WindowsFileNames.IsAsciiLetter(normalized[0]) && normalized[1] == ':' && normalized[2] == Separator)
             {
                 prefix = char.ToUpperInvariant(normalized[0]) + ":";
                 rest = normalized.Substring(3);
             }
-            else if (normalized.Length == 2 && IsAsciiLetter(normalized[0]) && normalized[1] == ':')
+            else if (normalized.Length == 2 && WindowsFileNames.IsAsciiLetter(normalized[0]) && normalized[1] == ':')
             {
                 prefix = char.ToUpperInvariant(normalized[0]) + ":";
                 rest = string.Empty;
@@ -672,11 +672,6 @@ namespace OutlookAI.Core.Services
             return c < ' '
                 ? "the control character U+" + ((int)c).ToString("X4", CultureInfo.InvariantCulture)
                 : "'" + c + "'";
-        }
-
-        private static bool IsAsciiLetter(char c)
-        {
-            return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
         }
 
         private static bool IsUnsafeInName(char c)

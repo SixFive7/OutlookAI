@@ -72,7 +72,6 @@ public sealed class OutlookStartRecordTests
     [InlineData(OutlookStartSteps.CreateApplication, true)]
     [InlineData(OutlookStartSteps.Settle, true)]
     [InlineData(OutlookStartSteps.Logon, true)]
-    [InlineData(OutlookStartSteps.Pin, true)]
     public void OnlyConnectedAndFailed_EndAConnection(string step, bool inProgress)
     {
         OutlookConnectRecord record = new(1, Started, false, 2, 3, step, Started, Started);

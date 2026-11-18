@@ -80,6 +80,8 @@ public sealed class LiveUiSearchBackendTests
         _fixture.Service.GotoFolder(storeId: LiveIds.StoreId(_fixture.Service, _fixture.Settings.TestHubStoreDisplayName));
 
         int? original = ReadDword(HealthReporting.OutlookSearchUserKeyPath);
+        RawRegistryValues userHive = RawRegistryValues.Capture(
+            HealthReporting.OutlookSearchUserKeyPath, HealthReporting.DisableServerAssistedSearchValueName);
         _output.WriteLine($"original user-hive DisableServerAssistedSearch: {(original.HasValue ? original.Value.ToString() : "(absent)")}");
         try
         {
@@ -119,34 +121,15 @@ public sealed class LiveUiSearchBackendTests
         }
         finally
         {
-            RestoreDword(HealthReporting.OutlookSearchUserKeyPath, original);
+            userHive.Restore();
             _fixture.VerifySession.TryClearSearch(out _);
             _output.WriteLine($"restored user-hive DisableServerAssistedSearch to {(original.HasValue ? original.Value.ToString() : "(absent)")}");
         }
     }
 
-    private static int? ReadDword(string keyPath)
-    {
-        using RegistryKey? key = Registry.CurrentUser.OpenSubKey(keyPath, writable: false);
-        return key?.GetValue(HealthReporting.DisableServerAssistedSearchValueName) as int?;
-    }
+    private static int? ReadDword(string keyPath) =>
+        RawRegistryValues.Read(keyPath, HealthReporting.DisableServerAssistedSearchValueName) as int?;
 
-    private static void WriteDword(string keyPath, int value)
-    {
-        using RegistryKey key = Registry.CurrentUser.CreateSubKey(keyPath)
-            ?? throw new InvalidOperationException("cannot open " + keyPath);
-        key.SetValue(HealthReporting.DisableServerAssistedSearchValueName, value, RegistryValueKind.DWord);
-    }
-
-    private static void RestoreDword(string keyPath, int? original)
-    {
-        if (original.HasValue)
-        {
-            WriteDword(keyPath, original.Value);
-            return;
-        }
-
-        using RegistryKey? key = Registry.CurrentUser.OpenSubKey(keyPath, writable: true);
-        key?.DeleteValue(HealthReporting.DisableServerAssistedSearchValueName, throwOnMissingValue: false);
-    }
+    private static void WriteDword(string keyPath, int value) =>
+        RawRegistryValues.Write(keyPath, HealthReporting.DisableServerAssistedSearchValueName, value, RegistryValueKind.DWord);
 }

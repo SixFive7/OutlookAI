@@ -7,6 +7,7 @@ using OutlookAI.McpServer.Tests.T2;
 
 using Xunit;
 using Xunit.Abstractions;
+using static OutlookAI.McpServer.Tests.T3.ToolShapes;
 
 namespace OutlookAI.McpServer.Tests.T3;
 
@@ -124,12 +125,6 @@ public sealed class OutlookAvailabilityLiveTests
         JsonElement envelope = await client.RoundTripAsync("tools/call", new { name = tool, arguments });
         clock.Stop();
         return (envelope.GetProperty("result"), clock.Elapsed);
-    }
-
-    private static JsonElement PayloadOf(JsonElement result)
-    {
-        string text = result.GetProperty("content")[0].GetProperty("text").GetString()!;
-        return JsonDocument.Parse(text).RootElement;
     }
 
     private static bool IsError(JsonElement result) =>

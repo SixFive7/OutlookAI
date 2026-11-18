@@ -85,4 +85,4 @@ Before the wait, a cold start connected in about 4 s. In every cold start the 20
 condition met. The indexed machine's 171 s came on a day its Outlook started slowly - preparing that
 run took 3 min 22 s - and a settle wait ends at the two-minute limit whatever the add-in has done.
 The add-in installed on both machines predates the start-up stamp, so every wait read its tuning
-reconcile instead (`Services/AddInServerContract.cs`).
+reconcile instead (`McpServer/OutlookAI.Core/AddIn/AddInServerContract.cs`).

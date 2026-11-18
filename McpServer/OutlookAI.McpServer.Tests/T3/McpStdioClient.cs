@@ -396,7 +396,7 @@ public sealed class McpStdioClient : IAsyncDisposable
         string address = _hubGate?.Hub ?? "nobody@example.invalid";
         string subject = _hubGate == null
             ? "writing-rules gate priming"
-            : LiveOutlookTestMailer.SubjectTag + " " + LiveRunMarker.Current + " writing-rules gate priming";
+            : LiveOutlookTestMailer.TaggedSubject(LiveRunMarker.Current, "writing-rules gate priming");
         await CallToolWithIsErrorAsync("new_draft", new
         {
             account = address,

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using Microsoft.Office.Tools;
+using OutlookAI.Core.AddIn;
 using OutlookAI.Services;
 using OutlookAI.TaskPane;
 using Outlook = Microsoft.Office.Interop.Outlook;

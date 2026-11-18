@@ -15,6 +15,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Web.Script.Serialization;
+using OutlookAI.Core.AddIn;
 
 namespace OutlookAI.Services
 {
@@ -25,8 +26,8 @@ namespace OutlookAI.Services
 
         /// <summary>
         /// How often a healthy machine polls. The number, the first-check delay and the
-        /// failure backoff all live in <see cref="UpdatePollSchedule"/>, which is the only
-        /// testable part of this class and is linked into the T1 suite for that reason.
+        /// failure backoff all live in <see cref="UpdatePollSchedule"/>, the only testable part of
+        /// this class, which is OutlookAI.Core's so that T1 can pin it.
         /// </summary>
         private static readonly TimeSpan PollInterval = UpdatePollSchedule.BaseInterval;
 

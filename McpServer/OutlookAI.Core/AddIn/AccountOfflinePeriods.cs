@@ -1,4 +1,4 @@
-namespace OutlookAI.Services
+namespace OutlookAI.Core.AddIn
 {
     /// <summary>
     /// ===================================================================================
@@ -49,11 +49,10 @@ namespace OutlookAI.Services
     /// </para>
     ///
     /// <para>
-    /// FRAMEWORK-NEUTRAL and INTERNAL, like <see cref="CachedModeSettings"/>, which the test project
-    /// links beside it.
+    /// In OutlookAI.Core's add-in namespace, like <see cref="CachedModeSettings"/> beside it (Q163 (a)).
     /// </para>
     /// </summary>
-    internal interface IAccountOfflinePeriods
+    public interface IAccountOfflinePeriods
     {
         /// <summary>Whether this build can set an existing account's own period. False until the add-in can call Core's writer.</summary>
         bool CanSetEveryAccount { get; }
@@ -70,7 +69,7 @@ namespace OutlookAI.Services
     }
 
     /// <summary>What <see cref="IAccountOfflinePeriods.SetEveryAccount"/> did.</summary>
-    internal sealed class AccountPeriodChange
+    public sealed class AccountPeriodChange
     {
         private AccountPeriodChange(bool done, string detail)
         {
@@ -79,17 +78,17 @@ namespace OutlookAI.Services
         }
 
         /// <summary>Every account now has the period asked for.</summary>
-        internal bool Done { get; }
+        public bool Done { get; }
 
         /// <summary>What happened, or why nothing did.</summary>
-        internal string Detail { get; }
+        public string Detail { get; }
 
-        internal static AccountPeriodChange Succeeded(string detail)
+        public static AccountPeriodChange Succeeded(string detail)
         {
             return new AccountPeriodChange(true, detail ?? string.Empty);
         }
 
-        internal static AccountPeriodChange NotDone(string why)
+        public static AccountPeriodChange NotDone(string why)
         {
             return new AccountPeriodChange(false, why ?? string.Empty);
         }
@@ -100,11 +99,11 @@ namespace OutlookAI.Services
     /// Core's <c>AccountOfflinePeriodWriter</c>; replace it then, in
     /// <c>OutlookTuningService.AccountPeriods</c>, and the dialog and the removal path follow.
     /// </summary>
-    internal sealed class AccountOfflinePeriodsNotYetBuilt : IAccountOfflinePeriods
+    public sealed class AccountOfflinePeriodsNotYetBuilt : IAccountOfflinePeriods
     {
-        internal static readonly AccountOfflinePeriodsNotYetBuilt Instance = new AccountOfflinePeriodsNotYetBuilt();
+        public static readonly AccountOfflinePeriodsNotYetBuilt Instance = new AccountOfflinePeriodsNotYetBuilt();
 
-        internal const string Reason =
+        public const string Reason =
             "OutlookAI cannot set an existing account's own offline period yet. Set it in Outlook's Account Settings.";
 
         private AccountOfflinePeriodsNotYetBuilt()

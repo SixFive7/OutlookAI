@@ -650,8 +650,9 @@ section 4.4a has its runs.
   do. Directions: (a) reset Office's grace with its own reset tool, `ospprearm.exe` - free, but only a
   limited number of times, its licence terms to be checked, and the cheapest proof of the cause; (b)
   install Microsoft 365 Apps there, activated by the test account's own licence if the tenant has one
-  for it - a licensed component, so an exception to the Dependencies rule, and it would let real
-  roaming signatures be measured, which the LTSC version cannot; (c) activate the current Office with
+  for it - a licensed component, so an exception to the Dependencies rule; the question added that it
+  would let real roaming signatures be measured, which LTSC could not, but Q194's second R3 run has
+  since shown LTSC 2024 roaming; (c) activate the current Office with
   a volume key, MAK or KMS - a licence key; (d) only the tests that write nothing, until one of these
   lands. Recommended: (a) once, to prove the cause, then (b) if the test account has a Microsoft 365
   Apps licence, else (d). *"206 a with fallback to b with fallback to reporting to me for spla mak
@@ -692,16 +693,23 @@ section 4.4a has its runs.
   and a start from closed is what preceded the 2026-11-15 hang. *"212 rec"*. **Decided: the
   recommendation, (a)**, as built: start Outlook, answer correctly, and refuse only when Outlook does
   not respond. Q175's start protections apply to it too.
-- **Q194 - the roaming-signature test with Office's online features on.** R3, on 2026-11-17, made a
-  test signature the test account's default in Outlook on the web and watched whether the VM's
-  Outlook, Office LTSC 2024, picked it up. It never did - not after 1 minute, 15 minutes or an hour,
-  nor after an Outlook restart - and no local copy appeared; the signature was deleted afterwards,
-  and no real mailbox's signatures were touched. Two things could have hidden roaming: the testbed's
-  policy switching Office's online features off, and File > Options greyed out there (probably the
-  expired activation, Q206), so that "store my settings in the cloud" could not be checked.
+- **Q194 - the roaming-signature test with Office's online features on.** R3's first run, on
+  2026-11-17, made a test signature the test account's default in Outlook on the web and watched
+  whether the VM's Outlook, Office LTSC 2024, picked it up. It never did - not after 1 minute, 15
+  minutes or an hour, nor after an Outlook restart - and no local copy appeared; the signature was
+  deleted afterwards, and no real mailbox's signatures were touched. Two things could have hidden
+  roaming: the testbed's policy switching Office's online features off, and File > Options greyed
+  out there (probably the expired activation, Q206), so that "store my settings in the cloud" could
+  not be checked.
   *"194 rec"*. **Decided: the recommendation, (b)**: R3 runs again with the four policy values
   removed - a change to that VM's registry only, undone by the checkpoint R3 restores anyway. While
-  it lasts, Office there talks more to Microsoft's online services.
+  it lasts, Office there talks more to Microsoft's online services. **The second run, stream E2's on
+  2026-11-18:** with the four connected-experience policy values removed, Office LTSC 2024 roamed the
+  test signature from Outlook on the web. It arrived about 3 minutes after it was saved, became the
+  account's default for new mail, and was still there after an hour and after a restart; its local
+  copy was named `<name> (<address>)`. With the policy values in place nothing arrived in 8 minutes,
+  and Options no longer offered the cloud-settings option at all. So the policy, not the expired
+  grace, kept roaming away on 2026-11-17.
 - **Q138 - the one old test message in the bystander mailbox's Sent Items.** It is left from the
   years the live tests ran on his workstation: `[OutlookAI-McpTest] d3994a2ad25309442 d39 move seed`,
   sent 2026-07-26 03:46, and a read-only scan found it the only tagged item in either mailbox on the
@@ -733,10 +741,12 @@ building it raised these six (this log, "Q147 carried out", 2026-11-17).
   decides.
 - **Q202 - reading signatures stored in the mailbox itself.** Microsoft 365 can keep signatures
   inside the mailbox ("roaming"); OutlookAI uses Outlook's local copies and detects roaming (Q152).
-  R3 (Q194, above) found nothing arriving on Office LTSC 2024, and no hidden local copy. *"202 rec"*.
-  **Decided: the recommendation, (a)**: the mailbox is never read, as built - not through Outlook's
-  hidden local copy, whose format is undocumented, and not through Outlook on the web's private
-  interface.
+  When it was asked, R3's first run (Q194, above) had found nothing arriving on Office LTSC 2024, and
+  no hidden local copy. *"202 rec"*. **Decided: the recommendation, (a)**: the mailbox is never read,
+  as built - not through Outlook's hidden local copy, whose format is undocumented, and not through
+  Outlook on the web's private interface. R3's second run bears it out: once the testbed's policy
+  values were removed, Outlook brought the signature down by itself, as a local copy named
+  `<name> (<address>)`, so OutlookAI never needs the hidden folder.
 - **Q203 - a named signature on a reply from a shared or delegate mailbox.** Q160 said no signature
   there for now, and the result says so. As built, no default goes in, but a signature the AI names
   explicitly does. *"203 rec"*. **Decided: the recommendation**: (a), as built, now; then (d) - once
@@ -1010,6 +1020,9 @@ Outlook's own `Name (address)` copies of an Exchange account are on the computer
 those accounts; (b) treated as possible, as first built; (c) off. **Decided: (a)** - right whichever
 way R3 comes out, and it leaves the testbed's LTSC 2024 and the maintainer's LTSC 2021 their local
 defaults. Microsoft 365 Apps 2303+ stays possible on Microsoft's word. **Undo:** `SignatureRoaming.Decide`.
+R3 came out on 2026-11-18, in its second run (Q194, in the 2026-11-18 entry): Office LTSC 2024 roams
+once the testbed's connected-experience policy values are removed, and the rule held both ways - the
+roaming copy is named `<name> (<address>)`, and with the policy values in place no such copy came.
 
 **7. A named signature on a reply from a delegate or shared mailbox (Q160).** *Options:* (a) a
 signature of this computer goes in, no default does; (b) refuse any signature there. **Decided: (a)** -
@@ -1214,11 +1227,17 @@ signature", over the add-in's own copy of the server's signature catalog. Resear
   mailbox's signatures, and Microsoft has no plans for one in Microsoft Graph. *"your
   recommendation"*. **Decided:** use Outlook's local copies, detect roaming, and refuse a local edit
   of a signature the mailbox manages. Whether OutlookAI also reads the mailbox's own signature
-  folder is decided after a read-only measurement. It is never written.
+  folder is decided after a read-only measurement. It is never written. Measured since: Office LTSC
+  2024 roams once the testbed's connected-experience policy values are removed (Q194's second R3 run,
+  2026-11-18), and its roaming copy is named `<name> (<address>)`, which is what the detection looks
+  for; on the maintainer's workstation, read without changing anything on 2026-11-18, none of its 4
+  signatures is named like a roaming copy. The reading was settled by Q202 (a), 2026-11-18: never,
+  because Outlook brings the signature down by itself.
 - **Q153 - testing classic Outlook's roaming, 2026-11-17.** Only Microsoft 365 Apps is known to
   roam, and the testbed runs perpetual-licence Office by decision. *"your recommendation"*.
   **Decided:** no Microsoft 365 Apps in the testbed. Measure the mailbox side and what Office 2024
-  does; classic Outlook's roaming is a known limit.
+  does; classic Outlook's roaming is a known limit. What Office 2024 does was measured on 2026-11-18:
+  it roams once the testbed's policy values allow it (Q194).
 - **Q154 - one copy of the code, 2026-11-17.** The add-in and the server need the same signature
   logic, and the add-in kept its own copies of it, already drifting apart, because the "Phase-6
   no-coupling choice" kept it from referencing OutlookAI.Core. That choice is recorded only in the

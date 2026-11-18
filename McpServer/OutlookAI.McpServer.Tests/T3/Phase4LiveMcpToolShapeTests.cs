@@ -43,7 +43,7 @@ public sealed class Phase4LiveMcpToolShapeTests
     public async Task DraftTools_GoldenShapes_OverRealStdio_WithAuditLines()
     {
         int auditLinesBefore = CountAuditLines();
-        string seedSubject = LiveOutlookTestMailer.SubjectTag + " " + Marker + " t3seed";
+        string seedSubject = LiveOutlookTestMailer.TaggedSubject(Marker, "t3seed");
         var draftEntryIds = new List<string>();
         try
         {
@@ -125,7 +125,7 @@ public sealed class Phase4LiveMcpToolShapeTests
             {
                 account = Hub,
                 to = Hub,
-                subject = LiveOutlookTestMailer.SubjectTag + " " + Marker + " t3new",
+                subject = LiveOutlookTestMailer.TaggedSubject(Marker, "t3new"),
                 body = "T3 new body " + Marker,
                 display = false,
             });
@@ -236,18 +236,9 @@ public sealed class Phase4LiveMcpToolShapeTests
     // The REAL log, deliberately: the lines asserted here are written by the server CHILD process,
     // which this test process's audit redirect (AuditIsolation, Q86) cannot reach - nothing may
     // redirect a shipped process. This class runs only in the live tier, on a test machine.
-    private static int CountAuditLines()
-    {
-        string path = AuditLog.DefaultLogPath;
-        return File.Exists(path) ? File.ReadAllLines(path).Length : 0;
-    }
+    private static int CountAuditLines() => AuditLines.Count(AuditLog.DefaultLogPath);
 
-    private static IReadOnlyList<string> ReadAuditLinesAfter(int skipCount)
-    {
-        string path = AuditLog.DefaultLogPath;
-        Assert.True(File.Exists(path), "audit log must exist after write operations");
-        return File.ReadAllLines(path).Skip(skipCount).ToList();
-    }
+    private static IReadOnlyList<string> ReadAuditLinesAfter(int skipCount) => AuditLines.After(AuditLog.DefaultLogPath, skipCount);
 
     private static void AssertAuditLine(IReadOnlyList<string> lines, string operation, string entryId)
     {

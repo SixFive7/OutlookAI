@@ -154,7 +154,7 @@ public sealed class OutlookHangReportTests
     [Fact]
     public void AConnectionThatDiedInAStep_IsReportedAsStopped_NotAsWaiting()
     {
-        OutlookConnectRecord connect = new(76888, Started, true, 68964, 4242, OutlookStartSteps.Pin, Started.AddSeconds(22), Started);
+        OutlookConnectRecord connect = new(76888, Started, true, 68964, 4242, OutlookStartSteps.QuitSink, Started.AddSeconds(22), Started);
         string report = OutlookHangReport.Describe(Facts(connect: connect, connectInProgress: false));
 
         Assert.Contains("stopped in start-up step 'pin' at 2026-11-15 15:28:01 UTC without finishing", report, StringComparison.Ordinal);

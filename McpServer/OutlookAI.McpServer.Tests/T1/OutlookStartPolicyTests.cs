@@ -130,7 +130,6 @@ public sealed class OutlookStartPolicyTests
     [InlineData(OutlookStartSteps.Namespace, true)]
     [InlineData(OutlookStartSteps.Logon, true)]
     [InlineData(OutlookStartSteps.QuitSink, true)]
-    [InlineData(OutlookStartSteps.Pin, true)]
     [InlineData(OutlookStartSteps.Connected, true)]
     [InlineData(OutlookStartSteps.CreateApplication, false)]
     [InlineData(OutlookStartSteps.Settle, false)]
