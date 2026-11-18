@@ -73,7 +73,9 @@
              registry keys and certificate stores snapshotted before and after. Any trace of the
              build on the host is a failure, and a changed add-in registration is put back first.
              These guards do not rely on the commit's own OutlookAI.csproj, so a commit from
-             before Q81 builds just as safely.
+             before Q81 builds just as safely. The build restores first (/restore): the add-in
+             references OutlookAI.Core (Q167 (a)), whose packages the restore brings, and the
+             flattened output carries OutlookAI.Core.dll and System.Reflection.DispatchProxy.dll.
           2. Copies the flattened publish output into a NEW folder,
              %LOCALAPPDATA%\OutlookAI\DevBuilds\<yyyyMMdd-HHmmss>-<commit>, which no build ever
              writes into.
@@ -203,13 +205,14 @@ $ErrorActionPreference = 'Stop'
 if (Test-Path Variable:\PSNativeCommandUseErrorActionPreference) {
     $PSNativeCommandUseErrorActionPreference = $false
 }
-# The Cert: drive belongs to this module, and nothing here loads it on its own. Measured 2026-09-27,
-# this script's first -BuildOnly: Windows PowerShell 5.1 started by Start-Process from PowerShell 7
-# inherits 7's PSModulePath, so autoloading picked 7's copy of the module, which 5.1 cannot load -
-# New-SelfSignedCertificate then failed on "A drive with the name 'Cert' does not exist", and a
-# plain Import-Module on "the member AuditToString is already present". So the running edition's
-# OWN copy is imported, by path.
-Import-Module (Join-Path $PSHOME 'Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1')
+# The Cert: drive belongs to the Security module, and nothing here loads it on its own. Measured
+# 2026-09-27, this script's first -BuildOnly: Windows PowerShell 5.1 started by Start-Process from
+# PowerShell 7 inherits 7's PSModulePath, so autoloading picked 7's copy of the module, which 5.1
+# cannot load - New-SelfSignedCertificate then failed on "A drive with the name 'Cert' does not
+# exist", and a plain Import-Module on "the member AuditToString is already present". So the
+# running edition's OWN copies of it and of the Utility module are imported, by path, by the file
+# every host and Tools/ script dot-sources for that (Q154).
+. (Join-Path $PSScriptRoot '..\Testbed\host\OwnEditionModules.ps1')
 
 # Defaults that need $PSScriptRoot or the environment are set HERE, not in param(): Windows
 # PowerShell 5.1 leaves $PSScriptRoot empty while param() defaults are evaluated (Q78).
@@ -1132,6 +1135,8 @@ function Get-MSBuildArgumentList {
     $list = @(
         $projectArg,
         '/t:Publish',
+        # OutlookAI.Core's packages (Q167 (a)), restored in an evaluation of their own first.
+        '/restore',
         # The release build's "Build and Publish" (the release workflow's, now
         # Publish-AddInPayload.ps1's for Tools/Publish-Release.ps1), property for property.
         (Format-MSBuildProperty 'Configuration' 'Release'),
@@ -1157,6 +1162,16 @@ function Get-MSBuildArgumentList {
     if ($flp -match '\s') { $flp = '"' + $flp + '"' }
     $list += "/flp:$flp"
     return $list
+}
+
+# Guard 1's evaluation: the build's own global properties, evaluated only - no target, no restore,
+# no file log. -getProperty with no target runs nothing; /restore would run the Restore target.
+function Get-MSBuildEvaluationArgumentList {
+    param([Parameter(Mandatory = $true)] [string[]] $BuildArguments)
+    $kept = @($BuildArguments | Where-Object {
+            -not $_.StartsWith('/t:') -and $_ -ne '/restore' -and -not $_.StartsWith('/flp:') -and $_ -ne '/v:minimal'
+        })
+    return @($kept + '-getProperty:PrepareForRunDependsOn')
 }
 
 function Test-EvaluatedPrepareForRun {
@@ -1447,41 +1462,6 @@ function Resolve-MSBuild {
     return $candidate
 }
 
-# Output straight to files, never through this process's pipe, under a deadline: a build that
-# spawns children can hold a pipe open after it has finished, and the timeout would never fire.
-function Invoke-Logged {
-    param(
-        [Parameter(Mandatory = $true)] [string] $FilePath,
-        [Parameter(Mandatory = $true)] [string[]] $ArgumentList,
-        [Parameter(Mandatory = $true)] [string] $LogStem,
-        [int] $TimeoutMinutes = 20,
-        [string] $WorkingDirectory
-    )
-    $out = "$LogStem.out.txt"
-    $err = "$LogStem.err.txt"
-    foreach ($f in @($out, $err)) { if (Test-Path -LiteralPath $f) { Remove-Item -LiteralPath $f -Force } }
-    $startArgs = @{
-        FilePath = $FilePath; ArgumentList = ($ArgumentList -join ' ')
-        RedirectStandardOutput = $out; RedirectStandardError = $err; NoNewWindow = $true; PassThru = $true
-    }
-    if ($WorkingDirectory) { $startArgs['WorkingDirectory'] = $WorkingDirectory }
-    $p = Start-Process @startArgs
-    $null = $p.Handle
-    $exited = $p.WaitForExit($TimeoutMinutes * 60 * 1000)
-    if ($exited) { $p.WaitForExit() }
-    if (-not $exited) {
-        try { $p.Kill() } catch { }
-        return [pscustomobject]@{ ExitCode = -1; TimedOut = $true; Out = $out; Err = $err }
-    }
-    return [pscustomobject]@{ ExitCode = $p.ExitCode; TimedOut = $false; Out = $out; Err = $err }
-}
-
-function Show-LogTail([string] $Path, [int] $Lines = 30) {
-    if ($Path -and (Test-Path -LiteralPath $Path)) {
-        foreach ($l in (Get-Content -LiteralPath $Path -Tail $Lines)) { Write-Host "      | $l" }
-    }
-}
-
 function Test-IsUnderGitWorkTreeButNotWork {
     param([string] $Path, [string] $WorkTreeRoot)
     if (-not $WorkTreeRoot) { return $false }
@@ -1570,7 +1550,7 @@ function Invoke-GuardedBuild {
         Say "  signing  throwaway Cert:\CurrentUser\My\$thumb"
         $msbuildArgs = Get-MSBuildArgumentList -ProjectPath $project -Thumbprint $thumb -StandInTargets $standIn -FileLog $log
 
-        $evalArgs = @($msbuildArgs | Where-Object { $_ -ne '/t:Publish' -and -not $_.StartsWith('/flp:') -and $_ -ne '/v:minimal' }) + '-getProperty:PrepareForRunDependsOn'
+        $evalArgs = Get-MSBuildEvaluationArgumentList -BuildArguments $msbuildArgs
         $eval = Invoke-Logged -FilePath $msbuild -ArgumentList $evalArgs -LogStem (Join-Path $BuildDir 'msbuild-evaluate') -TimeoutMinutes 5 -WorkingDirectory $sourceDir
         $evaluated = ''
         if (Test-Path -LiteralPath $eval.Out) { $evaluated = Get-Content -LiteralPath $eval.Out -Raw }
@@ -1778,6 +1758,10 @@ function Invoke-SelfTest {
     Test-Case 'the IDE''s registering behaviour is pinned off' $true ($a1 -contains '/p:BuildingInsideVisualStudio=false')
     Test-Case 'the dev version is stamped' $true ($a1 -contains "/p:ApplicationVersion=$DevVersion")
     Test-Case 'nothing names the registration target' $false (($a1 -join ' ').Contains('RegisterOfficeAddin'))
+    Test-Case 'the build restores OutlookAI.Core''s packages first (Q167)' $true ($a1 -contains '/restore')
+    $e1 = @(Get-MSBuildEvaluationArgumentList -BuildArguments $a1)
+    Test-Case 'guard 1''s evaluation runs no target, restores nothing and writes no file log' 0 @($e1 | Where-Object { $_.StartsWith('/t:') -or $_ -eq '/restore' -or $_.StartsWith('/flp:') }).Count
+    Test-Case 'it asks for the chain, with the build''s own global properties' $true (($e1[$e1.Count - 1] -eq '-getProperty:PrepareForRunDependsOn') -and ($e1 -contains '/p:PrepareForRunDependsOn="CopyFilesToOutputDirectory;VisualStudioForApplicationsBuild"') -and ($e1 -contains '/p:BuildingInsideVisualStudio=false'))
     Test-Case 'an evaluated chain without registration is accepted' 0 @(Test-EvaluatedPrepareForRun "CopyFilesToOutputDirectory;`r`n VisualStudioForApplicationsBuild;").Count
     Test-Case 'a chain still carrying RegisterOfficeAddin is refused' $true ((Test-EvaluatedPrepareForRun 'CopyFilesToOutputDirectory;VisualStudioForApplicationsBuild;RegisterOfficeAddin') -join ' ').Contains('did not take')
     $vsfab = 'Done building target "VisualStudioForApplicationsBuild" in project "OutlookAI.csproj".'
@@ -1970,12 +1954,6 @@ function Invoke-SelfTest {
         return 1
     }
     return 0
-}
-
-function Test-IsElevated {
-    $id = [System.Security.Principal.WindowsIdentity]::GetCurrent()
-    $p = New-Object System.Security.Principal.WindowsPrincipal($id)
-    return $p.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
 # =============================================================================================
