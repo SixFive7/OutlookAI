@@ -783,7 +783,7 @@ namespace OutlookAI.Core.Services
             foreach (bool reply in ScopesOf(scope!))
             {
                 string? fixedName = policy.DefaultFor(reply);
-                if (fixedName != null)
+                if (policy.TakesDefault(reply))
                 {
                     bool forced = policy.ForcedFor(reply);
                     throw new SignatureRefusedException("default_set_by_policy",

@@ -446,12 +446,14 @@ namespace OutlookAI.Core.Services
         {
             bool reply = replyOrForward ?? false;
             string scope = reply ? "replies and forwards" : "new messages";
-            string? policyDefault = policy.DefaultFor(reply);
-            if (policyDefault != null)
+            string? own = account != null && profile != null && entry != null
+                ? (reply ? entry.ReplyForwardSignature : entry.NewSignature)
+                : null;
+            string? name = policy.EffectiveDefault(reply, own, out SignaturePolicySource? source);
+            if (name != null && source != null)
             {
-                return new Effective(policyDefault, SignatureDecision.SourcePolicyDefault,
-                    "'" + policyDefault + "' is the signature " + SignaturePolicy.Describe(policy.SourceFor(reply)) + " sets for "
-                    + scope + " of every account");
+                return new Effective(name, SignatureDecision.SourcePolicyDefault,
+                    "'" + name + "' is the signature " + SignaturePolicy.Describe(source) + " sets for " + scope + " of every account");
             }
 
             if (account == null)
@@ -472,7 +474,6 @@ namespace OutlookAI.Core.Services
                     + ", so no default was added");
             }
 
-            string? name = reply ? entry.ReplyForwardSignature : entry.NewSignature;
             if (name == null)
             {
                 return new Effective(null, SignatureDecision.SourceNone,

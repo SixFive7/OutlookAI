@@ -207,6 +207,31 @@ namespace OutlookAI.Core.Services
         /// <summary>True when that default is forced by policy.</summary>
         public bool ForcedFor(bool replyOrForward) => replyOrForward ? ReplyForwardForced : NewMessageForced;
 
+        /// <summary>
+        /// The default a draft of an account gets for one scope, given the account's own (null for none, or for no account),
+        /// and where it came from: <paramref name="source"/> is the policy or deployed setting it came from, null for the
+        /// account's own. The ONE rule the draft tools (<see cref="SignatureSelector"/>), list_signatures and
+        /// manage_signature share (Q154), so what OutlookAI inserts, lists and refuses is ranked the same everywhere.
+        /// </summary>
+        public string? EffectiveDefault(bool replyOrForward, string? accountsOwn, out SignaturePolicySource? source)
+        {
+            string? set = DefaultFor(replyOrForward);
+            if (set != null)
+            {
+                source = SourceFor(replyOrForward);
+                return set;
+            }
+
+            source = null;
+            return accountsOwn;
+        }
+
+        /// <summary>
+        /// True when a policy or deployed setting takes that scope's default out of the account's hands, so manage_signature
+        /// refuses to change the account's own.
+        /// </summary>
+        public bool TakesDefault(bool replyOrForward) => DefaultFor(replyOrForward) != null;
+
         /// <summary>The source in words, for answers and refusals.</summary>
         public static string Describe(SignaturePolicySource? source)
         {

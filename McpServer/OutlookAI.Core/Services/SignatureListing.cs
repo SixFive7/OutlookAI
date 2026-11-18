@@ -87,6 +87,8 @@ namespace OutlookAI.Core.Services
             foreach (ProfileAccountEntry entry in environment.MailAccountsOf(profile).Where(e => e.Address != null))
             {
                 string? locked = DefaultsLocked(environment, entry);
+                string? effectiveNew = policy.EffectiveDefault(false, entry.NewSignature, out SignaturePolicySource? newFrom);
+                string? effectiveReply = policy.EffectiveDefault(true, entry.ReplyForwardSignature, out SignaturePolicySource? replyFrom);
                 accounts.Add(new SignatureAccountView
                 {
                     Account = entry.Address!,
@@ -96,11 +98,10 @@ namespace OutlookAI.Core.Services
                         : null,
                     NewMessage = entry.NewSignature,
                     ReplyForward = entry.ReplyForwardSignature,
-                    EffectiveNewMessage = policy.SignaturesDisabled ? null : policy.NewMessage ?? entry.NewSignature,
-                    EffectiveReplyForward = policy.SignaturesDisabled ? null : policy.ReplyForward ?? entry.ReplyForwardSignature,
+                    EffectiveNewMessage = policy.SignaturesDisabled ? null : effectiveNew,
+                    EffectiveReplyForward = policy.SignaturesDisabled ? null : effectiveReply,
                     DefaultsFrom = policy.SignaturesDisabled ? SignaturePolicy.Token(policy.DisabledBy)
-                        : policy.AnyDefaultSet ? SignaturePolicy.Token(policy.NewMessageSource ?? policy.ReplyForwardSource)
-                        : "account",
+                        : SignaturePolicy.Token(newFrom ?? replyFrom) ?? "account",
                     DefaultsEditable = locked == null,
                     DefaultsLocked = locked,
                 });
@@ -124,9 +125,10 @@ namespace OutlookAI.Core.Services
                 return "signatures are disabled by " + SignaturePolicy.Describe(policy.DisabledBy);
             }
 
-            if (policy.AnyDefaultSet)
+            if (policy.TakesDefault(false) || policy.TakesDefault(true))
             {
-                return "the default is set for every account by " + SignaturePolicy.Describe(policy.NewMessageSource ?? policy.ReplyForwardSource);
+                return "the default is set for every account by "
+                    + SignaturePolicy.Describe(policy.TakesDefault(false) ? policy.NewMessageSource : policy.ReplyForwardSource);
             }
 
             if (entry.AccountKind == MailAccountKind.Exchange && environment.Roaming.MayRoamFor(entry.Address))
