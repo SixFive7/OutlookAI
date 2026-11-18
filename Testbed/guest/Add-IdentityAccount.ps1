@@ -776,7 +776,7 @@ function Show-Accounts {
 
 switch ($Phase) {
     'Mint' {
-        Assert-OutlookNotRunning
+        Assert-OutlookNotRunning $OutlookRewritesProfileWhy
         $importPrf = ''
         if (Test-Path -LiteralPath $SetupKey) { $importPrf = [string](Get-ItemProperty -LiteralPath $SetupKey).ImportPRF }
         $profileExists = Test-Path -LiteralPath (Join-Path $ProfilesKey $MintProfileName)
@@ -840,7 +840,7 @@ switch ($Phase) {
         Say '  .\Add-IdentityAccount.ps1 -Phase CaptureStore -Execute'
     }
     'Import' {
-        Assert-OutlookNotRunning
+        Assert-OutlookNotRunning $OutlookRewritesProfileWhy
         if (-not (Test-Path -LiteralPath (Join-Path $ProfilesKey $ProfileName))) { throw "REFUSING: profile '$ProfileName' does not exist. Build the tier profile first (New-TierProfile.ps1)." }
         $default = (Get-ItemProperty -LiteralPath $OutlookKey).DefaultProfile
         if ($default -ne $ProfileName) { throw "REFUSING: the default profile is '$default', not '$ProfileName'. Outlook imports at start-up into the profile it opens; make '$ProfileName' the default first (Set-DefaultOutlookProfile.ps1)." }
@@ -910,7 +910,7 @@ switch ($Phase) {
         Say 'NEXT: close Outlook the one way the runbook allows - from the host, Testbed/host/Restart-Guest.ps1 -VMName <this guest> -Execute -CancelLogonPrompt (it cancels the identity logon dialog, quits gracefully, restarts unforced; never taskkill) - then:  .\Add-IdentityAccount.ps1 -Phase Bind -Execute'
     }
     'Bind' {
-        Assert-OutlookNotRunning
+        Assert-OutlookNotRunning $OutlookRewritesProfileWhy
         if (-not (Test-Path -LiteralPath $IdsPath)) { throw "No capture at $IdsPath. Run -Phase CaptureStore -Execute first, with Outlook running." }
         $ids = Get-Content -LiteralPath $IdsPath -Raw | ConvertFrom-Json
         if ($ids.FilePath -ine [IO.Path]::GetFullPath($PstPath)) { throw "The capture is for '$($ids.FilePath)', not '$PstPath'." }

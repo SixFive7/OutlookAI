@@ -139,7 +139,8 @@
     mailRows=0`, `VERDICT: UNINDEXED`, indexer running, `wSearchStartMode` `automatic`. It
     reported `no mapi rule for this account under WorkingSetRules - nothing to change`: that guest
     had never had Outlook in its crawl scope either (item 2 above), so the Group Policy layer did
-    all the work, against nothing. `Assert-OutlookClosed` was added after that run.
+    all the work, against nothing. `Assert-OutlookClosed`, now the shared `Assert-OutlookNotRunning`,
+    was added after that run.
 
 .SYNOPSIS
     Takes a testbed guest's Outlook OUT of the Windows Search index, or with -Enable puts it IN -
@@ -444,61 +445,35 @@ else, say so:
 Do not 'fix' this by widening either default. The defaults are the guard.
 "@
 
-function Assert-Elevated {
-    $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
-    $principal = New-Object System.Security.Principal.WindowsPrincipal($identity)
-    if (-not $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)) {
-        throw @"
-REFUSING TO RUN: this session is not elevated.
+# What this script gives the guards the scripts share from ScriptHelpers.ps1 (Q154, P05) as its
+# reasons: Assert-Bitness, Assert-Elevated and Assert-OutlookNotRunning.
+$BitnessWhy = @"
+The Search.CollatorDSO provider needs an x64 host (Docs/live-tier-on-the-vm.md section 2.3), so
+every catalog probe below would fail and this script would report NO-INDEXER on a machine whose
+index is perfectly healthy.
+"@
 
+$ElevatedWhy = @"
 -Execute writes an HKLM policy value and restarts a service. An unelevated run would fail
 somewhere in the middle, having written some things and not others, which is the one outcome
 worse than not running at all.
 "@
-    }
-}
 
-function Assert-OutlookClosed {
-    <#
-        EVIDENCE: MS-DOC, verbatim, from the MAPI dev article on wrapped PSTs and indexing:
-        "The PST provider is very sensitive to the indexing state changing while the PST is
-        open. If the state changes, the PST may end up kicking off an installer to repair
-        Outlook." https://learn.microsoft.com/en-us/archive/blogs/stephen_griffin/wrapped-pst-and-indexing
-        This script changes exactly that state and restarts WSearch, so it refuses while Outlook
-        runs - and says WHICH process, leaving the closing to the caller: never taskkill it.
-    #>
-    $outlook = @(Get-Process -Name 'OUTLOOK' -ErrorAction SilentlyContinue)
-    if ($outlook.Count -eq 0) {
-        return
-    }
-
-    $pids = ($outlook | ForEach-Object { $_.Id }) -join ', '
-    throw @"
-REFUSING TO RUN: Outlook is running on this guest (PID $pids).
-
+# EVIDENCE: MS-DOC, verbatim, from the MAPI dev article on wrapped PSTs and indexing:
+# "The PST provider is very sensitive to the indexing state changing while the PST is
+# open. If the state changes, the PST may end up kicking off an installer to repair
+# Outlook." https://learn.microsoft.com/en-us/archive/blogs/stephen_griffin/wrapped-pst-and-indexing
+# This script changes exactly that state and restarts WSearch, so it refuses while Outlook
+# runs - and says WHICH process, leaving the closing to the caller: never taskkill it.
+$OutlookRunningWhy = @"
 Microsoft documents that the PST provider is "very sensitive to the indexing state changing
 while the PST is open", and that if the state changes "the PST may end up kicking off an
 installer to repair Outlook". This script changes precisely that state and then restarts
-WSearch.
-
-Close Outlook first - GRACEFULLY. Testbed/host/Restart-Guest.ps1 quits it the way mailbox-safety
-rule 7 describes and restarts the guest without forcing anything. Never taskkill it.
+WSearch. Testbed/host/Restart-Guest.ps1 quits Outlook the way mailbox-safety rule 7 describes
+and restarts the guest without forcing anything.
 
 This refusal does not apply to -Verify, which only reads.
 "@
-}
-
-function Assert-Bitness {
-    if (-not [Environment]::Is64BitProcess) {
-        throw @"
-REFUSING TO RUN: this is a 32-bit PowerShell.
-
-The Search.CollatorDSO provider needs an x64 host (Docs/live-tier-on-the-vm.md section 2.3), so
-every catalog probe below would fail and this script would report NO-INDEXER on a machine whose
-index is perfectly healthy. Start Windows PowerShell from C:\Windows\System32\WindowsPowerShell\v1.0.
-"@
-    }
-}
 
 function Get-CurrentUserSid {
     return ([System.Security.Principal.WindowsIdentity]::GetCurrent()).User.Value
@@ -1093,7 +1068,7 @@ function Invoke-SelfTest {
 # =============================================================================================
 if ($SelfTest) { Invoke-SelfTest }
 
-Assert-Bitness
+Assert-Bitness $BitnessWhy
 
 if (-not ($Execute -or $Verify -or $Enable)) {
     Say 'DRY RUN. Nothing is written. This is what -Execute would do:'
@@ -1115,8 +1090,8 @@ Assert-TestbedGuestIdentity -Why $GuestGuardWhy
 
 if ($Execute -or $Enable) {
     if (-not $Execute) { throw '-Enable writes nothing without -Execute. Run -Enable -Execute, or -Verify to look.' }
-    Assert-Elevated
-    Assert-OutlookClosed
+    Assert-Elevated $ElevatedWhy
+    Assert-OutlookNotRunning $OutlookRunningWhy
 
     $service = Get-WSearchState
     Say ('== Windows Search: startMode={0} status={1} indexerRunning={2} ==' -f

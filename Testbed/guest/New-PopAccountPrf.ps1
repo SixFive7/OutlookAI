@@ -117,6 +117,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+# The Outlook guard, Assert-OutlookNotRunning, is one of the helpers the scripts share (Q154, P05),
+# dot-sourced from ScriptHelpers.ps1 beside this script; the reason it gives is the interop file's.
+. (Join-Path $PSScriptRoot 'ScriptHelpers.ps1')
 . "$PSScriptRoot\OutlookMapiInterop.ps1"
 
 if (-not $UserName) { $UserName = $EmailAddress }
@@ -205,7 +208,7 @@ if (-not (Test-Path -LiteralPath $PrfPath)) {
 Write-Host "Wrote $PrfPath ($((Get-Item -LiteralPath $PrfPath).Length) bytes, ANSI, no BOM)."
 
 if ($Import) {
-    Assert-OutlookNotRunning
+    Assert-OutlookNotRunning $OutlookRewritesProfileWhy
 
     $outlookExe = $null
     foreach ($candidate in @(

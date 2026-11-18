@@ -1230,7 +1230,20 @@ its mailbox tests on, and change nothing you install.
   hives, the hives and the profiles on a machine, the profile a .prf names and whether a profile
   entry is a mail account were restated in `New-OutlookProfile.ps1`, `Set-DefaultOutlookProfile.ps1`,
   `New-TierProfile.ps1` and `Build-Corpus.ps1`, two to four copies each, and are one copy in the
-  shared file now; each script keeps the Office constants they read.
+  shared file now; each script keeps the Office constants they read. `Build-Corpus.ps1`'s
+  `Write-Preflight` and `Reset-HubPopulation.ps1`'s `Write-Line`, one three-line function under two
+  names, are the shared `Write-LogLine`. And check 4 now reads a function defined inside another one,
+  as a self-test's helpers are, as well as one at the top of a script: a scratch copy that hid a copy
+  of a shared helper inside a self-test failed it. The other guest guards went the same way: whether
+  the session is elevated, whether PowerShell is 64-bit and whether Outlook is running are
+  `Assert-Elevated`, `Assert-Bitness` and `Assert-OutlookNotRunning` in the shared file, each refusing
+  in one form with the words its script hands it, in place of ten copies in six files, two of them
+  named `Assert-OutlookClosed` and one written inline. The profile writers' reason is said once, in
+  `OutlookMapiInterop.ps1`, and the SDK and mail sink installers keep copies check 4 holds identical. The choice of the hive a profile script works in (`Select-OutlookHive`,
+  two copies and an older one in `Build-Corpus.ps1`, which now reads the shared one's choice) and
+  what `-Verify` does about ImportPRF (`Resolve-ImportPrfClearance`, two copies) are one copy too,
+  and so is the one helper of the self-tests with a single form, `ConvertTo-SelfTestText`, which four
+  of them compared values by.
 
 - 📝 **If Office's own grace reset fails, the Exchange test machine may get Microsoft 365 Apps (Q206).**
   The maintainer's decision Q206, 2026-11-18, now in AGENTS.md beside the machine's internet
@@ -1273,7 +1286,8 @@ its mailbox tests on, and change nothing you install.
   are made of, and the mailer's twelve inline ordinal tag checks, and four more elsewhere, now ask one
   ordinal predicate, `CarriesSubjectTag`; the reading filters that leave test items out of a
   search, a census or a ground truth ask `MentionsSubjectTag`, which ignores letter case as each of
-  them did. A test's tagged subject is built once (`TaggedSubject`). `LiveDraftChecks` holds the
+  them did. A test's tagged subject is built once (`TaggedSubject`), the subject the signature work's
+  Outlook-made draft gets since among them. `LiveDraftChecks` holds the
   draft suites' reads of a draft and of where its body sits, which seven suites restated in up to
   four copies each; `LiveDraftCleanup` deletes their drafts and proves none is left; the folder
   suites' clean-up and zero-artifact proof are methods of the fixture they share; the two

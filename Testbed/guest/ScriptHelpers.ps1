@@ -132,6 +132,31 @@ function Test-IsElevated {
     return $p.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
+# THE ELEVATION GUARD of a script whose work needs an administrator (Q154, P05): it returns in an
+# elevated session and otherwise throws a refusal that says so, then -Why - what the script writes, and
+# what an unelevated run would leave half done.
+function Assert-Elevated([string] $Why) {
+    if (Test-IsElevated) { return }
+    throw "REFUSING TO RUN: this session is not elevated.`n`n$Why"
+}
+
+# THE BITNESS GUARD of a script that needs a 64-bit PowerShell - for x64 Outlook, or for the Windows
+# Search provider, which only an x64 host loads: it returns in a 64-bit process and otherwise throws a
+# refusal that says so, then -Why, then where the 64-bit Windows PowerShell is.
+function Assert-Bitness([string] $Why) {
+    if ([Environment]::Is64BitProcess) { return }
+    throw "REFUSING TO RUN: this is a 32-bit PowerShell.`n`n$Why`n`nStart Windows PowerShell from C:\Windows\System32\WindowsPowerShell\v1.0."
+}
+
+# THE OUTLOOK GUARD of a script that must not run while Outlook does: it returns when no OUTLOOK.EXE runs
+# and otherwise throws a refusal that names each one's pid, then -Why - what a running Outlook would undo
+# or break. It never closes Outlook itself: mailbox-safety rule 7 forbids taskkill on OUTLOOK.EXE outright.
+function Assert-OutlookNotRunning([string] $Why) {
+    $running = @(Get-Process -Name 'OUTLOOK' -ErrorAction SilentlyContinue)
+    if ($running.Count -eq 0) { return }
+    throw ("REFUSING TO RUN: OUTLOOK.EXE is running (pid {0}).`n`n{1}`n`nQuit Outlook gracefully and run this again. DO NOT taskkill it: mailbox-safety rule 7 forbids that outright." -f (($running | ForEach-Object { $_.Id }) -join ', '), $Why)
+}
+
 # A line of progress: the time, then the message, on the console - and, where the calling script keeps
 # a log at $LogPath, the same line appended there, its folder made first. A log that cannot be written
 # does not stop the work it records. $LogPath is the calling script's own - its parameter, or a variable
@@ -159,6 +184,15 @@ function Say([string] $m) {
 function Write-ReportLine([string] $Text = '') {
     Write-Host $Text
     [void] $ReportLines.Add($Text)
+}
+
+# A line printed as it is and appended to the calling script's own log, $script:LogPath, with no time
+# before it - for Build-Corpus.ps1 and Reset-HubPopulation.ps1, whose logs read as plain reports. A log
+# that cannot be written is passed over.
+function Write-LogLine([string] $Text) {
+    Write-Host $Text
+    $log = $script:LogPath
+    if ($log) { Add-Content -LiteralPath $log -Value $Text -ErrorAction SilentlyContinue }
 }
 
 # A request refused before anything was touched: said as a line of progress, and the script ends with
@@ -272,9 +306,27 @@ function Assert-TestbedGuestIdentity {
     throw ("REFUSING TO RUN.`n`n  logged on as : '{0}'          (allowed: {1})`n  computer name: '{2}'      (must start with: '{3}')`n`n{4}" -f $env:USERNAME, ($users -join ', '), $env:COMPUTERNAME, $prefix, $Why)
 }
 
-# ---- The Outlook profile scripts' helpers (Q154, S7c step 3): New-OutlookProfile.ps1,
-# Set-DefaultOutlookProfile.ps1, New-TierProfile.ps1 and Build-Corpus.ps1 each held a copy. The constants
-# the first three read are the calling script's own, as $script: variables.
+# ---- The self-tests' helpers (Q154, S7a: P04).
+
+# A value as a self-test prints and compares it: '<null>' for $null, an array as [a, b] item by item, and
+# anything else as its string - so $null, '' and an empty array never read alike. Add-OutlookPstStore.ps1,
+# New-OutlookProfile.ps1, Set-DefaultOutlookProfile.ps1 and New-LiveTestSettings.ps1 each held a copy.
+function ConvertTo-SelfTestText {
+    param($Value)
+
+    if ($null -eq $Value) { return '<null>' }
+    if ($Value -is [System.Array]) {
+        $parts = @()
+        foreach ($item in $Value) { $parts += (ConvertTo-SelfTestText $item) }
+        return '[' + ($parts -join ', ') + ']'
+    }
+    return [string] $Value
+}
+
+# ---- The Outlook profile scripts' helpers (Q154, S7c step 3, and S7a for the hive choice and the
+# ImportPRF clearance): New-OutlookProfile.ps1, Set-DefaultOutlookProfile.ps1, New-TierProfile.ps1 and
+# Build-Corpus.ps1 each held a copy. The constants they read are the calling script's own, as $script:
+# variables.
 
 # Whether an ...\Office\<major>\Outlook key with these values and subkeys is a REAL Outlook hive, or just
 # the shell this product's installer leaves behind - whose one subkey the calling script names in
@@ -344,6 +396,95 @@ function Get-OutlookHiveCandidate {
     return , $candidates
 }
 
+# The hive a profile script works in, picked from candidates shaped
+# @{ Version = '16.0'; Path = '...'; ValueNames = @(); SubKeyNames = @() } - Get-OutlookHiveCandidate's.
+# Pure. Returns Chosen (a candidate, or $null), RealHives (every candidate passing the shape rule, in the
+# order given) and Problem (the refusal text, when Chosen is $null); Build-Corpus.ps1 reads Chosen alone.
+# -RequestedVersion overrides the probe order and the supported list both: an operator who names a
+# version has said something no script can know. It does NOT override the shape rule, because writing
+# ImportPRF or DefaultProfile into a key Outlook never reads is a silent no-op - the operator starts
+# Outlook, sees nothing change, and has nothing at all to read to find out why.
+function Select-OutlookHive {
+    param([object[]] $Candidates, [string] $RequestedVersion)
+
+    $real = @()
+    $present = @()
+    if ($null -ne $Candidates) {
+        foreach ($candidate in $Candidates) {
+            $present += $candidate.Version
+            if (Test-IsOutlookHive -ValueNames $candidate.ValueNames -SubKeyNames $candidate.SubKeyNames) {
+                $real += $candidate
+            }
+        }
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($RequestedVersion)) {
+        $named = $null
+        if ($null -ne $Candidates) {
+            foreach ($candidate in $Candidates) {
+                if ($candidate.Version -eq $RequestedVersion) { $named = $candidate }
+            }
+        }
+
+        if ($null -eq $named) {
+            $presentText = '<none>'
+            if ($present.Count -gt 0) { $presentText = ($present -join ', ') }
+            return [pscustomobject]@{
+                Chosen    = $null
+                RealHives = $real
+                Problem   = "REFUSING: -OfficeVersion $RequestedVersion was asked for, and $script:OfficeRootKeyPath\$RequestedVersion\Outlook does not exist. Version keys present: $presentText. Drop -OfficeVersion and let the detection choose."
+            }
+        }
+
+        if (-not (Test-IsOutlookHive -ValueNames $named.ValueNames -SubKeyNames $named.SubKeyNames)) {
+            return [pscustomobject]@{
+                Chosen    = $null
+                RealHives = $real
+                Problem   = "REFUSING: -OfficeVersion $RequestedVersion was asked for, and $($named.Path) holds nothing but a '$script:InstallerFootprintSubKeyName' subkey - which this product's own installer writes under every supported major, on every install. Outlook does not read that key, so anything this script writes into it would be a silent no-op. Name the major Outlook really uses, or drop -OfficeVersion."
+            }
+        }
+
+        return [pscustomobject]@{ Chosen = $named; RealHives = $real; Problem = $null }
+    }
+
+    foreach ($version in $script:SupportedOfficeVersions) {
+        foreach ($candidate in $real) {
+            if ($candidate.Version -eq $version) {
+                return [pscustomobject]@{ Chosen = $candidate; RealHives = $real; Problem = $null }
+            }
+        }
+    }
+
+    # Nothing supported qualified. If some OTHER major did, name it - choosing it is an operator
+    # decision (-OfficeVersion), not one this script may take on itself.
+    $unsupported = @()
+    foreach ($candidate in $real) { $unsupported += $candidate.Version }
+
+    $problem = @"
+REFUSING: found no supported Outlook hive with any content under $script:OfficeRootKeyPath.
+
+Probed in this order: $($script:SupportedOfficeVersions -join ', ') - the order the shipped product
+probes in (OfficeVersions.Supported).
+
+Every one of them was either absent or held nothing but a '$script:InstallerFootprintSubKeyName'
+subkey, which this product writes under 15.0, 16.0 and 17.0 alike on every install - so a
+present-but-empty key proves nothing. Either classic Outlook is not installed, or it has never
+been started.
+"@
+
+    if ($unsupported.Count -gt 0) {
+        $problem += @"
+
+
+There IS a real Outlook hive at: $($unsupported -join ', '). That major is not one this product
+supports, so nothing here will choose it for you. If it is the one Outlook really uses, say so:
+    -OfficeVersion $($unsupported[0])
+"@
+    }
+
+    return [pscustomobject]@{ Chosen = $null; RealHives = $real; Problem = $problem }
+}
+
 # The profile names: the subkey names under <hive>\Profiles. A subkey IS a profile.
 function Get-OutlookProfileName {
     param([string] $ProfilesKeyPath)
@@ -376,6 +517,83 @@ function Get-PrfProfileName {
         }
     }
     return $null
+}
+
+# What -Verify does about ImportPRF, for New-OutlookProfile.ps1 and New-TierProfile.ps1, whose .prf files
+# both carry OverwriteProfile=Yes. Pure: the machine half gathers five facts and acts on the answer, so
+# both scripts' -SelfTest walk every branch.
+#
+# WHY -VERIFY CLEARS IT, AND WHY IT CANNOT CLEAR IT ANY EARLIER. Outlook reads ImportPRF at startup, so
+# an ImportPRF left behind is a rebuild waiting for a start - and a rebuild is what would detach a store
+# attached or filled since, a corpus store among them. Removing it closes that. But removing it BEFORE
+# Outlook has read it cancels the import itself, silently: the profile is never built.
+#
+# WHAT TELLS THE TWO APART, and it is two measured facts, not one. (1) Outlook REMOVES ImportPRF itself
+# within 5 s of the start that imports it (OAI-UNINDEXED, 2026-09-24, sampled every 5 s) - so a value
+# still set means no start has acted on it. (2) Outlook ignores ImportPRF while First-Run or FirstRun
+# exists (documented), -Execute deletes both, and Outlook writes First-Run back only once a start has
+# COMPLETED its first run: during the tier profile's first session, yes; during a start that stopped on
+# the account wizard, not in 300 s and not at shutdown. So "still set, First-Run absent" is an import
+# still to come - leave it - and "still set, First-Run present" is a value Outlook will not act on until
+# something removes First-Run again - a latent rebuild, and the only state this ever removes.
+#
+# Decision is one of:
+#   NotSet       ImportPRF is absent. Nothing can re-import.
+#   Clear        it names THIS profile's .prf, the profile exists, and First-Run is back: the import
+#                has had its start, and all that is left is a re-import. REMOVE IT.
+#   KeepPending  it names this profile's .prf and neither First-Run nor FirstRun is there: Outlook has
+#                not started since -Execute, so the import has not happened and removing the value
+#                would cancel it. -Verify ran too early.
+#   KeepFailed   it names this profile's .prf, Outlook HAS started since (First-Run is back), and the
+#                profile is not there: the import did not take. Left as evidence - Outlook ignores it
+#                while First-Run exists.
+#   KeepOther    it names another profile's .prf, or a file whose profile name cannot be read: ANOTHER
+#                import may be pending, and removing the value would cancel that one. Left alone.
+#                Build-Corpus.ps1 refuses while ImportPRF is set, so a corpus is not built underneath
+#                it either way.
+function Resolve-ImportPrfClearance {
+    param(
+        [string] $ImportPrfValue,
+        [string] $PrfProfileName,
+        [Parameter(Mandatory = $true)] [string] $ProfileName,
+        [bool] $ProfileExists,
+        [bool] $FirstRunPresent
+    )
+
+    if ([string]::IsNullOrEmpty($ImportPrfValue)) {
+        return [pscustomobject]@{
+            Decision = 'NotSet'
+            Message  = 'ImportPRF is not set, so no Outlook start can re-import. (Outlook removes it itself once it has imported the file - measured on this build.)'
+        }
+    }
+
+    if ([string]::IsNullOrEmpty($PrfProfileName) -or $PrfProfileName -ne $ProfileName) {
+        $whose = "a file whose profile name could not be read"
+        if (-not [string]::IsNullOrEmpty($PrfProfileName)) { $whose = "the .prf for profile '$PrfProfileName'" }
+        return [pscustomobject]@{
+            Decision = 'KeepOther'
+            Message  = "ImportPRF is set to '$ImportPrfValue' - $whose, not '$ProfileName'. Left alone: another import may still be pending, and removing the value would cancel it without a word. Build-Corpus.ps1 refuses to build while ImportPRF is set. To remove it anyway: .\New-OutlookProfile.ps1 -ClearImportPrf -Execute"
+        }
+    }
+
+    if (-not $FirstRunPresent) {
+        return [pscustomobject]@{
+            Decision = 'KeepPending'
+            Message  = "ImportPRF still names this profile's .prf and neither First-Run nor FirstRun is back, so Outlook has NOT started since -Execute - the import has not happened yet. Removing the value now would cancel it, so it is left in place. Start Outlook once, let it settle, and run -Verify again."
+        }
+    }
+
+    if (-not $ProfileExists) {
+        return [pscustomobject]@{
+            Decision = 'KeepFailed'
+            Message  = "ImportPRF still names this profile's .prf, Outlook HAS started since -Execute (First-Run is back), and there is no profile named '$ProfileName': the import did not take. Left in place as evidence; while First-Run exists Outlook does not act on it."
+        }
+    }
+
+    return [pscustomobject]@{
+        Decision = 'Clear'
+        Message  = "ImportPRF still names this profile's .prf after the import has run. Removing it: left in place, it is a rebuild waiting for the next start that finds First-Run gone - and a rebuild detaches whatever was attached or filled since."
+    }
 }
 
 # Whether one entry of a profile's account-manager key is a MAIL account. Pure; from a measurement on

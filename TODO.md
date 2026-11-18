@@ -71,8 +71,8 @@
   T07 (repository paths), T08 (readers of compiled code and source text; ComposeOnReopenedDraftTests and
   ReadOnlyFolderLookupTests keep member cutters with declaration rules of their own), T09, T10 to
   T12 (the live tier's helpers, audit lines and tool-surface readers, with the test tags and the
-  mailer's tag checks, the two the drafting stream added since among them; a stream adding another
-  inline tag check folds it when it lands) and T05
+  mailer's tag checks, the drafting stream's two checks and the signature stream's tagged subject,
+  added since, among them; a stream adding another folds it when it lands) and T05
   (the sweep and scan suites' one-mailbox profile, `AliceMailbox`, and the thread suites' walks,
   `ThreadWalks`; six more suites - the thread, unindexed-store and folder-walk ones - still spell
   that mailbox's SID, prefix and frontier under names of their own, beside stores of their own).
@@ -92,9 +92,12 @@
   that file and `TestbedLeasePath.ps1` to one copy too; its list of copies not folded yet is empty.
   P05's guest guard is `Test-GuestIdentity` and `Assert-TestbedGuestIdentity` in the shared file
   (S7c step 2), five scripts that travel alone keeping identical copies, and P06's Outlook profile
-  helpers are there too (S7c step 3), each script keeping the Office constants they read. Left: P05's
-  elevation, bitness and Outlook-closed guards and P06's `Select-OutlookHive` and
-  `Resolve-ImportPrfClearance`, whose copies differ script by script.
+  helpers are there too (S7c step 3), each script keeping the Office constants they read, with
+  `Select-OutlookHive` and `Resolve-ImportPrfClearance` since. So are P05's other guards,
+  `Assert-Elevated`, `Assert-Bitness` and `Assert-OutlookNotRunning`, each script giving its own
+  reason. Left: the self-test helpers (P04) but `ConvertTo-SelfTestText`, shared too. Check 4 reads
+  nested functions now, and the helpers' seven `Test-Case` and thirteen `Check` shapes share their
+  names, so they fold under names of their own or into one harness.
   What remains, one stage at a time: S4, the signature and draft code (A01-A05, A08, A09, A12) with
   Q162's checkbox, Core winning where the copies drifted apart and the pane's visible differences
   measured on a test machine first (Q165 (c)), and the pane driven on a test machine (Q168 (b));
