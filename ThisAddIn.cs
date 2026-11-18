@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using Microsoft.Office.Tools;
+using OutlookAI.Core.AddIn;
 using OutlookAI.Services;
 using OutlookAI.TaskPane;
 using Outlook = Microsoft.Office.Interop.Outlook;
@@ -133,7 +134,12 @@ namespace OutlookAI
                 _uiMarshalControl = null;
             }
 
-            ClaudeService.WarmUp();
+            // No Claude Code warm-up here any more (Q182 (a), decided by the maintainer 2026-11-18). Every
+            // Outlook start - the ones OutlookAI's mail server makes for an agent included - ran a whole
+            // Claude Code session from inside OUTLOOK.EXE, in system32 when Outlook was started over COM,
+            // and it did not stay warm: on 2026-11-15 it sent the prompt "-" to the model and exited
+            // 3.3 s later. The first request after a start now starts its own process; every request
+            // still warms one up for the next (ClaudeService.ExecutePrompt).
             UpdateService.Start();
             ThemeService.StartWatching();
 
@@ -182,6 +188,43 @@ namespace OutlookAI
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine("Explorer event hookup failed: " + ex.Message);
+            }
+
+            // Last, once everything above has run: the start-up stamp.
+            WriteStartupStamp();
+        }
+
+        /// <summary>
+        /// Tells OutlookAI's mail server that the add-in has finished starting inside this Outlook (Q175 (a),
+        /// decided by the maintainer 2026-11-18): this process's id, then the time. The server opens no
+        /// mailbox in an Outlook that started less than about 20 s ago, or whose add-in has not stamped its
+        /// start, or whose main thread is busy - on 2026-11-15 an Outlook started for an agent deadlocked
+        /// because mailboxes were opened while its add-ins were still starting. The server takes the pair
+        /// as this Outlook's only when the id is this process's and the time is not before it started, so a
+        /// reader between the two writes sees no stamp rather than a wrong one. Registry only, and it never
+        /// throws: a stamp that cannot be written costs the server a longer wait, never this start.
+        /// </summary>
+        private static void WriteStartupStamp()
+        {
+            try
+            {
+                using (var key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(AddInServerContract.AddInKeyPath))
+                {
+                    if (key == null)
+                        return;
+                    int processId;
+                    using (var self = System.Diagnostics.Process.GetCurrentProcess())
+                        processId = self.Id;
+                    key.SetValue(AddInServerContract.AddInStartupProcessIdValueName, processId, Microsoft.Win32.RegistryValueKind.DWord);
+                    key.SetValue(
+                        AddInServerContract.AddInStartupCompleteUtcValueName,
+                        DateTime.UtcNow.ToString("o", System.Globalization.CultureInfo.InvariantCulture),
+                        Microsoft.Win32.RegistryValueKind.String);
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine("Start-up stamp: " + ex.Message);
             }
         }
 

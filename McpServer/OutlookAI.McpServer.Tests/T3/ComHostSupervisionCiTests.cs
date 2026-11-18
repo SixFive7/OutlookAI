@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using OutlookAI.ComHost.Host;
 using OutlookAI.ComHost.Supervision;
@@ -252,6 +253,104 @@ public sealed class ComHostSupervisionCiTests
             string.Format(CultureInfo.InvariantCulture, "0x{0:X8}", ComHostFaultInjection.SessionComHResult),
             message,
             StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A request whose caller gives up still has its wedged COM host reclaimed at its deadline (Q179 (b),
+    /// decided by the maintainer 2026-11-18).
+    /// <para>
+    /// THE DEFECT THIS PINS. The supervisor's own description said the deadline watchdog runs whoever is
+    /// awaiting the result, and its cancel path disarmed it: a cancelled request was removed and its
+    /// deadline disposed. A call wedged inside Outlook then held the host - which serves serially - for
+    /// good. On 2026-11-15 a request the client had interrupted stayed stuck for twelve minutes, and when
+    /// that Outlook was ended its one-shot retry started Outlook again.
+    /// </para>
+    /// <para>
+    /// HOW. The injected hang never returns, so nothing but the deadline can end the host. The request is
+    /// sent, the host found by its parent process, and the request cancelled the way an MCP client does,
+    /// some seconds after the host appeared so it has been dispatched; the deadline is 15 s, long enough
+    /// that the cancel lands well before it. Without the fix the host lives until the test gives up.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task ACancelledRequest_StillHasItsWedgedHostReclaimedAtTheDeadline()
+    {
+        Dictionary<string, string> environment = Fault("hang:GetAccounts");
+        environment["OUTLOOKAI_COMHOST_DEADLINE_MS"] = "15000";
+        await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync(
+            TimeSpan.FromSeconds(180), environment, McpStdioClient.OutlookReachingToolsAllowed);
+
+        int requestId = await client.SendRequestAsync("tools/call", new { name = "list_accounts", arguments = new { } });
+        int hostId = await ComHostOfAsync(client.ServerProcess.Id, TimeSpan.FromSeconds(60));
+        using Process host = Process.GetProcessById(hostId);
+
+        // Dispatch follows the host's handshake within a second on any machine this runs on.
+        await Task.Delay(TimeSpan.FromSeconds(5));
+        Assert.False(host.HasExited, "the COM host ended before the request was cancelled - the deadline is too short for this test");
+        await client.NotifyAsync("notifications/cancelled", new { requestId, reason = "the caller gave up" });
+
+        bool reclaimed = host.WaitForExit(TimeSpan.FromSeconds(45));
+        Assert.True(
+            reclaimed,
+            "the cancelled request's COM host is still alive 45 s after the cancel, past its 15 s deadline: the cancel "
+            + "disarmed the deadline, and the wedged call holds the host for good (Q179 (b))");
+
+        // And the server goes on answering.
+        JsonElement signatures = await CallRawAsync(client, "list_signatures", new { });
+        Assert.True(PayloadOf(signatures).TryGetProperty("signatures", out _));
+    }
+
+    /// <summary>The server's COM host child, found by its parent process id; waits for it to appear.</summary>
+    private static async Task<int> ComHostOfAsync(int serverProcessId, TimeSpan timeout)
+    {
+        Stopwatch waited = Stopwatch.StartNew();
+        while (waited.Elapsed < timeout)
+        {
+            foreach (Process candidate in Process.GetProcessesByName("OutlookAI.ComHost"))
+            {
+                using (candidate)
+                {
+                    if (ParentProcessId(candidate) == serverProcessId)
+                    {
+                        return candidate.Id;
+                    }
+                }
+            }
+
+            await Task.Delay(100);
+        }
+
+        throw new TimeoutException($"server process {serverProcessId} started no COM host within {timeout.TotalSeconds:F0} s");
+    }
+
+    private static int? ParentProcessId(Process process)
+    {
+        try
+        {
+            ProcessBasicInformation information = default;
+            int status = NtQueryInformationProcess(
+                process.Handle, 0, ref information, Marshal.SizeOf<ProcessBasicInformation>(), out _);
+            return status == 0 ? (int)information.InheritedFromUniqueProcessId : null;
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            return null;
+        }
+    }
+
+    [DllImport("ntdll.dll")]
+    private static extern int NtQueryInformationProcess(
+        IntPtr processHandle, int processInformationClass, ref ProcessBasicInformation processInformation, int length, out int returnLength);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ProcessBasicInformation
+    {
+        public IntPtr ExitStatus;
+        public IntPtr PebBaseAddress;
+        public IntPtr AffinityMask;
+        public IntPtr BasePriority;
+        public IntPtr UniqueProcessId;
+        public IntPtr InheritedFromUniqueProcessId;
     }
 
     /// <summary>

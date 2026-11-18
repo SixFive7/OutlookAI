@@ -297,7 +297,8 @@ How the lifetime behaves:
 - **When the last agent session ends**, it closes the hidden window, whichever session made it, and an Outlook with no other window ends at once. While another session is still connected the hidden window stays, so no session's Outlook ends under it.
 - **When you exit Outlook** - File > Exit, or closing the last window you opened over it - the connected sessions close the hidden window, so Outlook ends as you asked. The server starts Outlook again, without a window, the next time an agent needs mail.
 - **A session whose process was killed** cannot close anything. The sessions still connected take its hidden window over, or the next session to start does, and the last of them closes it. Until one does, File > Exit ends Outlook. `outlook_health` lists the sessions attached to Outlook, the hidden window and who made it, and says what will end Outlook.
-- **Want a normal Outlook?** Launch Outlook the usual way: the same process becomes a full windowed Outlook within a second or two.
+- **Want a normal Outlook?** Launch Outlook the usual way: the same process becomes a full windowed Outlook within a second or two - unless that Outlook has stopped responding, when Windows hands your launch to it and nothing appears: see [Outlook does not open, or an agent says Outlook is not responding](#troubleshooting).
+- **Just after Outlook starts**, whoever started it, the server opens none of its mailboxes for about 20 seconds: until Outlook is at least 20 seconds old, the OutlookAI add-in has finished starting inside it, and Outlook is idle. Meanwhile an agent's mail tools answer at once that Outlook is starting and when to try again, and search still answers from the index. Only one agent session starts Outlook at a time; the others wait for it.
 - **Closing your Outlook window** ends Outlook within seconds even while agent sessions are connected - since Outlook 2007 SP2, programs cannot keep Outlook alive after the user closes it.
 - **With no hidden window and nothing connected**, a window-less Outlook ends by itself after a delay. It took about 11.5 minutes on Office LTSC 2021, measured once; it has not been measured on Office 2024. A session that only read, and started Outlook, leaves it to end that way.
 - The server never quits or kills Outlook. It closes only the hidden window an OutlookAI session made, recorded by its window handle, and never a window you can see.
@@ -460,9 +461,9 @@ OutlookAI invokes the Claude Code CLI (`claude`) as a subprocess. Several integr
 
 OutlookAI uses a **pre-warmed fire-and-forget** approach:
 
-1. At Outlook startup, a `claude -p` process is spawned in the background and waits for input
-2. When the user triggers an action, the prompt is written to the already-warm process's stdin and the response is read from stdout
-3. A new process is immediately pre-warmed in the background for the next request
+1. The first action after Outlook starts spawns a `claude -p` process, writes the prompt to its stdin and reads the response from stdout. Nothing is started when Outlook starts: Outlook also starts for agents, without a window, and each start used to run a whole Claude Code session for nothing
+2. After every request, a new process is pre-warmed in the background for the next one
+3. The next action writes its prompt to that already-warm process when it is still running, and starts a fresh one when it is not
 
 This gives the zero-latency benefit of a persistent process with the simplicity of fire-and-forget — no protocol implementation, no process lifecycle management, no extra dependencies.
 
@@ -602,12 +603,32 @@ Then start a fresh agent session — Claude Code reads its MCP configuration at 
 </details>
 
 <details>
+<summary><strong>Outlook does not open, or an agent says Outlook is not responding</strong></summary>
+
+**Symptom:** you start Outlook and nothing appears, or an agent reports `OutlookUnresponsive`: Outlook is running without a window and has stopped responding, or has not finished starting.
+
+**Why it happens.** When an agent needs mail and Outlook is closed, OutlookAI's mail server starts Outlook *without a window* (see [Outlook Lifetime and the Tray Icon](#outlook-lifetime-and-the-tray-icon)). If that Outlook hangs - on 2026-11-15 one deadlocked while its add-ins were still starting - you cannot see it or close it, and every time you start Outlook, Windows hands the start to the hung one, so nothing opens. It does not fix itself, and OutlookAI never ends Outlook for you.
+
+**What the agent tells you.** The message names what is stuck and why, the Outlook process's ID (PID), how to end it, and what ending it can cost. `outlook_health` shows the same: the process, when it started, whether OutlookAI started it, whether it ever showed a window, since when it has not responded, and which start-up step OutlookAI's connection is in.
+
+**To end it:**
+
+1. Open Task Manager (Ctrl+Shift+Esc) and go to **Details**
+2. Select **OUTLOOK.EXE** with the PID from the message (Outlook runs only once per user, so there is normally one)
+3. Click **End task**, then start Outlook again
+
+**What ending it can cost:** text typed in an open compose window that was not saved as a draft is lost; mail waiting in the Outbox is sent when Outlook runs again; and if Outlook was writing its data file (.ost or .pst) at that moment, the next start can take longer while it checks the file, or offer to start in safe mode. You can also ask the agent to end it for you, if it has a way to.
+
+**Reporting it.** If it happens again, OutlookAI's start log helps us find out why: `%LOCALAPPDATA%\OutlookAI\outlook-start.log` records every step of starting Outlook and every time Outlook was found not responding, and holds no mail content. Attach it to a report on the project's GitHub issues.
+</details>
+
+<details>
 <summary><strong>Requests timing out (2-minute timeout)</strong></summary>
 
 - Check your internet connection
 - Verify Claude Code works independently: `claude -p "Hello"`
 - Claude may be temporarily overloaded — try again in a moment
-- If the issue persists, the pre-warmed process may have stalled; restart Outlook to spawn a fresh one
+- If the issue persists: a request that times out ends its process, and the next one starts a fresh one
 </details>
 
 <details>
