@@ -257,20 +257,73 @@ function Join-TestbedQueue {
     return [pscustomobject]@{ Path = $path; Name = $name; Json = $json }
 }
 
+# THE TESTBED'S SHARED FILES - the queue's tickets, the gate's waiting records and its switch - are
+# written and deleted by several runs at once: eight runs were queued at 09:58 on 2026-11-18. A file
+# listed a moment ago can be gone when it is read, and two runs can find the same ended run's ticket and
+# delete it in the same instant. So these files are listed by name alone (Get-TestbedStateFiles), a
+# file that cannot be read counts as gone (Read-TestbedLiveRecords), and a delete goes through
+# Remove-TestbedStateFile - never Remove-Item, which throws for a file that goes between its own look
+# and its delete, "An object at the specified path ... does not exist" or, under Windows PowerShell
+# 5.1, "Access is denied" for a file already pending delete, whatever -ErrorAction says. That ended
+# stream M's build run 20261118-092047 before it started; on a scratch queue whose tickets came and
+# went, 183 of 600 turns threw under PowerShell 7.7 and 150 of 600 under 5.1.
+
+# The .json files of one of the testbed's state directories: full paths, in ordinal order of their
+# names - for the queue, its order. Names only, so nothing is asked of a file that has gone since. None
+# when the directory cannot be listed.
+function Get-TestbedStateFiles {
+    param([string] $Directory)
+    [string[]] $paths = @()
+    try { $paths = [System.IO.Directory]::GetFiles($Directory, '*.json') } catch { return @() }
+    [Array]::Sort($paths, [System.StringComparer]::OrdinalIgnoreCase)
+    return $paths
+}
+
+# Deletes one of those files: $true when this call deleted it, $false when it had gone already or
+# could not be deleted - another run deleting it at the same instant. Never throws.
+function Remove-TestbedStateFile {
+    param([string] $Path)
+    try {
+        if (-not [System.IO.File]::Exists($Path)) { return $false }
+        [System.IO.File]::Delete($Path)
+        return $true
+    }
+    catch { return $false }
+}
+
 # Leaves the queue: the ticket goes. Never throws.
 function Exit-TestbedQueue {
     param([object] $Ticket)
-    try { if ($null -ne $Ticket -and (Test-Path -LiteralPath $Ticket.Path)) { Remove-Item -LiteralPath $Ticket.Path -Force } } catch { }
+    try { if ($null -ne $Ticket) { [void](Remove-TestbedStateFile ([string]$Ticket.Path)) } } catch { }
 }
 
-# Whether a ticket's run still lives: its process, started when the ticket says - not another that
-# took its id since.
+# Whether a record's run still lives - a ticket's, or a waiting record's: its process, started when
+# the record says - not another that took its id since.
 function Test-TestbedTicketAlive {
     param([object] $Record)
     $p = $null
     try { $p = Get-Process -Id ([int]$Record.pid) -ErrorAction SilentlyContinue } catch { }
     if ($null -eq $p) { return $false }
     try { return (([DateTimeOffset]$p.StartTime).ToUnixTimeSeconds() -eq [long]$Record.processStartUnix) } catch { return $true }
+}
+
+# The records of $Paths - tickets, waiting records - in their order, up to the one named $Until: each
+# read, and Name, Path and Record given back for every one whose run still lives. One that cannot be
+# read is passed over as gone - another run may have deleted it since the list was made, or still be
+# writing it - and one whose run has ended is deleted. Never throws for a file that goes meanwhile.
+function Read-TestbedLiveRecords {
+    param([string[]] $Paths, [string] $Until = '')
+    $live = @()
+    foreach ($path in @($Paths)) {
+        $name = [System.IO.Path]::GetFileName($path)
+        if ($Until -and $name -eq $Until) { break }
+        $record = $null
+        try { $record = [System.IO.File]::ReadAllText($path) | ConvertFrom-Json } catch { continue }
+        if ($null -eq $record) { continue }
+        if (-not (Test-TestbedTicketAlive $record)) { [void](Remove-TestbedStateFile $path); continue }
+        $live += [pscustomobject]@{ Name = $name; Path = $path; Record = $record }
+    }
+    return $live
 }
 
 # This run's turn in the queue: the tickets ahead of its own are read, those of runs that have ended -
@@ -281,15 +334,7 @@ function Get-TestbedQueueTurn {
     param([object] $Ticket, [string] $Run, [string[]] $Candidates)
     $dir = Get-TestbedQueueDirectory
     if (-not (Test-Path -LiteralPath $Ticket.Path)) { [System.IO.File]::WriteAllText($Ticket.Path, $Ticket.Json, (New-Object System.Text.UTF8Encoding($false))) }
-    $live = @()
-    foreach ($f in @(Get-ChildItem -LiteralPath $dir -Filter '*.json' -File -ErrorAction SilentlyContinue | Sort-Object Name)) {
-        if ($f.Name -eq $Ticket.Name) { break }
-        $t = $null
-        try { $t = [System.IO.File]::ReadAllText($f.FullName) | ConvertFrom-Json } catch { continue }
-        if ($null -eq $t) { continue }
-        if (-not (Test-TestbedTicketAlive $t)) { Remove-Item -LiteralPath $f.FullName -Force -ErrorAction SilentlyContinue; continue }
-        $live += [pscustomobject]@{ Name = $f.Name; Run = [string]$t.run; Candidates = @($t.candidates) }
-    }
+    $live = @(Read-TestbedLiveRecords -Paths @(Get-TestbedStateFiles $dir) -Until $Ticket.Name | ForEach-Object { [pscustomobject]@{ Name = $_.Name; Run = [string]$_.Record.run; Candidates = @($_.Record.candidates) } })
     $live += [pscustomobject]@{ Name = $Ticket.Name; Run = $Run; Candidates = @($Candidates) }
     return (Select-TestbedQueueTurn -Tickets $live -Mine $Ticket.Name -Candidates $Candidates)
 }
