@@ -78,7 +78,8 @@
        file - keeps its own copy, says so on a line of its own,
            # travels-alone: <how it reaches the machine>
        and its copy must be the shared text exactly. Any other copy fails, and so does a copy in a
-       script that dot-sources the shared file as well. Copies not folded yet are listed below,
+       script that dot-sources the shared file as well - a copy defined inside one of the script's
+       functions, as a self-test's helpers are, as much as one at its top. Copies not folded yet are listed below,
        each with the step that folds it; they are reported, and an entry for a script that no
        longer restates anything fails, so the list only shrinks.
 
@@ -665,7 +666,8 @@ foreach ($relative in $scriptFacts.Keys) {
     $travelsAlone = @($facts.Lines | Where-Object { $_ -match $script:TravelsAloneMarker }).Count -gt 0
     $pending = $script:RestatedUntilFolded.Contains($relative.Replace('\', '/'))
     $restates = 0
-    foreach ($f in $facts.Ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $false)) {
+    # Nested definitions count: a self-test's helpers are functions inside its Invoke-SelfTest (S7a).
+    foreach ($f in $facts.Ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)) {
         $key = $f.Name.ToLowerInvariant()
         if (-not $sharedDefinitions.ContainsKey($key)) { continue }
         $restates++

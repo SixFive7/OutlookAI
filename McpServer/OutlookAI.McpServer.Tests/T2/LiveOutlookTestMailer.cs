@@ -3654,7 +3654,7 @@ public static class LiveOutlookTestMailer
                     items = drafts.Items;
                     item = items.Add(0); // olMailItem
                     OutlookComSession.SetSendUsingAccount((object)item, account);
-                    item.Subject = SubjectTag + " " + uniqueMarker + " outlook-own-new";
+                    item.Subject = TaggedSubject(uniqueMarker, "outlook-own-new");
                 }
                 else
                 {

@@ -1195,8 +1195,9 @@ make the protection depend on anyone remembering a flag. Three places, none of t
 * `New-OutlookProfile.ps1 -ClearImportPrf -Execute` still removes it by hand, unconditionally.
 
 The reasoning lives beside the code that acts on it: `Resolve-ImportPrfClearance` in
-`Testbed/guest/New-OutlookProfile.ps1` and `Test-CorpusImportPrfGuard` in
-`Testbed/guest/Build-Corpus.ps1`, each walked by its script's `-SelfTest`.
+`Testbed/guest/ScriptHelpers.ps1`, which `New-OutlookProfile.ps1` and `New-TierProfile.ps1` share,
+and `Test-CorpusImportPrfGuard` in `Testbed/guest/Build-Corpus.ps1`, each walked by its scripts'
+`-SelfTest`.
 
 **Turn AutoArchive OFF, on every store, in both profiles.** It is a client-side actor that
 moves items out of a PST on a schedule, and to a before/after census that is **indistinguishable

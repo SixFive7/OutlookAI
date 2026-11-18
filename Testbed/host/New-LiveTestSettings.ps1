@@ -1631,17 +1631,6 @@ function Read-TextFile {
 # .work\ and removes it. No guest, no COM, no registry, no real live-fixtures directory.
 # =============================================================================================
 
-function ConvertTo-SelfTestText {
-    param($Value)
-    if ($null -eq $Value) { return '<null>' }
-    if ($Value -is [System.Array]) {
-        $parts = @()
-        foreach ($item in $Value) { $parts += (ConvertTo-SelfTestText $item) }
-        return '[' + ($parts -join ', ') + ']'
-    }
-    return [string] $Value
-}
-
 <#
     THE EXCHANGE VM'S ADDRESSES ARE NOT IN testbed.json (Q189 (b), decided by the maintainer
     2026-11-17). Its mailboxes are real, so the record names each by a PLACEHOLDER under the reserved
@@ -2324,6 +2313,10 @@ function Invoke-SelfTest {
     }
     return 0
 }
+
+# ConvertTo-SelfTestText, by which the self-test compares, is one of the helpers the scripts share,
+# dot-sourced from Testbed/guest/ScriptHelpers.ps1 (Q154, S7a).
+. (Join-Path $PSScriptRoot '..\guest\ScriptHelpers.ps1')
 
 if ($SelfTest) { exit (Invoke-SelfTest) }
 

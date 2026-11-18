@@ -383,18 +383,6 @@ function Format-StoreListing {
 # SELF-TEST. Pure: no COM, no registry, no files, no guest.
 # =============================================================================================
 
-function ConvertTo-SelfTestText {
-    param($Value)
-
-    if ($null -eq $Value) { return '<null>' }
-    if ($Value -is [System.Array]) {
-        $parts = @()
-        foreach ($item in $Value) { $parts += (ConvertTo-SelfTestText $item) }
-        return '[' + ($parts -join ', ') + ']'
-    }
-    return [string] $Value
-}
-
 function Invoke-SelfTest {
     $script:SelfTestChecks = 0
     $script:SelfTestFailures = @()
@@ -530,6 +518,10 @@ function Invoke-SelfTest {
     }
     return 0
 }
+
+# ConvertTo-SelfTestText, by which the self-test compares, is one of the helpers the scripts share,
+# dot-sourced from ScriptHelpers.ps1 beside this script (Q154, S7a).
+. (Join-Path $PSScriptRoot 'ScriptHelpers.ps1')
 
 if ($SelfTest) { exit (Invoke-SelfTest) }
 

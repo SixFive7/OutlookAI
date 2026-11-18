@@ -182,7 +182,9 @@ Do not 'fix' this by widening the default. The default is the guard.
 }
 
 <#
-    Refuses while Outlook is running.
+    Why a profile writer refuses while Outlook is running: the -Why that New-OutlookProfile.ps1,
+    Set-DefaultOutlookProfile.ps1, Add-IdentityAccount.ps1 and New-PopAccountPrf.ps1 give
+    Assert-OutlookNotRunning, the guard the scripts share from ScriptHelpers.ps1 (Q154, P05).
 
     It does NOT kill it. Mailbox-safety rule 7 forbids taskkill on OUTLOOK.EXE outright, and a
     running Outlook writes its own view of the profile back at shutdown - so killing it here would
@@ -193,20 +195,11 @@ Do not 'fix' this by widening the default. The default is the guard.
     (a .prf is read at startup) and Set-DefaultOutlookProfile.ps1. It deliberately does NOT guard
     Add-OutlookPstStore.ps1, which drives the object model and therefore REQUIRES a live Outlook.
 #>
-function Assert-OutlookNotRunning {
-    $running = @(Get-Process -Name 'OUTLOOK' -ErrorAction SilentlyContinue)
-    if ($running.Count -gt 0) {
-        throw @"
-REFUSING: OUTLOOK.EXE is running (pid $(($running | ForEach-Object { $_.Id }) -join ', ')).
-
+$OutlookRewritesProfileWhy = @"
 What this script writes is read by Outlook at STARTUP, and a running Outlook writes its own view
-of the profile back when it closes - which silently reverts whatever was just written.
-
-Close Outlook properly and run this again. DO NOT taskkill it - mailbox-safety rule 7 forbids
-that outright, and a forced kill can leave the profile mid-write.
+of the profile back when it closes - which silently reverts whatever was just written. A forced
+kill can leave the profile mid-write.
 "@
-    }
-}
 
 <#
     Normalises a PST path ONCE, and everything downstream reuses the exact string this returns.

@@ -250,38 +250,6 @@ $script:AccountsSubKeyName = '9375CFF0413111d3B88A00104B2A6676'
 # =============================================================================================
 
 <#
-    The first candidate that is a real hive, in the product's probe order - or the one named by
-    -OfficeVersion, if it is a real hive. $null when nothing qualifies.
-
-    Candidates are shaped @{ Version = '16.0'; Path = '...'; ValueNames = @(); SubKeyNames = @() }.
-#>
-function Select-OutlookHive {
-    param([object[]] $Candidates, [string] $RequestedVersion)
-
-    if ($null -eq $Candidates) { return $null }
-
-    if (-not [string]::IsNullOrWhiteSpace($RequestedVersion)) {
-        foreach ($candidate in $Candidates) {
-            if ($candidate.Version -eq $RequestedVersion -and
-                (Test-IsOutlookHive -ValueNames $candidate.ValueNames -SubKeyNames $candidate.SubKeyNames)) {
-                return $candidate
-            }
-        }
-        return $null
-    }
-
-    foreach ($version in $script:SupportedOfficeVersions) {
-        foreach ($candidate in $Candidates) {
-            if ($candidate.Version -eq $version -and
-                (Test-IsOutlookHive -ValueNames $candidate.ValueNames -SubKeyNames $candidate.SubKeyNames)) {
-                return $candidate
-            }
-        }
-    }
-    return $null
-}
-
-<#
     Precondition 3, and the one that protects the CORPUS rather than predicting the build.
 
     Returns the refusal text, or $null. Pure, and deliberately a function of its own: it is the one
@@ -555,14 +523,14 @@ function Invoke-SelfTest {
     $shell16 = New-HiveFact -Version '16.0' -SubKeyNames @('Resiliency')
     $shell17 = New-HiveFact -Version '17.0' -SubKeyNames @('Resiliency')
 
-    Test-Case '16.0 wins over a real 17.0 (probe order, not highest number)' '16.0' (Select-OutlookHive -Candidates @($real17, $real16)).Version
-    Test-Case '17.0 wins when 16.0 is only the footprint' '17.0' (Select-OutlookHive -Candidates @($shell16, $real17)).Version
-    Test-Case '15.0 is read when it is the only real one' '15.0' (Select-OutlookHive -Candidates @($shell16, $shell17, $real15)).Version
-    Test-Case 'all-footprint finds nothing' '<null>' (Select-OutlookHive -Candidates @($shell16, $shell17))
-    Test-Case 'no candidates at all finds nothing' '<null>' (Select-OutlookHive -Candidates @())
-    Test-Case 'a null candidate list finds nothing, and does not throw' '<null>' (Select-OutlookHive -Candidates $null)
-    Test-Case '-OfficeVersion overrides the probe order' '15.0' (Select-OutlookHive -Candidates @($real16, $real15) -RequestedVersion '15.0').Version
-    Test-Case '-OfficeVersion does NOT override the shape rule' '<null>' (Select-OutlookHive -Candidates @($real16, $shell17) -RequestedVersion '17.0')
+    Test-Case '16.0 wins over a real 17.0 (probe order, not highest number)' '16.0' (Select-OutlookHive -Candidates @($real17, $real16)).Chosen.Version
+    Test-Case '17.0 wins when 16.0 is only the footprint' '17.0' (Select-OutlookHive -Candidates @($shell16, $real17)).Chosen.Version
+    Test-Case '15.0 is read when it is the only real one' '15.0' (Select-OutlookHive -Candidates @($shell16, $shell17, $real15)).Chosen.Version
+    Test-Case 'all-footprint finds nothing' '<null>' (Select-OutlookHive -Candidates @($shell16, $shell17)).Chosen
+    Test-Case 'no candidates at all finds nothing' '<null>' (Select-OutlookHive -Candidates @()).Chosen
+    Test-Case 'a null candidate list finds nothing, and does not throw' '<null>' (Select-OutlookHive -Candidates $null).Chosen
+    Test-Case '-OfficeVersion overrides the probe order' '15.0' (Select-OutlookHive -Candidates @($real16, $real15) -RequestedVersion '15.0').Chosen.Version
+    Test-Case '-OfficeVersion does NOT override the shape rule' '<null>' (Select-OutlookHive -Candidates @($real16, $shell17) -RequestedVersion '17.0').Chosen
 
     Write-Host ''
     Write-Host '== both preconditions met =='
@@ -778,13 +746,6 @@ function Invoke-Corpus {
     return $code
 }
 
-function Write-Preflight {
-    param([string] $Text)
-
-    Write-Host $Text
-    Add-Content -LiteralPath $LogPath -Value $Text -ErrorAction SilentlyContinue
-}
-
 <#
     Gathers what Test-CorpusPrecondition judges. READ-ONLY, and it makes no COM call: a preflight
     that could itself start Outlook, or itself hang, would be the very fault it checks for.
@@ -813,7 +774,7 @@ function Get-CorpusPreflightFact {
         }
     }
 
-    $hive = Select-OutlookHive -Candidates $candidates -RequestedVersion $RequestedOfficeVersion
+    $hive = (Select-OutlookHive -Candidates $candidates -RequestedVersion $RequestedOfficeVersion).Chosen
 
     $hivePath = ''
     $defaultProfile = ''
@@ -954,35 +915,35 @@ if ($SkipPreflight) {
     # Preconditions 1 and 2 predict whether the build SUCCEEDS, and -SkipPreflight exists for a
     # machine they read wrongly. Precondition 3 protects the corpus, and nothing downstream
     # re-checks it - so it is not skipped. See Test-CorpusImportPrfGuard.
-    Write-Preflight ''
-    Write-Preflight '=== preflight SKIPPED (-SkipPreflight) for the default profile and warmth. The tool''s own'
-    Write-Preflight '    store guard still applies, and the ImportPRF check below is NOT skipped.'
-    Write-Preflight "  ImportPRF       : $importText"
+    Write-LogLine ''
+    Write-LogLine '=== preflight SKIPPED (-SkipPreflight) for the default profile and warmth. The tool''s own'
+    Write-LogLine '    store guard still applies, and the ImportPRF check below is NOT skipped.'
+    Write-LogLine "  ImportPRF       : $importText"
     $guard = Test-CorpusImportPrfGuard -Facts $facts
     if ($null -ne $guard) {
         $refusal = Format-CorpusPreflightRefusal -Problems @($guard)
         Add-Content -LiteralPath $LogPath -Value $refusal -ErrorAction SilentlyContinue
         throw $refusal
     }
-    Write-Preflight '  OK - nothing is waiting to rebuild the profile.'
+    Write-LogLine '  OK - nothing is waiting to rebuild the profile.'
 }
 else {
-    Write-Preflight ''
-    Write-Preflight '=== preflight: default profile, a warm Outlook, and nothing waiting to rebuild the profile'
+    Write-LogLine ''
+    Write-LogLine '=== preflight: default profile, a warm Outlook, and nothing waiting to rebuild the profile'
 
     $uptimeText = '(unreadable)'
     if ($null -ne $facts.OutlookUptimeSeconds) { $uptimeText = "$([int]$facts.OutlookUptimeSeconds)s" }
     $accountsText = '(unreadable)'
     if ($null -ne $facts.AccountEntryCount) { $accountsText = "$($facts.AccountEntryCount)" }
 
-    Write-Preflight "  hive            : $($facts.HivePath)"
-    Write-Preflight "  DefaultProfile  : $($facts.DefaultProfile)"
-    Write-Preflight "  mail accounts   : $accountsText   (registry, data-file and address-book entries excluded; the tool's COM count is the authoritative one)"
-    Write-Preflight "  OUTLOOK.EXE     : $($facts.OutlookProcessCount) running, up $uptimeText, wanted $($facts.WarmupSeconds)s"
-    Write-Preflight "  ImportPRF       : $importText"
+    Write-LogLine "  hive            : $($facts.HivePath)"
+    Write-LogLine "  DefaultProfile  : $($facts.DefaultProfile)"
+    Write-LogLine "  mail accounts   : $accountsText   (registry, data-file and address-book entries excluded; the tool's COM count is the authoritative one)"
+    Write-LogLine "  OUTLOOK.EXE     : $($facts.OutlookProcessCount) running, up $uptimeText, wanted $($facts.WarmupSeconds)s"
+    Write-LogLine "  ImportPRF       : $importText"
 
     $verdict = Test-CorpusPrecondition -Facts $facts
-    foreach ($note in $verdict.Notes) { Write-Preflight "  note: $note" }
+    foreach ($note in $verdict.Notes) { Write-LogLine "  note: $note" }
 
     if (-not $verdict.Ok) {
         $refusal = Format-CorpusPreflightRefusal -Problems $verdict.Problems
@@ -990,7 +951,7 @@ else {
         throw $refusal
     }
 
-    Write-Preflight '  OK - the default profile has no accounts, Outlook is up and warm, and ImportPRF is not set.'
+    Write-LogLine '  OK - the default profile has no accounts, Outlook is up and warm, and ImportPRF is not set.'
 }
 
 if (-not $Execute) {
