@@ -1,6 +1,4 @@
 using System.Diagnostics;
-using System.Runtime.InteropServices;
-using System.Text;
 using OutlookAI.Core.Com;
 using OutlookAI.Core.Services;
 using Xunit;
@@ -55,25 +53,14 @@ namespace OutlookAI.McpServer.Tests.T2;
 [Trait("Category", "Live")]
 public sealed class LiveDisconnectRecoveryTests
 {
-    /// <summary>RPC_S_SERVER_UNAVAILABLE as an HRESULT: the COM server is gone or going.</summary>
-    private const int RpcServerUnavailable = unchecked((int)0x800706BA);
-
-    /// <summary>RPC_E_DISCONNECTED: the object invoked has disconnected from its clients.</summary>
-    private const int RpcDisconnected = unchecked((int)0x80010108);
-
     /// <summary>What a user-protection stop before the scenario leaves unexercised.</summary>
     internal const string Scenario = "the disconnect-recovery scenario";
 
-    /// <summary>What a stop for recent input means on a machine nobody uses during a run.</summary>
-    internal const string RecentInputOnAnUnattendedMachine =
-        "Nothing in the suite synthesizes input, so on a test guest recent keyboard or mouse input means a person, or "
-        + "a console session left connected, was using the guest during the run - which the live tier assumes never "
-        + "happens. Disconnect from the guest's console and re-run.";
+    /// <summary>What a stop for recent input means on a machine nobody uses during a run - the shared stop's meaning.</summary>
+    internal const string RecentInputOnAnUnattendedMachine = LiveOutlookRestart.RecentInputOnAnUnattendedMachine;
 
-    /// <summary>What a stop for an open Inspector means on a machine nobody uses during a run.</summary>
-    internal const string OpenInspectorOnAnUnattendedMachine =
-        "Nobody composes mail on a test guest, so an open Inspector is one an earlier test or step left open - and "
-        + "making Outlook exit would throw away whatever it holds. Find what opened it before re-running.";
+    /// <summary>What a stop for an open Inspector means on a machine nobody uses during a run - the shared stop's meaning.</summary>
+    internal const string OpenInspectorOnAnUnattendedMachine = LiveOutlookRestart.OpenInspectorOnAnUnattendedMachine;
 
     /// <summary>What a stop for a window appearing during the re-autostart means on such a machine.</summary>
     internal const string WindowDuringRestartOnAnUnattendedMachine =
@@ -221,12 +208,12 @@ public sealed class LiveDisconnectRecoveryTests
                         "release the lifetime pin on the pre-existing instance",
                         () => independentGateway.Run(s => ((OutlookComSession)s).TryCloseInvisibleExplorers()));
                 }
-                catch (Exception ex) when (IsSessionGone(ex))
+                catch (Exception ex) when (LiveOutlookRestart.IsSessionGone(ex))
                 {
                     // The session died between the probe and the call: Outlook was quitting already. On the
                     // Exchange VM (2026-11-18) the session's own exit watcher got there first, and the call
                     // met a disposed session instead of a COM disconnect.
-                    _output.WriteLine($"the session died under the pin release ({DescribeGone(ex)}) - Outlook was already quitting, so there is no pin left to release");
+                    _output.WriteLine($"the session died under the pin release ({LiveOutlookRestart.DescribeGone(ex)}) - Outlook was already quitting, so there is no pin left to release");
                 }
             }
             else
@@ -506,22 +493,6 @@ public sealed class LiveDisconnectRecoveryTests
             which + ": the settle wait ended before Outlook was " + OutlookStartPolicy.MinimumAgeMilliseconds + " ms old");
     }
 
-    /// <summary>
-    /// A call whose session's Outlook quit under it, in every shape <see cref="ComGateway"/> counts as that
-    /// disconnect: a COM disconnect, or a session the exit watcher already disposed or separated.
-    /// </summary>
-    private static bool IsSessionGone(Exception ex)
-    {
-        return ex is ObjectDisposedException
-            || ex is InvalidComObjectException
-            || (ex is COMException com && (com.HResult == RpcServerUnavailable || com.HResult == RpcDisconnected));
-    }
-
-    private static string DescribeGone(Exception ex)
-    {
-        return ex is COMException com ? $"0x{com.HResult:X8}" : ex.GetType().Name;
-    }
-
     /// <summary>One health reading, short enough to sit inside a failure message.</summary>
     private static string Describe(HealthOutcome health)
     {
@@ -584,48 +555,13 @@ public sealed class LiveDisconnectRecoveryTests
     }
 
     /// <summary>
-    /// What this test says when the S7 Outbox count is not a clean zero - or null when it is, and
-    /// the parked windows may be closed.
-    /// <para>
-    /// <b>A FAILURE on every machine profile - not a skip, and not a Portable announcement (Q76,
-    /// 2026-09-27).</b> It used to print <c>SKIP:</c> and return GREEN, having proved nothing about
-    /// disconnect recovery. The usual answer to "this test could not prove anything here" is the
-    /// Production/Portable split of <see cref="LivePopulationCoverage"/>, and it was deliberately NOT
-    /// used, because its premise does not hold for an Outbox. Its Portable half announces instead of
-    /// failing because a test machine legitimately LACKS some population and names it under
-    /// <c>Requires</c>; an empty Outbox is not something any machine lacks - every machine can have
-    /// one, and the suite demands it. On a test guest nothing but a test ever queues mail, and this
-    /// collection is forced last, after every other collection has swept - so a count above zero
-    /// there is residue the zero-artifact rule forbids (a send the local sink never delivered, an
-    /// earlier run's leftovers, a corpus build's strays), and <see cref="LiveMailSink.EnsureOutboxDrained"/>
-    /// already refuses a whole run for it. Announcing it would turn a stuck Outbox into a permanent
-    /// <c>PROVED NOTHING:</c>, and this test would never run on that guest again. On a Production
-    /// profile the split would fail it anyway.
-    /// </para>
-    /// <para>
-    /// An unreadable count (-1) fails the same way: unknown is unsafe under S7, the rule
-    /// <see cref="LiveMailSink.EnsureOutboxDrained"/> keeps too. A count, never a subject (S4) - on a
-    /// working profile the Outbox is the user's own unsent mail.
-    /// </para>
+    /// What this test says when the S7 Outbox count is not a clean zero - or null when it is, and the parked windows
+    /// may be closed: <see cref="LiveOutlookRestart.OutboxRefusal"/>, the shared stop's refusal, which says why it
+    /// FAILS on every machine profile (Q76) rather than skipping.
     /// </summary>
     internal static string? OutboxRefusal(int outboxItems)
     {
-        if (outboxItems == 0)
-        {
-            return null;
-        }
-
-        string found = outboxItems < 0
-            ? "The Outbox item count could not be read, so an empty Outbox cannot be told from a full one"
-            : "The profile's Outbox holds " + outboxItems.ToString(System.Globalization.CultureInfo.InvariantCulture)
-                + " item(s)";
-        return found + ". This test closes Outlook, and the quit-when-safe rule (S7) forbids that while anything may "
-            + "be queued, so it closed nothing and proved nothing about disconnect recovery. That fails on every machine "
-            + "profile instead of skipping (Q76). On a test guest nothing but a test ever queues mail, and this collection "
-            + "runs after every other one has swept, so this is residue the zero-artifact rule forbids - a send the local "
-            + "sink never delivered, an earlier run's leftovers or a corpus build's strays; "
-            + "LiveMailSink.EnsureOutboxDrained refuses a whole run for the same state. On a working profile it may be "
-            + "your own unsent mail: send or clear it, then re-run.";
+        return LiveOutlookRestart.OutboxRefusal(outboxItems, "disconnect recovery");
     }
 
     /// <summary>
@@ -790,107 +726,6 @@ public sealed class LiveDisconnectRecoveryTests
                 + $"{ScenarioBudget.TotalSeconds:F0} s scenario budget. Observed: {_observe()}.";
             _output.WriteLine(message);
             return message;
-        }
-    }
-
-    /// <summary>Visible top-level Outlook windows (class rctrl_renwnd32) + WM_CLOSE poster.</summary>
-    internal static class WindowProbe
-    {
-        internal static IReadOnlyList<IntPtr> VisibleOutlookWindows()
-        {
-            HashSet<int> outlookPids = new();
-            foreach (Process p in Process.GetProcessesByName("OUTLOOK"))
-            {
-                using (p)
-                {
-                    outlookPids.Add(p.Id);
-                }
-            }
-
-            List<IntPtr> result = new();
-            if (outlookPids.Count == 0)
-            {
-                return result;
-            }
-
-            NativeMethods.EnumWindows((hwnd, _) =>
-            {
-                if (!NativeMethods.IsWindowVisible(hwnd))
-                {
-                    return true;
-                }
-
-                NativeMethods.GetWindowThreadProcessId(hwnd, out uint pid);
-                if (!outlookPids.Contains((int)pid))
-                {
-                    return true;
-                }
-
-                StringBuilder className = new(64);
-                _ = NativeMethods.GetClassName(hwnd, className, className.Capacity);
-                if (string.Equals(className.ToString(), "rctrl_renwnd32", StringComparison.Ordinal))
-                {
-                    result.Add(hwnd);
-                }
-
-                return true;
-            }, IntPtr.Zero);
-            return result;
-        }
-
-        internal static void PostClose(IntPtr hwnd)
-        {
-            const uint WmClose = 0x0010;
-            _ = NativeMethods.PostMessage(hwnd, WmClose, IntPtr.Zero, IntPtr.Zero);
-        }
-
-        /// <summary>Seconds since the interactive user's last keyboard/mouse input.</summary>
-        internal static double UserIdleSeconds()
-        {
-            NativeMethods.LASTINPUTINFO info = new()
-            {
-                cbSize = (uint)System.Runtime.InteropServices.Marshal.SizeOf<NativeMethods.LASTINPUTINFO>(),
-            };
-            if (!NativeMethods.GetLastInputInfo(ref info))
-            {
-                return 0; // Unknown - treat as "user just active" (the conservative direction).
-            }
-
-            return (Environment.TickCount - (int)info.dwTime) / 1000.0;
-        }
-
-        private static class NativeMethods
-        {
-            internal delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
-
-            [StructLayout(LayoutKind.Sequential)]
-            internal struct LASTINPUTINFO
-            {
-                internal uint cbSize;
-                internal uint dwTime;
-            }
-
-            [DllImport("user32.dll")]
-            [return: MarshalAs(UnmanagedType.Bool)]
-            internal static extern bool GetLastInputInfo(ref LASTINPUTINFO plii);
-
-            [DllImport("user32.dll")]
-            [return: MarshalAs(UnmanagedType.Bool)]
-            internal static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
-
-            [DllImport("user32.dll")]
-            [return: MarshalAs(UnmanagedType.Bool)]
-            internal static extern bool IsWindowVisible(IntPtr hWnd);
-
-            [DllImport("user32.dll")]
-            internal static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
-
-            [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-            internal static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
-
-            [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-            [return: MarshalAs(UnmanagedType.Bool)]
-            internal static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
         }
     }
 }

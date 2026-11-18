@@ -3,7 +3,6 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text;
-using Microsoft.Win32;
 using OutlookAI.Core.Com;
 using OutlookAI.Core.Services;
 
@@ -24,22 +23,19 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// product's own two-step send.
 /// </para>
 /// <para>
-/// <b>Outlook's lifecycle (rule 7).</b> OUTLOOK.EXE is never killed. It is ended by closing its windows
-/// (WM_CLOSE, what a user's close sends), by closing its Explorers once no window is visible, or by
-/// <c>Application.Quit()</c> from a client that holds nothing else - each only after the S7 counts say no
-/// Inspector is open and every Outbox is empty - and a stop that does not end it fails the cell instead
-/// of escalating. No inspector is ever opened on an object <c>Items.Add</c>, <c>Reply</c> or
+/// <b>Outlook's lifecycle (rule 7).</b> OUTLOOK.EXE is never killed. It is ended and started through
+/// <see cref="LiveOutlookRestart"/>, the one stop the live tests share: closing its windows (WM_CLOSE, what a
+/// user's close sends), closing its Explorers once no window is visible, or <c>Application.Quit()</c> from a
+/// client that holds nothing else - each only after the S7 counts say no Inspector is open and every Outbox
+/// is empty - and a stop that does not end it fails the cell instead of escalating. No inspector is ever opened on an object <c>Items.Add</c>, <c>Reply</c> or
 /// <c>Forward</c> returned: that close crashed Outlook about once in 40 (runbook 4.6), so every draft is
 /// saved, released and re-opened by EntryID first.
 /// </para>
 /// </summary>
 public static class LiveComposeProbe
 {
-    /// <summary>How long a stop may take before the cell fails rather than escalating.</summary>
-    internal static readonly TimeSpan StopBudget = TimeSpan.FromSeconds(120);
-
-    /// <summary>The pause after OUTLOOK.EXE has gone before the next start, so no start lands on an exiting instance.</summary>
-    internal const int SettleAfterExitMs = 5000;
+    /// <summary>What the measurement's stops name as what did not run (<see cref="LiveOutlookRestart.Stop"/>).</summary>
+    internal const string Scenario = "the Q149 measurement, which ends and restarts Outlook";
 
     /// <summary>How long one probe STA step may block before the trial fails naming it.</summary>
     internal static readonly TimeSpan StepBudget = TimeSpan.FromMinutes(3);
@@ -108,215 +104,19 @@ public static class LiveComposeProbe
     /// <summary>Runs <paramref name="work"/> on its own thread and gives up after <paramref name="budget"/>, naming the step.</summary>
     internal static T Bounded<T>(string step, TimeSpan budget, Func<T> work)
     {
-        Task<T> task = Task.Run(work);
-        if (!task.Wait(budget))
-        {
-            throw new TimeoutException("Q149: '" + step + "' did not finish within " + budget.TotalSeconds.ToString("0", CultureInfo.InvariantCulture)
-                + " s - Outlook is probably wedged; nothing was killed.");
-        }
-
-        return task.GetAwaiter().GetResult();
-    }
-
-    /// <summary>The OUTLOOK.EXE processes now running.</summary>
-    internal static int OutlookProcessCount()
-    {
-        Process[] processes = Process.GetProcessesByName("OUTLOOK");
-        foreach (Process p in processes)
-        {
-            p.Dispose();
-        }
-
-        return processes.Length;
-    }
-
-    /// <summary>Waits until no OUTLOOK.EXE runs; true when that happened inside <paramref name="timeout"/>.</summary>
-    internal static bool WaitForNoOutlook(TimeSpan timeout)
-    {
-        LiveWaitBudget wait = LiveWaitBudget.Of(timeout);
-        while (wait.HasTimeLeft)
-        {
-            if (OutlookProcessCount() == 0)
-            {
-                return true;
-            }
-
-            Thread.Sleep(200);
-        }
-
-        return OutlookProcessCount() == 0;
+        return LiveOutlookRestart.Bounded("Q149: '" + step + "'", budget, work);
     }
 
     /// <summary>
-    /// Ends Outlook the S7 way, or fails naming why it could not. A no-op when none runs. Each rung is tried
-    /// only when the one before did not end it, and every rung is one a user's own Outlook would accept:
-    /// WM_CLOSE to its visible windows; closing its Explorers once none is visible (a hidden Explorer - a
-    /// pin - is what keeps an Outlook up after its last window closes); and <c>Application.Quit()</c> from a
-    /// client holding nothing else.
+    /// Ends Outlook for the measurement through <see cref="LiveOutlookRestart.Stop"/>, the one graceful stop the live
+    /// tests share (rule 7); the measurement does not run on past a stop that stood aside for a person at the keyboard.
     /// </summary>
     internal static void StopOutlook(LiveTestSettings settings, Action<string> log)
     {
-        // An Outlook already on its way out is given a moment to finish, so nothing below attaches to - or, in a
-        // race, starts a new Outlook on top of - an instance that is ending by itself.
-        if (WaitForNoOutlook(TimeSpan.FromSeconds(5)))
+        if (!LiveOutlookRestart.Stop(settings, Scenario, log))
         {
-            return;
+            throw new InvalidOperationException("Q149: stood aside for a user at the keyboard - the measurement did not run.");
         }
-
-        // The S7 counts first, whatever is on screen: every rung below ends Outlook.
-        (int inspectors, int outbox) = ReadSafetyCounts();
-        log("stop: S7 counts read - " + inspectors.ToString(CultureInfo.InvariantCulture) + " Inspector(s), " + outbox.ToString(CultureInfo.InvariantCulture) + " item(s) in the Outboxes");
-        if (inspectors != 0)
-        {
-            throw new InvalidOperationException(
-                "Q149: Outlook has " + inspectors.ToString(CultureInfo.InvariantCulture) + " Inspector(s) open, so it is not ended here "
-                + "(S7). Nobody composes on a test guest - an earlier step left one open; find it before re-running.");
-        }
-
-        string? outboxRefusal = LiveDisconnectRecoveryTests.OutboxRefusal(outbox);
-        if (outboxRefusal != null)
-        {
-            throw new InvalidOperationException(outboxRefusal);
-        }
-
-        IReadOnlyList<IntPtr> visible = LiveDisconnectRecoveryTests.WindowProbe.VisibleOutlookWindows();
-        if (visible.Count > 0)
-        {
-            double idle = LiveDisconnectRecoveryTests.WindowProbe.UserIdleSeconds();
-            if (idle < 180)
-            {
-                LivePopulationCoverage.StandAsideForAUser(
-                    settings,
-                    "Outlook windows are open and the user was active " + idle.ToString("0", CultureInfo.InvariantCulture) + " s ago",
-                    "the Q149 measurement, which ends and restarts Outlook",
-                    LiveDisconnectRecoveryTests.RecentInputOnAnUnattendedMachine,
-                    log);
-                throw new InvalidOperationException("Q149: stood aside for a user at the keyboard - the measurement did not run.");
-            }
-
-            log("stop: WM_CLOSE to " + visible.Count.ToString(CultureInfo.InvariantCulture) + " visible window(s)");
-            foreach (IntPtr window in visible)
-            {
-                LiveDisconnectRecoveryTests.WindowProbe.PostClose(window);
-            }
-
-            if (WaitForNoOutlook(TimeSpan.FromSeconds(30)))
-            {
-                log("stop: OUTLOOK.EXE ended after WM_CLOSE to its " + visible.Count.ToString(CultureInfo.InvariantCulture) + " visible window(s)");
-                Thread.Sleep(SettleAfterExitMs);
-                return;
-            }
-        }
-
-        if (LiveDisconnectRecoveryTests.WindowProbe.VisibleOutlookWindows().Count == 0)
-        {
-            log("stop: closing hidden Explorers");
-            int closed = CloseHiddenExplorers();
-            if (closed > 0 && WaitForNoOutlook(TimeSpan.FromSeconds(30)))
-            {
-                log("stop: OUTLOOK.EXE ended after its " + closed.ToString(CultureInfo.InvariantCulture) + " hidden Explorer(s) were closed");
-                Thread.Sleep(SettleAfterExitMs);
-                return;
-            }
-        }
-
-        log("stop: Application.Quit() from a client holding nothing else");
-        QuitFromAnEmptyClient();
-        if (!WaitForNoOutlook(StopBudget))
-        {
-            throw new InvalidOperationException(
-                "Q149: Outlook did not end after WM_CLOSE, closing its Explorers and Application.Quit() - it was NOT killed, and the "
-                + "measurement cannot stage a cold start on top of it.");
-        }
-
-        log("stop: OUTLOOK.EXE ended after Application.Quit()");
-        Thread.Sleep(SettleAfterExitMs);
-    }
-
-    /// <summary>The two S7 counts through a short-lived session that makes no pin: open Inspectors, items in every Outbox.</summary>
-    internal static (int Inspectors, int Outbox) ReadSafetyCounts()
-    {
-        return Bounded("S7 counts", StepBudget, () =>
-        {
-            using OutlookComSession session = OutlookComSession.Connect(allowStartingOutlook: false, onOutlookGone: null, lifetimePin: false);
-            return (session.GetOpenInspectors().Count, session.CountOutboxItems());
-        });
-    }
-
-    private static int CloseHiddenExplorers()
-    {
-        return Bounded("close hidden Explorers", StepBudget, () =>
-        {
-            using Q149OutlookClient client = Q149OutlookClient.Connect(new Stopwatch(), allowStart: false);
-            return client.Run((app, _) =>
-            {
-                int closed = 0;
-                dynamic explorers = app.Explorers;
-                try
-                {
-                    for (int i = (int)explorers.Count; i >= 1; i--)
-                    {
-                        dynamic explorer = explorers.Item(i);
-                        try
-                        {
-                            explorer.Close();
-                            closed++;
-                        }
-                        catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
-                        {
-                        }
-                        finally
-                        {
-                            Q149Com.Release(explorer);
-                        }
-                    }
-                }
-                finally
-                {
-                    Q149Com.Release(explorers);
-                }
-
-                return closed;
-            });
-        });
-    }
-
-    private static void QuitFromAnEmptyClient()
-    {
-        // Rule 7: the client calling Quit holds nothing but the Application object, and releases it at once.
-        Bounded<object?>("Application.Quit", StepBudget, () =>
-        {
-            Thread sta = new Thread(() =>
-            {
-                object? app = null;
-                try
-                {
-                    Type type = Type.GetTypeFromProgID("Outlook.Application")!;
-                    if (OutlookProcessCount() == 0)
-                    {
-                        return;
-                    }
-
-                    app = Activator.CreateInstance(type);
-                    ((dynamic)app!).Quit();
-                }
-                catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
-                {
-                }
-                finally
-                {
-                    Q149Com.Release(app);
-                }
-            })
-            {
-                IsBackground = true,
-                Name = "Q149.Quit",
-            };
-            sta.SetApartmentState(ApartmentState.STA);
-            sta.Start();
-            sta.Join();
-            return null;
-        });
     }
 
     /// <summary>
@@ -335,72 +135,10 @@ public static class LiveComposeProbe
     /// </summary>
     internal static void EnsureWindowedOutlook(LiveTestSettings settings, Action<string> log, Q180ColdStartWatch? coldStart)
     {
-        if (OutlookProcessCount() > 0 && LiveDisconnectRecoveryTests.WindowProbe.VisibleOutlookWindows().Count > 0)
+        if (!LiveOutlookRestart.EnsureWindowed(settings, Scenario, log, windowBudget: null, coldStart))
         {
-            coldStart?.Milestone("alreadyWindowed");
-            return;
+            throw new InvalidOperationException("Q149: stood aside for a user at the keyboard - the measurement did not run.");
         }
-
-        StopOutlook(settings, log);
-        string exe = OutlookExePath();
-        ProcessStartInfo start = new(exe) { UseShellExecute = false };
-        string? profile = DefaultProfileName();
-        if (!string.IsNullOrWhiteSpace(profile))
-        {
-            // As the guest runner starts it (Start-OutlookUnelevated.ps1): the profile named, so no picker can appear.
-            start.ArgumentList.Add("/profile");
-            start.ArgumentList.Add(profile!);
-        }
-
-        coldStart?.Milestone("startRequested");
-        using (Process? started = Process.Start(start))
-        {
-            log("start: OUTLOOK.EXE started with its window (pid " + (started?.Id.ToString(CultureInfo.InvariantCulture) ?? "?") + ")");
-        }
-
-        LiveWaitBudget wait = LiveWaitBudget.Of(TimeSpan.FromMinutes(3));
-        while (wait.HasTimeLeft && LiveDisconnectRecoveryTests.WindowProbe.VisibleOutlookWindows().Count == 0)
-        {
-            Thread.Sleep(coldStart == null ? 500 : 100);
-        }
-
-        if (LiveDisconnectRecoveryTests.WindowProbe.VisibleOutlookWindows().Count == 0)
-        {
-            coldStart?.Hang("no window within 3 minutes");
-            throw new InvalidOperationException("Q149: OUTLOOK.EXE started but showed no window within 3 minutes.");
-        }
-
-        coldStart?.Milestone("windowShown");
-
-        // The window is up before the stores are; one store read through a short-lived client proves the object model answers.
-        _ = ReadSafetyCounts();
-        coldStart?.Ready();
-        Thread.Sleep(3000);
-    }
-
-    /// <summary>The profile Outlook opens by default (DefaultProfile under HKCU Software\Microsoft\Office\16.0\Outlook), or null.</summary>
-    internal static string? DefaultProfileName()
-    {
-        using RegistryKey? key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Office\16.0\Outlook");
-        return key?.GetValue("DefaultProfile") as string;
-    }
-
-    /// <summary>OUTLOOK.EXE's path from App Paths, else Office's default location.</summary>
-    internal static string OutlookExePath()
-    {
-        foreach (RegistryKey root in new[] { Registry.CurrentUser, Registry.LocalMachine })
-        {
-            using RegistryKey? key = root.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\OUTLOOK.EXE");
-            if (key?.GetValue(null) is string path && File.Exists(path))
-            {
-                return path;
-            }
-        }
-
-        const string Default = @"C:\Program Files\Microsoft Office\root\Office16\OUTLOOK.EXE";
-        return File.Exists(Default)
-            ? Default
-            : throw new InvalidOperationException("Q149: OUTLOOK.EXE was not found under App Paths or at its default location.");
     }
 
     /// <summary>Top-level windows of OUTLOOK.EXE with class OpusApp - Word's frame, inside Outlook when Word is its editor.</summary>
@@ -1337,7 +1075,7 @@ internal sealed class Q149OutlookClient : IDisposable
     /// </summary>
     public static Q149OutlookClient Connect(Stopwatch clock, bool allowStart)
     {
-        if (!allowStart && LiveComposeProbe.OutlookProcessCount() == 0)
+        if (!allowStart && LiveOutlookRestart.OutlookProcessCount() == 0)
         {
             throw new InvalidOperationException("Q149: Outlook is not running and this step may not start it.");
         }
@@ -1845,7 +1583,7 @@ internal static class Q149Native
         {
             if (w.Visible && IsDialogClass(w.ClassName))
             {
-                LiveDisconnectRecoveryTests.WindowProbe.PostClose(w.Handle);
+                WindowProbe.PostClose(w.Handle);
                 asked++;
             }
         }

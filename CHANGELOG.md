@@ -1000,7 +1000,9 @@ its mailbox tests on, and change nothing you install.
   for the whole machine, and uninstalling removes its copy. If setup could not put the runtime in
   place, OutlookAI Settings says so and what to do. On a test machine whose only .NET is 10, a fresh
   install and a silent update from v3.1.0.325 each left a mail server that answered on its own
-  runtime, with no administrator rights and nothing installed for the whole machine.
+  runtime, with no administrator rights and nothing installed for the whole machine. Uninstalled
+  there as Settings runs it, both of the uninstaller's phases ran, its own runtime went, and the
+  machine-wide .NET stayed as it was.
 
 - 🔧 **OutlookAI opens no mailbox in a newly started Outlook until it has settled (Q175).**
   Settled means at least 20 seconds old, the OutlookAI add-in finished starting inside it, and its
@@ -1150,6 +1152,29 @@ its mailbox tests on, and change nothing you install.
   OutlookAI does not edit or delete their copies or change the account's defaults, because Outlook
   would overwrite the change or copy it into the mailbox, and says to use Outlook instead. Roaming on
   Microsoft 365 Apps itself is not tested: the test machines run perpetual Office only.
+
+- ♻️ **The live tests end and restart Outlook through one shared helper.**
+  The compose measurement's stop in `LiveComposeProbe`, whose `Application.Quit()` from a client
+  holding nothing else was private there, and the quit protocol `LiveDisconnectRecoveryTests`
+  carries are folded into `T2/LiveOutlookRestart.cs`, so AGENTS.md's rule 7 for Outlook is kept in
+  one place. The Inspector and Outbox counts come first, and an Outlook that ends by itself while
+  they are read ends the stop: in the Q149 smoke on 2026-11-18 a cell's stop met the Outlook the
+  cell before had just let go of, and the product's start guard reported it as an Outlook that
+  exited while it started. A person's windows are closed only after three minutes without input. The
+  rungs go in order: WM_CLOSE to Outlook's windows, its hidden Explorers closed, then
+  `Application.Quit()`, and Outlook is never killed. One rung is new, for a window-less Outlook that
+  a client still holds, which `Application.Quit()` would only park: one Explorer shown through the
+  product's goto surface and closed the way a user closes it, as the disconnect test ends Outlook.
+  It counts only this Windows session's Outlook, by the product's own rule. A start opens Outlook
+  with its window through the shell, as the guest runner does, so the Outlook inherits no handle of
+  the test host: one the test host started itself held a live run's output pipe open for 50 minutes
+  after its suite had finished (Exchange VM, 2026-11-18). The measurement stops and starts Outlook
+  through it. The disconnect test keeps its own scenario, which is what it tests, and takes from it
+  its window probe, its Outbox refusal, its user-protection meanings and its one test for a session
+  that died under a call, the `ObjectDisposedException` it met on the Exchange test machine among
+  them (runbook section 4.4a, run 8). `T1/LiveOutlookRestartTests` pins the order of the rungs, that
+  test for a dead session, that the stop's catches test a step's own failure and not the wrapper a
+  bounded step passes it on in, and that nothing in it kills Outlook.
 
 - ✅ **The testbed can build an installer that carries the mail server, to test the installed product.**
   `Testbed/host/Publish-AddInPayload.ps1 -WithServer` publishes the mail server and
