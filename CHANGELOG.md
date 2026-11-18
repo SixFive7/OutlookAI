@@ -858,15 +858,18 @@ its mailbox tests on, and change nothing you install.
   Microsoft 365 Apps itself is not tested: the test machines run perpetual Office only.
 
 - 📝 **The README's section on Outlook's lifetime and tray icon describes the lifetime pin.**
-  It was written before pins existed. It now says a session that finds Outlook with no window holds a
-  hidden one while it is connected, that the session which started Outlook closes it on the way out
-  and Outlook ends at once, and that a pin left behind keeps Outlook running past Application.Quit()
-  and past closing a window opened over it, while File > Exit ends it. The 10-12 minute exit is now
-  given as what it was: one measurement, on Office LTSC 2021, before pins. What Exit Now does with a
-  pin present is said to be unmeasured, where the old text claimed it disconnects and exits at once.
+  It was written before pins existed. It now says that the first draft written in an Outlook with no
+  window adds one hidden window, which every agent session shares and connecting never adds; that the
+  last session to end closes it, whichever made it, and Outlook then ends at once; that your exit, by
+  File > Exit or by closing the last window you opened, makes the sessions close it; and that a
+  session whose process was killed leaves its hidden window to the others or to the next session,
+  with File > Exit ending Outlook meanwhile and `outlook_health` naming it. The 10-12 minute exit is
+  now given as what it was: one measurement, on Office LTSC 2021, before pins. What Exit Now does with
+  a pin present is said to be unmeasured, where the old text claimed it disconnects and exits at once.
   And where it said every draft is written in a compose window nobody sees, it now says what Q149
-  measured on Office LTSC 2024: with no Outlook window open, that window shows at the top left of the
-  screen for 130 to 650 ms and has the foreground while it is there.
+  measured on Office LTSC 2024 and what changed with it: with no Outlook window open, the first draft
+  after each start of Outlook shows its compose window at the top left of the screen for 130 to 650 ms
+  and gives it the foreground, and no later draft shows anything.
 
 - ♻️ **The test suite keeps one copy of its stand-ins for Outlook's connection, and of its paths (Q154).**
   Nineteen test files each declared a stand-in for Outlook's connection that runs an operation
