@@ -23,7 +23,7 @@ public static class LiveSignatureSettingsStep
     /// <summary>The variable the live runner sets inside the guest task for a run with the step.</summary>
     public const string VariableName = "OUTLOOKAI_LIVE_SIGNATURE_SETTINGS";
 
-    /// <summary>Q200: Group Policy forces the default for new mail and for replies and forwards.</summary>
+    /// <summary>Q200: Group Policy names the default for new mail and for replies and forwards.</summary>
     public const string GroupPolicy = "GroupPolicy";
 
     /// <summary>Q201: a default deployed in Outlook's general mail settings, <c>Common\MailSettings</c>.</summary>
