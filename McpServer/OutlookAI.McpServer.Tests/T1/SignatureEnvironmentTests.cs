@@ -103,6 +103,41 @@ public sealed class SignatureEnvironmentTests
     }
 
     [Fact]
+    public void LocksSignature_IsTheSignatureASettingNames_InAnyCase_PolicyOrDeployed()
+    {
+        // Q156 (d), measured 2026-11-18: Outlook's Signatures dialog lets no signature be deleted under either setting.
+        SignaturePolicy policy = new(false, null, "Corporate", SignaturePolicySource.GroupPolicy, "Corporate reply", SignaturePolicySource.CloudPolicy);
+        Assert.True(policy.LocksSignatureFor(false, "corporate"));
+        Assert.False(policy.LocksSignatureFor(true, "Corporate"));
+        Assert.True(policy.LocksSignature("Corporate reply"));
+        Assert.False(policy.LocksSignature("Personal"));
+
+        SignaturePolicy deployed = new(false, null, "Deployed", SignaturePolicySource.Preference, "Deployed reply", SignaturePolicySource.Preference);
+        Assert.True(deployed.LocksSignature("Deployed"));
+        Assert.True(deployed.LocksSignatureFor(true, "deployed REPLY"));
+        Assert.False(deployed.LocksSignature("Personal"));
+        Assert.False(SignaturePolicy.None.LocksSignature("Anything"));
+    }
+
+    [Fact]
+    public void EffectiveDefault_IsTheAccountsOwn_WhateverASettingNames_AndEverySettingLocksIt()
+    {
+        // Q200 (a), Q201, measured 2026-11-18 (runbook 4.14): Outlook put an account's own default in, and nothing where the
+        // account had none - never the policy's or the deployed one's.
+        SignaturePolicy policy = SignaturePolicy.Read(new FakeSignatureSettings()
+            .Policy(SignaturePolicySource.Preference, newMessage: "Deployed")
+            .Policy(SignaturePolicySource.GroupPolicy, reply: "Forced"), "16.0");
+
+        Assert.Equal("Own", policy.EffectiveDefault(false, "Own"));
+        Assert.Null(policy.EffectiveDefault(false, null));
+        Assert.Equal("Own reply", policy.EffectiveDefault(true, "Own reply"));
+        Assert.Null(policy.EffectiveDefault(true, null));
+        Assert.True(policy.TakesDefault(false), "a deployed default locks the account's own, as Outlook's dialog does (Q156 (d))");
+        Assert.True(policy.TakesDefault(true), "a policy does (Q156)");
+        Assert.False(SignaturePolicy.None.TakesDefault(false) || SignaturePolicy.None.TakesDefault(true), "no setting locks nothing");
+    }
+
+    [Fact]
     public void Policy_APreferenceDefault_IsADefaultForEveryAccount_ButNotForced()
     {
         SignaturePolicy policy = SignaturePolicy.Read(
@@ -150,8 +185,10 @@ public sealed class SignatureEnvironmentTests
     [Fact]
     public void Roaming_Ltsc2024_IsOff_UnlessOutlooksOwnCopiesShowIt_ForThoseExchangeAccountsOnly()
     {
-        // R1 on the Exchange test machine (2026-11-17): Office LTSC 2024 showed no sign of roaming. Not a
-        // proof, so the verdict stays open to Outlook's own evidence.
+        // R1 on the Exchange test machine (2026-11-17): Office LTSC 2024 showed no sign of roaming while the
+        // testbed's connected-experience policy values were set; with them removed it roamed a signature made
+        // in Outlook on the web, as a 'Name (address)' copy (stream E2's R3 run 2, 2026-11-18). So the verdict
+        // stays open to Outlook's own evidence, which told it both ways.
         SignatureRoaming roaming = SignatureRoaming.Read(new FakeSignatureSettings().Ltsc2024(), "16.0");
         Assert.Equal(SignatureRoamingState.Off, roaming.State);
         Assert.True(roaming.EvidenceDecides);

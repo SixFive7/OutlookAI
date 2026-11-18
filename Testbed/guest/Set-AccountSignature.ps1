@@ -101,10 +101,17 @@
     What the signature is called. May not begin with OutlookAI-McpTest-.
 
 .PARAMETER BodyText
-    Plain-text body. The HTML rendition is derived from it when -BodyHtml is omitted.
+    Plain-text body. A new signature's HTML and RTF renditions are derived from it when -BodyHtml and
+    -BodyRtf are omitted.
 
 .PARAMETER BodyHtml
-    HTML body. Optional; derived from -BodyText when omitted.
+    HTML body. Optional when the signature is new; derived from -BodyText when omitted.
+
+.PARAMETER BodyRtf
+    RTF body. Optional when the signature is new; derived from -BodyText when omitted. An update sends
+    every rendition the signature has (Q205 (d)), and one this script made has all three: so a run on a
+    signature that already exists takes -BodyHtml and -BodyRtf beside -BodyText, or the server refuses
+    it, naming the ones left out, and nothing is written.
 
 .PARAMETER Scope
     'new' | 'reply' | 'both'. Section 2.8b needs at least 'new'.
@@ -128,6 +135,7 @@ param(
     [string] $SignatureName = 'Identity',
     [string] $BodyText = 'OutlookAI testbed identity account.',
     [string] $BodyHtml,
+    [string] $BodyRtf,
     [ValidateSet('new', 'reply', 'both')] [string] $Scope = 'new',
     [string] $OutlookProfile = 'OutlookAI-Tier',
     [string] $ServerExe = 'C:\OutlookAI-Q5\server\OutlookAI.McpServer.exe',
@@ -138,6 +146,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\OutlookMapiInterop.ps1"
+. "$PSScriptRoot\McpStdioClient.ps1"
 
 if ($SignatureName -like 'OutlookAI-McpTest-*') {
     throw @"
@@ -177,60 +186,14 @@ then on the guest: Expand-Archive C:\OutlookAI-Q5\McpServer.zip -DestinationPath
 "@
 }
 
-# --- the stdio client. Same shape as Invoke-GuestMeasure.ps1, which is where it was proven. -----
-$psi = New-Object Diagnostics.ProcessStartInfo
-$psi.FileName = $ServerExe
-$psi.WorkingDirectory = Split-Path $ServerExe -Parent
-$psi.RedirectStandardInput = $true
-$psi.RedirectStandardOutput = $true
-$psi.RedirectStandardError = $true
-$psi.UseShellExecute = $false
-$psi.CreateNoWindow = $true
-$psi.StandardOutputEncoding = New-Object Text.UTF8Encoding($false)
-
-$proc = [Diagnostics.Process]::Start($psi)
-$stdin = New-Object IO.StreamWriter($proc.StandardInput.BaseStream, (New-Object Text.UTF8Encoding($false)))
-$stdin.AutoFlush = $true
-
-function Send-Rpc {
-    param([string] $Method, $Params, $Id, [switch] $Notification)
-    $msg = [ordered]@{ jsonrpc = '2.0'; method = $Method }
-    if (-not $Notification) { $msg['id'] = $Id }
-    if ($null -ne $Params) { $msg['params'] = $Params }
-    $stdin.WriteLine(($msg | ConvertTo-Json -Depth 20 -Compress))
-}
-
-function Read-Reply {
-    param($ForId)
-    $deadline = (Get-Date).AddSeconds($ReplyTimeoutSeconds)
-    while ((Get-Date) -lt $deadline) {
-        if ($proc.HasExited -and $proc.StandardOutput.EndOfStream) { throw "server exited $($proc.ExitCode)" }
-        $remaining = [int]([Math]::Max(1000, ($deadline - (Get-Date)).TotalMilliseconds))
-        $task = $proc.StandardOutput.ReadLineAsync()
-        if (-not $task.Wait($remaining)) { throw "read timed out for id $ForId" }
-        $line = $task.Result
-        if ($null -eq $line) { throw "stdout closed before id $ForId" }
-        if ($line.Trim() -eq '') { continue }
-        $o = $null
-        try { $o = $line | ConvertFrom-Json } catch { continue }
-        if (($o.PSObject.Properties.Name -contains 'id') -and ("$($o.id)" -eq "$ForId")) { return $o }
-    }
-    throw "no reply to id $ForId"
-}
-
-function Get-ResultJson {
-    param($Reply)
-    return $Reply.result.content[0].text | ConvertFrom-Json
-}
+# --- the stdio client: McpStdioClient.ps1, the one copy of the shape Invoke-GuestMeasure.ps1 proved (Q154). -----
+$session = $null
 
 try {
-    Send-Rpc -Method 'initialize' -Id 1 -Params @{ protocolVersion = '2025-06-18'; capabilities = @{}; clientInfo = @{ name = 'set-signature'; version = '1.0' } }
-    Read-Reply -ForId 1 | Out-Null
-    Send-Rpc -Method 'notifications/initialized' -Notification
+    $session = Start-McpStdioServer -ServerExe $ServerExe -ClientName 'set-signature' -TimeoutSeconds $ReplyTimeoutSeconds
 
     # --- 1. the account must exist BEFORE anything is written. --------------------------------
-    Send-Rpc -Method 'tools/call' -Id 10 -Params @{ name = 'list_accounts'; arguments = @{} }
-    $accounts = Get-ResultJson (Read-Reply -ForId 10)
+    $accounts = Invoke-McpTool -Session $session -Tool 'list_accounts' -Id 10
 
     # The delivery store is printed beside each account because section 2.8b needs the identity
     # account to deliver into its OWN PST, and section 2.8 calls a wrong delivery store "the
@@ -256,8 +219,7 @@ Accounts this profile does have: $($addresses -join ', ')
     }
 
     # --- 2. create or update, decided by asking rather than by guessing. ----------------------
-    Send-Rpc -Method 'tools/call' -Id 11 -Params @{ name = 'list_signatures'; arguments = @{} }
-    $signatures = Get-ResultJson (Read-Reply -ForId 11)
+    $signatures = Invoke-McpTool -Session $session -Tool 'list_signatures' -Id 11
 
     $existing = @()
     foreach ($s in $signatures.signatures) { $existing += $s.name }
@@ -275,17 +237,13 @@ Accounts this profile does have: $($addresses -join ', ')
         default_for = @{ profile = $OutlookProfile; account = $Account; scope = $Scope }
     }
     if ($BodyHtml) { $callArgs['body_html'] = $BodyHtml }
+    if ($BodyRtf) { $callArgs['body_rtf'] = $BodyRtf }
 
-    Send-Rpc -Method 'tools/call' -Id 12 -Params @{ name = 'manage_signature'; arguments = $callArgs }
-    $written = Read-Reply -ForId 12
-
-    if ($written.PSObject.Properties.Name -contains 'error') {
-        throw "manage_signature failed: $($written.error | ConvertTo-Json -Depth 10 -Compress)"
-    }
+    # A refusal or an error throws, carrying what the server said (McpStdioClient.ps1, Get-McpToolResult).
+    [void](Invoke-McpTool -Session $session -Tool 'manage_signature' -Arguments $callArgs -Id 12)
 
     # --- 3. verify by reading it back, not by trusting the call. ------------------------------
-    Send-Rpc -Method 'tools/call' -Id 13 -Params @{ name = 'list_signatures'; arguments = @{} }
-    $after = Get-ResultJson (Read-Reply -ForId 13)
+    $after = Invoke-McpTool -Session $session -Tool 'list_signatures' -Id 13
 
     $present = $false
     foreach ($s in $after.signatures) {
@@ -334,10 +292,7 @@ Accounts this profile does have: $($addresses -join ', ')
     Write-Host "Verified. Outlook picks the assignment up at its next start."
 }
 finally {
-    if ($null -ne $stdin) { $stdin.Dispose() }
-    if ($null -ne $proc -and -not $proc.HasExited) {
-        # The server exits when its stdin closes. Give it a moment rather than killing it: it owns
-        # a COM host that is attached to Outlook.
-        [void]$proc.WaitForExit(30000)
-    }
+    # The server exits when its stdin closes. It is given a moment rather than killed: it owns a COM
+    # host that is attached to Outlook.
+    [void](Stop-McpStdioServer -Session $session)
 }
