@@ -184,6 +184,22 @@
     program (never Outlook) and waits for its full dump. Recorded in the summary; a failed proof does
     not stop the run. Once per guest is enough - runbook section 4.6.
 
+.PARAMETER HuntFirstChance
+    THE HUNT for the crash of OUTLOOK.EXE in mso40uiwin32client.dll that left no dump twice on 2026-11-18
+    (runbook section 4.15; the coordinator's decision of that day). A debugger - guest\Watch-OutlookFirstChance.ps1,
+    THIS checkout's copy - is attached to every OUTLOOK.EXE of the suite's session and writes one full dump at the
+    first first-chance access violation in that module, and one at any second-chance exception; and the suite repeats
+    the tests the two crashes struck in, each leg in a dotnet test of its own, until -HuntRounds rounds, -HuntMinutes
+    minutes or a dump. Off by default: no other run ever has a debugger attached, and this one is refused on the
+    Exchange VM, with a filter, or with a signature step. The dumps land in dumps\<guest>\ beside the WER evidence,
+    the debugger's log in results\<guest>\first-chance.log.
+
+.PARAMETER HuntRounds
+    With -HuntFirstChance: at most this many rounds, every leg once each (default 20).
+
+.PARAMETER HuntMinutes
+    With -HuntFirstChance: no round starts after this many minutes of the suite (default 60).
+
 .PARAMETER SignatureSettings
     GroupPolicy (Q200 (a)), Preference (Q201), PreferenceNoOwnNew (Q201, the hub's own default for
     replies only) or NoSetting (the control - the hub's own defaults and no setting): makes that
@@ -230,6 +246,9 @@ param(
     [Parameter(ParameterSetName = 'Run')] [switch] $RestOnGreen,
     [Parameter(ParameterSetName = 'Run')] [switch] $SkipHubReset,
     [Parameter(ParameterSetName = 'Run')] [switch] $ProveCrashDumps,
+    [Parameter(ParameterSetName = 'Run')] [switch] $HuntFirstChance,
+    [Parameter(ParameterSetName = 'Run')] [int] $HuntRounds = 20,
+    [Parameter(ParameterSetName = 'Run')] [int] $HuntMinutes = 60,
     [Parameter(ParameterSetName = 'Run')] [switch] $WithAddIn,
     [Parameter(ParameterSetName = 'Run')] [string] $VstoRuntimePath,
     [Parameter(ParameterSetName = 'Run')] [ValidateSet('GroupPolicy', 'Preference', 'PreferenceNoOwnNew', 'NoSetting')] [string] $SignatureSettings,
@@ -281,6 +300,18 @@ $GuestSettingsPath = 'C:\OutlookAI-Q5\src\McpServer\OutlookAI.McpServer.Tests\li
 # tested, because the frozen checkpoints predate it - and fetched into dumps\ before the guest rests.
 $GuestDumpDir = 'C:\OutlookAI-Q5\crash-dumps'
 $CrashDumpScript = 'Set-OutlookCrashDumps.ps1'
+# THE HUNT (-HuntFirstChance; decided 2026-11-18, runbook section 4.15): the debugger, THIS checkout's copy, the module
+# whose first first-chance access violation it dumps, and the legs of each round - the tests the two crashes of that
+# day struck in, as suffixes of the guest's derived filter. Each leg runs in a dotnet test of its own: the Q149 gate
+# runs the typed-text tests only when their collection is selected alone. Stream U's crash struck in the reply with a
+# signature (its run's TRX: the crash at 17:07:41.9, inside that test's 17:07:35-17:08:00), the forward beside it in
+# the same collection failed after it; K2's in the typed-text test's reply.
+$FirstChanceScript = 'Watch-OutlookFirstChance.ps1'
+$HuntModule = 'mso40uiwin32client.dll'
+$HuntLegs = [ordered]@{
+    typed  = '&FullyQualifiedName~OutlookAI.McpServer.Tests.T2.LiveQ149TypedTextTests'
+    drafts = '&(FullyQualifiedName~OutlookAI.McpServer.Tests.T2.LiveSignatureTests.ReplyDraft_WithSignature_InsertsAboveQuote_ThenUpdateSwapsItForAnother_ThenNoneRemovesIt|FullyQualifiedName~OutlookAI.McpServer.Tests.T2.LiveDraftOptionsTests.ForwardDraft_CcBccAppend_AndSubjectOverrideKeepsTheForwardedContent)'
+}
 # The -SignatureSettings step (Q200 (a), Q201): the guest script that makes the setting before Outlook starts, the
 # variable that tells the suite which it made, and the one test such a run is narrowed to.
 $SignatureSettingsScript = 'Set-SignatureSettings.ps1'
@@ -378,6 +409,83 @@ function Merge-CrashCount {
     $outlook = @($Dumps | Where-Object { $_ -and ([string]$_.Program) -ieq 'OUTLOOK.EXE' }).Count
     if ($Events -lt 0 -and $outlook -eq 0) { return -1 }
     return [Math]::Max($Events, $outlook)
+}
+
+# Why a hunting run (-HuntFirstChance) cannot be had as asked - '' when it can. The hunt runs its own tests, on an
+# Outlook test guest only - never the Exchange VM, whose Outlook holds a real mailbox that a full dump would hold too -
+# and its rounds and minutes are bounded, inside the run's own time limit. Pure.
+function Get-HuntRefusal {
+    param([bool] $Hunt, [bool] $Exchange, [string] $Filter, [string] $FilterSuffix, [string] $SignatureSettings, [bool] $SignatureDialog, [int] $Rounds, [int] $Minutes, [int] $RunTimeoutMinutes)
+    if (-not $Hunt) { return '' }
+    if ($Exchange) { return '-HuntFirstChance attaches a debugger to Outlook and writes its whole memory to a dump: never on the Exchange VM, whose Outlook holds a real mailbox.' }
+    if ($Filter -or $FilterSuffix) { return '-HuntFirstChance runs its own tests, the ones the crashes of 2026-11-18 struck in: give no -Filter or -FilterSuffix.' }
+    if ($SignatureSettings -or $SignatureDialog) { return '-HuntFirstChance and a signature step together are two runs: give one.' }
+    if ($Rounds -lt 1 -or $Rounds -gt 100) { return "-HuntRounds must be 1 to 100, not $Rounds." }
+    $most = $RunTimeoutMinutes - 15
+    if ($Minutes -lt 1 -or $Minutes -gt $most) { return "-HuntMinutes must be 1 to $most - inside the run's time limit of $RunTimeoutMinutes minutes, with room for the build and the stop - not $Minutes." }
+    return ''
+}
+
+# The suite's script for a hunting run. The debugger is started through the shell (Start-Process), so it inherits
+# nothing of the suite's task - its output pipe least of all (2026-11-18) - and is stopped through its stop file, after
+# which it detaches. Each round runs every leg in a dotnet test of its own, the first one building; each leg's TRX
+# file is named for its round and leg. The rounds end at -HuntRounds, at -HuntMinutes, or at the first dump the
+# debugger wrote. Pure.
+function Get-HuntSuiteScript {
+    param([string] $OptIn, [string] $GuestRunDir, [string] $GuestRoot, [System.Collections.IDictionary] $Filters, [int] $Rounds, [int] $Minutes, [string] $Module, [string] $DumpDir, [string] $ScriptName)
+    $legLines = (@($Filters.Keys) | ForEach-Object { "`$legs += ,@('$_', '$($Filters[$_])')" }) -join "`r`n"
+    return @"
+`$env:OUTLOOKAI_LIVE_OPT_IN = '$OptIn'
+`$env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'; `$env:DOTNET_NOLOGO = '1'; `$env:MSBUILDDISABLENODEREUSE = '1'
+New-Item -ItemType Directory -Force -Path '$GuestRunDir', '$GuestRunDir\diag' | Out-Null
+Set-Location '$GuestRoot\src'
+`$stop = '$GuestRunDir\first-chance.stop'
+`$watch = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', '$GuestRoot\$ScriptName', '-DumpFolder', '$DumpDir', '-StopFile', `$stop, '-Log', '$GuestRunDir\first-chance.log', '-Module', '$Module', '-MaxMinutes', '$($Minutes + 30)') -WindowStyle Hidden -PassThru
+Start-Sleep -Seconds 5
+`$legs = @()
+$legLines
+`$deadline = (Get-Date).AddMinutes($Minutes)
+`$exit = 0
+`$built = `$false
+`$done = 0
+while (`$done -lt $Rounds -and (Get-Date) -lt `$deadline) {
+    `$round = `$done + 1
+    foreach (`$leg in `$legs) {
+        `$testArgs = @('test', 'McpServer\OutlookAI.McpServer.Tests\OutlookAI.McpServer.Tests.csproj', '-c', 'Release', '--filter', `$leg[1], '--logger', ('trx;LogFileName=live-r{0:D2}-{1}.trx' -f `$round, `$leg[0]), '--logger', 'console;verbosity=detailed', '--results-directory', '$GuestRunDir', '--diag', ('$GuestRunDir\diag\vstest-r{0:D2}-{1}.log' -f `$round, `$leg[0]))
+        if (`$built) { `$testArgs += '--no-build' }
+        & dotnet @testArgs *>> '$GuestRunDir\console.txt'
+        if (`$LASTEXITCODE -ne 0) { `$exit = `$LASTEXITCODE }
+        `$built = `$true
+    }
+    `$done = `$round
+    Add-Content -LiteralPath '$GuestRunDir\console.txt' -Value "HUNT-ROUND `$done"
+    if (@(Get-ChildItem -LiteralPath '$DumpDir' -Filter '*chance.dmp' -ErrorAction SilentlyContinue).Count -gt 0) { Add-Content -LiteralPath '$GuestRunDir\console.txt' -Value 'HUNT-DUMP the debugger wrote a dump - the hunt stops'; break }
+}
+New-Item -ItemType File -Force -Path `$stop | Out-Null
+if (`$null -ne `$watch) { `$null = `$watch.WaitForExit(120000) }
+Add-Content -LiteralPath '$GuestRunDir\console.txt' -Value "HUNT-ROUNDS `$done"
+exit `$exit
+"@
+}
+
+# Every TRX file of a hunting run as one result: the counts summed, each failed or skipped test named with the file it
+# came from ("[live-r03-typed] <test>"), the files' own counters summed when every file has them. Pure.
+function Merge-TrxResults {
+    param([object[]] $Files)    # each: Label, Result (ConvertFrom-TrxText's)
+    $counts = [ordered]@{ total = 0; passed = 0; failed = 0; skipped = 0; other = 0 }
+    $declared = [ordered]@{ total = 0; passed = 0; failed = 0; notExecuted = 0 }
+    $allDeclared = @($Files).Count -gt 0
+    $failed = @()
+    $skipped = @()
+    foreach ($f in @($Files)) {
+        foreach ($k in @($counts.Keys)) { $counts[$k] += [int]$f.Result.Counts[$k] }
+        if ($null -eq $f.Result.Declared) { $allDeclared = $false }
+        else { foreach ($k in @($declared.Keys)) { $declared[$k] += [int]$f.Result.Declared[$k] } }
+        foreach ($x in @($f.Result.Failed)) { $failed += [pscustomobject]@{ name = "[$($f.Label)] $($x.name)"; message = $x.message } }
+        foreach ($s in @($f.Result.Skipped)) { $skipped += "[$($f.Label)] $s" }
+    }
+    if (-not $allDeclared) { $declared = $null }
+    return [pscustomobject]@{ Counts = $counts; Declared = $declared; Failed = $failed; Skipped = $skipped }
 }
 
 # The files of WER's own reports of an OUTLOOK.EXE crash that the guest copied beside the dumps -
@@ -1109,6 +1217,36 @@ STACK      the faulting thread
     $fetchAt = $runCode.IndexOf('if ($suiteStarted) { Save-CrashDumps }')
     Check 'the dumps are fetched before the guest rests - the restore wipes them' $true ($fetchAt -gt 0 -and $fetchAt -lt $runCode.IndexOf('Restore-Guest $restOn'))
 
+    Write-Host '== the hunt (-HuntFirstChance, 2026-11-18) =='
+    $paramAst = [System.Management.Automation.Language.Parser]::ParseFile($PSCommandPath, [ref]$null, [ref]$null).ParamBlock.Parameters
+    $huntSwitch = @($paramAst | Where-Object { $_.Name.VariablePath.UserPath -eq 'HuntFirstChance' })
+    Check 'the hunt is a switch, off unless given - no other run has a debugger attached' 'switch|True' "$($huntSwitch[0].StaticType.Name.ToLowerInvariant() -replace 'switchparameter','switch')|$($null -eq $huntSwitch[0].DefaultValue)"
+    Check 'its module is mso40uiwin32client.dll, the one both crashes of 2026-11-18 named' 'mso40uiwin32client.dll' $HuntModule
+    $catcher = [System.IO.File]::ReadAllText((Join-Path $repo "Testbed\guest\$FirstChanceScript"))
+    Check 'and the debugger''s own default is the same module' $true $catcher.Contains("[string]   `$Module = '$HuntModule'")
+    Check 'it hunts the tests the crashes struck in: the typed-text tests, then the reply with a signature and the forward' 'typed|drafts' (@($HuntLegs.Keys) -join '|')
+    Check 'every leg narrows the derived filter' $true (@($HuntLegs.Values | Where-Object { -not $_.StartsWith('&') }).Count -eq 0)
+    Check 'a run without the switch is no hunt' '' (Get-HuntRefusal $false $true 'Category=Live' '&x' 'GroupPolicy' $true 0 0 120)
+    Check 'never on the Exchange VM' $true ((Get-HuntRefusal $true $true '' '' '' $false 20 60 120) -match 'Exchange VM')
+    Check 'never with a filter of its own' $true ((Get-HuntRefusal $true $false '' '&FullyQualifiedName~X' '' $false 20 60 120) -match 'own tests')
+    Check 'never with a signature step' $true ((Get-HuntRefusal $true $false '' '' 'GroupPolicy' $false 20 60 120) -match 'two runs')
+    Check 'its rounds and minutes are bounded, inside the run''s time limit' '1|1|1|' "$([int][bool](Get-HuntRefusal $true $false '' '' '' $false 0 60 120))|$([int][bool](Get-HuntRefusal $true $false '' '' '' $false 20 106 120))|$([int][bool](Get-HuntRefusal $true $false '' '' '' $false 20 0 120))|$(Get-HuntRefusal $true $false '' '' '' $false 20 60 120)"
+    $hunt = Get-HuntSuiteScript -OptIn 'OAI-INDEXED' -GuestRunDir 'C:\r' -GuestRoot 'C:\g' -Filters ([ordered]@{ typed = 'F&A'; drafts = 'F&(B|C)' }) -Rounds 20 -Minutes 60 -Module 'mso40uiwin32client.dll' -DumpDir 'C:\d' -ScriptName $FirstChanceScript
+    $err = $null
+    [void][System.Management.Automation.Language.Parser]::ParseInput($hunt, [ref]$null, [ref]$err)
+    Check 'the hunt''s suite script parses' 0 @($err).Count
+    Check 'it starts the debugger through the shell, hidden, with the module, its stop file and its log' $true ($hunt.Contains("Start-Process -FilePath 'powershell.exe'") -and $hunt.Contains('-WindowStyle Hidden') -and $hunt.Contains("'-Module', 'mso40uiwin32client.dll'") -and $hunt.Contains("`$stop = 'C:\r\first-chance.stop'") -and $hunt.Contains("'-Log', 'C:\r\first-chance.log'"))
+    Check 'every leg runs in a dotnet test of its own, its TRX file named for the round and leg' $true ($hunt.Contains("`$legs += ,@('typed', 'F&A')") -and $hunt.Contains("`$legs += ,@('drafts', 'F&(B|C)')") -and $hunt.Contains("'trx;LogFileName=live-r{0:D2}-{1}.trx' -f `$round, `$leg[0]"))
+    Check 'the rounds stop at the cap, the minutes or the first dump, and the debugger is stopped after' $true ($hunt.Contains('while ($done -lt 20 -and (Get-Date) -lt $deadline)') -and $hunt.Contains("Get-ChildItem -LiteralPath 'C:\d' -Filter '*chance.dmp'") -and $hunt.IndexOf('New-Item -ItemType File -Force -Path $stop') -gt $hunt.IndexOf('while ('))
+    $ordinaryAt = $runCode.IndexOf('$liveScript = @"')
+    $ordinaryEnd = $runCode.IndexOf('"@', [Math]::Max(0, $ordinaryAt))
+    Check 'an ordinary run''s suite script starts no debugger' $true ($ordinaryAt -gt 0 -and $ordinaryEnd -gt $ordinaryAt -and -not $runCode.Substring($ordinaryAt, $ordinaryEnd - $ordinaryAt).Contains('FirstChance'))
+    Check 'and the debugger reaches the guest only in a hunting run' $true ($runCode.Contains('if ($HuntFirstChance) { $guestScripts += [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\guest\$FirstChanceScript")) }') -and $runCode.Contains('$_.Name -ne $FirstChanceScript'))
+    $r1 = [pscustomobject]@{ Counts = [ordered]@{ total = 2; passed = 1; failed = 1; skipped = 0; other = 0 }; Declared = [ordered]@{ total = 2; passed = 1; failed = 1; notExecuted = 0 }; Failed = @([pscustomobject]@{ name = 'T.A'; message = 'boom' }); Skipped = @() }
+    $r2 = [pscustomobject]@{ Counts = [ordered]@{ total = 3; passed = 2; failed = 0; skipped = 1; other = 0 }; Declared = $null; Failed = @(); Skipped = @('T.C') }
+    $m = Merge-TrxResults @([pscustomobject]@{ Label = 'live-r01-typed'; Result = $r1 }, [pscustomobject]@{ Label = 'live-r01-drafts'; Result = $r2 })
+    Check 'a hunting run''s TRX files are one result: counts summed, each test named with its file' '5|3|1|1|[live-r01-typed] T.A|[live-r01-drafts] T.C|True' "$($m.Counts['total'])|$($m.Counts['passed'])|$($m.Counts['failed'])|$($m.Counts['skipped'])|$($m.Failed[0].name)|$($m.Skipped[0])|$($null -eq $m.Declared)"
+
     Write-Host '== the guest''s clock around every guest call (stream K, 2026-11-18) =='
     $sample = "noise`r`nGUEST-CLOCK-BEFORE 2026-10-03T19:46:53.1234567Z W. Europe Standard Time`r`nSDK-EXECUTE-EXIT 0`r`nGUEST-CLOCK-AFTER 2026-10-03T19:47:53.6234567Z W. Europe Standard Time  `r`n"
     $r = Read-GuestClock $sample
@@ -1254,6 +1392,16 @@ if ($WithAddIn -and ($facts.Exchange -or (-not $Kind -and -not $startIsFrozen)))
 # again once taken.
 $stepRefusal = Get-SignatureSettingsRefusal $SignatureSettings ([bool]$facts.Exchange) ($startIsFrozen -or [bool]$Kind) $GreenCheckpoint $Filter ([bool]$SignatureDialog)
 if ($stepRefusal) { Stop-Refused $stepRefusal }
+$huntRefusal = Get-HuntRefusal ([bool]$HuntFirstChance) ([bool]$facts.Exchange) $Filter $FilterSuffix $SignatureSettings ([bool]$SignatureDialog) $HuntRounds $HuntMinutes $RunTimeoutMinutes
+if ($huntRefusal) { Stop-Refused $huntRefusal }
+# A hunting run runs its own tests (Get-HuntSuiteScript): narrowed, and every leg's filter the guest's derived one with
+# the leg's suffix.
+$huntFilters = $null
+if ($HuntFirstChance) {
+    $narrowed = $true
+    $huntFilters = [ordered]@{}
+    foreach ($leg in $HuntLegs.Keys) { $huntFilters[$leg] = $runFilter + $HuntLegs[$leg] }
+}
 if (-not $RepoPath) { $RepoPath = Split-Path -Parent (Split-Path -Parent $PSScriptRoot) }
 $repo = [System.IO.Path]::GetFullPath($RepoPath)
 if (-not $CredentialRepoRoot) {
@@ -1328,6 +1476,7 @@ $outlookStart = $null
 $indexRoots = $null
 $script:dumpsFound = @()
 $script:werFound = @()
+$huntRoundsRun = -1
 $suiteStarted = $false
 $stage = ''
 $stageWhy = ''
@@ -1668,8 +1817,10 @@ try {
         }
         # The commit's guest scripts - but the crash-dump arming is THIS checkout's, whatever commit is
         # tested, so an older commit (a bisection) is dumped the same way.
-        $guestScripts = @(Get-ChildItem -LiteralPath (Join-Path $tree 'Testbed\guest') -File | Where-Object { $_.Name -ne $CrashDumpScript } | ForEach-Object { $_.FullName })
+        $guestScripts = @(Get-ChildItem -LiteralPath (Join-Path $tree 'Testbed\guest') -File | Where-Object { $_.Name -ne $CrashDumpScript -and $_.Name -ne $FirstChanceScript } | ForEach-Object { $_.FullName })
         $guestScripts += [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\guest\$CrashDumpScript"))
+        # The hunt's debugger, THIS checkout's too - and on the guest at all only in a hunting run.
+        if ($HuntFirstChance) { $guestScripts += [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\guest\$FirstChanceScript")) }
         # ps51-native-stderr-ok: a PowerShell script, not a program - every program it starts goes through its own Invoke-NativeCommand, under 'Continue' inside a try
         & (Join-Path $PSScriptRoot 'Copy-ToGuest.ps1') -VMName $facts.Name -RepoRoot $CredentialRepoRoot -Path $guestScripts -Destination $GuestRoot *>> (Join-Path $runDir 'copy.log')
         # What must not be running while the payload is swapped. The Exchange VM's Outlook stays up: its
@@ -1822,6 +1973,11 @@ Copy-Item -LiteralPath '$GuestPayloadDir\live-test-settings.json' -Destination '
         # Recorded BEFORE the suite starts: a run that dies half-way still leaves its marker for the next one.
         Add-Content -LiteralPath $ledgerPath -Value (ConvertTo-LedgerLine $runMarker $runId 'started' $null $priorMarkers ([DateTime]::UtcNow)) -Encoding UTF8
     }
+    if ($HuntFirstChance) {
+        $liveScript = Get-HuntSuiteScript -OptIn $facts.ComputerName -GuestRunDir $guestRunDir -GuestRoot $GuestRoot -Filters $huntFilters -Rounds $HuntRounds -Minutes $HuntMinutes -Module $HuntModule -DumpDir $GuestDumpDir -ScriptName $FirstChanceScript
+        Say "hunt: a debugger on every OUTLOOK.EXE, dumping the first first-chance access violation in $HuntModule; at most $HuntRounds round(s) of $(@($huntFilters.Keys) -join ' and ') in $HuntMinutes minute(s)"
+    }
+    else {
     $liveScript = @"
 $markerLines`$env:OUTLOOKAI_LIVE_OPT_IN = '$($facts.ComputerName)'
 `$env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'; `$env:DOTNET_NOLOGO = '1'; `$env:MSBUILDDISABLENODEREUSE = '1'
@@ -1830,6 +1986,7 @@ $($dialogLines)Set-Location '$GuestRoot\src'
 & dotnet test McpServer\OutlookAI.McpServer.Tests\OutlookAI.McpServer.Tests.csproj -c Release --filter "$runFilter" --logger "trx;LogFileName=live.trx" --logger "console;verbosity=detailed" --results-directory '$guestRunDir' --diag '$guestRunDir\diag\vstest.log' *> '$guestRunDir\console.txt'
 exit `$LASTEXITCODE
 "@
+    }
     $runStartUtc = [DateTime]::UtcNow
     # The GUEST's clock at the start, for the crash events below, which carry the guest's time: on a
     # frozen guest (Q130 (a)) the host's clock is hours or days ahead of it, and filtering the guest's
@@ -1847,13 +2004,21 @@ exit `$LASTEXITCODE
     # ---- FETCH: results, console, logs, crash events.
     $resultsDir = Join-Path $runDir 'results'
     # ps51-native-stderr-ok: a PowerShell script, not a program - every program it starts goes through its own Invoke-NativeCommand, under 'Continue' inside a try
-    & (Join-Path $PSScriptRoot 'Copy-FromGuest.ps1') -VMName $facts.Name -RepoRoot $CredentialRepoRoot -GuestPath $guestRunDir -Include '*.trx', 'console.txt', 'signature-dialog.*' -Destination $resultsDir -Force *> (Join-Path $runDir 'fetch.log')
+    & (Join-Path $PSScriptRoot 'Copy-FromGuest.ps1') -VMName $facts.Name -RepoRoot $CredentialRepoRoot -GuestPath $guestRunDir -Include '*.trx', 'console.txt', 'signature-dialog.*', 'first-chance.log' -Destination $resultsDir -Force *> (Join-Path $runDir 'fetch.log')
     # ps51-native-stderr-ok: a PowerShell script, not a program - every program it starts goes through its own Invoke-NativeCommand, under 'Continue' inside a try
     & (Join-Path $PSScriptRoot 'Copy-FromGuest.ps1') -VMName $facts.Name -RepoRoot $CredentialRepoRoot -GuestPath "$guestRunDir\diag" -Include '*.log' -Destination (Join-Path $resultsDir 'diag') -Force *>> (Join-Path $runDir 'fetch.log')
     $trxFile = Get-ChildItem -LiteralPath $resultsDir -Filter '*.trx' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($trxFile) { $trx = ConvertFrom-TrxText ([System.IO.File]::ReadAllText($trxFile.FullName)) }
+    if ($HuntFirstChance) {
+        $trxFiles = @(Get-ChildItem -LiteralPath $resultsDir -Filter '*.trx' -Recurse -ErrorAction SilentlyContinue | Sort-Object Name)
+        if ($trxFiles.Count -gt 0) { $trx = Merge-TrxResults @($trxFiles | ForEach-Object { [pscustomobject]@{ Label = $_.BaseName; Result = (ConvertFrom-TrxText ([System.IO.File]::ReadAllText($_.FullName))) } }) }
+    }
+    elseif ($trxFile) { $trx = ConvertFrom-TrxText ([System.IO.File]::ReadAllText($trxFile.FullName)) }
     $consoleFile = Get-ChildItem -LiteralPath $resultsDir -Filter 'console.txt' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($consoleFile) { $consoleFacts = Read-ConsoleFacts ([System.IO.File]::ReadAllText($consoleFile.FullName)) }
+    if ($HuntFirstChance -and $consoleFile) {
+        $hr = @([regex]::Matches([System.IO.File]::ReadAllText($consoleFile.FullName), '(?m)^HUNT-ROUNDS (\d+)'))
+        if ($hr.Count -gt 0) { $huntRoundsRun = [int]$hr[$hr.Count - 1].Groups[1].Value }
+    }
     $since = Get-CrashEventsSince -GuestRunStartUtc $guestRunStartUtc -HostRunStartUtc $runStartUtc
     # Event 1001 too, whole: WER's report of each crash - its kind and where it filed it - which is how a crash
     # that left an Application Error event and no dump can be told apart (2026-11-18, runbook section 4.15).
@@ -1962,6 +2127,8 @@ if ($facts.Exchange) { $summary['runMarker'] = [ordered]@{ marker = $runMarker; 
 $summary['outlookStart'] = $outlookStart
 $summary['signatureSettings'] = $signatureSettingsState
 $summary['indexRoots'] = $indexRoots
+$huntDumps = @(@($crashDumpState['files']) | Where-Object { [string]$_['name'] -match 'chance\.dmp$' } | ForEach-Object { [string]$_['name'] })
+if ($HuntFirstChance) { $summary['hunt'] = [ordered]@{ module = $HuntModule; legs = $huntFilters; roundsAsked = $HuntRounds; minutes = $HuntMinutes; roundsRun = $huntRoundsRun; dumps = $huntDumps; log = "results\$($facts.Name)\first-chance.log" } }
 # ToArray(), never @(...): @() of a List[object] given to an [object[]] parameter fails with "Argument
 # types do not match" under Windows PowerShell 5.1 and PowerShell 7.7 alike (measured 2026-11-18).
 $summary['guestClock'] = New-GuestClockSummaryJson $guestClockRecords.ToArray()
@@ -2005,6 +2172,11 @@ if ([int]$crashDumpState['werReports'] -gt 0 -or $werList.Count -gt 0) {
     if ($werList.Count -gt 0) { $werText += ", $(@($werList | Where-Object { $_['fetched'] }).Count) of $($werList.Count) file(s) fetched to wer\$($facts.Name)\" }
 }
 $lines.Add("outlook    crashes during the run: $crashText; crash dumps: $dumpText$werText")
+if ($HuntFirstChance) {
+    $roundsText = 'not read'
+    if ($huntRoundsRun -ge 0) { $roundsText = [string]$huntRoundsRun }
+    $lines.Add("hunt       $roundsText of at most $HuntRounds round(s) of $(@($huntFilters.Keys) -join ' and ') in $HuntMinutes min, a debugger on every OUTLOOK.EXE: $($huntDumps.Count) first- or second-chance dump(s) in $HuntModule's hunt (results\$($facts.Name)\first-chance.log)")
+}
 $lines.Add((Format-OutlookStartLine $outlookStart))
 if ($null -ne $signatureSettingsState) { $lines.Add("signature  $($signatureSettingsState['scenario']), values $($signatureSettingsState['valueKind']), made before Outlook started: $(if ($signatureSettingsState['set']) { 'SET' } else { 'NOT SET' }) ($($signatureSettingsState['log']))") }
 if ($indexRoots) { $lines.Add("index      $indexRoots") }

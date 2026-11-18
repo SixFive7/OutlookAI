@@ -5484,6 +5484,93 @@ its source, after a program named `OUTLOOK.EXE` - a copy of `rundll32.exe`, not 
 such crash will say which report WER filed, of what kind and with what status; whether it leaves a dump is not
 settled by this.
 
+**The hunt** (the coordinator's decision of 2026-11-18). `Invoke-LiveTierOnGuest.ps1 -HuntFirstChance` is the one
+run that leaves a dump of this crash for certain: `guest/Watch-OutlookFirstChance.ps1`, Windows' own debugging API
+through `Add-Type`, is attached to every OUTLOOK.EXE of the suite's session as it appears and writes one full
+dump at the first first-chance access violation in `mso40uiwin32client.dll` - before Outlook's, Office's or
+WER's handlers run - and one at any second-chance exception, then passes the exception back to Outlook. The
+suite repeats the tests the two crashes struck in, each leg in a dotnet test of its own: the Q149 typed-text
+tests (`LiveQ149TypedTextTests`, K2's crash was in its reply), and stream U's - the crash struck inside
+`LiveSignatureTests.ReplyDraft_WithSignature_InsertsAboveQuote_ThenUpdateSwapsItForAnother_ThenNoneRemovesIt`
+(17:07:35 to 17:08:00 by its TRX, the crash at 17:07:41.9), and
+`LiveDraftOptionsTests.ForwardDraft_CcBccAppend_AndSubjectOverrideKeepsTheForwardedContent`, which its summary
+named first, failed after it. Both crashes were the product's reply drafted with a signature in a windowed
+Outlook. Off by default and refused on the Exchange VM: a debugger changes what it is attached to, and a
+full dump holds the mailbox.
+
+**The first catch** - run `20261118-150312-indexed-3577d9a3f9fd` on `OutlookAI-Indexed` (`CP-24C-FROZEN-CLOCK`), in
+round 11 of 20, after ten rounds that passed. Outlook pid 5464 had been up 15.7 minutes, the same process through
+every round, when the debugger wrote `OUTLOOK.EXE.5464.firstchance.dmp` at the first-chance access violation, and
+`OUTLOOK.EXE.5464.secondchance.dmp` at the second chance; WER then wrote `OUTLOOK.EXE.5464.dmp` itself. All three,
+about 1.1 GB each, are kept whole in the run's `dumps\OutlookAI-Indexed\` with their reports, WER's report in its
+`wer\OutlookAI-Indexed\`, the debugger's log in its `results\OutlookAI-Indexed\first-chance.log`.
+
+* **The fault.** `mso40uiwin32client.dll+0x11DA7E`, in the function at `+0x11D910`: `lock inc dword ptr [rbx+8]`
+  (`F0 FF 43 08`) with `rbx` 0x40000, so a reference-count increment on an object pointer that is not one, WRITING
+  0x40008. The same offset as K2's crash of that morning; stream U's, at `+0x11D8C7`, lies just before this function.
+* **The stack**, from the bottom: Outlook's main thread; its message loop dispatching an incoming COM call -
+  `combase`, `rpcrt4!NdrStubCall2`, `oleaut32` - into Outlook's `IDispatch::Invoke` (`OUTLOOK.EXE+0x207C60`, the
+  slot 4.6 found), whose arguments on the stack read `wFlags` 3 and no argument; some fifteen Outlook frames; Word
+  (`WWLIB.DLL`) calling `SetWindowPos`; the kernel delivering the message that causes synchronously
+  (`ntdll!KiUserCallbackDispatcher`), through Office's window subclasses (`mso98win32client`, `mso20win32client`,
+  `comctl32`), into Word's window procedure (`WWLIB.DLL+0x256DC0`), which called `mso.dll` (`+0x1E9910`), which
+  called `mso40uiwin32client`.
+* **The call in flight.** The test was in `LiveQ149TypedTextTests.Q211_WhatOutlooksOwnComposeWindowMakesOfTypedText`,
+  at the product's forward of its source mail (`MailService.ForwardDraft`, `CreateDerived`), which failed with
+  `0x800706BE` "before Outlook was given anything to save": the derived draft's first call, `Forward()` on the source
+  item, a method with no argument, as the `Invoke` frame reads. Just before it the test had shown Outlook's own forward
+  window for the same mail, typed into it and closed it with `Close(olDiscard)`. Stream U's crash came six seconds into
+  `ReplyDraft_WithSignature_InsertsAboveQuote_ThenUpdateSwapsItForAnother_ThenNoneRemovesIt`, after product drafts
+  only; K2's earlier one at the product's reply in the same typed-text test.
+* **What it is not.** Not OutlookAI's use of Word's editor: `WordEditor` is not on the stack, and the draft had not
+  reached it. Not the timing after a fast restart: that Outlook had run 15.7 minutes and served ten rounds. It is
+  Office's own code - Word's window procedure handing a window message to `mso40uiwin32client`, whose object is bad -
+  reached while Outlook served the product's derived-draft call.
+* **Why the two crashes before left no dump** (inferred from three crashes' codes, events and dumps, not from Windows'
+  source). The access violation happens inside a kernel-to-user callback. Under the debugger it went to the debugger
+  first, then left the callback as `0xC000041D`, STATUS_FATAL_USER_CALLBACK_EXCEPTION, non-continuable, which took the
+  ordinary unhandled path: event 1000 read `0xc000041d`, and WER wrote its local dump. The two crashes without a
+  debugger wrote event 1000 with `0xc0000005` and no dump: Windows reported them from the callback itself, a path on
+  which no local dump was written.
+
+**The second hunt and the crashes beside it.** Run `20261118-153836-indexed-3c8d7619885c` (the same guest and
+checkpoint) caught a crash of the same component in another module, in round 10: an access violation WRITING freed
+memory at `dcomp.dll+0x26B0B` (DirectComposition), on a thread `mso40uiwin32client.dll` started itself
+(`+0x1A6140`), whose stack is `mso40uiwin32client` calling into `dcomp` - not in a window callback, so it stayed
+`0xC0000005` at the second chance and WER wrote its local dump of it, as it did of every earlier Outlook crash.
+Outlook's main thread was then in Outlook code called from `FM20.DLL` (Forms 2.0), and the product was at its reply
+with a signature in the typed-text test, past its save ("a draft may have been saved"). Two runs of stream R1 and U
+on `OutlookAI-Unindexed` (`CP-18B-FROZEN-CLOCK`), `20261118-152310-unindexed-d4637b195672` and
+`20261118-095132-unindexed-aa7f226fc8be`, crashed at `mso40uiwin32client.dll+0x11D8C7`, just before the function of
+the first catch, each six seconds or so into
+`LiveSignatureTests.ReplyDraft_WithSignature_InsertsAboveQuote_ThenUpdateSwapsItForAnother_ThenNoneRemovesIt`, with
+event 1000 reading `0xc0000005` and no local dump. R1's run kept WER's report: `IsFatal` -1 where the hunt's report of
+the first catch reads 1 - WER filed the crash that left no dump as one it did not count fatal, which fits the reading
+above. So five crashes: every one in `mso40uiwin32client.dll` or below it, every one while the product was creating
+a reply or a forward in an Outlook with its window, at its first call (`Forward()`) or after its save, with a
+signature or without; none in a new draft, which the same tests make as often.
+
+**The third catch, on an unindexed guest** - run `20261118-160758-unindexed-547718b16c6f` on `OutlookAI-Unindexed3`
+(`CP-18B-FROZEN-CLOCK`), in round 4. Its first-chance access violation is at `mso40uiwin32client.dll+0x11D8C7`, the
+offset of U's and R1's crashes, and it is the first catch's instruction, `lock inc dword ptr [rbx+8]` with `rbx`
+0x40000, in the function before it (`+0x11D74C`): two places that increment one reference count through one bad
+pointer. The incoming COM call under it reads `wFlags` 3 and one argument, the string "Message" - the product's
+`ModifiedFormPages.Add("Message")` on its reopened reply, after the save ("a draft may have been saved"), the step the
+editor route of Q208 B takes in an Outlook with its window. Beneath it: Word (`WWLIB.DLL`), Office's
+`mso98win32client.dll` and `mso.dll`, and `mso40uiwin32client` destroying a window (`NtUserDestroyWindow`), whose
+kernel callback re-entered `mso40uiwin32client`'s own window procedure; that walked its tree of UI elements ten levels
+deep to the bad one. Like the first catch it left the callback as `0xC000041D`, and WER wrote its dump.
+
+**What the five have in common.** The fault is in Office: one bad pointer, 0x40000, among `mso40uiwin32client`'s UI
+elements, met wherever Word makes that UI lay out a window, tear one down or compose it (the `dcomp.dll` crash).
+Every crash came while the product was making a reply or a forward in an Outlook with its window, and the call in
+flight differed: the creator itself (`Forward()`, before anything was saved) in one, the form page
+(`ModifiedFormPages.Add("Message")`, and Forms 2.0 on the main thread in the `dcomp.dll` one) in two, after the save.
+The new drafts the same tests make, as many and by the same route, never crashed.
+
+What OutlookAI does about it, if anything, is the maintainer's decision.
+
+
 ## 5. Which tests are in which bucket, and how to find out
 
 The classification is **two traits on the test itself**, not a list in a document that can drift -
