@@ -183,7 +183,7 @@ public sealed class UnindexedStoreReportingTests
         // Silence here means "not established", never "indexed". With no store list there is
         // no evidence, and inventing a missing store from an absent list would be the same
         // defect pointing the other way. The answer is still honestly index-only.
-        using MailService service = new MailService(new ThrowingGateway(), null, OnlyAliceIndexed());
+        using MailService service = new MailService(new DeadGateway(), null, OnlyAliceIndexed());
 
         SearchOutcome outcome = service.Search(Request());
 
@@ -399,76 +399,6 @@ public sealed class UnindexedStoreReportingTests
             return _knownPrefixes.Any(p =>
                 string.Equals(scope, p, StringComparison.OrdinalIgnoreCase)
                 || scope.StartsWith(p + "/0/", StringComparison.OrdinalIgnoreCase));
-        }
-    }
-
-    /// <summary>Runs operations straight against the stand-in session (no COM host, no pipe).</summary>
-    private sealed class DirectGateway : IComGateway
-    {
-        private readonly IOutlookSession _session;
-
-        internal DirectGateway(IOutlookSession session)
-        {
-            _session = session;
-        }
-
-        public event Action? OutlookGone
-        {
-            add { }
-            remove { }
-        }
-
-        public bool IsConnected => true;
-
-        public bool? QuitSinkActive => null;
-
-        public bool ProbeConnected() => true;
-
-        public T Run<T>(Func<IOutlookSession, T> operation) => operation(_session);
-
-        public T Run<T>(Func<IOutlookSession, T> operation, ComSessionRecovery recovery) => operation(_session);
-
-        public T Run<T>(Func<IOutlookSession, T> operation, int budgetMilliseconds, bool allowConnectFloor = false)
-            => operation(_session);
-
-        public ComHostDiagnostics GetDiagnostics() => new ComHostDiagnostics("in-process", "ready");
-
-        public void Dispose()
-        {
-        }
-    }
-
-    /// <summary>An Outlook that cannot be reached at all.</summary>
-    private sealed class ThrowingGateway : IComGateway
-    {
-        public event Action? OutlookGone
-        {
-            add { }
-            remove { }
-        }
-
-        public bool IsConnected => false;
-
-        public bool? QuitSinkActive => null;
-
-        public bool ProbeConnected() => false;
-
-        public T Run<T>(Func<IOutlookSession, T> operation) => throw Unavailable();
-
-        public T Run<T>(Func<IOutlookSession, T> operation, ComSessionRecovery recovery) => throw Unavailable();
-
-        public T Run<T>(Func<IOutlookSession, T> operation, int budgetMilliseconds, bool allowConnectFloor = false)
-            => throw Unavailable();
-
-        public ComHostDiagnostics GetDiagnostics() => new ComHostDiagnostics("in-process", "down");
-
-        public void Dispose()
-        {
-        }
-
-        private static OutlookUnavailableException Unavailable()
-        {
-            return new OutlookUnavailableException("Outlook is not running.");
         }
     }
 

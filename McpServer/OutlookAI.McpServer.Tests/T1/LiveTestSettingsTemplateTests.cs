@@ -1,4 +1,3 @@
-using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using OutlookAI.McpServer.Tests.T2;
@@ -79,22 +78,9 @@ public sealed class LiveTestSettingsTemplateTests
 
     // ------------------------------------------------------------------------------ plumbing
 
-    /// <summary>The repository root, located from the same assembly metadata the loader uses.</summary>
-    private static string RepoRoot()
-    {
-        string testProjectDir =
-            typeof(LiveTestSettings).Assembly
-                .GetCustomAttributes<AssemblyMetadataAttribute>()
-                .FirstOrDefault(a => a.Key == "TestProjectDir")?.Value
-            ?? throw new InvalidOperationException("AssemblyMetadata 'TestProjectDir' is missing.");
-
-        // <repo>/McpServer/OutlookAI.McpServer.Tests/ -> <repo>
-        return Path.GetFullPath(Path.Combine(testProjectDir, "..", ".."));
-    }
-
     private static string TemplateText()
     {
-        string path = Path.Combine(RepoRoot(), "Testbed", "live-test-settings.template.json");
+        string path = Path.Combine(RepoPaths.RepoRoot(), "Testbed", "live-test-settings.template.json");
         Assert.True(File.Exists(path), "the committed settings template is missing: " + path);
         return File.ReadAllText(path);
     }
@@ -218,7 +204,7 @@ public sealed class LiveTestSettingsTemplateTests
 
     private static JsonObject Guests()
     {
-        string path = Path.Combine(RepoRoot(), "Testbed", "testbed.json");
+        string path = Path.Combine(RepoPaths.RepoRoot(), "Testbed", "testbed.json");
         JsonObject testbed = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
         return Assert.IsType<JsonObject>(testbed["liveTestSettings"]);
     }
@@ -230,7 +216,7 @@ public sealed class LiveTestSettingsTemplateTests
     /// </summary>
     private static bool IsTheExchangeVm(KeyValuePair<string, JsonNode?> section)
     {
-        string path = Path.Combine(RepoRoot(), "Testbed", "testbed.json");
+        string path = Path.Combine(RepoPaths.RepoRoot(), "Testbed", "testbed.json");
         string? exchangeVm = JsonNode.Parse(File.ReadAllText(path))!["exchangeVm"]?["vmName"]?.GetValue<string>();
         bool named = exchangeVm != null && string.Equals(section.Key, exchangeVm, StringComparison.Ordinal);
         string? profile = section.Value?["machineProfile"]?.GetValue<string>();
@@ -241,7 +227,7 @@ public sealed class LiveTestSettingsTemplateTests
 
     private static bool? GuestIsIndexed(string guest)
     {
-        string path = Path.Combine(RepoRoot(), "Testbed", "testbed.json");
+        string path = Path.Combine(RepoPaths.RepoRoot(), "Testbed", "testbed.json");
         JsonArray assigned = JsonNode.Parse(File.ReadAllText(path))!["corpusIdConvention"]!["assigned"]!.AsArray();
         JsonNode? entry = assigned.SingleOrDefault(a => a?["guest"]?.GetValue<string>() == guest);
         return entry?["indexed"]?.GetValue<bool>();
@@ -491,7 +477,7 @@ public sealed class LiveTestSettingsTemplateTests
         // the manifest's name, and the frontier test reads the manifest to refuse a stale hub. Both
         // depend on this path naming THIS guest's hub population - held against the ids
         // corpusIdConvention.populations assigns, so the two records cannot part.
-        string path = Path.Combine(RepoRoot(), "Testbed", "testbed.json");
+        string path = Path.Combine(RepoPaths.RepoRoot(), "Testbed", "testbed.json");
         JsonArray populations = JsonNode.Parse(File.ReadAllText(path))!["corpusIdConvention"]!["populations"]!["assigned"]!.AsArray();
 
         int guests = 0;
@@ -514,7 +500,7 @@ public sealed class LiveTestSettingsTemplateTests
         Assert.Equal(2, guests);
 
         // And the documented example models the indexed guest's.
-        JsonObject example = JsonNode.Parse(File.ReadAllText(Path.Combine(RepoRoot(), "Testbed", "live-test-settings.example.json")))!.AsObject();
+        JsonObject example = JsonNode.Parse(File.ReadAllText(ExampleLiveSettings.FilePath))!.AsObject();
         Assert.Equal(
             Guests()["OutlookAI-Indexed"]!["hubPopulationManifestPath"]!.GetValue<string>(),
             example["hubPopulationManifestPath"]!.GetValue<string>());
@@ -635,7 +621,7 @@ public sealed class LiveTestSettingsTemplateTests
         Assert.Equal(1, indexedGuests);
 
         // And the documented example models the same values.
-        JsonObject example = JsonNode.Parse(File.ReadAllText(Path.Combine(RepoRoot(), "Testbed", "live-test-settings.example.json")))!.AsObject();
+        JsonObject example = JsonNode.Parse(File.ReadAllText(ExampleLiveSettings.FilePath))!.AsObject();
         Assert.Equal(CorpusPopulation.ProbeTerm, example["probeTerm"]!.GetValue<string>());
         Assert.Equal(generated.FolderPath, example["subjectOnlyProbe"]!["folderPath"]!.GetValue<string>());
         Assert.Equal(generated.SubjectTerm, example["subjectOnlyProbe"]!["subjectTerm"]!.GetValue<string>());
@@ -676,7 +662,7 @@ public sealed class LiveTestSettingsTemplateTests
         Assert.Equal(new[] { 30 }, expired.EmptiedWindowDays);
 
         // And what the decision avoided: the example's windows refuse from a week after the newest item.
-        int[] exampleWindows = JsonNode.Parse(File.ReadAllText(Path.Combine(RepoRoot(), "Testbed", "live-test-settings.example.json")))!
+        int[] exampleWindows = JsonNode.Parse(File.ReadAllText(ExampleLiveSettings.FilePath))!
             ["corpus"]!["windowDays"]!.AsArray().Select(n => n!.GetValue<int>()).ToArray();
         Assert.Contains(7, exampleWindows);
         Assert.Equal(

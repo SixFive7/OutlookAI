@@ -1,4 +1,3 @@
-using System.Reflection;
 using System.Text.RegularExpressions;
 using Xunit;
 
@@ -226,10 +225,7 @@ public sealed class ComposeOnReopenedDraftTests
 
     private static string SessionPath()
     {
-        string testProjectDir = typeof(ComposeOnReopenedDraftTests).Assembly
-                .GetCustomAttributes<AssemblyMetadataAttribute>()
-                .FirstOrDefault(a => a.Key == "TestProjectDir")?.Value
-            ?? throw new InvalidOperationException("AssemblyMetadata 'TestProjectDir' is missing.");
+        string testProjectDir = RepoPaths.TestProjectDir();
         return Path.GetFullPath(Path.Combine(testProjectDir, "..", Session));
     }
 }

@@ -135,7 +135,7 @@ public sealed class LiveRunOptInTests
     {
         // The message sends a refused run to Testbed/README.md section 4c. A pointer at a
         // heading that was renamed or never written is a refusal that explains nothing.
-        string readme = File.ReadAllText(Path.Combine(RepoRoot(), "Testbed", "README.md"));
+        string readme = File.ReadAllText(Path.Combine(RepoPaths.RepoRoot(), "Testbed", "README.md"));
 
         Assert.Contains("## 4c.", readme, StringComparison.Ordinal);
         Assert.Contains("$env:" + LiveRunOptIn.Variable + " = ", readme, StringComparison.Ordinal);
@@ -588,17 +588,6 @@ public sealed class LiveRunOptInTests
         {
             Environment.SetEnvironmentVariable(LiveRunOptIn.Variable, saved, EnvironmentVariableTarget.Process);
         }
-    }
-
-    private static string RepoRoot()
-    {
-        string testProjectDir = typeof(LiveRunOptInTests).Assembly
-                .GetCustomAttributes<AssemblyMetadataAttribute>()
-                .FirstOrDefault(a => a.Key == "TestProjectDir")?.Value
-            ?? throw new InvalidOperationException("AssemblyMetadata 'TestProjectDir' is missing.");
-
-        // <repo>/McpServer/OutlookAI.McpServer.Tests/ -> <repo>
-        return Path.GetFullPath(Path.Combine(testProjectDir, "..", ".."));
     }
 
     // ------------------------------------------------------------------ controls: never constructed

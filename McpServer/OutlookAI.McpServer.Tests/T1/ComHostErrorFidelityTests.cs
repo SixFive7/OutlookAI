@@ -460,7 +460,7 @@ public sealed class ComHostErrorFidelityTests
             await listening.WaitAsync(Patience).ConfigureAwait(false);
 
             ComHostServer server = new ComHostServer(
-                childEnd, GatewayRoutingProxy.Create(new PassThroughGateway(session)), typeof(IOutlookSession), maxFrameBytes);
+                childEnd, GatewayRoutingProxy.Create(new DirectGateway(session)), typeof(IOutlookSession), maxFrameBytes);
 
             CancellationTokenSource shutdown = new CancellationTokenSource();
             Task serving = server.ServeAsync(shutdown.Token);
@@ -529,45 +529,6 @@ public sealed class ComHostErrorFidelityTests
 
             Assert.NotNull(response);
             return response!;
-        }
-    }
-
-    /// <summary>
-    /// Stands where <c>ComGateway</c> stands on the child side and does nothing but run the
-    /// operation, so what this file observes is the boundary and never the gateway.
-    /// </summary>
-    private sealed class PassThroughGateway : IComGateway
-    {
-        private readonly IOutlookSession _session;
-
-        internal PassThroughGateway(IOutlookSession session)
-        {
-            _session = session;
-        }
-
-        public event Action? OutlookGone
-        {
-            add { }
-            remove { }
-        }
-
-        public bool IsConnected => true;
-
-        public bool? QuitSinkActive => null;
-
-        public bool ProbeConnected() => true;
-
-        public T Run<T>(Func<IOutlookSession, T> operation) => operation(_session);
-
-        public T Run<T>(Func<IOutlookSession, T> operation, ComSessionRecovery recovery) => operation(_session);
-
-        public T Run<T>(Func<IOutlookSession, T> operation, int budgetMilliseconds, bool allowConnectFloor = false)
-            => operation(_session);
-
-        public ComHostDiagnostics GetDiagnostics() => new ComHostDiagnostics("in-process", "ready");
-
-        public void Dispose()
-        {
         }
     }
 
