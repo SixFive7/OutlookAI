@@ -308,30 +308,6 @@ $ErrorActionPreference = 'Stop'
 # =============================================================================================
 
 <#
-    The ProfileName= a .prf carries, from its [General] section. $null when there is none.
-#>
-function Get-PrfProfileName {
-    param([string] $Text)
-
-    if ([string]::IsNullOrEmpty($Text)) { return $null }
-    $section = ''
-    foreach ($raw in ($Text -split "`r?`n")) {
-        $line = $raw.Trim()
-        if ($line.StartsWith(';')) { continue }
-        if ($line.StartsWith('[') -and $line.EndsWith(']')) {
-            $section = $line.Substring(1, $line.Length - 2).Trim()
-            continue
-        }
-        if ($section -eq 'General' -and $line.StartsWith('ProfileName=', [System.StringComparison]::OrdinalIgnoreCase)) {
-            $value = $line.Substring('ProfileName='.Length).Trim()
-            if ($value.Length -gt 0) { return $value }
-            return $null
-        }
-    }
-    return $null
-}
-
-<#
     What -Verify does about ImportPRF. The reasoning is in New-OutlookProfile.ps1, beside the
     function of the same name; in one line: remove it only when it names THIS profile's .prf and
     Outlook has demonstrably started since -Execute (First-Run is back), because removing it any
@@ -363,18 +339,6 @@ function Resolve-ImportPrfClearance {
         return [pscustomobject]@{ Decision = 'KeepFailed'; Message = "ImportPRF still names the tier .prf, Outlook HAS started since -Execute (First-Run is back), and there is no profile named '$ProfileName': the import did not take. Left in place as evidence; while First-Run exists Outlook does not act on it." }
     }
     return [pscustomobject]@{ Decision = 'Clear'; Message = 'ImportPRF still names the tier .prf after the import has run. Removing it: left in place, it is a rebuild waiting for the next start that finds First-Run gone.' }
-}
-
-<#
-    Whether one entry of the account-manager key is a MAIL account. The same rule, from the same
-    measurement, as New-OutlookProfile.ps1 and Build-Corpus.ps1: only a {ED475414-...} wrapper
-    around a data file or an address book is excluded.
-#>
-function Test-IsMailAccountEntry {
-    param([string] $Clsid, [string] $ServiceName)
-
-    if ($Clsid -eq '{ED475414-B0D6-11D2-8C3B-00104B2A6676}' -and @('MSUPST MS', 'MSPST MS', 'CONTAB', 'EMABLT', 'MSPST AB') -contains $ServiceName) { return $false }
-    return $true
 }
 
 <#
@@ -738,6 +702,10 @@ function Invoke-SelfTest {
     return 0
 }
 
+# The Outlook profile helpers are among the helpers the scripts share, dot-sourced from ScriptHelpers.ps1
+# beside this script (Q154, Q166 (b), decision 215 (a)) - before the self-test, which holds them too.
+. (Join-Path $PSScriptRoot 'ScriptHelpers.ps1')
+
 if ($SelfTest) { exit (Invoke-SelfTest) }
 
 # =============================================================================================
@@ -827,10 +795,6 @@ function Get-ForcePstPathState {
 
 $script:Failures = @()
 $ReportLines = New-Object System.Collections.Generic.List[string]
-
-# Write-ReportLine prints a line and keeps it in $ReportLines; it is one of the helpers the scripts share,
-# dot-sourced from ScriptHelpers.ps1, which travels with the guest scripts (Q154, Q166 (b), decision 215 (a)).
-. (Join-Path $PSScriptRoot 'ScriptHelpers.ps1')
 
 function Pass {
     param([string] $What, [string] $Detail)

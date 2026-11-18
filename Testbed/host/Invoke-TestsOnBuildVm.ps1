@@ -383,7 +383,8 @@ $ReadGuestLogBlock = {
 
 # Every program call goes through Invoke-NativeCommand, so that Windows PowerShell 5.1 cannot end
 # the script on a program's first stderr line (Q78). It is one of the helpers the scripts share,
-# dot-sourced from Testbed/guest/ScriptHelpers.ps1 (Q166 (b), decision 215 (a)), which says why.
+# dot-sourced from Testbed/guest/ScriptHelpers.ps1 (Q166 (b), decision 215 (a)), which says why; so are
+# Say, Stop-Refused, Format-Seconds, the run id and the TRX reader, which the live runner uses too.
 . (Join-Path $PSScriptRoot '..\guest\ScriptHelpers.ps1')
 
 # =============================================================================================
@@ -425,14 +426,6 @@ function Get-GuestRefusal {
     return ''
 }
 
-# A run directory's name: when it started, and which commit. Sortable, unique per second and
-# commit, and readable in a directory listing.
-function New-RunId {
-    param([DateTime] $When, [string] $Sha)
-    if ($Sha -notmatch '^[0-9a-f]{12,40}$') { throw "Not a commit id: '$Sha'." }
-    return ('{0:yyyyMMdd-HHmmss}-{1}' -f $When, $Sha.Substring(0, 12))
-}
-
 # Whether a string is a run id New-RunId could have made - what the janitor is handed on its
 # command line, and what it then searches runs.log for, so nothing else is accepted.
 function Test-IsRunId {
@@ -448,45 +441,6 @@ function Test-RunEnded {
         if ($line -cmatch ('^\S+ \S+  end    ' + [regex]::Escape($RunId) + '  ')) { return $true }
     }
     return $false
-}
-
-# What a TRX file says. Outcomes are counted from the results themselves, and the file's own
-# counters are kept beside them so a disagreement can be seen; NotExecuted is how xUnit's skips
-# arrive. Failed tests carry the first line of their message.
-function ConvertFrom-TrxText {
-    param([string] $Text)
-    $doc = New-Object System.Xml.XmlDocument
-    $doc.LoadXml($Text)
-    $ns = New-Object System.Xml.XmlNamespaceManager($doc.NameTable)
-    $ns.AddNamespace('t', 'http://microsoft.com/schemas/VisualStudio/TeamTest/2010')
-    $results = @($doc.SelectNodes('//t:Results/t:UnitTestResult', $ns))
-    $counts = [ordered]@{ total = $results.Count; passed = 0; failed = 0; skipped = 0; other = 0 }
-    $failed = @()
-    $skipped = @()
-    foreach ($r in $results) {
-        $outcome = $r.GetAttribute('outcome')
-        if ($outcome -eq 'Passed') { $counts['passed']++ }
-        elseif ($outcome -eq 'Failed') {
-            $counts['failed']++
-            $message = ''
-            $node = $r.SelectSingleNode('t:Output/t:ErrorInfo/t:Message', $ns)
-            if ($null -ne $node) { $message = (($node.InnerText -split "`r?`n") | Where-Object { $_.Trim() } | Select-Object -First 1) }
-            $failed += [pscustomobject]@{ name = $r.GetAttribute('testName'); message = [string]$message }
-        }
-        elseif ($outcome -eq 'NotExecuted') { $counts['skipped']++; $skipped += $r.GetAttribute('testName') }
-        else { $counts['other']++; $failed += [pscustomobject]@{ name = $r.GetAttribute('testName'); message = "outcome $outcome" } }
-    }
-    $counters = $doc.SelectSingleNode('//t:ResultSummary/t:Counters', $ns)
-    $declared = $null
-    if ($null -ne $counters) {
-        $declared = [ordered]@{
-            total       = [int]$counters.GetAttribute('total')
-            passed      = [int]$counters.GetAttribute('passed')
-            failed      = [int]$counters.GetAttribute('failed')
-            notExecuted = [int]$counters.GetAttribute('notExecuted')
-        }
-    }
-    return [pscustomobject]@{ Counts = $counts; Declared = $declared; Failed = $failed; Skipped = $skipped }
 }
 
 # The host's verdict, from what came back. WHEREVER THE GUEST'S run.json AND THE TRX FILE CAME
@@ -1057,7 +1011,7 @@ Expected: 1</Message></ErrorInfo></Output></UnitTestResult>
     }
     $getVms = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Get-PoolVms' }, $true))
     Check 'members are found by name in exactly one place, Get-PoolVms, which refuses a name that is no build VM before it asks' $true ((Get-RunCalls 'Get-TestbedVms').Count -eq 1 -and $getVms.Count -eq 1 -and $getVms[0].Body.Extent.Text.IndexOf('Test-IsBuildVmName') -ge 0 -and $getVms[0].Body.Extent.Text.IndexOf('Test-IsBuildVmName') -lt $getVms[0].Body.Extent.Text.IndexOf('Get-TestbedVms'))
-    Check 'and the state and the heartbeat by the held member''s id, one place each' '1|1' ("{0}|{1}" -f (Get-RunCalls 'Get-TestbedVmStateById').Count, (Get-RunCalls 'Test-TestbedHeartbeat').Count)
+    Check 'and the state and the heartbeat by the held member''s id, one place each' '1|1' ("{0}|{1}" -f (Get-RunCalls 'Get-TestbedVmStateById').Count, (Get-RunCalls 'Wait-TestbedHeartbeat').Count)
     Check 'Get-VMIntegrationService is asked nothing any more' 0 (Get-RunCalls 'Get-VMIntegrationService').Count
 
     Write-Host ''
@@ -1082,7 +1036,10 @@ Expected: 1</Message></ErrorInfo></Output></UnitTestResult>
     $guestRun = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Invoke-GuestRun' }, $true))
     $guestDone = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Wait-GuestDone' }, $true))
     Check 'a running run asks its guest every 15 s, and so does the wait for a guest that outlives its run' $true ($guestRun.Count -eq 1 -and $guestRun[0].Body.Extent.Text.Contains('Start-Sleep -Seconds $TestbedGuestPollSeconds') -and $guestDone.Count -eq 1 -and $guestDone[0].Body.Extent.Text.Contains('Start-Sleep -Seconds $TestbedGuestPollSeconds') -and -not $guestRun[0].Body.Extent.Text.Contains('Start-Sleep -Seconds 3'))
-    Check 'the heartbeat is one narrow query every 2 s' $true ($runText.Contains('while (-not (Test-TestbedHeartbeat (Get-BuildVmId)))') -and $runText.Contains('Start-Sleep -Seconds $TestbedHeartbeatSeconds'))
+    $waitAt = $poolText.IndexOf('function Wait-TestbedHeartbeat')
+    $waitBody = ''
+    if ($waitAt -ge 0) { $waitBody = $poolText.Substring($waitAt, [Math]::Min(600, $poolText.Length - $waitAt)) }
+    Check 'the heartbeat is one narrow query every 2 s' $true ($waitBody.Contains('while (-not (Test-TestbedHeartbeat $Id))') -and $waitBody.Contains('Start-Sleep -Seconds $TestbedHeartbeatSeconds'))
     $restoreBase = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Restore-Base' }, $true))
     $restoreText = ''
     if ($restoreBase.Count -eq 1) { $restoreText = $restoreBase[0].Body.Extent.Text }
@@ -1521,7 +1478,8 @@ function Get-PoolVms([string[]] $Names) {
 }
 
 # The Hyper-V id of the member this run or janitor holds, asked once (Enter-PoolVm sets it as it
-# takes the member; the janitor asks here).
+# takes the member; the janitor asks here). Not TestbedPool.ps1's Get-TestbedVmId, which the guest
+# runners ask: this one asks only through the pool's allowlist, Get-PoolVms.
 function Get-BuildVmId {
     if ($script:BuildVmId) { return $script:BuildVmId }
     $rows = @(Get-PoolVms @($BuildVmName))
@@ -1650,10 +1608,6 @@ if ($PSCmdlet.ParameterSetName -eq 'Janitor') {
 # =============================================================================================
 $tStart = Get-Date
 $timings = [ordered]@{}
-function Stop-Refused([string] $Why) {
-    Say "REFUSED: $Why"
-    exit $ExitCodes['REFUSED']
-}
 function Measure-Phase([string] $Name, [DateTime] $Since) { $timings[$Name] = [math]::Round(((Get-Date) - $Since).TotalSeconds, 1) }
 
 if ($QueueTimeoutMinutes -lt 1 -or $RunTimeoutMinutes -lt 5) { Stop-Refused '-QueueTimeoutMinutes must be at least 1 and -RunTimeoutMinutes at least 5.' }
@@ -1895,13 +1849,9 @@ try {
     # 2026-10-03: Running -> Running); applied to a saved or stopped one it leaves it saved.
     if ($stateAfter -ne 'Running') { Start-VM -VM $vm }
     # The heartbeat, every 2 s, by one narrow query on the VM's id (TestbedPool.ps1's
-    # Test-TestbedHeartbeat) - Get-VMIntegrationService, every second until 2026-11-18, cost 23 WMI
+    # Wait-TestbedHeartbeat) - Get-VMIntegrationService, every second until 2026-11-18, cost 23 WMI
     # operations a look.
-    $hbDeadline = (Get-Date).AddMinutes(3)
-    while (-not (Test-TestbedHeartbeat (Get-BuildVmId))) {
-        if ((Get-Date) -ge $hbDeadline) { throw "the VM's heartbeat did not read OK within 3 minutes of Start-VM" }
-        Start-Sleep -Seconds $TestbedHeartbeatSeconds
-    }
+    Wait-TestbedHeartbeat -Id (Get-BuildVmId) -Minutes 3 -What 'the VM'
     Measure-Phase 'resume' $t0
 
     $t0 = Get-Date

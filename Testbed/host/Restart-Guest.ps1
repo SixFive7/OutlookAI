@@ -211,8 +211,9 @@ $script:QuitCodes = @{
     16 = 'REFUSED-DIALOG-OPEN'
 }
 
-# Say is one of the helpers the scripts share, dot-sourced from Testbed/guest/ScriptHelpers.ps1 (Q154,
-# Q166 (b), decision 215 (a)), which says why. It appends to $LogPath when there is one.
+# Say and Get-VmHeartbeatStatus are among the helpers the scripts share, dot-sourced from
+# Testbed/guest/ScriptHelpers.ps1 (Q154, Q166 (b), decision 215 (a)), which says why. Say appends to
+# $LogPath when there is one.
 . (Join-Path $PSScriptRoot '..\guest\ScriptHelpers.ps1')
 
 # `query session` output -> the console row, or $null. Pure, so -SelfTest can pin it.
@@ -620,12 +621,6 @@ $cred = & (Join-Path $PSScriptRoot 'Get-GuestCredential.ps1') -RepoRoot $RepoRoo
 $expectedUser = $cred.UserName
 if ($expectedUser -match '\\') { $expectedUser = $expectedUser.Split('\')[-1] }
 
-function Get-Heartbeat {
-    $hb = Get-VMIntegrationService -VMName $VMName -Name 'Heartbeat' -ErrorAction SilentlyContinue
-    if (-not $hb) { return 'absent' }
-    return [string]$hb.PrimaryStatusDescription
-}
-
 function Invoke-InGuest([scriptblock] $Block, [object[]] $ArgumentList = @()) {
     Invoke-Command -VMName $VMName -Credential $cred -ScriptBlock $Block -ArgumentList $ArgumentList -ErrorAction Stop
 }
@@ -732,7 +727,7 @@ Say "== Restart-Guest: $VMName ($(if ($Execute) { 'EXECUTE' } else { 'DRY RUN' }
 $vm = Get-VM -Name $VMName -ErrorAction SilentlyContinue
 if (-not $vm) { Say "REFUSING: no VM named '$VMName' on this host."; exit 2 }
 if ($vm.State -ne 'Running') { Say "REFUSING: '$VMName' is $($vm.State), not Running. Start or resume it first."; exit 2 }
-$hb = Get-Heartbeat
+$hb = Get-VmHeartbeatStatus $VMName
 if ($hb -ne 'OK') { Say "REFUSING: the heartbeat reads '$hb', not OK - the guest is not in a state to be restarted cleanly."; exit 2 }
 
 # A frozen guest (time sync off, Q130 (a)) is not restarted unless told to carry its time across.
@@ -882,7 +877,7 @@ $dropped = $false
 $seenRestart = $false
 $lastBootCheck = Get-Date
 while (((Get-Date) - $tr) -lt $limit) {
-    $hb = Get-Heartbeat
+    $hb = Get-VmHeartbeatStatus $VMName
     if ($hb -ne 'OK') { $dropped = $true; break }
     if (((Get-Date) - $lastBootCheck).TotalSeconds -ge 10) {
         $lastBootCheck = Get-Date
@@ -901,7 +896,7 @@ else { Say "  heartbeat never left OK in $RestartTimeoutMinutes min - checking t
 $tb = Get-Date
 $back = $false
 while (((Get-Date) - $tb) -lt $limit) {
-    if ((Get-Heartbeat) -eq 'OK') { $back = $true; break }
+    if ((Get-VmHeartbeatStatus $VMName) -eq 'OK') { $back = $true; break }
     Start-Sleep -Seconds 3
 }
 if (-not $back) { Say "STOPPING: the heartbeat did not return to OK within $RestartTimeoutMinutes min."; exit 5 }

@@ -490,14 +490,6 @@ if ($SelfTest) { $LogPath = $null }
 # PURE DECISIONS. Each decides from its arguments alone, so -SelfTest can drive it anywhere.
 # =============================================================================================
 
-function Test-GuestIdentity {
-    param([string] $UserName, [string] $ComputerName, [string[]] $Users, [string] $Prefix)
-    $userOk = $false
-    foreach ($u in $Users) { if ($UserName -eq $u) { $userOk = $true } }
-    $machineOk = [bool]($Prefix -and $ComputerName -and $ComputerName.StartsWith($Prefix, [System.StringComparison]::OrdinalIgnoreCase))
-    return ($userOk -and $machineOk)
-}
-
 # The installer's switches. /VERYSILENT and /SUPPRESSMSGBOXES: nothing on screen - a dialog on an
 # unattended guest is a hang. /NOCLOSEAPPLICATIONS: never let Restart Manager close Outlook - this
 # refuses to run while Outlook is up anyway. /NORESTART: a reboot is a human's decision.
@@ -1231,14 +1223,9 @@ function Invoke-Installer {
 # =============================================================================================
 # GUARDS
 # =============================================================================================
-function Assert-TestbedGuestLocal {
-    if (Test-GuestIdentity -UserName $env:USERNAME -ComputerName $env:COMPUTERNAME -Users $ExpectedUser -Prefix $ExpectedComputerNamePrefix) { return }
-    throw @"
-REFUSING TO RUN.
-
-  logged on as : '$env:USERNAME'          (allowed: $($ExpectedUser -join ', '))
-  computer name: '$env:COMPUTERNAME'      (must start with: '$ExpectedComputerNamePrefix')
-
+# The guest guard is Assert-TestbedGuestIdentity, one of the helpers the scripts share (Q154, S7c),
+# dot-sourced from ScriptHelpers.ps1: this is what it says this script would have done elsewhere.
+$GuestGuardWhy = @"
 This script installs the OutlookAI add-in, rewrites a VSTO trust entry and starts Outlook. On the
 maintainer's workstation that would replace the add-in his Outlook really runs, and nothing would
 say so until it misbehaved.
@@ -1251,7 +1238,6 @@ so a guest built from the answer file matches both axes. If you named a guest so
 
 Do not 'fix' this by widening either default. The defaults are the guard.
 "@
-}
 
 function Assert-PhaseElevation {
     param([string] $ForPhase)
@@ -2226,7 +2212,7 @@ function Invoke-FirstRunPhase {
 # =============================================================================================
 # MAIN
 # =============================================================================================
-Assert-TestbedGuestLocal
+Assert-TestbedGuestIdentity -Why $GuestGuardWhy
 
 $mode = Resolve-RunMode -Execute $Execute.IsPresent -Verify $Verify.IsPresent -Phase $Phase
 if ($mode.Refusal) { throw $mode.Refusal }

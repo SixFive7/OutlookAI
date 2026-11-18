@@ -175,18 +175,17 @@ if ($SelfTest) { Invoke-SelfTest }
 if (-not $Hub) { $Hub = Get-StagedSettingsValue $SettingsPath 'testHubStoreDisplayName' }
 if (-not $Hub) { throw "No -Hub, and no staged live-test settings at $SettingsPath name one: give the test account's address, or stage the settings (Invoke-LiveTierOnGuest.ps1 does on every run)." }
 
-function Assert-TestbedGuestLocal {
-    $machineOk = $env:COMPUTERNAME -and $ExpectedComputerNamePrefix -and $env:COMPUTERNAME.StartsWith($ExpectedComputerNamePrefix, [StringComparison]::OrdinalIgnoreCase)
-    if (-not ($ExpectedUser -contains $env:USERNAME) -or -not $machineOk) {
-        throw "REFUSING TO RUN: '$env:USERNAME' on '$env:COMPUTERNAME' is not the Exchange test VM (allowed users: $($ExpectedUser -join ', '); computer prefix '$ExpectedComputerNamePrefix')."
-    }
-}
-Assert-TestbedGuestLocal
-
-$ReportLines = New-Object System.Collections.Generic.List[string]
 # Write-ReportLine prints a line and keeps it in $ReportLines; it is one of the helpers the scripts share,
 # dot-sourced from ScriptHelpers.ps1, which travels with the guest scripts (Q154, Q166 (b), decision 215 (a)).
 . (Join-Path $PSScriptRoot 'ScriptHelpers.ps1')
+# The guest guard is Assert-TestbedGuestIdentity, one of the helpers the scripts share (Q154, S7c),
+# dot-sourced from ScriptHelpers.ps1: this is what it says this script would have done elsewhere.
+$GuestGuardWhy = @"
+This measurement runs on the Exchange test VM, OutlookAI-Exchange, and on no other machine.
+"@
+Assert-TestbedGuestIdentity -Why $GuestGuardWhy
+
+$ReportLines = New-Object System.Collections.Generic.List[string]
 Write-ReportLine ("MEASURE-EXCHANGE-INDEX-IDS on {0} at {1}" -f $env:COMPUTERNAME, (Get-Date).ToString('o'))
 
 function Get-BinaryHex($Accessor, [string] $Tag) {

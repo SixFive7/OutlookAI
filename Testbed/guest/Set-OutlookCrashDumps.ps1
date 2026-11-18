@@ -202,24 +202,31 @@ if ($SelfTest) { exit (Invoke-SelfTest) }
 # THE GUEST.
 # =============================================================================================
 
-function Assert-TestbedGuestLocal {
-    $who = $env:USERNAME
-    $machine = $env:COMPUTERNAME
-    $userOk = @($ExpectedUser | Where-Object { $_ -eq $who }).Count -gt 0
-    $machineOk = $machine -and $machine.StartsWith($ExpectedComputerNamePrefix, [System.StringComparison]::OrdinalIgnoreCase)
-    if ($userOk -and $machineOk) { return }
-    throw @"
-REFUSING TO RUN.
+# travels-alone: Invoke-LiveTierOnGuest.ps1 stages THIS checkout's copy beside any commit's guest scripts.
+# The guest guard: Test-GuestIdentity and Assert-TestbedGuestIdentity, copies of ScriptHelpers.ps1's that
+# Tools/Checks/check-powershell-51.ps1 check 4 holds identical, then what this script would have done elsewhere.
+function Test-GuestIdentity {
+    param([string] $UserName, [string] $ComputerName, [string[]] $Users, [string] $Prefix)
+    $userOk = $false
+    foreach ($u in $Users) { if ($UserName -eq $u) { $userOk = $true } }
+    $machineOk = [bool]($Prefix -and $ComputerName -and $ComputerName.StartsWith($Prefix, [System.StringComparison]::OrdinalIgnoreCase))
+    return ($userOk -and $machineOk)
+}
 
-  logged on as : '$who'          (allowed: $($ExpectedUser -join ', '))
-  computer name: '$machine'      (must start with: '$ExpectedComputerNamePrefix')
+function Assert-TestbedGuestIdentity {
+    param([string] $Why)
+    $users = @($script:ExpectedUser)
+    $prefix = [string]$script:ExpectedComputerNamePrefix
+    if (Test-GuestIdentity -UserName $env:USERNAME -ComputerName $env:COMPUTERNAME -Users $users -Prefix $prefix) { return }
+    throw ("REFUSING TO RUN.`n`n  logged on as : '{0}'          (allowed: {1})`n  computer name: '{2}'      (must start with: '{3}')`n`n{4}" -f $env:USERNAME, ($users -join ', '), $env:COMPUTERNAME, $prefix, $Why)
+}
 
+$GuestGuardWhy = @"
 This script changes Windows Error Reporting for the whole machine and makes it write the full memory
 of a crashing Outlook - mail included - to a folder. That belongs on a test guest, never on a machine
 with real mail on it. The testbed guests autologon as 'vmadmin' and are named 'OAI-...'
 (Testbed/host/New-AnswerFile.ps1). Do not 'fix' this by widening either default.
 "@
-}
 
 function Read-Observed {
     $keys = @{}
@@ -258,7 +265,7 @@ function Show-Verdict([object] $Verdict) {
     return 1
 }
 
-Assert-TestbedGuestLocal
+Assert-TestbedGuestIdentity -Why $GuestGuardWhy
 $plan = @(Get-DumpPlan $DumpFolder)
 
 if ($Prove) {

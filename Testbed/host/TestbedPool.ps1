@@ -54,7 +54,10 @@
       - and a run that runs reads its VM's state and heartbeat with one narrow CIM query each, by
         the VM's id, on a session kept for the process (Get-TestbedVms, Get-TestbedVmStateById,
         Test-TestbedHeartbeat) - never Get-VM or Get-VMIntegrationService, which cost 4 and 23 WMI
-        operations a call (stream W, 2026-11-18).
+        operations a call (stream W, 2026-11-18). The live runner and the trust-removal probe ask
+        them by the guest's name (Get-TestbedVmId, Get-TestbedVmState, Wait-TestbedHeartbeat), and
+        restore a checkpoint over a guest the one way, saving a running guest first
+        (Restore-TestbedCheckpoint).
 #>
 
 # The pools, the source first: the member every run tried first before there were clones. The
@@ -410,4 +413,58 @@ function Test-TestbedHeartbeat {
     if ($rows.Count -lt 1) { return $false }
     $status = @($rows[0].OperationalStatus)
     return ($status.Count -gt 0 -and [int]$status[0] -eq 2)
+}
+
+# A VM's Hyper-V id by its name: Get-TestbedVms the first time a script asks, and the answer kept for
+# the rest of it - an id does not change while the VM exists. Throws unless exactly one VM has the
+# name. The build-VM runner keeps its own, Get-BuildVmId: it asks only through its pool's allowlist,
+# and is handed the id as it takes a VM.
+function Get-TestbedVmId {
+    param([string] $Name)
+    if ($null -eq $script:TestbedVmIds) { $script:TestbedVmIds = @{} }
+    if (-not $script:TestbedVmIds.ContainsKey($Name)) {
+        $rows = @(Get-TestbedVms -Name @($Name))
+        if ($rows.Count -ne 1) { throw "expected one VM named '$Name' on this host and found $($rows.Count)" }
+        $script:TestbedVmIds[$Name] = [string]$rows[0].Id
+    }
+    return $script:TestbedVmIds[$Name]
+}
+
+# A VM's state by its name - Running, Saved, Off, Paused, or on its way - by one keyed query on its id,
+# never Get-VM. Throws when Hyper-V no longer has the VM.
+function Get-TestbedVmState {
+    param([string] $Name)
+    $state = Get-TestbedVmStateById (Get-TestbedVmId $Name)
+    if (-not $state) { throw "Hyper-V no longer has '$Name' on this host" }
+    return [string]$state
+}
+
+# Waits until a VM's heartbeat reads OK, asking Test-TestbedHeartbeat every $TestbedHeartbeatSeconds,
+# and throws once -Minutes have passed without it. Get-VMIntegrationService, asked every 1 to 3 s until
+# 2026-11-18, cost 23 WMI operations a look (stream W).
+function Wait-TestbedHeartbeat {
+    param([string] $Id, [int] $Minutes, [string] $What)
+    $deadline = (Get-Date).AddMinutes($Minutes)
+    while (-not (Test-TestbedHeartbeat $Id)) {
+        if ((Get-Date) -ge $deadline) { throw "$What's heartbeat did not read OK within $Minutes minute(s)" }
+        Start-Sleep -Seconds $TestbedHeartbeatSeconds
+    }
+}
+
+# A checkpoint restored over a test guest, by the guest's name. A guest that runs - or is paused - is
+# SAVED first (2026-11-18): a restore over a running guest left it out of PowerShell Direct's reach for
+# six minutes in stream R1's runs, where saved first and then restored it answered in seconds. -Start
+# starts a guest the restore left stopped or saved, and waits up to 5 minutes for its heartbeat.
+# Returns the state the restore left the guest in, before any start.
+function Restore-TestbedCheckpoint {
+    param([string] $Name, [string] $Checkpoint, [switch] $Start)
+    $state = Get-TestbedVmState $Name
+    if ($state -eq 'Running' -or $state -eq 'Paused') { Save-VM -Name $Name }
+    Restore-VMSnapshot -VMName $Name -Name $Checkpoint -Confirm:$false
+    $after = Get-TestbedVmState $Name
+    if ($Start) {
+        if ($after -ne 'Running') { Start-VM -Name $Name }
+        Wait-TestbedHeartbeat -Id (Get-TestbedVmId $Name) -Minutes 5 -What $Name
+    }
+    return $after
 }
