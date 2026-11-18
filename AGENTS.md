@@ -257,9 +257,11 @@ pwsh -File Testbed/host/Invoke-TestsOnBuildVm.ps1 -SkipSuite -SelfTestInclude 'T
 - **One run per VM, and the build VM is a pool** (2026-11-17): `OutlookAI-Build`, `OutlookAI-Build2`
   and `OutlookAI-Build3` - copies of one machine, `Testbed/host/TestbedPool.ps1` - and a run takes
   whichever is free; callers queue only while all are busy. `-VMName` pins one. Run it in the
-  background or with a timeout of 20 minutes or more. Never use a VM by hand while runs may happen;
-  to hold runs off one, take a lease on it with `Testbed/host/Set-TestbedLease.ps1 -VMName <vm>` and
-  release it after.
+  background or with a timeout of 20 minutes or more - and in the background while the host is busy:
+  a run also waits while the testbed is paused or the host's processors are 70 % busy or more, up
+  to its `-QueueTimeoutMinutes` (the section on test VMs below). Never use a VM by hand while runs
+  may happen; to hold runs off one, take a lease on it with
+  `Testbed/host/Set-TestbedLease.ps1 -VMName <vm>` and release it after.
 - **It runs in UTC** (Q126 (a), decided by the maintainer 2026-10-03), not in this workstation's
   W. Europe: with GitHub's UTC runner gone, it is where a zone-dependent test fails. A failure
   there that W. Europe would not show is a time-zone bug until shown otherwise - fix it with a T1
@@ -291,7 +293,8 @@ and never takes over one somebody else holds), the checkpoint, the graceful rest
 `-RunLevel Limited` with the per-run opt-in, and on every path the resting checkpoint, the
 guest saved and the lease released. Exit 0 pass, 1 a test or a safety proof failed, 2 the commit did
 not build or stage, 3 not tested, 4 refused; `summary.txt` in `.work\guest-live-runs\<run>\` says
-why. Run it in the background or with a timeout of an hour or more.
+why. Run it in the background or with a timeout of an hour or more; like a build run, it waits while
+the testbed is paused or the host is busy, up to its `-LeaseWaitMinutes`.
 
 **What stays on this workstation - this, and nothing else:**
 
