@@ -985,7 +985,7 @@ Expected: 1</Message></ErrorInfo></Output></UnitTestResult>
     }
     $getVms = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Get-PoolVms' }, $true))
     Check 'members are found by name in exactly one place, Get-PoolVms, which refuses a name that is no build VM before it asks' $true ((Get-RunCalls 'Get-TestbedVms').Count -eq 1 -and $getVms.Count -eq 1 -and $getVms[0].Body.Extent.Text.IndexOf('Test-IsBuildVmName') -ge 0 -and $getVms[0].Body.Extent.Text.IndexOf('Test-IsBuildVmName') -lt $getVms[0].Body.Extent.Text.IndexOf('Get-TestbedVms'))
-    Check 'and the state and the heartbeat by the held member''s id, one place each' '1|1' ("{0}|{1}" -f (Get-RunCalls 'Get-TestbedVmStateById').Count, (Get-RunCalls 'Test-TestbedHeartbeat').Count)
+    Check 'and the state and the heartbeat by the held member''s id, one place each' '1|1' ("{0}|{1}" -f (Get-RunCalls 'Get-TestbedVmStateById').Count, (Get-RunCalls 'Wait-TestbedHeartbeat').Count)
     Check 'Get-VMIntegrationService is asked nothing any more' 0 (Get-RunCalls 'Get-VMIntegrationService').Count
 
     Write-Host ''
@@ -1010,7 +1010,10 @@ Expected: 1</Message></ErrorInfo></Output></UnitTestResult>
     $guestRun = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Invoke-GuestRun' }, $true))
     $guestDone = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Wait-GuestDone' }, $true))
     Check 'a running run asks its guest every 15 s, and so does the wait for a guest that outlives its run' $true ($guestRun.Count -eq 1 -and $guestRun[0].Body.Extent.Text.Contains('Start-Sleep -Seconds $TestbedGuestPollSeconds') -and $guestDone.Count -eq 1 -and $guestDone[0].Body.Extent.Text.Contains('Start-Sleep -Seconds $TestbedGuestPollSeconds') -and -not $guestRun[0].Body.Extent.Text.Contains('Start-Sleep -Seconds 3'))
-    Check 'the heartbeat is one narrow query every 2 s' $true ($runText.Contains('while (-not (Test-TestbedHeartbeat (Get-BuildVmId)))') -and $runText.Contains('Start-Sleep -Seconds $TestbedHeartbeatSeconds'))
+    $waitAt = $poolText.IndexOf('function Wait-TestbedHeartbeat')
+    $waitBody = ''
+    if ($waitAt -ge 0) { $waitBody = $poolText.Substring($waitAt, [Math]::Min(600, $poolText.Length - $waitAt)) }
+    Check 'the heartbeat is one narrow query every 2 s' $true ($waitBody.Contains('while (-not (Test-TestbedHeartbeat $Id))') -and $waitBody.Contains('Start-Sleep -Seconds $TestbedHeartbeatSeconds'))
     $restoreBase = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Restore-Base' }, $true))
     $restoreText = ''
     if ($restoreBase.Count -eq 1) { $restoreText = $restoreBase[0].Body.Extent.Text }
@@ -1322,7 +1325,8 @@ function Get-PoolVms([string[]] $Names) {
 }
 
 # The Hyper-V id of the member this run or janitor holds, asked once (Enter-PoolVm sets it as it
-# takes the member; the janitor asks here).
+# takes the member; the janitor asks here). Not TestbedPool.ps1's Get-TestbedVmId, which the guest
+# runners ask: this one asks only through the pool's allowlist, Get-PoolVms.
 function Get-BuildVmId {
     if ($script:BuildVmId) { return $script:BuildVmId }
     $rows = @(Get-PoolVms @($BuildVmName))
@@ -1681,13 +1685,9 @@ try {
     # 2026-10-03: Running -> Running); applied to a saved or stopped one it leaves it saved.
     if ($stateAfter -ne 'Running') { Start-VM -VM $vm }
     # The heartbeat, every 2 s, by one narrow query on the VM's id (TestbedPool.ps1's
-    # Test-TestbedHeartbeat) - Get-VMIntegrationService, every second until 2026-11-18, cost 23 WMI
+    # Wait-TestbedHeartbeat) - Get-VMIntegrationService, every second until 2026-11-18, cost 23 WMI
     # operations a look.
-    $hbDeadline = (Get-Date).AddMinutes(3)
-    while (-not (Test-TestbedHeartbeat (Get-BuildVmId))) {
-        if ((Get-Date) -ge $hbDeadline) { throw "the VM's heartbeat did not read OK within 3 minutes of Start-VM" }
-        Start-Sleep -Seconds $TestbedHeartbeatSeconds
-    }
+    Wait-TestbedHeartbeat -Id (Get-BuildVmId) -Minutes 3 -What 'the VM'
     Measure-Phase 'resume' $t0
 
     $t0 = Get-Date

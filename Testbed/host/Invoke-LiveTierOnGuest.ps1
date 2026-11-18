@@ -667,15 +667,21 @@ function Invoke-SelfTest {
     Check 'whether a guest is free is its lease file, read before Hyper-V is asked anything about it' $true ($at['$held = Get-TestbedLease -VMName $guest.Name'] -gt $at['$ahead = Get-TestbedQueueTurn'] -and $at['$held = Get-TestbedLease -VMName $guest.Name'] -lt $at['$refusals[$guest.Name] = Get-GuestRunRefusal $guest'] -and $at['$refusals[$guest.Name] = Get-GuestRunRefusal $guest'] -lt $at['$startupBytes[$guest.Name] = [long](Get-VM -Name $guest.Name).MemoryStartup'])
     Check 'and what does not change in a run - its checkpoints, its startup memory - is asked once a run' $true ($runCode.Contains('if (-not $refusals.ContainsKey($guest.Name))') -and $runCode.Contains('if (-not $startupBytes.ContainsKey($guest.Name))'))
     Check 'between passes it sleeps on the testbed''s files, and leaves the queue on every path' $true ($at['[void](Wait-TestbedChange)'] -gt $at['$holder = Request-GuestLease $guest.Name 60'] -and $at['finally { Exit-TestbedQueue $ticket }'] -gt $at['[void](Wait-TestbedChange)'])
-    Check 'the heartbeat is one narrow query on the guest''s id, every 2 s' $true ($runCode.Contains('while (-not (Test-TestbedHeartbeat (Get-GuestVmId $facts.Name)))') -and $runCode.Contains('Start-Sleep -Seconds $TestbedHeartbeatSeconds') -and -not $runCode.Contains("Get-VMIntegrationService -VMName `$facts.Name -Name 'Heartbeat'"))
-    Check 'the run''s guest calls share one PowerShell Direct session, opened by the guest''s id' $true ($runCode.Contains('New-PSSession -VMId (Get-GuestVmId $facts.Name)') -and -not $runCode.Contains('Invoke-Command -VMName') -and ([regex]::Matches($runCode, [regex]::Escape('Invoke-Command -Session (Get-GuestSession)'))).Count -eq 2)
+    # TestbedPool.ps1's functions, which the run asks Hyper-V through, by name.
+    $poolAst = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'TestbedPool.ps1'), [ref] $null, [ref] $null)
+    $poolBody = @{}
+    foreach ($fn in $poolAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $false)) { $poolBody[$fn.Name] = $fn.Body.Extent.Text }
+    $poolWait = [string]$poolBody['Wait-TestbedHeartbeat']
+    $poolRestore = [string]$poolBody['Restore-TestbedCheckpoint']
+    Check 'the heartbeat is one narrow query on the guest''s id, every 2 s' $true ($runCode.Contains('Wait-TestbedHeartbeat -Id (Get-TestbedVmId $facts.Name)') -and $poolRestore.Contains('Wait-TestbedHeartbeat -Id (Get-TestbedVmId $Name)') -and $poolWait.Contains('Test-TestbedHeartbeat $Id') -and $poolWait.Contains('Start-Sleep -Seconds $TestbedHeartbeatSeconds') -and -not $runCode.Contains("Get-VMIntegrationService -VMName `$facts.Name -Name 'Heartbeat'"))
+    Check 'the run''s guest calls share one PowerShell Direct session, opened by the guest''s id' $true ($runCode.Contains('New-PSSession -VMId (Get-TestbedVmId $facts.Name)') -and -not $runCode.Contains('Invoke-Command -VMName') -and ([regex]::Matches($runCode, [regex]::Escape('Invoke-Command -Session (Get-GuestSession)'))).Count -eq 2)
     Check 'and each guest call starts as a session of its own did: no exit code from the call before, the folder it started in' $true ($runCode.Contains('$global:LASTEXITCODE = $null') -and $runCode.Contains('Set-Location -LiteralPath $global:OutlookAIGuestStart') -and $runCode.IndexOf('$global:LASTEXITCODE = $null') -lt $runCode.IndexOf('"RUN-REGISTER-EXIT: $LASTEXITCODE"'))
     $restoreAt = $runCode.IndexOf('function Restore-Guest')
     $restoreText = ''
     if ($restoreAt -ge 0) { $restoreText = $runCode.Substring($restoreAt, [Math]::Min(700, $runCode.Length - $restoreAt)) }
-    Check 'a running guest is saved before a checkpoint is restored over it, and its session closed' $true ($restoreText.IndexOf('Close-GuestSession') -gt 0 -and $restoreText.IndexOf('Save-VM -Name $facts.Name') -gt 0 -and $restoreText.IndexOf('Save-VM -Name $facts.Name') -lt $restoreText.IndexOf('Restore-VMSnapshot'))
+    Check 'a running guest is saved before a checkpoint is restored over it, and its session closed' $true ($restoreText.IndexOf('Close-GuestSession') -gt 0 -and $restoreText.IndexOf('Restore-TestbedCheckpoint -Name $facts.Name -Checkpoint $Name -Start') -gt $restoreText.IndexOf('Close-GuestSession') -and $poolRestore.IndexOf('Save-VM -Name $Name') -gt 0 -and $poolRestore.IndexOf('Save-VM -Name $Name') -lt $poolRestore.IndexOf('Restore-VMSnapshot'))
     Check 'and the session is closed before every restart, which ends it' $true (([regex]::Matches($runCode, 'Close-GuestSession\s+# ps51-native-stderr-ok:[^\n]*\n\s*&\s+\(Join-Path \$PSScriptRoot ''Restart-Guest\.ps1''\)')).Count -eq 2)
-    Check 'a guest''s state is read with the narrow query, never Get-VM''s' $true ($runCode.Contains('function Get-GuestVmState') -and -not $runCode.Contains('(Get-VM -Name $facts.Name).State'))
+    Check 'a guest''s state is read with the narrow query, never Get-VM''s' $true ($runCode.Contains('(Get-TestbedVmState $facts.Name)') -and ([string]$poolBody['Get-TestbedVmState']).Contains('Get-TestbedVmStateById') -and -not $runCode.Contains('(Get-VM -Name $facts.Name).State'))
 
     Write-Host '== the run id =='
     Check 'when, guest, commit' '20261003-174500-indexed-d4e31fe12345' (New-RunId ([datetime]'2026-10-03T17:45:00') 'd4e31fe1234567890' (Get-RunLabel 'OutlookAI-Indexed'))
@@ -992,32 +998,9 @@ function Request-GuestLease([string] $Name, [int] $Minutes) {
     }
     finally { $claim.Dispose() }
 }
-# A guest's Hyper-V id, asked once a run by one narrow query (TestbedPool.ps1's Get-TestbedVms): the
-# state, the heartbeat and the PowerShell Direct session are asked for by it.
-$guestVmIds = @{}
-function Get-GuestVmId([string] $Name) {
-    if (-not $guestVmIds.ContainsKey($Name)) {
-        $rows = @(Get-TestbedVms -Name @($Name))
-        if ($rows.Count -ne 1) { throw "expected one VM named '$Name' on this host and found $($rows.Count)" }
-        $guestVmIds[$Name] = [string]$rows[0].Id
-    }
-    return $guestVmIds[$Name]
-}
-# The heartbeat, every 2 s, by one narrow query on the guest's id (Test-TestbedHeartbeat) -
-# Get-VMIntegrationService, every 3 s until 2026-11-18, cost 23 WMI operations a look (stream W).
-function Wait-Heartbeat {
-    $deadline = (Get-Date).AddMinutes(5)
-    while (-not (Test-TestbedHeartbeat (Get-GuestVmId $facts.Name))) {
-        if ((Get-Date) -ge $deadline) { throw "the guest's heartbeat did not come back within 5 minutes" }
-        Start-Sleep -Seconds $TestbedHeartbeatSeconds
-    }
-}
-# The guest's state - Running, Saved, Off, Paused, or on its way - by its id, one keyed query, never Get-VM.
-function Get-GuestVmState([string] $Name) {
-    $state = Get-TestbedVmStateById (Get-GuestVmId $Name)
-    if (-not $state) { throw "Hyper-V no longer has '$Name' on this host" }
-    return [string]$state
-}
+# The guest's Hyper-V id - asked once a run - its state and its heartbeat are TestbedPool.ps1's narrow
+# queries by the guest's name (stream W, 2026-11-18): Get-TestbedVmId, Get-TestbedVmState and
+# Wait-TestbedHeartbeat, every 2 s, which the trust-removal probe asks too.
 # ONE PowerShell Direct session for the run's own guest calls (stream W, 2026-11-18): every guest call
 # opened a session of its own, by the VM's name - nine in a run of one test class that morning.
 # Opened by the guest's id at the first call that needs it, and closed wherever the guest is restored
@@ -1031,19 +1014,15 @@ function Close-GuestSession {
 function Get-GuestSession {
     if ($null -ne $script:guestSession -and [string]$script:guestSession.State -eq 'Opened') { return $script:guestSession }
     Close-GuestSession
-    $script:guestSession = New-PSSession -VMId (Get-GuestVmId $facts.Name) -Credential $credential -ErrorAction Stop
+    $script:guestSession = New-PSSession -VMId (Get-TestbedVmId $facts.Name) -Credential $credential -ErrorAction Stop
     return $script:guestSession
 }
-# A guest that runs - or is paused - is SAVED before a checkpoint is restored over it (2026-11-18): a
-# restore over a running guest left it out of PowerShell Direct's reach for six minutes in stream R1's
-# runs, where saved first and then restored it answered in seconds.
+# A checkpoint restored over the guest by TestbedPool.ps1's Restore-TestbedCheckpoint, which saves a
+# guest that runs first (2026-11-18), then the guest started and its heartbeat waited for. The restore
+# ends the run's guest session, so it is closed first.
 function Restore-Guest([string] $Name) {
     Close-GuestSession
-    $state = Get-GuestVmState $facts.Name
-    if ($state -eq 'Running' -or $state -eq 'Paused') { Save-VM -Name $facts.Name }
-    Restore-VMSnapshot -VMName $facts.Name -Name $Name -Confirm:$false
-    if ((Get-GuestVmState $facts.Name) -ne 'Running') { Start-VM -Name $facts.Name }
-    Wait-Heartbeat
+    [void](Restore-TestbedCheckpoint -Name $facts.Name -Checkpoint $Name -Start)
 }
 # One piece of work on the guest; its whole output goes to guest\<name>.log. Session 1 through
 # Register-InteractiveTask.ps1 at RunLevel Limited (where Outlook runs, NOT elevated), or session 0
@@ -1192,8 +1171,8 @@ try {
     try {
         $touched = $true
         if ($exchangeCarry) {
-            if ((Get-GuestVmState $facts.Name) -ne 'Running') { Start-VM -Name $facts.Name }
-            Wait-Heartbeat
+            if ((Get-TestbedVmState $facts.Name) -ne 'Running') { Start-VM -Name $facts.Name }
+            Wait-TestbedHeartbeat -Id (Get-TestbedVmId $facts.Name) -Minutes 5 -What $facts.Name
             Say 'resumed the Exchange VM as its last run left it (its mailboxes live on the server; no checkpoint restored)'
         }
         else {
@@ -1425,7 +1404,7 @@ finally {
             }
             try {
                 Save-VM -Name $facts.Name
-                $checkpointActions['saved'] = ((Get-GuestVmState $facts.Name) -eq 'Saved')
+                $checkpointActions['saved'] = ((Get-TestbedVmState $facts.Name) -eq 'Saved')
             }
             catch { Say "SAVING THE GUEST FAILED: $($_.Exception.Message) - save it by hand." }
             Say "rested on $($checkpointActions['restedOn']); settings staged=$($checkpointActions['settingsStaged']); saved=$($checkpointActions['saved'])"

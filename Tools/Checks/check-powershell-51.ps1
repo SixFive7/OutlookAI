@@ -71,7 +71,9 @@
        same file always did.
 
     4. A SHARED HELPER RESTATED. The helpers the scripts share have one copy, in
-       Testbed/guest/ScriptHelpers.ps1, and a script that uses one dot-sources that file. A script
+       Testbed/guest/ScriptHelpers.ps1 - and the host's VM pool and lease helpers in
+       Testbed/host/TestbedPool.ps1 and TestbedLeasePath.ps1, which only host scripts dot-source -
+       and a script that uses one dot-sources that file. A script
        that must reach a machine on its own - on the answer volume, or copied to a VM as a single
        file - keeps its own copy, says so on a line of its own,
            # travels-alone: <how it reaches the machine>
@@ -366,7 +368,8 @@ function Get-PreferenceAssignments($ast) {
 }
 
 # The shared helper files (check 4, Q166 (b), decision 215 (a)): the one copy of each function in them.
-$script:SharedHelperFiles = @('Testbed/guest/ScriptHelpers.ps1')
+# ScriptHelpers.ps1 travels with the guest scripts; the pool and lease files are the host scripts' own.
+$script:SharedHelperFiles = @('Testbed/guest/ScriptHelpers.ps1', 'Testbed/host/TestbedPool.ps1', 'Testbed/host/TestbedLeasePath.ps1')
 
 # Copies not folded yet, each with what folds it. Reported, and only ever shortened: an entry for a
 # script that no longer restates a shared function fails.
@@ -699,7 +702,7 @@ foreach ($relative in $scriptFacts.Keys) {
 $script:Checks++
 if ($restateProblems.Count -gt 0) {
     Fail 'no shared helper restated outside a script that travels alone' (($restateProblems -join "`n    ") +
-        "`n    The helpers the scripts share have one copy (Q154, Q166 (b)): Testbed/guest/ScriptHelpers.ps1, dot-sourced.")
+        "`n    The helpers the scripts share have one copy (Q154, Q166 (b)): Testbed/guest/ScriptHelpers.ps1, and the host's Testbed/host/TestbedPool.ps1 and TestbedLeasePath.ps1, dot-sourced.")
 }
 else {
     $pendingText = ''

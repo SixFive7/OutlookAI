@@ -170,6 +170,7 @@ function Invoke-SelfTest {
     Check 'the installer round names the staged installer and Installer.iss' ($c.EndsWith("-InstallerPath '$GuestDir\OutlookAI-v1.exe' -InstallerScript '$GuestDir\Installer.iss'"))
     Check 'the task exit is read back' ((Get-TaskExit "x`nRUN-REGISTER-EXIT: 1`n") -eq 1)
     Check 'and the probe''s call writes the line it is read from' ($runCode.Contains('"RUN-REGISTER-EXIT: $LASTEXITCODE"'))
+    Check 'the guest is restored through TestbedPool.ps1, which saves a running guest first: on the way in, and at rest' (([regex]::Matches($runCode, 'Restore-TestbedCheckpoint -Name \$VMName -Checkpoint \$checkpoint')).Count -eq 2 -and -not $runCode.Contains('Get-VMIntegrationService'))
     Check 'no exit line is no exit' ($null -eq (Get-TaskExit 'nothing'))
 
     Write-Host ''
@@ -235,13 +236,9 @@ try {
 
     if (-not (Get-VMSnapshot -VMName $VMName -Name $checkpoint -ErrorAction SilentlyContinue)) { throw "$VMName has no checkpoint named $checkpoint" }
     $touched = $true
-    Restore-VMSnapshot -VMName $VMName -Name $checkpoint -Confirm:$false
-    if ((Get-VM -Name $VMName).State -ne 'Running') { Start-VM -Name $VMName }
-    $deadline = (Get-Date).AddMinutes(5)
-    while ((Get-VMIntegrationService -VMName $VMName -Name 'Heartbeat').PrimaryStatusDescription -ne 'OK') {
-        if ((Get-Date) -gt $deadline) { throw "the guest's heartbeat did not come back within 5 minutes" }
-        Start-Sleep -Seconds 3
-    }
+    # TestbedPool.ps1's restore, as the live runner's: a guest that runs is saved first, and the
+    # heartbeat is one narrow query on its id, every 2 s.
+    [void](Restore-TestbedCheckpoint -Name $VMName -Checkpoint $checkpoint -Start)
     Say "restored $checkpoint and running"
 
     $credential = & (Join-Path $PSScriptRoot 'Get-GuestCredential.ps1') -RepoRoot $CredentialRepoRoot -VMName $VMName
@@ -289,9 +286,9 @@ finally {
     if ($null -ne $session) { Remove-PSSession $session -ErrorAction SilentlyContinue }
     if ($touched) {
         try {
-            Restore-VMSnapshot -VMName $VMName -Name $checkpoint -Confirm:$false
-            if ((Get-VM -Name $VMName).State -eq 'Running') { Save-VM -Name $VMName }
-            Say "rested: $checkpoint restored, $VMName $((Get-VM -Name $VMName).State)"
+            $after = Restore-TestbedCheckpoint -Name $VMName -Checkpoint $checkpoint
+            if ($after -eq 'Running') { Save-VM -Name $VMName }
+            Say "rested: $checkpoint restored, $VMName $(Get-TestbedVmState $VMName)"
         }
         catch { Say "REST FAILED - restore $checkpoint on $VMName and save it by hand: $($_.Exception.Message)"; $verdict = 'INFRA' }
     }

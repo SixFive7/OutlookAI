@@ -906,7 +906,16 @@ its mailbox tests on, and change nothing you install.
   guest's kind or the probe's scenario as a label), the TRX reader (`ConvertFrom-TrxText`), the lease
   decision (`Get-LeaseDecision`, now handed the run's whole lease reason) and the exit code of a
   task on a guest (`Get-TaskExit`, whose line the probe now writes as the live runner does). The
-  clone maker's `Stop-Refused` went the same way.
+  clone maker's `Stop-Refused` went the same way. What the live runner and the probe each wrote out
+  about a guest - its Hyper-V id, its state, the wait for its heartbeat and the restore of a
+  checkpoint over it - is `Get-TestbedVmId`, `Get-TestbedVmState`, `Wait-TestbedHeartbeat` and
+  `Restore-TestbedCheckpoint` in `Testbed/host/TestbedPool.ps1`, beside the narrow queries they ask,
+  and the build-VM runner waits for its heartbeat through the same function. So the probe now saves
+  a running guest before it restores a checkpoint over it, as the live runner has since 2026-11-18,
+  and asks for a heartbeat with one narrow query where it asked 23 WMI operations. `Restart-Guest.ps1`
+  and `Set-GuestClockFrozen.ps1`, which print what a heartbeat reads, share `Get-VmHeartbeatStatus`.
+  Check 4 now holds the host's pool and lease files, `TestbedPool.ps1` and `TestbedLeasePath.ps1`, to
+  one copy as well.
 
 - 📝 **If Office's own grace reset fails, the Exchange test machine may get Microsoft 365 Apps (Q206).**
   The maintainer's decision Q206, 2026-11-18, now in AGENTS.md beside the machine's internet

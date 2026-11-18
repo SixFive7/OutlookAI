@@ -1699,9 +1699,11 @@
   installer, which travels alone, keeps an identical copy), beside `Write-ReportLine` for
   the five scripts that collect a report (the mail sink's installer and the build-VM runner keep
   their different ones as `Write-SinkLog` and `Write-RunLog`); P11's module
-  import is `Testbed/host/OwnEditionModules.ps1`, which the `Tools/` scripts dot-source too.
-  Build-Corpus.ps1 and Reset-HubPopulation.ps1 fold with S7c, and the check lists them until they
-  do.
+  import is `Testbed/host/OwnEditionModules.ps1`, which the `Tools/` scripts dot-source too. The
+  guest runners' id, state, heartbeat wait and checkpoint restore went into
+  `Testbed/host/TestbedPool.ps1`, beside the narrow queries they ask (S7d step 2), and check 4 holds
+  that file and `TestbedLeasePath.ps1` to one copy too. Build-Corpus.ps1 and Reset-HubPopulation.ps1
+  fold with S7c, and the check lists them until they do.
   What remains, one stage at a time: S3, the linked files and the shared logic (L01-L07, A06, A07,
   A10) into Core, the logic only the add-in runs into `OutlookAI.Core.AddIn` (Q163 (a)); S4, the
   signature and draft code (A01-A05, A08, A09, A12) with Q162's checkbox, Core winning where the

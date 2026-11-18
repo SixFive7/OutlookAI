@@ -237,3 +237,13 @@ function Get-TaskExit([string] $Text) {
     if ($m.Success) { return [int]$m.Groups[1].Value }
     return $null
 }
+
+# What a VM's heartbeat reads, in Get-VMIntegrationService's own words - OK, No Contact, Lost
+# Communication - or 'absent' when the VM has no heartbeat service: for Restart-Guest.ps1 and
+# Set-GuestClockFrozen.ps1, which say what they read. A wait for OK that says nothing more asks
+# Testbed/host/TestbedPool.ps1's Test-TestbedHeartbeat, one narrow query to this one's 23 WMI operations.
+function Get-VmHeartbeatStatus([string] $VMName) {
+    $hb = Get-VMIntegrationService -VMName $VMName -Name 'Heartbeat' -ErrorAction SilentlyContinue
+    if (-not $hb) { return 'absent' }
+    return [string]$hb.PrimaryStatusDescription
+}
