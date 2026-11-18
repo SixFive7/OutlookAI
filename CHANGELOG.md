@@ -60,7 +60,9 @@ its mailbox tests on, and change nothing you install.
   one an agent wrote, keeps its signature until the AI rewrites its body. It changes a signature
   Outlook or the AI put in; it adds none to a mail that has none, leaves a policy's signature alone,
   and never replaces one a person chose or changed, which it checks again after the AI answered.
-  Nothing happens as a mail is sent. The choice uses the rule the MCP server's drafts use for the account's
+  Nothing happens as a mail is sent, and nothing in a compose window nobody sees, such as the one an
+  agent's draft is written in: asking for its editor could put it on screen, which the first test run
+  with this add-in caught. The choice uses the rule the MCP server's drafts use for the account's
   signatures (`SignatureSelector.Candidates`) and the prompt of "Select the best signature"; when it
   asks the AI at all is `SignatureAutoChoice`, in OutlookAI.Core, which T1 `SignatureAutoChoiceTests`
   pins. A reply or forward costs one more request to Claude Code as it opens.
