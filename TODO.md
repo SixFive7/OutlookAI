@@ -1670,8 +1670,11 @@
   check 15). It has used that namespace since stage S3: the fourteen files the server, Core or the
   tests compiled as linked copies of the add-in's (L01-L07) are Core's, in
   `McpServer/OutlookAI.Core/AddIn/`, and the reading of `~/.claude.json`, the `${VAR}` expansion and
-  the add-in's registry root (A06, A07, A10) have one copy each. Q162's signature choice is built on
-  that reference, and Q145's writer of an account's offline period goes into that namespace, beside
+  the add-in's registry root (A06, A07, A10) have one copy each. Since stage S4 the task pane uses
+  it too: the signature code, the compose-document code, the recipient reader, the COM release and
+  identity and the window calls are Core's (A01-A05, A08, A09), `SignatureStore` is gone, Q162's
+  signature choice is built on Core's selection rule, and `T2/LivePaneTests` drives the pane on a test
+  guest (Q168 (b)). Q145's writer of an account's offline period goes into that namespace, beside
   the seam it implements, for the same reason. A read-only
   survey of master 9f4646d, made 2026-11-17, found 73 groups: the add-in against Core (A01-A12, the
   signature catalog and the signature and draft-region bookmark code among them), the add-in's
@@ -1703,27 +1706,11 @@
   import is `Testbed/host/OwnEditionModules.ps1`, which the `Tools/` scripts dot-source too.
   Invoke-LiveTierOnGuest.ps1 and Invoke-TrustRemovalProbe.ps1 fold with the rest of S7d,
   Build-Corpus.ps1 and Reset-HubPopulation.ps1 with S7c, and the check lists them until they do.
-  What remains, one stage at a time: S4, the signature and draft code (A01-A05, A08, A09, A12) with
-  Q162's checkbox, Core winning where the copies drifted apart and the pane's visible differences
-  measured on a test machine first (Q165 (c)), and the pane driven on a test machine (Q168 (b));
-  S6, the server's own repetition (S01-S14). In parallel: the rest of the shared test code (S5a),
-  the PowerShell helpers (S7), and the rules restated in C# and PowerShell as shared C# source
-  (Q171).
-
-- [ ] **Let the add-in's AI choose the signature by itself, once the add-in uses OutlookAI.Core (Q158
-  and Q162, decided 2026-11-17).** Signatures are managed through the MCP server only; the add-in
-  gets no editor, list or dropdown, because Outlook has its own (Q158). It gets one checkbox
-  instead, "Allow the AI to automatically choose the correct signature", on by default. With it on,
-  the AI picks the signature when it writes or rewrites the body, and when a reply or forward opens,
-  matching the language of the mail being answered - the maintainer's example is his "kind regards"
-  and "vriendelijke groeten" signatures - from the signatures the sending account can use. It never
-  replaces a signature someone chose by hand, and never changes a mail as it is sent (Q162 (b)). It
-  uses Core's signature code, not the add-in's own copy, so it waits for the Core reference above
-  (Q154). Today the task pane's "Select the best signature" does this by hand, through that copy.
-  The Core code it is to call is in place, and the server's drafts use it:
-  `SignatureEnvironment.ReadCurrent()`, then `SignatureSelector.Candidates(...)` for the signatures
-  the sending account can use, with excerpts to judge the language by, and `SignatureSelector.Decide(...)`
-  for the default and why (`QUESTIONS.md` decision log, 2026-11-17, Q147 carried out, item 10).
+  What remains, one stage at a time: S6, the server's own repetition (S01-S14), and of S4's A12 the
+  scaffold the pane's three AI actions each repeat around the compose document. In parallel: the
+  rest of the shared test code (S5a) - the live tier's own Win32 window declarations among it, which
+  can use Core's `NativeWindows` now - the PowerShell helpers (S7), and the rules restated in C# and
+  PowerShell as shared C# source (Q171).
 
 - [ ] **Remove the Cached Mode policy values OutlookAI 3.0.0.319 to 3.1.0.325 wrote, when the
   maintainer says so (Q151 (a), decided 2026-11-17).** Those versions wrote the five values as
