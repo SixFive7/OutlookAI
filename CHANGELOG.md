@@ -771,16 +771,18 @@ its mailbox tests on, and change nothing you install.
   `find_folder` call that finds it; so is an argument this release removed, rather than being
   ignored, which for `search` would have searched every mailbox. Every store's ID is 28 characters:
   the top folder of an Exchange store Outlook does not cache is read too, once each time the list of
-  stores is refreshed (2 to 3 ms, measured on the Exchange test machine), where its ID used to be its
-  whole entry id, which changed when the store's caching mode did. A mailbox the profile holds twice,
+  stores is refreshed (2 to 3 ms, measured on the Exchange test machine), where its ID used to be
+  its whole entry id, which changed when the store's caching mode did. While Outlook says it is
+  offline, that top folder is not asked for, since a call that needs the server can then wait, and
+  the store keeps its long ID until Outlook is connected again. A mailbox the profile holds twice,
   as its own cached store and as the online entry Exchange automaps for an account with Full Access
-  to it, has one store ID and is listed and resolved once, through the cached entry; `outlook_health`
-  calls the online entry a second view of that mailbox, not a store the index holds nothing for,
-  `list_accounts` names the mailbox it shows (`secondViewOf`), and a search covers the mailbox once,
-  through the cached entry, without checking the same mail live through the online one (decision
-  207). An Exchange
-  folder ID no folder has is refused: Outlook in cached mode opens such an ID as an empty folder,
-  which read as the top of the mailbox, so a search scoped to it answered for the whole mailbox.
+  to it, has one store ID and is listed and resolved once, through the cached entry;
+  `outlook_health` calls the online entry a second view of that mailbox, not a store the index holds
+  nothing for, `list_accounts` names the mailbox it shows (`secondViewOf`), and a search covers the
+  mailbox once, through the cached entry, without checking the same mail live through the online one
+  (decision 207). An Exchange folder ID no folder has is refused: Outlook in cached mode opens such
+  an ID as an empty folder, which read as the top of the mailbox, so a search scoped to it answered
+  for the whole mailbox.
 
 - 🔧 **OutlookAI writes Outlook's Cached Mode settings as your own settings, never as policy.**
   Versions 3.0.0.319 to 3.1.0.325 wrote five of them under Windows' policy key for Outlook, which on

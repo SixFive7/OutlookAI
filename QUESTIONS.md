@@ -383,8 +383,8 @@ or by him (207). What was measured on the way is in `Docs/live-tier-on-the-vm.md
 - **The index-hit locator and two folders that share a path: (a).** The path fallback tries every folder at
   the path, not only the first (`Core/Com/FolderPathCandidates.cs`).
 - **Store IDs for an Exchange store Outlook does not cache: (b).** Every store's top folder is read once per
-  store-list refresh, so every store gets the 28-character S ID. Measured first, read-only: 2.2-3.5 ms for
-  the automapped online entry on the Exchange VM, as for the cached stores.
+  store-list refresh, so every store gets the 28-character S ID. Measured first, read-only: 2.2-3.0 ms for
+  the automapped online entry's top folder on the Exchange VM, 2.1-3.5 ms for the cached stores'.
 - **`read`'s `folder`: (a).** The folder's names joined by `/`, as every other tool prints a folder.
 - **One store ID named two stores (run 6).** Decided under the delegation: an ID never resolves to two stores
   or two folders; a mailbox that appears as two store entries is listed and resolved once, through its
@@ -413,9 +413,11 @@ copies an unscoped search reads are a health problem, copies it leaves out advic
 shows (`secondViewOf`); the kept entry of two is the one Outlook keeps locally, then one that is not a
 delegate's entry, then the first in the profile's order; the namesake walk runs only after the folder
 `Folders[name]` gives failed, so an ordinary hit pays nothing for it, and it also reaches a folder whose
-name holds `/`. Not measured: a cold read of an online store's top folder in a headless Outlook (the Exchange
-VM's Outlook is windowed, and its folder pane holds every top folder open), and what that read costs while the
-server is unreachable.
+name holds `/`; and the top folder of an Exchange store Outlook does not cache is not asked for while Outlook
+says it is offline or disconnected, so such a store keeps its T ID then. Not measured: a cold read of an online
+store's top folder in a headless Outlook (the Exchange VM's Outlook is windowed, and its folder pane holds every
+top folder open), and what that read costs while the server is unreachable - three seconds after the VM
+resumed, with Outlook not yet reconnected, it took 2.3 ms, while a lookup of an ID no folder has waited 26 s.
 
 ### 2026-11-17 - Q131-Q136 carried out: folders and stores addressed by ID
 

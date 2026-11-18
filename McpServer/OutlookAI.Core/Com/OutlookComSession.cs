@@ -1484,6 +1484,7 @@ namespace OutlookAI.Core.Com
             {
                 dynamic ns = _namespace!;
                 List<ComStoreDetail> result = new List<ComStoreDetail>();
+                int? connectionMode = TryReadConnectionMode((object)ns);
                 dynamic stores = ns.Stores;
                 try
                 {
@@ -1570,10 +1571,17 @@ namespace OutlookAI.Core.Com
                             // once per store-list refresh, so it gets the 28-character S ID like every
                             // other store instead of T and its whole StoreID, which was long and changed
                             // with the store's caching mode. Measured on the Exchange guest (2026-11-18,
-                            // Testbed/guest/Measure-FolderIdResolution.ps1): 2.2-2.8 ms for the online
+                            // Testbed/guest/Measure-FolderIdResolution.ps1): 2.2-3.0 ms for the online
                             // entry's root, as for the cached stores'. A store whose root will not read
-                            // keeps T (OutlookIds.StoreIdOf).
-                            TryReadRootFolder((object)store, out string? rootName, out string? rootFolderEntryId);
+                            // keeps T (OutlookIds.StoreIdOf), and so does an online-only one while Outlook
+                            // says it is offline, when its root is not asked for (ReadsTopFolder).
+                            string? rootName = null;
+                            string? rootFolderEntryId = null;
+                            if (ReadsTopFolder(exchangeType, cached, connectionMode))
+                            {
+                                TryReadRootFolder((object)store, out rootName, out rootFolderEntryId);
+                            }
+
                             string? ownName = exchangeType == OlNotExchange ? rootName : null;
 
                             result.Add(new ComStoreDetail(
@@ -1597,6 +1605,35 @@ namespace OutlookAI.Core.Com
 
                 return (IReadOnlyList<ComStoreDetail>)result;
             });
+        }
+
+        /// <summary>
+        /// Whether a store's top folder is read for its ID: always, but for an Exchange store Outlook does not
+        /// cache while Outlook says it is offline or disconnected (<c>ExchangeConnectionMode</c> 100 to 400). That
+        /// store's top folder is a server round trip, and a call that needs a server none answers can wait: on the
+        /// Exchange guest a folder lookup waited 26 s just after the VM resumed, while Outlook still reported
+        /// itself connected (2026-11-18). So while Outlook SAYS it has no server the top folder is not asked for,
+        /// and the store keeps the T ID until it is connected again; a silent loss of the network is not covered.
+        /// A mode that would not read changes nothing. Pure.
+        /// </summary>
+        internal static bool ReadsTopFolder(int? exchangeStoreType, bool? isCachedExchange, int? connectionMode)
+        {
+            bool uncachedExchange = exchangeStoreType.HasValue && exchangeStoreType.Value != OlNotExchange && isCachedExchange != true;
+            bool disconnected = connectionMode.HasValue && connectionMode.Value >= 100 && connectionMode.Value <= 400;
+            return !(uncachedExchange && disconnected);
+        }
+
+        /// <summary>STA-side: <c>NameSpace.ExchangeConnectionMode</c>, or null when it will not read.</summary>
+        private static int? TryReadConnectionMode(object ns)
+        {
+            try
+            {
+                return (int)((dynamic)ns).ExchangeConnectionMode;
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+                return null;
+            }
         }
 
         /// <summary>
@@ -1635,8 +1672,9 @@ namespace OutlookAI.Core.Com
         /// and top folder's entry id - in the profile's order. A value that will not read is left empty; a
         /// store that will not answer at all is still counted, so the positions stay the profile's.
         /// </summary>
-        private static IReadOnlyList<ComStoreDetail> ReadStoreEntries(dynamic stores, int count)
+        private IReadOnlyList<ComStoreDetail> ReadStoreEntries(dynamic stores, int count)
         {
+            int? connectionMode = TryReadConnectionMode(_namespace!);
             List<ComStoreDetail> entries = new List<ComStoreDetail>(count);
             for (int i = 1; i <= count; i++)
             {
@@ -1665,7 +1703,12 @@ namespace OutlookAI.Core.Com
                     {
                     }
 
-                    TryReadRootFolder(probe, out _, out string? rootEntryId);
+                    string? rootEntryId = null;
+                    if (ReadsTopFolder(type, cached, connectionMode))
+                    {
+                        TryReadRootFolder(probe, out _, out rootEntryId);
+                    }
+
                     entries.Add(new ComStoreDetail(name, storeId, type, cached, rootFolderEntryId: rootEntryId));
                 }
                 catch (Exception ex) when (IsComCallFailure(ex))
