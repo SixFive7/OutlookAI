@@ -2377,15 +2377,12 @@ if ($null -ne $exchangeRecord -and (Test-IsJsonObject $exchangeRecord.Value)) {
 }
 
 # The Exchange VM's real addresses, read now from its credential files (Q189 (b); see
-# Get-ExchangeAddressPlaceholders): testbed.json holds only placeholders for them. Only THIS guest's
-# section can make another guest refuse: exchangeVm.accounts always holds the Exchange VM's
-# placeholders, and counting them for every guest refused every Outlook guest's settings.
-$guestPlaceholders = @(Get-ExchangeAddressPlaceholders $guestProperty.Value)
-if ($guestPlaceholders.Count -gt 0 -and -not $isExchangeVm) {
-    throw "REFUSING: liveTestSettings.$VMName holds $(@($guestPlaceholders | Sort-Object -Unique) -join ', '), the Exchange VM's address placeholders, and '$VMName' is not the Exchange VM. Nothing was written."
-}
-$placeholders = $guestPlaceholders + @(Get-ExchangeAddressPlaceholders @($exchangeAccounts | ForEach-Object { $_.address }))
-if ($isExchangeVm -and $placeholders.Count -gt 0) {
+# Get-ExchangeAddressPlaceholders): testbed.json holds only placeholders for them.
+$placeholders = @(Get-ExchangeAddressPlaceholders $guestProperty.Value) + @(Get-ExchangeAddressPlaceholders @($exchangeAccounts | ForEach-Object { $_.address }))
+if ($placeholders.Count -gt 0) {
+    if (-not $isExchangeVm) {
+        throw "REFUSING: liveTestSettings.$VMName holds $(@($placeholders | Sort-Object -Unique) -join ', '), the Exchange VM's address placeholders, and '$VMName' is not the Exchange VM. Nothing was written."
+    }
     if (-not $CredentialRoot) { $CredentialRoot = Get-MainCheckout -Root $repoFull }
     $addressOf = { param([string] $File) & (Join-Path $PSScriptRoot 'Get-ExchangeCredential.ps1') -RepoRoot $CredentialRoot -AddressOf $File }
     $addressMap = Get-ExchangeAddressMap -Accounts $exchangeAccounts -AddressOf $addressOf
