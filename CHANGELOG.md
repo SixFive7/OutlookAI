@@ -872,7 +872,11 @@ its mailbox tests on, and change nothing you install.
   Smaller copies went the same way: the in-memory prompt registry (`FakePromptRegistry`, which also
   replaces the narrower one `PromptLintTests` kept), the setter of a stand-in's out parameter
   (`ProxyArgs`), settings naming only the hub (`HubOnlyLiveSettings`) and a PST store's EntryID
-  (`TestFolders.PstStoreEntryId`). No test changed what it checks: the build machine ran the same
+  (`TestFolders.PstStoreEntryId`). Six suites around the sweep and the exhaustive scan spelled out
+  the same one-mailbox profile - its SID, store, index prefix and frontier - and three of them its
+  mail, its sweep, an exhaustive search of its Inbox and a session that answers the store list, the
+  sweep and the scan as well: `AliceMailbox` holds it once, and `ThreadWalks` the conversation walks
+  three thread suites each built. No test changed what it checks: the build machine ran the same
   tests, by name, before and after each step.
 
 - ✅ **A live run that starts Outlook closes Office's activation wizard and records it.**
