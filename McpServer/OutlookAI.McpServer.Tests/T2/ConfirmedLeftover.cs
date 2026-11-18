@@ -246,8 +246,8 @@ public sealed record ConfirmedLeftoverRemoval(bool Removed, bool Gone, int Other
 }
 
 /// <summary>
-/// The confirmed removals this process made, by store and the EntryID each item had where it was confirmed -
-/// written by <see cref="LiveOutlookTestMailer.RemoveConfirmedLeftover"/> alone, once the item reads back gone.
+/// The confirmed removals this process made, by store and the id the census knows each item by - written by
+/// <see cref="LiveOutlookTestMailer.RemoveConfirmedLeftover"/> alone, once the item reads back gone.
 /// The count tripwire reads it (<see cref="StoreCountTripwire.Evaluate"/>): such an item's departure from its
 /// folder is noted, not failed, and only when the census found it TAGGED; every other departure fails exactly
 /// as before. The artifact sweep's pre-run counts of the read-only stores come down by it too
@@ -281,7 +281,10 @@ public static class ConfirmedRemovals
     }
 }
 
-/// <summary>One confirmed removal: the store, and the EntryID the item had in the folder it was confirmed in.</summary>
+/// <summary>One confirmed removal: the store, and the id the count tripwire's census knows the item by.</summary>
 /// <param name="Store">The store's display name, as the settings name the bystander.</param>
-/// <param name="EntryId">The item's EntryID in the folder it was confirmed in - the id the census knows it by.</param>
+/// <param name="EntryId">
+/// The EntryID the folder's table gave the item in this Outlook session - the census's identity for it. On a cached
+/// Exchange store that is a short-term id, not the long-term one the pin is checked against.
+/// </param>
 public sealed record ConfirmedRemoval(string Store, string EntryId);

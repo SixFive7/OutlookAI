@@ -497,14 +497,22 @@ public static class LiveOutlookTestMailer
     /// bystander, never the hub - and its selection is the item's EntryID AND its subject, both exactly
     /// (<see cref="ConfirmedLeftover.IsTheItem"/>).
     /// <para>
-    /// In order: the tagged rows of the confirmed folder are read (a server-side tag restriction narrows them;
-    /// each row is then judged by EntryID and subject); exactly one must be the item, or nothing is written;
-    /// the item is opened by that EntryID and judged again, with its parent proven to be that folder; it is
+    /// In order: the tagged rows of the confirmed folder are read (a server-side tag restriction narrows them),
+    /// each row's item opened for its LONG-TERM EntryID, and each judged by that EntryID and its subject;
+    /// exactly one must be the item, or nothing is written; its parent is proven to be that folder; it is
     /// MOVED to the same store's Deleted Items, which hands back the copy and its new EntryID; that copy is
     /// judged again (<see cref="ConfirmedLeftover.RefusalForMovedCopy"/>) and deleted there, which takes it out
     /// of Deleted Items for good. Then both folders are read again: no row of the folder may be the item and no
     /// row of Deleted Items may carry its subject. Only then is the removal recorded
     /// (<see cref="ConfirmedRemovals"/>), which is what lets the count tripwire accept this one departure.
+    /// </para>
+    /// <para>
+    /// <b>Two EntryIDs, measured 2026-11-18.</b> For a cached Exchange store a folder table's EntryID column
+    /// hands out a 24-byte SHORT-TERM id, valid for the running Outlook's session, while the item itself
+    /// answers with its 70-byte long-term one - the form the maintainer confirmed. So the pin is checked
+    /// against the long-term id the opened item gives, and the removal is recorded under the table's id,
+    /// which is the one the count tripwire's census knows the item by. The first run of this helper, reading
+    /// only the table's id, matched nothing and removed nothing.
     /// </para>
     /// <para>
     /// Run it again and it reads, finds nothing and writes nothing. Content-free: nothing of any other item is
@@ -559,7 +567,8 @@ public static class LiveOutlookTestMailer
                 string folderId = (string)((dynamic)folder!).EntryID;
                 string deletedItemsId = (string)((dynamic)deletedItems!).EntryID;
 
-                ConfirmedLeftoverSelection selection = leftover.Select(ReadTaggedRows(folder!));
+                List<TaggedRow> rows = ReadTaggedRowsWithLongTermIds((object)ns, storeId, folder!);
+                ConfirmedLeftoverSelection selection = leftover.Select(rows.Select(r => (r.LongTermEntryId, r.Subject)));
                 if (selection.Outcome == ConfirmedLeftoverOutcome.Ambiguous)
                 {
                     throw new InvalidOperationException(
@@ -573,7 +582,8 @@ public static class LiveOutlookTestMailer
                 }
 
                 string entryId = selection.EntryId!;
-                item = ns.GetItemFromID(entryId, storeId);
+                string tableEntryId = rows.First(r => SameEntryId(r.LongTermEntryId, entryId)).TableEntryId!;
+                item = ns.GetItemFromID(tableEntryId, storeId);
                 string? openedEntryId = TryRead<string>(() => (string?)item.EntryID);
                 string? openedSubject = TryRead<string>(() => (string?)item.Subject);
                 if (!leftover.IsTheItem(openedEntryId, openedSubject))
@@ -603,12 +613,14 @@ public static class LiveOutlookTestMailer
 
                 moved.Delete();
 
-                ConfirmedLeftoverSelection after = leftover.Select(ReadTaggedRows(folder!));
+                ConfirmedLeftoverSelection after = leftover.Select(
+                    ReadTaggedRowsWithLongTermIds((object)ns, storeId, folder!).Select(r => (r.LongTermEntryId, r.Subject)));
                 int copies = CountRowsWithSubject(deletedItems!, leftover.Subject);
                 bool gone = after.Outcome == ConfirmedLeftoverOutcome.NotPresent && copies == 0;
                 if (gone)
                 {
-                    ConfirmedRemovals.Record(new ConfirmedRemoval(store, entryId));
+                    // Under the id the census knows it by: the table's, in this Outlook session.
+                    ConfirmedRemovals.Record(new ConfirmedRemoval(store, tableEntryId));
                 }
 
                 return new ConfirmedLeftoverRemoval(Removed: true, gone, after.OtherTagged, copies);
@@ -698,6 +710,44 @@ public static class LiveOutlookTestMailer
             Release(table);
         }
     }
+
+    /// <summary>
+    /// A folder's tagged rows, each with the long-term EntryID its item answers with - the table's own id is a
+    /// short-term one on a cached Exchange store. Each item is opened only to read that id, and released.
+    /// Read-only. A row whose item cannot be opened keeps a null long-term id, which matches no pin.
+    /// </summary>
+    private static List<TaggedRow> ReadTaggedRowsWithLongTermIds(object session, string storeId, object folder)
+    {
+        List<TaggedRow> rows = new();
+        foreach ((string? tableId, string? subject) in ReadTaggedRows(folder))
+        {
+            string? longTerm = null;
+            if (!string.IsNullOrWhiteSpace(tableId))
+            {
+                dynamic? opened = null;
+                try
+                {
+                    opened = ((dynamic)session).GetItemFromID(tableId, storeId);
+                    longTerm = TryRead<string>(() => (string?)opened.EntryID);
+                }
+                catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+                {
+                    longTerm = null;
+                }
+                finally
+                {
+                    Release(opened);
+                }
+            }
+
+            rows.Add(new TaggedRow(tableId, longTerm, subject));
+        }
+
+        return rows;
+    }
+
+    /// <summary>One tagged row: the table's id, the item's long-term id, and the subject.</summary>
+    private sealed record TaggedRow(string? TableEntryId, string? LongTermEntryId, string? Subject);
 
     /// <summary>How many of a folder's tagged rows carry exactly <paramref name="subject"/>. Read-only.</summary>
     private static int CountRowsWithSubject(object folder, string subject)

@@ -3911,6 +3911,56 @@ only):
   the confound: whether "Store my Outlook settings in the cloud" or the connected-experience policies
   kept the copy away could not be read, because Options is disabled past the activation grace (Q194).
 
+- **Q147 R3 again, with Office's online features allowed (2026-11-18, Q194 (b)).** The maintainer's
+  order: the four connected-experience policy values the testbed sets - `disconnectedstate`,
+  `usercontentdisabled`, `downloadcontentdisabled` and `controllerconnectedservicesenabled`, each 2,
+  under the user's `Software\Policies\Microsoft\office\16.0\common\privacy` - removed on this VM
+  first, `sendtelemetry` 3 kept, then R3 by the same procedure. One more thing differed from the first
+  run, and this run does not separate it: Office was inside its grace, re-armed that morning (decision
+  206 (a)), where on 2026-11-17 it was past it. Local times (UTC+1):
+
+  1. 03:46 the four values removed over PowerShell Direct; Windows restarted
+     (`host/Restart-Guest.ps1 -Execute`), Defender brought current, Outlook started NOT elevated 240 s
+     after the boot - no activation wizard - and both accounts read `SIGNED-IN`.
+  2. 03:54 to 04:00, R0 to R2 before anything was made: no signature setting anywhere, no signature
+     file, the classic dialog with no sign of roaming; File > Options enabled, inside the grace, and
+     "Store my Outlook settings in the cloud" offered and **on** - the probe reads that checkbox's state
+     since this run; R2 no `ApplicationDataRoot`, as before.
+  3. 04:00 the test account signed in to Outlook on the web (`-Mode OwaSignIn`: no code asked for,
+     "Stay signed in?" No). Settings > Account > Signatures read "No signature yet"; Add signature:
+     `OutlookAI-McpTest-Roam1118`, one marker line and a 24x24 picture (Insert > Pictures, through
+     Edge's file chooser), "Set default for new messages" on and replies off; saved at 04:22:09. The
+     page then listed it as the default for new messages, and "(No signature)" for replies.
+  4. Meanwhile Outlook on the desktop had put up "Your privacy matters", an informational notice -
+     "Your organization has given you the ability to use optional cloud-backed services" - with one
+     Close button; the policy values had kept it away until then. Closed with that button at 04:25:26.
+  5. **04:25:31 the signature was in Outlook**: `OutlookAI-McpTest-Roam1118 (<address>).htm` (537
+     bytes, the picture inside it as a `data:` URI, no picture folder) and `.txt` (118 bytes) in the
+     signature folder - the `<name> (<address>)` copy classic Outlook keeps of a roaming signature -
+     and the test account's own "New Signature" set to that name. "Reply-Forward Signature" stayed
+     unset, MailSettings untouched, and the bystander's account had nothing. R1 read roams=True from
+     those copies, although the classic dialog itself still showed no account selector and no
+     "Signatures on this device"; R2 still saw no `ApplicationDataRoot` through the object model.
+  6. The same at +15 min (04:37) and +1 h (05:22), and after a graceful restart of Windows and Outlook
+     (05:25 to 05:33): the two files unchanged, by hash, and the default still set.
+
+  **So Office LTSC 2024 16.0.17932.21000 does roam signatures, once the testbed's connected-experience
+  policies are gone**: the copy arrived about three minutes after the save, 5 s after Outlook's privacy
+  notice was closed, and stayed across a restart. Whether the policies alone kept it away on 2026-11-17,
+  or the expired grace as well, this run cannot say. OutlookAI's evidence rule for perpetual Office -
+  roaming only where Outlook's own `<name> (<address>)` copies show it (Q152 (a)) - reads this account
+  as roaming, from exactly those copies. The draft check of the plan was not run: before it could be,
+  another stream's lease took the VM, and its restore of `CP-09-OFFICE-REARMED` put the policies back
+  and took the local copies away.
+
+  **The variant that separates the two (2026-11-18, 06:27 to 06:32).** That restore left the signature
+  in Outlook on the web and the policies in place, with the grace still running. The next run started
+  Outlook on .ost files freshly downloaded from the server, and both accounts read connected (mode 700).
+  At 06:32 Outlook had no copy of the signature and no default for it, and its Options' General page no
+  longer offered "Store my Outlook settings in the cloud" at all - 75 named controls, against 78 without
+  the policies. **So it is the connected-experience policies that keep roaming signatures away on this
+  Office, not the expired grace**: they take the cloud-settings option itself away.
+
 **The live runs of 2026-11-17** (`host/Invoke-LiveTierOnGuest.ps1 -VMName OutlookAI-Exchange`; results
 in `.work\guest-live-runs\<run>\` of the branch's worktree).
 
