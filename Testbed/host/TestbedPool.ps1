@@ -38,8 +38,9 @@
     associations through WMI, served inside vmms.exe and the WMI service at normal priority whatever
     the caller's: a WMI-Activity trace at 04:09 that night counted 32 operations a second, 91 % of
     them those, all from waiting runners - about 0.2 to 0.6 of a logical processor in vmms and the
-    WMI service, stream W measured. (WmiPrvSE's 3.4 to 3.8 processors that night were other programs
-    listing processes, not the runners.) So a run that waits now:
+    WMI service, stream W measured. (WmiPrvSE's 3.4 to 3.8 processors that night were mostly other
+    programs listing processes; the runners' share of them was their memory read, about 0.3 of a
+    processor for each waiting run - Docs/live-tier-on-the-vm.md section 4.10.) So a run that waits now:
       - joins a QUEUE, a ticket file in %SystemDrive%\OutlookAI-Testbed\queue\ naming the VMs it
         can use (Join-TestbedQueue). It tries a VM only while no run that queued before it wants
         that VM (Get-TestbedQueueTurn): one run at a time tries each VM, first come first served,

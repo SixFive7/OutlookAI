@@ -56,9 +56,12 @@
     saves it as it is. With -Checkpoint, the checkpoint is restored, the guest restarted gracefully and
     its .ost files set aside (guest\Reset-OutlookOfflineStore.ps1) before Outlook starts and downloads
     the mailboxes afresh. STAGE leaves a running Outlook running (the swap replaces only the suite and
-    its server, which Outlook does not use). Its filter is LiveRunFilters.ExchangeTestAccountWritesNothing - the
-    write run's own filter, narrowed to the tests that write nothing until decision 206 (2026-11-17) settles
-    how the VM's never-activated Office gets back the ability to create items. And every run gets a RUN MARKER - 'oair' and
+    its server, which Outlook does not use). Its filter is LiveRunFilters.ExchangeTestAccount, the write run's
+    own, again since 2026-11-18: the VM's never-activated Office had passed its grace and Outlook created no
+    item, until decision 206 (a) re-armed the grace once with Office's own OSPPREARM.EXE (Docs/live-tier-on-the-vm.md
+    section 4.4a). Past the grace - next on 2026-12-18 - every write test fails at its first item again; -FilterSuffix
+    '&Writes=Nothing' narrows a run to LiveRunFilters.ExchangeTestAccountWritesNothing until it is re-armed. And every
+    run gets a RUN MARKER - 'oair' and
     the UTC start to the second - recorded in the host's ledger, C:\OutlookAI-Testbed\exchange-runs\
     ledger.jsonl, BEFORE the suite starts, and handed to the run in OUTLOOKAI_LIVE_RUN_MARKER with the
     markers of earlier runs that never reported a clean sweep in OUTLOOKAI_LIVE_PRIOR_RUN_MARKERS: every
@@ -190,7 +193,7 @@ $Guests = [ordered]@{
     'OutlookAI-Unindexed' = [ordered]@{ ComputerName = 'OAI-UNINDEXED'; Indexed = $false; Checkpoint = 'CP-16B-FROZEN-CLOCK'; Exchange = $false }
     # The Exchange VM (2026-10-08): never frozen, never cloned; its resting checkpoint is the newest
     # testbed.json's exchangeVm.checkpoints records, and -SelfTest holds the two equal.
-    'OutlookAI-Exchange'  = [ordered]@{ ComputerName = 'OAI-EXCHANGE'; Indexed = $true; Checkpoint = 'CP-08-ADDIN-READY'; Exchange = $true }
+    'OutlookAI-Exchange'  = [ordered]@{ ComputerName = 'OAI-EXCHANGE'; Indexed = $true; Checkpoint = 'CP-10-SDK11'; Exchange = $true }
 }
 # AND THEIR CLONES (2026-11-17): TestbedPool.ps1's indexed and unindexed pools. A clone is its
 # source copied at the source's frozen checkpoint - New-TestbedClone.ps1 - and rests on a checkpoint
@@ -211,14 +214,21 @@ $GuestSettingsPath = 'C:\OutlookAI-Q5\src\McpServer\OutlookAI.McpServer.Tests\li
 # tested, because the frozen checkpoints predate it - and fetched into dumps\ before the guest rests.
 $GuestDumpDir = 'C:\OutlookAI-Q5\crash-dumps'
 $CrashDumpScript = 'Set-OutlookCrashDumps.ps1'
+# The SDK a run's commit installs when its guest lacks it, and the SDK its verification looks for:
+# Install-DotnetSdk.ps1 -Execute and -Verify, the commit's own copy, told all three below, so that
+# copy's defaults do not decide (they name the .NET 11 SDK since 2026-11-18). Still .NET 10's on
+# 2026-11-18 (Q172): the frozen checkpoints this restores hold 10.0.401 alone, and CP-10-SDK11
+# holds 10.0.404 beside SDK 11, which '10.' matches too. It moves to the .NET 11 SDK with the code,
+# and the frozen checkpoints with it (Testbed/MEDIA.md). Hashed on the host before every run.
 $SdkInstallerName = 'dotnet-sdk-10.0.401-win-x64.exe'
 $SdkSha512 = 'f0d8f8e7ec24efb05172a65dd80c4a9b1ef17efcebdbf0f57c15f436eea417960a7eeb6726c473a042373d6a8b94ac1adc7d680decbf7d2c45fa5c5662d62265'
+$SdkVersionPrefix = '10.'
 $FilterBase = 'Category=Live&Requires!=DelegateStore&Requires!=CachedExchange'
 $FilterUnindexedExtra = '&Requires!=SearchIndex'
-# The Exchange VM with its test account as the hub: LiveRunFilters.ExchangeTestAccount, and of it only the
-# tests that write nothing (LiveRunFilters.ExchangeTestAccountWritesNothing) until decision 206 settles how
-# its Office gets back the ability to create items (Docs/live-tier-on-the-vm.md section 4.4a).
-$FilterExchange = 'Category=Live&Requires!=LocalSignatures&Requires!=DelegateStore&Requires!=GeneratedPopulation&Requires!=IdentityAccount&Requires!=ProbePopulation&Requires!=PstStore&Writes=Nothing'
+# The Exchange VM with its test account as the hub: LiveRunFilters.ExchangeTestAccount, read and write. From
+# 2026-11-17 to decision 206 (a) on 2026-11-18 it was narrowed to the tests that write nothing, because Office
+# there was past its grace and created no item (Docs/live-tier-on-the-vm.md section 4.4a).
+$FilterExchange = 'Category=Live&Requires!=LocalSignatures&Requires!=DelegateStore&Requires!=GeneratedPopulation&Requires!=IdentityAccount&Requires!=ProbePopulation&Requires!=PstStore&Requires!=ConfirmedLeftover'
 # The host's record of the Exchange VM's run markers: beside the leases, machine state, not the repository.
 $ExchangeLedgerRelative = 'exchange-runs\ledger.jsonl'
 $LeaseReasonPrefix = 'Invoke-LiveTierOnGuest'
@@ -549,6 +559,112 @@ function New-LiveRunSummary {
     }
 }
 
+# THE GUEST'S CLOCK AROUND EVERY GUEST CALL (stream K, 2026-11-18). In two Q149 measurement runs on a
+# frozen-clock guest, the guest's wall clock jumped about two hours forward during the suite, and a wait
+# of 9000 s or 7200 s ran out after 35 to 40 minutes of real time. The cause is not established. So every
+# guest call reads the guest's UTC time and time zone as its first and its last act, and the run sets
+# them beside this host's clock: a line a call in guest-clock.log, and a warning in run.log and
+# summary.txt when the two clocks ran more than this many seconds apart over a call, or the zone changed.
+$GuestClockToleranceSeconds = 60
+
+# The guest's two readings in a guest call's output - the lines GUEST-CLOCK-BEFORE and GUEST-CLOCK-AFTER,
+# each the UTC time in round-trip form and the zone's id: Before and After, each with Utc and Zone, or
+# $null for a line the output lacks. Pure.
+function Read-GuestClock {
+    param([string] $Text)
+    $before = $null
+    $after = $null
+    foreach ($m in [regex]::Matches([string]$Text, '(?m)^GUEST-CLOCK-(BEFORE|AFTER) (\S+) (.+?)\s*$')) {
+        $utc = [DateTime]::MinValue
+        if (-not [DateTime]::TryParse($m.Groups[2].Value, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::RoundtripKind, [ref] $utc)) { continue }
+        $reading = [pscustomobject]@{ Utc = $utc.ToUniversalTime(); Zone = $m.Groups[3].Value }
+        if ($m.Groups[1].Value -ceq 'BEFORE') { $before = $reading } else { $after = $reading }
+    }
+    return [pscustomobject]@{ Before = $before; After = $after }
+}
+
+# What one guest call did to the guest's clock beside this host's: how long each clock ran over the call,
+# how far apart they ran, the guest's lead on this host at each end, the zone before and after, and
+# Moved - more than $ToleranceSeconds apart, or another zone after than before. This host's readings,
+# UTC, are taken with the session already open, just before and just after the call, so the guest's two
+# fall between them. $null when the output lacks either of the guest's. Pure.
+function Get-GuestClockShift {
+    param([object] $Readings, [DateTime] $HostBefore, [DateTime] $HostAfter, [int] $ToleranceSeconds = $GuestClockToleranceSeconds)
+    if ($null -eq $Readings -or $null -eq $Readings.Before -or $null -eq $Readings.After) { return $null }
+    $guestSeconds = ($Readings.After.Utc - $Readings.Before.Utc).TotalSeconds
+    $hostSeconds = ($HostAfter - $HostBefore).TotalSeconds
+    $apart = $guestSeconds - $hostSeconds
+    return [pscustomobject]@{
+        GuestSeconds = $guestSeconds
+        HostSeconds  = $hostSeconds
+        ApartSeconds = $apart
+        LeadBefore   = ($Readings.Before.Utc - $HostBefore).TotalSeconds
+        LeadAfter    = ($Readings.After.Utc - $HostAfter).TotalSeconds
+        ZoneBefore   = [string]$Readings.Before.Zone
+        ZoneAfter    = [string]$Readings.After.Zone
+        Moved        = (([Math]::Abs($apart) -gt $ToleranceSeconds) -or ([string]$Readings.Before.Zone -cne [string]$Readings.After.Zone))
+    }
+}
+
+# Seconds as the clock lines print them: one decimal, a point, whatever this host's culture. Pure.
+function Format-ClockSeconds {
+    param([double] $Seconds, [switch] $Signed)
+    $format = '0.0'
+    if ($Signed) { $format = '+0.0;-0.0;0.0' }
+    return $Seconds.ToString($format, [System.Globalization.CultureInfo]::InvariantCulture)
+}
+
+# A move as run.log and summary.txt say it. Pure.
+function Format-GuestClockMove {
+    param([string] $Call, [object] $Shift)
+    $zone = "its zone '$($Shift.ZoneBefore)' throughout"
+    if ($Shift.ZoneBefore -cne $Shift.ZoneAfter) { $zone = "its zone '$($Shift.ZoneBefore)' before and '$($Shift.ZoneAfter)' after" }
+    return ("during '{0}' the guest's clock ran {1} s and this host's {2} s, {3} s apart; {4}" -f $Call, (Format-ClockSeconds $Shift.GuestSeconds), (Format-ClockSeconds $Shift.HostSeconds), (Format-ClockSeconds $Shift.ApartSeconds -Signed), $zone)
+}
+
+# One guest call's line in guest-clock.log: when it began on this host, the call, the guest's two
+# readings and how far the two clocks ran apart. Pure.
+function Format-GuestClockLine {
+    param([string] $Call, [DateTime] $HostBefore, [object] $Readings, [object] $Shift)
+    $head = '{0}  {1}' -f $HostBefore.ToString('yyyy-MM-ddTHH:mm:ss.fffZ', [System.Globalization.CultureInfo]::InvariantCulture), $Call
+    if ($null -eq $Shift) { return "$head  the guest's clock was not read: the call's output holds no GUEST-CLOCK line, or only one" }
+    $line = "{0}  guest {1} '{2}' to {3} '{4}', {5} s ahead of this host at the start; the guest's clock ran {6} s, this host's {7} s, {8} s apart" -f $head, $Readings.Before.Utc.ToString('yyyy-MM-ddTHH:mm:ss.fffZ', [System.Globalization.CultureInfo]::InvariantCulture), $Shift.ZoneBefore, $Readings.After.Utc.ToString('yyyy-MM-ddTHH:mm:ss.fffZ', [System.Globalization.CultureInfo]::InvariantCulture), $Shift.ZoneAfter, (Format-ClockSeconds $Shift.LeadBefore -Signed), (Format-ClockSeconds $Shift.GuestSeconds), (Format-ClockSeconds $Shift.HostSeconds), (Format-ClockSeconds $Shift.ApartSeconds -Signed)
+    if ($Shift.Moved) { $line += ' - MOVED' }
+    return $line
+}
+
+# summary.txt's clock line, from every guest call's record (Call, Shift) in call order. Pure.
+function Format-GuestClockSummary {
+    param([object[]] $Records, [int] $ToleranceSeconds = $GuestClockToleranceSeconds)
+    $all = @(@($Records) | Where-Object { $null -ne $_ })
+    if ($all.Count -eq 0) { return 'clock      no guest call was made' }
+    $read = @($all | Where-Object { $null -ne $_.Shift })
+    $moved = @($read | Where-Object { $_.Shift.Moved })
+    if ($moved.Count -gt 0) {
+        return ("clock      MOVED in {0} of {1} guest calls: {2} (guest-clock.log)" -f $moved.Count, $all.Count, ((@($moved | ForEach-Object { Format-GuestClockMove $_.Call $_.Shift })) -join '; '))
+    }
+    if ($read.Count -eq 0) { return ("clock      the guest's clock was read around none of the {0} guest calls (guest-clock.log)" -f $all.Count) }
+    $zones = @($read | ForEach-Object { $_.Shift.ZoneAfter } | Select-Object -Unique)
+    return ("clock      the guest's clock kept to this host's, within {0} s, over every guest call it was read around: {1} of {2}, in '{3}' (guest-clock.log)" -f $ToleranceSeconds, $read.Count, $all.Count, ($zones -join "', '"))
+}
+
+# summary.json's guestClock: how many calls, how many read, the tolerance, and every move - an array at
+# every length (the summary's rule). Pure.
+function New-GuestClockSummaryJson {
+    param([object[]] $Records, [int] $ToleranceSeconds = $GuestClockToleranceSeconds)
+    $all = @(@($Records) | Where-Object { $null -ne $_ })
+    $moved = @($all | Where-Object { $null -ne $_.Shift -and $_.Shift.Moved } | ForEach-Object {
+            [ordered]@{ call = [string]$_.Call; guestSeconds = [Math]::Round($_.Shift.GuestSeconds, 1); hostSeconds = [Math]::Round($_.Shift.HostSeconds, 1); apartSeconds = [Math]::Round($_.Shift.ApartSeconds, 1); zoneBefore = $_.Shift.ZoneBefore; zoneAfter = $_.Shift.ZoneAfter }
+        })
+    return [ordered]@{
+        calls            = $all.Count
+        read             = @($all | Where-Object { $null -ne $_.Shift }).Count
+        toleranceSeconds = $ToleranceSeconds
+        moved            = $moved
+        log              = 'guest-clock.log'
+    }
+}
+
 function Invoke-SelfTest {
     $script:stChecks = 0
     $script:stFailures = @()
@@ -606,7 +722,7 @@ function Invoke-SelfTest {
     Check 'the crash search takes the guest''s clock read before the suite' $true $own.Contains("`$since = Get-CrashEventsSince -GuestRunStartUtc `$guestRunStartUtc")
     Check 'the frozen branch calls the guard with -Verify' $true $own.Contains("'Set-GuestClockFrozen.ps1') -VMName `$facts.Name -Verify")
     $x = Get-GuestFacts 'OutlookAI-Exchange'
-    Check 'the Exchange VM is one, never frozen, resting on its newest checkpoint' 'OAI-EXCHANGE|True|True|CP-08-ADDIN-READY' @($x.ComputerName, $x.Indexed, $x.Exchange, $x.Checkpoint)
+    Check 'the Exchange VM is one, never frozen, resting on its newest checkpoint' 'OAI-EXCHANGE|True|True|CP-10-SDK11' @($x.ComputerName, $x.Indexed, $x.Exchange, $x.Checkpoint)
     Check 'the PST guests are not' 'False|False' @((Get-GuestFacts 'OutlookAI-Indexed').Exchange, (Get-GuestFacts 'OutlookAI-Unindexed').Exchange)
     Check 'the build VM is refused' $true ($null -eq (Get-GuestFacts 'OutlookAI-Build'))
     Check 'the retired test VM is refused' $true ($null -eq (Get-GuestFacts 'OutlookAI-TestVM'))
@@ -621,9 +737,11 @@ function Invoke-SelfTest {
     $f = Get-LiveFilter $true '' '&FullyQualifiedName~X'
     Check 'a suffix narrows it' 'Category=Live&Requires!=DelegateStore&Requires!=CachedExchange&FullyQualifiedName~X|True' @($f.Filter, $f.Narrowed)
     $f = Get-LiveFilter $true '' '' $true
-    Check 'the Exchange VM runs LiveRunFilters.ExchangeTestAccountWritesNothing' $FilterExchange $f.Filter
-    Check 'which writes nothing while decision 206 is open' $true $FilterExchange.EndsWith('&Writes=Nothing')
+    Check 'the Exchange VM runs LiveRunFilters.ExchangeTestAccount' $FilterExchange $f.Filter
+    Check 'read and write again since decision 206 (a)' $false $FilterExchange.Contains('Writes=')
     Check 'and that run is not narrowed' $false $f.Narrowed
+    $f = Get-LiveFilter $true '' '&Writes=Nothing' $true
+    Check 'past Office''s grace a suffix narrows it to LiveRunFilters.ExchangeTestAccountWritesNothing' ($FilterExchange + '&Writes=Nothing|True') @($f.Filter, $f.Narrowed)
     Check 'the Exchange VM carries its state forward by default' 'resume as the last run left it|Outlook NOT elevated if it is not running|preflight' (Get-ExchangeStartPlan $false)
     Check 'and a named checkpoint is restored and its data files set aside' $true ((Get-ExchangeStartPlan $true) -contains 'set the .ost files aside')
     Check 'with the search index rebuilt after them, and its roots waited for after Outlook starts' 'set the .ost files aside|rebuild the search index|Outlook NOT elevated|wait for one index root per indexed store' ((@(Get-ExchangeStartPlan $true) | Select-Object -Skip 2 -First 4) -join '|')
@@ -633,7 +751,7 @@ function Invoke-SelfTest {
     Check 'and the summary line says so' "outlook    started by this run, NOT elevated, on profile 'Outlook'; Office's activation wizard dismissed 1 time(s)" (Format-OutlookStartLine $os)
     Check 'a starter that reported nothing reads as not reported, never as zero' $true ((Format-OutlookStartLine (Get-OutlookStartFacts 'OK: OUTLOOK.EXE pid 1' 'X')) -match 'NOT REPORTED')
     Check 'no start at all reads as not started' 'outlook    not started by this run (it was running already)' (Format-OutlookStartLine $null)
-    Check 'and a suffix narrows it' $true (Get-LiveFilter $true '' '&FullyQualifiedName~Y' $true).Filter.EndsWith('&Requires!=PstStore&Writes=Nothing&FullyQualifiedName~Y')
+    Check 'and a suffix narrows it' ($FilterExchange + '&FullyQualifiedName~Y') (Get-LiveFilter $true '' '&FullyQualifiedName~Y' $true).Filter
     Check 'a suffix that does not start with & is refused' $true ($null -ne (Get-LiveFilter $true '' 'FullyQualifiedName~X').Refusal)
     Check 'a filter that is not Category=Live is refused' $true ($null -ne (Get-LiveFilter $true 'FullyQualifiedName~X' '').Refusal)
     $f = Get-LiveFilter $false 'Category=Live&Requires=SearchIndex' ''
@@ -808,6 +926,43 @@ STACK      the faulting thread
     $fetchAt = $own.IndexOf('if ($suiteStarted) { Save-CrashDumps }')
     Check 'the dumps are fetched before the guest rests - the restore wipes them' $true ($fetchAt -gt 0 -and $fetchAt -lt $own.IndexOf('Restore-Guest $restOn'))
 
+    Write-Host '== the guest''s clock around every guest call (stream K, 2026-11-18) =='
+    $sample = "noise`r`nGUEST-CLOCK-BEFORE 2026-10-03T19:46:53.1234567Z W. Europe Standard Time`r`nSDK-EXECUTE-EXIT 0`r`nGUEST-CLOCK-AFTER 2026-10-03T19:47:53.6234567Z W. Europe Standard Time  `r`n"
+    $r = Read-GuestClock $sample
+    Check 'both readings are read: the UTC time, as UTC, and the zone, spaces and all' '2026-10-03T19:46:53.1234567Z|W. Europe Standard Time|2026-10-03T19:47:53.6234567Z|W. Europe Standard Time|Utc' @($r.Before.Utc.ToString('o'), $r.Before.Zone, $r.After.Utc.ToString('o'), $r.After.Zone, [string]$r.After.Utc.Kind)
+    Check 'an output without the lines has no readings, and one line alone gives no shift' 'True|True|True' @(($null -eq (Read-GuestClock 'SDK-EXECUTE-EXIT 0').Before), ($null -eq (Read-GuestClock 'x GUEST-CLOCK-BEFORE 2026-10-03T19:46:53Z UTC').Before), ($null -eq (Get-GuestClockShift -Readings (Read-GuestClock "GUEST-CLOCK-BEFORE 2026-10-03T19:46:53Z UTC") -HostBefore ([DateTime]::UtcNow) -HostAfter ([DateTime]::UtcNow))))
+    $hostBefore = [DateTime]::new(2026, 11, 18, 6, 0, 0, [DateTimeKind]::Utc)
+    $steady = Get-GuestClockShift -Readings $r -HostBefore $hostBefore -HostAfter $hostBefore.AddSeconds(61)
+    Check 'a call the guest''s clock kept time over: 60.5 s against 61, the guest weeks behind, not moved' '60.5|61.0|-0.5|False' @((Format-ClockSeconds $steady.GuestSeconds), (Format-ClockSeconds $steady.HostSeconds), (Format-ClockSeconds $steady.ApartSeconds -Signed), $steady.Moved)
+    $jump = Get-GuestClockShift -Readings (Read-GuestClock "GUEST-CLOCK-BEFORE 2026-10-03T19:00:00Z UTC`nGUEST-CLOCK-AFTER 2026-10-03T21:35:00Z UTC") -HostBefore $hostBefore -HostAfter $hostBefore.AddMinutes(35)
+    Check 'two hours forward in a call of 35 minutes is a move of 7200 s' '+7200.0|True' @((Format-ClockSeconds $jump.ApartSeconds -Signed), $jump.Moved)
+    $back = Get-GuestClockShift -Readings (Read-GuestClock "GUEST-CLOCK-BEFORE 2026-10-03T19:00:00Z UTC`nGUEST-CLOCK-AFTER 2026-10-03T19:00:30Z UTC") -HostBefore $hostBefore -HostAfter $hostBefore.AddSeconds(120)
+    Check 'and a clock that ran 90 s short of this host''s moved too, backwards' '-90.0|True' @((Format-ClockSeconds $back.ApartSeconds -Signed), $back.Moved)
+    $edge = Get-GuestClockShift -Readings (Read-GuestClock "GUEST-CLOCK-BEFORE 2026-10-03T19:00:00Z UTC`nGUEST-CLOCK-AFTER 2026-10-03T19:02:00Z UTC") -HostBefore $hostBefore -HostAfter $hostBefore.AddSeconds(60)
+    Check 'exactly the tolerance apart is still kept time' '+60.0|False' @((Format-ClockSeconds $edge.ApartSeconds -Signed), $edge.Moved)
+    $zoned = Get-GuestClockShift -Readings (Read-GuestClock "GUEST-CLOCK-BEFORE 2026-10-03T19:00:00Z W. Europe Standard Time`nGUEST-CLOCK-AFTER 2026-10-03T19:00:10Z UTC") -HostBefore $hostBefore -HostAfter $hostBefore.AddSeconds(10)
+    Check 'another zone after than before is a move, however well the clock kept time' 'True' $zoned.Moved
+    Check 'the log line says when, which call, both readings and how far apart' "2026-11-18T06:00:00.000Z  sdk-execute  guest 2026-10-03T19:46:53.123Z 'W. Europe Standard Time' to 2026-10-03T19:47:53.623Z 'W. Europe Standard Time', -3924786.9 s ahead of this host at the start; the guest's clock ran 60.5 s, this host's 61.0 s, -0.5 s apart" (Format-GuestClockLine -Call 'sdk-execute' -HostBefore $hostBefore -Readings $r -Shift $steady)
+    Check 'and that a call''s clock was not read' $true ((Format-GuestClockLine -Call 'x' -HostBefore $hostBefore -Readings (Read-GuestClock '') -Shift $null).EndsWith('the guest''s clock was not read: the call''s output holds no GUEST-CLOCK line, or only one'))
+    $records = @([pscustomobject]@{ Call = 'swap'; Shift = $steady }, [pscustomobject]@{ Call = 'live'; Shift = $jump }, [pscustomobject]@{ Call = 'crash-events'; Shift = $null })
+    Check 'summary.txt names every move' "clock      MOVED in 1 of 3 guest calls: during 'live' the guest's clock ran 9300.0 s and this host's 2100.0 s, +7200.0 s apart; its zone 'UTC' throughout (guest-clock.log)" (Format-GuestClockSummary $records)
+    Check 'or says the clock kept time, over how many calls, in which zone' "clock      the guest's clock kept to this host's, within 60 s, over every guest call it was read around: 1 of 2, in 'W. Europe Standard Time' (guest-clock.log)" (Format-GuestClockSummary @($records[0], $records[2]))
+    Check 'and a run with no guest call says so' 'clock      no guest call was made' (Format-GuestClockSummary @())
+    $invokeGuestAt = $runCode.IndexOf('function Invoke-Guest(')
+    $invokeGuest = ''
+    if ($invokeGuestAt -ge 0) { $invokeGuest = $runCode.Substring($invokeGuestAt, [Math]::Min(3200, $runCode.Length - $invokeGuestAt)) }
+    $marks = @{}
+    foreach ($mark in @('$session = Get-GuestSession', '$hostBefore = [DateTime]::UtcNow', '$out = Invoke-Command -Session $session -ScriptBlock', '"GUEST-CLOCK-BEFORE $([DateTime]::UtcNow.ToString(''o'')) $([TimeZoneInfo]::Local.Id)"', 'Set-ExecutionPolicy -Scope Process', '"GUEST-CLOCK-AFTER $([DateTime]::UtcNow.ToString(''o'')) $([TimeZoneInfo]::Local.Id)"', '$hostAfter = [DateTime]::UtcNow', 'Add-GuestClockRecord $Name $out $hostBefore $hostAfter')) { $marks[$mark] = $invokeGuest.IndexOf($mark) }
+    Check 'a guest call reads this host''s clock with the session open, the guest''s first and last, and this host''s again after' $true ($marks['$session = Get-GuestSession'] -ge 0 -and $marks['$hostBefore = [DateTime]::UtcNow'] -gt $marks['$session = Get-GuestSession'] -and $marks['$out = Invoke-Command -Session $session -ScriptBlock'] -gt $marks['$hostBefore = [DateTime]::UtcNow'] -and $marks['"GUEST-CLOCK-BEFORE $([DateTime]::UtcNow.ToString(''o'')) $([TimeZoneInfo]::Local.Id)"'] -gt $marks['$out = Invoke-Command -Session $session -ScriptBlock'] -and $marks['Set-ExecutionPolicy -Scope Process'] -gt $marks['"GUEST-CLOCK-BEFORE $([DateTime]::UtcNow.ToString(''o'')) $([TimeZoneInfo]::Local.Id)"'] -and $marks['"GUEST-CLOCK-AFTER $([DateTime]::UtcNow.ToString(''o'')) $([TimeZoneInfo]::Local.Id)"'] -gt $marks['Set-ExecutionPolicy -Scope Process'] -and $marks['$hostAfter = [DateTime]::UtcNow'] -gt $marks['"GUEST-CLOCK-AFTER $([DateTime]::UtcNow.ToString(''o'')) $([TimeZoneInfo]::Local.Id)"'] -and $marks['Add-GuestClockRecord $Name $out $hostBefore $hostAfter'] -gt $marks['$hostAfter = [DateTime]::UtcNow'])
+    Check 'and the guest reads its zone afresh each time, as its session''s process keeps the first it read' 2 ([regex]::Matches($invokeGuest, [regex]::Escape('[TimeZoneInfo]::ClearCachedData()'))).Count
+    Check 'every guest call goes through it: the only other is the clock read before the suite' $true (([regex]::Matches($runCode, '(?m)^\s*\$o = Invoke-Guest ')).Count -ge 10 -and ([regex]::Matches($runCode, 'Invoke-Command -Session ')).Count -eq 2)
+    $asTheRunKeepsThem = New-Object System.Collections.Generic.List[object]
+    foreach ($record in $records) { $asTheRunKeepsThem.Add($record) }
+    $listJson = New-GuestClockSummaryJson $asTheRunKeepsThem.ToArray()
+    $listLine = Format-GuestClockSummary $asTheRunKeepsThem.ToArray()
+    Check 'the report reads the records as the run keeps them: a list, given as an array, never @() of it' 'True|3|True' @(($runCode.Contains('New-GuestClockSummaryJson $guestClockRecords.ToArray()') -and $runCode.Contains('Format-GuestClockSummary $guestClockRecords.ToArray()') -and -not $runCode.Contains('@($guestClockRecords)')), $listJson.calls, $listLine.StartsWith('clock      MOVED in 1 of 3'))
+    Check 'summary.json carries the record, its moves an array at every length' $true ($runCode.Contains("`$summary['guestClock'] = New-GuestClockSummaryJson") -and ((New-GuestClockSummaryJson $records | ConvertTo-Json -Depth 5) -match '"moved":\s*\[') -and ((New-GuestClockSummaryJson @() | ConvertTo-Json -Depth 5) -match '"moved":\s*\[\s*\]'))
+
     Write-Host '== the constants, against the files they copy =='
     $media = [System.IO.File]::ReadAllText((Join-Path $repo 'Testbed\MEDIA.md'))
     Check 'MEDIA.md names the SDK installer' $true $media.Contains($SdkInstallerName)
@@ -821,13 +976,16 @@ STACK      the faulting thread
     }
     $sdk = [System.IO.File]::ReadAllText((Join-Path $repo 'Testbed\guest\Install-DotnetSdk.ps1'))
     Check 'Install-DotnetSdk.ps1 builds the source this stages' $true $sdk.Contains("'$GuestRoot\src'")
+    Check 'and takes the installer and the version prefix this names it' $true ($sdk.Contains('[string]   $InstallerPath ') -and $sdk.Contains('[string]   $ExpectedSdkVersionPrefix '))
+    Check 'both calls name them' 2 ([regex]::Matches($own, [regex]::Escape("& .\Install-DotnetSdk.ps1 `$sdkNamed -")).Count)
     $testbed = [System.IO.File]::ReadAllText((Join-Path $repo 'Testbed\testbed.json')) | ConvertFrom-Json
     foreach ($name in @($Guests.Keys | Where-Object { -not $Guests[$_].Exchange })) {
         Check "$name rests on the frozen checkpoint testbed.json records" ([string]$testbed.frozenClocks.$name.checkpoint) $Guests[$name].Checkpoint
     }
     Check 'the Exchange VM is the one testbed.json exchangeVm names' 'OutlookAI-Exchange|OAI-EXCHANGE' @([string]$testbed.exchangeVm.vmName, [string]$testbed.exchangeVm.computerName)
     Check 'and rests on the newest checkpoint testbed.json records for it' ([string]@($testbed.exchangeVm.checkpoints)[-1]) $Guests['OutlookAI-Exchange'].Checkpoint
-    Check 'LiveRunFilters.ExchangeTestAccount leaves out exactly what the Exchange VM lacks' $true $filters.Contains('new[] { LocalSignatures, DelegateStore, GeneratedPopulation, IdentityAccount, ProbePopulation, PstStore }')
+    Check 'LiveRunFilters.ExchangeTestAccount leaves out exactly what the Exchange VM lacks, and the one-off removal' $true $filters.Contains('new[] { LocalSignatures, DelegateStore, GeneratedPopulation, IdentityAccount, ProbePopulation, PstStore, ConfirmedLeftover }')
+    Check 'and the filter here is that list, in that order' ('Category=Live' + ((@('LocalSignatures', 'DelegateStore', 'GeneratedPopulation', 'IdentityAccount', 'ProbePopulation', 'PstStore', 'ConfirmedLeftover') | ForEach-Object { '&Requires!=' + $_ }) -join '')) $FilterExchange
     $marker = [System.IO.File]::ReadAllText((Join-Path $repo 'McpServer\OutlookAI.McpServer.Tests\T2\LiveRunMarker.cs'))
     Check 'the run reads the marker from the variable this sets' $true ($marker.Contains('"OUTLOOKAI_LIVE_RUN_MARKER"') -and $marker.Contains('"OUTLOOKAI_LIVE_PRIOR_RUN_MARKERS"') -and $own.Contains("`$env:OUTLOOKAI_LIVE_RUN_MARKER = '"))
     foreach ($name in $Guests.Keys) {
@@ -1017,6 +1175,20 @@ function Get-GuestSession {
     $script:guestSession = New-PSSession -VMId (Get-TestbedVmId $facts.Name) -Credential $credential -ErrorAction Stop
     return $script:guestSession
 }
+# Every guest call's clock record - Call and Shift (Get-GuestClockShift) - in call order, for the
+# summary; each also a line in guest-clock.log, and a warning in run.log when the clock moved. A record
+# that cannot be written is said and passed over: it never fails the call.
+$guestClockRecords = New-Object System.Collections.Generic.List[object]
+function Add-GuestClockRecord([string] $Call, [string] $Output, [DateTime] $HostBefore, [DateTime] $HostAfter) {
+    try {
+        $readings = Read-GuestClock $Output
+        $shift = Get-GuestClockShift -Readings $readings -HostBefore $HostBefore -HostAfter $HostAfter
+        $guestClockRecords.Add([pscustomobject]@{ Call = $Call; Shift = $shift })
+        Add-Content -LiteralPath (Join-Path $runDir 'guest-clock.log') -Value (Format-GuestClockLine -Call $Call -HostBefore $HostBefore -Readings $readings -Shift $shift) -Encoding UTF8
+        if ($null -ne $shift -and $shift.Moved) { Say "GUEST CLOCK: $(Format-GuestClockMove $Call $shift) - guest-clock.log" }
+    }
+    catch { Say "  (the guest's clock around '$Call' could not be recorded: $($_.Exception.Message))" }
+}
 # A checkpoint restored over the guest by TestbedPool.ps1's Restore-TestbedCheckpoint, which saves a
 # guest that runs first (2026-11-18), then the guest started and its heartbeat waited for. The restore
 # ends the run's guest session, so it is closed first.
@@ -1028,15 +1200,23 @@ function Restore-Guest([string] $Name) {
 # Register-InteractiveTask.ps1 at RunLevel Limited (where Outlook runs, NOT elevated), or session 0
 # over PowerShell Direct for work that needs no desktop - both over the run's one session, each call
 # starting as a session of its own did: with no exit code left by the call before it, which
-# Get-TaskExit would read as this call's, and in the folder the session started in.
+# Get-TaskExit would read as this call's, and in the folder the session started in. Each also reads the
+# guest's clock and zone first and last, and this host's around it (THE GUEST'S CLOCK, above).
 function Invoke-Guest([string] $Name, [string] $Script, [int] $TimeoutSeconds, [switch] $Session0) {
     Use-Lease ([int][Math]::Ceiling($TimeoutSeconds / 60) + 30)
-    $out = Invoke-Command -Session (Get-GuestSession) -ScriptBlock {
+    # The session first, so that this host's two readings of its clock hold the call and nothing more.
+    $session = Get-GuestSession
+    $hostBefore = [DateTime]::UtcNow
+    $out = Invoke-Command -Session $session -ScriptBlock {
         param($text, $timeout, $inSession0)
         $ErrorActionPreference = 'Continue'
         $global:LASTEXITCODE = $null
         if ($null -eq $global:OutlookAIGuestStart) { $global:OutlookAIGuestStart = (Get-Location).Path }
         Set-Location -LiteralPath $global:OutlookAIGuestStart
+        # The guest's clock and zone, first and last (Read-GuestClock) - the zone read afresh each time,
+        # as a process that has read it once keeps it.
+        [TimeZoneInfo]::ClearCachedData()
+        "GUEST-CLOCK-BEFORE $([DateTime]::UtcNow.ToString('o')) $([TimeZoneInfo]::Local.Id)"
         Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
         if ($inSession0) {
             try { & ([scriptblock]::Create($text)) *>&1 | Out-String -Width 400 } catch { "GUEST-CALL-THREW: $($_.Exception.Message)" }
@@ -1045,8 +1225,12 @@ function Invoke-Guest([string] $Name, [string] $Script, [int] $TimeoutSeconds, [
             try { & 'C:\OutlookAI-Q5\Register-InteractiveTask.ps1' -Script $text -TimeoutSeconds $timeout -RunLevel Limited *>&1 | Out-String -Width 400 } catch { "GUEST-CALL-THREW: $($_.Exception.Message)" }
             "RUN-REGISTER-EXIT: $LASTEXITCODE"
         }
+        [TimeZoneInfo]::ClearCachedData()
+        "GUEST-CLOCK-AFTER $([DateTime]::UtcNow.ToString('o')) $([TimeZoneInfo]::Local.Id)"
     } -ArgumentList $Script, $TimeoutSeconds, ([bool]$Session0) 2>&1 | Out-String -Width 400
+    $hostAfter = [DateTime]::UtcNow
     [System.IO.File]::WriteAllText((Join-Path $runDir "guest\$Name.log"), $out)
+    Add-GuestClockRecord $Name $out $hostBefore $hostAfter
     return $out
 }
 # The dumps WER wrote during the run, fetched into dumps\<guest>\ BEFORE the guest is restored - the
@@ -1219,9 +1403,10 @@ Copy-Item -LiteralPath '$GuestPayloadDir\live-test-settings.json' -Destination '
             $crashDumpState['proven'] = ($o -match 'VERDICT: PROVEN')
             Say "crash dumps proven: $($crashDumpState['proven']) - guest\crash-dumps-prove.log"
         }
-        $o = Invoke-Guest 'sdk-execute' "Set-Location '$GuestRoot'; & .\Install-DotnetSdk.ps1 -ExpectedSha512 '$SdkSha512' -Execute; `"SDK-EXECUTE-EXIT `$LASTEXITCODE`"" 1800 -Session0
+        $sdkNamed = "-InstallerPath '$GuestRoot\media\$SdkInstallerName' -ExpectedSdkVersionPrefix '$SdkVersionPrefix'"
+        $o = Invoke-Guest 'sdk-execute' "Set-Location '$GuestRoot'; & .\Install-DotnetSdk.ps1 $sdkNamed -ExpectedSha512 '$SdkSha512' -Execute; `"SDK-EXECUTE-EXIT `$LASTEXITCODE`"" 1800 -Session0
         if ($o -notmatch 'SDK-EXECUTE-EXIT 0') { throw 'Install-DotnetSdk.ps1 -Execute failed - guest\sdk-execute.log' }
-        $o = Invoke-Guest 'sdk-verify' "Set-Location '$GuestRoot'; & .\Install-DotnetSdk.ps1 -Verify; `"SDK-VERIFY-EXIT `$LASTEXITCODE`"" 1800 -Session0
+        $o = Invoke-Guest 'sdk-verify' "Set-Location '$GuestRoot'; & .\Install-DotnetSdk.ps1 $sdkNamed -Verify; `"SDK-VERIFY-EXIT `$LASTEXITCODE`"" 1800 -Session0
         if ($o -notmatch 'VERDICT: TEST-READY') { $stage = 'BUILD'; $stageWhy = 'the suite is not TEST-READY on the guest - it did not build or enumerate there (guest\sdk-verify.log)'; throw $stageWhy }
     }
     catch { if (-not $stage) { $stage = 'INFRA'; $stageWhy = "staging failed: $($_.Exception.Message)" }; throw }
@@ -1442,6 +1627,9 @@ $summary = New-LiveRunSummary -RunId $runId -Verdict $verdict -Revision $revisio
 if ($facts.Exchange) { $summary['runMarker'] = [ordered]@{ marker = $runMarker; priors = @($priorMarkers); ledger = $ledgerPath; clean = $ledgerOutcome } }
 $summary['outlookStart'] = $outlookStart
 $summary['indexRoots'] = $indexRoots
+# ToArray(), never @(...): @() of a List[object] given to an [object[]] parameter fails with "Argument
+# types do not match" under Windows PowerShell 5.1 and PowerShell 7.7 alike (measured 2026-11-18).
+$summary['guestClock'] = New-GuestClockSummaryJson $guestClockRecords.ToArray()
 [System.IO.File]::WriteAllText((Join-Path $runDir 'summary.json'), ($summary | ConvertTo-Json -Depth 8))
 
 $lines = New-Object System.Collections.Generic.List[string]
@@ -1478,6 +1666,7 @@ elseif ($crashDumpState['armed']) { $dumpText += ', none written' }
 $lines.Add("outlook    crashes during the run: $crashText; crash dumps: $dumpText")
 $lines.Add((Format-OutlookStartLine $outlookStart))
 if ($indexRoots) { $lines.Add("index      $indexRoots") }
+$lines.Add((Format-GuestClockSummary $guestClockRecords.ToArray()))
 $endLine = "guest end  rested on $($checkpointActions['restedOn']); settings staged=$($checkpointActions['settingsStaged']); saved=$($checkpointActions['saved'])"
 if ($checkpointActions['green']) { $endLine += "; green checkpoint $($checkpointActions['green'])" }
 $lines.Add($endLine)
@@ -1498,7 +1687,7 @@ if ($null -ne $consoleFacts -and @($consoleFacts.ProvedNothing).Count -gt 0) {
     foreach ($p in $consoleFacts.ProvedNothing) { $lines.Add("  $($p.Substring(0, [Math]::Min(240, $p.Length)))") }
 }
 $lines.Add(''); $lines.Add("results    $runDir")
-$lines.Add('           summary.txt and summary.json here; results\ the TRX, console.txt and VSTest logs; guest\ every guest call; run.log the steps')
+$lines.Add('           summary.txt and summary.json here; results\ the TRX, console.txt and VSTest logs; guest\ every guest call; guest-clock.log the guest''s clock around each; run.log the steps')
 [System.IO.File]::WriteAllLines((Join-Path $runDir 'summary.txt'), $lines)
 Write-Host ''
 $lines | ForEach-Object { Write-Host $_ }

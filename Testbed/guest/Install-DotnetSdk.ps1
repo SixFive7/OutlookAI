@@ -1,6 +1,23 @@
 #Requires -Version 5.1
 <#
     ============================================================================================
+    2026-11-18: THE DEFAULT IS THE .NET 11 SDK (Q172), AND A GUEST MAY HOLD SEVERAL SDKs.
+    ============================================================================================
+
+    The maintainer moved OutlookAI to .NET 11 on 2026-11-18 (Q172), so the default installer is
+    dotnet-sdk-11.0.100-win-x64.exe and the default prefix '11.'. The new base checkpoints hold
+    SDK 11.0.100 BESIDE a .NET 10 SDK - 10.0.404, whose .NET 10.0.15 targeting packs are the
+    ones SDK 11.0.100 builds a net10.0 project with (Testbed/MEDIA.md, "The .NET SDK") - so a
+    branch still on .NET 10 keeps building on them. Run this once per SDK, with that SDK's
+    installer, hash and an exact prefix: -ExpectedSdkVersionPrefix '10.0.404' installs 10.0.404
+    on a guest whose 10.0.401 would satisfy '10.'.
+
+    Rung 2 now builds its probe for the major the prefix names - net11.0-windows for '11.',
+    net10.0-windows for '10.0.404' - and pins that SDK with a global.json in the probe folder,
+    so on a guest with several SDKs it proves the one asked for, not merely the newest. Rungs 3
+    and 4 build the suite with whatever SDK the guest picks for it, as a run does.
+
+    ============================================================================================
     RUN 2026-09-17 ON `OutlookAI-Indexed`. VERDICT: TEST-READY. AND IT FAILED THE FIRST TIME.
     ============================================================================================
 
@@ -93,11 +110,14 @@
     1 without a logon. An extracted zip would need DOTNET_ROOT and a PATH edit of our own, which
     is more moving parts for no gain.
 
-    WHICH VERSION, AND WHY IT IS PINNED. .NET 10, x64. Every project in McpServer/ targets
-    `net10.0-windows`; OutlookAI.Core additionally targets `net48`, which needs no separate
-    install because it builds against the `Microsoft.NETFramework.ReferenceAssemblies` package
-    (in the staged feed). There is NO global.json anywhere in the repository, so nothing pins a
-    feature band and any .NET 10 SDK would compile. The default below pins the version the HOST runs anyway, because
+    WHICH VERSION, AND WHY IT IS PINNED. .NET 11, x64, since 2026-11-18 (Q172; .NET 10 before
+    it), when OutlookAI moved to .NET 11. The projects in McpServer/ target `net11.0-windows` from
+    the commit that moved the code, and `net10.0-windows` before it, which SDK 11 builds with a
+    .NET 10 SDK's packs beside it (Testbed/MEDIA.md); OutlookAI.Core additionally
+    targets `net48`, which needs no separate install because it builds against the
+    `Microsoft.NETFramework.ReferenceAssemblies` package (in the staged feed). There is NO
+    global.json anywhere in the repository, so nothing pins a feature band, and a guest builds
+    with the newest SDK it has. The default below pins the version the HOST runs anyway, because
     the host is what publishes the payload the guest measures with, and one toolchain across
     both machines is one fewer difference to suspect when a guest behaves unlike the host - the
     same reasoning Testbed/MEDIA.md applies to locale and to the Office build gap.
@@ -110,13 +130,17 @@
     installer exited zero. The thing being enabled is `dotnet test`, so -Verify drives it, in
     four rungs that get progressively closer to the real question:
 
-      1. THE SDK ANSWERS.      `--list-sdks` reports a 10.x SDK, and `--info` reports a win-x64
-                               RID. Anything else is the wrong installer.
-      2. IT BUILDS OFFLINE.    A throwaway `net10.0-windows` console project is created,
-                               restored, built and RUN. It has no PackageReference, so it needs
-                               no feed at all - which separates "the SDK is broken" from "the
-                               offline feed is missing", two failures that otherwise look
-                               identical on a machine with no network.
+      1. THE SDK ANSWERS.      `--list-sdks` reports an SDK matching -ExpectedSdkVersionPrefix,
+                               and `--info` reports a win-x64 RID. Anything else is the wrong
+                               installer.
+      2. IT BUILDS OFFLINE.    A throwaway console project for the prefix's major -
+                               `net11.0-windows` for '11.' - is created, restored, built and
+                               RUN, by that SDK: a global.json in the probe folder pins it, so a
+                               guest holding several SDKs proves the one asked for. It has no
+                               PackageReference, so it needs no feed at all - which separates
+                               "the SDK is broken" from "the offline feed is missing", two
+                               failures that otherwise look identical on a machine with no
+                               network.
       3. THE SUITE ENUMERATES. `dotnet test --list-tests` against the real test project. This
                                restores from the staged feed, builds every referenced project,
                                launches the test host and asks xUnit what it has. If that
@@ -191,7 +215,9 @@
 
 .PARAMETER ExpectedSdkVersionPrefix
     What `dotnet --list-sdks` must report for the verification to accept the install. A prefix,
-    so '10.' accepts any .NET 10 SDK and '10.0.401' pins one exactly.
+    so '11.' accepts any .NET 11 SDK and '10.0.404' pins one exactly. -Execute skips the
+    installer when an SDK already matches it, so installing a second SDK of a major the guest
+    already has takes the exact version. Its first number is also the major rung 2 builds for.
 
 .PARAMETER DotnetRoot
     Where the installer puts dotnet. Only used as the fallback when `dotnet` is not yet on this
@@ -232,6 +258,13 @@
     project (which it removes) and the test project's own build output - a build is not
     optional, since a build happening at all is part of what is being proven.
 
+.PARAMETER SkipVerify
+    With -Execute only: install, write the machine environment and the NuGet.config, and stop -
+    VERDICT: INSTALLED, exit 0 - without the four rungs. For a FROZEN guest (Q130 (a)), where
+    every second between the restore and the next checkpoint moves the frozen instant: verify
+    with -Verify after that checkpoint is taken, as Docs/live-tier-on-the-vm.md section 4.12 does.
+    Nothing else should pass it; a run never does.
+
 .PARAMETER KeepProbe
     Leave rung 2's throwaway project behind for inspection.
 
@@ -245,9 +278,9 @@
 #>
 [CmdletBinding()]
 param(
-    [string]   $InstallerPath             = 'C:\OutlookAI-Q5\media\dotnet-sdk-10.0.401-win-x64.exe',
+    [string]   $InstallerPath             = 'C:\OutlookAI-Q5\media\dotnet-sdk-11.0.100-win-x64.exe',
     [string]   $ExpectedSha512,
-    [string]   $ExpectedSdkVersionPrefix  = '10.',
+    [string]   $ExpectedSdkVersionPrefix  = '11.',
     [string]   $DotnetRoot                = 'C:\Program Files\dotnet',
     [string]   $SourceRoot                = 'C:\OutlookAI-Q5\src',
     [string]   $OfflineFeed               = 'C:\OutlookAI-Q5\nuget-offline',
@@ -261,11 +294,19 @@ param(
     [int]      $BuildTimeoutMinutes       = 30,
     [switch]   $Execute,
     [switch]   $Verify,
+    [switch]   $SkipVerify,
     [switch]   $KeepProbe,
     [string]   $LogPath                   = 'C:\OutlookAI-Q5\install-dotnet-sdk.log'
 )
 
 $ErrorActionPreference = 'Stop'
+
+# The major the prefix names: what rung 2 builds its probe for (net<major>.0-windows) and pins.
+$probeMajor = ''
+if ($ExpectedSdkVersionPrefix -match '^(\d+)\.') { $probeMajor = $Matches[1] }
+if (-not $probeMajor) {
+    throw "REFUSING TO RUN: -ExpectedSdkVersionPrefix is '$ExpectedSdkVersionPrefix'. It must begin with a major version and a dot - '11.' for any .NET 11 SDK, '10.0.404' for that one."
+}
 
 # ---------------------------------------------------------------------------------------------
 # Everything this script writes or runs, named in one place, so the blast radius is readable
@@ -697,6 +738,13 @@ SHA-512, and update Testbed/MEDIA.md so the next rebuilder is not doing this aga
         Say '       are staged by Testbed/host/Publish-LiveTierPayload.ps1. Re-run -Execute after'
         Say '       copying them in, or write the config by hand.'
     }
+
+    if ($SkipVerify) {
+        Say ''
+        Say 'VERDICT: INSTALLED'
+        Say '  -SkipVerify: the installer finished and nothing was proven. Run -Verify before relying on it.'
+        exit 0
+    }
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -735,7 +783,7 @@ else {
     elseif ($listSdks.Output -notmatch ('(?m)^' + [regex]::Escape($ExpectedSdkVersionPrefix))) {
         Say "  FAIL rung 1: no SDK matching '$ExpectedSdkVersionPrefix'. Installed:"
         Show-Tail $listSdks.Output
-        $notes += "The wrong SDK is installed. The suite targets net10.0-windows and will not build without a .NET 10 SDK."
+        $notes += "The wrong SDK is installed: nothing matches '$ExpectedSdkVersionPrefix'. A suite targets the .NET of its own major and does not build without an SDK of that major (Testbed/MEDIA.md)."
     }
     else {
         $info = Invoke-Dotnet -DotnetPath $dotnet.Path -Arguments @('--info') -LogName 'info' -TimeoutMinutes 5
@@ -763,6 +811,20 @@ else {
         $sentinel = 'OUTLOOKAI-SDK-PROBE-OK'
         $probeProj = Join-Path $ProbeDir 'SdkProbe.csproj'
         $probeMain = Join-Path $ProbeDir 'Program.cs'
+        $probeTfm = 'net' + $probeMajor + '.0-windows'
+
+        # The SDK the prefix names builds the probe, not merely the newest the guest has: a guest
+        # may hold several (Testbed/MEDIA.md), and the newest builds an older major only with that
+        # major's targeting packs. A full version pins that SDK; a shorter prefix the newest SDK of
+        # its major. Written without a byte-order mark, which global.json does not need.
+        $pinVersion = $probeMajor + '.0.100'
+        $pinRollForward = 'latestFeature'
+        if ($ExpectedSdkVersionPrefix -match '^\d+\.\d+\.\d+$') {
+            $pinVersion = $ExpectedSdkVersionPrefix
+            $pinRollForward = 'disable'
+        }
+        $pinJson = '{ "sdk": { "version": "' + $pinVersion + '", "rollForward": "' + $pinRollForward + '", "allowPrerelease": false } }'
+        [System.IO.File]::WriteAllText((Join-Path $ProbeDir 'global.json'), $pinJson)
 
         # No PackageReference, deliberately. Everything this needs ships inside the SDK, so it
         # proves the toolchain WITHOUT the staged feed - which is what separates a broken SDK
@@ -771,7 +833,7 @@ else {
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <TargetFramework>$probeTfm</TargetFramework>
     <PlatformTarget>x64</PlatformTarget>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
@@ -782,6 +844,8 @@ else {
 System.Console.WriteLine("$sentinel " + System.Environment.Version + " " + (System.Environment.Is64BitProcess ? "x64" : "x86"));
 "@
 
+        $probeSdk = Invoke-Dotnet -DotnetPath $dotnet.Path -Arguments @('--version') -LogName 'probe-sdk' -TimeoutMinutes 5 -WorkingDirectory $ProbeDir
+        Say ("  rung 2 sdk: " + ($probeSdk.Output.Trim() -split "`r?`n")[0] + "  (global.json: $pinVersion, rollForward $pinRollForward)")
         $run = Invoke-Dotnet -DotnetPath $dotnet.Path -Arguments @('run', '--project', $probeProj, '-c', $Configuration) -LogName 'probe-run' -TimeoutMinutes 15 -WorkingDirectory $ProbeDir
         if ($run.ExitCode -eq 0 -and $run.Output -match [regex]::Escape($sentinel)) {
             $sentinelLine = ''
@@ -798,7 +862,7 @@ System.Console.WriteLine("$sentinel " + System.Environment.Version + " " + (Syst
                 $notes += 'A 32-bit host cannot open Search.CollatorDSO; the index tier would report a missing index on a healthy machine.'
             }
             else {
-                Say '  OK   rung 2: the SDK restores, builds and runs net10.0-windows offline.'
+                Say "  OK   rung 2: the SDK restores, builds and runs $probeTfm offline."
                 $rung2 = $true
             }
         }

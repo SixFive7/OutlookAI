@@ -218,16 +218,39 @@ public static class LiveArtifactBaseline
     private static readonly object Gate = new();
     private static IReadOnlyDictionary<string, int> _current = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>The counts captured, by store; empty until <see cref="Capture"/> ran.</summary>
+    /// <summary>
+    /// The counts captured, by store, less the confirmed removals made since (<see cref="ConfirmedRemovals"/>,
+    /// Q138); empty until <see cref="Capture"/> ran.
+    /// </summary>
     public static IReadOnlyDictionary<string, int> Current
     {
         get
         {
             lock (Gate)
             {
-                return _current;
+                return AdjustedFor(_current, ConfirmedRemovals.Current);
             }
         }
+    }
+
+    /// <summary>
+    /// <paramref name="counts"/> with one taken off a store's count for each confirmed removal made in it - never
+    /// below zero, and a store the counts do not name is left out. Pure, so T1 pins it.
+    /// </summary>
+    public static IReadOnlyDictionary<string, int> AdjustedFor(IReadOnlyDictionary<string, int> counts, IEnumerable<ConfirmedRemoval> removals)
+    {
+        ArgumentNullException.ThrowIfNull(counts);
+        ArgumentNullException.ThrowIfNull(removals);
+        Dictionary<string, int> adjusted = new(counts, StringComparer.OrdinalIgnoreCase);
+        foreach (ConfirmedRemoval removal in removals)
+        {
+            if (removal != null && adjusted.TryGetValue(removal.Store, out int count))
+            {
+                adjusted[removal.Store] = Math.Max(0, count - 1);
+            }
+        }
+
+        return adjusted;
     }
 
     /// <summary>Counts the tagged items of every store the sweep may not delete from. Read-only.</summary>

@@ -252,7 +252,10 @@ $BuildVmPool = @($TestbedPools['build'])
 $BuildVmName = ''
 $BuildVmComputerName = 'OAI-BUILD'
 $BuildVmUser = 'vmadmin'
-$BaseCheckpointName = 'CP-03-SDK-TEST-READY-UTC'
+# The base every run restores: since 2026-11-18 (Q172) the .NET 11 SDK 11.0.100 beside .NET 10's
+# 10.0.404, on CP-03-SDK-TEST-READY-UTC, which stays for the branches whose runner still names it
+# (Testbed/README.md section 1c, B11). Each member of the pool made its own, by the same steps.
+$BaseCheckpointName = 'CP-04-SDK11-TEST-READY-UTC'
 # The guest's time zone: UTC, decided by the maintainer 2026-10-03 (Q126 (a)), so the suite runs in a
 # zone other than the workstation's W. Europe - GitHub's UTC runner, which caught Q95's zone bug, is
 # gone. The base checkpoint holds it, and a run refuses a guest that reads anything else: a base
@@ -1108,7 +1111,9 @@ Expected: 1</Message></ErrorInfo></Output></UnitTestResult>
         Check 'and the same offline feed' $GuestFeedRoot $buildVm.guest.offlineFeed
     }
     # TestbedPool.ps1 lists the pools; testbed.json's vmPools records each clone. They must agree, and
-    # each clone must have been made from the checkpoint its source's runner restores now.
+    # each clone must rest on the checkpoint its source's runner restores now: copied from the source
+    # at that checkpoint, or made on the clone from its copy by the source's own steps - each step
+    # recorded in madeOnTheClone, from the checkpoint it was made from, and one the source has too.
     $vmPools = $null
     if ($null -ne $testbedJson) { $vmPools = $testbedJson.vmPools }
     Check 'testbed.json has a vmPools block' $true ($null -ne $vmPools)
@@ -1123,7 +1128,19 @@ Expected: 1</Message></ErrorInfo></Output></UnitTestResult>
             if ($pool -eq 'build' -and $null -ne $buildVm) { $from = [string]$buildVm.runnerBaseCheckpoint }
             elseif ($null -ne $testbedJson.frozenClocks -and $null -ne $record) { $from = [string]$testbedJson.frozenClocks.([string]$record.source).checkpoint }
             foreach ($clone in $clones) {
-                Check "$($clone.vmName) was made from the checkpoint its source's runner restores ($from), and rests on that name" "$from|$from" "$($clone.fromCheckpoint)|$($clone.checkpoint)"
+                $steps = @(@($clone.madeOnTheClone) | Where-Object { $null -ne $_ })
+                $reached = [string]$clone.fromCheckpoint
+                for ($k = 0; $k -lt $steps.Count -and $reached -ne $from; $k++) {
+                    $next = @($steps | Where-Object { [string]$_.from -eq $reached })
+                    if ($next.Count -ne 1) { break }
+                    $reached = [string]$next[0].checkpoint
+                }
+                Check "$($clone.vmName) rests on the checkpoint its source's runner restores ($from), copied from the source at it or made on the clone from its copy" "$from|$from" "$reached|$($clone.checkpoint)"
+                $sourceHas = @()
+                if ($pool -eq 'build' -and $null -ne $buildVm) { $sourceHas = @($buildVm.checkpoints) }
+                foreach ($m in $steps) {
+                    Check "and $($m.checkpoint), made on $($clone.vmName), is a checkpoint its source has too" $true ($sourceHas -contains [string]$m.checkpoint)
+                }
             }
         }
     }

@@ -3,10 +3,10 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Security;
 
-namespace OutlookAI.Services
+namespace OutlookAI.Core.AddIn
 {
     /// <summary>One Outlook value the tuning service keeps applied: where it lives, which group owns it, and its shipped default.</summary>
-    internal sealed class TuningEntry
+    public sealed class TuningEntry
     {
         private static readonly string[] NoPolicy = new string[0];
 
@@ -72,7 +72,7 @@ namespace OutlookAI.Services
     }
 
     /// <summary>One catalog value as the settings dialog shows it: desired against live, and why they differ.</summary>
-    internal sealed class TuningValueState
+    public sealed class TuningValueState
     {
         public TuningValueState(TuningEntry entry, int desired, int? live, bool groupEnabled, bool setByPolicy, bool needsAdministrator)
         {
@@ -105,7 +105,7 @@ namespace OutlookAI.Services
     }
 
     /// <summary>The tuning state the settings dialog paints from.</summary>
-    internal sealed class TuningSnapshot
+    public sealed class TuningSnapshot
     {
         public bool MasterEnabled { get; internal set; }
 
@@ -127,7 +127,7 @@ namespace OutlookAI.Services
     }
 
     /// <summary>What one reconcile did.</summary>
-    internal sealed class TuningReconcileResult
+    public sealed class TuningReconcileResult
     {
         public bool WroteAny { get; internal set; }
 
@@ -159,7 +159,7 @@ namespace OutlookAI.Services
     /// The registry the reconcile works against - HKEY_CURRENT_USER in the add-in
     /// (<c>OutlookTuningService</c>), a dictionary in the tests. Key paths are relative to the hive.
     /// </summary>
-    internal interface ITuningStore
+    public interface ITuningStore
     {
         /// <summary>The value when it is a REG_DWORD; null when it is absent, not a DWORD, or unreadable. Never throws.</summary>
         int? ReadDword(string keyPath, string valueName);
@@ -222,25 +222,24 @@ namespace OutlookAI.Services
     /// </para>
     ///
     /// <para>
-    /// SPLIT OUT OF <c>OutlookTuningService</c> so the test project can LINK it and pin the walk -
-    /// the add-in is net48/VSTO and nothing can reference it. FRAMEWORK-NEUTRAL and INTERNAL under the
-    /// same rules as the other linked files: C# 7.3, no nullable annotations, nothing null returned
-    /// or assigned. Every value name comes from <see cref="AddInServerContract"/>, which the server's
-    /// <c>HealthReporting</c> reads with.
+    /// SPLIT OUT OF the add-in's <c>OutlookTuningService</c> so that the T1 suite can pin the walk, and
+    /// since the code-sharing refactor's stage S3 OutlookAI.Core's, in the add-in namespace
+    /// (Q163 (a)): the suite pins the one compiled copy the add-in loads. Every value name comes from
+    /// <see cref="AddInServerContract"/>, which the server's <c>HealthReporting</c> reads with.
     /// </para>
     /// </summary>
-    internal static class TuningReconciler
+    public static class TuningReconciler
     {
-        internal const string GroupSearch = "search";
-        internal const string GroupCaching = "caching";
-        internal const string GroupOst = "ost";
+        public const string GroupSearch = "search";
+        public const string GroupCaching = "caching";
+        public const string GroupOst = "ost";
 
-        internal const string TuningKeyPath = AddInServerContract.TuningKeyPath;
-        internal const string DesiredKeyPath = TuningKeyPath + @"\Desired";
-        internal const string AppliedKeyPath = TuningKeyPath + @"\Applied";
+        public const string TuningKeyPath = AddInServerContract.TuningKeyPath;
+        public const string DesiredKeyPath = TuningKeyPath + @"\Desired";
+        public const string AppliedKeyPath = TuningKeyPath + @"\Applied";
 
         /// <summary>Applies diffs, skipping what cannot be written, then writes the bookkeeping - always.</summary>
-        internal static TuningReconcileResult Reconcile(ITuningStore store, IReadOnlyList<TuningEntry> catalog, bool isStartup, DateTime utcNow)
+        public static TuningReconcileResult Reconcile(ITuningStore store, IReadOnlyList<TuningEntry> catalog, bool isStartup, DateTime utcNow)
         {
             var result = new TuningReconcileResult();
             try
@@ -340,7 +339,7 @@ namespace OutlookAI.Services
         }
 
         /// <summary>Seeds the toggles once, and any missing desired value, every time. Writes only the add-in's own key.</summary>
-        internal static void EnsureInitialized(ITuningStore store, IReadOnlyList<TuningEntry> catalog)
+        public static void EnsureInitialized(ITuningStore store, IReadOnlyList<TuningEntry> catalog)
         {
             bool initialized = store.ReadDword(TuningKeyPath, AddInServerContract.TuningInitializedValueName) == 1;
             if (!initialized)
@@ -362,7 +361,7 @@ namespace OutlookAI.Services
         }
 
         /// <summary>Desired against live for every catalog value, plus the toggles and the last reconcile's lists.</summary>
-        internal static TuningSnapshot ReadSnapshot(ITuningStore store, IReadOnlyList<TuningEntry> catalog)
+        public static TuningSnapshot ReadSnapshot(ITuningStore store, IReadOnlyList<TuningEntry> catalog)
         {
             EnsureInitialized(store, catalog);
             List<string> conflicts = ParseIdList(store.ReadString(TuningKeyPath, AddInServerContract.TuningPolicyConflictsValueName));
@@ -402,7 +401,7 @@ namespace OutlookAI.Services
         /// True while any of the entry's <see cref="TuningEntry.PolicyValueNames"/> holds a DWORD
         /// under any of its <see cref="TuningEntry.PolicyKeyPaths"/> - whoever wrote it. Reads only.
         /// </summary>
-        internal static bool IsSetByPolicy(ITuningStore store, TuningEntry entry)
+        public static bool IsSetByPolicy(ITuningStore store, TuningEntry entry)
         {
             foreach (string keyPath in entry.PolicyKeyPaths)
             {
@@ -420,18 +419,18 @@ namespace OutlookAI.Services
         /// <see cref="UnauthorizedAccessException"/> (CreateSubKey, SetValue) and
         /// <see cref="SecurityException"/> (opening a key writable that is not).
         /// </summary>
-        internal static bool IsAccessDenied(Exception ex)
+        public static bool IsAccessDenied(Exception ex)
         {
             return ex is UnauthorizedAccessException || ex is SecurityException;
         }
 
-        internal static int ReadDesired(ITuningStore store, TuningEntry entry)
+        public static int ReadDesired(ITuningStore store, TuningEntry entry)
         {
             int? stored = store.ReadDword(DesiredKeyPath, entry.Id);
             return stored.HasValue ? stored.Value : entry.DefaultDesired;
         }
 
-        internal static string ToggleName(string groupId)
+        public static string ToggleName(string groupId)
         {
             switch (groupId)
             {
@@ -443,14 +442,14 @@ namespace OutlookAI.Services
         }
 
         /// <summary>Missing means on: the toggles default ON.</summary>
-        internal static bool IsToggleOn(ITuningStore store, string name)
+        public static bool IsToggleOn(ITuningStore store, string name)
         {
             int? value = store.ReadDword(TuningKeyPath, name);
             return !value.HasValue || value.Value != 0;
         }
 
         /// <summary>';'-joined entry ids, as PolicyConflicts and NeedsAdministrator store them: empties dropped, duplicates once.</summary>
-        internal static List<string> ParseIdList(string raw)
+        public static List<string> ParseIdList(string raw)
         {
             var list = new List<string>();
             if (string.IsNullOrEmpty(raw))
@@ -463,7 +462,7 @@ namespace OutlookAI.Services
             return list;
         }
 
-        internal static string JoinIdList(IEnumerable<string> ids)
+        public static string JoinIdList(IEnumerable<string> ids)
         {
             return string.Join(";", ids);
         }

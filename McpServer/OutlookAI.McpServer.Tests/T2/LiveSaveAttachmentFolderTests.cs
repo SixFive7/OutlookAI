@@ -159,8 +159,8 @@ public sealed class LiveSaveAttachmentFolderTests
         // operation", measured on the unindexed guest 2026-11-18. So the names here are names any
         // program can give a file: a direction control, a leading space, and a name too long for the
         // folder. A device's name and trailing dots and spaces only a \\?\ path can give a file, and
-        // asking Outlook to attach CON.txt from one crashed OUTLOOK.EXE (an access violation, the same
-        // day, same guest) - so those, path separators and ':' are T1's alone
+        // asking Outlook to attach any file from a \\?\ path crashes OUTLOOK.EXE (four of four, the same
+        // day, runbook section 4.11) - so those, path separators and ':' are T1's alone
         // (AttachmentFileWriterDiskTests), with every other name.
         string sources = Path.Combine(Path.GetTempPath(), Tag + "-names");
 

@@ -21,8 +21,9 @@
                 ExecuteMso('ApplicationOptionsDialog') from a hidden helper process, its Mail page's
                 "Signatures..." opened, and the names on that dialog read through UI Automation - an
                 account selector or "Signatures on this device" is the roaming dialog. Cancel. Then the
-                General page is read for "Store my Outlook settings in the cloud". Cancel. Never OK,
-                never a checkbox, never a field.
+                General page is read for "Store my Outlook settings in the cloud", and whether that
+                checkbox is on (its toggle state, read). Cancel. Never OK, never a checkbox changed, never
+                a field.
       -Step R2  The test account's store only, through the object model: its non-IPM root, whether
                 ApplicationDataRoot\49499048-0129-47f5-b95e-f9d315b861a6 is in the offline copy, how many
                 subfolders it has, and each one's hidden items' message classes and which of a fixed set
@@ -115,6 +116,13 @@ function Get-RoamingCopyAddress([string] $BaseName) {
     return $null
 }
 
+# One entry of Get-UiaNames - '<ControlType><TAB><Name>' - as its type and name, or $null.
+function ConvertFrom-UiaNameEntry([string] $Entry) {
+    $parts = ([string]$Entry) -split "`t", 2
+    if ($parts.Count -ne 2 -or -not $parts[0] -or -not $parts[1]) { return $null }
+    return [pscustomobject]@{ Type = $parts[0]; Name = $parts[1] }
+}
+
 # A REG_BINARY signature name as Outlook writes it - UTF-16, NUL-terminated - or a REG_SZ.
 function ConvertFrom-SignatureValue($Value) {
     if ($null -eq $Value) { return $null }
@@ -172,6 +180,9 @@ function Invoke-SelfTest {
     Check 'a "(address)" file alone reads as roaming' ($v.Roams -and $v.RoamingCopies -eq 1)
     $v = Get-RoamingVerdict @() @('Store my Outlook settings in the cloud') @()
     Check 'the cloud-settings checkbox is reported, apart from the verdict' ($v.CloudSettingOffered -and -not $v.Roams)
+    $e = ConvertFrom-UiaNameEntry "CheckBox`tStore my Outlook settings in the cloud (requires restarting Outlook)"
+    Check 'a names entry reads as its control type and its name' ($e.Type -eq 'CheckBox' -and $e.Name -eq 'Store my Outlook settings in the cloud (requires restarting Outlook)')
+    Check 'an entry with no type or no name reads as nothing' ($null -eq (ConvertFrom-UiaNameEntry 'CheckBox') -and $null -eq (ConvertFrom-UiaNameEntry "`tName"))
 
     # Read-only, read off this file's own syntax tree so this text cannot count as what it forbids.
     $ast = [System.Management.Automation.Language.Parser]::ParseFile($PSCommandPath, [ref] $null, [ref] $null)
@@ -469,6 +480,13 @@ function Invoke-R1 {
                 $generalNames = @(Get-UiaNames $options)
                 $cloud = @($generalNames | Where-Object { $_ -match '(?i)settings in the cloud|roam' })
                 Write-ReportLine ("  General page: {0} named controls; about cloud settings: {1}" -f $generalNames.Count, $(if ($cloud.Count) { $cloud -join ' | ' } else { 'none' }))
+                # Whether that checkbox is ON - its toggle state, read and never changed (Q194 (b), 2026-11-18).
+                foreach ($entry in @($cloud | ForEach-Object { ConvertFrom-UiaNameEntry $_ } | Where-Object { $_ -and $_.Type -eq 'CheckBox' })) {
+                    $state = 'could not be read'
+                    $box = Find-Named $options ([System.Windows.Automation.ControlType]::CheckBox) $entry.Name
+                    if ($box) { try { $state = [string]$box.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Current.ToggleState } catch { } }
+                    Write-ReportLine ("  '{0}' is {1} (read, never changed)" -f $entry.Name, $state)
+                }
             }
             else { Write-ReportLine "  NOT-FOUND: no 'General' page in Options' navigation" }
         }

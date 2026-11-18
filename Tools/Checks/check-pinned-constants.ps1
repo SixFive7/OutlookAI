@@ -168,7 +168,7 @@ if ($capMb -and $gateMb) {
 #    machine where half the product's Office integration silently does nothing.
 # ---------------------------------------------------------------------------------------------
 $script:Checks++
-$supportedRaw = Get-Pinned 'Services/OfficeVersions.cs' `
+$supportedRaw = Get-Pinned 'McpServer/OutlookAI.Core/AddIn/OfficeVersions.cs' `
     'Supported\s*=\s*\{([^}]*)\}' 'Office versions (OfficeVersions.cs)'
 $issVersions = Get-PinnedAll 'Installer.iss' `
     'Software\\Microsoft\\Office\\([0-9]+\.[0-9]+)\\Outlook\\Resiliency\\DoNotDisableAddinList' 'Office versions (Installer.iss)'
@@ -467,8 +467,9 @@ if ($filtersSource -and $runbook) {
 # 12. The Outlook Search value name, and the fact that it is spelled ONCE.
 #     AddInServerContract.DisableServerAssistedSearchValueName is the single definition of a
 #     value name that used to be typed out six times (the add-in's tuning catalog, twice in
-#     HealthReporting, three times in the T2 live test). Both trees compile that file, so a
-#     RENAME of the constant cannot drift - it breaks both compilations. Two things still can,
+#     HealthReporting, three times in the T2 live test). The add-in and the server both use that
+#     one constant - OutlookAI.Core's, since the code-sharing refactor's stage S3 - so a RENAME
+#     cannot drift: it breaks every compilation that names it. Two things still can,
 #     and neither is visible to any compiler:
 #
 #     (a) SOMEBODY TYPES THE LITERAL AGAIN. Re-introducing "DisableServerAssistedSearch" as a
@@ -484,7 +485,7 @@ if ($filtersSource -and $runbook) {
 #         constant, so this is the mechanism.
 # ---------------------------------------------------------------------------------------------
 $script:Checks++
-$searchValueName = Get-Pinned 'Services/AddInServerContract.cs' `
+$searchValueName = Get-Pinned 'McpServer/OutlookAI.Core/AddIn/AddInServerContract.cs' `
     'DisableServerAssistedSearchValueName\s*=\s*"([^"]+)"' 'Outlook Search value name (AddInServerContract.cs)'
 if ($searchValueName) {
     # Every .cs file in the tree, minus build output and dot-directories (which is also what
@@ -500,11 +501,11 @@ if ($searchValueName) {
             ForEach-Object { $_.FullName.Substring($RepoRoot.Length).TrimStart('\', '/').Replace('\', '/') })
 
     if ($copies.Count -eq 0) {
-        Fail "Outlook Search value name is defined once" "no .cs file contains the literal $literal, not even Services/AddInServerContract.cs where it is declared - this check has stopped finding what it counts and proves nothing."
-    } elseif ($copies.Count -gt 1 -or $copies[0] -ne 'Services/AddInServerContract.cs') {
-        Fail "Outlook Search value name is defined once" "$literal is written out in $($copies.Count) file$(if ($copies.Count -ne 1) { 's' }) - $($copies -join ', ') - but it may exist only in Services/AddInServerContract.cs. Everything else reads AddInServerContract.DisableServerAssistedSearchValueName (the server re-exports it as HealthReporting.DisableServerAssistedSearchValueName). A second copy re-opens a mirror that fails silently: the add-in keeps writing the value, the server reads a name nobody wrote and reports uiSearchBackend as 'server-assisted' on a tuned machine for ever."
+        Fail "Outlook Search value name is defined once" "no .cs file contains the literal $literal, not even McpServer/OutlookAI.Core/AddIn/AddInServerContract.cs where it is declared - this check has stopped finding what it counts and proves nothing."
+    } elseif ($copies.Count -gt 1 -or $copies[0] -ne 'McpServer/OutlookAI.Core/AddIn/AddInServerContract.cs') {
+        Fail "Outlook Search value name is defined once" "$literal is written out in $($copies.Count) file$(if ($copies.Count -ne 1) { 's' }) - $($copies -join ', ') - but it may exist only in McpServer/OutlookAI.Core/AddIn/AddInServerContract.cs. Everything else reads AddInServerContract.DisableServerAssistedSearchValueName (the server re-exports it as HealthReporting.DisableServerAssistedSearchValueName). A second copy re-opens a mirror that fails silently: the add-in keeps writing the value, the server reads a name nobody wrote and reports uiSearchBackend as 'server-assisted' on a tuned machine for ever."
     } else {
-        Pass "Outlook Search value name is defined once" "$searchValueName (Services/AddInServerContract.cs)"
+        Pass "Outlook Search value name is defined once" "$searchValueName (McpServer/OutlookAI.Core/AddIn/AddInServerContract.cs)"
     }
 
     $serverReadme = Read-Source 'McpServer/README.md'
@@ -521,7 +522,8 @@ if ($searchValueName) {
 # ---------------------------------------------------------------------------------------------
 # 13. The Outlook Search KEY PATH is built by the shared helper on BOTH sides.
 #     The add-in writes ...\Office\<major>\Outlook\Search and the server reads it. Sharing
-#     Services/OfficeVersions.cs settled the <major> (check #4's neighbour); it did NOT settle
+#     OfficeVersions (Core's AddIn/OfficeVersions.cs since stage S3) settled the <major> (check
+#     #4's neighbour); it did NOT settle
 #     the construction, and until 2026-08-24 the add-in concatenated the whole path by hand while
 #     the server went through OfficeVersions.OutlookKeyPath. One address, two spellings, across a
 #     boundary no compiler crosses - and the add-in half is unreachable from every test in this

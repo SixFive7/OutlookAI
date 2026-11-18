@@ -115,15 +115,24 @@ public static class LiveRunFilters
     public const string PstStore = "PstStore";
 
     /// <summary>
+    /// A tagged leftover the maintainer confirmed by its EntryID for removal from a bystander - the one write a
+    /// bystander ever gets (Q138, <see cref="T2.ConfirmedLeftover"/>). No derived filter selects a test that
+    /// needs it: the Exchange VM's filter leaves it out, and the one-off removal runs only when it is named.
+    /// </summary>
+    public const string ConfirmedLeftover = "ConfirmedLeftover";
+
+    /// <summary>
     /// What the Exchange VM does NOT have since its test account became the hub (2026-10-08), in the
     /// order its filter names them: signatures that are known to stay local (<see cref="LocalSignatures"/>,
     /// until the roaming measurement); no delegate store until the shared test mailbox exists (Q109); no
     /// generated population - a test there seeds what it needs and the sweep removes it; no identity
     /// account - the other mailbox, the real one, is a bystander no test writes to; no hand-curated probe
-    /// population; and no data file. The add-in it has since 2026-11-17 (Q140 (b)).
+    /// population; and no data file. The add-in it has since 2026-11-17 (Q140 (b)). And it never selects the
+    /// removal of a confirmed leftover (<see cref="ConfirmedLeftover"/>): that one-off write to its bystander
+    /// runs only when named (Q138).
     /// </summary>
     public static IReadOnlyList<string> ExchangeTestAccountLacks { get; } =
-        new[] { LocalSignatures, DelegateStore, GeneratedPopulation, IdentityAccount, ProbePopulation, PstStore };
+        new[] { LocalSignatures, DelegateStore, GeneratedPopulation, IdentityAccount, ProbePopulation, PstStore, ConfirmedLeftover };
 
     /// <summary>
     /// The filter the Exchange VM runs with its test account as the writable hub
@@ -135,13 +144,15 @@ public static class LiveRunFilters
         "Category=Live" + string.Concat(ExchangeTestAccountLacks.Select(c => "&Requires!=" + c));
 
     /// <summary>
-    /// The filter the Exchange VM runs until the maintainer decides how its Office gets back the ability to
-    /// create items (decision 206, asked 2026-11-17): <see cref="ExchangeTestAccount"/>, and of it only the
-    /// tests that carry <see cref="WritesTrait"/>=<see cref="WritesNothing"/>. Its Office LTSC 2024 was never
-    /// activated, and since the grace ran out Outlook there creates no item through its object model: on
-    /// 2026-11-17 every test that seeds a mail or makes a draft failed at its first item, and every test that
-    /// only reads passed (<c>Docs/live-tier-on-the-vm.md</c> section 4.4a). Once 206 is settled the runner goes
-    /// back to <see cref="ExchangeTestAccount"/>.
+    /// The Exchange VM's run while its Office is past its activation grace: <see cref="ExchangeTestAccount"/>,
+    /// and of it only the tests that carry <see cref="WritesTrait"/>=<see cref="WritesNothing"/>. Its Office
+    /// LTSC 2024 was never activated, and past the grace Outlook there creates no item through its object model:
+    /// on 2026-11-17 every test that seeds a mail or makes a draft failed at its first item, and every test that
+    /// only reads passed. The runner typed this filter until decision 206 (a) re-armed the grace once with
+    /// Office's own OSPPREARM.EXE on 2026-11-18, after which a draft was made again and the runner went back to
+    /// <see cref="ExchangeTestAccount"/>; the next time the grace runs out (2026-12-18) a run is narrowed to this
+    /// with <c>-FilterSuffix '&amp;Writes=Nothing'</c> until it is re-armed (<c>Docs/live-tier-on-the-vm.md</c>
+    /// section 4.4a).
     /// </summary>
     public static string ExchangeTestAccountWritesNothing { get; } = ExchangeTestAccount + "&" + WritesTrait + "=" + WritesNothing;
 }

@@ -150,7 +150,11 @@ if (Test-Path Variable:\PSNativeCommandUseErrorActionPreference) {
 . (Join-Path $PSScriptRoot 'OwnEditionModules.ps1')
 
 if (-not $OutDir) { $OutDir = Join-Path $RepoRoot '.work\testbed-livetier-payload' }
-if (-not $SdkInstallerPath) { $SdkInstallerPath = Join-Path $RepoRoot '.work\media\dotnet-sdk-10.0.401-win-x64.exe' }
+# Made absolute: the feed check's NuGet.config names the feed by this path, and NuGet reads a
+# relative source against the config file's own folder - so a relative -OutDir failed every
+# project's check with "the local source doesn't exist" (measured 2026-11-18).
+$OutDir = [System.IO.Path]::GetFullPath($OutDir)
+if (-not $SdkInstallerPath) { $SdkInstallerPath = Join-Path $RepoRoot '.work\media\dotnet-sdk-11.0.100-win-x64.exe' }
 
 # Where each artefact goes on the guest. Repeated in the instructions this script prints, and
 # kept here so there is one place to change it.

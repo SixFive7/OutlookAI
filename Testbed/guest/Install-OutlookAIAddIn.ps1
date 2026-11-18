@@ -230,7 +230,7 @@
 
     WHAT THE TESTS READ, EXACTLY. McpServer/OutlookAI.Core/Services/HealthReporting.cs,
     ReadTuningState, over HKCU\Software\OutlookAI\Tuning, value names from
-    Services/AddInServerContract.cs:
+    McpServer/OutlookAI.Core/AddIn/AddInServerContract.cs:
 
       Initialized       must be a REG_DWORD, nonzero -> tuning.managed = true
       Enabled           must be a REG_DWORD, nonzero -> tuning.enabled = true
@@ -374,7 +374,7 @@
     That payload's Source.zip, whose zip comment `git archive` sets to the commit it was built from.
 
 .PARAMETER OfficeVersion
-    The Office major whose Outlook hive to read. Detected the way Services/OfficeVersions.cs does
+    The Office major whose Outlook hive to read. Detected the way McpServer/OutlookAI.Core/AddIn/OfficeVersions.cs does
     when omitted.
 
 .PARAMETER Phase
@@ -459,7 +459,7 @@ $VstoRuntimeBytes        = 41828424
 $VstoRuntimeVersion      = '10.0.60917'                                           # what that file installs
 $SearchPolicyKey         = 'SOFTWARE\Policies\Microsoft\Windows\Windows Search'  # HKLM; Set-OutlookIndexingDisabled.ps1's
 $CrawlRulesKey           = 'SOFTWARE\Microsoft\Windows Search\CrawlScopeManager\Windows\SystemIndex\WorkingSetRules'
-$SupportedOffice         = @('16.0', '17.0', '15.0')                              # Services/OfficeVersions.cs, same order
+$SupportedOffice         = @('16.0', '17.0', '15.0')                              # Core's AddIn/OfficeVersions.cs, same order
 $ManifestFileName        = 'addin-payload.json'
 $StatusAwaitingChoice    = 'awaiting_choice'                                      # McpRegistrationService
 $StatusNoClaude          = 'claude_code_not_installed'
@@ -795,7 +795,7 @@ function Get-McpStatusProblem {
     return $null
 }
 
-# Services/OfficeVersions.cs: the first of 16.0, 17.0, 15.0 whose Outlook key is a REAL hive -
+# Core's AddIn/OfficeVersions.cs: the first of 16.0, 17.0, 15.0 whose Outlook key is a REAL hive -
 # at least one value, or a subkey other than the Resiliency shell our own installer creates under
 # every major.
 function Select-OfficeVersion {
@@ -940,7 +940,7 @@ function ConvertFrom-InstallRecord {
 # the walk: the reconcile caught the exception, logged it to the debugger and wrote nothing more, so
 # the Desired values with no Applied record said where a walk stopped - in Desired's own order, which
 # is the catalog's (the first run writes every Desired value, in catalog order). Since Q128
-# (Services\TuningReconciler.cs) a value Windows refuses for lack of rights is SKIPPED and listed in
+# (Core's AddIn\TuningReconciler.cs) a value Windows refuses for lack of rights is SKIPPED and listed in
 # Tuning\NeedsAdministrator, and the walk goes on: Desired minus Applied is then those values, not a
 # stopping point.
 function Get-UnappliedTuning {
@@ -1010,30 +1010,31 @@ function Get-FirstRunPreflight {
 # =============================================================================================
 function Get-ContractChecks {
     return @(
-        @{ File = 'Services\AddInServerContract.cs'; Needle = 'internal const string TuningKeyPath = @"Software\OutlookAI\Tuning";'; Why = "the tests read HKCU\$TuningKey" }
-        @{ File = 'Services\AddInServerContract.cs'; Needle = 'internal const string TuningInitializedValueName = "Initialized";'; Why = 'Initialized -> tuning.managed' }
-        @{ File = 'Services\AddInServerContract.cs'; Needle = 'internal const string TuningEnabledValueName = "Enabled";'; Why = 'Enabled -> tuning.enabled' }
-        @{ File = 'Services\AddInServerContract.cs'; Needle = 'internal const string TuningLastReconcileUtcValueName = "LastReconcileUtc";'; Why = 'LastReconcileUtc -> tuning.lastReconcileUtc' }
-        @{ File = 'Services\AddInServerContract.cs'; Needle = 'internal const string TuningPolicyConflictsValueName = "PolicyConflicts";'; Why = 'PolicyConflicts is reported' }
-        @{ File = 'Services\AddInServerContract.cs'; Needle = 'internal const string TuningNeedsAdministratorValueName = "NeedsAdministrator";'; Why = 'NeedsAdministrator is reported (Q128)' }
+        @{ File = 'McpServer\OutlookAI.Core\AddIn\AddInServerContract.cs'; Needle = 'public const string AppKeyPath = @"Software\OutlookAI";'; Why = "the add-in's own key, which the two below are under" }
+        @{ File = 'McpServer\OutlookAI.Core\AddIn\AddInServerContract.cs'; Needle = 'public const string TuningKeyPath = AppKeyPath + @"\Tuning";'; Why = "the tests read HKCU\$TuningKey" }
+        @{ File = 'McpServer\OutlookAI.Core\AddIn\AddInServerContract.cs'; Needle = 'public const string TuningInitializedValueName = "Initialized";'; Why = 'Initialized -> tuning.managed' }
+        @{ File = 'McpServer\OutlookAI.Core\AddIn\AddInServerContract.cs'; Needle = 'public const string TuningEnabledValueName = "Enabled";'; Why = 'Enabled -> tuning.enabled' }
+        @{ File = 'McpServer\OutlookAI.Core\AddIn\AddInServerContract.cs'; Needle = 'public const string TuningLastReconcileUtcValueName = "LastReconcileUtc";'; Why = 'LastReconcileUtc -> tuning.lastReconcileUtc' }
+        @{ File = 'McpServer\OutlookAI.Core\AddIn\AddInServerContract.cs'; Needle = 'public const string TuningPolicyConflictsValueName = "PolicyConflicts";'; Why = 'PolicyConflicts is reported' }
+        @{ File = 'McpServer\OutlookAI.Core\AddIn\AddInServerContract.cs'; Needle = 'public const string TuningNeedsAdministratorValueName = "NeedsAdministrator";'; Why = 'NeedsAdministrator is reported (Q128)' }
         @{ File = 'McpServer\OutlookAI.Core\Services\HealthReporting.cs'; Needle = 'string? needsAdministrator = readValue(Contract.TuningNeedsAdministratorValueName) as string;'; Why = 'and read as a string, as here' }
-        @{ File = 'Services\AddInServerContract.cs'; Needle = 'internal const string McpKeyPath = @"Software\OutlookAI\Mcp";'; Why = 'the registration status is read here' }
-        @{ File = 'Services\AddInServerContract.cs'; Needle = 'internal const string McpStatusValueName = "Status";'; Why = 'awaiting_choice is read from Status' }
-        @{ File = 'Services\AddInServerContract.cs'; Needle = 'internal const string McpLastReconcileUtcValueName = "LastReconcileUtc";'; Why = 'the add-in''s second startup marker, Mcp\LastReconcileUtc' }
+        @{ File = 'McpServer\OutlookAI.Core\AddIn\AddInServerContract.cs'; Needle = 'public const string McpKeyPath = AppKeyPath + @"\Mcp";'; Why = 'the registration status is read here' }
+        @{ File = 'McpServer\OutlookAI.Core\AddIn\AddInServerContract.cs'; Needle = 'public const string McpStatusValueName = "Status";'; Why = 'awaiting_choice is read from Status' }
+        @{ File = 'McpServer\OutlookAI.Core\AddIn\AddInServerContract.cs'; Needle = 'public const string McpLastReconcileUtcValueName = "LastReconcileUtc";'; Why = 'the add-in''s second startup marker, Mcp\LastReconcileUtc' }
         @{ File = 'Services\McpRegistrationService.cs'; Needle = 'snap.LastReconcileUtc = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture);'; Why = 'written at every reconcile, failed or not, as a round-trip UTC time' }
         @{ File = 'ThisAddIn.cs'; Needle = 'try { McpRegistrationService.Reconcile(); }'; Why = 'and that reconcile runs at every startup' }
-        @{ File = 'Services\TuningReconciler.cs'; Needle = 'internal const string DesiredKeyPath = TuningKeyPath + @"\Desired";'; Why = 'the tuning walk is read from Tuning\Desired' }
-        @{ File = 'Services\TuningReconciler.cs'; Needle = 'internal const string AppliedKeyPath = TuningKeyPath + @"\Applied";'; Why = 'and Tuning\Applied' }
-        @{ File = 'Services\TuningReconciler.cs'; Needle = 'result.NeedsAdministrator.Add(entry.Id);'; Why = 'a value Windows refuses for lack of rights is skipped and listed, and the walk goes on (Q128)' }
-        @{ File = 'Services\TuningReconciler.cs'; Needle = 'WriteBookkeeping(store, result, isStartup, utcNow);'; Why = 'and the bookkeeping, LastReconcileUtc last, is written whatever the walk met' }
+        @{ File = 'McpServer\OutlookAI.Core\AddIn\TuningReconciler.cs'; Needle = 'public const string DesiredKeyPath = TuningKeyPath + @"\Desired";'; Why = 'the tuning walk is read from Tuning\Desired' }
+        @{ File = 'McpServer\OutlookAI.Core\AddIn\TuningReconciler.cs'; Needle = 'public const string AppliedKeyPath = TuningKeyPath + @"\Applied";'; Why = 'and Tuning\Applied' }
+        @{ File = 'McpServer\OutlookAI.Core\AddIn\TuningReconciler.cs'; Needle = 'result.NeedsAdministrator.Add(entry.Id);'; Why = 'a value Windows refuses for lack of rights is skipped and listed, and the walk goes on (Q128)' }
+        @{ File = 'McpServer\OutlookAI.Core\AddIn\TuningReconciler.cs'; Needle = 'WriteBookkeeping(store, result, isStartup, utcNow);'; Why = 'and the bookkeeping, LastReconcileUtc last, is written whatever the walk met' }
         @{ File = 'McpServer\OutlookAI.Core\Services\HealthReporting.cs'; Needle = 'if (value is int number)'; Why = 'only a REG_DWORD counts as a bool' }
         @{ File = 'McpServer\OutlookAI.Core\Services\HealthReporting.cs'; Needle = 'if (AsBool(readValue(Contract.TuningInitializedValueName)) != true)'; Why = 'managed rests on Initialized alone' }
         @{ File = 'McpServer\OutlookAI.Core\Services\HealthReporting.cs'; Needle = 'LastReconcileUtc = readValue(Contract.TuningLastReconcileUtcValueName) as string,'; Why = 'LastReconcileUtc must be a string' }
-        @{ File = 'Services\TuningReconciler.cs'; Needle = 'WriteDword(TuningKeyPath, AddInServerContract.TuningInitializedValueName, 1);'; Why = 'the add-in writes Initialized as a DWORD' }
-        @{ File = 'Services\TuningReconciler.cs'; Needle = 'string stamp = DateTime.SpecifyKind(utcNow, DateTimeKind.Utc).ToString("o", CultureInfo.InvariantCulture);'; Why = 'freshness parses a round-trip UTC timestamp' }
+        @{ File = 'McpServer\OutlookAI.Core\AddIn\TuningReconciler.cs'; Needle = 'WriteDword(TuningKeyPath, AddInServerContract.TuningInitializedValueName, 1);'; Why = 'the add-in writes Initialized as a DWORD' }
+        @{ File = 'McpServer\OutlookAI.Core\AddIn\TuningReconciler.cs'; Needle = 'string stamp = DateTime.SpecifyKind(utcNow, DateTimeKind.Utc).ToString("o", CultureInfo.InvariantCulture);'; Why = 'freshness parses a round-trip UTC timestamp' }
         @{ File = 'Services\OutlookTuningService.cs'; Needle = 'TuningReconciler.Reconcile(Store, Catalog, isStartup, DateTime.UtcNow);'; Why = 'stamped with the time of THIS reconcile' }
-        @{ File = 'Services\OfficeVersions.cs'; Needle = 'internal static readonly string[] Supported = { "16.0", "17.0", "15.0" };'; Why = 'the Office majors, in detection order' }
-        @{ File = 'Services\OfficeVersions.cs'; Needle = 'internal const string InstallerFootprintSubKeyName = "Resiliency";'; Why = 'a hive holding only Resiliency is not a real Outlook' }
+        @{ File = 'McpServer\OutlookAI.Core\AddIn\OfficeVersions.cs'; Needle = 'public static readonly string[] Supported = { "16.0", "17.0", "15.0" };'; Why = 'the Office majors, in detection order' }
+        @{ File = 'McpServer\OutlookAI.Core\AddIn\OfficeVersions.cs'; Needle = 'public const string InstallerFootprintSubKeyName = "Resiliency";'; Why = 'a hive holding only Resiliency is not a real Outlook' }
         @{ File = 'Services\McpRegistrationService.cs'; Needle = 'internal const string StatusAwaitingChoice = "awaiting_choice";'; Why = 'a pending registration question' }
         @{ File = 'Installer.iss'; Needle = 'Root: HKCU; Subkey: "Software\Microsoft\Office\Outlook\Addins\OutlookAI"; ValueType: string; ValueName: "Manifest"; ValueData: "file:///{app}\OutlookAI.vsto|vstolocal"'; Why = 'the registration this verifies' }
         @{ File = 'Installer.iss'; Needle = 'ValueName: "LoadBehavior"; ValueData: "3"'; Why = 'LoadBehavior 3' }
@@ -1055,7 +1056,7 @@ function Get-ContractChecks {
 
 # The payload manifest's own copy of the contract files' hashes lets the guest compare the add-in
 # it installed with the suite it is about to run - the drift that would matter.
-$ContractFiles = @('Services/AddInServerContract.cs', 'Services/OfficeVersions.cs')
+$ContractFiles = @('McpServer/OutlookAI.Core/AddIn/AddInServerContract.cs', 'McpServer/OutlookAI.Core/AddIn/OfficeVersions.cs')
 
 # =============================================================================================
 # I/O
@@ -1478,7 +1479,7 @@ AwQ=</Modulus><Exponent>AQAB</Exponent></RSAKeyValue></KeyValue></KeyInfo></Sign
     Test-Case 'a Search POLICY value appearing is caught' $true ((Compare-InteractionFacts $before $after) -join ' ').Contains('POLICY')
 
     Write-Host ''
-    Write-Host '== the Office hive, as Services/OfficeVersions.cs picks it =='
+    Write-Host '== the Office hive, as Core''s AddIn/OfficeVersions.cs picks it =='
     Test-Case 'a real 16.0 hive wins' '16.0' (Select-OfficeVersion @{ '16.0' = @{ Values = @('x'); SubKeys = @('Profiles') }; '15.0' = @{ Values = @(); SubKeys = @('Resiliency') } })
     Test-Case 'the installer''s Resiliency shell alone is not a hive' $null (Select-OfficeVersion @{ '15.0' = @{ Values = @(); SubKeys = @('Resiliency') }; '17.0' = @{ Values = @(); SubKeys = @('Resiliency') } })
     Test-Case '17.0 is tried before 15.0' '17.0' (Select-OfficeVersion @{ '17.0' = @{ Values = @(); SubKeys = @('Search') }; '15.0' = @{ Values = @('a'); SubKeys = @() } })
@@ -1720,7 +1721,7 @@ AwQ=</Modulus><Exponent>AQAB</Exponent></RSAKeyValue></KeyValue></KeyInfo></Sign
     # "Cannot bind argument to parameter 'Path' because it is an empty string", which ended the
     # FIRST guest -SelfTest (2026-09-24, OutlookAI-Unindexed) before this section could say SKIP.
     $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-    if ($repo -and (Test-Path -LiteralPath (Join-Path $repo 'Services\AddInServerContract.cs'))) {
+    if ($repo -and (Test-Path -LiteralPath (Join-Path $repo 'McpServer\OutlookAI.Core\AddIn\AddInServerContract.cs'))) {
         foreach ($c in (Get-ContractChecks)) {
             $path = Join-Path $repo $c.File
             $text = ''

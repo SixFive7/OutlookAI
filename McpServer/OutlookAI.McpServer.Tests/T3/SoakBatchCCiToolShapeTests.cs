@@ -49,6 +49,39 @@ public sealed class SoakBatchCCiToolShapeTests
         Assert.Contains("NOTHING is attached", hint, StringComparison.Ordinal);
         // The send interlock must be discoverable from the parameter itself.
         Assert.Contains("confirm_token", hint, StringComparison.Ordinal);
+        // So must the paths Outlook crashes on or will not attach (Q157 (a), measured 2026-11-18).
+        Assert.Contains(@"a path starting with \\?\", hint, StringComparison.Ordinal);
+        Assert.Contains("named after a Windows device (CON", hint, StringComparison.Ordinal);
+        Assert.Contains("an alternate data stream", hint, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [MemberData(nameof(AllDraftToolNames))]
+    public async Task Attachments_QuestionMarkPath_IsRejectedBeforeAnyComWork_GivingTheOrdinaryPath(string toolName)
+    {
+        // A \\?\ path crashed OUTLOOK.EXE inside Attachments.Add on the test guest, whatever the file was
+        // called (2026-11-18). The file here exists and is readable, which is exactly the path that used to
+        // pass every check and reach Outlook.
+        string file = Path.Combine(Path.GetTempPath(), "outlookai-ci-question-mark-" + Guid.NewGuid().ToString("N") + ".txt");
+        File.WriteAllText(file, "a file the draft tools must refuse to hand Outlook through \\\\?\\");
+        try
+        {
+            await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();
+            await client.PrimeWritingRulesGateAsync();
+
+            JsonElement result = await client.CallToolAsync(toolName, ArgumentsFor(toolName, new[] { @"\\?\" + file }));
+
+            JsonElement error = result.GetProperty("error");
+            Assert.Equal("InvalidArgument", error.GetProperty("type").GetString());
+            string message = error.GetProperty("message").GetString()!;
+            Assert.Contains(@"'\\?\" + file + @"': is a \\?\ path, and Outlook crashes", message, StringComparison.Ordinal);
+            Assert.Contains("give the file's ordinary path instead, '" + file + "'", message, StringComparison.Ordinal);
+            Assert.Contains("no draft was changed", message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            File.Delete(file);
+        }
     }
 
     [Theory]

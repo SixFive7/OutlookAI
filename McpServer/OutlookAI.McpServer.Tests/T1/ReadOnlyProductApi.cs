@@ -151,13 +151,28 @@ internal static class ReadOnlyProductApi
 
     /// <summary>
     /// What the in-product walk may meet and still call a read - each a reviewed case, keyed by the
-    /// source member the call sits in and the late-bound member it calls.
+    /// source member the call sits in and the late-bound member it calls, the <c>System.IO</c> call it
+    /// makes (<c>File.Replace</c>), or the product member it calls (<c>SignatureManager.WriteFileSafely</c>),
+    /// which the walk then does not follow from that member alone.
     /// </summary>
     internal static readonly IReadOnlyDictionary<string, string> InProductExemptions = new Dictionary<string, string>(StringComparer.Ordinal)
     {
-        ["OutlookAI.Core.Com.OutlookComSession.Dispose|Close"] =
-            "closes the invisible pin Explorer the session itself opened, and only when the session started Outlook (D49): "
-            + "a window it owns, never an item, a folder or the user's own window",
+        ["OutlookAI.Core.Com.OutlookComSession.LeaveRegistry|Close"] =
+            "closes the invisible pin Explorer the session itself made, when it never joined the session registry and started "
+            + "Outlook, or when its window could not be read and so was never recorded (D49, Q118 (a)): a window OutlookAI owns, "
+            + "never an item, a folder or the user's own window",
+        ["OutlookAI.Core.Com.OutlookComSession.ClosePin|Close"] =
+            "closes the lifetime pin the session itself made, as the last session out or after Outlook's Quit (Q118 (a)), and "
+            + "only while its recorded window is still hidden: a window OutlookAI owns, never an item, a folder or a window a "
+            + "person can see",
+        ["OutlookAI.Core.Com.ComposeSurface.TryClosePinByWindow|Close"] =
+            "closes the lifetime pin another OutlookAI session made, found among Outlook's Explorers by the window handle the "
+            + "session registry recorded, and only while that window is hidden (Q118 (a)): a window OutlookAI owns, never an "
+            + "item, a folder or a window a person can see",
+        ["OutlookAI.Core.Com.OutlookSessionRegistry.TrySave|SignatureManager.WriteFileSafely"] =
+            "writes OutlookAI's own session registry, %LOCALAPPDATA%\\OutlookAI\\outlook-sessions.txt (Q118 (a)), through Core's "
+            + "one file replace: which OutlookAI sessions are attached to Outlook and the pin they share - never the mailbox, "
+            + "the profile or the user's files. A signature write through the same member is still a finding on every other path",
     };
 
     /// <summary>
