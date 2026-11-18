@@ -17,9 +17,12 @@
     found the same way - and imports that SDK's own analyser targets, so these projects run the
     SDK's analysers from the SDK's own rule-set files. Measured 2026-10-04: Visual Studio 18.10.3
     (Roslyn 5.10) with SDK 10.0.401, on a scratch project first and then on the add-in itself.
+    Since 2026-11-18 (Q172) that SDK is 11.0.100, the one this workstation has.
 
-    THE LEVEL, 10.0-all (the same in McpServer\Directory.Build.props): every rule in the Security
-    category that .NET 10's analysers ship, and only that category.
+    THE LEVEL, 11.0-all (the same in McpServer\Directory.Build.props): every rule in the Security
+    category that .NET 11's analysers ship, and only that category. 10.0-all until 2026-11-18, when
+    the server moved to .NET 11 (Q172); SDK 11.0.100's two rule-set files list the same 94 rules
+    at the same severities, so the move changed no rule.
       * all, not the default or "recommended": the default runs almost none of them, and
         "recommended" leaves out the injection, deserialisation and DLL-search rules (CA2100,
         CA3001-CA3012, CA2300-CA2362, CA5392), the ones a code scan exists for. "all" found 78
@@ -27,7 +30,7 @@
         and one more in the add-in: a list one person can triage, not a flood.
       * Security only: "all" in every category is thousands of style and design findings, and it
         would bury the few that matter. That is not what Q125 asked for.
-      * pinned at 10.0, not "latest": an SDK update must not change the rule set under a build
+      * pinned at 11.0, not "latest": an SDK update must not change the rule set under a build
         that passed. A newer level is a deliberate edit of this number and of the props file.
     Every finding is an ERROR. The add-in does not otherwise treat warnings as errors, and a
     finding that only warns in a scripted build is one nobody reads - so
@@ -41,7 +44,7 @@
   -->
   <PropertyGroup>
     <EnableNETAnalyzers>true</EnableNETAnalyzers>
-    <AnalysisLevelSecurity>10.0-all</AnalysisLevelSecurity>
+    <AnalysisLevelSecurity>11.0-all</AnalysisLevelSecurity>
     <CodeAnalysisTreatWarningsAsErrors>true</CodeAnalysisTreatWarningsAsErrors>
   </PropertyGroup>
   <Import Project="..\targets\Microsoft.NET.Sdk.Analyzers.targets" Sdk="Microsoft.NET.Sdk" />

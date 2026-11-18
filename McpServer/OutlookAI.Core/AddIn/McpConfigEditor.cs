@@ -28,7 +28,7 @@ namespace OutlookAI.Core.AddIn
     ///
     /// Framework-neutral by construction: no <c>JavaScriptSerializer</c> (net48-only) and
     /// no <c>System.Text.Json</c> (absent on net48), so the same source compiles into the
-    /// net48 add-in and into the .NET 10 test host.
+    /// net48 add-in and into the .NET 11 test host.
     /// </summary>
     public static class McpConfigEditor
     {

@@ -25,7 +25,8 @@ namespace OutlookAI.Core.AddIn
     /// <para>
     /// One rule for both: OutlookAI.Core's, in the add-in namespace (Q163 (a)), which the add-in's
     /// task pane uses and Core re-exports through <c>SignatureFolder</c>. The add-in compiles as
-    /// C# 7.3, so nothing here may need a newer language to call.
+    /// C# 15 on .NET Framework 4.8 (C# 7.3 until Q172), so nothing here may need the modern runtime
+    /// to call.
     /// </para>
     /// </summary>
     public static class SignatureFolderLocation

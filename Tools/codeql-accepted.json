@@ -21,20 +21,6 @@
       "lineHash": "cf7c0606d098db4a:1",
       "reason": "The path is HKCU\\Software\\OutlookAI InstallDir, which the per-user installer writes, joined with the server's fixed relative path. The add-in only checks that the file exists before writing that path into the user's own agent configuration, which then starts the server as the same user. Anything that can change the value already runs as that user, and could edit the configuration or run its own program directly: no privilege boundary is crossed.",
       "triaged": "2026-11-17"
-    },
-    {
-      "rule": "cs/path-injection",
-      "path": "Services/McpRegistrationService.cs",
-      "lineHash": "310f409ab8967eca:1",
-      "reason": "The path is HKLM\\SOFTWARE\\dotnet\\Setup\\InstalledVersions\\x64\\sharedhost Path, which only an administrator or the .NET installer can write, joined with a fixed folder name. The add-in only asks whether that folder exists, to decide whether a .NET 10 runtime is installed.",
-      "triaged": "2026-11-17"
-    },
-    {
-      "rule": "cs/path-injection",
-      "path": "Services/McpRegistrationService.cs",
-      "lineHash": "b323a7276389c344:1",
-      "reason": "The same HKLM .NET sharedhost path as the line above, which only an administrator or the .NET installer can write. The add-in lists the names of its subfolders to find a 10.x runtime, and opens nothing in it.",
-      "triaged": "2026-11-17"
     }
   ]
 }

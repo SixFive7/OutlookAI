@@ -108,7 +108,7 @@ foreach ($p in $payloads) {
         # the log, as they did with *>; Invoke-NativeCommand is what lets a warning on stderr do
         # that under Windows PowerShell 5.1 instead of ending the script.
         $log = Join-Path $OutDir ("publish-" + [IO.Path]::GetFileNameWithoutExtension($p.Zip) + ".log")
-        Invoke-NativeCommand { & dotnet publish $proj -c $Configuration -f net10.0-windows -r win-x64 --self-contained true -o $dest 2>&1 } |
+        Invoke-NativeCommand { & dotnet publish $proj -c $Configuration -f net11.0-windows -r win-x64 --self-contained true -o $dest 2>&1 } |
             Out-File -LiteralPath $log
         if ($LASTEXITCODE -ne 0) {
             Write-Host (Get-Content -LiteralPath $log -Tail 40 | Out-String)

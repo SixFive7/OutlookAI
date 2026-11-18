@@ -197,8 +197,8 @@ namespace OutlookAI.Core.Audit
 
         /// <summary>
         /// The current UTC time from <c>GetSystemTimePreciseAsFileTime</c>. <c>DateTime.UtcNow</c> is
-        /// that on .NET 10 but the coarse clock on .NET Framework, which lags by up to a timer tick
-        /// (15.6 ms by default) - so a Framework writer taking its turn after a .NET 10 writer could
+        /// that on .NET 11 but the coarse clock on .NET Framework, which lags by up to a timer tick
+        /// (15.6 ms by default) - so a Framework writer taking its turn after a .NET 11 writer could
         /// stamp an EARLIER time on the later line, and the file would stop being in time order. One
         /// clock for both runtimes keeps the lock's promise across them.
         /// </summary>

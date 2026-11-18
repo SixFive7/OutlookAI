@@ -12,7 +12,7 @@ namespace OutlookAI.McpServer.Tests.T1;
 /// <summary>
 /// The audit log under many writer PROCESSES at once (Q117, 2026-10-03) - the case the writer exists
 /// for, which threads in this test host cannot stand in for. Every run starts copies of
-/// <c>OutlookAI.AuditLogStress</c>, the .NET 10 and the .NET Framework 4.8 build side by side, against
+/// <c>OutlookAI.AuditLogStress</c>, the .NET 11 and the .NET Framework 4.8 build side by side, against
 /// one throwaway log under %TEMP%; lines are up to 64 KB, and every line's content is recomputed here
 /// from (seed, writer, n) by the same <see cref="StressLines"/> the writers used, then compared byte
 /// for byte after the read-back.
@@ -39,7 +39,7 @@ public sealed class AuditLogStressTests : IDisposable
     /// both runs were clean at that size too.
     /// </summary>
     private const int LinesPerWriter = 125;
-    private const string Net10 = "net10.0-windows";
+    private const string Net11 = "net11.0-windows";
     private const string Net48 = "net48";
     private static readonly TimeSpan StartTimeout = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan RunTimeout = TimeSpan.FromSeconds(240);
@@ -101,7 +101,7 @@ public sealed class AuditLogStressTests : IDisposable
     [Fact]
     public void EightWriterProcesses_OnBothRuntimes_WithTheLock_KeepEveryLineWhole_AndTheLockedLinesInTimeOrder()
     {
-        Writer[] writers = StartWriters("lockon", lockOn: true, net10: 6, net48: 2, lines: LinesPerWriter);
+        Writer[] writers = StartWriters("lockon", lockOn: true, net11: 6, net48: 2, lines: LinesPerWriter);
         Stopwatch elapsed = Go(writers);
         WaitAll(writers);
         elapsed.Stop();
@@ -137,7 +137,7 @@ public sealed class AuditLogStressTests : IDisposable
     [Fact]
     public void WritersHeldOffPastTheLocksWait_AppendAnyway_MarkTheLine_AndCountIt()
     {
-        Writer[] writers = StartWriters("held", lockOn: true, net10: 2, net48: 1, lines: 10);
+        Writer[] writers = StartWriters("held", lockOn: true, net11: 2, net48: 1, lines: 10);
         Stopwatch elapsed;
         using (AuditLog.AuditWriterLock held = AuditLog.AuditWriterLock.Acquire(LogPath))
         {
@@ -176,7 +176,7 @@ public sealed class AuditLogStressTests : IDisposable
         // processes writing lines of up to 64 KB to one file is FILE_APPEND_DATA. Every line must still
         // arrive whole - a byte of one line inside another would fail its checksum - and none may be
         // lost. Order is NOT asserted (that is what the lock is for); how much of it was lost is reported.
-        Writer[] writers = StartWriters("lockoff", lockOn: false, net10: 6, net48: 2, lines: LinesPerWriter);
+        Writer[] writers = StartWriters("lockoff", lockOn: false, net11: 6, net48: 2, lines: LinesPerWriter);
         Stopwatch elapsed = Go(writers);
         WaitAll(writers);
         elapsed.Stop();
@@ -198,14 +198,14 @@ public sealed class AuditLogStressTests : IDisposable
         Process tear;
         using (EventWaitHandle torn = new(false, EventResetMode.ManualReset, readyName))
         {
-            tear = Launch(Net10, "tear", Quote(_dir), readyName);
+            tear = Launch(Net11, "tear", Quote(_dir), readyName);
             Assert.True(torn.WaitOne(StartTimeout), "the tearing writer never reported its half line");
         }
 
         // 2. Four ordinary writers and one that appends until it is killed - all of them now waiting on
         //    the lock the tearing writer holds.
-        Writer[] finite = StartWriters("killrun", lockOn: true, net10: 3, net48: 1, lines: 75);
-        Writer endless = StartWriter("endless", Net10, lockOn: true, lines: -1, finite[0].StartEvent);
+        Writer[] finite = StartWriters("killrun", lockOn: true, net11: 3, net48: 1, lines: 75);
+        Writer endless = StartWriter("endless", Net11, lockOn: true, lines: -1, finite[0].StartEvent);
         Writer[] all = finite.Concat(new[] { endless }).ToArray();
         WaitReady(all);
         Stopwatch elapsed = Go(all);
@@ -264,7 +264,7 @@ public sealed class AuditLogStressTests : IDisposable
     {
         // FILE_FLAG_WRITE_THROUGH was switched on by measurement, not by assumption: this prints the
         // open-append-close latency with and without it, and the product's whole append, per runtime.
-        foreach (string runtime in new[] { Net10, Net48 })
+        foreach (string runtime in new[] { Net11, Net48 })
         {
             string dir = Path.Combine(_dir, "bench-" + runtime);
             Process bench = Launch(runtime, "bench", Quote(dir), "150", "400");
@@ -296,13 +296,13 @@ public sealed class AuditLogStressTests : IDisposable
 
     // ================================================================== running writers
 
-    private Writer[] StartWriters(string prefix, bool lockOn, int net10, int net48, long lines)
+    private Writer[] StartWriters(string prefix, bool lockOn, int net11, int net48, long lines)
     {
         string startEvent = EventName(prefix);
         List<Writer> writers = new();
-        for (int i = 0; i < net10 + net48; i++)
+        for (int i = 0; i < net11 + net48; i++)
         {
-            string runtime = i < net10 ? Net10 : Net48;
+            string runtime = i < net11 ? Net11 : Net48;
             string name = prefix + i.ToString("00", CultureInfo.InvariantCulture) + (runtime == Net48 ? "fx" : "core");
             writers.Add(StartWriter(name, runtime, lockOn, lines, startEvent));
         }
@@ -588,7 +588,7 @@ public sealed class AuditLogStressTests : IDisposable
         AuditLogScan scan = AuditLogReader.Read(LogPath, new AuditLogFilter(null, null, null, null), 1);
         long bytes = new FileInfo(LogPath).Length;
         _output.WriteLine(run + ": " + writers.Length.ToString(CultureInfo.InvariantCulture) + " writer processes ("
-            + writers.Count(w => w.Runtime == Net10).ToString(CultureInfo.InvariantCulture) + " .NET 10, "
+            + writers.Count(w => w.Runtime == Net11).ToString(CultureInfo.InvariantCulture) + " .NET 11, "
             + writers.Count(w => w.Runtime == Net48).ToString(CultureInfo.InvariantCulture) + " .NET Framework 4.8), "
             + scan.LinesScanned.ToString(CultureInfo.InvariantCulture) + " lines, "
             + bytes.ToString(CultureInfo.InvariantCulture) + " bytes, "

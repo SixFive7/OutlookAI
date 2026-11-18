@@ -71,8 +71,8 @@ namespace OutlookAI.Core.AddIn
     /// <para>
     /// Logic only the add-in runs, in OutlookAI.Core's add-in namespace so that the T1 suite pins the
     /// one compiled copy the add-in loads (Q163 (a)). It reads and writes through
-    /// <see cref="ITuningStore"/>, never the registry; the add-in compiles as C# 7.3, so nothing here
-    /// may need a newer language to call.
+    /// <see cref="ITuningStore"/>, never the registry; the add-in compiles as C# 15 on .NET Framework
+    /// 4.8 (C# 7.3 until Q172, 2026-11-18), so nothing here may need the modern runtime to call.
     /// </para>
     /// </summary>
     public static class CachedModeSettings

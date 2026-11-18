@@ -98,7 +98,7 @@ namespace OutlookAI.Core.Mapi
     /// Anything else that is not an ID - a folder name, a path, a raw hex entry id - is refused with
     /// a pointer to <c>find_folder</c> (Q135 (i)): <see cref="DescribeFolderIdProblem"/>.
     /// </para>
-    /// <para>Pure: no COM, no I/O, net48 and net10 alike.</para>
+    /// <para>Pure: no COM, no I/O, net48 and net11 alike.</para>
     /// </summary>
     public static class OutlookIds
     {
