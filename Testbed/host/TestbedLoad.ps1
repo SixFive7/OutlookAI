@@ -64,6 +64,9 @@
 #>
 
 . (Join-Path $PSScriptRoot 'TestbedLeasePath.ps1')
+# The pools and the waits (TestbedPool.ps1): a run that waits at the gate sleeps as a queued run does,
+# on the testbed's files (Wait-TestbedChange), never on a timer of its own.
+. (Join-Path $PSScriptRoot 'TestbedPool.ps1')
 
 # The decision's numbers. Set-TestbedPause.ps1 -SelfTest pins them.
 $TestbedLoadLimitPercent = 70       # a run starts only while the host is less busy than this
@@ -485,9 +488,11 @@ function Exit-TestbedStart {
 }
 
 # For a caller that waits before it takes anything - a live run before its build, New-TestbedClone.ps1
-# before its export: looks every $PollSeconds until the gate is open, with the VMs other runs took
-# lately counted (read, not claimed: such a caller writes no start), or until $TimeoutMinutes have
-# passed. Says what it waits for when it begins to wait and once a minute after, through $Say, and is
+# before its export: looks until the gate is open, with the VMs other runs took lately counted (read,
+# not claimed: such a caller writes no start), or until $TimeoutMinutes have passed. Between looks it
+# sleeps until a file of the testbed's state changes - the switch turned off, a start, a lease, a lock's
+# owner file, a ticket - or $PollSeconds pass, 30 by default (TestbedPool.ps1's Wait-TestbedChange):
+# never a poll of its own, which every 5 s until 2026-11-18 it was. Says what it waits for when it begins to wait and once a minute after, through $Say, and is
 # listed in waiting\ meanwhile. Go, Why, WaitedSeconds, and the Look and Pending it went on.
 function Wait-TestbedGate {
     param(
@@ -497,7 +502,7 @@ function Wait-TestbedGate {
         [scriptblock] $Say,
         [int] $LimitPercent = $TestbedLoadLimitPercent,
         [int] $WindowSeconds = $TestbedLoadWindowSeconds,
-        [int] $PollSeconds = 5
+        [int] $PollSeconds = $TestbedWaitSeconds
     )
     $deadline = (Get-Date).AddMinutes($TimeoutMinutes)
     $since = $null
@@ -523,7 +528,7 @@ function Wait-TestbedGate {
                 $lastSaid = Get-Date
             }
             if ((Get-Date) -ge $deadline) { return [pscustomobject]@{ Go = $false; Why = $why; WaitedSeconds = ((Get-Date) - $since).TotalSeconds; Look = $look; Pending = $pending } }
-            Start-Sleep -Seconds $PollSeconds
+            [void](Wait-TestbedChange -Seconds $PollSeconds)
         }
     }
     finally { if ($null -ne $since) { Remove-TestbedWaiting } }

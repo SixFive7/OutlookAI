@@ -207,6 +207,11 @@ function Invoke-SelfTest {
         [void](Set-TestbedPauseOff)
         $waited = Wait-TestbedGate -Run 'r-wait' -What 'a self-test wait' -TimeoutMinutes 0 -Say { param($line) $said.Add($line) } -LimitPercent 101 -WindowSeconds 1 -PollSeconds 1
         Check 'switch off: the wait ends at once' 'True|0' ("{0}|{1}" -f $waited.Go, [int]$waited.WaitedSeconds)
+        $gateText = [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot 'TestbedLoad.ps1'))
+        $waitAt = $gateText.IndexOf('function Wait-TestbedGate')
+        $waitBody = ''
+        if ($waitAt -ge 0) { $waitBody = $gateText.Substring($waitAt) }
+        Check 'between looks a waiting run sleeps on the testbed''s files, 30 s at most - never a poll of its own' $true ($waitBody.Contains('[void](Wait-TestbedChange -Seconds $PollSeconds)') -and $waitBody.Contains('[int] $PollSeconds = $TestbedWaitSeconds') -and -not $waitBody.Contains('Start-Sleep') -and $TestbedWaitSeconds -eq 30)
 
         # The start, under the gate's claim: TestbedLeasePath.ps1's, in the machine's leases directory -
         # on the build VM, which every run restores.
