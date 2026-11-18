@@ -1936,6 +1936,15 @@
   delegate or shared mailbox gets no default signature, and its result says so; a signature the
   agent names still goes in (`QUESTIONS.md` decision log, 2026-11-17, Q147 carried out, item 7).
 
+- [ ] **Match what Outlook does with a named signature on a reply from a shared or delegate mailbox,
+  once the shared test mailbox exists (Q203 (d), decided 2026-11-18).** Today a signature the agent
+  names goes into such a reply, and no default does (Q160; `QUESTIONS.md` decision log, 2026-11-17,
+  Q147 carried out, item 7). The maintainer kept that for now, Q203 (a), and decided what follows,
+  (d): once the shared test mailbox of Q109 exists, measure what Outlook itself does with a named
+  signature on a reply from a shared or delegate mailbox, and make OutlookAI's reply drafts there do
+  the same (`QUESTIONS.md` decision log, 2026-11-18). The item above holds the default signature's
+  half (Q160).
+
 - [ ] **Measure whether Outlook lets one message use another signature, or none, under a policy-forced
   default (Q156, G2's policy half).** Until it is measured, OutlookAI refuses a different signature and
   "none" while Group Policy or Cloud Policy forces a default (`SignatureSelector.ForcedConflict`). The

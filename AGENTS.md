@@ -359,11 +359,12 @@ That exception does not generalise to "open source is fine".
 in to his Microsoft 365 tenant, because its one mailbox lives there (Q108). Conditions, all of them:
 that one VM, nothing else on it but what `Testbed/MEDIA.md` already names (no new media, no licensed
 component, nothing downloaded and installed beyond the Office the Office Deployment Tool installs from
-`.work/office-odt/Testbed.xml`); its sign-in through `Testbed/host/Invoke-ExchangeSignIn.ps1`, whose
-credential is read only on the host, in memory (`Testbed/host/Get-ExchangeCredential.ps1`), and
-reaches the VM only as keystrokes; device registration with the tenant declined; Windows' own updates
-left on, without automatic restarts. Every other test VM stays offline. This is not "test VMs may
-have internet". Since 2026-11-17 the OutlookAI add-in itself is installed there too (Q140 (b)).
+`.work/office-odt/Testbed.xml`, save Q206's fallbacks below); its sign-in through
+`Testbed/host/Invoke-ExchangeSignIn.ps1`, whose credential is read only on the host, in memory
+(`Testbed/host/Get-ExchangeCredential.ps1`), and reaches the VM only as keystrokes; device
+registration with the tenant declined; Windows' own updates left on, without automatic restarts.
+Every other test VM stays offline. This is not "test VMs may have internet". Since 2026-11-17 the
+OutlookAI add-in itself is installed there too (Q140 (b)).
 
 **Q161 (c), decided by the maintainer 2026-11-17: Outlook on the web on the Exchange VM, to measure
 roaming signatures.** An agent may sign in to Outlook on the web there. Conditions, all of them:
@@ -372,6 +373,16 @@ hub - never the Exchange VM's mailbox; Windows' own browser, Edge; the password 
 as keystrokes from the host's DPAPI store, as `Testbed/host/Invoke-ExchangeSignIn.ps1` does; "Stay
 signed in" and
 device registration declined; signed out afterwards, and the VM restored to its checkpoint.
+
+**Q206, decided by the maintainer 2026-11-18: Office on the Exchange VM, when it cannot create
+items.** Its Office LTSC 2024 was never activated, and since its grace ran out Outlook there creates
+no item through its object model (runbook §4.4a). In his words: *"a with fallback to b with fallback
+to reporting to me for spla mak keys"*. In that order: Office's own grace-period reset,
+`ospprearm.exe`, which comes with the Office installed there; if that does not bring item creation
+back, Microsoft 365 Apps on `OutlookAI-Exchange`, activated by the test account's own licence - a
+licensed component, allowed on that VM alone; and failing that, a volume key (SPLA MAK) that the
+maintainer supplies, which an agent asks him for and never obtains any other way. Every other
+condition of Q111 stands, and no other test VM gets any of these.
 
 **A third exception, decided by the maintainer 2026-10-03 (Q125): CodeQL, run locally.** The
 CodeQL CLI is free but not open source - it comes under the GitHub CodeQL Terms and Conditions -

@@ -800,6 +800,17 @@ its mailbox tests on, and change nothing you install.
   measured on Office LTSC 2024: with no Outlook window open, that window shows at the top left of the
   screen for 130 to 650 ms and has the foreground while it is there.
 
+- 📝 **If Office's own grace reset fails, the Exchange test machine may get Microsoft 365 Apps (Q206).**
+  The maintainer's decision Q206, 2026-11-18, now in AGENTS.md beside the machine's internet
+  exception. Its Office LTSC 2024 was never activated, and since the grace ran out in late October
+  Outlook there creates no item through its object model, so the machine runs only the tests that
+  write nothing. In his words: *"a with fallback to b with fallback to reporting to me for spla mak
+  keys"*. First Office's own grace-period reset, `ospprearm.exe`; if that does not bring item
+  creation back, Microsoft 365 Apps, activated by the test account's own licence, a licensed
+  component allowed on that machine alone; and failing that, a volume key (SPLA MAK) that the
+  maintainer supplies. Every other condition of the exception stands. `QUESTIONS.md` records the
+  decision with his other answers of that day, to Q138, Q163 to Q182 and Q194 to Q213.
+
 - ✅ **A live run that starts Outlook closes Office's activation wizard and records it.**
   Past Office's 30-day activation grace, which the Exchange test machine's real clock has crossed,
   every start of Outlook with a window raises the modal Microsoft Office Activation Wizard before the
