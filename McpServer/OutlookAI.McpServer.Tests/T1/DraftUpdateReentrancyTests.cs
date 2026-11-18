@@ -267,6 +267,22 @@ public sealed class DraftUpdateReentrancyTests : IDisposable
     }
 
     [Fact]
+    public void TheKey_IsLowercaseHex_PinnedForOneRequest()
+    {
+        // Pinned to a value computed outside OutlookAI, not to the product's own code, so that folding its hex
+        // writers together (the code-sharing refactor, Q154) cannot change its case unseen: the SHA-256, in
+        // lowercase hex, of the canonical text KeyFor builds for this request - "entry=00000000AABBCCDD\n",
+        // "bodyKind=none\n", "body=0\n", "subject=1|Plan\n", "to=1|1\n", "to=a@example.com\n", "cc=0\n",
+        // "bcc=0\n", "importance=0\n", "readReceipt=0\n", "signature=0\n", "signaturePath=0\n",
+        // "signatureNone=0\n", "attach=1|0\n", "remove=1|0\n", "display=1\n".
+        Assert.Equal(
+            "697f75c2bc35753fcbc93ac8dfdd8118997d6451b135de9a225dc9caab389777",
+            DraftUpdateIntents.KeyFor(
+                "00000000AABBCCDD", null, "Plan", new[] { "a@example.com" }, null, null, null, null, null,
+                Array.Empty<string>(), Array.Empty<string>(), true));
+    }
+
+    [Fact]
     public void AnOmittedRecipientListAndAnEmptyOne_DoNotShareAKey()
     {
         // update_draft reads them as "leave alone" and "clear", which are opposite
