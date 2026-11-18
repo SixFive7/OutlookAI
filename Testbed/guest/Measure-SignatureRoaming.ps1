@@ -71,6 +71,8 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+# Outlook's dialogs through UI Automation, and the signature folder: one copy, shared with Measure-SignatureDialog.ps1 (Q154).
+. (Join-Path $PSScriptRoot 'OutlookDialogUia.ps1')
 $SignaturePrefix = 'OutlookAI-McpTest-'
 $RoamingFolderGuid = '49499048-0129-47f5-b95e-f9d315b861a6'
 
@@ -239,15 +241,6 @@ function Get-Outlook {
 # ---------------------------------------------------------------------------------------------
 # R0
 # ---------------------------------------------------------------------------------------------
-function Get-SignatureFiles {
-    $folderName = 'Signatures'
-    try { $v = (Get-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Office\16.0\Common\General' -Name 'Signatures' -ErrorAction Stop).Signatures; if ($v) { $folderName = $v } } catch { }
-    $folder = Join-Path $env:APPDATA ('Microsoft\' + $folderName)
-    $files = @()
-    if (Test-Path -LiteralPath $folder) { $files = @(Get-ChildItem -LiteralPath $folder -File -Recurse -ErrorAction SilentlyContinue) }
-    return [pscustomobject]@{ Folder = $folder; FolderName = $folderName; Files = $files }
-}
-
 function Invoke-R0 {
     Write-ReportLine '== R0: Office =='
     $c2r = 'HKLM:\SOFTWARE\Microsoft\Office\ClickToRun\Configuration'
@@ -326,11 +319,8 @@ function Invoke-R0 {
 # ---------------------------------------------------------------------------------------------
 function Get-UiaNames($Element, [int] $Max = 1500) {
     $names = New-Object System.Collections.Generic.List[string]
-    $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
-    $stack = New-Object System.Collections.Stack
-    $stack.Push($Element)
-    while ($stack.Count -gt 0 -and $names.Count -lt $Max) {
-        $e = $stack.Pop()
+    foreach ($e in (Get-UiaTree $Element ($Max * 4))) {
+        if ($names.Count -ge $Max) { break }
         try {
             $type = $e.Current.ControlType.ProgrammaticName -replace '^ControlType\.', ''
             $name = [string]$e.Current.Name
@@ -341,56 +331,8 @@ function Get-UiaNames($Element, [int] $Max = 1500) {
             }
         }
         catch { }
-        $child = $null
-        try { $child = $walker.GetFirstChild($e) } catch { }
-        $kids = @()
-        while ($child) { $kids += $child; try { $child = $walker.GetNextSibling($child) } catch { $child = $null } }
-        for ($i = $kids.Count - 1; $i -ge 0; $i--) { $stack.Push($kids[$i]) }
     }
     return $names
-}
-
-function Find-TopWindow([string] $Name, [int] $Seconds) {
-    $root = [System.Windows.Automation.AutomationElement]::RootElement
-    $cond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty, $Name)
-    $until = (Get-Date).AddSeconds($Seconds)
-    while ((Get-Date) -lt $until) {
-        $w = $root.FindFirst([System.Windows.Automation.TreeScope]::Children, $cond)
-        if ($w) { return $w }
-        # An owned dialog can sit one level down, under Outlook's window.
-        $w = $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $cond)
-        if ($w -and $w.Current.ControlType -eq [System.Windows.Automation.ControlType]::Window) { return $w }
-        Start-Sleep -Milliseconds 500
-    }
-    return $null
-}
-
-function Find-Named($Parent, [System.Windows.Automation.ControlType] $Type, [string] $Name) {
-    $c = New-Object System.Windows.Automation.AndCondition(
-        (New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, $Type)),
-        (New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty, $Name)))
-    return $Parent.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $c)
-}
-
-function Invoke-Button($Button) {
-    $Button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
-}
-
-# Closes a dialog as Cancel does - the one way this probe ever closes anything: its own Cancel button, or,
-# where UI Automation shows none (the Signatures dialog, class bosa_sdm_Mso96, measured 2026-11-17),
-# WM_CLOSE to that one window, which a dialog treats as Cancel.
-function Close-WithCancel($Window, [string] $What) {
-    $cancel = Find-Named $Window ([System.Windows.Automation.ControlType]::Button) 'Cancel'
-    if ($cancel) { Invoke-Button $cancel; Start-Sleep -Seconds 2; return $true }
-    if (-not ('OaiProbeWin' -as [type])) {
-        Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class OaiProbeWin { [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l); [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr h); }'
-    }
-    $handle = [IntPtr]$Window.Current.NativeWindowHandle
-    [void][OaiProbeWin]::PostMessage($handle, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)
-    Start-Sleep -Seconds 3
-    $closed = -not [OaiProbeWin]::IsWindow($handle)
-    Write-ReportLine ("  {0}: no Cancel button through UI Automation; WM_CLOSE to the dialog's own window - closed {1}" -f $What, $closed)
-    return $closed
 }
 
 function Select-NavigationPage($Options, [string] $Page) {
@@ -400,20 +342,6 @@ function Select-NavigationPage($Options, [string] $Page) {
     Start-Sleep -Seconds 2
     return $true
 }
-
-# A helper process of its own for each command that opens a modal dialog: the command returns only when
-# the dialog closes, so the probe must be free to read and Cancel it meanwhile.
-function Start-Helper([string] $Script) {
-    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($Script))
-    return Start-Process -FilePath powershell.exe -ArgumentList '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-EncodedCommand', $encoded -WindowStyle Hidden -PassThru
-}
-
-# The helper that opens the Signatures dialog by its own command. GetLabelMso('SignaturesStationeryDialog')
-# reads 'Signatures...' and enabled from the explorer, ApplicationOptionsDialog disabled (measured 2026-11-17).
-$SignaturesHelper = @'
-$app = [Runtime.InteropServices.Marshal]::GetActiveObject('Outlook.Application')
-try { $app.ActiveExplorer().CommandBars.ExecuteMso('SignaturesStationeryDialog') } finally { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($app) }
-'@
 
 # The helper that opens Options through the File tab: the tab is invoked, then the backstage's Options.
 $OptionsHelper = @'
@@ -436,7 +364,7 @@ function Invoke-R1 {
     $signatureNames = @(); $generalNames = @()
 
     Write-ReportLine '== R1: the Signatures dialog, opened through ExecuteMso(''SignaturesStationeryDialog'') =='
-    $process = Start-Helper $SignaturesHelper
+    $process = Start-SignaturesDialog
     $dialog = Find-TopWindow 'Signatures and Stationery' $DialogWaitSeconds
     if ($dialog) {
         try {

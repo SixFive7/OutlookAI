@@ -87,6 +87,7 @@ namespace OutlookAI.Core.Services
             foreach (ProfileAccountEntry entry in environment.MailAccountsOf(profile).Where(e => e.Address != null))
             {
                 string? locked = DefaultsLocked(environment, entry);
+
                 accounts.Add(new SignatureAccountView
                 {
                     Account = entry.Address!,
@@ -96,11 +97,9 @@ namespace OutlookAI.Core.Services
                         : null,
                     NewMessage = entry.NewSignature,
                     ReplyForward = entry.ReplyForwardSignature,
-                    EffectiveNewMessage = policy.SignaturesDisabled ? null : policy.NewMessage ?? entry.NewSignature,
-                    EffectiveReplyForward = policy.SignaturesDisabled ? null : policy.ReplyForward ?? entry.ReplyForwardSignature,
-                    DefaultsFrom = policy.SignaturesDisabled ? SignaturePolicy.Token(policy.DisabledBy)
-                        : policy.AnyDefaultSet ? SignaturePolicy.Token(policy.NewMessageSource ?? policy.ReplyForwardSource)
-                        : "account",
+                    EffectiveNewMessage = policy.SignaturesDisabled ? null : policy.EffectiveDefault(false, entry.NewSignature),
+                    EffectiveReplyForward = policy.SignaturesDisabled ? null : policy.EffectiveDefault(true, entry.ReplyForwardSignature),
+                    DefaultsFrom = policy.SignaturesDisabled ? SignaturePolicy.Token(policy.DisabledBy) : "account",
                     DefaultsEditable = locked == null,
                     DefaultsLocked = locked,
                 });
@@ -124,9 +123,11 @@ namespace OutlookAI.Core.Services
                 return "signatures are disabled by " + SignaturePolicy.Describe(policy.DisabledBy);
             }
 
-            if (policy.AnyDefaultSet)
+            if (policy.TakesDefault(false) || policy.TakesDefault(true))
             {
-                return "the default is set for every account by " + SignaturePolicy.Describe(policy.NewMessageSource ?? policy.ReplyForwardSource);
+                return SignaturePolicy.Describe(policy.TakesDefault(false) ? policy.NewMessageSource : policy.ReplyForwardSource)
+                    + " names a default signature, and OutlookAI does not change an account's default while such a setting names one, "
+                    + "as Outlook's own Signatures dialog does not (Q156)";
             }
 
             if (entry.AccountKind == MailAccountKind.Exchange && environment.Roaming.MayRoamFor(entry.Address))

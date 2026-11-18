@@ -101,6 +101,8 @@
   S6, the server's own repetition (S01-S14). In parallel: the rest of the shared test code (S5a),
   the PowerShell helpers (S7), and the rules restated in C# and PowerShell as shared C# source
   (Q171).
+  S7 also takes the two MCP stdio clients left beside `Testbed/guest/McpStdioClient.ps1`:
+  `Invoke-GuestMeasure.ps1`'s, kept as found, and `Measure-PinWindows.ps1`'s C# session class.
 
 - [ ] **Let the add-in's AI choose the signature by itself, once the add-in uses OutlookAI.Core (Q158
   and Q162, decided 2026-11-17).** Signatures are managed through the MCP server only; the add-in
@@ -258,20 +260,6 @@
   signature on a reply from a shared or delegate mailbox, and make OutlookAI's reply drafts there do
   the same (`QUESTIONS.md` decision log, 2026-11-18). The item above holds the default signature's
   half (Q160).
-
-- [ ] **Measure whether Outlook lets one message use another signature, or none, under a policy-forced
-  default (Q156, G2's policy half).** Until it is measured, OutlookAI refuses a different signature and
-  "none" while Group Policy or Cloud Policy forces a default (`SignatureSelector.ForcedConflict`). The
-  live tier cannot set a policy: `HKCU\Software\Policies` is read-only for the user (its ACL grants
-  ReadKey, checked on the workstation 2026-11-17), and the suite runs at RunLevel Limited. It needs an
-  elevated step on a PST guest before the suite - a parameter of `Invoke-LiveTierOnGuest.ps1` that
-  writes the policy values over PowerShell Direct, undone by the checkpoint restore - then a live test
-  that reads Outlook's own view (`LiveOutlookTestMailer.ReadSignatureEngine`) and its compose window's
-  Signature menu. The maintainer decides whether the runner gets that step. The same step settles G2's
-  other half, a default deployed for every account in `Common\MailSettings` (QUESTIONS.md, 2026-11-17,
-  item 5): its first run, on OAI-UNINDEXED on 2026-11-17, could not tell what Outlook does with it -
-  Outlook's signature settings, read through a draft's editor, reported no default with it or without
-  it - and the value had been written while Outlook ran, which Outlook may read only when it starts.
 
 - [ ] **Re-arm Office on the Exchange VM again before its grace runs out on 2026-12-18 - two re-arms
   left (decision 206 (a), 2026-11-18).** Its Office LTSC 2024 volume edition is never activated, and past

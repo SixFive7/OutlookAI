@@ -2025,7 +2025,10 @@ namespace OutlookAI.Core.Services
         /// <summary>The reply/forward signature a draft from this account gets when signature is left out (absent = none).</summary>
         public string? EffectiveReplyForward { get; set; }
 
-        /// <summary>Where the effective defaults come from: account | cloudPolicy | groupPolicy | preference.</summary>
+        /// <summary>
+        /// Where the effective defaults come from: account, or the policy that disables signatures (cloudPolicy |
+        /// groupPolicy). A policy's or deployed default never decides them: Outlook was measured not to use one (2026-11-18).
+        /// </summary>
         public string? DefaultsFrom { get; set; }
 
         /// <summary>False when manage_signature refuses to change this account's defaults; <see cref="DefaultsLocked"/> says why.</summary>
@@ -2500,7 +2503,7 @@ namespace OutlookAI.Core.Services
         /// <summary>The signature that went in (absent = none) - see <see cref="SignatureSource"/> and <see cref="SignatureReason"/>.</summary>
         public string? Signature { get; set; }
 
-        /// <summary>requested | accountDefault | policyDefault | none.</summary>
+        /// <summary>requested | accountDefault | none (policyDefault is gone since 2026-11-18: Outlook was measured not to use one).</summary>
         public string? SignatureSource { get; set; }
 
         /// <summary>Why that signature, or why none, in one sentence.</summary>
