@@ -406,6 +406,26 @@ public sealed class DraftAttachmentsTests : IDisposable
         Assert.Contains("relative to a drive's current folder", reason, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData(@"NUL\.")]
+    [InlineData(@"nul\x\..")]
+    [InlineData(@"CON.txt\.")]
+    public void APathWhoseTextHidesADevice_IsRefusedOnTheFullPathWindowsMakesOfIt(string below)
+    {
+        // The last name on the text is '.' or '..', so the text check passes; the full path Windows makes
+        // of it ends in a device name, or is the device itself (C:\x\NUL is \\.\NUL on Windows 11).
+        string asked = Path.Combine(_directory, below);
+        Assert.Null(DraftAttachments.RefuseOnItsText(asked));
+
+        ArgumentException ex = Assert.Throws<ArgumentException>(() => DraftAttachments.Validate(new[] { asked }));
+
+        Assert.Contains("'" + asked + "': ", ex.Message, StringComparison.Ordinal);
+        Assert.True(
+            ex.Message.Contains("is called after a Windows device", StringComparison.Ordinal)
+                || ex.Message.Contains("names no file on a drive", StringComparison.Ordinal),
+            ex.Message);
+    }
+
     [Fact]
     public void APathOverWindowsOrdinaryLimit_IsRefused_NamingItsLength_AndOneAtTheLimitIsAccepted()
     {

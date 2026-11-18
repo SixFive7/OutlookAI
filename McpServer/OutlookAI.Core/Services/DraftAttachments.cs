@@ -220,8 +220,9 @@ namespace OutlookAI.Core.Services
                     return "not an absolute path (the server has no working directory an agent can rely on)";
                 }
 
-                // On the text first, before the disk is asked anything - and again on what Windows makes of
-                // it, which on Windows 10 turns C:\x\CON.txt into \\.\CON.
+                // On the text first, before the disk is asked anything - and again on the full path Windows
+                // makes of it, which can be a device: C:\x\NUL becomes \\.\NUL (Windows 11, measured
+                // 2026-11-18), and by Microsoft's naming rules C:\x\CON.txt becomes \\.\CON on Windows 10.
                 string? refused = RefuseOnItsText(path);
                 if (refused != null)
                 {
