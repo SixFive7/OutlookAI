@@ -1436,6 +1436,15 @@ its mailbox tests on, and change nothing you install.
   focus is not in: the first could not attach on a test machine where Outlook had just started. All
   four use `Connect-RunningOutlook` now, which asks the table first and the class factory only once an
   OUTLOOK.EXE runs in the caller's own session, so it never starts one, and says which way it went.
+  The MCP server's stdio client is one copy too: `Invoke-GuestMeasure.ps1`, kept as
+  found until then, and `Measure-PinWindows.ps1`, whose sessions were a C# class of its own, both use
+  `Testbed/guest/McpStdioClient.ps1`. It took on what the second did that it did not: a read still
+  waiting when a reply's time runs out is kept for the next one, where the next read used to throw; a
+  server starts without the initialize for a caller that times it; a request goes out now and its
+  reply is read later; a silence can give back nothing instead of throwing; a reply must carry a
+  result or an error; and the end of the server's standard error is waited for. A server that cannot
+  be initialized is stopped, and the error says what it wrote. `Set-SignatureSettings.ps1`'s
+  self-test now talks to a stand-in server through it as well as checking its pure parts.
 
 - 📝 **If Office's own grace reset fails, the Exchange test machine may get Microsoft 365 Apps (Q206).**
   The maintainer's decision Q206, 2026-11-18, now in AGENTS.md beside the machine's internet
