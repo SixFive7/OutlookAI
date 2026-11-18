@@ -256,7 +256,8 @@ pwsh -File Testbed/host/Invoke-TestsOnBuildVm.ps1 -SkipSuite -SelfTestInclude 'T
   `vm\trx\zone.trx` and every log.
 - **One run per VM, and the build VM is a pool** (2026-11-17): `OutlookAI-Build`, `OutlookAI-Build2`
   and `OutlookAI-Build3` - copies of one machine, `Testbed/host/TestbedPool.ps1` - and a run takes
-  whichever is free; callers queue only while all are busy. `-VMName` pins one. Run it in the
+  whichever is free; callers queue only while all are busy - first come first served, in a queue of
+  files, asking Hyper-V nothing while they wait (2026-11-18). `-VMName` pins one. Run it in the
   background or with a timeout of 20 minutes or more. Never use a VM by hand while runs may happen;
   to hold runs off one, take a lease on it with `Testbed/host/Set-TestbedLease.ps1 -VMName <vm>` and
   release it after.

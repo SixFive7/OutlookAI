@@ -2177,6 +2177,17 @@ its mailbox tests on, and change nothing you install.
   when the assistant kills the helper outright, which is what happens when Outlook has genuinely
   stopped responding and when a session ends abruptly.
 
+- ✅ **Test runs that wait for a test machine no longer ask Hyper-V every few seconds.**
+  Every queued run asked Hyper-V about every machine it could use every 5 seconds, through the WMI
+  calls Get-VM makes. On the night of 2026-11-18, with eighteen runners alive and at most eight of
+  them running, the WMI service answering them used about 5 of the PC's 32 logical processors and the
+  maintainer's PC lagged: a 15-second trace counted 32 WMI calls a second, 91 % of them those. A run
+  that waits now takes a ticket in a queue of files and tries only the machines no earlier run wants,
+  first come first served. It tells a free machine from its lock and lease files, asks Hyper-V only
+  once one is free, and sleeps until a lock, a lease or a ticket changes, or 30 seconds pass. A
+  machine's state is read with one narrow query instead of Get-VM, and a running run asks its test
+  machine how far it got, and for a heartbeat, every 15 seconds instead of every 1 to 3.
+
 - ✅ **The index-refile measurement no longer fails when Outlook lists a moved folder late.**
   The live test that times how fast the index follows a folder rename and move reads the folder's
   ID under its new parent right after moving it. On the copy of the indexed test machine the parent

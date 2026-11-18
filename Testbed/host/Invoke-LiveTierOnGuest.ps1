@@ -18,7 +18,9 @@
       2. LEASE   - waits until nobody else holds a live lease on the guest (Set-TestbedLease.ps1),
                    NEVER taking one over, then takes it, and renews it before every long step. The
                    guests are shared between agents, and the idle-saver saves any running guest that
-                   holds no live lease.
+                   holds no live lease. It waits asking Hyper-V nothing (2026-11-18): a ticket in the
+                   testbed's queue, first come first served, the lease files to tell a free guest,
+                   and a sleep until a lease or a ticket changes or 30 s pass (TestbedPool.ps1).
       3. STAGE   - restores the start checkpoint, copies the payloads, the settings and the commit's
                    Testbed/guest scripts in, swaps the server, tools, source and feed, and proves the
                    suite TEST-READY (Install-DotnetSdk.ps1 -Execute, then -Verify).
@@ -707,6 +709,21 @@ function Invoke-SelfTest {
     Check 'a live lease of another run is theirs' 'theirs' (Get-LeaseDecision ([pscustomobject]@{ expiresUnix = $now + 60; reason = 'Invoke-LiveTierOnGuest r2' }) 'r1' $now)
     Check 'a live lease of another agent is theirs' 'theirs' (Get-LeaseDecision ([pscustomobject]@{ expiresUnix = $now + 60; reason = 'agent accec8f1: folder-path tests' }) 'r1' $now)
 
+    Write-Host '== a run that waits asks Hyper-V nothing (2026-11-18, TestbedPool.ps1) =='
+    # Looked for in the run's code only - after this function, whose own lines name the same text.
+    $selfTestAst = @([System.Management.Automation.Language.Parser]::ParseFile($PSCommandPath, [ref] $null, [ref] $null).FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Invoke-SelfTest' }, $false))
+    $runCode = ''
+    if ($selfTestAst.Count -eq 1) { $runCode = $runner.Substring($selfTestAst[0].Extent.EndOffset) }
+    Check 'the run''s code is found after this self-test' $true ($runCode.Length -gt 1000)
+    $at = @{}
+    foreach ($mark in @('$ticket = Join-TestbedQueue -Run $runId', '$ahead = Get-TestbedQueueTurn', '$held = Get-TestbedLease -VMName $guest.Name', '$refusals[$guest.Name] = Get-GuestRunRefusal $guest', '$startupBytes[$guest.Name] = [long](Get-VM -Name $guest.Name).MemoryStartup', '$holder = Request-GuestLease $guest.Name 60', '[void](Wait-TestbedChange)', 'finally { Exit-TestbedQueue $ticket }')) { $at[$mark] = $runCode.IndexOf($mark) }
+    Check 'a run waiting for a guest holds a ticket and reads its turn on every pass' $true ($at['$ticket = Join-TestbedQueue -Run $runId'] -gt 0 -and $at['$ahead = Get-TestbedQueueTurn'] -gt $at['$ticket = Join-TestbedQueue -Run $runId'])
+    Check 'whether a guest is free is its lease file, read before Hyper-V is asked anything about it' $true ($at['$held = Get-TestbedLease -VMName $guest.Name'] -gt $at['$ahead = Get-TestbedQueueTurn'] -and $at['$held = Get-TestbedLease -VMName $guest.Name'] -lt $at['$refusals[$guest.Name] = Get-GuestRunRefusal $guest'] -and $at['$refusals[$guest.Name] = Get-GuestRunRefusal $guest'] -lt $at['$startupBytes[$guest.Name] = [long](Get-VM -Name $guest.Name).MemoryStartup'])
+    Check 'and what does not change in a run - its checkpoints, its startup memory - is asked once a run' $true ($runCode.Contains('if (-not $refusals.ContainsKey($guest.Name))') -and $runCode.Contains('if (-not $startupBytes.ContainsKey($guest.Name))'))
+    Check 'between passes it sleeps on the testbed''s files, and leaves the queue on every path' $true ($at['[void](Wait-TestbedChange)'] -gt $at['$holder = Request-GuestLease $guest.Name 60'] -and $at['finally { Exit-TestbedQueue $ticket }'] -gt $at['[void](Wait-TestbedChange)'])
+    Check 'the heartbeat is asked for after 3 s, then every 15 s' $true ($runCode.Contains('if ($looks -eq 1) { Start-Sleep -Seconds 3 } else { Start-Sleep -Seconds $TestbedGuestPollSeconds }'))
+    Check 'a guest''s state is read with the narrow query, never Get-VM''s' $true ($runCode.Contains('function Get-GuestVmState') -and -not $runCode.Contains('(Get-VM -Name $facts.Name).State'))
+
     Write-Host '== the run id =='
     Check 'when, guest, commit' '20261003-174500-indexed-d4e31fe12345' (New-RunId ([datetime]'2026-10-03T17:45:00') 'd4e31fe1234567890' 'OutlookAI-Indexed')
     Check 'the unindexed guest' '20261003-174500-unindexed-d4e31fe12345' (New-RunId ([datetime]'2026-10-03T17:45:00') 'd4e31fe1234567890' 'OutlookAI-Unindexed')
@@ -1030,18 +1047,30 @@ function Request-GuestLease([string] $Name, [int] $Minutes) {
     }
     finally { $claim.Dispose() }
 }
+# A resumed guest answers within seconds: one more look after 3 s, then one every 15 s
+# ($TestbedGuestPollSeconds, TestbedPool.ps1) - every 3 s until 2026-11-18, each look a question to
+# Hyper-V.
 function Wait-Heartbeat {
     $deadline = (Get-Date).AddMinutes(5)
+    $looks = 0
     do {
         $hb = (Get-VMIntegrationService -VMName $facts.Name -Name 'Heartbeat').PrimaryStatusDescription
         if ($hb -eq 'OK') { return }
-        Start-Sleep -Seconds 3
+        $looks++
+        if ($looks -eq 1) { Start-Sleep -Seconds 3 } else { Start-Sleep -Seconds $TestbedGuestPollSeconds }
     } while ((Get-Date) -lt $deadline)
     throw "the guest's heartbeat did not come back within 5 minutes"
 }
+# The guest's state - Running, Saved, Off, Paused, or on its way - from the one narrow query
+# (TestbedPool.ps1's Get-TestbedVmState), never Get-VM.
+function Get-GuestVmState([string] $Name) {
+    $rows = @(Get-TestbedVmState -Name @($Name))
+    if ($rows.Count -ne 1) { throw "expected one VM named '$Name' on this host and found $($rows.Count)" }
+    return [string]$rows[0].State
+}
 function Restore-Guest([string] $Name) {
     Restore-VMSnapshot -VMName $facts.Name -Name $Name -Confirm:$false
-    if ((Get-VM -Name $facts.Name).State -ne 'Running') { Start-VM -Name $facts.Name }
+    if ((Get-GuestVmState $facts.Name) -ne 'Running') { Start-VM -Name $facts.Name }
     Wait-Heartbeat
 }
 # One piece of work on the guest; its whole output goes to guest\<name>.log. Session 1 through
@@ -1136,36 +1165,52 @@ try {
 
     # ---- LEASE: wait, never take over. With -Kind, whichever guest of the kind is free: the source
     # first, a clone only while the host has its startup memory and the reserve (TestbedPool.ps1).
+    # A run that waits asks Hyper-V nothing (2026-11-18, TestbedPool.ps1's banner): it holds a ticket
+    # in the testbed's queue and tries only the guests no earlier ticket wants; whether a guest is
+    # free is its lease file; Hyper-V is asked about a guest only once its lease is free - and the facts
+    # that do not change in a run, its checkpoints and its startup memory, once a run. Between turns
+    # it sleeps until a lease, a lock's owner file or a ticket changes, or 30 s pass.
     $t0 = Get-Date
     $deadline = (Get-Date).AddMinutes($LeaseWaitMinutes)
     $candidates = @($facts.Name)
     if ($Kind) { $candidates = @(Get-KindMembers $Kind) }
     $lastSaid = ''
     $takenGuest = $null
-    while ($null -eq $takenGuest) {
-        $why = @()
-        for ($i = 0; $i -lt $candidates.Count; $i++) {
-            $guest = Get-GuestFacts $candidates[$i]
-            if ($Kind) {
-                $refusal = Get-GuestRunRefusal $guest
-                if ($refusal) { $why += $refusal; continue }
-                if ($i -gt 0) {
-                    $need = [long](Get-VM -Name $guest.Name).MemoryStartup
-                    $available = Get-HostAvailableBytes
-                    if (-not (Test-HostHasRoom -NeedBytes $need -AvailableBytes $available)) { $why += ("{0} waits for memory: the host has {1:N1} GB available, under its {2:N0} GB and the {3:N0} GB kept free" -f $guest.Name, ($available / 1GB), ($need / 1GB), ($TestbedHostReserveBytes / 1GB)); continue }
+    $refusals = @{}
+    $startupBytes = @{}
+    $ticket = Join-TestbedQueue -Run $runId -What "Invoke-LiveTierOnGuest run $runId, $kindText" -Candidates $candidates
+    try {
+        while ($null -eq $takenGuest) {
+            $why = @()
+            $ahead = Get-TestbedQueueTurn -Ticket $ticket -Run $runId -Candidates $candidates
+            for ($i = 0; $i -lt $candidates.Count; $i++) {
+                $guest = Get-GuestFacts $candidates[$i]
+                if ($ahead.ContainsKey($guest.Name)) { $why += "$($guest.Name) is wanted first by run $($ahead[$guest.Name]), queued before this one"; continue }
+                $held = Get-TestbedLease -VMName $guest.Name
+                if ((Get-LeaseDecision $held $runId ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())) -eq 'theirs') { $why += "$($guest.Name) is leased until $($held.expiresUtc) - $($held.reason)"; continue }
+                if ($Kind) {
+                    if (-not $refusals.ContainsKey($guest.Name)) { $refusals[$guest.Name] = Get-GuestRunRefusal $guest }
+                    if ($refusals[$guest.Name]) { $why += $refusals[$guest.Name]; continue }
+                    if ($i -gt 0) {
+                        if (-not $startupBytes.ContainsKey($guest.Name)) { $startupBytes[$guest.Name] = [long](Get-VM -Name $guest.Name).MemoryStartup }
+                        $need = $startupBytes[$guest.Name]
+                        $available = Get-HostAvailableBytes
+                        if (-not (Test-HostHasRoom -NeedBytes $need -AvailableBytes $available)) { $why += ("{0} waits for memory: the host has {1:N1} GB available, under its {2:N0} GB and the {3:N0} GB kept free" -f $guest.Name, ($available / 1GB), ($need / 1GB), ($TestbedHostReserveBytes / 1GB)); continue }
+                    }
                 }
+                $holder = Request-GuestLease $guest.Name 60
+                if ($null -eq $holder) { $takenGuest = $guest; break }
+                $why += "$($guest.Name) is leased until $($holder.expiresUtc) - $($holder.reason)"
             }
-            $holder = Request-GuestLease $guest.Name 60
-            if ($null -eq $holder) { $takenGuest = $guest; break }
-            $why += "$($guest.Name) is leased until $($holder.expiresUtc) - $($holder.reason)"
-        }
-        if ($null -eq $takenGuest) {
-            $text = $why -join '; '
-            if ($text -ne $lastSaid) { Say "waiting: $text"; $lastSaid = $text }
-            if ((Get-Date) -ge $deadline) { $stage = 'INFRA'; $stageWhy = "no guest came free in $LeaseWaitMinutes minutes - $text"; throw $stageWhy }
-            Start-Sleep -Seconds 30
+            if ($null -eq $takenGuest) {
+                $text = $why -join '; '
+                if ($text -ne $lastSaid) { Say "waiting: $text"; $lastSaid = $text }
+                if ((Get-Date) -ge $deadline) { $stage = 'INFRA'; $stageWhy = "no guest came free in $LeaseWaitMinutes minutes - $text"; throw $stageWhy }
+                [void](Wait-TestbedChange)
+            }
         }
     }
+    finally { Exit-TestbedQueue $ticket }
     if ($Kind) {
         Use-Guest $takenGuest
         $checkpointActions['start'] = $Checkpoint
@@ -1180,7 +1225,7 @@ try {
     try {
         $touched = $true
         if ($exchangeCarry) {
-            if ((Get-VM -Name $facts.Name).State -ne 'Running') { Start-VM -Name $facts.Name }
+            if ((Get-GuestVmState $facts.Name) -ne 'Running') { Start-VM -Name $facts.Name }
             Wait-Heartbeat
             Say 'resumed the Exchange VM as its last run left it (its mailboxes live on the server; no checkpoint restored)'
         }
@@ -1411,7 +1456,7 @@ finally {
             }
             try {
                 Save-VM -Name $facts.Name
-                $checkpointActions['saved'] = ((Get-VM -Name $facts.Name).State -eq 'Saved')
+                $checkpointActions['saved'] = ((Get-GuestVmState $facts.Name) -eq 'Saved')
             }
             catch { Say "SAVING THE GUEST FAILED: $($_.Exception.Message) - save it by hand." }
             Say "rested on $($checkpointActions['restedOn']); settings staged=$($checkpointActions['settingsStaged']); saved=$($checkpointActions['saved'])"

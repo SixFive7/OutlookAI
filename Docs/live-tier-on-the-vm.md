@@ -4581,6 +4581,38 @@ anywhere; the computer's stores; an install run with administrator rights on pur
 build. Nothing here loaded an add-in through an entry: that the runtime trusts an entry's key without
 the certificate is the IL above and section 4.5's measurement.
 
+### 4.9 Waiting runs that ask Hyper-V nothing - every testbed VM, 2026-11-18
+
+**Why this section exists.** At about 04:10 on 2026-11-18 the maintainer's PC lagged. Another session
+traced it: WmiPrvSE used about 5 of the host's 32 logical processors, on top of about 5.5 for the VMs,
+and a 15-second WMI-Activity trace counted 492 WMI operations, 32 a second, 91 % of them in
+`root\virtualization\v2` - `Msvm_SummaryInformation` enumerations and `Msvm_VirtualSystemSettingData`
+reads and associations, which is what `Get-VM` produces - all from runner processes: eighteen alive, at
+most eight of them running. A queued build run asked `Get-VM` about every pool member every 5 s; a live
+run given `-Kind` asked `Get-VM` and `Get-VMSnapshot` about every guest of its kind every 30 s; a
+running build run asked its guest how far it got every 3 s and, after a resume, its heartbeat every
+second. WmiPrvSE serves every one of those at normal priority, whatever the caller's.
+
+**What changed** (`Testbed/host/TestbedPool.ps1`'s banner says how): a run that waits holds a ticket
+in `%SystemDrive%\OutlookAI-Testbed\queue\` and tries only the VMs no earlier ticket wants; it tells a
+free VM from its lock and lease files and asks Hyper-V only once one is free; it sleeps on a
+FileSystemWatcher until a lock's owner file, a lease or a ticket changes, or 30 s pass; which members
+are on the host, and a VM's state while a restore or a save moves it, are read with one narrow CIM
+query on a session kept for the process (`Msvm_ComputerSystem`, `EnabledState` alone), never `Get-VM`.
+A running run asks its guest, and its heartbeat after the first two looks, every 15 s. The janitor
+waits on its run's process handle instead of looking every 10 s, and the clone maker waits at the head
+of the queue instead of asking for the build VM's lock every quarter second.
+
+**Measured** - WMI-Activity traces of 15 s, by the 04:09 session's method (`logman` with the
+`Microsoft-Windows-WMI-Activity` provider, `tracerpt`, operations counted per client process), run as a
+member of Performance Log Users; raw data in `.work\q-wmi\` of the worktree
+`stream-q-testbed-load-limit`:
+
+| When | What was waiting | WMI operations | WmiPrvSE |
+| --- | --- | --- | --- |
+| 04:09, the other session | eighteen runners, at most eight running | 492 in 15 s, 32 a second, 91 % in `root\virtualization\v2` | about 5 cores |
+| 05:05, before this change | four queued build runs and a live run of agents' branches, on runners from before it | 155 in 14.5 s, 11 a second, 85 % in `root\virtualization\v2`: 28 to 35 from each queued build runner - about 2 a second each - and 18 from the live run | 3.9 cores |
+
 ## 5. Which tests are in which bucket, and how to find out
 
 The classification is **two traits on the test itself**, not a list in a document that can drift -
