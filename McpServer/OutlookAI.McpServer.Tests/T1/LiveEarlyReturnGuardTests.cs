@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Reflection;
 using System.Text.RegularExpressions;
 using OutlookAI.McpServer.Tests.T2;
 using OutlookAI.McpServer.Tests.T3;
@@ -985,10 +984,7 @@ public sealed class LiveEarlyReturnGuardTests
     /// </summary>
     private static string LiveSource(string fileName)
     {
-        string dir = typeof(LiveTestSettings).Assembly
-                .GetCustomAttributes<AssemblyMetadataAttribute>()
-                .FirstOrDefault(a => a.Key == "TestProjectDir")?.Value
-            ?? throw new InvalidOperationException("AssemblyMetadata 'TestProjectDir' is missing.");
+        string dir = RepoPaths.TestProjectDir();
         string path = fileName.Contains('/', StringComparison.Ordinal)
             ? Path.Combine(dir, fileName.Replace('/', Path.DirectorySeparatorChar))
             : Path.Combine(dir, "T2", fileName);

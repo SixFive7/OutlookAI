@@ -1,4 +1,3 @@
-using System.Reflection;
 using OutlookAI.McpServer.Tests.T2;
 using Xunit;
 
@@ -58,7 +57,7 @@ public sealed class ArtifactSweepPlanTests
     {
         // Read off the committed example rather than retyped: this is the layout the whole file
         // is about, and a hand-copied one would keep passing after the real one changed.
-        LiveTestSettings settings = Example();
+        LiveTestSettings settings = ExampleLiveSettings.Load();
         ArtifactSweepPlan plan = ArtifactSweepPolicy.Assess(settings);
 
         Assert.Equal(LiveStoreCountTripwire.WatchedStores(settings).Count, plan.Steps.Count);
@@ -73,7 +72,7 @@ public sealed class ArtifactSweepPlanTests
     {
         // The specific item this whole change exists for, stated as its own test so that a
         // regression names the corpus rather than "a bystander".
-        LiveTestSettings settings = Example();
+        LiveTestSettings settings = ExampleLiveSettings.Load();
         string corpus = settings.Corpus!.StoreDisplayName;
         List<string> purged = new();
 
@@ -449,7 +448,7 @@ public sealed class ArtifactSweepPlanTests
         // a declared bystander exactly.
         foreach (string file in new[] { "LiveDraftTests.cs", "LiveSendTests.cs" })
         {
-            string path = Path.Combine(TestProjectDir(), "T2", file);
+            string path = Path.Combine(RepoPaths.TestProjectDir(), "T2", file);
             Assert.True(File.Exists(path), "artifact sweep source is missing: " + path);
             string source = File.ReadAllText(path);
 
@@ -498,7 +497,7 @@ public sealed class ArtifactSweepPlanTests
     /// </summary>
     private static IEnumerable<LiveTestSettings> EveryShape()
     {
-        yield return Example();
+        yield return ExampleLiveSettings.Load();
         yield return Settings(LiveMachineProfile.Production, new[] { Hub, Business }, bystander: null);
         yield return Settings(LiveMachineProfile.Portable, new[] { Hub, Business, Bystander }, Bystander);
         yield return Settings(
@@ -506,24 +505,5 @@ public sealed class ArtifactSweepPlanTests
             delegates: new[] { Delegate, "Second Shared Mailbox" });
         yield return Settings(
             LiveMachineProfile.Production, new[] { Hub }, Delegate, delegates: new[] { Delegate });
-    }
-
-    private static string TestProjectDir()
-    {
-        return typeof(LiveTestSettings).Assembly
-                .GetCustomAttributes<AssemblyMetadataAttribute>()
-                .FirstOrDefault(a => a.Key == "TestProjectDir")?.Value
-            ?? throw new InvalidOperationException("AssemblyMetadata 'TestProjectDir' is missing.");
-    }
-
-    /// <summary>The committed example settings, parsed by the real loader.</summary>
-    private static LiveTestSettings Example()
-    {
-        // <repo>/McpServer/OutlookAI.McpServer.Tests/ -> <repo>
-        string path = Path.Combine(
-            Path.GetFullPath(Path.Combine(TestProjectDir(), "..", "..")),
-            "Testbed", "live-test-settings.example.json");
-        Assert.True(File.Exists(path), "the committed example settings file is missing: " + path);
-        return LiveTestSettings.Parse(File.ReadAllText(path));
     }
 }

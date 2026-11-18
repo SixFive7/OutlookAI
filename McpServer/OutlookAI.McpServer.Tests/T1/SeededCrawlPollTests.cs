@@ -1,4 +1,3 @@
-using System.Reflection;
 using OutlookAI.Core.IndexSearch;
 using OutlookAI.McpServer.Tests.T2;
 using Xunit;
@@ -435,16 +434,8 @@ public sealed class SeededCrawlPollTests
 
     private static string LiveProbeSource()
     {
-        string path = Path.Combine(TestProjectDir(), "T2", "LiveAttachmentKindRecallTests.cs");
+        string path = Path.Combine(RepoPaths.TestProjectDir(), "T2", "LiveAttachmentKindRecallTests.cs");
         Assert.True(File.Exists(path), "the seeded attachment probe's source is missing: " + path);
         return File.ReadAllText(path);
-    }
-
-    private static string TestProjectDir()
-    {
-        return typeof(LiveTestSettings).Assembly
-                .GetCustomAttributes<AssemblyMetadataAttribute>()
-                .FirstOrDefault(a => a.Key == "TestProjectDir")?.Value
-            ?? throw new InvalidOperationException("AssemblyMetadata 'TestProjectDir' is missing.");
     }
 }

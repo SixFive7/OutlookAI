@@ -487,55 +487,6 @@ public sealed class StoreIndexHashScopeTests
         }
     }
 
-    /// <summary>Runs operations straight against the stand-in session (no COM host, no pipe) - or, when <see cref="Down"/>, refuses as an unreachable Outlook does.</summary>
-    private sealed class DirectGateway : IComGateway
-    {
-        private readonly IOutlookSession _session;
-
-        internal DirectGateway(IOutlookSession session)
-        {
-            _session = session;
-        }
-
-        public event Action? OutlookGone
-        {
-            add { }
-            remove { }
-        }
-
-        /// <summary>When true, every operation fails as it does when Outlook is closed or wedged.</summary>
-        public bool Down { get; set; }
-
-        public bool IsConnected => !Down;
-
-        public bool? QuitSinkActive => null;
-
-        public bool ProbeConnected() => !Down;
-
-        public T Run<T>(Func<IOutlookSession, T> operation) => Invoke(operation);
-
-        public T Run<T>(Func<IOutlookSession, T> operation, ComSessionRecovery recovery) => Invoke(operation);
-
-        public T Run<T>(Func<IOutlookSession, T> operation, int budgetMilliseconds, bool allowConnectFloor = false)
-            => Invoke(operation);
-
-        public ComHostDiagnostics GetDiagnostics() => new ComHostDiagnostics("in-process", "ready");
-
-        public void Dispose()
-        {
-        }
-
-        private T Invoke<T>(Func<IOutlookSession, T> operation)
-        {
-            if (Down)
-            {
-                throw new OutlookUnavailableException("Outlook is not answering (T1 stand-in).");
-            }
-
-            return operation(_session);
-        }
-    }
-
     /// <summary>A session answering the store list and the sweep, refusing everything else. Not sealed: DispatchProxy.</summary>
     private class ProfileSession : DispatchProxy
     {
