@@ -1712,6 +1712,13 @@ its mailbox tests on, and change nothing you install.
   Items - beside the mail, and none of them could be opened. On the test machine they were 21 of the
   first 100 results.
 
+- ✅ **A build-machine run that has to stage packages checks the known personal data again.**
+  When the build machine's offline feed lacked a package a revision needs, the runner staged it and
+  ran the machine's half a second time. That second run expanded the source afresh, after the first
+  had moved the private list of personal data into it, so the known identifiers went unchecked and
+  the run's summary said so. Every run of the move to .NET 11 stages its 11.0.0 packages, so it hit
+  every one of them (Q172, 2026-11-18). The runner stages the list again before the second run.
+
 - ✅ **The build machine's run summaries never print a duration as "1 m 60 s"; seconds round down.**
   `Testbed/host/Invoke-TestsOnBuildVm.ps1` rounded the seconds of a duration to the nearest whole
   one after taking the minutes, so 119.6 s read "1 m 60 s" in `summary.txt`, the run log and the
