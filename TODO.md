@@ -1682,6 +1682,10 @@
   themselves), T08 (readers of compiled code and source text; ComposeOnReopenedDraftTests and
   ReadOnlyFolderLookupTests keep member cutters with declaration rules of their own) and T09 (but
   for the registry helpers of the live tier's `T2/` files, which wait for the live step).
+  PowerShell, into `Testbed/guest/ScriptHelpers.ps1` (decision 215 (a)), held there by
+  check-powershell-51 check 4: P01's `Invoke-NativeCommand` for 13 of its 17 copies -
+  Invoke-LiveTierOnGuest.ps1 and Invoke-TrustRemovalProbe.ps1 fold with S7d, Build-Corpus.ps1 and
+  Reset-HubPopulation.ps1 with S7c, and the check lists them until they do.
 
 - [ ] **Let the add-in's AI choose the signature by itself, once the add-in uses OutlookAI.Core (Q158
   and Q162, decided 2026-11-17).** Signatures are managed through the MCP server only; the add-in
