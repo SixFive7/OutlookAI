@@ -936,8 +936,10 @@ Expected: 1</Message></ErrorInfo></Output></UnitTestResult>
     Check 'self-tests skipped: nothing to say' 'self-tests skipped' (Get-PersonalDataState $true '' $null @()).State
     Check 'the guest stages it where this stages it' $true ([System.IO.File]::ReadAllText((Join-Path $PSScriptRoot "..\guest\$GuestScriptName")).Contains("'$GuestPrivateListRelative'"))
     $ownText = [System.IO.File]::ReadAllText($PSCommandPath)
-    $retry = $ownText.IndexOf('$code = Invoke-GuestRun -Attempt 2')
-    $restage = $ownText.LastIndexOf('if ($privateList) { Copy-Item', $retry)
+    # Each needle is split in two, so that these lines cannot find themselves: written whole, the
+    # first found this line, ahead of the call it looks for, and the check failed on a correct runner.
+    $retry = $ownText.IndexOf('$code = Invoke-GuestRun' + ' -Attempt 2')
+    $restage = if ($retry -gt 0) { $ownText.LastIndexOf('if ($privateList) {' + ' Copy-Item', $retry) } else { -1 }
     Check 'and stages it again before a second attempt, which expands the source afresh' $true ($retry -gt 0 -and $restage -gt $ownText.IndexOf("packages: `$added package(s)"))
     $j = New-RunSummary -RunId 'x' -Verdict ([pscustomobject]@{ Verdict = 'PASS'; Why = '' }) -Revision ([ordered]@{}) -Filter '' -Trx $null -SelfTests @() -SelfTestSkips @() -GuestVerdict 'PASS' -HostError '' -BuildErrors @() -PackagesStaged $false -Timings ([ordered]@{}) -GuestPhases ([ordered]@{}) -Results 'C:\x' -Vm 'OutlookAI-Build' -PersonalData $none.State
     Check 'summary.json carries the state' 'not checked: no private list' $j.personalData
