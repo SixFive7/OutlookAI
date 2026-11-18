@@ -4389,8 +4389,9 @@ CPU read 82 to 100 % in twelve samples over a minute, with 35 GB of its 128 GB a
 run took 17 to 19 minutes, its tests 11 to 12, where a run alone took 9 to 10 and its tests 6 - so three
 runs finished in 19 minutes that would have taken about 30 one after another, and the one test that
 times eight writers against each other failed on both clones and passed alone. Memory, the one budget
-the pool guards, was never short; CPU was. Whether the pools should also keep CPU free for the
-maintainer is open: `TODO.md`.
+the pool guards, was never short; CPU was. On 2026-11-18 the maintainer decided that a run starts
+only while the host has processor time to spare, and that he can pause the testbed (Q195 (e)):
+section 4.9.
 
 ### 4.8 The leaked signing key: Windows' Root-store question and VSTO's trust entries - `OutlookAI-Unindexed2`, 2026-11-17 (Q193 follow-ups)
 
@@ -4580,6 +4581,68 @@ the same command and the same thumbprint-addressed removal, so that no copy of t
 anywhere; the computer's stores; an install run with administrator rights on purpose; another Windows
 build. Nothing here loaded an add-in through an entry: that the runtime trusts an entry's key without
 the certificate is the IL above and section 4.5's measurement.
+
+### 4.9 The load limit and the pause switch - every testbed VM, 2026-11-18 (Q195 (e))
+
+**Why this section exists.** Section 4.7 ended on an open question: the pools kept memory free for the
+maintainer and nothing kept processor time free, and with every member busy the host read 82 to 100 %
+busy. He decided on 2026-11-18 (Q195 (e)): a new run starts only while the host's processors are below
+about 70 % busy, measured over a sensible window, and otherwise waits and says so - the build-VM
+runner, the live-tier runner and the start of a clone alike; and a pause switch he can flip when he
+needs the PC, under which runs already going finish and no new one starts until it is flipped back.
+`Testbed/host/TestbedLoad.ps1` is the gate every runner reads, `Testbed/host/Set-TestbedPause.ps1` the
+switch, `Testbed/README.md` section 5b the contract. Raw logs: `.work\q-load\` of the worktree
+`stream-q-testbed-load-limit`.
+
+**What "busy" is measured with, and why.** Measured on this host on 2026-11-18, with other agents'
+runs and builds going, every reading over the same window:
+
+| Window | GetSystemTimes | `\Processor(_Total)\% Processor Time` | `% Processor Utility` (Task Manager's) | Hypervisor logical processors, `% Total Run Time` | of which guest VPs / root VPs |
+| --- | --- | --- | --- | --- | --- |
+| 11.0 s | 62.0 % | 62.1 % | 81.3 % | 65.3 % | - |
+| 10.0 s | 44.9 % | 44.8 % | 58.7 % | 46.9 % | - |
+| 10.0 s | 46.3 % | 46.4 % | 59.0 % | 47.1 % | - |
+| 11.1 s | 63.6 % | - | - | 64.9 % | 22.4 / 42.4 points |
+| 10.1 s | 83.3 % | - | - | 85.3 % | 29.2 / 56.0 points |
+
+`GetSystemTimes` - kernel32's idle, kernel and user time of every logical processor since boot - reads
+what the `% Processor Time` counter reads, without a counter name in the machine's language (this one
+was installed in Dutch). It includes the VMs because this host runs the hypervisor's ROOT scheduler
+(the System log's Hyper-V-Hypervisor event 2: "Hypervisor scheduler type is 0x4", client Windows'
+default), under which the guests' virtual processors run as the host's own threads: in the last row
+the root partition's own virtual processors were busy 56.0 points of 85.3 and the guests' 29.2, and
+`GetSystemTimes` read 83.3 - both together, less the hypervisor's own 2 points. Under the core
+scheduler it would not see the VMs at all. `% Processor Utility`, which Task Manager shows, weighs
+frequency boost in and read 13 to 19 points higher; the limit is on time busy, as the decision says.
+
+**The window: 30 seconds.** Sampled every second for four minutes at about 60 % busy (37 looks, one every
+5 s):
+
+| Window | lowest | highest | mean | looks at or over 70 % |
+| --- | --- | --- | --- | --- |
+| 1 s | 36.4 % | 86.0 % | 60.2 % | 8 of 37 |
+| 10 s | 40.0 % | 80.5 % | 60.8 % | 7 of 37 |
+| 30 s | 47.5 % | 73.3 % | 62.3 % | 8 of 37 |
+| 60 s | 48.5 % | 72.1 % | 63.5 % | 2 of 37 |
+
+A 10-second look swings 40 points within a minute and would let a run in on any dip; a 60-second one
+is the smoothest but costs every run a minute before it starts. Thirty seconds is the first look's
+cost; a run that waits looks again on every turn of its wait, at the last 30 seconds of its own
+readings, without waiting them out again.
+
+**Runs that waited must not all start at once.** When the switch is turned off, or the load dips, every
+run that waited sees the same reading in the same few seconds - and a new run's load shows only after
+its VM has resumed and its build begun. So a run that takes a VM writes its start - the VM, and its
+virtual processors' share of the host's, 12.5 % for a build VM and 18.75 % for an Outlook guest - and
+every run counts the VMs others took in the last 120 seconds on top of what it measured. Reading those
+starts, deciding and writing one's own is one step, under `Enter-TestbedLeaseClaim` on a name no VM has.
+While the host is quiet this changes nothing: three build runs at 30 % count 30, 42.5 and 55 % and all
+start, as before.
+
+**The proofs** - real runs of this branch:
+
+| Proof | Run | Result |
+| --- | --- | --- |
 
 ## 5. Which tests are in which bucket, and how to find out
 

@@ -21,7 +21,8 @@
          never a working tree, so every result names a revision anybody can check out. A HEAD with
          uncommitted changes is tested as committed, and the run says how many changes it left out.
       2. Takes a build VM of the pool that is free - its lock, queueing while every one is busy
-         (see CONCURRENT CALLERS) - or the one -VMName names.
+         (see CONCURRENT CALLERS) - or the one -VMName names; and only while the testbed's pause
+         switch is off and the host's processors are under the load limit (see THE GATE).
       3. Takes a lease on that VM (Testbed/README.md section 5b), so the idle-saver keeps away.
       4. Restores the base checkpoint and resumes the VM from it, waits for its heartbeat and
          PowerShell Direct, proves it is OAI-BUILD logged on as the autologon account in the UTC
@@ -86,6 +87,19 @@
     another member. Running several VMs in parallel was not chosen on 2026-10-03, when a queue was
     rarely long; with eight agents queueing it was (the maintainer, 2026-11-17: "try to parallelize
     as much as possible"), at 27.5 GB of disk a clone (measured) and, only while it runs, 6 GB of memory.
+
+    THE GATE: THE LOAD LIMIT AND THE PAUSE SWITCH (Q195 (e), decided by the maintainer 2026-11-18).
+    With every member busy the host read 82 to 100 % busy, his own work slowed and every run took
+    twice as long. So every turn of the queue looks at the gate (Testbed/host/TestbedLoad.ps1) BEFORE
+    it touches any member: while the pause switch is on (Testbed/host/Set-TestbedPause.ps1 -On), or
+    the host's processors were 70 % busy or more over the last 30 seconds, the run waits - holding no
+    lock and no lease - and says what for, and since when, once a minute. The first look takes those
+    30 seconds; later ones read the run's own readings at once. When a member's lock is had, the start
+    itself is decided once more under the gate's claim, for that moment only: the switch again, and
+    the VMs other runs took in the last 120 s counted at their size, since their load cannot show yet;
+    a run told to wait lets the lock go. A run that starts writes its own start there for the runs
+    after it. Waiting on the gate counts against -QueueTimeoutMinutes like any wait in the queue, and
+    summary.txt's time line gives it as 'gate', apart from the 'queue' for a member.
 
     THE PRIVATE LIST OF PERSONAL DATA (Q196 (c), 2026-11-18). Tools/Checks/check-personal-data.ps1
     knows the identifiers it guards only from .work\personal-data\identifiers.json - nothing about
@@ -156,7 +170,8 @@
     Default: the main checkout of -RepoPath's repository.
 
 .PARAMETER QueueTimeoutMinutes
-    How long to wait for a run already holding the VM. Default 120.
+    How long to wait for a build VM: for runs already holding them, and for the gate - the pause
+    switch and the load limit (THE GATE). Default 120.
 
 .PARAMETER RunTimeoutMinutes
     How long the guest half may take before the run is abandoned as INFRA. Default 60.
@@ -236,6 +251,8 @@ if (Test-Path Variable:\PSNativeCommandUseErrorActionPreference) {
 # -VMName pins one. $BuildVmName is the member THIS run or janitor holds, set by Use-PoolVm once it
 # is chosen, and every Hyper-V call below names it. -SelfTest holds the pool to testbed.json.
 . (Join-Path $PSScriptRoot 'TestbedPool.ps1')
+# THE GATE (Q195 (e)): the pause switch and the load limit, looked at before any member is touched.
+. (Join-Path $PSScriptRoot 'TestbedLoad.ps1')
 $BuildVmPool = @($TestbedPools['build'])
 $BuildVmName = ''
 $BuildVmComputerName = 'OAI-BUILD'
@@ -1035,6 +1052,21 @@ Expected: 1</Message></ErrorInfo></Output></UnitTestResult>
     Check 'and it refuses a name that is no build VM before it asks Hyper-V' $true ($findPoolVm.Count -eq 1 -and $findPoolVm[0].Body.Extent.Text.IndexOf('Test-IsBuildVmName') -ge 0 -and $findPoolVm[0].Body.Extent.Text.IndexOf('Test-IsBuildVmName') -lt $findPoolVm[0].Body.Extent.Text.IndexOf('Get-VM '))
 
     Write-Host ''
+    Write-Host '== the gate (Q195 (e), TestbedLoad.ps1): looked at before any member is touched, the start decided under its claim =='
+    $enterPoolVm = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Enter-PoolVm' }, $true))
+    $body = ''
+    if ($enterPoolVm.Count -eq 1) { $body = $enterPoolVm[0].Body.Extent.Text }
+    $at = @{}
+    foreach ($mark in @('$look = Test-TestbedGate', 'if (-not $look.Go) { $gated = $true', '[System.IO.File]::Open($script:lockPath', '$start = Enter-TestbedStart -Look $look -Run $runId', 'if (-not $start.Go) { $held.Dispose()', '$claim = Enter-TestbedLeaseClaim -VMName $name', "'Set-TestbedLease.ps1') -VMName `$name", 'Register-TestbedStart -Start $start', 'finally { Exit-TestbedStart $start }', 'finally { if ($null -ne $since) { Remove-TestbedWaiting } }')) { $at[$mark] = $body.IndexOf($mark) }
+    Check 'every turn looks at the switch and the load before it opens any member''s lock' $true ($at['$look = Test-TestbedGate'] -ge 0 -and $at['$look = Test-TestbedGate'] -lt $at['[System.IO.File]::Open($script:lockPath'])
+    Check 'and a turn the gate holds back opens none' $true ($at['if (-not $look.Go) { $gated = $true'] -gt $at['$look = Test-TestbedGate'] -and $at['if (-not $look.Go) { $gated = $true'] -lt $at['[System.IO.File]::Open($script:lockPath'])
+    Check 'the start is decided after the lock is had and before the lease is taken' $true ($at['$start = Enter-TestbedStart -Look $look -Run $runId'] -gt $at['[System.IO.File]::Open($script:lockPath'] -and $at['$start = Enter-TestbedStart -Look $look -Run $runId'] -lt $at['$claim = Enter-TestbedLeaseClaim -VMName $name'])
+    Check 'a run told to wait lets the lock go' $true ($at['if (-not $start.Go) { $held.Dispose()'] -gt $at['$start = Enter-TestbedStart -Look $look -Run $runId'])
+    Check 'its start is written once the lease is its, and the claim let go on every path' $true ($at['Register-TestbedStart -Start $start'] -gt $at["'Set-TestbedLease.ps1') -VMName `$name"] -and $at['finally { Exit-TestbedStart $start }'] -gt $at['Register-TestbedStart -Start $start'])
+    Check 'and a run that waited is no longer listed as waiting once it stops' $true ($at['finally { if ($null -ne $since) { Remove-TestbedWaiting } }'] -gt 0)
+    Check 'the gate''s time is apart from the queue''s in summary.txt''s time line' $true ([System.IO.File]::ReadAllText($PSCommandPath).Contains("foreach (`$k in @('gate', 'queue', "))
+
+    Write-Host ''
     Write-Host '== this file, the guest script and testbed.json agree =='
     $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
     $testbedPath = Join-Path $repoRoot 'Testbed\testbed.json'
@@ -1127,62 +1159,94 @@ function Get-LockHolder([string] $OwnerFile) {
 # lock, and - any member but the first - while the host lacks its startup memory and the reserve
 # TestbedPool.ps1 keeps for the maintainer. Once the lock is ours the lease is read again and taken
 # in one step (Enter-TestbedLeaseClaim), so a lease taken by hand in between still holds the VM back.
-# What holds each member back is said once a minute. Returns the lock; $null when the time ran out,
-# with the reasons in $script:queueWhy; throws when no candidate is on this host at all.
+# What holds each member back is said once a minute, with since when. Returns the lock; $null when the
+# time ran out, with the reasons in $script:queueWhy; throws when no candidate is on this host at all.
+# THE GATE COMES FIRST (Q195 (e), TestbedLoad.ps1 - THE GATE in the banner). Every turn looks at the
+# pause switch and the host's load before it touches any member, and a turn the gate holds back touches
+# none. With a member's lock had, Enter-TestbedStart decides the start under the gate's claim - the
+# switch read again, and the VMs other runs took lately - and a run told to wait lets the lock go. The
+# look the run went on is in $script:gateLook, the start in $script:gateStart, and the seconds the gate
+# cost - its first look and every turn it held the run back - in $script:gateSeconds.
 function Enter-PoolVm([string[]] $Candidates, [int] $TimeoutMinutes) {
     $deadline = (Get-Date).AddMinutes($TimeoutMinutes)
     $lastSaid = [DateTime]::MinValue
     $queued = $false
-    while ($true) {
-        $why = New-Object System.Collections.Generic.List[string]
-        $present = 0
-        for ($i = 0; $i -lt $Candidates.Count; $i++) {
-            $name = $Candidates[$i]
-            $found = @(Find-PoolVm $name)
-            if ($found.Count -ne 1) { $why.Add("$name is not on this host"); continue }
-            $present++
-            $lease = Get-TestbedLease -VMName $name
-            if ($null -ne $lease -and -not ([string]$lease.reason).StartsWith($LeaseReasonPrefix)) { $why.Add("$name is leased by hand until $($lease.expiresUtc) - '$($lease.reason)'"); continue }
-            if ($i -gt 0) {
-                $available = Get-HostAvailableBytes
-                if (-not (Test-HostHasRoom -NeedBytes ([long]$found[0].MemoryStartup) -AvailableBytes $available)) {
-                    $why.Add(("{0} waits for memory: the host has {1:N1} GB available, under its {2:N0} GB and the {3:N0} GB kept free" -f $name, ($available / 1GB), ($found[0].MemoryStartup / 1GB), ($TestbedHostReserveBytes / 1GB)))
-                    continue
+    $since = $null
+    try {
+        while ($true) {
+            $why = New-Object System.Collections.Generic.List[string]
+            $present = 0
+            $gated = $false
+            $t0 = Get-Date
+            if ($null -eq $script:gateLook) { Say "gate: the pause switch, then the host's load over the last $TestbedLoadWindowSeconds s (Testbed/host/TestbedLoad.ps1)" }
+            $look = Test-TestbedGate
+            $script:gateLook = $look
+            $script:gateSeconds += ((Get-Date) - $t0).TotalSeconds
+            if ($look.Note -and -not $script:gateNoted) { Say "gate: $($look.Note)"; $script:gateNoted = $true }
+            if (-not $look.Go) { $gated = $true; $why.Add($look.Why) }
+            else {
+                for ($i = 0; $i -lt $Candidates.Count; $i++) {
+                    $name = $Candidates[$i]
+                    $found = @(Find-PoolVm $name)
+                    if ($found.Count -ne 1) { $why.Add("$name is not on this host"); continue }
+                    $present++
+                    $lease = Get-TestbedLease -VMName $name
+                    if ($null -ne $lease -and -not ([string]$lease.reason).StartsWith($LeaseReasonPrefix)) { $why.Add("$name is leased by hand until $($lease.expiresUtc) - '$($lease.reason)'"); continue }
+                    if ($i -gt 0) {
+                        $available = Get-HostAvailableBytes
+                        if (-not (Test-HostHasRoom -NeedBytes ([long]$found[0].MemoryStartup) -AvailableBytes $available)) {
+                            $why.Add(("{0} waits for memory: the host has {1:N1} GB available, under its {2:N0} GB and the {3:N0} GB kept free" -f $name, ($available / 1GB), ($found[0].MemoryStartup / 1GB), ($TestbedHostReserveBytes / 1GB)))
+                            continue
+                        }
+                    }
+                    Use-PoolVm $name
+                    $held = $null
+                    try { $held = [System.IO.File]::Open($script:lockPath, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None) }
+                    catch [System.IO.IOException] { $why.Add("$name is busy with $(Get-LockHolder $script:ownerPath)"); continue }
+                    # The start itself, under the gate's claim, this member's lock held for that moment only.
+                    $start = Enter-TestbedStart -Look $look -Run $runId
+                    if (-not $start.Go) { $held.Dispose(); $gated = $true; $why.Clear(); $why.Add($start.Why); break }
+                    $byHand = $null
+                    try {
+                        $claim = Enter-TestbedLeaseClaim -VMName $name
+                        try {
+                            $lease = Get-TestbedLease -VMName $name
+                            if ($null -ne $lease -and -not ([string]$lease.reason).StartsWith($LeaseReasonPrefix)) { $byHand = $lease }
+                            else {
+                                $leaseOutput = & (Join-Path $PSScriptRoot 'Set-TestbedLease.ps1') -VMName $name -Minutes ([Math]::Min(480, $RunTimeoutMinutes + 20)) -Reason "$LeaseReasonPrefix $runId"
+                                $script:leaseTaken = $true
+                                Write-Verbose ([string]$leaseOutput)
+                                Register-TestbedStart -Start $start -Run $runId -VmName $name -VmProcessors ([int]$found[0].ProcessorCount)
+                                $script:gateStart = $start
+                            }
+                        }
+                        finally { $claim.Dispose() }
+                    }
+                    finally { Exit-TestbedStart $start }
+                    if ($null -ne $byHand) {
+                        $held.Dispose()
+                        $why.Add("$name is leased by hand until $($byHand.expiresUtc) - '$($byHand.reason)'")
+                        continue
+                    }
+                    return $held
                 }
             }
-            Use-PoolVm $name
-            $held = $null
-            try { $held = [System.IO.File]::Open($script:lockPath, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None) }
-            catch [System.IO.IOException] { $why.Add("$name is busy with $(Get-LockHolder $script:ownerPath)"); continue }
-            $claim = Enter-TestbedLeaseClaim -VMName $name
-            $byHand = $null
-            try {
-                $lease = Get-TestbedLease -VMName $name
-                if ($null -ne $lease -and -not ([string]$lease.reason).StartsWith($LeaseReasonPrefix)) { $byHand = $lease }
-                else {
-                    $leaseOutput = & (Join-Path $PSScriptRoot 'Set-TestbedLease.ps1') -VMName $name -Minutes ([Math]::Min(480, $RunTimeoutMinutes + 20)) -Reason "$LeaseReasonPrefix $runId"
-                    $script:leaseTaken = $true
-                    Write-Verbose ([string]$leaseOutput)
-                }
+            if (-not $gated -and $present -eq 0) { throw "no build VM of the pool is on this host ($($Candidates -join ', ')); Testbed/README.md section 1c builds OutlookAI-Build." }
+            $script:queueWhy = $why -join '; '
+            if ($null -eq $since) { $since = Get-Date }
+            if ((Get-Date) -ge $deadline) { return $null }
+            if (((Get-Date) - $lastSaid).TotalSeconds -ge 60) {
+                if (-not $queued) { Say "queued: $($script:queueWhy)" } else { Say (Format-TestbedWaitLine -Since $since -Why $script:queueWhy -First $false) }
+                Set-TestbedWaiting -What "Invoke-TestsOnBuildVm run $runId, $Ref in $repo" -Why $script:queueWhy -Since $since
+                $queued = $true
+                $lastSaid = Get-Date
             }
-            finally { $claim.Dispose() }
-            if ($null -ne $byHand) {
-                $held.Dispose()
-                $why.Add("$name is leased by hand until $($byHand.expiresUtc) - '$($byHand.reason)'")
-                continue
-            }
-            return $held
+            $t0 = Get-Date
+            Start-Sleep -Seconds 5
+            if ($gated) { $script:gateSeconds += ((Get-Date) - $t0).TotalSeconds }
         }
-        if ($present -eq 0) { throw "no build VM of the pool is on this host ($($Candidates -join ', ')); Testbed/README.md section 1c builds OutlookAI-Build." }
-        $script:queueWhy = $why -join '; '
-        if ((Get-Date) -ge $deadline) { return $null }
-        if (((Get-Date) - $lastSaid).TotalSeconds -ge 60) {
-            if (-not $queued) { Say "queued: $($script:queueWhy)" } else { Say "  still waiting: $($script:queueWhy)" }
-            $queued = $true
-            $lastSaid = Get-Date
-        }
-        Start-Sleep -Seconds 5
     }
+    finally { if ($null -ne $since) { Remove-TestbedWaiting } }
 }
 
 function Enter-RunnerLock([int] $TimeoutMinutes) {
@@ -1423,22 +1487,33 @@ $request = [ordered]@{
 $requestPath = Join-Path $runDir 'request.json'
 ($request | ConvertTo-Json -Depth 5) | Set-Content -LiteralPath $requestPath -Encoding UTF8
 
-# ---- a build VM of the pool: its lock, then its lease (Enter-PoolVm) ---------------------------
+# ---- a build VM of the pool: the gate, its lock, then its lease (Enter-PoolVm) -----------------
 $t0 = Get-Date
 $leaseTaken = $false
 $lock = $null
+$script:gateLook = $null
+$script:gateStart = $null
+$script:gateSeconds = 0.0
+$script:gateNoted = $false
 try { $lock = Enter-PoolVm -Candidates $candidates -TimeoutMinutes $QueueTimeoutMinutes }
 catch {
     Say "INFRA: $($_.Exception.Message) This run did not start; nothing was touched."
     exit $ExitCodes['INFRA']
 }
 Measure-Phase 'queue' $t0
+# The gate's seconds - its first look, and every turn it held the run back - apart from the queue's.
+$timings['gate'] = [math]::Round($script:gateSeconds, 1)
+$timings['queue'] = [math]::Round([Math]::Max(0.0, $timings['queue'] - $script:gateSeconds), 1)
 if ($null -eq $lock) {
-    Say "INFRA: no build VM came free in $QueueTimeoutMinutes minute(s) - $($script:queueWhy). This run did not start; nothing on a VM was touched."
+    Say "INFRA: no build VM could be taken in $QueueTimeoutMinutes minute(s) - $($script:queueWhy). This run did not start; nothing on a VM was touched."
     exit $ExitCodes['INFRA']
 }
 [ordered]@{ runId = $runId; pid = $PID; ref = $Ref; sha = $sha; repo = $repo; vm = $BuildVmName; startedLocal = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss') } |
     ConvertTo-Json | Set-Content -LiteralPath $ownerPath -Encoding UTF8
+$gateText = Format-TestbedGateOpen -Look $script:gateLook
+if ($null -ne $script:gateStart) { $gateText = Format-TestbedGateOpen -Look $script:gateLook -PendingPercent $script:gateStart.PendingPercent -PendingCount $script:gateStart.PendingCount }
+if ($timings['gate'] -ge $TestbedLoadWindowSeconds + 5) { $gateText += " - after $(Format-Seconds $timings['gate']) at the gate" }
+Say "gate: $gateText"
 $queueText = ''
 if ($timings['queue'] -ge 5) { $queueText = " after $(Format-Seconds $timings['queue']) in the queue" }
 Say "VM: $BuildVmName is ours$queueText"
@@ -1824,7 +1899,7 @@ if ($null -ne $guestRecord -and $null -ne $guestRecord.machine) {
     $lines.Add(("machine    {0} ({1}), {2} / {3}, {4}, {5} CPU, {6} GB, session {7}, Outlook.Application registered: {8}" -f $m.computerName, $m.os, $m.culture, $m.uiCulture, $m.timeZone, $m.logicalProcessors, $m.memoryGB, $m.sessionId, $m.outlookInstalled))
 }
 $timeParts = @()
-foreach ($k in @('queue', 'archive', 'resume', 'connect', 'stage', 'packages', 'guest', 'fetch', 'revert')) {
+foreach ($k in @('gate', 'queue', 'archive', 'resume', 'connect', 'stage', 'packages', 'guest', 'fetch', 'revert')) {
     if ($timings.Contains($k)) { $timeParts += "$k $(Format-Seconds $timings[$k])" }
 }
 $lines.Add("time       $(Format-Seconds $timings['total']) in all: $($timeParts -join ', ')")

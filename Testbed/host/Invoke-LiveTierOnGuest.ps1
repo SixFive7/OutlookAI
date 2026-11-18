@@ -9,6 +9,10 @@
     The guest counterpart of Invoke-TestsOnBuildVm.ps1, written 2026-10-03 after the first guest
     runs were driven by hand from scratch scripts, hundreds of calls a run. One run is:
 
+      0. GATE    - waits, holding nothing, while the testbed's pause switch is on or the host's
+                   processors were 70 % busy or more over the last 30 seconds (Q195 (e),
+                   Testbed/host/TestbedLoad.ps1): the build below is the run's first load on this
+                   host. It says what it waits for, and since when, once a minute.
       1. BUILD   - the commit, never the working tree: a detached `git worktree` of it, from which
                    Publish-GuestPayload.ps1 builds the server and the tools and
                    Publish-LiveTierPayload.ps1 takes the suite's source (`git archive`) and the
@@ -18,7 +22,9 @@
       2. LEASE   - waits until nobody else holds a live lease on the guest (Set-TestbedLease.ps1),
                    NEVER taking one over, then takes it, and renews it before every long step. The
                    guests are shared between agents, and the idle-saver saves any running guest that
-                   holds no live lease.
+                   holds no live lease. Every turn of that wait looks at the gate again before it
+                   tries a guest, and the lease is taken only under the gate's claim, the VMs other
+                   runs took in the last two minutes counted at their size (TestbedLoad.ps1).
       3. STAGE   - restores the start checkpoint, copies the payloads, the settings and the commit's
                    Testbed/guest scripts in, swaps the server, tools, source and feed, and proves the
                    suite TEST-READY (Install-DotnetSdk.ps1 -Execute, then -Verify).
@@ -140,6 +146,10 @@
     program (never Outlook) and waits for its full dump. Recorded in the summary; a failed proof does
     not stop the run. Once per guest is enough - runbook section 4.6.
 
+.PARAMETER LeaseWaitMinutes
+    How long the run waits at the gate before its build, and again how long it waits for a guest -
+    for leases others hold and for the gate - before it gives up as INFRA, not tested. Default 240.
+
 .PARAMETER SelfTest
     Checks the pure parts - the guest table, the filter, the lease decision, the TRX and console
     readers, the verdict table, summary.json's shape - and the constants against the files they
@@ -195,6 +205,8 @@ $Guests = [ordered]@{
 # of the same name, with the source's computer name, stores and settings, so its facts are its
 # source's: the same opt-in, the same filter, the same rendered settings, the same frozen record.
 . (Join-Path $PSScriptRoot 'TestbedPool.ps1')
+# THE GATE (Q195 (e)): the pause switch and the load limit, before the build and before a guest is taken.
+. (Join-Path $PSScriptRoot 'TestbedLoad.ps1')
 # Hyper-V's Time Synchronization integration service, by component id (Set-GuestClockFrozen.ps1).
 $TimeSyncComponentId = '2497F4DE-E9FA-4204-80E4-4B75C46419C0'
 # The profile the suite runs on, which a frozen start opens NOT elevated before the suite, as step 9a
@@ -707,6 +719,20 @@ function Invoke-SelfTest {
     Check 'a live lease of another run is theirs' 'theirs' (Get-LeaseDecision ([pscustomobject]@{ expiresUnix = $now + 60; reason = 'Invoke-LiveTierOnGuest r2' }) 'r1' $now)
     Check 'a live lease of another agent is theirs' 'theirs' (Get-LeaseDecision ([pscustomobject]@{ expiresUnix = $now + 60; reason = 'agent accec8f1: folder-path tests' }) 'r1' $now)
 
+    Write-Host '== the gate (Q195 (e), TestbedLoad.ps1): before the build, and on every turn of the lease wait =='
+    # Looked for in the run's code only - after this function, whose own lines name the same text.
+    $selfTestAst = @([System.Management.Automation.Language.Parser]::ParseFile($PSCommandPath, [ref] $null, [ref] $null).FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Invoke-SelfTest' }, $false))
+    $runCode = ''
+    if ($selfTestAst.Count -eq 1) { $runCode = $runner.Substring($selfTestAst[0].Extent.EndOffset) }
+    Check 'the run''s code is found after this self-test' $true ($runCode.Length -gt 1000)
+    $at = @{}
+    foreach ($mark in @('$gate = Wait-TestbedGate -Run $runId', "& (Join-Path `$PSScriptRoot 'Publish-GuestPayload.ps1')", '$look = Test-TestbedGate', 'if ($gated) { $why += $look.Why }', '$start = Enter-TestbedStart -Look $look -Run $runId', 'if (-not $start.Go) { $gated = $true', '$holder = Request-GuestLease $guest.Name 60', 'Register-TestbedStart -Start $start', 'finally { Exit-TestbedStart $start }', 'finally { if ($null -ne $waitingSince) { Remove-TestbedWaiting } }', '# ---- STAGE.')) { $at[$mark] = $runCode.IndexOf($mark) }
+    Check 'the gate is passed before the build - the run''s first load on this host' $true ($at['$gate = Wait-TestbedGate -Run $runId'] -gt 0 -and $at['$gate = Wait-TestbedGate -Run $runId'] -lt $at["& (Join-Path `$PSScriptRoot 'Publish-GuestPayload.ps1')"])
+    Check 'every turn of the lease wait looks at it again before it tries a guest' $true ($at['$look = Test-TestbedGate'] -gt $at["& (Join-Path `$PSScriptRoot 'Publish-GuestPayload.ps1')"] -and $at['if ($gated) { $why += $look.Why }'] -gt $at['$look = Test-TestbedGate'] -and $at['if ($gated) { $why += $look.Why }'] -lt $at['$holder = Request-GuestLease $guest.Name 60'])
+    Check 'the lease is taken only once the start is decided under the gate''s claim' $true ($at['$start = Enter-TestbedStart -Look $look -Run $runId'] -gt $at['$look = Test-TestbedGate'] -and $at['$start = Enter-TestbedStart -Look $look -Run $runId'] -lt $at['$holder = Request-GuestLease $guest.Name 60'] -and $at['if (-not $start.Go) { $gated = $true'] -lt $at['$holder = Request-GuestLease $guest.Name 60'])
+    Check 'its start is written once the lease is its, and the claim let go on every path' $true ($at['Register-TestbedStart -Start $start'] -gt $at['$holder = Request-GuestLease $guest.Name 60'] -and $at['finally { Exit-TestbedStart $start }'] -gt $at['Register-TestbedStart -Start $start'])
+    Check 'and the guest is touched only after all of it' $true ($at['finally { if ($null -ne $waitingSince) { Remove-TestbedWaiting } }'] -gt $at['finally { Exit-TestbedStart $start }'] -and $at['# ---- STAGE.'] -gt $at['finally { if ($null -ne $waitingSince) { Remove-TestbedWaiting } }'])
+
     Write-Host '== the run id =='
     Check 'when, guest, commit' '20261003-174500-indexed-d4e31fe12345' (New-RunId ([datetime]'2026-10-03T17:45:00') 'd4e31fe1234567890' 'OutlookAI-Indexed')
     Check 'the unindexed guest' '20261003-174500-unindexed-d4e31fe12345' (New-RunId ([datetime]'2026-10-03T17:45:00') 'd4e31fe1234567890' 'OutlookAI-Unindexed')
@@ -1112,6 +1138,15 @@ function Get-TaskExit([string] $Text) {
 }
 
 try {
+    # ---- GATE (Q195 (e), TestbedLoad.ps1): the pause switch and the host's load, before the build puts
+    # this run's first load on the host. Waits holding nothing; a run the gate never lets through is INFRA.
+    $t0 = Get-Date
+    Say "gate: the pause switch, then the host's load over the last $TestbedLoadWindowSeconds s (Testbed/host/TestbedLoad.ps1)"
+    $gate = Wait-TestbedGate -Run $runId -What "Invoke-LiveTierOnGuest run $runId, before its build" -TimeoutMinutes $LeaseWaitMinutes -Say { param($line) Say $line }
+    if (-not $gate.Go) { $stage = 'INFRA'; $stageWhy = "the gate did not open in $LeaseWaitMinutes minutes - $($gate.Why)"; throw $stageWhy }
+    $timings['gate'] = Format-Seconds ((Get-Date) - $t0).TotalSeconds
+    Say "gate: $(Format-TestbedGateOpen -Look $gate.Look -PendingPercent $gate.Pending.Percent -PendingCount $gate.Pending.Count) ($($timings['gate']))"
+
     # ---- BUILD: the commit's tree, its payloads and the guest's settings. The guest is untouched.
     $t0 = Get-Date
     try {
@@ -1136,36 +1171,71 @@ try {
 
     # ---- LEASE: wait, never take over. With -Kind, whichever guest of the kind is free: the source
     # first, a clone only while the host has its startup memory and the reserve (TestbedPool.ps1).
+    # Every turn looks at the gate again first, and a lease is taken only under the gate's claim, the
+    # VMs other runs took lately counted; a run told to wait lets the claim go (TestbedLoad.ps1).
     $t0 = Get-Date
     $deadline = (Get-Date).AddMinutes($LeaseWaitMinutes)
     $candidates = @($facts.Name)
     if ($Kind) { $candidates = @(Get-KindMembers $Kind) }
     $lastSaid = ''
+    $lastSaidAt = [DateTime]::MinValue
+    $waitingSince = $null
     $takenGuest = $null
-    while ($null -eq $takenGuest) {
-        $why = @()
-        for ($i = 0; $i -lt $candidates.Count; $i++) {
-            $guest = Get-GuestFacts $candidates[$i]
-            if ($Kind) {
-                $refusal = Get-GuestRunRefusal $guest
-                if ($refusal) { $why += $refusal; continue }
-                if ($i -gt 0) {
-                    $need = [long](Get-VM -Name $guest.Name).MemoryStartup
-                    $available = Get-HostAvailableBytes
-                    if (-not (Test-HostHasRoom -NeedBytes $need -AvailableBytes $available)) { $why += ("{0} waits for memory: the host has {1:N1} GB available, under its {2:N0} GB and the {3:N0} GB kept free" -f $guest.Name, ($available / 1GB), ($need / 1GB), ($TestbedHostReserveBytes / 1GB)); continue }
+    $look = $null
+    $leaseStart = $null
+    try {
+        while ($null -eq $takenGuest) {
+            $why = @()
+            $look = Test-TestbedGate
+            $gated = -not $look.Go
+            if ($gated) { $why += $look.Why }
+            else {
+                for ($i = 0; $i -lt $candidates.Count; $i++) {
+                    $guest = Get-GuestFacts $candidates[$i]
+                    if ($Kind) {
+                        $refusal = Get-GuestRunRefusal $guest
+                        if ($refusal) { $why += $refusal; continue }
+                        if ($i -gt 0) {
+                            $need = [long](Get-VM -Name $guest.Name).MemoryStartup
+                            $available = Get-HostAvailableBytes
+                            if (-not (Test-HostHasRoom -NeedBytes $need -AvailableBytes $available)) { $why += ("{0} waits for memory: the host has {1:N1} GB available, under its {2:N0} GB and the {3:N0} GB kept free" -f $guest.Name, ($available / 1GB), ($need / 1GB), ($TestbedHostReserveBytes / 1GB)); continue }
+                        }
+                    }
+                    $start = Enter-TestbedStart -Look $look -Run $runId
+                    if (-not $start.Go) { $gated = $true; $why = @($start.Why); break }
+                    try {
+                        $holder = Request-GuestLease $guest.Name 60
+                        if ($null -eq $holder) {
+                            $cpu = 0
+                            try { $cpu = [int](Get-VM -Name $guest.Name -ErrorAction Stop).ProcessorCount } catch { }
+                            Register-TestbedStart -Start $start -Run $runId -VmName $guest.Name -VmProcessors $cpu
+                            $leaseStart = $start
+                            $takenGuest = $guest
+                        }
+                    }
+                    finally { Exit-TestbedStart $start }
+                    if ($null -ne $takenGuest) { break }
+                    $why += "$($guest.Name) is leased until $($holder.expiresUtc) - $($holder.reason)"
                 }
             }
-            $holder = Request-GuestLease $guest.Name 60
-            if ($null -eq $holder) { $takenGuest = $guest; break }
-            $why += "$($guest.Name) is leased until $($holder.expiresUtc) - $($holder.reason)"
-        }
-        if ($null -eq $takenGuest) {
-            $text = $why -join '; '
-            if ($text -ne $lastSaid) { Say "waiting: $text"; $lastSaid = $text }
-            if ((Get-Date) -ge $deadline) { $stage = 'INFRA'; $stageWhy = "no guest came free in $LeaseWaitMinutes minutes - $text"; throw $stageWhy }
-            Start-Sleep -Seconds 30
+            if ($null -eq $takenGuest) {
+                $text = $why -join '; '
+                if ($null -eq $waitingSince) { $waitingSince = Get-Date }
+                # Said when what it waits for changes - while the gate holds it back, at most once a
+                # minute, since its figures move on every turn.
+                if ($text -ne $lastSaid -and (-not $gated -or ((Get-Date) - $lastSaidAt).TotalSeconds -ge 60)) {
+                    Say (Format-TestbedWaitLine -Since $waitingSince -Why $text -First ($lastSaidAt -eq [DateTime]::MinValue))
+                    Set-TestbedWaiting -What "Invoke-LiveTierOnGuest run $runId, for a guest" -Why $text -Since $waitingSince
+                    $lastSaid = $text
+                    $lastSaidAt = Get-Date
+                }
+                if ((Get-Date) -ge $deadline) { $stage = 'INFRA'; $stageWhy = "no guest came free in $LeaseWaitMinutes minutes - $text"; throw $stageWhy }
+                Start-Sleep -Seconds 30
+            }
         }
     }
+    finally { if ($null -ne $waitingSince) { Remove-TestbedWaiting } }
+    Say "gate: $(Format-TestbedGateOpen -Look $look -PendingPercent $leaseStart.PendingPercent -PendingCount $leaseStart.PendingCount)"
     if ($Kind) {
         Use-Guest $takenGuest
         $checkpointActions['start'] = $Checkpoint

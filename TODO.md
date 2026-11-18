@@ -1810,20 +1810,6 @@
   every test whose product call converts in the machine's zone, `MailService.ToUtc` (122 tests)
   among them, the Q95 kind. Recommended: (1) now, and (3) for each function as it is next changed.
 
-- [ ] **Decide whether the VM pools keep CPU free for the maintainer, as they keep memory free
-  (2026-11-17).** The pools (`Testbed/host/TestbedPool.ps1`) start a member other than the first only
-  while the host has its memory and 16 GB more available, and nothing looks at CPU. From 17:20 to 17:40
-  that day three build runs and four Outlook guests ran at once: the host's 32 logical processors read
-  82 to 100 % busy for the whole minute sampled, each build run took 17 to 19 minutes instead of 9 to
-  10, and one timing-sensitive test (`T1.AuditLogStressTests`, eight writers checked for time order)
-  failed on both build clones and passed alone minutes later (`Docs/live-tier-on-the-vm.md` section
-  4.7). Directions: (1) leave it - the most runs at once, a busy PC while they overlap; (2) a CPU gate
-  beside the memory one: a member other than the first starts only while the host's CPU, sampled over
-  a few seconds, is under a threshold, else the run waits; (3) cap each testbed VM with Hyper-V
-  (`Set-VMProcessor -Maximum`), so no VM can take all of its virtual processors' share; (4) fewer or
-  smaller clones - one build clone, or clones with 2 virtual processors. Recommended: (2), at 75 %:
-  it keeps every run the pools allow today when the PC is quiet, and stops adding load when it is not.
-
 
 - [ ] **Waiting for the shared test mailbox (Q109).** The maintainer requested a free shared
   mailbox in his Microsoft 365 tenant on 2026-10-03, with full access for the Exchange VM's

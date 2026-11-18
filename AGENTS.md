@@ -341,6 +341,21 @@ I will forget and lose performance the coming months."*
   in the startup info, as the build-VM runner's janitor does) - never `powershell.exe
   -WindowStyle Hidden`, which hides a console window only after it has already taken focus.
 
+**A new run starts only while the host has room for it, and never while the testbed is paused.**
+Decided by the maintainer 2026-11-18 (Q195 (e)), after every VM running at once held the host's 32
+processors at 82 to 100 % busy and slowed his own work. Both runners and `New-TestbedClone.ps1 -Execute`
+wait - holding no VM's lock or lease, and saying what they wait for and since when - while the host's
+processors were 70 % busy or more over the last 30 seconds, the VMs other runs took in the last two
+minutes counted at their size, and while the pause switch is on. The switch is his, for when he needs
+the PC - for gaming, say. Runs already going finish; nothing new starts until it is off:
+
+    pwsh -File Testbed/host/Set-TestbedPause.ps1 -On -Reason 'gaming'
+    pwsh -File Testbed/host/Set-TestbedPause.ps1 -Off
+    pwsh -File Testbed/host/Set-TestbedPause.ps1          # is it on; the load; what waits and runs
+
+An agent turns the switch on or off only when he asks for that in the current message. It pauses no
+VM: a VM is saved, never paused, as above. `Testbed/README.md` section 5b has the rest.
+
 ## The Outlook test guests' clocks are frozen (Q130)
 
 **`OutlookAI-Indexed` and `OutlookAI-Unindexed` - and their clones - run with Hyper-V time
