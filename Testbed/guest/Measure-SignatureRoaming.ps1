@@ -230,9 +230,12 @@ function Write-Result {
 }
 Write-ReportLine ("MEASURE-SIGNATURE-ROAMING {0} on {1} at {2}" -f $Step, $env:COMPUTERNAME, (Get-Date).ToString('o'))
 
+# The running Outlook, through the attach the scripts share (Connect-RunningOutlook, ScriptHelpers.ps1): it attached
+# through the Running Object Table alone until 2026-11-18, which an Outlook that has not lost the focus is not in.
 function Get-Outlook {
-    try { return [Runtime.InteropServices.Marshal]::GetActiveObject('Outlook.Application') }
-    catch { throw 'Outlook is not running in this session - start it first (Testbed/guest/Start-OutlookUnelevated.ps1 -Profile Outlook).' }
+    $attach = Connect-RunningOutlook
+    if ($null -eq $attach.App) { throw "Outlook is not running in this session - start it first (Testbed/guest/Start-OutlookUnelevated.ps1 -Profile Outlook): $($attach.Why)" }
+    return $attach.App
 }
 
 # ---------------------------------------------------------------------------------------------

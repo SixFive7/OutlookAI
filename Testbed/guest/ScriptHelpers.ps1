@@ -345,6 +345,36 @@ function Assert-TestbedGuestIdentity {
     throw ("REFUSING TO RUN.`n`n  logged on as : '{0}'          (allowed: {1})`n  computer name: '{2}'      (must start with: '{3}')`n`n{4}" -f $env:USERNAME, ($users -join ', '), $env:COMPUTERNAME, $prefix, $Why)
 }
 
+# ---- Attaching to Outlook (Q154, S7).
+
+# Whether an OUTLOOK.EXE runs in this process's own session: what an attach to a running Outlook asks before it
+# may use the class factory, and what a probe asks before it opens anything, since the Running Object Table cannot
+# tell - an Outlook that has not yet lost the focus is not in it.
+function Test-OutlookInThisSession {
+    $session = (Get-Process -Id $PID).SessionId
+    return (@(Get-Process -Name 'OUTLOOK' -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -eq $session }).Count -gt 0)
+}
+
+# Outlook's Application object, from the Outlook already running in this process's own session - never a new one.
+# Through the Running Object Table first. Office registers there only once its window has first lost the focus
+# (MK_E_UNAVAILABLE before that: the Outlook guests, 2026-11-18), and PowerShell 7 has no GetActiveObject at all, so
+# then through the class factory - Outlook runs one instance, and its class hands back the running one - but only once
+# an OUTLOOK.EXE is seen running in this session (Test-OutlookInThisSession), so the factory starts nothing. Returns
+# App ($null when it did not attach), Via - 'RunningObjectTable' or 'ClassFactory', for a log line to say - Running,
+# whether an OUTLOOK.EXE runs in this session, and Why, what stopped it, or $null. Reset-HubPopulation.ps1,
+# OutlookDialogUia.ps1's dialog helper, Measure-FolderIdResolution.ps1 and Measure-SignatureRoaming.ps1 each attached
+# their own way until 2026-11-18, and the probe could not attach where the first two could.
+function Connect-RunningOutlook {
+    if (-not (Test-OutlookInThisSession)) {
+        return [pscustomobject]@{ App = $null; Via = $null; Running = $false; Why = "no OUTLOOK.EXE runs in this session ($((Get-Process -Id $PID).SessionId)), and none is started" }
+    }
+    $rot = ''
+    try { return [pscustomobject]@{ App = [Runtime.InteropServices.Marshal]::GetActiveObject('Outlook.Application'); Via = 'RunningObjectTable'; Running = $true; Why = $null } }
+    catch { $rot = $_.Exception.Message }
+    try { return [pscustomobject]@{ App = (New-Object -ComObject Outlook.Application); Via = 'ClassFactory'; Running = $true; Why = $null } }
+    catch { return [pscustomobject]@{ App = $null; Via = $null; Running = $true; Why = "neither the Running Object Table ($rot) nor the class factory ($($_.Exception.Message)) gave the running Outlook" } }
+}
+
 # ---- The measurements' helpers (Q154, S7).
 
 # The first -Digits hex digits - 12 unless a caller says otherwise - of the SHA-256 of a value's UTF-8, or

@@ -187,6 +187,19 @@ function Invoke-SelfTest {
     Check 'the hash ignores case' ((Get-ShortHash 'abc' -IgnoreCase) -eq (Get-ShortHash 'ABC' -IgnoreCase))
     Check 'different values hash apart' ((Get-ShortHash 'abc' -IgnoreCase) -ne (Get-ShortHash 'abd' -IgnoreCase))
     Check 'it is the first 12 hex digits of the SHA-256 of the upper-case spelling, as this script''s own copy made it' ((Get-ShortHash 'abc' -IgnoreCase) -eq 'b5d4045c3f46')
+    # The attach the scripts share (Connect-RunningOutlook, ScriptHelpers.ps1). Its refusal is taken only where no
+    # Outlook runs in this session, as on the build VM: anywhere else it would attach.
+    if (-not (Test-OutlookInThisSession)) {
+        $attach = Connect-RunningOutlook
+        Check 'with no OUTLOOK.EXE in this session the attach refuses, attaches nothing and says why' ($null -eq $attach.App -and -not $attach.Running -and $null -eq $attach.Via -and ([string]$attach.Why).StartsWith('no OUTLOOK.EXE runs in this session'))
+        Check 'and starts no Outlook' (-not (Test-OutlookInThisSession))
+    }
+    else {
+        Write-Host '  NOTE  an OUTLOOK.EXE runs in this session, so the no-Outlook refusal is not taken here'
+    }
+    $attachText = [string]${function:Connect-RunningOutlook}
+    $factoryAt = $attachText.IndexOf('New-Object -ComObject Outlook.Application')
+    Check 'it asks this session''s processes, then the Running Object Table, before the class factory' ($factoryAt -gt 0 -and $attachText.IndexOf('Test-OutlookInThisSession') -ge 0 -and $attachText.IndexOf('Test-OutlookInThisSession') -lt $factoryAt -and $attachText.IndexOf('GetActiveObject') -lt $factoryAt)
     Check 'no value has no hash' ($null -eq (Get-ShortHash '' -IgnoreCase))
     $shared = Get-SharedWith @('X', 'y', 'x', $null, 'Z')
     Check 'equal values name each other' (($shared[0] -eq '3') -and ($shared[2] -eq '1'))
@@ -217,6 +230,7 @@ function Invoke-SelfTest {
     $members = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.InvokeMemberExpressionAst] }, $true) | Where-Object { -not ($_.Member.Extent.Text -eq 'Close' -and @('$rs', '$conn') -contains $_.Expression.Extent.Text) } | ForEach-Object { $_.Member.Extent.Text.Trim("'", '"') })
     $bad = @($members | Where-Object { $_ -match '^(Delete|Save|Move|Send|SetProperty|SetProperties|DeleteProperties|Remove|Copy|Close|Quit|Display|SaveAs|ExecuteMso|MoveTo|CopyTo)$' })
     Check ('no late-bound member that changes anything: ' + ($bad -join ', ')) ($bad.Count -eq 0)
+    Check 'it attaches only through the shared Connect-RunningOutlook: no GetActiveObject and no COM object of its own' (@($members | Where-Object { $_ -eq 'GetActiveObject' }).Count -eq 0 -and @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandParameterAst] -and $n.ParameterName -eq 'ComObject' }, $true)).Count -eq 0 -and @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Connect-RunningOutlook' }, $true)).Count -ge 1)
     $commands = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true) | ForEach-Object { $_.GetCommandName() } | Where-Object { $_ -match '^(Set-(?!Content$)|New-Item|Remove-|Rename-|Move-|Add-Content|Out-File)' })
     # Its own result file is the one thing written: Set-Content once, and New-Item for its directory.
     $writers = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true) | ForEach-Object { $_.GetCommandName() } | Where-Object { $_ -in @('Set-Content', 'New-Item') })
@@ -256,18 +270,21 @@ function Release($Object) {
 }
 function Ms([double] $Value) { return $Value.ToString('0.0', [Globalization.CultureInfo]::InvariantCulture) }
 
-if (-not (Get-Process -Name 'OUTLOOK' -ErrorAction SilentlyContinue)) {
-    Out-Line 'OUTLOOK-NOT-RUNNING: this probe attaches to a running Outlook and never starts one. Nothing measured.'
+# The Outlook running in this session, through the attach the scripts share (Connect-RunningOutlook, ScriptHelpers.ps1):
+# the Running Object Table first, the class factory once an OUTLOOK.EXE is seen in this session - never a new Outlook.
+# Through the table alone it could not attach to an Outlook that had not yet lost the focus (OutlookAI-Indexed3,
+# 2026-11-18: ATTACH-FAILED 0x800401E3).
+$attach = Connect-RunningOutlook
+if (-not $attach.Running) {
+    Out-Line 'OUTLOOK-NOT-RUNNING: this probe attaches to the Outlook running in its own session and never starts one. Nothing measured.'
     exit 3
 }
-
-try {
-    $outlook = [Runtime.InteropServices.Marshal]::GetActiveObject('Outlook.Application')
-}
-catch {
-    Out-Line ('ATTACH-FAILED ' + (Get-HResult $_) + ': Outlook runs, but not at this integrity level or not in this session. Nothing measured.')
+if ($null -eq $attach.App) {
+    Out-Line ('ATTACH-FAILED: ' + $attach.Why + '. Nothing measured.')
     exit 3
 }
+$outlook = $attach.App
+Out-Line ('attached through the ' + $(if ($attach.Via -eq 'RunningObjectTable') { 'Running Object Table' } else { 'class factory' }))
 
 $ns = $outlook.GetNamespace('MAPI')
 $explorers = -1
