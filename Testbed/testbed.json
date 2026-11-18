@@ -212,16 +212,17 @@
         { "vmName": "OutlookAI-Build3", "fromCheckpoint": "CP-03-SDK-TEST-READY-UTC", "checkpoint": "CP-04-SDK11-TEST-READY-UTC", "madeOnTheClone": [ { "checkpoint": "CP-04-SDK11-TEST-READY-UTC", "from": "CP-03-SDK-TEST-READY-UTC", "how": "Testbed/README.md section 1c row B11, the source's own steps, on the clone's copy of CP-03 - the first member made (Docs/live-tier-on-the-vm.md section 4.12)", "madeUtc": "2026-11-18T03:56:59Z", "provenBy": "the source's B11 steps on this clone's copy of CP-03, verified there (Install-DotnetSdk.ps1 -Verify TEST-READY after a restart, and a proving restore); the pool's first full run on it: Docs/live-tier-on-the-vm.md section 4.12" } ], "madeUtc": "2026-11-17T16:19:06Z", "provenBy": "20261117-180203-4f6159ed35e3, named with -VMName: PASS, 3,829 of 3,829 and 33 of 33 self-tests on this branch merged with master; first, on 00acbed, 3,826 of 3,829 as OutlookAI-Build2's" }
       ]
     },
+    "_formerClones": "Until the move to .NET 11 (Q172, 2026-11-18) the guests' clones were OutlookAI-Indexed2 - from CP-22C-FROZEN-CLOCK, made 2026-11-17T16:05:50Z, proven by 20261117-170838-indexed-aea2679737c0: PASS, 127 of 127, 0 artifacts, 0 census failures, 0 crashes, frozen guard FROZEN against OutlookAI-Indexed's record - and OutlookAI-Unindexed2 - from CP-16B-FROZEN-CLOCK, made 2026-11-17T16:40:04Z, proven by 20261117-174406-unindexed-00acbed007ec, through -Kind Unindexed while the source was busy: PASS, 81 of 81, 0 artifacts, 0 census failures, 0 crashes, frozen guard FROZEN against OutlookAI-Unindexed's record. They stay on the host for the branches whose TestbedPool.ps1 still lists them, and go with the checkpoints they copy (TODO.md). OutlookAI-Indexed3 and OutlookAI-Unindexed3 were made by New-TestbedClone.ps1 from the frozen checkpoints that hold the .NET 11 SDK (Docs/live-tier-on-the-vm.md section 4.12).",
     "indexed": {
       "source": "OutlookAI-Indexed",
       "clones": [
-        { "vmName": "OutlookAI-Indexed2", "fromCheckpoint": "CP-22C-FROZEN-CLOCK", "checkpoint": "CP-22C-FROZEN-CLOCK", "madeUtc": "2026-11-17T16:05:50Z", "provenBy": "20261117-170838-indexed-aea2679737c0: PASS, 127 of 127, 0 artifacts, 0 census failures, 0 crashes, frozen guard FROZEN against OutlookAI-Indexed's record" }
+        { "vmName": "OutlookAI-Indexed3", "fromCheckpoint": "CP-24C-FROZEN-CLOCK", "checkpoint": "CP-24C-FROZEN-CLOCK", "madeUtc": "2026-11-18T07:27:28Z", "provenBy": "20261118-083041-indexed-981f7cbbdde5, named with -VMName on 981f7cb, the code on .NET 11: PASS, 152 of 152, 0 artifacts, 0 census failures, 0 crashes, the frozen-clock guard passed" }
       ]
     },
     "unindexed": {
       "source": "OutlookAI-Unindexed",
       "clones": [
-        { "vmName": "OutlookAI-Unindexed2", "fromCheckpoint": "CP-16B-FROZEN-CLOCK", "checkpoint": "CP-16B-FROZEN-CLOCK", "madeUtc": "2026-11-17T16:40:04Z", "provenBy": "20261117-174406-unindexed-00acbed007ec, through -Kind Unindexed while the source was busy: PASS, 81 of 81, 0 artifacts, 0 census failures, 0 crashes, frozen guard FROZEN against OutlookAI-Unindexed's record" }
+        { "vmName": "OutlookAI-Unindexed3", "fromCheckpoint": "CP-18B-FROZEN-CLOCK", "checkpoint": "CP-18B-FROZEN-CLOCK", "madeUtc": "2026-11-18T07:36:22Z", "provenBy": "20261118-083911-unindexed-0e5c4c2a18e0, named with -VMName on 0e5c4c2, the code on .NET 11: PASS, 105 of 105, 0 artifacts, 0 census failures, 0 crashes, the frozen-clock guard passed" }
       ]
     }
   },

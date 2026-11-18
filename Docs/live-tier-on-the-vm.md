@@ -4871,9 +4871,24 @@ longest run a frozen record allows (its instant plus 90 minutes), the indexed hu
 old instant left 6.8 - and the unindexed hub's about 109 minutes. `testbed.json`'s
 `frozenClocks._dotnet11Next` recorded both until the commit that moved the code to .NET 11 made them
 the guests' `frozenClocks` records - where `T1/FrozenGuestClockTests` proves them - and the live
-runner's resting checkpoints; the clones were made again from them then (section 4.7: a frozen guest's
-clone cannot make its own). `CP-22C-FROZEN-CLOCK` and `CP-16B-FROZEN-CLOCK` stay on the two sources for
-the branches whose runner still names them.
+runner's resting checkpoints. A frozen guest's clone cannot make its own (section 4.7), so the clones
+are new copies of them, made the same day by `New-TestbedClone.ps1` (the coordinator's choice, Q-U2
+(b)): `OutlookAI-Indexed3` from `CP-24C-FROZEN-CLOCK`, exported in 43 s and imported in 56 s once the
+source's lease was free, and `OutlookAI-Unindexed3` from `CP-18B-FROZEN-CLOCK`, 26 s and 44 s. Each
+was proven by a live run that named it, on the code moved to .NET 11: `20261118-083041-indexed-981f7cbbdde5`,
+**PASS, 152 of 152**, and `20261118-083911-unindexed-0e5c4c2a18e0`, **PASS, 105 of 105** - both with no
+artifact left, no census failure and no crash, the frozen-clock guard passing, the suite built on the
+guest by SDK 11 from the run's own offline feed. `TestbedPool.ps1` lists them; `CP-22C-FROZEN-CLOCK`
+and `CP-16B-FROZEN-CLOCK` stay on the two sources, and `OutlookAI-Indexed2` and `OutlookAI-Unindexed2`,
+copies of those, on the host, for the branches whose runner still names them (`testbed.json`,
+`vmPools._formerClones`; `TODO.md` removes all four).
+
+**The build machines' feed, once the code was on .NET 11.** The move took System.Data.OleDb,
+Microsoft.Extensions.Hosting and System.Drawing.Common to 11.0.0, which the base checkpoint's feed
+predates; the build runner stages a revision's missing packages for its run by itself (55 s in run
+`20261118-081531-088f77d5612c`), so no checkpoint changed. That run found the runner's second attempt
+blind to personal data: the first had moved the private list into the source tree, which the second
+expands afresh. The runner now stages the list again before the second attempt.
 
 **`OutlookAI-Exchange`: `CP-10-SDK11`.** Its runs carry its state forward, so the SDKs belong in a
 checkpoint a run can restore. Under a lease, and by the coordinator's direction of 05:43: the first
