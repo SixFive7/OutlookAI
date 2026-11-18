@@ -1944,15 +1944,30 @@
 
 - [ ] **The first draft after each start of an Outlook with no window still shows its compose window.**
   Q208 B (2026-11-18) promotes a compose window once per Outlook process instead of once per draft:
-  the first draft in a window-less Outlook activates its window, which on Office LTSC 2024 shows at
-  Outlook's own place, (25,25) 768 x 519, for 130-646 ms and takes the foreground (Q149 cells L1 and
-  L1c, 50 of 50); every later draft in that process, from any session, reads its editor directly and
-  shows nothing. `ComposeSurface.PromoteForWordEditor` parks the window off-screen before
-  `Activate()`, and `Activate()` puts it back where Outlook keeps it. Untried ways to keep that one
-  moment off the screen: set `Inspector.Left` and `Top` through the object model before `Activate()`
-  (Outlook may place the window where its own properties say rather than where Windows was told), or
+  the first draft in a window-less Outlook activates its window, which on Office LTSC 2024 shows where
+  Outlook places it, (25,25) to (156,156), 768 x 519, for 81-410 ms (Q149 stage 4, 15 timed
+  promotions; 130-646 ms in stage 1); every later draft in that process, from any session, reads its
+  editor directly and shows nothing (152 of 152). On the test guests the window took neither the
+  foreground (GetForegroundWindow, every 10 ms) nor a key from a person typing in another program, but
+  their foreground lock time-out never runs out (2147483647 ms): on a machine with Windows' default of
+  200 s, after 200 s without input, whether it takes the foreground is unmeasured.
+  `ComposeSurface.PromoteForWordEditor` parks the window off-screen before `Activate()`, and
+  `Activate()` puts it back where Outlook keeps it. Untried ways to keep that one moment off the
+  screen: set `Inspector.Left` and `Top` through the object model before `Activate()` (Outlook may
+  place the window where its own properties say rather than where Windows was told), or
   `Inspector.WindowState` minimized; each needs a Q149-style cell measuring the window shown and the
   editor had.
+
+- [ ] **Decide what Q211 (b)'s measurement changes: with a signature, a draft's text takes the
+  signature's spacing.** Measured 2026-11-18 (`Docs/research/q149-draft-text`, stage 4): text typed in
+  Outlook's own compose window is Word's "Normal" style, 0 pt before and after, a paragraph per line,
+  in a new mail, a reply and a forward. The product's drafts match it in style and spacing without a
+  signature. With one, the text and the blank line after it are "Normal (Web)", 5 pt before and after,
+  because the text goes in at the start of the signature's first paragraph and takes its format. The
+  product also writes the text's lines as soft line breaks in one paragraph. Options: give the
+  inserted text the document's "Normal" style once it is in; insert the text before the signature
+  rather than into it; write a paragraph per line as well; or leave it. The maintainer decides
+  (Q211).
 
 - [ ] **Let the count tripwire's census read a table date by its column spelling too.**
   `CensusTableRow.ReadUtc` still calls the one-argument `ComDateValue.FromTableValue`, which takes every

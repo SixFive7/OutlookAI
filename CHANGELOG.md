@@ -248,7 +248,11 @@ its mailbox tests on, and change nothing you install.
   Outlook's own compose window, types into it through Word, and reads the style and spacing of the
   typed paragraphs beside the product's drafts of the same text (Q211 (b)). Every cold start in these
   runs is logged for Q180 (b): the time until Outlook answered, Windows' verdict on it every 100 ms,
-  and any hang. They run like the rest of the suite, alone.
+  and any hang. They run like the rest of the suite, alone. Run on 2026-11-18, they found typed text
+  in Word's "Normal" style with no space before or after, as in the product's drafts without a
+  signature, while with a signature the product's text takes the signature's "Normal (Web)", 5 pt
+  before and after; 22 cold starts answered in 2.3 to 4.1 s and none hung
+  (`Docs/research/q149-draft-text`, stage 4).
 
 - ✅ **A probe on the Exchange test machine measures what the folder-ID fixes of November rest on.**
   `Testbed/guest/Measure-FolderIdResolution.ps1` reads, changing nothing, what three of the fixes
@@ -800,15 +804,19 @@ its mailbox tests on, and change nothing you install.
 - 🔧 **A draft puts a window on screen at most once per Outlook start, and never while Outlook is open.**
   OutlookAI writes every draft in a compose window it does not show. In an Outlook with no window of
   its own, Word lends that window its editor only after a compose window has been activated in the
-  process, and the activation put the window on screen at the top left for 130 to 650 ms and gave
-  Outlook the foreground: for every draft, 50 of 50 measured on Office LTSC 2024 (Q149). As the
-  maintainer decided (Q208 B), only the first draft after each Outlook start activates its window now,
-  and every later one reads its editor straight away, which Q149 measured to work after one
-  activation in 120 of 120 drafts. While Outlook has a window open, no draft activates anything at all
-  (40 of 40). An edit read that way is kept by adding Outlook's Message form page before the editor is
-  read and saving as the window closes, which kept all 100 measured edits and changed no message's
-  class or form. The activation is recorded per Outlook process for every OutlookAI session of the
-  user, and decided under a shared lock, so agents drafting at the same moment make one between them.
+  process, and the activation put the window on screen at the top left for 130 to 650 ms: for every
+  draft, 50 of 50 measured on Office LTSC 2024 (Q149). As the maintainer decided (Q208 B), only the
+  first draft after each Outlook start activates its window now, and every later one reads its
+  editor straight away, which Q149 measured to work after one activation in 120 of 120 drafts. While
+  Outlook has a window open, no draft activates anything at all (40 of 40). An edit read that way is
+  kept by adding Outlook's Message form page before the editor is read and saving as the window
+  closes, which kept all 100 measured edits and changed no message's class or form. The activation is
+  recorded per Outlook process for every OutlookAI session of the user, and decided under a shared
+  lock, so agents drafting at the same moment make one between them. Measured on the change itself,
+  170 drafts in 22 starts of Outlook: the first draft of each of the 18 starts with no window showed
+  its window, for 81 to 410 ms, no other draft showed one, every edit was kept, and a person typing in
+  another program throughout 30 of the drafts lost none of 1,090 keys. Windows announced Outlook's
+  windows as the foreground during most drafts, but never made one the foreground window.
 
 - 🔧 **Connecting to Outlook adds no hidden window; the first draft that needs one does (Q175 (b)).**
   A session that found Outlook with no window used to add a hidden Outlook window of its own, the
@@ -904,8 +912,9 @@ its mailbox tests on, and change nothing you install.
   a pin present is said to be unmeasured, where the old text claimed it disconnects and exits at once.
   And where it said every draft is written in a compose window nobody sees, it now says what Q149
   measured on Office LTSC 2024 and what changed with it: with no Outlook window open, the first draft
-  after each start of Outlook shows its compose window at the top left of the screen for 130 to 650 ms
-  and gives it the foreground, and no later draft shows anything.
+  after each start of Outlook shows its compose window near the top left of the screen for 80 to 650
+  ms, which on the test machines took neither the foreground nor a key from a person typing in
+  another program, and no later draft shows anything.
 
 - ♻️ **The scripts share one copy of the helpers they restated, in Testbed/guest/ScriptHelpers.ps1 (Q166).**
   Seventeen scripts each declared the same `Invoke-NativeCommand`, the wrapper every program call
