@@ -884,8 +884,8 @@ its mailbox tests on, and change nothing you install.
   branches whose runners still name it. `Install-DotnetSdk.ps1` installs SDK 11 by default, builds
   its probe for the major it is asked about and pins that SDK there, and installs without verifying
   for a frozen machine, where every second before the checkpoint moves its clock. The live runner
-  hashes the SDK 11 installer before every run, and a relative output folder no longer breaks the
-  live-tier payload's offline feed check.
+  names the SDK each machine's install step must find, still .NET 10's until the code moves, and a
+  relative output folder no longer breaks the live-tier payload's offline feed check.
 
 - ♻️ **The scripts share one copy of their program-call wrapper, in Testbed/guest/ScriptHelpers.ps1 (Q166).**
   Seventeen scripts each declared the same `Invoke-NativeCommand`, the wrapper every program call

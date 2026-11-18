@@ -209,12 +209,15 @@ $GuestSettingsPath = 'C:\OutlookAI-Q5\src\McpServer\OutlookAI.McpServer.Tests\li
 # tested, because the frozen checkpoints predate it - and fetched into dumps\ before the guest rests.
 $GuestDumpDir = 'C:\OutlookAI-Q5\crash-dumps'
 $CrashDumpScript = 'Set-OutlookCrashDumps.ps1'
-# The SDK a run's commit installs when its guest lacks it (Install-DotnetSdk.ps1 -Execute, the
-# commit's own copy): the .NET 11 SDK since 2026-11-18 (Q172). The resting checkpoints hold it
-# already, beside .NET 10's 10.0.404 (Testbed/MEDIA.md), so a run copies no installer; this one is
-# hashed on the host before every run.
-$SdkInstallerName = 'dotnet-sdk-11.0.100-win-x64.exe'
-$SdkSha512 = '9777f9c9b8ea136a3aa5284f6bd33b0f1b3133fbc96d05d5c725683ccc101bc2fb2830c4182e199ec236c61a5e703a77b05770dcf3c881552ef77c7ada0584ff'
+# The SDK a run's commit installs when its guest lacks it, and the SDK its verification looks for:
+# Install-DotnetSdk.ps1 -Execute and -Verify, the commit's own copy, told all three below, so that
+# copy's defaults do not decide (they name the .NET 11 SDK since 2026-11-18). Still .NET 10's on
+# 2026-11-18 (Q172): the frozen checkpoints this restores hold 10.0.401 alone, and CP-10-SDK11
+# holds 10.0.404 beside SDK 11, which '10.' matches too. It moves to the .NET 11 SDK with the code,
+# and the frozen checkpoints with it (Testbed/MEDIA.md). Hashed on the host before every run.
+$SdkInstallerName = 'dotnet-sdk-10.0.401-win-x64.exe'
+$SdkSha512 = 'f0d8f8e7ec24efb05172a65dd80c4a9b1ef17efcebdbf0f57c15f436eea417960a7eeb6726c473a042373d6a8b94ac1adc7d680decbf7d2c45fa5c5662d62265'
+$SdkVersionPrefix = '10.'
 $FilterBase = 'Category=Live&Requires!=DelegateStore&Requires!=CachedExchange'
 $FilterUnindexedExtra = '&Requires!=SearchIndex'
 # The Exchange VM with its test account as the hub: LiveRunFilters.ExchangeTestAccount, and of it only the
@@ -849,7 +852,8 @@ STACK      the faulting thread
     }
     $sdk = [System.IO.File]::ReadAllText((Join-Path $repo 'Testbed\guest\Install-DotnetSdk.ps1'))
     Check 'Install-DotnetSdk.ps1 builds the source this stages' $true $sdk.Contains("'$GuestRoot\src'")
-    Check 'and installs, by default, the SDK whose hash this hands it' $true $sdk.Contains("'$GuestRoot\media\$SdkInstallerName'")
+    Check 'and takes the installer and the version prefix this names it' $true ($sdk.Contains('[string]   $InstallerPath ') -and $sdk.Contains('[string]   $ExpectedSdkVersionPrefix '))
+    Check 'both calls name them' 2 ([regex]::Matches($own, [regex]::Escape("& .\Install-DotnetSdk.ps1 `$sdkNamed -")).Count)
     $testbed = [System.IO.File]::ReadAllText((Join-Path $repo 'Testbed\testbed.json')) | ConvertFrom-Json
     foreach ($name in @($Guests.Keys | Where-Object { -not $Guests[$_].Exchange })) {
         Check "$name rests on the frozen checkpoint testbed.json records" ([string]$testbed.frozenClocks.$name.checkpoint) $Guests[$name].Checkpoint
@@ -1233,9 +1237,10 @@ Copy-Item -LiteralPath '$GuestPayloadDir\live-test-settings.json' -Destination '
             $crashDumpState['proven'] = ($o -match 'VERDICT: PROVEN')
             Say "crash dumps proven: $($crashDumpState['proven']) - guest\crash-dumps-prove.log"
         }
-        $o = Invoke-Guest 'sdk-execute' "Set-Location '$GuestRoot'; & .\Install-DotnetSdk.ps1 -ExpectedSha512 '$SdkSha512' -Execute; `"SDK-EXECUTE-EXIT `$LASTEXITCODE`"" 1800 -Session0
+        $sdkNamed = "-InstallerPath '$GuestRoot\media\$SdkInstallerName' -ExpectedSdkVersionPrefix '$SdkVersionPrefix'"
+        $o = Invoke-Guest 'sdk-execute' "Set-Location '$GuestRoot'; & .\Install-DotnetSdk.ps1 $sdkNamed -ExpectedSha512 '$SdkSha512' -Execute; `"SDK-EXECUTE-EXIT `$LASTEXITCODE`"" 1800 -Session0
         if ($o -notmatch 'SDK-EXECUTE-EXIT 0') { throw 'Install-DotnetSdk.ps1 -Execute failed - guest\sdk-execute.log' }
-        $o = Invoke-Guest 'sdk-verify' "Set-Location '$GuestRoot'; & .\Install-DotnetSdk.ps1 -Verify; `"SDK-VERIFY-EXIT `$LASTEXITCODE`"" 1800 -Session0
+        $o = Invoke-Guest 'sdk-verify' "Set-Location '$GuestRoot'; & .\Install-DotnetSdk.ps1 $sdkNamed -Verify; `"SDK-VERIFY-EXIT `$LASTEXITCODE`"" 1800 -Session0
         if ($o -notmatch 'VERDICT: TEST-READY') { $stage = 'BUILD'; $stageWhy = 'the suite is not TEST-READY on the guest - it did not build or enumerate there (guest\sdk-verify.log)'; throw $stageWhy }
     }
     catch { if (-not $stage) { $stage = 'INFRA'; $stageWhy = "staging failed: $($_.Exception.Message)" }; throw }
