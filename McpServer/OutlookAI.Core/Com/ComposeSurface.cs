@@ -815,9 +815,17 @@ namespace OutlookAI.Core.Com
         }
 
         /// <summary>Count of windows a HUMAN can currently see (visible, not minimized, on screen).</summary>
-        public static int CountUserVisibleWindows()
+        public static int CountUserVisibleWindows() => UserVisibleWindowHandles().Count;
+
+        /// <summary>
+        /// The windows <see cref="CountUserVisibleWindows"/> counts, by handle: reads only, for a test that has
+        /// to name the windows a count found rather than say how many. The count is this list's length, so the
+        /// two have one filter; a test that takes both at one moment still says so when a window came or went
+        /// between them.
+        /// </summary>
+        public static IReadOnlyList<IntPtr> UserVisibleWindowHandles()
         {
-            int visible = 0;
+            List<IntPtr> handles = new List<IntPtr>();
             foreach (WindowState w in SnapshotOutlookWindows())
             {
                 if (!w.Visible)
@@ -840,10 +848,10 @@ namespace OutlookAI.Core.Com
                     continue; // parked
                 }
 
-                visible++;
+                handles.Add(w.Handle);
             }
 
-            return visible;
+            return handles;
         }
 
         private static void Park(IntPtr handle)

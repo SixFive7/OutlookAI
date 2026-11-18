@@ -75,7 +75,13 @@
     Object Model Guard puts an Allow/Deny prompt in front of every out-of-process address read, and a
     run hangs on it (measured 2026-10-03: six stacked prompts, after a checkpoint restore brought back
     year-old signatures) - and then reads whether the account is still signed in. Exit 0 when both
-    hold; when only the sign-in does not, run -Mode Reauth.
+    hold; when only the sign-in does not, run -Mode Reauth - unless it says OLD-OST: an account
+    Outlook holds disconnected (ExchangeConnectionMode 400) since it refused the account's .ost as an
+    old copy of the mailbox - Office's alert, OAlerts event 300, since the running Outlook started -
+    has no lapsed sign-in, Outlook raises no sign-in page for it, and Reauth cannot fix it. Then the
+    .ost files go aside: the live runner's -Checkpoint path, or guest/Reset-OutlookOfflineStore.ps1.
+    Measured 2026-11-18: the VM restored to a checkpoint outside the runner, its .ost files left in
+    place, held the bystander at 400 from Outlook's next start, and a Reauth found no page.
 
     EXIT CODES: 0 signed in (Preflight: everything holds); 1 failed; 4 refused; 5 STOPPED FOR THE
     MAINTAINER - Microsoft asked for a second factor, or for one to be registered, that only he can
@@ -88,7 +94,8 @@
     No, and waits for the mail page. OwaSignOut signs out through Outlook on the web's own sign-out and
     closes every InPrivate window. THE TEST ACCOUNT ONLY: both refuse any account testbed.json does not
     record with the role "hub" - never the VM's real mailbox. The VM is restored to its checkpoint
-    afterwards by whoever ran it (AGENTS.md, Q161 (c)).
+    afterwards by whoever ran it (AGENTS.md, Q161 (c)) - and its .ost files set aside, as after every
+    restore outside the runner: a restored .ost is older than the server, and Outlook refuses it.
 
 .PARAMETER DefenderOnly
     With -Mode Preflight: bring Defender's signatures up to date and stop there - for the moment
@@ -224,6 +231,46 @@ function Get-AfterPasswordAction {
     }
 }
 
+# Whether an Office alert is the one Outlook raises when it refuses a data file as older than the mailbox on
+# the server: OAlerts event 300, recorded on OutlookAI-Exchange on 2026-11-18 as "Outlook is using an old copy
+# of your Outlook data file (.ost). Exit Outlook, delete the file, and restart Outlook." English Office only: a
+# translated alert does not match, and the advice falls back to the sign-in's. Pure.
+function Test-OldCopyAlert {
+    param([string] $Text)
+    return ([string]$Text) -match '(?i)\bold copy of your Outlook data file\b'
+}
+
+# The ExchangeConnectionMode a Verify status names - 'account <a>: type 0, ExchangeConnectionMode 400, ...' -
+# or $null when it names none. Pure.
+function Get-VerifyConnectionMode {
+    param([string[]] $Detail)
+    foreach ($line in @($Detail)) {
+        $m = [regex]::Match([string]$line, 'ExchangeConnectionMode (\d+)')
+        if ($m.Success) { return [int]$m.Groups[1].Value }
+    }
+    return $null
+}
+
+# What preflight 2 says of an account that is not signed in. OLD-OST when Outlook holds it disconnected
+# (ExchangeConnectionMode 400) and an old-copy alert (Test-OldCopyAlert) came since the running Outlook started:
+# that is no lapsed sign-in, Outlook raises no sign-in page for it, and -Mode Reauth cannot fix it (measured on
+# OutlookAI-Exchange on 2026-11-18). Otherwise the sign-in's advice. Names the alert's time, never its text.
+# Pure.
+function Get-NotSignedInAdvice {
+    param([string] $Role, [string[]] $Detail, [object[]] $Alerts, [string] $Checkpoint)
+    $old = @(@($Alerts) | Where-Object { $null -ne $_ -and (Test-OldCopyAlert ([string]$_.Text)) })
+    if ((Get-VerifyConnectionMode $Detail) -eq 400 -and $old.Count -gt 0) {
+        if (-not $Checkpoint) { $Checkpoint = '<its newest checkpoint>' }
+        return "OLD-OST: Outlook refused a data file (.ost) as an old copy of its mailbox at $($old[0].Utc) " `
+            + "(OAlerts event 300, since this Outlook started), and holds the $Role disconnected (ExchangeConnectionMode 400). " `
+            + 'No sign-in has lapsed, and -Mode Reauth cannot fix it: Outlook raises no sign-in for it. ' `
+            + "Run the live tier with -Checkpoint $Checkpoint (Testbed/host/Invoke-LiveTierOnGuest.ps1), which sets both .ost files " `
+            + 'aside before Outlook starts, or set them aside with guest/Reset-OutlookOfflineStore.ps1 -Execute -ResetSearchIndex ' `
+            + 'once host/Restart-Guest.ps1 has quit Outlook.'
+    }
+    return "not signed in - run this script with -Mode Reauth -Account $Role"
+}
+
 if ($SelfTest) {
     Write-Host "Invoke-ExchangeSignIn.ps1 -SelfTest under PowerShell $($PSVersionTable.PSVersion). No VM, no credential."
     $script:fails = 0
@@ -280,6 +327,21 @@ if ($SelfTest) {
     Check 'and never the bystander' $true ([string](Get-OwaAccountProblem 'first@example.invalid' (Resolve-ExchangeAccount 'first@example.invalid' $known))).StartsWith('REFUSING')
     Check 'nor by its role' $true ([string](Get-OwaAccountProblem 'bystander' (Resolve-ExchangeAccount 'bystander' $known))).StartsWith('REFUSING')
     Check 'nor an account given by nobody' $true ([string](Get-OwaAccountProblem '' (Resolve-ExchangeAccount '' $known))).StartsWith('REFUSING')
+    # The two OAlerts entries OutlookAI-Exchange recorded at Outlook's start on 2026-11-18, word for word.
+    $oldCopy = [pscustomobject]@{ Utc = '2026-11-18T07:41:14Z'; Text = 'Microsoft Outlook Outlook is using an old copy of your Outlook data file (.ost). Exit Outlook, delete the file, and restart Outlook. A new file will be automatically created the next time you initiate a send/receive. P1: 301737 P2: 16.0.17932.21000 P3: 4q0i4P4:' }
+    $compositor = [pscustomobject]@{ Utc = '2026-11-18T07:41:08Z'; Text = 'Compositor Type: 1OUTLOOKP1: %3P2: %4P3: %5P4: %6' }
+    Check 'the old-copy alert is told by its words' $true (Test-OldCopyAlert $oldCopy.Text)
+    Check 'and another alert is not' $false (Test-OldCopyAlert $compositor.Text)
+    $disconnected = @('account bystander@example.invalid: type 0, ExchangeConnectionMode 400, delivery store "bystander@example.invalid" cached=True, profile "Outlook"')
+    Check 'a Verify status names its connection mode' 400 (Get-VerifyConnectionMode $disconnected)
+    Check 'and one that names none, nothing' $true ($null -eq (Get-VerifyConnectionMode @('no Outlook to attach to')))
+    $advice = Get-NotSignedInAdvice 'bystander' $disconnected @($compositor, $oldCopy) 'CP-10-SDK11'
+    Check 'disconnected after an old-copy alert is OLD-OST, at the alert''s time' $true ($advice.StartsWith('OLD-OST: ') -and $advice.Contains(' at 2026-11-18T07:41:14Z '))
+    Check 'and names the set-aside, not Reauth' $true ($advice.Contains('-Checkpoint CP-10-SDK11') -and $advice.Contains('Reset-OutlookOfflineStore.ps1') -and -not $advice.Contains('run this script with -Mode Reauth'))
+    Check 'and no address' $false ($advice.Contains('@'))
+    Check 'disconnected with no such alert is the sign-in''s' 'not signed in - run this script with -Mode Reauth -Account bystander' (Get-NotSignedInAdvice 'bystander' $disconnected @($compositor) 'CP-10-SDK11')
+    Check 'an old-copy alert with the account in another mode is the sign-in''s' $true ((Get-NotSignedInAdvice 'hub' @('account hub@example.invalid: type 0, ExchangeConnectionMode 300') @($oldCopy) 'CP-10-SDK11').StartsWith('not signed in'))
+    Check 'and an account Outlook could not be asked about too' $true ((Get-NotSignedInAdvice 'hub' @('no Outlook to attach to') @($oldCopy) '').StartsWith('not signed in'))
     Write-Host ''
     if ($script:fails -gt 0) { Write-Host "$script:fails FAILED"; exit 1 }
     Write-Host 'All passed.'
@@ -426,12 +488,28 @@ try {
         Say ('  up to date (productState 0x{0:X6}); signatures {1} day(s) old' -f $av.State, $av.Age)
         if ($DefenderOnly) { exit 0 }
         $allSignedIn = $true
+        $alerts = $null
         foreach ($recordedAccount in $known) {
             $recorded = $recordedAccount.Address
             Say "preflight 2: is the $($recordedAccount.Role) ($recorded) still signed in?"
             $v = Invoke-GuestStep "-Step Verify -Account '$recorded' -WaitSeconds 60"
             Say "  $($v.State) $($v.Detail -join ' | ')"
-            if ($v.State -ne 'SIGNED-IN') { Say "  not signed in - run this script with -Mode Reauth -Account $($recordedAccount.Role)"; $allSignedIn = $false }
+            if ($v.State -ne 'SIGNED-IN') {
+                # Office's alerts since the running Outlook started, read once (session 0, read only): an old-copy
+                # alert there means no sign-in will fix the account (Get-NotSignedInAdvice).
+                if ($null -eq $alerts) {
+                    $alerts = @(Invoke-Command -Session $session -ScriptBlock {
+                            $outlook = @(Get-Process -Name OUTLOOK -ErrorAction SilentlyContinue | Sort-Object StartTime)
+                            if ($outlook.Count -gt 0) {
+                                Get-WinEvent -FilterHashtable @{ LogName = 'OAlerts'; Id = 300; StartTime = $outlook[0].StartTime } -ErrorAction SilentlyContinue | ForEach-Object {
+                                    [pscustomobject]@{ Utc = $_.TimeCreated.ToUniversalTime().ToString('s') + 'Z'; Text = [string]$_.Message }
+                                }
+                            }
+                        })
+                }
+                Say ('  ' + (Get-NotSignedInAdvice $recordedAccount.Role @($v.Detail) $alerts ([string]@($testbed.exchangeVm.checkpoints)[-1])))
+                $allSignedIn = $false
+            }
         }
         if (-not $allSignedIn) { exit 1 }
         exit 0

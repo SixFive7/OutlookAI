@@ -305,8 +305,8 @@ its mailbox tests on, and change nothing you install.
   at their start in two of eleven runs, both on an indexed guest. Named, they were a tooltip and its
   shadow, there from the moment the pane test closed its compose window. A tooltip comes up at the
   pointer, which nobody moves on a test machine, so the pane test now moves the pointer to the
-  screen's bottom-left corner before its compose window comes up and after it closes, and those
-  tests name every window they count.
+  screen's bottom-left corner before its compose window comes up and after it closes, and lists
+  what it leaves on screen with the headless tests' own window listing.
 
 - ✅ **A live run can set a signature policy before Outlook starts, and measure what Outlook inserts.**
   Outlook reads an administrator's signature policy, a default deployed in its general mail settings
@@ -1173,6 +1173,19 @@ its mailbox tests on, and change nothing you install.
   source, the few types records, init accessors, required members and argument-expression guards
   look up by name, and a feature that needs the modern runtime the compiler refuses there. What a
   user sees of it is the runtime setup now brings for the mail server.
+
+- ✅ **A compose test names each window it finds on screen, at its start and in its failure.**
+  `LiveHeadlessComposeParityTests` failed twice on 2026-11-18 with "user-visible windows 1 -> 3" and
+  nothing else: it counted the windows, so nobody could say what the two new ones were. And some runs
+  found the two already showing when the tests began, counted 3 -> 3 and passed. Both of its tests
+  now list the counted windows in their output as they start, and again after composing, through
+  `ComposeSurface.UserVisibleWindowHandles`, a read-only list made with the count's own filter; when
+  the count goes up, the failure names them too, as does the first test's check that a window-less
+  Outlook starts with none. Each window is given by its class (`rctrl_renwnd32` is Outlook's own, a
+  compose window among them), its title with everything but the window's kind reduced to the test
+  tag and a hash, its process, its rectangle, whether it is cloaked or minimised, when it was read,
+  and whether it is new. The count and the list are set side by side, so a drift between their
+  filters shows. What the tests assert is unchanged.
 
 - ✅ **The test machines carry the .NET 11 SDK beside .NET 10, on new checkpoints (Q172).**
   OutlookAI is moving to .NET 11 (Q172), and nothing on .NET 11 can be tested until the test
@@ -2224,6 +2237,20 @@ its mailbox tests on, and change nothing you install.
   Items - beside the mail, and none of them could be opened. On the test machine they were 21 of the
   first 100 results.
 
+- ✅ **The Exchange machine's preflight says when Outlook has refused an old .ost file.**
+  On 2026-11-18 the preflight stopped two live runs on the Exchange test machine: the real mailbox was
+  no longer signed in, it said, and it asked for `-Mode Reauth`, which then found no sign-in page to
+  answer. The machine had been restored to a checkpoint outside the runner with its .ost files left in
+  place, and at Outlook's next start Office raised "Outlook is using an old copy of your Outlook data
+  file (.ost)" (OAlerts event 300). From then on Outlook held that mailbox disconnected
+  (ExchangeConnectionMode 400), and the Windows AAD log held no token error at all. The preflight now
+  reads Office's alerts since the running Outlook started, and for an account at 400 after that alert
+  it says `OLD-OST` and names the remedy instead: the live runner's `-Checkpoint` path, or
+  `guest/Reset-OutlookOfflineStore.ps1`, each of which sets both .ost files aside. Its `-SelfTest` pins
+  the decision with that day's alert text and no real address. `Testbed/README.md` says a restore
+  outside the runner must set both .ost files aside as well: a restored .ost is older than the
+  server, and Outlook refuses it.
+
 - ✅ **A build-machine run that has to stage packages checks the known personal data again.**
   When the build machine's offline feed lacked a package a revision needs, the runner staged it and
   ran the machine's half a second time. That second run expanded the source afresh, after the first
@@ -2241,9 +2268,15 @@ its mailbox tests on, and change nothing you install.
   pending delete - whatever -ErrorAction says. On a scratch queue whose tickets came and went, it threw
   in 183 of 600 turns under PowerShell 7.7 and in 150 of 600 under 5.1. The queue, the gate's waiting
   records, its pause switch and leaving the queue now list file names alone, count a file they cannot
-  read as gone, and delete through one helper that never throws: the same 600 turns threw in none. The
-  self-tests pin a ticket deleted between the list and the read, one ticket deleted twice, and a queue
-  whose tickets come and go while 100 turns read it.
+  read as gone, and delete through one helper that never throws: the same 600 turns threw in none. A
+  run whose own ticket has gone writes it again, and a write that cannot be made at that moment - the
+  old file still pending delete, which Windows PowerShell 5.1 answered with "Access is denied" in 5 of
+  3,000 turns - waits for the next turn instead of stopping the run. The self-tests pin a ticket
+  deleted between the list and the read, one ticket deleted twice, a run's own ticket that cannot be
+  written again, and a queue whose tickets come and go while 100 turns read it, as other runs join,
+  leave and delete the tickets of runs that ended. That churn used to delete the run's own ticket too,
+  which no run does, and it failed 1 build-VM run in 100. It now prints the exception of any turn that
+  throws, and it threw in none of 1,000 turns under either PowerShell.
 
 - ✅ **The disconnect test no longer fails when Outlook quits just before its pin is released.**
   Closing Outlook's last window can make it quit, so the test releases the lifetime pin only on a

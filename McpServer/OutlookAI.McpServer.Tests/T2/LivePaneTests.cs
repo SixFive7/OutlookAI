@@ -161,7 +161,8 @@ public sealed class LivePaneTests
             LiveOutlookTestMailer.DeleteTaggedArtifactsUntilStableZero(Hub, Marker);
             PaneControls.ParkPointer();
             // What this test leaves on screen, for the headless tests that count Outlook's windows after it.
-            _output.WriteLine("on screen after: " + LiveHeadlessComposeParityTests.OutlookWindowsOnScreen());
+            _output.WriteLine(UserVisibleWindows.List(
+                "after the pane test", UserVisibleWindows.Take(), OutlookAI.Core.Com.ComposeSurface.CountUserVisibleWindows()));
         }
 
         Assert.Equal(0, LiveOutlookTestMailer.CountTaggedArtifacts(Hub, Marker));

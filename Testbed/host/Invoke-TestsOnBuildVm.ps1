@@ -1121,31 +1121,57 @@ Expected: 1</Message></ErrorInfo></Output></UnitTestResult>
         $whilePending = $null
         try { [System.IO.File]::Delete($pending); $whilePending = Remove-TestbedStateFile $pending } catch { $threw = $_.Exception.Message } finally { $hold.Dispose() }
         Check 'nor for one already pending delete, which made Remove-Item say "Access is denied" under Windows PowerShell 5.1' 'False|' ("{0}|{1}" -f $whilePending, $threw)
-        # The race as it happens: tickets of ended runs written and deleted all the while 100 turns read
-        # the queue. Remove-Item threw in 183 of 600 such turns under PowerShell 7.7 and 150 under 5.1.
+        # The race as it happens, with what real runs do to the queue: other runs join and leave - their own
+        # tickets written and deleted - and their turns delete the tickets of runs that have ended, the
+        # same ones this run's turns delete, all the while 100 turns read the queue. Remove-Item threw in
+        # 183 of 600 such turns under PowerShell 7.7 and 150 under 5.1. No run deletes the ticket of a run
+        # that lives, so the churn never touches this run's own: until 2026-11-18 it did, and this run's
+        # writing it again over one still pending delete threw in 1 of 100 turns on OutlookAI-Build3
+        # under Windows PowerShell 5.1 (stream U).
         $me = Join-TestbedQueue -Run 'r-me' -What 'self-test, under churn' -Candidates $pool
         $churn = Start-Job -ArgumentList $queueScratch -ScriptBlock {
             param($dir)
+            $startUnix = ([DateTimeOffset](Get-Process -Id $PID).StartTime).ToUnixTimeSeconds()
             $until = (Get-Date).AddSeconds(60)
             $i = 0
             while ((Get-Date) -lt $until) {
                 $i++
-                try { [System.IO.File]::WriteAllText((Join-Path $dir ('{0:D19}-{1}.json' -f (100 + ($i % 30)), $i)), '{"pid": 1, "processStartUnix": 1, "run": "r-churn", "candidates": ["OutlookAI-Build"]}') } catch { }
-                foreach ($f in [System.IO.Directory]::GetFiles($dir, '*.json')) { if ((Get-Random -Maximum 3) -eq 0) { try { [System.IO.File]::Delete($f) } catch { } } }
+                $json = '{"pid": 1, "processStartUnix": 1, "run": "r-churn-ended", "candidates": ["OutlookAI-Build"]}'
+                if ($i % 2 -eq 0) { $json = '{"pid": ' + $PID + ', "processStartUnix": ' + $startUnix + ', "run": "r-churn-live", "candidates": ["OutlookAI-Build"]}' }
+                try { [System.IO.File]::WriteAllText((Join-Path $dir ('{0:D19}-{1}.json' -f (100 + ($i % 30)), $i)), $json) } catch { }
+                foreach ($f in [System.IO.Directory]::GetFiles($dir, '*.json')) {
+                    if ([System.IO.Path]::GetFileName($f) -notmatch '^0{16}1\d\d-\d+\.json$') { continue }
+                    if ((Get-Random -Maximum 3) -eq 0) { try { [System.IO.File]::Delete($f) } catch { } }
+                }
             }
         }
         $threw = 0
+        $firstThrow = ''
         $turns = 0
         try {
             $wait = (Get-Date).AddSeconds(30)
             while (@(Get-TestbedStateFiles $queueScratch).Count -lt 5 -and (Get-Date) -lt $wait) { Start-Sleep -Milliseconds 100 }
             for ($n = 0; $n -lt 100; $n++) {
                 $turns++
-                try { [void](Get-TestbedQueueTurn -Ticket $me -Run 'r-me' -Candidates $pool) } catch { $threw++ }
+                try { [void](Get-TestbedQueueTurn -Ticket $me -Run 'r-me' -Candidates $pool) }
+                catch {
+                    $threw++
+                    if (-not $firstThrow) { $firstThrow = "$($_.Exception.GetType().FullName): $($_.Exception.Message) at: $($_.InvocationInfo.Line.Trim())" }
+                }
             }
         }
         finally { $churn | Stop-Job -PassThru | Remove-Job -Force }
-        Check 'and a queue whose tickets come and go while 100 turns read it throws in none' '100|0' ("{0}|{1}" -f $turns, $threw)
+        Check 'and a queue whose tickets come and go while 100 turns read it throws in none' '100|0|' ("{0}|{1}|{2}" -f $turns, $threw, $firstThrow)
+        Check 'and the run''s own ticket is still there, for the runs after it' $true ([System.IO.File]::Exists($me.Path))
+        # A turn whose own ticket cannot be written again now goes on without it: here a folder of its
+        # name, which no file can be written over, stands in for a ticket still pending delete.
+        $blocked = Join-TestbedQueue -Run 'r-blocked' -What 'self-test, its own ticket not writable' -Candidates $pool
+        [System.IO.File]::Delete($blocked.Path)
+        [void][System.IO.Directory]::CreateDirectory($blocked.Path)
+        $threw = ''
+        try { [void](Get-TestbedQueueTurn -Ticket $blocked -Run 'r-blocked' -Candidates $pool) } catch { $threw = "$($_.Exception.GetType().FullName): $($_.Exception.Message)" }
+        [System.IO.Directory]::Delete($blocked.Path)
+        Check 'a turn whose own ticket cannot be written again now does not throw: the next turn writes it' '' $threw
         Exit-TestbedQueue $me
         $pool2 = [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot 'TestbedPool.ps1'))
         $load2 = [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot 'TestbedLoad.ps1'))
