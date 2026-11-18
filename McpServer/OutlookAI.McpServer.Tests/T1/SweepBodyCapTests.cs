@@ -390,6 +390,39 @@ public sealed class SweepBodyCapTests
         Assert.False(read.BodyTruncated);
     }
 
+    // ============================================================ read's folder (2026-11-18)
+
+    [Fact]
+    [Trait("TimeZone", "Machine")]
+    public void ReadPrintsItsFolder_AsTheOtherToolsDo_NamesJoinedBySlash_WithoutTheStoreOrOutlooksEscapes()
+    {
+        // Decided 2026-11-18 (option (a)): read printed Outlook's own FolderPath - the store's name, backslashes and
+        // Outlook's escapes - where every other tool prints the folder's names joined by '/'. The store and its
+        // storeId are beside it already.
+        const string Whole = "the needle";
+        using MailService service = Service(
+            _ => SweepOf(Mail("AA1", body: Whole)),
+            entryId => Detail(entryId, Whole, "\\\\" + Store + "\\Inbox\\Projects\\a%2Fb 50%25"));
+
+        HitSummary hit = Assert.Single(service.Search(Request("needle")).Hits);
+        ReadOutcome read = service.Read(hit.Id!);
+
+        Assert.Equal("Inbox/Projects/a/b 50%", read.Folder);
+        Assert.Equal(Store, read.Store);
+    }
+
+    [Theory]
+    [InlineData("\\\\alice@example.com\\Inbox", "alice@example.com", "Inbox")]
+    [InlineData("\\\\alice@example.com", "alice@example.com", "")]
+    [InlineData("\\\\Outlook Data File\\Inbox\\Sub", "Outlook Data Fil", "Inbox/Sub")]
+    public void ReadsFolder_IsTheStoreRelativePath(string outlookFolderPath, string store, string expected)
+    {
+        // The third: an ANSI PST's display name is one character short of its root's (measured, Q92/Q99) - the
+        // first segment is dropped all the same.
+        Assert.Equal(expected, MailService.DescribeReadFolder(outlookFolderPath, store));
+        Assert.Null(MailService.DescribeReadFolder(null, store));
+    }
+
     // ===================================================================== fixtures
 
     private static SearchRequest Request(
@@ -459,12 +492,12 @@ public sealed class SweepBodyCapTests
             bodyTruncated: cut ? true : (bool?)null);
     }
 
-    private static ComItemDetail Detail(string entryId, string body)
+    private static ComItemDetail Detail(string entryId, string body, string? folderPath = null)
     {
         return new ComItemDetail(
             entryId: entryId,
             storeDisplayName: Store,
-            folderPath: "\\\\" + Store + "\\Inbox",
+            folderPath: folderPath ?? "\\\\" + Store + "\\Inbox",
             itemClass: 43,
             subject: "a test mail",
             senderName: "Bob",
