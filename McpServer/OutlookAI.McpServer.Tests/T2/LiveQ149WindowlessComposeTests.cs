@@ -52,12 +52,24 @@ public sealed class LiveQ149WindowlessComposeTests
     private const int ProcessesP1 = 3;
     private const int DraftsPerProcessP1 = 10;
     private const int DraftsP3 = 5;
+    private const int ProcessesP4 = 2;
+    private const int DraftsPerProcessP4 = 5;
+    private const int DraftsP5 = 5;
+
+    /// <summary>A key every 40 ms: a fast typist's pace, twice over.</summary>
+    private const int TypingIntervalMs = 40;
+
+    /// <summary>The typing starts this long before each draft, so the foreground lock is engaged when the draft begins.</summary>
+    private const int TypingLeadMs = 400;
 
     private readonly LiveQ149Fixture _fixture;
     private readonly ITestOutputHelper _output;
 
     /// <summary>The P cells' stand-in for the program a person types in (<see cref="Q149ForegroundHolder"/>); null outside them.</summary>
     private Q149ForegroundHolder? _holder;
+
+    /// <summary>Whether the P cell running types into <see cref="_holder"/> during each draft (P4, P5).</summary>
+    private bool _typing;
 
     public LiveQ149WindowlessComposeTests(LiveQ149Fixture fixture, ITestOutputHelper output)
     {
@@ -224,6 +236,32 @@ public sealed class LiveQ149WindowlessComposeTests
     [Fact]
     [Trait("Requires", "MailAccount")]
     [Trait("Requires", "InteractiveDesktop")]
+    public void P4_WhileAPersonTypes_TheProductsDraftsLeaveTheirKeystrokesAlone()
+    {
+        if (!_fixture.Begin(_output))
+        {
+            return;
+        }
+
+        ProductOncePerStart(Q149Cells.P4, ProcessesP4, DraftsPerProcessP4, typing: true);
+    }
+
+    [Fact]
+    [Trait("Requires", "MailAccount")]
+    [Trait("Requires", "InteractiveDesktop")]
+    public void P5_WhileAPersonTypes_AnOutlookWithAWindowLeavesTheirKeystrokesAlone()
+    {
+        if (!_fixture.Begin(_output))
+        {
+            return;
+        }
+
+        ComStartWithAWindow(Q149Cells.P5, DraftsP5, typing: true);
+    }
+
+    [Fact]
+    [Trait("Requires", "MailAccount")]
+    [Trait("Requires", "InteractiveDesktop")]
     public void Smoke_EveryWindowlessCellOnce()
     {
         if (!_fixture.Begin(_output))
@@ -242,6 +280,8 @@ public sealed class LiveQ149WindowlessComposeTests
         ProductOncePerStart(Q149Cells.P1, 1, 3);
         SharedPin(Q149Cells.P2);
         ComStartWithAWindow(Q149Cells.P3, 2);
+        ProductOncePerStart(Q149Cells.P4, 1, 2, typing: true);
+        ComStartWithAWindow(Q149Cells.P5, 2, typing: true);
     }
 
     // ------------------------------------------------------------------ L1: the shipped compose
@@ -687,7 +727,7 @@ public sealed class LiveQ149WindowlessComposeTests
             }
         }
 
-        (int committed, int changedForm) = VerifyCommits(cell, written);
+        (int committed, int changedForm, _) = VerifyCommits(cell, written);
         Summary(cell, processes, string.Format(
             CultureInfo.InvariantCulture,
             "direct reads after one promotion: {0} of {1}; after a displayed Explorer was opened and closed: {2} of {3}; edits in the stored draft {4} of {5}, {6} with a message class or form properties changed",
@@ -706,13 +746,16 @@ public sealed class LiveQ149WindowlessComposeTests
     /// P1: per cold start, one product session - the default registry, the product's own pin rules - drafts
     /// <paramref name="draftsPerProcess"/> drafts through update_draft. Each draft's route, the windows it put on screen and
     /// any change of foreground are recorded; then the session ends - the last session out - and Outlook's exit is
-    /// watched. The commits are re-read through a separate client at the end.
+    /// watched. The commits are re-read through a separate client at the end. With <paramref name="typing"/> (P4) a
+    /// person types throughout each draft, and where every key went is recorded.
     /// </summary>
-    private void ProductOncePerStart(string cell, int processes, int draftsPerProcess)
+    private void ProductOncePerStart(string cell, int processes, int draftsPerProcess, bool typing = false)
     {
         _fixture.ReleaseService();
         using Q149ForegroundHolder holder = new();
         _holder = holder;
+        _typing = typing;
+        (int Sent, int Elsewhere, int Drafts) keys = (0, 0, 0);
         List<(string EntryId, string StoreId, string Token, int Iteration)> written = new();
         int firsts = 0;
         int firstsPromoted = 0;
@@ -765,6 +808,7 @@ public sealed class LiveQ149WindowlessComposeTests
                         latersForeground += attempt.Get("foregroundToOutlook") is int fg && fg > 0 ? 1 : 0;
                     }
 
+                    keys = CountKeys(attempt, keys);
                     Run.Write(attempt);
                 }
 
@@ -789,12 +833,13 @@ public sealed class LiveQ149WindowlessComposeTests
             }
         }
 
-        (int committed, int changedForm) = VerifyCommits(cell, written);
+        (int committed, int changedForm, int typedInDrafts) = VerifyCommits(cell, written);
         Summary(cell, processes, string.Format(
             CultureInfo.InvariantCulture,
             "first draft of each start promoted {0} of {1}, a window shown in {2}; later drafts direct {3} of {4}, a window shown in {5}, "
             + "the foreground taken in {6}; composed {7} of {8}; edits in the stored draft {9}, {10} with a message class or form "
-            + "properties changed; Outlook ended after the last session out {11} of {12}; pins left in the registry {13}",
+            + "properties changed; Outlook ended after the last session out {11} of {12}; pins left in the registry {13}"
+            + KeysSummary(typing, keys, typedInDrafts),
             firstsPromoted,
             firsts,
             firstsShown,
@@ -895,7 +940,7 @@ public sealed class LiveQ149WindowlessComposeTests
             }
         }
 
-        (int committed, _) = VerifyCommits(cell, written);
+        (int committed, _, _) = VerifyCommits(cell, written);
         Summary(cell, 1, string.Format(
             CultureInfo.InvariantCulture,
             "routes {0}; Outlook kept running after the first session out: {1}; the last session out: {2}; Outlook ended: {3}; "
@@ -913,11 +958,13 @@ public sealed class LiveQ149WindowlessComposeTests
     /// cold start is in once the user opens Outlook. Every product draft must read its editor directly, with no window
     /// activated and no pin made; closing the Explorer, its only window, then ends it.
     /// </summary>
-    private void ComStartWithAWindow(string cell, int drafts)
+    private void ComStartWithAWindow(string cell, int drafts, bool typing = false)
     {
         _fixture.ReleaseService();
         using Q149ForegroundHolder holder = new();
         _holder = holder;
+        _typing = typing;
+        (int Sent, int Elsewhere, int Drafts) keys = (0, 0, 0);
         List<(string EntryId, string StoreId, string Token, int Iteration)> written = new();
         Q149Attempt process = new(cell + "-process", 1);
         Stopwatch clock = Stopwatch.StartNew();
@@ -949,6 +996,7 @@ public sealed class LiveQ149WindowlessComposeTests
                 written.Add((entryId, storeId, token, d));
                 direct += Equals(attempt.Get("route"), "Direct") ? 1 : 0;
                 shown += attempt.Get("windowShows") is int shows && shows > 0 ? 1 : 0;
+                keys = CountKeys(attempt, keys);
                 Run.Write(attempt);
             }
 
@@ -985,11 +1033,11 @@ public sealed class LiveQ149WindowlessComposeTests
             }
         }
 
-        (int committed, int changedForm) = VerifyCommits(cell, written);
+        (int committed, int changedForm, int typedInDrafts) = VerifyCommits(cell, written);
         Summary(cell, drafts, string.Format(
             CultureInfo.InvariantCulture,
             "direct {0} of {1}, a window shown in {2}; a pin made: {3}; edits in the stored draft {4} of {5}, {6} with a message class "
-            + "or form properties changed; Outlook ended at the Explorer's close: {7}",
+            + "or form properties changed; Outlook ended at the Explorer's close: {7}" + KeysSummary(typing, keys, typedInDrafts),
             direct,
             drafts,
             shown,
@@ -1051,8 +1099,16 @@ public sealed class LiveQ149WindowlessComposeTests
 
         string token = Token(cell.Substring(3, 2), iteration, pin: true);
 
-        // The program a person types in, standing in: brought to the foreground before the draft, checked after it.
+        // The program a person types in, standing in: brought to the foreground before the draft, checked after it. In P4
+        // and P5 the person types in it from just before the draft until the draft returns.
         bool holderHadForeground = _holder != null && _holder.TakeForeground();
+        double idleSecondsBefore = LiveDisconnectRecoveryTests.WindowProbe.UserIdleSeconds();
+        if (_typing && _holder != null)
+        {
+            _holder.StartTyping(TypingIntervalMs);
+            Thread.Sleep(TypingLeadMs);
+        }
+
         int foregroundMark = _holder?.Mark() ?? 0;
         string foregroundBefore = Q149Native.DescribeForeground();
         int shows = windows.Shows;
@@ -1080,6 +1136,7 @@ public sealed class LiveQ149WindowlessComposeTests
         }
 
         long returned = clock.ElapsedMilliseconds;
+        (int Sent, int ToHolder, int Skipped, int Failed, string? SkippedTo)? keys = _holder?.StopTyping();
 
         // A window shown at the very end of the compose reaches the watch's own message loop a moment later.
         Thread.Sleep(300);
@@ -1101,6 +1158,14 @@ public sealed class LiveQ149WindowlessComposeTests
             .Set("holderKeptForeground", _holder == null ? null : _holder.HasForeground)
             .Set("foregroundAwayMs", away?.AwayMs)
             .Set("foregroundChanges", away?.Changes)
+            .Set("inputIdleSecondsBefore", Math.Round(idleSecondsBefore, 1))
+            .Set("foregroundLockTimeoutMs", Q149Native.ForegroundLockTimeoutMs())
+            .Set("keysSent", keys?.Sent)
+            .Set("keysToThePersonsProgram", keys?.ToHolder)
+            .Set("keysElsewhere", keys == null ? null : keys.Value.Sent - keys.Value.ToHolder)
+            .Set("keysHeldBack", keys?.Skipped)
+            .Set("keysHeldBackFor", keys?.SkippedTo)
+            .Set("keysRefused", keys?.Failed)
             .Set("foregroundBefore", foregroundBefore)
             .Set("foregroundAfter", Q149Native.DescribeForeground())
             .Set("windowEvents", windows.Events.Skip(events).Take(40).ToArray());
@@ -1388,19 +1453,16 @@ public sealed class LiveQ149WindowlessComposeTests
     }
 
     /// <summary>
-    /// Whether each trial's edit reached the store - read in a fresh window-less Outlook through a separate
-    /// client - then every draft deleted by EntryID, tag and marker.
+    /// Re-reads every written draft through a separate client: the new text in, the old out, what B3's commit could
+    /// leave behind - the message class and the form-definition properties - and any key a P4 or P5 typist sent that
+    /// ended up in it; then deletes every draft by EntryID, tag and marker. Returns how many carried the edit, how many
+    /// came back changed, and how many typed keys the drafts held in all.
     /// </summary>
-    /// <summary>
-    /// Re-reads every written draft through a separate client: the new text in, the old out, and - what B3's
-    /// commit could leave behind - the message class and the form-definition properties. Returns how many
-    /// carried the edit and how many came back changed.
-    /// </summary>
-    private (int Committed, int ChangedForm) VerifyCommits(string cell, IReadOnlyList<(string EntryId, string StoreId, string Token, int Iteration)> written)
+    private (int Committed, int ChangedForm, int TypedKeys) VerifyCommits(string cell, IReadOnlyList<(string EntryId, string StoreId, string Token, int Iteration)> written)
     {
         if (written.Count == 0)
         {
-            return (0, 0);
+            return (0, 0, 0);
         }
 
         Run.Log(cell + ": verifying " + written.Count.ToString(CultureInfo.InvariantCulture) + " stored draft(s)");
@@ -1408,6 +1470,7 @@ public sealed class LiveQ149WindowlessComposeTests
         using Q149OutlookClient holder = Q149OutlookClient.Connect(clock, allowStart: true);
         int committed = 0;
         int changedForm = 0;
+        int typedKeys = 0;
         foreach ((string entryId, string storeId, string token, int iteration) in written)
         {
             Q149Attempt attempt = new(cell + "-commit", iteration);
@@ -1417,11 +1480,14 @@ public sealed class LiveQ149WindowlessComposeTests
                 bool present = html.Contains(token, StringComparison.Ordinal);
                 bool oldGone = !html.Contains(OldToken(iteration), StringComparison.Ordinal);
                 bool clean = string.Equals(messageClass, "IPM.Note", StringComparison.OrdinalIgnoreCase) && formProperties.Count == 0;
+                int typed = TypedKeysIn(html);
                 attempt.Set("tokenPresent", present).Set("oldAbsent", oldGone).Set("html", Q149Html.Analyze(html).ToFields())
                     .Set("messageClass", messageClass)
-                    .Set("formPropertiesPresent", formProperties.Count == 0 ? null : formProperties.ToArray());
+                    .Set("formPropertiesPresent", formProperties.Count == 0 ? null : formProperties.ToArray())
+                    .Set("typedKeysInDraft", typed);
                 committed += present ? 1 : 0;
                 changedForm += clean ? 0 : 1;
+                typedKeys += typed;
             }
             catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex) || ex is InvalidOperationException)
             {
@@ -1434,7 +1500,44 @@ public sealed class LiveQ149WindowlessComposeTests
 
         Run.Log(cell + ": " + committed.ToString(CultureInfo.InvariantCulture) + " of " + written.Count.ToString(CultureInfo.InvariantCulture)
             + " edits are in the stored draft");
-        return (committed, changedForm);
+        return (committed, changedForm, typedKeys);
+    }
+
+    /// <summary>
+    /// How many of the typist's keys <paramref name="html"/> holds: the character itself, or written as Word's HTML may
+    /// write it (<c>&amp;curren;</c>, <c>&amp;#164;</c>, <c>&amp;#xA4;</c>).
+    /// </summary>
+    private static int TypedKeysIn(string html)
+    {
+        int count = 0;
+        foreach (string form in new[] { Q149ForegroundHolder.TypedKey.ToString(), "&curren;", "&#164;", "&#xA4;", "&#xa4;" })
+        {
+            for (int at = html.IndexOf(form, StringComparison.Ordinal); at >= 0; at = html.IndexOf(form, at + form.Length, StringComparison.Ordinal))
+            {
+                count++;
+            }
+        }
+
+        return count;
+    }
+
+    /// <summary>Adds one draft's keys to a cell's totals: sent, gone elsewhere than the person's program, and drafts that lost any.</summary>
+    private static (int Sent, int Elsewhere, int Drafts) CountKeys(Q149Attempt attempt, (int Sent, int Elsewhere, int Drafts) keys)
+    {
+        int sent = attempt.Get("keysSent") is int s ? s : 0;
+        int elsewhere = attempt.Get("keysElsewhere") is int e ? e : 0;
+        return (keys.Sent + sent, keys.Elsewhere + elsewhere, keys.Drafts + (elsewhere > 0 ? 1 : 0));
+    }
+
+    private static string KeysSummary(bool typing, (int Sent, int Elsewhere, int Drafts) keys, int typedInDrafts)
+    {
+        return !typing ? string.Empty : string.Format(
+            CultureInfo.InvariantCulture,
+            "; a person typing: {0} keys sent, {1} of them did not reach the person's program, in {2} draft(s); typed keys found in the stored drafts {3}",
+            keys.Sent,
+            keys.Elsewhere,
+            keys.Drafts,
+            typedInDrafts);
     }
 
     private void Summary(string cell, int trials, string text)

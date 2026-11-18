@@ -120,6 +120,16 @@ public static class Q149Cells
     /// </summary>
     public const string P3 = "S1-P3-com-start-with-a-window";
 
+    /// <summary>
+    /// P1's drafts while a person types: keystrokes through SendInput into the program in the foreground from just before
+    /// each draft until it returns - so Windows' foreground lock is engaged, as it is at a desk - and where every key
+    /// went: the person's program, Outlook, or the stored draft.
+    /// </summary>
+    public const string P4 = "S1-P4-product-while-a-person-types";
+
+    /// <summary>P3's drafts - an Outlook that shows a window - while a person types, as in <see cref="P4"/>.</summary>
+    public const string P5 = "S1-P5-with-a-window-while-a-person-types";
+
     // Stage 4 - Q211 (b) and Q180 (b), decided 2026-11-18.
 
     /// <summary>

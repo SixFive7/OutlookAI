@@ -783,7 +783,9 @@ internal sealed class Q180StartObserver : IDisposable
 /// A small visible window of the test's own that holds the foreground, standing in for the program a person is typing
 /// in while an agent drafts: before each draft it is brought to the foreground, and after it the cells record whether
 /// it still is. Whether a draft TAKES THE FOCUS is that question - a window shown off-screen or hidden that took the
-/// foreground would take the person's keystrokes with it. It shows nothing but its own empty window and sends no input.
+/// foreground would take the person's keystrokes with it. It shows nothing but its own empty window, and sends input
+/// only when a cell has it type (<see cref="StartTyping"/>): one character no draft holds, into its own window or an
+/// Outlook window that took the foreground from it, never into any other program.
 /// </summary>
 internal sealed class Q149ForegroundHolder : IDisposable
 {
@@ -792,6 +794,10 @@ internal sealed class Q149ForegroundHolder : IDisposable
     private const uint WsVisible = 0x10000000;
     private const uint WmClose = 0x0010;
     private const uint WmDestroy = 0x0002;
+    private const uint WmChar = 0x0102;
+    private const uint InputKeyboard = 1;
+    private const uint KeyEventKeyUp = 0x0002;
+    private const uint KeyEventUnicode = 0x0004;
 
     private readonly Thread _thread;
     private readonly ManualResetEventSlim _ready = new(false);
@@ -803,6 +809,13 @@ internal sealed class Q149ForegroundHolder : IDisposable
     private Q149Native.WinEventProc? _onForeground;
     private IntPtr _hwnd;
     private uint _threadId;
+    private Thread? _typist;
+    private volatile bool _typing;
+    private int _received;
+    private int _sent;
+    private int _skipped;
+    private int _failed;
+    private string? _skippedTo;
 
     public Q149ForegroundHolder()
     {
@@ -813,6 +826,12 @@ internal sealed class Q149ForegroundHolder : IDisposable
     }
 
     private delegate IntPtr WndProc(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
+
+    /// <summary>
+    /// The character the typist sends: the currency sign, which no token, old body, signature or quoted original of the
+    /// cells holds - so one found in a stored draft came from the typist.
+    /// </summary>
+    public const char TypedKey = '\u00A4';
 
     /// <summary>True when the holder's window exists.</summary>
     public bool Created => _hwnd != IntPtr.Zero;
@@ -902,8 +921,50 @@ internal sealed class Q149ForegroundHolder : IDisposable
         return HasForeground;
     }
 
+    /// <summary>
+    /// Starts typing as a person typing in the holder would: one <see cref="TypedKey"/> through SendInput every
+    /// <paramref name="intervalMs"/> ms, which also keeps Windows' foreground lock engaged as a person's input does - an
+    /// idle desktop lets any program take the foreground once the lock's time-out has passed. A key goes out only while
+    /// the holder or an OUTLOOK.EXE window has the foreground, so none reaches another program on the guest.
+    /// <see cref="StopTyping"/> ends it and says where the keys went.
+    /// </summary>
+    public void StartTyping(int intervalMs)
+    {
+        _ = StopTyping();
+        Interlocked.Exchange(ref _received, 0);
+        _sent = 0;
+        _skipped = 0;
+        _failed = 0;
+        _skippedTo = null;
+        _typing = true;
+        _typist = new Thread(() => Type(intervalMs)) { IsBackground = true, Name = "Q149.Typist" };
+        _typist.Start();
+    }
+
+    /// <summary>
+    /// Ends the typing <see cref="StartTyping"/> began: the keys sent, how many reached the holder's own window (the
+    /// rest went to whatever had the foreground when they arrived), how many were held back because some other program
+    /// had the foreground and what it was, and how many SendInput refused. Null when no typing ran.
+    /// </summary>
+    public (int Sent, int ToHolder, int Skipped, int Failed, string? SkippedTo)? StopTyping()
+    {
+        if (_typist == null)
+        {
+            return null;
+        }
+
+        _typing = false;
+        _typist.Join(TimeSpan.FromSeconds(5));
+        _typist = null;
+
+        // The last keys reach the holder's message loop a moment after SendInput returns.
+        Thread.Sleep(200);
+        return (_sent, Volatile.Read(ref _received), _skipped, _failed, _skippedTo);
+    }
+
     public void Dispose()
     {
+        _ = StopTyping();
         if (_hwnd != IntPtr.Zero)
         {
             _ = PostMessage(_hwnd, WmClose, IntPtr.Zero, IntPtr.Zero);
@@ -973,8 +1034,42 @@ internal sealed class Q149ForegroundHolder : IDisposable
         }
     }
 
+    private void Type(int intervalMs)
+    {
+        INPUT[] key =
+        {
+            new() { Type = InputKeyboard, Data = new InputUnion { Keyboard = new KEYBDINPUT { Scan = TypedKey, Flags = KeyEventUnicode } } },
+            new() { Type = InputKeyboard, Data = new InputUnion { Keyboard = new KEYBDINPUT { Scan = TypedKey, Flags = KeyEventUnicode | KeyEventKeyUp } } },
+        };
+        while (_typing)
+        {
+            IntPtr foreground = Q149Native.GetForegroundWindow();
+            if (foreground == IntPtr.Zero || (foreground != _hwnd && Q149Native.OutlookClassOf(foreground) == null))
+            {
+                _skipped++;
+                _skippedTo ??= foreground == IntPtr.Zero ? "none" : Q149Native.Describe(foreground);
+            }
+            else if (SendInput((uint)key.Length, key, Marshal.SizeOf<INPUT>()) == key.Length)
+            {
+                _sent++;
+            }
+            else
+            {
+                _failed++;
+            }
+
+            Thread.Sleep(intervalMs);
+        }
+    }
+
     private IntPtr Proc(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam)
     {
+        if (message == WmChar && wParam == (IntPtr)TypedKey)
+        {
+            Interlocked.Increment(ref _received);
+            return IntPtr.Zero;
+        }
+
         if (message == WmClose)
         {
             _ = DestroyWindow(hwnd);
@@ -1006,6 +1101,47 @@ internal sealed class Q149ForegroundHolder : IDisposable
         public string ClassName;
         public IntPtr SmallIcon;
     }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct INPUT
+    {
+        public uint Type;
+        public InputUnion Data;
+    }
+
+    [StructLayout(LayoutKind.Explicit)]
+    private struct InputUnion
+    {
+        [FieldOffset(0)]
+        public MOUSEINPUT Mouse;
+
+        [FieldOffset(0)]
+        public KEYBDINPUT Keyboard;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MOUSEINPUT
+    {
+        public int Dx;
+        public int Dy;
+        public uint MouseData;
+        public uint Flags;
+        public uint Time;
+        public IntPtr ExtraInfo;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct KEYBDINPUT
+    {
+        public ushort Vk;
+        public ushort Scan;
+        public uint Flags;
+        public uint Time;
+        public IntPtr ExtraInfo;
+    }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern uint SendInput(uint count, INPUT[] inputs, int size);
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern ushort RegisterClassEx(ref WNDCLASSEX windowClass);
@@ -1649,22 +1785,38 @@ internal static class Q149Native
     internal static string? ForegroundOutlookClass()
     {
         IntPtr foreground = GetForegroundWindow();
-        if (foreground == IntPtr.Zero)
-        {
-            return null;
-        }
+        return foreground == IntPtr.Zero ? null : OutlookClassOf(foreground);
+    }
 
-        _ = GetWindowThreadProcessId(foreground, out uint pid);
+    /// <summary>The class of <paramref name="window"/> when an OUTLOOK.EXE owns it; null when another process does.</summary>
+    internal static string? OutlookClassOf(IntPtr window)
+    {
+        _ = GetWindowThreadProcessId(window, out uint pid);
         try
         {
             using Process owner = Process.GetProcessById((int)pid);
-            return string.Equals(owner.ProcessName, "OUTLOOK", StringComparison.OrdinalIgnoreCase) ? ClassOf(foreground) : null;
+            return string.Equals(owner.ProcessName, "OUTLOOK", StringComparison.OrdinalIgnoreCase) ? ClassOf(window) : null;
         }
-        catch (ArgumentException)
+        catch (Exception ex) when (ex is ArgumentException || ex is InvalidOperationException)
         {
             return null;
         }
     }
+
+    /// <summary>
+    /// How long after a person's input Windows keeps other programs from taking the foreground
+    /// (SPI_GETFOREGROUNDLOCKTIMEOUT), in milliseconds; null when it cannot be read.
+    /// </summary>
+    internal static long? ForegroundLockTimeoutMs()
+    {
+        const uint GetForegroundLockTimeout = 0x2000;
+        uint timeout = 0;
+        return SystemParametersInfo(GetForegroundLockTimeout, 0, ref timeout, 0) ? timeout : null;
+    }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SystemParametersInfo(uint action, uint param, ref uint value, uint winIni);
 
     internal static void Park(IntPtr hwnd)
     {
