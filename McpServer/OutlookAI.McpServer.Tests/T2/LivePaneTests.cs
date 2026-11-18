@@ -153,6 +153,8 @@ public sealed class LivePaneTests
             LiveOutlookTestMailer.CloseOpenDraftDiscarding(Hub, draft.EntryId, Marker);
             TryDeleteArtifact(draft.EntryId);
             LiveOutlookTestMailer.DeleteTaggedArtifactsUntilStableZero(Hub, Marker);
+            // What this test leaves on screen, for the headless tests that count Outlook's windows after it.
+            _output.WriteLine("on screen after: " + LiveHeadlessComposeParityTests.OutlookWindowsOnScreen());
         }
 
         Assert.Equal(0, LiveOutlookTestMailer.CountTaggedArtifacts(Hub, Marker));
