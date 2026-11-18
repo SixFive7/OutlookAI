@@ -1228,7 +1228,9 @@ its mailbox tests on, and change nothing you install.
   named `Assert-OutlookClosed` and one written inline. The profile writers' reason is said once, in
   `OutlookMapiInterop.ps1`, and the SDK and mail sink installers keep copies check 4 holds identical. The choice of the hive a profile script works in (`Select-OutlookHive`,
   two copies and an older one in `Build-Corpus.ps1`, which now reads the shared one's choice) and
-  what `-Verify` does about ImportPRF (`Resolve-ImportPrfClearance`, two copies) are one copy too.
+  what `-Verify` does about ImportPRF (`Resolve-ImportPrfClearance`, two copies) are one copy too,
+  and so is the one helper of the self-tests with a single form, `ConvertTo-SelfTestText`, which four
+  of them compared values by.
 
 - 📝 **If Office's own grace reset fails, the Exchange test machine may get Microsoft 365 Apps (Q206).**
   The maintainer's decision Q206, 2026-11-18, now in AGENTS.md beside the machine's internet

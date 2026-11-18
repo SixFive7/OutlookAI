@@ -909,18 +909,6 @@ function Test-ProfileOutcome {
 # SELF-TEST. Pure: reads no registry, writes no file, starts no process, needs no guest.
 # =============================================================================================
 
-function ConvertTo-SelfTestText {
-    param($Value)
-
-    if ($null -eq $Value) { return '<null>' }
-    if ($Value -is [System.Array]) {
-        $parts = @()
-        foreach ($item in $Value) { $parts += (ConvertTo-SelfTestText $item) }
-        return '[' + ($parts -join ', ') + ']'
-    }
-    return [string] $Value
-}
-
 function Invoke-SelfTest {
     $script:SelfTestChecks = 0
     $script:SelfTestFailures = @()

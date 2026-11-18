@@ -306,6 +306,23 @@ function Assert-TestbedGuestIdentity {
     throw ("REFUSING TO RUN.`n`n  logged on as : '{0}'          (allowed: {1})`n  computer name: '{2}'      (must start with: '{3}')`n`n{4}" -f $env:USERNAME, ($users -join ', '), $env:COMPUTERNAME, $prefix, $Why)
 }
 
+# ---- The self-tests' helpers (Q154, S7a: P04).
+
+# A value as a self-test prints and compares it: '<null>' for $null, an array as [a, b] item by item, and
+# anything else as its string - so $null, '' and an empty array never read alike. Add-OutlookPstStore.ps1,
+# New-OutlookProfile.ps1, Set-DefaultOutlookProfile.ps1 and New-LiveTestSettings.ps1 each held a copy.
+function ConvertTo-SelfTestText {
+    param($Value)
+
+    if ($null -eq $Value) { return '<null>' }
+    if ($Value -is [System.Array]) {
+        $parts = @()
+        foreach ($item in $Value) { $parts += (ConvertTo-SelfTestText $item) }
+        return '[' + ($parts -join ', ') + ']'
+    }
+    return [string] $Value
+}
+
 # ---- The Outlook profile scripts' helpers (Q154, S7c step 3, and S7a for the hive choice and the
 # ImportPRF clearance): New-OutlookProfile.ps1, Set-DefaultOutlookProfile.ps1, New-TierProfile.ps1 and
 # Build-Corpus.ps1 each held a copy. The constants they read are the calling script's own, as $script:
