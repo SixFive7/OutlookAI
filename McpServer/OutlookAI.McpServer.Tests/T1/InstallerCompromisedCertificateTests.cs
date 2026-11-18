@@ -66,15 +66,54 @@ public sealed class InstallerCompromisedCertificateTests
     }
 
     [Fact]
-    public void ARootStoreIsChangedOnlyWhenTheCertificateIsInIt_AndSetupNeverWaitsOnIt()
+    public void TheComputersRootStoresAreChangedOnlyWhenTheCertificateIsInThem_AndNeverWaitedOn()
     {
-        // Windows guards the user's Root store and can put up its own confirmation for a change to
-        // it; a silent auto-update must not sit behind that.
         string delete = Procedure(Installer(), "DeleteCompromisedCertificate");
 
         Assert.Matches(@"if \(Store = 'Root'\) or \(Store = 'AuthRoot'\) then", delete);
         Assert.Matches(@"if ResultCode <> 0 then\s+exit;\s+Wait := ewNoWait;", delete);
         Assert.Contains("Wait := ewWaitUntilTerminated;", delete);
+    }
+
+    /// <summary>
+    /// Windows puts every removal from the user's Root store to the user - "Root Certificate Store",
+    /// "Do you want to DELETE the following certificate from the Root Store?", No the default - and
+    /// certutil waits for the answer - still waiting after two minutes - even started hidden
+    /// (measured 2026-11-17, Docs/live-tier-on-the-vm.md section 4.8). So the installer asks only
+    /// when the certificate is in the user's own Root store, explains first in one sentence, waits
+    /// only when somebody is there, and on a silent run - every auto-update - neither asks nor waits.
+    /// </summary>
+    [Fact]
+    public void TheUsersRootStoreIsAskedOnlyWhenTheCertificateIsInIt_AfterOneSentence_AndNeverOnASilentRun()
+    {
+        string iss = Installer();
+        string delete = Procedure(iss, "DeleteCompromisedCertificate");
+        string userRoot = Procedure(iss, "RemoveCompromisedCertificateFromUserRoot");
+
+        Assert.Matches(@"if \(Scope = '-user '\) and \(Store = 'Root'\) then\s+begin\s+RemoveCompromisedCertificateFromUserRoot;\s+exit;\s+end;", delete);
+        // In the user's own store: the certificate's key, where certutil -user -addstore Root puts it -
+        // not the user's view of Root, which lists the computer's roots too.
+        Assert.Matches(@"(?m)^\s*UserRootCertificateKey = 'Software\\Microsoft\\SystemCertificates\\Root\\Certificates\\\{#CompromisedCertThumbprint\}';\r?$", iss);
+        Assert.Matches(@"^procedure RemoveCompromisedCertificateFromUserRoot;\s+var\s+ResultCode: Integer;\s+Silent: Boolean;\s+begin\s+if not RegKeyExists\(HKCU, UserRootCertificateKey\) then\s+exit;", userRoot);
+        Assert.Matches(@"if IsUninstaller then\s+Silent := UninstallSilent\s+else\s+Silent := WizardSilent;", userRoot);
+
+        // A silent run leaves before anything is shown or started.
+        Match silent = Regex.Match(userRoot, @"if Silent then\s+begin(?<body>.*?)\s+exit;\s+end;", RegexOptions.Singleline);
+        Assert.True(silent.Success, "no silent branch that exits");
+        Assert.DoesNotContain("MsgBox", silent.Groups["body"].Value);
+        Assert.DoesNotContain("Exec", silent.Groups["body"].Value);
+
+        // Then one sentence, then Windows' question, waited for.
+        int explain = userRoot.IndexOf("MsgBox(", StringComparison.Ordinal);
+        int ask = userRoot.IndexOf("Exec('certutil', '-user -delstore Root {#CompromisedCertThumbprint}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode)", StringComparison.Ordinal);
+        Assert.True(explain > silent.Index && ask > explain, "the explanation does not come between the silent branch and the question");
+        Match message = Regex.Match(userRoot, @"MsgBox\('(?<text>(?:[^']|'')*)' \+ Copy\('\{#CompromisedCertThumbprint\}', 1, 8\) \+ '(?<rest>(?:[^']|'')*)', mbInformation, MB_OK\);");
+        Assert.True(message.Success, "the explanation is not a MsgBox naming the thumbprint's first eight digits");
+        string sentence = message.Groups["text"].Value + Thumbprint.Substring(0, 8) + message.Groups["rest"].Value;
+        Assert.EndsWith(".", sentence, StringComparison.Ordinal);
+        Assert.DoesNotMatch(@"[.!?]\s", sentence);
+        Assert.Contains("Root Certificate Store", sentence, StringComparison.Ordinal);
+        Assert.Matches(@"\bYes\b", sentence);
     }
 
     [Fact]
@@ -83,7 +122,7 @@ public sealed class InstallerCompromisedCertificateTests
         string iss = Installer();
 
         Assert.Contains("RemoveCompromisedCertificate;", Procedure(iss, "CurStepChanged"));
-        Assert.Matches(@"if CurUninstallStep = usUninstall then\s+RemoveCompromisedCertificate;", Procedure(iss, "CurUninstallStepChanged"));
+        Assert.Matches(@"if CurUninstallStep = usUninstall then\s+begin(?:\s+\w+;)*\s+RemoveCompromisedCertificate;\s+end;", Procedure(iss, "CurUninstallStepChanged"));
     }
 
     [Fact]

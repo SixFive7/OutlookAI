@@ -33,6 +33,13 @@
 #define CompromisedCertThumbprint "E205060633DD7062D4F90033130542948A69D068"
 #define CompromisedCertUserStores "TrustedPublisher TrustedPeople CA Root"
 #define CompromisedCertMachineStores "TrustedPublisher TrustedPeople CA AuthRoot Root"
+; ITS PUBLIC KEY, for the VSTO trust entries that name the key and not the certificate: the RSA
+; modulus, 1024 bits, as base64 in exactly the form .NET writes it in the <Modulus> of the
+; <RSAKeyValue> the VSTO runtime stores. A public key names nobody. Read 2026-11-17 from the
+; public half of the certificate above, which is not in this repository. Removed by
+; RemoveCompromisedTrustEntries on every install, update and uninstall; T1
+; InstallerCompromisedTrustEntryTests pins it by its SHA-256.
+#define CompromisedKeyModulus "uG6emg3rYVFe+OpNdO5oBsRtIb5MLBiCOKamIZ0V3QntBawNEC7948U8KeGAeiuUZwZ4pqGCRh4vIZ/Yv0GIz8DBjvuleWcckI+MSL1LZheVyBcBPm7UOmfd/i2aYAKqxdvtQrODDb81000zefQg4owVdYaweuT/uOvgryhnXjk="
 
 [Setup]
 AppId={{78AF2871-0CEB-4451-B80D-455552E37C91}
@@ -138,7 +145,8 @@ Root: HKCU; Subkey: "Software\Microsoft\Office\17.0\Outlook\Resiliency\DoNotDisa
 [UninstallRun]
 Filename: "certutil"; Parameters: "-user -delstore TrustedPublisher OutlookAI"; Flags: runhidden
 ; The compromised certificate is removed by thumbprint from every trust store on uninstall as
-; on install: CurUninstallStepChanged runs RemoveCompromisedCertificate.
+; on install, and the VSTO trust entries for its key with it: CurUninstallStepChanged runs
+; RemoveCompromisedTrustEntries and RemoveCompromisedCertificate.
 
 [Code]
 // Setup is a 32-bit process, so these HKLM reads pass through the WOW64 redirector and
@@ -472,27 +480,72 @@ end;
 // certificate TRUST store setup can write (decision 193 (b), 2026-11-17). Before that, from the
 // user's TrustedPublisher store only.
 //
-//  * By THUMBPRINT, its one identifier here, never by subject: it shares CN=OutlookAI with the
-//    current certificate, so a subject match would also remove the one just installed above.
-//    No copy of it is shipped, and none may enter the repository.
+//  * By THUMBPRINT, its one identifier here, never by subject: its subject is not OutlookAI's but
+//    the name of the computer and user it was made on, which no file here may carry. No copy of it
+//    is shipped, and none may enter the repository.
 //  * The user's stores always - this per-user installer can write them. The computer's stores
 //    only when setup runs with administrator rights, the one case it can write them. Trust
 //    stores only: TrustedPublisher, TrustedPeople, CA (intermediates, which chains are built
 //    from), Root, and the computer's AuthRoot. Never added to Disallowed: that is for the
 //    maintainer's own computer, where it is done by hand.
-//  * Root LAST, ONLY WHEN IT IS THERE, AND NOT WAITED FOR. Windows guards the user's Root store,
-//    and a change to it can put up Windows' own confirmation (adding one does: measured, see
-//    InstallCertificate). On a silent auto-update nobody may be there to answer it, so setup
-//    never waits on it: the confirmation, if one comes, stays up until the user answers, and the
-//    next install looks again. Reading the store first means the normal machine - the
-//    certificate in no Root store at all - never sees a certutil -delstore Root at all.
+//  * The computer's Root and AuthRoot only when the certificate is there, and not waited for.
+//  * THE USER'S ROOT STORE ASKS. Windows puts every removal from it to the user: a window titled
+//    "Root Certificate Store" - "Do you want to DELETE the following certificate from the Root
+//    Store?", the certificate's subject, issuer, validity, serial number and thumbprints, Yes and
+//    No, No the default - shown even when certutil runs hidden, and certutil waits for the answer
+//    (still waiting after two minutes). Yes removes it (certutil exits 0), No keeps it (0x800704C7,
+//    ERROR_CANCELLED). Measured 2026-11-17, Docs/live-tier-on-the-vm.md section 4.8. So that store
+//    has its own procedure, RemoveCompromisedCertificateFromUserRoot, below.
 //  * Best effort throughout: on most machines it is in none of these stores, and "not found" is
 //    the normal answer, so every result is ignored. Install and uninstall run the same removal.
+const
+  UserRootCertificateKey = 'Software\Microsoft\SystemCertificates\Root\Certificates\{#CompromisedCertThumbprint}';
+
+// THE USER'S ROOT STORE: only when the certificate is in it, and only when somebody is there to
+// answer Windows' question.
+//
+//  * In it means in the user's own Root store: the certificate's key under UserRootCertificateKey,
+//    which is where a certificate the user added to Root is kept (measured). The user's view of Root
+//    also lists the computer's roots, which this user cannot remove - so the question is never put
+//    about one of those, and the normal machine, the certificate in no Root store, starts no
+//    certutil here at all.
+//  * An interactive install or uninstall says why in one sentence first, then lets Windows ask, and
+//    waits for the answer: the user is at the screen, and the setup window waits behind the question.
+//  * A silent run - the add-in's own updates are /SILENT - never asks and never waits: it leaves the
+//    certificate for the next interactive install or uninstall, which asks again. Windows' question
+//    unexplained, after an update nobody watched, would look like an attack, and it would come back
+//    after every update while it stood unanswered.
+procedure RemoveCompromisedCertificateFromUserRoot;
+var
+  ResultCode: Integer;
+  Silent: Boolean;
+begin
+  if not RegKeyExists(HKCU, UserRootCertificateKey) then
+    exit;
+  if IsUninstaller then
+    Silent := UninstallSilent
+  else
+    Silent := WizardSilent;
+  if Silent then
+  begin
+    Log('The compromised certificate is in the user''s Root store. A silent run leaves it for the next interactive install or uninstall, which asks.');
+    exit;
+  end;
+  MsgBox('Windows will now ask, in a window titled Root Certificate Store, whether to delete an old OutlookAI certificate (thumbprint ' + Copy('{#CompromisedCertThumbprint}', 1, 8) + '...) from your trusted root certificates: its private key has leaked, so please answer Yes.', mbInformation, MB_OK);
+  if Exec('certutil', '-user -delstore Root {#CompromisedCertThumbprint}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    Log('certutil -user -delstore Root exited ' + IntToStr(ResultCode) + ': 0 removed, -2147023673 (ERROR_CANCELLED) kept.');
+end;
+
 procedure DeleteCompromisedCertificate(const Scope, Store: String);
 var
   ResultCode: Integer;
   Wait: TExecWait;
 begin
+  if (Scope = '-user ') and (Store = 'Root') then
+  begin
+    RemoveCompromisedCertificateFromUserRoot;
+    exit;
+  end;
   Wait := ewWaitUntilTerminated;
   if (Store = 'Root') or (Store = 'AuthRoot') then
   begin
@@ -538,6 +591,52 @@ begin
   DeleteCompromisedCertificateFromStores('-user ', '{#CompromisedCertUserStores}');
   if IsAdmin then
     DeleteCompromisedCertificateFromStores('', '{#CompromisedCertMachineStores}');
+end;
+
+// VSTO'S TRUST ENTRIES FOR THE COMPROMISED KEY. Clicking Install on Office's "Publisher cannot be
+// verified" prompt for v1.0.0.1 to v2.3.1.111 left an entry under VstoInclusionKey\<guid>: Url, the
+// location of the .vsto, and PublicKey, the key that signed it, as <RSAKeyValue>. From then on the
+// VSTO runtime loads ANY add-in at that location whose manifests are signed with that key, with no
+// prompt - it compares the location and the key and never looks at the certificate - and that key's
+// private half is public. So every entry holding the compromised key goes, wherever it points, on
+// every install, update and uninstall. Docs/live-tier-on-the-vm.md section 4.8 has the evidence.
+//
+//  * Matched on the public key alone: its modulus, found in the value once the value's white space
+//    is out. The runtime reads the value with .NET's FromXmlString and compares the two keys'
+//    bytes, so a namespace, a prefix, another element order or a line break inside the base64 is
+//    still this key to it - and to this test. Never on the Url, which names a user's folders.
+//  * Only this key: the entry the current release's own prompt wrote for the same folder, and every
+//    other add-in's, stay. Removing an entry costs at most one more prompt; keeping this one lets
+//    anything signed with the leaked key load from that folder unasked.
+//  * Best effort: no key, no entry or no PublicKey is the normal case and changes nothing.
+const
+  VstoInclusionKey = 'Software\Microsoft\VSTO\Security\Inclusion';
+
+// S with every space, tab, carriage return and line feed taken out - the white space .NET's
+// base64 decoder skips.
+function WithoutWhiteSpace(const S: String): String;
+var
+  I: Integer;
+begin
+  Result := '';
+  for I := 1 to Length(S) do
+    if (S[I] <> ' ') and (S[I] <> #9) and (S[I] <> #10) and (S[I] <> #13) then
+      Result := Result + S[I];
+end;
+
+procedure RemoveCompromisedTrustEntries;
+var
+  Names: TArrayOfString;
+  PublicKey: String;
+  I: Integer;
+begin
+  if not RegGetSubkeyNames(HKCU, VstoInclusionKey, Names) then
+    exit;
+  for I := 0 to GetArrayLength(Names) - 1 do
+    if RegQueryStringValue(HKCU, VstoInclusionKey + '\' + Names[I], 'PublicKey', PublicKey) then
+      if Pos('{#CompromisedKeyModulus}', WithoutWhiteSpace(PublicKey)) > 0 then
+        if RegDeleteKeyIncludingSubkeys(HKCU, VstoInclusionKey + '\' + Names[I]) then
+          Log('Removed the VSTO trust entry ' + Names[I] + ', which trusted the compromised key.');
 end;
 
 procedure DownloadAndInstallNetRuntime10;
@@ -630,16 +729,20 @@ begin
     end;
 
     InstallCertificate;
-    // Runs on every install and every silent auto-update, so machines that still trust
-    // the exposed certificate are cleaned up as they update.
+    // Run on every install and every silent auto-update, so machines that still trust the
+    // exposed key are cleaned up as they update: its VSTO trust entries, then its certificate.
+    RemoveCompromisedTrustEntries;
     RemoveCompromisedCertificate;
   end;
 end;
 
-// Uninstalling removes the compromised certificate from every trust store too: an uninstall is
-// no reason to go on trusting it.
+// Uninstalling removes the compromised key's VSTO trust entries and its certificate too: an
+// uninstall is no reason to go on trusting it.
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if CurUninstallStep = usUninstall then
+  begin
+    RemoveCompromisedTrustEntries;
     RemoveCompromisedCertificate;
+  end;
 end;
