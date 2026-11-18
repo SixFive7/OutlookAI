@@ -796,7 +796,11 @@ internal sealed class Q149ForegroundHolder : IDisposable
     private readonly Thread _thread;
     private readonly ManualResetEventSlim _ready = new(false);
     private readonly string _className = "Q149ForegroundHolder" + Guid.NewGuid().ToString("N");
+    private readonly Stopwatch _since = Stopwatch.StartNew();
+    private readonly object _gate = new();
+    private readonly List<(long Ms, bool Holder, string What)> _foreground = new();
     private WndProc? _proc;
+    private Q149Native.WinEventProc? _onForeground;
     private IntPtr _hwnd;
     private uint _threadId;
 
@@ -815,6 +819,51 @@ internal sealed class Q149ForegroundHolder : IDisposable
 
     /// <summary>True when the holder's window is the foreground window now.</summary>
     public bool HasForeground => _hwnd != IntPtr.Zero && Q149Native.GetForegroundWindow() == _hwnd;
+
+    /// <summary>Where the foreground timeline stands now - pass it to <see cref="AwaySince"/> after a draft.</summary>
+    public int Mark()
+    {
+        lock (_gate)
+        {
+            return _foreground.Count;
+        }
+    }
+
+    /// <summary>
+    /// Every change of the foreground since <paramref name="mark"/>, system-wide (EVENT_SYSTEM_FOREGROUND for every
+    /// process), and how long, in all, it was on some other window than the holder's - the time a person's keystrokes
+    /// would have gone elsewhere. Process names, window classes and places only.
+    /// </summary>
+    public (long AwayMs, string[] Changes) AwaySince(int mark)
+    {
+        lock (_gate)
+        {
+            long away = 0;
+            long? leftAt = null;
+            List<string> changes = new();
+            for (int i = mark; i < _foreground.Count; i++)
+            {
+                (long ms, bool holder, string what) = _foreground[i];
+                changes.Add("+" + ms.ToString(CultureInfo.InvariantCulture) + " " + what);
+                if (!holder && leftAt == null)
+                {
+                    leftAt = ms;
+                }
+                else if (holder && leftAt != null)
+                {
+                    away += ms - leftAt.Value;
+                    leftAt = null;
+                }
+            }
+
+            if (leftAt != null)
+            {
+                away += _since.ElapsedMilliseconds - leftAt.Value;
+            }
+
+            return (away, changes.Take(40).ToArray());
+        }
+    }
 
     /// <summary>
     /// Brings the holder to the foreground the way a program a person clicked would have it - attached to the input of
@@ -883,6 +932,11 @@ internal sealed class Q149ForegroundHolder : IDisposable
             _hwnd = CreateWindowEx(0, _className, "Q149 foreground holder", WsOverlapped | WsCaption | WsVisible, 40, 40, 320, 120, IntPtr.Zero, IntPtr.Zero, windowClass.Instance, IntPtr.Zero);
         }
 
+        // Every foreground change on the desktop, whichever process it goes to - out of context, on this thread's loop.
+        _onForeground = OnForeground;
+        IntPtr hook = _hwnd == IntPtr.Zero
+            ? IntPtr.Zero
+            : Q149Native.SetWinEventHook(Q149Native.EventSystemForeground, Q149Native.EventSystemForeground, IntPtr.Zero, _onForeground, 0, 0, Q149Native.WinEventOutOfContext);
         _ready.Set();
         if (_hwnd == IntPtr.Zero)
         {
@@ -893,6 +947,29 @@ internal sealed class Q149ForegroundHolder : IDisposable
         {
             Q149Native.TranslateMessage(ref msg);
             Q149Native.DispatchMessage(ref msg);
+        }
+
+        if (hook != IntPtr.Zero)
+        {
+            _ = Q149Native.UnhookWinEvent(hook);
+        }
+    }
+
+    private void OnForeground(IntPtr hook, uint eventType, IntPtr hwnd, int idObject, int idChild, uint thread, uint time)
+    {
+        if (hwnd == IntPtr.Zero)
+        {
+            return;
+        }
+
+        long at = _since.ElapsedMilliseconds;
+        string what = Q149Native.Describe(hwnd);
+        lock (_gate)
+        {
+            if (_foreground.Count < 4000)
+            {
+                _foreground.Add((at, hwnd == _hwnd, what));
+            }
         }
     }
 
@@ -1546,24 +1623,26 @@ internal static class Q149Native
     internal static string DescribeForeground()
     {
         IntPtr foreground = GetForegroundWindow();
-        if (foreground == IntPtr.Zero)
-        {
-            return "none";
-        }
+        return foreground == IntPtr.Zero ? "none" : Describe(foreground);
+    }
 
-        _ = GetWindowThreadProcessId(foreground, out uint pid);
+    /// <summary><paramref name="window"/> as one line, as <see cref="DescribeForeground"/> gives the foreground window.</summary>
+    internal static string Describe(IntPtr window)
+    {
+        _ = GetWindowThreadProcessId(window, out uint pid);
         string owner;
         try
         {
             using Process process = Process.GetProcessById((int)pid);
             owner = process.ProcessName;
         }
-        catch (ArgumentException)
+        catch (Exception ex) when (ex is ArgumentException || ex is InvalidOperationException)
         {
+            // No process with that id any more, or one that has just exited.
             owner = "?";
         }
 
-        return owner + " " + ClassOf(foreground) + " " + DescribePlace(foreground);
+        return owner + " " + ClassOf(window) + " " + DescribePlace(window);
     }
 
     /// <summary>Whether the foreground window belongs to an OUTLOOK.EXE, and its class - null when there is none.</summary>

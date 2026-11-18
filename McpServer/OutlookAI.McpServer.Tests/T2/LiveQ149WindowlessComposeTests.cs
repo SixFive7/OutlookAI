@@ -1053,6 +1053,7 @@ public sealed class LiveQ149WindowlessComposeTests
 
         // The program a person types in, standing in: brought to the foreground before the draft, checked after it.
         bool holderHadForeground = _holder != null && _holder.TakeForeground();
+        int foregroundMark = _holder?.Mark() ?? 0;
         string foregroundBefore = Q149Native.DescribeForeground();
         int shows = windows.Shows;
         int onScreen = windows.OnScreenShows;
@@ -1082,6 +1083,7 @@ public sealed class LiveQ149WindowlessComposeTests
 
         // A window shown at the very end of the compose reaches the watch's own message loop a moment later.
         Thread.Sleep(300);
+        (long AwayMs, string[] Changes)? away = _holder?.AwaySince(foregroundMark);
         attempt.Set("composeOk", result != null)
             .Set("composeError", error ?? (result == null ? "see composeOk" : null))
             .Set("composeMs", returned - started)
@@ -1097,6 +1099,8 @@ public sealed class LiveQ149WindowlessComposeTests
             .Set("userVisibleWindowsAfter", ComposeSurface.CountUserVisibleWindows())
             .Set("holderHadForegroundBefore", _holder == null ? null : holderHadForeground)
             .Set("holderKeptForeground", _holder == null ? null : _holder.HasForeground)
+            .Set("foregroundAwayMs", away?.AwayMs)
+            .Set("foregroundChanges", away?.Changes)
             .Set("foregroundBefore", foregroundBefore)
             .Set("foregroundAfter", Q149Native.DescribeForeground())
             .Set("windowEvents", windows.Events.Skip(events).Take(40).ToArray());
