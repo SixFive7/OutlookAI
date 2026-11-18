@@ -1109,7 +1109,7 @@ public sealed class LiveQ149WindowlessComposeTests
             Thread.Sleep(TypingLeadMs);
         }
 
-        int foregroundMark = _holder?.Mark() ?? 0;
+        long foregroundMark = _holder?.Mark() ?? 0;
         string foregroundBefore = Q149Native.DescribeForeground();
         int shows = windows.Shows;
         int onScreen = windows.OnScreenShows;
@@ -1136,11 +1136,12 @@ public sealed class LiveQ149WindowlessComposeTests
         }
 
         long returned = clock.ElapsedMilliseconds;
-        (int Sent, int ToHolder, int Skipped, int Failed, string? SkippedTo)? keys = _holder?.StopTyping();
+        ((int Sent, int ToHolder, int Skipped, int Failed, string? SkippedTo) Keys, int WhileOutlookForeground, int WhileOutlookFocus)? typed = _holder?.StopTypingCounted();
+        (int Sent, int ToHolder, int Skipped, int Failed, string? SkippedTo)? keys = typed?.Keys;
 
         // A window shown at the very end of the compose reaches the watch's own message loop a moment later.
         Thread.Sleep(300);
-        (long AwayMs, string[] Changes)? away = _holder?.AwaySince(foregroundMark);
+        (long AwayMs, string[] Changes, long SampledAwayMs, string[] Samples)? away = _holder?.AwaySince(foregroundMark);
         attempt.Set("composeOk", result != null)
             .Set("composeError", error ?? (result == null ? "see composeOk" : null))
             .Set("composeMs", returned - started)
@@ -1158,6 +1159,10 @@ public sealed class LiveQ149WindowlessComposeTests
             .Set("holderKeptForeground", _holder == null ? null : _holder.HasForeground)
             .Set("foregroundAwayMs", away?.AwayMs)
             .Set("foregroundChanges", away?.Changes)
+            .Set("foregroundAwaySampledMs", away?.SampledAwayMs)
+            .Set("foregroundSamples", away?.Samples)
+            .Set("keysSentWhileOutlookHadTheForeground", typed?.WhileOutlookForeground)
+            .Set("keysSentWhileOutlookHadTheFocus", typed?.WhileOutlookFocus)
             .Set("inputIdleSecondsBefore", Math.Round(idleSecondsBefore, 1))
             .Set("foregroundLockTimeoutMs", Q149Native.ForegroundLockTimeoutMs())
             .Set("keysSent", keys?.Sent)

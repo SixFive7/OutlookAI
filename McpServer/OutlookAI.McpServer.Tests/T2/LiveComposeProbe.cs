@@ -805,6 +805,9 @@ internal sealed class Q149ForegroundHolder : IDisposable
     private readonly Stopwatch _since = Stopwatch.StartNew();
     private readonly object _gate = new();
     private readonly List<(long Ms, bool Holder, string What)> _foreground = new();
+    private readonly List<(long Ms, bool Holder, string What)> _sampled = new();
+    private Thread? _sampler;
+    private volatile bool _closing;
     private WndProc? _proc;
     private Q149Native.WinEventProc? _onForeground;
     private IntPtr _hwnd;
@@ -815,6 +818,8 @@ internal sealed class Q149ForegroundHolder : IDisposable
     private int _sent;
     private int _skipped;
     private int _failed;
+    private int _sentWhileOutlookForeground;
+    private int _sentWhileOutlookFocus;
     private string? _skippedTo;
 
     public Q149ForegroundHolder()
@@ -823,6 +828,11 @@ internal sealed class Q149ForegroundHolder : IDisposable
         _thread.SetApartmentState(ApartmentState.STA);
         _thread.Start();
         _ready.Wait(TimeSpan.FromSeconds(10));
+        if (_hwnd != IntPtr.Zero)
+        {
+            _sampler = new Thread(SampleForeground) { IsBackground = true, Name = "Q149.ForegroundSampler" };
+            _sampler.Start();
+        }
     }
 
     private delegate IntPtr WndProc(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
@@ -839,49 +849,68 @@ internal sealed class Q149ForegroundHolder : IDisposable
     /// <summary>True when the holder's window is the foreground window now.</summary>
     public bool HasForeground => _hwnd != IntPtr.Zero && Q149Native.GetForegroundWindow() == _hwnd;
 
-    /// <summary>Where the foreground timeline stands now - pass it to <see cref="AwaySince"/> after a draft.</summary>
-    public int Mark()
+    /// <summary>Where the foreground timelines stand now, in their milliseconds - pass it to <see cref="AwaySince"/> after a draft.</summary>
+    public long Mark()
     {
-        lock (_gate)
-        {
-            return _foreground.Count;
-        }
+        return _since.ElapsedMilliseconds;
     }
 
     /// <summary>
-    /// Every change of the foreground since <paramref name="mark"/>, system-wide (EVENT_SYSTEM_FOREGROUND for every
-    /// process), and how long, in all, it was on some other window than the holder's - the time a person's keystrokes
-    /// would have gone elsewhere. Process names, window classes and places only.
+    /// The foreground since <paramref name="mark"/>, two ways. As Windows announced it: every EVENT_SYSTEM_FOREGROUND of
+    /// the desktop, for every process, and how long in all from one that left the holder to the next that came back to
+    /// it (to now, when none came back). And as Windows answered when asked: GetForegroundWindow every 10 ms, its
+    /// changes, and how long in all it named another window than the holder's - the time a person's keystrokes would
+    /// have gone elsewhere. Process names, window classes and places only.
     /// </summary>
-    public (long AwayMs, string[] Changes) AwaySince(int mark)
+    public (long AwayMs, string[] Changes, long SampledAwayMs, string[] Samples) AwaySince(long mark)
     {
         lock (_gate)
         {
-            long away = 0;
-            long? leftAt = null;
-            List<string> changes = new();
-            for (int i = mark; i < _foreground.Count; i++)
+            (long announced, string[] changes) = Away(_foreground, mark, startsOnHolder: true);
+            bool sampledStart = true;
+            foreach ((long ms, bool holder, _) in _sampled)
             {
-                (long ms, bool holder, string what) = _foreground[i];
-                changes.Add("+" + ms.ToString(CultureInfo.InvariantCulture) + " " + what);
-                if (!holder && leftAt == null)
+                if (ms < mark)
                 {
-                    leftAt = ms;
-                }
-                else if (holder && leftAt != null)
-                {
-                    away += ms - leftAt.Value;
-                    leftAt = null;
+                    sampledStart = holder;
                 }
             }
 
-            if (leftAt != null)
-            {
-                away += _since.ElapsedMilliseconds - leftAt.Value;
-            }
-
-            return (away, changes.Take(40).ToArray());
+            (long sampled, string[] samples) = Away(_sampled, mark, sampledStart);
+            return (announced, changes, sampled, samples);
         }
+    }
+
+    private (long AwayMs, string[] Changes) Away(List<(long Ms, bool Holder, string What)> timeline, long mark, bool startsOnHolder)
+    {
+        long away = 0;
+        long? leftAt = startsOnHolder ? null : mark;
+        List<string> changes = new();
+        foreach ((long ms, bool holder, string what) in timeline)
+        {
+            if (ms < mark)
+            {
+                continue;
+            }
+
+            changes.Add("+" + ms.ToString(CultureInfo.InvariantCulture) + " " + what);
+            if (!holder && leftAt == null)
+            {
+                leftAt = ms;
+            }
+            else if (holder && leftAt != null)
+            {
+                away += ms - leftAt.Value;
+                leftAt = null;
+            }
+        }
+
+        if (leftAt != null)
+        {
+            away += _since.ElapsedMilliseconds - leftAt.Value;
+        }
+
+        return (away, changes.Take(40).ToArray());
     }
 
     /// <summary>
@@ -935,6 +964,8 @@ internal sealed class Q149ForegroundHolder : IDisposable
         _sent = 0;
         _skipped = 0;
         _failed = 0;
+        _sentWhileOutlookForeground = 0;
+        _sentWhileOutlookFocus = 0;
         _skippedTo = null;
         _typing = true;
         _typist = new Thread(() => Type(intervalMs)) { IsBackground = true, Name = "Q149.Typist" };
@@ -948,6 +979,15 @@ internal sealed class Q149ForegroundHolder : IDisposable
     /// </summary>
     public (int Sent, int ToHolder, int Skipped, int Failed, string? SkippedTo)? StopTyping()
     {
+        return StopTypingCounted()?.Keys;
+    }
+
+    /// <summary>
+    /// <see cref="StopTyping"/>, and of the keys sent, how many went out while GetForegroundWindow named an Outlook window,
+    /// and while the foreground thread's keyboard focus (GetGUIThreadInfo) was in one - where Windows would deliver them.
+    /// </summary>
+    public ((int Sent, int ToHolder, int Skipped, int Failed, string? SkippedTo) Keys, int WhileOutlookForeground, int WhileOutlookFocus)? StopTypingCounted()
+    {
         if (_typist == null)
         {
             return null;
@@ -959,12 +999,14 @@ internal sealed class Q149ForegroundHolder : IDisposable
 
         // The last keys reach the holder's message loop a moment after SendInput returns.
         Thread.Sleep(200);
-        return (_sent, Volatile.Read(ref _received), _skipped, _failed, _skippedTo);
+        return ((_sent, Volatile.Read(ref _received), _skipped, _failed, _skippedTo), _sentWhileOutlookForeground, _sentWhileOutlookFocus);
     }
 
     public void Dispose()
     {
         _ = StopTyping();
+        _closing = true;
+        _sampler?.Join(TimeSpan.FromSeconds(2));
         if (_hwnd != IntPtr.Zero)
         {
             _ = PostMessage(_hwnd, WmClose, IntPtr.Zero, IntPtr.Zero);
@@ -1052,6 +1094,8 @@ internal sealed class Q149ForegroundHolder : IDisposable
             else if (SendInput((uint)key.Length, key, Marshal.SizeOf<INPUT>()) == key.Length)
             {
                 _sent++;
+                _sentWhileOutlookForeground += foreground != _hwnd ? 1 : 0;
+                _sentWhileOutlookFocus += FocusIsOutlooks() ? 1 : 0;
             }
             else
             {
@@ -1059,6 +1103,38 @@ internal sealed class Q149ForegroundHolder : IDisposable
             }
 
             Thread.Sleep(intervalMs);
+        }
+    }
+
+    /// <summary>Whether the foreground thread's keyboard focus is in a window of an OUTLOOK.EXE - where a key would go.</summary>
+    private static bool FocusIsOutlooks()
+    {
+        GUITHREADINFO info = new() { Size = (uint)Marshal.SizeOf<GUITHREADINFO>() };
+        return GetGUIThreadInfo(0, ref info) && info.Focus != IntPtr.Zero && Q149Native.OutlookClassOf(info.Focus) != null;
+    }
+
+    /// <summary>GetForegroundWindow every 10 ms, its changes kept - what Windows answers, beside what it announces.</summary>
+    private void SampleForeground()
+    {
+        IntPtr last = new(-1);
+        while (!_closing)
+        {
+            IntPtr now = Q149Native.GetForegroundWindow();
+            if (now != last)
+            {
+                last = now;
+                long at = _since.ElapsedMilliseconds;
+                string what = now == IntPtr.Zero ? "none" : Q149Native.Describe(now);
+                lock (_gate)
+                {
+                    if (_sampled.Count < 4000)
+                    {
+                        _sampled.Add((at, now == _hwnd, what));
+                    }
+                }
+            }
+
+            Thread.Sleep(10);
         }
     }
 
@@ -1140,8 +1216,29 @@ internal sealed class Q149ForegroundHolder : IDisposable
         public IntPtr ExtraInfo;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct GUITHREADINFO
+    {
+        public uint Size;
+        public uint Flags;
+        public IntPtr Active;
+        public IntPtr Focus;
+        public IntPtr Capture;
+        public IntPtr MenuOwner;
+        public IntPtr MoveSize;
+        public IntPtr Caret;
+        public int CaretLeft;
+        public int CaretTop;
+        public int CaretRight;
+        public int CaretBottom;
+    }
+
     [DllImport("user32.dll", SetLastError = true)]
     private static extern uint SendInput(uint count, INPUT[] inputs, int size);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetGUIThreadInfo(uint thread, ref GUITHREADINFO info);
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern ushort RegisterClassEx(ref WNDCLASSEX windowClass);
