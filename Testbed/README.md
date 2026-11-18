@@ -293,7 +293,9 @@ fetching and 8 s restoring it again. Master at `3e7b861` the same night: 3,346 o
 asks Hyper-V nothing (`host/TestbedPool.ps1`): it holds a ticket in `%SystemDrive%\OutlookAI-Testbed\queue\`,
 first come first served, tells a free VM from its lock and lease files, and sleeps until one of those
 or a ticket changes, or 30 s pass - on 2026-11-18 eighteen runners asked `Get-VM` every 5 s, 32 WMI
-operations a second served by vmms and the WMI service (runbook section 4.10). The runbook's §4.3 records each
+operations a second served by vmms and the WMI service (runbook section 4.10). It also waits,
+holding nothing, while the testbed's pause switch is on or the host's processors are 70 % busy or
+more (section 5b), and every run's first look at the load takes 30 s. The runbook's §4.3 records each
 verdict proved on it: a failing test, a compile error, a missing package, two callers at once, a
 lease held by hand, a caller killed part-way, whose VM its janitor saved 22 s later - and a run
 whose log, and one whose results, something else held: FAIL, as the tests said, where the runner
@@ -1128,10 +1130,12 @@ frozen checkpoint, under the same name: the same stores, settings (rendered from
 (`host/Set-GuestClockFrozen.ps1 -Verify` checks a clone against its source's). The leases are taken in one
 step with reading them, so two runs never take one guest. `-VMName` names one guest, a clone included.
 
-It builds the commit's payloads and the guest's settings on this host before it touches the guest
-(uncommitted changes are not in the run, and it says how many it left out); waits for the guest's
-lease and never takes over one somebody else holds - in the testbed's queue, asking Hyper-V nothing
-while it waits (`host/TestbedPool.ps1`); restores the guest's checkpoint and stages the
+It waits at the gate first - the pause switch and the load limit, section 5b - and again on every
+turn of its wait for a guest; builds the commit's payloads and the guest's settings on this host
+before it touches the guest (uncommitted changes are not in the run, and it says how many it left
+out); waits for the guest's lease and never takes over one somebody else holds - in the testbed's
+queue, asking Hyper-V nothing while it waits (`host/TestbedPool.ps1`); restores the guest's
+checkpoint and stages the
 payloads, the settings and the commit's `guest/` scripts; proves the suite TEST-READY; then - from a
 FROZEN checkpoint, its default since Q130 (a) - runs `host/Set-GuestClockFrozen.ps1 -Verify`, stops
 unless it says `FROZEN`, and starts Outlook NOT elevated on the tier profile as step 9a would have
@@ -1608,7 +1612,50 @@ taken its lease yet is not immediately put back to sleep.
 | `host/TestbedLeasePath.ps1` | Where leases live, and how one is read. Dot-sourced by both sides so they cannot disagree. |
 | `host/Invoke-TestbedIdleSave.ps1` | The saver. `-WhatIf` reports without changing anything. The one script here that keeps a VM-name default, because its `-VMName` is an allowlist rather than a target (§4a) - since 2026-11-17 every member of every pool in `host/TestbedPool.ps1` and `OutlookAI-Exchange`, so a clone is watched from the day it joins its pool. |
 | `host/Register-IdleSaveTask.ps1` | Registers it as the invoking user at ordinary privilege, every 15 minutes. Needs local `Hyper-V Administrators` membership, **not** elevation - `Save-VM` does not require it, and a standing elevated task would outlive the reason it was created. |
+| `host/TestbedLoad.ps1` | **The gate** (Q195 (e), 2026-11-18): the pause switch, the load limit - under 70 % busy over the last 30 s, the VMs other runs took in the last 120 s counted at their size - and the files that hold them, `%SystemDrive%\OutlookAI-Testbed\gate\`. Dot-sourced by both runners, `host/New-TestbedClone.ps1` and `host/Set-TestbedPause.ps1`, so they cannot disagree. Reads the host's processor times with `GetSystemTimes`, compiled by `Add-Type`, and sleeps between looks with `host/TestbedPool.ps1`'s wait on the testbed's files, 30 s at most. |
+| `host/Set-TestbedPause.ps1` | **The pause switch** (Q195 (e)): `-On [-Reason <text>]` holds every new run back, `-Off` lets them start, neither prints the switch, the load, the runs that wait and the testbed VMs that run. Runs already going finish. `-SelfTest` covers the gate's decisions and files on a scratch directory and reads this machine's processor times once. |
 | `host/Invoke-TestbedIdleSave.vbs` | The task's action: `wscript.exe` starts the saver with its window hidden from creation and waits for it. The task started `powershell.exe` directly until 2026-10-03, and every run opened a console window that took the maintainer's focus for 1-2 s. |
+
+**The load limit and the pause switch (Q195 (e), decided by the maintainer 2026-11-18).** With every
+pool member busy the host's 32 logical processors read 82 to 100 % busy (runbook section 4.7): his own
+work slowed down, and every run took about twice as long. So a run starts only through a gate,
+`host/TestbedLoad.ps1`, that every runner reads:
+
+- **The pause switch.** When the PC is needed - for gaming, say:
+
+      pwsh -File Testbed/host/Set-TestbedPause.ps1 -On -Reason 'gaming'
+      pwsh -File Testbed/host/Set-TestbedPause.ps1 -Off
+      pwsh -File Testbed/host/Set-TestbedPause.ps1          # is it on; the load; what waits and runs
+
+  Runs already going finish: nothing is stopped, saved or killed. No new run starts until `-Off`.
+  It is the maintainer's switch: an agent turns it on or off only when he asks for that in the
+  current message. A file, `%SystemDrive%\OutlookAI-Testbed\gate\paused.json`, holds it - when it was
+  turned on and the reason, not who - and one there that cannot be read counts as on.
+- **The load limit.** A run starts only while the host's processors were less than 70 % busy over the
+  last 30 seconds. Every VM another run took in the last 120 seconds counts on top, at its virtual
+  processors' share of the host (a build VM 12.5 %, an Outlook guest 18.75 %), because a new run's load
+  takes that long to show: without it, every run that waited would start in the second the load
+  dipped, and the host would be back at 100 %. The measurement is kernel32's `GetSystemTimes`: it reads
+  what `\Processor(_Total)\% Processor Time` reads, in any language, and it includes the VMs because
+  this host runs the hypervisor's root scheduler (runbook section 4.13 has the measurements). Task
+  Manager shows a higher figure, % Processor Utility, which weighs frequency boost in.
+- **Where a run starts.** `host/Invoke-TestsOnBuildVm.ps1` looks at the gate on every turn of its queue
+  before it touches a build VM - before its place in the queue, a lease or a lock;
+  `host/Invoke-LiveTierOnGuest.ps1` before its build and on every turn of its wait for a guest, the
+  same way; `host/New-TestbedClone.ps1 -Execute` before it takes the source. A turn the gate holds back
+  keeps the run's ticket in the testbed's queue (`host/TestbedPool.ps1`), so the runs start in the
+  order they came when it opens. A run that
+  takes a VM decides it under the gate's claim and writes its start there, so two runs never both
+  start on the same reading. The janitor and the idle-saver are not gated: they put VMs away.
+- **A waiting run holds nothing and says so**: what it waits for, and since when, once a minute in its
+  own output, and in `gate\waiting\<pid>.json`, which `Set-TestbedPause.ps1` lists. It waits up to
+  its own limit - `-QueueTimeoutMinutes`, `-LeaseWaitMinutes` - and then ends as INFRA, not tested.
+  The first look at the load takes 30 s. Between looks a run sleeps until a file of the testbed's
+  state changes - the switch turned off wakes every waiting run at once - or 30 s pass, and then reads
+  the load from its own readings, without waiting a window out again.
+  `summary.txt`'s time line gives the build runner's wait at the gate as `gate`.
+- **Nothing runs in the background for it**: no task, no service, no sampling process, so no window
+  can open. A run measures in its own process while it waits.
 
 **Deliberate failure directions**, each chosen so the wrong answer is visible rather than silent:
 
@@ -1623,6 +1670,9 @@ taken its lease yet is not immediately put back to sleep.
   like a machine where nothing was ever idle. That is not hypothetical; it is what the first
   version of this did.
 - **The task only ever saves.** It never starts, stops, checkpoints or deletes a VM.
+- **The gate's pause file, when it cannot be read, holds runs back; the load, when it cannot be read,
+  does not.** A switch half-written must not let runs in, and it says which file to delete; a broken
+  measurement must not stop every agent's testing, and the run says it went without the limit.
 
 **One trap this cost, recorded so nobody repeats it.** The lease expiry is compared as a Unix
 second count, not as `expiresUtc`. PowerShell's `ConvertFrom-Json` silently coerces an ISO-8601
