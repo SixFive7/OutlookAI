@@ -792,7 +792,10 @@ from 1 to 3 while the MCP server composed a draft without showing it, and failed
 there at both headless tests, which counted 3 before and after - as most of the passing runs before had. A
 tooltip comes up at the pointer, which nobody moves on a test machine; when this one came up during a headless
 test rather than before it, the test failed. The pane test now moves the pointer to the screen's bottom-left
-corner, on the taskbar, before its compose window comes up and after it closes. The guard `48c7d6e` and
+corner, on the taskbar, before its compose window comes up and after it closes; at `d1e0b1b` it left only
+Outlook's main window on screen, and both headless tests counted 1 before and after, on `OutlookAI-Unindexed`
+and `OutlookAI-Indexed3` (`20261118-121845-unindexed-d1e0b1bcabf3`, `20261118-121845-indexed-d1e0b1bcabf3`, 51
+of 51 each). The guard `48c7d6e` and
 `2973eb7` added stays - the pane leaves the Word editor of a compose window nobody sees alone - but it was not
 what the failing count was about.
 
