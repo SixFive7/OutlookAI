@@ -493,7 +493,7 @@ function Get-LiveFilter {
 }
 
 # What a run directory's name says between its start and its commit (New-RunId): which kind of guest
-# ran it, a clone its source's kind.
+# ran it, a clone its source's kind. A name taken in the same second gets -2, -3 ... (New-RunDirectory).
 function Get-RunLabel {
     param([string] $GuestName)
     if ($GuestName -match 'Exchange$') { return 'exchange' }
@@ -940,6 +940,11 @@ function Invoke-SelfTest {
     if ($selfTestAst.Count -eq 1) { $runCode = $runner.Substring($selfTestAst[0].Extent.EndOffset) }
     Check 'the run''s code is found after this self-test' $true ($runCode.Length -gt 1000)
     $at = @{}
+    # The run's code only: what follows the -SelfTest dispatch, below this function.
+    $mainCode = $own.Substring($own.LastIndexOf('if ($SelfTest) { exit (Invoke-SelfTest) }'))
+    $claimAt = $mainCode.IndexOf('$made = New-RunDirectory -Parent $ResultsRoot -RunId (New-RunId $started $sha (Get-RunLabel $facts.Name))')
+    Check 'the run claims its directory with New-RunDirectory (ScriptHelpers.ps1), from the run id New-RunId makes, and goes by the name it gives' $true ($claimAt -gt 0 -and $mainCode.IndexOf('$runId = $made.RunId') -gt $claimAt)
+    Check 'before its log, its build tree or its folder on the guest is named after it, and never with New-Item -Force' $true ($claimAt -gt 0 -and $claimAt -lt $mainCode.IndexOf("`$script:LogPath = Join-Path `$runDir 'run.log'") -and $claimAt -lt $mainCode.IndexOf("`$tree = Join-Path `$runDir 'tree'") -and $claimAt -lt $mainCode.IndexOf('$guestRunDir = Join-Path $GuestRunsRoot $runId') -and -not $mainCode.Contains('New-Item -ItemType Directory -Force -Path $runDir'))
     foreach ($mark in @('$gate = Wait-TestbedGate -Run $runId', "& (Join-Path `$PSScriptRoot 'Publish-GuestPayload.ps1')", '$look = Test-TestbedGate', 'if ($gated) { $why += $look.Why }', '$ticket = Join-TestbedQueue -Run $runId', '$ahead = Get-TestbedQueueTurn', '$held = Get-TestbedLease -VMName $guest.Name', '$refusals[$guest.Name] = Get-GuestRunRefusal $guest', '$startupBytes[$guest.Name] = [long](Get-VM -Name $guest.Name).MemoryStartup', '$start = Enter-TestbedStart -Look $look -Run $runId', 'if (-not $start.Go) { $gated = $true', '$holder = Request-GuestLease $guest.Name 60', 'Register-TestbedStart -Start $start', 'finally { Exit-TestbedStart $start }', '[void](Wait-TestbedChange)', 'finally { Exit-TestbedQueue $ticket; if ($null -ne $waitingSince) { Remove-TestbedWaiting } }', '# ---- STAGE.')) { $at[$mark] = $runCode.IndexOf($mark) }
     Check 'the gate is passed before the build - the run''s first load on this host' $true ($at['$gate = Wait-TestbedGate -Run $runId'] -gt 0 -and $at['$gate = Wait-TestbedGate -Run $runId'] -lt $at["& (Join-Path `$PSScriptRoot 'Publish-GuestPayload.ps1')"])
     Check 'every turn of the lease wait looks at it again before it tries a guest' $true ($at['$look = Test-TestbedGate'] -gt $at["& (Join-Path `$PSScriptRoot 'Publish-GuestPayload.ps1')"] -and $at['if ($gated) { $why += $look.Why }'] -gt $at['$look = Test-TestbedGate'] -and $at['if ($gated) { $why += $look.Why }'] -lt $at['$holder = Request-GuestLease $guest.Name 60'])
@@ -1272,10 +1277,14 @@ if ($LASTEXITCODE -ne 0 -or $sha -notmatch '^[0-9a-f]{40}$') { Stop-Refused "git
 $subject = (@(Invoke-NativeCommand { & git -C $repo log -1 --format=%s $sha 2>&1 }) | Out-String).Trim()
 $dirtyCount = 0
 if ($Ref -eq 'HEAD') { $dirtyCount = @(Invoke-NativeCommand { & git -C $repo status --porcelain 2>&1 } | Where-Object { $_ }).Count }
-$runId = New-RunId $started $sha (Get-RunLabel $facts.Name)
 if (-not $ResultsRoot) { $ResultsRoot = Join-Path $repo '.work\guest-live-runs' }
-$runDir = Join-Path $ResultsRoot $runId
-New-Item -ItemType Directory -Force -Path $runDir, (Join-Path $runDir 'guest') | Out-Null
+# The run's own directory, claimed before anything is named after the run - its build tree, its folder
+# on the guest, its lease and its queue ticket: a run of the same commit on the same kind of guest
+# started in the same second gets -2, -3 ... (New-RunDirectory), and the name it gives is the run's.
+$made = New-RunDirectory -Parent $ResultsRoot -RunId (New-RunId $started $sha (Get-RunLabel $facts.Name))
+$runId = $made.RunId
+$runDir = $made.Path
+New-Item -ItemType Directory -Force -Path (Join-Path $runDir 'guest') | Out-Null
 $script:LogPath = Join-Path $runDir 'run.log'
 $revision = [ordered]@{ ref = $Ref; sha = $sha; subject = $subject; repo = $repo; uncommittedLeftOut = $dirtyCount }
 

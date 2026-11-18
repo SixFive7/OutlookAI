@@ -2298,6 +2298,24 @@ its mailbox tests on, and change nothing you install.
   Items - beside the mail, and none of them could be opened. On the test machine they were 21 of the
   first 100 results.
 
+- ✅ **Two test runs started in the same second get a results folder each.**
+  A run's folder is named for the second it started, its commit and the kind of machine it ran on, and
+  the live runner, the build-machine runner and the trust-removal probe each made it with
+  `New-Item -Force`, which hands a second run the first one's folder without a word. Stream K2 had two
+  runs on the indexed machines start at 12:14:18 on 2026-11-18: they wrote one log, one run's
+  `git worktree add` failed, and the other's build failed when the first deleted the tree. All three
+  runners now claim the folder through `New-RunDirectory` in `Testbed/guest/ScriptHelpers.ps1`, which
+  makes it under a name nobody else uses and renames it to the run's name, a rename that fails when
+  the name is taken; a taken name gets a number on the end, 2 and up, until one is free. The run goes
+  by that name from then on: its build tree, its folder on the guest, its lease, its queue ticket and
+  its summary, and the build-machine runner's janitor accepts it. The build-machine runner's
+  self-test pins the helper, two processes racing to claim one name 25 times each among its checks,
+  and each runner's self-test that it claims its folder this way before anything is named after the
+  run. `Tools/Switch-AddInBuild.ps1`, which names its build folder and the dev build it puts in
+  Outlook the same way, claims both with the same helper: two builds of one commit started in the
+  same second get a folder each, and a dev build's folder that another run made first refuses the
+  second, where it used to be copied into.
+
 - ✅ **The Exchange machine's preflight says when Outlook has refused an old .ost file.**
   On 2026-11-18 the preflight stopped two live runs on the Exchange test machine: the real mailbox was
   no longer signed in, it said, and it asked for `-Mode Reauth`, which then found no sign-in page to

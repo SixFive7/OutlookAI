@@ -426,11 +426,12 @@ function Get-GuestRefusal {
     return ''
 }
 
-# Whether a string is a run id New-RunId could have made - what the janitor is handed on its
-# command line, and what it then searches runs.log for, so nothing else is accepted.
+# Whether a string is a run id New-RunId could have made, with the -2 to -99 New-RunDirectory adds to a
+# taken one - what the janitor is handed on its command line, and what it then searches runs.log for, so
+# nothing else is accepted.
 function Test-IsRunId {
     param([string] $Text)
-    return ([string]$Text) -cmatch '^\d{8}-\d{6}-[0-9a-f]{12}$'
+    return ([string]$Text) -cmatch '^\d{8}-\d{6}-[0-9a-f]{12}(-[1-9][0-9]?)?$'
 }
 
 # Whether runs.log says a run finished: its own end line, written after the lock is released and
@@ -739,6 +740,74 @@ function Invoke-SelfTest {
     Check 'a run id New-RunId makes is one the janitor accepts' $true (Test-IsRunId (New-RunId -When (Get-Date) -Sha 'ea40cc831e68ae3e4f09602309bbc98569394979'))
     Check 'the janitor accepts nothing else' $false (Test-IsRunId '20261003-041500-ea40cc831e68; Remove-Item')
     Check 'not an upper-case one either' $false (Test-IsRunId '20261003-041500-EA40CC831E68')
+    Check 'it accepts the name New-RunDirectory gives a run whose name was taken' $true (Test-IsRunId '20261003-041500-ea40cc831e68-2')
+    Check 'up to -99, and nothing else after the commit' 'True|False|False' ('{0}|{1}|{2}' -f (Test-IsRunId '20261003-041500-ea40cc831e68-99'), (Test-IsRunId '20261003-041500-ea40cc831e68-100'), (Test-IsRunId '20261003-041500-ea40cc831e68-x'))
+
+    Write-Host ''
+    Write-Host '== a run directory is claimed, never shared (New-RunDirectory, shared from ScriptHelpers.ps1) =='
+    # Stream K2, 2026-11-18: two runs started in the same second were handed one directory by New-Item
+    # -Force, wrote one log, and broke each other's build tree.
+    $claimScratch = Join-Path ([System.IO.Path]::GetTempPath()) ('oai-rundir-selftest-' + [guid]::NewGuid().ToString('N'))
+    try {
+        $base = '20261003-041500-ea40cc831e68'
+        $first = New-RunDirectory -Parent $claimScratch -RunId $base
+        Check 'a free name is the run''s as it is, and the directory is made, the parent with it' "$base|True" ('{0}|{1}' -f $first.RunId, (Test-Path -LiteralPath $first.Path -PathType Container))
+        $second = New-RunDirectory -Parent $claimScratch -RunId $base
+        $third = New-RunDirectory -Parent $claimScratch -RunId $base
+        Check 'a taken name gets -2, then -3, each a directory of its own' "$base-2|$base-3|True" ('{0}|{1}|{2}' -f $second.RunId, $third.RunId, ((Test-Path -LiteralPath $second.Path) -and (Test-Path -LiteralPath $third.Path) -and $second.Path -ne $first.Path))
+        Check 'and the path it returns is the run directory under the parent' (Join-Path $claimScratch "$base-2") $second.Path
+        $again = $null
+        try { $again = New-Item -ItemType Directory -Force -Path $first.Path } catch { }
+        Check 'where New-Item -Force hands a second run the first one''s directory without a word, which is what went wrong' $true ($null -ne $again)
+        [System.IO.File]::WriteAllText((Join-Path $claimScratch "$base-4"), 'a file, not a directory')
+        Check 'a name a file holds is taken too' "$base-5" (New-RunDirectory -Parent $claimScratch -RunId $base).RunId
+        $threw = ''
+        try { [void](New-RunDirectory -Parent $claimScratch -RunId '..\escape') } catch { $threw = $_.Exception.Message }
+        Check 'a run id that is no plain name is refused' $true ($threw.Contains('Not a run id'))
+        $threw = ''
+        try { 1..4 | ForEach-Object { [void](New-RunDirectory -Parent $claimScratch -RunId 'full' -MaxTries 3) } } catch { $threw = $_.Exception.Message }
+        Check 'and when every name it may try is taken it refuses, saying so' $true ($threw.Contains('full and -2 to -3 are all taken'))
+        $threw = ''
+        try { [void](New-RunDirectory -Parent $claimScratch -RunId 'full' -MaxTries 1) } catch { $threw = $_.Exception.Message }
+        Check 'with -MaxTries 1 it claims the one name or refuses, trying no other' $true ($threw.Contains('full is already taken'))
+        Check 'no claim directory is left behind' 0 @(Get-ChildItem -LiteralPath $claimScratch -Force -Filter '.claim-*').Count
+
+        # The race as it happens: two creators, each a process of its own, claim one name 25 times at once.
+        $raceRoot = Join-Path $claimScratch 'race'
+        $go = Join-Path $claimScratch 'go'
+        # Each creator is handed the very function this runner dot-sourced, as text: a job is a process of
+        # its own, and the function is all it needs.
+        $definition = (Get-Command New-RunDirectory -CommandType Function).Definition
+        $racer = {
+            param($definitionText, $root, $scratchDir, $id, $n)
+            Set-Item -Path 'function:New-RunDirectory' -Value ([scriptblock]::Create($definitionText))
+            [System.IO.File]::WriteAllText((Join-Path $scratchDir "ready-$n"), 'ready')
+            $until = (Get-Date).AddSeconds(60)
+            while (-not (Test-Path -LiteralPath (Join-Path $scratchDir 'go')) -and (Get-Date) -lt $until) { Start-Sleep -Milliseconds 2 }
+            $got = @()
+            for ($i = 0; $i -lt 25; $i++) { $got += (New-RunDirectory -Parent $root -RunId $id).RunId }
+            $got
+        }
+        $jobs = @(1, 2 | ForEach-Object { Start-Job -ScriptBlock $racer -ArgumentList $definition, $raceRoot, $claimScratch, $base, $_ })
+        $ids = @()
+        try {
+            # Both creators loaded and waiting, then one word starts them both.
+            $until = (Get-Date).AddSeconds(90)
+            while (@(Get-ChildItem -LiteralPath $claimScratch -Filter 'ready-*' -ErrorAction SilentlyContinue).Count -lt 2 -and (Get-Date) -lt $until) { Start-Sleep -Milliseconds 50 }
+            [System.IO.File]::WriteAllText($go, 'go')
+            $ids = @($jobs | Wait-Job -Timeout 120 | Receive-Job -ErrorAction SilentlyContinue)
+        }
+        finally { $jobs | Remove-Job -Force -ErrorAction SilentlyContinue }
+        $dirs = @(Get-ChildItem -LiteralPath $raceRoot -Directory -ErrorAction SilentlyContinue)
+        Check 'two creators racing for one name get 50 names between them, no two alike' '50|50' ('{0}|{1}' -f $ids.Count, @($ids | Sort-Object -Unique).Count)
+        Check 'and 50 directories, every one claimed once, with no claim left behind' '50|0' ('{0}|{1}' -f @($dirs | Where-Object { $_.Name -notlike '.claim-*' }).Count, @($dirs | Where-Object { $_.Name -like '.claim-*' }).Count)
+    }
+    finally { Remove-Item -LiteralPath $claimScratch -Recurse -Force -ErrorAction SilentlyContinue }
+    # The run's code only: what follows the -SelfTest dispatch, below this function.
+    $mainCode = [System.IO.File]::ReadAllText($PSCommandPath)
+    $mainCode = $mainCode.Substring($mainCode.LastIndexOf('if ($SelfTest) { exit (Invoke-SelfTest) }'))
+    Check 'this runner claims its directory with New-RunDirectory, from the run id New-RunId makes' $true ($mainCode.Contains('$made = New-RunDirectory -Parent $ResultsRoot -RunId (New-RunId -When $tStart -Sha $sha)') -and $mainCode.Contains('$runId = $made.RunId'))
+    Check 'before anything is named after the run, and never with New-Item -Force' $true ($mainCode.IndexOf('$runId = $made.RunId') -gt 0 -and $mainCode.IndexOf('$runId = $made.RunId') -lt $mainCode.IndexOf("`$archive = Join-Path `$runDir 'Source.zip'") -and -not $mainCode.Contains('New-Item -ItemType Directory -Force -Path $runDir'))
     $history = @(
         '2026-10-03 04:19:17  start  20261003-041915-ff55a603e9c2  HEAD  C:\x'
         '2026-10-03 04:23:15  end    20261003-041915-ff55a603e9c2  PASS  3 m 59 s'
@@ -1671,9 +1740,12 @@ $privateList = $null
 if (-not $SkipSelfTests) { $privateList = Find-PrivateList $repo $CredentialRepoRoot }
 
 if (-not $ResultsRoot) { $ResultsRoot = Join-Path $repo '.work\build-vm-runs' }
-$runId = New-RunId -When $tStart -Sha $sha
-$runDir = Join-Path $ResultsRoot $runId
-New-Item -ItemType Directory -Force -Path $runDir | Out-Null
+# The run's own directory, claimed before anything is named after the run: a run of the same commit
+# started in the same second gets -2, -3 ... (New-RunDirectory), and the name it gives is the run's from
+# here on - its archive, its owner file, runs.log and the janitor's command line.
+$made = New-RunDirectory -Parent $ResultsRoot -RunId (New-RunId -When $tStart -Sha $sha)
+$runId = $made.RunId
+$runDir = $made.Path
 $archive = Join-Path $runDir 'Source.zip'
 
 Say "== Invoke-TestsOnBuildVm: run $runId =="
