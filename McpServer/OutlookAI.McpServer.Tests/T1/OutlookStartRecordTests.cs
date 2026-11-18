@@ -302,13 +302,18 @@ public sealed class OutlookStartRecordTests
 
         // A thread that takes the lock and ends without releasing it: what a COM host killed at its
         // deadline leaves behind.
-        Thread dying = new(() => _ = OutlookStartLock.TryAcquire(name));
+        // Its lock object is kept alive, as a killed host's handle stays open until Windows closes it: a
+        // collected one would close the last handle and take the mutex - and the abandonment - with it.
+        OutlookStartLock? leftBehind = null;
+        Thread dying = new(() => leftBehind = OutlookStartLock.TryAcquire(name));
         dying.Start();
         dying.Join();
+        Assert.NotNull(leftBehind);
 
         using OutlookStartLock? next = OutlookStartLock.TryAcquire(name);
         Assert.NotNull(next);
         Assert.True(next!.PreviousHolderDied);
+        GC.KeepAlive(leftBehind);
     }
 
     private static bool OnAnotherThread(Func<bool> body)
