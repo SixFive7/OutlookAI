@@ -73,3 +73,61 @@ function Format-Seconds {
     if ($whole -lt 60) { return ('{0} s' -f $whole) }
     return ('{0} m {1:00} s' -f [int][Math]::Floor($whole / 60), ($whole % 60))
 }
+
+# A long-running program with its output going STRAIGHT TO FILES - never through this process's pipe -
+# and a deadline. A program that leaves children behind can hold a pipe open after it has finished,
+# and a declared timeout then never fires. .Handle is read before waiting because Start-Process
+# -PassThru otherwise loses the exit code (measured, Install-DotnetSdk.ps1). The arguments are joined
+# with spaces and quoted by nobody: quote one that needs it with Format-Argument. The result says the
+# exit code (-1 on a timeout, when the program is killed), whether it timed out, and where its two
+# logs are: <LogStem>.out.txt and <LogStem>.err.txt.
+function Invoke-Logged {
+    param(
+        [Parameter(Mandatory = $true)] [string] $FilePath,
+        [Parameter(Mandatory = $true)] [string[]] $ArgumentList,
+        [Parameter(Mandatory = $true)] [string] $LogStem,
+        [int] $TimeoutMinutes = 20,
+        [string] $WorkingDirectory
+    )
+    $out = "$LogStem.out.txt"
+    $err = "$LogStem.err.txt"
+    foreach ($f in @($out, $err)) { if (Test-Path -LiteralPath $f) { Remove-Item -LiteralPath $f -Force } }
+    $startArgs = @{
+        FilePath               = $FilePath
+        ArgumentList           = ($ArgumentList -join ' ')
+        RedirectStandardOutput = $out
+        RedirectStandardError  = $err
+        NoNewWindow            = $true
+        PassThru               = $true
+    }
+    if ($WorkingDirectory) { $startArgs['WorkingDirectory'] = $WorkingDirectory }
+    $p = Start-Process @startArgs
+    $null = $p.Handle
+    $exited = $p.WaitForExit($TimeoutMinutes * 60 * 1000)
+    if ($exited) { $p.WaitForExit() }
+    if (-not $exited) {
+        try { $p.Kill() } catch { }
+        return [pscustomobject]@{ ExitCode = -1; TimedOut = $true; Out = $out; Err = $err }
+    }
+    return [pscustomobject]@{ ExitCode = $p.ExitCode; TimedOut = $false; Out = $out; Err = $err }
+}
+
+# The last lines of a log Invoke-Logged wrote, indented under the step that failed.
+function Show-LogTail([string] $Path, [int] $Lines = 30) {
+    if ($Path -and (Test-Path -LiteralPath $Path)) {
+        foreach ($l in (Get-Content -LiteralPath $Path -Tail $Lines)) { Write-Host "      | $l" }
+    }
+}
+
+# One argument for Start-Process's joined command line: quoted when it holds white space.
+function Format-Argument([string] $Value) {
+    if ($Value -match '\s') { return '"' + $Value + '"' }
+    return $Value
+}
+
+# Whether this process runs elevated - as a member of Administrators with its full token.
+function Test-IsElevated {
+    $id = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+    $p = New-Object System.Security.Principal.WindowsPrincipal($id)
+    return $p.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
+}
