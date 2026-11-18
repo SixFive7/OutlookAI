@@ -4639,10 +4639,14 @@ starts, deciding and writing one's own is one step, under `Enter-TestbedLeaseCla
 While the host is quiet this changes nothing: three build runs at 30 % count 30, 42.5 and 55 % and all
 start, as before.
 
-**The proofs** - real runs of this branch:
+**The proofs** - real runs of this branch, while about ten other agents' runs, on runners from before
+the gate, kept every build VM and two guests busy and the host at 93 to 100 % (the gate's own reading
+and `\Processor(_Total)\% Processor Time` alike):
 
 | Proof | Run | Result |
 | --- | --- | --- |
+| A build run waits for the load, holding nothing | `20261118-033327-156063d5f0c0`, `Invoke-TestsOnBuildVm.ps1` at `156063d` | Its first look took 30 s; at 03:34:00 it printed `queued: the host's processors were 99 % busy over the last 30 s, not under the 70 % limit`, and once a minute after that `still waiting, since 03:34:00 (n min)`. No lease, no owner file and no `runs.log` line named it; `Set-TestbedPause.ps1` listed it with what it waited for and since when. Stopped at 03:42 to make room for the run on the final commit: it left only `Source.zip` and `request.json`, and the next status dropped its waiting record as the record of a process that had ended. |
+| The pause switch holds back a waiting build run and a live run before its build | the run above, and `20261118-033611-indexed-156063d5f0c0`, `Invoke-LiveTierOnGuest.ps1 -Kind Indexed` at `156063d` | `Set-TestbedPause.ps1 -On -Reason 'stream Q proof'` at 03:35:57: the build run's next line read `still waiting, since 03:34:00 (2 min): the testbed is paused, since 2026-11-18 03:35 ('stream Q proof')`; the live run, started at 03:36:12, printed `waiting: the testbed is paused, ...` a second later and built nothing - its run directory held only `run.log` - and took no lease. `-Off` at 03:37: both went back to waiting for the load, 99 %. |
 
 ## 5. Which tests are in which bucket, and how to find out
 
