@@ -72,14 +72,38 @@ public sealed class LivePaneTests
 
             IntPtr prompt = WaitForWindow("the pane's instruction box", () => PaneControls.Find(opened.Window, "WindowsForms10.EDIT", null));
             IntPtr edit = WaitForWindow("the pane's Edit current draft button", () => PaneControls.Find(opened.Window, "WindowsForms10.BUTTON", "Edit current draft"));
+            _output.WriteLine($"pane: instruction box {PaneControls.Describe(prompt)}, button {PaneControls.Describe(edit)}, "
+                + $"status \"{PaneControls.ReadStatus(opened.Window)}\"");
             PaneControls.SetText(prompt, "Rewrite this mail. " + Marker);
             PaneControls.Click(edit);
 
-            OpenDraftReading after = WaitFor(
-                "the stand-in's body and the AI's signature in the open window",
-                () => LiveOutlookTestMailer.ReadOpenDraft(Hub, draft.EntryId, Marker),
-                r => r.DraftText.Contains("Stand-in draft, first line", StringComparison.Ordinal)
-                     && r.SignatureText.Contains(aisChoice.BodyMarker, StringComparison.Ordinal));
+            // What the pane says along the way is what tells a click that never landed from a request that failed.
+            List<string> statuses = new List<string>();
+            OpenDraftReading after;
+            try
+            {
+                after = WaitFor(
+                    "the stand-in's body and the AI's signature in the open window",
+                    () =>
+                    {
+                        string now = PaneControls.ReadStatus(opened.Window);
+                        if (statuses.Count == 0 || statuses[^1] != now)
+                        {
+                            statuses.Add(now);
+                        }
+
+                        return LiveOutlookTestMailer.ReadOpenDraft(Hub, draft.EntryId, Marker);
+                    },
+                    r => r.DraftText.Contains("Stand-in draft, first line", StringComparison.Ordinal)
+                         && r.SignatureText.Contains(aisChoice.BodyMarker, StringComparison.Ordinal));
+            }
+            catch (TimeoutException ex)
+            {
+                throw new TimeoutException(
+                    ex.Message + "\npane status, in order: " + string.Join(" -> ", statuses.Select(st => "\"" + st + "\""))
+                    + "\ninstruction box now: " + PaneControls.Describe(prompt) + "; button now: " + PaneControls.Describe(edit)
+                    + "\nprompts the stand-in received: " + standIn.Prompts().Count, ex);
+            }
             IReadOnlyList<string> prompts = standIn.Prompts();
             string status = PaneControls.ReadStatus(opened.Window);
             _output.WriteLine($"after: draft {after.DraftParagraphs} paragraph(s), signature pictures {after.SignaturePictures} "
@@ -207,6 +231,14 @@ public sealed class LivePaneTests
 
         public static void SetText(IntPtr control, string text) => _ = SendMessageW(control, WmSetText, IntPtr.Zero, text);
 
+        /// <summary>A control's class, text, and whether it is enabled and visible: for a test's output.</summary>
+        public static string Describe(IntPtr control)
+        {
+            StringBuilder name = new StringBuilder(256);
+            _ = GetClassNameW(control, name, name.Capacity);
+            return $"0x{control.ToInt64():X} {name} \"{ReadText(control)}\" enabled={IsWindowEnabled(control)} visible={IsWindowVisible(control)}";
+        }
+
         public static void Click(IntPtr button) => _ = PostMessageW(button, BmClick, IntPtr.Zero, IntPtr.Zero);
 
         private static string ReadText(IntPtr window)
@@ -234,5 +266,13 @@ public sealed class LivePaneTests
         [DllImport("user32.dll")]
         [return: MarshalAs(UnmanagedType.Bool)]
         private static extern bool PostMessageW(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool IsWindowEnabled(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool IsWindowVisible(IntPtr hWnd);
     }
 }
