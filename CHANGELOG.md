@@ -1110,7 +1110,13 @@ its mailbox tests on, and change nothing you install.
   use only the namespace `OutlookAI.Core.AddIn`, and nothing in it may attach to Outlook, start a
   COM apartment thread, open a MAPI session or open the search index (Q164 (a)), because the add-in
   runs inside Outlook's own process. `Tools/Checks/check-pinned-constants.ps1` check 15 holds that
-  rule, and T1 `AddInCoreReferenceTests` the shape of the reference.
+  rule, and T1 `AddInCoreReferenceTests` the shape of the reference. Measured 2026-11-18: both build
+  scripts built the add-in and left the host unchanged over 318 lines, the installer grew from
+  43,159,206 to 43,435,319 bytes, and a commit from before the reference still builds, its restore
+  finding nothing to do. On `OutlookAI-Unindexed` the build installed from `CP-08` and reached
+  `ADDIN-READY` three times in a row, as master's did; Outlook recorded its loads at 2.11 and 2.13 s
+  against master's 1.75 and 1.72 s, on a host running three build VMs, which two samples do not settle
+  (runbook section 2.3, the last record).
 
 - 📝 **The documents and the TODO list name no real person, address or machine any more (Q189).**
   They quoted the maintainer's computer name, his user name in paths under his profile, his
