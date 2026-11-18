@@ -163,10 +163,7 @@ public sealed class StoreRootListingTests
                 throw new InvalidOperationException("The listing stand-in only answers the listing: " + sql);
             }
 
-            return _urls.Select(u => (IReadOnlyDictionary<string, object?>)new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-            {
-                ["System.ItemUrl"] = u,
-            }).ToList();
+            return IndexRows.Urls(_urls);
         }
     }
 }
