@@ -202,7 +202,7 @@ public sealed class SweepCacheKeyTests
         // can find anything, and a 10 s TTL is a weaker promise than the rest of this cache
         // makes.
         SweepRecorder session = new SweepRecorder();
-        using MailService service = Service(session, NothingIndexed());
+        using MailService service = Service(session, AliceMailbox.NothingIndexed());
 
         service.Search(Unscoped());
         WaitForTheWallClockToTick();
@@ -260,9 +260,6 @@ public sealed class SweepCacheKeyTests
 
     /// <summary>The mixed profile: one store the catalog knows, one data file it does not.</summary>
     private static StubIndexClient Index() => new(new[] { IndexedPrefix }, Frontier);
-
-    /// <summary>A profile Windows Search holds no mail for at all.</summary>
-    private static StubIndexClient NothingIndexed() => new(Array.Empty<string>(), Frontier);
 
     /// <summary>
     /// Records every sweep the service asks Outlook for, with the window arguments it was

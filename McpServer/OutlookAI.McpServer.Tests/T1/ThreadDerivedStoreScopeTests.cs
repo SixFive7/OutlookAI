@@ -47,11 +47,11 @@ namespace OutlookAI.McpServer.Tests.T1;
 [Trait("TimeZone", "Machine")]
 public sealed class ThreadDerivedStoreScopeTests
 {
-    private const string Sid = "{S-1-5-21-1111111111-2222222222-3333333333-1001}";
+    private const string Sid = AliceMailbox.Sid;
 
-    private const string AliceStore = "alice@example.com";
+    private const string AliceStore = AliceMailbox.Store;
 
-    private const string AlicePrefix = "mapi16://" + Sid + "/" + AliceStore + "($deadbeef)";
+    private const string AlicePrefix = AliceMailbox.StorePrefix;
 
     private const string BobStore = "bob@example.com";
 
@@ -59,7 +59,7 @@ public sealed class ThreadDerivedStoreScopeTests
 
     private const string ConversationId = "conv-1";
 
-    private static readonly DateTime AliceFrontier = new(2026, 8, 18, 9, 30, 0, DateTimeKind.Utc);
+    private static readonly DateTime AliceFrontier = AliceMailbox.Frontier;
 
     /// <summary>Bob's index is AHEAD, so a profile-wide staleness probe is distinguishable from Alice's.</summary>
     private static readonly DateTime BobFrontier = AliceFrontier.AddHours(4);
@@ -287,24 +287,6 @@ public sealed class ThreadDerivedStoreScopeTests
             };
         }
 
-        private static ComMailBrief Member(int i)
-        {
-            return new ComMailBrief(
-                entryId: "MEMBER" + i.ToString(CultureInfo.InvariantCulture),
-                storeDisplayName: AliceStore,
-                storeId: "store-alice",
-                folderName: "Inbox",
-                folderKind: "inbox",
-                subject: "a test thread member",
-                senderName: "Bob",
-                senderAddress: "bob@example.com",
-                receivedTime: AliceFrontier.AddMinutes(i),
-                isRead: true,
-                hasAttachments: false,
-                sizeBytes: 2048,
-                body: "test body");
-        }
-
         /// <summary>
         /// A Windows Search stand-in that knows both mailboxes and - the point of the fixture -
         /// returns the conversation's rows FILTERED BY THE STATEMENT'S OWN SCOPE, exactly as the
@@ -395,7 +377,7 @@ public sealed class ThreadDerivedStoreScopeTests
                             _ => new ComOpenResult("MEMBER1", "a test thread member", AliceFrontier, 43))
                         .Answering(
                             nameof(IOutlookSession.TryGetConversationItems),
-                            _ => Enumerable.Range(1, 3).Select(Member).ToList()));
+                            _ => Enumerable.Range(1, 3).Select(ThreadWalks.Member).ToList()));
         }
     }
 }

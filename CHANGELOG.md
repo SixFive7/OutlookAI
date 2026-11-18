@@ -1461,7 +1461,10 @@ its mailbox tests on, and change nothing you install.
   the same one-mailbox profile - its SID, store, index prefix and frontier - and three of them its
   mail, its sweep, an exhaustive search of its Inbox and a session that answers the store list, the
   sweep and the scan as well: `AliceMailbox` holds it once, and `ThreadWalks` the conversation walks
-  three thread suites each built. The suite's eighteen stand-ins for the COM session are two:
+  three thread suites each built. Five more suites take that SID, store, prefix and frontier from
+  `AliceMailbox`, where they spelled them out, with the index that holds the store alone and the one
+  that holds none, which four and three of them each built, and `ThreadWalks.Member` the thread
+  member two of them wrote. The suite's eighteen stand-ins for the COM session are two:
   eleven that answered the same members - the profile's name, its stores, a folder's description
   and, all but one, the freshness sweep - three of them word for word, are one `StandInSession`, on
   which a test scripts any other member it needs, such as the exhaustive scan, an item read, a
