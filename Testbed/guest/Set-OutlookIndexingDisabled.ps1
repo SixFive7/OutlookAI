@@ -426,28 +426,9 @@ $CatalogStatusNames = @{ 0 = 'IDLE'; 1 = 'PAUSED'; 2 = 'RECOVERING'; 3 = 'FULL_C
 # run opens a catalog connection and reads a mailbox-shaped URL list, and neither belongs on the
 # maintainer's machine either.
 # ---------------------------------------------------------------------------------------------
-function Assert-TestbedGuestLocal {
-    $who = $env:USERNAME
-    $userOk = $false
-    foreach ($candidate in $ExpectedUser) {
-        if ($who -eq $candidate) { $userOk = $true }
-    }
-
-    $machine = $env:COMPUTERNAME
-    $machineOk = $false
-    if ($ExpectedComputerNamePrefix -and $machine -and
-        $machine.StartsWith($ExpectedComputerNamePrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
-        $machineOk = $true
-    }
-
-    if ($userOk -and $machineOk) { return }
-
-    throw @"
-REFUSING TO RUN.
-
-  logged on as : '$who'          (allowed: $($ExpectedUser -join ', '))
-  computer name: '$machine'      (must start with: '$ExpectedComputerNamePrefix')
-
+# The guest guard is Assert-TestbedGuestIdentity, one of the helpers the scripts share (Q154, S7c),
+# dot-sourced from ScriptHelpers.ps1: this is what it says this script would have done elsewhere.
+$GuestGuardWhy = @"
 This script changes whether Outlook is in the Windows Search index. On a machine with real mail
 on it that silently empties mail search - for every account, in Outlook's own search box as well
 as through this project's tools - or indexes mail somebody excluded on purpose, and nothing
@@ -462,7 +443,6 @@ else, say so:
 
 Do not 'fix' this by widening either default. The defaults are the guard.
 "@
-}
 
 function Assert-Elevated {
     $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
@@ -1131,7 +1111,7 @@ if (-not ($Execute -or $Verify -or $Enable)) {
     return
 }
 
-Assert-TestbedGuestLocal
+Assert-TestbedGuestIdentity -Why $GuestGuardWhy
 
 if ($Execute -or $Enable) {
     if (-not $Execute) { throw '-Enable writes nothing without -Execute. Run -Enable -Execute, or -Verify to look.' }

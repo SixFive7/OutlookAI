@@ -316,16 +316,30 @@ if ($SelfTest) { Invoke-SelfTest }
 
 if (-not $Profile) { throw '-Profile is mandatory: name the Outlook profile to open.' }
 
-# The guest guard: the autologon account on an OAI- guest, both. Restated locally so this script
-# needs nothing staged beside it; check 9 of Tools/Checks/check-testbed-references.ps1 recognises
-# Assert-TestbedGuestLocal by name and requires it before the first write (the scheduled task below).
-function Assert-TestbedGuestLocal {
-    $machineOk = $env:COMPUTERNAME -and $ExpectedComputerNamePrefix -and $env:COMPUTERNAME.StartsWith($ExpectedComputerNamePrefix, [StringComparison]::OrdinalIgnoreCase)
-    if (-not ($ExpectedUser -contains $env:USERNAME) -or -not $machineOk) {
-        throw "REFUSING TO RUN: '$env:USERNAME' on '$env:COMPUTERNAME' is not a testbed guest (allowed users: $($ExpectedUser -join ', '); computer prefix '$ExpectedComputerNamePrefix')."
-    }
+# travels-alone: it needs nothing staged beside it, wherever a run or a step starts it from.
+# The guest guard: Test-GuestIdentity and Assert-TestbedGuestIdentity, copies of ScriptHelpers.ps1's that
+# Tools/Checks/check-powershell-51.ps1 check 4 holds identical, then what this script would have done elsewhere.
+function Test-GuestIdentity {
+    param([string] $UserName, [string] $ComputerName, [string[]] $Users, [string] $Prefix)
+    $userOk = $false
+    foreach ($u in $Users) { if ($UserName -eq $u) { $userOk = $true } }
+    $machineOk = [bool]($Prefix -and $ComputerName -and $ComputerName.StartsWith($Prefix, [System.StringComparison]::OrdinalIgnoreCase))
+    return ($userOk -and $machineOk)
 }
-Assert-TestbedGuestLocal
+
+function Assert-TestbedGuestIdentity {
+    param([string] $Why)
+    $users = @($script:ExpectedUser)
+    $prefix = [string]$script:ExpectedComputerNamePrefix
+    if (Test-GuestIdentity -UserName $env:USERNAME -ComputerName $env:COMPUTERNAME -Users $users -Prefix $prefix) { return }
+    throw ("REFUSING TO RUN.`n`n  logged on as : '{0}'          (allowed: {1})`n  computer name: '{2}'      (must start with: '{3}')`n`n{4}" -f $env:USERNAME, ($users -join ', '), $env:COMPUTERNAME, $prefix, $Why)
+}
+
+$GuestGuardWhy = @"
+This script registers a scheduled task that starts Outlook on this machine's desktop: that belongs on a
+test guest, never on a machine with real mail on it.
+"@
+Assert-TestbedGuestIdentity -Why $GuestGuardWhy
 
 $running = @(Get-Process -Name OUTLOOK -ErrorAction SilentlyContinue)
 if ($running.Count -gt 0) {
