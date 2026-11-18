@@ -92,16 +92,11 @@ public sealed class LivePhase4Fixture : IDisposable
     /// <summary>Builds a tagged subject: [OutlookAI-McpTest] + run marker + label.</summary>
     public string TaggedSubject(string label)
     {
-        return LiveOutlookTestMailer.SubjectTag + " " + RunMarker + " " + label;
+        return LiveOutlookTestMailer.TaggedSubject(RunMarker, label);
     }
 
     /// <summary>StoreID of a store by display name (via the verify session).</summary>
-    public string GetStoreId(string storeDisplayName)
-    {
-        return VerifySession.GetStores()
-                .FirstOrDefault(s => string.Equals(s.DisplayName, storeDisplayName, StringComparison.OrdinalIgnoreCase))?.StoreId
-            ?? throw new InvalidOperationException("Store not found by display name.");
-    }
+    public string GetStoreId(string storeDisplayName) => LiveIds.StoreIdOf(VerifySession, storeDisplayName);
 
     /// <summary>Gitignored screenshots directory (v3.MD S6): McpServer/**/screenshots/.</summary>
     public string ScreenshotsDirectory
@@ -109,10 +104,7 @@ public sealed class LivePhase4Fixture : IDisposable
         get
         {
             string testProjectDir =
-                typeof(LivePhase4Fixture).Assembly
-                    .GetCustomAttributes<AssemblyMetadataAttribute>()
-                    .FirstOrDefault(a => a.Key == "TestProjectDir")?.Value
-                ?? throw new InvalidOperationException("AssemblyMetadata 'TestProjectDir' is missing.");
+                RepoPaths.TestProjectDir();
             return Path.Combine(testProjectDir, "screenshots");
         }
     }

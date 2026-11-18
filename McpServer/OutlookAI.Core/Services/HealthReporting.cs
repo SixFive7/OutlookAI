@@ -1,10 +1,13 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 
 using Microsoft.Win32;
 using OutlookAI.Core.AddIn;
+using OutlookAI.Core.Com;
 
 // The one definition of everything the add-in and this server have to agree about: the HKCU keys
 // the add-in writes and this file reads, and the Claude Code configuration both of them look at.
@@ -292,6 +295,113 @@ namespace OutlookAI.Core.Services
                     }
 
                     return processes[0].MainWindowHandle == IntPtr.Zero;
+                }
+                finally
+                {
+                    foreach (Process process in processes)
+                    {
+                        process.Dispose();
+                    }
+                }
+            }
+            catch (Exception ex) when (!(ex is OutOfMemoryException))
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// outlook_health's sessions block (Q118 (a)), from a registry snapshot - pure, so T1 pins it. Only sessions
+        /// whose process <paramref name="isRunning"/> still finds, attached to <paramref name="runningOutlook"/>, are
+        /// listed; <paramref name="comHostPid"/> marks this server's own. Null when Outlook is not running and the
+        /// snapshot holds nothing for it. <paramref name="problem"/> is set when a pin is left with no session to
+        /// close it.
+        /// </summary>
+        public static OutlookSessionsHealthView? DescribeOutlookSessions(
+            SessionRegistryState? state,
+            ProcessStamp? runningOutlook,
+            bool outlookShowsAWindow,
+            Func<ProcessStamp, bool> isRunning,
+            int? comHostPid,
+            out string? problem)
+        {
+            problem = null;
+            if (isRunning == null)
+            {
+                throw new ArgumentNullException(nameof(isRunning));
+            }
+
+            if (runningOutlook == null)
+            {
+                return null;
+            }
+
+            ProcessStamp outlook = runningOutlook.Value;
+            RegisteredOutlook? record = state?.Find(outlook);
+            List<OutlookSessionHealthRow> attached = new List<OutlookSessionHealthRow>();
+            if (state != null)
+            {
+                foreach (RegisteredSession session in state.Sessions)
+                {
+                    if (session.Outlook != outlook || !isRunning(session.Process))
+                    {
+                        continue;
+                    }
+
+                    attached.Add(new OutlookSessionHealthRow
+                    {
+                        Pid = session.Process.Pid,
+                        SinceUtc = new DateTime(Math.Max(0, session.SinceUtcTicks), DateTimeKind.Utc),
+                        StartedOutlook = session.StartedOutlook,
+                        ThisServer = comHostPid.HasValue && session.Process.Pid == comHostPid.Value,
+                    });
+                }
+            }
+
+            attached.Sort((a, b) => a.SinceUtc.CompareTo(b.SinceUtc));
+            OutlookSessionsHealthView view = new OutlookSessionsHealthView
+            {
+                Attached = attached,
+                StartedByOutlookAI = record == null ? (bool?)null : record.StartedBy != null,
+                PromotedUtc = record == null || record.PromotedUtcTicks == 0 ? (DateTime?)null : new DateTime(record.PromotedUtcTicks, DateTimeKind.Utc),
+                NextDraftPromotes = record == null ? (bool?)null : record.DirectRefused,
+                WhatEndsOutlook = SessionRegistryRules.DescribeWhatEndsOutlook(true, outlookShowsAWindow, record, attached.Count),
+            };
+
+            if (record != null && record.PinWindow != 0)
+            {
+                view.PinWindow = "0x" + record.PinWindow.ToString("X", CultureInfo.InvariantCulture);
+                view.PinSinceUtc = record.PinSinceUtcTicks == 0 ? (DateTime?)null : new DateTime(record.PinSinceUtcTicks, DateTimeKind.Utc);
+                string? maker = record.PinMadeBy;
+                int makerPid = 0;
+                if (maker != null)
+                {
+                    int dot = maker.IndexOf('.');
+                    _ = int.TryParse(dot > 0 ? maker.Substring(0, dot) : maker, NumberStyles.None, CultureInfo.InvariantCulture, out makerPid);
+                }
+
+                view.PinMadeByPid = makerPid > 0 ? makerPid : (int?)null;
+                view.PinMakerAttached = maker != null && state!.Sessions.Any(s => s.Key == maker && s.Outlook == outlook && isRunning(s.Process));
+                if (attached.Count == 0 && !outlookShowsAWindow)
+                {
+                    problem = "Outlook is held open by a hidden OutlookAI window that no OutlookAI session is attached to any more "
+                        + "(its session ended without closing it). The next OutlookAI session to start takes it over and closes it "
+                        + "when it ends; File > Exit in Outlook ends Outlook now.";
+                }
+            }
+
+            return view;
+        }
+
+        /// <summary>The running OUTLOOK.EXE's stamp, or null when none runs or its start time cannot be read.</summary>
+        public static ProcessStamp? TryGetRunningOutlook()
+        {
+            try
+            {
+                Process[] processes = Process.GetProcessesByName("OUTLOOK");
+                try
+                {
+                    return processes.Length == 0 ? null : ProcessStamp.Of(processes[0]);
                 }
                 finally
                 {

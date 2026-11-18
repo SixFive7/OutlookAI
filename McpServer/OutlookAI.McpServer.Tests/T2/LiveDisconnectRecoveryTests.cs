@@ -196,10 +196,11 @@ public sealed class LiveDisconnectRecoveryTests
                 WindowProbe.PostClose(hwnd);
             }
 
-            // D49: the parked windows are no longer the only thing holding Outlook up -
-            // a live session pins it with an invisible Explorer. Wait for the windows to
-            // go, then relinquish the pin, or Outlook will (correctly) refuse to exit.
-            // Advisory: proceed either way, the pin release below is what matters.
+            // D49: a lifetime pin - an invisible Explorer - would keep Outlook up after its
+            // windows close. Since Q175 (b) (2026-11-18) only a draft makes one, and this
+            // collection never drafts, so normally there is none; but a pin another session
+            // left would hold Outlook, so wait for the windows to go, then close any hidden
+            // Explorer. Advisory: proceed either way, the release below is what matters.
             _ = clock.TryWaitUntil(
                 "the pre-existing Outlook windows have closed",
                 () => WindowProbe.VisibleOutlookWindows().Count == 0,
@@ -256,13 +257,12 @@ public sealed class LiveDisconnectRecoveryTests
             }
         }
 
-        // Whether the session holds D49's lifetime pin around the promotion. Diagnostic only; the
-        // assertion below is unchanged. On the test guest (Office LTSC 2024, 16.0.17932) the live runs
-        // of 2026-10-03 logged pinned=True on both sides and Outlook STILL exited when the promoted
-        // window closed. The D49 probes measured why: on that build Explorers.Add on the folder the
-        // pin shows (the default Inbox - the hub's, here) hands back the pin itself, so the promotion
-        // displayed the pin and the close took it. ComposeSurface.AddShowMeExplorer now never returns
-        // an Explorer that already existed (T1 ShowMeExplorerPinTests).
+        // Whether the session holds D49's lifetime pin around the promotion. Diagnostic only. Since
+        // Q175 (b) (2026-11-18) no session pins at connect - only a draft that needs one does - so this
+        // reads pinned=False here. (On 2026-10-03, when every session pinned at connect, the guest's runs
+        // logged pinned=True and Outlook still exited when the promoted window closed: Explorers.Add on
+        // the folder the pin shows handed back the pin itself, which ComposeSurface.AddShowMeExplorer now
+        // refuses - T1 ShowMeExplorerPinTests.)
         _output.WriteLine("lifetime pin before promotion: " + DescribePin(independentGateway) + "; " + DescribeOutlookProcesses());
 
         // Whether the session that promotes - and, after a re-autostart, also holds the pin - started
@@ -321,13 +321,11 @@ public sealed class LiveDisconnectRecoveryTests
         _output.WriteLine("posting WM_CLOSE to our window");
         WindowProbe.PostClose(ourWindow);
 
-        // (0) D49 - THE NEW CONTRACT, asserted before the old scenario can even be
-        // staged. Losing its last window used to kill Outlook within ~1-2 s even with
-        // COM clients attached, and that is exactly what broke the compose path: closing
-        // the Inspector a draft was written in took the whole instance down, which is
-        // where update_draft's com_failure and the three RPC_S_SERVER_UNAVAILABLE suite
-        // failures came from. A live session now holds an invisible Explorer, so Outlook
-        // returns to the window-less state the product prefers (D33) instead of dying.
+        // (0) THE CONTRACT SINCE Q175 (b) (decided 2026-11-18). A lifetime pin - the invisible
+        // Explorer that keeps a window-less Outlook up across a draft's compose (D49) - is made
+        // only when a draft needs one, never at connect, and nothing in this collection drafts.
+        // So the window this test opened is Outlook's only one, and its close is the user's
+        // close of Outlook: it ends, and the next call brings it back headless (Q150 (a)).
         clock.WaitUntil(
             "the Explorer window we posted WM_CLOSE to has gone",
             () => WindowProbe.VisibleOutlookWindows().Count == 0,
@@ -336,40 +334,36 @@ public sealed class LiveDisconnectRecoveryTests
         bool survived = Process.GetProcessesByName("OUTLOOK").Length > 0;
         if (survived)
         {
+            // Something still holds this Outlook up - a pin a draft made in it, which nothing in this
+            // collection should have, or another program's hidden Explorer. Close the hidden ones, or the
+            // disconnect scenario below cannot be staged.
             _output.WriteLine(
-                "D49: Outlook survived losing its last window and is headless again "
-                + $"(session IsConnected={independentGateway.IsConnected} - passive flag, healed on the next call)");
-
-            // Now relinquish the pin, which is the ONLY thing still keeping Outlook alive -
-            // otherwise the disconnect scenario below cannot be staged at all any more.
+                "Outlook survived losing its last window and is headless again "
+                + $"(session IsConnected={independentGateway.IsConnected} - passive flag, healed on the next call; "
+                + $"Explorers before the close: {explorersBeforeClose?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "unreadable"})");
             int closedExplorers = clock.Step(
-                "release the lifetime pin so Outlook can exit",
+                "close the hidden Explorers so Outlook can exit",
                 () => independentGateway.Run(s => ((OutlookComSession)s).TryCloseInvisibleExplorers()));
-            _output.WriteLine($"released the lifetime pin ({closedExplorers} invisible Explorer(s) closed)");
+            _output.WriteLine($"closed {closedExplorers} invisible Explorer(s)");
         }
         else
         {
-            // DECIDED 2026-10-03 (coordinator job 2, on the maintainer's behalf; QUESTIONS.md decision
-            // log), from what the guest measured. Office LTSC 2024 raises Application.Quit when the user
-            // closes the last VISIBLE window, even while a hidden Explorer would keep it running. The
-            // session hears it (SF-2), leaves, and - because it STARTED this Outlook - closes its pin on
-            // the way out ("leave Outlook as you found it"), which is also what lets the user's own Exit
-            // end an Outlook OutlookAI started. So when the promoting session started Outlook, the close
-            // ending Outlook is the user's quit honoured, and that alone is accepted here: the window must
-            // not have been the pin (two Explorers before the close), and the session must have been told
-            // by the quit event - a process exit first would be a crash. The reattach in (4) then proves
-            // the next call brings Outlook back headless.
+            // Q175 (b): no pin, so the close of Outlook's only window ended it - the user's quit. Office
+            // LTSC 2024 raises Application.Quit when the user closes the last visible window (measured
+            // 2026-10-03), so the session must have been told by the quit event: a process exit first
+            // would be a crash. The window must have been the only Explorer: a second one would be a pin
+            // somebody made at connect. The reattach in (4) then proves the next call brings Outlook back
+            // headless.
             string? gone = independentGateway.LastSessionGoneSignal;
             Assert.True(
-                promoterStartedOutlook && explorersBeforeClose == 2 && gone == OutlookComSession.GoneByQuitEvent,
-                "D49 regression: Outlook exited when its last window closed - the compose-surface pin is not holding it "
+                explorersBeforeClose == 1 && gone == OutlookComSession.GoneByQuitEvent,
+                "Outlook's exit at its last window's close was not the user's quit of an unpinned Outlook "
                 + $"(promoting session started Outlook={promoterStartedOutlook}, Explorers before the close="
                 + (explorersBeforeClose?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "unreadable")
                 + $", what ended the session={gone ?? "nothing"})");
             _output.WriteLine(
-                "D49 (Office raises Quit on the last window's close): the session that started Outlook heard the quit, "
-                + "closed its pin as it left, and Outlook ended as the user asked - the pin was not the window "
-                + $"({explorersBeforeClose} Explorers before the close); the reattach below must bring it back headless");
+                "Q175 (b): no session had made a pin, the window this test opened was Outlook's only one, and its close "
+                + "ended Outlook through the quit event; the reattach below must bring it back headless");
         }
 
         // (1) Background release: the independent gateway receives NO calls - only the

@@ -140,9 +140,28 @@ namespace OutlookAI.Core.Com
 
         /// <summary>
         /// False only for a session the Q149 measurement connects without a lifetime pin
-        /// (<see cref="Connect(bool, Action{OutlookComSession}, bool)"/>); every product session pins.
+        /// (<see cref="Connect(bool, Action{OutlookComSession}, bool)"/>); every product session pins
+        /// when its first draft needs one.
         /// </summary>
         private bool _lifetimePinAllowed = true;
+
+        /// <summary>
+        /// The per-user registry this session joins (Q118 (a)): the sessions attached to its Outlook, the one
+        /// lifetime pin they share, and whether a compose window has been promoted in that Outlook (Q208 B).
+        /// </summary>
+        private readonly OutlookSessionRegistry _registry = OutlookSessionRegistry.Default;
+
+        /// <summary>This session's key in the registry, or null when it never joined (its Outlook was not found).</summary>
+        private string? _sessionKey;
+
+        /// <summary>The Outlook process this session joined the registry for, or null.</summary>
+        private ProcessStamp? _outlookStamp;
+
+        /// <summary>The window of the pin THIS session made, 0 when it made none (or its window could not be read).</summary>
+        private long _ownPinWindow;
+
+        /// <summary>The gate every compose of this session decides its editor route through (Q208 B).</summary>
+        private DraftEditorGate? _editorGate;
 
         private OutlookComSession(PumpedStaRunner runner, bool startedOutlook)
         {
@@ -168,6 +187,24 @@ namespace OutlookAI.Core.Com
 
         /// <summary>D49: content-free reason the process pin could not be created, else null.</summary>
         public string? ComposeSurfacePinError { get; private set; }
+
+        /// <summary>This session's key in the per-user session registry (Q118 (a)), or null when it did not join.</summary>
+        public string? RegistryKey => _sessionKey;
+
+        /// <summary>The Outlook process this session is attached to, as the registry knows it; null when unknown.</summary>
+        public ProcessStamp? RegisteredOutlook => _outlookStamp;
+
+        /// <summary>
+        /// The route the last compose of this session took to its Word editor - "Direct" or "Promote" (Q208 B) - or
+        /// null before the first. Diagnostic only; the live tests read it.
+        /// </summary>
+        public string? LastEditorRoute => _editorGate?.LastRoute?.ToString();
+
+        /// <summary>How the last registry change of this session went (<see cref="RegistryAccess"/>), or null before one.</summary>
+        public string? LastRegistryAccess { get; private set; }
+
+        /// <summary>What the last leave of the registry decided about the pin - a diagnostic, set by <see cref="Dispose"/>.</summary>
+        public string? LeaveOutcome { get; private set; }
 
         /// <summary>
         /// D49 diagnostic for the live tests (2026-10-03): whether this session's lifetime pin is
@@ -257,7 +294,21 @@ namespace OutlookAI.Core.Com
                     ComposeSurface.ForgetPin(_composeSurfacePin);
                     Release(_composeSurfacePin);
                     _composeSurfacePin = null;
+                    _ownPinWindow = 0;
                     ComposeSurfacePinned = false;
+                    if (_outlookStamp is ProcessStamp outlook)
+                    {
+                        // Every hidden Explorer is gone, the recorded pin with them.
+                        _ = _registry.Update(
+                            state =>
+                            {
+                                SessionRegistryRules.PinClosed(state, outlook, 0);
+                                return 0;
+                            },
+                            out RegistryAccess access);
+                        LastRegistryAccess = access.ToString();
+                    }
+
                     return closed;
                 }
                 catch (Exception ex) when (IsComCallFailure(ex))
@@ -272,29 +323,96 @@ namespace OutlookAI.Core.Com
         }
 
         /// <summary>
-        /// D49: makes sure this session holds the lifetime pin, creating it if it does not.
+        /// D49, as Q175 (b) and Q118 (a) left it (2026-11-18): makes sure the Outlook this session drafts in has a
+        /// lifetime pin, when it needs one - called by every compose, and by nothing else. Connect makes none.
         /// <para>
-        /// Idempotent, and deliberately called from MORE than one place. Doing it once at
-        /// <see cref="Connect"/> is not enough: on a COLD start Outlook may not have its
-        /// Explorers collection or default folders ready when Connect runs, so the attempt
-        /// can fail and leave the session unpinned - and an unpinned session is one whose
-        /// own compose call kills the Outlook it is composing in (D49 probe row 1, 2 of 2 cold starts on
-        /// Office LTSC 2021; on Office LTSC 2024 40 of 40, Q149's cell L1, Docs/research/q149-draft-text). Every
-        /// compose therefore re-ensures it first; when a pin already exists the cost is one
-        /// field test.
+        /// A window-less Outlook ends the moment the only Inspector closes (D49 probe row 1, 2 of 2 cold starts on
+        /// Office LTSC 2021; on Office LTSC 2024 40 of 40, Q149's cell L1, Docs/research/q149-draft-text), so a
+        /// compose closing its inspector in one would end the Outlook it composes in. The pin - a never-displayed
+        /// Explorer on the default Inbox - keeps it up, shows nothing, and leaves Outlook promotable.
+        /// </para>
+        /// <para>
+        /// ONE PIN PER OUTLOOK, SHARED: under the registry's lock, a pin another session recorded, whose window still
+        /// exists hidden in this Outlook, stands for this session too; otherwise <see cref="ComposeSurface.TryPinProcess"/>
+        /// makes one only when Outlook has no Explorer at all (its count guard: the user's window needs no pin), and
+        /// its window handle is recorded. The lock is what keeps sessions that draft at once from making two.
         /// </para>
         /// MUST run on the STA thread - every caller is already inside a work item.
         /// </summary>
         private void EnsureComposeSurfacePin()
         {
-            if (!_lifetimePinAllowed || _composeSurfacePin != null || _application == null || _namespace == null)
+            if (!_lifetimePinAllowed || _application == null || _namespace == null)
             {
                 return;
             }
 
-            _composeSurfacePin = ComposeSurface.TryPinProcess(_application, _namespace, out string? pinError);
-            ComposeSurfacePinned = _composeSurfacePin != null;
-            ComposeSurfacePinError = pinError;
+            if (!(_outlookStamp is ProcessStamp outlook) || _sessionKey == null)
+            {
+                // No registry identity (the Outlook process was not found at connect): this session's own pin, by the
+                // count guard, as before the registry - closed by Dispose only if this session started Outlook.
+                if (_composeSurfacePin == null)
+                {
+                    _composeSurfacePin = ComposeSurface.TryPinProcess(_application, _namespace, out string? ownError);
+                    ComposeSurfacePinned = _composeSurfacePin != null;
+                    ComposeSurfacePinError = ownError;
+                }
+
+                return;
+            }
+
+            string key = _sessionKey;
+            _ = _registry.Update(
+                state =>
+                {
+                    RegisteredOutlook record = state.FindOrAdd(outlook);
+                    if (record.PinWindow != 0)
+                    {
+                        if (ComposeSurface.IsHiddenWindowOf(record.PinWindow, outlook.Pid))
+                        {
+                            // The shared pin stands - this session's own, or one another session made.
+                            return 0;
+                        }
+
+                        // Its window is gone (closed by a person who made it visible, S6) or visible now: no longer a pin.
+                        SessionRegistryRules.PinClosed(state, outlook, record.PinWindow);
+                    }
+
+                    if (_composeSurfacePin != null && _ownPinWindow == 0)
+                    {
+                        // This session's own pin, whose window could not be read and so was never recorded, stands.
+                        return 0;
+                    }
+
+                    if (_composeSurfacePin != null)
+                    {
+                        // This session's recorded pin is gone, or a person's window now: let go of the reference, never
+                        // Close it here.
+                        ComposeSurface.ForgetPin(_composeSurfacePin);
+                        Release(_composeSurfacePin);
+                        _composeSurfacePin = null;
+                        _ownPinWindow = 0;
+                    }
+
+                    object? pin = ComposeSurface.TryPinProcess(_application!, _namespace!, out string? pinError);
+                    ComposeSurfacePinError = pinError;
+                    if (pin == null)
+                    {
+                        // An Explorer exists (the user's window): nothing to pin. Or the Add failed: the error says so.
+                        return 0;
+                    }
+
+                    _composeSurfacePin = pin;
+                    ComposeSurfacePinned = true;
+                    _ownPinWindow = ComposeSurface.TryGetWindowHandle(pin);
+                    if (_ownPinWindow != 0)
+                    {
+                        SessionRegistryRules.PinMade(state, outlook, _ownPinWindow, key, DateTime.UtcNow.Ticks);
+                    }
+
+                    return 0;
+                },
+                out RegistryAccess access);
+            LastRegistryAccess = access.ToString();
         }
 
         /// <summary>True when an OUTLOOK.EXE process exists for this session's user.</summary>
@@ -419,22 +537,22 @@ namespace OutlookAI.Core.Com
                         session.QuitSinkActive = false;
                     }
 
-                    // D49 THE PROCESS PIN. A window-less Outlook EXITS the moment the only
-                    // Inspector closes (D49 probe row 1, Office LTSC 2021; Q149 L1, 40 of 40 on LTSC 2024) - the compose path's own
-                    // last step, so every headless draft was killing the instance it had
-                    // just used, taking update_draft (com_failure) and three live-suite
-                    // collections (RPC_S_SERVER_UNAVAILABLE) with it. A NON-DISPLAYED
-                    // Explorer owns an invisible window that keeps the process alive; it
-                    // shows nothing, leaves Process.MainWindowHandle zero (so outlook_health
-                    // still reports headless), and does not cost the user promotability -
-                    // launching outlook.exe with the pin held still opens a normal window.
-                    session.EnsureComposeSurfacePin();
+                    // D49's PROCESS PIN IS NOT MADE HERE ANY MORE (Q175 (b), decided 2026-11-18): no hidden
+                    // window at connect. A window-less Outlook ends the moment the only Inspector closes (D49
+                    // probe row 1, Office LTSC 2021; Q149 L1, 40 of 40 on LTSC 2024), so the pin is still what
+                    // keeps it up across a draft's compose - and it is made by the first draft that needs one
+                    // (EnsureComposeSurfacePin, from every compose), shared through the session registry, and
+                    // closed by the last session out. A session that only reads never makes one.
                 });
 
                 // SF-2 fix, part 2: watch the OUTLOOK.EXE process itself (crash / hard
                 // exit path - no Quit event fires then). Outlook is single-instance per
                 // session, so the first process by name is THE instance we attached to.
                 session.WireProcessExitWatch();
+
+                // Q118 (a): every session joins the per-user registry, a reading one too - the last session out
+                // closes a shared pin, and a reader is one of the sessions it must not be closed under.
+                session.JoinRegistry();
                 return session;
             }
             catch
@@ -480,6 +598,50 @@ namespace OutlookAI.Core.Com
         private void OnWatchedProcessExited(object? sender, EventArgs e)
         {
             SignalOutlookGone(GoneByProcessExit);
+        }
+
+        /// <summary>
+        /// Q118 (a): records this session in the per-user registry against the Outlook process it attached to, and
+        /// whether its connect started that Outlook. Best-effort: a registry that cannot be written costs the
+        /// cross-process record, never the connect.
+        /// </summary>
+        private void JoinRegistry()
+        {
+            Process? watched = _watchedProcess;
+            ProcessStamp? outlook = watched == null ? null : ProcessStamp.Of(watched);
+            if (outlook == null)
+            {
+                return;
+            }
+
+            ProcessStamp self = ProcessStamp.Current();
+            string key = OutlookSessionRegistry.NewSessionKey(self);
+            RegisteredSession record = new RegisteredSession(key, self, outlook.Value, DateTime.UtcNow.Ticks, StartedOutlook);
+            OutlookSessionRegistry.MarkLiveInThisProcess(key, live: true);
+            _sessionKey = key;
+            _outlookStamp = outlook;
+            _editorGate = new DraftEditorGate(_registry, outlook);
+            try
+            {
+                _ = _registry.Update(
+                    state =>
+                    {
+                        SessionRegistryRules.Join(state, record);
+                        return 0;
+                    },
+                    out RegistryAccess access);
+                LastRegistryAccess = access.ToString();
+            }
+            catch (Exception ex) when (!(ex is OutOfMemoryException))
+            {
+                LastRegistryAccess = "failed (" + ex.GetType().Name + ")";
+            }
+        }
+
+        /// <summary>The gate a compose decides its editor route through: the registry's, or one with no Outlook identity.</summary>
+        private DraftEditorGate EditorGate()
+        {
+            return _editorGate ??= new DraftEditorGate(_registry, null);
         }
 
         /// <summary><see cref="GoneSignal"/> when the Application Quit event arrived first.</summary>
@@ -3983,7 +4145,7 @@ namespace OutlookAI.Core.Com
             // pin holding Outlook up may belong to ANOTHER server session in this
             // process, so ownership cannot be the criterion - COM identity against the
             // process-wide pin registry is.
-            if (explorer != null && ComposeSurface.IsPin(explorer))
+            if (explorer != null && (ComposeSurface.IsPin(explorer) || IsRecordedPin(explorer)))
             {
                 Release(explorer);
                 explorer = null;
@@ -4063,6 +4225,24 @@ namespace OutlookAI.Core.Com
             }
 
             return explorer;
+        }
+
+        /// <summary>
+        /// True when <paramref name="explorer"/> is the lifetime pin the session registry records for this Outlook -
+        /// made by ANY OutlookAI process, which <see cref="ComposeSurface.IsPin"/>'s per-process pointers cannot see.
+        /// It is what keeps the show-me path from making a pin the user's window after the user closed a window
+        /// opened over it (S6, measured 2026-10-03: <c>ActiveExplorer()</c> then returned the hidden pin). A lock-free
+        /// read: the show-me path never waits on the registry.
+        /// </summary>
+        private bool IsRecordedPin(object explorer)
+        {
+            if (!(_outlookStamp is ProcessStamp outlook))
+            {
+                return false;
+            }
+
+            long recorded = _registry.TryRead()?.Find(outlook)?.PinWindow ?? 0;
+            return recorded != 0 && ComposeSurface.TryGetWindowHandle(explorer) == recorded;
         }
 
         /// <summary>STA-side: snapshots an Explorer's caption/current folder/window state.</summary>
@@ -6318,7 +6498,7 @@ namespace OutlookAI.Core.Com
                     {
                         (bool ok, string? composeError) = ReviseHeldDocument(
                             item!, body, toInsert, measureSignatureInjection: false, out _, out _, signatureIsAccountDefault: false, out _,
-                            removeSignature: signature?.RemoveExisting == true, out bool signatureRemoved, out _);
+                            removeSignature: signature?.RemoveExisting == true, out bool signatureRemoved, out _, EditorGate());
                         if (!ok)
                         {
                             capturedError = composeError ?? "BodyReplaceFailed";
@@ -6773,9 +6953,12 @@ namespace OutlookAI.Core.Com
         }
 
         /// <summary>
-        /// The held-Inspector revision used by update_draft: acquire the inspector ONCE,
-        /// optionally swap the signature region, optionally REPLACE the draft region with
-        /// the new body, then flush with <c>Close(olSave)</c>. Any failure closes the
+        /// The held-Inspector revision every compose goes through (update_draft, and the creators by
+        /// <see cref="ComposeReopened"/>): acquire the inspector ONCE, have its Word editor by the route
+        /// <see cref="ComposeSurface.ObtainWordEditor"/> decides (Q208 B), optionally swap the signature
+        /// region, optionally REPLACE the draft region with the new body, then commit the way that route
+        /// was measured to keep the edit - <c>Close(olSave)</c> after the form page (direct), or
+        /// <c>CurrentItem.Save()</c> and <c>Close(olDiscard)</c> (promoted). Any failure closes the
         /// inspector with <c>olDiscard</c> so a half-written document never reaches the
         /// item, and reports the error instead of falling back to an appending splice.
         /// <para>
@@ -6798,7 +6981,8 @@ namespace OutlookAI.Core.Com
             out bool accountDefaultApplied,
             bool removeSignature,
             out bool signatureRemoved,
-            out bool promotedWindowless)
+            out bool promotedWindowless,
+            DraftEditorGate editorGate)
         {
             textBeforeTouch = 0;
             textAfterTouch = 0;
@@ -6810,6 +6994,7 @@ namespace OutlookAI.Core.Com
             object? document = null;
             string? error = null;
             bool flushed = false;
+            DraftEditorRoute route = DraftEditorRoute.Promote;
             try
             {
                 if (signatureOverride != null && !File.Exists(signatureOverride.FilePath))
@@ -6860,30 +7045,29 @@ namespace OutlookAI.Core.Com
                     signatureOverride = null;
                 }
 
-                // ⚠ ACTIVATE BEFORE EDITING - live-measured, and the difference between
-                // a working revision and a silent no-op. On a NEW item the WordEditor of a
-                // hidden inspector is live and its edits commit. On an ALREADY-SAVED draft
-                // the hidden inspector hands back a document whose edits go nowhere: the
-                // call reports success and the stored HTMLBody changes by EXACTLY ZERO
-                // bytes (measured: 38932 -> 38932, new text absent, old text intact).
-                // Activating the inspector materializes the real editing surface.
-                // D49: the Activate() is unchanged in PURPOSE and now correct in EFFECT.
-                // It was always required (see above), but on a window-less Outlook a bare
-                // Activate() PAINTS the compose window where the user can see it - a D33
-                // violation that shipped unnoticed because it only happens headless, and
-                // the headless path then died anyway. ComposeSurface parks the window
-                // off-screen FIRST, activates, hides whatever became visible, and hands
-                // back the WordEditor. Nothing is user-visible at any point.
-                document = ComposeSurface.PromoteForWordEditor(inspector!, out string? promoteError, out bool windowless);
+                // THE EDITOR, BY ONE OF TWO MEASURED ROUTES (Q208 B, decided 2026-11-18 on Q149 (d)'s measurement).
+                // On an ALREADY-SAVED draft - every compose since 2026-10-04 - an edit made through an inspector that
+                // was never activated went nowhere when it was committed the old way (D46: 3 of 3; runbook 4.6
+                // variant m30c: 400 of 400 on Office LTSC 2024; cells B1 and B2, 0 of 80). It is kept when the
+                // "Message" form page is added before the read and the inspector closed with olSave (cell B3, 40 of
+                // 40, no message class or form property changed). So:
+                //  - DIRECT, whenever Outlook shows a window, and in a window-less Outlook once it has been promoted:
+                //    no Activate at all, the form page, the editor read, the edit, Close(olSave) (B3; W7, 60 of 60);
+                //  - PROMOTE, once per Outlook process: in a window-less Outlook the editor is refused until a compose
+                //    window has been activated there (cells L2, W2-W5: 0 of 66), so the first draft parks, activates
+                //    and hides its window - the one moment a window can show - and commits the old way.
+                // The per-user registry records the promotion, so every OutlookAI process of the user reads directly
+                // after it, and makes the decision under its lock (ComposeSurface.ObtainWordEditor).
+                document = ComposeSurface.ObtainWordEditor(inspector!, editorGate, out route, out bool windowless, out string? editorError);
                 if (document == null)
                 {
-                    error = promoteError ?? ComErrorTokens.NoWordEditor;
+                    error = editorError ?? ComErrorTokens.NoWordEditor;
                 }
                 else
                 {
                     // What the audit line's composeSurface means by "wordEditorPromoted": Outlook had no
-                    // window a person could see, and the invisible promotion is what produced the editor.
-                    promotedWindowless = windowless;
+                    // window a person could see, and the promotion is what produced the editor.
+                    promotedWindowless = route == DraftEditorRoute.Promote && windowless;
                 }
 
                 if (error == null && removeSignature)
@@ -6922,12 +7106,26 @@ namespace OutlookAI.Core.Com
                     _ = ComposeDocument.EmbedLinkedPictures(document!);
                 }
 
-                if (error == null)
+                if (error == null && route == DraftEditorRoute.Direct)
                 {
-                    // ⚠ THE COMMIT, and it is NOT the creators' Close(olSave).
-                    // On a NEW item Close(olSave) is what writes the Word document into
-                    // the item, because closing is what saves an item that was never
-                    // saved. On an ALREADY-SAVED draft it does nothing - live-measured:
+                    // ⚠ THE DIRECT ROUTE'S COMMIT: Close(olSave), which keeps the edit only because the "Message"
+                    // form page was added before the editor was read (ComposeSurface.ReadEditorDirectly) - cell B3,
+                    // 40 of 40; W7, 60 of 60. Without the form page the same close keeps nothing (B2, 0 of 40), and
+                    // neither does CurrentItem.Save() on an inspector never activated (B1, W6: 0 of 100).
+                    try
+                    {
+                        ((dynamic)inspector!).Close(ComposeSurface.OlSave);
+                        flushed = true;
+                    }
+                    catch (Exception ex) when (IsComCallFailure(ex))
+                    {
+                        error = DescribeComFailure(ex);
+                    }
+                }
+                else if (error == null)
+                {
+                    // ⚠ THE PROMOTED ROUTE'S COMMIT, and it is NOT Close(olSave).
+                    // On an ALREADY-SAVED draft Close(olSave) after an activation does nothing - live-measured:
                     // the call reported success and the re-opened draft still held the
                     // OLD body, with the new text nowhere in the document.
                     // What does commit is saving the inspector's OWN item -
@@ -6935,7 +7133,7 @@ namespace OutlookAI.Core.Com
                     // Save() on THAT writes the document through. The close is then
                     // olDiscard on purpose: the save already happened, and a second
                     // save-on-close would re-render the document from the item (the D37
-                    // footgun) for no gain.
+                    // footgun) for no gain. Every promoted draft of W6 and W7 committed this way.
                     object? currentItem = null;
                     try
                     {
@@ -6963,7 +7161,7 @@ namespace OutlookAI.Core.Com
                     {
                         try
                         {
-                            ((dynamic)inspector!).Close(1); // olDiscard - already saved
+                            ((dynamic)inspector!).Close(ComposeSurface.OlDiscard); // already saved
                         }
                         catch (Exception ex) when (IsComCallFailure(ex))
                         {
@@ -6983,8 +7181,8 @@ namespace OutlookAI.Core.Com
                 {
                     // Discard, never save: the draft must survive a failed revision
                     // untouched rather than half-rewritten. (On the success path the
-                    // inspector was already closed with olDiscard after the explicit
-                    // save.)
+                    // inspector was already closed - by Close(olSave) on the direct route,
+                    // with olDiscard after the explicit save on the promoted one.)
                     //
                     // TRUE ONLY IF THIS PROCESS SURVIVES. A killed COM host runs no
                     // finally, so the untouched-draft promise covers a failed revision and
@@ -6992,7 +7190,7 @@ namespace OutlookAI.Core.Com
                     // first and why the killed-update message says the outcome is unknown.
                     try
                     {
-                        ((dynamic)inspector!).Close(1); // olDiscard
+                        ((dynamic)inspector!).Close(ComposeSurface.OlDiscard);
                     }
                     catch (Exception ex) when (IsComCallFailure(ex))
                     {
@@ -7464,9 +7662,10 @@ namespace OutlookAI.Core.Com
         /// returned WITHOUT EVER OPENING AN INSPECTOR ON THAT OBJECT: it is saved as it stands, re-opened
         /// by its EntryID as a separate object - which replaces <paramref name="mail"/>, the creator's
         /// object being released - and composed there the way update_draft revises a draft
-        /// (<see cref="ReviseHeldDocument"/>: one held inspector, the editor promoted, the signature and
-        /// the body placed in Word, <c>CurrentItem.Save</c>, <c>Close(olDiscard)</c>). When the Word path
-        /// cannot be had, the body goes in by the HTML splice instead, on the same re-opened item.
+        /// (<see cref="ReviseHeldDocument"/>: one held inspector, its editor read directly or through the one
+        /// promotion of the Outlook process, the signature and the body placed in Word, and the route's commit -
+        /// <c>Close(olSave)</c> after the form page, or <c>CurrentItem.Save</c> and <c>Close(olDiscard)</c>). When
+        /// the Word path cannot be had, the body goes in by the HTML splice instead, on the same re-opened item.
         /// <para>
         /// ⚠ WHY: IT IS A CRASH (2026-10-04, from the test guests' first crash dumps - runbook section
         /// 4.6). The compose this replaced held an inspector on the creator's object and closed it with
@@ -7539,7 +7738,7 @@ namespace OutlookAI.Core.Com
             (bool placed, string? error) = ReviseHeldDocument(
                 mail!, body, toInsert, measureSignatureInjection: true,
                 out long textBefore, out long textAfter, signatureIsAccountDefault: signature.IsDefault, out bool defaultApplied,
-                removeSignature: signature.RemoveExisting, out bool _, out bool promotedWindowless);
+                removeSignature: signature.RemoveExisting, out bool _, out bool promotedWindowless, EditorGate());
             if (!placed)
             {
                 // The fallback the in-place compose had: the agent's text is not lost because the editor
@@ -11648,6 +11847,117 @@ namespace OutlookAI.Core.Com
             }
         }
 
+        /// <summary>
+        /// Q118 (a), on the STA, from <see cref="Dispose"/>: takes this session out of the registry and closes its
+        /// Outlook's lifetime pin when <see cref="SessionRegistryRules.Leave"/> says so. A session that never joined
+        /// keeps the rule from before the registry: its own pin is closed only when it started Outlook.
+        /// </summary>
+        private void LeaveRegistry()
+        {
+            string? key = _sessionKey;
+            if (key == null || !(_outlookStamp is ProcessStamp outlook))
+            {
+                if (_composeSurfacePin != null && StartedOutlook)
+                {
+                    try
+                    {
+                        ((dynamic)_composeSurfacePin).Close();
+                        LeaveOutcome = "own pin closed (not registered; this session started Outlook)";
+                    }
+                    catch (Exception)
+                    {
+                        // Outlook may already be gone; teardown must not throw.
+                    }
+                }
+
+                return;
+            }
+
+            bool heardQuit = string.Equals(GoneSignal, GoneByQuitEvent, StringComparison.Ordinal);
+            bool outlookGone = string.Equals(GoneSignal, GoneByProcessExit, StringComparison.Ordinal);
+            try
+            {
+                LeaveVerdict verdict = _registry.Update(
+                    state =>
+                    {
+                        LeaveVerdict leave = SessionRegistryRules.Leave(state, key, outlook, heardQuit);
+                        if (leave.ClosePinWindow != 0 && !outlookGone && _application != null)
+                        {
+                            if (ClosePin(leave.ClosePinWindow, outlook.Pid, out string? detail))
+                            {
+                                SessionRegistryRules.PinClosed(state, outlook, leave.ClosePinWindow);
+                                LeaveOutcome = "pin closed: " + leave.Reason + (detail == null ? string.Empty : " (" + detail + ")");
+                            }
+                            else
+                            {
+                                LeaveOutcome = "pin left for the next session: " + (detail ?? "the close failed");
+                            }
+                        }
+                        else
+                        {
+                            LeaveOutcome = leave.Reason + "; " + leave.OthersAttached.ToString(CultureInfo.InvariantCulture) + " other session(s) attached";
+                        }
+
+                        return leave;
+                    },
+                    out RegistryAccess access);
+                LastRegistryAccess = access.ToString();
+
+                if (_composeSurfacePin != null && _ownPinWindow == 0 && StartedOutlook && verdict.OthersAttached == 0)
+                {
+                    // A pin of this session's whose window could not be read was never recorded: the old rule.
+                    try
+                    {
+                        ((dynamic)_composeSurfacePin).Close();
+                    }
+                    catch (Exception)
+                    {
+                    }
+                }
+            }
+            catch (Exception ex) when (!(ex is OutOfMemoryException))
+            {
+                // Teardown must not throw; a pin left here is the next session's to adopt.
+                LeaveOutcome = "registry not updated (" + ex.GetType().Name + ")";
+            }
+            finally
+            {
+                OutlookSessionRegistry.MarkLiveInThisProcess(key, live: false);
+            }
+        }
+
+        /// <summary>
+        /// Closes the pin whose window is <paramref name="window"/> - through this session's own reference when it made
+        /// it, else found among Outlook's Explorers by its window - and only while that window is hidden: a pin a person
+        /// made visible (S6) has become their window and is left alone, and its record dropped. True when no pin with
+        /// that window is left.
+        /// </summary>
+        private bool ClosePin(long window, int outlookPid, out string? detail)
+        {
+            detail = null;
+            if (!ComposeSurface.IsHiddenWindowOf(window, outlookPid))
+            {
+                detail = "its window is gone or visible now, so it is no longer a pin";
+                return true;
+            }
+
+            if (_composeSurfacePin != null && _ownPinWindow == window)
+            {
+                try
+                {
+                    ((dynamic)_composeSurfacePin).Close();
+                    return true;
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                    detail = DescribeComFailure(ex);
+                    return !ComposeSurface.IsHiddenWindowOf(window, outlookPid);
+                }
+            }
+
+            return ComposeSurface.TryClosePinByWindow(_application!, window, outlookPid, out detail);
+        }
+
         internal static void Release(object? comObject) => ComObjects.Release(comObject);
 
         private void EnsureNotDisposed()
@@ -11698,33 +12008,13 @@ namespace OutlookAI.Core.Com
                     _quitSinkRegistration = null;
                     _quitSink = null;
 
-                    // D49: CLOSE the pin, do not merely release it. Measured: an Explorer
-                    // released but left in Outlook's collection outlives the session that
-                    // made it and keeps Outlook up for good - a later Application.Quit
-                    // (the user choosing Exit) then does NOT terminate the process, and
-                    // repeated sessions accumulate invisible Explorers. Closing it here
-                    // restores the pre-D49 lifecycle exactly: the pin exists for precisely
-                    // as long as the session that needs it, and Outlook is left in the
-                    // state it would have been in anyway. Any other window - the user's, or
-                    // another live session's pin - still keeps Outlook running.
-                    // ...but ONLY when this session started Outlook, i.e. when closing the
-                    // pin leaves Outlook exactly as we found it: not running. Closing it
-                    // on a session that merely ATTACHED can pull the surface out from
-                    // under whoever else is using that instance - measured, and it cost a
-                    // full-suite run 16 cascading RPC_S_SERVER_UNAVAILABLE failures when a
-                    // per-collection fixture happened to own the pin and disposed
-                    // mid-run. "Leave Outlook as you found it" is the rule.
-                    if (_composeSurfacePin != null && StartedOutlook)
-                    {
-                        try
-                        {
-                            ((dynamic)_composeSurfacePin).Close();
-                        }
-                        catch (Exception)
-                        {
-                            // Outlook may already be gone; teardown must not throw.
-                        }
-                    }
+                    // D49 and Q118 (a): CLOSE the pin when the rules say so, never merely release it - an Explorer
+                    // released but left in Outlook's collection keeps Outlook up for good, past Application.Quit()
+                    // and past the user's close of a window opened over it (measured 2026-10-03). The rules are the
+                    // registry's: the last session out closes the shared pin, whoever made it and whoever started
+                    // Outlook; while another session is attached it stays, so nobody's Outlook ends under them; and a
+                    // session that heard Outlook's Quit closes it regardless, so the user's exit wins for every session.
+                    LeaveRegistry();
 
                     ComposeSurface.ForgetPin(_composeSurfacePin);
                     Release(_composeSurfacePin);

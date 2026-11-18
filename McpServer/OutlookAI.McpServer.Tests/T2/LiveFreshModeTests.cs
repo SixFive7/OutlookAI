@@ -2,6 +2,7 @@ using System.Diagnostics;
 using OutlookAI.Core.Services;
 using Xunit;
 using Xunit.Abstractions;
+using OutlookAI.McpServer.Tests.T1;
 
 namespace OutlookAI.McpServer.Tests.T2;
 
@@ -155,12 +156,12 @@ public sealed class LiveFreshModeTests
             }
             finally
             {
-                TryDelete(saved.SavedPath);
+                ScratchFiles.TryDeleteFile(saved.SavedPath);
             }
         }
         finally
         {
-            TryDelete(attachmentPath);
+            ScratchFiles.TryDeleteFile(attachmentPath);
 
             // S3 cleanup: delete ONLY this run's artifacts (tag + marker double match)
             // from Inbox, Sent Items and Deleted Items of the test hub.
@@ -209,22 +210,5 @@ public sealed class LiveFreshModeTests
         }
 
         return total;
-    }
-
-    private static void TryDelete(string path)
-    {
-        try
-        {
-            if (File.Exists(path))
-            {
-                File.Delete(path);
-            }
-        }
-        catch (IOException)
-        {
-        }
-        catch (UnauthorizedAccessException)
-        {
-        }
     }
 }

@@ -1,6 +1,7 @@
 using OutlookAI.McpServer.Tests.T1;
 using System.Text.Json;
 using Xunit;
+using static OutlookAI.McpServer.Tests.T3.ToolShapes;
 
 namespace OutlookAI.McpServer.Tests.T3;
 
@@ -211,19 +212,5 @@ public sealed class MoveArchiveCiToolShapeTests
         Assert.False(annotations.GetProperty("destructiveHint").GetBoolean());
         Assert.True(annotations.GetProperty("idempotentHint").GetBoolean());
         Assert.False(annotations.GetProperty("openWorldHint").GetBoolean());
-    }
-
-    private static async Task<JsonElement> GetToolAsync(McpStdioClient client, string name)
-    {
-        JsonElement list = await client.RoundTripAsync("tools/list", new { });
-        foreach (JsonElement tool in list.GetProperty("result").GetProperty("tools").EnumerateArray())
-        {
-            if (tool.GetProperty("name").GetString() == name)
-            {
-                return tool;
-            }
-        }
-
-        throw new InvalidOperationException($"tool '{name}' is not advertised");
     }
 }

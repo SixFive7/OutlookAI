@@ -4,6 +4,7 @@ using OutlookAI.McpServer.Tests.T2;
 using System.Text.Json;
 using Xunit;
 using Xunit.Abstractions;
+using static OutlookAI.McpServer.Tests.T3.ToolShapes;
 
 namespace OutlookAI.McpServer.Tests.T3;
 
@@ -68,18 +69,6 @@ public sealed class ComHostSupervisionLiveTests
         // keeps the tests deterministic and testing what they claim to.
         ["OUTLOOKAI_COMHOST_LIVENESS"] = "Responsive",
     };
-
-    private static async Task<JsonElement> CallRawAsync(McpStdioClient client, string tool, object arguments)
-    {
-        JsonElement envelope = await client.RoundTripAsync("tools/call", new { name = tool, arguments });
-        return envelope.GetProperty("result");
-    }
-
-    private static JsonElement PayloadOf(JsonElement result)
-    {
-        string text = result.GetProperty("content")[0].GetProperty("text").GetString()!;
-        return JsonDocument.Parse(text).RootElement;
-    }
 
     private static Task<McpStdioClient> StartAsync(TimeSpan timeout, string faultSpec)
     {

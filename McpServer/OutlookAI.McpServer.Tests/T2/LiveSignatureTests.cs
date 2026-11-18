@@ -109,6 +109,7 @@ public sealed class LiveSignatureTests
         ComDraftInfo seedInfo = RequireMailInfo(seed.EntryId, seed.StoreId ?? hubStoreId);
 
         string? draftId = null;
+        string? forwardId = null;
         try
         {
             DraftOutcome reply = Service.ReplyDraft(seed.EntryId, agentText, replyAll: false, display: false, signature: sig.Name);
@@ -134,6 +135,20 @@ public sealed class LiveSignatureTests
             Assert.True(sigAt > agentAt, $"signature must follow the agent text (agent@{agentAt} sig@{sigAt})");
             Assert.True(quoteAt > sigAt, $"quoted seed must follow the signature (sig@{sigAt} quote@{quoteAt})");
             _output.WriteLine($"insert branch: agent@{agentAt} sig@{sigAt} quote@{quoteAt} (ordered ok)");
+
+            // Q209 (a): the text and the signature in the paragraphs above the quoted header block - before the fix
+            // all 12 measured replies and forwards had them under the block's separator line, the first paragraph
+            // with its top border. Read off Word's layout of the stored draft.
+            QuotedDraftLayout.AssertTextAboveTheHeaderBlock(
+                LiveOutlookTestMailer.ReadDraftLook(Hub, reply.EntryId, Marker), agentText, sig.BodyMarker, "reply with a signature", _output.WriteLine);
+
+            // ... and a forward, which Forward() lays out the same way.
+            string forwardText = "Signature-steered forward " + Marker;
+            DraftOutcome forward = Service.ForwardDraft(seed.EntryId, forwardText, to: Hub, display: false, signature: sig.Name);
+            forwardId = forward.EntryId;
+            Assert.True(forward.SignatureApplied, $"the forward's signature must apply (error: {forward.SignatureError ?? "-"})");
+            QuotedDraftLayout.AssertTextAboveTheHeaderBlock(
+                LiveOutlookTestMailer.ReadDraftLook(Hub, forward.EntryId, Marker), forwardText, sig.BodyMarker, "forward with a signature", _output.WriteLine);
 
             // REPLACE branch, through the product's own path: the draft carries a _MailAutoSig
             // region from the first signature, and update_draft swaps a DIFFERENT one in. Applying the
@@ -172,6 +187,11 @@ public sealed class LiveSignatureTests
             if (draftId != null)
             {
                 TryDeleteArtifact(draftId);
+            }
+
+            if (forwardId != null)
+            {
+                TryDeleteArtifact(forwardId);
             }
 
             LiveOutlookTestMailer.DeleteTaggedArtifactsUntilStableZero(Hub, Marker);
@@ -329,12 +349,8 @@ public sealed class LiveSignatureTests
         return LiveInboxArrival.WaitFor(_fixture.VerifySession, Hub, seedSubject, sentUtc);
     }
 
-    private ComDraftInfo RequireMailInfo(string entryId, string? storeId)
-    {
-        ComDraftInfo? info = _fixture.VerifySession.TryGetMailInfo(entryId, storeId, out string? error);
-        Assert.True(info != null, $"mail info unavailable: {error}");
-        return info!;
-    }
+    private ComDraftInfo RequireMailInfo(string entryId, string? storeId) =>
+        LiveDraftChecks.RequireMailInfo(_fixture.VerifySession, entryId, storeId);
 
     private void TryDeleteArtifact(string entryId)
     {

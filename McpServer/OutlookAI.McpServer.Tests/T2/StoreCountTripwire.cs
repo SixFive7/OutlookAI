@@ -530,14 +530,26 @@ public static class StoreCountTripwire
     }
 
     /// <summary>Compares two per-store, per-folder censuses.</summary>
+    /// <param name="before">The baseline census, by store and folder.</param>
+    /// <param name="after">The census after the run.</param>
+    /// <param name="hubStoreDisplayName">The store exempt as the hub, or the empty string.</param>
+    /// <param name="lazyHierarchyStores">Stores whose folder hierarchy syncs lazily (delegate stores).</param>
+    /// <param name="confirmedRemovals">
+    /// Items the run removed as the maintainer confirmed them, by EntryID (<see cref="ConfirmedRemovals"/>,
+    /// Q138): such an item's departure is noted, not failed - but only from a folder identified item by item,
+    /// only from the store named with it, only once, and only when the census found the item TAGGED. A folder
+    /// read only as a count gets no such exoneration: its decrease fails as before. Null or empty: none.
+    /// </param>
     public static TripwireVerdict Evaluate(
         IReadOnlyDictionary<string, IReadOnlyDictionary<string, FolderCensus>> before,
         IReadOnlyDictionary<string, IReadOnlyDictionary<string, FolderCensus>> after,
         string hubStoreDisplayName,
-        IEnumerable<string>? lazyHierarchyStores = null)
+        IEnumerable<string>? lazyHierarchyStores = null,
+        IEnumerable<ConfirmedRemoval>? confirmedRemovals = null)
     {
         ArgumentNullException.ThrowIfNull(before);
         ArgumentNullException.ThrowIfNull(after);
+        ConfirmedRemovalIndex confirmed = new(confirmedRemovals);
 
         // MEASURED on this profile: a delegate/shared store's folder HIERARCHY is synced
         // lazily - the same mailbox enumerated 165 folders in one census and 159 minutes
@@ -596,7 +608,7 @@ public static class StoreCountTripwire
                 if (folder.Value.HasIdentities && current.HasIdentities)
                 {
                     EvaluateByIdentity(
-                        store.Key, folder.Key, folder.Value, current, exempt, relocations,
+                        store.Key, folder.Key, folder.Value, current, exempt, relocations, confirmed,
                         failures, notes, ref taggedDepartures, ref sawDepartures);
                 }
                 else
@@ -702,7 +714,7 @@ public static class StoreCountTripwire
     /// </summary>
     private static void EvaluateByIdentity(
         string store, string folderKey, FolderCensus was, FolderCensus now, bool exempt,
-        RelocationIndex relocations, List<TripwireFailure> failures, List<string> notes,
+        RelocationIndex relocations, ConfirmedRemovalIndex confirmed, List<TripwireFailure> failures, List<string> notes,
         ref int taggedDepartures, ref bool sawDepartures)
     {
         HashSet<string> present = new(now.Items!.Select(i => i.Id), StringComparer.Ordinal);
@@ -723,8 +735,17 @@ public static class StoreCountTripwire
         sawDepartures = true;
         List<string> filed = new();
         List<string> removed = new();
+        List<string> confirmedHere = new();
         foreach (CensusItem item in departed)
         {
+            // The one removal the maintainer confirmed by EntryID (Q138), and only when the census saw the
+            // tag on it: it neither fails nor counts as the suite's tagged departure.
+            if (confirmed.TryConsume(store, item))
+            {
+                confirmedHere.Add("[" + item.Id + "]");
+                continue;
+            }
+
             if (item.Tagged)
             {
                 taggedDepartures++;
@@ -744,6 +765,13 @@ public static class StoreCountTripwire
             notes.Add("  filed (not loss): store '" + store + "' folder '" + Display(folderKey) + "' "
                 + Count(filed.Count) + " item(s) moved to " + string.Join(", ", filed.Distinct(StringComparer.Ordinal))
                 + " in the same store.");
+        }
+
+        if (confirmedHere.Count > 0)
+        {
+            notes.Add("  removed as confirmed (not loss): store '" + store + "' folder '" + Display(folderKey) + "' "
+                + Count(confirmedHere.Count) + " TEST-TAGGED item(s) the maintainer confirmed by EntryID for removal, "
+                + "and nothing else: " + string.Join("; ", confirmedHere) + ".");
         }
 
         if (removed.Count == 0)
@@ -807,6 +835,40 @@ public static class StoreCountTripwire
     private static string Count(int value)
     {
         return value.ToString(CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>
+    /// The confirmed removals a verdict may accept, each at most once: a departure matches one only when its
+    /// store and EntryID are the removal's and the census found the item tagged.
+    /// </summary>
+    private sealed class ConfirmedRemovalIndex
+    {
+        private readonly List<ConfirmedRemoval> _open;
+
+        internal ConfirmedRemovalIndex(IEnumerable<ConfirmedRemoval>? removals)
+        {
+            _open = (removals ?? Enumerable.Empty<ConfirmedRemoval>()).Where(r => r != null).ToList();
+        }
+
+        /// <summary>True, consuming the removal, when <paramref name="item"/> left <paramref name="store"/> as one.</summary>
+        internal bool TryConsume(string store, CensusItem item)
+        {
+            if (!item.Tagged || string.IsNullOrEmpty(item.Id))
+            {
+                return false;
+            }
+
+            int at = _open.FindIndex(r =>
+                string.Equals(r.Store, store, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(r.EntryId?.Trim(), item.Id.Trim(), StringComparison.OrdinalIgnoreCase));
+            if (at < 0)
+            {
+                return false;
+            }
+
+            _open.RemoveAt(at);
+            return true;
+        }
     }
 
     /// <summary>

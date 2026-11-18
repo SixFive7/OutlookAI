@@ -61,6 +61,11 @@ namespace OutlookAI.Core.AddIn
         [return: MarshalAs(UnmanagedType.Bool)]
         public static extern bool IsWindowVisible(IntPtr hWnd);
 
+        /// <summary>Whether the handle still names a window.</summary>
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool IsWindow(IntPtr hWnd);
+
         /// <summary>Whether the window is minimized.</summary>
         [DllImport("user32.dll")]
         [return: MarshalAs(UnmanagedType.Bool)]

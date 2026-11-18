@@ -163,7 +163,7 @@ public sealed class LiveSearchInTests
         // stays on the probe folder: it is the one folder whose subject-only population it measures.
         (IReadOnlyList<LiveStoreSize> sizes, string largest) = LiveLatencyTarget.Measure(_fixture.Settings);
         _output.WriteLine(LiveLatencyTarget.Describe(sizes, largest));
-        StoreScopeInfo timedStore = ResolveStoreScope(index, largest);
+        StoreScopeInfo timedStore = LiveIndexScopes.Require(index, largest);
 
         // Agent-sized shape: what MailService actually emits for a default search
         // (top 25 over-fetched by one, ORDER BY DateReceived DESC).
@@ -200,7 +200,7 @@ public sealed class LiveSearchInTests
         Assert.True(corpus.Count > 0, "hub corpus is empty");
 
         IndexSearchService index = IndexSearchService.CreateDefault(out _);
-        StoreScopeInfo hub = ResolveStoreScope(index, Hub);
+        StoreScopeInfo hub = LiveIndexScopes.Require(index, Hub);
 
         // Candidates come from the COM ground truth (a word in one field, absent as a
         // substring from the other across the whole store). The index then confirms the
@@ -302,14 +302,7 @@ public sealed class LiveSearchInTests
     private string ResolveProbeFolderScope(IndexSearchService index)
     {
         // Same shape MailService.ResolveScope builds for store + folder.
-        return ResolveStoreScope(index, Probe.StoreDisplayName).StorePrefix + "/0/" + Probe.FolderPath.Trim('/');
-    }
-
-    private static StoreScopeInfo ResolveStoreScope(IndexSearchService index, string storeDisplayName)
-    {
-        StoreScopeInfo? scope = LiveIndexScopes.Find(index, storeDisplayName);
-        Assert.True(scope != null, $"store scope of '{storeDisplayName}' not discoverable in the index");
-        return scope!;
+        return LiveIndexScopes.Require(index, Probe.StoreDisplayName).StorePrefix + "/0/" + Probe.FolderPath.Trim('/');
     }
 
     private static int CountRows(
@@ -439,7 +432,7 @@ public sealed class LiveSearchInTests
 
                 Regex word = HubCorpus.WordRegex(token);
                 int matches = ownField.Count(t => word.IsMatch(t));
-                if (matches > 0 && AllOccurrencesAreCleanWords(ownField, token))
+                if (matches > 0 && HubCorpus.AllOccurrencesAreCleanWords(ownField, token))
                 {
                     candidates[token] = matches;
                 }
@@ -451,33 +444,5 @@ public sealed class LiveSearchInTests
             .ThenBy(kv => kv.Key, StringComparer.Ordinal)
             .Select(kv => kv.Key)
             .ToList();
-    }
-
-    private static bool AllOccurrencesAreCleanWords(IReadOnlyList<string> texts, string token)
-    {
-        foreach (string text in texts)
-        {
-            int start = 0;
-            while (true)
-            {
-                int index = text.IndexOf(token, start, StringComparison.OrdinalIgnoreCase);
-                if (index < 0)
-                {
-                    break;
-                }
-
-                bool beforeOk = index == 0 || !char.IsLetterOrDigit(text[index - 1]);
-                int end = index + token.Length;
-                bool afterOk = end >= text.Length || !char.IsLetterOrDigit(text[end]);
-                if (!beforeOk || !afterOk)
-                {
-                    return false;
-                }
-
-                start = index + 1;
-            }
-        }
-
-        return true;
     }
 }

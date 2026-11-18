@@ -61,6 +61,17 @@ namespace OutlookAI.Core.Com
     /// </description></item>
     /// </list>
     /// <para>
+    /// <b>Since 2026-11-18 (Q208 B) a promotion happens once per Outlook process, not once per draft</b>
+    /// (<see cref="ObtainWordEditor"/>). Every later draft in that process, and every draft while Outlook shows a
+    /// window a person could see, reads its editor straight from an inspector that is never activated, adds the
+    /// "Message" form page before the read and commits with <c>Close(olSave)</c> - cells B3 (40 of 40, in a
+    /// windowed Outlook) and W7 (60 of 60, after one promotion in a window-less one). The per-user
+    /// <see cref="OutlookSessionRegistry"/> records the promotion, so it holds across every OutlookAI process of
+    /// the user, and the decision and the promotion are made under its lock, so two sessions drafting at once do
+    /// not both promote. The pin is made when the first draft needs it (Q175 (b)), not at connect, is shared by
+    /// every session, and the last session out closes it (Q118 (a)).
+    /// </para>
+    /// <para>
     /// SAFETY RULE, and the reason the window selection is a pure function
     /// (<see cref="SelectWindowsToPark"/> / <see cref="SelectWindowsToHide"/>): a window
     /// the user could already see is NEVER touched. Promotion parks only windows that are
@@ -472,6 +483,315 @@ namespace OutlookAI.Core.Com
             return after >= 0 && after <= countBefore;
         }
 
+        /// <summary><c>Inspector.Close</c>'s olSave.</summary>
+        internal const int OlSave = 0;
+
+        /// <summary><c>Inspector.Close</c>'s olDiscard.</summary>
+        internal const int OlDiscard = 1;
+
+        /// <summary>
+        /// How long a direct read of the editor is retried, pumped, before it counts as refused. Cell B3 gave itself
+        /// 2 s at 250 ms; every direct read of B1-B3, W6 and W7 answered at the first (220 of 220).
+        /// </summary>
+        internal const int DirectReadBudgetMilliseconds = 2_000;
+
+        private const int DirectReadIntervalMilliseconds = 250;
+
+        /// <summary>
+        /// Q208 B: the draft's Word editor, by the route <see cref="SessionRegistryRules.DecideEditorRoute"/> picks -
+        /// directly, or through the one promotion of this Outlook process - and what came of it recorded in the
+        /// registry. The decision, the promotion and its record are made under the registry's lock, so a second
+        /// session drafting at the same moment waits and then reads directly instead of promoting again: at most
+        /// one compose window on screen per Outlook start, never one per draft. Returns the Word document, or null
+        /// with <paramref name="error"/> (<see cref="ComErrorTokens.NoWordEditor"/> or
+        /// <see cref="ComErrorTokens.ActivateFailed"/>, with the failure).
+        /// <para>
+        /// <paramref name="route"/> decides the commit: <see cref="DraftEditorRoute.Direct"/> commits with
+        /// <c>Close(olSave)</c> (B3, W7); <see cref="DraftEditorRoute.Promote"/> with <c>CurrentItem.Save()</c> and
+        /// <c>Close(olDiscard)</c>, as every promoted draft in W6 and W7 did.
+        /// </para>
+        /// </summary>
+        internal static object? ObtainWordEditor(
+            object inspectorObject,
+            DraftEditorGate gate,
+            out DraftEditorRoute route,
+            out bool outlookWasWindowless,
+            out string? error)
+        {
+            if (gate == null)
+            {
+                throw new ArgumentNullException(nameof(gate));
+            }
+
+            route = DraftEditorRoute.Promote;
+            outlookWasWindowless = false;
+            error = null;
+            if (inspectorObject == null)
+            {
+                error = "NoInspector";
+                return null;
+            }
+
+            object? document = null;
+            string? promoteError = null;
+            bool windowless = false;
+            DraftEditorRoute decided;
+            if (gate.Outlook is ProcessStamp outlook)
+            {
+                decided = gate.Registry.Update(
+                    state =>
+                    {
+                        // The windows are read under the lock: another session's promotion shows its window for a
+                        // moment, and it holds this lock while it does.
+                        bool showsWindow = OutlookShowsAWindow();
+                        windowless = !showsWindow;
+                        DraftEditorRoute chosen = SessionRegistryRules.DecideEditorRoute(showsWindow, state.Find(outlook));
+                        if (chosen == DraftEditorRoute.Promote)
+                        {
+                            document = PromoteForWordEditor(inspectorObject, out promoteError, out windowless);
+                            SessionRegistryRules.EditorOutcome(state, outlook, chosen, document != null, DateTime.UtcNow.Ticks);
+                        }
+
+                        return chosen;
+                    },
+                    out RegistryAccess access);
+                gate.LastAccess = access;
+            }
+            else
+            {
+                // No Outlook identity to record against (its process was not found at connect): the window alone
+                // decides, and a window-less Outlook is promoted for every draft - the behaviour before Q208.
+                bool showsWindow = OutlookShowsAWindow();
+                windowless = !showsWindow;
+                decided = showsWindow ? DraftEditorRoute.Direct : DraftEditorRoute.Promote;
+                if (decided == DraftEditorRoute.Promote)
+                {
+                    document = PromoteForWordEditor(inspectorObject, out promoteError, out windowless);
+                }
+            }
+
+            route = decided;
+            outlookWasWindowless = windowless;
+            gate.LastRoute = decided;
+            if (decided == DraftEditorRoute.Promote)
+            {
+                error = document == null ? promoteError ?? ComErrorTokens.NoWordEditor : null;
+                return document;
+            }
+
+            document = ReadEditorDirectly(inspectorObject, out error);
+            if (document == null && gate.Outlook is ProcessStamp refusedIn)
+            {
+                // The next draft in this Outlook promotes: a refused editor is never left to refuse every draft after it.
+                _ = gate.Registry.Update(
+                    state =>
+                    {
+                        SessionRegistryRules.EditorOutcome(state, refusedIn, DraftEditorRoute.Direct, editorObtained: false, DateTime.UtcNow.Ticks);
+                        return 0;
+                    },
+                    out _);
+            }
+
+            return document;
+        }
+
+        /// <summary>
+        /// B3's route: the "Message" form page added to an inspector that is never activated, then its editor read -
+        /// once, then pumped re-reads up to <see cref="DirectReadBudgetMilliseconds"/>. Nothing is shown and nothing
+        /// is activated. The form page comes FIRST, as in every measured commit: an edit read this way is kept by
+        /// <c>Close(olSave)</c> only with it (B3, 40 of 40; without it, B2, 0 of 40). Null with the reason when the
+        /// form page or the editor was refused.
+        /// </summary>
+        internal static object? ReadEditorDirectly(object inspectorObject, out string? error)
+        {
+            error = null;
+            object? pages = null;
+            object? page = null;
+            try
+            {
+                pages = ((dynamic)inspectorObject).ModifiedFormPages;
+                page = ((dynamic)pages!).Add("Message");
+            }
+            catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+            {
+                // Without the form page Close(olSave) keeps nothing (B2), so no edit may be made through this route.
+                error = ComErrorTokens.With(ComErrorTokens.NoWordEditor, "FormPage " + OutlookComSession.DescribeComFailure(ex));
+                return null;
+            }
+            finally
+            {
+                OutlookComSession.Release(page);
+                OutlookComSession.Release(pages);
+            }
+
+            Stopwatch elapsed = Stopwatch.StartNew();
+            string? failure = null;
+            while (true)
+            {
+                try
+                {
+                    object? document = ((dynamic)inspectorObject).WordEditor;
+                    if (document != null)
+                    {
+                        return document;
+                    }
+
+                    failure = "returned null";
+                }
+                catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+                {
+                    failure = OutlookComSession.DescribeComFailure(ex);
+                }
+
+                if (elapsed.ElapsedMilliseconds + DirectReadIntervalMilliseconds > DirectReadBudgetMilliseconds)
+                {
+                    error = ComErrorTokens.With(ComErrorTokens.NoWordEditor, failure);
+                    return null;
+                }
+
+                PumpedStaRunner.PumpedWait(DirectReadIntervalMilliseconds);
+            }
+        }
+
+        /// <summary>
+        /// True when OUTLOOK.EXE has a window a person could see - <c>IsWindowVisible</c>, so a minimized or parked
+        /// window counts: the user's own Outlook, or a show-me window. Then a draft's editor is read directly and no
+        /// compose window is ever activated (Q208 B, cell B3).
+        /// </summary>
+        public static bool OutlookShowsAWindow()
+        {
+            try
+            {
+                return SnapshotOutlookWindows().Any(w => w.Visible);
+            }
+            catch (Exception ex) when (!(ex is OutOfMemoryException))
+            {
+                // Not knowing is treated as no window: the promotion is the route that works in both states.
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// The window handle of an Explorer or Inspector, through <c>IOleWindow</c>; 0 when Outlook will not say.
+        /// It is how the registry records a lifetime pin, and how a pin another process made is recognised.
+        /// </summary>
+        internal static long TryGetWindowHandle(object? outlookWindowObject)
+        {
+            if (outlookWindowObject == null)
+            {
+                return 0;
+            }
+
+            try
+            {
+                if (outlookWindowObject is IOleWindow window && window.GetWindow(out IntPtr handle) == 0)
+                {
+                    return handle.ToInt64();
+                }
+            }
+            catch (Exception ex) when (ex is InvalidCastException || ex is COMException || ex is InvalidComObjectException)
+            {
+            }
+
+            return 0;
+        }
+
+        /// <summary>
+        /// True when <paramref name="window"/> still exists, belongs to the OUTLOOK.EXE with <paramref name="outlookPid"/>
+        /// and is not visible - what a lifetime pin's window is.
+        /// </summary>
+        internal static bool IsHiddenWindowOf(long window, int outlookPid)
+        {
+            if (window == 0 || outlookPid <= 0)
+            {
+                return false;
+            }
+
+            IntPtr handle = new IntPtr(window);
+            if (!NativeWindows.IsWindow(handle))
+            {
+                return false;
+            }
+
+            _ = NativeWindows.GetWindowThreadProcessId(handle, out uint pid);
+            return (int)pid == outlookPid && !NativeWindows.IsWindowVisible(handle);
+        }
+
+        /// <summary>
+        /// Closes the lifetime pin whose window is <paramref name="window"/>: the Explorer among
+        /// <c>Application.Explorers</c> whose <c>IOleWindow</c> handle is that window, and only while that window is
+        /// not visible - never a window a person could see, never an Explorer the registry did not record (Q118
+        /// research). True when it was closed or no longer exists; false, with the reason, when it was left.
+        /// </summary>
+        internal static bool TryClosePinByWindow(object applicationObject, long window, int outlookPid, out string? detail)
+        {
+            detail = null;
+            if (window == 0)
+            {
+                return true;
+            }
+
+            IntPtr handle = new IntPtr(window);
+            if (!NativeWindows.IsWindow(handle))
+            {
+                detail = "the pin's window no longer exists";
+                return true;
+            }
+
+            if (NativeWindows.IsWindowVisible(handle))
+            {
+                detail = "the recorded window is visible - a person may be using it, so it is not closed";
+                return false;
+            }
+
+            if (outlookPid > 0)
+            {
+                _ = NativeWindows.GetWindowThreadProcessId(handle, out uint pid);
+                if ((int)pid != outlookPid)
+                {
+                    detail = "the recorded window belongs to another process";
+                    return true;
+                }
+            }
+
+            object? explorers = null;
+            try
+            {
+                explorers = ((dynamic)applicationObject).Explorers;
+                int count = (int)((dynamic)explorers!).Count;
+                for (int i = count; i >= 1; i--)
+                {
+                    object? explorer = null;
+                    try
+                    {
+                        explorer = ((dynamic)explorers!).Item(i);
+                        if (TryGetWindowHandle(explorer) == window)
+                        {
+                            ((dynamic)explorer!).Close();
+                            ForgetPin(explorer);
+                            return true;
+                        }
+                    }
+                    finally
+                    {
+                        OutlookComSession.Release(explorer);
+                    }
+                }
+
+                detail = "no Explorer has the recorded window";
+                return !NativeWindows.IsWindow(handle);
+            }
+            catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+            {
+                detail = OutlookComSession.DescribeComFailure(ex);
+                return false;
+            }
+            finally
+            {
+                OutlookComSession.Release(explorers);
+            }
+        }
+
         /// <summary>Every top-level window owned by the OUTLOOK.EXE processes.</summary>
         public static IReadOnlyList<WindowState> SnapshotOutlookWindows()
         {
@@ -553,5 +873,43 @@ namespace OutlookAI.Core.Com
                 0,
                 NativeWindows.SWP_NOSIZE | NativeWindows.SWP_NOZORDER | NativeWindows.SWP_NOACTIVATE);
         }
+
+        /// <summary>The OLE window interface every Outlook Explorer and Inspector implements: the one way from one to its window.</summary>
+        [ComImport]
+        [Guid("00000114-0000-0000-C000-000000000046")]
+        [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        internal interface IOleWindow
+        {
+            [PreserveSig]
+            int GetWindow(out IntPtr phwnd);
+
+            [PreserveSig]
+            int ContextSensitiveHelp([MarshalAs(UnmanagedType.Bool)] bool enterMode);
+        }
+    }
+
+    /// <summary>
+    /// What a compose needs to choose its editor route and to record what came of it (Q208 B): the per-user
+    /// registry and the Outlook process the session is attached to. Made by the session for each compose.
+    /// </summary>
+    internal sealed class DraftEditorGate
+    {
+        internal DraftEditorGate(OutlookSessionRegistry registry, ProcessStamp? outlook)
+        {
+            Registry = registry ?? throw new ArgumentNullException(nameof(registry));
+            Outlook = outlook;
+        }
+
+        /// <summary>The registry the route is decided and recorded in.</summary>
+        internal OutlookSessionRegistry Registry { get; }
+
+        /// <summary>The Outlook process the session is attached to; null when its process was not found.</summary>
+        internal ProcessStamp? Outlook { get; }
+
+        /// <summary>The route the last compose through this gate took - a diagnostic.</summary>
+        internal DraftEditorRoute? LastRoute { get; set; }
+
+        /// <summary>How the last registry update went - a diagnostic.</summary>
+        internal RegistryAccess? LastAccess { get; set; }
     }
 }

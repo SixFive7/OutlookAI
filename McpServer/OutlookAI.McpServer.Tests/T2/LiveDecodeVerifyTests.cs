@@ -382,7 +382,7 @@ public sealed class LiveDecodeVerifyTests
     /// after assert per S3) can outlive the item; sampling them would fail the locate.
     /// </summary>
     private static bool IsTransientTestArtifact(IndexHit hit)
-        => hit.Subject != null && hit.Subject.Contains("[OutlookAI-McpTest]", StringComparison.Ordinal);
+        => LiveOutlookTestMailer.CarriesSubjectTag(hit.Subject);
 
     private List<IndexHit> SampleHitsAcrossStores()
     {

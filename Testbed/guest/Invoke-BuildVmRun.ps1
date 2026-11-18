@@ -466,8 +466,8 @@ function Invoke-SelfTest {
 
     Write-Host ''
     Write-Host '== the run log is appended with sharing, so the host can read it while it grows =='
-    $say = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Say' }, $true))
-    Check 'Say is defined once' 1 $say.Count
+    $say = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Write-RunLog' }, $true))
+    Check 'Write-RunLog is defined once' 1 $say.Count
     $sayText = ''
     $sayAddContent = 0
     if ($say.Count -eq 1) {
@@ -567,7 +567,7 @@ foreach ($stale in @($ResultsZip, $DoneFile)) {
 if (Test-Path -LiteralPath $ResultsDir) { Remove-Item -LiteralPath $ResultsDir -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $ResultsDir | Out-Null
 
-function Say([string] $m) {
+function Write-RunLog([string] $m) {
     # In UTC, the VM's own zone, so the zone pass's change of zone does not move this log's clock.
     $line = "[{0:HH:mm:ss}] {1}" -f [DateTime]::UtcNow, $m
     Write-Host $line
@@ -668,7 +668,7 @@ function Get-LogText($result) {
 function Show-Tail([string] $Text, [int] $Lines = 30) {
     $all = @($Text -split "`r?`n" | Where-Object { $_.Trim() })
     $start = [Math]::Max(0, $all.Count - $Lines)
-    for ($i = $start; $i -lt $all.Count; $i++) { Say ("    | " + $all[$i]) }
+    for ($i = $start; $i -lt $all.Count; $i++) { Write-RunLog ("    | " + $all[$i]) }
 }
 
 # What the run reports, built up phase by phase and written once at the end.
@@ -704,16 +704,16 @@ function Complete-Run([string] $Verdict) {
                     maxCommittedMB  = ($rows | ForEach-Object { [int]$_.committedMB } | Measure-Object -Maximum).Maximum
                     physicalMB      = [int]($record['machine'].memoryGB * 1024)
                 }
-                Say ("memory: lowest free {0} MB, highest committed {1} MB, over {2} sample(s)" -f $record['memory'].minFreeMB, $record['memory'].maxCommittedMB, $rows.Count)
+                Write-RunLog ("memory: lowest free {0} MB, highest committed {1} MB, over {2} sample(s)" -f $record['memory'].minFreeMB, $record['memory'].maxCommittedMB, $rows.Count)
             }
         }
-        catch { Say "memory: could not summarise $MemoryLog - $($_.Exception.Message)" }
+        catch { Write-RunLog "memory: could not summarise $MemoryLog - $($_.Exception.Message)" }
     }
     $record['verdict'] = $Verdict
     $record['exitCode'] = $Verdicts[$Verdict]
     $record['finishedUtc'] = [DateTime]::UtcNow.ToString('o')
     ($record | ConvertTo-Json -Depth 8) | Set-Content -LiteralPath $RunJson -Encoding UTF8
-    Say "VERDICT: $Verdict (exit $($Verdicts[$Verdict]))"
+    Write-RunLog "VERDICT: $Verdict (exit $($Verdicts[$Verdict]))"
     try {
         Add-Type -AssemblyName System.IO.Compression.FileSystem
         if (Test-Path -LiteralPath $ResultsZip) { Remove-Item -LiteralPath $ResultsZip -Force }
@@ -724,9 +724,9 @@ function Complete-Run([string] $Verdict) {
         # out with the files it got before it, and the host would take that for all of them: a
         # run.json without its TRX file, say. Removed, it sends the host to read the results one
         # by one, each with sharing (the host's fetch), and run.json and the TRX file still decide.
-        Say "could not zip the results: $($_.Exception.Message) - the host reads them one by one"
+        Write-RunLog "could not zip the results: $($_.Exception.Message) - the host reads them one by one"
         try { if (Test-Path -LiteralPath $ResultsZip) { Remove-Item -LiteralPath $ResultsZip -Force } }
-        catch { Say "and could not remove the partial zip: $($_.Exception.Message)" }
+        catch { Write-RunLog "and could not remove the partial zip: $($_.Exception.Message)" }
     }
     # Written LAST: its existence is what the host waits for.
     Set-Content -LiteralPath $DoneFile -Value ([string]$Verdicts[$Verdict]) -Encoding ASCII
@@ -736,17 +736,17 @@ function Complete-Run([string] $Verdict) {
 # ---------------------------------------------------------------------------------------------
 # The request.
 # ---------------------------------------------------------------------------------------------
-Say "Invoke-BuildVmRun on $env:COMPUTERNAME as $env:USERNAME, PowerShell $($PSVersionTable.PSVersion)"
+Write-RunLog "Invoke-BuildVmRun on $env:COMPUTERNAME as $env:USERNAME, PowerShell $($PSVersionTable.PSVersion)"
 $requestText = ''
 if (Test-Path -LiteralPath $RequestPath) { $requestText = [System.IO.File]::ReadAllText($RequestPath) }
-else { Say "no request at $RequestPath - every default applies" }
+else { Write-RunLog "no request at $RequestPath - every default applies" }
 try { $read = Read-RunRequest $requestText }
-catch { Say "REFUSED: the request cannot be read: $($_.Exception.Message)"; Complete-Run 'REFUSED' }
+catch { Write-RunLog "REFUSED: the request cannot be read: $($_.Exception.Message)"; Complete-Run 'REFUSED' }
 $request = $read.Request
-foreach ($u in @($read.Unknown)) { Say "REFUSED: the request carries '$u', which this script does not know. A misspelt key would otherwise be ignored and the run would test something other than what was asked."; }
+foreach ($u in @($read.Unknown)) { Write-RunLog "REFUSED: the request carries '$u', which this script does not know. A misspelt key would otherwise be ignored and the run would test something other than what was asked."; }
 if (@($read.Unknown).Count -gt 0) { Complete-Run 'REFUSED' }
 $refusal = Get-FilterRefusal $request['filter']
-if ($refusal) { Say "REFUSED: $refusal."; Complete-Run 'REFUSED' }
+if ($refusal) { Write-RunLog "REFUSED: $refusal."; Complete-Run 'REFUSED' }
 $record['revision'] = $request['revision']
 $request.Remove('revision')
 $record['request'] = $request
@@ -771,7 +771,7 @@ $record['machine'] = [ordered]@{
     sessionId         = (Get-Process -Id $PID).SessionId
     outlookInstalled  = (Test-Path -LiteralPath 'Registry::HKEY_CLASSES_ROOT\Outlook.Application')
 }
-Say ("machine: {0}; {1} / {2}; {3}; {4} CPU, {5} GB; session {6}; Outlook.Application registered: {7}" -f $record['machine'].os, $record['machine'].culture, $record['machine'].uiCulture, $record['machine'].timeZone, $record['machine'].logicalProcessors, $record['machine'].memoryGB, $record['machine'].sessionId, $record['machine'].outlookInstalled)
+Write-RunLog ("machine: {0}; {1} / {2}; {3}; {4} CPU, {5} GB; session {6}; Outlook.Application registered: {7}" -f $record['machine'].os, $record['machine'].culture, $record['machine'].uiCulture, $record['machine'].timeZone, $record['machine'].logicalProcessors, $record['machine'].memoryGB, $record['machine'].sessionId, $record['machine'].outlookInstalled)
 
 # Memory, sampled every 5 s for the whole run into results\memory.csv: free physical and committed
 # megabytes. It is what the VM's RAM was sized from, and what says when it stops being enough.
@@ -790,19 +790,19 @@ $env:MSBUILDDISABLENODEREUSE = '1'
 $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
 $env:DOTNET_NOLOGO = '1'
 # The live tier's per-run opt-in is a computer name set for one run; it must never be set here.
-if ($env:OUTLOOKAI_LIVE_OPT_IN) { Say 'OUTLOOKAI_LIVE_OPT_IN was set in this environment; it is cleared for this run.'; $env:OUTLOOKAI_LIVE_OPT_IN = $null }
+if ($env:OUTLOOKAI_LIVE_OPT_IN) { Write-RunLog 'OUTLOOKAI_LIVE_OPT_IN was set in this environment; it is cleared for this run.'; $env:OUTLOOKAI_LIVE_OPT_IN = $null }
 
 # ---------------------------------------------------------------------------------------------
 # 1. Expand.
 # ---------------------------------------------------------------------------------------------
 $t0 = Get-Date
-if (-not (Test-Path -LiteralPath $SourceZip)) { Say "REFUSED: no source archive at $SourceZip."; Complete-Run 'REFUSED' }
+if (-not (Test-Path -LiteralPath $SourceZip)) { Write-RunLog "REFUSED: no source archive at $SourceZip."; Complete-Run 'REFUSED' }
 if (Test-Path -LiteralPath $SourceRoot) { Remove-Item -LiteralPath $SourceRoot -Recurse -Force }
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 [System.IO.Compression.ZipFile]::ExtractToDirectory($SourceZip, $SourceRoot)
 $fileCount = @(Get-ChildItem -LiteralPath $SourceRoot -Recurse -File).Count
 $record['phases']['expand'] = [ordered]@{ seconds = [math]::Round(((Get-Date) - $t0).TotalSeconds, 1); files = $fileCount }
-Say "expanded $fileCount file(s) into $SourceRoot in $($record['phases']['expand'].seconds) s"
+Write-RunLog "expanded $fileCount file(s) into $SourceRoot in $($record['phases']['expand'].seconds) s"
 
 # The private list of personal data (Q196 (c)), if the host staged one: into the source tree's .work,
 # where the guard looks - never into the results, which are zipped and fetched.
@@ -810,11 +810,11 @@ if (Test-Path -LiteralPath $StagedPrivateList -PathType Leaf) {
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $PlacedPrivateList) | Out-Null
     Move-Item -LiteralPath $StagedPrivateList -Destination $PlacedPrivateList -Force
     $record['privateList'] = 'placed'
-    Say 'personal data: the staged private list is in place for the self-tests; it is not in the results'
+    Write-RunLog 'personal data: the staged private list is in place for the self-tests; it is not in the results'
 }
 else {
     $record['privateList'] = 'absent'
-    Say 'personal data: no private list was staged - check-personal-data will not check the known identifiers'
+    Write-RunLog 'personal data: no private list was staged - check-personal-data will not check the known identifiers'
 }
 
 $restoreState = 'skipped'
@@ -826,8 +826,8 @@ $suiteState = 'skipped'
 # ---------------------------------------------------------------------------------------------
 if (-not $request['skipSuite']) {
     $projectFull = Join-Path $SourceRoot $TestProject
-    if (-not (Test-Path -LiteralPath $projectFull)) { Say "REFUSED: the revision has no $TestProject."; Complete-Run 'REFUSED' }
-    if (-not (Test-Path -LiteralPath $dotnetExe)) { Say "SUITE-BROKEN: no dotnet at $dotnetExe - this VM's base checkpoint has no SDK."; $record['notes'] += "no dotnet at $dotnetExe"; Complete-Run 'SUITE-BROKEN' }
+    if (-not (Test-Path -LiteralPath $projectFull)) { Write-RunLog "REFUSED: the revision has no $TestProject."; Complete-Run 'REFUSED' }
+    if (-not (Test-Path -LiteralPath $dotnetExe)) { Write-RunLog "SUITE-BROKEN: no dotnet at $dotnetExe - this VM's base checkpoint has no SDK."; $record['notes'] += "no dotnet at $dotnetExe"; Complete-Run 'SUITE-BROKEN' }
 
     # The offline configuration, outside the source tree so the revision is built exactly as
     # archived. <clear/> is the load-bearing line: see guest/Install-DotnetSdk.ps1.
@@ -845,39 +845,39 @@ if (-not $request['skipSuite']) {
 </configuration>
 "@
 
-    Say "restore: $TestProject, offline feed $OfflineFeed only"
+    Write-RunLog "restore: $TestProject, offline feed $OfflineFeed only"
     $restore = Invoke-LoggedStep -FilePath $dotnetExe -Arguments @('restore', $projectFull, '--configfile', $OfflineConfig) -LogName 'restore' -TimeoutSeconds ($request['restoreTimeoutMinutes'] * 60) -WorkingDirectory $SourceRoot
     $restoreText = Get-LogText $restore
     $record['phases']['restore'] = [ordered]@{ seconds = $restore.Seconds; exitCode = $restore.ExitCode; timedOut = $restore.TimedOut }
     if ($restore.ExitCode -eq 0 -and -not $restore.TimedOut) {
         $restoreState = 'ok'
-        Say "restore: ok in $($restore.Seconds) s"
+        Write-RunLog "restore: ok in $($restore.Seconds) s"
     }
     else {
         $missing = @(Get-MissingPackages $restoreText)
         if ($missing.Count -gt 0) {
             $restoreState = 'missing'
             $record['missingPackages'] = $missing
-            Say "restore: the offline feed lacks $($missing.Count) package(s): $($missing -join ', ')"
+            Write-RunLog "restore: the offline feed lacks $($missing.Count) package(s): $($missing -join ', ')"
         }
         else {
             $restoreState = 'failed'
-            Say "restore: FAILED (exit $($restore.ExitCode), timed out: $($restore.TimedOut))"
+            Write-RunLog "restore: FAILED (exit $($restore.ExitCode), timed out: $($restore.TimedOut))"
             Show-Tail $restoreText
         }
     }
 
     if ($restoreState -eq 'ok') {
-        Say "build: $($request['configuration']), no restore"
+        Write-RunLog "build: $($request['configuration']), no restore"
         $build = Invoke-LoggedStep -FilePath $dotnetExe -Arguments @('build', $projectFull, '-c', $request['configuration'], '--no-restore', '-nodeReuse:false') -LogName 'build' -TimeoutSeconds ($request['buildTimeoutMinutes'] * 60) -WorkingDirectory $SourceRoot
         $record['phases']['build'] = [ordered]@{ seconds = $build.Seconds; exitCode = $build.ExitCode; timedOut = $build.TimedOut }
         if ($build.ExitCode -eq 0 -and -not $build.TimedOut) {
             $buildState = 'ok'
-            Say "build: ok in $($build.Seconds) s"
+            Write-RunLog "build: ok in $($build.Seconds) s"
         }
         else {
             $buildState = 'failed'
-            Say "build: FAILED (exit $($build.ExitCode), timed out: $($build.TimedOut)) in $($build.Seconds) s"
+            Write-RunLog "build: FAILED (exit $($build.ExitCode), timed out: $($build.TimedOut)) in $($build.Seconds) s"
             Show-Tail (Get-LogText $build) 40
         }
     }
@@ -886,7 +886,7 @@ if (-not $request['skipSuite']) {
         $filter = Get-SuiteFilter $request['filter']
         $trxDir = Join-Path $ResultsDir 'trx'
         New-Item -ItemType Directory -Force -Path $trxDir | Out-Null
-        Say "test: --filter $filter"
+        Write-RunLog "test: --filter $filter"
         $testArgs = Get-TestArguments -Project $projectFull -Configuration $request['configuration'] -Filter $filter -TrxName 'suite.trx' -TrxDir $trxDir -HangTimeoutMinutes $request['hangTimeoutMinutes']
         $test = Invoke-LoggedStep -FilePath $dotnetExe -Arguments $testArgs -LogName 'test' -TimeoutSeconds ($request['testTimeoutMinutes'] * 60) -WorkingDirectory $SourceRoot
         $trx = Join-Path $trxDir 'suite.trx'
@@ -896,27 +896,27 @@ if (-not $request['skipSuite']) {
         $record['suite'] = [ordered]@{ filter = $filter; trx = 'trx/suite.trx'; trxPresent = (Test-Path -LiteralPath $trx); summaryLine = $summaryLine }
         if ($test.TimedOut) {
             $suiteState = 'broken'
-            Say "test: STOPPED after $($request['testTimeoutMinutes']) min ($($test.Stopped) process(es) ended)"
+            Write-RunLog "test: STOPPED after $($request['testTimeoutMinutes']) min ($($test.Stopped) process(es) ended)"
             Show-Tail $testText 40
         }
         elseif (-not (Test-Path -LiteralPath $trx)) {
             $suiteState = 'broken'
-            Say "test: no TRX file (exit $($test.ExitCode)) - the test host did not finish its run"
+            Write-RunLog "test: no TRX file (exit $($test.ExitCode)) - the test host did not finish its run"
             Show-Tail $testText 40
         }
         elseif ($test.ExitCode -eq 0) {
             $suiteState = 'passed'
-            Say "test: exit 0 in $($test.Seconds) s - $summaryLine"
+            Write-RunLog "test: exit 0 in $($test.Seconds) s - $summaryLine"
         }
         else {
             $suiteState = 'failed'
-            Say "test: exit $($test.ExitCode) in $($test.Seconds) s - $summaryLine"
+            Write-RunLog "test: exit $($test.ExitCode) in $($test.Seconds) s - $summaryLine"
             Show-Tail $testText 40
         }
     }
 }
 else {
-    Say 'suite: skipped by the request'
+    Write-RunLog 'suite: skipped by the request'
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -953,7 +953,7 @@ if ($request['zonePassTimeZone'] -and ($suiteState -eq 'passed' -or $suiteState 
     $restoredTo = ''
     $zoneTest = $null
     $zoneText = ''
-    Say "zone pass: the VM leaves '$homeZone' for '$zone', runs the tests marked $ZonePassMarker again, and comes back"
+    Write-RunLog "zone pass: the VM leaves '$homeZone' for '$zone', runs the tests marked $ZonePassMarker again, and comes back"
     try {
         try {
             Set-TimeZone -Id $zone
@@ -962,7 +962,7 @@ if ($request['zonePassTimeZone'] -and ($suiteState -eq 'passed' -or $suiteState 
         }
         catch { $switchError = $_.Exception.Message }
         if (-not $switchError) {
-            Say "zone pass: a new process reads '$readBack'; test --filter $zoneFilter"
+            Write-RunLog "zone pass: a new process reads '$readBack'; test --filter $zoneFilter"
             $zoneArgs = Get-TestArguments -Project $projectFull -Configuration $request['configuration'] -Filter $zoneFilter -TrxName 'zone.trx' -TrxDir $trxDir -HangTimeoutMinutes $request['hangTimeoutMinutes']
             $zoneTest = Invoke-LoggedStep -FilePath $dotnetExe -Arguments $zoneArgs -LogName 'zone-test' -TimeoutSeconds ($request['testTimeoutMinutes'] * 60) -WorkingDirectory $SourceRoot
             $zoneText = Get-LogText $zoneTest
@@ -1001,11 +1001,11 @@ if ($request['zonePassTimeZone'] -and ($suiteState -eq 'passed' -or $suiteState 
     $said = "zone pass: $($state.State) in $($record['phases']['zonePass'].seconds) s, back in '$restoredTo'"
     if ($state.Why) { $said += " - $($state.Why)" }
     if ($zoneSummaryLine) { $said += " - $zoneSummaryLine" }
-    Say $said
+    Write-RunLog $said
     if ($state.State -eq 'failed' -or $state.State -eq 'broken') { Show-Tail $zoneText 40 }
 }
 elseif ($request['zonePassTimeZone']) {
-    Say "zone pass: not run - $($record['zonePass'].why)"
+    Write-RunLog "zone pass: not run - $($record['zonePass'].why)"
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -1043,14 +1043,14 @@ if (-not $request['skipSelfTests'] -and $restoreState -ne 'missing') {
         }
     }
     $selected = @($candidates | Where-Object { Test-SelfTestSelected $_.Relative $request['selfTestInclude'] })
-    Say ("self-tests: {0} script(s) declare -SelfTest; {1} selected, {2} excluded by reason" -f $candidates.Count, $selected.Count, @($selected | Where-Object { $excludedPaths -contains $_.Relative }).Count)
+    Write-RunLog ("self-tests: {0} script(s) declare -SelfTest; {1} selected, {2} excluded by reason" -f $candidates.Count, $selected.Count, @($selected | Where-Object { $excludedPaths -contains $_.Relative }).Count)
     $n = 0
     foreach ($c in $selected) {
         $n++
         $exclusion = @($SelfTestExclusions | Where-Object { $_.Path -eq $c.Relative })
         if ($exclusion.Count -gt 0) {
             $record['selfTestSkips'] += [ordered]@{ path = $c.Relative; reason = $exclusion[0].Why }
-            Say ("  [{0}/{1}] SKIP {2} - {3}" -f $n, $selected.Count, $c.Relative, $exclusion[0].Why)
+            Write-RunLog ("  [{0}/{1}] SKIP {2} - {3}" -f $n, $selected.Count, $c.Relative, $exclusion[0].Why)
             continue
         }
         $logName = 'selftests\' + ($c.Relative -replace '[\\/:]', '_')
@@ -1072,12 +1072,12 @@ if (-not $request['skipSelfTests'] -and $restoreState -ne 'missing') {
         }
         $state = 'ok  '
         if (-not $ok) { $state = 'FAIL' }
-        Say ("  [{0}/{1}] {2} {3} ({4} s) - {5}" -f $n, $selected.Count, $state, $c.Relative, $r.Seconds, $lastLine)
+        Write-RunLog ("  [{0}/{1}] {2} {3} ({4} s) - {5}" -f $n, $selected.Count, $state, $c.Relative, $r.Seconds, $lastLine)
     }
     $record['phases']['selfTests'] = [ordered]@{ seconds = [math]::Round(((Get-Date) - $t0).TotalSeconds, 1); run = @($record['selfTests']).Count; failed = $selfTestsFailed }
 }
 elseif ($request['skipSelfTests']) {
-    Say 'self-tests: skipped by the request'
+    Write-RunLog 'self-tests: skipped by the request'
 }
 
 # The private list leaves the tree once the self-tests are done; the revert would take it anyway.

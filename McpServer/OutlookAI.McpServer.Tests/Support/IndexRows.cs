@@ -31,6 +31,12 @@ internal static class IndexRows
         return urls.Select(u => Row("System.ItemUrl", u)).ToList();
     }
 
+    /// <summary>A row's <paramref name="column"/> when it holds text; null otherwise.</summary>
+    public static string? Text(IReadOnlyDictionary<string, object?> row, string column)
+    {
+        return row.TryGetValue(column, out object? value) && value is string s ? s : null;
+    }
+
     /// <summary>The scope a statement's first <c>SCOPE='...'</c> clause names, or null when it names none.</summary>
     public static string? ScopeOf(string sql)
     {

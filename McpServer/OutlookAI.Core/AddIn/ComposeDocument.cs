@@ -195,9 +195,12 @@ namespace OutlookAI.Core.AddIn
                 }
                 else if ((bool)bm.Exists(OriginalBookmark))
                 {
-                    // No signature region yet (e.g. an account without a default): insert directly
-                    // ABOVE the quoted original.
-                    insertAt = BookmarkSpan(bookmarks!, OriginalBookmark).Start;
+                    // No signature yet - a reply or forward made without an inspector never has one: it goes into
+                    // the empty paragraph directly above the quoted message's header block, NOT at _MailOriginal's
+                    // start, which sits inside that block's bordered first paragraph. There it took the block's top
+                    // border and, with the body written above it, put the agent's whole text under the separator line
+                    // (Q149, 12 of 12 measured replies and forwards; Q209 (a), decided 2026-11-18).
+                    insertAt = PrepareSlotAboveQuote(document, BookmarkSpan(bookmarks!, OriginalBookmark).Start);
                 }
                 else
                 {
@@ -417,6 +420,7 @@ namespace OutlookAI.Core.AddIn
             string? boundary = null;
             int boundaryStart = -1;
             int boundaryEnd = -1;
+            bool aboveQuote = false;
             try
             {
                 bookmarks = doc.Bookmarks;
@@ -432,7 +436,10 @@ namespace OutlookAI.Core.AddIn
                 }
                 else if ((bool)bm.Exists(OriginalBookmark))
                 {
-                    boundary = OriginalBookmark;
+                    // A reply or forward with no signature (Q209 (a)): the text goes into the empty paragraphs above
+                    // the quoted message's header block. _MailOriginal itself is never touched: nothing is written at
+                    // its start, so Word has nothing to absorb into it.
+                    aboveQuote = true;
                 }
 
                 if (boundary != null)
@@ -459,7 +466,14 @@ namespace OutlookAI.Core.AddIn
                 // The DRAFT region [0, boundary) is REPLACED, so the body starts at the top instead of
                 // below a template's blank paragraphs.
                 int insertAt = boundary != null ? boundaryStart : 0;
-                if (boundary == null && replaceToEndWhenNoBoundary)
+                if (aboveQuote)
+                {
+                    // The draft region runs to the empty paragraph kept above the header block, which stays as the
+                    // blank line between the text and the quote - so the text ends in one paragraph mark, not two,
+                    // and an HTML body needs no blank paragraph of its own after it.
+                    insertAt = PrepareSlotAboveQuote(document, BookmarkSpan(bookmarks!, OriginalBookmark).Start);
+                }
+                else if (boundary == null && replaceToEndWhenNoBoundary)
                 {
                     insertAt = Math.Max(0, GetDocumentEnd(document) - 1);
                 }
@@ -603,6 +617,145 @@ namespace OutlookAI.Core.AddIn
                 catch (UnauthorizedAccessException)
                 {
                 }
+            }
+        }
+
+        /// <summary>
+        /// Q209 (a), decided 2026-11-18: the start of the empty paragraph directly above a reply's or forward's quoted
+        /// header block - where the text and signature go, and the paragraph that then stays as the blank line
+        /// between them and the quote. <c>Reply()</c> and <c>Forward()</c> leave two empty paragraphs above the header
+        /// block for exactly this (Q149 cell C4, 6 of 6); the header block's first paragraph, where
+        /// <c>_MailOriginal</c> starts, carries the separator line as its top border, and text written at its start
+        /// took that border (12 of 12 measured replies and forwards).
+        /// <para>
+        /// When the paragraph above the header block is not empty - a draft someone typed into right above the quote -
+        /// an empty one is split off its end, with its formatting; when the header block is the document's first
+        /// paragraph, an empty one is put before it and stripped of the formatting it copied from the block
+        /// (<see cref="QuoteSlotRules"/>). Either way nothing is written into the bordered paragraph.
+        /// </para>
+        /// </summary>
+        private static int PrepareSlotAboveQuote(object document, int originalStart)
+        {
+            dynamic doc = document;
+            int headerStart = ParagraphStartAt(document, originalStart);
+            bool lastIsBlank = false;
+            int lastStart = 0;
+            if (headerStart > 0)
+            {
+                object? probe = null;
+                object? paragraphs = null;
+                object? paragraph = null;
+                object? range = null;
+                try
+                {
+                    probe = doc.Range(headerStart - 1, headerStart - 1);
+                    paragraphs = ((dynamic)probe!).Paragraphs;
+                    paragraph = ((dynamic)paragraphs!).Item(1);
+                    range = ((dynamic)paragraph!).Range;
+                    lastStart = (int)((dynamic)range!).Start;
+                    lastIsBlank = QuoteSlotRules.IsBlankParagraphText(TryGetString(() => (string?)((dynamic)range!).Text));
+                }
+                finally
+                {
+                    ComObjects.Release(range);
+                    ComObjects.Release(paragraph);
+                    ComObjects.Release(paragraphs);
+                    ComObjects.Release(probe);
+                }
+            }
+
+            switch (QuoteSlotRules.Decide(headerStart, lastIsBlank))
+            {
+                case QuoteSlotAction.UseLastParagraph:
+                    return lastStart;
+
+                case QuoteSlotAction.SplitLastParagraph:
+                {
+                    // A paragraph mark just before the last paragraph's own: its text keeps its paragraph, and an empty
+                    // paragraph with the same formatting - outside the header block - is left above the block.
+                    object? at = null;
+                    try
+                    {
+                        at = doc.Range(headerStart - 1, headerStart - 1);
+                        ((dynamic)at!).InsertBefore("\r");
+                    }
+                    finally
+                    {
+                        ComObjects.Release(at);
+                    }
+
+                    return headerStart;
+                }
+
+                default:
+                {
+                    // The header block is the first paragraph: an empty paragraph before it copies its formatting, the
+                    // top border with it, so that formatting is taken off again.
+                    object? at = null;
+                    object? paragraphs = null;
+                    object? first = null;
+                    object? borders = null;
+                    try
+                    {
+                        at = doc.Range(0, 0);
+                        ((dynamic)at!).InsertBefore("\r");
+                        paragraphs = doc.Paragraphs;
+                        first = ((dynamic)paragraphs!).Item(1);
+                        ((dynamic)first!).Reset();
+                        borders = ((dynamic)first).Borders;
+                        ((dynamic)borders!).Enable = 0;
+                    }
+                    catch (Exception ex) when (ComObjects.IsCallFailure(ex))
+                    {
+                        // Best-effort: the text still goes above the block, perhaps with its border.
+                    }
+                    finally
+                    {
+                        ComObjects.Release(borders);
+                        ComObjects.Release(first);
+                        ComObjects.Release(paragraphs);
+                        ComObjects.Release(at);
+                    }
+
+                    return 0;
+                }
+            }
+        }
+
+        /// <summary>The start of the paragraph that holds document position <paramref name="position"/>.</summary>
+        private static int ParagraphStartAt(object document, int position)
+        {
+            dynamic doc = document;
+            object? probe = null;
+            object? paragraphs = null;
+            object? paragraph = null;
+            object? range = null;
+            try
+            {
+                probe = doc.Range(position, position);
+                paragraphs = ((dynamic)probe!).Paragraphs;
+                paragraph = ((dynamic)paragraphs!).Item(1);
+                range = ((dynamic)paragraph!).Range;
+                return (int)((dynamic)range!).Start;
+            }
+            finally
+            {
+                ComObjects.Release(range);
+                ComObjects.Release(paragraph);
+                ComObjects.Release(paragraphs);
+                ComObjects.Release(probe);
+            }
+        }
+
+        private static string? TryGetString(Func<string?> getter)
+        {
+            try
+            {
+                return getter();
+            }
+            catch (Exception ex) when (ComObjects.IsCallFailure(ex))
+            {
+                return null;
             }
         }
 

@@ -1526,9 +1526,19 @@ namespace OutlookAI.Core.Services
             outcome.Replacements = plan.Replacements.Count > 0 ? plan.Replacements.ToList() : null;
         }
 
-        /// <summary>Writes beside the target and swaps it in, so a failure never leaves a half-written rendition.</summary>
-        private static void WriteFileSafely(string path, byte[] content)
+        /// <summary>
+        /// Writes beside the target and swaps it in, so a failure never leaves a half-written rendition. The target's
+        /// folder is made when it is missing. Core's one way to replace a file whole: the session registry
+        /// (<see cref="Com.OutlookSessionRegistry"/>) saves through it too, rather than through a copy of it (Q154).
+        /// </summary>
+        internal static void WriteFileSafely(string path, byte[] content)
         {
+            string? directory = Path.GetDirectoryName(path);
+            if (!string.IsNullOrEmpty(directory))
+            {
+                _ = Directory.CreateDirectory(directory);
+            }
+
             string temporary = path + ".outlookai-new";
             File.WriteAllBytes(temporary, content);
             try

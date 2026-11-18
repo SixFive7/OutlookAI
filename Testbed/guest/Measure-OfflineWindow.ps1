@@ -195,11 +195,13 @@ function Assert-TestbedGuestLocal {
 }
 Assert-TestbedGuestLocal
 
-$lines = New-Object System.Collections.Generic.List[string]
-function Say([string] $Text) { $lines.Add($Text); Write-Host $Text }
+$ReportLines = New-Object System.Collections.Generic.List[string]
+# Write-ReportLine prints a line and keeps it in $ReportLines; it is one of the helpers the scripts share,
+# dot-sourced from ScriptHelpers.ps1, which travels with the guest scripts (Q154, Q166 (b), decision 215 (a)).
+. (Join-Path $PSScriptRoot 'ScriptHelpers.ps1')
 if (-not (Test-Path -LiteralPath $Root)) { [void][System.IO.Directory]::CreateDirectory($Root) }
 $resultPath = Join-Path $Root ("result-{0}-{1:yyyyMMdd-HHmmss}.txt" -f $Step, (Get-Date))
-Say ("MEASURE-OFFLINE-WINDOW {0} on {1} at {2}" -f $Step, $env:COMPUTERNAME, (Get-Date).ToString('o'))
+Write-ReportLine ("MEASURE-OFFLINE-WINDOW {0} on {1} at {2}" -f $Step, $env:COMPUTERNAME, (Get-Date).ToString('o'))
 
 $ProfileKey = "HKCU:\Software\Microsoft\Office\16.0\Outlook\Profiles\$ProfileName"
 
@@ -230,7 +232,7 @@ function Invoke-Export {
     $json = ($p.Map.GetEnumerator() | Sort-Object Key | ForEach-Object { [ordered]@{ k = $_.Key; v = $_.Value } }) | ConvertTo-Json -Depth 3 -Compress
     [System.IO.File]::WriteAllText($path, $json)
     $holders = @($p.Sections.Keys | Where-Object { $p.Sections[$_].ContainsKey('00036649') })
-    Say ("EXPORTED {0}: {1} values in {2} sections; sections holding 00036649: {3}" -f $Label, $p.Map.Count, $p.Sections.Count, $(if ($holders.Count) { ($holders | ForEach-Object { "$_ = " + (Format-ProfileValue $p.Sections[$_]['00036649']) + $(if (Test-SectionIsTheHubs $p.Sections[$_] $Hub) { ' (the hub''s)' } else { '' }) }) -join '; ' } else { 'none' }))
+    Write-ReportLine ("EXPORTED {0}: {1} values in {2} sections; sections holding 00036649: {3}" -f $Label, $p.Map.Count, $p.Sections.Count, $(if ($holders.Count) { ($holders | ForEach-Object { "$_ = " + (Format-ProfileValue $p.Sections[$_]['00036649']) + $(if (Test-SectionIsTheHubs $p.Sections[$_] $Hub) { ' (the hub''s)' } else { '' }) }) -join '; ' } else { 'none' }))
 }
 
 function Read-Export([string] $Name) {
@@ -244,11 +246,11 @@ function Read-Export([string] $Name) {
 
 function Invoke-Diff {
     $d = @(Compare-ProfileExport (Read-Export $From) (Read-Export $To))
-    Say ("DIFF {0} -> {1}: {2} value(s) changed" -f $From, $To, $d.Count)
+    Write-ReportLine ("DIFF {0} -> {1}: {2} value(s) changed" -f $From, $To, $d.Count)
     foreach ($x in $d) {
         $parts = $x.Key.Split('|'); $tag = ConvertFrom-ProfileValueName $parts[1]
         $what = if ($tag) { "$($tag.IdHex) $($tag.TypeName)" } else { 'not a tag' }
-        Say ("  section {0} value {1} ({2}): {3} -> {4}" -f $parts[0], $parts[1], $what, (Format-ProfileValue $x.Before), (Format-ProfileValue $x.After))
+        Write-ReportLine ("  section {0} value {1} ({2}): {3} -> {4}" -f $parts[0], $parts[1], $what, (Format-ProfileValue $x.Before), (Format-ProfileValue $x.After))
     }
 }
 
@@ -324,7 +326,7 @@ function Close-Window($Element, [string] $What) { Close-Handle ([IntPtr]$Element
 function Close-Handle([IntPtr] $h, [string] $What) {
     [void][OaiQ145]::PostMessage($h, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)
     Start-Sleep -Seconds 2
-    Say ("  {0} closed by WM_CLOSE (its Cancel): {1}" -f $What, (-not [OaiQ145]::IsWindow($h)))
+    Write-ReportLine ("  {0} closed by WM_CLOSE (its Cancel): {1}" -f $What, (-not [OaiQ145]::IsWindow($h)))
 }
 
 # Opens Account Settings and the test account's Change dialog; returns both, or throws.
@@ -346,7 +348,7 @@ function Open-ChangeDialog {
     $p = $null; $edit = Get-ById $acct '1114'
     if ($edit -and $edit.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref] $p)) { $delivers = [string]$p.Current.Value }
     if (-not $delivers.StartsWith($Hub + '\', [StringComparison]::OrdinalIgnoreCase)) { throw "the selected row is not the test account's (it delivers to '$delivers') - nothing is changed" }
-    Say "  Account Settings: row $row selected, which delivers to the test account"
+    Write-ReportLine "  Account Settings: row $row selected, which delivers to the test account"
     $toolbar = [IntPtr](Get-ById $acct '436').Current.NativeWindowHandle
     $buttons = @([OaiQ145]::Names($toolbar))
     $change = [Array]::FindIndex([string[]]$buttons, [Predicate[string]] { param($n) $n -and $n -match '^Change' }) + 1
@@ -366,7 +368,7 @@ function Close-AccountSettings($Open) {
     if ($close) { [void][OaiQ145]::PostMessage([IntPtr]$close.Current.NativeWindowHandle, 0x00F5, [IntPtr]::Zero, [IntPtr]::Zero) }
     else { [void][OaiQ145]::PostMessage($Open.AccountHandle, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero) }
     Start-Sleep -Seconds 2
-    Say ("  Account Settings closed with its Close button: {0}; helper ended {1}" -f (-not [OaiQ145]::IsWindow($Open.AccountHandle)), $Open.Helper.WaitForExit(15000))
+    Write-ReportLine ("  Account Settings closed with its Close button: {0}; helper ended {1}" -f (-not [OaiQ145]::IsWindow($Open.AccountHandle)), $Open.Helper.WaitForExit(15000))
 }
 
 function Read-Slider($Dialog) {
@@ -381,7 +383,7 @@ function Invoke-Read {
     $open = Open-ChangeDialog
     try {
         $s = Read-Slider $open.Dialog
-        Say ("READ: slider position {0} of {1}..{2}, label '{3}'" -f $s.Value, $s.Min, $s.Max, $s.Label)
+        Write-ReportLine ("READ: slider position {0} of {1}..{2}, label '{3}'" -f $s.Value, $s.Min, $s.Max, $s.Label)
     }
     finally {
         if ([OaiQ145]::IsWindow($open.DialogHandle)) { Close-Handle $open.DialogHandle 'the Change dialog' }
@@ -395,30 +397,30 @@ function Invoke-Set {
     $confirmed = $false
     try {
         $s = Read-Slider $open.Dialog
-        Say ("  before: position {0} of {1}..{2}, label '{3}'" -f $s.Value, $s.Min, $s.Max, $s.Label)
+        Write-ReportLine ("  before: position {0} of {1}..{2}, label '{3}'" -f $s.Value, $s.Min, $s.Max, $s.Label)
         $s.Range.SetValue($Position)
         Start-Sleep -Seconds 1
         $after = Read-Slider $open.Dialog
-        Say ("SET: position {0} -> label '{1}' (Microsoft's window for it: '{2}')" -f $after.Value, $after.Label, ($Windows | Where-Object { $_.Position -eq $Position }).Label)
+        Write-ReportLine ("SET: position {0} -> label '{1}' (Microsoft's window for it: '{2}')" -f $after.Value, $after.Label, ($Windows | Where-Object { $_.Position -eq $Position }).Label)
         $next = Find-In $open.Dialog ([System.Windows.Automation.ControlType]::Button) 'Next'
         $next.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
         # The pages after Next: printed, and finished with their own Done / Finish / OK.
         for ($page = 1; $page -le 4; $page++) {
             Start-Sleep -Seconds 4
             if (-not [OaiQ145]::IsWindow($open.DialogHandle)) { $confirmed = $true; break }
-            Say ("  page {0}: {1}" -f $page, ((Get-Texts $open.Dialog) -join ' | '))
+            Write-ReportLine ("  page {0}: {1}" -f $page, ((Get-Texts $open.Dialog) -join ' | '))
             $done = $null
             foreach ($n in 'Done', 'Finish', 'OK', 'Close') { if (-not $done) { $done = Find-In $open.Dialog ([System.Windows.Automation.ControlType]::Button) $n } }
-            if ($done) { Say ("  pressing '{0}'" -f $done.Current.Name); $done.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke() }
+            if ($done) { Write-ReportLine ("  pressing '{0}'" -f $done.Current.Name); $done.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke() }
         }
         $box = Find-Window 'Microsoft Outlook' '#32770' 3
-        if ($box) { Say ('  message box: ' + ((Get-Texts $box) -join ' | ')); $ok = Find-In $box ([System.Windows.Automation.ControlType]::Button) 'OK'; if ($ok) { [void][OaiQ145]::PostMessage([IntPtr]$ok.Current.NativeWindowHandle, 0x00F5, [IntPtr]::Zero, [IntPtr]::Zero) } }
+        if ($box) { Write-ReportLine ('  message box: ' + ((Get-Texts $box) -join ' | ')); $ok = Find-In $box ([System.Windows.Automation.ControlType]::Button) 'OK'; if ($ok) { [void][OaiQ145]::PostMessage([IntPtr]$ok.Current.NativeWindowHandle, 0x00F5, [IntPtr]::Zero, [IntPtr]::Zero) } }
     }
     finally {
         if (-not $confirmed -and [OaiQ145]::IsWindow($open.DialogHandle)) { Close-Handle $open.DialogHandle 'the Change dialog, NOT confirmed' }
         Close-AccountSettings $open
     }
-    Say ("RESULT: position {0} {1}" -f $Position, $(if ($confirmed) { 'confirmed - the Change dialog closed after its last page' } else { 'NOT confirmed' }))
+    Write-ReportLine ("RESULT: position {0} {1}" -f $Position, $(if ($confirmed) { 'confirmed - the Change dialog closed after its last page' } else { 'NOT confirmed' }))
 }
 
 # THE ONE REGISTRY WRITE of this script: a 4-byte value into one section the caller has proven to be the
@@ -426,7 +428,7 @@ function Invoke-Set {
 function Write-HubValue([string] $Section, [string] $Name, [int] $Value, $Before) {
     Set-ItemProperty -LiteralPath (Join-Path $ProfileKey $Section) -Name $Name -Value ([byte[]][BitConverter]::GetBytes($Value)) -Type Binary
     $after = (Get-Item -LiteralPath (Join-Path $ProfileKey $Section)).GetValue($Name)
-    Say ("WROTE section {0} value {1}: {2} -> {3}" -f $Section, $Name, (Format-ProfileValue $Before), (Format-ProfileValue ((@($after) | ForEach-Object { $_.ToString('X2') }) -join '')))
+    Write-ReportLine ("WROTE section {0} value {1}: {2} -> {3}" -f $Section, $Name, (Format-ProfileValue $Before), (Format-ProfileValue ((@($after) | ForEach-Object { $_.ToString('X2') }) -join '')))
 }
 
 # The sections a write may touch: those that hold 0x6649 and carry the test account's address.
@@ -449,7 +451,7 @@ function Invoke-WritePair {
     if ($WhileRunning -and -not $running) { throw '-WhileRunning measures a write into a RUNNING Outlook, and Outlook is not running.' }
     if (-not $WhileRunning -and $running) { throw 'Outlook is running - give -WhileRunning to write while it runs, or close it first.' }
     $p = Read-Profile
-    Say ("  Outlook running: {0}" -f $running)
+    Write-ReportLine ("  Outlook running: {0}" -f $running)
     foreach ($sec in (Get-HubSections $p)) {
         Write-HubValue $sec '00036649' $Months $p.Sections[$sec]['00036649']
         Write-HubValue $sec '0003665a' $Days $p.Sections[$sec]['0003665a']
@@ -466,5 +468,5 @@ try {
         'WritePair' { Invoke-WritePair }
     }
 }
-catch { Say ('FAILED: ' + $_.Exception.Message); Say ('  at ' + (($_.ScriptStackTrace -split "`n") -join ' <- ')) }
-finally { [System.IO.File]::WriteAllLines($resultPath, $lines); [System.IO.File]::WriteAllLines((Join-Path $Root 'last.txt'), $lines) }
+catch { Write-ReportLine ('FAILED: ' + $_.Exception.Message); Write-ReportLine ('  at ' + (($_.ScriptStackTrace -split "`n") -join ' <- ')) }
+finally { [System.IO.File]::WriteAllLines($resultPath, $ReportLines); [System.IO.File]::WriteAllLines((Join-Path $Root 'last.txt'), $lines) }

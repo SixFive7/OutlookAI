@@ -136,8 +136,7 @@ public sealed class SignatureRegistrySnapshot
         List<(string, string, object?)> values = new();
         foreach ((string key, string valueName) in FixedLocations(office))
         {
-            using RegistryKey? opened = Registry.CurrentUser.OpenSubKey(key, writable: false);
-            values.Add((key, valueName, opened?.GetValue(valueName, null, RegistryValueOptions.DoNotExpandEnvironmentNames)));
+            values.Add((key, valueName, RawRegistryValues.Read(key, valueName)));
         }
 
         string profilesPath = OutlookProfileRegistry.OutlookRootKeyPath + "\\" + OutlookProfileRegistry.ProfilesSubKeyName;

@@ -1395,44 +1395,39 @@ foreach ($p in $collectorProblems) { $null = $notices.Add("collector: $p") }
 # ---- report ----------------------------------------------------------------------------------
 # Everything printed is also kept, so the run's own verdict outlives the terminal scrollback.
 $script:ReportLines = New-Object System.Collections.ArrayList
-function Say([string] $text = '') {
-    Write-Host $text
-    $null = $script:ReportLines.Add($text)
-}
-
 $verdictOrder = @{ 'FAIL' = 0; 'MISSING' = 1; 'ABSENT' = 2; 'NEW' = 3; 'OK' = 4; '-' = 5 }
 
 if ($ReleaseNoteSummary) {
     # A summary carrying no measurements at all, for the one place the numbers may not go.
     $status = if ($failures.Count -gt 0) { 'FAIL' } elseif ($coldStarts.Count -gt 0) { 'NO BASELINE' } else { 'PASS' }
     $compared = @($rows | Where-Object { $_.Verdict -in @('OK', 'FAIL') }).Count
-    Say "Measurement gate: $status - $compared of $($script:Catalogue.Count) metrics compared against this machine's history, $($failures.Count) problem(s). Values are machine-local and deliberately not published; read the full table on the console or in the run report."
+    Write-ReportLine "Measurement gate: $status - $compared of $($script:Catalogue.Count) metrics compared against this machine's history, $($failures.Count) problem(s). Values are machine-local and deliberately not published; read the full table on the console or in the run report."
 } else {
-    Say ''
-    Say '=================================================================================================='
-    Say ' OutlookAI measurement gate'
-    Say ' MACHINE-LOCAL NUMBERS. Do not commit them, do not paste them into release notes, do not send them'
-    Say ' anywhere. They are statistics about one machine and mean nothing off it.'
-    Say '=================================================================================================='
-    Say (" store      : {0}" -f (Get-HistoryPath))
-    Say (" run        : {0}   {1}" -f $record.runId, $record.recordedAtUtc)
-    Say (" commit     : {0} ({1}){2}" -f $record.provenance.gitShort, $record.provenance.gitBranch, $(if ($record.provenance.gitDirty) { ' DIRTY' } else { '' }))
-    Say (" conditions : profile={0} indexed={1} corpus={2} anchor={3}{4}" -f `
+    Write-ReportLine ''
+    Write-ReportLine '=================================================================================================='
+    Write-ReportLine ' OutlookAI measurement gate'
+    Write-ReportLine ' MACHINE-LOCAL NUMBERS. Do not commit them, do not paste them into release notes, do not send them'
+    Write-ReportLine ' anywhere. They are statistics about one machine and mean nothing off it.'
+    Write-ReportLine '=================================================================================================='
+    Write-ReportLine (" store      : {0}" -f (Get-HistoryPath))
+    Write-ReportLine (" run        : {0}   {1}" -f $record.runId, $record.recordedAtUtc)
+    Write-ReportLine (" commit     : {0} ({1}){2}" -f $record.provenance.gitShort, $record.provenance.gitBranch, $(if ($record.provenance.gitDirty) { ' DIRTY' } else { '' }))
+    Write-ReportLine (" conditions : profile={0} indexed={1} corpus={2} anchor={3}{4}" -f `
             $record.conditions.profile, $record.conditions.indexed,
         $(if ($record.conditions.corpusId) { $record.conditions.corpusId } else { '<none>' }),
         $(if ($record.conditions.corpusAnchor) { $record.conditions.corpusAnchor } else { '<none>' }),
         $(if ($null -ne $script:CorpusAgeDays) { " (aged $($script:CorpusAgeDays) d)" } else { '' }))
-    Say ("              storeSet={0}" -f $(if ($record.conditions.storeSet) { $record.conditions.storeSet } else { '<unrecorded>' }))
-    Say ("              notes={0}" -f $(if ($record.conditions.notes) { $record.conditions.notes } else { '<none>' }))
-    Say (" scope      : {0}   ({1} run(s) already in this scope)" -f $scopeKey, @($history | Where-Object { (Get-ScopeKey $_.conditions) -eq $scopeKey }).Count)
-    Say (" tolerance  : +/-{0:P1} by default, per-metric overrides in the catalogue; baseline = median of the last {1} run(s)" -f $Tolerance, $BaselineRuns)
-    Say (" require    : {0}" -f $Require)
-    Say ''
+    Write-ReportLine ("              storeSet={0}" -f $(if ($record.conditions.storeSet) { $record.conditions.storeSet } else { '<unrecorded>' }))
+    Write-ReportLine ("              notes={0}" -f $(if ($record.conditions.notes) { $record.conditions.notes } else { '<none>' }))
+    Write-ReportLine (" scope      : {0}   ({1} run(s) already in this scope)" -f $scopeKey, @($history | Where-Object { (Get-ScopeKey $_.conditions) -eq $scopeKey }).Count)
+    Write-ReportLine (" tolerance  : +/-{0:P1} by default, per-metric overrides in the catalogue; baseline = median of the last {1} run(s)" -f $Tolerance, $BaselineRuns)
+    Write-ReportLine (" require    : {0}" -f $Require)
+    Write-ReportLine ''
 
     # The FULL table, every catalogued metric, pass or fail. This is the guarantee that the raw
     # numbers are in front of whoever triggered the release even if nobody runs the reader.
-    Say ('{0,-42} {1,13} {2,13} {3,9} {4,5}  {5}' -f 'METRIC', 'BASELINE', 'NOW', 'DELTA', 'RUNS', 'VERDICT')
-    Say ('-' * 98)
+    Write-ReportLine ('{0,-42} {1,13} {2,13} {3,9} {4,5}  {5}' -f 'METRIC', 'BASELINE', 'NOW', 'DELTA', 'RUNS', 'VERDICT')
+    Write-ReportLine ('-' * 98)
 
     foreach ($row in ($rows | Sort-Object @{ Expression = { $verdictOrder[$_.Verdict] } }, Id)) {
         $b = if ($null -eq $row.Base) { '-' } else { '{0:N0}' -f $row.Base }
@@ -1446,23 +1441,23 @@ if ($ReleaseNoteSummary) {
             }
         }
         $runs = if ($row.Baseline.Runs -gt 0) { '{0}' -f $row.Baseline.Runs } else { '-' }
-        Say ('{0,-42} {1,13} {2,13} {3,9} {4,5}  {5}' -f $row.Id, $b, $n, $d, $runs, $row.Verdict)
+        Write-ReportLine ('{0,-42} {1,13} {2,13} {3,9} {4,5}  {5}' -f $row.Id, $b, $n, $d, $runs, $row.Verdict)
         if ($row.Verdict -notin @('OK', '-')) {
-            Say ('{0}{1}' -f (' ' * 4), $row.Detail)
+            Write-ReportLine ('{0}{1}' -f (' ' * 4), $row.Detail)
         }
     }
 
     $notCollected = @($rows | Where-Object { $_.Verdict -eq '-' })
     if ($notCollected.Count -gt 0) {
-        Say ''
-        Say (" {0} metric(s) above read '-': never collected on this machine, and not collected now." -f $notCollected.Count)
-        Say "   Not failures under -Require Present. They ARE gaps. Use -Require All for a release run."
+        Write-ReportLine ''
+        Write-ReportLine (" {0} metric(s) above read '-': never collected on this machine, and not collected now." -f $notCollected.Count)
+        Write-ReportLine "   Not failures under -Require Present. They ARE gaps. Use -Require All for a release run."
     }
 
     if ($notices.Count -gt 0) {
-        Say ''
-        Say ' NOTICES - not failures, and not safe to skip either. This is what a tolerance cannot see.'
-        foreach ($n in $notices) { Say "   - $n" }
+        Write-ReportLine ''
+        Write-ReportLine ' NOTICES - not failures, and not safe to skip either. This is what a tolerance cannot see.'
+        foreach ($n in $notices) { Write-ReportLine "   - $n" }
     }
 }
 
