@@ -96,6 +96,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'ScriptHelpers.ps1')
 . (Join-Path $PSScriptRoot 'OutlookMapiInterop.ps1')
 . (Join-Path $PSScriptRoot 'McpStdioClient.ps1')
 . (Join-Path $PSScriptRoot 'StagedLiveTestSettings.ps1')
@@ -404,12 +405,11 @@ try {
     $before = Read-ListedState $session
 
     if ($Execute) {
-        $principal = New-Object System.Security.Principal.WindowsPrincipal([System.Security.Principal.WindowsIdentity]::GetCurrent())
         $values = (Read-PlanValues).Values
         $observed = @{
             User              = $env:USERNAME
             Computer          = $env:COMPUTERNAME
-            Elevated          = $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
+            Elevated          = (Test-IsElevated)
             OutlookRunning    = (@(Get-Process -Name OUTLOOK -ErrorAction SilentlyContinue).Count -gt 0)
             ValuesSet         = @($values.Keys | Where-Object { $null -ne $values[$_] } | Sort-Object)
             SignaturesThere   = @($plan.Signatures | Where-Object { $before.Signatures -contains $_ })
