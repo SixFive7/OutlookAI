@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using OutlookAI.Core.Com;
 using OutlookAI.Core.Services;
@@ -61,6 +62,9 @@ public sealed class LiveHeadlessComposeParityTests
     {
         bool? headlessAtStart = HealthReporting.TryGetOutlookHeadless();
         int visibleBefore = ComposeSurface.CountUserVisibleWindows();
+        IReadOnlyList<UserVisibleWindows.Window> windowsBefore = UserVisibleWindows.Take();
+        string windowsAtStart = UserVisibleWindows.List("at the start", windowsBefore, visibleBefore);
+        _output.WriteLine(windowsAtStart);
 
         using TestSignature sig = TestSignature.Create(Marker);
         string subject = _fixture.TaggedSubject("headless-parity");
@@ -102,7 +106,7 @@ public sealed class LiveHeadlessComposeParityTests
         // the editor already available. The capability asserts are the contract.
         if (headlessAtStart == true)
         {
-            Assert.Equal(0, visibleBefore);
+            Assert.True(visibleBefore == 0, $"Outlook was window-less at the start, and {visibleBefore} user-visible window(s) were counted{windowsAtStart}");
         }
 
         // ---- 2. The RAW stored HTML - the only place these defects are visible --------
@@ -175,9 +179,12 @@ public sealed class LiveHeadlessComposeParityTests
 
         // ---- 4. D33: composing must leave the user's screen exactly as it was ---------
         int visibleAfter = ComposeSurface.CountUserVisibleWindows();
+        string windows = UserVisibleWindows.Describe(windowsBefore, UserVisibleWindows.Take(), visibleBefore, visibleAfter);
+        _output.WriteLine(windows);
+
         Assert.True(
             visibleAfter <= visibleBefore,
-            $"composing must not put a window on screen (user-visible windows {visibleBefore} -> {visibleAfter})");
+            $"composing must not put a window on screen (user-visible windows {visibleBefore} -> {visibleAfter}){windows}");
 
         _output.WriteLine(
             $"parity ok: placement={outcome.BodyPlacement} signatureApplied={outcome.SignatureApplied} "
@@ -189,6 +196,8 @@ public sealed class LiveHeadlessComposeParityTests
     public void APlainTextDraftIsAlsoFullyComposed_WithNoDegradationReported()
     {
         int visibleBefore = ComposeSurface.CountUserVisibleWindows();
+        IReadOnlyList<UserVisibleWindows.Window> windowsBefore = UserVisibleWindows.Take();
+        _output.WriteLine(UserVisibleWindows.List("at the start", windowsBefore, visibleBefore));
         string subject = _fixture.TaggedSubject("headless-parity-text");
         string agentText = "PlatteTekstHeadless" + Marker; // space-free: Word hard-wraps its HTML
 
@@ -210,7 +219,10 @@ public sealed class LiveHeadlessComposeParityTests
         Assert.True(wordSectionAt >= 0 && bodyAt > wordSectionAt, $"wordSection@{wordSectionAt} body@{bodyAt}");
 
         int visibleAfter = ComposeSurface.CountUserVisibleWindows();
-        Assert.True(visibleAfter <= visibleBefore, $"user-visible windows {visibleBefore} -> {visibleAfter}");
+        string windows = UserVisibleWindows.Describe(windowsBefore, UserVisibleWindows.Take(), visibleBefore, visibleAfter);
+        _output.WriteLine(windows);
+
+        Assert.True(visibleAfter <= visibleBefore, $"user-visible windows {visibleBefore} -> {visibleAfter}{windows}");
 
         _output.WriteLine($"text parity ok: body@{bodyAt} wordSection@{wordSectionAt} visible={visibleBefore}->{visibleAfter}");
     }

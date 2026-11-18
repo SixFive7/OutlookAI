@@ -881,6 +881,42 @@ namespace OutlookAI.Core.Com
             return visible;
         }
 
+        /// <summary>
+        /// The windows <see cref="CountUserVisibleWindows"/> counts, by handle: reads only, for a test that has
+        /// to name the windows a count found rather than say how many. Its filter is the count's, and the two
+        /// must stay the same - a test that takes both at one moment says so when they differ.
+        /// </summary>
+        public static IReadOnlyList<IntPtr> UserVisibleWindowHandles()
+        {
+            List<IntPtr> handles = new List<IntPtr>();
+            foreach (WindowState w in SnapshotOutlookWindows())
+            {
+                if (!w.Visible)
+                {
+                    continue;
+                }
+
+                if (!NativeMethods.GetWindowRect(w.Handle, out NativeMethods.RECT r))
+                {
+                    continue;
+                }
+
+                if (r.Right <= r.Left || r.Bottom <= r.Top)
+                {
+                    continue;
+                }
+
+                if (r.Left <= ParkX / 2 && r.Top <= ParkY / 2)
+                {
+                    continue; // parked
+                }
+
+                handles.Add(w.Handle);
+            }
+
+            return handles;
+        }
+
         private static void Park(IntPtr handle)
         {
             _ = NativeMethods.SetWindowPos(
