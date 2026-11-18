@@ -234,7 +234,7 @@ its mailbox tests on, and change nothing you install.
   check fails, the reason is written out in full here rather than hidden behind a link. Both
   indicators now take their wording from one place, so they cannot disagree.
 
-- ✅ **A tested one-off removes the one tagged leftover from the Exchange machine's bystander mailbox.**
+- ✅ **A tested one-off took the confirmed test leftover out of the bystander mailbox's Sent Items.**
   The maintainer confirmed it by its EntryID on 2026-11-18 (Q138): an item the live tests left in that
   mailbox's Sent Items in July, when they still ran on his own computer. It is the only write that
   mailbox ever gets. A new live test, which no machine's filter selects and which runs only when named,
@@ -243,7 +243,11 @@ its mailbox tests on, and change nothing you install.
   EntryID is pinned by its SHA-256, so the repository holds no identifier of the real mailbox. The count
   tripwire, which censuses that mailbox item by item around the run, accepts exactly that departure: a
   tagged item, by EntryID, from a folder it identified item by item, once. Any other change there still
-  fails the run.
+  fails the run. Two runs on 2026-11-18 found two things. A folder table on a cached Exchange store
+  gives a short-term id, so the first run matched nothing and changed nothing; the item's own long-term
+  id is read now. The second run moved the item to Deleted Items, but the delete there did not purge it,
+  so the tripwire failed that run on the one departure, as it should. The item waits in the bystander's
+  Deleted Items, under a new EntryID, for the maintainer's decision.
 
 - ✅ **A test-machine probe measures how Windows and the installer remove trust in the leaked key.**
   `Testbed/host/Invoke-TrustRemovalProbe.ps1` runs `Testbed/guest/Measure-TrustRemoval.ps1` on an
@@ -380,9 +384,10 @@ its mailbox tests on, and change nothing you install.
   switch Office's connected experiences off, and Office past its activation grace. On 2026-11-18, with
   those four policy values removed and the grace re-armed (Q194 (b)), the same kind of signature
   arrived about three minutes after it was saved: a `<name> (<address>)` copy in the signature folder,
-  set as the test account's default for new mail, still there after an hour and a restart. So this
-  Outlook roams signatures once connected experiences are allowed, and Outlook's own copies show it,
-  as OutlookAI's evidence rule expects. The probe also reads now whether "Store my Outlook settings in
+  set as the test account's default for new mail, still there after an hour and a restart. With the
+  policies back and the grace kept, it did not come, and Outlook's Options no longer offered "Store my
+  Outlook settings in the cloud" at all. So this Outlook roams signatures unless connected experiences
+  are switched off, and Outlook's own copies show it, as OutlookAI's evidence rule expects. The probe also reads now whether "Store my Outlook settings in
   the cloud" is on: it was. The hidden folder could not be seen on the server even while either
   signature existed, so the probe's server-side reading proves nothing.
   `Measure-OfflineWindow.ps1` moves the test account's "Download email for the past" slider through its

@@ -1316,9 +1316,10 @@ profile that day (§1d, E12). Its settings declare `machineProfile`
   existing stable-zero wait for late deliveries. Before the run, a tagged item in the hub of NO recorded
   run refuses the run (`HubLeftovers`): nothing would delete it.
 - **The sweep judges the hub.** A store nothing may write to may keep the tagged items it held before
-  the run (`LiveArtifactBaseline`): the real mailbox's one leftover from the workstation years
-  (TODO.md, Q138)
-  is reported as `preExisting=1` and left alone; one more, or one fewer, fails the run.
+  the run (`LiveArtifactBaseline`), reported as `preExisting` and left alone; one more, or one fewer,
+  fails the run - unless the one fewer is a removal the maintainer confirmed by its EntryID
+  (`ConfirmedRemovals`, below). The bystander's one leftover from the workstation years is reported so:
+  since 2026-11-18 it sits in the bystander's Deleted Items (Q138, TODO.md).
 - **Populations are built by the run and removed by it.** No generated or hand-curated population is
   kept in the test account: every test that needs mail seeds its own tagged items and sweeps them, and
   the tests that need the guests' curated probe population (`Requires=ProbePopulation`) are filtered
@@ -1363,6 +1364,24 @@ to
 successful." - and Outlook restarted with `host/Restart-Guest.ps1 -Execute`. The licence query in
 `MEDIA.md` reads the state; `SoftwareLicensingProduct.RemainingAppReArmCount` is the count.
 
+**The one write the bystander ever gets: its confirmed leftover (Q138, 2026-11-18).** The maintainer
+confirmed the one tagged item the workstation years left in the bystander's Sent Items by its EntryID,
+and `T2/LiveConfirmedLeftoverTests` takes it out through `LiveOutlookTestMailer.RemoveConfirmedLeftover`:
+the item selected by its long-term EntryID - pinned in `T2/ConfirmedLeftover.cs` by its SHA-256, so the
+repository holds no identifier of the real mailbox - AND its exact tagged subject; only on the
+`ExchangeTestAccount` profile and only in its one declared bystander; moved to that store's Deleted Items,
+the copy the move hands back checked again, deleted there, and both folders read back. The count tripwire
+censuses the bystander item by item around it and accepts that one tagged departure, once recorded
+(`ConfirmedRemovals`), and nothing else. No derived filter selects it (capability `ConfirmedLeftover`);
+it runs only when named:
+
+```powershell
+pwsh -File Testbed/host/Invoke-LiveTierOnGuest.ps1 -VMName OutlookAI-Exchange -Filter 'Category=Live&Requires=ConfirmedLeftover'
+```
+
+On 2026-11-18 it moved the item to the bystander's Deleted Items, where the delete did not purge it
+(runbook §4.4a); the item's purge from there waits for the maintainer's decision.
+
 **The read-only run (Q108 to Q111), for a settings file that declares `ExchangeGuest`.** Before
 2026-10-08 the VM's one mailbox was also its hub, and it ran only tests that write nothing. That
 profile is unchanged and stays read-only for good, so no settings file of that shape - whose hub is
@@ -1398,8 +1417,9 @@ in any folder the sweep covers), `T2/LiveExchangeStoreHashTests` (Q113 (b)) and,
 follow-up branch, `T2/LiveExchangeFolderPathTests`. Three pass. **The fourth found one item tagged
 `[OutlookAI-McpTest]` in the mailbox's Sent Items** - a leftover from the workstation years, before
 this VM existed; nothing this VM ran created it (its census before and after every run is identical).
-It stays until the maintainer decides how it goes: only the tested sweep on an approved write run
-removes test items, never a hand. The count tripwire reported 0 failures and 0 notes on every run.
+It stayed until the maintainer decided how it goes (Q138): on 2026-11-18 a tested one-off moved it to
+the bystander's Deleted Items, below - never a hand. The count tripwire reported 0 failures and 0 notes
+on every run.
 
 **Q113 (b), answered**: Outlook ties a cached Exchange store to its index root by the store hash of
 the profile's `PR_MAPPING_SIGNATURE` - `outlook_health` reports `matchedBy` `storeHash`,

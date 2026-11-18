@@ -1884,14 +1884,15 @@
   by the test account's own licence, was decided as the fallback for a re-arm that did not work, and he
   has offered a volume key if neither did.
 
-- [ ] **Delete the one tagged leftover in the Exchange VM mailbox's Sent Items once the maintainer has
-  confirmed its id (Q138 (c), decided 2026-11-17).** Found read-only on 2026-11-17: subject
-  `[OutlookAI-McpTest]
-  d3994a2ad25309442 d39 move seed`, sent 2026-07-26 03:46:54 (W. Europe), EntryID beginning
-  `000000009D47E954`, in the real mailbox's Sent Items; nothing else tagged in either mailbox. After his
-  confirmation: delete exactly that EntryID - EntryID allowlist AND ordinal tag match - through tested
-  helper code and the suite, then remove it from Deleted Items too. The only write the real mailbox
-  ever gets.
+- [ ] **Decide how the Q138 leftover leaves the Exchange VM bystander's Deleted Items (2026-11-18).** The
+  tested one-off moved the confirmed item out of the bystander's Sent Items on 2026-11-18, but the delete
+  in Deleted Items did not purge it (runbook §4.4a, run 10): it sits there under a new EntryID, which the
+  maintainer has not confirmed, and the rule is an EntryID allowlist AND an ordinal tag match.
+  Directions: (1) he confirms the new EntryID (read on the host, kept out of the repository), and the
+  same helper, with a second pin and the copy opened afresh, purges it - tried in the test account first;
+  (2) leave it, for him to empty or for the tenant's retention to take; (3) purge it by its exact subject
+  and its move-stable received time and size, without a confirmed EntryID - weaker than the rule.
+  Recommended: (1).
 
 - [ ] **Decide what to do about the test account's automapping into the Exchange VM's mailbox.** Since
   the test account joined the profile, Outlook shows a THIRD store, named by the test account's display

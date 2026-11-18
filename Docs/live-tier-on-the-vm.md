@@ -3747,7 +3747,9 @@ measurement: a delegate store's row and a second profile are untested here.
 **The leftover in Sent Items.** One item whose subject carries `OutlookAI-McpTest`, found by the
 read-only count; nothing this VM ran created it - the census identifies the same items before and
 after every run. It is test data, so under the maintainer's rule (Q129 (a)) it must go; on this
-read-only machine nothing removes it, and nothing will by hand.
+read-only machine nothing removes it, and nothing will by hand. On 2026-11-18 a tested one-off moved it
+to the bystander's Deleted Items, after the maintainer had confirmed it by its EntryID (Q138, section
+4.4a); its purge from there waits for his decision.
 
 **Phase 2 - PROPOSED 2026-10-03; BUILT 2026-10-08 for the test account (section 4.4a), never for this
 mailbox, which has been a read-only bystander since.** What writing in this real mailbox would rest on, each
@@ -3959,7 +3961,15 @@ only):
   At 06:32 Outlook had no copy of the signature and no default for it, and its Options' General page no
   longer offered "Store my Outlook settings in the cloud" at all - 75 named controls, against 78 without
   the policies. **So it is the connected-experience policies that keep roaming signatures away on this
-  Office, not the expired grace**: they take the cloud-settings option itself away.
+  Office, not the expired grace**: they take the cloud-settings option itself away. A second reading at
+  06:35, eight minutes into the connection, was the same.
+
+  **The cleanup.** The signature was deleted in Outlook on the web at 06:43:59 (Delete signature, then
+  OK on "Delete the signature?"); after a reload the page read "No signature yet", and both defaults
+  "No signature yet". The test account signed out (`-Mode OwaSignOut`, 06:46, every InPrivate window
+  closed), and R0 to R2 read clean at 06:47: no signature setting for any account or in MailSettings, no
+  signature file, roams=False, no `ApplicationDataRoot`. The VM went back to `CP-10-SDK11`, the
+  checkpoint the other stream had built on `CP-09-OFFICE-REARMED`, at the end of the session.
 
 **The live runs of 2026-11-17** (`host/Invoke-LiveTierOnGuest.ps1 -VMName OutlookAI-Exchange`; results
 in `.work\guest-live-runs\<run>\` of the branch's worktree).
@@ -3972,6 +3982,8 @@ in `.work\guest-live-runs\<run>\` of the branch's worktree).
 | 6 | `d5f3d34`, master `9550802` (folders and stores by ID) merged, `Writes=Nothing` only | carried forward | 28 | 23 | 5 | 1 m 15 s | already running |
 | 7 | `c85becc`, the write filter narrowed to `LiveDraftTests.NewDraft_Hub_LandsInHubDrafts` (decision 206 (a)) | carried forward: Office re-armed, Windows restarted | 1 | 1 | 0 | 19 s | started by the run; no activation wizard |
 | 8 | `1488047`, master `14907d3` merged - the write filter again | carried forward | 106 | 95 | 11 | 19 m 44 s | already running |
+| 9 | `d7c0d3e`, `Requires=ConfirmedLeftover` (Q138) | `CP-10-SDK11`, both .ost files set aside, the search index rebuilt | 1 | 0 | 1 | 32 s | started by the run; no activation wizard |
+| 10 | `c2a21c4`, `Requires=ConfirmedLeftover` (Q138) | carried forward | 1 | 0 | 1 | 1 m 35 s | already running |
 
 Both runs left no tagged item behind (run 1 swept every store to zero; run 2 created nothing), the
 count tripwire found no change outside the test account, Outlook did not crash, and the mailbox
@@ -4081,6 +4093,32 @@ three found an Exchange folder ID no folder has answered instead of refused
 `LiveDisconnectRecoveryTests.OutlookExit_...` closed the one Explorer window the run's Outlook had been
 started with and then met an `ObjectDisposedException` in `TryCloseInvisibleExplorers` - not analysed
 further here.
+
+**Q138: the bystander's leftover, out of its Sent Items (2026-11-18).** The maintainer confirmed the one
+tagged item the workstation years left in the bystander's Sent Items by its EntryID, and the tested
+one-off `T2/LiveConfirmedLeftoverTests` (`-Filter 'Category=Live&Requires=ConfirmedLeftover'`) ran twice:
+
+1. Run 9 (`d7c0d3e`, from `CP-10-SDK11`, the .ost files downloaded afresh): **nothing removed**. The
+   helper found one tagged row in Sent Items whose subject is the pinned one exactly, and whose id did not
+   hash to the pin: a folder table's EntryID column on a cached Exchange store hands out a 24-byte
+   short-term id, while the item answers with its 70-byte long-term one - the form the maintainer
+   confirmed (a read-only check of that row: provider id equal, the rest not). The tripwire found no
+   change. Since `c2a21c4` the pin is checked against the long-term id the opened item gives, and the
+   removal recorded under the table's id, which is the one the census knows the item by.
+2. Run 10 (`c2a21c4`, carried forward): the item matched, its parent was proven to be Sent Items, it was
+   **moved to the bystander's Deleted Items**, and the copy the move handed back passed its check (the
+   pinned subject, in Deleted Items, a new EntryID). Its `Delete()` returned without error but **did not
+   purge it**: read back, Deleted Items still held one row with the pinned subject, so the removal was not
+   recorded and the test failed; the count tripwire, which accepts only a recorded removal, failed the
+   run on exactly that departure - Sent Items 2 to 1, the departed item TEST-TAGGED with the leftover's
+   sent time, Deleted Items 4 to 5, every other folder of the bystander unchanged, at the post-run census
+   and both re-censuses. A read-only check afterwards: Sent Items holds its one other item, and Deleted
+   Items holds the leftover under a new 70-byte EntryID, received 2026-07-26 03:46, 7,312 bytes.
+
+The item is now where an ordinary delete in Outlook puts it. Purging it from Deleted Items needs an
+EntryID the maintainer has not confirmed - its new one - so it waits for his decision (TODO.md); why the
+returned copy's `Delete()` did not purge is not established - a copy opened afresh by its new EntryID is
+the obvious next try, in the test account first.
 
 **The grace runs out again about 02:56 on 2026-12-18** (TODO.md). Past it every write test fails at its
 first item again; until a re-arm, a run narrows itself with `-FilterSuffix '&Writes=Nothing'`. A re-arm
