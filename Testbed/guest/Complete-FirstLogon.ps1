@@ -146,14 +146,18 @@ function Test-GuestIdentity {
     return ($userOk -and $machineOk)
 }
 
-function Assert-TestbedGuestLocal {
-    if (Test-GuestIdentity -UserName $env:USERNAME -ComputerName $env:COMPUTERNAME -Users $ExpectedUser -Prefix $ExpectedComputerNamePrefix) { return }
-    throw @"
-REFUSING TO RUN.
+# travels-alone: the answer volume Testbed/host/New-AnswerFile.ps1 builds carries this one script to a new guest.
+# The guest guard: Test-GuestIdentity and Assert-TestbedGuestIdentity, copies of ScriptHelpers.ps1's that
+# Tools/Checks/check-powershell-51.ps1 check 4 holds identical, then what this script would have done elsewhere.
+function Assert-TestbedGuestIdentity {
+    param([string] $Why)
+    $users = @($script:ExpectedUser)
+    $prefix = [string]$script:ExpectedComputerNamePrefix
+    if (Test-GuestIdentity -UserName $env:USERNAME -ComputerName $env:COMPUTERNAME -Users $users -Prefix $prefix) { return }
+    throw ("REFUSING TO RUN.`n`n  logged on as : '{0}'          (allowed: {1})`n  computer name: '{2}'      (must start with: '{3}')`n`n{4}" -f $env:USERNAME, ($users -join ', '), $env:COMPUTERNAME, $prefix, $Why)
+}
 
-  logged on as : '$env:USERNAME'          (allowed: $($ExpectedUser -join ', '))
-  computer name: '$env:COMPUTERNAME'      (must start with: '$ExpectedComputerNamePrefix')
-
+$GuestGuardWhy = @"
 This script rewrites the language list, the system and user locales, the home location, the
 power policy, fast startup and the screen saver of the machine it runs on. On the maintainer's
 workstation that is a working machine's regional and power settings, changed without a word.
@@ -169,9 +173,8 @@ a guest outside that convention, say so and run this by hand:
 Nothing has been written - not even the log, which is opened only once this check has passed.
 Do not 'fix' this by widening either default. The defaults are the guard.
 "@
-}
 
-Assert-TestbedGuestLocal
+Assert-TestbedGuestIdentity -Why $GuestGuardWhy
 
 $script:Failed = 0
 $script:Ran = 0

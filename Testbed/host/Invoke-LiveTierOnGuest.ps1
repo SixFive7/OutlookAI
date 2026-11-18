@@ -262,21 +262,12 @@ $LeaseReasonPrefix = 'Invoke-LiveTierOnGuest'
 $MinFreeGbForCheckpoint = 60
 $ExitCodes = [ordered]@{ PASS = 0; FAIL = 1; BUILD = 2; INFRA = 3; REFUSED = 4 }
 
-# A NATIVE PROGRAM RUNS THROUGH HERE (Q78) - see Invoke-TestsOnBuildVm.ps1, which says why:
-# 'Continue' in this scope only, stderr lines as strings, the exit code left in $LASTEXITCODE.
-function Invoke-NativeCommand {
-    param([Parameter(Mandatory = $true)] [scriptblock] $NativeCommand)
-
-    $ErrorActionPreference = 'Continue'
-    try {
-        & $NativeCommand | ForEach-Object {
-            if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.Exception.Message } else { $_ }
-        }
-    }
-    catch {
-        throw
-    }
-}
+# Every program call goes through Invoke-NativeCommand, so that Windows PowerShell 5.1 cannot end
+# the script on a program's first stderr line (Q78). It is one of the helpers the scripts share,
+# dot-sourced from Testbed/guest/ScriptHelpers.ps1 (Q154, Q166 (b), decision 215 (a)), which says why;
+# so are this runner's Say, Stop-Refused and Format-Seconds, its run id, its TRX reader, its lease
+# decision and the guest task's exit code, which the build-VM runner and the trust-removal probe use too.
+. (Join-Path $PSScriptRoot '..\guest\ScriptHelpers.ps1')
 
 # =============================================================================================
 # PURE DECISIONS. No Hyper-V, no git, no guest. -SelfTest pins them.
@@ -402,26 +393,13 @@ function Get-LiveFilter {
     return [pscustomobject]@{ Filter = $filter + $Suffix; Narrowed = [bool]$Suffix; Refusal = $null }
 }
 
-# A lease as Set-TestbedLease.ps1 writes it, judged for THIS run: 'free' (none, expired or
-# unreadable - TestbedLeasePath.ps1's rule), 'ours', or 'theirs' - which is never taken over.
-function Get-LeaseDecision {
-    param([object] $Lease, [string] $RunId, [long] $NowUnix)
-    if ($null -eq $Lease) { return 'free' }
-    $expires = 0L
-    try { $expires = [long]$Lease.expiresUnix } catch { return 'free' }
-    if ($expires -le $NowUnix) { return 'free' }
-    if (([string]$Lease.reason) -ceq "$LeaseReasonPrefix $RunId") { return 'ours' }
-    return 'theirs'
-}
-
-# A run directory's name: when it started, which guest, which commit.
-function New-RunId {
-    param([DateTime] $When, [string] $Sha, [string] $GuestName)
-    if ($Sha -notmatch '^[0-9a-f]{12,40}$') { throw "Not a commit id: '$Sha'." }
-    $short = 'indexed'
-    if ($GuestName -match 'Unindexed\d*$') { $short = 'unindexed' }
-    if ($GuestName -match 'Exchange$') { $short = 'exchange' }
-    return ('{0:yyyyMMdd-HHmmss}-{1}-{2}' -f $When, $short, $Sha.Substring(0, 12))
+# What a run directory's name says between its start and its commit (New-RunId): which kind of guest
+# ran it, a clone its source's kind.
+function Get-RunLabel {
+    param([string] $GuestName)
+    if ($GuestName -match 'Exchange$') { return 'exchange' }
+    if ($GuestName -match 'Unindexed\d*$') { return 'unindexed' }
+    return 'indexed'
 }
 
 # How the Exchange VM's run begins: carried forward from its last run, or - only when a checkpoint is
@@ -490,34 +468,6 @@ function Get-PriorRunMarkers {
     $open = @($started | Where-Object { $_ -cne $Current -and -not $cleared.Contains($_) })
     [array]::Reverse($open)
     return @($open | Select-Object -First $Max)
-}
-
-# What a TRX file says - Invoke-TestsOnBuildVm.ps1's reader: outcomes counted from the results,
-# NotExecuted as xUnit's skip, a failure's first message line.
-function ConvertFrom-TrxText {
-    param([string] $Text)
-    $doc = New-Object System.Xml.XmlDocument
-    $doc.LoadXml($Text)
-    $ns = New-Object System.Xml.XmlNamespaceManager($doc.NameTable)
-    $ns.AddNamespace('t', 'http://microsoft.com/schemas/VisualStudio/TeamTest/2010')
-    $results = @($doc.SelectNodes('//t:Results/t:UnitTestResult', $ns))
-    $counts = [ordered]@{ total = $results.Count; passed = 0; failed = 0; skipped = 0; other = 0 }
-    $failed = @()
-    $skipped = @()
-    foreach ($r in $results) {
-        $outcome = $r.GetAttribute('outcome')
-        if ($outcome -eq 'Passed') { $counts['passed']++ }
-        elseif ($outcome -eq 'Failed') {
-            $counts['failed']++
-            $message = ''
-            $node = $r.SelectSingleNode('t:Output/t:ErrorInfo/t:Message', $ns)
-            if ($null -ne $node) { $message = (($node.InnerText -split "`r?`n") | Where-Object { $_.Trim() } | Select-Object -First 1) }
-            $failed += [pscustomobject]@{ name = $r.GetAttribute('testName'); message = [string]$message }
-        }
-        elseif ($outcome -eq 'NotExecuted') { $counts['skipped']++; $skipped += $r.GetAttribute('testName') }
-        else { $counts['other']++; $failed += [pscustomobject]@{ name = $r.GetAttribute('testName'); message = "outcome $outcome" } }
-    }
-    return [pscustomobject]@{ Counts = $counts; Failed = $failed; Skipped = $skipped }
 }
 
 # What the suite's console says about its own safety proofs. xUnit writes each output line twice -
@@ -634,13 +584,6 @@ function New-LiveRunSummary {
         timings        = $Timings
         results        = $Results
     }
-}
-
-function Format-Seconds {
-    param([double] $Seconds)
-    if ($Seconds -lt 60) { return ('{0:N0} s' -f $Seconds) }
-    $whole = [int][Math]::Floor($Seconds)
-    return ('{0} m {1:00} s' -f [int][Math]::Floor($whole / 60), ($whole % 60))
 }
 
 # THE GUEST'S CLOCK AROUND EVERY GUEST CALL (stream K, 2026-11-18). In two Q149 measurement runs on a
@@ -847,12 +790,15 @@ function Invoke-SelfTest {
 
     Write-Host '== the lease =='
     $now = 1800000000L
-    Check 'no lease is free' 'free' (Get-LeaseDecision $null 'r1' $now)
-    Check 'an expired lease is free' 'free' (Get-LeaseDecision ([pscustomobject]@{ expiresUnix = $now - 1; reason = 'someone' }) 'r1' $now)
-    Check 'an unreadable expiry is free' 'free' (Get-LeaseDecision ([pscustomobject]@{ expiresUnix = 'soon'; reason = 'someone' }) 'r1' $now)
-    Check 'a live lease of this run is ours' 'ours' (Get-LeaseDecision ([pscustomobject]@{ expiresUnix = $now + 60; reason = 'Invoke-LiveTierOnGuest r1' }) 'r1' $now)
-    Check 'a live lease of another run is theirs' 'theirs' (Get-LeaseDecision ([pscustomobject]@{ expiresUnix = $now + 60; reason = 'Invoke-LiveTierOnGuest r2' }) 'r1' $now)
-    Check 'a live lease of another agent is theirs' 'theirs' (Get-LeaseDecision ([pscustomobject]@{ expiresUnix = $now + 60; reason = 'agent accec8f1: folder-path tests' }) 'r1' $now)
+    $mine = "$LeaseReasonPrefix r1"
+    Check 'a run''s lease reason is this runner''s name and the run id' 'Invoke-LiveTierOnGuest r1' $mine
+    Check 'no lease is free' 'free' (Get-LeaseDecision $null $mine $now)
+    Check 'an expired lease is free' 'free' (Get-LeaseDecision ([pscustomobject]@{ expiresUnix = $now - 1; reason = 'someone' }) $mine $now)
+    Check 'an unreadable expiry is free' 'free' (Get-LeaseDecision ([pscustomobject]@{ expiresUnix = 'soon'; reason = 'someone' }) $mine $now)
+    Check 'a live lease of this run is ours' 'ours' (Get-LeaseDecision ([pscustomobject]@{ expiresUnix = $now + 60; reason = 'Invoke-LiveTierOnGuest r1' }) $mine $now)
+    Check 'a live lease of another run is theirs' 'theirs' (Get-LeaseDecision ([pscustomobject]@{ expiresUnix = $now + 60; reason = 'Invoke-LiveTierOnGuest r2' }) $mine $now)
+    Check 'a live lease of another agent is theirs' 'theirs' (Get-LeaseDecision ([pscustomobject]@{ expiresUnix = $now + 60; reason = 'agent accec8f1: folder-path tests' }) $mine $now)
+    Check 'every lease decision of the run asks with the run''s own reason' 4 ([regex]::Matches($runner, 'Get-LeaseDecision [^\r\n]*"\$LeaseReasonPrefix \$runId"')).Count
 
     Write-Host '== the gate (Q195 (e), TestbedLoad.ps1) and the queue (2026-11-18, TestbedPool.ps1): before the build, and on every turn of the lease wait, asking Hyper-V nothing =='
     # Looked for in the run's code only - after this function, whose own lines name the same text.
@@ -872,23 +818,29 @@ function Invoke-SelfTest {
     Check 'whether a guest is free is its lease file, read before Hyper-V is asked anything about it' $true ($at['$held = Get-TestbedLease -VMName $guest.Name'] -gt $at['$ahead = Get-TestbedQueueTurn'] -and $at['$held = Get-TestbedLease -VMName $guest.Name'] -lt $at['$refusals[$guest.Name] = Get-GuestRunRefusal $guest'] -and $at['$refusals[$guest.Name] = Get-GuestRunRefusal $guest'] -lt $at['$startupBytes[$guest.Name] = [long](Get-VM -Name $guest.Name).MemoryStartup'])
     Check 'and what does not change in a run - its checkpoints, its startup memory - is asked once a run' $true ($runCode.Contains('if (-not $refusals.ContainsKey($guest.Name))') -and $runCode.Contains('if (-not $startupBytes.ContainsKey($guest.Name))'))
     Check 'between passes it sleeps on the testbed''s files, and leaves the queue on every path' $true ($at['[void](Wait-TestbedChange)'] -gt $at['$holder = Request-GuestLease $guest.Name 60'] -and $at['finally { Exit-TestbedQueue $ticket; if ($null -ne $waitingSince) { Remove-TestbedWaiting } }'] -gt $at['[void](Wait-TestbedChange)'])
-    Check 'the heartbeat is one narrow query on the guest''s id, every 2 s' $true ($runCode.Contains('while (-not (Test-TestbedHeartbeat (Get-GuestVmId $facts.Name)))') -and $runCode.Contains('Start-Sleep -Seconds $TestbedHeartbeatSeconds') -and -not $runCode.Contains("Get-VMIntegrationService -VMName `$facts.Name -Name 'Heartbeat'"))
-    Check 'the run''s guest calls share one PowerShell Direct session, opened by the guest''s id' $true ($runCode.Contains('New-PSSession -VMId (Get-GuestVmId $facts.Name)') -and -not $runCode.Contains('Invoke-Command -VMName') -and ([regex]::Matches($runCode, 'Invoke-Command -Session ')).Count -eq 2 -and $runCode.Contains('$out = Invoke-Command -Session $session -ScriptBlock'))
+    # TestbedPool.ps1's functions, which the run asks Hyper-V through, by name.
+    $poolAst = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'TestbedPool.ps1'), [ref] $null, [ref] $null)
+    $poolBody = @{}
+    foreach ($fn in $poolAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $false)) { $poolBody[$fn.Name] = $fn.Body.Extent.Text }
+    $poolWait = [string]$poolBody['Wait-TestbedHeartbeat']
+    $poolRestore = [string]$poolBody['Restore-TestbedCheckpoint']
+    Check 'the heartbeat is one narrow query on the guest''s id, every 2 s' $true ($runCode.Contains('Wait-TestbedHeartbeat -Id (Get-TestbedVmId $facts.Name)') -and $poolRestore.Contains('Wait-TestbedHeartbeat -Id (Get-TestbedVmId $Name)') -and $poolWait.Contains('Test-TestbedHeartbeat $Id') -and $poolWait.Contains('Start-Sleep -Seconds $TestbedHeartbeatSeconds') -and -not $runCode.Contains("Get-VMIntegrationService -VMName `$facts.Name -Name 'Heartbeat'"))
+    Check 'the run''s guest calls share one PowerShell Direct session, opened by the guest''s id' $true ($runCode.Contains('New-PSSession -VMId (Get-TestbedVmId $facts.Name)') -and -not $runCode.Contains('Invoke-Command -VMName') -and ([regex]::Matches($runCode, 'Invoke-Command -Session ')).Count -eq 2 -and $runCode.Contains('$out = Invoke-Command -Session $session -ScriptBlock'))
     Check 'and each guest call starts as a session of its own did: no exit code from the call before, the folder it started in' $true ($runCode.Contains('$global:LASTEXITCODE = $null') -and $runCode.Contains('Set-Location -LiteralPath $global:OutlookAIGuestStart') -and $runCode.IndexOf('$global:LASTEXITCODE = $null') -lt $runCode.IndexOf('"RUN-REGISTER-EXIT: $LASTEXITCODE"'))
     $restoreAt = $runCode.IndexOf('function Restore-Guest')
     $restoreText = ''
     if ($restoreAt -ge 0) { $restoreText = $runCode.Substring($restoreAt, [Math]::Min(700, $runCode.Length - $restoreAt)) }
-    Check 'a running guest is saved before a checkpoint is restored over it, and its session closed' $true ($restoreText.IndexOf('Close-GuestSession') -gt 0 -and $restoreText.IndexOf('Save-VM -Name $facts.Name') -gt 0 -and $restoreText.IndexOf('Save-VM -Name $facts.Name') -lt $restoreText.IndexOf('Restore-VMSnapshot'))
+    Check 'a running guest is saved before a checkpoint is restored over it, and its session closed' $true ($restoreText.IndexOf('Close-GuestSession') -gt 0 -and $restoreText.IndexOf('Restore-TestbedCheckpoint -Name $facts.Name -Checkpoint $Name -Start') -gt $restoreText.IndexOf('Close-GuestSession') -and $poolRestore.IndexOf('Save-VM -Name $Name') -gt 0 -and $poolRestore.IndexOf('Save-VM -Name $Name') -lt $poolRestore.IndexOf('Restore-VMSnapshot'))
     Check 'and the session is closed before every restart, which ends it' $true (([regex]::Matches($runCode, 'Close-GuestSession\s+# ps51-native-stderr-ok:[^\n]*\n\s*&\s+\(Join-Path \$PSScriptRoot ''Restart-Guest\.ps1''\)')).Count -eq 2)
-    Check 'a guest''s state is read with the narrow query, never Get-VM''s' $true ($runCode.Contains('function Get-GuestVmState') -and -not $runCode.Contains('(Get-VM -Name $facts.Name).State'))
+    Check 'a guest''s state is read with the narrow query, never Get-VM''s' $true ($runCode.Contains('(Get-TestbedVmState $facts.Name)') -and ([string]$poolBody['Get-TestbedVmState']).Contains('Get-TestbedVmStateById') -and -not $runCode.Contains('(Get-VM -Name $facts.Name).State'))
 
     Write-Host '== the run id =='
-    Check 'when, guest, commit' '20261003-174500-indexed-d4e31fe12345' (New-RunId ([datetime]'2026-10-03T17:45:00') 'd4e31fe1234567890' 'OutlookAI-Indexed')
-    Check 'the unindexed guest' '20261003-174500-unindexed-d4e31fe12345' (New-RunId ([datetime]'2026-10-03T17:45:00') 'd4e31fe1234567890' 'OutlookAI-Unindexed')
-    Check 'the Exchange VM' '20261003-174500-exchange-d4e31fe12345' (New-RunId ([datetime]'2026-10-03T17:45:00') 'd4e31fe1234567890' 'OutlookAI-Exchange')
-    Check 'and its clone' '20261003-174500-unindexed-d4e31fe12345' (New-RunId ([datetime]'2026-10-03T17:45:00') 'd4e31fe1234567890' 'OutlookAI-Unindexed2')
-    Check 'and the indexed guest''s clone' '20261003-174500-indexed-d4e31fe12345' (New-RunId ([datetime]'2026-10-03T17:45:00') 'd4e31fe1234567890' 'OutlookAI-Indexed2')
-    $threw = $false; try { New-RunId (Get-Date) 'HEAD' 'OutlookAI-Indexed' | Out-Null } catch { $threw = $true }
+    Check 'when, guest, commit' '20261003-174500-indexed-d4e31fe12345' (New-RunId ([datetime]'2026-10-03T17:45:00') 'd4e31fe1234567890' (Get-RunLabel 'OutlookAI-Indexed'))
+    Check 'the unindexed guest' '20261003-174500-unindexed-d4e31fe12345' (New-RunId ([datetime]'2026-10-03T17:45:00') 'd4e31fe1234567890' (Get-RunLabel 'OutlookAI-Unindexed'))
+    Check 'the Exchange VM' '20261003-174500-exchange-d4e31fe12345' (New-RunId ([datetime]'2026-10-03T17:45:00') 'd4e31fe1234567890' (Get-RunLabel 'OutlookAI-Exchange'))
+    Check 'and its clone' '20261003-174500-unindexed-d4e31fe12345' (New-RunId ([datetime]'2026-10-03T17:45:00') 'd4e31fe1234567890' (Get-RunLabel 'OutlookAI-Unindexed2'))
+    Check 'and the indexed guest''s clone' '20261003-174500-indexed-d4e31fe12345' (New-RunId ([datetime]'2026-10-03T17:45:00') 'd4e31fe1234567890' (Get-RunLabel 'OutlookAI-Indexed2'))
+    $threw = $false; try { New-RunId (Get-Date) 'HEAD' (Get-RunLabel 'OutlookAI-Indexed') | Out-Null } catch { $threw = $true }
 
     Write-Host '== the run marker and the ledger (the Exchange VM) =='
     $when = [DateTime]::SpecifyKind([DateTime]::new(2026, 10, 8, 15, 30, 5), [DateTimeKind]::Utc)
@@ -1094,16 +1046,8 @@ if ($SelfTest) { exit (Invoke-SelfTest) }
 # THE RUN.
 # =============================================================================================
 $started = Get-Date
+# Say appends to it once the run has a directory; until then a line, a refusal too, is only printed.
 $script:LogPath = $null
-function Say([string] $Message) {
-    $line = '[{0:HH:mm:ss}] {1}' -f (Get-Date), $Message
-    Write-Host $line
-    if ($script:LogPath) { Add-Content -LiteralPath $script:LogPath -Value $line -Encoding UTF8 }
-}
-function Stop-Refused([string] $Why) {
-    Write-Host "REFUSED: $Why"
-    exit $ExitCodes['REFUSED']
-}
 
 if ($VMName -and $Kind) { Stop-Refused '-VMName and -Kind together are ambiguous: name a guest, or a kind of guest.' }
 if (-not $VMName -and -not $Kind) { Stop-Refused 'name a guest with -VMName, or a kind of guest with -Kind Indexed or -Kind Unindexed: no default picks one (Testbed/README.md section 4a).' }
@@ -1157,6 +1101,8 @@ if (-not $Kind) {
     if ($exchangeCarry) { $startIsFrozen = $false }
     if ($startIsFrozen -and $RestOnGreen) { Stop-Refused "-RestOnGreen from the frozen checkpoint '$Checkpoint': a green checkpoint of this run would stand a run later than the frozen instant testbed.json records, and every later run would start there. Make a new frozen checkpoint with Set-GuestClockFrozen.ps1 and record it instead." }
 }
+# The add-in goes onto a frozen-clock Outlook guest only: a -Kind run's guest, taken later, is checked again once it is.
+if ($WithAddIn -and ($facts.Exchange -or (-not $Kind -and -not $startIsFrozen))) { Stop-Refused '-WithAddIn installs the add-in on a frozen-clock Outlook guest only: an Outlook guest or a clone, from its frozen checkpoint.' }
 if (-not $RepoPath) { $RepoPath = Split-Path -Parent (Split-Path -Parent $PSScriptRoot) }
 $repo = [System.IO.Path]::GetFullPath($RepoPath)
 if (-not $CredentialRepoRoot) {
@@ -1170,8 +1116,9 @@ if (-not $SdkInstallerPath) { $SdkInstallerPath = Join-Path $CredentialRepoRoot 
 if ($WithAddIn -and -not $VstoRuntimePath) {
     $VstoRuntimePath = @((Join-Path $CredentialRepoRoot '.work\media\vstor_redist.exe'), (Join-Path $CredentialRepoRoot 'Redist\vstor_redist.exe')) |
         Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
-    if (-not $VstoRuntimePath) { throw "-WithAddIn needs the staged vstor_redist.exe (Testbed/MEDIA.md): not at .work\media\ or Redist\ of $CredentialRepoRoot - name it with -VstoRuntimePath" }
+    if (-not $VstoRuntimePath) { Stop-Refused "-WithAddIn needs the staged vstor_redist.exe (Testbed/MEDIA.md): not at .work\media\ or Redist\ of $CredentialRepoRoot - name it with -VstoRuntimePath" }
 }
+if ($WithAddIn -and -not (Test-Path -LiteralPath $VstoRuntimePath)) { Stop-Refused "no VSTO runtime at $VstoRuntimePath (Testbed/MEDIA.md); pass -VstoRuntimePath." }
 if (-not (Test-Path -LiteralPath $SdkInstallerPath)) { Stop-Refused "no SDK installer at $SdkInstallerPath (Testbed/MEDIA.md); pass -SdkInstallerPath." }
 
 $sha = (@(Invoke-NativeCommand { & git -C $repo rev-parse --verify "$Ref^{commit}" 2>&1 }) | Out-String).Trim()
@@ -1179,7 +1126,7 @@ if ($LASTEXITCODE -ne 0 -or $sha -notmatch '^[0-9a-f]{40}$') { Stop-Refused "git
 $subject = (@(Invoke-NativeCommand { & git -C $repo log -1 --format=%s $sha 2>&1 }) | Out-String).Trim()
 $dirtyCount = 0
 if ($Ref -eq 'HEAD') { $dirtyCount = @(Invoke-NativeCommand { & git -C $repo status --porcelain 2>&1 } | Where-Object { $_ }).Count }
-$runId = New-RunId $started $sha $facts.Name
+$runId = New-RunId $started $sha (Get-RunLabel $facts.Name)
 if (-not $ResultsRoot) { $ResultsRoot = Join-Path $repo '.work\guest-live-runs' }
 $runDir = Join-Path $ResultsRoot $runId
 New-Item -ItemType Directory -Force -Path $runDir, (Join-Path $runDir 'guest') | Out-Null
@@ -1236,7 +1183,7 @@ $guestRunDir = Join-Path $GuestRunsRoot $runId
 . (Join-Path $PSScriptRoot 'TestbedLeasePath.ps1')
 
 function Use-Lease([int] $Minutes) {
-    $decision = Get-LeaseDecision (Get-TestbedLease -VMName $facts.Name) $runId ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())
+    $decision = Get-LeaseDecision (Get-TestbedLease -VMName $facts.Name) "$LeaseReasonPrefix $runId" ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())
     if ($decision -eq 'theirs') { throw "the lease on $($facts.Name) is held by someone else - not touching the guest" }
     & (Join-Path $PSScriptRoot 'Set-TestbedLease.ps1') -VMName $facts.Name -Minutes ([Math]::Min(480, [Math]::Max(30, $Minutes))) -Reason "$LeaseReasonPrefix $runId" | Out-Null
 }
@@ -1247,38 +1194,15 @@ function Request-GuestLease([string] $Name, [int] $Minutes) {
     $claim = Enter-TestbedLeaseClaim -VMName $Name
     try {
         $lease = Get-TestbedLease -VMName $Name
-        if ((Get-LeaseDecision $lease $runId ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())) -eq 'theirs') { return $lease }
+        if ((Get-LeaseDecision $lease "$LeaseReasonPrefix $runId" ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())) -eq 'theirs') { return $lease }
         & (Join-Path $PSScriptRoot 'Set-TestbedLease.ps1') -VMName $Name -Minutes ([Math]::Min(480, [Math]::Max(30, $Minutes))) -Reason "$LeaseReasonPrefix $runId" | Out-Null
         return $null
     }
     finally { $claim.Dispose() }
 }
-# A guest's Hyper-V id, asked once a run by one narrow query (TestbedPool.ps1's Get-TestbedVms): the
-# state, the heartbeat and the PowerShell Direct session are asked for by it.
-$guestVmIds = @{}
-function Get-GuestVmId([string] $Name) {
-    if (-not $guestVmIds.ContainsKey($Name)) {
-        $rows = @(Get-TestbedVms -Name @($Name))
-        if ($rows.Count -ne 1) { throw "expected one VM named '$Name' on this host and found $($rows.Count)" }
-        $guestVmIds[$Name] = [string]$rows[0].Id
-    }
-    return $guestVmIds[$Name]
-}
-# The heartbeat, every 2 s, by one narrow query on the guest's id (Test-TestbedHeartbeat) -
-# Get-VMIntegrationService, every 3 s until 2026-11-18, cost 23 WMI operations a look (stream W).
-function Wait-Heartbeat {
-    $deadline = (Get-Date).AddMinutes(5)
-    while (-not (Test-TestbedHeartbeat (Get-GuestVmId $facts.Name))) {
-        if ((Get-Date) -ge $deadline) { throw "the guest's heartbeat did not come back within 5 minutes" }
-        Start-Sleep -Seconds $TestbedHeartbeatSeconds
-    }
-}
-# The guest's state - Running, Saved, Off, Paused, or on its way - by its id, one keyed query, never Get-VM.
-function Get-GuestVmState([string] $Name) {
-    $state = Get-TestbedVmStateById (Get-GuestVmId $Name)
-    if (-not $state) { throw "Hyper-V no longer has '$Name' on this host" }
-    return [string]$state
-}
+# The guest's Hyper-V id - asked once a run - its state and its heartbeat are TestbedPool.ps1's narrow
+# queries by the guest's name (stream W, 2026-11-18): Get-TestbedVmId, Get-TestbedVmState and
+# Wait-TestbedHeartbeat, every 2 s, which the trust-removal probe asks too.
 # ONE PowerShell Direct session for the run's own guest calls (stream W, 2026-11-18): every guest call
 # opened a session of its own, by the VM's name - nine in a run of one test class that morning.
 # Opened by the guest's id at the first call that needs it, and closed wherever the guest is restored
@@ -1292,7 +1216,7 @@ function Close-GuestSession {
 function Get-GuestSession {
     if ($null -ne $script:guestSession -and [string]$script:guestSession.State -eq 'Opened') { return $script:guestSession }
     Close-GuestSession
-    $script:guestSession = New-PSSession -VMId (Get-GuestVmId $facts.Name) -Credential $credential -ErrorAction Stop
+    $script:guestSession = New-PSSession -VMId (Get-TestbedVmId $facts.Name) -Credential $credential -ErrorAction Stop
     return $script:guestSession
 }
 # Every guest call's clock record - Call and Shift (Get-GuestClockShift) - in call order, for the
@@ -1309,16 +1233,12 @@ function Add-GuestClockRecord([string] $Call, [string] $Output, [DateTime] $Host
     }
     catch { Say "  (the guest's clock around '$Call' could not be recorded: $($_.Exception.Message))" }
 }
-# A guest that runs - or is paused - is SAVED before a checkpoint is restored over it (2026-11-18): a
-# restore over a running guest left it out of PowerShell Direct's reach for six minutes in stream R1's
-# runs, where saved first and then restored it answered in seconds.
+# A checkpoint restored over the guest by TestbedPool.ps1's Restore-TestbedCheckpoint, which saves a
+# guest that runs first (2026-11-18), then the guest started and its heartbeat waited for. The restore
+# ends the run's guest session, so it is closed first.
 function Restore-Guest([string] $Name) {
     Close-GuestSession
-    $state = Get-GuestVmState $facts.Name
-    if ($state -eq 'Running' -or $state -eq 'Paused') { Save-VM -Name $facts.Name }
-    Restore-VMSnapshot -VMName $facts.Name -Name $Name -Confirm:$false
-    if ((Get-GuestVmState $facts.Name) -ne 'Running') { Start-VM -Name $facts.Name }
-    Wait-Heartbeat
+    [void](Restore-TestbedCheckpoint -Name $facts.Name -Checkpoint $Name -Start)
 }
 # One piece of work on the guest; its whole output goes to guest\<name>.log. Session 1 through
 # Register-InteractiveTask.ps1 at RunLevel Limited (where Outlook runs, NOT elevated), or session 0
@@ -1392,11 +1312,6 @@ function Save-CrashDumps {
         Say "crash dumps: $($script:dumpsFound.Count) on the guest, $(@($files | Where-Object { $_['fetched'] }).Count) fetched to dumps\$($facts.Name)\"
     }
     catch { Say "fetching the crash dumps failed: $($_.Exception.Message)" }
-}
-function Get-TaskExit([string] $Text) {
-    $m = [regex]::Match($Text, 'RUN-REGISTER-EXIT: (-?\d+)')
-    if ($m.Success) { return [int]$m.Groups[1].Value }
-    return $null
 }
 
 try {
@@ -1475,7 +1390,7 @@ try {
                     $guest = Get-GuestFacts $candidates[$i]
                     if ($ahead.ContainsKey($guest.Name)) { $why += "$($guest.Name) is wanted first by run $($ahead[$guest.Name]), queued before this one"; continue }
                     $held = Get-TestbedLease -VMName $guest.Name
-                    if ((Get-LeaseDecision $held $runId ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())) -eq 'theirs') { $why += "$($guest.Name) is leased until $($held.expiresUtc) - $($held.reason)"; continue }
+                    if ((Get-LeaseDecision $held "$LeaseReasonPrefix $runId" ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())) -eq 'theirs') { $why += "$($guest.Name) is leased until $($held.expiresUtc) - $($held.reason)"; continue }
                     if ($Kind) {
                         if (-not $refusals.ContainsKey($guest.Name)) { $refusals[$guest.Name] = Get-GuestRunRefusal $guest }
                         if ($refusals[$guest.Name]) { $why += $refusals[$guest.Name]; continue }
@@ -1537,8 +1452,8 @@ try {
     try {
         $touched = $true
         if ($exchangeCarry) {
-            if ((Get-GuestVmState $facts.Name) -ne 'Running') { Start-VM -Name $facts.Name }
-            Wait-Heartbeat
+            if ((Get-TestbedVmState $facts.Name) -ne 'Running') { Start-VM -Name $facts.Name }
+            Wait-TestbedHeartbeat -Id (Get-TestbedVmId $facts.Name) -Minutes 5 -What $facts.Name
             Say 'resumed the Exchange VM as its last run left it (its mailboxes live on the server; no checkpoint restored)'
         }
         else {
@@ -1793,7 +1708,7 @@ finally {
             }
             try {
                 Save-VM -Name $facts.Name
-                $checkpointActions['saved'] = ((Get-GuestVmState $facts.Name) -eq 'Saved')
+                $checkpointActions['saved'] = ((Get-TestbedVmState $facts.Name) -eq 'Saved')
             }
             catch { Say "SAVING THE GUEST FAILED: $($_.Exception.Message) - save it by hand." }
             Say "rested on $($checkpointActions['restedOn']); settings staged=$($checkpointActions['settingsStaged']); saved=$($checkpointActions['saved'])"
@@ -1801,7 +1716,7 @@ finally {
     }
     Close-GuestSession
     try {
-        if ((Get-LeaseDecision (Get-TestbedLease -VMName $facts.Name) $runId ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())) -eq 'ours') {
+        if ((Get-LeaseDecision (Get-TestbedLease -VMName $facts.Name) "$LeaseReasonPrefix $runId" ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())) -eq 'ours') {
             & (Join-Path $PSScriptRoot 'Set-TestbedLease.ps1') -VMName $facts.Name -Release | Out-Null
             Say 'lease released'
         }
