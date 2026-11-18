@@ -52,9 +52,8 @@ public sealed class LiveHeadlessComposeParityTests
     /// </summary>
     private const string SignatureToken = "testhandtekening";
 
-    private string RequireHtmlBody(string entryId)
-        => _fixture.VerifySession.TryGetHtmlBody(entryId, _fixture.GetStoreId(Hub), out string? error)
-            ?? throw new InvalidOperationException("draft HTML unavailable: " + (error ?? "empty"));
+    private string RequireHtmlBody(string entryId) =>
+        LiveDraftChecks.RequireHtmlBody(_fixture.VerifySession, entryId, _fixture.GetStoreId(Hub));
 
     [Fact]
     [Trait("Requires", "MailAccount")]

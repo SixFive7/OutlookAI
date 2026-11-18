@@ -281,7 +281,7 @@ public sealed class LiveFolderIdentityTests
 
                 ReportRow("folder row", folderRow);
                 FolderEntryIdLayout layout = Assert.IsType<FolderEntryIdLayout>(FolderEntryIdLayout.Parse(folder.EntryId));
-                string? folderProviderItemId = Text(folderRow, "System.ProviderItemID");
+                string? folderProviderItemId = IndexRows.Text(folderRow, "System.ProviderItemID");
                 _output.WriteLine(
                     "  folder row: carries the whole folder id in " + Carriers(folderRow, folderId) + "; System.ProviderItemID "
                     + (folderProviderItemId ?? "(none)") + "; the id's node part " + (layout.PstProviderItemId ?? "(not a PST id)"));
@@ -320,7 +320,7 @@ public sealed class LiveFolderIdentityTests
                 Assert.True(MapiItemUrl.TryParse(itemUrl, out MapiItemUrl? parsed) && parsed!.TryDecodeEntryId(out decoded));
                 string itemProviderItemId = FolderEntryIdLayout.ProviderItemIdOf(
                     BitConverter.ToUInt32(Convert.FromHexString(decoded!.NidHex), 0));
-                string? itemRowProviderItemId = Text(itemRow!, "System.ProviderItemID");
+                string? itemRowProviderItemId = IndexRows.Text(itemRow!, "System.ProviderItemID");
                 _output.WriteLine(
                     "  item row: carries the whole folder id in " + Carriers(itemRow!, folderId) + "; its URL id is 24 bytes, store UID equal to the folder id's "
                     + string.Equals(decoded.StoreUidHex, layout.ProviderUidHex, StringComparison.OrdinalIgnoreCase)
@@ -517,48 +517,9 @@ public sealed class LiveFolderIdentityTests
         return Path.GetExtension(path).ToLowerInvariant();
     }
 
-    private void CleanUp(List<string> entryIds)
-    {
-        foreach (string entryId in entryIds.Distinct(StringComparer.OrdinalIgnoreCase))
-        {
-            try
-            {
-                LiveOutlookTestMailer.DeleteItemByEntryId(Hub, entryId, Marker);
-            }
-            catch (Exception)
-            {
-                // The stable-zero sweep below is the authority.
-            }
-        }
+    private void CleanUp(List<string> entryIds) => _fixture.CleanUpHub(entryIds);
 
-        LiveOutlookTestMailer.DeleteTestFolders(Hub);
-        LiveOutlookTestMailer.DeleteTaggedArtifactsUntilStableZero(
-            Hub, Marker, folderIds: LiveOutlookTestMailer.HubSweepFolderIdsWithArchive);
-    }
-
-    private void AssertHubClean()
-    {
-        LiveOutlookTestMailer.DeleteTaggedArtifactsUntilStableZero(
-            Hub, Marker, folderIds: LiveOutlookTestMailer.HubSweepFolderIdsWithArchive);
-        int remaining = LiveOutlookTestMailer.CountTaggedArtifactsAfterPurgingStragglers(
-            Hub, Marker, LiveOutlookTestMailer.HubSweepFolderIdsWithArchive, out int stragglersPurged);
-        if (stragglersPurged > 0)
-        {
-            _output.WriteLine($"cleanup[{Hub}]: {stragglersPurged} late-materialized artifact(s) purged (documented lag)");
-        }
-
-        Assert.Equal(0, remaining);
-        int liveTestFolders = LiveOutlookTestMailer.CountLiveTestFolders(Hub, out int wedgedEmpty);
-        if (wedgedEmpty > 0)
-        {
-            _output.WriteLine(
-                $"cleanup[{Hub}]: {wedgedEmpty} empty test folder(s) wedged in Deleted Items until Outlook restarts "
-                + "(documented same-session limitation, no items involved)");
-        }
-
-        Assert.Equal(0, liveTestFolders);
-        _output.WriteLine(_fixture.VerifyHubReconciled());
-    }
+    private void AssertHubClean() => _fixture.AssertHubClean(_output.WriteLine);
 
     // ------------------------------------------------------------------ 4. the folder ID the tools take (Q131-Q136)
 
@@ -861,11 +822,6 @@ public sealed class LiveFolderIdentityTests
         return carriers.Count == 0 ? "no property" : string.Join(", ", carriers);
     }
 
-    private static string? Text(IReadOnlyDictionary<string, object?> row, string column)
-    {
-        return row.TryGetValue(column, out object? value) && value is string s ? s : null;
-    }
-
     /// <summary>
     /// A PST folder id's index scope, found WITHOUT Outlook (Q115) - through the PRODUCT's own route since
     /// Q132 (i) shipped it (<see cref="IndexSearchService.FindStoreRootsByProviderUid"/>, then
@@ -1015,7 +971,7 @@ public sealed class LiveFolderIdentityTests
         try
         {
             List<string> urls = client.ExecuteRows(sql, 5, StatementTimeoutSeconds)
-                .Select(r => Text(r, "System.ItemUrl"))
+                .Select(r => IndexRows.Text(r, "System.ItemUrl"))
                 .Where(u => u != null)
                 .Select(u => u!)
                 .ToList();

@@ -348,12 +348,8 @@ public sealed class LiveSignatureTests
         return LiveInboxArrival.WaitFor(_fixture.VerifySession, Hub, seedSubject, sentUtc);
     }
 
-    private ComDraftInfo RequireMailInfo(string entryId, string? storeId)
-    {
-        ComDraftInfo? info = _fixture.VerifySession.TryGetMailInfo(entryId, storeId, out string? error);
-        Assert.True(info != null, $"mail info unavailable: {error}");
-        return info!;
-    }
+    private ComDraftInfo RequireMailInfo(string entryId, string? storeId) =>
+        LiveDraftChecks.RequireMailInfo(_fixture.VerifySession, entryId, storeId);
 
     private void TryDeleteArtifact(string entryId)
     {

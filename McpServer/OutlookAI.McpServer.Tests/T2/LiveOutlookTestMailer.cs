@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using Microsoft.CSharp.RuntimeBinder;
@@ -14,15 +15,49 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// </summary>
 public static class LiveOutlookTestMailer
 {
+    /// <summary>
+    /// The live tier's tag without its brackets, and its one spelling (Q154): <see cref="SubjectTag"/> and
+    /// <see cref="TestFolderNamePrefix"/> are made of it. It is also what a DASL <c>LIKE</c> prefilter matches, since
+    /// a <c>[</c> inside a LIKE pattern opens a character class - the mechanism that destroyed real mail in the
+    /// 2026-07-25 incident. <c>T1/CorpusTagSeparationTests</c> keeps the corpus tag apart from it.
+    /// </summary>
+    public const string TagText = "OutlookAI-McpTest";
+
     /// <summary>The S3 subject tag every test artifact must carry.</summary>
-    public const string SubjectTag = "[OutlookAI-McpTest]";
+    public const string SubjectTag = "[" + TagText + "]";
 
     /// <summary>
     /// Name prefix every TEST FOLDER must carry (D39 move tests). Folder cleanup
     /// matches this with ordinal Contains via the tested helpers only - never shell
     /// patterns (the 7d standing rule).
     /// </summary>
-    public const string TestFolderNamePrefix = "OutlookAI-McpTest-Folder";
+    public const string TestFolderNamePrefix = TagText + "-Folder";
+
+    /// <summary>
+    /// Whether <paramref name="subject"/> carries <see cref="SubjectTag"/>, matched ORDINALLY: the tag test behind
+    /// every delete, move and refusal of this class and of every sweep (S3; AGENTS.md mailbox-safety rule 2 -
+    /// never a pattern, never a culture). A missing subject carries nothing.
+    /// </summary>
+    public static bool CarriesSubjectTag([NotNullWhen(true)] string? subject)
+    {
+        return subject != null && subject.Contains(SubjectTag, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Whether <paramref name="subject"/> mentions <see cref="SubjectTag"/> in any letter case: the test of the
+    /// READING filters, which leave test artifacts out of what a search, a census or a ground truth counts. Never a
+    /// delete's test - that is <see cref="CarriesSubjectTag"/>, which is ordinal.
+    /// </summary>
+    public static bool MentionsSubjectTag([NotNullWhen(true)] string? subject)
+    {
+        return subject != null && subject.Contains(SubjectTag, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>A subject for a test item of this run: the tag, the run's marker, then the label.</summary>
+    public static string TaggedSubject(string runMarker, string label)
+    {
+        return SubjectTag + " " + runMarker + " " + label;
+    }
 
     /// <summary>
     /// Default-folder ids swept for tagged artifacts: Drafts, Inbox, Sent Items, the
@@ -123,7 +158,7 @@ public static class LiveOutlookTestMailer
         string smtpAddress, string subject, string body, IReadOnlyList<string>? attachmentPaths)
     {
         LiveStoreWriteGuard.Assert(smtpAddress, StoreWriteKind.Send, nameof(SendSelfMail));
-        if (!subject.Contains(SubjectTag, StringComparison.Ordinal))
+        if (!CarriesSubjectTag(subject))
         {
             throw new ArgumentException($"Test mail subject must carry the {SubjectTag} tag (S3).", nameof(subject));
         }
@@ -467,8 +502,7 @@ public static class LiveOutlookTestMailer
                 {
                 }
 
-                if (subject == null
-                    || !subject.Contains(SubjectTag, StringComparison.Ordinal)
+                if (!CarriesSubjectTag(subject)
                     || !subject.Contains(uniqueMarker, StringComparison.OrdinalIgnoreCase))
                 {
                     throw new InvalidOperationException(
@@ -806,8 +840,7 @@ public static class LiveOutlookTestMailer
                 {
                 }
 
-                if (subject == null
-                    || !subject.Contains(SubjectTag, StringComparison.Ordinal)
+                if (!CarriesSubjectTag(subject)
                     || !subject.Contains(uniqueMarker, StringComparison.OrdinalIgnoreCase))
                 {
                     throw new InvalidOperationException(
@@ -879,8 +912,7 @@ public static class LiveOutlookTestMailer
                 {
                 }
 
-                if (subject == null
-                    || !subject.Contains(SubjectTag, StringComparison.Ordinal)
+                if (!CarriesSubjectTag(subject)
                     || !subject.Contains(uniqueMarker, StringComparison.OrdinalIgnoreCase))
                 {
                     throw new InvalidOperationException(
@@ -1166,7 +1198,7 @@ public static class LiveOutlookTestMailer
         string storeDisplayName, string subject, string body, IReadOnlyList<string> attachmentPaths)
     {
         LiveStoreWriteGuard.Assert(storeDisplayName, StoreWriteKind.Draft, nameof(SaveTaggedDraftWithAttachments));
-        if (!subject.Contains(SubjectTag, StringComparison.Ordinal))
+        if (!CarriesSubjectTag(subject))
         {
             throw new ArgumentException($"Test draft subject must carry the {SubjectTag} tag (S3).", nameof(subject));
         }
@@ -1290,8 +1322,7 @@ public static class LiveOutlookTestMailer
                 // The item first: refuse before anything is created if it is not this run's.
                 item = ns.GetItemFromID(itemEntryId, storeId);
                 string? subject = (string?)item.Subject;
-                if (subject == null
-                    || !subject.Contains(SubjectTag, StringComparison.Ordinal)
+                if (!CarriesSubjectTag(subject)
                     || !subject.Contains(uniqueMarker, StringComparison.Ordinal))
                 {
                     throw new InvalidOperationException(
@@ -2789,7 +2820,7 @@ public static class LiveOutlookTestMailer
                     {
                     }
 
-                    if (subject != null && subject.Contains(SubjectTag, StringComparison.Ordinal))
+                    if (CarriesSubjectTag(subject))
                     {
                         moved = item.Move(inbox);
                         moved.Delete(); // recorded on the Inbox, purged by the folder-3 sweep pass
@@ -2960,7 +2991,7 @@ public static class LiveOutlookTestMailer
                     {
                     }
 
-                    if (subject == null || !subject.Contains(SubjectTag, StringComparison.Ordinal))
+                    if (!CarriesSubjectTag(subject))
                     {
                         throw new InvalidOperationException(
                             "Refusing to delete test folder: it contains an item without the test tag (S3).");
@@ -3056,8 +3087,7 @@ public static class LiveOutlookTestMailer
                     {
                     }
 
-                    if (subject != null
-                        && subject.Contains(SubjectTag, StringComparison.Ordinal)
+                    if (CarriesSubjectTag(subject)
                         && subject.Contains(uniqueMarker, StringComparison.OrdinalIgnoreCase))
                     {
                         item.Delete();
@@ -3450,7 +3480,7 @@ public static class LiveOutlookTestMailer
                     ?? throw new InvalidOperationException("Store not found for the signature-engine read.");
                 item = ns.GetItemFromID(entryIdHex, (string)store.StoreID);
                 string? subject = (string?)item.Subject;
-                if (subject == null || !subject.Contains(SubjectTag, StringComparison.Ordinal)
+                if (!CarriesSubjectTag(subject)
                     || !subject.Contains(uniqueMarker, StringComparison.OrdinalIgnoreCase))
                 {
                     throw new InvalidOperationException(

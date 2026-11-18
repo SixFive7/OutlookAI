@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Xunit;
+using static OutlookAI.McpServer.Tests.T3.ToolShapes;
 
 namespace OutlookAI.McpServer.Tests.T3;
 
@@ -23,7 +24,7 @@ public sealed class SoakBatchCCiToolShapeTests
         "new_draft", "reply_draft", "replyall_draft", "forward_draft", "update_draft",
     ];
 
-    public static TheoryData<string> AllDraftToolNames => Names(AllDraftTools);
+    public static TheoryData<string> AllDraftToolNames => new(AllDraftTools);
 
     // ------------------------------------------------------------------ C3: attachments
 
@@ -370,44 +371,6 @@ public sealed class SoakBatchCCiToolShapeTests
         return arguments;
     }
 
-    private static TheoryData<string> Names(string[] names)
-    {
-        TheoryData<string> data = new();
-        foreach (string name in names)
-        {
-            data.Add(name);
-        }
-
-        return data;
-    }
-
-    private static void AssertOptional(JsonElement schema, string toolName, params string[] parameterNames)
-    {
-        if (!schema.TryGetProperty("required", out JsonElement required))
-        {
-            return;
-        }
-
-        string[] requiredNames = required.EnumerateArray().Select(r => r.GetString()!).ToArray();
-        foreach (string parameterName in parameterNames)
-        {
-            Assert.DoesNotContain(parameterName, requiredNames, StringComparer.Ordinal);
-        }
-    }
-
-    private static async Task<JsonElement> GetToolAsync(McpStdioClient client, string name)
-    {
-        JsonElement list = await client.RoundTripAsync("tools/list", new { });
-        foreach (JsonElement tool in list.GetProperty("result").GetProperty("tools").EnumerateArray())
-        {
-            if (tool.GetProperty("name").GetString() == name)
-            {
-                return tool;
-            }
-        }
-
-        throw new InvalidOperationException($"tool '{name}' is not advertised");
-    }
 }
 
 internal static class JsonElementDescriptionExtensions

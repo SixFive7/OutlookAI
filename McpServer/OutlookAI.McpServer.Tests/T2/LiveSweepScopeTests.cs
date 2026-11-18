@@ -58,7 +58,7 @@ public sealed class LiveSweepScopeTests
         // Before this fix the index tier ANDed the terms inside each column, so such a
         // mail matched NOTHING - the terms never co-occur in one column.
         IndexSearchService index = IndexSearchService.CreateDefault(out _);
-        StoreScopeInfo hub = ResolveStoreScope(index, Hub);
+        StoreScopeInfo hub = LiveIndexScopes.Require(index, Hub);
         (ComWalkedItem Item, string SubjectTerm, string BodyTerm) probe = SelectCrossColumnProbe(index, hub);
 
         _output.WriteLine(
@@ -332,24 +332,7 @@ public sealed class LiveSweepScopeTests
         }).Hits;
     }
 
-    private void CleanUp(string? entryId)
-    {
-        if (entryId != null)
-        {
-            try
-            {
-                LiveOutlookTestMailer.DeleteItemByEntryId(Hub, entryId, Marker);
-            }
-            catch (Exception)
-            {
-                // The stable-zero sweep below is the authority.
-            }
-        }
-
-        LiveOutlookTestMailer.DeleteTestFolders(Hub);
-        LiveOutlookTestMailer.DeleteTaggedArtifactsUntilStableZero(
-            Hub, Marker, folderIds: LiveOutlookTestMailer.HubSweepFolderIdsWithArchive);
-    }
+    private void CleanUp(string? entryId) => _fixture.CleanUpHub(new[] { entryId });
 
     // The seed's arrival wait is LiveInboxArrival.WaitFor (2026-10-03). This file kept a SEVENTH
     // copy of that loop, which walked the hub every three seconds and never asked Outlook to
@@ -378,13 +361,6 @@ public sealed class LiveSweepScopeTests
             Kinds = KindFilter.MailKindOnly,
             Top = 5000,
         }).Hits;
-    }
-
-    private static StoreScopeInfo ResolveStoreScope(IndexSearchService index, string storeDisplayName)
-    {
-        StoreScopeInfo? scope = LiveIndexScopes.Find(index, storeDisplayName);
-        Assert.True(scope != null, $"store scope of '{storeDisplayName}' not discoverable in the index");
-        return scope!;
     }
 
     /// <summary>

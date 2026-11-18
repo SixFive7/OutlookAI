@@ -269,6 +269,15 @@ its mailbox tests on, and change nothing you install.
   so the tripwire failed that run on the one departure, as it should. The item waits in the bystander's
   Deleted Items, under a new EntryID, for the maintainer's decision.
 
+- ✅ **A live run records the guest's clock and time zone around every call it makes into the guest.**
+  In two measurement runs on a frozen-clock test machine, the machine's clock jumped about two hours
+  forward during the suite, and waits of 9,000 and 7,200 seconds ran out after 35 to 40 minutes of real
+  time. Nobody knows why yet. Each call into the guest now reads the guest's UTC time and time zone as
+  its first and last step, and the runner sets the two readings beside its own clock in
+  `guest-clock.log`. A call over which the two clocks ran more than 60 seconds apart, or the time zone
+  changed, is a warning in `run.log`, `summary.txt` and `summary.json`; the run's verdict does not
+  change.
+
 - ✅ **A probe on the Exchange test machine measures what the folder-ID fixes of November rest on.**
   `Testbed/guest/Measure-FolderIdResolution.ps1` reads, changing nothing, what three of the fixes
   needed. Reading the top folder of the mailbox Exchange automapped online takes 2 to 3 ms, as it does
@@ -1043,8 +1052,22 @@ its mailbox tests on, and change nothing you install.
   the same one-mailbox profile - its SID, store, index prefix and frontier - and three of them its
   mail, its sweep, an exhaustive search of its Inbox and a session that answers the store list, the
   sweep and the scan as well: `AliceMailbox` holds it once, and `ThreadWalks` the conversation walks
-  three thread suites each built. No test changed what it checks: the build machine ran the same
-  tests, by name, before and after each step.
+  three thread suites each built. The live tier went the same way. Its test tag is spelled once,
+  in `LiveOutlookTestMailer.TagText`, which the bracketed subject tag and the test-folder prefix
+  are made of, and the mailer's ten inline ordinal tag checks, and four more elsewhere, now ask one
+  ordinal predicate, `CarriesSubjectTag`; the reading filters that leave test items out of a
+  search, a census or a ground truth ask `MentionsSubjectTag`, which ignores letter case as each of
+  them did. A test's tagged subject is built once (`TaggedSubject`). `LiveDraftChecks` holds the
+  draft suites' reads of a draft and of where its body sits, which seven suites restated in up to
+  four copies each; `LiveDraftCleanup` deletes their drafts and proves none is left; the folder
+  suites' clean-up and zero-artifact proof are methods of the fixture they share; the two
+  post-suite sweeps run one proof, `LiveArtifactSweep.ProveNoTaggedArtifactRemains`; `AuditLines`
+  reads the audit lines six suites counted, each still naming which log; the stdio suites read the
+  tool surface through `ToolShapes`; the corpus helpers live in `HubCorpus`, scratch files go
+  through `ScratchFiles`, a store's id through `LiveIds`, an index scope through `LiveIndexScopes`
+  and the registry through `RawRegistryValues`; and four fixtures read the test project's folder
+  through `RepoPaths`. No test changed what it checks: the build machine ran the same tests, by
+  name, before and after each step, and the 164 live test methods are the same 164.
 
 - ✅ **The draft tests read where Word lays out a reply's text, and check no draft became a form.**
   The reply, reply-all and forward tests now read Word's own layout of each draft and fail when its
