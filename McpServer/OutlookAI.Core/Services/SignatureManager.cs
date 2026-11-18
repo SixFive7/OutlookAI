@@ -40,13 +40,22 @@ namespace OutlookAI.Core.Services
         /// <summary>Signature name (file base name, what Outlook's pickers show). For clear_default: the default being cleared.</summary>
         public string Name { get; set; } = string.Empty;
 
-        /// <summary>Plain-text rendition. Create: written (derived from another when omitted). Update: replaces the .txt only.</summary>
+        /// <summary>
+        /// Plain-text rendition. Create: written (derived from another when omitted). Update: the new .txt, sent
+        /// with every other rendition the signature has (Q205 (d)).
+        /// </summary>
         public string? BodyText { get; set; }
 
-        /// <summary>HTML rendition, fragment or full document. Create: written. Update: replaces the .htm only.</summary>
+        /// <summary>
+        /// HTML rendition, fragment or full document. Create: written. Update: the new .htm, sent with every other
+        /// rendition the signature has (Q205 (d)).
+        /// </summary>
         public string? BodyHtml { get; set; }
 
-        /// <summary>RTF rendition, with <c>[[picture:N]]</c> / <c>[[picture-file:...]]</c> tokens for pictures. Update: replaces the .rtf only.</summary>
+        /// <summary>
+        /// RTF rendition, with <c>[[picture:N]]</c> / <c>[[picture-file:...]]</c> tokens for pictures. Update: the new
+        /// .rtf, sent with every other rendition the signature has (Q205 (d)).
+        /// </summary>
         public string? BodyRtf { get; set; }
 
         /// <summary>In-place text edits applied to every rendition (update only).</summary>
@@ -1231,6 +1240,8 @@ namespace OutlookAI.Core.Services
             string? rtfBefore = File.Exists(rtfPath) ? SignatureText.ReadRtf(rtfPath).Text : null;
             DecodedSignatureText? textBefore = File.Exists(txtPath) ? SignatureText.ReadText(txtPath) : null;
 
+            RequireEveryRendition(name, request, htmlBefore != null, rtfBefore != null, textBefore != null);
+
             string? html = htmlBefore?.Text;
             string? rtf = rtfBefore;
             string? text = textBefore?.Text;
@@ -1360,39 +1371,6 @@ namespace OutlookAI.Core.Services
                 plan.FormatsWritten.Add(SignatureFormats.Text);
             }
 
-            // A rendition sent whole is not copied into the others (nothing is rebuilt from another, Q159), so
-            // the renditions can now say different things - and each mail format inserts only its own.
-            if (!string.IsNullOrWhiteSpace(request.BodyHtml) || !string.IsNullOrWhiteSpace(request.BodyRtf)
-                || !string.IsNullOrWhiteSpace(request.BodyText))
-            {
-                List<string> unchanged = new List<string>();
-                if (!htmlChanged && htmlBefore != null)
-                {
-                    unchanged.Add(SignatureFormats.Html);
-                }
-
-                if (!rtfChanged && rtfBefore != null)
-                {
-                    unchanged.Add(SignatureFormats.Rtf);
-                }
-
-                if (!textChanged && textBefore != null)
-                {
-                    unchanged.Add(SignatureFormats.Text);
-                }
-
-                if (unchanged.Count > 0)
-                {
-                    bool several = unchanged.Count > 1;
-                    plan.Warnings.Add(
-                        "Only the " + string.Join(" and ", plan.FormatsWritten) + (plan.FormatsWritten.Count > 1 ? " renditions" : " rendition")
-                        + " changed: the " + string.Join(" and ", unchanged) + (several ? " renditions still read" : " rendition still reads")
-                        + " as before, and Outlook inserts each rendition in mail of its own format. To change "
-                        + (several ? "them" : "it") + " too, send " + string.Join(" or ", unchanged.Select(f => "body_" + f))
-                        + " edited, or change text in every rendition at once with replace.");
-                }
-            }
-
             if ((plan.PicturesReplaced.Count > 0 || plan.PicturesToRemove.Count > 0) && !rtfChanged && rtfBefore != null
                 && SignatureRtf.FindPictures(rtfBefore).Count > 0)
             {
@@ -1401,6 +1379,79 @@ namespace OutlookAI.Core.Services
                     + "too, read the signature with list_signatures(name) and send body_rtf with [[picture-file:<file>]] where the "
                     + "old [[picture:N]] stood (or without it, to remove it).");
             }
+        }
+
+        /// <summary>
+        /// Q205 (d): an update that sends a rendition whole sends every rendition the signature has. Nothing
+        /// is converted from one format to another (Q159), and each mail format inserts only its own, so a
+        /// rendition left out would go on saying what the signature said before. Refused, with the missing
+        /// ones named, before anything is written. An update that only replaces text or changes pictures
+        /// sends no rendition and is not affected.
+        /// </summary>
+        private static void RequireEveryRendition(string name, ManageSignatureRequest request, bool hasHtml, bool hasRtf, bool hasText)
+        {
+            List<string> sent = new List<string>();
+            if (!string.IsNullOrWhiteSpace(request.BodyHtml))
+            {
+                sent.Add(SignatureFormats.Html);
+            }
+
+            if (!string.IsNullOrWhiteSpace(request.BodyRtf))
+            {
+                sent.Add(SignatureFormats.Rtf);
+            }
+
+            if (!string.IsNullOrWhiteSpace(request.BodyText))
+            {
+                sent.Add(SignatureFormats.Text);
+            }
+
+            if (sent.Count == 0)
+            {
+                return;
+            }
+
+            List<string> has = new List<string>();
+            if (hasHtml)
+            {
+                has.Add(SignatureFormats.Html);
+            }
+
+            if (hasRtf)
+            {
+                has.Add(SignatureFormats.Rtf);
+            }
+
+            if (hasText)
+            {
+                has.Add(SignatureFormats.Text);
+            }
+
+            List<string> missing = has.Where(f => !sent.Contains(f)).ToList();
+            if (missing.Count == 0)
+            {
+                return;
+            }
+
+            throw new ArgumentException(
+                "update: '" + name + "' has " + DescribeRenditions(has) + ", and this update sends only "
+                + string.Join(" and ", sent.Select(f => "body_" + f)) + ". An update that sends a rendition whole must send every "
+                + "rendition the signature has: nothing is converted from one format to another, and each mail format inserts only "
+                + "its own, so a rendition left out would go on saying what it said before. Missing: "
+                + string.Join(" and ", missing.Select(f => "body_" + f)) + ". Read the current ones with list_signatures(name) and "
+                + "send all of them, edited - or change text in every rendition at once with replace. Nothing was written.");
+        }
+
+        /// <summary>"an HTML, an RTF and a plain-text rendition" - the renditions a signature has, in words.</summary>
+        private static string DescribeRenditions(IReadOnlyList<string> formats)
+        {
+            List<string> words = formats
+                .Select(f => f == SignatureFormats.Html ? "an HTML" : f == SignatureFormats.Rtf ? "an RTF" : "a plain-text")
+                .ToList();
+            string joined = words.Count <= 2
+                ? string.Join(" and ", words)
+                : string.Join(", ", words.Take(words.Count - 1)) + " and " + words[words.Count - 1];
+            return joined + " rendition";
         }
 
         private static void RequireRtfDocument(string rtf)

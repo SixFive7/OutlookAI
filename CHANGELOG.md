@@ -86,13 +86,13 @@ its mailbox tests on, and change nothing you install.
 - ✨ **A signature can be read in full and changed in place, pictures included.**
   list_signatures with a name returns all three versions Outlook keeps of a signature - the HTML one
   for HTML mail, the RTF one for Rich Text mail and the plain text - and every picture with its file
-  path. manage_signature then changes only what it is asked to: a version sent back replaces that one
-  file, a replace edit changes a piece of text in every version that has it and keeps its
-  formatting, and pictures are added, replaced or removed one file at a time. Each file keeps the
-  encoding it was stored in. In the RTF version the pictures are embedded, and they show as
-  [[picture:1]] tokens: each token left in place becomes the same picture again, byte for byte, and
-  [[picture-file:logo.png]] embeds a new one. A new signature can be made with pictures, and its RTF
-  version then embeds them too.
+  path. manage_signature then changes only what it is asked to: the versions sent back replace their
+  own files, and an update that sends one sends every version the signature has; a replace edit
+  changes a piece of text in every version that has it and keeps its formatting; and pictures are
+  added, replaced or removed one file at a time. Each file keeps the encoding it was stored in. In
+  the RTF version the pictures are embedded, and they show as [[picture:1]] tokens: each token left
+  in place becomes the same picture again, byte for byte, and [[picture-file:logo.png]] embeds a new
+  one. A new signature can be made with pictures, and its RTF version then embeds them too.
 
 - ✨ **A default signature can be set or cleared on its own, for a named profile and account.**
   manage_signature has two new actions, set_default and clear_default. A default could only be set
@@ -1421,9 +1421,12 @@ its mailbox tests on, and change nothing you install.
 - 🐛 **Changing a signature keeps its pictures and its other versions.**
   An update deleted the signature's picture folder and rebuilt its RTF version from the plain text, so
   editing a signature Outlook had made with a logo lost the logo, and Rich Text mail lost its
-  formatting. An update now touches only the files it is asked to change. When it replaces one
-  version whole, the answer says which versions still read as before, because Outlook puts the HTML
-  version in HTML mail, the RTF version in Rich Text mail and the text version in plain-text mail.
+  formatting. An update now touches only the files it is asked to change and converts nothing from
+  one version to another. Because Outlook puts the HTML version in HTML mail, the RTF version in Rich
+  Text mail and the text version in plain-text mail, an update that replaces a version whole must
+  send every version the signature has, and one that leaves a version out is refused with the
+  missing ones named (Q205 (d), decided by the maintainer 2026-11-18). Until then such an update wrote
+  the one version and said in its answer which versions still read as before.
 
 - 🐛 **A draft whose signature could not be added says it has none.**
   Since the crash fix, a draft whose chosen signature could not be put in came out with no signature

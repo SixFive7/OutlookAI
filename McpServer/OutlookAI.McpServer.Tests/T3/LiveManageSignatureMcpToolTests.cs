@@ -62,12 +62,15 @@ public sealed class LiveManageSignatureMcpToolTests
             Assert.Contains(listed.GetProperty("signatures").EnumerateArray(),
                 s => s.GetProperty("name").GetString() == name);
 
-            // UPDATE: backupPath present, under the documented root.
+            // UPDATE: backupPath present, under the documented root. Every rendition the signature has is sent
+            // (Q205 (d)): create wrote all three.
             JsonElement updated = await client.CallToolAsync("manage_signature", new
             {
                 action = "update",
                 name,
                 body_html = "<p>Wire updated " + _fixture.RunMarker + "</p>",
+                body_rtf = @"{\rtf1\ansi Wire updated " + _fixture.RunMarker + "}",
+                body_text = "Wire updated " + _fixture.RunMarker,
             });
             string? updateBackup = updated.GetProperty("backupPath").GetString();
             Assert.NotNull(updateBackup);

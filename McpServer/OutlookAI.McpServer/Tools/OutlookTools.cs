@@ -579,10 +579,11 @@ public static partial class OutlookTools
         + "signature is files in the folder Outlook uses: an HTML, an RTF and a plain-text rendition (each mail format inserts "
         + "only its own) plus a picture folder.\n\n"
         + "create: give body_html, body_rtf and/or body_text; the renditions not given are derived. update edits IN PLACE and "
-        + "touches only what you pass: body_html, body_rtf and body_text each replace that one rendition (read it first with "
-        + "list_signatures(name) and send it back edited); replace [{find, replace}] changes visible text in every rendition "
-        + "that has it, formatting kept; pictures adds, replaces or removes picture files. Nothing is rebuilt from another "
-        + "rendition. set_default and clear_default change an account's default for new mail, replies or both - default_for "
+        + "never converts one format into another. To rewrite a signature, send EVERY rendition it has - body_html, body_rtf "
+        + "and body_text, each read with list_signatures(name) and sent back edited; an update that leaves out a format the "
+        + "signature has is REFUSED, naming it. replace [{find, replace}] changes visible text in every rendition that has "
+        + "it, formatting kept; pictures adds, replaces or removes picture files. set_default and clear_default change an "
+        + "account's default for new mail, replies or both - default_for "
         + "needs an EXPLICIT profile and account (list_signatures lists them); create and update may set one too.\n\n"
         + "DESTRUCTIVE: 'delete' permanently removes the signature and 'update' changes it - before either, the previous files "
         + "are automatically backed up under %LOCALAPPDATA%\\OutlookAI\\signature-backups and the path is returned as "
@@ -595,16 +596,18 @@ public static partial class OutlookTools
         [Description("Signature name (as list_signatures shows it). For clear_default: the signature that is the default now - "
             + "only that default is cleared.")]
         string name,
-        [Description("Plain-text rendition. create: written (derived from another when omitted). update: replaces the .txt only.")]
+        [Description("Plain-text rendition. create: written (derived from another when omitted). update: the new .txt - send it "
+            + "with every other rendition the signature has.")]
         string? body_text = null,
         [Description("HTML rendition, fragment or full document. Refer to the signature's pictures as <name>_files/<file> - "
-            + "list_signatures(name) gives the exact prefix as pictureReference. create: written. update: replaces the .htm "
-            + "only; send the whole document back, edited.")]
+            + "list_signatures(name) gives the exact prefix as pictureReference. create: written. update: the new .htm - send "
+            + "the whole document back, edited, with every other rendition the signature has.")]
         string? body_html = null,
         [Description("RTF rendition: a whole document starting {\\rtf1, as list_signatures(name) returns it. Keep each "
             + "[[picture:N]] token where that picture should stay - it becomes the same picture again, byte for byte - delete a "
             + "token to remove its picture, and write [[picture-file:<file>]] or [[picture-file:<file>|WIDTHxHEIGHT]] (pixels) to "
-            + "embed a PNG or JPEG from the signature's picture folder or an absolute path. update: replaces the .rtf only.")]
+            + "embed a PNG or JPEG from the signature's picture folder or an absolute path. update: the new .rtf - send it with "
+            + "every other rendition the signature has.")]
         string? body_rtf = null,
         [Description("update only: in-place text edits, [{\"find\": \"old text\", \"replace\": \"new text\"}], each applied to "
             + "every rendition that contains the text (matched as it reads, case included), formatting kept. Refused with "
