@@ -295,20 +295,26 @@ internal static class WritePathAnalyzer
 
         static bool Exempt(MethodBase method, MethodBase target, IReadOnlyList<IlInstruction> body, int at)
         {
-            // A reviewed file write is keyed by its member and the System.IO call ("...TrySave|File.Replace"), so one
-            // exemption never covers another member's writes, nor another call of the same member.
-            if (FileWrite(target) != null)
+            // Keyed by the source member and what it calls: a late-bound member's name, or - for a file or registry
+            // write - the framework member ("...TrySave|File.Replace", "...WriteValue|RegistryKey.SetValue"), so one
+            // exemption never covers another member's writes, nor another call of the same member. A property SET
+            // on a COM object is never exempt.
+            string called;
+            if (target.DeclaringType?.FullName == "Microsoft.CSharp.RuntimeBinder.Binder")
             {
-                return ReadOnlyProductApi.InProductExemptions.ContainsKey(
-                    ReadOnlyProductApi.SourceKeyOf(method) + "|" + target.DeclaringType!.Name + "." + target.Name);
+                if (target.Name != "InvokeMember")
+                {
+                    return false;
+                }
+
+                called = BinderMemberName(body, at) ?? "?";
+            }
+            else
+            {
+                called = target.DeclaringType?.Name + "." + target.Name;
             }
 
-            if (target.DeclaringType?.FullName != "Microsoft.CSharp.RuntimeBinder.Binder" || target.Name != "InvokeMember")
-            {
-                return false;
-            }
-
-            string key = ReadOnlyProductApi.SourceKeyOf(method) + "|" + (BinderMemberName(body, at) ?? "?");
+            string key = ReadOnlyProductApi.SourceKeyOf(method) + "|" + called;
             return ReadOnlyProductApi.InProductExemptions.ContainsKey(key);
         }
 

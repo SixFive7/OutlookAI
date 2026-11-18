@@ -1,4 +1,5 @@
 using System;
+using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
 
 namespace OutlookAI.Core.Com
@@ -191,6 +192,15 @@ namespace OutlookAI.Core.Com
         /// A dead session is dropped either way. The difference is only whether the work is
         /// attempted again here or reported to the caller.
         /// </para>
+        /// <para>
+        /// <b>The rebuild only attaches; it never starts Outlook</b> (Q179 (c), decided by the
+        /// maintainer 2026-11-18). On 2026-11-15 a hung Outlook was ended by hand, the read stuck
+        /// inside it failed with a disconnect, and this rebuild started Outlook again 67 ms later -
+        /// for a request whose client had given up twelve minutes before. Outlook going away under
+        /// a call is the user closing it or it dying; bringing it back is for the next request that
+        /// needs it, through its own gate (Q150 (a): "on the next call"). With no Outlook to attach
+        /// to, the call fails with the disconnect that ended it.
+        /// </para>
         /// </summary>
         public T Run<T>(Func<IOutlookSession, T> operation, ComSessionRecovery recovery)
         {
@@ -217,7 +227,19 @@ namespace OutlookAI.Core.Com
                     throw;
                 }
 
-                OutlookComSession retrySession = GetOrConnect();
+                OutlookComSession retrySession;
+                try
+                {
+                    retrySession = GetOrConnect(mayStartOutlook: RebuildMayStartOutlook);
+                }
+                catch (OutlookUnavailableException)
+                {
+                    // No Outlook to attach to, and this rebuild may not start one: the caller is told
+                    // what ended its call, exactly as if no rebuild had been allowed.
+                    ExceptionDispatchInfo.Capture(ex).Throw();
+                    throw;
+                }
+
                 return operation(retrySession);
             }
         }
@@ -288,11 +310,27 @@ namespace OutlookAI.Core.Com
         }
 
         /// <summary>
+        /// Whether the one-shot rebuild after a disconnect may start Outlook: never (Q179 (c)). A
+        /// constant rather than a literal at the call so T1 names the rule it pins.
+        /// </summary>
+        internal const bool RebuildMayStartOutlook = false;
+
+        /// <summary>
         /// Returns the live session, pinging a held one first and reconnecting when the
         /// ping fails. Serialized: concurrent callers queue here while a cold Outlook
         /// start is in progress.
         /// </summary>
         public OutlookComSession GetOrConnect()
+        {
+            return GetOrConnect(mayStartOutlook: true);
+        }
+
+        /// <summary>
+        /// <see cref="GetOrConnect()"/>, attaching only when <paramref name="mayStartOutlook"/> is
+        /// false: with no Outlook running it then refuses (<see cref="OutlookUnavailableException"/>)
+        /// before any COM call. The disconnect rebuild asks this way (Q179 (c)).
+        /// </summary>
+        internal OutlookComSession GetOrConnect(bool mayStartOutlook)
         {
             if (_disposed)
             {
@@ -327,7 +365,7 @@ namespace OutlookAI.Core.Com
 
                 try
                 {
-                    _session = OutlookComSession.Connect(_allowStartingOutlook, HandleSessionGone);
+                    _session = OutlookComSession.Connect(_allowStartingOutlook && mayStartOutlook, HandleSessionGone);
                 }
                 catch (InvalidOperationException ex)
                 {

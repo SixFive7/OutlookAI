@@ -50,6 +50,35 @@ its mailbox tests on, and change nothing you install.
 
 ### Added
 
+- ✨ **A stuck Outlook is reported with its process ID, how to end it, and what ending it risks (Q177).**
+  When Outlook stops responding, or has been starting for two minutes without finishing, every mail
+  tool answers `OutlookUnresponsive` with a report that says what is stuck and why, the process ID,
+  how to end it in Task Manager and what that can cost: unsaved text in a compose window, mail
+  waiting in the Outbox, a data file checked at the next start. For an Outlook with no window, the
+  kind OutlookAI starts for an agent, it says the user cannot see or close it and that starting
+  Outlook does nothing until it is ended, and no longer that restarting Outlook fixes it or that it
+  clears by itself. The advice tells the assistant to tell the user and to end Outlook only if the
+  user asks; OutlookAI never ends it (Q177 (a)). An Outlook that hangs before it has created its
+  windows used to read as starting for ever; past 120 seconds it is reported as stuck, and so is a
+  connection that has waited that long in one start-up step, while an Outlook that had windows and
+  closed them is shutting down, not stuck (Q176 (c)). `outlook_health` gains an `outlook.start`
+  block: the process and its start time, whether OutlookAI started it and for which server, whether
+  it ever showed a window, since when it has not responded, the start-up step of the last
+  connection, whether the add-in has started, and the start log's path (Q178 (e)). Decided by the
+  maintainer on 2026-11-18, after the hang of 2026-11-15: an Outlook OutlookAI had started with no
+  window deadlocked, and the user could neither see it nor close it.
+
+- ✨ **A start log records every step of starting Outlook and every hang, with no mail content (Q178).**
+  `%LOCALAPPDATA%\OutlookAI\outlook-start.log`, beside the audit log, gets a line for each step a
+  connection takes into Outlook, each wait for it to settle and why the wait ended, each change of
+  the verdict in front of a request, and each COM host ended at its deadline. Keys are constants and
+  every value is reduced to a token, so no sentence, subject or store name can be written; a failure
+  is logged by exception type and HRESULT, never by its message. About 1 MB is kept. A per-user
+  record, `HKCU\Software\OutlookAI\OutlookStart`, holds which server started the running Outlook,
+  which start-up step a connection is in and since when, and when Outlook was first seen not
+  responding or with a window, so every server can report it (Q176 (c)). Nothing OutlookAI wrote
+  could say what happened inside the Outlook that hung on 2026-11-15, nor what started it again.
+
 - ✨ **`find_folder` finds folders by name and gives their IDs, and never acts (Q136).**
   Every tool now addresses a folder by its ID, so an assistant asked about "my Projects folder" first
   looks the folder up. `find_folder` takes a name, part of one, or the end of a path, and returns
@@ -259,6 +288,31 @@ its mailbox tests on, and change nothing you install.
   test holds OutlookAI's refusals to. The two probes that read Outlook's dialogs share one copy of
   that code, `OutlookDialogUia.ps1`.
 
+- ✅ **Tests pin the start policy, lock, record, log and report, and live tests time the settle wait.**
+  T1 runs every branch of the start policy over every combination of its facts, the record's and the
+  log's formats, the rule that no free text reaches the log, the add-in stamp rule, the start lock
+  between threads and after a holder dies, every variant of the report, the agent's error and the
+  start block of `outlook_health`, the in-flight rule for a cancelled request and the rebuild that
+  only attaches. A stdio test proves a cancelled request's wedged COM host is still ended at its
+  deadline. On the Outlook test machines a live test connects to the running Outlook and checks the
+  record, the log and health, and the disconnect test's two cold starts print what the settle wait
+  cost and must have settled on every condition. On the Exchange test machine, whose Outlook syncs
+  real mailboxes as it starts, a cold start only has to have waited until Outlook was 20 seconds old.
+
+- 📝 **The Outlook hang of 2026-11-15 is written up: its timeline, its cause and what was measured.**
+  `Docs/research/outlook-start-hang-2026-11-15.md` keeps what the investigation item in `TODO.md`
+  held, now that the item is gone: what happened minute by minute, the deadlock between OutlookAI's
+  connection and the Teams Meeting add-in as far as it was established, what was ruled out, which of
+  Q175 to Q182 answers which part of it, and what the settle wait costs on the test machines. It
+  names no person, mailbox or machine; the full report stays outside the repository.
+
+- 📝 **The README says what to do when Outlook does not open or an agent says it is not responding.**
+  A troubleshooting entry explains the Outlook without a window that hangs, gives the Task Manager
+  steps and what ending Outlook can cost, and asks for the start log in a report. The section on
+  Outlook's lifetime says when a launch is handed to a hung Outlook and that the server waits about
+  20 seconds after any Outlook start; the server's README and `McpServer/Docs/com-host.md` describe
+  the settle wait, the start lock, the limit, the record, the log and the report.
+
 - ✅ **Test runs wait while the PC is 70 % busy or more, and a pause switch holds new ones back.**
   With every testbed machine running at once, the host's 32 logical processors were 82 to 100 % busy:
   the maintainer's own work slowed down, and every run took about twice as long. He decided on
@@ -439,7 +493,9 @@ its mailbox tests on, and change nothing you install.
   is the test account's own store and that the second entry is neither censused nor written through,
   or the run refuses. Neither address is in the repository: `Testbed/testbed.json` names each account
   by its role, a run reads the address from that account's gitignored credential file, and the same
-  check refuses a run whose settings name an account the machine's Outlook has not signed in. The
+  check refuses a run whose settings name an account the machine's Outlook has not signed in. Another
+  test machine's settings are refused only for such a placeholder in their own section, never for the
+  accounts the Exchange machine records, which had stopped every Outlook guest's live run. The
   live runner runs this machine with the broadest filter it can honestly run, carries
   its state from run to run, because a restored offline data file is older than the server, and sets
   the data files aside when a checkpoint is restored, has Windows Search rebuild its index, and waits
@@ -873,6 +929,28 @@ its mailbox tests on, and change nothing you install.
   the log rather than passing quietly.
 
 ### Changed
+
+- 🔧 **OutlookAI opens no mailbox in a newly started Outlook until it has settled (Q175).**
+  Settled means at least 20 seconds old, the OutlookAI add-in finished starting inside it, and its
+  main thread idle: under a tenth of a 500 ms sample, and answering a message within a second. On
+  2026-11-15 the server started Outlook over COM and opened mailboxes in its first second, while its
+  add-ins were still loading; the Teams Meeting add-in called back into Outlook and its main thread
+  deadlocked. The wait narrows that race; another add-in's own calls are outside OutlookAI's reach,
+  so it cannot close it. Only one OutlookAI connection starts or attaches to Outlook at a time,
+  across every server of the user, and the others wait for it (Q175 (e)). Meanwhile mail tools
+  answer `OutlookStarting` at once; the retry guidance after a start is 25 seconds, up from 15. An
+  Outlook that started more than two minutes ago counts as settled, so connecting to it costs one
+  look. The add-in writes a start-up stamp, `HKCU\Software\OutlookAI\AddIn`, at the end of its
+  start; an older add-in is recognised by its tuning reconcile. A folder search of an Exchange
+  mailbox that starts Outlook (Q212 (a)) goes through the same wait. Decided by the maintainer on
+  2026-11-18. Measured on the two Outlook test machines, which have no add-in that could deadlock:
+  the disconnect test's eight cold starts, six on the unindexed machine and two on the indexed one,
+  waited 18.0 to 18.6 s for Outlook to settle, the 20 s age being the last condition met, and
+  connected in 21.2 to 22.2 s, where a cold start took about 4 s before; a connection to an Outlook
+  already minutes old waited under 40 ms. In an Outlook opened with its window, as a user opens it,
+  the add-in had started 6.2 s, 14.2 s and 27.9 s in on the unindexed machine and 171 s in on the
+  indexed one, on a day its Outlook started slowly, so such an Outlook can settle later than one
+  OutlookAI starts; the two-minute limit ends the wait regardless.
 
 - 🔧 **A draft puts a window on screen at most once per Outlook start, and never while Outlook is open.**
   OutlookAI writes every draft in a compose window it does not show. In an Outlook with no window of
@@ -1761,6 +1839,13 @@ its mailbox tests on, and change nothing you install.
 
 ### Removed
 
+- 🗑️ **The add-in no longer runs a Claude Code session every time Outlook starts (Q182).**
+  Its warm-up ran `claude -p` from inside OUTLOOK.EXE at each Outlook start, the starts OutlookAI's
+  server makes for an agent included, in system32 when Outlook was started over COM, and the process
+  did not stay warm: on 2026-11-15 it sent the prompt "-" to the model and exited 3.3 s later. The
+  first sidebar action after Outlook starts now starts its own process, and every action still
+  warms one up for the next. Decided by the maintainer on 2026-11-18 (Q182 (a)).
+
 - 🗑️ **`move_mail` no longer creates folders, and no tool takes a folder path or a store name (Q134, Q135).**
   `move_mail`'s `create_folder` and `store` arguments are gone: a folder is made with
   `create_folder`, and the target folder's ID names its store. Its target is checked once, before
@@ -1779,6 +1864,36 @@ its mailbox tests on, and change nothing you install.
   sweep fragment, the definitions the sweep matches with, instead of the incident tool's copy.
 
 ### Fixed
+
+- 🐛 **Another user's Outlook on the same computer is no longer taken for yours.**
+  OutlookAI counted every OUTLOOK.EXE on the computer. With someone else signed in to it, by fast
+  user switching or on a terminal server, their Outlook, whose windows are on another desktop,
+  looked like yours still starting, and health reported their process as yours. Only an OUTLOOK.EXE
+  in your own Windows session counts now: in the checks before a mailbox is opened, in health, in
+  the watch for Outlook exiting and in the count of its windows. Decided on 2026-11-18.
+
+- 🐛 **An Outlook that closes during a call is reported as a COM failure, with advice and an outcome.**
+  When Outlook went away under a call and the mail server's exit watcher had released the session
+  first, the agent was told "Cannot access a disposed object", with no advice and no outcome. That
+  shape, and a COM object already separated from the session, are now reported exactly as the COM
+  disconnect they are: the `ComFailure` error, the advice for the call that was interrupted, and
+  whether it may have changed anything, for a read and a write alike. A read meets this more often
+  since its retry no longer starts Outlook again (Q179). Decided on 2026-11-18.
+
+- 🐛 **A request whose caller gave up no longer leaves a stuck call holding the COM host (Q179).**
+  The cancel path disposed the request's deadline, against the supervisor's own description, so a
+  call stuck inside Outlook that nobody awaited any more held the COM host for good, and the host
+  serves one call at a time. On 2026-11-15 such a request stayed stuck for twelve minutes. Its
+  deadline now still ends the COM host. `ComHostPolicy.DecideInFlight`, which put a cancellation
+  above everything and was called by nothing, now says a cancellation stops the waiting and not the
+  deadline, and the deadline watchdog acts on it (Q179 (b)).
+
+- 🐛 **A retry after Outlook went away attaches to Outlook and never starts it again (Q179).**
+  When Outlook went away under a read, the COM host rebuilt its connection and ran the read once
+  more, and that connection could start Outlook. On 2026-11-15 it started Outlook 67 ms after the
+  hung one was ended, for a request abandoned twelve minutes before. The rebuild now only attaches;
+  with no Outlook running the read fails with the disconnect that ended it, and the next request
+  starts Outlook if it is still wanted (Q179 (c), Q150 (a)).
 
 - 🐛 **A paged exhaustive search of an Exchange mailbox returns no mail twice after Outlook restarts.**
   An exhaustive search hands out its results a page at a time, and each page remembers which mail
@@ -1938,6 +2053,13 @@ its mailbox tests on, and change nothing you install.
   folder - Calendar, Quick Step Settings, the mailbox's top level, emptied folders in Deleted
   Items - beside the mail, and none of them could be opened. On the test machine they were 21 of the
   first 100 results.
+
+- ✅ **The disconnect test no longer fails when Outlook quits just before its pin is released.**
+  Closing Outlook's last window can make it quit, so the test releases the lifetime pin only on a
+  session that is still connected. When Outlook quit between that check and the call, the test
+  accepted a COM disconnect but not a session the mail server's exit watcher had already disposed,
+  and on 2026-11-18 it failed that way on the Exchange test machine. It now accepts every shape the
+  mail server itself counts as that disconnect.
 
 - ✅ **The build machine's run summaries never print a duration as "1 m 60 s"; seconds round down.**
   `Testbed/host/Invoke-TestsOnBuildVm.ps1` rounded the seconds of a duration to the nearest whole

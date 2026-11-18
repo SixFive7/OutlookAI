@@ -285,7 +285,7 @@ namespace OutlookAI.Core.Services
         {
             try
             {
-                Process[] processes = Process.GetProcessesByName("OUTLOOK");
+                Process[] processes = OutlookProcesses.InThisSession();
                 try
                 {
                     if (processes.Length == 0)
@@ -397,7 +397,7 @@ namespace OutlookAI.Core.Services
         {
             try
             {
-                Process[] processes = Process.GetProcessesByName("OUTLOOK");
+                Process[] processes = OutlookProcesses.InThisSession();
                 try
                 {
                     return processes.Length == 0 ? null : ProcessStamp.Of(processes[0]);

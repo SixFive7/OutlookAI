@@ -45,6 +45,12 @@ namespace OutlookAI.ComHost.Supervision
                 case nameof(OutlookUnavailableException):
                     return new OutlookUnavailableException(message);
 
+                case nameof(OutlookNotRespondingException):
+                    // Raised by a connection that found Outlook not responding, or still starting past the
+                    // limit, while it waited (Q176 (c)). The message is the whole report; the retry guidance
+                    // does not cross the pipe, and the policy's is the one it was given.
+                    return new OutlookNotRespondingException(message, OutlookStartPolicy.NotRespondingRetryAfterSeconds);
+
                 case nameof(ComHostResponseTooLargeException):
                     // Not raised by a `throw` in the COM layer, so invariant 10 cannot see
                     // it: the child stamps this name onto the wire error directly, because

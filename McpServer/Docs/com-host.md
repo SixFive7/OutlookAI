@@ -84,7 +84,9 @@ The bound lives in the parent, and its enforcement is `Process.Kill`.
 `ComHostPolicy` holds the decisions as pure, total functions:
 
 - `DecideDispatch` — dispatch / start-then-dispatch / refuse-backoff / refuse-unavailable
-- `DecideInFlight` — keep-waiting / timeout-kill-child / fail-child-died / abandon-client-cancelled
+- `DecideInFlight` — keep-waiting / timeout-kill-child / fail-child-died / abandon-client-cancelled,
+  where abandoning stops the waiting and never the deadline (Q179 (b), below); the deadline
+  watchdog acts on it
 
 They are pure so T1 can pin every branch with a synthetic clock, the same idiom
 `SweepWalkBoundsTests` already uses for the sweep bounds. Otherwise the behaviour that
@@ -261,6 +263,84 @@ half-initialised, wedged process.
 Hence the cooldown. The breaker helps here too, by removing the rapid kill/respawn cycle
 that produced the churn. This is inference from strong evidence, not proof: confirming it
 needs a native stack, and no debugger is installed on that machine.
+
+## Starting Outlook without racing its add-ins (2026-11-18)
+
+**The hang of 2026-11-15.** A server cold-started `OUTLOOK.EXE -Embedding` through COM to answer
+`list_accounts`, and within its first second asked for the namespace, logged on, made the pin
+(which opens the default Inbox) and read every store. In a COM start Outlook loads its add-ins at
+once and opens stores only when asked. While Outlook was opening an Exchange store for that call -
+holding a lock, inside a cross-process call of its own - the Teams Meeting add-in called back into
+it from a thread-pool thread, and Outlook's main thread deadlocked on itself. Its every window was
+hidden: the user could not see it, could not close it, and every start of Outlook was handed to it.
+The installed server was 3.1.0.325, with none of this document's machinery; master would have
+answered at once, but would have prevented nothing and told the user "restarting Outlook fixes it
+now", which for an Outlook with no window is not true. The decisions that followed, all by the
+maintainer on 2026-11-18, are what this section describes.
+
+**Settle before a mailbox is opened (Q175 (a)).** A connection opens nothing in an Outlook until
+it has settled: at least `OutlookStartPolicy.MinimumAgeMilliseconds` (20 s) old, the add-in's
+start-up stamp present, and its main thread idle. The stamp is the add-in's own
+(`HKCU\Software\OutlookAI\AddIn`: the process id, then the time, written last in
+`ThisAddIn_Startup`); an add-in from before it is recognised by its tuning reconcile's time, and an
+add-in not set to load is not waited for. Idle is measured, not assumed: the main thread - the
+owner of Outlook's hidden `mspim_wnd32` window - must use under a tenth of a 500 ms sample and
+answer `WM_NULL` within a second. The wait runs on the connection's STA thread and keeps its
+messages flowing (`PumpedStaRunner.PumpedWait`). When Outlook was not running the wait comes after
+`CreateInstance`, which starts it and opens nothing; when it was running it comes BEFORE, because
+`CreateInstance` against a hung Outlook blocks with no limit (the 2026-08-15 probe stack above).
+The wait narrows the race; it cannot close it, because another add-in's own calls are outside
+OutlookAI's reach.
+
+**One connection at a time (Q175 (e)).** Every Claude Code session runs its own server, and eight
+were running that day. A connection takes `OutlookStartLock` - a mutex in the session's namespace -
+from before it looks whether Outlook runs until it is connected, so of several servers asking a
+closed Outlook at once one starts it and the others wait, then attach. A holder that dies leaves
+the mutex abandoned, and the next connection says so in the start log.
+
+**A limit on "starting", and a record (Q176 (c)).** "Starting" used to have no end: an Outlook that
+hung before creating its windows read as starting for ever, and the agent was told nothing was
+wrong. Past `OutlookStartPolicy.StartingLimitMilliseconds` (120 s) an Outlook still without windows
+is reported as not responding, and so is a connection that has waited that long in one start-up
+step. An Outlook that responds but has not met every settle condition by then - its add-in
+disabled, say - is used anyway: there is no start-up left to race. An Outlook that had windows and
+has none is closing, not stuck. The per-user record (`HKCU\Software\OutlookAI\OutlookStart`)
+holds the connection's step and since when, which server started the running Outlook, and when it
+was first seen not responding or with a window; every OutlookAI process of the user reads it, so a
+server that did not start Outlook can still say who did.
+
+**The gate in front of each request.** `ComHostSupervisor` asks `OutlookStartPolicy` instead of the
+bare liveness verdict: an Outlook that is settling - young, its stamp missing, another connection
+in progress - is `OutlookStarting` with retry guidance and a warm-up, with no call; one stuck past
+the limit is refused with the report below; a start's guidance is 25 s, up from 15, because the
+settle wait is part of every start now. The test override `OUTLOOKAI_COMHOST_LIVENESS` keeps the
+bare verdict, as the supervision tests need.
+
+**The report (Q177 (a), Q178 (e)).** OutlookAI never ends Outlook. It says what is stuck and why,
+the process ID, how to end it in Task Manager, and what that risks - unsaved text in a compose
+window, mail waiting in the Outbox, a data file checked at the next start - and for an Outlook with
+no window it says the user cannot see or close it and that starting Outlook does nothing until it
+is ended, never that it clears by itself (`OutlookHangReport`, raised as
+`OutlookNotRespondingException`, `OutlookUnresponsive` to the agent). `outlook_health` carries the
+same facts in `outlook.start`.
+
+**The start log (Q178 (e)).** `%LOCALAPPDATA%\OutlookAI\outlook-start.log`: one line per step, wait,
+verdict change and COM host kill, keys constant and values reduced to tokens, so no sentence,
+subject or store name can be written - failures by exception type and HRESULT, never by message.
+Appended through the audit log's own append handle, about 1 MB kept.
+
+**A cancel stops the waiting, not the deadline (Q179 (b)).** The supervisor's description has
+always said the watchdog runs whoever is awaiting the result, and its cancel path disarmed it. A
+cancelled request now stays registered with its deadline armed; an answer, the deadline or a lost
+host each clear it. `ComHostPolicy.DecideInFlight` says so and the watchdog acts on it, so it is no
+longer a decision nothing calls.
+
+**The rebuild only attaches (Q179 (c)).** The child's one-shot rebuild of a read after a
+disconnect used to reconnect with starting allowed. On 2026-11-15 it started Outlook 67 ms after
+the hung one was ended, for a client that had left twelve minutes before. It now attaches or reports
+the disconnect; only the next request, through its own gate, starts Outlook (Q150 (a)). Q212 (a)'s
+folder searches of an Exchange mailbox with Outlook closed start it through the same
+`OutlookComSession.Connect`, so everything above applies to them too.
 
 ## Degraded results are stated, not implied
 
