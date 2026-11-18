@@ -689,7 +689,7 @@ public sealed class LiveTierInventoryTests
         List<string> problems = new();
         foreach (Type type in LiveTestClasses())
         {
-            string? collection = SingleAttributeArgument(type, "CollectionAttribute");
+            string? collection = Traits.SingleAttributeArgument(type, "CollectionAttribute");
             if (collection == null)
             {
                 problems.Add(type.Name + ": no [Collection] - runs outside every live-tier guard");
@@ -710,7 +710,7 @@ public sealed class LiveTierInventoryTests
         // ordered list are guarded. A collection missing from LiveCollections.All is invisible
         // to that question, so a run ending in it would never be verified.
         List<string> declared = typeof(LiveCollections).Assembly.GetTypes()
-            .Select(t => SingleAttributeArgument(t, "CollectionDefinitionAttribute"))
+            .Select(t => Traits.SingleAttributeArgument(t, "CollectionDefinitionAttribute"))
             .Where(name => name != null)
             .Select(name => name!)
             .OrderBy(name => name, StringComparer.Ordinal)
@@ -920,63 +920,7 @@ public sealed class LiveTierInventoryTests
     /// </summary>
     private static HashSet<string> StringLiteralsOf(Type type)
     {
-        HashSet<string> literals = new(StringComparer.Ordinal);
-        CollectStringLiterals(type, literals);
-        return literals;
-    }
-
-    private static void CollectStringLiterals(Type type, HashSet<string> literals)
-    {
-        const BindingFlags all = BindingFlags.Public | BindingFlags.NonPublic
-            | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
-
-        foreach (MethodBase method in type.GetMethods(all).Cast<MethodBase>().Concat(type.GetConstructors(all)))
-        {
-            byte[]? il = SafeIl(method);
-            if (il == null)
-            {
-                continue;
-            }
-
-            // ldstr is 0x72 followed by a 4-byte metadata token whose high byte is 0x70
-            // (the user-string heap). Requiring that byte is what keeps the scan from
-            // resolving random operand bytes, and ResolveString covers the rest by throwing.
-            for (int i = 0; i + 4 < il.Length; i++)
-            {
-                if (il[i] != 0x72 || il[i + 4] != 0x70)
-                {
-                    continue;
-                }
-
-                int token = il[i + 1] | (il[i + 2] << 8) | (il[i + 3] << 16) | (il[i + 4] << 24);
-                try
-                {
-                    literals.Add(type.Module.ResolveString(token));
-                }
-                catch (ArgumentException)
-                {
-                    // Not a real ldstr - the bytes happened to look like one.
-                }
-            }
-        }
-
-        foreach (Type nested in type.GetNestedTypes(BindingFlags.Public | BindingFlags.NonPublic))
-        {
-            CollectStringLiterals(nested, literals);
-        }
-    }
-
-    private static byte[]? SafeIl(MethodBase method)
-    {
-        try
-        {
-            return method.GetMethodBody()?.GetILAsByteArray();
-        }
-        catch (Exception ex) when (ex is InvalidOperationException || ex is NotSupportedException)
-        {
-            // Abstract, extern or otherwise bodiless.
-            return null;
-        }
+        return IlReader.StringsOf(type);
     }
 
     /// <summary>Every non-abstract class in this assembly that declares at least one test.</summary>
@@ -1043,16 +987,6 @@ public sealed class LiveTierInventoryTests
             .Where(value => value != null)
             .Select(value => value!)
             .ToList();
-    }
-
-    /// <summary>The one string argument of an attribute named <paramref name="attributeName"/>, or null.</summary>
-    private static string? SingleAttributeArgument(Type type, string attributeName)
-    {
-        return type.GetCustomAttributesData()
-            .Where(a => string.Equals(a.AttributeType.Name, attributeName, StringComparison.Ordinal))
-            .Where(a => a.ConstructorArguments.Count == 1)
-            .Select(a => a.ConstructorArguments[0].Value as string)
-            .FirstOrDefault(value => value != null);
     }
 
     private static string Name(MethodInfo method)

@@ -273,24 +273,10 @@ $script:SelfTestActive = $false
 
 function Say([string] $m) { Write-Host ("[{0:HH:mm:ss}] {1}" -f (Get-Date), $m) }
 
-# A native program whose stderr is redirected runs through here. Under Windows PowerShell 5.1,
-# with 'Stop', the first line a native program writes to a redirected stderr is a terminating
-# NativeCommandError; 'Continue' holds only inside this function, the try keeps "program not
-# found" terminating, and callers judge the call by $LASTEXITCODE. Restated from the repository's
-# other scripts (Tools/Checks/check-powershell-51.ps1 explains the rule).
-function Invoke-NativeCommand {
-    param([Parameter(Mandatory = $true)] [scriptblock] $NativeCommand)
-
-    $ErrorActionPreference = 'Continue'
-    try {
-        & $NativeCommand | ForEach-Object {
-            if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.Exception.Message } else { $_ }
-        }
-    }
-    catch {
-        throw
-    }
-}
+# Every program call goes through Invoke-NativeCommand, so that Windows PowerShell 5.1 cannot end
+# the script on a program's first stderr line (Q78). It is one of the helpers the scripts share,
+# dot-sourced from Testbed/guest/ScriptHelpers.ps1 (Q166 (b), decision 215 (a)), which says why.
+. (Join-Path $PSScriptRoot '..\Testbed\guest\ScriptHelpers.ps1')
 
 # =============================================================================================
 # THE REGISTRY, THROUGH ONE DOOR. Every path is relative to HKCU. The self-test points a layout at

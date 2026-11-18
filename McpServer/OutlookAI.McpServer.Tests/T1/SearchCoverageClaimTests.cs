@@ -478,7 +478,7 @@ public sealed class SearchCoverageClaimTests
     }
 
     private static MailService Service(
-        StubIndexClient index,
+        CoverageIndexClient index,
         Func<string?, ComSweepResult> sweep,
         Func<string?, ComExhaustiveResult>? scan = null)
     {
@@ -486,9 +486,9 @@ public sealed class SearchCoverageClaimTests
             new DirectGateway(StandInSession.Create(ProfileStores, sweep, scan)), null, index);
     }
 
-    private static StubIndexClient Index(bool folderResolves = true, bool storeResolves = true)
+    private static CoverageIndexClient Index(bool folderResolves = true, bool storeResolves = true)
     {
-        return new StubIndexClient(folderResolves, storeResolves);
+        return new CoverageIndexClient(folderResolves, storeResolves);
     }
 
     /// <summary>A sweep that reaches the store and finds one mail.</summary>
@@ -561,70 +561,27 @@ public sealed class SearchCoverageClaimTests
     }
 
     /// <summary>
-    /// A Windows Search stand-in that knows one store and answers the probe statements by
-    /// shape. It returns no SEARCH rows at all, which is the state every case here needs:
-    /// the index tier contributes nothing and the question is what the answer then SAYS.
-    /// <para>
-    /// <c>folderResolves</c> / <c>storeResolves</c> drive the two TOP-1 existence probes
-    /// independently, which is the pair of fixtures gap G5 needs and nothing had.
-    /// </para>
+    /// The index of the one store, whose reachability probe answers the folder probe and the store
+    /// probe separately: telling the two apart is the whole point of the fixture.
     /// </summary>
-    private sealed class StubIndexClient : IIndexClient
+    private sealed class CoverageIndexClient : StubIndexClient
     {
-        private const string DiscoveryTail = " System.ItemUrl FROM SystemIndex WHERE System.Kind='email'";
-
         private readonly bool _folderResolves;
         private readonly bool _storeResolves;
 
-        internal StubIndexClient(bool folderResolves, bool storeResolves)
+        internal CoverageIndexClient(bool folderResolves, bool storeResolves)
+            : base(new[] { StorePrefix }, SearchCoverageClaimTests.Frontier, everyScope: true)
         {
             _folderResolves = folderResolves;
             _storeResolves = storeResolves;
         }
 
-        public IndexProviderKind Provider => IndexProviderKind.OleDb;
-
-        public IReadOnlyList<IReadOnlyDictionary<string, object?>> ExecuteRows(
-            string sql, int maxRows, int? commandTimeoutSeconds = null)
+        protected override bool ProbeFinds(string sql)
         {
-            if (sql.EndsWith(DiscoveryTail, StringComparison.Ordinal))
-            {
-                return Rows(StorePrefix + "/0/Inbox/sampled-item");
-            }
-
-            if (sql.Contains("System.Message.DateReceived FROM SystemIndex", StringComparison.Ordinal))
-            {
-                return new[]
-                {
-                    (IReadOnlyDictionary<string, object?>)new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-                    {
-                        ["System.Message.DateReceived"] = Frontier,
-                    },
-                };
-            }
-
-            if (sql.StartsWith("SELECT TOP 1 System.ItemUrl FROM SystemIndex WHERE", StringComparison.Ordinal))
-            {
-                // The folder probe scopes BELOW the store prefix; the store probe is the
-                // prefix itself. Telling them apart is the whole point of the fixture.
-                bool folderProbe = sql.Contains(StorePrefix + "/0/", StringComparison.OrdinalIgnoreCase)
-                    || sql.Contains("ItemFolderPathDisplay", StringComparison.Ordinal);
-                bool answers = folderProbe ? _folderResolves : _storeResolves;
-                return answers ? Rows(StorePrefix + "/0/Inbox/probed-item") : Array.Empty<IReadOnlyDictionary<string, object?>>();
-            }
-
-            return Array.Empty<IReadOnlyDictionary<string, object?>>();
-        }
-
-        private static IReadOnlyList<IReadOnlyDictionary<string, object?>> Rows(string itemUrl)
-        {
-            return new[]
-            {
-                (IReadOnlyDictionary<string, object?>)new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-                {
-                    ["System.ItemUrl"] = itemUrl,
-                },
-            };
+            // The folder probe scopes BELOW the store prefix; the store probe is the prefix itself.
+            bool folderProbe = sql.Contains(StorePrefix + "/0/", StringComparison.OrdinalIgnoreCase)
+                || sql.Contains("ItemFolderPathDisplay", StringComparison.Ordinal);
+            return folderProbe ? _folderResolves : _storeResolves;
         }
     }
 

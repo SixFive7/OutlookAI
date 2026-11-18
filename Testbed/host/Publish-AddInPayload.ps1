@@ -340,25 +340,10 @@ $ManifestFileName = 'addin-payload.json'
 
 function Say([string] $m) { Write-Host ("[{0:HH:mm:ss}] {1}" -f (Get-Date), $m) }
 
-# Every native call whose stderr is redirected goes through this. Under Windows PowerShell 5.1,
-# with $ErrorActionPreference = 'Stop', the FIRST line a native program writes to stderr is a
-# terminating NativeCommandError whether the redirection is 2>$null, 2>&1 or *> - measured
-# 2026-09-24; PowerShell 7 does not do it. 'Continue' holds only inside this function, so the
-# caller's 'Stop' is untouched; callers still judge the call by $LASTEXITCODE. The same helper is
-# restated in the other host scripts, in this repository's "restated locally" style.
-function Invoke-NativeCommand {
-    param([Parameter(Mandatory = $true)] [scriptblock] $NativeCommand)
-
-    $ErrorActionPreference = 'Continue'
-    try {
-        & $NativeCommand | ForEach-Object {
-            if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.Exception.Message } else { $_ }
-        }
-    }
-    catch {
-        throw
-    }
-}
+# Every program call goes through Invoke-NativeCommand, so that Windows PowerShell 5.1 cannot end
+# the script on a program's first stderr line (Q78). It is one of the helpers the scripts share,
+# dot-sourced from Testbed/guest/ScriptHelpers.ps1 (Q166 (b), decision 215 (a)), which says why.
+. (Join-Path $PSScriptRoot '..\guest\ScriptHelpers.ps1')
 
 # =============================================================================================
 # PURE DECISIONS. Everything below this line up to the I/O section decides from its arguments

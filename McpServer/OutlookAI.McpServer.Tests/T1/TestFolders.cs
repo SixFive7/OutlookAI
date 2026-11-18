@@ -26,6 +26,17 @@ internal static class TestFolders
         return hash.Take(16).ToArray();
     }
 
+    /// <summary>
+    /// A PST store's EntryID: the store provider's header (msspst.dll) and then the file's path in
+    /// UTF-16, with its terminator.
+    /// </summary>
+    internal static byte[] PstStoreEntryId(string path)
+    {
+        byte[] header = Convert.FromHexString(
+            "0000000038A1BB1005E5101AA1BB08002B2A56C200006D737073742E646C6C00000000004E495441F9BFB80100AA0037D96E0000" + "0000");
+        return header.Concat(Encoding.Unicode.GetBytes(path + "\0")).ToArray();
+    }
+
     /// <summary>A store's root folder entry id (hex).</summary>
     internal static string RootEntryId(string store) => EntryId(store, 0x8022);
 
