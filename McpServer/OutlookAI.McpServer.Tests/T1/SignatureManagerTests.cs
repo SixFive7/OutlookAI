@@ -717,10 +717,11 @@ public sealed class SignatureManagerTests : IDisposable
     }
 
     [Theory]
-    [InlineData(SignaturePolicySource.GroupPolicy, "cannot be changed")]
-    [InlineData(SignaturePolicySource.Preference, "would do nothing")]
-    public void Policy_ADefaultSetForEveryAccount_RefusesADefaultChange(SignaturePolicySource source, string why)
+    [InlineData(SignaturePolicySource.GroupPolicy)]
+    [InlineData(SignaturePolicySource.CloudPolicy)]
+    public void Policy_ADefaultAPolicyNames_RefusesADefaultChange(SignaturePolicySource source)
     {
+        // Q156: under a policy's default OutlookAI changes no account's default.
         SeedSignature("S", withResources: false);
         FakeDefaultsStore store = new FakeDefaultsStore().Account(Profile, "k", "jan@example.com");
 
@@ -728,8 +729,30 @@ public sealed class SignatureManagerTests : IDisposable
             SetDefault("S", Profile, "jan@example.com"), store, settings: new FakeSignatureSettings().Policy(source, newMessage: "Corporate")));
 
         Assert.Equal("default_set_by_policy", refusal.Reason);
-        Assert.Contains(why, refusal.Message, StringComparison.Ordinal);
+        Assert.Contains("does not change an account's default under a policy (Q156)", refusal.Message, StringComparison.Ordinal);
+        Assert.Contains("'Corporate'", refusal.Message, StringComparison.Ordinal);
         Assert.Empty(store.Writes);
+
+        // The scope the policy leaves alone is the account's to change.
+        Manage(SetDefault("S", Profile, "jan@example.com", "reply"), store, settings: new FakeSignatureSettings().Policy(source, newMessage: "Corporate"));
+        Assert.Equal(new[] { ("k", SignatureManager.ReplyForwardSignatureValueName, "S") }, store.Writes);
+    }
+
+    [Fact]
+    public void Policy_ADeployedDefault_LeavesTheAccountsOwnToChange()
+    {
+        // Q201, measured 2026-11-18: an account's own default ranks above a default deployed in Outlook's
+        // Common\MailSettings, so changing it changes what a draft gets - it is no longer refused.
+        SeedSignature("S", withResources: false);
+        FakeDefaultsStore store = new FakeDefaultsStore().Account(Profile, "k", "jan@example.com");
+
+        ManageSignatureOutcome outcome = Manage(SetDefault("S", Profile, "jan@example.com", "both"), store,
+            settings: new FakeSignatureSettings().Policy(SignaturePolicySource.Preference, newMessage: "Deployed", reply: "Deployed reply"));
+
+        Assert.Equal(2, outcome.DefaultsChanged!.Count);
+        Assert.Equal(
+            new[] { ("k", SignatureManager.NewSignatureValueName, "S"), ("k", SignatureManager.ReplyForwardSignatureValueName, "S") },
+            store.Writes);
     }
 
     [Fact]

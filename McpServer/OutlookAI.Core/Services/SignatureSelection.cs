@@ -170,14 +170,15 @@ namespace OutlookAI.Core.Services
     /// once the add-in references Core).
     /// <list type="bullet">
     /// <item><b>Left out</b>: the sending account's EFFECTIVE default for new mail or for replies and
-    /// forwards - a policy's or deployed setting's when one is set, else the account's own in the
-    /// profile Outlook is RUNNING (else the recorded default profile).</item>
+    /// forwards - its own in the profile Outlook is RUNNING (else the recorded default profile), and a
+    /// policy's or deployed setting's only where it has none (<see cref="SignaturePolicy.EffectiveDefault"/>).</item>
     /// <item><b>"none"</b>: no signature.</item>
     /// <item><b>A name</b>: that signature - only one the sending account can use: any signature of
     /// this device, and a roaming copy only for its own account.</item>
     /// </list>
-    /// Policy (Q156): no signature at all while signatures are disabled; under a FORCED default a
-    /// different choice is refused until a measurement shows Outlook allows one per message.
+    /// Policy (Q156): no signature at all while signatures are disabled. Under a forced default one message may
+    /// still have another signature or none, because Outlook's own compose window allows both: its Signature button
+    /// stays open (measured 2026-11-18, Q200 (a), <c>Docs/live-tier-on-the-vm.md</c> section 4.9).
     /// Delegate and shared mailboxes (Q160): no account default applies, so none goes in unless named.
     /// </summary>
     public static class SignatureSelector
@@ -243,12 +244,6 @@ namespace OutlookAI.Core.Services
                             + ", and Outlook offers it only to that account" + UsableList(environment, sendingAccount), profile);
                     }
 
-                    string? forced = ForcedConflict(policy, replyOrForward, signature.Name);
-                    if (forced != null)
-                    {
-                        return Refuse(request, forced, profile);
-                    }
-
                     (string? suggestion, string? why) = Suggest(effective, signature.Name);
                     return new SignatureDecision(
                         request.Kind, signature.Name, signature.PreferredFilePath, SignatureDecision.SourceRequested,
@@ -257,12 +252,6 @@ namespace OutlookAI.Core.Services
 
                 case SignatureRequestKind.None:
                 {
-                    string? forced = ForcedConflict(policy, replyOrForward, null);
-                    if (forced != null)
-                    {
-                        return Refuse(request, forced, profile);
-                    }
-
                     (string? suggestion, string? why) = Suggest(effective, null);
                     return None(request, "signature=\"none\" was asked for", profile, suggestion, why);
                 }
@@ -453,7 +442,8 @@ namespace OutlookAI.Core.Services
             if (name != null && source != null)
             {
                 return new Effective(name, SignatureDecision.SourcePolicyDefault,
-                    "'" + name + "' is the signature " + SignaturePolicy.Describe(source) + " sets for " + scope + " of every account");
+                    "'" + name + "' is the signature " + SignaturePolicy.Describe(source) + " sets for " + scope + ", used where "
+                    + (account == null ? "the mail's mailbox" : account.Label) + " has no default of its own");
             }
 
             if (account == null)
@@ -496,22 +486,6 @@ namespace OutlookAI.Core.Services
             return account?.SmtpAddress != null && ProfileAccountEntries.AddressEquals(owner, account.SmtpAddress) ? null : owner;
         }
 
-        /// <summary>The refusal a policy-forced default makes of a different choice, or null.</summary>
-        private static string? ForcedConflict(SignaturePolicy policy, bool? replyOrForward, string? chosen)
-        {
-            foreach (bool reply in replyOrForward == null ? new[] { false, true } : new[] { replyOrForward.Value })
-            {
-                if (policy.ForcedFor(reply) && !string.Equals(policy.DefaultFor(reply), chosen, StringComparison.OrdinalIgnoreCase))
-                {
-                    return SignaturePolicy.Describe(policy.SourceFor(reply)) + " forces the signature '" + policy.DefaultFor(reply)
-                        + "' for " + (reply ? "replies and forwards" : "new messages") + " of every account, and whether Outlook lets a "
-                        + "single message use " + (chosen == null ? "none" : "another") + " has not been measured, so OutlookAI does "
-                        + "not (Q156). Leave signature out to get '" + policy.DefaultFor(reply) + "'.";
-                }
-            }
-
-            return null;
-        }
 
         private static (string? Suggestion, string? Reason) Suggest(Effective effective, string? used)
         {
@@ -587,7 +561,10 @@ namespace OutlookAI.Core.Services
         /// <summary>True when policy disables signatures: nothing may be inserted.</summary>
         public bool SignaturesDisabled { get; }
 
-        /// <summary>True when policy forces a default: an automatic pick must leave it alone (Q156).</summary>
+        /// <summary>
+        /// True when a policy names a default, so OutlookAI does not change the account's own (Q156). One message may
+        /// still have another signature, as Outlook's own compose window allows (measured 2026-11-18, Q200 (a)).
+        /// </summary>
         public bool DefaultsForced { get; }
     }
 }

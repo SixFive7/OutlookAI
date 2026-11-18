@@ -132,13 +132,16 @@ namespace OutlookAI.Core.Services
     /// <list type="bullet">
     /// <item><c>DisableSignatures</c> (DWORD 1, the Group Policy "Do not allow signatures for e-mail
     /// messages") - no signature at all.</item>
-    /// <item><c>NewSignature</c> / <c>ReplySignature</c> (REG_SZ, a signature name) - the default for
-    /// new mail and for replies and forwards, for EVERY account. From a policy source it is FORCED:
-    /// "all accounts in the profile use the signatures you defined and they can't be changed"
-    /// (MVP, technet). From the preference key it is a deployed default.</item>
+    /// <item><c>NewSignature</c> / <c>ReplySignature</c> (a string, a signature name) - a default for new mail
+    /// and for replies and forwards. From a policy source it is FORCED - OutlookAI does not change an account's
+    /// default under it (Q156); from the preference key it is a deployed default.</item>
     /// </list>
-    /// Precedence: Cloud Policy over Group Policy (documented, ms-cloudpol) over the preference, and
-    /// all of them over the per-account values (the research's model, until MEASURE G2 says more).
+    /// Precedence: Cloud Policy over Group Policy (documented, ms-cloudpol) over the preference - and an account's
+    /// OWN default over all of them. MEASURED 2026-11-18 on Office LTSC 2024 (Q200 (a), Q201;
+    /// <c>Docs/live-tier-on-the-vm.md</c> section 4.9): with the values set before Outlook started, as REG_SZ or as
+    /// REG_EXPAND_SZ, Outlook put an account's own default in a new mail, a reply and a forward, not theirs, and kept
+    /// its Signature button open. They name the default of an account that has none of its own
+    /// (<see cref="EffectiveDefault"/>).
     /// </summary>
     public sealed class SignaturePolicy
     {
@@ -210,27 +213,29 @@ namespace OutlookAI.Core.Services
         /// <summary>
         /// The default a draft of an account gets for one scope, given the account's own (null for none, or for no account),
         /// and where it came from: <paramref name="source"/> is the policy or deployed setting it came from, null for the
-        /// account's own. The ONE rule the draft tools (<see cref="SignatureSelector"/>), list_signatures and
-        /// manage_signature share (Q154), so what OutlookAI inserts, lists and refuses is ranked the same everywhere.
+        /// account's own. The account's own comes first and the setting's only where it has none - what Outlook does
+        /// (measured 2026-11-18, Q200 (a), Q201; see the class). The ONE rule the draft tools
+        /// (<see cref="SignatureSelector"/>), list_signatures and manage_signature share (Q154).
         /// </summary>
         public string? EffectiveDefault(bool replyOrForward, string? accountsOwn, out SignaturePolicySource? source)
         {
-            string? set = DefaultFor(replyOrForward);
-            if (set != null)
+            if (accountsOwn != null)
             {
-                source = SourceFor(replyOrForward);
-                return set;
+                source = null;
+                return accountsOwn;
             }
 
-            source = null;
-            return accountsOwn;
+            string? set = DefaultFor(replyOrForward);
+            source = set != null ? SourceFor(replyOrForward) : null;
+            return set;
         }
 
         /// <summary>
-        /// True when a policy or deployed setting takes that scope's default out of the account's hands, so manage_signature
-        /// refuses to change the account's own.
+        /// True when a POLICY names that scope's default, so manage_signature refuses to change the account's own (Q156:
+        /// a change of default is refused under a forced default). A deployed preference does not: the account's own
+        /// default ranks above it, so changing it changes what a draft gets (Q201).
         /// </summary>
-        public bool TakesDefault(bool replyOrForward) => DefaultFor(replyOrForward) != null;
+        public bool TakesDefault(bool replyOrForward) => ForcedFor(replyOrForward);
 
         /// <summary>The source in words, for answers and refusals.</summary>
         public static string Describe(SignaturePolicySource? source)

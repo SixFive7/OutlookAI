@@ -782,17 +782,12 @@ namespace OutlookAI.Core.Services
 
             foreach (bool reply in ScopesOf(scope!))
             {
-                string? fixedName = policy.DefaultFor(reply);
                 if (policy.TakesDefault(reply))
                 {
-                    bool forced = policy.ForcedFor(reply);
                     throw new SignatureRefusedException("default_set_by_policy",
-                        "The default for " + (reply ? "replies and forwards" : "new messages") + " is set for every account by "
-                        + SignaturePolicy.Describe(policy.SourceFor(reply)) + ": '" + fixedName + "'. "
-                        + (forced
-                            ? "It is a policy, so it cannot be changed here or in Outlook."
-                            : "While it is set Outlook does not use a per-account default, so one written here would do nothing.")
-                        + " Nothing was written.");
+                        SignaturePolicy.Describe(policy.SourceFor(reply)) + " names the default signature for "
+                        + (reply ? "replies and forwards" : "new messages") + ", '" + policy.DefaultFor(reply) + "', and OutlookAI does "
+                        + "not change an account's default under a policy (Q156). Nothing was written.");
                 }
             }
 

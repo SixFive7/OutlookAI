@@ -103,6 +103,27 @@ public sealed class SignatureEnvironmentTests
     }
 
     [Fact]
+    public void EffectiveDefault_TheAccountsOwnFirst_TheSettingOnlyWhereItHasNone_AndOnlyAPolicyLocksIt()
+    {
+        // Q200 (a), Q201, measured 2026-11-18 (runbook 4.9): Outlook put an account's own default in, not the setting's.
+        SignaturePolicy policy = SignaturePolicy.Read(new FakeSignatureSettings()
+            .Policy(SignaturePolicySource.Preference, newMessage: "Deployed")
+            .Policy(SignaturePolicySource.GroupPolicy, reply: "Forced"), "16.0");
+
+        Assert.Equal("Own", policy.EffectiveDefault(false, "Own", out SignaturePolicySource? ownSource));
+        Assert.Null(ownSource);
+        Assert.Equal("Deployed", policy.EffectiveDefault(false, null, out SignaturePolicySource? deployedSource));
+        Assert.Equal(SignaturePolicySource.Preference, deployedSource);
+        Assert.Equal("Own reply", policy.EffectiveDefault(true, "Own reply", out _));
+        Assert.Equal("Forced", policy.EffectiveDefault(true, null, out SignaturePolicySource? forcedSource));
+        Assert.Equal(SignaturePolicySource.GroupPolicy, forcedSource);
+        Assert.False(policy.TakesDefault(false), "a deployed default does not lock the account's own (Q201)");
+        Assert.True(policy.TakesDefault(true), "a policy does (Q156)");
+        Assert.Null(SignaturePolicy.None.EffectiveDefault(false, null, out SignaturePolicySource? none));
+        Assert.Null(none);
+    }
+
+    [Fact]
     public void Policy_APreferenceDefault_IsADefaultForEveryAccount_ButNotForced()
     {
         SignaturePolicy policy = SignaturePolicy.Read(

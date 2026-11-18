@@ -75,14 +75,28 @@ public sealed class SignatureListingTests : IDisposable
 
         SignaturesOutcome forced = SignatureListing.Build(
             Environment(accounts, new FakeSignatureSettings().Policy(SignaturePolicySource.GroupPolicy, newMessage: "Corporate")), "Outlook", null, null);
+        // The account's own default before the policy's (measured 2026-11-18, Q200 (a)); the policy's for an account with
+        // none. Neither may be changed through OutlookAI while the policy names one (Q156).
         SignatureAccountView pop = forced.Profiles[0].Accounts[0];
-        Assert.Equal("Corporate", pop.EffectiveNewMessage);
+        Assert.Equal("Own", pop.EffectiveNewMessage);
         Assert.Equal("Own", pop.NewMessage);
-        Assert.Equal("groupPolicy", pop.DefaultsFrom);
+        Assert.Equal("account", pop.DefaultsFrom);
         Assert.False(pop.DefaultsEditable);
-        Assert.Contains("Group Policy", pop.DefaultsLocked, StringComparison.Ordinal);
+        Assert.Contains("Group Policy names a default signature", pop.DefaultsLocked, StringComparison.Ordinal);
+        SignatureAccountView exchange = forced.Profiles[0].Accounts[1];
+        Assert.Equal("Corporate", exchange.EffectiveNewMessage);
+        Assert.Null(exchange.NewMessage);
+        Assert.Equal("groupPolicy", exchange.DefaultsFrom);
         Assert.Equal("Corporate", forced.Policy!.NewMessage);
         Assert.Equal("groupPolicy", forced.Policy.NewMessageFrom);
+
+        // A deployed default ranks below the account's own too, and leaves its defaults to change (Q201).
+        SignaturesOutcome deployed = SignatureListing.Build(
+            Environment(accounts, new FakeSignatureSettings().Policy(SignaturePolicySource.Preference, newMessage: "Deployed")), "Outlook", null, null);
+        Assert.Equal("Own", deployed.Profiles[0].Accounts[0].EffectiveNewMessage);
+        Assert.True(deployed.Profiles[0].Accounts[0].DefaultsEditable);
+        Assert.Equal("Deployed", deployed.Profiles[0].Accounts[1].EffectiveNewMessage);
+        Assert.Equal("preference", deployed.Profiles[0].Accounts[1].DefaultsFrom);
 
         SignaturesOutcome roaming = SignatureListing.Build(Environment(accounts, new FakeSignatureSettings().Microsoft365()), "Outlook", null, null);
         Assert.True(roaming.Profiles[0].Accounts[0].DefaultsEditable);

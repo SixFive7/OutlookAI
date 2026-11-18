@@ -128,7 +128,7 @@ public sealed class LiveSignatureSettingsTests
     [Fact]
     [Trait("Requires", "MailAccount")]
     [Trait("Requires", "LocalSignatures")]
-    public void G2_ADeployedDefault_IsWhatADraftGets_AnotherChoiceStaysAllowed_AndOutlooksViewIsRecorded()
+    public void G2_ADeployedDefault_GivesWayToTheAccountsOwn_AnotherChoiceStaysAllowed_AndOutlooksViewIsRecorded()
     {
         string running = _fixture.VerifySession.GetProfileName();
         SignatureDefaultsRow? hubRow = HubRow(running);
@@ -154,8 +154,7 @@ public sealed class LiveSignatureSettingsTests
         List<string> drafts = new();
         try
         {
-            // The account's own default first: manage_signature refuses a default change while a deployed
-            // one is in force, which is the point of the next assertions.
+            // The account's own default, then a deployed one beside it, written while Outlook runs.
             SetDefault(own.Name, running, hubRow.Account, "new");
             WriteValue(preferenceKey, SignaturePolicy.NewSignatureValueName, deployed.Name, RegistryValueKind.String);
 
@@ -165,34 +164,37 @@ public sealed class LiveSignatureSettingsTests
             SignatureAccountView row = listing.Profiles.Single(p => p.Running == true).Accounts
                 .Single(a => ProfileAccountEntries.AddressEquals(a.Account, hubRow.Account));
             Assert.Equal(own.Name, row.NewMessage);
-            Assert.Equal(deployed.Name, row.EffectiveNewMessage);
-            Assert.False(row.DefaultsEditable);
-            SignatureRefusedException refusal = Assert.Throws<SignatureRefusedException>(() => SetDefault(own.Name, running, hubRow.Account, "new"));
-            Assert.Equal("default_set_by_policy", refusal.Reason);
+
+            // Q201, measured 2026-11-18 with the setting made before Outlook started (runbook 4.9): the account's own
+            // default ranks above a deployed one. So it is the effective default, and it stays the account's to change.
+            Assert.Equal(own.Name, row.EffectiveNewMessage);
+            Assert.Equal("account", row.DefaultsFrom);
+            Assert.True(row.DefaultsEditable);
+            SetDefault(own.Name, running, hubRow.Account, "new");
 
             DraftOutcome byDefault = Service.NewDraft(
                 LiveStoreWriteGuard.Writable(Hub, StoreWriteKind.Draft, "new_draft"), Hub, cc: null,
-                _fixture.TaggedSubject("g2-deployed-default"), "G2 deployed default " + Marker, display: false, signature: null);
+                _fixture.TaggedSubject("g2-own-default"), "G2 own default " + Marker, display: false, signature: null);
             drafts.Add(byDefault.EntryId);
-            Assert.Equal(deployed.Name, byDefault.Signature);
-            Assert.Equal("policyDefault", byDefault.SignatureSource);
-            Assert.Contains(deployed.BodyMarker, Service.Read(byDefault.EntryId).Body, StringComparison.Ordinal);
+            Assert.Equal(own.Name, byDefault.Signature);
+            Assert.Equal("accountDefault", byDefault.SignatureSource);
+            Assert.Contains(own.BodyMarker, Service.Read(byDefault.EntryId).Body, StringComparison.Ordinal);
 
-            // A deployed setting is not a policy: a per-message choice stays allowed (Q156 forbids it only under a forced default).
+            // Another choice stays allowed - the deployed one included - and the account's own default is suggested.
             DraftOutcome chosen = Service.NewDraft(
                 LiveStoreWriteGuard.Writable(Hub, StoreWriteKind.Draft, "new_draft"), Hub, cc: null,
-                _fixture.TaggedSubject("g2-chosen"), "G2 chosen " + Marker, display: false, signature: own.Name);
+                _fixture.TaggedSubject("g2-chosen"), "G2 chosen " + Marker, display: false, signature: deployed.Name);
             drafts.Add(chosen.EntryId);
-            Assert.Equal(own.Name, chosen.Signature);
-            Assert.Equal(deployed.Name, chosen.SignatureSuggestion);
+            Assert.Equal(deployed.Name, chosen.Signature);
+            Assert.Equal(own.Name, chosen.SignatureSuggestion);
 
             OutlookSignatureEngineView engine = LiveOutlookTestMailer.ReadSignatureEngine(Hub, byDefault.EntryId, Marker);
             string verdict = engine.NewMessageSignature == null ? "unknown"
                 : string.Equals(engine.NewMessageSignature, deployed.Name, StringComparison.OrdinalIgnoreCase) ? "deployed default"
                 : string.Equals(engine.NewMessageSignature, own.Name, StringComparison.OrdinalIgnoreCase) ? "account's own default"
                 : "something else";
-            _output.WriteLine($"MEASURED G2 (preference): OutlookAI uses the deployed default; Outlook's engine reports new='"
-                + $"{engine.NewMessageSignature ?? "-"}' = {verdict}; error={engine.Error ?? "-"}");
+            _output.WriteLine($"MEASURED G2 (preference, written while Outlook runs): OutlookAI uses the account's own default; "
+                + $"Outlook's engine reports new='{engine.NewMessageSignature ?? "-"}' = {verdict}; error={engine.Error ?? "-"}");
         }
         finally
         {
