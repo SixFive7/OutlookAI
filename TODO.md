@@ -1690,7 +1690,7 @@
   `ThreadWalks`; six more suites - the thread, unindexed-store and folder-walk ones - still spell
   that mailbox's SID, prefix and frontier under names of their own, beside stores of their own).
   PowerShell, into `Testbed/guest/ScriptHelpers.ps1` (decision 215 (a)), held there by
-  check-powershell-51 check 4: P01's `Invoke-NativeCommand` for 15 of its 17 copies, P09's
+  check-powershell-51 check 4: P01's `Invoke-NativeCommand` for all 17 of its copies, P09's
   `Format-Seconds`, the build-VM runner's copy of which rounded 119.6 s to "1 m 60 s", and the
   runners' `Stop-Refused`, `New-RunId`, `ConvertFrom-TrxText`, `Get-LeaseDecision` and
   `Get-TaskExit`, which the live runner, the trust-removal probe and the build-VM runner share, P02's
@@ -1702,8 +1702,7 @@
   import is `Testbed/host/OwnEditionModules.ps1`, which the `Tools/` scripts dot-source too. The
   guest runners' id, state, heartbeat wait and checkpoint restore went into
   `Testbed/host/TestbedPool.ps1`, beside the narrow queries they ask (S7d step 2), and check 4 holds
-  that file and `TestbedLeasePath.ps1` to one copy too. Build-Corpus.ps1 and Reset-HubPopulation.ps1
-  fold with S7c, and the check lists them until they do.
+  that file and `TestbedLeasePath.ps1` to one copy too; its list of copies not folded yet is empty.
   What remains, one stage at a time: S3, the linked files and the shared logic (L01-L07, A06, A07,
   A10) into Core, the logic only the add-in runs into `OutlookAI.Core.AddIn` (Q163 (a)); S4, the
   signature and draft code (A01-A05, A08, A09, A12) with Q162's checkbox, Core winning where the

@@ -870,10 +870,9 @@ its mailbox tests on, and change nothing you install.
 - ♻️ **The scripts share one copy of the helpers they restated, in Testbed/guest/ScriptHelpers.ps1 (Q166).**
   Seventeen scripts each declared the same `Invoke-NativeCommand`, the wrapper every program call
   goes through so that Windows PowerShell 5.1 cannot end a script on the first line a program writes
-  to stderr. Fifteen of them now dot-source it from `Testbed/guest/ScriptHelpers.ps1`, where
+  to stderr. All seventeen now dot-source it from `Testbed/guest/ScriptHelpers.ps1`, where
   decision 215 (a) put the helpers the scripts share, so that every route that carries the guest
-  scripts to a test machine carries the file too; the two guest scripts left fold with the step
-  that proves them by a real run. It is a dot-sourced file and not a module
+  scripts to a test machine carries the file too. It is a dot-sourced file and not a module
   because a module does not pass the caller's error settings through: measured 2026-11-18, a script
   running a program through the wrapper from a module died on that first stderr line under Windows
   PowerShell 5.1, and came back with the program's exit code when the same function was dot-sourced.

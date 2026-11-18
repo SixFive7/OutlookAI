@@ -374,8 +374,6 @@ $script:SharedHelperFiles = @('Testbed/guest/ScriptHelpers.ps1', 'Testbed/host/T
 # Copies not folded yet, each with what folds it. Reported, and only ever shortened: an entry for a
 # script that no longer restates a shared function fails.
 $script:RestatedUntilFolded = [ordered]@{
-    'Testbed/guest/Build-Corpus.ps1'            = 'a guest script, folded with the guest helpers (S7c) and proven by its -Verify under a lease'
-    'Testbed/guest/Reset-HubPopulation.ps1'     = 'a guest script, folded with the guest helpers (S7c) and proven by its -Verify under a lease'
 }
 
 # The line a script that reaches a machine on its own carries, with how.
