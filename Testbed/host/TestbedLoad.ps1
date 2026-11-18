@@ -251,12 +251,10 @@ function Set-TestbedPauseOn {
     return (Get-TestbedPause)
 }
 
-# Turns it off: $true when it was on.
+# Turns it off: $true when it was on. Two turning it off at once do not throw (TestbedPool.ps1's
+# Remove-TestbedStateFile).
 function Set-TestbedPauseOff {
-    $path = Join-Path (Get-TestbedGateDirectory) 'paused.json'
-    if (-not (Test-Path -LiteralPath $path)) { return $false }
-    Remove-Item -LiteralPath $path -Force
-    return $true
+    return (Remove-TestbedStateFile (Join-Path (Get-TestbedGateDirectory) 'paused.json'))
 }
 
 # The VMs taken lately, as starts.json holds them; none when it is missing or cannot be read.
@@ -299,33 +297,17 @@ function Set-TestbedWaiting {
 }
 
 function Remove-TestbedWaiting {
-    try {
-        $path = Join-Path (Join-Path (Get-TestbedGateDirectory) 'waiting') "$PID.json"
-        if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force }
-    }
+    try { [void](Remove-TestbedStateFile (Join-Path (Join-Path (Get-TestbedGateDirectory) 'waiting') "$PID.json")) }
     catch { }
 }
 
 # The runs that wait now, the longest-waiting first. A record whose process has ended - a run stopped
-# while it waited - is deleted, not listed.
+# while it waited - is deleted, not listed, and one another lister deleted first is passed over
+# (TestbedPool.ps1's Read-TestbedLiveRecords): Set-TestbedPause.ps1 and every waiting run read these.
 function Get-TestbedWaiting {
     $dir = Join-Path (Get-TestbedGateDirectory) 'waiting'
     if (-not (Test-Path -LiteralPath $dir)) { return @() }
-    $alive = @()
-    foreach ($f in @(Get-ChildItem -LiteralPath $dir -Filter '*.json' -File -ErrorAction SilentlyContinue)) {
-        $r = $null
-        try { $r = [System.IO.File]::ReadAllText($f.FullName) | ConvertFrom-Json } catch { continue }
-        if ($null -eq $r) { continue }
-        $same = $false
-        $p = $null
-        try { $p = Get-Process -Id ([int]$r.pid) -ErrorAction SilentlyContinue } catch { }
-        if ($null -ne $p) {
-            # The same process, not another that has its id now.
-            try { $same = (([DateTimeOffset]$p.StartTime).ToUnixTimeSeconds() -eq [long]$r.processStartUnix) } catch { $same = $true }
-        }
-        if (-not $same) { Remove-Item -LiteralPath $f.FullName -Force -ErrorAction SilentlyContinue; continue }
-        $alive += $r
-    }
+    $alive = @(Read-TestbedLiveRecords -Paths @(Get-TestbedStateFiles $dir) | ForEach-Object { $_.Record })
     return @($alive | Sort-Object { [long]$_.sinceUnix })
 }
 
