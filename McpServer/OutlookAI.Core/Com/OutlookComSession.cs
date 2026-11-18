@@ -626,6 +626,16 @@ namespace OutlookAI.Core.Com
         /// tolerance - an exact probe, not a scan. An empty subject falls back to a
         /// bounded time-only enumeration (small folders only). Returns the first matching
         /// item snapshot carrying the item's REAL EntryID.
+        /// <para>
+        /// EVERY FOLDER AT THE PATH, NOT ONLY THE FIRST (decided 2026-11-18, option (a) of the TODO item
+        /// stream A's finding opened). Two folders of one name can sit side by side - the Exchange guest
+        /// has two top-level <c>Conversation Action Settings</c> - and the index keeps one path for both,
+        /// while <c>Folders[name]</c> answers with the first. So when the folder the name walk reaches does
+        /// not hold the item, or the walk finds no folder of a name, every other folder at that path is
+        /// probed too (<see cref="FolderPathCandidates"/>), reading each child's own name - which also
+        /// reaches a folder whose name holds <c>/</c> (Q99). An ordinary hit pays nothing for it: the
+        /// namesakes are looked for only after the first folder failed.
+        /// </para>
         /// </summary>
         public ComOpenResult? TryResolveByPath(
             string storeDisplayName,
@@ -654,105 +664,261 @@ namespace OutlookAI.Core.Com
             string? capturedError = null;
             ComOpenResult? result = _runner.Run<ComOpenResult?>(() =>
             {
-                object? currentFolder = null;
-                object? items = null;
-                object? restricted = null;
+                object? first = null;
+                string? firstEntryId = null;
+                string? reason;
                 try
                 {
-                    currentFolder = WalkToFolder(storeDisplayName, folderPath, out string? walkError);
-                    if (currentFolder == null)
+                    first = WalkToFolder(storeDisplayName, folderPath, out string? walkError);
+                    if (first == null)
                     {
-                        capturedError = walkError;
+                        reason = walkError;
+                    }
+                    else
+                    {
+                        ComOpenResult? found = ProbeFolderForItem(first, itemSubject, indexReceivedUtc, toleranceSeconds, out reason);
+                        if (found != null)
+                        {
+                            return found;
+                        }
+
+                        firstEntryId = TryReadFolderEntryId(first);
+                    }
+                }
+                catch (COMException ex)
+                {
+                    reason = string.Format(CultureInfo.InvariantCulture, "COMException 0x{0:X8}", ex.HResult);
+                }
+                finally
+                {
+                    Release(first);
+                }
+
+                if (MayTryNamesakes(folderPath, reason))
+                {
+                    ComOpenResult? viaNamesake = TryResolveInNamesakes(
+                        storeDisplayName, folderPath, firstEntryId, itemSubject, indexReceivedUtc, toleranceSeconds, ref reason);
+                    if (viaNamesake != null)
+                    {
+                        return viaNamesake;
+                    }
+                }
+
+                capturedError = reason;
+                return null;
+            });
+
+            error = capturedError;
+            return result;
+        }
+
+        /// <summary>
+        /// Whether the other folders at a path are worth probing after the first one failed with
+        /// <paramref name="reason"/>: when it held no such item, could not be probed, or no folder of a
+        /// name was found - never for the store root (an empty path has no namesake), and never when the
+        /// store or its root is out of reach or the hit gives nothing to probe with, which no other folder
+        /// can change. Pure.
+        /// </summary>
+        internal static bool MayTryNamesakes(IReadOnlyList<string> folderPath, string? reason)
+        {
+            if (folderPath == null || folderPath.Count == 0 || reason == null)
+            {
+                return false;
+            }
+
+            switch (reason)
+            {
+                case "FolderNotFound":
+                case "NoSubjectTimeMatch":
+                case "NoTimeOnlyMatch":
+                case "FolderTooLargeForTimeOnlyProbe":
+                    return true;
+                default:
+                    return reason.StartsWith("COMException", StringComparison.Ordinal);
+            }
+        }
+
+        /// <summary>
+        /// STA-side: probes every folder at <paramref name="folderPath"/> but the one already probed
+        /// (<paramref name="alreadyProbedEntryId"/>) for the item, and returns the first that holds it.
+        /// Leaves <paramref name="reason"/> as the most informative failure
+        /// (<see cref="HitLocator.MoreInformative"/>): "a folder of that name exists and the item is not in
+        /// it" beats "no folder of that name". A walk that fails as a whole keeps the first folder's answer.
+        /// Every folder it opened is released.
+        /// </summary>
+        private ComOpenResult? TryResolveInNamesakes(
+            string storeDisplayName,
+            IReadOnlyList<string> folderPath,
+            string? alreadyProbedEntryId,
+            string itemSubject,
+            DateTime? indexReceivedUtc,
+            int toleranceSeconds,
+            ref string? reason)
+        {
+            dynamic? store = FindStoreByDisplayName(storeDisplayName);
+            if (store == null)
+            {
+                return null;
+            }
+
+            object? root = null;
+            IReadOnlyList<object> candidates = Array.Empty<object>();
+            try
+            {
+                try
+                {
+                    root = store.GetRootFolder();
+                }
+                finally
+                {
+                    Release(store);
+                }
+
+                if (root == null)
+                {
+                    return null;
+                }
+
+                candidates = FolderPathCandidates.FindAll<object>(root, folderPath, ReadChildFolders, Release);
+                foreach (object candidate in candidates)
+                {
+                    if (alreadyProbedEntryId != null
+                        && string.Equals(TryReadFolderEntryId(candidate), alreadyProbedEntryId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    ComOpenResult? found;
+                    string? probeError;
+                    try
+                    {
+                        found = ProbeFolderForItem(candidate, itemSubject, indexReceivedUtc, toleranceSeconds, out probeError);
+                    }
+                    catch (COMException ex)
+                    {
+                        found = null;
+                        probeError = string.Format(CultureInfo.InvariantCulture, "COMException 0x{0:X8}", ex.HResult);
+                    }
+
+                    if (found != null)
+                    {
+                        return found;
+                    }
+
+                    reason = HitLocator.MoreInformative(reason, probeError);
+                }
+
+                return null;
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+                return null;
+            }
+            finally
+            {
+                foreach (object candidate in candidates)
+                {
+                    Release(candidate);
+                }
+
+                Release(root);
+            }
+        }
+
+        /// <summary>
+        /// STA-side: a folder's children with their own names - every child the collection hands out, a
+        /// name that would not read as null. The CALLER owns every folder returned. Empty when the children
+        /// will not enumerate.
+        /// </summary>
+        private static IReadOnlyList<(string? Name, object Folder)> ReadChildFolders(object folder)
+        {
+            List<(string? Name, object Folder)> result = new List<(string? Name, object Folder)>();
+            object? children = null;
+            try
+            {
+                children = ((dynamic)folder).Folders;
+                dynamic all = children!;
+                int count = all.Count;
+                for (int i = 1; i <= count; i++)
+                {
+                    object? child = null;
+                    try
+                    {
+                        child = all[i];
+                        if (child != null)
+                        {
+                            object held = child;
+                            result.Add((TryGetString(() => (string?)((dynamic)held).Name), held));
+                            child = null;
+                        }
+                    }
+                    catch (Exception ex) when (IsComCallFailure(ex))
+                    {
+                    }
+                    finally
+                    {
+                        Release(child);
+                    }
+                }
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+            }
+            finally
+            {
+                Release(children);
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// STA-side: the probe of ONE folder for the item an index hit names - subject and received time
+        /// in three tiers, or a bounded time-only enumeration for an item with no subject. The folder stays
+        /// the caller's: nothing here releases it. Null with a content-free reason when the item is not
+        /// there; a COM failure of the probe itself propagates for the caller to report.
+        /// </summary>
+        private ComOpenResult? ProbeFolderForItem(
+            object folderObject, string itemSubject, DateTime? indexReceivedUtc, int toleranceSeconds, out string? reason)
+        {
+            reason = null;
+            object? items = null;
+            object? restricted = null;
+            try
+            {
+                dynamic folder = folderObject;
+
+                if (itemSubject.Length == 0)
+                {
+                    // No subject to restrict on: bounded time-only enumeration,
+                    // acceptable only for small folders (e.g. the tiny test-hub store).
+                    if (!indexReceivedUtc.HasValue)
+                    {
+                        reason = "EmptySubjectAndNoReceivedTime";
                         return null;
                     }
 
-                    dynamic folder = currentFolder!;
-
-                    if (itemSubject.Length == 0)
-                    {
-                        // No subject to restrict on: bounded time-only enumeration,
-                        // acceptable only for small folders (e.g. the tiny test-hub store).
-                        if (!indexReceivedUtc.HasValue)
-                        {
-                            capturedError = "EmptySubjectAndNoReceivedTime";
-                            return null;
-                        }
-
-                        items = folder.Items;
-                        dynamic itemCollection = (dynamic)items!;
-                        int total = itemCollection.Count;
-                        if (total > TimeOnlyProbeMaxFolderItems)
-                        {
-                            capturedError = "FolderTooLargeForTimeOnlyProbe";
-                            return null;
-                        }
-
-                        for (int i = 1; i <= total; i++)
-                        {
-                            object? candidate = null;
-                            try
-                            {
-                                candidate = itemCollection[i];
-                                ComOpenResult snapshot = Snapshot(candidate);
-                                if (ReceivedTimeMatches(snapshot.ReceivedTime, indexReceivedUtc.Value, toleranceSeconds)
-                                    && (snapshot.Subject == null || snapshot.Subject.Length == 0))
-                                {
-                                    return snapshot;
-                                }
-                            }
-                            finally
-                            {
-                                Release(candidate);
-                            }
-                        }
-
-                        capturedError = "NoTimeOnlyMatch";
-                        return null;
-                    }
-
-                    string subjectClause = "\"urn:schemas:httpmail:subject\" = '" + EscapeDaslValue(itemSubject) + "'";
-
-                    // Tier A (Phase-2 narrowing, v3.MD section 0.8 Phase-1 guidance):
-                    // Folder.GetTable with subject + received-time window - lightweight
-                    // rows, no item RCWs until the final open. DASL date literals are UTC
-                    // and year-first (DaslDateLiteral - Outlook parses them in the machine
-                    // locale, so a month-first literal silently swaps day and month).
-                    if (indexReceivedUtc.HasValue)
-                    {
-                        string windowed = "@SQL=(" + subjectClause + ") AND (\"urn:schemas:httpmail:datereceived\" >= '"
-                            + DaslDateLiteral.FormatUtc(indexReceivedUtc.Value.AddSeconds(-toleranceSeconds - 5)) + "' AND \"urn:schemas:httpmail:datereceived\" <= '"
-                            + DaslDateLiteral.FormatUtc(indexReceivedUtc.Value.AddSeconds(toleranceSeconds + 5)) + "')";
-                        ComOpenResult? viaWindow = TryProbeViaGetTable(folder, windowed, indexReceivedUtc, toleranceSeconds);
-                        if (viaWindow != null)
-                        {
-                            return viaWindow;
-                        }
-                    }
-
-                    // Tier B: GetTable, subject-only.
-                    ComOpenResult? viaSubject = TryProbeViaGetTable(folder, "@SQL=" + subjectClause, indexReceivedUtc, toleranceSeconds);
-                    if (viaSubject != null)
-                    {
-                        return viaSubject;
-                    }
-
-                    // Tier C: legacy Items.Restrict (Phase-1 behavior) - correctness net
-                    // in case GetTable misbehaves on a folder type.
                     items = folder.Items;
-                    dynamic legacyItems = (dynamic)items!;
-                    restricted = legacyItems.Restrict("@SQL=" + subjectClause);
-                    dynamic restrictedItems = restricted!;
-                    int count = restrictedItems.Count;
-                    for (int i = 1; i <= count; i++)
+                    dynamic itemCollection = (dynamic)items!;
+                    int total = itemCollection.Count;
+                    if (total > TimeOnlyProbeMaxFolderItems)
+                    {
+                        reason = "FolderTooLargeForTimeOnlyProbe";
+                        return null;
+                    }
+
+                    ClosestByTime<ComOpenResult> nearestUntitled = new ClosestByTime<ComOpenResult>(toleranceSeconds);
+                    for (int i = 1; i <= total; i++)
                     {
                         object? candidate = null;
                         try
                         {
-                            candidate = restrictedItems[i];
+                            candidate = itemCollection[i];
                             ComOpenResult snapshot = Snapshot(candidate);
-                            if (!indexReceivedUtc.HasValue || ReceivedTimeMatches(snapshot.ReceivedTime, indexReceivedUtc.Value, toleranceSeconds))
+                            if ((snapshot.Subject == null || snapshot.Subject.Length == 0)
+                                && nearestUntitled.Offer(snapshot, HitLocator.SecondsApart(IndexTimeOf(candidate!, snapshot), indexReceivedUtc.Value)))
                             {
-                                return snapshot;
+                                break;
                             }
                         }
                         finally
@@ -761,24 +927,85 @@ namespace OutlookAI.Core.Com
                         }
                     }
 
-                    capturedError = "NoSubjectTimeMatch";
-                    return null;
-                }
-                catch (COMException ex)
-                {
-                    capturedError = string.Format(CultureInfo.InvariantCulture, "COMException 0x{0:X8}", ex.HResult);
-                    return null;
-                }
-                finally
-                {
-                    Release(restricted);
-                    Release(items);
-                    Release(currentFolder);
-                }
-            });
+                    if (nearestUntitled.Best != null)
+                    {
+                        return nearestUntitled.Best;
+                    }
 
-            error = capturedError;
-            return result;
+                    reason = "NoTimeOnlyMatch";
+                    return null;
+                }
+
+                string subjectClause = "\"urn:schemas:httpmail:subject\" = '" + EscapeDaslValue(itemSubject) + "'";
+
+                // Tier A (Phase-2 narrowing, v3.MD section 0.8 Phase-1 guidance):
+                // Folder.GetTable with subject + received-time window - lightweight
+                // rows, no item RCWs until the final open. DASL date literals are UTC
+                // and year-first (DaslDateLiteral - Outlook parses them in the machine
+                // locale, so a month-first literal silently swaps day and month).
+                if (indexReceivedUtc.HasValue)
+                {
+                    string windowed = "@SQL=(" + subjectClause + ") AND (\"urn:schemas:httpmail:datereceived\" >= '"
+                        + DaslDateLiteral.FormatUtc(indexReceivedUtc.Value.AddSeconds(-toleranceSeconds - 5)) + "' AND \"urn:schemas:httpmail:datereceived\" <= '"
+                        + DaslDateLiteral.FormatUtc(indexReceivedUtc.Value.AddSeconds(toleranceSeconds + 5)) + "')";
+                    ComOpenResult? viaWindow = TryProbeViaGetTable(folder, windowed, indexReceivedUtc, toleranceSeconds);
+                    if (viaWindow != null)
+                    {
+                        return viaWindow;
+                    }
+                }
+
+                // Tier B: GetTable, subject-only.
+                ComOpenResult? viaSubject = TryProbeViaGetTable(folder, "@SQL=" + subjectClause, indexReceivedUtc, toleranceSeconds);
+                if (viaSubject != null)
+                {
+                    return viaSubject;
+                }
+
+                // Tier C: legacy Items.Restrict (Phase-1 behavior) - correctness net
+                // in case GetTable misbehaves on a folder type.
+                items = folder.Items;
+                dynamic legacyItems = (dynamic)items!;
+                restricted = legacyItems.Restrict("@SQL=" + subjectClause);
+                dynamic restrictedItems = restricted!;
+                int count = restrictedItems.Count;
+                ClosestByTime<ComOpenResult> nearest = new ClosestByTime<ComOpenResult>(toleranceSeconds);
+                for (int i = 1; i <= count && i <= GetTableProbeMaxRows; i++)
+                {
+                    object? candidate = null;
+                    try
+                    {
+                        candidate = restrictedItems[i];
+                        ComOpenResult snapshot = Snapshot(candidate);
+                        if (!indexReceivedUtc.HasValue)
+                        {
+                            return snapshot;
+                        }
+
+                        if (nearest.Offer(snapshot, HitLocator.SecondsApart(IndexTimeOf(candidate!, snapshot), indexReceivedUtc.Value)))
+                        {
+                            break;
+                        }
+                    }
+                    finally
+                    {
+                        Release(candidate);
+                    }
+                }
+
+                if (nearest.Best != null)
+                {
+                    return nearest.Best;
+                }
+
+                reason = "NoSubjectTimeMatch";
+                return null;
+            }
+            finally
+            {
+                Release(restricted);
+                Release(items);
+            }
         }
 
         /// <summary>
@@ -1257,6 +1484,7 @@ namespace OutlookAI.Core.Com
             {
                 dynamic ns = _namespace!;
                 List<ComStoreDetail> result = new List<ComStoreDetail>();
+                int? connectionMode = TryReadConnectionMode((object)ns);
                 dynamic stores = ns.Stores;
                 try
                 {
@@ -1337,18 +1565,24 @@ namespace OutlookAI.Core.Com
                             // not answer is still listed, and is then tied to no index store.
                             //
                             // The same read gives the root folder's entry id, which the store's ID is
-                            // built from (Q133) - for every store but an Exchange store Outlook does not
-                            // cache, whose root folder is the server round trip this used to avoid for
-                            // all Exchange stores. That one is addressed by its own entry id instead
-                            // (OutlookIds.StoreIdOf). A cached Exchange store's root is in its .ost.
-                            string? ownName = null;
+                            // built from (Q133) - for EVERY store since 2026-11-18, an Exchange store
+                            // Outlook does not cache included (option (b) of its ID, decided under the
+                            // maintainer's Q131/Q132 delegation): its root is a server round trip, read
+                            // once per store-list refresh, so it gets the 28-character S ID like every
+                            // other store instead of T and its whole StoreID, which was long and changed
+                            // with the store's caching mode. Measured on the Exchange guest (2026-11-18,
+                            // Testbed/guest/Measure-FolderIdResolution.ps1): 2.2-3.0 ms for the online
+                            // entry's root, as for the cached stores'. A store whose root will not read
+                            // keeps T (OutlookIds.StoreIdOf), and so does an online-only one while Outlook
+                            // says it is offline, when its root is not asked for (ReadsTopFolder).
+                            string? rootName = null;
                             string? rootFolderEntryId = null;
-                            bool uncachedExchange = exchangeType.HasValue && exchangeType.Value != OlNotExchange && cached != true;
-                            if (!uncachedExchange)
+                            if (ReadsTopFolder(exchangeType, cached, connectionMode))
                             {
-                                TryReadRootFolder((object)store, out string? rootName, out rootFolderEntryId);
-                                ownName = exchangeType == OlNotExchange ? rootName : null;
+                                TryReadRootFolder((object)store, out rootName, out rootFolderEntryId);
                             }
+
+                            string? ownName = exchangeType == OlNotExchange ? rootName : null;
 
                             result.Add(new ComStoreDetail(
                                 displayName, storeId, exchangeType, cached, nameUnreadable, filePath, mappingSignature, profileSection,
@@ -1371,6 +1605,35 @@ namespace OutlookAI.Core.Com
 
                 return (IReadOnlyList<ComStoreDetail>)result;
             });
+        }
+
+        /// <summary>
+        /// Whether a store's top folder is read for its ID: always, but for an Exchange store Outlook does not
+        /// cache while Outlook says it is offline or disconnected (<c>ExchangeConnectionMode</c> 100 to 400). That
+        /// store's top folder is a server round trip, and a call that needs a server none answers can wait: on the
+        /// Exchange guest a folder lookup waited 26 s just after the VM resumed, while Outlook still reported
+        /// itself connected (2026-11-18). So while Outlook SAYS it has no server the top folder is not asked for,
+        /// and the store keeps the T ID until it is connected again; a silent loss of the network is not covered.
+        /// A mode that would not read changes nothing. Pure.
+        /// </summary>
+        internal static bool ReadsTopFolder(int? exchangeStoreType, bool? isCachedExchange, int? connectionMode)
+        {
+            bool uncachedExchange = exchangeStoreType.HasValue && exchangeStoreType.Value != OlNotExchange && isCachedExchange != true;
+            bool disconnected = connectionMode.HasValue && connectionMode.Value >= 100 && connectionMode.Value <= 400;
+            return !(uncachedExchange && disconnected);
+        }
+
+        /// <summary>STA-side: <c>NameSpace.ExchangeConnectionMode</c>, or null when it will not read.</summary>
+        private static int? TryReadConnectionMode(object ns)
+        {
+            try
+            {
+                return (int)((dynamic)ns).ExchangeConnectionMode;
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+                return null;
+            }
         }
 
         /// <summary>
@@ -1404,6 +1667,64 @@ namespace OutlookAI.Core.Com
         }
 
         /// <summary>
+        /// STA-side: every store of the profile as <see cref="StoreTwins"/> tells two entries of one mailbox
+        /// apart - its name (or its <see cref="StoreNaming"/> label), StoreID, Exchange store type, cached flag
+        /// and top folder's entry id - in the profile's order. A value that will not read is left empty; a
+        /// store that will not answer at all is still counted, so the positions stay the profile's.
+        /// </summary>
+        private IReadOnlyList<ComStoreDetail> ReadStoreEntries(dynamic stores, int count)
+        {
+            int? connectionMode = TryReadConnectionMode(_namespace!);
+            List<ComStoreDetail> entries = new List<ComStoreDetail>(count);
+            for (int i = 1; i <= count; i++)
+            {
+                object? store = null;
+                try
+                {
+                    store = stores[i];
+                    object probe = store!;
+                    string name = TryGetString(() => (string?)((dynamic)probe).DisplayName) ?? StoreNaming.LabelForUnnamedStore(i);
+                    string storeId = TryGetString(() => (string?)((dynamic)probe).StoreID) ?? string.Empty;
+                    int? type = null;
+                    bool? cached = null;
+                    try
+                    {
+                        type = (int)((dynamic)probe).ExchangeStoreType;
+                    }
+                    catch (Exception ex) when (IsComCallFailure(ex))
+                    {
+                    }
+
+                    try
+                    {
+                        cached = (bool)((dynamic)probe).IsCachedExchange;
+                    }
+                    catch (Exception ex) when (IsComCallFailure(ex))
+                    {
+                    }
+
+                    string? rootEntryId = null;
+                    if (ReadsTopFolder(type, cached, connectionMode))
+                    {
+                        TryReadRootFolder(probe, out _, out rootEntryId);
+                    }
+
+                    entries.Add(new ComStoreDetail(name, storeId, type, cached, rootFolderEntryId: rootEntryId));
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                    entries.Add(new ComStoreDetail(StoreNaming.LabelForUnnamedStore(i), string.Empty, null, null));
+                }
+                finally
+                {
+                    Release(store);
+                }
+            }
+
+            return entries;
+        }
+
+        /// <summary>
         /// Folder tree listing (list_folders): the FULL tree of every requested store in
         /// a STABLE traversal order - stores sorted by display name, then depth-first
         /// with siblings sorted by folder name (case-insensitive ordinal) - so an offset
@@ -1433,8 +1754,20 @@ namespace OutlookAI.Core.Com
                 try
                 {
                     int count = stores.Count;
+
+                    // One mailbox in two store entries - its own cached store and the online entry
+                    // Exchange automapped beside it, one StoreID and one provider UID between them
+                    // (measured on the Exchange guest, 2026-11-18) - is listed ONCE, through its kept
+                    // entry (StoreTwins, decided 2026-11-18): an unscoped listing walks the other entry
+                    // not at all, and a listing scoped by the shared StoreID walks the kept one alone.
+                    int[] keptEntryOf = StoreTwins.KeptEntryOf(ReadStoreEntries(stores, count));
                     for (int i = 1; i <= count; i++)
                     {
+                        if (keptEntryOf[i - 1] >= 0)
+                        {
+                            continue;
+                        }
+
                         object? probe = null;
                         try
                         {
@@ -2123,6 +2456,11 @@ namespace OutlookAI.Core.Com
                 try
                 {
                     int count = stores.Count;
+
+                    // A second view of an indexed mailbox - the online entry Exchange automaps beside the
+                    // mailbox's own cached store - is the same mail: the search covers the mailbox once, through
+                    // the kept entry, and never sweeps it live a second time (decision 207 (b), StoreTwins).
+                    int[] keptEntryOf = StoreTwins.KeptEntryOf(ReadStoreEntries(stores, count));
                     for (int i = 1; i <= count; i++)
                     {
                         // Stop at a STORE boundary as well as at a folder one: on a profile
@@ -2131,6 +2469,11 @@ namespace OutlookAI.Core.Com
                         if (tally.CheckSweepDeadline())
                         {
                             break;
+                        }
+
+                        if (keptEntryOf[i - 1] >= 0)
+                        {
+                            continue;
                         }
 
                         dynamic store = stores[i];
@@ -2960,8 +3303,10 @@ namespace OutlookAI.Core.Com
                     {
                         conversation = item.GetConversation();
                     }
-                    catch (COMException)
+                    catch (Exception ex) when (IsComCallFailure(ex))
                     {
+                        // A COM failure, or an item class the binder finds no GetConversation on - since gap B3
+                        // the index tier hands out appointments, tasks and contacts as hits too.
                         conversation = null;
                     }
 
@@ -4847,6 +5192,15 @@ namespace OutlookAI.Core.Com
                 try
                 {
                     object parentFolder = parent;
+
+                    // An id no folder has opens on a cached Exchange store as an empty stand-in (DescribeFolderObject):
+                    // nothing is made under one.
+                    if (FolderHasRecordKey(parentFolder) == false)
+                    {
+                        capturedError = "ParentFolderNotFound";
+                        return null;
+                    }
+
                     string parentEntryId = TryReadFolderEntryId(parentFolder) ?? parentFolderEntryId;
                     int? itemType = null;
                     try
@@ -5012,6 +5366,18 @@ namespace OutlookAI.Core.Com
                 return null;
             }
 
+            // An id no folder has is NOT refused by GetFolderFromID on a cached Exchange store: Outlook hands back a
+            // folder with that id, an empty name, nothing in it and no parent, every MAPI property of which is
+            // MAPI_E_NOT_FOUND - measured on the Exchange guest 2026-11-18 (Testbed/guest/Measure-FolderIdResolution.ps1),
+            // in the cached entry, with or without a StoreID. Described, it read as the top of the store, and a
+            // search scoped to it answered for the whole mailbox (runbook 4.4a, run 6). A real folder always carries
+            // its record key - Exchange's and every PST folder's (Q114) - so a folder without one does not exist.
+            if (FolderHasRecordKey(folderObject) == false)
+            {
+                error = "FolderNotFound";
+                return null;
+            }
+
             string name = TryGetString(() => (string?)((dynamic)folderObject).Name) ?? string.Empty;
             int? defaultItemType = null;
             try
@@ -5044,6 +5410,37 @@ namespace OutlookAI.Core.Com
             finally
             {
                 Release(store);
+            }
+        }
+
+        /// <summary>PR_RECORD_KEY, which every MAPI folder carries.</summary>
+        private const string RecordKeySchema = "http://schemas.microsoft.com/mapi/proptag/0x0FF90102";
+
+        /// <summary>
+        /// STA-side: whether a folder Outlook opened is one - true when it carries its record key, false when the
+        /// read answers MAPI_E_NOT_FOUND (the empty stand-in cached Exchange opens for an id no folder has), null
+        /// when the read failed in another way, which says nothing either way.
+        /// </summary>
+        private static bool? FolderHasRecordKey(object folderObject)
+        {
+            object? accessor = null;
+            try
+            {
+                accessor = ((dynamic)folderObject).PropertyAccessor;
+                object? value = ((dynamic)accessor!).GetProperty(RecordKeySchema);
+                return value != null;
+            }
+            catch (Exception ex) when (SpecialFolders.IsMapiNotFound(ex))
+            {
+                return false;
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+                return null;
+            }
+            finally
+            {
+                Release(accessor);
             }
         }
 
@@ -11134,6 +11531,7 @@ namespace OutlookAI.Core.Com
 
                 dynamic ns = _namespace!;
                 int scanned = 0;
+                ClosestByTime<ComOpenResult> nearest = new ClosestByTime<ComOpenResult>(toleranceSeconds);
                 while (!(bool)t.EndOfTable && scanned < GetTableProbeMaxRows)
                 {
                     scanned++;
@@ -11158,10 +11556,16 @@ namespace OutlookAI.Core.Com
                         }
 
                         ComOpenResult snapshot = Snapshot(itemObject);
-                        if (!indexReceivedUtc.HasValue
-                            || ReceivedTimeMatches(snapshot.ReceivedTime, indexReceivedUtc.Value, toleranceSeconds))
+                        if (!indexReceivedUtc.HasValue)
                         {
                             return snapshot;
+                        }
+
+                        // The NEAREST within the tolerance, not the first: items of one subject made in one
+                        // batch sit tenths of a second apart (measured on the Exchange guest, 2026-11-18).
+                        if (nearest.Offer(snapshot, HitLocator.SecondsApart(IndexTimeOf(itemObject!, snapshot), indexReceivedUtc.Value)))
+                        {
+                            break;
                         }
                     }
                     finally
@@ -11171,7 +11575,7 @@ namespace OutlookAI.Core.Com
                     }
                 }
 
-                return null;
+                return nearest.Best;
             }
             catch (Exception ex) when (IsComCallFailure(ex))
             {
@@ -11850,16 +12254,19 @@ namespace OutlookAI.Core.Com
         /// </summary>
         public static bool ReceivedTimeMatches(DateTime? comReceivedLocal, DateTime indexUtc, int toleranceSeconds)
         {
-            if (!comReceivedLocal.HasValue)
-            {
-                return false;
-            }
+            double? apart = HitLocator.SecondsApart(comReceivedLocal, indexUtc);
+            return apart.HasValue && apart.Value <= toleranceSeconds;
+        }
 
-            DateTime local = comReceivedLocal.Value;
-            DateTime asUtc = DateTime.SpecifyKind(local, DateTimeKind.Local).ToUniversalTime();
-            double utcDelta = Math.Abs((asUtc - indexUtc).TotalSeconds);
-            double rawDelta = Math.Abs((DateTime.SpecifyKind(local, DateTimeKind.Utc) - indexUtc).TotalSeconds);
-            return utcDelta <= toleranceSeconds || rawDelta <= toleranceSeconds;
+        /// <summary>
+        /// STA-side: the time an item is matched on against its index row (<see cref="HitLocator.IndexTimeOf"/>) -
+        /// its ReceivedTime from <paramref name="snapshot"/>, else its CreationTime, read only then.
+        /// </summary>
+        private static DateTime? IndexTimeOf(object itemObject, ComOpenResult snapshot)
+        {
+            return HitLocator.IndexTimeOf(
+                snapshot.ReceivedTime,
+                snapshot.ReceivedTime.HasValue ? null : TryGetDateTime(() => (DateTime)((dynamic)itemObject).CreationTime));
         }
 
         /// <summary>
