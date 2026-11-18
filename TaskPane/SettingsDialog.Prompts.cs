@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Drawing;
 using System.Windows.Forms;
 using OutlookAI.Services;
+using OutlookAI.Core.AddIn;
 
 namespace OutlookAI.TaskPane
 {

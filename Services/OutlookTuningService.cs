@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Microsoft.Win32;
+using OutlookAI.Core.AddIn;
 
 namespace OutlookAI.Services
 {
@@ -32,8 +33,8 @@ namespace OutlookAI.Services
         /// <summary>
         /// The key this service owns. The MCP server's <c>outlook_health</c> reads it to report
         /// the tuning state, so the path and every value name under it live in
-        /// <see cref="AddInServerContract"/> - one definition, compiled into both, rather than a
-        /// comment on each side claiming to mirror the other.
+        /// <see cref="AddInServerContract"/> - one definition, OutlookAI.Core's, used by both, rather
+        /// than a comment on each side claiming to mirror the other.
         /// </summary>
         internal const string TuningKeyPath = AddInServerContract.TuningKeyPath;
 

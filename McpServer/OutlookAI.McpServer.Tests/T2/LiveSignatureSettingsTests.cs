@@ -72,7 +72,7 @@ public sealed class LiveSignatureSettingsTests
             SetDefault(sig.Name, running, hubRow.Account, "new");
             if (other != null)
             {
-                WriteValue(OutlookProfileRegistry.OutlookRootKeyPath, LiveProfileAccountRegistry.DefaultProfileValueName, other, RegistryValueKind.String);
+                RawRegistryValues.Write(OutlookProfileRegistry.OutlookRootKeyPath, LiveProfileAccountRegistry.DefaultProfileValueName, other, RegistryValueKind.String);
             }
             else
             {
@@ -156,7 +156,7 @@ public sealed class LiveSignatureSettingsTests
         {
             // The account's own default, then a deployed one beside it, written while Outlook runs.
             SetDefault(own.Name, running, hubRow.Account, "new");
-            WriteValue(preferenceKey, SignaturePolicy.NewSignatureValueName, deployed.Name, RegistryValueKind.String);
+            RawRegistryValues.Write(preferenceKey, SignaturePolicy.NewSignatureValueName, deployed.Name, RegistryValueKind.String);
 
             SignaturesOutcome listing = Service.ListSignatures();
             Assert.Equal(deployed.Name, listing.Policy!.NewMessage);
@@ -165,7 +165,7 @@ public sealed class LiveSignatureSettingsTests
                 .Single(a => ProfileAccountEntries.AddressEquals(a.Account, hubRow.Account));
             Assert.Equal(own.Name, row.NewMessage);
 
-            // Q201, measured 2026-11-18 with the setting made before Outlook started (runbook 4.11): the account's own
+            // Q201, measured 2026-11-18 with the setting made before Outlook started (runbook 4.13): the account's own
             // default ranks above a deployed one. So it is the effective default, and it stays the account's to change.
             Assert.Equal(own.Name, row.EffectiveNewMessage);
             Assert.Equal("account", row.DefaultsFrom);
@@ -519,7 +519,7 @@ public sealed class LiveSignatureSettingsTests
         string? draftId = null;
         try
         {
-            WriteValue(key, SignatureFolder.RegistryValueName, relocatedName, RegistryValueKind.String);
+            RawRegistryValues.Write(key, SignatureFolder.RegistryValueName, relocatedName, RegistryValueKind.String);
 
             SignaturesOutcome listing = Service.ListSignatures();
             Assert.Equal("registry", listing.Folder.Source);
@@ -659,13 +659,6 @@ public sealed class LiveSignatureSettingsTests
             .FirstOrDefault(r => ProfileAccountEntries.KeyEquals(r.AccountKey, before.AccountKey));
         Assert.Equal(before.NewMessage, now?.NewMessage);
         Assert.Equal(before.ReplyForward, now?.ReplyForward);
-    }
-
-    /// <summary>Sets one value; the test's RawRegistryValues capture puts it back.</summary>
-    private static void WriteValue(string key, string valueName, object value, RegistryValueKind kind)
-    {
-        using RegistryKey created = Registry.CurrentUser.CreateSubKey(key, writable: true);
-        created.SetValue(valueName, value, kind);
     }
 
     private void DeleteDraft(string? entryId)

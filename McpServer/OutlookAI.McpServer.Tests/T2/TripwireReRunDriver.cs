@@ -519,10 +519,7 @@ public static class TripwireReRunDriver
     /// </summary>
     private static string LocateTestProject()
     {
-        string directory = typeof(TripwireReRunDriver).Assembly
-                .GetCustomAttributes<AssemblyMetadataAttribute>()
-                .FirstOrDefault(a => a.Key == "TestProjectDir")?.Value
-            ?? throw new InvalidOperationException("AssemblyMetadata 'TestProjectDir' is missing.");
+        string directory = RepoPaths.TestProjectDir();
 
         string[] projects = Directory.GetFiles(directory, "*.csproj");
         return projects.Length == 1

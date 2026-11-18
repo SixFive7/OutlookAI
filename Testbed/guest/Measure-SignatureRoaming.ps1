@@ -21,8 +21,9 @@
                 ExecuteMso('ApplicationOptionsDialog') from a hidden helper process, its Mail page's
                 "Signatures..." opened, and the names on that dialog read through UI Automation - an
                 account selector or "Signatures on this device" is the roaming dialog. Cancel. Then the
-                General page is read for "Store my Outlook settings in the cloud". Cancel. Never OK,
-                never a checkbox, never a field.
+                General page is read for "Store my Outlook settings in the cloud", and whether that
+                checkbox is on (its toggle state, read). Cancel. Never OK, never a checkbox changed, never
+                a field.
       -Step R2  The test account's store only, through the object model: its non-IPM root, whether
                 ApplicationDataRoot\49499048-0129-47f5-b95e-f9d315b861a6 is in the offline copy, how many
                 subfolders it has, and each one's hidden items' message classes and which of a fixed set
@@ -117,6 +118,13 @@ function Get-RoamingCopyAddress([string] $BaseName) {
     return $null
 }
 
+# One entry of Get-UiaNames - '<ControlType><TAB><Name>' - as its type and name, or $null.
+function ConvertFrom-UiaNameEntry([string] $Entry) {
+    $parts = ([string]$Entry) -split "`t", 2
+    if ($parts.Count -ne 2 -or -not $parts[0] -or -not $parts[1]) { return $null }
+    return [pscustomobject]@{ Type = $parts[0]; Name = $parts[1] }
+}
+
 # A REG_BINARY signature name as Outlook writes it - UTF-16, NUL-terminated - or a REG_SZ.
 function ConvertFrom-SignatureValue($Value) {
     if ($null -eq $Value) { return $null }
@@ -174,6 +182,9 @@ function Invoke-SelfTest {
     Check 'a "(address)" file alone reads as roaming' ($v.Roams -and $v.RoamingCopies -eq 1)
     $v = Get-RoamingVerdict @() @('Store my Outlook settings in the cloud') @()
     Check 'the cloud-settings checkbox is reported, apart from the verdict' ($v.CloudSettingOffered -and -not $v.Roams)
+    $e = ConvertFrom-UiaNameEntry "CheckBox`tStore my Outlook settings in the cloud (requires restarting Outlook)"
+    Check 'a names entry reads as its control type and its name' ($e.Type -eq 'CheckBox' -and $e.Name -eq 'Store my Outlook settings in the cloud (requires restarting Outlook)')
+    Check 'an entry with no type or no name reads as nothing' ($null -eq (ConvertFrom-UiaNameEntry 'CheckBox') -and $null -eq (ConvertFrom-UiaNameEntry "`tName"))
 
     # Read-only, read off this file's own syntax tree so this text cannot count as what it forbids.
     $ast = [System.Management.Automation.Language.Parser]::ParseFile($PSCommandPath, [ref] $null, [ref] $null)
@@ -212,14 +223,16 @@ function Assert-TestbedGuestLocal {
 Assert-TestbedGuestLocal
 
 if (-not $OutPath) { $OutPath = "C:\OutlookAI-Q5\measure\signatures-$Step.txt" }
-$lines = New-Object System.Collections.Generic.List[string]
-function Say([string] $Text) { $lines.Add($Text); Write-Host $Text }
+$ReportLines = New-Object System.Collections.Generic.List[string]
+# Write-ReportLine prints a line and keeps it in $ReportLines; it is one of the helpers the scripts share,
+# dot-sourced from ScriptHelpers.ps1, which travels with the guest scripts (Q154, Q166 (b), decision 215 (a)).
+. (Join-Path $PSScriptRoot 'ScriptHelpers.ps1')
 function Write-Result {
     $dir = Split-Path -Parent $OutPath
     if (-not (Test-Path -LiteralPath $dir)) { [void][System.IO.Directory]::CreateDirectory($dir) }
-    [System.IO.File]::WriteAllLines($OutPath, $lines)
+    [System.IO.File]::WriteAllLines($OutPath, $ReportLines)
 }
-Say ("MEASURE-SIGNATURE-ROAMING {0} on {1} at {2}" -f $Step, $env:COMPUTERNAME, (Get-Date).ToString('o'))
+Write-ReportLine ("MEASURE-SIGNATURE-ROAMING {0} on {1} at {2}" -f $Step, $env:COMPUTERNAME, (Get-Date).ToString('o'))
 
 function Get-Outlook {
     try { return [Runtime.InteropServices.Marshal]::GetActiveObject('Outlook.Application') }
@@ -230,28 +243,28 @@ function Get-Outlook {
 # R0
 # ---------------------------------------------------------------------------------------------
 function Invoke-R0 {
-    Say '== R0: Office =='
+    Write-ReportLine '== R0: Office =='
     $c2r = 'HKLM:\SOFTWARE\Microsoft\Office\ClickToRun\Configuration'
     if (Test-Path -LiteralPath $c2r) {
         $cfg = Get-ItemProperty -LiteralPath $c2r
         foreach ($n in 'VersionToReport', 'ClientVersionToReport', 'ProductReleaseIds', 'Platform', 'UpdateChannel', 'CDNBaseUrl', 'AudienceId', 'AudienceData', 'UpdatesEnabled') {
             $val = $cfg.$n
-            if ($null -ne $val) { Say ("  {0} = {1}" -f $n, $val) }
+            if ($null -ne $val) { Write-ReportLine ("  {0} = {1}" -f $n, $val) }
         }
     }
-    else { Say '  no ClickToRun configuration key' }
+    else { Write-ReportLine '  no ClickToRun configuration key' }
     $exe = 'C:\Program Files\Microsoft Office\root\Office16\OUTLOOK.EXE'
-    if (Test-Path -LiteralPath $exe) { Say ('  OUTLOOK.EXE file version ' + (Get-Item -LiteralPath $exe).VersionInfo.FileVersion) }
+    if (Test-Path -LiteralPath $exe) { Write-ReportLine ('  OUTLOOK.EXE file version ' + (Get-Item -LiteralPath $exe).VersionInfo.FileVersion) }
     try {
         $products = @(Get-CimInstance -ClassName SoftwareLicensingProduct -Filter "ApplicationID='0ff1ce15-a989-479d-af46-f275c6370663' AND PartialProductKey IS NOT NULL" -ErrorAction Stop)
         foreach ($pr in $products) {
-            Say ("  licence: {0}; LicenseStatus {1}; GracePeriodRemaining {2} min; reason 0x{3:X8}; channel {4}" -f $pr.Name, $pr.LicenseStatus, $pr.GracePeriodRemaining, [uint32]$pr.LicenseStatusReason, $pr.ProductKeyChannel)
+            Write-ReportLine ("  licence: {0}; LicenseStatus {1}; GracePeriodRemaining {2} min; reason 0x{3:X8}; channel {4}" -f $pr.Name, $pr.LicenseStatus, $pr.GracePeriodRemaining, [uint32]$pr.LicenseStatusReason, $pr.ProductKeyChannel)
         }
-        if ($products.Count -eq 0) { Say '  licence: no Office product with a key in SoftwareLicensingProduct' }
+        if ($products.Count -eq 0) { Write-ReportLine '  licence: no Office product with a key in SoftwareLicensingProduct' }
     }
-    catch { Say ('  licence: could not be read - ' + $_.Exception.Message) }
+    catch { Write-ReportLine ('  licence: could not be read - ' + $_.Exception.Message) }
 
-    Say '== R0: signature settings (report section 2) =='
+    Write-ReportLine '== R0: signature settings (report section 2) =='
     $profiles = 'HKCU:\Software\Microsoft\Office\16.0\Outlook\Profiles'
     foreach ($prof in @(Get-ChildItem -LiteralPath $profiles -ErrorAction SilentlyContinue)) {
         $accountsKey = Join-Path $prof.PSPath '9375CFF0413111d3B88A00104B2A6676'
@@ -263,7 +276,7 @@ function Invoke-R0 {
             $reply = ConvertFrom-SignatureValue $props.'Reply-Forward Signature'
             $shownLabel = $label
             if ($label -and $Bystander -and $label.IndexOf($Bystander, [StringComparison]::OrdinalIgnoreCase) -ge 0) { $shownLabel = '<bystander>' }
-            Say ("  profile '{0}' account {1} '{2}': New Signature {3}; Reply-Forward Signature {4}" -f $prof.PSChildName, $acc.PSChildName, $shownLabel,
+            Write-ReportLine ("  profile '{0}' account {1} '{2}': New Signature {3}; Reply-Forward Signature {4}" -f $prof.PSChildName, $acc.PSChildName, $shownLabel,
                 $(if ($null -ne $new) { "'" + (Get-PrintableName $new $Bystander) + "'" } else { '(absent)' }),
                 $(if ($null -ne $reply) { "'" + (Get-PrintableName $reply $Bystander) + "'" } else { '(absent)' }))
         }
@@ -285,20 +298,20 @@ function Invoke-R0 {
         try { $val = (Get-ItemProperty -LiteralPath $pair[0] -Name $pair[1] -ErrorAction Stop).($pair[1]) } catch { }
         $shown = '(absent)'
         if ($null -ne $val) { $shown = "'" + (Get-PrintableName (ConvertFrom-SignatureValue $val) $Bystander) + "'"; if ($val -is [int]) { $shown = [string]$val } }
-        Say ("  {0}\{1} = {2}" -f ($pair[0] -replace '^HKCU:\\', 'HKCU\'), $pair[1], $shown)
+        Write-ReportLine ("  {0}\{1} = {2}" -f ($pair[0] -replace '^HKCU:\\', 'HKCU\'), $pair[1], $shown)
     }
     $cloud = 'HKCU:\Software\Policies\Microsoft\Cloud\Office\16.0'
-    Say ("  Cloud Policy key {0}: {1}" -f ($cloud -replace '^HKCU:\\', 'HKCU\'), $(if (Test-Path -LiteralPath $cloud) { 'PRESENT' } else { 'absent' }))
+    Write-ReportLine ("  Cloud Policy key {0}: {1}" -f ($cloud -replace '^HKCU:\\', 'HKCU\'), $(if (Test-Path -LiteralPath $cloud) { 'PRESENT' } else { 'absent' }))
 
-    Say '== R0: the signature folder =='
+    Write-ReportLine '== R0: the signature folder =='
     $sig = Get-SignatureFiles
-    Say ("  folder %APPDATA%\Microsoft\{0}: {1}" -f $sig.FolderName, $(if (Test-Path -LiteralPath $sig.Folder) { "$($sig.Files.Count) file(s)" } else { 'does not exist' }))
+    Write-ReportLine ("  folder %APPDATA%\Microsoft\{0}: {1}" -f $sig.FolderName, $(if (Test-Path -LiteralPath $sig.Folder) { "$($sig.Files.Count) file(s)" } else { 'does not exist' }))
     foreach ($file in $sig.Files) {
         $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash
         $copy = Get-RoamingCopyAddress ([IO.Path]::GetFileNameWithoutExtension($file.Name))
         $note = ''
         if ($copy) { $note = ' ROAMING-COPY name, address ' + $(if ($Bystander -and $copy -ieq $Bystander) { '<bystander>' } else { $copy }) }
-        Say ("  {0} {1} bytes sha256 {2}{3}" -f (Get-PrintableName $file.Name $Bystander), $file.Length, $hash.Substring(0, 16), $note)
+        Write-ReportLine ("  {0} {1} bytes sha256 {2}{3}" -f (Get-PrintableName $file.Name $Bystander), $file.Length, $hash.Substring(0, 16), $note)
     }
 }
 
@@ -351,19 +364,19 @@ function Invoke-R1 {
     $null = Get-Outlook
     $signatureNames = @(); $generalNames = @()
 
-    Say '== R1: the Signatures dialog, opened through ExecuteMso(''SignaturesStationeryDialog'') =='
+    Write-ReportLine '== R1: the Signatures dialog, opened through ExecuteMso(''SignaturesStationeryDialog'') =='
     $process = Start-SignaturesDialog
     $dialog = Find-TopWindow 'Signatures and Stationery' $DialogWaitSeconds
     if ($dialog) {
         try {
             $signatureNames = @(Get-UiaNames $dialog)
-            Say ("  'Signatures and Stationery' (class {0}): {1} named controls" -f $dialog.Current.ClassName, $signatureNames.Count)
-            foreach ($n in $signatureNames) { Say ("    {0}" -f $n) }
+            Write-ReportLine ("  'Signatures and Stationery' (class {0}): {1} named controls" -f $dialog.Current.ClassName, $signatureNames.Count)
+            foreach ($n in $signatureNames) { Write-ReportLine ("    {0}" -f $n) }
         }
         finally { [void](Close-WithCancel $dialog 'Signatures and Stationery') }
     }
-    else { Say "  NOT-FOUND: 'Signatures and Stationery' did not open within $DialogWaitSeconds s (helper pid $($process.Id))" }
-    if (-not $process.WaitForExit(15000)) { Say "  NOTE: the helper (pid $($process.Id)) is still waiting - the dialog may still be open" }
+    else { Write-ReportLine "  NOT-FOUND: 'Signatures and Stationery' did not open within $DialogWaitSeconds s (helper pid $($process.Id))" }
+    if (-not $process.WaitForExit(15000)) { Write-ReportLine "  NOTE: the helper (pid $($process.Id)) is still waiting - the dialog may still be open" }
 
     # Options may be switched off in this Outlook altogether: measured 2026-11-17, ApplicationOptionsDialog
     # reads disabled and the File tab shows Options greyed. Read that, and the privacy policies the testbed
@@ -371,48 +384,55 @@ function Invoke-R1 {
     $app = Get-Outlook
     $optionsEnabled = $null
     try { $optionsEnabled = [bool]$app.ActiveExplorer().CommandBars.GetEnabledMso('ApplicationOptionsDialog') } catch { }
-    Say ("  File > Options enabled: {0}" -f $(if ($null -eq $optionsEnabled) { 'could not be read' } else { $optionsEnabled }))
+    Write-ReportLine ("  File > Options enabled: {0}" -f $(if ($null -eq $optionsEnabled) { 'could not be read' } else { $optionsEnabled }))
     $privacy = 'HKCU:\Software\Policies\Microsoft\Office\16.0\Common\Privacy'
     foreach ($n in 'disconnectedstate', 'usercontentdisabled', 'downloadcontentdisabled', 'controllerconnectedservicesenabled') {
         $val = $null
         try { $val = (Get-ItemProperty -LiteralPath $privacy -Name $n -ErrorAction Stop).$n } catch { }
-        Say ("  privacy policy {0} = {1}" -f $n, $(if ($null -eq $val) { '(absent)' } else { $val }))
+        Write-ReportLine ("  privacy policy {0} = {1}" -f $n, $(if ($null -eq $val) { '(absent)' } else { $val }))
     }
-    Say '== R1: Outlook''s Options, General page, through the File tab =='
+    Write-ReportLine '== R1: Outlook''s Options, General page, through the File tab =='
     if ($optionsEnabled -eq $false) {
-        Say '  NOT READ: Options is disabled in this Outlook, so "Store my Outlook settings in the cloud" cannot be looked for there'
+        Write-ReportLine '  NOT READ: Options is disabled in this Outlook, so "Store my Outlook settings in the cloud" cannot be looked for there'
         $copies = @((Get-SignatureFiles).Files | ForEach-Object { Get-RoamingCopyAddress ([IO.Path]::GetFileNameWithoutExtension($_.Name)) } | Where-Object { $_ })
         $v = Get-RoamingVerdict $signatureNames @() $copies
-        Say ("VERDICT R1: roams={0} - {1}; 'Store my Outlook settings in the cloud' not readable (Options disabled)" -f $v.Roams, $v.Why)
+        Write-ReportLine ("VERDICT R1: roams={0} - {1}; 'Store my Outlook settings in the cloud' not readable (Options disabled)" -f $v.Roams, $v.Why)
         return
     }
     $process = Start-Helper $OptionsHelper
     $options = Find-TopWindow 'Outlook Options' ($DialogWaitSeconds + 20)
     if ($options) {
         try {
-            Say ("  'Outlook Options' open (class {0})" -f $options.Current.ClassName)
+            Write-ReportLine ("  'Outlook Options' open (class {0})" -f $options.Current.ClassName)
             if (Select-NavigationPage $options 'General') {
                 $generalNames = @(Get-UiaNames $options)
                 $cloud = @($generalNames | Where-Object { $_ -match '(?i)settings in the cloud|roam' })
-                Say ("  General page: {0} named controls; about cloud settings: {1}" -f $generalNames.Count, $(if ($cloud.Count) { $cloud -join ' | ' } else { 'none' }))
+                Write-ReportLine ("  General page: {0} named controls; about cloud settings: {1}" -f $generalNames.Count, $(if ($cloud.Count) { $cloud -join ' | ' } else { 'none' }))
+                # Whether that checkbox is ON - its toggle state, read and never changed (Q194 (b), 2026-11-18).
+                foreach ($entry in @($cloud | ForEach-Object { ConvertFrom-UiaNameEntry $_ } | Where-Object { $_ -and $_.Type -eq 'CheckBox' })) {
+                    $state = 'could not be read'
+                    $box = Find-Named $options ([System.Windows.Automation.ControlType]::CheckBox) $entry.Name
+                    if ($box) { try { $state = [string]$box.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Current.ToggleState } catch { } }
+                    Write-ReportLine ("  '{0}' is {1} (read, never changed)" -f $entry.Name, $state)
+                }
             }
-            else { Say "  NOT-FOUND: no 'General' page in Options' navigation" }
+            else { Write-ReportLine "  NOT-FOUND: no 'General' page in Options' navigation" }
         }
         finally { [void](Close-WithCancel $options 'Outlook Options') }
     }
-    else { Say "  NOT-FOUND: no 'Outlook Options' window (helper pid $($process.Id))" }
-    if (-not $process.WaitForExit(15000)) { Say "  NOTE: the helper (pid $($process.Id)) is still waiting" }
+    else { Write-ReportLine "  NOT-FOUND: no 'Outlook Options' window (helper pid $($process.Id))" }
+    if (-not $process.WaitForExit(15000)) { Write-ReportLine "  NOTE: the helper (pid $($process.Id)) is still waiting" }
     # Back out of the File tab's backstage, by its own Back button.
     try {
         $main = [System.Windows.Automation.AutomationElement]::RootElement.FindFirst([System.Windows.Automation.TreeScope]::Children, (New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ClassNameProperty, 'rctrl_renwnd32')))
         $back = Find-Named $main ([System.Windows.Automation.ControlType]::Button) 'Back'
-        if ($back) { Invoke-Button $back; Say '  left the File tab by its Back button' }
+        if ($back) { Invoke-Button $back; Write-ReportLine '  left the File tab by its Back button' }
     }
-    catch { Say ('  NOTE: the File tab could not be left: ' + $_.Exception.Message) }
+    catch { Write-ReportLine ('  NOTE: the File tab could not be left: ' + $_.Exception.Message) }
 
     $copies = @((Get-SignatureFiles).Files | ForEach-Object { Get-RoamingCopyAddress ([IO.Path]::GetFileNameWithoutExtension($_.Name)) } | Where-Object { $_ })
     $v = Get-RoamingVerdict $signatureNames $generalNames $copies
-    Say ("VERDICT R1: roams={0} - {1}; 'Store my Outlook settings in the cloud' offered={2}" -f $v.Roams, $v.Why, $v.CloudSettingOffered)
+    Write-ReportLine ("VERDICT R1: roams={0} - {1}; 'Store my Outlook settings in the cloud' offered={2}" -f $v.Roams, $v.Why, $v.CloudSettingOffered)
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -425,7 +445,7 @@ function Get-StoreRecordKey($Store) {
 # One entry of the test mailbox, walked read-only: its non-IPM root, ApplicationDataRoot, the roaming folder.
 # The test account's folder names are its own test data, and are printed as they are.
 function Read-RoamingFolder($Ns, $Store, [string] $Label) {
-    Say ("== R2: {0} - entry '{1}' (ExchangeStoreType {2}, cached {3}) ==" -f $Label, [string]$Store.DisplayName, [int]$Store.ExchangeStoreType, $Store.IsCachedExchange)
+    Write-ReportLine ("== R2: {0} - entry '{1}' (ExchangeStoreType {2}, cached {3}) ==" -f $Label, [string]$Store.DisplayName, [int]$Store.ExchangeStoreType, $Store.IsCachedExchange)
     $ipm = $Store.GetRootFolder()
     $parentHex = $null
     try { $parentHex = $ipm.PropertyAccessor.BinaryToString($ipm.PropertyAccessor.GetProperty('http://schemas.microsoft.com/mapi/proptag/0x0E090102')) } catch { }
@@ -433,26 +453,26 @@ function Read-RoamingFolder($Ns, $Store, [string] $Label) {
     $root = $null
     try { $root = $Ns.GetFolderFromID($parentHex, $Store.StoreID) } catch { return ('the non-IPM root did not open: ' + $_.Exception.Message) }
     $top = @(); foreach ($f in $root.Folders) { $top += [string]$f.Name }
-    Say ("  non-IPM root '{0}': {1} folder(s): {2}" -f [string]$root.Name, $top.Count, ($top -join ', '))
+    Write-ReportLine ("  non-IPM root '{0}': {1} folder(s): {2}" -f [string]$root.Name, $top.Count, ($top -join ', '))
     # Where else a mailbox keeps settings: the hidden (associated) items of the non-IPM root and of the top of
     # the information store - message classes and which probed tags they carry, no value.
-    Say ("  hidden items of the non-IPM root: {0}" -f (Get-HiddenCount $root))
+    Write-ReportLine ("  hidden items of the non-IPM root: {0}" -f (Get-HiddenCount $root))
     Write-HiddenItems $root '    '
-    Say ("  hidden items of the top of the information store: {0}" -f (Get-HiddenCount $ipm))
+    Write-ReportLine ("  hidden items of the top of the information store: {0}" -f (Get-HiddenCount $ipm))
     Write-HiddenItems $ipm '    '
     $appData = $null
     foreach ($f in $root.Folders) { if ([string]$f.Name -eq 'ApplicationDataRoot') { $appData = $f } }
     if (-not $appData) { return 'ApplicationDataRoot is NOT there' }
     $children = @(); foreach ($f in $appData.Folders) { $children += [string]$f.Name }
-    Say ("  ApplicationDataRoot: {0} subfolder(s): {1}" -f $children.Count, ($children -join ', '))
+    Write-ReportLine ("  ApplicationDataRoot: {0} subfolder(s): {1}" -f $children.Count, ($children -join ', '))
     $roam = $null
     foreach ($f in $appData.Folders) { if ([string]$f.Name -ieq $RoamingFolderGuid) { $roam = $f } }
     if (-not $roam) { return "ApplicationDataRoot is there, but $RoamingFolderGuid is NOT" }
     $sigFolders = @($roam.Folders)
-    Say ("  {0}: {1} subfolder(s), {2} hidden item(s) of its own" -f $RoamingFolderGuid, $sigFolders.Count, (Get-HiddenCount $roam))
+    Write-ReportLine ("  {0}: {1} subfolder(s), {2} hidden item(s) of its own" -f $RoamingFolderGuid, $sigFolders.Count, (Get-HiddenCount $roam))
     Write-HiddenItems $roam '    (the folder itself) '
     foreach ($sf in $sigFolders) {
-        Say ("    subfolder {0}: container class '{1}', {2} hidden item(s), {3} item(s)" -f (Get-PrintableName ([string]$sf.Name) $Bystander), $(try { [string]$sf.PropertyAccessor.GetProperty('http://schemas.microsoft.com/mapi/proptag/0x3613001F') } catch { '-' }), (Get-HiddenCount $sf), [int]$sf.Items.Count)
+        Write-ReportLine ("    subfolder {0}: container class '{1}', {2} hidden item(s), {3} item(s)" -f (Get-PrintableName ([string]$sf.Name) $Bystander), $(try { [string]$sf.PropertyAccessor.GetProperty('http://schemas.microsoft.com/mapi/proptag/0x3613001F') } catch { '-' }), (Get-HiddenCount $sf), [int]$sf.Items.Count)
         Write-HiddenItems $sf '      '
     }
     return ("{0} is there, with {1} subfolder(s)" -f $RoamingFolderGuid, $sigFolders.Count)
@@ -463,16 +483,16 @@ function Invoke-R2 {
     $ns = $app.Session
     $store = $null
     foreach ($s in $ns.Stores) { if ([string]$s.DisplayName -ieq $Hub) { $store = $s } }
-    if (-not $store) { Say "  NOT-FOUND: no store named '$Hub'"; return }
+    if (-not $store) { Write-ReportLine "  NOT-FOUND: no store named '$Hub'"; return }
     $offline = Read-RoamingFolder $ns $store 'the offline copy (the test account''s own cached store)'
-    Say ('VERDICT R2 offline copy: ' + $offline)
+    Write-ReportLine ('VERDICT R2 offline copy: ' + $offline)
     # The same mailbox, read on the server: the online entry Exchange automapped (2026-11-17), found by its
     # record key - read-only, as everything here. It tells "not synced into the .ost" from "not in the mailbox".
     $key = Get-StoreRecordKey $store
     $online = $null
     foreach ($s in $ns.Stores) { if ([int]$s.ExchangeStoreType -eq 1 -and $key -and (Get-StoreRecordKey $s) -eq $key) { $online = $s } }
-    if ($online) { Say ('VERDICT R2 on the server (the online entry of the same mailbox): ' + (Read-RoamingFolder $ns $online 'the server, through the online entry')) }
-    else { Say 'VERDICT R2 on the server: not read - no online entry of the same mailbox in this profile' }
+    if ($online) { Write-ReportLine ('VERDICT R2 on the server (the online entry of the same mailbox): ' + (Read-RoamingFolder $ns $online 'the server, through the online entry')) }
+    else { Write-ReportLine 'VERDICT R2 on the server: not read - no online entry of the same mailbox in this profile' }
 }
 
 function Get-HiddenCount($Folder) {
@@ -481,7 +501,7 @@ function Get-HiddenCount($Folder) {
 
 function Write-HiddenItems($Folder, [string] $Indent) {
     $table = $null
-    try { $table = $Folder.GetTable('', 1) } catch { Say ($Indent + 'hidden items could not be listed: ' + $_.Exception.Message); return }
+    try { $table = $Folder.GetTable('', 1) } catch { Write-ReportLine ($Indent + 'hidden items could not be listed: ' + $_.Exception.Message); return }
     $table.Columns.RemoveAll()
     # A column the table will not take is noted and left out, so one refusal does not cost the rest.
     $columns = New-Object System.Collections.Generic.List[string]
@@ -490,7 +510,7 @@ function Write-HiddenItems($Folder, [string] $Indent) {
         try { [void]$table.Columns.Add('http://schemas.microsoft.com/mapi/proptag/' + $ProbeTags[$name]); $columns.Add($name) }
         catch { $refused += $name }
     }
-    if ($refused.Count) { Say ($Indent + 'columns the table would not take: ' + ($refused -join ', ')) }
+    if ($refused.Count) { Write-ReportLine ($Indent + 'columns the table would not take: ' + ($refused -join ', ')) }
     $n = 0
     while (-not $table.EndOfTable -and $n -lt 50) {
         $row = $table.GetNextRow()
@@ -501,7 +521,7 @@ function Write-HiddenItems($Folder, [string] $Indent) {
             if ($columns[$i] -eq 'PR_MESSAGE_CLASS') { $class = [string]$val }
             elseif ($null -ne $val -and [string]$val -ne '') { $present += $columns[$i] }
         }
-        Say ("{0}hidden item {1}: class '{2}'; carries {3}" -f $Indent, ($n + 1), $class, $(if ($present.Count) { $present -join ', ' } else { 'none of the probed tags' }))
+        Write-ReportLine ("{0}hidden item {1}: class '{2}'; carries {3}" -f $Indent, ($n + 1), $class, $(if ($present.Count) { $present -join ', ' } else { 'none of the probed tags' }))
         $n++
     }
 }
@@ -513,5 +533,5 @@ try {
         'R2' { Invoke-R2 }
     }
 }
-catch { Say ('FAILED: ' + $_.Exception.Message) }
+catch { Write-ReportLine ('FAILED: ' + $_.Exception.Message) }
 finally { Write-Result }

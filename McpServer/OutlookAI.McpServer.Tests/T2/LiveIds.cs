@@ -1,3 +1,4 @@
+using OutlookAI.Core.Com;
 using OutlookAI.Core.Services;
 
 namespace OutlookAI.McpServer.Tests.T2;
@@ -11,6 +12,14 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// </summary>
 internal static class LiveIds
 {
+    /// <summary>A store's StoreID as a verifying session reads it, by its display name; one copy for the fixtures (Q154).</summary>
+    internal static string StoreIdOf(OutlookComSession session, string storeDisplayName)
+    {
+        return session.GetStores()
+                .FirstOrDefault(s => string.Equals(s.DisplayName, storeDisplayName, StringComparison.OrdinalIgnoreCase))?.StoreId
+            ?? throw new InvalidOperationException("Store not found by display name.");
+    }
+
     /// <summary>The storeId of the ONE store list_accounts shows under <paramref name="storeDisplayName"/>; fails on none or several.</summary>
     internal static string StoreId(MailService service, string storeDisplayName)
     {

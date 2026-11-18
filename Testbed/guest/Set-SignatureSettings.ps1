@@ -36,7 +36,7 @@
     THE VALUES' KIND (-ValueKind). ExpandString, REG_EXPAND_SZ, by default: what signature vendors tell
     administrators to write and what Outlook was reported to honour where a plain string stopped working (Microsoft
     Q&A, 2023-2024). String, REG_SZ, measures the other. On 2026-11-18 Outlook LTSC 2024 put an account's own default
-    in a new mail, a reply and a forward, not the policy's, with either kind (Docs/live-tier-on-the-vm.md section 4.11).
+    in a new mail, a reply and a forward, not the policy's, with either kind (Docs/live-tier-on-the-vm.md section 4.13).
 
     WHAT -Execute DOES, in this order:
       1. Refuses - nothing written - unless the session is 'vmadmin' on a computer named OAI-..., the guest is not

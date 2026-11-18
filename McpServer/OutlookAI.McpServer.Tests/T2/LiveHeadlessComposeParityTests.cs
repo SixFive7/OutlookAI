@@ -52,9 +52,8 @@ public sealed class LiveHeadlessComposeParityTests
     /// </summary>
     private const string SignatureToken = "testhandtekening";
 
-    private string RequireHtmlBody(string entryId)
-        => _fixture.VerifySession.TryGetHtmlBody(entryId, _fixture.GetStoreId(Hub), out string? error)
-            ?? throw new InvalidOperationException("draft HTML unavailable: " + (error ?? "empty"));
+    private string RequireHtmlBody(string entryId) =>
+        LiveDraftChecks.RequireHtmlBody(_fixture.VerifySession, entryId, _fixture.GetStoreId(Hub));
 
     [Fact]
     [Trait("Requires", "MailAccount")]
@@ -141,6 +140,12 @@ public sealed class LiveHeadlessComposeParityTests
         Assert.DoesNotContain("src=\"file:///", html, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("C:\\Users", html, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("<v:rect", html, StringComparison.OrdinalIgnoreCase);
+
+        // Q208 B: committed through the inspector's form page, then saved again with its subject and recipients - still an
+        // ordinary message, with no one-off form in it.
+        (string messageClass, IReadOnlyList<string> formProperties) = LiveOutlookTestMailer.ReadFormFacts(Hub, outcome.EntryId, Marker);
+        Assert.Equal("IPM.Note", messageClass, ignoreCase: true);
+        Assert.True(formProperties.Count == 0, "the new draft carries form-definition properties: " + string.Join(", ", formProperties));
 
         AttachmentView image = Assert.Single(outcome.Attachments!);
         Assert.True(

@@ -95,8 +95,9 @@ function Invoke-Button($Button) {
 
 # Closes a dialog as Cancel does - the one way a probe ever closes anything: its own Cancel button, or,
 # where UI Automation shows none (the Signatures dialog, class bosa_sdm_Mso96, measured 2026-11-17),
-# WM_CLOSE to that one window, which a dialog treats as Cancel. Says how through the caller's Say when it
-# has one, else on the host; returns whether the window is gone.
+# WM_CLOSE to that one window, which a dialog treats as Cancel. Says how in the caller's report when it
+# keeps one (Write-ReportLine and $ReportLines, ScriptHelpers.ps1), else on the host; returns whether the
+# window is gone.
 function Close-WithCancel($Window, [string] $What) {
     $cancel = Find-Named $Window ([System.Windows.Automation.ControlType]::Button) 'Cancel'
     if ($cancel) { Invoke-Button $cancel; Start-Sleep -Seconds 2; return $true }
@@ -108,7 +109,7 @@ function Close-WithCancel($Window, [string] $What) {
     Start-Sleep -Seconds 3
     $closed = -not [OaiProbeWin]::IsWindow($handle)
     $message = "  {0}: no Cancel button through UI Automation; WM_CLOSE to the dialog's own window - closed {1}" -f $What, $closed
-    if (Get-Command -Name Say -CommandType Function -ErrorAction SilentlyContinue) { Say $message } else { Write-Host $message }
+    if ((Get-Command -Name Write-ReportLine -CommandType Function -ErrorAction SilentlyContinue) -and (Get-Variable -Name ReportLines -ErrorAction SilentlyContinue)) { Write-ReportLine $message } else { Write-Host $message }
     return $closed
 }
 

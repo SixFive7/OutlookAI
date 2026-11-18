@@ -87,7 +87,9 @@ $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\OutlookMapiInterop.ps1"
 Assert-TestbedGuest -ExpectedUser $ExpectedUser
 
-function Say($m) { Write-Host ("[{0:HH:mm:ss}] {1}" -f (Get-Date), $m) }
+# Say is one of the helpers the scripts share, dot-sourced from ScriptHelpers.ps1, which travels with the
+# guest scripts (Q154, Q166 (b), decision 215 (a)) and says why.
+. (Join-Path $PSScriptRoot 'ScriptHelpers.ps1')
 
 # Every value this script touches, named in one place so the blast radius is readable.
 # 'Why' is carried with each so a reader does not have to go looking.

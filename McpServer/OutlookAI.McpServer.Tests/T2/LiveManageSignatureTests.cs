@@ -2,6 +2,7 @@ using OutlookAI.Core.Audit;
 using OutlookAI.Core.Services;
 using Xunit;
 using Xunit.Abstractions;
+using OutlookAI.McpServer.Tests.T1;
 
 namespace OutlookAI.McpServer.Tests.T2;
 
@@ -124,7 +125,7 @@ public sealed class LiveManageSignatureTests
             DeleteTestSignatureFiles(directory, name);
             foreach (string backup in backupsToCleanUp)
             {
-                TryDeleteDirectory(backup);
+                ScratchFiles.TryDeleteTree(backup);
             }
         }
 
@@ -241,7 +242,7 @@ public sealed class LiveManageSignatureTests
             DeleteTestSignatureFiles(directory, name);
             foreach (string backup in backupsToCleanUp)
             {
-                TryDeleteDirectory(backup);
+                ScratchFiles.TryDeleteTree(backup);
             }
         }
 
@@ -303,7 +304,7 @@ public sealed class LiveManageSignatureTests
             DeleteTestSignatureFiles(directory, name);
             foreach (string backup in backupsToCleanUp)
             {
-                TryDeleteDirectory(backup);
+                ScratchFiles.TryDeleteTree(backup);
             }
 
             File.Delete(logo);
@@ -343,36 +344,14 @@ public sealed class LiveManageSignatureTests
             }
         }
 
-        TryDeleteDirectory(Path.Combine(directory, name + "_files"));
-    }
-
-    private static void TryDeleteDirectory(string path)
-    {
-        try
-        {
-            if (Directory.Exists(path))
-            {
-                Directory.Delete(path, recursive: true);
-            }
-        }
-        catch (IOException)
-        {
-        }
+        ScratchFiles.TryDeleteTree(Path.Combine(directory, name + "_files"));
     }
 
     // The log THIS process appends to. The service runs in-process here, so since Q86 its lines
     // go to the test run's throwaway directory (AuditIsolation), never the machine's real log.
-    private static int CountAuditLines()
-    {
-        string path = AuditLog.EffectiveLogPath;
-        return File.Exists(path) ? File.ReadAllLines(path).Length : 0;
-    }
+    private static int CountAuditLines() => AuditLines.Count(AuditLog.EffectiveLogPath);
 
-    private static IReadOnlyList<string> ReadAuditLinesAfter(int skip)
-    {
-        string path = AuditLog.EffectiveLogPath;
-        return File.Exists(path) ? File.ReadAllLines(path).Skip(skip).ToList() : new List<string>();
-    }
+    private static IReadOnlyList<string> ReadAuditLinesAfter(int skip) => AuditLines.After(AuditLog.EffectiveLogPath, skip);
 
     private static int IndexOfManageLine(IReadOnlyList<string> lines, string action, string name)
     {

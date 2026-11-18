@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using Microsoft.Win32;
-using OutlookAI.Services;
+using OutlookAI.Core.AddIn;
 
 namespace OutlookAI.Core.Services
 {
@@ -205,8 +205,8 @@ namespace OutlookAI.Core.Services
     /// <b>Who calls it.</b> Nobody yet. The add-in, which lives in Outlook and is where a user picks a
     /// period, references Core since the code-sharing refactor's first stage (Q167 (a)), but may call
     /// only the namespace OutlookAI.Core.AddIn (Q164 (a)), which this must move into first; until
-    /// then its seam, <c>Services\AccountOfflinePeriods.cs</c>, keeps telling the user how to set the
-    /// period in Account Settings.
+    /// then the add-in's seam, <c>IAccountOfflinePeriods</c> in that namespace, keeps telling the
+    /// user how to set the period in Account Settings.
     /// </para>
     /// </summary>
     public static class AccountOfflinePeriodWriter

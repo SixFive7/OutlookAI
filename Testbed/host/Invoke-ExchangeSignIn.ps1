@@ -295,7 +295,9 @@ $testbed = Get-Content -LiteralPath (Join-Path (Split-Path -Parent $PSScriptRoot
 $problem = Get-ExchangeVmProblem $VMName $testbed
 if ($null -ne $problem) { Write-Host $problem; exit 4 }
 
-function Say([string] $m) { Write-Host ('[{0:HH:mm:ss}] {1}' -f (Get-Date), $m) }
+# Say is one of the helpers the scripts share, dot-sourced from Testbed/guest/ScriptHelpers.ps1 (Q154,
+# Q166 (b), decision 215 (a)), which says why.
+. (Join-Path $PSScriptRoot '..\guest\ScriptHelpers.ps1')
 
 if ($Mode -eq 'AddAccount' -and [string]::IsNullOrWhiteSpace($Account)) { Write-Host 'REFUSING: -Mode AddAccount needs -Account <address>: which mailbox to add is never a default.'; exit 4 }
 $owa = ($Mode -eq 'OwaSignIn' -or $Mode -eq 'OwaSignOut')
