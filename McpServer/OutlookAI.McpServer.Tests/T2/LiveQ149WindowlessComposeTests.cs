@@ -56,6 +56,9 @@ public sealed class LiveQ149WindowlessComposeTests
     private readonly LiveQ149Fixture _fixture;
     private readonly ITestOutputHelper _output;
 
+    /// <summary>The P cells' stand-in for the program a person types in (<see cref="Q149ForegroundHolder"/>); null outside them.</summary>
+    private Q149ForegroundHolder? _holder;
+
     public LiveQ149WindowlessComposeTests(LiveQ149Fixture fixture, ITestOutputHelper output)
     {
         _fixture = fixture;
@@ -708,6 +711,8 @@ public sealed class LiveQ149WindowlessComposeTests
     private void ProductOncePerStart(string cell, int processes, int draftsPerProcess)
     {
         _fixture.ReleaseService();
+        using Q149ForegroundHolder holder = new();
+        _holder = holder;
         List<(string EntryId, string StoreId, string Token, int Iteration)> written = new();
         int firsts = 0;
         int firstsPromoted = 0;
@@ -815,6 +820,8 @@ public sealed class LiveQ149WindowlessComposeTests
     private void SharedPin(string cell)
     {
         _fixture.ReleaseService();
+        using Q149ForegroundHolder holder = new();
+        _holder = holder;
         List<(string EntryId, string StoreId, string Token, int Iteration)> written = new();
         Q149Attempt process = new(cell + "-process", 1);
         Stopwatch clock = Stopwatch.StartNew();
@@ -909,6 +916,8 @@ public sealed class LiveQ149WindowlessComposeTests
     private void ComStartWithAWindow(string cell, int drafts)
     {
         _fixture.ReleaseService();
+        using Q149ForegroundHolder holder = new();
+        _holder = holder;
         List<(string EntryId, string StoreId, string Token, int Iteration)> written = new();
         Q149Attempt process = new(cell + "-process", 1);
         Stopwatch clock = Stopwatch.StartNew();
@@ -1041,10 +1050,15 @@ public sealed class LiveQ149WindowlessComposeTests
         }
 
         string token = Token(cell.Substring(3, 2), iteration, pin: true);
+
+        // The program a person types in, standing in: brought to the foreground before the draft, checked after it.
+        bool holderHadForeground = _holder != null && _holder.TakeForeground();
+        string foregroundBefore = Q149Native.DescribeForeground();
         int shows = windows.Shows;
         int onScreen = windows.OnScreenShows;
         int foreground = windows.ForegroundToOutlook;
         int classes = windows.ShownClasses.Count;
+        int events = windows.Events.Count;
         long started = clock.ElapsedMilliseconds;
         ComDraftUpdateResult? result = null;
         string? error = null;
@@ -1080,7 +1094,12 @@ public sealed class LiveQ149WindowlessComposeTests
             .Set("pinMadeByThisSession", session.ComposeSurfacePinned)
             .Set("pinRecorded", RecordedPin(session.RegisteredOutlook) != 0)
             .Set("registryAccess", session.LastRegistryAccess)
-            .Set("userVisibleWindowsAfter", ComposeSurface.CountUserVisibleWindows());
+            .Set("userVisibleWindowsAfter", ComposeSurface.CountUserVisibleWindows())
+            .Set("holderHadForegroundBefore", _holder == null ? null : holderHadForeground)
+            .Set("holderKeptForeground", _holder == null ? null : _holder.HasForeground)
+            .Set("foregroundBefore", foregroundBefore)
+            .Set("foregroundAfter", Q149Native.DescribeForeground())
+            .Set("windowEvents", windows.Events.Skip(events).Take(40).ToArray());
         return (entryId, storeId, token, result != null);
     }
 

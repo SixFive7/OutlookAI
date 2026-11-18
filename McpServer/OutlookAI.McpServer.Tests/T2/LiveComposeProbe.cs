@@ -779,6 +779,193 @@ internal sealed class Q180StartObserver : IDisposable
     }
 }
 
+/// <summary>
+/// A small visible window of the test's own that holds the foreground, standing in for the program a person is typing
+/// in while an agent drafts: before each draft it is brought to the foreground, and after it the cells record whether
+/// it still is. Whether a draft TAKES THE FOCUS is that question - a window shown off-screen or hidden that took the
+/// foreground would take the person's keystrokes with it. It shows nothing but its own empty window and sends no input.
+/// </summary>
+internal sealed class Q149ForegroundHolder : IDisposable
+{
+    private const uint WsOverlapped = 0x00000000;
+    private const uint WsCaption = 0x00C00000;
+    private const uint WsVisible = 0x10000000;
+    private const uint WmClose = 0x0010;
+    private const uint WmDestroy = 0x0002;
+
+    private readonly Thread _thread;
+    private readonly ManualResetEventSlim _ready = new(false);
+    private readonly string _className = "Q149ForegroundHolder" + Guid.NewGuid().ToString("N");
+    private WndProc? _proc;
+    private IntPtr _hwnd;
+    private uint _threadId;
+
+    public Q149ForegroundHolder()
+    {
+        _thread = new Thread(Loop) { IsBackground = true, Name = "Q149.ForegroundHolder" };
+        _thread.SetApartmentState(ApartmentState.STA);
+        _thread.Start();
+        _ready.Wait(TimeSpan.FromSeconds(10));
+    }
+
+    private delegate IntPtr WndProc(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
+
+    /// <summary>True when the holder's window exists.</summary>
+    public bool Created => _hwnd != IntPtr.Zero;
+
+    /// <summary>True when the holder's window is the foreground window now.</summary>
+    public bool HasForeground => _hwnd != IntPtr.Zero && Q149Native.GetForegroundWindow() == _hwnd;
+
+    /// <summary>
+    /// Brings the holder to the foreground the way a program a person clicked would have it - attached to the input of
+    /// whatever has the foreground, so Windows' foreground lock lets it - and says whether it has it now.
+    /// </summary>
+    public bool TakeForeground()
+    {
+        if (_hwnd == IntPtr.Zero)
+        {
+            return false;
+        }
+
+        IntPtr current = Q149Native.GetForegroundWindow();
+        if (current == _hwnd)
+        {
+            return true;
+        }
+
+        uint mine = Q149Native.GetCurrentThreadId();
+        uint theirs = current == IntPtr.Zero ? 0 : Q149Native.GetWindowThreadProcessId(current, out _);
+        bool attached = theirs != 0 && theirs != mine && AttachThreadInput(mine, theirs, true);
+        try
+        {
+            _ = BringWindowToTop(_hwnd);
+            _ = SetForegroundWindow(_hwnd);
+        }
+        finally
+        {
+            if (attached)
+            {
+                _ = AttachThreadInput(mine, theirs, false);
+            }
+        }
+
+        PumpedStaRunner.PumpedWait(100);
+        return HasForeground;
+    }
+
+    public void Dispose()
+    {
+        if (_hwnd != IntPtr.Zero)
+        {
+            _ = PostMessage(_hwnd, WmClose, IntPtr.Zero, IntPtr.Zero);
+        }
+        else if (_threadId != 0)
+        {
+            _ = Q149Native.PostThreadMessage(_threadId, Q149Native.WmQuit, IntPtr.Zero, IntPtr.Zero);
+        }
+
+        _thread.Join(TimeSpan.FromSeconds(5));
+    }
+
+    private void Loop()
+    {
+        _threadId = Q149Native.GetCurrentThreadId();
+        _proc = Proc;
+        WNDCLASSEX windowClass = new()
+        {
+            Size = (uint)Marshal.SizeOf<WNDCLASSEX>(),
+            WndProc = Marshal.GetFunctionPointerForDelegate(_proc),
+            Instance = GetModuleHandle(null),
+            ClassName = _className,
+        };
+        if (RegisterClassEx(ref windowClass) != 0)
+        {
+            _hwnd = CreateWindowEx(0, _className, "Q149 foreground holder", WsOverlapped | WsCaption | WsVisible, 40, 40, 320, 120, IntPtr.Zero, IntPtr.Zero, windowClass.Instance, IntPtr.Zero);
+        }
+
+        _ready.Set();
+        if (_hwnd == IntPtr.Zero)
+        {
+            return;
+        }
+
+        while (Q149Native.GetMessage(out Q149Native.MSG msg, IntPtr.Zero, 0, 0) > 0)
+        {
+            Q149Native.TranslateMessage(ref msg);
+            Q149Native.DispatchMessage(ref msg);
+        }
+    }
+
+    private IntPtr Proc(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam)
+    {
+        if (message == WmClose)
+        {
+            _ = DestroyWindow(hwnd);
+            return IntPtr.Zero;
+        }
+
+        if (message == WmDestroy)
+        {
+            PostQuitMessage(0);
+            return IntPtr.Zero;
+        }
+
+        return DefWindowProc(hwnd, message, wParam, lParam);
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct WNDCLASSEX
+    {
+        public uint Size;
+        public uint Style;
+        public IntPtr WndProc;
+        public int ClassExtra;
+        public int WindowExtra;
+        public IntPtr Instance;
+        public IntPtr Icon;
+        public IntPtr Cursor;
+        public IntPtr Background;
+        public string? MenuName;
+        public string ClassName;
+        public IntPtr SmallIcon;
+    }
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern ushort RegisterClassEx(ref WNDCLASSEX windowClass);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern IntPtr CreateWindowEx(uint exStyle, string className, string windowName, uint style, int x, int y, int width, int height, IntPtr parent, IntPtr menu, IntPtr instance, IntPtr param);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr DefWindowProc(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool DestroyWindow(IntPtr hwnd);
+
+    [DllImport("user32.dll")]
+    private static extern void PostQuitMessage(int exitCode);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool PostMessage(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetForegroundWindow(IntPtr hwnd);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool BringWindowToTop(IntPtr hwnd);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool AttachThreadInput(uint attach, uint attachTo, [MarshalAs(UnmanagedType.Bool)] bool doAttach);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    private static extern IntPtr GetModuleHandle(string? moduleName);
+}
+
 /// <summary>Release, and the failure description every attempt line uses.</summary>
 internal static class Q149Com
 {
@@ -1184,7 +1371,7 @@ internal sealed class Q149WindowWatch : IDisposable
                 return;
             }
 
-            if (_events.Count < 60)
+            if (_events.Count < 400)
             {
                 _events.Add("+" + _since.ElapsedMilliseconds.ToString(System.Globalization.CultureInfo.InvariantCulture) + " " + what + " "
                     + Q149Native.ClassOf(hwnd) + " " + Q149Native.DescribePlace(hwnd));
@@ -1350,6 +1537,33 @@ internal static class Q149Native
 
         string state = !IsWindowVisible(hwnd) ? "hidden" : IsOnScreen(hwnd) ? "on" : "off";
         return string.Format(System.Globalization.CultureInfo.InvariantCulture, "{0} {1},{2} {3}x{4}", state, r.Left, r.Top, r.Right - r.Left, r.Bottom - r.Top);
+    }
+
+    /// <summary>
+    /// The foreground window as one line: the name of the process that owns it, its class and its place ("hidden", "on"
+    /// or "off" the screen) - window classes and process names only, never a title.
+    /// </summary>
+    internal static string DescribeForeground()
+    {
+        IntPtr foreground = GetForegroundWindow();
+        if (foreground == IntPtr.Zero)
+        {
+            return "none";
+        }
+
+        _ = GetWindowThreadProcessId(foreground, out uint pid);
+        string owner;
+        try
+        {
+            using Process process = Process.GetProcessById((int)pid);
+            owner = process.ProcessName;
+        }
+        catch (ArgumentException)
+        {
+            owner = "?";
+        }
+
+        return owner + " " + ClassOf(foreground) + " " + DescribePlace(foreground);
     }
 
     /// <summary>Whether the foreground window belongs to an OUTLOOK.EXE, and its class - null when there is none.</summary>
