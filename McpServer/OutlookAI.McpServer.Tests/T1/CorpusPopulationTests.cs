@@ -122,7 +122,7 @@ public sealed class CorpusPopulationTests
     {
         // The corpus every published measurement rests on is reproduced by four parameters and the
         // default shape. Adding populations must not move a single byte of that shape's key.
-        string path = Path.Combine(RepoRoot(), "Testbed", "testbed.json");
+        string path = Path.Combine(RepoPaths.RepoRoot(), "Testbed", "testbed.json");
         JsonObject corpus = JsonNode.Parse(File.ReadAllText(path))!["corpus"]!.AsObject();
         var options = new CorpusPlanOptions(
             corpus["corpusId"]!.GetValue<string>(),
@@ -1960,15 +1960,5 @@ public sealed class CorpusPopulationTests
         Assert.Contains("probe term            : " + CorpusPopulation.ProbeTerm, sheet, StringComparison.Ordinal);
         Assert.Contains("subjectTerm=" + CorpusPopulation.SubjectOnlyTerm, sheet, StringComparison.Ordinal);
         Assert.Contains("senderFragment=" + CorpusPopulation.SubjectOnlySenderFragment, sheet, StringComparison.Ordinal);
-    }
-
-    private static string RepoRoot()
-    {
-        string testProjectDir =
-            typeof(LiveTestSettings).Assembly
-                .GetCustomAttributes<AssemblyMetadataAttribute>()
-                .FirstOrDefault(a => a.Key == "TestProjectDir")?.Value
-            ?? throw new InvalidOperationException("AssemblyMetadata 'TestProjectDir' is missing.");
-        return Path.GetFullPath(Path.Combine(testProjectDir, "..", ".."));
     }
 }

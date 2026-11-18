@@ -1456,17 +1456,6 @@ public sealed class ReadOnlyFolderLookupTests
         return bytes;
     }
 
-    private static string RepoRoot()
-    {
-        string testProjectDir = typeof(ReadOnlyFolderLookupTests).Assembly
-                .GetCustomAttributes<AssemblyMetadataAttribute>()
-                .FirstOrDefault(a => a.Key == "TestProjectDir")?.Value
-            ?? throw new InvalidOperationException("AssemblyMetadata 'TestProjectDir' is missing.");
-
-        // <repo>/McpServer/OutlookAI.McpServer.Tests/ -> <repo>
-        return Path.GetFullPath(Path.Combine(testProjectDir, "..", ".."));
-    }
-
     /// <summary>A creating call, or one of the product's own creating entry points, on a line of code.</summary>
     private static readonly Regex CreatingLookup = new Regex(
         @"\.GetDefaultFolder\s*\(|\.GetSharedDefaultFolder\s*\(|\bGetDefaultFolderMayCreate\s*\(",
@@ -1487,7 +1476,7 @@ public sealed class ReadOnlyFolderLookupTests
     /// </summary>
     private static List<string> FindCreatingLookups()
     {
-        string root = RepoRoot();
+        string root = RepoPaths.RepoRoot();
         List<string> files = new List<string>();
         foreach (string project in new[] { "OutlookAI.Core", "OutlookAI.McpServer", "OutlookAI.ComHost" })
         {
@@ -1550,7 +1539,7 @@ public sealed class ReadOnlyFolderLookupTests
     /// <summary>The source of one member: its declaration line through the next member declaration.</summary>
     private static string MemberBody(string relativePath, string member)
     {
-        string[] lines = File.ReadAllLines(Path.Combine(RepoRoot(), relativePath));
+        string[] lines = File.ReadAllLines(Path.Combine(RepoPaths.RepoRoot(), relativePath));
         int start = Array.FindIndex(lines, line =>
         {
             Match declaration = MemberDeclaration.Match(line);
@@ -1978,42 +1967,6 @@ public sealed class ReadOnlyFolderLookupTests
         }
 
         public void Release(object? comObject)
-        {
-        }
-    }
-
-    /// <summary>Runs operations straight against the stand-in session, with no budget layer.</summary>
-    private sealed class DirectGateway : IComGateway
-    {
-        private readonly IOutlookSession _session;
-
-        internal DirectGateway(IOutlookSession session)
-        {
-            _session = session;
-        }
-
-        public event Action? OutlookGone
-        {
-            add { }
-            remove { }
-        }
-
-        public bool IsConnected => true;
-
-        public bool? QuitSinkActive => null;
-
-        public bool ProbeConnected() => true;
-
-        public T Run<T>(Func<IOutlookSession, T> operation) => operation(_session);
-
-        public T Run<T>(Func<IOutlookSession, T> operation, ComSessionRecovery recovery) => operation(_session);
-
-        public T Run<T>(Func<IOutlookSession, T> operation, int budgetMilliseconds, bool allowConnectFloor = false)
-            => operation(_session);
-
-        public ComHostDiagnostics GetDiagnostics() => new ComHostDiagnostics("in-process", "ready");
-
-        public void Dispose()
         {
         }
     }
