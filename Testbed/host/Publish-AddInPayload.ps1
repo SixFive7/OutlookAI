@@ -154,6 +154,16 @@
     live tier never uses that copy - it builds and spawns its own from the suite source - and the
     add-in only needs it to register itself with Claude Code, which a guest does not have.
 
+    OUTLOOKAI.CORE, AND THE RESTORE (Q167 (a), decided by the maintainer 2026-11-18). The add-in
+    references McpServer/OutlookAI.Core for its net48 build (OutlookAI.csproj says how), so the build
+    restores first - MSBuild's own /restore, which restores Core's packages in an evaluation of its own
+    before the build evaluates anything - and the publish carries OutlookAI.Core.dll and
+    System.Reflection.DispatchProxy.dll beside OutlookAI.dll. The add-in's own project has no
+    package. The restore writes Core's obj\ inside the build tree and NuGet's own caches under the
+    user profile, as any restore does; the guards do not change, and guard 1's evaluation still runs
+    no target and restores nothing (Get-MSBuildEvaluationArgumentList). A commit from before the
+    reference builds as it did: the restore then finds nothing to do.
+
     THE RELEASE BUILD (-ReleaseSigningThumbprint). There is no CI any more: on 2026-10-03 the
     maintainer decided that only his own machine builds and tests ("No CI pipelines on github"),
     and Tools/Publish-Release.ps1 builds every release THROUGH THIS SCRIPT, so the three guards
@@ -166,6 +176,9 @@
         the build directory still counts wherever it appears;
       * Properties/AssemblyInfo.cs is stamped with -Version, and the flattened OutlookAI.dll must
         carry it - the file the registration loads;
+      * so must OutlookAI.Core.dll beside it, when the commit has one: MSBuild's Version property
+        carries -Version into Core's build, as the server's publish below carries it into Core's
+        other copy, so one release has one version;
       * the MCP server is published into publish\McpServer, framework-dependent, with the same
         version, so the installer carries it, and both of its executables must carry the version;
       * it stops at the UNSIGNED installer: no guest manifest, no AddIn.zip. Signing the installer
@@ -443,7 +456,10 @@ function Get-MSBuildArgumentList {
         [Parameter(Mandatory = $true)] [string] $Thumbprint,
         [Parameter(Mandatory = $true)] [string] $StandInTargets,
         [Parameter(Mandatory = $true)] [string] $ApplicationVersion,
-        [Parameter(Mandatory = $true)] [string] $FileLog
+        [Parameter(Mandatory = $true)] [string] $FileLog,
+        # The release build's -Version, for the assemblies MSBuild stamps from a property - Core's.
+        # The add-in's own comes from Properties/AssemblyInfo.cs, which the release stamps itself.
+        [string] $AssemblyVersion
     )
 
     $projectArg = $ProjectPath
@@ -452,6 +468,9 @@ function Get-MSBuildArgumentList {
     $list = @(
         $projectArg,
         '/t:Publish',
+        # OutlookAI.Core's packages (Q167 (a)): restored in an evaluation of its own before the
+        # build's - MSBuild's documented switch, not a Restore target in the same evaluation.
+        '/restore',
         # Mirrors the release workflow's "Build and Publish" step, property for property - and
         # since 2026-10-03 it IS the release's build (-ReleaseSigningThumbprint).
         (Format-MSBuildProperty 'Configuration' 'Release'),
@@ -473,11 +492,25 @@ function Get-MSBuildArgumentList {
         '/v:minimal'
     )
 
+    if ($AssemblyVersion) { $list += (Format-MSBuildProperty 'Version' $AssemblyVersion) }
+
     # DETAILED, because the proof reads which TARGETS ran, and only detailed names every one.
     $flp = "LogFile=$FileLog;Verbosity=detailed;Encoding=UTF-8"
     if ($flp -match '\s') { $flp = '"' + $flp + '"' }
     $list += "/flp:$flp"
     return $list
+}
+
+# Guard 1's evaluation: the build's own arguments - so the same global properties - minus everything
+# that would make it more than an evaluation: the target, the restore, the logger and the verbosity.
+# -getProperty with no target evaluates the project and runs nothing; /restore would run the Restore
+# target first.
+function Get-MSBuildEvaluationArgumentList {
+    param([Parameter(Mandatory = $true)] [string[]] $BuildArguments)
+    $kept = @($BuildArguments | Where-Object {
+            -not $_.StartsWith('/t:') -and $_ -ne '/restore' -and -not $_.StartsWith('/flp:') -and $_ -ne '/v:minimal'
+        })
+    return @($kept + '-getProperty:PrepareForRunDependsOn')
 }
 
 # Guard 1's proof, BEFORE anything runs: MSBuild's own evaluation of the project with the same
@@ -845,6 +878,16 @@ function Invoke-SelfTest {
     Test-Case 'no compiler server' $true ($args1 -contains '/p:UseSharedCompilation=false')
     Test-Case 'no reused nodes' $true ($args1 -contains '/nodeReuse:false')
     Test-Case 'nothing registers by name' $false ($joined.Contains('RegisterOfficeAddin'))
+    Test-Case 'the build restores OutlookAI.Core''s packages first (Q167)' $true ($args1 -contains '/restore')
+    Test-Case 'a testbed build sets no Version property - Core keeps the developer version' 0 @($args1 | Where-Object { $_.StartsWith('/p:Version=') }).Count
+    $argsRelease = Get-MSBuildArgumentList -ProjectPath 'C:\b\source\OutlookAI.csproj' -Thumbprint 'ABCDEF' -StandInTargets 'C:\b\NoHostWrite.targets' -ApplicationVersion '3.1.1.900' -FileLog 'C:\b\msbuild.log' -AssemblyVersion '3.1.1.900'
+    Test-Case 'a release build carries its version into Core''s build' $true ($argsRelease -contains '/p:Version=3.1.1.900')
+    $evalArgs1 = @(Get-MSBuildEvaluationArgumentList -BuildArguments $args1)
+    Test-Case 'guard 1''s evaluation runs no target' 0 @($evalArgs1 | Where-Object { $_.StartsWith('/t:') }).Count
+    Test-Case 'and restores nothing' $false ($evalArgs1 -contains '/restore')
+    Test-Case 'and writes no file log' 0 @($evalArgs1 | Where-Object { $_.StartsWith('/flp:') }).Count
+    Test-Case 'it asks for the chain' '-getProperty:PrepareForRunDependsOn' $evalArgs1[$evalArgs1.Count - 1]
+    Test-Case 'with the build''s own global properties' $true (($evalArgs1 -contains '/p:PrepareForRunDependsOn="CopyFilesToOutputDirectory;VisualStudioForApplicationsBuild"') -and ($evalArgs1 -contains '/p:CustomBeforeMicrosoftCommonTargets=C:\b\NoHostWrite.targets'))
     $args2 = Get-MSBuildArgumentList -ProjectPath 'C:\a b\OutlookAI.csproj' -Thumbprint 'AB' -StandInTargets 'C:\a b\t.targets' -ApplicationVersion '1.2.3.4' -FileLog 'C:\a b\l.log'
     Test-Case 'a project path with a space is quoted' '"C:\a b\OutlookAI.csproj"' $args2[0]
     Test-Case 'a property value with a space is quoted' $true ($args2 -contains '/p:CustomBeforeMicrosoftCommonTargets="C:\a b\t.targets"')
@@ -1131,47 +1174,6 @@ function Resolve-Dotnet {
     $c = Join-Path $env:ProgramFiles 'dotnet\dotnet.exe'
     if (Test-Path -LiteralPath $c) { return $c }
     throw 'REFUSING TO BUILD THE RELEASE: dotnet.exe was not found (PATH, Program Files\dotnet). The release publishes the MCP server with the .NET 10 SDK.'
-}
-
-# Start a tool with its output going STRAIGHT TO FILES - never through this process's pipe - and
-# a deadline. A build that spawns children can otherwise hold a pipe open after it has finished,
-# and the declared timeout then never fires. .Handle is read before waiting because
-# Start-Process -PassThru otherwise loses the exit code (measured, Install-DotnetSdk.ps1).
-function Invoke-Logged {
-    param(
-        [Parameter(Mandatory = $true)] [string] $FilePath,
-        [Parameter(Mandatory = $true)] [string[]] $ArgumentList,
-        [Parameter(Mandatory = $true)] [string] $LogStem,
-        [int] $TimeoutMinutes = 20,
-        [string] $WorkingDirectory
-    )
-    $out = "$LogStem.out.txt"
-    $err = "$LogStem.err.txt"
-    foreach ($f in @($out, $err)) { if (Test-Path -LiteralPath $f) { Remove-Item -LiteralPath $f -Force } }
-    $startArgs = @{
-        FilePath               = $FilePath
-        ArgumentList           = ($ArgumentList -join ' ')
-        RedirectStandardOutput = $out
-        RedirectStandardError  = $err
-        NoNewWindow            = $true
-        PassThru               = $true
-    }
-    if ($WorkingDirectory) { $startArgs['WorkingDirectory'] = $WorkingDirectory }
-    $p = Start-Process @startArgs
-    $null = $p.Handle
-    $exited = $p.WaitForExit($TimeoutMinutes * 60 * 1000)
-    if ($exited) { $p.WaitForExit() }
-    if (-not $exited) {
-        try { $p.Kill() } catch { }
-        return [pscustomobject]@{ ExitCode = -1; TimedOut = $true; Out = $out; Err = $err }
-    }
-    return [pscustomobject]@{ ExitCode = $p.ExitCode; TimedOut = $false; Out = $out; Err = $err }
-}
-
-function Show-LogTail([string] $Path, [int] $Lines = 30) {
-    if ($Path -and (Test-Path -LiteralPath $Path)) {
-        foreach ($l in (Get-Content -LiteralPath $Path -Tail $Lines)) { Write-Host "      | $l" }
-    }
 }
 
 function Format-RegistryData($Value, [Microsoft.Win32.RegistryValueKind] $Kind) {
@@ -1489,14 +1491,16 @@ try {
         Say "  Cert:\CurrentUser\My\$thumb"
     }
 
+    # A release stamps its version into OutlookAI.Core.dll as well (THE RELEASE BUILD, above).
+    $coreVersion = $null
+    if ($Release) { $coreVersion = $Version }
     $msbuildArgs = Get-MSBuildArgumentList -ProjectPath $project -Thumbprint $thumb -StandInTargets $standInPath `
-        -ApplicationVersion $Version -FileLog $msbuildLog
+        -ApplicationVersion $Version -FileLog $msbuildLog -AssemblyVersion $coreVersion
 
     Say ''
     Say '== Guard 1, proven before anything runs: MSBuild evaluates the chain =='
-    # The same arguments minus the target, the logger and the verbosity, plus -getProperty:
-    # evaluation only, no target executes.
-    $evalArgs = @($msbuildArgs | Where-Object { $_ -ne '/t:Publish' -and -not $_.StartsWith('/flp:') -and $_ -ne '/v:minimal' }) + '-getProperty:PrepareForRunDependsOn'
+    # The same global properties, evaluated only: no target executes and nothing is restored.
+    $evalArgs = Get-MSBuildEvaluationArgumentList -BuildArguments $msbuildArgs
     $eval = Invoke-Logged -FilePath $msbuild -ArgumentList $evalArgs -LogStem (Join-Path $OutDir 'msbuild-evaluate') -TimeoutMinutes 5 -WorkingDirectory $sourceDir
     $evaluated = ''
     if (Test-Path -LiteralPath $eval.Out) { $evaluated = (Get-Content -LiteralPath $eval.Out -Raw) }
@@ -1543,6 +1547,12 @@ try {
                 $dllVersion = (Get-Item -LiteralPath (Join-Path $publish 'OutlookAI.dll')).VersionInfo.FileVersion
                 if ($dllVersion -ne $Version) { $buildProblems += "The flattened OutlookAI.dll is $dllVersion, not $Version." }
                 else { Say "  publish\OutlookAI.dll carries $dllVersion" }
+            }
+            # And the Core beside it, which a commit from before Q167 does not have.
+            if ($Release -and (Test-Path -LiteralPath (Join-Path $publish 'OutlookAI.Core.dll'))) {
+                $coreDllVersion = (Get-Item -LiteralPath (Join-Path $publish 'OutlookAI.Core.dll')).VersionInfo.FileVersion
+                if ($coreDllVersion -ne $Version) { $buildProblems += "The flattened OutlookAI.Core.dll is $coreDllVersion, not $Version - the release's Version did not reach Core's build." }
+                else { Say "  publish\OutlookAI.Core.dll carries $coreDllVersion" }
             }
             # The PUBLIC half only, DER - what the release workflow's Export-Certificate -Type CERT wrote. The
             # installer imports it into the guest user's TrustedPublisher store, as it does for users.

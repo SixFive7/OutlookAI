@@ -184,12 +184,9 @@ $ErrorActionPreference = 'Stop'
 if (Test-Path Variable:\PSNativeCommandUseErrorActionPreference) {
     $PSNativeCommandUseErrorActionPreference = $false
 }
-# The running edition's OWN Security and Utility modules, by path - Testbed/host/OwnEditionModules.ps1
-# says why (Windows PowerShell 5.1 started from PowerShell 7 resolves both to 7's copies and loses
-# Get-FileHash). Restated inline, as Tools/Publish-Release.ps1 does, because this lives outside Testbed/.
-foreach ($ownEditionModuleName in @('Microsoft.PowerShell.Security', 'Microsoft.PowerShell.Utility')) {
-    Import-Module (Join-Path $PSHOME "Modules\$ownEditionModuleName\$ownEditionModuleName.psd1")
-}
+# The running edition's OWN Security and Utility modules, by path: Testbed/host/OwnEditionModules.ps1
+# says why, and holds the import for every host and Tools/ script (Q154).
+. (Join-Path $PSScriptRoot '..\Testbed\host\OwnEditionModules.ps1')
 
 # Defaults that need $PSScriptRoot are set HERE, not in param(): Windows PowerShell 5.1 leaves it
 # empty while param() defaults are evaluated (Q78).
@@ -250,52 +247,6 @@ function Say([string] $m) { Write-Host ("[{0:HH:mm:ss}] {1}" -f (Get-Date), $m) 
 # the script on a program's first stderr line (Q78). It is one of the helpers the scripts share,
 # dot-sourced from Testbed/guest/ScriptHelpers.ps1 (Q166 (b), decision 215 (a)), which says why.
 . (Join-Path $PSScriptRoot '..\Testbed\guest\ScriptHelpers.ps1')
-
-# A long-running program with its output going STRAIGHT TO FILES, never through this process's
-# pipe, and a deadline: a program that leaves children behind can hold a pipe open after it has
-# finished, and a declared timeout then never fires. Restated from Tools/Publish-Release.ps1.
-function Invoke-Logged {
-    param(
-        [Parameter(Mandatory = $true)] [string] $FilePath,
-        [Parameter(Mandatory = $true)] [string[]] $ArgumentList,
-        [Parameter(Mandatory = $true)] [string] $LogStem,
-        [int] $TimeoutMinutes = 20,
-        [string] $WorkingDirectory
-    )
-    $out = "$LogStem.out.txt"
-    $err = "$LogStem.err.txt"
-    foreach ($f in @($out, $err)) { if (Test-Path -LiteralPath $f) { Remove-Item -LiteralPath $f -Force } }
-    $startArgs = @{
-        FilePath               = $FilePath
-        ArgumentList           = ($ArgumentList -join ' ')
-        RedirectStandardOutput = $out
-        RedirectStandardError  = $err
-        NoNewWindow            = $true
-        PassThru               = $true
-    }
-    if ($WorkingDirectory) { $startArgs['WorkingDirectory'] = $WorkingDirectory }
-    $p = Start-Process @startArgs
-    $null = $p.Handle
-    $exited = $p.WaitForExit($TimeoutMinutes * 60 * 1000)
-    if ($exited) { $p.WaitForExit() }
-    if (-not $exited) {
-        try { $p.Kill() } catch { }
-        return [pscustomobject]@{ ExitCode = -1; TimedOut = $true; Out = $out; Err = $err }
-    }
-    return [pscustomobject]@{ ExitCode = $p.ExitCode; TimedOut = $false; Out = $out; Err = $err }
-}
-
-function Show-LogTail([string] $Path, [int] $Lines = 20) {
-    if ($Path -and (Test-Path -LiteralPath $Path)) {
-        foreach ($l in (Get-Content -LiteralPath $Path -Tail $Lines)) { Write-Host "      | $l" }
-    }
-}
-
-# One argument for Start-Process's joined command line.
-function Format-Argument([string] $Value) {
-    if ($Value -match '\s') { return '"' + $Value + '"' }
-    return $Value
-}
 
 # =============================================================================================
 # PURE DECISIONS - everything -SelfTest checks

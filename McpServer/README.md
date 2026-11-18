@@ -131,7 +131,7 @@ Term matching (D40, renamed 2026-07-26; cross-column AND added in soak fix 13): 
 
 ## Build and test
 
-Requires the .NET 10 SDK. **Always build by explicit csproj path — never via `OutlookAI.slnx`** (the solution only carries the VSTO add-in, which needs MSBuild + VSTO tooling):
+Requires the .NET 10 SDK. **Always build by explicit csproj path — never via `OutlookAI.slnx`** (the solution carries the VSTO add-in, which needs MSBuild + VSTO tooling, and `OutlookAI.Core`, which the add-in references):
 
 ```
 dotnet build McpServer/OutlookAI.Core/OutlookAI.Core.csproj -c Release
