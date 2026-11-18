@@ -1673,16 +1673,6 @@ function Get-ExchangeAddressPlaceholders {
     return @($found | Sort-Object -Unique)
 }
 
-# Why a render refuses the Exchange VM's address placeholders, or '' (Q189 (b)). Only the guest's OWN section counts:
-# exchangeVm.accounts always holds placeholders, and they are resolved only when the Exchange VM itself is rendered.
-# Counted with that list, every Outlook guest was refused (found 2026-11-18, -SignatureSettings' first runs). Pure.
-function Get-ExchangePlaceholderRefusal {
-    param([string[]] $GuestPlaceholders, [string] $VMName, [bool] $IsExchangeVm)
-    $found = @($GuestPlaceholders | Where-Object { $_ } | Sort-Object -Unique)
-    if ($found.Count -eq 0 -or $IsExchangeVm) { return '' }
-    return "REFUSING: liveTestSettings.$VMName holds $($found -join ', '), the Exchange VM's address placeholders, and '$VMName' is not the Exchange VM. Nothing was written."
-}
-
 # Role -> address, one per account exchangeVm.accounts records, each read by $AddressOf from the
 # account's credential file. Two roles naming one mailbox are refused: the hub and a bystander would
 # be the same store, written and watched at once.
@@ -2203,9 +2193,6 @@ function Invoke-SelfTest {
     [void](Resolve-ExchangeAddressPlaceholders -Value 'delegate@exchange-vm.invalid' -Map $map -Problems $placeholderProblems -Where 'x')
     Test-Case 'a placeholder for a role no account has is a problem' 1 $placeholderProblems.Count
     Test-Case 'the placeholders are found wherever they are' 'bystander@exchange-vm.invalid|hub@exchange-vm.invalid' (@(Get-ExchangeAddressPlaceholders ([pscustomobject]@{ a = 'hub@exchange-vm.invalid'; b = @('x', 'bystander@exchange-vm.invalid', 'hub@exchange-vm.invalid'); c = $null })) -join '|')
-    Test-Case 'an Outlook guest whose own section holds none renders, whatever the Exchange VM''s account list holds' '' (Get-ExchangePlaceholderRefusal @() 'OutlookAI-Unindexed' $false)
-    Test-Case 'one whose own section holds one is refused, naming it' $true ((Get-ExchangePlaceholderRefusal @('hub@exchange-vm.invalid', 'hub@exchange-vm.invalid') 'OutlookAI-Indexed' $false) -like "REFUSING: liveTestSettings.OutlookAI-Indexed holds hub@exchange-vm.invalid, the Exchange VM's*")
-    Test-Case 'the Exchange VM''s own section may hold them' '' (Get-ExchangePlaceholderRefusal @('hub@exchange-vm.invalid') 'OutlookAI-Exchange' $true)
     $threw = ''
     try { [void](Get-ExchangeAddressMap -Accounts @($recorded[0], [pscustomobject]@{ address = 'hub@exchange-vm.invalid'; credentialFile = 'exchange-credentials.json'; role = 'hub' }) -AddressOf $fakeAddressOf) } catch { $threw = $_.Exception.Message }
     Test-Case 'two roles naming one mailbox are refused' $true $threw.Contains('same address')
@@ -2391,11 +2378,11 @@ if ($null -ne $exchangeRecord -and (Test-IsJsonObject $exchangeRecord.Value)) {
 
 # The Exchange VM's real addresses, read now from its credential files (Q189 (b); see
 # Get-ExchangeAddressPlaceholders): testbed.json holds only placeholders for them.
-$guestPlaceholders = @(Get-ExchangeAddressPlaceholders $guestProperty.Value)
-$placeholderRefusal = Get-ExchangePlaceholderRefusal $guestPlaceholders $VMName $isExchangeVm
-if ($placeholderRefusal) { throw $placeholderRefusal }
-$placeholders = $guestPlaceholders + @(Get-ExchangeAddressPlaceholders @($exchangeAccounts | ForEach-Object { $_.address }))
-if ($isExchangeVm -and $placeholders.Count -gt 0) {
+$placeholders = @(Get-ExchangeAddressPlaceholders $guestProperty.Value) + @(Get-ExchangeAddressPlaceholders @($exchangeAccounts | ForEach-Object { $_.address }))
+if ($placeholders.Count -gt 0) {
+    if (-not $isExchangeVm) {
+        throw "REFUSING: liveTestSettings.$VMName holds $(@($placeholders | Sort-Object -Unique) -join ', '), the Exchange VM's address placeholders, and '$VMName' is not the Exchange VM. Nothing was written."
+    }
     if (-not $CredentialRoot) { $CredentialRoot = Get-MainCheckout -Root $repoFull }
     $addressOf = { param([string] $File) & (Join-Path $PSScriptRoot 'Get-ExchangeCredential.ps1') -RepoRoot $CredentialRoot -AddressOf $File }
     $addressMap = Get-ExchangeAddressMap -Accounts $exchangeAccounts -AddressOf $addressOf
