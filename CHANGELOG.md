@@ -1631,6 +1631,14 @@ its mailbox tests on, and change nothing you install.
 
 ### Fixed
 
+- 🐛 **An Outlook that closes during a call is reported as a COM failure, with advice and an outcome.**
+  When Outlook went away under a call and the mail server's exit watcher had released the session
+  first, the agent was told "Cannot access a disposed object", with no advice and no outcome. That
+  shape, and a COM object already separated from the session, are now reported exactly as the COM
+  disconnect they are: the `ComFailure` error, the advice for the call that was interrupted, and
+  whether it may have changed anything, for a read and a write alike. A read meets this more often
+  since its retry no longer starts Outlook again (Q179). Decided on 2026-11-18.
+
 - 🐛 **A request whose caller gave up no longer leaves a stuck call holding the COM host (Q179).**
   The cancel path disposed the request's deadline, against the supervisor's own description, so a
   call stuck inside Outlook that nobody awaited any more held the COM host for good, and the host
