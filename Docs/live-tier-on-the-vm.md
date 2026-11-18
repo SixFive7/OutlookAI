@@ -4612,6 +4612,11 @@ member of Performance Log Users; raw data in `.work\q-wmi\` of the worktree
 | --- | --- | --- | --- |
 | 04:09, the other session | eighteen runners, at most eight running | 492 in 15 s, 32 a second, 91 % in `root\virtualization\v2` | about 5 cores |
 | 05:05, before this change | four queued build runs and a live run of agents' branches, on runners from before it | 155 in 14.5 s, 11 a second, 85 % in `root\virtualization\v2`: 28 to 35 from each queued build runner - about 2 a second each - and 18 from the live run | 3.9 cores |
+| 05:29, after it, beside runs on runners from before it | this branch's runners: a build run queued behind another of them, the build run ahead of it running its suite, and a live run staging its guest; and four queued build runs of agents' branches on runners from before the change | 139 in 15.7 s, 9 a second: none from this branch's queued run and none from its running build run; 4 from its live run - one VM looked up by name as it started the guest; and 30 to 34 from each of the four older queued runners, 124 in all | 3.2 cores |
+
+So a run that waits now costs Hyper-V nothing, where one on a runner from before this cost about two WMI
+operations a second, each of them `Get-VM`'s; what WmiPrvSE still spends is the older runners' and other
+clients', and falls as the agents' branches take this change up.
 
 ## 5. Which tests are in which bucket, and how to find out
 

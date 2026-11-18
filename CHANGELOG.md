@@ -2186,7 +2186,9 @@ its mailbox tests on, and change nothing you install.
   first come first served. It tells a free machine from its lock and lease files, asks Hyper-V only
   once one is free, and sleeps until a lock, a lease or a ticket changes, or 30 seconds pass. A
   machine's state is read with one narrow query instead of Get-VM, and a running run asks its test
-  machine how far it got, and for a heartbeat, every 15 seconds instead of every 1 to 3.
+  machine how far it got, and for a heartbeat, every 15 seconds instead of every 1 to 3. Traced again
+  the same morning: a queued run made no WMI call in 15 seconds, where each of four queued runs on the
+  old runner made 30 to 34.
 
 - ✅ **The index-refile measurement no longer fails when Outlook lists a moved folder late.**
   The live test that times how fast the index follows a folder rename and move reads the folder's

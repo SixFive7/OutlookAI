@@ -1026,7 +1026,12 @@ Expected: 1</Message></ErrorInfo></Output></UnitTestResult>
     Check 'a VM is looked up in exactly one place, Find-PoolVm' 1 $vmLookups.Count
     $findPoolVm = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Find-PoolVm' }, $true))
     Check 'and it refuses a name that is no build VM before it asks Hyper-V' $true ($findPoolVm.Count -eq 1 -and $findPoolVm[0].Body.Extent.Text.IndexOf('Test-IsBuildVmName') -ge 0 -and $findPoolVm[0].Body.Extent.Text.IndexOf('Test-IsBuildVmName') -lt $findPoolVm[0].Body.Extent.Text.IndexOf('Get-VM '))
-    $stateReads = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Get-TestbedVmState' }, $true))
+    # The run's code only: this self-test asks the narrow query too, to see it refuse.
+    $stateReads = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Get-TestbedVmState' }, $true) | Where-Object {
+            $up = $_.Parent
+            while ($null -ne $up -and -not ($up -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $up.Name -eq 'Invoke-SelfTest')) { $up = $up.Parent }
+            $null -eq $up
+        })
     $getStates = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Get-PoolVmStates' }, $true))
     Check 'a VM''s state is read in exactly one place, Get-PoolVmStates, which refuses a name that is no build VM before it asks' $true ($stateReads.Count -eq 1 -and $getStates.Count -eq 1 -and $getStates[0].Body.Extent.Text.IndexOf('Test-IsBuildVmName') -ge 0 -and $getStates[0].Body.Extent.Text.IndexOf('Test-IsBuildVmName') -lt $getStates[0].Body.Extent.Text.IndexOf('Get-TestbedVmState'))
 
