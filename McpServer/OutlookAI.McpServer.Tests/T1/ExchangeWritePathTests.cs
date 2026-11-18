@@ -457,7 +457,7 @@ public sealed class ExchangeWritePathTests
             switch (method.Name)
             {
                 case nameof(IOutlookSession.TryGetSendableDraftState) when Draft != null:
-                    SetOut(method, args, "error", null);
+                    ProxyArgs.SetOut(method, args, "error", null);
                     return Draft;
 
                 case nameof(IOutlookSession.TrySendDraft) when Draft != null:
@@ -471,13 +471,13 @@ public sealed class ExchangeWritePathTests
                         throw new StandInStoppedTheSend();
                     }
 
-                    SetOut(method, args, "error", SendRefusal);
+                    ProxyArgs.SetOut(method, args, "error", SendRefusal);
                     return null;
 
                 case nameof(IOutlookSession.TryCreateDerivedDraft) when DerivedDraft != null:
-                    SetOut(method, args, "savedDraftEntryId", DerivedDraft.Draft.EntryId);
-                    SetOut(method, args, "createdFolder", null);
-                    SetOut(method, args, "error", null);
+                    ProxyArgs.SetOut(method, args, "savedDraftEntryId", DerivedDraft.Draft.EntryId);
+                    ProxyArgs.SetOut(method, args, "createdFolder", null);
+                    ProxyArgs.SetOut(method, args, "error", null);
                     return DerivedDraft;
 
                 default:
@@ -498,18 +498,6 @@ public sealed class ExchangeWritePathTests
             }
 
             throw new InvalidOperationException(method.Name + " has no parameter named '" + name + "'.");
-        }
-
-        private static void SetOut(MethodInfo method, object?[]? args, string name, object? value)
-        {
-            ParameterInfo[] parameters = method.GetParameters();
-            for (int i = 0; args != null && i < parameters.Length && i < args.Length; i++)
-            {
-                if (parameters[i].IsOut && string.Equals(parameters[i].Name, name, StringComparison.Ordinal))
-                {
-                    args[i] = value;
-                }
-            }
         }
 
         /// <summary>Not sealed: <see cref="DispatchProxy"/> derives from it at runtime.</summary>

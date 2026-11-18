@@ -123,25 +123,10 @@ function Pass([string] $invariant, [string] $detail) {
     Write-Host "  OK   $invariant - $detail"
 }
 
-# Every git call goes through this. Under Tools/ a native call is held to the strict rule of
-# Tools/Checks/check-powershell-51.ps1 check 3: a script here is as likely to run behind a
-# redirection - Tools/Publish-Release.ps1 logs every guard to a file - as from a console, and
-# Windows PowerShell 5.1 with 'Stop' dies on a program's first stderr line there. 'Continue' holds
-# only inside this function, the try keeps "program not found" terminating, and the caller reads
-# $LASTEXITCODE. Restated, as this repository restates its shared rules.
-function Invoke-NativeCommand {
-    param([Parameter(Mandatory = $true)] [scriptblock] $NativeCommand)
-
-    $ErrorActionPreference = 'Continue'
-    try {
-        & $NativeCommand | ForEach-Object {
-            if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.Exception.Message } else { $_ }
-        }
-    }
-    catch {
-        throw
-    }
-}
+# Every program call goes through Invoke-NativeCommand, so that Windows PowerShell 5.1 cannot end
+# the script on a program's first stderr line (Q78). It is one of the helpers the scripts share,
+# dot-sourced from Testbed/guest/ScriptHelpers.ps1 (Q166 (b), decision 215 (a)), which says why.
+. (Join-Path $PSScriptRoot '..\..\Testbed\guest\ScriptHelpers.ps1')
 
 Write-Host "Checking testbed references under $RepoRoot"
 Write-Host ''

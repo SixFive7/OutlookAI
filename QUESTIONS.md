@@ -369,6 +369,484 @@ spelling".** See the decision log below.
 
 ## Decision log
 
+### 2026-11-18 - the maintainer's answers to Q138, Q163 to Q182 and Q194 to Q215
+
+**What this is.** Forty-two questions went to the maintainer on 2026-11-18, and he sent 41 one-line
+answers the same day; two more were asked and answered that day too: Q214, raised by his answer to
+Q173, and Q215, raised by the work on Q166. The questions as asked, each with its primer, context,
+directions and recommendation, are in `.work\open-questions-2026-11-18.md` of his checkout, which
+is gitignored, so not in a clone; what the decisions rest on is restated here, with placeholders
+where the questions named real mailboxes. Words in quotes are his, verbatim, spelling included.
+Where he answered "rec", the recommendation he had been given was taken, and it is spelled out.
+Five of the 42 did not end in a plain one-line decision:
+- **Q172 and Q173** drew questions back from him, and were decided the same day after follow-ups;
+  the exchanges are quoted below.
+- **Q197 and Q199**, which concern CodeQL alone, are superseded by Q173 (b). Q197's line, which
+  arrived as *"ec"*, needs no confirming now.
+- **Q183** asked for an action of his, not a decision; it was done the same day.
+
+One decision was taken on his behalf the same day, under his answer to Q131 and Q132; it is
+recorded with Q207.
+
+#### Code sharing - Q163 to Q172, Q215
+
+**Primer.** Q154 (2026-11-17) made "no code duplicated" a rule and let the add-in reference
+OutlookAI.Core's net48 build "behind a small interface". A read-only survey of master 9f4646d found
+73 groups of duplicated code (`.work\dup-survey-2026-11\` of his checkout). These ten asked how the
+refactor goes, and Q215 followed from one of them; `TODO.md` holds the refactor.
+
+- **Q163 - logic only the add-in runs.** Some pure code is used by the add-in alone: the update
+  schedule, the decision whether to register the MCP server, the prompt checks, the settings
+  reconciler. The tests cannot reference the add-in, so they compile those source files in.
+  *"163 a"*. **Decided: (a)**: it moves into Core, in a section of its own for the add-in - one
+  reference and no shared source files, though Core is then no longer purely neutral between the
+  server and the add-in.
+- **Q164 - what "behind a small interface" means.** Core also holds code that must never run inside
+  Outlook's own process, where the add-in runs - its Outlook connection, its COM thread, the index
+  search - because a crash there takes Outlook down. *"164 a"*. **Decided: (a)**: one public part of
+  Core that the add-in may use, held to that by a text check; nothing in it connects to Outlook,
+  starts a COM thread or opens the index. No C# interface and factory, and no bridge DLL.
+- **Q165 - which copy wins where the copies have drifted apart.** Core's copies are newer and
+  live-tested: they release COM objects the add-in leaks, and embed signature pictures the add-in
+  probably leaves as file links. One difference shows: Core writes a line break as a soft break, the
+  add-in's AI pane as a new paragraph. *"165 c"*. **Decided: (c)**: Core wins for robustness fixes;
+  a difference a person can see is measured on a test machine first.
+- **Q166 - how far the rule reaches into PowerShell.** The scripts copy helpers on purpose - the
+  worst case is one wrapper, copied 15 times - because some scripts travel alone to a VM (the setup
+  disk carries one file), and the Windows PowerShell 5.1 check sees only helpers in the same file.
+  *"166 b"*. **Decided: (b)**: a module for the scripts that travel with others, and a check that
+  fails when a copy in a script that travels alone differs from the module. The "module" became a
+  file the scripts dot-source: stream R2 measured that under Windows PowerShell 5.1 the helpers
+  cannot be a .psm1 module, because the module's scope loses the callers' error settings. Where the
+  file lives is Q215.
+- **Q215 - where Q166 (b)'s shared file lives.** A new question, raised by stream R2's work on
+  Q166 (b) and answered the same day. Directions: (a) `Testbed/guest/` - the routes that copy
+  scripts to the VMs stay as they are, and `Tools/` starts depending on `Testbed/`; (b) `Tools/`,
+  with every route that copies scripts to a guest also copying the file; (c) a new top-level folder,
+  delivered as in (b); (d) only the host's scripts share it, for now; (e) two files kept identical.
+  *"215 rec"*. **Decided: the recommendation, (a)**: the file lives in `Testbed/guest/`.
+- **Q167 - how the add-in's build gets Core.** The add-in is an old-style Office project, built only
+  by the two scripts that keep it from registering itself in his Outlook (Q81). *"167 a"*.
+  **Decided: (a)**: a project reference, as the add-in had to PolicyWriter until Q145 (a), with
+  package restore added to both scripts, and Core added to the Visual Studio solution so that F5
+  still works. That changes `AGENTS.md`'s rule that the solution holds only the add-in; the stream
+  that builds it changes the rule.
+- **Q168 - testing the add-in's AI pane.** Nothing tests the pane today - the test VMs only prove
+  that the add-in loads - and its signature and draft code is moving into Core. *"168 b"*.
+  **Decided: (b)**, over the recommended (c) plus (a): the pane is automated on a test VM - real
+  coverage, at the cost of a new automation entry point in the shipped add-in.
+- **Q169 - where shared test code lives.** One test helper exists 18 times, 17 of them identical,
+  and another 13 times; the repair tools (`OutlookAI.RemediationTools`) share code with the tests
+  too. *"169 rec (your recommendation)"*. **Decided: the recommendation**: (c), a shared folder in
+  the test project for code only the tests use and a test-support project for what the tools share
+  with them - or only (a), the folder, if the tools share no code with the tests once Q170 (a) has
+  deleted their incident commands.
+- **Q170 - the repair tools' incident commands.** Beside the corpus commands the test VMs use,
+  `OutlookAI.RemediationTools` still has `audit`, `refile`, `purge` and `dedupe` from the July 2026
+  incident, and `purge` and `dedupe` delete mail. They run on an old copy of the test mailer that has
+  drifted: its purge skips the Sync Issues folders the safety rules require. The recommendation
+  rested on his confirming that the incident is closed. *"170 rec"*. **Decided: the recommendation,
+  (a)**, with that confirmation: the four commands and their code are deleted, and the corpus
+  tooling stays. The personal-data clean-up carried it out the same day (`CHANGELOG.md`, Removed).
+- **Q171 - copies across languages.** PowerShell restates rules the C# holds - account
+  classification, the test tags, the updater's signature check - and the installer and some
+  documents repeat constants that an existing check keeps equal. *"171 rec"*. **Decided: the
+  recommendation**: (c), C# source files both sides compile, as one file already is, for the Windows
+  interop code and the signature check; (a), checked copies, for the installer, the documents and
+  the build files.
+- **Q172 - the add-in's C# version, and then every project's .NET.** The add-in targets .NET
+  Framework 4.8 and compiles as C# 7.3 by default; the server's projects are on .NET 10, and Core
+  is built for both. Core's public code works with 7.3. Directions: (a) keep 7.3 during the
+  refactor and revisit after, recommended; (b) the latest version; (c) a newer pinned version with
+  null checks on. His answer reached past the add-in: *"172 move everything to the latest possible
+  .net or .net core version (beware that .net 11 just released)"*. A follow-up went to him, and he
+  asked back: *"172 I tought we had a aot bianry with the framework (or at least parts of it)
+  included so that we would not have to install a framework on the machines?"* The answer was no:
+  the server has been framework-dependent since 2026-08-08, because of the updater's 50 MB download
+  cap, which a self-contained server would pass (`McpServer/README.md`). *"172 why is there a 50 MB
+  limit? That is silly. Double check this."* It is an arbitrary sanity limit from the bug-fix batch
+  of 2026-06-01 (0021ca1), compiled into every installed copy (`Services/UpdateService.cs`). A
+  second follow-up went to him, and he answered: *"172 can we go for option c but instead of
+  shipping it along and breaking our stupid file size limit we have the installer download it on
+  demand?"* **Decided**, all on 2026-11-18: everything that can moves to .NET 11 and C# 15, and the
+  VSTO add-in, which cannot run on modern .NET, stays on .NET Framework 4.8 but compiles as C# 15;
+  the shipped MCP server runs on .NET 11 with a private copy of the runtime, which the installer
+  downloads on demand - Microsoft's official runtime package, checked against its published hash -
+  and unpacks into OutlookAI's own per-user folder, so it needs no administrator rights and a silent
+  update does it too; and the installer itself stays under the 50 MB cap, which is unchanged.
+  Stream U builds it.
+
+#### The licence and CodeQL - Q173, Q214, Q197 to Q199
+
+**Primer.** On 2026-10-01 the maintainer decided to move OutlookAI to the FSL-based licence BrowserAI
+carries; it is an open `TODO.md` item. On 2026-10-03 (Q125) he allowed CodeQL in the release
+checks, and CodeQL's licence permits it only on code under an OSI-approved open-source licence,
+which FSL is not: `Tools/Invoke-CodeQL.ps1` refuses unless `LICENSE` is MIT (`AGENTS.md`,
+Dependencies, the third exception). Since Q146 the scan treats every MCP tool's arguments as
+untrusted input.
+
+- **Q173 - the licence change rules out CodeQL.** Directions: (a) stay on MIT and keep CodeQL; (b)
+  move to FSL and drop CodeQL from the release checks, keeping the .NET security analysers on every
+  build and the vulnerable-package check - recommended, if FSL still stands; (c) move to FSL and find
+  a free scanner whose licence allows it, which needs research and an exception to the Dependencies
+  rule; (d) decide when the move actually happens. His first answer was a question back: *"173 what
+  does CodeQL bring us? I'd rather not let something steer my license but I have no clue what it's
+  loss will cost us. Why was it added?"* Why it was added is in this log's Q125 record (2026-10-04);
+  what it found, in the Q146 record (2026-10-11) and under Q198 below. A follow-up went to him the
+  same day, and he answered: *"173 b"*. **Decided: (b)**: OutlookAI moves to the FSL licence, and
+  CodeQL leaves the release checks. In its place a build rule keeps the risky calls - file writes,
+  the search query, program starts - inside a few vetted wrapper classes that check their input; the
+  .NET security analysers on every build and the vulnerable-package check stay. Stream S builds it,
+  and the rules it changes in `AGENTS.md` change with it. It supersedes Q197 and Q199, and raised
+  Q214.
+- **Q214 - from when the FSL licence applies.** A new question, raised by Q173 (b) and answered the
+  same day. Every release so far went out under MIT, and what was published under MIT stays MIT for
+  whoever has it. Directions: (a) from the commit that changes the licence; (b) from the next
+  release; (c) from a fixed date. *"214 a"*. **Decided: (a)**: everything after the licence commit,
+  the next release included, is under the FSL, and the release notes say so. Stream S builds it.
+- **Q197 - should CodeQL follow an AI's input past the tools themselves. Superseded by Q173 (b).**
+  CodeQL loses track of an AI's arguments in two places, so what happens to them after those is not
+  scanned: where the work crosses into the separate process that talks to Outlook, through a channel
+  CodeQL cannot follow, and at list arguments such as item IDs and attachments. Directions: (a) one
+  CodeQL model entry per operation of that process, 27 today, counted by the census that already
+  guards the tools; (b) a small custom CodeQL library, which also covers the list arguments; (c)
+  leave it, with the gaps written down. Recommended: (a), after Q198 - a trial run with those
+  entries found 3 new results, all in `save_attachment`, which would block every release until Q198
+  was decided. His line arrived as *"ec"*, most likely "197 rec" with its start lost. With CodeQL
+  leaving the release checks there is nothing left to decide, and the line needs no confirming.
+- **Q198 - where `save_attachment` may save files.** It saves an attachment into any folder the AI
+  names. The sender chooses the file and its name, and the AI, which reads the sender's mail, chooses
+  the folder, so a malicious mail could talk an AI into saving its attachment into the Startup
+  folder, where it would run at the next sign-in. Whether Outlook's blocking of dangerous attachment
+  types stops that save is not measured. *"198 rec"*. **Decided: the recommendation, (a)**: only
+  OutlookAI's own download folder, `%LOCALAPPDATA%\OutlookAI\scratch\attachments`, and folders under
+  it. An AI can still copy the file elsewhere with its own tools, under their own permission rules.
+  It stands without CodeQL, whose scan found the hole.
+- **Q199 - how strictly an accepted CodeQL finding is matched. Superseded by Q173 (b).** A release
+  passes CodeQL only when every finding is fixed or accepted with a written reason in
+  `Tools/codeql-accepted.json`, and an acceptance matches on the rule, the file and the line - so a
+  new source of untrusted input reaching the same line is accepted silently, its reason never
+  re-checked. The accepted search-query finding already covers 7 sources. *"199 c"*: each acceptance
+  would have recorded every source's exact location, computed by the script, over the recommended
+  (b), which records only how many sources a finding lists. The acceptance file goes with CodeQL, so
+  nothing of it is built.
+
+#### How drafts are written - Q208 to Q211
+
+**Primer.** Q149 (d), 2026-11-17: measure first, then choose between keeping Word for drafts, with
+pins only while drafting, and writing them as HTML with no compose window and no pins - HTML only if
+its drafts are indistinguishable from today's. The measurement ran that day on the four Outlook test
+guests (`Docs/research/q149-draft-text`): no HTML-only draft looked the same as today's, so drafts
+keep going through Word, and a window-less Outlook needs a pin for as long as they do - without one,
+the compose window's close ended Outlook in 40 of 40 drafts. Q175 to Q179 and Q118's pin clean-up
+depend on Q208.
+
+- **Q208 - how Word-based drafting works from now on.** Directions: (A) as approved, a pin only while
+  a draft is being written - closing it after each draft ends Outlook, so every draft starts Outlook
+  from cold and the compose window flashes every time; (B) as measured, one pin for the whole
+  session, with Q118's clean-up so that pins are not left behind, one visible moment per Outlook
+  start instead of per draft, and no per-draft activation at all while his Outlook window is open;
+  (C) HTML-only after all, which fails his "identical" rule today; (D) B now, then retry HTML-only
+  with a third version that copies today's markup, once Q209 fixes replies - about an hour of
+  test-machine time; (E) judge HTML-only against what Outlook's own compose window produces instead
+  of today's drafts, not measured. *"208 rec"*. **Decided: the recommendation, B**, together with
+  Q209's fix. B carries Q118 (a)'s pin clean-up, approved 2026-10-11 and on hold until now.
+- **Q209 - fixing replies and forwards.** A new reply starts with two empty paragraphs above the
+  quoted message's header block; today's code writes into the header block itself, so the text and
+  the signature end up inside the quoted header - 12 of 12 measured. *"209 rec"*. **Decided: the
+  recommendation, (a)**: the text and the signature go into those top paragraphs, with a test that
+  the first paragraph has no top border.
+- **Q210 - the measurement suite.** The tests that produced Q149's numbers run only when selected on
+  their own, so they cost nothing in normal runs. *"210 rec"*. **Decided: the recommendation, (a)**:
+  all of it stays in the repository. Results already differ between Office 2021 and 2024, so it will
+  be needed again.
+- **Q211 - the spacing in drafts.** Today's draft paragraphs use Word's "Normal (Web)" style, with
+  5 pt of space above and below. *"211 rec"*. **Decided: the recommendation, (b)**: first measure
+  what Outlook's own compose window does with typed text.
+
+#### The Outlook hang of 2026-11-15 - Q174 to Q182
+
+**Primer.** On 2026-11-15 an OutlookAI MCP server on the maintainer's workstation started Outlook
+through COM, with no window, while Outlook was closed. About 5 seconds into its start that Outlook
+deadlocked - inferred: OutlookAI's connect sequence and the Teams Meeting add-in's start-up call met
+on Outlook's main thread - never showed a window, and Outlook would not start for him until the
+process was ended 34 minutes later (`TODO.md`, the item on the hang). What master has done since
+reaches his PC only with a release.
+
+- **Q174 - his installed OutlookAI until his next release.** *"174 a"*. **Decided: (a)**: it stays
+  as it is, and the installed MCP server is not disabled. The recommended (c) would also have put the
+  prevention (Q175, Q178, Q179) first, so that his next release carries it. Releases stay his call.
+- **Q175 - how OutlookAI starts Outlook, or attaches to one that is still starting.** Today it starts
+  Outlook with no window (D17, D33) and opens the mailboxes within a second - exactly when the
+  deadlock struck. Q150 (a), restarting Outlook on the next call after he closes it, stands.
+  Directions: (a) wait for Outlook to settle before opening any mailbox - Outlook at least about 20 s
+  old, the add-in's start-up stamp present, its main thread idle - which narrows the race, is
+  unproven until measured, and makes cold starts on the test VMs about 20 s slower; (b) (a), plus no
+  hidden pin window at connect, which removes two more mailbox-opening calls and depends on how Q208
+  decides the pin; (c) start Outlook minimised, as he does, reversing D33; (d) never start Outlook,
+  refuse instead, reversing D17 and Q150 (a); (e) only one OutlookAI server at a time may start
+  Outlook, and the others wait - eight were running during the hang. *"175 rec"*. **Decided: the
+  recommendation**: (a) and (e) now, and (b) once Q208 decides the pin - Q208 is B, above. D33 stays
+  unless the measurement shows that only (c) avoids the deadlock.
+- **Q176 - noticing an Outlook that starts and never finishes, or stops answering.** Master asks
+  Windows whether Outlook's windows are frozen. That would have caught this hang, but not one that
+  strikes before Outlook creates its windows, which reads as "starting" forever. *"176 c - we can
+  then report back to the calling llm that outlook is stuck and why. Allowing for the user to report
+  back to us or ask the llm to fix it."* **Decided: (c)**: a time limit on "starting", about 120 s,
+  and a per-user record of the Outlook that OutlookAI started - its process, its start time, which
+  server started it, and which start-up step it has been stuck in, since when. With his requirement:
+  the calling AI is told that Outlook is stuck and why, so that the user can report it to the
+  project or ask the AI to fix it.
+- **Q177 - may OutlookAI ever end a hung Outlook.** A deadlocked Outlook ignores Quit and window
+  closes; only ending the process helps. OutlookAI never stops Outlook (S7, D17), and the mailbox
+  safety rules forbid killing OUTLOOK.EXE. *"177 a - ensure to communicate back the risks of killing
+  it when communicating back the hang."* **Decided: (a)**: never; OutlookAI reports the hang clearly,
+  and the user ends Outlook in Task Manager. With his requirement: the report of a hang also says
+  what ending Outlook that way risks.
+- **Q178 - what the agent and the user are told about a hung Outlook.** For a hung Outlook, master
+  tells the agent "restarting Outlook fixes it now ... this also clears by itself". For an Outlook
+  with no window that is untrue: the user can neither see nor close it, launching Outlook does
+  nothing, and a deadlock never clears by itself. *"178 rec"*. **Decided: the recommendation, (e)**:
+  different text when Outlook is hung and has no window - the Task Manager steps, and no "clears by
+  itself"; health fields for the process, its start time, who started it, whether it ever showed a
+  window, frozen since when and which start-up step; a start log under `%LOCALAPPDATA%\OutlookAI`,
+  with no mail content, which would have named the stuck call here; and a troubleshooting entry in
+  the README.
+- **Q179 - only a live request may start Outlook.** After his Outlook was ended, the old version
+  started it again for a request abandoned 12 minutes earlier. Master can do the same another way: a
+  cancelled request switches off its own hang timer, the process that makes the Outlook calls (the
+  COM host) then retries once, and that retry starts Outlook. *"179 rec"*. **Decided: the
+  recommendation, (e)**: the hang timer keeps running after a cancel, as the code's own description
+  already says it does, and the COM host's retry may only attach to a running Outlook, never start
+  one.
+- **Q180 - recording how Outlook starts during measurement runs.** The offline test VMs cannot
+  reproduce this deadlock - no Exchange mailbox cache, no Teams - but every measurement run there
+  cold-starts Outlook many times. *"180 rec"*. **Decided: the recommendation, (b)**: the next
+  measurement run there logs every cold start's time to ready, its "alive" verdicts and any hang -
+  about 100 data points for nothing.
+- **Q181 - reproducing the hang.** Only the Exchange VM has an Exchange mailbox cache, and it runs
+  Office 2024; his own Office 2021 runs only on his workstation, where no live test may run (Q116),
+  and no test VM has Teams. *"181 d"*. **Decided: (d)**, over the recommended (a) plus (d): no
+  reproduction - the prevention and the start log ship, and what follows is watched. No stand-in
+  add-in on the Exchange VM making Teams' kind of call.
+- **Q182 - the add-in's Claude warm-up.** At every Outlook start the add-in runs a full Claude Code
+  session from inside OUTLOOK.EXE to "warm up" the command line: one model request with the prompt
+  "-", under the user's global Claude settings, run from `C:\Windows\system32` when a program started
+  Outlook. It does not stay warm - it runs and exits - and about 656 such sessions were on disk. It
+  played no part in the hang. *"182 a"*. **Decided: (a)**: the warm-up is removed.
+
+#### The Exchange VM - Q206, Q207, Q212, Q194, Q138
+
+**Primer.** `OutlookAI-Exchange` is the one test VM signed in to Microsoft 365 (Q108 to Q111): the
+dedicated test account, its writable hub (Q137), and a real mailbox, a read-only bystander. Runbook
+section 4.4a has its runs.
+
+- **Q206 - getting back Office's ability to create items there.** Its Office LTSC 2024 was installed
+  on 2026-10-03 and never activated, because no activation server answers it, and its grace ran out
+  about 25 days later. Since then Outlook there refuses to create any item through its object model:
+  41 tests of the run of 2026-11-17 failed at their first draft or mail, and every read test passed.
+  On 2026-10-08, inside the grace, the same tests created and removed their items. The licence is the
+  most likely cause, not proven: proving it means creating an item, which only the tested suite may
+  do. Directions: (a) reset Office's grace with its own reset tool, `ospprearm.exe` - free, but only a
+  limited number of times, its licence terms to be checked, and the cheapest proof of the cause; (b)
+  install Microsoft 365 Apps there, activated by the test account's own licence if the tenant has one
+  for it - a licensed component, so an exception to the Dependencies rule, and it would let real
+  roaming signatures be measured, which the LTSC version cannot; (c) activate the current Office with
+  a volume key, MAK or KMS - a licence key; (d) only the tests that write nothing, until one of these
+  lands. Recommended: (a) once, to prove the cause, then (b) if the test account has a Microsoft 365
+  Apps licence, else (d). *"206 a with fallback to b with fallback to reporting to me for spla mak
+  keys"*. **Decided:** (a) first; if the reset does not bring item creation back, (b); and if (b) is
+  not possible, an agent reports to him, and he supplies a volume key (a SPLA MAK). `AGENTS.md`
+  (Dependencies, the second exception) carries the fallbacks. Until one of them works, the VM runs
+  only the tests that write nothing, as it has since 2026-11-17.
+- **Q207 - a mailbox shown twice makes `outlook_health` report "degraded".** The test account's
+  mailbox is in the VM's Outlook twice: as its own cached mailbox, which Windows Search indexes, and
+  as an online-only entry Exchange added automatically because the bystander mailbox has Full Access
+  to it, which is never indexed. So `outlook_health` reports "degraded" - a mailbox with nothing in
+  the index, and searches falling back to a slower 7-day sweep - which is true of that entry and
+  misleading, because the mailbox is fully indexed through its cached entry. Both entries carry the
+  same internal ID. Any user whose account has full access to another mailbox in the same profile
+  gets this, and the health test fails on the VM because of it. Directions: (a) switch the automatic
+  adding off in Microsoft 365, or remove the Full Access - his tenant's administrator, a colleague -
+  which also rules that entry out as a stand-in delegate mailbox in tests; (b) in the product,
+  `outlook_health` and search recognise an entry with the same ID as an indexed mailbox as that
+  mailbox: health calls it a second view of an indexed mailbox, not a degradation, and a search
+  covers it once, through the indexed entry, instead of also sweeping the same mail live; (c) in the
+  tests only, the health test accepts "degraded" exactly when every unindexed entry is such a second
+  view; (d) leave the test failing there, or exclude it. Recommended: (b), and (c) meanwhile if (b)
+  has to wait. *"207 b"*. **Decided: (b).** The stopgap (c) was not part of his answer. Stream K
+  builds (b) together with the decision that follows.
+- **Decided on his behalf, 2026-11-18: one mailbox, one store ID** - under his answer to Q131 and
+  Q132, *"what you think is the most stable"*. Run 6 on the VM (runbook section 4.4a) found the
+  duplicate breaking folder IDs too: the test account's `store_id` named both entries, so
+  `list_folders` listed both folder trees, 74 folders, and `find_folder` found two Inboxes - a defect
+  under Q131 and Q132 whatever Q207 decided. **Decided:** a mailbox that appears as two store
+  entries - its cached store and an automapped online entry - gets one store ID and one folder tree,
+  resolved through its cached (indexed) entry, and no ID resolves to two stores. Stream K builds it,
+  with Q207 (b).
+- **Q212 - may a folder search on an Exchange mailbox start Outlook while it is closed.** For a local
+  mail file the search index finds a folder by its ID without Outlook; for Exchange it cannot
+  (measured, runbook section 4.4a), so only Outlook can find the folder. As built, OutlookAI starts
+  Outlook without a window to answer, as it does for other tools under D17 and Q150 (a), and refuses
+  only when Outlook does not respond. Q132 could be read as "always refuse while Outlook is closed",
+  and a start from closed is what preceded the 2026-11-15 hang. *"212 rec"*. **Decided: the
+  recommendation, (a)**, as built: start Outlook, answer correctly, and refuse only when Outlook does
+  not respond. Q175's start protections apply to it too.
+- **Q194 - the roaming-signature test with Office's online features on.** R3, on 2026-11-17, made a
+  test signature the test account's default in Outlook on the web and watched whether the VM's
+  Outlook, Office LTSC 2024, picked it up. It never did - not after 1 minute, 15 minutes or an hour,
+  nor after an Outlook restart - and no local copy appeared; the signature was deleted afterwards,
+  and no real mailbox's signatures were touched. Two things could have hidden roaming: the testbed's
+  policy switching Office's online features off, and File > Options greyed out there (probably the
+  expired activation, Q206), so that "store my settings in the cloud" could not be checked.
+  *"194 rec"*. **Decided: the recommendation, (b)**: R3 runs again with the four policy values
+  removed - a change to that VM's registry only, undone by the checkpoint R3 restores anyway. While
+  it lasts, Office there talks more to Microsoft's online services.
+- **Q138 - the one old test message in the bystander mailbox's Sent Items.** It is left from the
+  years the live tests ran on his workstation: `[OutlookAI-McpTest] d3994a2ad25309442 d39 move seed`,
+  sent 2026-07-26 03:46, and a read-only scan found it the only tagged item in either mailbox on the
+  VM. Under Q138 (c) (2026-10-11) a tested helper deletes exactly this item - its item ID and its
+  test tag both matched - then removes it from Deleted Items, but only after he confirms.
+  *"138 rec"*. **Decided: the recommendation, (a)**: delete it - his confirmation, given on the item
+  as the question described it, by its subject and the time it was sent. The deletion is a write, so
+  it waits until Q206 gives Office there back the ability to change items.
+
+#### Signatures - Q200 to Q205
+
+**Primer.** Q147 and Q152 to Q162 (2026-11-17) shaped how OutlookAI handles signatures, and
+building it raised these six (this log, "Q147 carried out", 2026-11-17).
+
+- **Q200 - finding out what Outlook does when an administrator forces a signature.** Q156 allows
+  another signature, or none, under a forced default only if Outlook allows it; until that is
+  measured, OutlookAI refuses both. The test machines run without administrator rights, so they
+  cannot set such a policy today. *"200 a"*. **Decided: (a)**: a runner step sets the policy as
+  administrator before Outlook starts, and the VM's checkpoint undoes it afterwards; a live test then
+  checks what Outlook inserts. It uses the kind of new-mail window that crashed Outlook on
+  2026-10-04, so it runs with crash dumps on. It answers Q201 too.
+- **Q201 - where a default signature set in Outlook's own mail settings ranks.** Besides an
+  administrator's policy, Outlook's general mail settings can name a default signature, and the
+  sources disagree on whether Outlook puts it above or below an account's own default. Directions:
+  (a) above the account's default, as built - default changes refused, a per-message choice
+  allowed; (b) below it; (c) ignore it; (d) show it, but act as in (b). Recommended: (a) until Q200
+  measures it, then follow the measurement. *"201 meassure it"*. **Decided:** measure it, with
+  Q200 (a)'s runner step; (a), as built, stays until the measurement is in, and the measurement then
+  decides.
+- **Q202 - reading signatures stored in the mailbox itself.** Microsoft 365 can keep signatures
+  inside the mailbox ("roaming"); OutlookAI uses Outlook's local copies and detects roaming (Q152).
+  R3 (Q194, above) found nothing arriving on Office LTSC 2024, and no hidden local copy. *"202 rec"*.
+  **Decided: the recommendation, (a)**: the mailbox is never read, as built - not through Outlook's
+  hidden local copy, whose format is undocumented, and not through Outlook on the web's private
+  interface.
+- **Q203 - a named signature on a reply from a shared or delegate mailbox.** Q160 said no signature
+  there for now, and the result says so. As built, no default goes in, but a signature the AI names
+  explicitly does. *"203 rec"*. **Decided: the recommendation**: (a), as built, now; then (d) - once
+  the shared test mailbox (Q109) exists, measure what Outlook does there and match it. `TODO.md`
+  holds (d).
+- **Q204 - how far an administrator's "no signatures" policy stops signature editing.** What is
+  built is stricter than Q156 asked: while policy disables signatures, every signature change
+  through OutlookAI is refused, and a signature the policy forces cannot be deleted. *"204 a"*.
+  **Decided: (a)**, as built: Outlook's own signature editor is closed under that policy too, and
+  deleting a forced signature would leave the forced default naming nothing.
+- **Q205 - updating one format of a signature.** Each signature has three files: HTML, Rich Text and
+  plain text. As built, an update writes only the formats it is given, and the answer names the
+  formats it left unchanged - nothing is converted, but the formats can disagree until the AI sends
+  the others. *"205 d"*. **Decided: (d)**, over the recommended (a): an update is refused unless it
+  sends every format the signature already has.
+
+#### Personal data and the leaked signing key - Q196, Q213, Q183
+
+- **Q196 - committing the personal-data check's fingerprints.** The check, on the personal-data
+  branch, finds the maintainer's identifiers, and third parties', without storing the values: it
+  stores salted fingerprints (hashes) of them in a committed file. The salt is public, so anyone can
+  test guesses against them - the agent recovered his computer name from 1,000 guesses, a million
+  take 2 seconds, and word lists of Dutch words, first names or .nl domains would expose the third
+  parties' values the same way. *"196 c"*. **Decided: the recommendation, (c)**: no fingerprint is
+  committed; the build-VM runner copies the private list from his workstation into each run - the VM
+  has no internet and is reset after every run. Nothing guessable is published, and the build VM
+  keeps checking every commit. The personal-data clean-up built it, with its rule in `AGENTS.md`
+  (Personal data); the next entry records it too.
+- **Q213 - silent updates and the leaked certificate in a user's Trusted Root store.** Windows makes
+  the user confirm every removal from their own Trusted Root store, with No as the default answer.
+  The installer explains and asks on an interactive install or uninstall; auto-updates run silently
+  right after Outlook closes, so they cannot ask without surprising the user. Only machines where
+  someone added the leaked certificate to Trusted Root by hand are affected - no release ever did
+  that. Measured on a test VM (runbook section 4.8): every removal asked, 13 of 13, even with the
+  removal tool hidden, and an unanswered question still waited after 120 s; deleting the
+  certificate's registry key directly skips the question, but Windows keeps its record of the
+  certificate as one the user confirmed, so writing the key back trusts it again with no question.
+  Directions: (a) skip it on silent runs, and the next interactive install or uninstall asks - as
+  built, on master since e8ee8d0; (b) delete the registry key silently; (c) ask without waiting; (d)
+  the add-in explains and asks at the next Outlook start; (e) (a), plus a line in the release notes
+  on how to check for the certificate and remove it - recommended. *"213 a only"*. **Decided: (a)
+  only**, as built: no release-notes line, and no question from the add-in. A machine that only
+  auto-updates keeps trusting the leaked root until an interactive install or uninstall.
+- **Q183 - the GitHub Support request to purge the old commits that hold the leaked signing key.**
+  Not a decision but an action: he chose (a), "send it for me", on 2026-11-17 (the next entry), and
+  the request went to GitHub Support on 2026-11-18 as ticket #5020876, signed in as the repository
+  owner. A second request follows the personal-data history rewrite.
+
+#### The test VMs - Q195
+
+- **Q195 - how much of his PC's processing power the test VMs may take.** He had asked for as much
+  parallel work as possible, extra VMs included (2026-11-17). Memory is fine - 35 to 64 GB stays
+  free - but the processors are not: with everything running at once his own work slows down, and
+  each test run takes twice as long, so going wider gains less than it looks. *"195 rec"*.
+  **Decided: the recommendation, (e)**: a load check - a new run starts only while the PC's
+  processors are below about 70 % busy, and otherwise waits - plus a pause switch he can flip when
+  he needs the PC: running test VMs finish their run, and no new one starts until he flips it back.
+  The rule this brings to `AGENTS.md` (Test VMs stay saved unless in use) comes with the stream that
+  builds it.
+
+### 2026-11-18 - the folder-ID follow-ups carried out (stream K), decision 207 (b) with them
+
+**Primer.** Folders and stores addressed by ID (Q131-Q136, the entry below) left four follow-ups open, and
+the Exchange VM's first read-only run of them (runbook 4.4a, run 6) found three more. Each was decided
+before it was built - under the maintainer's Q131/Q132 delegation, "what you think is the most stable",
+or by him (207). What was measured on the way is in `Docs/live-tier-on-the-vm.md` section 4.9.
+
+- **The stale copy of a rebuilt .ost in an UNSCOPED search: (a) and (b) together.** Where another index
+  store of a store's name is tied to it by its hash, the untied one is the stale copy and is left out, and
+  the advice says so (`index.storeCopiesLeftOut`); where none is tied, nothing is left out and the copies
+  are reported (`index.storeCopiesSearched`); `outlook_health` lists them per store (`storeCopies`).
+- **The index-hit locator and two folders that share a path: (a).** The path fallback tries every folder at
+  the path, not only the first (`Core/Com/FolderPathCandidates.cs`).
+- **Store IDs for an Exchange store Outlook does not cache: (b).** Every store's top folder is read once per
+  store-list refresh, so every store gets the 28-character S ID. Measured first, read-only: 2.2-3.0 ms for
+  the automapped online entry's top folder on the Exchange VM, 2.1-3.5 ms for the cached stores'.
+- **`read`'s `folder`: (a).** The folder's names joined by `/`, as every other tool prints a folder.
+- **One store ID named two stores (run 6).** Decided under the delegation: an ID never resolves to two stores
+  or two folders; a mailbox that appears as two store entries is listed and resolved once, through its
+  cached (indexed) entry (`Core/Com/StoreTwins.cs`). Measured: the two entries share their `StoreID` byte for
+  byte and their top folders' provider UID, and a folder ID opens in the cached entry whatever `StoreID` is
+  passed beside it.
+- **Decision 207 (b), by the maintainer.** `outlook_health` calls the other entry a second view of an indexed
+  mailbox (`matchedBy: "secondView"`), not a degradation; search covers the mailbox once, through the indexed
+  entry, without sweeping the same mail live through the second one. An online-only store with no cached
+  twin keeps its own S ID.
+- **An Exchange folder ID no folder has was answered (run 6).** Refused now. Measured: in cached mode
+  `GetFolderFromID` opens such an ID - with or without a `StoreID`, in the cached entry, not the online one -
+  as an empty stand-in whose every MAPI property is `MAPI_E_NOT_FOUND`; described, it read as the top of the
+  store. A folder without a record key is no folder.
+- **The thread test that could not open its index member (run 6).** Within existing decisions (gap B3, Q98
+  (f)): the member was a holiday appointment, which has no ReceivedTime; the index files its creation time,
+  so the locator matches an item without a ReceivedTime on its CreationTime, and the nearest candidate in
+  time wins - the holidays of one name were created tenths of a second apart.
+- **Decision 212 (a), by the maintainer:** with Outlook closed, a folder search on an Exchange mailbox may
+  start Outlook, as built.
+
+Decided on the maintainer's behalf while building it: another store of the profile that is tied to nothing
+and could be filed under the copies' name keeps them in an unscoped search, since they might be its own;
+copies an unscoped search reads are a health problem, copies it leaves out advice; a second view's row in
+`outlook_health` takes the kept entry's `inLocalIndex`, and `list_accounts` names the mailbox a second view
+shows (`secondViewOf`); the kept entry of two is the one Outlook keeps locally, then one that is not a
+delegate's entry, then the first in the profile's order; the namesake walk runs only after the folder
+`Folders[name]` gives failed, so an ordinary hit pays nothing for it, and it also reaches a folder whose
+name holds `/`; and the top folder of an Exchange store Outlook does not cache is not asked for while Outlook
+says it is offline or disconnected, so such a store keeps its T ID then. Not measured: a cold read of an online
+store's top folder in a headless Outlook (the Exchange VM's Outlook is windowed, and its folder pane holds every
+top folder open), and what that read costs while the server is unreachable - three seconds after the VM
+resumed, with Outlook not yet reconnected, it took 2.3 ms, while a lookup of an ID no folder has waited 26 s.
+
 ### 2026-11-17 - the maintainer's answers to Q183 to Q193: personal data in the public history
 
 **What this is.** Questions asked and answered in conversation on 2026-11-17, after a read-only
@@ -569,8 +1047,8 @@ none was recorded in the repository until now: answers of 2026-10-11, in two mes
 The research behind several answers is in `.work\research-2026-10-11\` (q118-tray, q145-admin,
 q147-signatures, q149-pins, q149-wordeditor) and the duplicated-code survey in
 `.work\dup-survey-2026-11\`, both in the maintainer's checkout. `.work` is gitignored, so neither is
-in a clone; what the decisions rest on is restated here. The survey's questions, Q163 onwards, are
-not answered yet.
+in a clone; what the decisions rest on is restated here. The survey's questions, Q163 to Q172, were
+answered on 2026-11-18 (the 2026-11-18 entry).
 
 #### Folders and stores by id - Q131 to Q136, 2026-10-11
 
@@ -751,7 +1229,8 @@ signature", over the add-in's own copy of the server's signature catalog. Resear
   net48 build behind a small interface, superseding the no-coupling choice - and, as a standing rule
   now in `AGENTS.md` (Shared code), no code is duplicated. A survey of master 9f4646d found 73 groups
   of duplicated code (`.work\dup-survey-2026-11\`: README.txt, inventory.tsv, members.tsv); its
-  follow-up questions, Q163 onwards, are not answered yet. `TODO.md` holds the refactor.
+  follow-up questions, Q163 to Q172, were answered on 2026-11-18 (the 2026-11-18 entry).
+  `TODO.md` holds the refactor.
 - **Q155 - which Outlook profile, 2026-11-17.** Outlook uses the profile it runs on, which is not
   the default one after `/profile` or the profile picker; OutlookAI read only the default profile,
   and with none recorded it merged every profile into one list. *"Q155 c - Always be explicit. A
