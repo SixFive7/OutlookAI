@@ -94,7 +94,8 @@
   (S7c step 2), five scripts that travel alone keeping identical copies, and P06's Outlook profile
   helpers are there too (S7c step 3), each script keeping the Office constants they read. Left: P05's
   elevation, bitness and Outlook-closed guards and P06's `Select-OutlookHive` and
-  `Resolve-ImportPrfClearance`, whose copies differ script by script.
+  `Resolve-ImportPrfClearance`, whose copies differ script by script. Check 4 reads nested
+  functions, so the self-test helpers (P04) can fold next.
   What remains, one stage at a time: S4, the signature and draft code (A01-A05, A08, A09, A12) with
   Q162's checkbox, Core winning where the copies drifted apart and the pane's visible differences
   measured on a test machine first (Q165 (c)), and the pane driven on a test machine (Q168 (b));

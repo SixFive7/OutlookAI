@@ -1141,7 +1141,11 @@ its mailbox tests on, and change nothing you install.
   hives, the hives and the profiles on a machine, the profile a .prf names and whether a profile
   entry is a mail account were restated in `New-OutlookProfile.ps1`, `Set-DefaultOutlookProfile.ps1`,
   `New-TierProfile.ps1` and `Build-Corpus.ps1`, two to four copies each, and are one copy in the
-  shared file now; each script keeps the Office constants they read.
+  shared file now; each script keeps the Office constants they read. `Build-Corpus.ps1`'s
+  `Write-Preflight` and `Reset-HubPopulation.ps1`'s `Write-Line`, one three-line function under two
+  names, are the shared `Write-LogLine`. And check 4 now reads a function defined inside another one,
+  as a self-test's helpers are, as well as one at the top of a script: a scratch copy that hid a copy
+  of a shared helper inside a self-test failed it.
 
 - 📝 **If Office's own grace reset fails, the Exchange test machine may get Microsoft 365 Apps (Q206).**
   The maintainer's decision Q206, 2026-11-18, now in AGENTS.md beside the machine's internet

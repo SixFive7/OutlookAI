@@ -161,6 +161,15 @@ function Write-ReportLine([string] $Text = '') {
     [void] $ReportLines.Add($Text)
 }
 
+# A line printed as it is and appended to the calling script's own log, $script:LogPath, with no time
+# before it - for Build-Corpus.ps1 and Reset-HubPopulation.ps1, whose logs read as plain reports. A log
+# that cannot be written is passed over.
+function Write-LogLine([string] $Text) {
+    Write-Host $Text
+    $log = $script:LogPath
+    if ($log) { Add-Content -LiteralPath $log -Value $Text -ErrorAction SilentlyContinue }
+}
+
 # A request refused before anything was touched: said as a line of progress, and the script ends with
 # 4, the exit code every runner here gives a refusal.
 function Stop-Refused([string] $Why) {

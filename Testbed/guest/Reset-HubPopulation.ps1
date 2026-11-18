@@ -961,12 +961,6 @@ if ($SelfTest) { exit (Invoke-SelfTest) }
 . "$PSScriptRoot\OutlookMapiInterop.ps1"
 Assert-TestbedGuest -ExpectedUser $ExpectedUser
 
-function Write-Line {
-    param([string] $Text)
-    Write-Host $Text
-    Add-Content -LiteralPath $LogPath -Value $Text -ErrorAction SilentlyContinue
-}
-
 # Every program call goes through Invoke-NativeCommand, so that Windows PowerShell 5.1 cannot end
 # the script on a program's first stderr line (Q78). It is one of the helpers the scripts share,
 # dot-sourced from ScriptHelpers.ps1 beside this script (Q154, Q166 (b), decision 215 (a)), which
@@ -978,15 +972,15 @@ function Invoke-HubTool {
     param([string[]] $Arguments, [switch] $Write)
     $toolArguments = @($Arguments)
     if ($Write) { $toolArguments += '--execute' }
-    Write-Line ''
-    Write-Line "=== $($toolArguments -join ' ')"
+    Write-LogLine ''
+    Write-LogLine "=== $($toolArguments -join ' ')"
     # Captured and echoed rather than streamed, so a child that outlives the call cannot hold the
     # pipe open; every number these verbs print is meant to be kept anyway.
     $output = Invoke-NativeCommand { & $ToolsExe @toolArguments 2>&1 }
     $code = $LASTEXITCODE
     $text = ($output | Out-String)
-    Write-Line $text.TrimEnd()
-    Write-Line "exit $code"
+    Write-LogLine $text.TrimEnd()
+    Write-LogLine "exit $code"
     return [pscustomobject]@{ Code = $code; Text = $text }
 }
 
@@ -1083,9 +1077,9 @@ function Get-HistoryEntry {
 
 function Set-HubDefaultProfile {
     param([string] $Name)
-    Write-Line ''
-    Write-Line "=== default profile -> $Name"
-    & (Join-Path $PSScriptRoot 'Set-DefaultOutlookProfile.ps1') -Name $Name -Execute -ExpectedUser $ExpectedUser | ForEach-Object { Write-Line ([string]$_) }
+    Write-LogLine ''
+    Write-LogLine "=== default profile -> $Name"
+    & (Join-Path $PSScriptRoot 'Set-DefaultOutlookProfile.ps1') -Name $Name -Execute -ExpectedUser $ExpectedUser | ForEach-Object { Write-LogLine ([string]$_) }
 }
 
 <#
@@ -1101,20 +1095,20 @@ function Set-HubDefaultProfile {
 #>
 function Start-HubOutlookUnelevated {
     param([string] $ProfileName, [string] $What)
-    Write-Line ''
+    Write-LogLine ''
     if (-not (Test-CurrentProcessElevated)) {
         # Already NOT elevated - the indexed guest's way of running this (Test-HubRunLevel): an Outlook
         # this process starts is at its level, so it is started directly, the way the rebuild's own is.
         $exe = Find-OutlookExe
-        Write-Line "=== starting Outlook for $What, NOT elevated - this script runs NOT elevated, so directly: $exe /profile $ProfileName"
+        Write-LogLine "=== starting Outlook for $What, NOT elevated - this script runs NOT elevated, so directly: $exe /profile $ProfileName"
         $direct = Start-Process -FilePath $exe -ArgumentList @('/profile', ('"' + $ProfileName + '"')) -PassThru
         $directClock = [System.Diagnostics.Stopwatch]::StartNew()
         return [pscustomobject]@{ Id = $direct.Id; Clock = $directClock }
     }
 
-    Write-Line "=== starting Outlook for $What, NOT elevated: Start-OutlookUnelevated.ps1 -Profile $ProfileName"
+    Write-LogLine "=== starting Outlook for $What, NOT elevated: Start-OutlookUnelevated.ps1 -Profile $ProfileName"
     $clock = [System.Diagnostics.Stopwatch]::StartNew()
-    & (Join-Path $PSScriptRoot 'Start-OutlookUnelevated.ps1') -Profile $ProfileName -ExpectedUser $ExpectedUser | ForEach-Object { Write-Line ([string]$_) }
+    & (Join-Path $PSScriptRoot 'Start-OutlookUnelevated.ps1') -Profile $ProfileName -ExpectedUser $ExpectedUser | ForEach-Object { Write-LogLine ([string]$_) }
     $code = $LASTEXITCODE
     if ($code -ne 0) {
         throw "Start-OutlookUnelevated.ps1 exited $code - its output above says why. The hub IS rebuilt; the default profile is '$ProfileName'. Start Outlook NOT elevated by hand (that script), then re-run this with -Execute -SkipRebuild."
@@ -1130,8 +1124,8 @@ function Start-HubOutlookUnelevated {
 function Start-HubOutlook {
     param([string] $What, [int] $Seconds)
     $exe = Find-OutlookExe
-    Write-Line ''
-    Write-Line "=== starting Outlook for $What ($exe); waiting ${Seconds}s for it to settle"
+    Write-LogLine ''
+    Write-LogLine "=== starting Outlook for $What ($exe); waiting ${Seconds}s for it to settle"
     $process = Start-Process -FilePath $exe -PassThru
     $clock = [System.Diagnostics.Stopwatch]::StartNew()
     Wait-HubOutlook -ProcessId $process.Id -Clock $clock -Seconds $Seconds -What $What
@@ -1149,7 +1143,7 @@ function Wait-HubOutlook {
     $responding = $null
     try { $responding = (Get-Process -Id $ProcessId -ErrorAction Stop).Responding } catch { $responding = $null }
     if ($false -eq $responding) {
-        Write-Line "  note: OUTLOOK.EXE is not responding to window messages after $([int]$Clock.Elapsed.TotalSeconds)s - what a modal dialog looks like from outside. Not refused on; a busy Outlook looks the same for a moment."
+        Write-LogLine "  note: OUTLOOK.EXE is not responding to window messages after $([int]$Clock.Elapsed.TotalSeconds)s - what a modal dialog looks like from outside. Not refused on; a busy Outlook looks the same for a moment."
     }
 }
 
@@ -1183,8 +1177,8 @@ function Wait-OnlyStartedOutlook {
 #>
 function Close-HubOutlook {
     param([int] $StartedPid, [string] $ExpectedProfile, [int] $TimeoutSeconds)
-    Write-Line ''
-    Write-Line "=== quitting the Outlook this script started (pid $StartedPid), under mailbox-safety rule 7"
+    Write-LogLine ''
+    Write-LogLine "=== quitting the Outlook this script started (pid $StartedPid), under mailbox-safety rule 7"
 
     $app = $null
     $ns = $null
@@ -1198,11 +1192,11 @@ function Close-HubOutlook {
     try {
         try {
             $app = [System.Runtime.InteropServices.Marshal]::GetActiveObject('Outlook.Application')
-            Write-Line '  attached through the Running Object Table'
+            Write-LogLine '  attached through the Running Object Table'
         }
         catch {
             $app = New-Object -ComObject Outlook.Application
-            Write-Line '  not in the Running Object Table - attached through the class factory'
+            Write-LogLine '  not in the Running Object Table - attached through the class factory'
         }
         $ns = $app.GetNamespace('MAPI')
         try { $profileName = [string]$ns.CurrentProfileName } catch { $profileName = $null }
@@ -1246,9 +1240,9 @@ function Close-HubOutlook {
     foreach ($outbox in $outboxes) {
         $shown = 'no Outbox'
         if ($null -eq $outbox.Count) { $shown = 'Outbox UNREADABLE' } elseif ($outbox.Count -ge 0) { $shown = "Outbox $($outbox.Count)" }
-        Write-Line ("  {0,-40} {1}" -f $outbox.Store, $shown)
+        Write-LogLine ("  {0,-40} {1}" -f $outbox.Store, $shown)
     }
-    Write-Line "  profile '$profileName', item windows open: $inspectorCount"
+    Write-LogLine "  profile '$profileName', item windows open: $inspectorCount"
 
     $problems = Test-QuitPrecondition -ProfileName $profileName -ExpectedProfile $ExpectedProfile `
         -RunningPids $runningBefore -StartedPid $StartedPid -InspectorCount $inspectorCount -Outboxes $outboxes
@@ -1271,7 +1265,7 @@ function Close-HubOutlook {
     $clock = [System.Diagnostics.Stopwatch]::StartNew()
     while ($clock.Elapsed.TotalSeconds -lt $TimeoutSeconds) {
         if ((Get-OutlookProcessId).Count -eq 0) {
-            Write-Line "  OUTLOOK.EXE left $([int]$clock.Elapsed.TotalSeconds)s after the Quit."
+            Write-LogLine "  OUTLOOK.EXE left $([int]$clock.Elapsed.TotalSeconds)s after the Quit."
             return
         }
         Start-Sleep -Seconds 2
@@ -1288,7 +1282,7 @@ function Close-HubOutlook {
 Remove-Item -LiteralPath $LogPath -Force -ErrorAction SilentlyContinue
 $mode = 'dry run'
 if ($Execute -and $SkipRebuild) { $mode = '-Execute -SkipRebuild' } elseif ($Execute) { $mode = '-Execute' }
-Write-Line "Reset-HubPopulation, $mode, $([datetime]::UtcNow.ToString($script:UtcFormat, $script:Invariant)) on $env:COMPUTERNAME"
+Write-LogLine "Reset-HubPopulation, $mode, $([datetime]::UtcNow.ToString($script:UtcFormat, $script:Invariant)) on $env:COMPUTERNAME"
 
 if (-not (Test-Path -LiteralPath $SettingsPath)) {
     throw "REFUSING: no live-test settings at $SettingsPath. Render them on the host with Testbed/host/New-LiveTestSettings.ps1 -VMName <this guest> and copy them in with the line it prints."
@@ -1310,17 +1304,17 @@ if ($null -ne $fact.ManifestPath) {
 $plan = Resolve-HubResetPlan -SettingsFact $fact -ManifestExists $manifestExists -Header $header -HistorySeed $historySeed `
     -SeedText $Seed -SkipRebuild ([bool]$SkipRebuild) -NowUtc ([datetime]::UtcNow)
 
-Write-Line ''
-Write-Line "  settings    $SettingsPath"
-Write-Line "  hub         $($plan.Store)"
-Write-Line "  population  $($plan.CorpusId), manifest $($plan.ManifestPath) ($(if ($manifestExists) { 'present' } else { 'ABSENT' }))"
-if ($null -ne $header -and $header.Problems.Count -eq 0) { Write-Line "  built       against $($header.AnchorUtc), seed $($header.Seed)" }
-Write-Line "  index       $(if ($plan.Indexed) { 'the hub is indexed here - the run waits for the index to take the new population' } else { 'the hub is not indexed here - no index wait' })"
+Write-LogLine ''
+Write-LogLine "  settings    $SettingsPath"
+Write-LogLine "  hub         $($plan.Store)"
+Write-LogLine "  population  $($plan.CorpusId), manifest $($plan.ManifestPath) ($(if ($manifestExists) { 'present' } else { 'ABSENT' }))"
+if ($null -ne $header -and $header.Problems.Count -eq 0) { Write-LogLine "  built       against $($header.AnchorUtc), seed $($header.Seed)" }
+Write-LogLine "  index       $(if ($plan.Indexed) { 'the hub is indexed here - the run waits for the index to take the new population' } else { 'the hub is not indexed here - no index wait' })"
 $kindsText = @{ 'all-kinds' = 'appointments, contacts and tasks (--all-kinds, D62 (b))'; 'contacts' = 'undated contacts only (--undated-contacts, Q98 (f))'; '' = 'none - its dated items alone' }
-Write-Line "  undated     torn down as $($kindsText[[string]$plan.TeardownKinds]); built with $($kindsText[[string]$plan.BuildKinds])"
+Write-LogLine "  undated     torn down as $($kindsText[[string]$plan.TeardownKinds]); built with $($kindsText[[string]$plan.BuildKinds])"
 $elevated = Test-CurrentProcessElevated
-Write-Line "  run level   $(if ($elevated) { 'ELEVATED' } else { 'NOT elevated' }) - the rebuild's Outlook starts at this level"
-foreach ($note in $plan.Notes) { Write-Line "  note: $note" }
+Write-LogLine "  run level   $(if ($elevated) { 'ELEVATED' } else { 'NOT elevated' }) - the rebuild's Outlook starts at this level"
+foreach ($note in $plan.Notes) { Write-LogLine "  note: $note" }
 
 # ---------------------------------------------------------------------------------------------
 # 2. The machine's state: Outlook closed, nothing waiting to rebuild a profile, the tool there.
@@ -1339,27 +1333,27 @@ if (-not (Test-Path -LiteralPath $ToolsExe)) {
 
 if ($refusals.Count -gt 0) {
     $text = "REFUSING to rebuild the hub population - $($refusals.Count) reason(s):`n  - " + ($refusals -join "`n  - ") + "`nNothing was changed."
-    Write-Line ''
-    Write-Line $text
+    Write-LogLine ''
+    Write-LogLine $text
     throw $text
 }
 
 if (-not $Execute) {
     [void](Invoke-HubTool -Arguments (Get-HubToolArgument -Verb 'corpus-plan' -Store $plan.Store -CorpusId $plan.CorpusId -SeedValue $plan.Seed -Anchor $plan.NewAnchor -ManifestPath $plan.ManifestPath -UndatedKinds $plan.BuildKinds))
-    Write-Line ''
-    Write-Line 'Dry run. Nothing written, no Outlook started. With -Execute this would, in order:'
+    Write-LogLine ''
+    Write-LogLine 'Dry run. Nothing written, no Outlook started. With -Execute this would, in order:'
     if ($plan.Rebuild) {
-        Write-Line "  - make '$CorpusProfileName' the default profile, start Outlook, wait ${WarmupSeconds}s"
+        Write-LogLine "  - make '$CorpusProfileName' the default profile, start Outlook, wait ${WarmupSeconds}s"
         if ($null -ne $plan.TeardownAnchor) {
-            Write-Line ("  - " + ((Get-HubToolArgument -Verb 'corpus-teardown' -Store $plan.Store -CorpusId $plan.CorpusId -SeedValue $plan.Seed -Anchor $plan.TeardownAnchor -ManifestPath $plan.ManifestPath -UndatedKinds $plan.TeardownKinds) -join ' ') + ' --execute')
-            Write-Line "  - move the manifest to $historyDirectory\$(Format-HubHistoryName -CorpusId $plan.CorpusId -AnchorText $plan.TeardownAnchor)"
+            Write-LogLine ("  - " + ((Get-HubToolArgument -Verb 'corpus-teardown' -Store $plan.Store -CorpusId $plan.CorpusId -SeedValue $plan.Seed -Anchor $plan.TeardownAnchor -ManifestPath $plan.ManifestPath -UndatedKinds $plan.TeardownKinds) -join ' ') + ' --execute')
+            Write-LogLine "  - move the manifest to $historyDirectory\$(Format-HubHistoryName -CorpusId $plan.CorpusId -AnchorText $plan.TeardownAnchor)"
         }
-        Write-Line ("  - " + ((Get-HubToolArgument -Verb 'corpus-build' -Store $plan.Store -CorpusId $plan.CorpusId -SeedValue $plan.Seed -Anchor '<now>' -ManifestPath $plan.ManifestPath -UndatedKinds $plan.BuildKinds) -join ' ') + ' --execute')
-        Write-Line '  - quit that Outlook gracefully (mailbox-safety rule 7)'
+        Write-LogLine ("  - " + ((Get-HubToolArgument -Verb 'corpus-build' -Store $plan.Store -CorpusId $plan.CorpusId -SeedValue $plan.Seed -Anchor '<now>' -ManifestPath $plan.ManifestPath -UndatedKinds $plan.BuildKinds) -join ' ') + ' --execute')
+        Write-LogLine '  - quit that Outlook gracefully (mailbox-safety rule 7)'
     }
-    Write-Line "  - make '$TierProfileName' the default profile, start Outlook NOT elevated (Start-OutlookUnelevated.ps1)"
-    if ($plan.Indexed) { Write-Line ("  - " + ((Get-HubToolArgument -Verb 'corpus-indexed' -Store $plan.Store -CorpusId $plan.CorpusId -SeedValue $plan.Seed -Anchor '<the anchor built>' -ManifestPath $plan.ManifestPath -WaitSeconds $IndexWaitSeconds -UndatedKinds $plan.BuildKinds) -join ' ')) }
-    Write-Line '  - leave Outlook running, warm, and report the frontier test''s margin'
+    Write-LogLine "  - make '$TierProfileName' the default profile, start Outlook NOT elevated (Start-OutlookUnelevated.ps1)"
+    if ($plan.Indexed) { Write-LogLine ("  - " + ((Get-HubToolArgument -Verb 'corpus-indexed' -Store $plan.Store -CorpusId $plan.CorpusId -SeedValue $plan.Seed -Anchor '<the anchor built>' -ManifestPath $plan.ManifestPath -WaitSeconds $IndexWaitSeconds -UndatedKinds $plan.BuildKinds) -join ' ')) }
+    Write-LogLine '  - leave Outlook running, warm, and report the frontier test''s margin'
     return
 }
 
@@ -1388,7 +1382,7 @@ if ($plan.Rebuild) {
             $suffix++
         }
         $moveTries = Move-HubManifest -From $plan.ManifestPath -To $historyPath -Seconds $script:ManifestMoveSeconds
-        Write-Line "  torn-down manifest kept as $historyPath$(if ($moveTries -gt 1) { " (moved on try $moveTries - the file was still held by another process for a moment after the teardown)" })"
+        Write-LogLine "  torn-down manifest kept as $historyPath$(if ($moveTries -gt 1) { " (moved on try $moveTries - the file was still held by another process for a moment after the teardown)" })"
     }
 
     # The anchor is taken NOW - after the warm-up and the teardown - so the newest item is as young
@@ -1432,21 +1426,21 @@ if ($null -eq $newest) {
 $offset = [System.TimeZoneInfo]::Local.GetUtcOffset([datetime]::UtcNow)
 $window = Get-FrontierWindow -NewestUtc $newest -UtcOffset $offset -NowUtc ([datetime]::UtcNow)
 
-Write-Line ''
-Write-Line "Hub population '$($plan.CorpusId)' in '$($plan.Store)' is anchored $anchorBuilt; its newest item is ${about}$($newest.ToString($script:UtcFormat, $script:Invariant))."
+Write-LogLine ''
+Write-LogLine "Hub population '$($plan.CorpusId)' in '$($plan.Store)' is anchored $anchorBuilt; its newest item is ${about}$($newest.ToString($script:UtcFormat, $script:Invariant))."
 if (-not $window.Discriminates) {
-    Write-Line 'This guest is on UTC, where the frontier test cannot tell a local-time frontier from a UTC one at all; it refuses here whatever the hub holds.'
+    Write-LogLine 'This guest is on UTC, where the frontier test cannot tell a local-time frontier from a UTC one at all; it refuses here whatever the hub holds.'
 }
 elseif ($window.MinutesLeft -le 0) {
-    Write-Line "The frontier test's margin ($($window.MarginMinutes) min) is ALREADY SPENT: it would refuse the run as STALE. Run this script again and start the run straight after it."
+    Write-LogLine "The frontier test's margin ($($window.MarginMinutes) min) is ALREADY SPENT: it would refuse the run as STALE. Run this script again and start the run straight after it."
 }
 else {
-    Write-Line "The frontier test can catch a local-time misreading until $($window.DeadlineUtc.ToString($script:UtcFormat, $script:Invariant)) - $($window.MinutesLeft) min from now ($($window.MarginMinutes) min on this guest's UTC offset of $offset). START THE RUN NOW, by Testbed/README.md section 4c, with:"
+    Write-LogLine "The frontier test can catch a local-time misreading until $($window.DeadlineUtc.ToString($script:UtcFormat, $script:Invariant)) - $($window.MinutesLeft) min from now ($($window.MarginMinutes) min on this guest's UTC offset of $offset). START THE RUN NOW, by Testbed/README.md section 4c, with:"
     # The guest filters are derived in LiveRunFilters (T2) and pinned there: everything live except the
     # tests naming a capability only an Exchange profile has (DelegateStore, CachedExchange - Q74 C1).
     $filter = 'Category=Live&Requires!=DelegateStore&Requires!=CachedExchange'
     if (-not $plan.Indexed) { $filter = 'Category=Live&Requires!=DelegateStore&Requires!=CachedExchange&Requires!=SearchIndex' }
-    Write-Line "  the opt-in   `$env:OUTLOOKAI_LIVE_OPT_IN = '$env:COMPUTERNAME'"
-    Write-Line "  the filter   --filter `"$filter`""
+    Write-LogLine "  the opt-in   `$env:OUTLOOKAI_LIVE_OPT_IN = '$env:COMPUTERNAME'"
+    Write-LogLine "  the filter   --filter `"$filter`""
 }
-Write-Line "Outlook is running on '$TierProfileName', NOT elevated, and is left running. Log: $LogPath"
+Write-LogLine "Outlook is running on '$TierProfileName', NOT elevated, and is left running. Log: $LogPath"

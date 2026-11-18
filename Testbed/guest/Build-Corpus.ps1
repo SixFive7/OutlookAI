@@ -778,13 +778,6 @@ function Invoke-Corpus {
     return $code
 }
 
-function Write-Preflight {
-    param([string] $Text)
-
-    Write-Host $Text
-    Add-Content -LiteralPath $LogPath -Value $Text -ErrorAction SilentlyContinue
-}
-
 <#
     Gathers what Test-CorpusPrecondition judges. READ-ONLY, and it makes no COM call: a preflight
     that could itself start Outlook, or itself hang, would be the very fault it checks for.
@@ -954,35 +947,35 @@ if ($SkipPreflight) {
     # Preconditions 1 and 2 predict whether the build SUCCEEDS, and -SkipPreflight exists for a
     # machine they read wrongly. Precondition 3 protects the corpus, and nothing downstream
     # re-checks it - so it is not skipped. See Test-CorpusImportPrfGuard.
-    Write-Preflight ''
-    Write-Preflight '=== preflight SKIPPED (-SkipPreflight) for the default profile and warmth. The tool''s own'
-    Write-Preflight '    store guard still applies, and the ImportPRF check below is NOT skipped.'
-    Write-Preflight "  ImportPRF       : $importText"
+    Write-LogLine ''
+    Write-LogLine '=== preflight SKIPPED (-SkipPreflight) for the default profile and warmth. The tool''s own'
+    Write-LogLine '    store guard still applies, and the ImportPRF check below is NOT skipped.'
+    Write-LogLine "  ImportPRF       : $importText"
     $guard = Test-CorpusImportPrfGuard -Facts $facts
     if ($null -ne $guard) {
         $refusal = Format-CorpusPreflightRefusal -Problems @($guard)
         Add-Content -LiteralPath $LogPath -Value $refusal -ErrorAction SilentlyContinue
         throw $refusal
     }
-    Write-Preflight '  OK - nothing is waiting to rebuild the profile.'
+    Write-LogLine '  OK - nothing is waiting to rebuild the profile.'
 }
 else {
-    Write-Preflight ''
-    Write-Preflight '=== preflight: default profile, a warm Outlook, and nothing waiting to rebuild the profile'
+    Write-LogLine ''
+    Write-LogLine '=== preflight: default profile, a warm Outlook, and nothing waiting to rebuild the profile'
 
     $uptimeText = '(unreadable)'
     if ($null -ne $facts.OutlookUptimeSeconds) { $uptimeText = "$([int]$facts.OutlookUptimeSeconds)s" }
     $accountsText = '(unreadable)'
     if ($null -ne $facts.AccountEntryCount) { $accountsText = "$($facts.AccountEntryCount)" }
 
-    Write-Preflight "  hive            : $($facts.HivePath)"
-    Write-Preflight "  DefaultProfile  : $($facts.DefaultProfile)"
-    Write-Preflight "  mail accounts   : $accountsText   (registry, data-file and address-book entries excluded; the tool's COM count is the authoritative one)"
-    Write-Preflight "  OUTLOOK.EXE     : $($facts.OutlookProcessCount) running, up $uptimeText, wanted $($facts.WarmupSeconds)s"
-    Write-Preflight "  ImportPRF       : $importText"
+    Write-LogLine "  hive            : $($facts.HivePath)"
+    Write-LogLine "  DefaultProfile  : $($facts.DefaultProfile)"
+    Write-LogLine "  mail accounts   : $accountsText   (registry, data-file and address-book entries excluded; the tool's COM count is the authoritative one)"
+    Write-LogLine "  OUTLOOK.EXE     : $($facts.OutlookProcessCount) running, up $uptimeText, wanted $($facts.WarmupSeconds)s"
+    Write-LogLine "  ImportPRF       : $importText"
 
     $verdict = Test-CorpusPrecondition -Facts $facts
-    foreach ($note in $verdict.Notes) { Write-Preflight "  note: $note" }
+    foreach ($note in $verdict.Notes) { Write-LogLine "  note: $note" }
 
     if (-not $verdict.Ok) {
         $refusal = Format-CorpusPreflightRefusal -Problems $verdict.Problems
@@ -990,7 +983,7 @@ else {
         throw $refusal
     }
 
-    Write-Preflight '  OK - the default profile has no accounts, Outlook is up and warm, and ImportPRF is not set.'
+    Write-LogLine '  OK - the default profile has no accounts, Outlook is up and warm, and ImportPRF is not set.'
 }
 
 if (-not $Execute) {
