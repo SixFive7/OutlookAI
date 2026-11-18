@@ -7924,7 +7924,7 @@ namespace OutlookAI.Core.Services
                     + "and pass that.");
             }
 
-            if (id.Length < MinRawEntryIdHexChars || id.Length % 2 != 0 || !IsHex(id))
+            if (id.Length < MinRawEntryIdHexChars || id.Length % 2 != 0 || !Hex.IsAllDigits(id))
             {
                 throw new ArgumentException(
                     "entry_id must be a full EntryID in hex (at least "
@@ -8412,7 +8412,7 @@ namespace OutlookAI.Core.Services
             // and longer than a hit id ("h7") is handed to Outlook, which is the authority
             // on whether it opens. The comment used to claim 140 while the code said 48,
             // three times looser than its own stated truth and with nothing pinning either.
-            if (id.Length >= MinRawEntryIdHexChars && id.Length % 2 == 0 && IsHex(id))
+            if (id.Length >= MinRawEntryIdHexChars && id.Length % 2 == 0 && Hex.IsAllDigits(id))
             {
                 return (id, null, "directEntryId", 0, null);
             }
@@ -9675,20 +9675,6 @@ namespace OutlookAI.Core.Services
         private static int Clamp(int value, int min, int max)
         {
             return value < min ? min : value > max ? max : value;
-        }
-
-        private static bool IsHex(string value)
-        {
-            foreach (char c in value)
-            {
-                bool hex = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
-                if (!hex)
-                {
-                    return false;
-                }
-            }
-
-            return true;
         }
 
         private sealed class CachedHit

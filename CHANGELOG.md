@@ -1151,6 +1151,17 @@ its mailbox tests on, and change nothing you install.
   would overwrite the change or copy it into the mailbox, and says to use Outlook instead. Roaming on
   Microsoft 365 Apps itself is not tested: the test machines run perpetual Office only.
 
+- ♻️ **The mail server keeps one copy of what it had written two to five times over (Q154).**
+  The code-sharing refactor's stage S6 folds the server's own repetition that the survey of
+  2026-11-17 found, its groups S01 to S14. The index search and the exhaustive scan check a
+  search term through one rule, `SearchTermRules`, where each had a copy that differed only in
+  how it refused a bare `*`: both now say "Bare '*' is not a valid term." Hexadecimal digits are
+  checked in one place, `Hex`, in the add-in's part of OutlookAI.Core, where the add-in's editor
+  of `~/.claude.json` finds it too; the five copies differed in what they made of an empty
+  string, and each caller now says. The send confirmations, the resumable searches and the
+  update_draft intents make their random tokens with `Hex.NewRandom` and list their expired
+  entries with `ExpiringEntries`, where each had its own copy of both.
+
 - ✅ **The testbed can build an installer that carries the mail server, to test the installed product.**
   `Testbed/host/Publish-AddInPayload.ps1 -WithServer` publishes the mail server and
   `OutlookAI.RuntimeSetup` into a testbed build's installer, as a release does, signed with the

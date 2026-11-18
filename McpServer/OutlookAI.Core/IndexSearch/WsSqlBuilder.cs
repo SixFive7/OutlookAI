@@ -81,18 +81,6 @@ namespace OutlookAI.Core.IndexSearch
         public const int MaxTop = 5000;
 
         /// <summary>
-        /// Longest accepted search term, in characters. Public because it is the definition
-        /// of a valid TERM for the whole product, not a detail of the index statement: the
-        /// COM tier's <c>ExhaustiveDaslFilter</c> derives its own limit from this one.
-        /// <para>
-        /// They were two private 128s. Raising either alone would have made indexed and
-        /// exhaustive search disagree about which terms are valid - a term accepted by one
-        /// mode and rejected by the other, for the same query, with nothing to notice it.
-        /// </para>
-        /// </summary>
-        public const int MaxTermLength = 128;
-
-        /// <summary>
         /// Hard ceiling on <see cref="IndexQuery.FolderPathsAnyOf"/> literals in one
         /// statement. MEASURED on this machine (read-only ADODB battery, 2026-07-27): a
         /// folder-path OR-set of 95 literals executes, 100 fails outright with
@@ -247,14 +235,14 @@ namespace OutlookAI.Core.IndexSearch
                 // (measured on this index: FromName alone 18 ms against FromAddress alone
                 // 42 ms for the same fragment; the OR pair costs +0-12 ms on agent-sized
                 // TOP 26 statements and is faster than address-only on some).
-                string sender = QuotedContainsValue(ValidateTerm(query.SenderContains, "SenderContains"));
+                string sender = QuotedContainsValue(SearchTermRules.ValidateTerm(query.SenderContains, "SenderContains"));
                 where.Add("(CONTAINS(" + FromAddressColumn + ", '" + sender
                     + "') OR CONTAINS(" + FromNameColumn + ", '" + sender + "'))");
             }
 
             if (query.RecipientContains != null)
             {
-                string recipient = QuotedContainsValue(ValidateTerm(query.RecipientContains, "RecipientContains"));
+                string recipient = QuotedContainsValue(SearchTermRules.ValidateTerm(query.RecipientContains, "RecipientContains"));
                 where.Add("(CONTAINS(System.Message.ToAddress, '" + recipient
                     + "') OR CONTAINS(System.Message.CcAddress, '" + recipient + "'))");
             }
@@ -599,7 +587,7 @@ namespace OutlookAI.Core.IndexSearch
             List<string> quoted = new List<string>(terms.Count);
             for (int i = 0; i < terms.Count; i++)
             {
-                quoted.Add(QuotedContainsValue(ValidateTerm(terms[i], "Terms[" + i.ToString(CultureInfo.InvariantCulture) + "]")));
+                quoted.Add(QuotedContainsValue(SearchTermRules.ValidateTerm(terms[i], "Terms[" + i.ToString(CultureInfo.InvariantCulture) + "]")));
             }
 
             switch (searchIn)
@@ -669,61 +657,6 @@ namespace OutlookAI.Core.IndexSearch
         private static string EscapeSqlLiteral(string value)
         {
             return value.IndexOf('\'') < 0 ? value : value.Replace("'", "''");
-        }
-
-        /// <summary>
-        /// Validates a free-text term. Rules: non-blank after trimming; no '"' (phrase
-        /// quoting is added by the builder); '*' only as the final character (prefix
-        /// match) and never alone - CONTAINS('*') is invalid (0x80041605); remaining
-        /// characters restricted to letters/digits plus a small punctuation set.
-        /// </summary>
-        private static string ValidateTerm(string term, string parameterName)
-        {
-            if (term == null)
-            {
-                throw new ArgumentException("Term must not be null.", parameterName);
-            }
-
-            string trimmed = term.Trim();
-            if (trimmed.Length == 0)
-            {
-                throw new ArgumentException("Term must not be blank.", parameterName);
-            }
-
-            if (trimmed.Length > MaxTermLength)
-            {
-                throw new ArgumentException("Term too long.", parameterName);
-            }
-
-            if (trimmed == "*")
-            {
-                throw new ArgumentException("Bare '*' is not a valid term (CONTAINS('*') fails with 0x80041605).", parameterName);
-            }
-
-            for (int i = 0; i < trimmed.Length; i++)
-            {
-                char c = trimmed[i];
-                if (c == '*')
-                {
-                    if (i != trimmed.Length - 1)
-                    {
-                        throw new ArgumentException("'*' is only allowed as the final character (prefix match).", parameterName);
-                    }
-
-                    continue;
-                }
-
-                bool allowed = char.IsLetterOrDigit(c)
-                    || c == ' ' || c == '@' || c == '.' || c == '_' || c == '-' || c == '\'' || c == '+';
-                if (!allowed)
-                {
-                    throw new ArgumentException(
-                        string.Format(CultureInfo.InvariantCulture, "Term contains unsupported character '{0}'.", c),
-                        parameterName);
-                }
-            }
-
-            return trimmed;
         }
 
         /// <summary>Wraps a validated term in CONTAINS phrase quotes, escaping embedded single quotes for SQL.</summary>

@@ -1291,7 +1291,7 @@ namespace OutlookAI.Core.AddIn
                         return -1;
                     for (int k = 1; k <= 4; k++)
                     {
-                        if (!IsHex(json[i + k]))
+                        if (!Hex.IsDigit(json[i + k]))
                             return -1;
                     }
                     i += 5;
@@ -1302,11 +1302,6 @@ namespace OutlookAI.Core.AddIn
                 i++;
             }
             return -1;
-        }
-
-        private static bool IsHex(char c)
-        {
-            return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
         }
 
         private static int MatchLiteral(string json, int i, string literal)

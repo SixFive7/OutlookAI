@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
+using OutlookAI.Core.AddIn;
 
 namespace OutlookAI.Core.Mapi
 {
@@ -242,7 +243,7 @@ namespace OutlookAI.Core.Mapi
             if (open >= 0 && storeSegment.EndsWith(")", StringComparison.Ordinal))
             {
                 string candidate = storeSegment.Substring(open + 2, storeSegment.Length - open - 3);
-                if (IsHex(candidate))
+                if (candidate.Length > 0 && Hex.IsAllDigits(candidate))
                 {
                     displayName = storeSegment.Substring(0, open).TrimEnd();
                     urlHash = candidate;
@@ -250,25 +251,6 @@ namespace OutlookAI.Core.Mapi
             }
 
             displayName = MapiUrlSegment.Decode(displayName);
-        }
-
-        private static bool IsHex(string value)
-        {
-            if (value.Length == 0)
-            {
-                return false;
-            }
-
-            foreach (char c in value)
-            {
-                bool hex = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
-                if (!hex)
-                {
-                    return false;
-                }
-            }
-
-            return true;
         }
 
         /// <summary>

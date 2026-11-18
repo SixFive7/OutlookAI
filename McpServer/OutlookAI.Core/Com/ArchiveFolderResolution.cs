@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using OutlookAI.Core.AddIn;
 
 namespace OutlookAI.Core.Com
 {
@@ -137,7 +138,7 @@ namespace OutlookAI.Core.Com
                     return ToHexOrNull(bytes);
                 case string text:
                     string trimmed = text.Trim();
-                    return trimmed.Length >= 8 && trimmed.Length % 2 == 0 && IsHex(trimmed)
+                    return trimmed.Length >= 8 && trimmed.Length % 2 == 0 && Hex.IsAllDigits(trimmed)
                         ? trimmed.ToUpperInvariant()
                         : null;
                 case IEnumerable values:
@@ -376,20 +377,6 @@ namespace OutlookAI.Core.Com
             }
 
             return sb.ToString();
-        }
-
-        private static bool IsHex(string value)
-        {
-            foreach (char c in value)
-            {
-                bool ok = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
-                if (!ok)
-                {
-                    return false;
-                }
-            }
-
-            return true;
         }
     }
 

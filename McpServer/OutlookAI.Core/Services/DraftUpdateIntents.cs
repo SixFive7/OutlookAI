@@ -321,10 +321,7 @@ namespace OutlookAI.Core.Services
 
         private void PruneLocked(DateTime now)
         {
-            foreach (string key in _pending
-                .Where(p => now - p.Value.IssuedUtc > TimeToLive)
-                .Select(p => p.Key)
-                .ToList())
+            foreach (string key in ExpiringEntries.ExpiredKeys(_pending, p => p.IssuedUtc, now, TimeToLive))
             {
                 _ = _pending.Remove(key);
             }
