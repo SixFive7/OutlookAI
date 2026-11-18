@@ -7349,6 +7349,24 @@ namespace OutlookAI.Core.Services
                 problems.Add(auditProblem);
             }
 
+            // Q118 (a): the OutlookAI sessions attached to this Outlook and its hidden lifetime pin, from the per-user
+            // session registry - a file read, never a call into Outlook, so it answers while Outlook is wedged.
+            OutlookSessionsHealthView? sessions = null;
+            if (outlookRunning)
+            {
+                sessions = HealthReporting.DescribeOutlookSessions(
+                    OutlookSessionRegistry.Default.TryRead(),
+                    HealthReporting.TryGetRunningOutlook(),
+                    ComposeSurface.OutlookShowsAWindow(),
+                    ProcessStamp.IsRunning,
+                    comHost.ProcessId,
+                    out string? sessionsProblem);
+                if (sessionsProblem != null)
+                {
+                    problems.Add(sessionsProblem);
+                }
+            }
+
             return new HealthOutcome
             {
                 Status = problems.Count == 0 ? "ok" : "degraded",
@@ -7374,6 +7392,7 @@ namespace OutlookAI.Core.Services
                     StoresReachable = storesReachable,
                     Stores = storeNames,
                     ComHost = comHost,
+                    Sessions = sessions,
                 },
                 Index = new IndexHealthView
                 {

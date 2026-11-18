@@ -388,6 +388,12 @@ public sealed class LiveDraftTests
         Assert.True(quoteIndex >= 0, expectedKind + ": quoted seed content must be in the draft body");
         Assert.True(agentIndex < quoteIndex, expectedKind + ": agent text must sit ABOVE the quoted history");
 
+        // Q209 (a): above the quoted message's header block, not inside it under its separator line - read off Word's
+        // own layout, where that line is the block's top border. With no signature (the hub has no default), this is
+        // the case the 2026-11-17 measurement did not cover.
+        QuotedDraftLayout.AssertTextAboveTheHeaderBlock(
+            LiveOutlookTestMailer.ReadDraftLook(Hub, outcome.EntryId, Marker), agentText, signatureText: null, expectedKind, _output.WriteLine);
+
         _output.WriteLine(
             $"{expectedKind}: conversationIndexExtends=true (len {seedInfo.ConversationIndex!.Length} -> {reopened.ConversationIndex!.Length}) "
             + $"inHubDrafts=true agentAboveQuote=true signatureInjected={outcome.SignatureInjected}");

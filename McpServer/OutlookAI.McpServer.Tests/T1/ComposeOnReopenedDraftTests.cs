@@ -24,13 +24,16 @@ public sealed class ComposeOnReopenedDraftTests
 {
     private const string Session = "OutlookAI.Core/Com/OutlookComSession.cs";
 
+    private const string Surface = "OutlookAI.Core/Com/ComposeSurface.cs";
+
     /// <summary>
     /// Anything that opens, uses or closes a compose inspector or its editor - as member accesses and calls,
     /// so a name such as BodyPlacedViaWordEditor, or the "NoWordEditor" token, is not one.
     /// </summary>
     private static readonly string[] InspectorWork =
     {
-        ".GetInspector", ".WordEditor", ".Close(", ".Activate(", "PromoteForWordEditor(", "ComposeDraft(", "CloseHiddenInspector(",
+        ".GetInspector", ".WordEditor", ".Close(", ".Activate(", "PromoteForWordEditor(", "ObtainWordEditor(", "ModifiedFormPages",
+        "ComposeDraft(", "CloseHiddenInspector(",
     };
 
     [Theory]
@@ -134,6 +137,65 @@ public sealed class ComposeOnReopenedDraftTests
         Assert.Null(MemberName("            inspector = draft.GetInspector;"));
     }
 
+    // ------------------------------------------------------------------ Q175 (b), Q208 B (2026-11-18)
+
+    [Fact]
+    public void Connect_MakesNoLifetimePin()
+    {
+        // Q175 (b): no hidden window at connect - the pin is made when the first draft needs it. Every overload.
+        List<string> bodies = MemberBodies("Connect");
+        Assert.True(bodies.Count >= 3, "fewer Connect overloads than this test was written against - it has stopped proving anything");
+        foreach (string body in bodies)
+        {
+            Assert.DoesNotContain("EnsureComposeSurfacePin(", CodeOnly(body), StringComparison.Ordinal);
+            Assert.DoesNotContain("TryPinProcess(", CodeOnly(body), StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void TheLifetimePin_IsMadeByTheComposesAlone()
+    {
+        Assert.Equal(
+            new[] { "EnsureComposeSurfacePin", "TryCreateDerivedDraft", "TryCreateNewDraft", "TryUpdateDraft" },
+            MembersContaining("EnsureComposeSurfacePin(").OrderBy(m => m, StringComparer.Ordinal).ToArray());
+        Assert.Equal(
+            new[] { "EnsureComposeSurfacePin" },
+            MembersContaining("ComposeSurface.TryPinProcess(").OrderBy(m => m, StringComparer.Ordinal).ToArray());
+    }
+
+    [Fact]
+    public void TheCompose_HasItsEditorByTheDecidedRoute_AndCommitsADirectReadWithCloseOlSave()
+    {
+        string body = CodeOnly(MemberBody("ReviseHeldDocument"));
+
+        // One way to the editor - the route ComposeSurface decides under the registry's lock (Q208 B) - and never a
+        // promotion or an Activate of its own: that is what put a window on screen for every draft.
+        Assert.Equal(1, Count(body, "ComposeSurface.ObtainWordEditor("));
+        Assert.DoesNotContain("PromoteForWordEditor(", body, StringComparison.Ordinal);
+        Assert.DoesNotContain(".Activate(", body, StringComparison.Ordinal);
+
+        // The direct route commits with Close(olSave) - B3's commit, after the form page ReadEditorDirectly adds -
+        // and the promoted route the way every promoted draft of W6 and W7 committed.
+        int direct = body.IndexOf("route == DraftEditorRoute.Direct", StringComparison.Ordinal);
+        int closeSave = body.IndexOf(".Close(ComposeSurface.OlSave)", StringComparison.Ordinal);
+        int currentItemSave = body.IndexOf(".CurrentItem", StringComparison.Ordinal);
+        Assert.True(direct >= 0 && closeSave > direct, "the direct route must commit with Close(olSave)");
+        Assert.True(currentItemSave > closeSave, "the promoted route's CurrentItem.Save() follows the direct route's commit");
+        Assert.Equal(1, Count(body, ".Close(ComposeSurface.OlSave)"));
+    }
+
+    [Fact]
+    public void TheDirectRoute_AddsTheMessageFormPage_BeforeItReadsTheEditor()
+    {
+        // B3: the form page FIRST, then the editor - an edit read without it is not kept by Close(olSave) (B2, 0 of 40).
+        string body = CodeOnly(MemberBody(Surface, "ReadEditorDirectly"));
+        int formPage = body.IndexOf(".ModifiedFormPages", StringComparison.Ordinal);
+        int add = body.IndexOf(".Add(\"Message\")", StringComparison.Ordinal);
+        int editor = body.IndexOf(".WordEditor", StringComparison.Ordinal);
+        Assert.True(formPage >= 0 && add > formPage && editor > add, "ReadEditorDirectly must add the Message form page before it reads the editor");
+        Assert.DoesNotContain(".Activate(", body, StringComparison.Ordinal);
+    }
+
     private static readonly Regex Modifiers = new Regex(
         @"^ {8}(?:(?:public|private|internal|protected|static|async|override|virtual|sealed|unsafe|extern|new)\s+)+(?<rest>\S.*)$",
         RegexOptions.CultureInvariant);
@@ -177,17 +239,44 @@ public sealed class ComposeOnReopenedDraftTests
     /// <summary>A member's lines, from its declaration to the next declaration.</summary>
     private static string MemberBody(string member)
     {
-        string[] lines = File.ReadAllLines(SessionPath());
-        int start = Array.FindIndex(lines, line => MemberName(line) == member);
-        Assert.True(start >= 0, member + " was not found in " + Session + " - this test has stopped proving anything");
+        return MemberBody(Session, member);
+    }
 
-        int end = start + 1;
-        while (end < lines.Length && MemberName(lines[end]) == null)
+    /// <summary>A member's lines in <paramref name="file"/>, from its declaration to the next declaration.</summary>
+    private static string MemberBody(string file, string member)
+    {
+        List<string> bodies = MemberBodies(file, member);
+        Assert.True(bodies.Count > 0, member + " was not found in " + file + " - this test has stopped proving anything");
+        return bodies[0];
+    }
+
+    /// <summary>Every overload's lines, each from its declaration to the next declaration.</summary>
+    private static List<string> MemberBodies(string member)
+    {
+        return MemberBodies(Session, member);
+    }
+
+    private static List<string> MemberBodies(string file, string member)
+    {
+        string[] lines = File.ReadAllLines(SourcePath(file));
+        List<string> bodies = new List<string>();
+        for (int start = 0; start < lines.Length; start++)
         {
-            end++;
+            if (MemberName(lines[start]) != member)
+            {
+                continue;
+            }
+
+            int end = start + 1;
+            while (end < lines.Length && MemberName(lines[end]) == null)
+            {
+                end++;
+            }
+
+            bodies.Add(string.Join("\n", lines, start, end - start));
         }
 
-        return string.Join("\n", lines, start, end - start);
+        return bodies;
     }
 
     /// <summary>The members whose code holds the needle.</summary>
@@ -226,10 +315,15 @@ public sealed class ComposeOnReopenedDraftTests
 
     private static string SessionPath()
     {
+        return SourcePath(Session);
+    }
+
+    private static string SourcePath(string file)
+    {
         string testProjectDir = typeof(ComposeOnReopenedDraftTests).Assembly
                 .GetCustomAttributes<AssemblyMetadataAttribute>()
                 .FirstOrDefault(a => a.Key == "TestProjectDir")?.Value
             ?? throw new InvalidOperationException("AssemblyMetadata 'TestProjectDir' is missing.");
-        return Path.GetFullPath(Path.Combine(testProjectDir, "..", Session));
+        return Path.GetFullPath(Path.Combine(testProjectDir, "..", file));
     }
 }

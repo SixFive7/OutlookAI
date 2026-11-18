@@ -3245,6 +3245,77 @@ public static class LiveOutlookTestMailer
         });
     }
 
+    /// <summary>
+    /// How Word lays out a draft of this run, paragraph by paragraph (<see cref="Q149Editor.ReadLook"/>): text,
+    /// top border, style, font, spacing. The instrument of Q209 (a)'s check that a reply's or forward's own text sits
+    /// above the quoted header block (<see cref="QuotedDraftLayout"/>).
+    /// <para>
+    /// READ-ONLY, the way <see cref="ReadSignatureEngine"/> is: the draft must carry the test tag and this run's
+    /// marker (S3), it is opened by EntryID - an inspector on a re-opened item - its editor had through the product's
+    /// promotion (off-screen in a windowed Outlook, B0: 40 of 40), and its inspector closed DISCARDING, so nothing is
+    /// saved. Throws when the editor cannot be had: a layout check that read nothing must not pass.
+    /// </para>
+    /// </summary>
+    public static IReadOnlyList<WordParagraphLook> ReadDraftLook(string storeDisplayName, string entryIdHex, string uniqueMarker)
+    {
+        if (string.IsNullOrWhiteSpace(uniqueMarker) || uniqueMarker.Length < 12)
+        {
+            throw new ArgumentException("Marker too weak for a safe item filter (S3).", nameof(uniqueMarker));
+        }
+
+        return RunSta<IReadOnlyList<WordParagraphLook>>(() =>
+        {
+            dynamic app = CreateOutlookApplication();
+            dynamic? ns = null;
+            dynamic? stores = null;
+            dynamic? store = null;
+            dynamic? item = null;
+            object? inspector = null;
+            object? document = null;
+            try
+            {
+                ns = app.GetNamespace("MAPI");
+                stores = ns.Stores;
+                store = FindStore(stores, storeDisplayName)
+                    ?? throw new InvalidOperationException("Store not found for the layout read.");
+                item = ns.GetItemFromID(entryIdHex, (string)store.StoreID);
+                string? subject = (string?)item.Subject;
+                if (subject == null || !subject.Contains(SubjectTag, StringComparison.Ordinal)
+                    || !subject.Contains(uniqueMarker, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException(
+                        "Refusing to open the item: its subject does not carry both the test tag and this run's marker (S3).");
+                }
+
+                inspector = item.GetInspector;
+                document = ComposeSurface.PromoteForWordEditor(inspector!, out string? promoteError)
+                    ?? throw new InvalidOperationException("The draft's Word editor could not be had: " + (promoteError ?? "unknown"));
+                return Q149Editor.ReadLook(document);
+            }
+            finally
+            {
+                if (inspector != null)
+                {
+                    try
+                    {
+                        ((dynamic)inspector).Close(1); // olDiscard: nothing is saved
+                    }
+                    catch (COMException)
+                    {
+                    }
+                }
+
+                Release(document);
+                Release(inspector);
+                Release(item);
+                Release(store);
+                Release(stores);
+                Release(ns);
+                Release(app);
+            }
+        });
+    }
+
     private static string? TryRead(Func<string?> read)
     {
         try
