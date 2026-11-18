@@ -4581,6 +4581,99 @@ anywhere; the computer's stores; an install run with administrator rights on pur
 build. Nothing here loaded an add-in through an entry: that the runtime trusts an entry's key without
 the certificate is the IL above and section 4.5's measurement.
 
+### 4.9 The .NET 11 SDK beside .NET 10 - the build pool, both Outlook guests and the Exchange VM, 2026-11-18 (Q172)
+
+**Why this section exists.** The maintainer moved OutlookAI to .NET 11 on 2026-11-18 (Q172). Nothing
+on .NET 11 can be tested before the checkpoints a runner restores carry the .NET 11 SDK, and while
+every branch moves, the ones still on .NET 10 have to keep building. `Testbed/MEDIA.md`, "The .NET
+SDK", has the media and why .NET 10's 10.0.404 sits beside 11.0.100; `Testbed/README.md` section 1c,
+row B11, the procedure for a build VM. Raw logs: `.work\dotnet11\runs\` of the worktree
+`stream-u-dotnet11-runtime`, one folder per VM, each with its driver's `driver.log` and `record.json`.
+
+**Checked first, on the host:**
+
+| Check | Finding |
+| --- | --- |
+| The media | `dotnet-sdk-11.0.100-win-x64.exe`, 236,244,816 bytes, and `dotnet-sdk-10.0.404-win-x64.exe`, 218,476,784 bytes, downloaded from `builds.dotnet.microsoft.com`; each SHA-512 equal to the one in Microsoft's release metadata (11.0.0 and 10.0.15); Authenticode valid, signed by `CN=.NET, O=Microsoft Corporation` with a certificate valid from 2026-04-16 - before every frozen guest's clock, which section 4.5 named as unmeasured |
+| What SDK 11 needs to build .NET 10 offline | its bundled versions file: `TargetingPackVersion="10.0.15"` and `AppHostPackVersion="10.0.15"` for `net10.0`. A restore of every project of the main branch with an empty pack folder fetched four packages beyond the 54 the feed holds, each 10.0.15: `Microsoft.NETCore.App.Ref`, `Microsoft.NETCore.App.Host.win-x64`, `Microsoft.WindowsDesktop.App.Ref`, `Microsoft.AspNetCore.App.Ref` - 26.6 MB as packages. SDK 10.0.401 carries 10.0.12, so on an offline guest SDK 11 cannot build a .NET 10 branch beside it alone |
+| The main branch, built by SDK 11 on the host | `dotnet build` of the test project, Release: 0 warnings, 0 errors, 44 s - the host has had only SDK 11 since 2026-11-13. Retargeted to `net11.0-windows` (a scratch copy), the same, with the security analysers at `11.0-all` too |
+| The base feed | 54 packages before and after expanding a feed staged from `a7c3fbe`: the restore graph has not moved since `e4b00fa` |
+
+**The build pool: `CP-04-SDK11-TEST-READY-UTC` on each member, one at a time.** Each under the
+runner's lock and a lease, by a driver that waited for the member's executing run to end, took the
+lock and then the lease, wrote the runner's owner file, and put the VM back on `CP-03` and saved it on
+any failure. Steps as B11; the first member copied everything over PowerShell Direct, the later ones
+from a disc image.
+
+| Member, in order | Waiting for its run | Staging the installers | 10.0.404, `-Execute` with its verify | 11.0.100, the same | Restart | `-Verify` | Settle | `CP-04-SDK11-TEST-READY-UTC` taken | Proving restore, host minus guest | Rests |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `OutlookAI-Build3` | 6 min 30 s | PowerShell Direct, 168 s | 14 min 09 s | 7 min 41 s | 2 min 31 s | 3 min 43 s | 11 min 51 s | 2026-11-18T03:56:59Z | 0.7 s | Saved |
+| `OutlookAI-Build2` | 18 min 32 s | disc image, 26 s | 9 min 00 s | 5 min 06 s | 1 min 40 s | 1 min 27 s | 3 min 05 s | 2026-11-18T04:48:48Z | 0.3 s | Saved |
+| `OutlookAI-Build` | 8 min 57 s | disc image, 20 s | 7 min 45 s | 4 min 04 s | 1 min 17 s | 1 min 03 s | 4 min 13 s | 2026-11-18T05:32:15Z | 0.2 s | Saved |
+
+Each member was out of the pool only from its "holding" to its "Rests": runs that came while one was
+being made took the other two. **Two things went wrong and were put right.** The first try on
+`OutlookAI-Build2` stopped itself 23 s after its restore: its check that the disc was out read the
+drive before Hyper-V had applied the eject, so it put `CP-03` back, saved the VM and gave it to the
+next run within 30 s; the driver now waits up to 20 s for an eject to show. And on `OutlookAI-Build`
+a queued run took the runner's lock in the second the run before it let go, though the driver asked
+every quarter second; the driver then took the lease first, over that executing run's own (the
+coordinator's direction: wait for each VM's executing run to finish under your lease), so that every
+later run passed the VM over, and took the lock when that run let go of it - the run finished as it
+would, restoring `CP-03`, and released only its own lease.
+
+**What the rungs showed on each member** - `Install-DotnetSdk.ps1`, first with 10.0.404 and then with
+11.0.100, then `-Verify` after the restart: 10.0.404 replaced 10.0.401 (rung 1 listed `10.0.404` and,
+after the second install, `11.0.100`; `--list-runtimes` lists .NET 10.0.15 and 11.0.0, each of
+`Microsoft.NETCore.App`, `Microsoft.AspNetCore.App` and `Microsoft.WindowsDesktop.App`, and no 10.0.12);
+rung 2's probe ran as `10.0.15 x64` pinned to SDK 10.0.404, then as `11.0.0 x64` pinned to SDK 11.0.100;
+rung 3 discovered 4,318 tests of the staged suite (`a7c3fbe`, still `net10.0-windows`) both times -
+the second time built by SDK 11, offline, from 10.0.404's packs - and rung 4 ran 17 of 17. The zone
+read `UTC` and `vmadmin`'s password `never` on every member.
+
+
+
+**The two Outlook guests: new frozen checkpoints with SDK 11 - not yet the ones a run restores.** By
+section 4.5's "Making a new frozen checkpoint", each under a lease, and as fast as it could be done,
+because every second between the restore and the next checkpoint moves the frozen instant and the
+indexed guest's frontier margin had 6 minutes 49 seconds left: the frozen checkpoint restored (time sync
+off travels with it); the installer from a disc image attached to the running guest, not copied over
+PowerShell Direct; `Install-DotnetSdk.ps1 -Execute -SkipVerify` (new: install, write the machine
+environment, stop); the disc ejected; an ordinary running checkpoint. Then, the instant no longer at
+stake, `-Verify` for `11.` and for `10.` on the guest that kept running - rungs 1 and 2, `SDK-ONLY` both
+times, since every run's own staging proves the suite - and `Set-GuestClockFrozen.ps1 -FromCheckpoint
+<ordinary> -NewCheckpoint <frozen> -Execute`. OUTLOOK.EXE never ran. SDK 10.0.404 is not on them:
+`Testbed/MEDIA.md` says why, and why the live runner moves to them only with the code.
+
+| Guest | From | Installer | Restore to ordinary checkpoint | Ordinary | New frozen | Frozen instant | Offset over 20 s | Proving restore |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `OutlookAI-Indexed` | `CP-22C-FROZEN-CLOCK`, 17:43:33Z | 3 min 35 s | 291.5 s | `CP-23C-SDK11` | `CP-24C-FROZEN-CLOCK` | **2026-10-03T17:48:32Z** (1791049712), 4 min 59 s after the old one | moved 1.7 s at most | 0.4 s before the instant |
+| `OutlookAI-Unindexed` | `CP-16B-FROZEN-CLOCK`, 14:50:40Z | 3 min 44 s | 299.8 s | `CP-17B-SDK11` | `CP-18B-FROZEN-CLOCK` | **2026-10-03T14:55:50Z** (1791039350), 5 min 10 s after the old one | moved 1.1 s at most | 1.6 s before the instant |
+
+Both verifies listed `10.0.401` and `11.0.100`, and rung 2's probe ran as `11.0.0 x64` by SDK 11.0.100
+and as `10.0.12 x64` by SDK 10.0.401, each pinned. **What the new instants leave:** at the end of the
+longest run a frozen record allows (its instant plus 90 minutes), the indexed hub's newest dated item
+(17:25:22Z) is 113.2 minutes old, under the 115-minute frontier margin - 1.8 minutes to spare, where the
+old instant left 6.8 - and the unindexed hub's about 109 minutes. `testbed.json`'s
+`frozenClocks._dotnet11Next` records both; they become the guests' `frozenClocks` records, and
+`T1/FrozenGuestClockTests` proves them, in the commit that moves the code to .NET 11, which also makes
+the clones again from them (section 4.7: a frozen guest's clone cannot make its own).
+
+**`OutlookAI-Exchange`: `CP-10-SDK11`.** Its runs carry its state forward, so the SDKs belong in a
+checkpoint a run can restore. Under a lease, and by the coordinator's direction of 05:43: the first
+attempt went into the state the runs had carried forward and was stopped part-way through the 10.0.404
+install, before it had taken any checkpoint, because that state was stream E2's roaming-signature test
+(four Office policy values removed, a test signature's roaming copy, and the test account's default
+pointing at it); `CP-09-OFFICE-REARMED`, E2's checkpoint of 03:40 with Office re-armed and its policies
+in place, was restored over it, which discarded that attempt too. On that state: the installers from a
+disc image, copied in; `Install-DotnetSdk.ps1 -Execute -SkipVerify` for 10.0.404 (the installer 6 min
+45 s, `INSTALLED`), then `-Execute` for 11.0.100 (8 min 13 s with its verify, `TEST-READY`: SDK 11
+built the staged suite, 4,318 tests discovered, 17 of 17 run); no restart, Outlook not touched (it was
+not running in `CP-09`); `CP-10-SDK11` taken running at 2026-11-18T05:01:38Z, a child of
+`CP-09-OFFICE-REARMED`, and the VM saved. It is the newest checkpoint: the live runner's resting
+checkpoint for this VM, the one a run that names `-Checkpoint` restores; a run that names none carries
+the state forward as before.
+
 ## 5. Which tests are in which bucket, and how to find out
 
 The classification is **two traits on the test itself**, not a list in a document that can drift -
