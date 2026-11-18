@@ -843,7 +843,9 @@ its mailbox tests on, and change nothing you install.
   internet, Microsoft's `dotnet-runtime-11.0.0-win-x64.zip` beside the installer is used instead,
   checked the same way. The server looks for its own copy first and then for a .NET 11 installed
   for the whole machine, and uninstalling removes its copy. If setup could not put the runtime in
-  place, OutlookAI Settings says so and what to do.
+  place, OutlookAI Settings says so and what to do. On a test machine whose only .NET is 10, a fresh
+  install and a silent update from v3.1.0.325 each left a mail server that answered on its own
+  runtime, with no administrator rights and nothing installed for the whole machine.
 
 - 🔧 **A draft puts a window on screen at most once per Outlook start, and never while Outlook is open.**
   OutlookAI writes every draft in a compose window it does not show. In an Outlook with no window of
@@ -962,6 +964,15 @@ its mailbox tests on, and change nothing you install.
   OutlookAI does not edit or delete their copies or change the account's defaults, because Outlook
   would overwrite the change or copy it into the mailbox, and says to use Outlook instead. Roaming on
   Microsoft 365 Apps itself is not tested: the test machines run perpetual Office only.
+
+- ✅ **The testbed can build an installer that carries the mail server, to test the installed product.**
+  `Testbed/host/Publish-AddInPayload.ps1 -WithServer` publishes the mail server and
+  `OutlookAI.RuntimeSetup` into a testbed build's installer, as a release does, signed with the
+  throwaway certificate and versioned 99.99.99.0 like every testbed build. It proved the private
+  .NET 11 runtime on `OutlookAI-Unindexed2` (Q172, runbook section 4.12): a fresh install and a
+  silent update from v3.1.0.325, each run as the logged-on user without administrator rights, left
+  the runtime in place, the server answering `initialize` and `tools/list` on it, and the COM host
+  starting on it through `DOTNET_ROOT`, which without that variable refused to start there.
 
 - ⬆️ **The mail server, its tests and its tools build for .NET 11, and the add-in as C# 15 (Q172).**
   The maintainer moved OutlookAI to .NET 11 on 2026-11-18. Every project under `McpServer/` targets

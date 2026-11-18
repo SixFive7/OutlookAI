@@ -5101,6 +5101,37 @@ scratch publish under `.work`:
 The installer that carries the server and the helper, built by `Publish-AddInPayload.ps1 -WithServer`,
 is 43.7 MB - under the updater's 50 MB - because the runtime is never inside it.
 
+**The proof on a guest (phase 4, 2026-11-18): a fresh install and a silent update both end with a
+working mail server on the private runtime, with no administrator rights and nothing machine-wide.**
+On `OutlookAI-Unindexed2`, restored to `CP-16B-FROZEN-CLOCK` for each scenario and put back after - a
+guest whose only machine-wide .NET is 10.0.12, so nothing but the private copy can start the .NET 11
+server. The installer, built by `-WithServer` from `bb0cf73`, and Microsoft's runtime zip beside it
+under its own name, as the guest has no network (the coordinator's choice, Q-U3 (a)); the real
+download was proven on the workstation instead (above). Every install and every check ran in session 1
+as the logged-on user with a NOT elevated token (`Register-InteractiveTask.ps1 -RunLevel Limited`), so
+an elevation prompt would have stalled it into its time limit; setup's own log says `User privileges:
+None`, `Administrative install mode: No`. Driver and evidence: `.work\dotnet11\p4\runs\OutlookAI-Unindexed2-20261118-091257`
+of the worktree `stream-u-dotnet11-runtime`.
+
+| Scenario | Steps | What setup left | The server | The COM host |
+| --- | --- | --- | --- | --- |
+| **A, fresh** | the guest's OutlookAI uninstalled; the new installer `/SILENT` (23 s) | the helper took the zip beside the installer, checked 39,856,058 bytes and the SHA-512, unpacked 202 entries into `%LOCALAPPDATA%\OutlookAI\dotnet` (83.1 MB) and swapped it in, in 2.5 s; no work folder left; the machine-wide .NET unchanged; the add-in's own check, `OutlookAI.Core.AddIn.ServerDotnetRuntime` from the installed `OutlookAI.Core.dll`: complete, not machine-wide, available | answered `initialize` (protocol 2025-06-18) and `tools/list` (24 tools) over stdio and exited 0 when stdin closed; its host trace: `Using app-relative location [...\OutlookAI\dotnet] as runtime location` | started as the server starts it - `DOTNET_ROOT_X64` naming the private runtime, `--no-autostart`, no pipe - it loaded the private runtime and ran OutlookAI's code, which refused for want of a pipe (exit 2); **without** the variable its apphost found only the machine-wide 10.0.12 and refused to start (`0x80008096`) |
+| **B, silent update** | the guest's OutlookAI uninstalled; the current release, **v3.1.0.325**, `/SILENT` (17 s, `DisplayVersion 3.1.0.325`); the new installer with the updater's own arguments, `/SILENT /SP- /NOCANCEL /NORESTART /NORESTARTAPPLICATIONS` (26 s) | the same as A: the zip, both checks, 202 entries, no work folder, the machine-wide .NET unchanged, the add-in's check available | the same as A | the same as A |
+
+After A, the new installer's uninstaller removed the runtime folder and the helper's log, and left the
+user's own `audit.log`, `scratch`, `signature-backups` and `tmp` in `%LOCALAPPDATA%\OutlookAI`.
+
+Two things the first attempt, at 08:34, found about the guest rather than the product, and how the
+second worked round them. **The interactive wizard waits on its Install button** - it was killed
+after 4 minutes - so the fresh install ran `/SILENT`, as the updater runs it; `SetUpServerRuntime`
+runs the same on both paths, and only its failure message differs. **Inno's uninstaller, started from
+the Limited scheduled task, never reached its second phase** - no log, the uninstall key left -
+while the same command from the PowerShell Direct session, elevated, uninstalled at once; so each
+scenario's uninstall ran there. A user uninstalls from Settings, which is neither; that path is
+unmeasured. And `ConvertTo-Json` in Windows PowerShell 5.1 spent minutes of CPU on the `PSPath`
+notes `Get-Content` puts on every line, which stalled the first attempt's scenario-B check; the
+verdicts above come from the second attempt, at 09:12, which read files with `ReadAllLines`.
+
 ## 5. Which tests are in which bucket, and how to find out
 
 The classification is **two traits on the test itself**, not a list in a document that can drift -
