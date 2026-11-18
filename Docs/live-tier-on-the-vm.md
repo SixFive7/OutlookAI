@@ -4392,6 +4392,195 @@ times eight writers against each other failed on both clones and passed alone. M
 the pool guards, was never short; CPU was. Whether the pools should also keep CPU free for the
 maintainer is open: `TODO.md`.
 
+### 4.8 The leaked signing key: Windows' Root-store question and VSTO's trust entries - `OutlookAI-Unindexed2`, 2026-11-17 (Q193 follow-ups)
+
+**Why this section exists.** The certificate that signed v1.0.0.1 to v2.3.1.111 (SHA-1
+`E205060633DD7062D4F90033130542948A69D068`) leaked with its private key, and decision 193 (b) has the
+installer remove it by thumbprint from every trust store. Two questions were left open: whether
+removing a certificate from the user's Root store puts up a prompt - adding one does, which is why
+`Installer.iss` never adds its own certificate there - and whether the VSTO trust entries that users
+of v1 to v2.3.1 hold for that key still let something load. Raw results: `.work\trust-removal-runs\`
+of the worktree `stream-j-leaked-key`.
+
+**How it runs, one call per run:**
+
+    pwsh -File Testbed/host/Invoke-TrustRemovalProbe.ps1 -VMName OutlookAI-Unindexed2 -Scenario RootStorePrompt -Execute
+    pwsh -File Testbed/host/Invoke-TrustRemovalProbe.ps1 -VMName OutlookAI-Unindexed2 -Scenario InstallerCleanup -RunLevel Highest -InstallerPath <OutlookAI-v99.99.99.0.exe> -Execute
+
+It refuses anything but an Outlook guest or its clone and a guest somebody else has leased, takes the
+lease, restores the guest's frozen checkpoint (`CP-16B-FROZEN-CLOCK`), stages
+`Testbed/guest/Measure-TrustRemoval.ps1` beside `Register-InteractiveTask.ps1`, runs it in session 1 at
+`-RunLevel Limited` - not elevated, medium integrity, the token a per-user installer gets; the
+installer scenario on these guests needs `Highest`, below - fetches its JSON, and restores the
+checkpoint, saves the guest and releases the lease on every path. Every run
+below ended that way: `CP-16B-FROZEN-CLOCK` restored, `OutlookAI-Unindexed2` Saved, the lease released.
+The guest: Windows 11 Pro 25H2, build 26200.8037 (its registry still says "Windows 10 Pro", as every
+Windows 11 does), nl-NL date formats.
+
+**1. Removing a certificate from the user's Root store asks - every time - and waits for the answer.**
+`-Scenario RootStorePrompt`, three runs (`8154f4a`, `0652782` and `a8fe793`; the last two watch each
+prompt until it is shown, the last also writes the certificate's registry key back). A throwaway
+certificate, made in memory with no store involved, went into the user's Root store and out again
+through certutil started exactly as `Installer.iss`'s `Exec` starts it: the 32-bit
+`SysWOW64\certutil.exe` a 32-bit setup reaches, `STARTF_USESHOWWINDOW` with `SW_HIDE`, a console of
+its own, `CREATE_DEFAULT_ERROR_MODE`. After each case the probe read whether Windows lists the
+certificate, whether it builds a trusted chain for it, and whether `ProtectedRoots` - the list of
+roots the user has confirmed, under `HKCU\Software\Microsoft\SystemCertificates\Root`, which only the
+system writes - names it. The third run, case by case:
+
+| Case | What Windows showed | Answer | certutil exit | Afterwards |
+| --- | --- | --- | --- | --- |
+| `-user -store Root <thumbprint>`, not there | nothing | - | `0x80090011` (not found) | - |
+| `-user -addstore Root <file>` | **Security Warning**, Yes and No, **No the default** | No | `0x800704C7` (ERROR_CANCELLED) | not added |
+| the same | the same | Yes | 0 | listed, trusted, in ProtectedRoots |
+| `-user -store Root <thumbprint>`, there - the check `Installer.iss` made | nothing | - | 0 | - |
+| `-user -delstore Root <thumbprint>`, as `Installer.iss` runs it | **Root Certificate Store**, Yes and No, **No the default** | No | `0x800704C7` | kept, still trusted |
+| the same, left 120 s | the same | none for 120.2 s, then No | `0x800704C7` at 121 s | after 120 s the question was still up and shown and certutil still waiting |
+| the same, started `SW_SHOWNORMAL` | the same, and certutil's console window | No | `0x800704C7` | kept |
+| the same as the first removal | the same | **Yes** | 0 | gone, untrusted (`UntrustedRoot`), **out of ProtectedRoots** |
+| its key written back - what any program running as the user can do | nothing | - | - | Windows took it straight back out: within 3 s neither listed nor in the registry, untrusted |
+| the key deleted under `...\Root\Certificates`, no certutil | nothing | - | (0.01 s) | gone, untrusted, `certutil -user -store Root` says not found - **but ProtectedRoots still names it** |
+| its key written back after that | nothing | - | - | **listed and trusted again, with no question** |
+
+Every removal certutil was asked for in the three runs - thirteen - put the question. The texts, exactly (the subject, dates,
+serial number and thumbprints are the certificate's own; this guest writes dates in Dutch):
+
+    Root Certificate Store
+    Do you want to DELETE the following certificate from the Root Store?
+
+    Subject : OutlookAI trust-removal probe 20261003-165043
+    Issuer : Self Issued
+    Time Validity : vrijdag 2 oktober 2026 to maandag 2 november 2026
+    Serial Number : 023BC087 D37D5175
+    Thumbprint (sha1) : F0974E85 F3A623F2 C591DC81 2E229C3A F102DDF7
+    Thumbprint (md5) : B981942A 0EB60398 9F6A23DE 5A38703E
+                                                                     [Yes]  [No]
+
+    Security Warning
+    You are about to install a certificate from a certification authority (CA) claiming to
+    represent:
+
+    OutlookAI trust-removal probe 20261003-165043
+
+    Windows cannot validate that the certificate is actually from "OutlookAI trust-removal probe
+    20261003-165043". You should confirm its origin by contacting "OutlookAI trust-removal probe
+    20261003-165043". The following number will assist you in this process:
+
+    Thumbprint (sha1): F0974E85 F3A623F2 C591DC81 2E229C3A F102DDF7
+
+    Warning:
+    If you install this root certificate, Windows will automatically trust any certificate issued
+    by this CA. Installing a certificate with an unconfirmed thumbprint is a security risk. If you
+    click "Yes" you acknowledge this risk.
+
+    Do you want to install this certificate?
+                                                                     [Yes]  [No]
+
+For the leaked certificate the subject is the name of the computer and user it was made on, and the
+issuer "Self Issued".
+
+- **Whose window, and seen or not.** Each question is a `#32770` dialog of certutil's own process,
+  and it is shown although certutil starts with `SW_HIDE`. The first run read every dialog the moment
+  it existed and found two of its four removal questions not yet shown; the second and third watched,
+  and all fifteen questions there - nine removals, six additions - were shown, 0.01 to 0.38 s after
+  they existed. It took the foreground in 8 of those 15.
+- **No timeout seen.** After 120 s the question was still up and shown, and certutil still waiting.
+- **UI Automation reads it but cannot press it.** The probe's UI Automation sees the dialog's buttons
+  as `ControlType.Pane` with no `InvokePattern` (the probe is 64-bit and certutil 32-bit; whether that
+  is why was not tested), so it answered with the dialog's own `WM_COMMAND` - the message a click
+  sends - and its JSON says so for every answer.
+- **ProtectedRoots is the difference between the two ways out.** After a confirmed removal Windows
+  removes a root written back by hand within seconds; after the registry route the stale entry makes
+  the same write a trusted root again. For the leaked certificate that write would quietly bring back
+  a root whose private key anyone has.
+
+**What that meant for `Installer.iss` as decision 193 (b) left it** (`8746827`): wherever the
+certificate was in the user's Root store, every install, update and uninstall started
+`certutil -user -delstore Root` hidden and did not wait. So Windows' question appeared with no word
+from OutlookAI - after a silent auto-update too, when the user had only closed Outlook - stayed up
+until answered, and every later update put another. Its default is No.
+
+**The change** - `Installer.iss` `RemoveCompromisedCertificateFromUserRoot`, pinned by T1
+`InstallerCompromisedCertificateTests`:
+
+- it acts only when the certificate's key is in the user's OWN Root store,
+  `HKCU\Software\Microsoft\SystemCertificates\Root\Certificates\<thumbprint>` - not when certutil's
+  view of the user's Root, which also lists the computer's roots, shows it, because this user could
+  not remove one of those - and no longer starts a certutil to find out;
+- an interactive install or uninstall first says, in one sentence, *"Windows will now ask, in a
+  window titled Root Certificate Store, whether to delete an old OutlookAI certificate (thumbprint
+  E2050606...) from your trusted root certificates: its private key has leaked, so please answer
+  Yes."*, then runs the same certutil and waits for the answer;
+- a silent run - every auto-update is `/SILENT` - neither asks nor waits: it logs that the certificate
+  is there and leaves it for the next interactive install or uninstall. Chosen over the registry route
+  for the ProtectedRoots result above, and over the unexplained question for the reasons in the
+  paragraph before. The maintainer has not decided this yet (stream J's report has the options).
+
+The computer's stores, cleaned when setup runs elevated, were not measured here: no question is
+known for them, and `Installer.iss` still checks and removes them without waiting.
+
+**2. VSTO's trust entries for the leaked key let anything signed with it load from their folder, unasked.**
+Clicking Install on Office's "Publisher cannot be verified" prompt for v1.0.0.1 to v2.3.1.111 left an
+entry under `HKCU\Software\Microsoft\VSTO\Security\Inclusion\<guid>`. What it holds and what it does:
+
+| Source | What it says |
+| --- | --- |
+| Microsoft Learn, *Trust Office solutions by using inclusion lists* | "A valid inclusion list entry has two parts: a path to the deployment manifest, and the public key used to sign the solution. After a solution is added to the inclusion list, it is considered trusted. When the Office solution runs, the Office application compares the public key in the inclusion list with the signing key in the deployment manifest". The lists are per user. |
+| Microsoft Learn, *Grant trust to Office solutions* | "If the end user grants trust to the solution, an inclusion list entry is created that contains a URL and a public key to store this trust decision. When a trusted customization is run later, the end user is not prompted again." |
+| The v10 runtime's own code, `Microsoft.VisualStudio.Tools.Office.Runtime.dll`, read with the Windows SDK's `ildasm` | `OfficeAddInDeploymentManager.VerifyAddInTrust`: the deployment manifest's strong-name signature must be valid; an Authenticode `TrustStatus` of `Trusted` (3: a publisher certificate in Trusted Publishers that chains to a trusted root) trusts it outright; otherwise `OfficeAddInTrustEvaluator.IsManifestInUserInclusionList(location, key)` decides, and only when that is false does the prompt appear - and Install writes `UserInclusionList.Add(location, StrongNameSignature.PublicKey.ToXmlString(false))`. `UserInclusionList.Contains` takes the entries whose `Url` equals the location as a URI and is true when `AddInSecurityEntry.Equals` holds: the URIs equal, and the two keys' `FromXmlString` + `ExportCspBlob(false)` bytes equal. Nothing reads the certificate's subject, dates or chain. `Add` first removes every entry for the same URL; `OnAddInUninstalled`, VSTOInstaller's uninstall, removes the entry for its URL. It reads `Registry.CurrentUser` only: there is no machine-wide list. |
+| Measured here, section 4.5 item 1 | A frozen guest loaded an add-in whose manifests a not-yet-valid certificate had signed, through its inclusion entry, with no prompt. |
+| Measured 2026-11-17 with that comparison on .NET Framework 4.8, the runtime's CLR | The leaked key's `<RSAKeyValue>` as .NET writes it against the same key with the base64 broken over lines, with a default namespace, with a `ds:` prefix, and with Exponent before Modulus: **equal**, all four. With a leading zero byte on the modulus, or another exponent: **not equal**. |
+
+So: **yes.** An entry is a location and a public key, and the runtime trusts any add-in at that
+location whose deployment manifest that key signed, without reading the certificate around it.
+Anyone can make such a manifest with the leaked key, so an entry for it turns "can put files in that
+folder" into "code runs in Outlook with no prompt". For a release user the folder is
+`%LOCALAPPDATA%\OutlookAI\Setup`: every release from v1.0.0.1 shipped as an installer that unpacked
+there and ran the VSTO installer on the `OutlookAI.vsto` in it (the README of the time spoke of a zip
+and `setup.exe`; the release workflow published only the installer). A developer's build folders hold
+entries too, which Visual Studio's own build writes.
+
+Who still holds one: the current installer uses the same folder, so the entry is replaced the first
+time the user accepts a newer release's prompt there (`Add` removes the same URL first), and the
+VSTOInstaller uninstall every v2 installer ran first removed it as well. What survives is the entry of
+a user who never accepted a newer prompt - still on v2.3.1 or older, or who answered Don't Install -
+and a developer's. The maintainer's workstation, read only, 2026-11-17: two entries, neither for the
+leaked key; the one for the installed release's folder holds the current 2048-bit key.
+
+**The change** - `Installer.iss` `RemoveCompromisedTrustEntries`, on every install, update and
+uninstall, before the certificate stores: every subkey of the Inclusion key whose `PublicKey`, with
+its spaces, tabs, carriage returns and line feeds taken out, contains the leaked key's modulus is
+deleted. The modulus is `#define CompromisedKeyModulus` - 1024 bits, read from the public certificate,
+which stays out of the repository - pinned in T1 `InstallerCompromisedTrustEntryTests` by its SHA-256
+`5C1D4C01B1E620EA2A41967C0272868B8EDA368F01E563778E8ABD42C9C724C3`. The `Url` is never read. The
+T1 class runs the rule, its white space read out of the Pascal, over the five spellings above.
+
+**The installer, run.** `-Scenario InstallerCleanup` with the testbed build of `5dfdcd5`
+(`Testbed/host/Publish-AddInPayload.ps1`; `Installer.iss` as merged), on `OutlookAI-Unindexed2`, run
+`333eefe` - **PASS**. Before each round the probe planted five entries: the leaked key spelled
+canonically at the install folder, broken over lines with a namespace in a Downloads folder, and with
+a `ds:` prefix and Exponent first elsewhere; another key in that Downloads folder; one with no
+`PublicKey`. The installer, `/VERYSILENT`: exit 0 in 14.8 s, the three leaked-key entries gone, the
+other two kept and so was the trust entry the guest's add-in already had; its log names each removal
+("Removed the VSTO trust entry <guid>, which trusted the compromised key."). Then the uninstaller it
+registered, `/VERYSILENT`, against five fresh entries: exit 0 in 3.3 s, the same three gone and the
+rest kept, the registration gone. Two earlier runs did not count. At `-RunLevel Limited` the
+uninstaller ended with exit 1 after two minutes having done nothing, while elevated it worked; this
+guest's add-in was first installed from an elevated task (`Install-OutlookAIAddIn.ps1 -Phase
+Install`), and the likeliest reading - not tested further - is that its uninstaller asked Windows for
+elevation and nobody answered. That run's probe then stalled writing its JSON - the setup log's lines,
+read with `Get-Content`, carried objects `ConvertTo-Json` walked to 2.8 GB - and was ended by writing
+its job's exit file by hand, after which the driver restored and saved the guest as on every run; the
+probe now reads logs as plain strings. And the probe once read the uninstaller's log while the
+uninstaller's second phase, `_unins.tmp`, still held it open, before it learned to wait for the log
+and the registration; that log shows the same three removals.
+
+**Not measured:** the leaked certificate itself - a throwaway stood in for it, in the same store with
+the same command and the same thumbprint-addressed removal, so that no copy of the leaked one went
+anywhere; the computer's stores; an install run with administrator rights on purpose; another Windows
+build. Nothing here loaded an add-in through an entry: that the runtime trusts an entry's key without
+the certificate is the IL above and section 4.5's measurement.
+
 ## 5. Which tests are in which bucket, and how to find out
 
 The classification is **two traits on the test itself**, not a list in a document that can drift -
