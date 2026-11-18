@@ -5437,6 +5437,53 @@ draft's default stays the account's own, read each time - after the dialog's rew
 Outlook. Not followed, and open: the dialog also shuts creating, editing, renaming and deleting every other
 signature under a setting, which `manage_signature` still does.
 
+### 4.15 The Outlook crashes that left no dump - `OutlookAI-Indexed`, `OutlookAI-Unindexed` and `OutlookAI-Indexed2`, 2026-11-18 (stream K2)
+
+**Why this section exists.** OUTLOOK.EXE crashed twice that day with crash dumps armed, and neither crash left
+one: an access violation in `mso40uiwin32client.dll` at offset `0x11d8c7` in stream U's run
+`20261118-095132-unindexed-aa7f226fc8be` (`OutlookAI-Unindexed`, `CP-18B-FROZEN-CLOCK`, a forward drafted with a
+signature), and at `0x11da7e` in stream K2's `20261118-121556-indexed-65d391fef8df` (`OutlookAI-Indexed`,
+`CP-24C-FROZEN-CLOCK`, a reply drafted in the typed-text test of the Q149 measurement). Each run's arming said
+`VERDICT: ARMED`, each run's listing found no dump and no `WerFault.exe` still running, and each Application log
+held the crash's event 1000. Every earlier Outlook crash under the arming left its full dump: 32 in `OLMAPI32.DLL`
+(4.6) and 5 in `OUTLOOK.EXE` itself (4.11).
+
+**What was measured**, on `OutlookAI-Indexed2` (`CP-22C-FROZEN-CLOCK`, the same Office 16.0.17932.20996 and
+Windows 10.0.26200), restored to its checkpoint after each step, with throwaway programs only - never Outlook:
+
+* The arming is what the run thinks it is. After `Set-OutlookCrashDumps.ps1 -Execute` the `LocalDumps` keys of
+  `OUTLOOK.EXE`, `WINWORD.EXE` and the probe each hold `DumpFolder` (REG_EXPAND_SZ) `C:\OutlookAI-Q5\crash-dumps`,
+  `DumpType` 2 and `DumpCount` 10; the folder grants Authenticated Users Modify; no `Disabled` value or policy is
+  set; `WerSvc` starts on demand; `AeDebug` names no debugger, so nothing displaces the local dump; and C: has 84.5
+  GB free. `-Prove` left a full dump of 29.9 MB.
+* Every way of reporting a crash that writes event 1000 also wrote the local dump: a copy of `rundll32.exe` crashed
+  on `DebugBreak`; a program that let an access violation go unhandled (93 MB); one that caught it and handed it to
+  `faultrep.dll`'s `ReportFault` (92 MB).
+* A program that files its crash through WER's own calls - `WerReportCreate` (critical, or application crash),
+  `WerReportAddDump` with the exception, `WerReportSubmit` queued and out of process - wrote event 1001 and NO local
+  dump, as Microsoft's page on local dumps says of programs that do their own crash reporting. It wrote no event
+  1000 either.
+* WER keeps no dump with any report on these guests: every report folder held `Report.wer` alone, the crash's own and
+  the self-filed one, even with the dump asked for and `ChangeDumpTypeByTelemetryLevel` set to 0. Telemetry is at
+  `AllowTelemetry` 1.
+* No event channel records whether a local dump was written: `Microsoft-Windows-WER-Diag/Operational` and the other
+  WER channels stayed empty over a crash.
+
+**What it means.** Both crashes wrote event 1000, so neither was a crash Office reported itself: each took Windows'
+own crash path, on which the local dump was written every time it was measured, and lost the dump somewhere along
+it. Where is not known, because what WER recorded about the two crashes - event 1001 and its report folder - went
+with the guests' restores.
+
+**What a run keeps now.** `Invoke-LiveTierOnGuest.ps1` records each OUTLOOK.EXE crash's event 1001 whole, in
+`guest\crash-events.log`, and counts the reports those events name (WER logs 1001 more than once for one report:
+twice for one crash, measured); and it copies the files of every WER report folder of an OUTLOOK.EXE crash written
+during the run - the machine's queue and archive, and each user's - into `wer\<guest>\`, named after the folder,
+whether or not a dump was written. Proved on `OutlookAI-Indexed2` with the runner's own two steps, evaluated from
+its source, after a program named `OUTLOOK.EXE` - a copy of `rundll32.exe`, not Outlook - crashed there: `CRASHES 1`,
+`WER-REPORTS` and both events 1001, the local dump listed, and the report's `Report.wer` copied beside it. The next
+such crash will say which report WER filed, of what kind and with what status; whether it leaves a dump is not
+settled by this.
+
 ## 5. Which tests are in which bucket, and how to find out
 
 The classification is **two traits on the test itself**, not a list in a document that can drift -
