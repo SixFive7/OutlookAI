@@ -93,6 +93,41 @@ public sealed class LiveOutlookRestartTests
     }
 
     [Fact]
+    public void AStepsOwnFailureIsTakenOutOfTheBoundedWrapper()
+    {
+        // Task.Wait passes a faulted step's failure on inside an AggregateException; the stop's catches test the
+        // step's own failure (the Q149 smoke on OutlookAI-Indexed, 2026-11-18).
+        Exception caught = Assert.ThrowsAny<Exception>(() =>
+            LiveOutlookRestart.Bounded<int>("a step", TimeSpan.FromSeconds(30), () => throw new ObjectDisposedException("session")));
+
+        Assert.IsType<ObjectDisposedException>(LiveOutlookRestart.StepFailure(caught));
+        Assert.True(LiveOutlookRestart.IsSessionGone(LiveOutlookRestart.StepFailure(caught)));
+
+        InvalidOperationException own = new("exited while starting");
+        Assert.Same(own, LiveOutlookRestart.StepFailure(new AggregateException(new AggregateException(own))));
+        Assert.Same(own, LiveOutlookRestart.StepFailure(own));
+
+        // Two failures at once are not one step's failure, and stay as they came.
+        AggregateException two = new(new InvalidOperationException("a"), new InvalidOperationException("b"));
+        Assert.Same(two, LiveOutlookRestart.StepFailure(two));
+    }
+
+    [Fact]
+    public void TheStopsCatchesTestTheStepsOwnFailure()
+    {
+        string[] lines = SourceText.Lines(SourceText.LiveSource("LiveOutlookRestart.cs"));
+        string stop = string.Join("\n", StopBody());
+        string going = SourceText.MemberBody(lines, "private static bool IsOutlookGoing(Exception ex)", "    ", "LiveOutlookRestart.cs");
+
+        // The count's catch: an Outlook that ended by itself while it was counted.
+        Assert.Contains("catch (Exception ex) when (StepFailure(ex) is InvalidOperationException)", stop, StringComparison.Ordinal);
+        Assert.DoesNotContain("catch (InvalidOperationException)", stop, StringComparison.Ordinal);
+
+        // The rungs' catch: a session that died under the close, or an Outlook already gone.
+        Assert.Contains("StepFailure(ex)", going, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void TheDisconnectTestsPinReleaseUsesTheSharedTest()
     {
         string source = SourceText.LiveSource("LiveDisconnectRecoveryTests.cs");
