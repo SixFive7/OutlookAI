@@ -320,8 +320,9 @@ its mailbox tests on, and change nothing you install.
   test machine - the live opt-in and a profile that is not Production come first - never over a real
   CLI, and is removed when the test ends, so the product needs no automation entry point. The test
   checks that the pane still writes one paragraph a line, that its AI's signature choice (Q162 (b))
-  follows the body and replaces the agent's signature, and that the chosen signature's picture is
-  embedded (D47). `LiveOutlookTestMailer` gained the read of an open draft and the close that
+  follows the body and replaces the agent's signature, that the chosen signature's picture is
+  embedded (D47), and that "Select the best signature" then puts in the signature the stand-in
+  names next. `LiveOutlookTestMailer` gained the read of an open draft and the close that
   discards it, both refusing a draft without this run's tag. A test machine's checkpoint holds the
   add-in of the day it was made, so `Testbed/host/Invoke-LiveTierOnGuest.ps1 -WithAddIn` builds the
   tested commit's add-in with `Publish-AddInPayload.ps1`, installs it on the frozen guest before
@@ -1725,9 +1726,12 @@ its mailbox tests on, and change nothing you install.
   `SignatureStore` is gone, the task pane reads and writes a draft through `ComposeDocument`, reads
   recipients through `MailRecipients` and releases through `ComObjects`, and the MCP registration
   prompt finds Outlook's windows through `NativeWindows`. Inside the add-in, the five handlers that
-  each handed an event from another thread to their window share `UiThread.Post`. Nothing in the
-  namespace attaches to Outlook, starts a COM thread or opens the search index, and check 15 holds
-  that for every file in it.
+  each handed an event from another thread to their window share `UiThread.Post`, the pane's three
+  edits and "Select the best signature" run in one scaffold around the compose document,
+  `RunDocumentActionAsync`, where each wrote it out, and the settings dialog's prompt sections build
+  their row of controls with the dialog's own button-row helper. Nothing in the namespace attaches
+  to Outlook, starts a COM thread or opens the search index, and check 15 holds that for every file
+  in it.
   The word the draft tools read as "no signature" and the refusal a signature request can end in
   move with the rule, out of `SignatureManager`, which stays where it is: it writes signature files,
   and only the server does.
