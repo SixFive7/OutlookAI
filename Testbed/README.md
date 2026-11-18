@@ -1606,7 +1606,7 @@ work slowed down, and every run took about twice as long. So a run starts only t
   takes that long to show: without it, every run that waited would start in the second the load
   dipped, and the host would be back at 100 %. The measurement is kernel32's `GetSystemTimes`: it reads
   what `\Processor(_Total)\% Processor Time` reads, in any language, and it includes the VMs because
-  this host runs the hypervisor's root scheduler (runbook section 4.11 has the measurements). Task
+  this host runs the hypervisor's root scheduler (runbook section 4.12 has the measurements). Task
   Manager shows a higher figure, % Processor Utility, which weighs frequency boost in.
 - **Where a run starts.** `host/Invoke-TestsOnBuildVm.ps1` looks at the gate on every turn of its queue
   before it touches a build VM - before its place in the queue, a lease or a lock;
