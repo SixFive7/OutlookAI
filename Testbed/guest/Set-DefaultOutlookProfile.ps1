@@ -197,99 +197,6 @@ $script:OfficeRootKeyPath = 'HKCU:\Software\Microsoft\Office'
 # =============================================================================================
 
 <#
-    Picks the hive to work in, from candidates shaped
-    @{ Version = '16.0'; Path = '...'; ValueNames = @(); SubKeyNames = @() }.
-
-    Returns Chosen (a candidate, or $null), RealHives (every candidate passing the shape rule, in
-    the order given) and Problem (the refusal text, when Chosen is $null).
-
-    -RequestedVersion overrides the probe order and the supported list both: an operator who names
-    a version has said something this script cannot know. It does NOT override the shape rule,
-    because writing DefaultProfile into a key Outlook never reads is a silent no-op - which is the
-    failure mode this whole rewrite exists to avoid.
-#>
-function Select-OutlookHive {
-    param([object[]] $Candidates, [string] $RequestedVersion)
-
-    $real = @()
-    $present = @()
-    if ($null -ne $Candidates) {
-        foreach ($candidate in $Candidates) {
-            $present += $candidate.Version
-            if (Test-IsOutlookHive -ValueNames $candidate.ValueNames -SubKeyNames $candidate.SubKeyNames) {
-                $real += $candidate
-            }
-        }
-    }
-
-    if (-not [string]::IsNullOrWhiteSpace($RequestedVersion)) {
-        $named = $null
-        if ($null -ne $Candidates) {
-            foreach ($candidate in $Candidates) {
-                if ($candidate.Version -eq $RequestedVersion) { $named = $candidate }
-            }
-        }
-
-        if ($null -eq $named) {
-            $presentText = '<none>'
-            if ($present.Count -gt 0) { $presentText = ($present -join ', ') }
-            return [pscustomobject]@{
-                Chosen    = $null
-                RealHives = $real
-                Problem   = "REFUSING: -OfficeVersion $RequestedVersion was asked for, and $script:OfficeRootKeyPath\$RequestedVersion\Outlook does not exist. Version keys present: $presentText. Drop -OfficeVersion and let the detection choose."
-            }
-        }
-
-        if (-not (Test-IsOutlookHive -ValueNames $named.ValueNames -SubKeyNames $named.SubKeyNames)) {
-            return [pscustomobject]@{
-                Chosen    = $null
-                RealHives = $real
-                Problem   = "REFUSING: -OfficeVersion $RequestedVersion was asked for, and $($named.Path) holds nothing but a '$script:InstallerFootprintSubKeyName' subkey - which this product's own installer writes under every supported major, on every install. Outlook does not read that key, so a DefaultProfile written into it would be a silent no-op. Name the major Outlook really uses, or drop -OfficeVersion."
-            }
-        }
-
-        return [pscustomobject]@{ Chosen = $named; RealHives = $real; Problem = $null }
-    }
-
-    foreach ($version in $script:SupportedOfficeVersions) {
-        foreach ($candidate in $real) {
-            if ($candidate.Version -eq $version) {
-                return [pscustomobject]@{ Chosen = $candidate; RealHives = $real; Problem = $null }
-            }
-        }
-    }
-
-    # Nothing supported qualified. If some OTHER major did, name it - choosing it is an operator
-    # decision (-OfficeVersion), not one this script may take on itself.
-    $unsupported = @()
-    foreach ($candidate in $real) { $unsupported += $candidate.Version }
-
-    $problem = @"
-REFUSING: found no supported Outlook hive with any content under $script:OfficeRootKeyPath.
-
-Probed in this order: $($script:SupportedOfficeVersions -join ', ') - the order the shipped product
-probes in (OfficeVersions.Supported).
-
-Every one of them was either absent or held nothing but a '$script:InstallerFootprintSubKeyName'
-subkey, which this product writes under 15.0, 16.0 and 17.0 alike on every install - so a
-present-but-empty key proves nothing. Either classic Outlook is not installed, or it has never
-been started.
-"@
-
-    if ($unsupported.Count -gt 0) {
-        $problem += @"
-
-
-There IS a real Outlook hive at: $($unsupported -join ', '). That major is not one this product
-supports, so nothing here will choose it for you. If it is the one Outlook really uses, say so:
-    -OfficeVersion $($unsupported[0])
-"@
-    }
-
-    return [pscustomobject]@{ Chosen = $null; RealHives = $real; Problem = $problem }
-}
-
-<#
     How to render PickLogonProfile for a human. $null means the value is absent, which is Outlook's
     own default and means 'do not prompt'.
 #>
@@ -680,8 +587,9 @@ if ($SelfTest) { exit (Invoke-SelfTest) }
 # EVERYTHING BELOW TOUCHES THE MACHINE. Guest only.
 # =============================================================================================
 
-# Dot-sourced for Assert-TestbedGuest and Assert-OutlookNotRunning ONLY. No MAPI call is made
-# anywhere in this script - see the banner at the top.
+# Dot-sourced for Assert-TestbedGuest and the reason this script gives the shared
+# Assert-OutlookNotRunning, $OutlookRewritesProfileWhy, ONLY. No MAPI call is made anywhere in this
+# script - see the banner at the top.
 . "$PSScriptRoot\OutlookMapiInterop.ps1"
 
 # Asserted before ANYTHING, including the read-only paths: this script reads the Outlook profile
@@ -750,7 +658,7 @@ if (-not $Execute) {
     return
 }
 
-Assert-OutlookNotRunning
+Assert-OutlookNotRunning $OutlookRewritesProfileWhy
 
 if ($decision.Decision -eq 'AlreadyDefault') {
     Write-Host $decision.Message

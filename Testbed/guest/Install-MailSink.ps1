@@ -810,29 +810,36 @@ by Testbed/host/New-AnswerFile.ps1. If you built a guest differently, say so:
 Do not 'fix' this by widening either default. The defaults are the guard.
 "@
 
-function Assert-Elevated {
-    $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
-    $principal = New-Object System.Security.Principal.WindowsPrincipal($identity)
-    if (-not $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)) {
-        throw 'REFUSING TO RUN: this session is not elevated. A SYSTEM task can only be registered, started and stopped by an administrator; asserted here rather than failing halfway with an access-denied that reads like a packaging fault.'
-    }
+# The elevation and Outlook guards: Test-IsElevated, Assert-Elevated and Assert-OutlookNotRunning,
+# copies of ScriptHelpers.ps1's that Tools/Checks/check-powershell-51.ps1 check 4 holds identical, then
+# what this script would have done.
+function Test-IsElevated {
+    $id = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+    $p = New-Object System.Security.Principal.WindowsPrincipal($id)
+    return $p.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
 }
+
+function Assert-Elevated([string] $Why) {
+    if (Test-IsElevated) { return }
+    throw "REFUSING TO RUN: this session is not elevated.`n`n$Why"
+}
+
+function Assert-OutlookNotRunning([string] $Why) {
+    $running = @(Get-Process -Name 'OUTLOOK' -ErrorAction SilentlyContinue)
+    if ($running.Count -eq 0) { return }
+    throw ("REFUSING TO RUN: OUTLOOK.EXE is running (pid {0}).`n`n{1}`n`nQuit Outlook gracefully and run this again. DO NOT taskkill it: mailbox-safety rule 7 forbids that outright." -f (($running | ForEach-Object { $_.Id }) -join ', '), $Why)
+}
+
+$ElevatedWhy = 'A SYSTEM task can only be registered, started and stopped by an administrator; asserted here rather than failing halfway with an access-denied that reads like a packaging fault.'
+
+$OutlookRunningWhy = @"
+Installing or removing the sink stops and starts its listeners, and a polling Outlook that finds
+them gone turns a quiet send/receive into an error. (-Verify alone may run while Outlook is open:
+it only uses mailboxes no account reads, and it skips its restart step.)
+"@
 
 function Test-OutlookRunning {
     return (@(Get-Process -Name 'OUTLOOK' -ErrorAction SilentlyContinue).Count -gt 0)
-}
-
-function Assert-OutlookNotRunning {
-    $running = @(Get-Process -Name 'OUTLOOK' -ErrorAction SilentlyContinue)
-    if ($running.Count -eq 0) { return }
-    throw @"
-REFUSING: OUTLOOK.EXE is running (pid $(($running | ForEach-Object { $_.Id }) -join ', ')).
-
-Installing or removing the sink stops and starts its listeners, and a polling Outlook that finds
-them gone turns a quiet send/receive into an error. Close Outlook properly and run this again.
-DO NOT taskkill it - mailbox-safety rule 7 forbids that outright. (-Verify alone may run while
-Outlook is open: it only uses mailboxes no account reads, and it skips its restart step.)
-"@
 }
 
 # =============================================================================================
@@ -1562,8 +1569,8 @@ function Show-Plan {
 
 function Invoke-Execute {
     Assert-TestbedGuestIdentity -Why $GuestGuardWhy
-    Assert-Elevated
-    Assert-OutlookNotRunning
+    Assert-Elevated $ElevatedWhy
+    Assert-OutlookNotRunning $OutlookRunningWhy
     Open-Log
     Write-SinkLog '== Execute =='
 
@@ -1673,7 +1680,7 @@ function Invoke-Verify {
     param([switch] $SkipGuards)
     if (-not $SkipGuards) {
         Assert-TestbedGuestIdentity -Why $GuestGuardWhy
-        Assert-Elevated
+        Assert-Elevated $ElevatedWhy
         Open-Log
     }
     Write-SinkLog ''
@@ -1786,8 +1793,8 @@ function Invoke-Verify {
 
 function Invoke-Uninstall {
     Assert-TestbedGuestIdentity -Why $GuestGuardWhy
-    Assert-Elevated
-    Assert-OutlookNotRunning
+    Assert-Elevated $ElevatedWhy
+    Assert-OutlookNotRunning $OutlookRunningWhy
     Open-Log
     Write-SinkLog '== Uninstall =='
 

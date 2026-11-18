@@ -92,10 +92,12 @@
   that file and `TestbedLeasePath.ps1` to one copy too; its list of copies not folded yet is empty.
   P05's guest guard is `Test-GuestIdentity` and `Assert-TestbedGuestIdentity` in the shared file
   (S7c step 2), five scripts that travel alone keeping identical copies, and P06's Outlook profile
-  helpers are there too (S7c step 3), each script keeping the Office constants they read. Left: P05's
-  elevation, bitness and Outlook-closed guards and P06's `Select-OutlookHive` and
-  `Resolve-ImportPrfClearance`, whose copies differ script by script. Check 4 reads nested
-  functions, so the self-test helpers (P04) can fold next.
+  helpers are there too (S7c step 3), each script keeping the Office constants they read, with
+  `Select-OutlookHive` and `Resolve-ImportPrfClearance` since. So are P05's other guards,
+  `Assert-Elevated`, `Assert-Bitness` and `Assert-OutlookNotRunning`, each script giving its own
+  reason. Left: the self-test helpers (P04). Check 4 reads nested functions now, and the helpers'
+  seven `Test-Case` and thirteen `Check` shapes share their names, so they fold under names of their
+  own or into one harness.
   What remains, one stage at a time: S4, the signature and draft code (A01-A05, A08, A09, A12) with
   Q162's checkbox, Core winning where the copies drifted apart and the pane's visible differences
   measured on a test machine first (Q165 (c)), and the pane driven on a test machine (Q168 (b));

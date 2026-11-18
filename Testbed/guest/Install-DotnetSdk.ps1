@@ -401,19 +401,24 @@ else, say so:
 Do not 'fix' this by widening either default. The defaults are the guard.
 "@
 
-function Assert-Elevated {
-    $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
-    $principal = New-Object System.Security.Principal.WindowsPrincipal($identity)
-    if (-not $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)) {
-        throw @"
-REFUSING TO RUN: this session is not elevated.
+# The elevation guard: Test-IsElevated and Assert-Elevated, copies of ScriptHelpers.ps1's that
+# Tools/Checks/check-powershell-51.ps1 check 4 holds identical, then what this script would have done.
+function Test-IsElevated {
+    $id = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+    $p = New-Object System.Security.Principal.WindowsPrincipal($id)
+    return $p.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
+}
 
+function Assert-Elevated([string] $Why) {
+    if (Test-IsElevated) { return }
+    throw "REFUSING TO RUN: this session is not elevated.`n`n$Why"
+}
+
+$ElevatedWhy = @"
 A machine-wide SDK install writes under Program Files and the machine environment block. An
 unelevated run would fail somewhere in the middle, having installed some of it, which is the one
 outcome worse than not running at all.
 "@
-    }
-}
 
 # The filter guard. Rung 4 executes tests on a machine that may carry a real Outlook profile,
 # so the Category!=Live half is added HERE and cannot be removed by a parameter.
@@ -609,7 +614,7 @@ Assert-TestbedGuestIdentity -Why $GuestGuardWhy
 # Execute.
 # ---------------------------------------------------------------------------------------------
 if ($Execute) {
-    Assert-Elevated
+    Assert-Elevated $ElevatedWhy
     Say '== Execute =='
 
     $existing = Resolve-Dotnet

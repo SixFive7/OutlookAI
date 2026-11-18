@@ -580,10 +580,7 @@ function Show-Plan {
 }
 
 function Invoke-Execute {
-    $running = @(Get-Process -Name 'OUTLOOK' -ErrorAction SilentlyContinue)
-    if ($running.Count -gt 0) {
-        throw "REFUSING: OUTLOOK.EXE is running (pid $(($running | ForEach-Object { $_.Id }) -join ', ')). Outlook reads its security policy when it starts, so the start that follows this write must come after it. Quit Outlook gracefully - never taskkill it (mailbox-safety rule 7) - and run this again."
-    }
+    Assert-OutlookNotRunning 'Outlook reads its security policy when it starts, so the start that follows this write must come after it.'
     Say ("== Execute{0} ==" -f $(if ($Revert) { ' -Revert' } else { '' }))
     Say "  before:"
     Show-PolicyState -Observed (Read-PolicyValues)

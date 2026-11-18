@@ -1245,11 +1245,9 @@ function Assert-PhaseElevation {
     if ($refusal) { throw $refusal }
 }
 
-function Assert-Bitness {
-    if (-not [Environment]::Is64BitProcess) {
-        throw 'REFUSING TO RUN: this is a 32-bit PowerShell. Outlook on the guests is x64, and a 32-bit client would start a COM surrogate rather than talk to it. Use C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe.'
-    }
-}
+# Why every phase refuses a 32-bit PowerShell: the -Why it gives Assert-Bitness, one of the guards
+# the scripts share from ScriptHelpers.ps1 (Q154, P05).
+$BitnessWhy = 'Outlook on the guests is x64, and a 32-bit client would start a COM surrogate rather than talk to it.'
 
 function Assert-InteractiveSession {
     param([string] $ForPhase)
@@ -1270,20 +1268,13 @@ $why Run it through the interactive session:
 "@
 }
 
-function Assert-OutlookClosed {
+# Why a phase refuses while Outlook runs: the -Why it gives Assert-OutlookNotRunning, one of the
+# guards the scripts share from ScriptHelpers.ps1 (Q154, P05).
+function Get-OutlookRunningWhy {
     param([string] $ForPhase)
-    $running = @(Get-Process -Name 'OUTLOOK' -ErrorAction SilentlyContinue)
-    if ($running.Count -eq 0) { return }
     $why = 'The add-in loads when Outlook STARTS, and the proof this phase gives - the add-in wrote its state AFTER a start this script made, in an Outlook whose token it read - needs that start to be this script''s.'
     if ($ForPhase -eq $PhaseInstall) { $why = 'The installer would be replacing files under a running add-in.' }
-    throw @"
-REFUSING TO RUN -Phase ${ForPhase}: OUTLOOK.EXE is running (pid $(($running | ForEach-Object { $_.Id }) -join ', ')).
-
-$why
-
-Restart the guest with Testbed/host/Restart-Guest.ps1 - the proven way to a clean Outlook here - and
-run this again. DO NOT taskkill OUTLOOK.EXE: mailbox-safety rule 7 forbids it outright.
-"@
+    return "-Phase ${ForPhase}: $why`n`nRestart the guest with Testbed/host/Restart-Guest.ps1 - the proven way to a clean Outlook here."
 }
 
 # =============================================================================================
@@ -1973,9 +1964,9 @@ function Write-PhasePlan {
 function Invoke-InstallPhase {
     param($Payload)
     Assert-PhaseElevation -ForPhase $PhaseInstall
-    Assert-Bitness
+    Assert-Bitness $BitnessWhy
     Assert-InteractiveSession -ForPhase $PhaseInstall
-    Assert-OutlookClosed -ForPhase $PhaseInstall
+    Assert-OutlookNotRunning (Get-OutlookRunningWhy -ForPhase $PhaseInstall)
 
     $installer = Join-Path $PayloadRoot ([string]$Payload.installer.file)
     if (-not (Test-Path -LiteralPath $installer)) { throw "REFUSING: the installer the manifest names is not at $installer." }
@@ -2114,9 +2105,9 @@ function Invoke-InstallPhase {
 function Invoke-FirstRunPhase {
     param($Payload)
     Assert-PhaseElevation -ForPhase $PhaseFirstRun
-    Assert-Bitness
+    Assert-Bitness $BitnessWhy
     Assert-InteractiveSession -ForPhase $PhaseFirstRun
-    Assert-OutlookClosed -ForPhase $PhaseFirstRun
+    Assert-OutlookNotRunning (Get-OutlookRunningWhy -ForPhase $PhaseFirstRun)
 
     # ---- 6b. Preflight: is a start safe, and worth making? -------------------------------------
     Say ''
@@ -2361,7 +2352,7 @@ if (-not $installRecord.Record -and -not $installRecord.Problem) {
 $ix = Get-InteractionFacts
 Say ("  index exclusion now: PreventIndexingOutlook={0} mapi rules=[{1}]  (read only; the add-in writes neither)" -f $ix.PreventIndexingOutlook, ($ix.MapiRules -join '; '))
 if ($WithOutlook) {
-    Assert-Bitness
+    Assert-Bitness $BitnessWhy
     $running = @(Get-Process -Name 'OUTLOOK' -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -eq [System.Diagnostics.Process]::GetCurrentProcess().SessionId })
     if ($running.Count -eq 0) {
         $facts.Notes += '-WithOutlook: no Outlook is running in this session, and a verify never starts one. The COM half was not checked.'

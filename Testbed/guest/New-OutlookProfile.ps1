@@ -343,97 +343,6 @@ $script:AddressBookBlockName = 'Outlook Address Book'
 # =============================================================================================
 
 <#
-    Picks the hive to work in, from candidates shaped
-    @{ Version = '16.0'; Path = '...'; ValueNames = @(); SubKeyNames = @() }.
-
-    Returns Chosen (a candidate, or $null), RealHives (every candidate passing the shape rule) and
-    Problem (the refusal text, when Chosen is $null).
-
-    -RequestedVersion overrides the probe order and the supported list both, and does NOT override
-    the shape rule: writing ImportPRF into a key Outlook never reads is a silent no-op, and a
-    silent no-op here means an operator starts Outlook, sees no new profile, and has nothing at
-    all to read to find out why.
-#>
-function Select-OutlookHive {
-    param([object[]] $Candidates, [string] $RequestedVersion)
-
-    $real = @()
-    $present = @()
-    if ($null -ne $Candidates) {
-        foreach ($candidate in $Candidates) {
-            $present += $candidate.Version
-            if (Test-IsOutlookHive -ValueNames $candidate.ValueNames -SubKeyNames $candidate.SubKeyNames) {
-                $real += $candidate
-            }
-        }
-    }
-
-    if (-not [string]::IsNullOrWhiteSpace($RequestedVersion)) {
-        $named = $null
-        if ($null -ne $Candidates) {
-            foreach ($candidate in $Candidates) {
-                if ($candidate.Version -eq $RequestedVersion) { $named = $candidate }
-            }
-        }
-
-        if ($null -eq $named) {
-            $presentText = '<none>'
-            if ($present.Count -gt 0) { $presentText = ($present -join ', ') }
-            return [pscustomobject]@{
-                Chosen    = $null
-                RealHives = $real
-                Problem   = "REFUSING: -OfficeVersion $RequestedVersion was asked for, and $script:OfficeRootKeyPath\$RequestedVersion\Outlook does not exist. Version keys present: $presentText. Drop -OfficeVersion and let the detection choose."
-            }
-        }
-
-        if (-not (Test-IsOutlookHive -ValueNames $named.ValueNames -SubKeyNames $named.SubKeyNames)) {
-            return [pscustomobject]@{
-                Chosen    = $null
-                RealHives = $real
-                Problem   = "REFUSING: -OfficeVersion $RequestedVersion was asked for, and $($named.Path) holds nothing but a '$script:InstallerFootprintSubKeyName' subkey - which this product's own installer writes under every supported major, on every install. Outlook does not read that key, so an ImportPRF written into it would be a silent no-op. Name the major Outlook really uses, or drop -OfficeVersion."
-            }
-        }
-
-        return [pscustomobject]@{ Chosen = $named; RealHives = $real; Problem = $null }
-    }
-
-    foreach ($version in $script:SupportedOfficeVersions) {
-        foreach ($candidate in $real) {
-            if ($candidate.Version -eq $version) {
-                return [pscustomobject]@{ Chosen = $candidate; RealHives = $real; Problem = $null }
-            }
-        }
-    }
-
-    $unsupported = @()
-    foreach ($candidate in $real) { $unsupported += $candidate.Version }
-
-    $problem = @"
-REFUSING: found no supported Outlook hive with any content under $script:OfficeRootKeyPath.
-
-Probed in this order: $($script:SupportedOfficeVersions -join ', ') - the order the shipped product
-probes in (OfficeVersions.Supported).
-
-Every one of them was either absent or held nothing but a '$script:InstallerFootprintSubKeyName'
-subkey, which this product writes under 15.0, 16.0 and 17.0 alike on every install - so a
-present-but-empty key proves nothing. Either classic Outlook is not installed, or it has never
-been started.
-"@
-
-    if ($unsupported.Count -gt 0) {
-        $problem += @"
-
-
-There IS a real Outlook hive at: $($unsupported -join ', '). That major is not one this product
-supports, so nothing here will choose it for you. If it is the one Outlook really uses, say so:
-    -OfficeVersion $($unsupported[0])
-"@
-    }
-
-    return [pscustomobject]@{ Chosen = $null; RealHives = $real; Problem = $problem }
-}
-
-<#
     Whether a string can survive being written into the .prf. Returns the refusal text, or $null.
 
     THE .prf IS WRITTEN AS ASCII, and that is not an arbitrary choice: every published sample is
@@ -826,86 +735,6 @@ function Select-StrayPst {
         $strays += $file.Name
     }
     return , $strays
-}
-
-<#
-    What -Verify does about ImportPRF. Pure: the machine half gathers five facts and acts on the
-    answer, so every branch is walked by -SelfTest.
-
-    WHY -VERIFY CLEARS IT, AND WHY IT CANNOT CLEAR IT ANY EARLIER. Outlook reads ImportPRF at
-    startup and this script's .prf carries OverwriteProfile=Yes, so an ImportPRF left behind is a
-    rebuild waiting for a start - and a rebuild is what would detach a corpus store filled since.
-    Removing it closes that. But removing it BEFORE Outlook has read it cancels the import itself,
-    silently: the profile is never built.
-
-    WHAT TELLS THE TWO APART, and it is two measured facts, not one. (1) Outlook REMOVES ImportPRF
-    itself within 5 s of the start that imports it (OAI-UNINDEXED, 2026-09-24, sampled every 5 s) -
-    so a value still set means no start has acted on it. (2) Outlook ignores ImportPRF while
-    First-Run or FirstRun exists (documented), -Execute deletes both, and Outlook writes First-Run
-    back only once a start has COMPLETED its first run: during the tier profile's first session,
-    yes; during a start that stopped on the account wizard, not in 300 s and not at shutdown. So
-    "still set, First-Run absent" is an import still to come - leave it - and "still set, First-Run
-    present" is a value Outlook will not act on until something removes First-Run again - a latent
-    rebuild, and the only state this ever removes.
-
-    Decision is one of:
-      NotSet       ImportPRF is absent. Nothing can re-import.
-      Clear        it names THIS profile's .prf, the profile exists, and First-Run is back: the
-                   import has had its start, and all that is left is a re-import. REMOVE IT.
-      KeepPending  it names this profile's .prf and neither First-Run nor FirstRun is there:
-                   Outlook has not started since -Execute, so the import has not happened and
-                   removing the value would cancel it. -Verify ran too early.
-      KeepFailed   it names this profile's .prf, Outlook HAS started since (First-Run is back),
-                   and the profile is not there: the import did not take. Left as evidence -
-                   Outlook ignores it while First-Run exists.
-      KeepOther    it names another profile's .prf, or a file whose profile name cannot be read:
-                   ANOTHER import may be pending, and removing the value would cancel that one.
-                   Left alone. Build-Corpus.ps1 refuses while ImportPRF is set, so a corpus is not
-                   built underneath it either way.
-#>
-function Resolve-ImportPrfClearance {
-    param(
-        [string] $ImportPrfValue,
-        [string] $PrfProfileName,
-        [Parameter(Mandatory = $true)] [string] $ProfileName,
-        [bool] $ProfileExists,
-        [bool] $FirstRunPresent
-    )
-
-    if ([string]::IsNullOrEmpty($ImportPrfValue)) {
-        return [pscustomobject]@{
-            Decision = 'NotSet'
-            Message  = 'ImportPRF is not set, so no Outlook start can re-import. (Outlook removes it itself once it has imported the file - measured on this build; see the banner.)'
-        }
-    }
-
-    if ([string]::IsNullOrEmpty($PrfProfileName) -or $PrfProfileName -ne $ProfileName) {
-        $whose = "a file whose profile name could not be read"
-        if (-not [string]::IsNullOrEmpty($PrfProfileName)) { $whose = "the .prf for profile '$PrfProfileName'" }
-        return [pscustomobject]@{
-            Decision = 'KeepOther'
-            Message  = "ImportPRF is set to '$ImportPrfValue' - $whose, not '$ProfileName'. Left alone: another import may still be pending, and removing the value would cancel it without a word. Build-Corpus.ps1 refuses to build while ImportPRF is set. To remove it anyway: .\New-OutlookProfile.ps1 -ClearImportPrf -Execute"
-        }
-    }
-
-    if (-not $FirstRunPresent) {
-        return [pscustomobject]@{
-            Decision = 'KeepPending'
-            Message  = "ImportPRF still names this profile's .prf and neither First-Run nor FirstRun is back, so Outlook has NOT started since -Execute - the import has not happened yet. Removing the value now would cancel it, so it is left in place. Start Outlook once, let it settle, and run -Verify again."
-        }
-    }
-
-    if (-not $ProfileExists) {
-        return [pscustomobject]@{
-            Decision = 'KeepFailed'
-            Message  = "ImportPRF still names this profile's .prf, Outlook HAS started since -Execute (First-Run is back), and there is no profile named '$ProfileName': the import did not take. Left in place as evidence; while First-Run exists Outlook does not act on it."
-        }
-    }
-
-    return [pscustomobject]@{
-        Decision = 'Clear'
-        Message  = "ImportPRF still names this profile's .prf after the import has run. Removing it: left in place, it is a rebuild waiting for the next start that finds First-Run gone - and a rebuild detaches whatever was attached or filled since."
-    }
 }
 
 <#
@@ -1576,8 +1405,9 @@ if ($SelfTest) { exit (Invoke-SelfTest) }
 # EVERYTHING BELOW TOUCHES THE MACHINE. Guest only.
 # =============================================================================================
 
-# Dot-sourced for Assert-TestbedGuest, Assert-OutlookNotRunning, Resolve-PstPath and
-# Invoke-WithOutlookSession. There is no MAPI left in that file to call - see its banner.
+# Dot-sourced for Assert-TestbedGuest, Resolve-PstPath, Invoke-WithOutlookSession and the reason this
+# script gives the shared Assert-OutlookNotRunning, $OutlookRewritesProfileWhy. There is no MAPI left in
+# that file to call - see its banner.
 . "$PSScriptRoot\OutlookMapiInterop.ps1"
 
 # Asserted before ANYTHING, including the read-only paths: these scripts create and reconfigure
@@ -2001,7 +1831,7 @@ Nothing has been written. Two ways on:
 "@
 }
 
-Assert-OutlookNotRunning
+Assert-OutlookNotRunning $OutlookRewritesProfileWhy
 
 if (-not (Test-Path -LiteralPath $setupKeyPath)) {
     throw "Not found: $setupKeyPath. ImportPRF lives under it, and Outlook $($root.Version) does not look installed for this user despite the hive above passing the shape rule. Do not continue without understanding why."

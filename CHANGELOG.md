@@ -1221,7 +1221,14 @@ its mailbox tests on, and change nothing you install.
   `Write-Preflight` and `Reset-HubPopulation.ps1`'s `Write-Line`, one three-line function under two
   names, are the shared `Write-LogLine`. And check 4 now reads a function defined inside another one,
   as a self-test's helpers are, as well as one at the top of a script: a scratch copy that hid a copy
-  of a shared helper inside a self-test failed it.
+  of a shared helper inside a self-test failed it. The other guest guards went the same way: whether
+  the session is elevated, whether PowerShell is 64-bit and whether Outlook is running are
+  `Assert-Elevated`, `Assert-Bitness` and `Assert-OutlookNotRunning` in the shared file, each refusing
+  in one form with the words its script hands it, in place of ten copies in six files, two of them
+  named `Assert-OutlookClosed` and one written inline. The profile writers' reason is said once, in
+  `OutlookMapiInterop.ps1`, and the SDK and mail sink installers keep copies check 4 holds identical. The choice of the hive a profile script works in (`Select-OutlookHive`,
+  two copies and an older one in `Build-Corpus.ps1`, which now reads the shared one's choice) and
+  what `-Verify` does about ImportPRF (`Resolve-ImportPrfClearance`, two copies) are one copy too.
 
 - 📝 **If Office's own grace reset fails, the Exchange test machine may get Microsoft 365 Apps (Q206).**
   The maintainer's decision Q206, 2026-11-18, now in AGENTS.md beside the machine's internet

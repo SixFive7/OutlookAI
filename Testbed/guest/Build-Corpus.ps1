@@ -250,38 +250,6 @@ $script:AccountsSubKeyName = '9375CFF0413111d3B88A00104B2A6676'
 # =============================================================================================
 
 <#
-    The first candidate that is a real hive, in the product's probe order - or the one named by
-    -OfficeVersion, if it is a real hive. $null when nothing qualifies.
-
-    Candidates are shaped @{ Version = '16.0'; Path = '...'; ValueNames = @(); SubKeyNames = @() }.
-#>
-function Select-OutlookHive {
-    param([object[]] $Candidates, [string] $RequestedVersion)
-
-    if ($null -eq $Candidates) { return $null }
-
-    if (-not [string]::IsNullOrWhiteSpace($RequestedVersion)) {
-        foreach ($candidate in $Candidates) {
-            if ($candidate.Version -eq $RequestedVersion -and
-                (Test-IsOutlookHive -ValueNames $candidate.ValueNames -SubKeyNames $candidate.SubKeyNames)) {
-                return $candidate
-            }
-        }
-        return $null
-    }
-
-    foreach ($version in $script:SupportedOfficeVersions) {
-        foreach ($candidate in $Candidates) {
-            if ($candidate.Version -eq $version -and
-                (Test-IsOutlookHive -ValueNames $candidate.ValueNames -SubKeyNames $candidate.SubKeyNames)) {
-                return $candidate
-            }
-        }
-    }
-    return $null
-}
-
-<#
     Precondition 3, and the one that protects the CORPUS rather than predicting the build.
 
     Returns the refusal text, or $null. Pure, and deliberately a function of its own: it is the one
@@ -555,14 +523,14 @@ function Invoke-SelfTest {
     $shell16 = New-HiveFact -Version '16.0' -SubKeyNames @('Resiliency')
     $shell17 = New-HiveFact -Version '17.0' -SubKeyNames @('Resiliency')
 
-    Test-Case '16.0 wins over a real 17.0 (probe order, not highest number)' '16.0' (Select-OutlookHive -Candidates @($real17, $real16)).Version
-    Test-Case '17.0 wins when 16.0 is only the footprint' '17.0' (Select-OutlookHive -Candidates @($shell16, $real17)).Version
-    Test-Case '15.0 is read when it is the only real one' '15.0' (Select-OutlookHive -Candidates @($shell16, $shell17, $real15)).Version
-    Test-Case 'all-footprint finds nothing' '<null>' (Select-OutlookHive -Candidates @($shell16, $shell17))
-    Test-Case 'no candidates at all finds nothing' '<null>' (Select-OutlookHive -Candidates @())
-    Test-Case 'a null candidate list finds nothing, and does not throw' '<null>' (Select-OutlookHive -Candidates $null)
-    Test-Case '-OfficeVersion overrides the probe order' '15.0' (Select-OutlookHive -Candidates @($real16, $real15) -RequestedVersion '15.0').Version
-    Test-Case '-OfficeVersion does NOT override the shape rule' '<null>' (Select-OutlookHive -Candidates @($real16, $shell17) -RequestedVersion '17.0')
+    Test-Case '16.0 wins over a real 17.0 (probe order, not highest number)' '16.0' (Select-OutlookHive -Candidates @($real17, $real16)).Chosen.Version
+    Test-Case '17.0 wins when 16.0 is only the footprint' '17.0' (Select-OutlookHive -Candidates @($shell16, $real17)).Chosen.Version
+    Test-Case '15.0 is read when it is the only real one' '15.0' (Select-OutlookHive -Candidates @($shell16, $shell17, $real15)).Chosen.Version
+    Test-Case 'all-footprint finds nothing' '<null>' (Select-OutlookHive -Candidates @($shell16, $shell17)).Chosen
+    Test-Case 'no candidates at all finds nothing' '<null>' (Select-OutlookHive -Candidates @()).Chosen
+    Test-Case 'a null candidate list finds nothing, and does not throw' '<null>' (Select-OutlookHive -Candidates $null).Chosen
+    Test-Case '-OfficeVersion overrides the probe order' '15.0' (Select-OutlookHive -Candidates @($real16, $real15) -RequestedVersion '15.0').Chosen.Version
+    Test-Case '-OfficeVersion does NOT override the shape rule' '<null>' (Select-OutlookHive -Candidates @($real16, $shell17) -RequestedVersion '17.0').Chosen
 
     Write-Host ''
     Write-Host '== both preconditions met =='
@@ -806,7 +774,7 @@ function Get-CorpusPreflightFact {
         }
     }
 
-    $hive = Select-OutlookHive -Candidates $candidates -RequestedVersion $RequestedOfficeVersion
+    $hive = (Select-OutlookHive -Candidates $candidates -RequestedVersion $RequestedOfficeVersion).Chosen
 
     $hivePath = ''
     $defaultProfile = ''

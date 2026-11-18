@@ -301,45 +301,11 @@ param(
 $ErrorActionPreference = 'Stop'
 
 # =============================================================================================
-# PURE DECISIONS - the ImportPRF clearance -Verify performs. No registry, no files, no output, so
-# -SelfTest can walk every branch on any machine. COPIED from New-OutlookProfile.ps1 rather than
-# shared, like the hive rule in the sibling scripts: this file dot-sources nothing before its
-# guard, and the two copies are asserted by the same cases.
+# PURE DECISIONS. No registry, no files, no output, so -SelfTest can walk every branch on any
+# machine. The ImportPRF clearance -Verify performs, Resolve-ImportPrfClearance, is
+# New-OutlookProfile.ps1's too: one of the helpers the scripts share, in ScriptHelpers.ps1, which
+# this file dot-sources before its self-test (Q154).
 # =============================================================================================
-
-<#
-    What -Verify does about ImportPRF. The reasoning is in New-OutlookProfile.ps1, beside the
-    function of the same name; in one line: remove it only when it names THIS profile's .prf and
-    Outlook has demonstrably started since -Execute (First-Run is back), because removing it any
-    earlier cancels the import itself.
-
-    Decision: NotSet | Clear | KeepPending | KeepFailed | KeepOther.
-#>
-function Resolve-ImportPrfClearance {
-    param(
-        [string] $ImportPrfValue,
-        [string] $PrfProfileName,
-        [Parameter(Mandatory = $true)] [string] $ProfileName,
-        [bool] $ProfileExists,
-        [bool] $FirstRunPresent
-    )
-
-    if ([string]::IsNullOrEmpty($ImportPrfValue)) {
-        return [pscustomobject]@{ Decision = 'NotSet'; Message = 'ImportPRF is not set, so no Outlook start can re-import. (Outlook removes it itself once it has imported the file - measured on this build.)' }
-    }
-    if ([string]::IsNullOrEmpty($PrfProfileName) -or $PrfProfileName -ne $ProfileName) {
-        $whose = 'a file whose profile name could not be read'
-        if (-not [string]::IsNullOrEmpty($PrfProfileName)) { $whose = "the .prf for profile '$PrfProfileName'" }
-        return [pscustomobject]@{ Decision = 'KeepOther'; Message = "ImportPRF is set to '$ImportPrfValue' - $whose, not '$ProfileName'. Left alone: another import may still be pending, and removing the value would cancel it without a word. Build-Corpus.ps1 refuses to build while ImportPRF is set. To remove it anyway: .\New-OutlookProfile.ps1 -ClearImportPrf -Execute" }
-    }
-    if (-not $FirstRunPresent) {
-        return [pscustomobject]@{ Decision = 'KeepPending'; Message = "ImportPRF still names the tier .prf and neither First-Run nor FirstRun is back, so Outlook has NOT started since -Execute - the import has not happened yet. Removing the value now would cancel it, so it is left in place. Start Outlook once, let it settle, and run -Verify again." }
-    }
-    if (-not $ProfileExists) {
-        return [pscustomobject]@{ Decision = 'KeepFailed'; Message = "ImportPRF still names the tier .prf, Outlook HAS started since -Execute (First-Run is back), and there is no profile named '$ProfileName': the import did not take. Left in place as evidence; while First-Run exists Outlook does not act on it." }
-    }
-    return [pscustomobject]@{ Decision = 'Clear'; Message = 'ImportPRF still names the tier .prf after the import has run. Removing it: left in place, it is a rebuild waiting for the next start that finds First-Run gone.' }
-}
 
 <#
     What is wrong with a tier template, as a list of reasons; empty means usable. Pure.
