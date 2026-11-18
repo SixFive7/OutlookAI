@@ -589,7 +589,7 @@ public sealed class DraftUpdateReentrancyTests : IDisposable
 
         internal RecordingSession()
         {
-            AsSession = Proxy.Create(this);
+            AsSession = ForwardingSession.Create(Handle, defaultsForTheRest: true);
         }
 
         internal IOutlookSession AsSession { get; }
@@ -676,49 +676,6 @@ public sealed class DraftUpdateReentrancyTests : IDisposable
                 {
                     args[i] = reason;
                 }
-            }
-        }
-
-        internal class Proxy : DispatchProxy
-        {
-            private RecordingSession _owner = null!;
-
-            internal static IOutlookSession Create(RecordingSession owner)
-            {
-                object proxy = Create<IOutlookSession, Proxy>()
-                    ?? throw new InvalidOperationException("DispatchProxy.Create returned null.");
-                ((Proxy)proxy)._owner = owner;
-                return (IOutlookSession)proxy;
-            }
-
-            /// <inheritdoc />
-            protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
-            {
-                ArgumentNullException.ThrowIfNull(targetMethod);
-
-                object? handled = _owner.Handle(targetMethod, args);
-
-                // Every unassigned out slot is filled: an unassigned one is unboxed on the way
-                // back and would fail the call for a reason unrelated to what is under test.
-                ParameterInfo[] parameters = targetMethod.GetParameters();
-                for (int i = 0; args != null && i < parameters.Length && i < args.Length; i++)
-                {
-                    if (parameters[i].IsOut && args[i] == null)
-                    {
-                        Type slot = parameters[i].ParameterType.GetElementType()!;
-                        args[i] = slot.IsValueType ? Activator.CreateInstance(slot) : null;
-                    }
-                }
-
-                if (handled != null)
-                {
-                    return handled;
-                }
-
-                Type returnType = targetMethod.ReturnType;
-                return returnType != typeof(void) && returnType.IsValueType
-                    ? Activator.CreateInstance(returnType)
-                    : null;
             }
         }
     }

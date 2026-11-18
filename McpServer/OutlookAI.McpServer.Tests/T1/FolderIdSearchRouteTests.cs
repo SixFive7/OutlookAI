@@ -34,7 +34,7 @@ public sealed class FolderIdSearchRouteTests
         string folderEntryId = TestFolders.FolderEntryId(Store, "Projects/2026");
         string folderUrl = StorePrefix + "/0/Projects/2026";
         RecordingIndex index = new RecordingIndex(folderEntryId, folderUrl);
-        using MailService service = new MailService(new DirectGateway(RefusingSession.Create(), connected: false), null, index);
+        using MailService service = new MailService(new DirectGateway(RefusingSession(), connected: false), null, index);
 
         SearchOutcome outcome = service.Search(new SearchRequest
         {
@@ -62,7 +62,7 @@ public sealed class FolderIdSearchRouteTests
         exchange[20] = 1;
         exchange[43] = 9;
         RecordingIndex index = new RecordingIndex(null, null);
-        using MailService service = new MailService(new DirectGateway(RefusingSession.Create(), connected: false), null, index);
+        using MailService service = new MailService(new DirectGateway(RefusingSession(), connected: false), null, index);
 
         ArgumentException refused = Assert.Throws<ArgumentException>(() => service.Search(new SearchRequest
         {
@@ -81,7 +81,7 @@ public sealed class FolderIdSearchRouteTests
     {
         string folderEntryId = TestFolders.FolderEntryId(Store, "Brand new");
         RecordingIndex index = new RecordingIndex(folderEntryId, null);
-        using MailService service = new MailService(new DirectGateway(RefusingSession.Create(), connected: false), null, index);
+        using MailService service = new MailService(new DirectGateway(RefusingSession(), connected: false), null, index);
 
         ArgumentException refused = Assert.Throws<ArgumentException>(() => service.Search(new SearchRequest
         {
@@ -98,7 +98,7 @@ public sealed class FolderIdSearchRouteTests
     public void AFolderIdAndAStoreIdOfAnotherStore_AreRefusedBeforeAnythingIsSearched()
     {
         RecordingIndex index = new RecordingIndex(null, null);
-        using MailService service = new MailService(new DirectGateway(RefusingSession.Create(), connected: false), null, index);
+        using MailService service = new MailService(new DirectGateway(RefusingSession(), connected: false), null, index);
 
         ArgumentException refused = Assert.Throws<ArgumentException>(() => service.Search(new SearchRequest
         {
@@ -154,17 +154,6 @@ public sealed class FolderIdSearchRouteTests
     }
 
     /// <summary>An Outlook that answers nothing - every call throws, as one that is not running does.</summary>
-    private class RefusingSession : DispatchProxy
-    {
-        internal static IOutlookSession Create()
-        {
-            return Create<IOutlookSession, RefusingSession>()
-                ?? throw new InvalidOperationException("DispatchProxy.Create returned null.");
-        }
-
-        protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
-        {
-            throw new TimeoutException("Outlook is not running; it is being started.");
-        }
-    }
+    private static IOutlookSession RefusingSession() =>
+        ForwardingSession.Create((_, _) => throw new TimeoutException("Outlook is not running; it is being started."));
 }

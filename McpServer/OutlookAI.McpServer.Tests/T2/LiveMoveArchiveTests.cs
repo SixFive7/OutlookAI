@@ -355,24 +355,7 @@ public sealed class LiveMoveArchiveTests
 
         // Post-suite (S3): zero tagged artifacts anywhere in the hub sweep set - the
         // hub Archive folder included - and zero test folders anywhere in the store.
-        int remaining = LiveOutlookTestMailer.CountTaggedArtifactsAfterPurgingStragglers(
-            Hub, Marker, LiveOutlookTestMailer.HubSweepFolderIdsWithArchive, out int stragglers);
-        if (stragglers > 0)
-        {
-            _output.WriteLine($"post-suite: {stragglers} late-materialized self-send copy/copies purged (documented lag)");
-        }
-
-        Assert.Equal(0, remaining);
-        // Folders: LIVE ones only - an empty test folder can wedge in Deleted Items
-        // for the rest of an Outlook session (documented in DeleteTestFolders, which
-        // tolerates and reports it). Asserting the raw count pins that limitation
-        // instead of the contract; see CountLiveTestFolders.
-        Assert.Equal(0, LiveOutlookTestMailer.CountLiveTestFolders(Hub, out int wedgedEmptyFolders));
-        if (wedgedEmptyFolders > 0)
-        {
-            Console.WriteLine($"cleanup[{Hub}]: {wedgedEmptyFolders} empty test folder(s) wedged in Deleted Items "
-                + "until Outlook restarts (documented same-session limitation, no items involved)");
-        }
+        _fixture.AssertNoTaggedArtifactOrLiveTestFolder(_output.WriteLine);
         _output.WriteLine("post-suite: 0 tagged artifacts (incl. Archive), 0 test folders");
 
         // Belt-and-braces (D39): whole-store snapshot reconciliation - every hub

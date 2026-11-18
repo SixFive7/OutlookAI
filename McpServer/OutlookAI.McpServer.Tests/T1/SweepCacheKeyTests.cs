@@ -75,7 +75,7 @@ public sealed class SweepCacheKeyTests
         // clock. The searches are separated by a real clock TICK on purpose - DateTime.UtcNow
         // moves in ~15.6 ms steps on Windows, so calls close enough together could share a
         // key by accident, and a test that passed for that reason would prove nothing.
-        StandInSession session = new StandInSession();
+        SweepRecorder session = new SweepRecorder();
         using MailService service = Service(session, Index());
 
         SearchOutcome first = service.Search(Unscoped());
@@ -95,7 +95,7 @@ public sealed class SweepCacheKeyTests
     {
         // Reuse has to mean the same answer, not merely a faster one - a cache that served a
         // hit while dropping the counters behind it would report coverage it did not have.
-        StandInSession session = new StandInSession();
+        SweepRecorder session = new SweepRecorder();
         using MailService service = Service(session, Index());
 
         SearchOutcome first = service.Search(Unscoped());
@@ -120,7 +120,7 @@ public sealed class SweepCacheKeyTests
         // frontier could not be measured, so it is the WIDEST window on the profile; keying
         // the cache on the frontier must not drag the window along with it, or the one store
         // that needs seven days would get the profile's newest instant instead.
-        StandInSession session = new StandInSession();
+        SweepRecorder session = new SweepRecorder();
         using MailService service = Service(session, Index());
 
         DateTime before = DateTime.UtcNow;
@@ -144,7 +144,7 @@ public sealed class SweepCacheKeyTests
     {
         // The other side of the same statement: the per-store windows are unchanged, so the
         // catalogued store is still swept back minutes rather than days.
-        StandInSession session = new StandInSession();
+        SweepRecorder session = new SweepRecorder();
         using MailService service = Service(session, Index());
 
         service.Search(Unscoped());
@@ -161,7 +161,7 @@ public sealed class SweepCacheKeyTests
         // the all-stores entry, sound because every store gets the identical folder set - and
         // it turns on the key and the per-store windows meaning the same thing. Moving the key
         // without moving them would break this and nothing else would notice.
-        StandInSession session = new StandInSession();
+        SweepRecorder session = new SweepRecorder();
         using MailService service = Service(session, Index());
 
         service.Search(Unscoped());
@@ -182,7 +182,7 @@ public sealed class SweepCacheKeyTests
         // the index has ingested, so the moment it ingests anything the entry stops matching
         // and the next search sweeps live. Without this the cache could outlive the state it
         // was taken against, which is the one way a cost fix turns into a recall bug.
-        StandInSession session = new StandInSession();
+        SweepRecorder session = new SweepRecorder();
         StubIndexClient index = Index();
         using MailService service = Service(session, index);
 
@@ -201,8 +201,8 @@ public sealed class SweepCacheKeyTests
         // behaviour and the safe direction: on this profile the sweep is the ONLY tier that
         // can find anything, and a 10 s TTL is a weaker promise than the rest of this cache
         // makes.
-        StandInSession session = new StandInSession();
-        using MailService service = Service(session, NothingIndexed());
+        SweepRecorder session = new SweepRecorder();
+        using MailService service = Service(session, AliceMailbox.NothingIndexed());
 
         service.Search(Unscoped());
         WaitForTheWallClockToTick();
@@ -219,7 +219,7 @@ public sealed class SweepCacheKeyTests
         // Unchanged, and re-pinned here because the key moved: a request whose 'after' clamped
         // the window took a NARROWER sweep than an unclamped one would, so caching it would
         // poison every wider follow-up search.
-        StandInSession session = new StandInSession();
+        SweepRecorder session = new SweepRecorder();
         using MailService service = Service(session, Index());
 
         SearchRequest clamped = Unscoped();
@@ -253,7 +253,7 @@ public sealed class SweepCacheKeyTests
         }
     }
 
-    private static MailService Service(StandInSession session, StubIndexClient index)
+    private static MailService Service(SweepRecorder session, StubIndexClient index)
     {
         return new MailService(new DirectGateway(session.AsSession()), null, index);
     }
@@ -261,15 +261,12 @@ public sealed class SweepCacheKeyTests
     /// <summary>The mixed profile: one store the catalog knows, one data file it does not.</summary>
     private static StubIndexClient Index() => new(new[] { IndexedPrefix }, Frontier);
 
-    /// <summary>A profile Windows Search holds no mail for at all.</summary>
-    private static StubIndexClient NothingIndexed() => new(Array.Empty<string>(), Frontier);
-
     /// <summary>
     /// Records every sweep the service asks Outlook for, with the window arguments it was
     /// asked for them with. The COUNT is the whole point: a cache hit is invisible in the
     /// payload's window fields and visible only as a COM call that did not happen.
     /// </summary>
-    private sealed class StandInSession
+    private sealed class SweepRecorder
     {
         private readonly List<DateTime> _since = new List<DateTime>();
         private readonly List<IReadOnlyDictionary<string, DateTime>?> _perStore =
@@ -281,7 +278,12 @@ public sealed class SweepCacheKeyTests
 
         internal IReadOnlyList<IReadOnlyDictionary<string, DateTime>?> PerStoreArguments => _perStore;
 
-        internal IOutlookSession AsSession() => RecordingSession.Create(this);
+        internal IOutlookSession AsSession() => StandInSession.Create(
+            ProfileStores,
+            script: standIn => standIn.Answering(
+                nameof(IOutlookSession.SweepFoldersNewerThan),
+                // Arguments 0 and 6 are sinceUtc and perStoreSinceUtc; see IOutlookSession.SweepFoldersNewerThan.
+                args => Sweep((DateTime)args![0]!, args[6] as IReadOnlyDictionary<string, DateTime>)));
 
         private ComSweepResult Sweep(DateTime sinceUtc, IReadOnlyDictionary<string, DateTime>? perStoreSinceUtc)
         {
@@ -316,51 +318,6 @@ public sealed class SweepCacheKeyTests
                 hasAttachments: false,
                 sizeBytes: 2048,
                 body: "test body");
-        }
-
-        /// <summary>
-        /// A <see cref="DispatchProxy"/> so a member added to the contract needs no change
-        /// here. Not sealed: DispatchProxy derives from its TProxy at runtime.
-        /// </summary>
-        private class RecordingSession : DispatchProxy
-        {
-            private StandInSession _owner = null!;
-
-            internal static IOutlookSession Create(StandInSession owner)
-            {
-                object proxy = Create<IOutlookSession, RecordingSession>()
-                    ?? throw new InvalidOperationException("DispatchProxy.Create returned null.");
-                ((RecordingSession)proxy)._owner = owner;
-                return (IOutlookSession)proxy;
-            }
-
-            /// <inheritdoc />
-            protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
-            {
-                switch (targetMethod?.Name)
-                {
-                    case nameof(IOutlookSession.GetProfileName):
-                        return "T1 stand-in profile";
-
-                    case nameof(IOutlookSession.GetStoreDetails):
-                        return TestFolders.WithRoots(ProfileStores);
-
-                    case nameof(IOutlookSession.TryDescribeFolder):
-                        return TestFolders.Describe(args);
-
-                    // Arguments 0 and 6 are sinceUtc and perStoreSinceUtc; see
-                    // IOutlookSession.SweepFoldersNewerThan.
-                    case nameof(IOutlookSession.SweepFoldersNewerThan):
-                        return _owner.Sweep(
-                            (DateTime)args![0]!,
-                            args[6] as IReadOnlyDictionary<string, DateTime>);
-
-                    default:
-                        throw new NotSupportedException(
-                            "The stand-in session was asked for " + (targetMethod?.Name ?? "an unnamed member")
-                            + ", which this test does not model.");
-                }
-            }
         }
     }
 }

@@ -204,10 +204,21 @@ public sealed class LiveMoveArchiveFixture : IDisposable
     /// </summary>
     public void AssertHubClean(Action<string> output)
     {
-        string hub = Settings.TestHubStoreDisplayName;
         LiveOutlookTestMailer.DeleteTaggedArtifactsUntilStableZero(
-            hub, RunMarker, folderIds: LiveOutlookTestMailer.HubSweepFolderIdsWithArchive);
+            Settings.TestHubStoreDisplayName, RunMarker, folderIds: LiveOutlookTestMailer.HubSweepFolderIdsWithArchive);
+        AssertNoTaggedArtifactOrLiveTestFolder(output);
+        output(VerifyHubReconciled());
+    }
 
+    /// <summary>
+    /// <see cref="AssertHubClean"/> for a test that has swept the hub itself - deleting its test folders first,
+    /// then the stable-zero sweep - and reconciles the store on its own terms: the straggler-tolerant count of this
+    /// run's tagged artifacts and the count of live test folders, each of which must be zero. The move/archive
+    /// suite and its stdio counterpart each wrote it out until the code-sharing refactor's S5a (T15).
+    /// </summary>
+    public void AssertNoTaggedArtifactOrLiveTestFolder(Action<string> output)
+    {
+        string hub = Settings.TestHubStoreDisplayName;
         int remaining = LiveOutlookTestMailer.CountTaggedArtifactsAfterPurgingStragglers(
             hub, RunMarker, LiveOutlookTestMailer.HubSweepFolderIdsWithArchive, out int stragglersPurged);
         if (stragglersPurged > 0)
@@ -226,7 +237,6 @@ public sealed class LiveMoveArchiveFixture : IDisposable
         }
 
         Assert.Equal(0, liveTestFolders);
-        output(VerifyHubReconciled());
     }
 
     public void Dispose()

@@ -63,17 +63,17 @@ namespace OutlookAI.McpServer.Tests.T1;
 [Trait("TimeZone", "Machine")]
 public sealed class UnindexedStoreScopeTests
 {
-    private const string Sid = "{S-1-5-21-1111111111-2222222222-3333333333-1001}";
+    private const string Sid = AliceMailbox.Sid;
 
     /// <summary>An ordinary Exchange store, present in both the profile and the index.</summary>
-    private const string IndexedStore = "alice@example.com";
+    private const string IndexedStore = AliceMailbox.Store;
 
-    private const string IndexedPrefix = "mapi16://" + Sid + "/" + IndexedStore + "($deadbeef)";
+    private const string IndexedPrefix = AliceMailbox.StorePrefix;
 
     /// <summary>The measured case: a local data file the profile has and the index has never seen.</summary>
     private const string PstStore = "Outlook Data File";
 
-    private static readonly DateTime Frontier = new(2026, 8, 18, 9, 30, 0, DateTimeKind.Utc);
+    private static readonly DateTime Frontier = AliceMailbox.Frontier;
 
     private static readonly ComStoreDetail[] ProfileStores =
     {
@@ -89,7 +89,7 @@ public sealed class UnindexedStoreScopeTests
         // Probe 14 of the measured run, which used to be an outright failure. The index tier
         // contributes nothing and the freshness sweep is the whole answer - which is a state
         // this payload already knew how to describe, on the unscoped path, for this very store.
-        using MailService service = Service(NothingIndexed());
+        using MailService service = Service(AliceMailbox.NothingIndexed());
 
         SearchOutcome outcome = service.Search(Request(PstStore));
 
@@ -103,7 +103,7 @@ public sealed class UnindexedStoreScopeTests
     {
         // Every one of these already existed and already fired on the unscoped path. The fix
         // is not to invent a report, it is to stop failing before reaching this one.
-        using MailService service = Service(NothingIndexed());
+        using MailService service = Service(AliceMailbox.NothingIndexed());
 
         SearchOutcome outcome = service.Search(Request(PstStore));
 
@@ -131,7 +131,7 @@ public sealed class UnindexedStoreScopeTests
         // with a mail that lives in the OTHER store, so a scope quietly dropped to null would
         // show up here as a hit from alice@example.com under store="Outlook Data File" - a
         // wrong answer wearing the shape of a right one.
-        using MailService service = Service(NothingIndexed(searchRows: OneIndexedMailInAlicesStore()));
+        using MailService service = Service(AliceMailbox.NothingIndexed(searchRows: OneIndexedMailInAlicesStore()));
 
         SearchOutcome outcome = service.Search(Request(PstStore));
 
@@ -147,7 +147,7 @@ public sealed class UnindexedStoreScopeTests
         // Probe 16, which failed with the identical message. There is no index folder scope to
         // build, so the folder bound lives entirely in the sweep - and the shape says so
         // rather than reporting "folder", which would describe a narrowing that never happened.
-        using MailService service = Service(NothingIndexed());
+        using MailService service = Service(AliceMailbox.NothingIndexed());
         SearchRequest request = Request(PstStore);
         request.FolderId = TestFolders.FolderId(PstStore, "Inbox");
 
@@ -166,7 +166,7 @@ public sealed class UnindexedStoreScopeTests
         // store and not the other. It is the ordinary mixed profile - an indexed Exchange
         // account plus a PST - and it is also the shape an indexed-but-small store takes when
         // the unordered 2000-row discovery sample misses it.
-        using MailService service = Service(OnlyAliceIndexed());
+        using MailService service = Service(AliceMailbox.OnlyAliceIndexed());
 
         SearchOutcome outcome = service.Search(Request(PstStore));
 
@@ -181,7 +181,7 @@ public sealed class UnindexedStoreScopeTests
         // The other half: this must not buy the unindexed store an answer by turning every
         // search into a sweep. A catalogued store still queries the index tier and still
         // reports itself live.
-        using MailService service = Service(OnlyAliceIndexed(searchRows: OneIndexedMailInAlicesStore()));
+        using MailService service = Service(AliceMailbox.OnlyAliceIndexed(searchRows: OneIndexedMailInAlicesStore()));
 
         SearchOutcome outcome = service.Search(Request(IndexedStore));
 
@@ -200,7 +200,7 @@ public sealed class UnindexedStoreScopeTests
         // Probe 15. It must stay an error - the caller asked for something that does not
         // exist - and it must now be TELLABLE APART from probe 14, which no longer errors at
         // all. That is the distinction, in the strongest form the payload has.
-        using MailService service = Service(NothingIndexed());
+        using MailService service = Service(AliceMailbox.NothingIndexed());
 
         ArgumentException error =
             Assert.Throws<ArgumentException>(() => service.Search(Request("no-such-store-xyz")));
@@ -215,7 +215,7 @@ public sealed class UnindexedStoreScopeTests
         // "Known stores: ." was the third defect: the list came from the index catalog, which
         // on this profile is empty, so the message named nothing and sent the caller to
         // list_accounts - which returns exactly the names that were missing here.
-        using MailService service = Service(NothingIndexed());
+        using MailService service = Service(AliceMailbox.NothingIndexed());
 
         ArgumentException error =
             Assert.Throws<ArgumentException>(() => service.Search(Request("no-such-store-xyz")));
@@ -230,7 +230,7 @@ public sealed class UnindexedStoreScopeTests
         // One shape for one mistake, across the tools that can make it (gap G1's precedent): an unknown
         // store ID is refused by the one store resolver both share (MailService.PickStore), so the two
         // messages cannot drift into two vocabularies for one error.
-        using MailService service = Service(NothingIndexed());
+        using MailService service = Service(AliceMailbox.NothingIndexed());
         string unknown = TestFolders.StoreId("no-such-store-xyz");
 
         ArgumentException bySearch = Assert.Throws<ArgumentException>(() => service.Search(Request("no-such-store-xyz")));
@@ -246,7 +246,7 @@ public sealed class UnindexedStoreScopeTests
         // evidence either way, and picking one would let a wedged Outlook produce a confident
         // "that store does not exist" about a store that is sitting right there.
         using MailService service = new MailService(
-            new DeadGateway(), null, NothingIndexed());
+            new DeadGateway(), null, AliceMailbox.NothingIndexed());
 
         ArgumentException error = Assert.Throws<ArgumentException>(() => service.Search(Request(PstStore)));
 
@@ -262,7 +262,7 @@ public sealed class UnindexedStoreScopeTests
         // thread resolves its store through the same resolver, and that resolver no longer
         // THROWS for this store - it answers "no scope". The widening flag used to be set in
         // the catch alone, so the fix would have made half of C3 silent again.
-        using MailService service = Service(NothingIndexed());
+        using MailService service = Service(AliceMailbox.NothingIndexed());
 
         ThreadOutcome outcome = service.Thread("conv-1", id: null, storeId: TestFolders.StoreId(PstStore));
 
@@ -283,20 +283,6 @@ public sealed class UnindexedStoreScopeTests
     private static MailService Service(StubIndexClient index)
     {
         return new MailService(new DirectGateway(StandInSession.Create(ProfileStores, Sweep)), null, index);
-    }
-
-    /// <summary>The measured machine: one profile, nothing of it in the index.</summary>
-    private static StubIndexClient NothingIndexed(
-        IReadOnlyList<IReadOnlyDictionary<string, object?>>? searchRows = null)
-    {
-        return new StubIndexClient(Array.Empty<string>(), Frontier) { SearchRows = searchRows ?? IndexRows.None };
-    }
-
-    /// <summary>The mixed profile: the Exchange store indexed, the data file not.</summary>
-    private static StubIndexClient OnlyAliceIndexed(
-        IReadOnlyList<IReadOnlyDictionary<string, object?>>? searchRows = null)
-    {
-        return new StubIndexClient(new[] { IndexedPrefix }, Frontier) { SearchRows = searchRows ?? IndexRows.None };
     }
 
     /// <summary>

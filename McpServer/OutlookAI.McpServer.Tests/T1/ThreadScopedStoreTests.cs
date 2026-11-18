@@ -44,11 +44,11 @@ namespace OutlookAI.McpServer.Tests.T1;
 /// </summary>
 public sealed class ThreadScopedStoreTests
 {
-    private const string Sid = "{S-1-5-21-1111111111-2222222222-3333333333-1001}";
+    private const string Sid = AliceMailbox.Sid;
 
-    private const string AliceStore = "alice@example.com";
+    private const string AliceStore = AliceMailbox.Store;
 
-    private const string AlicePrefix = "mapi16://" + Sid + "/" + AliceStore + "($deadbeef)";
+    private const string AlicePrefix = AliceMailbox.StorePrefix;
 
     /// <summary>A second mailbox the index knows all about - the case C4's fix cannot see.</summary>
     private const string BobStore = "bob@example.com";
@@ -60,7 +60,7 @@ public sealed class ThreadScopedStoreTests
     /// <summary>A raw EntryID hex: long enough to be accepted without any hit cache or COM locate.</summary>
     private const string AnchorId = "00000000AABBCCDDEEFF00112233445566778899AABBCCDD";
 
-    private static readonly DateTime Frontier = new(2026, 8, 18, 9, 30, 0, DateTimeKind.Utc);
+    private static readonly DateTime Frontier = AliceMailbox.Frontier;
 
     private static readonly ComStoreDetail[] TwoMailboxes =
     {
@@ -174,12 +174,7 @@ public sealed class ThreadScopedStoreTests
         ThreadLiveInfo live = Walked(AliceStore);
         live.StoresNotQueried = new[] { BobStore };
 
-        Assert.Contains(
-            FreshMerge.ThreadGapUnqueriedStore,
-            FreshMerge.DescribeThreadCoverageGaps(live, new[] { AliceStore })!);
-        Assert.Equal(
-            FreshMerge.FreshnessPartial,
-            FreshMerge.ClassifyThreadFreshness(live, new[] { AliceStore }));
+        ThreadWalks.AssertNamedStoresRaiseTheCode("the unqueried stores", live, FreshMerge.ThreadGapUnqueriedStore, AliceStore);
     }
 
     [Fact]
@@ -188,12 +183,7 @@ public sealed class ThreadScopedStoreTests
         string line = Assert.Single(MailService.DescribeThreadCoverage(
             Unqueried(AliceStore, BobStore), FreshMerge.FreshnessPartial, AliceStore, scopeWidened: false, top: 50)!);
 
-        Assert.Contains(AliceStore, line, StringComparison.Ordinal);
-        Assert.Contains(BobStore, line, StringComparison.Ordinal);
-        Assert.Contains("TELL THE USER", line, StringComparison.Ordinal);
-
-        // "We could not ask", never "we asked and there was nothing there".
-        Assert.Contains("cannot be established", line, StringComparison.Ordinal);
+        ThreadWalks.AssertSentenceNamesTheStoresAndWithdrawsTheStrongerClaim("the unqueried stores", line, AliceStore, BobStore);
     }
 
     [Fact]
@@ -233,11 +223,7 @@ public sealed class ThreadScopedStoreTests
         live.StoresNotQueriedTotal = 30;
         live.CoverageGaps = new[] { FreshMerge.ThreadGapUnqueriedStore };
 
-        string line = Assert.Single(MailService.DescribeThreadCoverage(
-            live, FreshMerge.FreshnessPartial, AliceStore, scopeWidened: false, top: 50)!);
-
-        Assert.Contains("and 18 more", line, StringComparison.Ordinal);
-        Assert.Contains("live.storesNotQueriedTotal", line, StringComparison.Ordinal);
+        ThreadWalks.AssertCappedListSaysHowManyMore("the unqueried stores", live, AliceStore, "live.storesNotQueriedTotal");
     }
 
     // ============================================================ through the whole tool
@@ -302,7 +288,7 @@ public sealed class ThreadScopedStoreTests
         // store would be named twice - once with a remedy that works and once with one that
         // does not.
         using MailService service = Service(
-            OnlyAliceIndexed(),
+            AliceMailbox.OnlyAliceIndexed(),
             new[]
             {
                 new ComStoreDetail(AliceStore, "store-alice", 0, true),
@@ -404,8 +390,6 @@ public sealed class ThreadScopedStoreTests
 
     private static StubIndexClient BothIndexed() => new(new[] { AlicePrefix, BobPrefix }, Frontier);
 
-    private static StubIndexClient OnlyAliceIndexed() => new(new[] { AlicePrefix }, Frontier);
-
     /// <summary>
     /// A session that answers the store list, one freshness sweep (so a search can register a
     /// hit for the derived-store case) and one conversation walk, both anchored in Alice's
@@ -415,7 +399,7 @@ public sealed class ThreadScopedStoreTests
         StandInSession.Create(
             stores,
             _ => new ComSweepResult(
-                new[] { Member(1) },
+                new[] { ThreadWalks.Member(1) },
                 foldersSwept: 4,
                 foldersSkipped: 0,
                 sweptFolders: new[] { AliceStore + "/Inbox" },
@@ -425,23 +409,5 @@ public sealed class ThreadScopedStoreTests
                         AliceStore, foldersSwept: 4, foldersSkipped: 0, foldersFailed: 0, foldersAbsent: 0),
                 }),
             standIn => standIn.Answering(
-                nameof(IOutlookSession.TryGetConversationItems), _ => Enumerable.Range(1, 3).Select(Member).ToList()));
-
-    private static ComMailBrief Member(int i)
-    {
-        return new ComMailBrief(
-            entryId: "MEMBER" + i,
-            storeDisplayName: AliceStore,
-            storeId: "store-alice",
-            folderName: "Inbox",
-            folderKind: "inbox",
-            subject: "a test thread member",
-            senderName: "Bob",
-            senderAddress: "bob@example.com",
-            receivedTime: Frontier.AddMinutes(i),
-            isRead: true,
-            hasAttachments: false,
-            sizeBytes: 2048,
-            body: "test body");
-    }
+                nameof(IOutlookSession.TryGetConversationItems), _ => Enumerable.Range(1, 3).Select(ThreadWalks.Member).ToList()));
 }

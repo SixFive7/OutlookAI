@@ -1479,39 +1479,47 @@ its mailbox tests on, and change nothing you install.
   three of them read the instructions byte by byte, and now walk the opcodes as the others did.
   Smaller copies went the same way: the in-memory prompt registry (`FakePromptRegistry`, which also
   replaces the narrower one `PromptLintTests` kept), the setter of a stand-in's out parameter
-  (`ProxyArgs`), settings naming only the hub (`HubOnlyLiveSettings`) and a PST store's EntryID
-  (`TestFolders.PstStoreEntryId`). Six suites around the sweep and the exhaustive scan spelled out
-  the same one-mailbox profile - its SID, store, index prefix and frontier - and three of them its
-  mail, its sweep, an exhaustive search of its Inbox and a session that answers the store list, the
-  sweep and the scan as well: `AliceMailbox` holds it once, and `ThreadWalks` the conversation walks
-  three thread suites each built. Nine of the suite's stand-ins for the COM session answered the
-  same four members - the profile's name, its stores, a folder's description and the freshness
-  sweep - three of them word for word, and are one `StandInSession`, on which a test scripts any
-  other member it needs: `AliceMailbox` and the resumable scans their exhaustive scan, the sweep's
-  body cap its item read and the three thread suites their conversation walk. The live tier went
-  the same way. Its test tag is spelled once,
-  in `LiveOutlookTestMailer.TagText`, which the bracketed subject tag and the test-folder prefix
-  are made of, and the mailer's twelve inline ordinal tag checks, and four more elsewhere, now ask one
-  ordinal predicate, `CarriesSubjectTag`; the reading filters that leave test items out of a
-  search, a census or a ground truth ask `MentionsSubjectTag`, which ignores letter case as each of
-  them did. A test's tagged subject is built once (`TaggedSubject`), the subject the signature work's
-  Outlook-made draft gets since among them. `LiveDraftChecks` holds the
-  draft suites' reads of a draft and of where its body sits, which seven suites restated in up to
-  four copies each; `LiveDraftCleanup` deletes their drafts and proves none is left; the folder
-  suites' clean-up and zero-artifact proof are methods of the fixture they share; the two
-  post-suite sweeps run one proof, `LiveArtifactSweep.ProveNoTaggedArtifactRemains`; `AuditLines`
-  reads the audit lines six suites counted, each still naming which log; the stdio suites read the
-  tool surface through `ToolShapes`; the corpus helpers live in `HubCorpus`, scratch files go
-  through `ScratchFiles`, a store's id through `LiveIds`, an index scope through `LiveIndexScopes`
-  and the registry through `RawRegistryValues`; and four fixtures read the test project's folder
-  through `RepoPaths`. The live tests make the window calls the product makes too through Core's
-  `NativeWindows`, where six of their files declared their own - 24 declarations, with two copies
-  of its `RECT`, five of its callback and four of its constants - and `TestWin32` declares the calls
+  (`ProxyArgs`), settings naming only the hub (`HubOnlyLiveSettings`), a PST store's EntryID
+  (`TestFolders.PstStoreEntryId`) and the checks of an over-long subject's refusal, which an
+  in-process and a stdio test each wrote out (`DraftRefusals`). Six suites around the sweep and the
+  exhaustive scan spelled out the same one-mailbox profile - its SID, store, index prefix and
+  frontier - and three of them its mail, its sweep, an exhaustive search of its Inbox and a session
+  that answers the store list, the sweep and the scan as well: `AliceMailbox` holds it once, and
+  `ThreadWalks` the conversation walks three thread suites each built. Five more suites take that
+  SID, store, prefix and frontier from `AliceMailbox`, where they spelled them out, with the index
+  that holds the store alone and the one that holds none, which four and three of them each built,
+  and `ThreadWalks.Member` the thread member two of them wrote. The two thread suites' three pairs
+  of parallel tests - a named store raises its list's code, the sentence names the stores, a capped
+  list says how many more - keep their names and assert through `ThreadWalks`, each failure naming
+  its list. The suite's eighteen stand-ins for the COM session are two: eleven that answered the
+  same members - the profile's name, its stores, a folder's description and, all but one, the
+  freshness sweep - three of them word for word, are one `StandInSession`, on which a test scripts
+  any other member it needs, such as the exhaustive scan, an item read, a conversation walk or the
+  folder lists; and seven that handed every call to a fake of the test's own, three of them giving
+  each unanswered out argument and result its default, are one `ForwardingSession`. The live tier
+  went the same way. Its test tag is spelled once, in `LiveOutlookTestMailer.TagText`, which the
+  bracketed subject tag and the test-folder prefix are made of, and the mailer's twelve inline
+  ordinal tag checks, and four more elsewhere, now ask one ordinal predicate, `CarriesSubjectTag`;
+  the reading filters that leave test items out of a search, a census or a ground truth ask
+  `MentionsSubjectTag`, which ignores letter case as each of them did. A test's tagged subject is
+  built once (`TaggedSubject`), the subject the signature work's Outlook-made draft gets since among
+  them. `LiveDraftChecks` holds the draft suites' reads of a draft and of where its body sits, which
+  seven suites restated in up to four copies each; `LiveDraftCleanup` deletes their drafts and
+  proves none is left; the folder suites' clean-up and zero-artifact proof are methods of the
+  fixture they share, the move/archive suite's and its stdio test's since too; the two post-suite
+  sweeps run one proof, `LiveArtifactSweep.ProveNoTaggedArtifactRemains`; `AuditLines` reads the
+  audit lines six suites counted, each still naming which log; the stdio suites read the tool
+  surface through `ToolShapes`; the corpus helpers live in `HubCorpus`, scratch files go through
+  `ScratchFiles`, a store's id through `LiveIds`, an index scope through `LiveIndexScopes` and the
+  registry through `RawRegistryValues`; and four fixtures read the test project's folder through
+  `RepoPaths`. The live tests make the window calls the product makes too through Core's
+  `NativeWindows`, where six of their files declared their own - 24 declarations, with two copies of
+  its `RECT`, five of its callback and four of its constants - and `TestWin32` declares the calls
   only tests make: the screen capture's, and those two or three test files each declared, a
-  foreground window, a child walk, a window's text and a posted message among them. Two test
-  helpers that wrote bytes as hex by hand use .NET's own writer. No test changed what it checks:
-  the build machine ran the same tests, by name, before and after each step, and the 164 live test
-  methods are the same 164.
+  foreground window, a child walk, a window's text and a posted message among them. Two test helpers
+  that wrote bytes as hex by hand use .NET's own writer. No test changed what it checks: the build
+  machine ran the same tests, by name, before and after each step, and the 164 live test methods are
+  the same 164.
 
 - ✅ **The draft tests read where Word lays out a reply's text, and check no draft became a form.**
   The reply, reply-all and forward tests now read Word's own layout of each draft and fail when its

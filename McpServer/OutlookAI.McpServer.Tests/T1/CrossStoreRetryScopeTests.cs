@@ -147,7 +147,7 @@ public sealed class CrossStoreRetryScopeTests
 
     /// <summary>
     /// A session that finds nothing, counts how often it was asked, and reports the failure
-    /// reason the test chose. A <see cref="DispatchProxy"/> rather than 26 stubs, so a method
+    /// reason the test chose. Built on the shared <see cref="ForwardingSession"/>, so a method
     /// added to the contract needs no change here.
     /// </summary>
     private sealed class CountingSession
@@ -156,7 +156,30 @@ public sealed class CrossStoreRetryScopeTests
 
         internal CountingSession(string? failureReason)
         {
-            AsSession = RecordingSession.Create(this, failureReason);
+            AsSession = ForwardingSession.Create(
+                (member, args) =>
+                {
+                    Record(member.Name);
+                    if (string.Equals(member.Name, nameof(IOutlookSession.GetStoreDetails), StringComparison.Ordinal))
+                    {
+                        return Stores;
+                    }
+
+                    // The failure reason the test chose goes in the finder's out error.
+                    ParameterInfo[] parameters = member.GetParameters();
+                    for (int i = 0; args != null && i < parameters.Length && i < args.Length; i++)
+                    {
+                        if (parameters[i].IsOut
+                            && parameters[i].ParameterType.GetElementType() == typeof(string)
+                            && string.Equals(parameters[i].Name, "error", StringComparison.Ordinal))
+                        {
+                            args[i] = failureReason;
+                        }
+                    }
+
+                    return null;
+                },
+                defaultsForTheRest: true);
         }
 
         internal IOutlookSession AsSession { get; }
@@ -174,61 +197,6 @@ public sealed class CrossStoreRetryScopeTests
             lock (_calls)
             {
                 _calls[operation] = (_calls.TryGetValue(operation, out int count) ? count : 0) + 1;
-            }
-        }
-
-        internal class RecordingSession : DispatchProxy
-        {
-            private CountingSession _owner = null!;
-            private string? _failureReason;
-
-            internal static IOutlookSession Create(CountingSession owner, string? failureReason)
-            {
-                object proxy = Create<IOutlookSession, RecordingSession>()
-                    ?? throw new InvalidOperationException("DispatchProxy.Create returned null.");
-                ((RecordingSession)proxy)._owner = owner;
-                ((RecordingSession)proxy)._failureReason = failureReason;
-                return (IOutlookSession)proxy;
-            }
-
-            /// <inheritdoc />
-            protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
-            {
-                ArgumentNullException.ThrowIfNull(targetMethod);
-
-                _owner.Record(targetMethod.Name);
-
-                if (string.Equals(targetMethod.Name, nameof(IOutlookSession.GetStoreDetails), StringComparison.Ordinal))
-                {
-                    return Stores;
-                }
-
-                // Every out parameter is assigned: an unassigned slot is unboxed on the way
-                // back and would fail the call for a reason that has nothing to do with the
-                // loop under test.
-                ParameterInfo[] parameters = targetMethod.GetParameters();
-                for (int i = 0; args != null && i < parameters.Length && i < args.Length; i++)
-                {
-                    ParameterInfo parameter = parameters[i];
-                    if (!parameter.IsOut)
-                    {
-                        continue;
-                    }
-
-                    Type slot = parameter.ParameterType.GetElementType()!;
-                    if (slot == typeof(string) && string.Equals(parameter.Name, "error", StringComparison.Ordinal))
-                    {
-                        args[i] = _failureReason;
-                        continue;
-                    }
-
-                    args[i] = slot.IsValueType ? Activator.CreateInstance(slot) : null;
-                }
-
-                Type returnType = targetMethod.ReturnType;
-                return returnType != typeof(void) && returnType.IsValueType
-                    ? Activator.CreateInstance(returnType)
-                    : null;
             }
         }
     }
