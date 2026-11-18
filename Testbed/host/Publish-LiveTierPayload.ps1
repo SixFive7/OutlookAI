@@ -180,36 +180,10 @@ $env:DOTNET_NOLOGO = '1'
 function Say([string] $m) { Write-Host ("[{0:HH:mm:ss}] {1}" -f (Get-Date), $m) }
 function SizeMb([string] $path) { return [math]::Round((Get-Item -LiteralPath $path).Length / 1MB, 1) }
 
-# A NATIVE PROGRAM WHOSE STDERR IS REDIRECTED RUNS THROUGH HERE (Q78). Under
-# $ErrorActionPreference = 'Stop', Windows PowerShell 5.1 turns the first line a native program
-# writes to a redirected stderr - 2>$null, 2>&1 and *> alike - into a terminating
-# NativeCommandError, so one warning or progress line ends the script before its exit code can be
-# read. PowerShell 7 does not. Measured on the host 2026-09-24. So, here and only here:
-#   * 'Continue' holds in THIS function's scope. The caller's 'Stop' is never changed, so there is
-#     nothing to restore and nothing else is relaxed.
-#   * The try is load-bearing. Without one, 'Continue' also demotes a terminating error inside the
-#     block - the program not being found at all - to a printed message, and the caller goes on to
-#     read a stale $LASTEXITCODE. Inside a try it stops the caller exactly as it always did.
-#     Measured in both shells.
-#   * Stderr lines come back as plain strings in both shells, never as ErrorRecords: 5.1 renders
-#     those with a position block around every line, and an empty one as an exception type name.
-#   * The exit code is left in $LASTEXITCODE, and the caller checks it.
-# Restated in each script that needs it, as this repository restates its shared rules.
-# Tools/Checks/check-powershell-51.ps1 fails the build on a redirected native call that does
-# not go through a function like this one.
-function Invoke-NativeCommand {
-    param([Parameter(Mandatory = $true)] [scriptblock] $NativeCommand)
-
-    $ErrorActionPreference = 'Continue'
-    try {
-        & $NativeCommand | ForEach-Object {
-            if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.Exception.Message } else { $_ }
-        }
-    }
-    catch {
-        throw
-    }
-}
+# Every program call goes through Invoke-NativeCommand, so that Windows PowerShell 5.1 cannot end
+# the script on a program's first stderr line (Q78). It is one of the helpers the scripts share,
+# dot-sourced from Testbed/guest/ScriptHelpers.ps1 (Q166 (b), decision 215 (a)), which says why.
+. (Join-Path $PSScriptRoot '..\guest\ScriptHelpers.ps1')
 
 # ---------------------------------------------------------------------------------------------
 # 1. The SDK installer. Identified, never produced.

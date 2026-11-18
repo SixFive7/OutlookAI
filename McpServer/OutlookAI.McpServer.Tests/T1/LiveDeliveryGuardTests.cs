@@ -34,7 +34,7 @@ public sealed class LiveDeliveryGuardTests
     [Fact]
     public void TheMachineGuards_AreArmedInTheFunnelEveryGuardedCollectionPasses()
     {
-        string body = MemberBody("LiveStoreCountTripwire.cs", "public static void EnsureBaseline(");
+        string body = SourceText.MemberBody(SourceText.Lines(SourceText.LiveSource("LiveStoreCountTripwire.cs")), "public static void EnsureBaseline(", "    ", "LiveStoreCountTripwire.cs");
 
         int freshness = body.IndexOf("LiveCorpusFreshness.EnsureFresh(settings);", StringComparison.Ordinal);
         int sink = body.IndexOf("LiveMailSink.EnsureReachable(settings);", StringComparison.Ordinal);
@@ -125,7 +125,7 @@ public sealed class LiveDeliveryGuardTests
         // NudgeIfDue is a no-op unless the machine declares a sink, so what can be pinned without
         // one is the cadence it gates on: the first poll and every NudgeEveryPolls-th after it.
         Assert.Equal(5, LiveInboxArrival.NudgeEveryPolls);
-        string body = MemberBody("LiveInboxArrival.cs", "internal static void NudgeIfDue(");
+        string body = SourceText.MemberBody(SourceText.Lines(SourceText.LiveSource("LiveInboxArrival.cs")), "internal static void NudgeIfDue(", "    ", "LiveInboxArrival.cs");
         Assert.Contains("pollsSoFar % NudgeEveryPolls == 0", body, StringComparison.Ordinal);
         Assert.Contains("LiveMailSink.NudgeDelivery();", body, StringComparison.Ordinal);
     }
@@ -133,17 +133,5 @@ public sealed class LiveDeliveryGuardTests
     private static IEnumerable<string> LiveSourceFiles(string folder)
     {
         return Directory.EnumerateFiles(Path.Combine(RepoPaths.TestProjectDir(), folder), "*.cs", SearchOption.TopDirectoryOnly);
-    }
-
-    private static string MemberBody(string t2File, string declarationStart)
-    {
-        string[] lines = File.ReadAllText(Path.Combine(RepoPaths.TestProjectDir(), "T2", t2File))
-            .Split('\n').Select(l => l.TrimEnd('\r')).ToArray();
-        int declaration = Array.FindIndex(lines, l => l.TrimStart().StartsWith(declarationStart, StringComparison.Ordinal));
-        Assert.True(declaration >= 0, declarationStart + " was not found in " + t2File + " - this test has stopped proving anything");
-        int open = Array.FindIndex(lines, declaration, l => string.Equals(l, "    {", StringComparison.Ordinal));
-        int close = open < 0 ? -1 : Array.FindIndex(lines, open + 1, l => string.Equals(l, "    }", StringComparison.Ordinal));
-        Assert.True(open > declaration && close > open, "could not find the body of " + declarationStart + " in " + t2File);
-        return string.Join("\n", lines[(open + 1)..close]);
     }
 }

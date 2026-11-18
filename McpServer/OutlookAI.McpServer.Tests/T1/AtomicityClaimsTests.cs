@@ -960,10 +960,10 @@ public sealed class AtomicityClaimsTests
 
                 case nameof(IOutlookSession.TryCreateNewDraft):
                 case nameof(IOutlookSession.TryCreateDerivedDraft):
-                    SetOut(method, args, "savedDraftEntryId", SavedDraftEntryId);
+                    ProxyArgs.SetOut(method, args, "savedDraftEntryId", SavedDraftEntryId);
                     if (CreateRefusal != null)
                     {
-                        SetOut(method, args, "error", CreateRefusal);
+                        ProxyArgs.SetOut(method, args, "error", CreateRefusal);
                         return null;
                     }
 
@@ -972,7 +972,7 @@ public sealed class AtomicityClaimsTests
                 case nameof(IOutlookSession.TryDiscardDraft):
                     if (DiscardRefusal != null)
                     {
-                        SetOut(method, args, "error", DiscardRefusal);
+                        ProxyArgs.SetOut(method, args, "error", DiscardRefusal);
                         return null;
                     }
 
@@ -989,7 +989,7 @@ public sealed class AtomicityClaimsTests
 
                     if (MoveRefusal != null)
                     {
-                        SetOut(method, args, "error", MoveRefusal);
+                        ProxyArgs.SetOut(method, args, "error", MoveRefusal);
                         return null;
                     }
 
@@ -999,9 +999,9 @@ public sealed class AtomicityClaimsTests
                     // A VALUE-TYPE out parameter has to be filled explicitly: DispatchProxy
                     // hands the args array to Invoke with null in every out slot, so leaving
                     // sizeBytes alone unboxes null into a long and the proxy throws.
-                    SetOut(method, args, "sizeBytes", 0L);
-                    SetOut(method, args, "attemptedPath", AttemptedPath);
-                    SetOut(method, args, "error", AttachmentRefusal);
+                    ProxyArgs.SetOut(method, args, "sizeBytes", 0L);
+                    ProxyArgs.SetOut(method, args, "attemptedPath", AttemptedPath);
+                    ProxyArgs.SetOut(method, args, "error", AttachmentRefusal);
                     return null;
 
                 case nameof(IOutlookSession.TryGetMailInfo):
@@ -1025,33 +1025,21 @@ public sealed class AtomicityClaimsTests
                         "me@example.com", Array.Empty<ComRecipientInfo>());
 
                 case nameof(IOutlookSession.TrySendDraft):
-                    SetOut(method, args, "error", SendRefusal);
+                    ProxyArgs.SetOut(method, args, "error", SendRefusal);
                     return null;
 
                 case nameof(IOutlookSession.TryDisplayItem):
-                    SetOut(method, args, "error", DisplayRefusal);
+                    ProxyArgs.SetOut(method, args, "error", DisplayRefusal);
                     return null;
 
                 case nameof(IOutlookSession.TryGotoFolder):
                 case nameof(IOutlookSession.TryShowSearchResults):
                     NavigationCalls++;
-                    SetOut(method, args, "error", NavigationRefusal);
+                    ProxyArgs.SetOut(method, args, "error", NavigationRefusal);
                     return null;
 
                 default:
                     return null;
-            }
-        }
-
-        private static void SetOut(MethodInfo method, object?[]? args, string name, object? value)
-        {
-            ParameterInfo[] parameters = method.GetParameters();
-            for (int i = 0; args != null && i < parameters.Length && i < args.Length; i++)
-            {
-                if (parameters[i].IsOut && string.Equals(parameters[i].Name, name, StringComparison.Ordinal))
-                {
-                    args[i] = value;
-                }
             }
         }
 

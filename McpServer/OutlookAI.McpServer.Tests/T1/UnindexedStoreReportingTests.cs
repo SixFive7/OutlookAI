@@ -267,13 +267,13 @@ public sealed class UnindexedStoreReportingTests
     /// <summary>The mixed profile: the Exchange store indexed, the data file not.</summary>
     private static StubIndexClient OnlyAliceIndexed()
     {
-        return new StubIndexClient(new[] { IndexedPrefix });
+        return new StubIndexClient(new[] { IndexedPrefix }, Frontier);
     }
 
     /// <summary>Both stores in the catalog, both with a frontier - nothing to report.</summary>
     private static StubIndexClient EverythingIndexed()
     {
-        return new StubIndexClient(new[] { IndexedPrefix, PstPrefix });
+        return new StubIndexClient(new[] { IndexedPrefix, PstPrefix }, Frontier);
     }
 
     private const string PstPrefix = "mapi16://" + Sid + "/" + PstStore + "($feedface)";
@@ -315,91 +315,6 @@ public sealed class UnindexedStoreReportingTests
     private static ComSweepResult FailingSweep(string? onlyStore)
     {
         throw new TimeoutException("The freshness sweep exceeded its 30s budget.");
-    }
-
-    /// <summary>
-    /// A Windows Search stand-in that knows about a chosen SET of store prefixes and nothing
-    /// else. Answers the three probe statements by shape (store-discovery sample,
-    /// newest-received frontier, scope existence) and no search rows at all - this file is
-    /// about what the answer SAYS, not what it holds.
-    /// </summary>
-    private sealed class StubIndexClient : IIndexClient
-    {
-        private const string DiscoveryTail = " System.ItemUrl FROM SystemIndex WHERE System.Kind='email'";
-
-        private readonly IReadOnlyList<string> _knownPrefixes;
-
-        internal StubIndexClient(IReadOnlyList<string> knownPrefixes)
-        {
-            _knownPrefixes = knownPrefixes;
-        }
-
-        public IndexProviderKind Provider => IndexProviderKind.OleDb;
-
-        public IReadOnlyList<IReadOnlyDictionary<string, object?>> ExecuteRows(
-            string sql, int maxRows, int? commandTimeoutSeconds = null)
-        {
-            if (sql.EndsWith(DiscoveryTail, StringComparison.Ordinal))
-            {
-                return _knownPrefixes
-                    .Select(p => (IReadOnlyDictionary<string, object?>)new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-                    {
-                        ["System.ItemUrl"] = p + "/0/Inbox/sampled-item",
-                    })
-                    .ToList();
-            }
-
-            if (sql.Contains("System.Message.DateReceived FROM SystemIndex", StringComparison.Ordinal))
-            {
-                return Known(sql)
-                    ? Rows(new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-                    {
-                        ["System.Message.DateReceived"] = Frontier,
-                    })
-                    : Array.Empty<IReadOnlyDictionary<string, object?>>();
-            }
-
-            if (sql.StartsWith("SELECT TOP 1 System.ItemUrl FROM SystemIndex WHERE", StringComparison.Ordinal))
-            {
-                return Known(sql)
-                    ? Rows(new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-                    {
-                        ["System.ItemUrl"] = _knownPrefixes[0] + "/0/Inbox/probed-item",
-                    })
-                    : Array.Empty<IReadOnlyDictionary<string, object?>>();
-            }
-
-            return Array.Empty<IReadOnlyDictionary<string, object?>>();
-        }
-
-        private static IReadOnlyList<IReadOnlyDictionary<string, object?>> Rows(IReadOnlyDictionary<string, object?> row)
-        {
-            return new[] { row };
-        }
-
-        /// <summary>
-        /// Whether a statement's SCOPE names a store this index knows. An UNSCOPED statement
-        /// asks about the whole catalog, so it is known exactly when the catalog is non-empty.
-        /// Deliberately not a bare StartsWith: the delegate probes ask about
-        /// <c>&lt;prefix&gt;/1/...</c> subtrees this profile does not have, and answering yes
-        /// to those would invent a delegate store.
-        /// </summary>
-        private bool Known(string sql)
-        {
-            int start = sql.IndexOf("SCOPE='", StringComparison.Ordinal);
-            if (start < 0)
-            {
-                return _knownPrefixes.Count > 0;
-            }
-
-            start += "SCOPE='".Length;
-            int end = sql.IndexOf('\'', start);
-            string scope = end < 0 ? sql.Substring(start) : sql.Substring(start, end - start);
-
-            return _knownPrefixes.Any(p =>
-                string.Equals(scope, p, StringComparison.OrdinalIgnoreCase)
-                || scope.StartsWith(p + "/0/", StringComparison.OrdinalIgnoreCase));
-        }
     }
 
     /// <summary>

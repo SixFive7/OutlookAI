@@ -352,29 +352,10 @@ $ReadGuestLogBlock = {
     return $null
 }
 
-# A NATIVE PROGRAM RUNS THROUGH HERE (Q78). Under $ErrorActionPreference = 'Stop', Windows
-# PowerShell 5.1 turns the first line a native program writes to stderr into a terminating
-# NativeCommandError when anything redirects it - and a script under Testbed/ runs behind a
-# redirection or in a remoting host as often as not, so every program call here goes through this:
-#   * 'Continue' holds in THIS function's scope only; the caller's 'Stop' is never changed.
-#   * The try is load-bearing: without it 'Continue' demotes "the program was not found" to a
-#     printed message and the caller reads a stale $LASTEXITCODE.
-#   * Stderr lines come back as plain strings in both shells, never as ErrorRecords.
-#   * The exit code is left in $LASTEXITCODE, and the caller checks it.
-# Restated in each script that needs it, as this repository restates its shared rules.
-function Invoke-NativeCommand {
-    param([Parameter(Mandatory = $true)] [scriptblock] $NativeCommand)
-
-    $ErrorActionPreference = 'Continue'
-    try {
-        & $NativeCommand | ForEach-Object {
-            if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.Exception.Message } else { $_ }
-        }
-    }
-    catch {
-        throw
-    }
-}
+# Every program call goes through Invoke-NativeCommand, so that Windows PowerShell 5.1 cannot end
+# the script on a program's first stderr line (Q78). It is one of the helpers the scripts share,
+# dot-sourced from Testbed/guest/ScriptHelpers.ps1 (Q166 (b), decision 215 (a)), which says why.
+. (Join-Path $PSScriptRoot '..\guest\ScriptHelpers.ps1')
 
 # =============================================================================================
 # PURE DECISIONS. No Hyper-V, no git, no file but the ones -SelfTest names. -SelfTest pins them.
