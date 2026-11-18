@@ -101,10 +101,17 @@
     What the signature is called. May not begin with OutlookAI-McpTest-.
 
 .PARAMETER BodyText
-    Plain-text body. The HTML rendition is derived from it when -BodyHtml is omitted.
+    Plain-text body. A new signature's HTML and RTF renditions are derived from it when -BodyHtml and
+    -BodyRtf are omitted.
 
 .PARAMETER BodyHtml
-    HTML body. Optional; derived from -BodyText when omitted.
+    HTML body. Optional when the signature is new; derived from -BodyText when omitted.
+
+.PARAMETER BodyRtf
+    RTF body. Optional when the signature is new; derived from -BodyText when omitted. An update sends
+    every rendition the signature has (Q205 (d)), and one this script made has all three: so a run on a
+    signature that already exists takes -BodyHtml and -BodyRtf beside -BodyText, or the server refuses
+    it, naming the ones left out, and nothing is written.
 
 .PARAMETER Scope
     'new' | 'reply' | 'both'. Section 2.8b needs at least 'new'.
@@ -128,6 +135,7 @@ param(
     [string] $SignatureName = 'Identity',
     [string] $BodyText = 'OutlookAI testbed identity account.',
     [string] $BodyHtml,
+    [string] $BodyRtf,
     [ValidateSet('new', 'reply', 'both')] [string] $Scope = 'new',
     [string] $OutlookProfile = 'OutlookAI-Tier',
     [string] $ServerExe = 'C:\OutlookAI-Q5\server\OutlookAI.McpServer.exe',
@@ -229,6 +237,7 @@ Accounts this profile does have: $($addresses -join ', ')
         default_for = @{ profile = $OutlookProfile; account = $Account; scope = $Scope }
     }
     if ($BodyHtml) { $callArgs['body_html'] = $BodyHtml }
+    if ($BodyRtf) { $callArgs['body_rtf'] = $BodyRtf }
 
     # A refusal or an error throws, carrying what the server said (McpStdioClient.ps1, Get-McpToolResult).
     [void](Invoke-McpTool -Session $session -Tool 'manage_signature' -Arguments $callArgs -Id 12)

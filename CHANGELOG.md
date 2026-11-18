@@ -1562,7 +1562,9 @@ its mailbox tests on, and change nothing you install.
   Text mail and the text version in plain-text mail, an update that replaces a version whole must
   send every version the signature has, and one that leaves a version out is refused with the
   missing ones named (Q205 (d), decided by the maintainer 2026-11-18). Until then such an update wrote
-  the one version and said in its answer which versions still read as before.
+  the one version and said in its answer which versions still read as before. The test machines'
+  `Set-AccountSignature.ps1` takes an RTF body beside the HTML one for the same reason: run again on
+  a signature it made, it has to send all three.
 
 - 🐛 **A draft whose signature could not be added says it has none.**
   Since the crash fix, a draft whose chosen signature could not be put in came out with no signature
