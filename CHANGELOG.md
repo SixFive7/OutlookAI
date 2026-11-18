@@ -271,7 +271,8 @@ its mailbox tests on, and change nothing you install.
   only attaches. A stdio test proves a cancelled request's wedged COM host is still ended at its
   deadline. On the Outlook test machines a live test connects to the running Outlook and checks the
   record, the log and health, and the disconnect test's two cold starts print what the settle wait
-  cost and must have settled on every condition.
+  cost and must have settled on every condition. On the Exchange test machine, whose Outlook syncs
+  real mailboxes as it starts, a cold start only has to have waited until Outlook was 20 seconds old.
 
 - 📝 **The README says what to do when Outlook does not open or an agent says it is not responding.**
   A troubleshooting entry explains the Outlook without a window that hangs, gives the Task Manager
@@ -1753,6 +1754,13 @@ its mailbox tests on, and change nothing you install.
   folder - Calendar, Quick Step Settings, the mailbox's top level, emptied folders in Deleted
   Items - beside the mail, and none of them could be opened. On the test machine they were 21 of the
   first 100 results.
+
+- ✅ **The disconnect test no longer fails when Outlook quits just before its pin is released.**
+  Closing Outlook's last window can make it quit, so the test releases the lifetime pin only on a
+  session that is still connected. When Outlook quit between that check and the call, the test
+  accepted a COM disconnect but not a session the mail server's exit watcher had already disposed,
+  and on 2026-11-18 it failed that way on the Exchange test machine. It now accepts every shape the
+  mail server itself counts as that disconnect.
 
 - ✅ **The build machine's run summaries never print a duration as "1 m 60 s"; seconds round down.**
   `Testbed/host/Invoke-TestsOnBuildVm.ps1` rounded the seconds of a duration to the nearest whole

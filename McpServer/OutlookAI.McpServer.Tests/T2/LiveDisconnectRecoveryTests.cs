@@ -220,10 +220,12 @@ public sealed class LiveDisconnectRecoveryTests
                         "release the lifetime pin on the pre-existing instance",
                         () => independentGateway.Run(s => ((OutlookComSession)s).TryCloseInvisibleExplorers()));
                 }
-                catch (COMException ex) when (ex.HResult == RpcServerUnavailable || ex.HResult == RpcDisconnected)
+                catch (Exception ex) when (IsSessionGone(ex))
                 {
-                    // The session died between the probe and the call: Outlook was quitting already.
-                    _output.WriteLine($"the session died under the pin release (0x{ex.HResult:X8}) - Outlook was already quitting, so there is no pin left to release");
+                    // The session died between the probe and the call: Outlook was quitting already. On the
+                    // Exchange VM (2026-11-18) the session's own exit watcher got there first, and the call
+                    // met a disposed session instead of a COM disconnect.
+                    _output.WriteLine($"the session died under the pin release ({DescribeGone(ex)}) - Outlook was already quitting, so there is no pin left to release");
                 }
             }
             else
@@ -489,19 +491,41 @@ public sealed class LiveDisconnectRecoveryTests
 
     /// <summary>
     /// The cold start a step just made, as the connection that made it saw it - and what the settle wait cost
-    /// (Q175 (a), measured here because this is the one test that stops and starts Outlook). A start must
-    /// have waited until Outlook was 20 s old with its add-in started and its main thread idle, and inside the
-    /// starting limit: these guests have no add-in that keeps it busy, so anything else is a defect.
+    /// (Q175 (a), measured here because this is the one test that stops and starts Outlook). Every start must
+    /// have waited until Outlook was 20 s old. On the Outlook guests (<see cref="LiveMachineProfile.Portable"/>)
+    /// it must also have settled on every condition inside the starting limit: they have no add-in that keeps
+    /// Outlook busy, so a wait ended by age or waived there is a defect. The Exchange VM's Outlook syncs real
+    /// mailboxes as it starts, and a wait that ends at the limit there is the wait doing its job.
     /// </summary>
     private void AssertTheColdStartSettled(string which)
     {
         OutlookConnectTrace? trace = OutlookComSession.LastConnectTrace;
         _output.WriteLine("cold start (" + which + "): " + (trace?.Describe() ?? "no connection trace in this process"));
         Assert.True(trace is { StartedOutlook: true }, which + ": the last connection in this process did not start Outlook");
-        Assert.Equal(OutlookStartPolicy.SettledCode, trace!.SettleOutcome);
+        if (_fixture.Settings.MachineProfile == LiveMachineProfile.Portable)
+        {
+            Assert.Equal(OutlookStartPolicy.SettledCode, trace!.SettleOutcome);
+        }
+
         Assert.True(
-            trace.AgeAtSettleMilliseconds >= OutlookStartPolicy.MinimumAgeMilliseconds,
+            trace!.AgeAtSettleMilliseconds >= OutlookStartPolicy.MinimumAgeMilliseconds,
             which + ": the settle wait ended before Outlook was " + OutlookStartPolicy.MinimumAgeMilliseconds + " ms old");
+    }
+
+    /// <summary>
+    /// A call whose session's Outlook quit under it, in every shape <see cref="ComGateway"/> counts as that
+    /// disconnect: a COM disconnect, or a session the exit watcher already disposed or separated.
+    /// </summary>
+    private static bool IsSessionGone(Exception ex)
+    {
+        return ex is ObjectDisposedException
+            || ex is InvalidComObjectException
+            || (ex is COMException com && (com.HResult == RpcServerUnavailable || com.HResult == RpcDisconnected));
+    }
+
+    private static string DescribeGone(Exception ex)
+    {
+        return ex is COMException com ? $"0x{com.HResult:X8}" : ex.GetType().Name;
     }
 
     /// <summary>One health reading, short enough to sit inside a failure message.</summary>

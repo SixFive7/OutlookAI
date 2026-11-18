@@ -72,8 +72,8 @@ public sealed class LiveOutlookStartTests
         Assert.Equal(before.Windows.ProcessId, trace.OutlookProcessId);
         Assert.Contains(trace.SettleOutcome, new[] { OutlookStartPolicy.SettledCode, OutlookStartPolicy.SettledByAgeCode });
 
-        // An Outlook past the starting limit is settled by its age alone, at the cost of one look; a younger
-        // one has had to meet every condition, its age among them.
+        // An Outlook past the starting limit is settled by its age alone, at the cost of one look when it was
+        // past it before this connection began; a younger one has had to meet every condition, its age among them.
         if (trace.SettleOutcome == OutlookStartPolicy.SettledCode)
         {
             Assert.True(trace.AgeAtSettleMilliseconds >= OutlookStartPolicy.MinimumAgeMilliseconds,
@@ -81,7 +81,12 @@ public sealed class LiveOutlookStartTests
         }
         else
         {
-            Assert.True(trace.SettleWaitMilliseconds < 1_000, "an Outlook settled by its age still cost " + trace.SettleWaitMilliseconds + " ms");
+            Assert.True(trace.AgeAtSettleMilliseconds >= OutlookStartPolicy.StartingLimitMilliseconds,
+                "an Outlook was settled by its age before it was " + OutlookStartPolicy.StartingLimitMilliseconds + " ms old");
+            if (before.AgeMilliseconds >= OutlookStartPolicy.StartingLimitMilliseconds)
+            {
+                Assert.True(trace.SettleWaitMilliseconds < 1_000, "an Outlook settled by its age still cost " + trace.SettleWaitMilliseconds + " ms");
+            }
         }
 
         // The record: this connection, finished, on this Outlook.
