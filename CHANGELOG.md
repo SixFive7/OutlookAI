@@ -1360,7 +1360,9 @@ its mailbox tests on, and change nothing you install.
   and writes the regions of a
   compose document - the draft, the signature region Outlook marks `_MailAutoSig` and the quoted
   original it marks `_MailOriginal` - which the server had ported from the pane and fixed since, now
-  `ComposeDocument`, with a choice between the server's soft line breaks and the pane's paragraphs;
+  `ComposeDocument`, with a choice between the server's soft line breaks and the pane's paragraphs,
+  and with the rule that puts a reply's own text above the quoted message's header block
+  (`QuoteSlotRules`, Q209 (a));
   the release of a COM reference, the test for a failed COM call and a COM object's identity, now
   `ComObjects`, to which `OutlookComSession`'s members of those names forward; the reading of a mail's
   recipients with the SMTP address where Outlook knows one, now `MailRecipients`, which also replaces
@@ -1371,7 +1373,7 @@ its mailbox tests on, and change nothing you install.
   `SignatureStore` is gone, the task pane reads and writes a draft through `ComposeDocument`, reads
   recipients through `MailRecipients` and releases through `ComObjects`, and the MCP registration
   prompt finds Outlook's windows through `NativeWindows`. Nothing in the namespace attaches to
-  Outlook, starts a COM thread or opens the search index, and check 15 holds that for all 27 of its
+  Outlook, starts a COM thread or opens the search index, and check 15 holds that for all 29 of its
   files.
   The word the draft tools read as "no signature" and the refusal a signature request can end in
   move with the rule, out of `SignatureManager`, which stays where it is: it writes signature files,
