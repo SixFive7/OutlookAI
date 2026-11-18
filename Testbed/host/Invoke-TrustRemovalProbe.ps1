@@ -163,6 +163,8 @@ function Invoke-SelfTest {
     # The run's code only: what follows the -SelfTest dispatch, below this function.
     $runCode = $own.Substring($own.LastIndexOf('if ($SelfTest) { Invoke-SelfTest }'))
     Check 'the probe asks with its run''s own reason' ($runCode.Contains('Get-LeaseDecision (Get-TestbedLease -VMName $VMName) "$LeaseReasonPrefix $runId"'))
+    $claimAt = $runCode.IndexOf('$made = New-RunDirectory -Parent $runsRoot -RunId $runId')
+    Check 'it claims its run directory with New-RunDirectory (ScriptHelpers.ps1) and goes by the name it gives, before its log is named after it, never with New-Item -Force' ($claimAt -gt 0 -and $runCode.IndexOf('$runId = $made.RunId') -gt $claimAt -and $claimAt -lt $runCode.IndexOf("`$script:LogPath = Join-Path `$runDir 'run.log'") -and -not $runCode.Contains('New-Item -ItemType Directory -Force -Path $runDir'))
 
     $c = Get-ProbeCommand -Scenario 'RootStorePrompt' -HoldSeconds 120 -WithInstaller $false -InstallerName ''
     Check 'the probe runs with -Execute and the hold' ($c -ceq "& '$GuestDir\Measure-TrustRemoval.ps1' -Scenario RootStorePrompt -Execute -LogDir '$GuestDir\results' -HoldSeconds 120")
@@ -204,7 +206,15 @@ if ($LASTEXITCODE -ne 0 -or $sha -notmatch '^[0-9a-f]{40}$') { Stop-Refused "git
 $dirty = @(Invoke-NativeCommand { & git -C $repo status --porcelain -- 'Testbed/guest/Measure-TrustRemoval.ps1' 'Testbed/guest/Register-InteractiveTask.ps1' 'Testbed/guest/OutlookMapiInterop.ps1' 'Installer.iss' 2>&1 } | Where-Object { $_ })
 
 $runId = New-RunId (Get-Date) $sha $Scenario
-$runDir = Join-Path $repo ".work\trust-removal-runs\$runId"
+$runsRoot = Join-Path $repo '.work\trust-removal-runs'
+if ($Execute) {
+    # The run's own directory, claimed before anything is named after the run: a probe of the same
+    # commit and scenario started in the same second gets -2, -3 ... (New-RunDirectory), and the name it
+    # gives is the run's. A dry run claims nothing and shows the name the run would try first.
+    $made = New-RunDirectory -Parent $runsRoot -RunId $runId
+    $runId = $made.RunId
+}
+$runDir = Join-Path $runsRoot $runId
 $command = Get-ProbeCommand -Scenario $Scenario -HoldSeconds $HoldSeconds -WithInstaller ($Scenario -eq 'InstallerCleanup') -InstallerName ([System.IO.Path]::GetFileName([string]$InstallerPath))
 
 Write-Host "== Invoke-TrustRemovalProbe: $Scenario on $VMName at RunLevel $RunLevel, from and resting on $checkpoint"
@@ -216,7 +226,6 @@ if (-not $Execute) {
     exit 0
 }
 
-New-Item -ItemType Directory -Force -Path $runDir | Out-Null
 $script:LogPath = Join-Path $runDir 'run.log'
 $verdict = 'INFRA'
 $why = ''
