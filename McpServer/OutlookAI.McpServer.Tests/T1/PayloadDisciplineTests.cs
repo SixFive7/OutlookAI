@@ -1,5 +1,6 @@
 using OutlookAI.Core.Com;
 using OutlookAI.Core.Services;
+using OutlookAI.Core.AddIn;
 using Xunit;
 
 namespace OutlookAI.McpServer.Tests.T1;

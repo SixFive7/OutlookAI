@@ -134,54 +134,35 @@ namespace OutlookAI.Core.Com
                 return false;
             }
 
-            IntPtr p = IntPtr.Zero;
-            try
-            {
-                p = Marshal.GetIUnknownForObject(explorer);
-                lock (PinLock)
-                {
-                    return PinPointers.Contains(p);
-                }
-            }
-            catch (Exception)
+            IntPtr p = ComObjects.IdentityOf(explorer);
+            if (p == IntPtr.Zero)
             {
                 return false;
             }
-            finally
+
+            lock (PinLock)
             {
-                if (p != IntPtr.Zero)
-                {
-                    _ = Marshal.Release(p);
-                }
+                return PinPointers.Contains(p);
             }
         }
 
         private static void RememberPin(object explorer, bool remember)
         {
-            IntPtr p = IntPtr.Zero;
-            try
+            IntPtr p = ComObjects.IdentityOf(explorer);
+            if (p == IntPtr.Zero)
             {
-                p = Marshal.GetIUnknownForObject(explorer);
-                lock (PinLock)
+                return;
+            }
+
+            lock (PinLock)
+            {
+                if (remember)
                 {
-                    if (remember)
-                    {
-                        _ = PinPointers.Add(p);
-                    }
-                    else
-                    {
-                        _ = PinPointers.Remove(p);
-                    }
+                    _ = PinPointers.Add(p);
                 }
-            }
-            catch (Exception)
-            {
-            }
-            finally
-            {
-                if (p != IntPtr.Zero)
+                else
                 {
-                    _ = Marshal.Release(p);
+                    _ = PinPointers.Remove(p);
                 }
             }
         }
@@ -355,7 +336,7 @@ namespace OutlookAI.Core.Com
                 foreach (IntPtr h in SelectWindowsToHide(before, after))
                 {
                     Park(h);
-                    _ = NativeMethods.ShowWindow(h, NativeMethods.SW_HIDE);
+                    _ = NativeWindows.ShowWindow(h, NativeWindows.SW_HIDE);
                 }
             }
             catch (Exception)
@@ -696,23 +677,7 @@ namespace OutlookAI.Core.Com
         /// </summary>
         internal static long TryGetWindowHandle(object? outlookWindowObject)
         {
-            if (outlookWindowObject == null)
-            {
-                return 0;
-            }
-
-            try
-            {
-                if (outlookWindowObject is IOleWindow window && window.GetWindow(out IntPtr handle) == 0)
-                {
-                    return handle.ToInt64();
-                }
-            }
-            catch (Exception ex) when (ex is InvalidCastException || ex is COMException || ex is InvalidComObjectException)
-            {
-            }
-
-            return 0;
+            return NativeWindows.WindowOf(outlookWindowObject).ToInt64();
         }
 
         /// <summary>
@@ -727,13 +692,13 @@ namespace OutlookAI.Core.Com
             }
 
             IntPtr handle = new IntPtr(window);
-            if (!NativeMethods.IsWindow(handle))
+            if (!NativeWindows.IsWindow(handle))
             {
                 return false;
             }
 
-            _ = NativeMethods.GetWindowThreadProcessId(handle, out uint pid);
-            return (int)pid == outlookPid && !NativeMethods.IsWindowVisible(handle);
+            _ = NativeWindows.GetWindowThreadProcessId(handle, out uint pid);
+            return (int)pid == outlookPid && !NativeWindows.IsWindowVisible(handle);
         }
 
         /// <summary>
@@ -751,13 +716,13 @@ namespace OutlookAI.Core.Com
             }
 
             IntPtr handle = new IntPtr(window);
-            if (!NativeMethods.IsWindow(handle))
+            if (!NativeWindows.IsWindow(handle))
             {
                 detail = "the pin's window no longer exists";
                 return true;
             }
 
-            if (NativeMethods.IsWindowVisible(handle))
+            if (NativeWindows.IsWindowVisible(handle))
             {
                 detail = "the recorded window is visible - a person may be using it, so it is not closed";
                 return false;
@@ -765,7 +730,7 @@ namespace OutlookAI.Core.Com
 
             if (outlookPid > 0)
             {
-                _ = NativeMethods.GetWindowThreadProcessId(handle, out uint pid);
+                _ = NativeWindows.GetWindowThreadProcessId(handle, out uint pid);
                 if ((int)pid != outlookPid)
                 {
                     detail = "the recorded window belongs to another process";
@@ -798,7 +763,7 @@ namespace OutlookAI.Core.Com
                 }
 
                 detail = "no Explorer has the recorded window";
-                return !NativeMethods.IsWindow(handle);
+                return !NativeWindows.IsWindow(handle);
             }
             catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
             {
@@ -833,13 +798,13 @@ namespace OutlookAI.Core.Com
                 return windows;
             }
 
-            _ = NativeMethods.EnumWindows(
+            _ = NativeWindows.EnumWindows(
                 (h, l) =>
                 {
-                    _ = NativeMethods.GetWindowThreadProcessId(h, out uint pid);
+                    _ = NativeWindows.GetWindowThreadProcessId(h, out uint pid);
                     if (pids.Contains((int)pid))
                     {
-                        windows.Add(new WindowState(h, NativeMethods.IsWindowVisible(h)));
+                        windows.Add(new WindowState(h, NativeWindows.IsWindowVisible(h)));
                     }
 
                     return true;
@@ -850,41 +815,13 @@ namespace OutlookAI.Core.Com
         }
 
         /// <summary>Count of windows a HUMAN can currently see (visible, not minimized, on screen).</summary>
-        public static int CountUserVisibleWindows()
-        {
-            int visible = 0;
-            foreach (WindowState w in SnapshotOutlookWindows())
-            {
-                if (!w.Visible)
-                {
-                    continue;
-                }
-
-                if (!NativeMethods.GetWindowRect(w.Handle, out NativeMethods.RECT r))
-                {
-                    continue;
-                }
-
-                if (r.Right <= r.Left || r.Bottom <= r.Top)
-                {
-                    continue;
-                }
-
-                if (r.Left <= ParkX / 2 && r.Top <= ParkY / 2)
-                {
-                    continue; // parked
-                }
-
-                visible++;
-            }
-
-            return visible;
-        }
+        public static int CountUserVisibleWindows() => UserVisibleWindowHandles().Count;
 
         /// <summary>
         /// The windows <see cref="CountUserVisibleWindows"/> counts, by handle: reads only, for a test that has
-        /// to name the windows a count found rather than say how many. Its filter is the count's, and the two
-        /// must stay the same - a test that takes both at one moment says so when they differ.
+        /// to name the windows a count found rather than say how many. The count is this list's length, so the
+        /// two have one filter; a test that takes both at one moment still says so when a window came or went
+        /// between them.
         /// </summary>
         public static IReadOnlyList<IntPtr> UserVisibleWindowHandles()
         {
@@ -896,7 +833,7 @@ namespace OutlookAI.Core.Com
                     continue;
                 }
 
-                if (!NativeMethods.GetWindowRect(w.Handle, out NativeMethods.RECT r))
+                if (!NativeWindows.GetWindowRect(w.Handle, out NativeWindows.RECT r))
                 {
                     continue;
                 }
@@ -919,73 +856,14 @@ namespace OutlookAI.Core.Com
 
         private static void Park(IntPtr handle)
         {
-            _ = NativeMethods.SetWindowPos(
+            _ = NativeWindows.SetWindowPos(
                 handle,
                 IntPtr.Zero,
                 ParkX,
                 ParkY,
                 0,
                 0,
-                NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOZORDER | NativeMethods.SWP_NOACTIVATE);
-        }
-
-        private static class NativeMethods
-        {
-            internal const uint SWP_NOSIZE = 0x0001;
-            internal const uint SWP_NOZORDER = 0x0004;
-            internal const uint SWP_NOACTIVATE = 0x0010;
-            internal const int SW_HIDE = 0;
-
-            internal delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
-
-            [StructLayout(LayoutKind.Sequential)]
-            internal struct RECT
-            {
-                public int Left;
-                public int Top;
-                public int Right;
-                public int Bottom;
-            }
-
-            [DllImport("user32.dll")]
-            [return: MarshalAs(UnmanagedType.Bool)]
-            internal static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
-
-            [DllImport("user32.dll")]
-            internal static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
-
-            [DllImport("user32.dll")]
-            [return: MarshalAs(UnmanagedType.Bool)]
-            internal static extern bool IsWindowVisible(IntPtr hWnd);
-
-            [DllImport("user32.dll")]
-            [return: MarshalAs(UnmanagedType.Bool)]
-            internal static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
-
-            [DllImport("user32.dll")]
-            [return: MarshalAs(UnmanagedType.Bool)]
-            internal static extern bool SetWindowPos(IntPtr hWnd, IntPtr insertAfter, int x, int y, int cx, int cy, uint flags);
-
-            [DllImport("user32.dll")]
-            [return: MarshalAs(UnmanagedType.Bool)]
-            internal static extern bool ShowWindow(IntPtr hWnd, int cmdShow);
-
-            [DllImport("user32.dll")]
-            [return: MarshalAs(UnmanagedType.Bool)]
-            internal static extern bool IsWindow(IntPtr hWnd);
-        }
-
-        /// <summary>The OLE window interface every Outlook Explorer and Inspector implements: the one way from one to its window.</summary>
-        [ComImport]
-        [Guid("00000114-0000-0000-C000-000000000046")]
-        [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-        internal interface IOleWindow
-        {
-            [PreserveSig]
-            int GetWindow(out IntPtr phwnd);
-
-            [PreserveSig]
-            int ContextSensitiveHelp([MarshalAs(UnmanagedType.Bool)] bool enterMode);
+                NativeWindows.SWP_NOSIZE | NativeWindows.SWP_NOZORDER | NativeWindows.SWP_NOACTIVATE);
         }
     }
 

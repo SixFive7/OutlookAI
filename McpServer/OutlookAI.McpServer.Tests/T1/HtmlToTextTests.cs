@@ -1,4 +1,5 @@
 using OutlookAI.Core.Text;
+using OutlookAI.Core.AddIn;
 using Xunit;
 
 namespace OutlookAI.McpServer.Tests.T1;

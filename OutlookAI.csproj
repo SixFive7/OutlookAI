@@ -188,7 +188,6 @@
     <Compile Include="Services\McpRegistrationService.cs" />
     <Compile Include="Services\ModelCatalog.cs" />
     <Compile Include="Services\OutlookTuningService.cs" />
-    <Compile Include="Services\SignatureStore.cs" />
     <Compile Include="Services\ThemeService.cs" />
     <Compile Include="Services\UpdateService.cs" />
     <Compile Include="TaskPane\AITaskPane.cs">
@@ -198,6 +197,7 @@
       <DependentUpon>AITaskPane.cs</DependentUpon>
     </Compile>
     <Compile Include="TaskPane\McpRegistrationPrompt.cs" />
+    <Compile Include="TaskPane\UiThread.cs" />
     <Compile Include="TaskPane\SettingsDialog.cs">
       <SubType>Form</SubType>
     </Compile>

@@ -124,7 +124,7 @@ public sealed class ReadOnlyLiveTestTests
     public void Control_AFileWriteInsideTheProduct_IsSeen_UnlessItIsAReviewedOne()
     {
         // A draft's temporary body file is a file write no exemption covers; the session registry's save is the reviewed one.
-        MethodBase temporary = typeof(OutlookAI.Core.Com.OutlookComSession).GetMethod("WriteTemporaryHtmlFile", Everything)!;
+        MethodBase temporary = typeof(OutlookAI.Core.AddIn.ComposeDocument).GetMethod("WriteTemporaryHtmlFile", Everything)!;
         Assert.Contains(
             WritePathAnalyzer.WalkProduct(new[] { (temporary, "control") }).Findings,
             f => f.Reason.Contains("writes the file system (File.WriteAllText)", StringComparison.Ordinal));

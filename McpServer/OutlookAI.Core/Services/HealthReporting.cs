@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 
 using Microsoft.Win32;
+using OutlookAI.Core.AddIn;
 using OutlookAI.Core.Com;
 
 // The one definition of everything the add-in and this server have to agree about: the HKCU keys

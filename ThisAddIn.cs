@@ -41,31 +41,15 @@ namespace OutlookAI
             get { return _uiMarshalControl; }
         }
 
+        /// <summary>
+        /// Releases a COM reference through OutlookAI.Core's <see cref="ComObjects.Release"/>, and
+        /// never throws: a release that fails is logged, because the add-in releases in finally
+        /// blocks inside Outlook's own process, where an exception would replace the one that matters.
+        /// </summary>
         internal static void ReleaseCom(object obj)
         {
-            if (obj != null)
-            {
-                try { Marshal.ReleaseComObject(obj); }
-                catch (Exception ex) { System.Diagnostics.Debug.WriteLine("ReleaseCom: " + ex.Message); }
-            }
-        }
-
-        private static bool ComEqual(object a, object b)
-        {
-            if (a == b) return true;
-            if (a == null || b == null) return false;
-            IntPtr punkA = IntPtr.Zero, punkB = IntPtr.Zero;
-            try
-            {
-                punkA = Marshal.GetIUnknownForObject(a);
-                punkB = Marshal.GetIUnknownForObject(b);
-                return punkA == punkB;
-            }
-            finally
-            {
-                if (punkA != IntPtr.Zero) Marshal.Release(punkA);
-                if (punkB != IntPtr.Zero) Marshal.Release(punkB);
-            }
+            try { ComObjects.Release(obj); }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("ReleaseCom: " + ex.Message); }
         }
 
         internal CustomTaskPane FindPaneForWindow(object window)
@@ -76,7 +60,7 @@ namespace OutlookAI
                 try
                 {
                     paneWindow = pane.Window;
-                    if (ComEqual(paneWindow, window))
+                    if (ComObjects.SameObject(paneWindow, window))
                         return pane;
                 }
                 catch (Exception ex) { System.Diagnostics.Debug.WriteLine("FindPaneForWindow: " + ex.Message); }
@@ -272,7 +256,7 @@ namespace OutlookAI
         {
             foreach (var hooked in _hookedExplorers)
             {
-                if (ComEqual(hooked, explorer))
+                if (ComObjects.SameObject(hooked, explorer))
                     return true;
             }
             return false;
@@ -326,7 +310,7 @@ namespace OutlookAI
             bool removed = false;
             for (int i = _hookedExplorers.Count - 1; i >= 0; i--)
             {
-                if (ComEqual(_hookedExplorers[i], explorer))
+                if (ComObjects.SameObject(_hookedExplorers[i], explorer))
                 {
                     _hookedExplorers.RemoveAt(i);
                     removed = true;

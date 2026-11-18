@@ -876,7 +876,8 @@ public static class HtmlOnlyDraftComposer
     }
 
     /// <summary>
-    /// A plain-text body the way the Word path writes it today (<c>InsertBodyAboveSignature</c>): ONE
+    /// A plain-text body the way the Word path writes it today (<c>ComposeDocument.WriteDraftText</c> with
+    /// <c>DraftTextLayout.LineBreaks</c>): ONE
     /// paragraph, every newline a soft line break - Word's vertical tab, which it writes as &lt;br&gt; - so a
     /// blank line is two breaks in a row, not a paragraph of its own.
     /// </summary>

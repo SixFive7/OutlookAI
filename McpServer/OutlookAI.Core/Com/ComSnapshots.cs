@@ -1,29 +1,9 @@
 using System;
 using System.Collections.Generic;
+using OutlookAI.Core.AddIn;
 
 namespace OutlookAI.Core.Com
 {
-    /// <summary>One recipient of a mail item (COM-free data).</summary>
-    public sealed class ComRecipientInfo
-    {
-        /// <summary>Creates a recipient snapshot.</summary>
-        public ComRecipientInfo(string kind, string? name, string? address)
-        {
-            Kind = kind;
-            Name = name;
-            Address = address;
-        }
-
-        /// <summary>"to", "cc" or "bcc".</summary>
-        public string Kind { get; }
-
-        /// <summary>Display name.</summary>
-        public string? Name { get; }
-
-        /// <summary>SMTP address when resolvable, otherwise the raw provider address.</summary>
-        public string? Address { get; }
-    }
-
     /// <summary>One attachment of a mail item (COM-free data).</summary>
     public sealed class ComAttachmentInfo
     {
@@ -1396,7 +1376,7 @@ namespace OutlookAI.Core.Com
         /// <summary>signature="none": no signature, and on update_draft the draft's own removed.</summary>
         public static ComSignatureOverride NoSignature()
         {
-            return new ComSignatureOverride(Services.SignatureManager.NoSignatureKeyword, string.Empty, none: true);
+            return new ComSignatureOverride(AddIn.SignatureRequest.NoSignatureKeyword, string.Empty, none: true);
         }
 
         /// <summary>Signature name (for reporting/audit); "none" for <see cref="None"/>.</summary>
@@ -1456,7 +1436,7 @@ namespace OutlookAI.Core.Com
         public bool? Removed { get; }
 
         /// <summary>The outcome of a decision.</summary>
-        public static ComSignatureOutcome From(Services.SignatureDecision decision, string? insertedName, bool? removed = null)
+        public static ComSignatureOutcome From(AddIn.SignatureDecision decision, string? insertedName, bool? removed = null)
         {
             if (decision == null)
             {

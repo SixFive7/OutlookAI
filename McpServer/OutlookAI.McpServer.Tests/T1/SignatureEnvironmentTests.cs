@@ -1,4 +1,5 @@
 using OutlookAI.Core.Services;
+using OutlookAI.Core.AddIn;
 using Xunit;
 using SignatureFolderLocation = global::OutlookAI.Core.AddIn.SignatureFolderLocation;
 

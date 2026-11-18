@@ -7,6 +7,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 
+using OutlookAI.Core.AddIn;
 using OutlookAI.Core.IndexSearch;
 
 namespace OutlookAI.Core.Com
@@ -4394,12 +4395,7 @@ namespace OutlookAI.Core.Com
             return new ComExplorerState(caption, folderPath, folderName, windowState, folderEntryId);
         }
 
-        internal static string DescribeComFailure(Exception ex)
-        {
-            return ex is COMException com
-                ? string.Format(CultureInfo.InvariantCulture, "COMException 0x{0:X8}", com.HResult)
-                : ex.GetType().Name;
-        }
+        internal static string DescribeComFailure(Exception ex) => ComObjects.DescribeFailure(ex);
 
         // ------------------------------------------------------------------ drafts (Phase 4, v3.MD L4/D4)
 
@@ -4535,7 +4531,7 @@ namespace OutlookAI.Core.Com
 
                     // Q157 (a): the signature is decided here, where the sending account and the profile
                     // Outlook runs on are known, and above the compose - a refusal leaves no draft.
-                    Services.SignatureDecision signature = DecideSignature(signatureOverride, account, replyOrForward: false);
+                    AddIn.SignatureDecision signature = DecideSignature(signatureOverride, account, replyOrForward: false);
                     if (signature.Refusal != null)
                     {
                         capturedError = ComErrorTokens.With(ComErrorTokens.SignatureRefused, signature.Refusal);
@@ -4768,7 +4764,7 @@ namespace OutlookAI.Core.Com
 
                     // Q157 (a) and Q160: decided with the account delivering to the source's store - none
                     // for a delegate or shared mailbox - and above the compose, so a refusal leaves no draft.
-                    Services.SignatureDecision signature = DecideSignature(signatureOverride, account, replyOrForward: true);
+                    AddIn.SignatureDecision signature = DecideSignature(signatureOverride, account, replyOrForward: true);
                     if (signature.Refusal != null)
                     {
                         capturedError = ComErrorTokens.With(ComErrorTokens.SignatureRefused, signature.Refusal);
@@ -6594,7 +6590,7 @@ namespace OutlookAI.Core.Com
 
                     // Q157 (a): a signature swap or removal is decided for the account the draft sends
                     // from - before the editor is touched, so a refusal leaves the draft as it was.
-                    Services.SignatureDecision? signature = null;
+                    AddIn.SignatureDecision? signature = null;
                     ComSignatureOverride? toInsert = null;
                     ComSignatureOutcome? signatureOutcome = null;
                     if (signatureOverride != null)
@@ -7189,14 +7185,14 @@ namespace OutlookAI.Core.Com
                 {
                     // signature="none" (Q157 (a)): the _MailAutoSig region goes - on update_draft the draft's
                     // own, on a new draft whatever Outlook injected itself.
-                    (bool removedOk, bool removed, string? removeError) = RemoveSignatureFromDocument(document!);
+                    (bool removedOk, bool removed, string? removeError) = ComposeDocument.RemoveSignature(document!);
                     signatureRemoved = removed;
                     error = removedOk ? null : removeError ?? "SignatureRemoveFailed";
                 }
 
                 if (error == null && signatureOverride != null)
                 {
-                    (bool sigOk, string? sigError) = ApplySignatureToDocument(document!, signatureOverride.FilePath);
+                    (bool sigOk, string? sigError) = ComposeDocument.ApplySignature(document!, signatureOverride.FilePath);
                     error = sigOk ? null : sigError ?? "SignatureInsertFailed";
                     accountDefaultApplied = sigOk && signatureIsAccountDefault;
                 }
@@ -7206,8 +7202,9 @@ namespace OutlookAI.Core.Com
                     // replaceWholeDocumentWhenNoBoundary: an update must clear the PREVIOUS
                     // body even when the draft carries neither a signature nor a quoted
                     // original to bound the region.
-                    (bool bodyOk, string? bodyError) = InsertBodyAboveSignature(
-                        document!, body, replaceWholeDocumentWhenNoBoundary: true);
+                    (bool bodyOk, string? bodyError) = body.IsHtml
+                        ? ComposeDocument.WriteDraftHtml(document!, body.Html, replaceToEndWhenNoBoundary: true)
+                        : ComposeDocument.WriteDraftText(document!, body.Text, DraftTextLayout.LineBreaks, replaceToEndWhenNoBoundary: true);
                     error = bodyOk ? null : bodyError ?? "BodyInsertFailed";
                 }
 
@@ -7217,7 +7214,7 @@ namespace OutlookAI.Core.Com
                     // document (an older draft, or a signature just re-inserted by the
                     // override above) is embedded now, so this re-render is the last one
                     // that could drop it.
-                    _ = EmbedLinkedPictures(document!);
+                    _ = ComposeDocument.EmbedLinkedPictures(document!);
                 }
 
                 if (error == null && route == DraftEditorRoute.Direct)
@@ -7807,7 +7804,7 @@ namespace OutlookAI.Core.Com
             ref object? mail,
             string? storeId,
             ComDraftBody body,
-            Services.SignatureDecision signature)
+            AddIn.SignatureDecision signature)
         {
             dynamic created = mail!;
             created.Save();
@@ -7875,19 +7872,19 @@ namespace OutlookAI.Core.Com
         /// account delivers to) and the profile Outlook runs on - read fresh, as are the policy, the
         /// roaming state and the signature folder.
         /// </summary>
-        private Services.SignatureDecision DecideSignature(ComSignatureOverride? requested, object? account, bool? replyOrForward)
+        private AddIn.SignatureDecision DecideSignature(ComSignatureOverride? requested, object? account, bool? replyOrForward)
         {
-            Services.SignatureRequest request = requested == null
-                ? Services.SignatureRequest.AccountDefault
-                : requested.None ? Services.SignatureRequest.NoSignature : Services.SignatureRequest.Named(requested.Name);
-            Services.SignatureSendingAccount? sending = account == null
+            AddIn.SignatureRequest request = requested == null
+                ? AddIn.SignatureRequest.AccountDefault
+                : requested.None ? AddIn.SignatureRequest.NoSignature : AddIn.SignatureRequest.Named(requested.Name);
+            AddIn.SignatureSendingAccount? sending = account == null
                 ? null
-                : new Services.SignatureSendingAccount(
+                : new AddIn.SignatureSendingAccount(
                     TryGetString(() => (string?)((dynamic)account).SmtpAddress),
                     TryGetString(() => (string?)((dynamic)account).DisplayName));
             string? runningProfile = TryGetString(() => (string?)((dynamic)_namespace!).CurrentProfileName);
-            return Services.SignatureSelector.Decide(
-                Services.SignatureEnvironment.ReadCurrent(), request, sending, replyOrForward, runningProfile);
+            return AddIn.SignatureSelector.Decide(
+                AddIn.SignatureEnvironment.ReadCurrent(), request, sending, replyOrForward, runningProfile);
         }
 
         /// <summary>
@@ -7895,7 +7892,7 @@ namespace OutlookAI.Core.Com
         /// to the draft's store - the identity send verifies - and whether it is a reply is not known, so
         /// a policy forcing either default is honoured.
         /// </summary>
-        private Services.SignatureDecision DecideSignatureForDraft(object draft, ComSignatureOverride requested)
+        private AddIn.SignatureDecision DecideSignatureForDraft(object draft, ComSignatureOverride requested)
         {
             object? parent = null;
             object? store = null;
@@ -7922,46 +7919,6 @@ namespace OutlookAI.Core.Com
                 Release(account);
                 Release(store);
                 Release(parent);
-            }
-        }
-
-        /// <summary>
-        /// Removes the signature region - the <c>_MailAutoSig</c> bookmark and its content - from an
-        /// already-acquired Word document. Ok with nothing removed when the draft has no such region.
-        /// </summary>
-        private static (bool Ok, bool Removed, string? Error) RemoveSignatureFromDocument(object documentObject)
-        {
-            dynamic doc = documentObject;
-            object? bookmarks = null;
-            object? sigBookmark = null;
-            object? sigRange = null;
-            try
-            {
-                bookmarks = doc.Bookmarks;
-                dynamic bm = (dynamic)bookmarks!;
-
-                // _MailAutoSig is a HIDDEN bookmark - invisible to Exists() unless ShowHidden is on.
-                bm.ShowHidden = true;
-                if (!(bool)bm.Exists("_MailAutoSig"))
-                {
-                    return (true, false, null);
-                }
-
-                sigBookmark = bm.Item("_MailAutoSig");
-                sigRange = ((dynamic)sigBookmark!).Range;
-                ((dynamic)sigBookmark).Delete();
-                ((dynamic)sigRange!).Delete();
-                return (true, true, null);
-            }
-            catch (Exception ex) when (IsComCallFailure(ex))
-            {
-                return (false, false, DescribeComFailure(ex));
-            }
-            finally
-            {
-                Release(sigRange);
-                Release(sigBookmark);
-                Release(bookmarks);
             }
         }
 
@@ -8001,676 +7958,6 @@ namespace OutlookAI.Core.Com
             }
         }
 
-        /// <summary>
-        /// The bookmark dance itself, on an already-acquired Word document: replace the
-        /// _MailAutoSig region (or insert above _MailOriginal / at document end when no
-        /// signature region exists) with the signature file's content and recreate the
-        /// _MailAutoSig bookmark over it.
-        /// </summary>
-        private static (bool Applied, string? Error) ApplySignatureToDocument(object documentObject, string signatureFilePath)
-        {
-            dynamic doc = documentObject;
-            object? bookmarks = null;
-            try
-            {
-                bookmarks = doc.Bookmarks;
-                dynamic bm = (dynamic)bookmarks!;
-
-                // _MailAutoSig/_MailOriginal are HIDDEN bookmarks - invisible to
-                // Exists() unless ShowHidden is on (add-in AITaskPane pattern).
-                bm.ShowHidden = true;
-
-                int insertAt;
-                if ((bool)bm.Exists("_MailAutoSig"))
-                {
-                    // Replace: drop the marker, then the signature content itself.
-                    object? sigBookmark = null;
-                    object? sigRange = null;
-                    try
-                    {
-                        sigBookmark = bm.Item("_MailAutoSig");
-                        sigRange = ((dynamic)sigBookmark!).Range;
-                        insertAt = (int)((dynamic)sigRange!).Start;
-                        ((dynamic)sigBookmark).Delete();
-                        ((dynamic)sigRange).Delete();
-                    }
-                    finally
-                    {
-                        Release(sigRange);
-                        Release(sigBookmark);
-                    }
-                }
-                else if ((bool)bm.Exists("_MailOriginal"))
-                {
-                    // No signature yet - a reply or forward made without an inspector never has one: it goes into
-                    // the empty paragraph directly above the quoted message's header block, NOT at _MailOriginal's
-                    // start, which sits inside that block's bordered first paragraph. There it took the block's top
-                    // border and, with the body written above it, put the agent's whole text under the separator line
-                    // (Q149, 12 of 12 measured replies and forwards; Q209 (a), decided 2026-11-18).
-                    insertAt = PrepareSlotAboveQuote(doc, MailOriginalStart(bm));
-                }
-                else
-                {
-                    // Plain new draft: end of document (before the final paragraph mark).
-                    object? content = null;
-                    try
-                    {
-                        content = doc.Content;
-                        insertAt = Math.Max(0, (int)((dynamic)content!).End - 1);
-                    }
-                    finally
-                    {
-                        Release(content);
-                    }
-                }
-
-                int endBefore = GetDocumentEnd(doc);
-                object? insertRange = null;
-                try
-                {
-                    insertRange = doc.Range(insertAt, insertAt);
-                    ((dynamic)insertRange!).InsertFile(signatureFilePath, Type.Missing, false, false, false);
-                }
-                finally
-                {
-                    Release(insertRange);
-                }
-
-                int endAfter = GetDocumentEnd(doc);
-                int newEnd = insertAt + Math.Max(0, endAfter - endBefore);
-
-                // Recreate the marker over the inserted content so Outlook (and the
-                // add-in's draft/signature/quote split) keep working on this draft.
-                object? newRange = null;
-                object? newMark = null;
-                try
-                {
-                    newRange = doc.Range(insertAt, newEnd);
-
-                    // Bookmarks.Add hands back the Bookmark it made: released here, while the
-                    // document is still open, never by the garbage collector after it closed.
-                    newMark = bm.Add("_MailAutoSig", newRange);
-                }
-                finally
-                {
-                    Release(newMark);
-                    Release(newRange);
-                }
-
-                return endAfter > endBefore ? (true, null) : (false, "InsertFileAddedNothing");
-            }
-            catch (Exception ex) when (IsComCallFailure(ex))
-            {
-                return (false, DescribeComFailure(ex));
-            }
-            finally
-            {
-                Release(bookmarks);
-            }
-        }
-
-        /// <summary>
-        /// Turns every LINKED picture in the compose document into an EMBEDDED one, and
-        /// returns how many it converted. Best-effort by design: a failure here must never
-        /// fail a composition, so every COM problem is swallowed and simply not counted.
-        /// <para>
-        /// ⚠ THE MECHANISM THIS EXISTS FOR (live-measured, D47). Word's
-        /// <c>Range.InsertFile</c> of a signature .htm does NOT embed the signature's
-        /// images: it inserts each one as a LINKED <c>InlineShape</c> pointing at the file
-        /// on disk, and Outlook stores that link verbatim, so the saved draft carries
-        /// <c>&lt;img src="file:///…\Signatures\&lt;name&gt;_files\logo.png"&gt;</c> and
-        /// ZERO attachments. The link only renders because the file happens to sit on this
-        /// machine. Re-rendering such a document - which is exactly what
-        /// <c>update_draft</c> does when the held inspector re-materializes the saved HTML
-        /// - makes Word re-serialize the unresolved linked picture as its VML placeholder
-        /// AutoShape (<c>&lt;v:rect … alt="logo"&gt;</c>), and the <c>&lt;img&gt;</c>
-        /// disappears. Embedding the picture at composition time removes the link, so
-        /// Outlook writes real image bytes as an inline <c>cid:</c> attachment that
-        /// survives any number of re-renders - and reaches the recipient, which a
-        /// <c>file:///</c> link never could.
-        /// </para>
-        /// <c>SavePictureWithDocument</c> must be set BEFORE <c>BreakLink</c>: breaking a
-        /// link whose picture is not stored with the document leaves nothing behind.
-        /// </summary>
-        private static int EmbedLinkedPictures(object documentObject)
-        {
-            dynamic doc = documentObject;
-            int embedded = 0;
-            object? shapes = null;
-            try
-            {
-                shapes = doc.InlineShapes;
-                dynamic collection = (dynamic)shapes!;
-                int count = (int)collection.Count;
-                for (int i = 1; i <= count; i++)
-                {
-                    object? shape = null;
-                    object? link = null;
-                    try
-                    {
-                        shape = collection[i];
-
-                        // An already-embedded picture has no LinkFormat: late-bound COM
-                        // answers either null or a binding failure, and both mean skip.
-                        link = ((dynamic)shape!).LinkFormat;
-                        if (link == null)
-                        {
-                            continue;
-                        }
-
-                        ((dynamic)link!).SavePictureWithDocument = true;
-                        ((dynamic)link!).BreakLink();
-                        embedded++;
-                    }
-                    catch (Exception ex) when (IsComCallFailure(ex))
-                    {
-                    }
-                    finally
-                    {
-                        Release(link);
-                        Release(shape);
-                    }
-                }
-            }
-            catch (Exception ex) when (IsComCallFailure(ex))
-            {
-            }
-            finally
-            {
-                Release(shapes);
-            }
-
-            return embedded;
-        }
-
-        /// <summary>
-        /// Writes the agent's plain-text body into the DRAFT region of an
-        /// already-acquired Word document - the add-in's proven
-        /// <c>AITaskPane.WriteDraftToDocument</c> technique ported to late-bound COM.
-        /// <para>
-        /// The draft region ends where the signature (<c>_MailAutoSig</c>) or, absent
-        /// that, the quoted original (<c>_MailOriginal</c>) begins; with neither marker
-        /// present the body simply goes to the document start. The boundary marker is
-        /// DELETED before the write and RECREATED over the (shifted, byte-identical)
-        /// region afterwards. That dance is load-bearing, not cosmetic: Word absorbs text
-        /// inserted at a bookmark's start INTO that bookmark, so writing straight to
-        /// Range(0,0) while <c>_MailAutoSig</c> starts at 0 made the agent body part of
-        /// the signature region (the A1 defect - live-proven on an account without a
-        /// default signature). Recreating the marker keeps Outlook's signature handling
-        /// and the add-in's draft/signature/thread split working on the draft.
-        /// </para>
-        /// Line breaks become soft line breaks (vertical tab), matching the fallback
-        /// path's &lt;br&gt; behavior; one paragraph mark separates the body from what
-        /// follows. The signature and quote regions themselves are never modified.
-        /// <para>
-        /// An HTML body (batch B - B1) takes the same route with one substitution: the
-        /// draft region is CLEARED and the markup is inserted with
-        /// <c>Range.InsertFile</c> from a temporary .htm file - the same verb
-        /// <see cref="ApplySignatureToDocument"/> already uses to place a signature, and
-        /// the only rich-content mechanism proven in this codebase (the add-in inserts
-        /// signatures the same way). Word's own HTML converter does the rendering, so
-        /// headings, lists and tables arrive as real Word structures inside the message's
-        /// WordSection1, and the boundary marker is re-anchored by the SAME
-        /// <c>Content.End</c> delta arithmetic - a collapsed insert range does not span
-        /// what was inserted, so the length must be measured, not read off the range.
-        /// </para>
-        /// </summary>
-        private static (bool Inserted, string? Error) InsertBodyAboveSignature(
-            object documentObject,
-            ComDraftBody body,
-            bool replaceWholeDocumentWhenNoBoundary = false)
-        {
-            dynamic doc = documentObject;
-            object? bookmarks = null;
-            string? boundary = null;
-            int boundaryStart = -1;
-            int boundaryEnd = -1;
-            bool aboveQuote = false;
-            try
-            {
-                bookmarks = doc.Bookmarks;
-                dynamic bm = (dynamic)bookmarks!;
-
-                // _MailAutoSig/_MailOriginal are HIDDEN bookmarks - invisible to
-                // Exists() unless ShowHidden is on (add-in AITaskPane pattern).
-                bm.ShowHidden = true;
-
-                if ((bool)bm.Exists("_MailAutoSig"))
-                {
-                    boundary = "_MailAutoSig";
-                }
-                else if ((bool)bm.Exists("_MailOriginal"))
-                {
-                    // A reply or forward with no signature (Q209 (a)): the text goes into the empty paragraphs above
-                    // the quoted message's header block. _MailOriginal itself is never touched: nothing is written at
-                    // its start, so Word has nothing to absorb into it.
-                    aboveQuote = true;
-                }
-
-                if (boundary != null)
-                {
-                    object? marker = null;
-                    object? markerRange = null;
-                    try
-                    {
-                        marker = bm.Item(boundary);
-                        markerRange = ((dynamic)marker!).Range;
-                        boundaryStart = (int)((dynamic)markerRange!).Start;
-                        boundaryEnd = (int)((dynamic)markerRange).End;
-
-                        // Marker only - the signature/quote CONTENT stays untouched.
-                        ((dynamic)marker).Delete();
-                    }
-                    finally
-                    {
-                        Release(markerRange);
-                        Release(marker);
-                    }
-                }
-
-                // The DRAFT region [0, boundary) is Outlook's empty compose boilerplate on
-                // a freshly created item - it is REPLACED, exactly like the add-in's
-                // WriteDraftToDocument does, so the body starts at the top instead of
-                // below the template's blank paragraphs. A trailing empty paragraph keeps
-                // Outlook's own blank line between body and signature/quote.
-                //
-                // ⚠ WITH NO BOUNDARY MARKER the draft region has no upper bound, and the
-                // two callers need OPPOSITE things (live-caught by the batch-C reply test):
-                // on a CREATE the document holds only empty boilerplate, so writing at 0
-                // is correct and safe; on an UPDATE the document holds the PREVIOUS body,
-                // so writing at 0 would PREPEND - the new text above the old one, the exact
-                // duplication update_draft exists to avoid. When the caller is revising, the
-                // draft region therefore runs to the end of the document (minus Word's
-                // final paragraph mark, which cannot be deleted).
-                int insertAt = boundary != null ? boundaryStart : 0;
-                if (aboveQuote)
-                {
-                    // The draft region runs to the empty paragraph kept above the header block, which stays as the
-                    // blank line between the text and the quote - so the text ends in one paragraph mark, not two,
-                    // and an HTML body needs no blank paragraph of its own after it.
-                    insertAt = PrepareSlotAboveQuote(doc, MailOriginalStart(bm));
-                }
-                else if (boundary == null && replaceWholeDocumentWhenNoBoundary)
-                {
-                    insertAt = Math.Max(0, GetDocumentEnd(doc) - 1);
-                }
-
-                int writtenEnd;
-                if (body.IsHtml)
-                {
-                    writtenEnd = InsertHtmlIntoDraftRegion(doc, body.Html, insertAt, boundary != null);
-                }
-                else
-                {
-                    string normalized = body.Text.Replace("\r\n", "\n").Replace('\n', '\v');
-                    object? range = null;
-                    try
-                    {
-                        range = doc.Range(0, insertAt);
-                        ((dynamic)range!).Text = normalized + (boundary != null ? "\r\r" : "\r");
-                        writtenEnd = (int)((dynamic)range).End;
-                    }
-                    finally
-                    {
-                        Release(range);
-                    }
-                }
-
-                if (boundary != null)
-                {
-                    // The region moved by (new draft length - old draft length).
-                    int shifted = boundaryEnd + (writtenEnd - insertAt);
-                    if (shifted < writtenEnd)
-                    {
-                        shifted = writtenEnd;
-                    }
-
-                    // Word's HTML converter may merge the last inserted paragraph with the
-                    // signature's first, leaving the document a character or two shorter
-                    // than the arithmetic predicts. An out-of-range Range() would throw and
-                    // silently demote the whole composition to the HTML fallback, so clamp.
-                    int documentEnd = GetDocumentEnd(doc);
-                    if (shifted > documentEnd)
-                    {
-                        shifted = documentEnd;
-                    }
-
-                    if (writtenEnd > shifted)
-                    {
-                        writtenEnd = shifted;
-                    }
-
-                    object? restoreRange = null;
-                    object? restoredMark = null;
-                    try
-                    {
-                        restoreRange = doc.Range(writtenEnd, shifted);
-                        restoredMark = bm.Add(boundary, restoreRange);
-                    }
-                    finally
-                    {
-                        Release(restoredMark);
-                        Release(restoreRange);
-                    }
-                }
-
-                return (true, null);
-            }
-            catch (Exception ex) when (IsComCallFailure(ex))
-            {
-                // The marker was deleted up front; restore it over the ORIGINAL range so
-                // a failed write cannot silently strip the signature/quote anchor (the
-                // add-in does the same). The caller falls back to the HTML path, which
-                // re-renders the document from the item anyway.
-                TryRestoreBookmark(bookmarks, boundary, boundaryStart, boundaryEnd);
-                return (false, DescribeComFailure(ex));
-            }
-            finally
-            {
-                Release(bookmarks);
-            }
-        }
-
-        /// <summary>
-        /// Places an already-normalized HTML fragment into the draft region of the held
-        /// inspector's Word document and returns the document offset just PAST it (which
-        /// is where the signature/quote region now begins).
-        /// <para>
-        /// Mechanism: clear the compose boilerplate <c>[0, draftEnd)</c>, then
-        /// <c>Range.InsertFile</c> a temporary .htm file at a COLLAPSED range at 0 - the
-        /// same call <see cref="ApplySignatureToDocument"/> makes for signatures, i.e. the
-        /// one HTML-into-Word route this codebase has proven. Word's HTML converter turns
-        /// the markup into real Word structures inside the message body, so the result
-        /// inherits the message style instead of sitting outside WordSection1 (the batch-A
-        /// A1(ii) defect). The inserted LENGTH must be measured as a <c>Content.End</c>
-        /// delta: a collapsed insert range does not grow to span what was inserted.
-        /// </para>
-        /// </summary>
-        private static int InsertHtmlIntoDraftRegion(dynamic doc, string html, int draftEnd, bool hasBoundary)
-        {
-            string path = WriteTemporaryHtmlFile(html, hasBoundary);
-            try
-            {
-                if (draftEnd > 0)
-                {
-                    // Outlook's empty compose boilerplate - replaced, not appended to,
-                    // exactly like the plain-text path's Range(0, draftEnd).Text write.
-                    object? clearRange = null;
-                    try
-                    {
-                        clearRange = doc.Range(0, draftEnd);
-                        ((dynamic)clearRange!).Delete();
-                    }
-                    finally
-                    {
-                        Release(clearRange);
-                    }
-                }
-
-                int endBefore = GetDocumentEnd(doc);
-                object? insertRange = null;
-                try
-                {
-                    insertRange = doc.Range(0, 0);
-                    ((dynamic)insertRange!).InsertFile(path, Type.Missing, false, false, false);
-                }
-                finally
-                {
-                    Release(insertRange);
-                }
-
-                int endAfter = GetDocumentEnd(doc);
-                return Math.Max(0, endAfter - endBefore);
-            }
-            finally
-            {
-                try
-                {
-                    File.Delete(path);
-                }
-                catch (IOException)
-                {
-                }
-                catch (UnauthorizedAccessException)
-                {
-                }
-            }
-        }
-
-        /// <summary>Where the <c>_MailOriginal</c> bookmark starts - the quoted message's header block.</summary>
-        private static int MailOriginalStart(dynamic bm)
-        {
-            object? origBookmark = null;
-            object? origRange = null;
-            try
-            {
-                origBookmark = bm.Item("_MailOriginal");
-                origRange = ((dynamic)origBookmark!).Range;
-                return (int)((dynamic)origRange!).Start;
-            }
-            finally
-            {
-                Release(origRange);
-                Release(origBookmark);
-            }
-        }
-
-        /// <summary>
-        /// Q209 (a), decided 2026-11-18: the start of the empty paragraph directly above a reply's or forward's quoted
-        /// header block - where the agent's text and signature go, and the paragraph that then stays as the blank line
-        /// between them and the quote. <c>Reply()</c> and <c>Forward()</c> leave two empty paragraphs above the header
-        /// block for exactly this (Q149 cell C4, 6 of 6); the header block's first paragraph, where
-        /// <c>_MailOriginal</c> starts, carries the separator line as its top border, and text written at its start
-        /// took that border (12 of 12 measured replies and forwards).
-        /// <para>
-        /// When the paragraph above the header block is not empty - a draft someone typed into right above the quote -
-        /// an empty one is split off its end, with its formatting; when the header block is the document's first
-        /// paragraph, an empty one is put before it and stripped of the formatting it copied from the block
-        /// (<see cref="QuoteSlotRules"/>). Either way nothing is written into the bordered paragraph.
-        /// </para>
-        /// </summary>
-        private static int PrepareSlotAboveQuote(dynamic doc, int originalStart)
-        {
-            int headerStart = ParagraphStartAt(doc, originalStart);
-            bool lastIsBlank = false;
-            int lastStart = 0;
-            if (headerStart > 0)
-            {
-                object? probe = null;
-                object? paragraphs = null;
-                object? paragraph = null;
-                object? range = null;
-                try
-                {
-                    probe = doc.Range(headerStart - 1, headerStart - 1);
-                    paragraphs = ((dynamic)probe!).Paragraphs;
-                    paragraph = ((dynamic)paragraphs!).Item(1);
-                    range = ((dynamic)paragraph!).Range;
-                    lastStart = (int)((dynamic)range!).Start;
-                    lastIsBlank = QuoteSlotRules.IsBlankParagraphText(TryGetString(() => (string?)((dynamic)range!).Text));
-                }
-                finally
-                {
-                    Release(range);
-                    Release(paragraph);
-                    Release(paragraphs);
-                    Release(probe);
-                }
-            }
-
-            switch (QuoteSlotRules.Decide(headerStart, lastIsBlank))
-            {
-                case QuoteSlotAction.UseLastParagraph:
-                    return lastStart;
-
-                case QuoteSlotAction.SplitLastParagraph:
-                {
-                    // A paragraph mark just before the last paragraph's own: its text keeps its paragraph, and an empty
-                    // paragraph with the same formatting - outside the header block - is left above the block.
-                    object? at = null;
-                    try
-                    {
-                        at = doc.Range(headerStart - 1, headerStart - 1);
-                        ((dynamic)at!).InsertBefore("\r");
-                    }
-                    finally
-                    {
-                        Release(at);
-                    }
-
-                    return headerStart;
-                }
-
-                default:
-                {
-                    // The header block is the first paragraph: an empty paragraph before it copies its formatting, the
-                    // top border with it, so that formatting is taken off again.
-                    object? at = null;
-                    object? paragraphs = null;
-                    object? first = null;
-                    object? borders = null;
-                    try
-                    {
-                        at = doc.Range(0, 0);
-                        ((dynamic)at!).InsertBefore("\r");
-                        paragraphs = doc.Paragraphs;
-                        first = ((dynamic)paragraphs!).Item(1);
-                        ((dynamic)first!).Reset();
-                        borders = ((dynamic)first).Borders;
-                        ((dynamic)borders!).Enable = 0;
-                    }
-                    catch (Exception ex) when (IsComCallFailure(ex))
-                    {
-                        // Best-effort: the text still goes above the block, perhaps with its border.
-                    }
-                    finally
-                    {
-                        Release(borders);
-                        Release(first);
-                        Release(paragraphs);
-                        Release(at);
-                    }
-
-                    return 0;
-                }
-            }
-        }
-
-        /// <summary>The start of the paragraph that holds document position <paramref name="position"/>.</summary>
-        private static int ParagraphStartAt(dynamic doc, int position)
-        {
-            object? probe = null;
-            object? paragraphs = null;
-            object? paragraph = null;
-            object? range = null;
-            try
-            {
-                probe = doc.Range(position, position);
-                paragraphs = ((dynamic)probe!).Paragraphs;
-                paragraph = ((dynamic)paragraphs!).Item(1);
-                range = ((dynamic)paragraph!).Range;
-                return (int)((dynamic)range!).Start;
-            }
-            finally
-            {
-                Release(range);
-                Release(paragraph);
-                Release(paragraphs);
-                Release(probe);
-            }
-        }
-
-        /// <summary>
-        /// Writes the fragment as a self-contained utf-8 .htm file for Word's converter.
-        /// It lives under the shared state root (v3.MD section 0.5.2), never in a mailbox
-        /// path, and is deleted immediately after the insert; a trailing empty paragraph
-        /// is added when a signature/quote region follows, so Word cannot merge the last
-        /// body paragraph into it.
-        /// </summary>
-        private static string WriteTemporaryHtmlFile(string html, bool hasBoundary)
-        {
-            string directory = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "OutlookAI",
-                "tmp");
-            Directory.CreateDirectory(directory);
-            PurgeStaleTemporaryFiles(directory);
-
-            string path = Path.Combine(directory, "draft-body-" + Guid.NewGuid().ToString("N") + ".htm");
-            string document = Services.SignatureManager.EnsureHtmlDocument(html + (hasBoundary ? "\r\n<p>&nbsp;</p>" : string.Empty));
-            File.WriteAllText(path, document, new UTF8Encoding(false));
-            return path;
-        }
-
-        /// <summary>Best-effort cleanup of temp bodies a crashed run could have left behind.</summary>
-        private static void PurgeStaleTemporaryFiles(string directory)
-        {
-            try
-            {
-                DateTime cutoff = DateTime.UtcNow.AddHours(-1);
-                foreach (string stale in Directory.GetFiles(directory, "draft-body-*.htm"))
-                {
-                    if (File.GetLastWriteTimeUtc(stale) < cutoff)
-                    {
-                        File.Delete(stale);
-                    }
-                }
-            }
-            catch (IOException)
-            {
-            }
-            catch (UnauthorizedAccessException)
-            {
-            }
-        }
-
-        private static void TryRestoreBookmark(object? bookmarksObject, string? name, int start, int end)
-        {
-            if (bookmarksObject == null || name == null || start < 0 || end < start)
-            {
-                return;
-            }
-
-            object? range = null;
-            object? parentDoc = null;
-            object? restored = null;
-            try
-            {
-                dynamic bm = (dynamic)bookmarksObject;
-                if ((bool)bm.Exists(name))
-                {
-                    return;
-                }
-
-                parentDoc = bm.Parent;
-                range = ((dynamic)parentDoc!).Range(start, end);
-                restored = bm.Add(name, range);
-            }
-            catch (Exception ex) when (IsComCallFailure(ex))
-            {
-            }
-            finally
-            {
-                Release(restored);
-                Release(range);
-                Release(parentDoc);
-            }
-        }
-
-        private static int GetDocumentEnd(dynamic doc)
-        {
-            object? content = null;
-            try
-            {
-                content = doc.Content;
-                return (int)((dynamic)content!).End;
-            }
-            finally
-            {
-                Release(content);
-            }
-        }
-
         private static long CountNonWhitespaceText(string html)
         {
             if (html.Length == 0)
@@ -8678,7 +7965,7 @@ namespace OutlookAI.Core.Com
                 return 0;
             }
 
-            string text = OutlookAI.Core.Text.HtmlToText.Convert(html);
+            string text = OutlookAI.Core.AddIn.HtmlToText.Convert(html);
             long count = 0;
             foreach (char c in text)
             {
@@ -9138,48 +8425,7 @@ namespace OutlookAI.Core.Com
             folderEntryId ??= fallbackFolderEntryId;
             sendUsingSmtp ??= fallbackSendUsingSmtp; // Only passed when the caller PINNED the identity.
 
-            List<ComRecipientInfo> recipients = new List<ComRecipientInfo>();
-            object? recipientsObject = null;
-            try
-            {
-                recipientsObject = item.Recipients;
-                dynamic collection = (dynamic)recipientsObject!;
-                int count = collection.Count;
-                for (int i = 1; i <= count; i++)
-                {
-                    object? recipient = null;
-                    try
-                    {
-                        recipient = collection[i];
-                        dynamic r = (dynamic)recipient!;
-                        int type = 1;
-                        try
-                        {
-                            type = (int)r.Type;
-                        }
-                        catch (Exception ex) when (IsComCallFailure(ex))
-                        {
-                        }
-
-                        string kind = type == 2 ? "cc" : type == 3 ? "bcc" : "to";
-                        string? name = TryGetString(() => (string?)r.Name);
-                        string? address = TryGetPropertyString(r, "http://schemas.microsoft.com/mapi/proptag/0x39FE001F")
-                            ?? TryGetString(() => (string?)r.Address);
-                        recipients.Add(new ComRecipientInfo(kind, name, address));
-                    }
-                    finally
-                    {
-                        Release(recipient);
-                    }
-                }
-            }
-            catch (Exception ex) when (IsComCallFailure(ex))
-            {
-            }
-            finally
-            {
-                Release(recipientsObject);
-            }
+            List<ComRecipientInfo> recipients = MailRecipients.Read((object)item);
 
             return new ComDraftInfo(
                 entryId,
@@ -11352,7 +10598,7 @@ namespace OutlookAI.Core.Com
                     string? html = TryGetString(() => (string?)item.HTMLBody);
                     if (!string.IsNullOrEmpty(html))
                     {
-                        body = OutlookAI.Core.Text.HtmlToText.Convert(html);
+                        body = OutlookAI.Core.AddIn.HtmlToText.Convert(html);
                         bodyOrigin = "html-converted";
                     }
                 }
@@ -11366,51 +10612,7 @@ namespace OutlookAI.Core.Com
             string? htmlBody = includeHtml ? (TryGetString(() => (string?)item.HTMLBody) ?? string.Empty) : null;
 
             // Recipients with SMTP resolution (PR_SMTP_ADDRESS via PropertyAccessor).
-            List<ComRecipientInfo> recipients = new List<ComRecipientInfo>();
-            object? recipientsObject = null;
-            try
-            {
-                recipientsObject = item.Recipients;
-                dynamic recipientCollection = (dynamic)recipientsObject!;
-                int recipientCount = recipientCollection.Count;
-                for (int i = 1; i <= recipientCount; i++)
-                {
-                    object? recipient = null;
-                    try
-                    {
-                        recipient = recipientCollection[i];
-                        dynamic r = (dynamic)recipient!;
-                        int type = 1;
-                        try
-                        {
-                            type = (int)r.Type;
-                        }
-                        catch (COMException)
-                        {
-                        }
-
-                        string kind = type == 2 ? "cc" : type == 3 ? "bcc" : "to";
-                        string? name = TryGetString(() => (string?)r.Name);
-                        string? address = TryGetPropertyString(r, "http://schemas.microsoft.com/mapi/proptag/0x39FE001F")
-                            ?? TryGetString(() => (string?)r.Address);
-                        recipients.Add(new ComRecipientInfo(kind, name, address));
-                    }
-                    finally
-                    {
-                        Release(recipient);
-                    }
-                }
-            }
-            catch (COMException)
-            {
-            }
-            catch (Microsoft.CSharp.RuntimeBinder.RuntimeBinderException)
-            {
-            }
-            finally
-            {
-                Release(recipientsObject);
-            }
+            List<ComRecipientInfo> recipients = MailRecipients.Read((object)item);
 
             // Attachments.
             List<ComAttachmentInfo> attachmentInfos = new List<ComAttachmentInfo>();
@@ -12134,27 +11336,10 @@ namespace OutlookAI.Core.Com
         }
 
         /// <summary>
-        /// Late-bound COM failures do not always surface as COMException: the dynamic
-        /// binder maps E_INVALIDARG to ArgumentException, E_POINTER to
-        /// ArgumentNullException, and binding problems to RuntimeBinderException. Optional
-        /// COM paths must treat all of these as "that call did not work here". Public:
-        /// every caller with an optional COM path (Phase 2 fact 2) uses this same test.
+        /// Whether a COM call failed rather than the code calling it: <see cref="ComObjects.IsCallFailure"/>,
+        /// which holds the rule, kept under this name for the code that has always called it so.
         /// </summary>
-        public static bool IsComCallFailure(Exception ex)
-        {
-            // MissingMemberException: the dynamic COM binder's shape for a failed
-            // GetIDsOfNames ("Could not get dispatch ID for X") - live-observed with
-            // 0x800706BA (RPC_S_SERVER_UNAVAILABLE) when Outlook exited mid-call
-            // (soak, 2026-07-24). InvalidComObjectException: a detached RCW - what a
-            // released-by-the-exit-watcher reference throws when used mid-flight
-            // (ComGateway already treats it as a disconnect shape).
-            return ex is COMException
-                || ex is ArgumentException
-                || ex is InvalidCastException
-                || ex is MissingMemberException
-                || ex is InvalidComObjectException
-                || ex is Microsoft.CSharp.RuntimeBinder.RuntimeBinderException;
-        }
+        public static bool IsComCallFailure(Exception ex) => ComObjects.IsCallFailure(ex);
 
         private static int FindTableColumn(dynamic table, string columnName)
         {
@@ -12971,13 +12156,7 @@ namespace OutlookAI.Core.Com
             return ComposeSurface.TryClosePinByWindow(_application!, window, outlookPid, out detail);
         }
 
-        internal static void Release(object? comObject)
-        {
-            if (comObject != null && Marshal.IsComObject(comObject))
-            {
-                Marshal.ReleaseComObject(comObject);
-            }
-        }
+        internal static void Release(object? comObject) => ComObjects.Release(comObject);
 
         private void EnsureNotDisposed()
         {

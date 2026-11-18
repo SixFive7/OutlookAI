@@ -11,6 +11,7 @@ using OutlookAI.ComHost.Supervision;
 using OutlookAI.Core.Com;
 using OutlookAI.Core.IndexSearch;
 using OutlookAI.Core.Services;
+using OutlookAI.Core.AddIn;
 
 namespace OutlookAI.McpServer.Tools;
 

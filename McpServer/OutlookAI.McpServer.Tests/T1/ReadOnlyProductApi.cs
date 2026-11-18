@@ -35,7 +35,7 @@ internal static class ReadOnlyProductApi
         ["OutlookAI.Core.Com.ComStoreInfo"] = Data,
         // Read by the Exchange VM's test-account guards (2026-10-08) to judge an item before a write.
         ["OutlookAI.Core.Com.ComItemDetail"] = Data,
-        ["OutlookAI.Core.Com.ComRecipientInfo"] = Data,
+        ["OutlookAI.Core.AddIn.ComRecipientInfo"] = Data,
         ["OutlookAI.Core.Com.ComSendableDraftState"] = Data,
         ["OutlookAI.Core.Com.ComDraftInfo"] = Data,
         ["OutlookAI.Core.Com.ComTableDateKindProbe"] = Data,

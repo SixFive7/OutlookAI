@@ -343,23 +343,23 @@ namespace OutlookAI.TaskPane
         private static List<McpRegistrationDecision.OutlookWindow> SnapshotOwnWindows()
         {
             var windows = new List<McpRegistrationDecision.OutlookWindow>();
-            uint own = NativeMethods.GetCurrentProcessId();
+            uint own = NativeWindows.GetCurrentProcessId();
 
             // Held in a local for the duration of the (synchronous) call so the delegate
             // cannot be collected while native code is calling it back.
-            NativeMethods.EnumWindowsProc callback = (handle, lparam) =>
+            NativeWindows.EnumWindowsProc callback = (handle, lparam) =>
             {
                 uint pid;
-                NativeMethods.GetWindowThreadProcessId(handle, out pid);
+                NativeWindows.GetWindowThreadProcessId(handle, out pid);
                 if (pid == own)
                 {
-                    NativeMethods.RECT r;
-                    if (!NativeMethods.GetWindowRect(handle, out r))
-                        r = new NativeMethods.RECT();
+                    NativeWindows.RECT r;
+                    if (!NativeWindows.GetWindowRect(handle, out r))
+                        r = new NativeWindows.RECT();
 
                     windows.Add(new McpRegistrationDecision.OutlookWindow(
-                        NativeMethods.IsWindowVisible(handle),
-                        NativeMethods.IsIconic(handle),
+                        NativeWindows.IsWindowVisible(handle),
+                        NativeWindows.IsIconic(handle),
                         r.Left,
                         r.Top,
                         r.Right,
@@ -369,7 +369,7 @@ namespace OutlookAI.TaskPane
                 return true;
             };
 
-            NativeMethods.EnumWindows(callback, IntPtr.Zero);
+            NativeWindows.EnumWindows(callback, IntPtr.Zero);
             GC.KeepAlive(callback);
             return windows;
         }
@@ -411,42 +411,6 @@ namespace OutlookAI.TaskPane
             {
                 get { return _handle; }
             }
-        }
-
-        private static class NativeMethods
-        {
-            internal delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
-
-            [StructLayout(LayoutKind.Sequential)]
-            internal struct RECT
-            {
-                public int Left;
-                public int Top;
-                public int Right;
-                public int Bottom;
-            }
-
-            [DllImport("user32.dll")]
-            [return: MarshalAs(UnmanagedType.Bool)]
-            internal static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
-
-            [DllImport("user32.dll")]
-            internal static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
-
-            [DllImport("user32.dll")]
-            [return: MarshalAs(UnmanagedType.Bool)]
-            internal static extern bool IsWindowVisible(IntPtr hWnd);
-
-            [DllImport("user32.dll")]
-            [return: MarshalAs(UnmanagedType.Bool)]
-            internal static extern bool IsIconic(IntPtr hWnd);
-
-            [DllImport("user32.dll")]
-            [return: MarshalAs(UnmanagedType.Bool)]
-            internal static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
-
-            [DllImport("kernel32.dll")]
-            internal static extern uint GetCurrentProcessId();
         }
     }
 }

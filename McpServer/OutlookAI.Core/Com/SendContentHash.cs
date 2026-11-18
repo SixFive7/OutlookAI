@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+using OutlookAI.Core.AddIn;
 
 namespace OutlookAI.Core.Com
 {

@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
+using OutlookAI.Core.AddIn;
 
 namespace OutlookAI.Core.Services
 {
@@ -72,24 +73,6 @@ namespace OutlookAI.Core.Services
 
         /// <summary>"new" | "reply" | "both" - which default(s).</summary>
         public string? DefaultForScope { get; set; }
-    }
-
-    /// <summary>A manage_signature refusal made for a reason outside the request's own shape: policy, roaming.</summary>
-    public sealed class SignatureRefusedException : ArgumentException
-    {
-        /// <summary>Creates the refusal.</summary>
-        public SignatureRefusedException(string reason, string message)
-            : base(message)
-        {
-            Reason = reason;
-        }
-
-        /// <summary>
-        /// Machine-readable reason: <c>signatures_disabled_by_policy</c>, <c>default_set_by_policy</c>,
-        /// <c>managed_in_mailbox</c>, <c>account_may_roam</c>, <c>signature_forced_by_policy</c>,
-        /// <c>signature_of_another_account</c>.
-        /// </summary>
-        public string Reason { get; }
     }
 
     /// <summary>One MAIL ACCOUNT's default-signature registry state in one profile (read/write handle).</summary>
@@ -358,8 +341,6 @@ namespace OutlookAI.Core.Services
         /// <summary>Timestamp format of backup directory names (UTC, filesystem-safe).</summary>
         public const string BackupTimestampFormat = "yyyyMMdd'T'HHmmssfff'Z'";
 
-        /// <summary>The reserved word the draft tools read as "no signature"; never a signature name.</summary>
-        public const string NoSignatureKeyword = "none";
 
         /// <summary>Advice returned whenever registry defaults were written or cleared.</summary>
         public const string DefaultsRestartAdvice =
@@ -573,7 +554,7 @@ namespace OutlookAI.Core.Services
                 throw new ArgumentException("name '" + trimmed + "' is a reserved Windows device name (CON, NUL, COM1 and the like, alone or before a dot).");
             }
 
-            if (string.Equals(trimmed, NoSignatureKeyword, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(trimmed, SignatureRequest.NoSignatureKeyword, StringComparison.OrdinalIgnoreCase))
             {
                 throw new ArgumentException(
                     "name '" + trimmed + "' is reserved: the draft tools read signature=\"none\" as \"no signature\", so a signature "
@@ -1185,7 +1166,7 @@ namespace OutlookAI.Core.Services
         private static void PlanCreate(
             string root, string name, ManageSignatureRequest request, ContentPlan plan, Func<string, byte[]?> pictureBytes, HashSet<string> picturesAfter)
         {
-            string? html = string.IsNullOrWhiteSpace(request.BodyHtml) ? null : EnsureHtmlDocument(request.BodyHtml!);
+            string? html = string.IsNullOrWhiteSpace(request.BodyHtml) ? null : SignatureText.EnsureHtmlDocument(request.BodyHtml!);
             string? rtf = string.IsNullOrWhiteSpace(request.BodyRtf) ? null : SignatureRtf.Expand(request.BodyRtf!, string.Empty, pictureBytes);
             string? text = string.IsNullOrWhiteSpace(request.BodyText) ? null : request.BodyText;
             if (rtf != null)
@@ -1200,7 +1181,7 @@ namespace OutlookAI.Core.Services
 
             if (text == null)
             {
-                text = html != null ? Text.HtmlToText.Convert(html) : SignatureRtf.ToPlainText(rtf!);
+                text = html != null ? AddIn.HtmlToText.Convert(html) : SignatureRtf.ToPlainText(rtf!);
                 plan.FormatsDerived.Add(SignatureFormats.Text);
             }
 
@@ -1243,7 +1224,7 @@ namespace OutlookAI.Core.Services
 
             if (!string.IsNullOrWhiteSpace(request.BodyHtml))
             {
-                html = EnsureHtmlDocument(request.BodyHtml!);
+                html = SignatureText.EnsureHtmlDocument(request.BodyHtml!);
                 htmlChanged = true;
             }
 
@@ -1752,22 +1733,6 @@ namespace OutlookAI.Core.Services
         }
 
         // ------------------------------------------------------------------ derivations (create only)
-
-        /// <summary>
-        /// Wraps an HTML fragment into a minimal document with a utf-8 charset meta;
-        /// a full document (contains &lt;html&gt;) is written as-is.
-        /// </summary>
-        public static string EnsureHtmlDocument(string html)
-        {
-            if (html.IndexOf("<html", StringComparison.OrdinalIgnoreCase) >= 0)
-            {
-                return html;
-            }
-
-            return "<html><head><meta http-equiv=\"Content-Type\" content=\"text/html; charset=utf-8\"></head><body>\r\n"
-                + html
-                + "\r\n</body></html>";
-        }
 
         /// <summary>Derives the HTML rendition from plain text (one &lt;p&gt; per line, escaped).</summary>
         public static string BuildHtmlFromText(string text)

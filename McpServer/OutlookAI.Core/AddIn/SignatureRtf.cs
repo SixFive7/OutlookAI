@@ -7,7 +7,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 
-namespace OutlookAI.Core.Services
+namespace OutlookAI.Core.AddIn
 {
     /// <summary>One picture inside an RTF signature (data only).</summary>
     public sealed class RtfPicture

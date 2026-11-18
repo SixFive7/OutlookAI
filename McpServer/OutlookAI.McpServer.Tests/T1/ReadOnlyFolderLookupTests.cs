@@ -4,6 +4,7 @@ using System.Text.RegularExpressions;
 
 using OutlookAI.Core.Com;
 using OutlookAI.Core.Services;
+using OutlookAI.Core.AddIn;
 
 using Xunit;
 using Xunit.Sdk;

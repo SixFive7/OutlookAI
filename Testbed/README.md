@@ -1125,8 +1125,17 @@ pwsh -File Testbed/host/Invoke-LiveTierOnGuest.ps1 -VMName OutlookAI-Unindexed <
 pwsh -File Testbed/host/Invoke-LiveTierOnGuest.ps1 -VMName OutlookAI-Indexed -FilterSuffix '&FullyQualifiedName~LiveShowMeTests' -SkipHubReset
 pwsh -File Testbed/host/Invoke-LiveTierOnGuest.ps1 -VMName OutlookAI-Indexed -GreenCheckpoint CP-19C-LIVE-GREEN
 pwsh -File Testbed/host/Invoke-LiveTierOnGuest.ps1 -Kind Unindexed                       # whichever unindexed guest is free (2026-11-17)
+pwsh -File Testbed/host/Invoke-LiveTierOnGuest.ps1 -Kind Unindexed <commit> -WithAddIn -FilterSuffix '&FullyQualifiedName~LivePaneTests'   # the tested commit's add-in on the guest (2026-11-18)
 pwsh -File Testbed/host/Invoke-LiveTierOnGuest.ps1 -Kind Unindexed -SignatureSettings GroupPolicy   # a signature policy set before Outlook starts (2026-11-18)
 ```
+
+**`-WithAddIn` puts the tested commit's add-in on the guest** before Outlook starts (Q168 (b), 2026-11-18): a
+guest's checkpoint holds the add-in of the day it was made, which is all the tests that read the add-in's
+registry state need, but not the ones that drive the add-in itself - `T2/LivePaneTests`. It builds the add-in
+on this host through `host/Publish-AddInPayload.ps1`, with its Q81 guards, installs it as the guest's default
+task, elevated, starts it once NOT elevated to `ADDIN-READY`, and writes `.tested-addin`, holding the commit,
+into the suite's source folder, which the next run's swap renames away; `LivePaneTests` runs only where that
+file is, and elsewhere prints a PROVED NOTHING line. A frozen-clock guest only; about three minutes more.
 
 **`-SignatureSettings GroupPolicy`, `Preference` or `PreferenceNoOwnNew` makes a signature setting before
 Outlook starts, and `NoSetting` makes none, as the control** (2026-11-18, Q200 (a), Q201 and Q156 (d)):

@@ -7,6 +7,7 @@ using OutlookAI.ComHost.Protocol;
 using OutlookAI.Core.Com;
 using OutlookAI.Core.IndexSearch;
 using OutlookAI.Core.Services;
+using OutlookAI.Core.AddIn;
 
 using Xunit;
 

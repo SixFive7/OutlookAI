@@ -50,6 +50,23 @@ its mailbox tests on, and change nothing you install.
 
 ### Added
 
+- ✨ **The add-in's AI chooses a mail's signature by itself, by the language of the mail it answers.**
+  Decided by the maintainer on 2026-11-17 (Q158, Q162 (b)): OutlookAI Settings has one tick box on
+  its Claude Code tab, "Allow the AI to automatically choose the correct signature", on unless you
+  untick it, and no signature editor, list or menu, since Outlook has its own. With it on, the AI
+  picks the signature when it writes or rewrites the body in the task pane and when you start a reply
+  or a forward, from the signatures the sending account can use - by the language of the mail being
+  answered, so that a Dutch mail gets the Dutch signature, for one. A draft opened again, yours or
+  one an agent wrote, keeps its signature until the AI rewrites its body. It changes a signature
+  Outlook or the AI put in; it adds none to a mail that has none, chooses none while a policy or a
+  deployed setting names a default, and never replaces one a person chose or changed, which it
+  checks again after the AI answered. Nothing happens as a mail is sent, and nothing in a compose
+  window nobody sees, such as one an agent's draft is written in. The choice uses the rule the MCP
+  server's drafts use for the account's signatures (`SignatureSelector.Candidates`) and the prompt
+  of "Select the best signature"; when it
+  asks the AI at all is `SignatureAutoChoice`, in OutlookAI.Core, which T1 `SignatureAutoChoiceTests`
+  pins. A reply or forward costs one more request to Claude Code as it opens.
+
 - ✨ **A stuck Outlook is reported with its process ID, how to end it, and what ending it risks (Q177).**
   When Outlook stops responding, or has been starting for two minutes without finishing, every mail
   tool answers `OutlookUnresponsive` with a report that says what is stuck and why, the process ID,
@@ -262,6 +279,34 @@ its mailbox tests on, and change nothing you install.
   last managed to look for a newer one, the same as the writing sidebar has always shown. When a
   check fails, the reason is written out in full here rather than hidden behind a link. Both
   indicators now take their wording from one place, so they cannot disagree.
+
+- ✅ **A live test drives the task pane on a test machine, with a stand-in for the Claude Code CLI.**
+  Decided by the maintainer on 2026-11-18 (Q168 (b)): nothing tested the pane, so the code-sharing
+  refactor's stage S4 could not show that it still worked. T2 `LivePaneTests` has the MCP server open
+  a tagged draft with a test signature in a compose window, types an instruction into the pane and
+  clicks "Edit current draft" with the Win32 messages typing and clicking send, and reads the open
+  window back, read only. The pane's requests go to `ClaudeCliStandIn`, which the test compiles with
+  the .NET Framework's own C# compiler to where the add-in runs Claude Code, answers the body and a
+  signature name the test chose, and keeps every prompt for the test to read. It goes only onto a
+  test machine - the live opt-in and a profile that is not Production come first - never over a real
+  CLI, and is removed when the test ends, so the product needs no automation entry point. The test
+  checks that the pane still writes one paragraph a line, that its AI's signature choice (Q162 (b))
+  follows the body and replaces the agent's signature, and that the chosen signature's picture is
+  embedded (D47). `LiveOutlookTestMailer` gained the read of an open draft and the close that
+  discards it, both refusing a draft without this run's tag. A test machine's checkpoint holds the
+  add-in of the day it was made, so `Testbed/host/Invoke-LiveTierOnGuest.ps1 -WithAddIn` builds the
+  tested commit's add-in with `Publish-AddInPayload.ps1`, installs it on the frozen guest before
+  Outlook starts - elevated, then one start NOT elevated to `ADDIN-READY` - and marks the run for the
+  test; a run without it gets a PROVED NOTHING line from the test, as a machine without a population
+  does. On `OutlookAI-Unindexed` on 2026-11-18, with the add-in of `8cf5431`, the pane wrote the
+  stand-in's four lines as 4 paragraphs, its AI replaced the agent's signature with the one the
+  stand-in named, and that signature's picture was embedded, 0 of 1 left a link (runbook section
+  2.3). Beside it, the headless tests that count Outlook's windows found two more at their end than
+  at their start in two of eleven runs, both on an indexed guest. Named, they were a tooltip and its
+  shadow, there from the moment the pane test closed its compose window. A tooltip comes up at the
+  pointer, which nobody moves on a test machine, so the pane test now moves the pointer to the
+  screen's bottom-left corner before its compose window comes up and after it closes, and lists
+  what it leaves on screen with the headless tests' own window listing.
 
 - ✅ **A live run can set a signature policy before Outlook starts, and measure what Outlook inserts.**
   Outlook reads an administrator's signature policy, a default deployed in its general mail settings
@@ -931,6 +976,17 @@ its mailbox tests on, and change nothing you install.
 
 ### Changed
 
+- 🔧 **The task pane chooses and inserts a signature with the mail server's code, pictures embedded.**
+  "Select the best signature" lists the signatures, and puts the chosen one in the mail, with the
+  code the MCP server's drafts use (the code-sharing refactor's stage S4, Q154). The signature's
+  pictures are embedded in the mail now, as the server's drafts embed them: the pane inserted them as
+  links to the signature's folder on this computer, which a recipient never sees (D47). The excerpts
+  the AI chooses by are read the way the server reads them: each file in its own encoding, the HTML
+  through the server's converter to text, and a signature that has only a Rich Text rendition
+  excerpted too. The recipients the pane tells the AI about carry the SMTP address of an
+  Exchange recipient where Outlook knows it, where the pane gave the Exchange (X.500) address. The
+  draft the pane writes is laid out as before, one paragraph a line.
+
 - 📦 **Setup puts the mail server's own .NET 11 runtime in your profile, with no administrator rights.**
   The mail server runs on .NET 11 since the maintainer moved OutlookAI to it on 2026-11-18 (Q172),
   and the installer no longer installs a .NET runtime for the whole machine. On every install and
@@ -1555,6 +1611,36 @@ its mailbox tests on, and change nothing you install.
   network clears the backoff and checks shortly after, and "Check for updates" always runs straight
   away.
 
+- ♻️ **The signature and compose-document code is in OutlookAI.Core's add-in part (Q164).**
+  The signature catalog; the signature environment, which is the folder, the policy, roaming and the
+  Office build; the rule that chooses a draft's signature; the readers of the profile's accounts and
+  of Outlook's profile keys; the conversion of HTML to text; and the readers and writers of a
+  signature's three renditions and its pictures move from `OutlookAI.Core.Services` and
+  `OutlookAI.Core.Text` into `OutlookAI.Core.AddIn` (`McpServer/OutlookAI.Core/AddIn/`), the one part
+  of Core the add-in may use (the code-sharing refactor's stage S4, Q154). So does the code that reads
+  and writes the regions of a
+  compose document - the draft, the signature region Outlook marks `_MailAutoSig` and the quoted
+  original it marks `_MailOriginal` - which the server had ported from the pane and fixed since, now
+  `ComposeDocument`, with a choice between the server's soft line breaks and the pane's paragraphs,
+  and with the rule that puts a reply's own text above the quoted message's header block
+  (`QuoteSlotRules`, Q209 (a));
+  the release of a COM reference, the test for a failed COM call and a COM object's identity, now
+  `ComObjects`, to which `OutlookComSession`'s members of those names forward; the reading of a mail's
+  recipients with the SMTP address where Outlook knows one, now `MailRecipients`, which also replaces
+  the server's two copies of that loop; and the Win32 window calls, now `NativeWindows`, which three
+  files declared for themselves, each a different subset. The server and the tests use all of it from
+  there, unchanged, and T1 `ComChildObjectReleaseTests` reads `ComposeDocument` for a discarded
+  `Bookmarks.Add` as it read `OutlookComSession`. The add-in uses it in the place of its own copies:
+  `SignatureStore` is gone, the task pane reads and writes a draft through `ComposeDocument`, reads
+  recipients through `MailRecipients` and releases through `ComObjects`, and the MCP registration
+  prompt finds Outlook's windows through `NativeWindows`. Inside the add-in, the five handlers that
+  each handed an event from another thread to their window share `UiThread.Post`. Nothing in the
+  namespace attaches to Outlook, starts a COM thread or opens the search index, and check 15 holds
+  that for every file in it.
+  The word the draft tools read as "no signature" and the refusal a signature request can end in
+  move with the rule, out of `SignatureManager`, which stays where it is: it writes signature files,
+  and only the server does.
+
 - ♻️ **The fourteen files the add-in shared by linking are OutlookAI.Core's, in one namespace (Q163).**
   The MCP server, Core and the test project compiled fourteen of the add-in's source files as
   linked copies: the registry contract between the add-in and the server, the Office versions, the
@@ -1968,6 +2054,13 @@ its mailbox tests on, and change nothing you install.
   sweep fragment, the definitions the sweep matches with, instead of the incident tool's copy.
 
 ### Fixed
+
+- 🐛 **The task pane finds a Claude Code installed while Outlook runs, without a restart.**
+  The pane remembered that Claude Code was missing when Outlook started, and every request then
+  failed with "not found" until Outlook was restarted, however soon Claude Code was installed. When
+  that is the error it remembers, it now looks for the program again before each request, and goes
+  ahead once it is there. Found while building the live pane test (Q168 (b)), whose stand-in for the
+  CLI arrives after the test machine's Outlook has started.
 
 - 🐛 **Another user's Outlook on the same computer is no longer taken for yours.**
   OutlookAI counted every OUTLOOK.EXE on the computer. With someone else signed in to it, by fast

@@ -5,9 +5,8 @@ using System.Collections.ObjectModel;
 // The Office major versions this product supports and the probe that finds the installed one.
 // Core's AddIn\OfficeVersions.cs is the add-in's too (Q163 (a), Q167 (a)), so this is not a copy of
 // the add-in's list - it is the add-in's list, probed in the add-in's order.
-using OfficeVersions = global::OutlookAI.Core.AddIn.OfficeVersions;
 
-namespace OutlookAI.Core.Services
+namespace OutlookAI.Core.AddIn
 {
     /// <summary>
     /// The Outlook profile registry addresses this product depends on, in one place.

@@ -1,4 +1,4 @@
-namespace OutlookAI.Core.Com
+namespace OutlookAI.Core.AddIn
 {
     /// <summary>How the empty paragraph above a quoted message's header block is had (<see cref="QuoteSlotRules.Decide"/>).</summary>
     public enum QuoteSlotAction
@@ -17,7 +17,7 @@ namespace OutlookAI.Core.Com
     /// Q209 (a), decided 2026-11-18: a reply's or forward's own text and signature go into the empty paragraphs
     /// <c>Reply()</c> and <c>Forward()</c> leave above the quoted message's header block, never into the block itself,
     /// whose first paragraph carries the separator line as a top border. These are the pure parts of that rule, so T1
-    /// pins them without Word; <c>OutlookComSession.PrepareSlotAboveQuote</c> applies them to the document.
+    /// pins them without Word; <c>ComposeDocument</c> applies them to the document.
     /// </summary>
     public static class QuoteSlotRules
     {

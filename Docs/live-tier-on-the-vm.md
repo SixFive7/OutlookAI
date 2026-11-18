@@ -762,6 +762,43 @@ its `\u00e9` came back as `é`. `b9a8b97` left every byte outside the `outlookai
 that entry on one line in its place: `{ "type": "stdio", "command": "${LOCALAPPDATA}/...", "env": {
 "OUTLOOKAI_LOG": "1" }, "args": [] }`.
 
+**The task pane on OutlookAI.Core's code (the code-sharing refactor's stage S4), driven - `OutlookAI-Unindexed`,
+from `CP-16B-FROZEN-CLOCK`, 2026-11-18, run `20261118-095640-unindexed-8cf5431a1050`.** `T2/LivePaneTests`
+through `host/Invoke-LiveTierOnGuest.ps1 -WithAddIn`, which installed the add-in of `8cf5431` over the
+checkpoint's and reached `ADDIN-READY`. The MCP server opened a tagged draft in a compose window with one test
+signature, holding a 1-pixel picture; the test typed an instruction into the pane, clicked "Edit current
+draft" with `BM_CLICK`, and the pane's two requests went to the Claude CLI stand-in. Read off the open window:
+the stand-in's four lines - the third one empty - became 4 paragraphs and no soft line break, as the pane has
+always written them; the pane's AI then chose the second test signature, as the stand-in answered, and it
+replaced the agent's (Q162 (b)); and its picture was in the document embedded, 0 of 1 left a link (D47). The
+first two pane runs that day failed before this one: their add-in was the checkpoint's, which still showed
+"Claude Code CLI was not found" for a CLI installed after Outlook started - which is what `-WithAddIn` and the
+add-in's new re-check of the CLI are for. Not measured here: the recipients' SMTP addresses, which only an
+Exchange recipient's X.500 one would change, and no PST guest has one.
+
+**The same test beside the headless ones - 2026-11-18, eleven runs with `-WithAddIn` and the draft, signature,
+headless and pane tests, from `6ba7b08` to `71c5d61`.** Every pane test from `2973eb7` on passed with two
+requests to the stand-in, the body's and the signature choice's - for example `20261118-110304-unindexed-2973eb72c9e1`
+(`OutlookAI-Unindexed2`, from `CP-16B-FROZEN-CLOCK`) and `20261118-110304-indexed-2973eb72c9e1` (`OutlookAI-Indexed`,
+from `CP-22C-FROZEN-CLOCK`), 49 of 49 each, and after the merge of .NET 11 `20261118-120100-unindexed-71c5d612ac23`
+(`OutlookAI-Unindexed`, from `CP-18B-FROZEN-CLOCK`) and `20261118-120100-indexed-71c5d612ac23` (`OutlookAI-Indexed3`,
+from `CP-24C-FROZEN-CLOCK`), 51 of 51 each. At `48c7d6e` the choice after the body was never made - one request,
+on `OutlookAI-Indexed` and `OutlookAI-Unindexed` both - because the pane asked the inspector through `IOleWindow`
+whether its window was visible; `2973eb7` asks the pane's own window. Twice, at `6ba7b08` on `OutlookAI-Indexed2`
+and at `8635669` on `OutlookAI-Indexed`, `LiveHeadlessComposeParityTests` counted Outlook's visible windows going
+from 1 to 3 while the MCP server composed a draft without showing it, and failed. It was not the draft. At
+`71c5d61` the tests named what they counted: a `tooltips_class32` window, 94 by 18 pixels at 500,402, and its
+`SysShadow`, on Outlook's own thread, there as soon as the pane test had closed its compose window and still
+there at both headless tests, which counted 3 before and after - as most of the passing runs before had. A
+tooltip comes up at the pointer, which nobody moves on a test machine; when this one came up during a headless
+test rather than before it, the test failed. The pane test now moves the pointer to the screen's bottom-left
+corner, on the taskbar, before its compose window comes up and after it closes; at `d1e0b1b` it left only
+Outlook's main window on screen, and both headless tests counted 1 before and after, on `OutlookAI-Unindexed`
+and `OutlookAI-Indexed3` (`20261118-121845-unindexed-d1e0b1bcabf3`, `20261118-121845-indexed-d1e0b1bcabf3`, 51
+of 51 each). The guard `48c7d6e` and
+`2973eb7` added stays - the pane leaves the Word editor of a compose window nobody sees alone - but it was not
+what the failing count was about.
+
 **Checkpoint `CP-03-OUTLOOKAI-INSTALLED` once `-Phase FirstRun` prints `ADDIN-READY`.** `CP-05-ADDIN-TRUSTED`
 is no longer a separate manual step - the trust entry is part of the scripted install - and the name
 survives only as the hand-built guest's history.
