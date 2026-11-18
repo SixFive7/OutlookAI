@@ -489,7 +489,7 @@ the two guests can be built with no one at the console. This is also what makes 
 honest: "install Windows" is not a step anyone can repeat identically.
 
 **Q31: the guests match THIS machine, because that is where the userbase sits.** Not a neutral
-en-US testbed - deliberately the maintainer's own configuration. Surveyed on host `PC657`,
+en-US testbed - deliberately the maintainer's own configuration. Surveyed on the maintainer's workstation,
 2026-08-25; every row below is read, not assumed:
 
 | Setting | Value | Read from |
@@ -1351,7 +1351,7 @@ converted as each row is next touched.
 
 30. **One number in this design is unmeasured and it is the one that decides whether the design is
     cheap.** Re-opening a resumed folder's table - `Folder.GetTable(filter)` with a date restriction
-    over 108,144 items - is measured nowhere. Sensitivity: at 10 s it is roughly 8% overhead across
+    over 100,000 items - is measured nowhere. Sensitivity: at 10 s it is roughly 8% overhead across
     the Archive's ~15 pages; at 60 s it is roughly 50%, and the design would then want fewer, longer
     pages. `T2/LiveResumableScanTests` records wall clock per page, so one live run measures it as a
     side effect. I did not reopen the 600 s budget or the `top` ceiling over it; I recorded the
@@ -1682,7 +1682,7 @@ converted as each row is next touched.
     3,000-item budget the last term is **15,000 round trips, ~94% of the census**, and the
     next largest term is smaller by two orders of magnitude. It needs 12 ms per call, or ~60
     ms per item opened, to exceed the 3-minute budget - the range a non-cached Exchange
-    delegate store sits in, and `info@voipfabric.com` is a delegate store. This is arithmetic
+    delegate store sits in, and `info@business.invalid` is a delegate store. This is arithmetic
     over the code plus a per-call cost model; it is not a measurement, and the first run after
     the fix is what will turn it into one.
 
@@ -1800,12 +1800,12 @@ it, not a current state.*
   have the unsent flag cleared, saved again, then moved (`DraftsThenMoveWithSentFlag`); received
   dates written through the PropertyAccessor **do** drive DASL selection. The earlier "dates are
   impossible" verdict was an artefact of the placement bug.
-- Host-side scripts live in `C:\Users\jori\Downloads\tmp-outlookai-vm\`; the corpus manifest is
+- Host-side scripts live in `C:\Users\<user>\Downloads\tmp-outlookai-vm\`; the corpus manifest is
   copied out to `corpus-vm1.jsonl` there, and **without it the corpus cannot be torn down**.
 
 ## 5. Measurements taken
 
-- **Real profile, 5 stores** (`jori@huisman.io` alone: Archive 108,144 items, Sent 10,024): Inbox-only
+- **Real profile, 5 stores** (`maintainer@personal.invalid` alone: Archive 100,000 items, Sent 10,000): Inbox-only
   exhaustive scan 30.5 s; with subfolders 66.5 s; whole store 7-day window 36.6 s over 32 folders;
   whole store 60-day window **timed out at 105 s having scanned 3 folders of 32**.
 - **Frame high-water on the real profile: 432 KB against a 64 MB limit**, zero refusals. The ceiling
@@ -1865,7 +1865,7 @@ skip, then a full folder restart with EntryID dedup, reporting which tier paid. 
 establishes: the folder walk has no stable order until this code imposes one (the `list_folders`
 walk already sorts siblings for exactly that reason and its comparator should be shared); within a
 folder MAPI documents that nothing is stable, so a token cannot name a row; resuming only at folder
-boundaries is fatal here because the measured failure IS one 108,144-item folder; and server-side
+boundaries is fatal here because the measured failure IS one 100,000-item folder; and server-side
 state is forced rather than preferred, because proving no folder was skipped needs the set of
 completed folders, which is too big for the wire. Four open questions are listed in its section 8.
 
@@ -1904,7 +1904,7 @@ wraps the column add and the sort together, so `sortApplied: false` cannot say w
 - ~~**The census cost on the maintainer's own profile.** Up to 3,000 items walked per non-hub
   store, four late-bound property reads each, at least twice per run, over five stores. Never
   measured. On a local PST it should be milliseconds; Exchange is a different question.~~
-  **ANSWERED 2026-08-20, by the census failing:** the baseline for `info@voipfabric.com` exceeded
+  **ANSWERED 2026-08-20, by the census failing:** the baseline for `info@business.invalid` exceeded
   the 3-minute STA budget and refused the whole live tier. Exchange was indeed a different
   question. The walk is a bulk table read now (section 3.58-3.64); what remains unverified is
   everything below.

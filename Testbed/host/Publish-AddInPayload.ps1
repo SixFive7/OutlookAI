@@ -765,10 +765,10 @@ function Invoke-SelfTest {
     }
 
     Write-Host '== host identity guard =='
-    Test-Case 'the maintainer workstation is not a guest' $false (Test-IsTestbedGuestIdentity -ComputerName 'PC657' -UserName 'jori')
+    Test-Case 'the maintainer workstation is not a guest' $false (Test-IsTestbedGuestIdentity -ComputerName 'DEV-PC' -UserName 'devuser')
     Test-Case 'an OAI- machine is a guest' $true (Test-IsTestbedGuestIdentity -ComputerName 'OAI-INDEXED' -UserName 'someone')
     Test-Case 'the prefix is case-insensitive' $true (Test-IsTestbedGuestIdentity -ComputerName 'oai-unindexed' -UserName 'x')
-    Test-Case 'vmadmin anywhere is a guest' $true (Test-IsTestbedGuestIdentity -ComputerName 'PC657' -UserName 'vmadmin')
+    Test-Case 'vmadmin anywhere is a guest' $true (Test-IsTestbedGuestIdentity -ComputerName 'DEV-PC' -UserName 'vmadmin')
 
     Write-Host ''
     Write-Host '== version =='

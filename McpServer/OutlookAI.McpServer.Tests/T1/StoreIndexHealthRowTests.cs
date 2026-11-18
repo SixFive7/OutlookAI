@@ -43,7 +43,7 @@ public sealed class StoreIndexHealthRowTests
         StoreHash.Candidates("00112233", true, false, "0A0B0C0D", null, null), filePath: @"C:\Users\a\alice.ost");
     private static readonly StoreIndexIdentity UndecidedExchange = new("bob@example.com", 4,
         StoreHash.Candidates("44556677", true, false, "0E0F1011", null, null), filePath: @"C:\Users\a\bob.ost");
-    private static readonly StoreIndexIdentity Delegate = new("Jan", 1, Array.Empty<StoreHashCandidate>());
+    private static readonly StoreIndexIdentity Delegate = new("Ann", 1, Array.Empty<StoreHashCandidate>());
 
     private static readonly StoreScopeInfo IdentityRoot = IndexRoot("Outlook Data File", StoreHash.Compute(Pst(@"C:\OutlookAI-Tier\identity.pst")));
     private static readonly StoreScopeInfo AliceRoot = IndexRoot("alice@example.com", StoreHash.Compute(new byte[] { 0x0A, 0x0B, 0x0C, 0x0D }));

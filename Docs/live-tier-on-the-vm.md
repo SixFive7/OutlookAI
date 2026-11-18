@@ -380,7 +380,7 @@ from-scratch rebuild replaces the guests (see `Testbed/README.md` section 1b).
   choice and is what you should record.
   *(2026-09-27: recorded since - `Testbed/MEDIA.md`'s Office section and section 8 item 7 below:
   the Office Deployment Tool with `ProPlus2024Volume` on `PerpetualVL2024`, 64-bit
-  (`OfficeClientEdition="64"`) - `Testbed.xml` for the script-built guests, `VoIPFabric.xml` for
+  (`OfficeClientEdition="64"`) - `Testbed.xml` for the script-built guests, `Workstation.xml` for
   the original one - and a guest build read on 2026-09-15 of 16.0.17932.20884. `Testbed.xml` also
   sets `<Updates Enabled="FALSE" />`, the pin the last bullet asks for. What stays untested is
   whether Office MUST be x64: every guest is 64-bit by configuration, and a 32-bit Office has
@@ -3681,7 +3681,7 @@ as before, until it merges this.
 
 ### 4.4 The Exchange VM - `OutlookAI-Exchange`, 2026-10-03 (Q108 to Q111, Q113 (b), Q116 (a))
 
-**Why this section exists.** The fourth machine: ONE real Microsoft 365 mailbox, `telefonie@xxlnet.nl`,
+**Why this section exists.** The fourth machine: ONE real Microsoft 365 mailbox, its bystander since 2026-10-08,
 cached and indexed, so that the live tests needing an Exchange profile leave the maintainer's
 workstation, whose Outlook holds far more critical mailboxes (Q108). `Testbed/README.md` section 1d
 is the procedure, 4e the run; this is the record of the build-out, every step from the committed
@@ -3708,7 +3708,7 @@ of the worktree that built it.
    scratch helpers, then as the committed `host/Invoke-ExchangeSignIn.ps1` from `CP-02` again: 2 min
    51 s, `SIGNED-IN` - profile `Outlook`, account type Exchange, `ExchangeConnectionMode` 700, the
    store `IsCachedExchange` and `IsInstantSearchEnabled`. `dsregcmd`: AzureAdJoined NO, WorkplaceJoined NO.
-5. `Set-OutlookIndexingDisabled.ps1 -Verify`: `INDEXED`, 183 rows under `telefonie@xxlnet.nl($65e0d53e)`.
+5. `Set-OutlookIndexingDisabled.ps1 -Verify`: `INDEXED`, 183 rows under `bystander@exchange-vm.invalid($65e0d53e)`.
    The mailbox is small: 25 mail folders, 5 mail items (Inbox 1, Sent Items 2, Deleted Items 2).
    `CP-03-EXCHANGE-SIGNED-IN`.
 6. The suite staged from the branch's commit (`Install-DotnetSdk.ps1 -Execute`: `TEST-READY`), the
@@ -3739,7 +3739,7 @@ failing, the tripwire clean. `host/Invoke-ExchangeSignIn.ps1 -Mode Preflight` no
 every run.
 
 **Q113 (b), measured:** `outlook_health`'s row for the cached Exchange store reads `matchedBy=storeHash
-matchedInput=profileMappingSignature inLocalIndex=True`, index root `telefonie@xxlnet.nl($65e0d53e)`,
+matchedInput=profileMappingSignature inLocalIndex=True`, index root `bystander@exchange-vm.invalid($65e0d53e)`,
 `storesNotInProfile` 0. Outlook hashes the profile's `PR_MAPPING_SIGNATURE`, as Microsoft documents,
 so for a cached Exchange store the name fallback did not decide anything. One store, one profile, one
 measurement: a delegate store's row and a second profile are untested here.
@@ -3789,8 +3789,8 @@ code on 2026-10-03, to be confirmed on it.** `new_draft` creates the draft with 
 SENDING ACCOUNT's Drafts and pins `SendUsingAccount` from an Account object
 (`OutlookComSession.TryCreateNewDraft`); a shared mailbox reached through the account is a delegate
 store, not an account, so new drafts - and `update_draft` and `discard_draft` on them - stay in
-telefonie's Drafts. `send` sends from the account, so its Sent Items copy stays in telefonie's Sent
-Items, and under the recipient allowlist the delivered copy lands in telefonie's Inbox. `reply_draft`,
+the real mailbox's Drafts. `send` sends from the account, so its Sent Items copy stays in the real mailbox's Sent
+Items, and under the recipient allowlist the delivered copy lands in the real mailbox's Inbox. `reply_draft`,
 `replyall_draft` and `forward_draft` pin the account whose delivery store holds the source item and
 save "into that store's Drafts" (`TryCreateDerivedDraft`): for a source item in the shared mailbox no
 account has that store, `SendUsingAccount` is left to Outlook, and whether the draft then stays in the

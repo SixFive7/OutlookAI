@@ -596,7 +596,7 @@ public sealed class SignatureManagerTests : IDisposable
     [InlineData("reply", SignatureManager.ReplyForwardSignatureValueName)]
     public void SetDefault_WithACreate_SingleScope_WritesOnlyThatValue(string scope, string expectedValueName)
     {
-        FakeDefaultsStore store = new FakeDefaultsStore().Account(Profile, "k", "a@b.nl");
+        FakeDefaultsStore store = new FakeDefaultsStore().Account(Profile, "k", "a@b.example");
 
         Manage(new ManageSignatureRequest
         {
@@ -604,7 +604,7 @@ public sealed class SignatureManagerTests : IDisposable
             Name = "One" + scope,
             BodyText = "x",
             DefaultForProfile = Profile,
-            DefaultForAccount = "a@b.nl",
+            DefaultForAccount = "a@b.example",
             DefaultForScope = scope,
         }, store);
 
@@ -647,7 +647,7 @@ public sealed class SignatureManagerTests : IDisposable
             DefaultForProfile = Profile,
             DefaultForAccount = "stranger@nowhere.test",
             DefaultForScope = "new",
-        }, new FakeDefaultsStore().Account(Profile, "k", "a@b.nl")));
+        }, new FakeDefaultsStore().Account(Profile, "k", "a@b.example")));
 
         Assert.False(File.Exists(Path.Combine(Dir, "Never.htm")), "validation must reject before writing files");
     }
@@ -814,11 +814,11 @@ public sealed class SignatureManagerTests : IDisposable
     [InlineData("create", "dot.", "b", null, null, null)]             // trailing dot
     [InlineData("create", "X", null, null, null, null)]               // create without any body
     [InlineData("delete", "X", "b", null, null, null)]                // delete with body
-    [InlineData("create", "X", "b", null, "a@b.nl", null)]            // account without scope or profile
+    [InlineData("create", "X", "b", null, "a@b.example", null)]            // account without scope or profile
     [InlineData("create", "X", "b", null, null, "new")]               // scope without account
-    [InlineData("create", "X", "b", null, "a@b.nl", "everything")]    // bad scope
-    [InlineData("delete", "X", null, null, "a@b.nl", "new")]          // a default with delete
-    [InlineData("set_default", "X", "b", null, "a@b.nl", "new")]      // content with set_default
+    [InlineData("create", "X", "b", null, "a@b.example", "everything")]    // bad scope
+    [InlineData("delete", "X", null, null, "a@b.example", "new")]          // a default with delete
+    [InlineData("set_default", "X", "b", null, "a@b.example", "new")]      // content with set_default
     public void InvalidRequests_AreRejected_WithArgumentException(
         string action, string name, string? bodyText, string? bodyHtml, string? account, string? scope)
     {
@@ -840,7 +840,7 @@ public sealed class SignatureManagerTests : IDisposable
 
         ArgumentException ex = Assert.Throws<ArgumentException>(() => Manage(new ManageSignatureRequest
         {
-            Action = "update", Name = "S", DefaultForProfile = Profile, DefaultForAccount = "a@b.nl", DefaultForScope = "new",
+            Action = "update", Name = "S", DefaultForProfile = Profile, DefaultForAccount = "a@b.example", DefaultForScope = "new",
         }));
         Assert.Contains("set_default", ex.Message, StringComparison.Ordinal);
     }

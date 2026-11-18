@@ -174,7 +174,7 @@ public sealed class LiveShowMeTests
         Assert.True(currentFolderWorks, "olSearchScopeCurrentFolder must work: " + string.Join(" ", findings));
 
         // --- S5 screenshot case: a REAL hub-corpus term so the visible result list is
-        // non-empty telefonie content. Hide the navigation pane + to-do bar first so
+        // non-empty hub content. Hide the navigation pane + to-do bar first so
         // nothing outside the hub store is in frame; restore afterwards.
         IReadOnlyList<string> ranked = HubCorpus.RankedCleanTerms(_fixture.TestHubCorpus);
         Assert.True(ranked.Count > 0, "no corpus term derivable from the hub store");

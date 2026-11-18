@@ -274,6 +274,12 @@ ClientBin/
 *.dbproj.schemaview
 *.jfm
 *.pfx
+# Key and certificate files never enter this public repository (Q190 (e), 2026-11-17).
+# Tools/Checks/check-personal-data.ps1 fails a release if these rules go.
+*.p12
+*.snk
+*.pem
+*.key
 *.publishsettings
 orleans.codegen.cs
 
