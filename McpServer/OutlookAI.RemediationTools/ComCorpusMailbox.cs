@@ -3759,31 +3759,10 @@ public static class ComCorpusMailbox
     /// liveness tick, and a wrong answer is worse than none.
     /// </para>
     /// </summary>
-    private static dynamic? FindStore(dynamic stores, string storeDisplayName)
-    {
-        int storeCount = stores.Count;
-        for (int i = 1; i <= storeCount; i++)
-        {
-            dynamic candidate = stores[i];
-            string? name = TryRead<string>(() => (string)candidate.DisplayName);
-            if (string.Equals(name, storeDisplayName, StringComparison.OrdinalIgnoreCase))
-            {
-                return candidate;
-            }
+    private static dynamic? FindStore(dynamic stores, string storeDisplayName) =>
+        OutlookAutomation.FindStore((object)stores, storeDisplayName);
 
-            Release(candidate);
-        }
-
-        return null;
-    }
-
-    private static dynamic CreateOutlookApplication()
-    {
-        Type progIdType = Type.GetTypeFromProgID("Outlook.Application")
-            ?? throw new InvalidOperationException("Outlook.Application ProgID is not registered.");
-        return Activator.CreateInstance(progIdType)
-            ?? throw new InvalidOperationException("Failed to create Outlook.Application.");
-    }
+    private static dynamic CreateOutlookApplication() => OutlookAutomation.CreateApplication();
 
     /// <summary>
     /// The one way a corpus operation reaches Outlook (the code-sharing refactor's S5b, the survey's S14): on the STA,
@@ -3889,11 +3868,5 @@ public static class ComCorpusMailbox
         return ns;
     }
 
-    private static void Release(object? comObject)
-    {
-        if (comObject != null && Marshal.IsComObject(comObject))
-        {
-            Marshal.ReleaseComObject(comObject);
-        }
-    }
+    private static void Release(object? comObject) => ComObjects.Release(comObject);
 }

@@ -2988,31 +2988,8 @@ public static class LiveOutlookTestMailer
         }
     }
 
-    private static dynamic? FindStore(dynamic stores, string storeDisplayName)
-    {
-        int storeCount = stores.Count;
-        for (int i = 1; i <= storeCount; i++)
-        {
-            dynamic candidate = stores[i];
-            string? name = null;
-            try
-            {
-                name = (string?)candidate.DisplayName;
-            }
-            catch (COMException)
-            {
-            }
-
-            if (string.Equals(name, storeDisplayName, StringComparison.OrdinalIgnoreCase))
-            {
-                return candidate;
-            }
-
-            Release(candidate);
-        }
-
-        return null;
-    }
+    private static dynamic? FindStore(dynamic stores, string storeDisplayName) =>
+        OutlookAutomation.FindStore((object)stores, storeDisplayName);
 
     /// <summary>
     /// One default folder's share of a tagged-artifact purge. The folder is looked up WITHOUT
@@ -3390,13 +3367,7 @@ public static class LiveOutlookTestMailer
         return null;
     }
 
-    private static dynamic CreateOutlookApplication()
-    {
-        Type progIdType = Type.GetTypeFromProgID("Outlook.Application")
-            ?? throw new InvalidOperationException("Outlook.Application ProgID is not registered.");
-        return Activator.CreateInstance(progIdType)
-            ?? throw new InvalidOperationException("Failed to create Outlook.Application.");
-    }
+    private static dynamic CreateOutlookApplication() => OutlookAutomation.CreateApplication();
 
     /// <summary>
     /// Asks Outlook to flush the Outbox and fetch waiting mail, and swallows every refusal.
@@ -4140,13 +4111,7 @@ public static class LiveOutlookTestMailer
         return result;
     }
 
-    private static void Release(object? comObject)
-    {
-        if (comObject != null && Marshal.IsComObject(comObject))
-        {
-            Marshal.ReleaseComObject(comObject);
-        }
-    }
+    private static void Release(object? comObject) => ComObjects.Release(comObject);
 }
 
 /// <summary>What Outlook's own signature engine reported (<see cref="LiveOutlookTestMailer.ReadSignatureEngine"/>).</summary>
