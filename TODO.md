@@ -2019,6 +2019,25 @@
   Recommended: (3), then (2) if `/` comes back raw - a parser change for a spelling nobody has seen
   would be a guess.
 
+- [ ] **Measure what reading an online-only Exchange store's top folder costs cold, and while its server is unreachable (stream K, 2026-11-18).**
+  Every store's top folder is read now, once per store-list refresh, so an Exchange store Outlook does
+  not cache gets the 28-character S ID like the rest (the store-ID follow-up's option (b),
+  `QUESTIONS.md` decision log, 2026-11-18). Measured on the Exchange VM: 2.2-3.0 ms for the automapped
+  online entry - but warm, because that Outlook has a window and its folder pane holds every top folder
+  open. Not measured: the first read in an Outlook the MCP server started headless, where nothing holds
+  the folder open, and a read while the server cannot be reached. The one wait seen was 26 s, for
+  `GetFolderFromID` of an ID no folder has, while Outlook was reconnecting after the VM resumed and
+  still reported itself connected; the online entry's top folder read in 2.3 ms in that same window. So
+  the read is skipped only while Outlook says it is offline or disconnected
+  (`OutlookComSession.ReadsTopFolder`), and a server lost without Outlook noticing is not covered -
+  while `outlook_health` reads the stores inside its 5 s budget. Directions: (1) measure both,
+  read-only, on the Exchange VM: a first read after a graceful restart with Outlook started headless,
+  and a read with the VM's network adapter disconnected on the host and connected again after; (2) leave
+  it - the rule covers what Outlook knows; (3) read no online-only store's top folder, as before
+  2026-11-18, so such a store keeps its T ID; (4) read an online store's top folder only when a tool
+  asks for its ID, not on every refresh. Recommended: (1), at the next Exchange VM session that restarts
+  Outlook anyway - the network half only if the cold read waits.
+
 - [ ] **Put a release candidate's MCP server in front of one session on the workstation, without installing it.**
   The manual pre-release checks (`Docs/release-manual-checks.md`, Q74 D2) exercise the Exchange-only
   write paths through the MCP server, by hand, on the maintainer's own profile - and nothing can put a
