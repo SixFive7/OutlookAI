@@ -29,6 +29,7 @@ public sealed class Phase3LiveMcpToolShapeTests
 
     [Fact]
     [Trait("Requires", "InteractiveDesktop")]
+    [Trait("Requires", "GeneratedPopulation")]
     public async Task ShowMe_And_ExhaustiveSearch_GoldenShapes_OverRealStdio()
     {
         string hub = _settings.TestHubStoreDisplayName;

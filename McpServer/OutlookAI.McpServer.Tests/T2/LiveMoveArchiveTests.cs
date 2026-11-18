@@ -41,7 +41,9 @@ public sealed class LiveMoveArchiveTests
         List<string> stores = _fixture.Settings.ExpectedStoreDisplayNames
             .Concat(_fixture.Settings.ExpectedDelegateStoreDisplayNames)
             .ToList();
-        Assert.True(stores.Count >= 3, "live settings must name the account stores");
+        // Two or more - what MultipleStores promises. It said three, the floor of the PST guests, until the
+        // Exchange VM's two mailboxes met it on 2026-10-08.
+        Assert.True(stores.Count >= 2, "live settings must name the account stores");
         IReadOnlyList<ComStoreDetail> details = _fixture.VerifySession.GetStoreDetails();
 
         foreach (string store in stores)

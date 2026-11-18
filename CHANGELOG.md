@@ -234,6 +234,19 @@ its mailbox tests on, and change nothing you install.
   check fails, the reason is written out in full here rather than hidden behind a link. Both
   indicators now take their wording from one place, so they cannot disagree.
 
+- ✅ **A test-machine probe measures how Windows and the installer remove trust in the leaked key.**
+  `Testbed/host/Invoke-TrustRemovalProbe.ps1` runs `Testbed/guest/Measure-TrustRemoval.ps1` on an
+  Outlook test machine under its lease, from its frozen checkpoint, and puts the checkpoint back
+  afterwards. One scenario adds a throwaway certificate to the user's Root store and removes it with
+  certutil started exactly as the installer starts it, and records every question Windows asks: its
+  text, whether it is shown, its default answer, what Yes and No do, and whether Windows still trusts
+  the certificate afterwards. It found that every removal asks, that certutil waits for the answer
+  (still waiting after two minutes), and that deleting the certificate's registry key instead leaves
+  Windows' list of confirmed roots naming it, so writing the key back makes it trusted again with no
+  question. The other scenario runs the built installer and its uninstaller against planted trust
+  entries and checks that exactly the leaked key's go. Both pass (Docs/live-tier-on-the-vm.md
+  section 4.8).
+
 - ✅ **The tests address folders and stores by ID, as an assistant does (Q131-Q136).**
   The mailbox tests on the test machines look IDs up through `list_accounts`, `list_folders` and
   `find_folder`, and make their test folders with `create_folder`, which refuses any name without
@@ -298,6 +311,78 @@ its mailbox tests on, and change nothing you install.
   Outlook's own list of signatures showed what was in it. What Outlook makes of a default deployed
   for every account could not be read: its signature settings reported no default with it or
   without it, written while Outlook ran, so that measurement stays open.
+
+- ✅ **The Exchange test machine checks folders by ID without writing: 66-character IDs and find_folder.**
+  Folders and stores addressed by ID (Q131-Q136) reached a real Exchange mailbox through T1 and one
+  measurement only. Three live tests that write nothing now run on that machine: every folder of the
+  test account carries a 66-character folder ID of kind X that reads back to an Exchange entry id,
+  find_folder finds the Inbox by its name under the ID list_folders gives, and a search scoped to that
+  ID answers while an Exchange-shaped ID no folder has is refused. Their first run, on 2026-11-18,
+  confirmed the IDs and found two things for the folders-by-ID code to settle: the test account's
+  storeId names both its cached store and the online entry Exchange automapped, so list_folders and
+  find_folder show its folders twice, and an Exchange folder ID no folder has was answered, not
+  refused. create_folder's refusals and the refusal while Outlook does not answer stay with T1:
+  reaching them there would take a write or a stopped Outlook. The test-side MCP client on that machine passes find_folder and lets create_folder
+  make a folder only in the test account, and the guarded session follows the new folder interface.
+
+- ✅ **The Exchange test machine writes in a dedicated test account, and only there.**
+  A Microsoft 365 account the maintainer gave for extensive testing joined the machine's Outlook
+  profile beside the mailbox it already held, and is the hub its live tests may write in (Q137,
+  settled 2026-10-11); that mailbox, real mail, is a read-only bystander the count tripwire watches.
+  The write-safety design proposed on 2026-10-03 is built for that account:
+  every address a test hands to Outlook, in-process or through the MCP server, must be the test
+  account's own; every item a run makes carries the test tag and a run marker the host records before
+  the run starts; a reply, a send, a move or a delete touches only the run's own tagged items in the
+  test account; and the sweep takes back only items of a recorded run, by tag and marker, so an aborted
+  run's leftovers go with the next run and never by a subject pattern. Exchange also maps the test
+  mailbox into the profile a second time, as an online entry reached through the real mailbox's Full
+  Access; before every baseline the tripwire now proves by the store's record key that the hub's name
+  is the test account's own store and that the second entry is neither censused nor written through,
+  or the run refuses. Neither address is in the repository: `Testbed/testbed.json` names each account
+  by its role, a run reads the address from that account's gitignored credential file, and the same
+  check refuses a run whose settings name an account the machine's Outlook has not signed in. The
+  live runner runs this machine with the broadest filter it can honestly run, carries
+  its state from run to run, because a restored offline data file is older than the server, and sets
+  the data files aside when a checkpoint is restored, has Windows Search rebuild its index, and waits
+  until each indexed mailbox has one index root before the tests start. A tagged item that was
+  already in a read-only
+  mailbox before a run is reported and left alone instead of failing every run.
+
+- ✅ **A second Microsoft 365 account signs in on the Exchange test machine, and an MFA page stops it.**
+  The sign-in script opens Outlook's own Add Account dialog in the running Outlook and types the
+  address and the password through the machine's virtual keyboard, as for the first account; each
+  account keeps its own encrypted credential file, picked by address, and a verification-code secret
+  is optional. After the password the script reads the page Microsoft shows before it types anything:
+  a request for a second factor, or for one to be registered, stops it with a message for the
+  maintainer, and nothing is clicked on his behalf. The test account signed in on 2026-10-08 without a
+  second factor; its code secret has been stored since, so a code page would be answered. Since
+  2026-11-17 the same script also signs the test account, and only it, in to Outlook on the web in an
+  InPrivate Edge window on that machine, for the roaming-signature measurement the maintainer allowed
+  (Q161 (c)), answers "Stay signed in?" with No, and signs it out again.
+
+- ✅ **Three probes measure signatures, the offline window and index ids on the Exchange test machine.**
+  `Measure-SignatureRoaming.ps1` reads the machine's Office build, licence and signature settings,
+  opens Outlook's Signatures dialog and closes it with Cancel, and looks for the hidden folder roaming
+  signatures live in: on 2026-11-17 Office LTSC 2024 16.0.17932.21000 showed the classic dialog with no
+  sign of roaming, and a signature made the test account's default in Outlook on the web had no copy
+  in Outlook an hour later or after a restart, so that Outlook does not roam signatures (Q147 R3). The
+  hidden folder could not be seen on the server even while that signature existed, so the probe's
+  server-side reading proves nothing.
+  `Measure-OfflineWindow.ps1` moves the test account's "Download email for the past" slider through its
+  eleven positions and reads the profile after each: the months are property 0x6649 and the days
+  0x665A, always written as a pair, and LTSC 2024 offers 3 and 5 years; a pair written into the profile
+  while Outlook runs, as the add-in would, is kept when Outlook quits and shown at its next start.
+  `Measure-ExchangeIndexIds.ps1`
+  found that a cached Exchange folder's id does not lead to its Windows Search row the way a PST
+  folder's does: the row carries the offline file's own node id, which the id lacks and which changes
+  when the file is rebuilt. Each probe has a self-test, and the slider probe changes nothing but the
+  test account's own setting, on that machine, before its checkpoint is restored.
+
+- ✅ **The OutlookAI add-in is installed on the Exchange test machine, and its tests run there.**
+  Installed on 2026-11-17 at the maintainer's decision (Q140 (b)) through the testbed's own two-phase
+  installer, it reached ADDIN-READY with 8 of its 13 Outlook settings applied, the five Cached Mode
+  policy values left to an administrator as everywhere else. The machine's live-run filter stops
+  leaving out the tests that read the add-in's registry state. Checkpoint `CP-08-ADDIN-READY`.
 
 - ✅ **Three build machines and two of each Outlook test machine now take test runs at once.**
   Eight agents were queueing on one build machine and the two Outlook test machines, and the
@@ -745,6 +830,33 @@ its mailbox tests on, and change nothing you install.
   And where it said every draft is written in a compose window nobody sees, it now says what Q149
   measured on Office LTSC 2024: with no Outlook window open, that window shows at the top left of the
   screen for 130 to 650 ms and has the foreground while it is there.
+
+- ✅ **A live run that starts Outlook closes Office's activation wizard and records it.**
+  Past Office's 30-day activation grace, which the Exchange test machine's real clock has crossed,
+  every start of Outlook with a window raises the modal Microsoft Office Activation Wizard before the
+  main window, and the main window waits for it: one start sat 277 seconds on 2026-11-17 until it was
+  closed by hand. The script that starts Outlook for a run now closes that one window with its own
+  Close button, says so, and fails if it stays up, and the run's summary records how many times it
+  was closed. On that machine the runner also starts Outlook no sooner than 240 seconds after a boot:
+  started 38 and 79 seconds after one, Outlook put its programmatic-access prompt in front of the
+  first address read although the antivirus read up to date, and started 2 and 8 minutes after one it
+  did not. Past the grace Outlook there also created no item through its object model on 2026-11-17,
+  so until the maintainer settles how it gets that back (decision 206, TODO.md) the runner gives the
+  machine only the tests that write nothing.
+
+- ✅ **The Exchange test machine leaves out the signature tests until signature roaming is measured.**
+  A signature or a default signature set on the test account could be carried into the mailbox by an
+  Outlook that roams signatures, where no sweep removes it. Until that is measured for this Office
+  (Q147, decided by the maintainer 2026-11-17), the tests that write a signature or touch an account's
+  default declare a new capability, `LocalSignatures`, which the machine's filter leaves out, and the
+  test-side MCP client there refuses `manage_signature` whatever its action.
+
+- 📝 **An agent may sign in to Outlook on the web on the Exchange test machine, on six conditions.**
+  The maintainer's decision Q161 (c), 2026-11-17, now in AGENTS.md beside the machine's internet
+  exception: that machine only; the test account only, never the real mailbox; Windows' own browser,
+  Edge; the password and the code typed as keystrokes from the host's encrypted store, as the sign-in
+  script does; "Stay signed in" and device registration declined; signed out afterwards and the
+  machine restored to its checkpoint. It exists to measure roaming signatures.
 
 - 📦 **The release page lists each change's icon and headline, linked to its full entry (Q123).**
   The maintainer decided it on 2026-10-03, in his words: *"copy the release notes style and system
@@ -2046,13 +2158,21 @@ its mailbox tests on, and change nothing you install.
   under its own name from the old one with its clock held back so the password still worked, and
   the Outlook machines' new frozen checkpoints `CP-22C-FROZEN-CLOCK` and `CP-16B-FROZEN-CLOCK`,
   whose frozen instants moved 27 and 28 seconds. A new test machine sets it at its first logon, and
-  the answer-file builder refuses to build one whose first-logon script would not.
+  the answer-file builder refuses to build one whose first-logon script would not. On the Exchange
+  test machine, which no runner restores from a checkpoint, it was set from its console on
+  2026-11-17, the password itself unchanged, and checkpoint `CP-07-TEST-ACCOUNT-READY` holds it.
 
 - ✅ **Two index-coverage tests pass on any date, not only before 2026-11-16.**
   `UnindexedStoreReportingTests` searched for mail older than today minus 90 days while its stub index
   stays at 2026-08-18, so from 2026-11-16 the search reached past the stub's frontier and the two
   tests that expect no sweep failed on every machine, master included. The search now ends 90 days
   before the stub's frontier, as the file's store-scoped test already did.
+
+- ✅ **A test-machine restart refuses Outlook's own Office dialogs instead of waiting behind them.**
+  The restart script refused only classic Windows dialogs, so Outlook's start-up "Check out our new
+  look" theme dialog went unseen on the Exchange test machine on 2026-10-08: Outlook ignored the
+  request to quit for half an hour, and had never added the new mailbox to Windows Search either. The
+  script now names and refuses that kind of dialog too.
 
 - ✅ **The live-test runner deletes the build it made for each run instead of leaving 180 MB behind.**
   Git unregistered the commit's build tree after every run but left its directory, so every run of the
@@ -2510,15 +2630,32 @@ its mailbox tests on, and change nothing you install.
 
 ### Security
 
+- 🔒 **The installer removes the trust Office saved for add-ins signed with the leaked old key.**
+  Clicking Install on Office's "Publisher cannot be verified" prompt for OutlookAI v1.0.0.1 to
+  v2.3.1.111 saved a trust entry under `HKCU\Software\Microsoft\VSTO\Security\Inclusion`: where
+  the add-in was, and the public key that signed it. From then on Office loads any add-in at that
+  place signed with that key without asking. It never looks at the certificate, and that key's
+  private half is public, so anybody can sign with it. Every install, update and uninstall now
+  removes each entry that holds the leaked key, found by the key alone and wherever it points.
+  Entries for other keys stay, among them the one for the current release. Microsoft documents the
+  entry as a location and a public key, and the runtime's own code compares those two and nothing
+  else. On a test machine the installer and its uninstaller each removed three planted entries for
+  the leaked key, spelled three ways, and kept every other entry (Docs/live-tier-on-the-vm.md
+  section 4.8).
+
 - 🔒 **The installer removes the leaked old signing certificate from every certificate store it can change.**
   That certificate signed OutlookAI v1.0.0.1 to v2.3.1.111, and its private key became public, so no
   computer should trust it. Installing or updating already removed it from your Trusted Publishers
-  store. Every install, update and uninstall now also removes it from your Trusted Root
-  Certification Authorities, Intermediate Certification Authorities and Trusted People stores, and
-  from the computer's stores too when the installer runs with administrator rights. It is found by
-  its thumbprint, E205060633DD7062D4F90033130542948A69D068, and nothing else. Windows guards your
-  Trusted Root store, so if the certificate is in it, Windows may ask you to confirm the removal;
-  the installer does not wait for your answer and looks again next time. The installer carries no
+  store. Every install, update and uninstall now also removes it from your Intermediate
+  Certification Authorities and Trusted People stores, and from the computer's stores too when the
+  installer runs with administrator rights. It is found by its thumbprint,
+  E205060633DD7062D4F90033130542948A69D068, and nothing else. Your Trusted Root Certification
+  Authorities store works differently: Windows asks you to confirm every removal from it, in a
+  window titled Root Certificate Store whose default answer is No, and the removal waits for your
+  answer; on a test machine it was still waiting after two minutes. So when the certificate is in
+  that store, an install or uninstall you run yourself first says why in one sentence and then
+  waits for your answer, and an automatic update leaves it for the next install you run. A test
+  machine showed all of this (Docs/live-tier-on-the-vm.md section 4.8). The installer carries no
   copy of the certificate and never adds it to the Disallowed store (decision 193 (b)).
 
 - 🔒 **The add-in and the MCP server load Windows DLLs only from System32.**

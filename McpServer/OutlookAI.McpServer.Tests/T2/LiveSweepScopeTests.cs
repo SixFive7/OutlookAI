@@ -50,6 +50,7 @@ public sealed class LiveSweepScopeTests
 
     [Fact]
     [Trait("Requires", "SearchIndex")]
+    [Trait("Requires", "GeneratedPopulation")]
     public void IndexTier_TwoTerms_OneInSubjectOneInBody_AreFoundTogether()
     {
         // Ground truth: a hub mail carrying a word in its subject that its own body does

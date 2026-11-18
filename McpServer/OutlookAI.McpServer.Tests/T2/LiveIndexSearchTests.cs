@@ -66,6 +66,7 @@ public sealed class LiveIndexSearchTests
     [Trait("Requires", "SearchIndex")]
     [Trait("Requires", "MultipleStores")]
     [Trait("Writes", "Nothing")]
+    [Trait("Requires", "GeneratedPopulation")]
     public void ProbeParity_AllThreeStores_ReturnRowsUnder2s()
     {
         foreach (string storeName in Indexed)
@@ -88,6 +89,7 @@ public sealed class LiveIndexSearchTests
     [Trait("Requires", "SearchIndex")]
     [Trait("Requires", "MultipleStores")]
     [Trait("Writes", "Nothing")]
+    [Trait("Requires", "ProbePopulation")]
     public void ProbeParity_McpShapedQuery_ScopeKindContainsOrderBy()
     {
         // Section-5 R3 shape: store scope + kind + CONTAINS + ORDER BY DESC, TOP 25.
@@ -124,6 +126,7 @@ public sealed class LiveIndexSearchTests
     [Trait("Requires", "SearchIndex")]
     [Trait("Requires", "MultipleStores")]
     [Trait("Writes", "Nothing")]
+    [Trait("Requires", "GeneratedPopulation")]
     public void ProbeParity_DateRangeQuery_HitsUnder2s()
     {
         // The 30 days before the declared corpus's anchor, not before now (Q130 (b), decided
@@ -214,6 +217,7 @@ public sealed class LiveIndexSearchTests
     [Trait("Requires", "SearchIndex")]
     [Trait("Requires", "MultipleStores")]
     [Trait("Writes", "Nothing")]
+    [Trait("Requires", "GeneratedPopulation")]
     public void SenderFilter_PerColumnContains_IndexBackedUnder2s()
     {
         // Any sender address seen in recent mail of the first store; asserted content-free.

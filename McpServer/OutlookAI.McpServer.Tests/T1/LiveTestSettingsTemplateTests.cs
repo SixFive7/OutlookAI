@@ -225,14 +225,16 @@ public sealed class LiveTestSettingsTemplateTests
 
     /// <summary>
     /// True for the Exchange test VM's section: the VM testbed.json's exchangeVm block names, which must
-    /// also be the one section declaring machineProfile ExchangeGuest - the two records cannot part.
+    /// also be the one section declaring machineProfile ExchangeGuest or, since 2026-10-08, ExchangeTestAccount -
+    /// the two records cannot part.
     /// </summary>
     private static bool IsTheExchangeVm(KeyValuePair<string, JsonNode?> section)
     {
         string path = Path.Combine(RepoRoot(), "Testbed", "testbed.json");
         string? exchangeVm = JsonNode.Parse(File.ReadAllText(path))!["exchangeVm"]?["vmName"]?.GetValue<string>();
         bool named = exchangeVm != null && string.Equals(section.Key, exchangeVm, StringComparison.Ordinal);
-        bool declared = section.Value?["machineProfile"]?.GetValue<string>() == nameof(LiveMachineProfile.ExchangeGuest);
+        string? profile = section.Value?["machineProfile"]?.GetValue<string>();
+        bool declared = profile == nameof(LiveMachineProfile.ExchangeGuest) || profile == nameof(LiveMachineProfile.ExchangeTestAccount);
         Assert.True(named == declared, section.Key + ": testbed.json's exchangeVm and the section's machineProfile disagree about whether it is the Exchange VM");
         return named;
     }

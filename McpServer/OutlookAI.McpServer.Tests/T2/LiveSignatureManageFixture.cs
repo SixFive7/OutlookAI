@@ -22,8 +22,8 @@ public sealed class LiveSignatureManageFixture : IDisposable
         // Fail-closed per-store count tripwire: no census, no live tier. Cheap after
         // the first fixture (one process-wide baseline).
         LiveStoreCountTripwire.EnsureBaseline(Settings);
-        Service = MailService.CreateDefault();
-        RunMarker = "d38" + Guid.NewGuid().ToString("N").Substring(0, 12);
+        Service = LiveMailServices.CreateDefault();
+        RunMarker = LiveRunMarker.ForFixture("d38");
 
         // The guard: no snapshot, no suite - the files and (Q147) every signature setting.
         Snapshot = SignatureDirectorySnapshot.Capture();

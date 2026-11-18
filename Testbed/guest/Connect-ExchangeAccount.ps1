@@ -33,9 +33,27 @@
       Inspect        read-only: every top-level window, and the UI Automation tree of each one
                      that is not an Outlook explorer or inspector (those can show mail). Nothing is
                      invoked, focused or typed. Writes <StatusDir>\inspect.txt.
-      Address        Outlook's "Email Account Setup" dialog: focus the email address box.
+      OpenAddAccount a SECOND account in a profile that already has one (2026-10-08): asks the running
+                     Outlook for its own "Add Account..." command - ExecuteMso('AddAccount'), which opens
+                     the same "Email Account Setup" dialog its first start shows - and waits for the
+                     dialog. The command is modal and blocks its caller until the dialog closes, so it
+                     is issued from a hidden helper process of its own, which ends with the dialog.
+                     DONE when the dialog is up (ALREADY-OPEN in the detail when it was up before).
+      Address        Outlook's "Email Account Setup" dialog: focus the email address box - emptied
+                     first if it holds anything, so that the address typed is the whole of it.
       Password       the Microsoft sign-in page: a password field (IsPassword) in focus.
       Code           the verification-code page: the code field in focus.
+      Page           read-only: which sign-in page is showing - PASSWORD, CODE, MFA (Microsoft asks
+                     for a second factor or for one to be registered: "More information required",
+                     "Approve sign in request", "Verify your identity" and the like), DEVICE (the
+                     offer to sign in to all apps), ERROR, OTHER or NONE - with the page's visible
+                     texts (control names: the sign-in page's own words and the account's address,
+                     never a field's value). Lets the host STOP on an MFA page rather than guess.
+                     With no sign-in window up, it reads Outlook's own "Email Account Setup" dialog
+                     instead, through MSAA (its NetUI pages are invisible to UI Automation): SETUP-ADDED
+                     ("Account successfully added"), SETUP-FAILED ("Something went wrong", "We couldn't
+                     add your account"), SETUP-BUSY (a progress page), SETUP-START (the address page)
+                     or SETUP-OTHER, with the page's visible texts.
       Verify         over COM, content-free: an Exchange account whose SmtpAddress is -Account, in a cached
                      mode that is connected (500, 600 or 700), whose delivery store is cached Exchange.
                      SIGNED-IN or NOT-SIGNED-IN, with what was seen. Reads only.
@@ -51,7 +69,7 @@
     and Name - and on the sign-in pages a Name can be the account's address, which is not a secret.
 
 .PARAMETER Step
-    Inspect, Address, Password, Code or Choose.
+    Inspect, OpenAddAccount, Address, Password, Code, Page, Choose or Verify.
 
 .PARAMETER ControlName
     With -Step Choose: the Name of the control to invoke, matched exactly, case-insensitively.
@@ -67,7 +85,10 @@
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Inspect', 'Address', 'Password', 'Code', 'Choose', 'Verify')] [string] $Step = 'Inspect',
+    [ValidateSet('Inspect', 'OpenAddAccount', 'Address', 'Password', 'Code', 'Page', 'Choose', 'Verify', 'OpenBrowser', 'SignOutBrowser')] [string] $Step = 'Inspect',
+    # Outlook on the web in Edge instead of Outlook's own sign-in (Q161 (c), 2026-11-17): the page window is
+    # an InPrivate Edge window, and the address field is the web page's own.
+    [switch] $Browser,
     [string] $ControlName,
     [string] $Account,
     [int] $WaitSeconds = 90,
@@ -104,6 +125,7 @@ namespace OutlookAI {
         [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
         [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
         [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr hWnd);
+        [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
         [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
         [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
 
@@ -308,6 +330,8 @@ function Bring-ToFront($Window) {
 # by process and title rather than by one class name, because the host differs between builds.
 function Find-PageWindow([string] $Page) {
     $tops = @(Get-TopWindows | Where-Object { -not $_.MailWindow -and -not $_.Offscreen })
+    # Q161 (c): the sign-in page is Outlook on the web's, in the InPrivate Edge window this script opened.
+    if ($Browser) { return @($tops | Where-Object { $_.Process -eq 'msedge' -and $_.Class -eq 'Chrome_WidgetWin_1' -and $_.Name -match 'InPrivate' }) }
     switch ($Page) {
         'Address' { return @($tops | Where-Object { $_.Process -eq 'OUTLOOK' -and $_.Class -eq 'NUIDialog' }) }
         default {
@@ -329,7 +353,20 @@ function Find-Field($Window, [string] $Page) {
     foreach ($e in $all) {
         try { $c = $e.Current } catch { continue }
         switch ($Page) {
-            'Address' { if ($c.ClassName -eq 'RICHEDIT60W') { return $e } }
+            # The first start's dialog showed a RICHEDIT60W; the same dialog opened by "Add Account..."
+            # in a running Outlook shows the box as a NetUITextbox named "Email address" (measured
+            # 2026-10-08), with the rich edit appearing under it only once it has the focus.
+            'Address' {
+                # The Microsoft sign-in page's address box: id i0116 (measured in Edge 2026-11-17).
+                if ($Browser) {
+                    if ($c.ControlType -eq [System.Windows.Automation.ControlType]::Edit -and -not $c.IsPassword -and $c.IsEnabled -and
+                        ($c.AutomationId -eq 'i0116' -or $c.Name -match '(?i)email|phone|skype')) { return $e }
+                    continue
+                }
+                if ($c.ClassName -eq 'RICHEDIT60W') { return $e }
+                if ($c.ClassName -eq 'NetUITextbox' -and $c.ControlType -eq [System.Windows.Automation.ControlType]::Edit -and
+                    [string]::Equals($c.Name, 'Email address', [StringComparison]::OrdinalIgnoreCase) -and -not $c.IsPassword) { return $e }
+            }
             'Password' { if ($c.IsPassword -and $c.IsEnabled) { return $e } }
             'Code' {
                 if (-not $c.IsPassword -and $c.IsEnabled -and $c.ControlType -eq [System.Windows.Automation.ControlType]::Edit -and
@@ -376,6 +413,164 @@ if ($Step -eq 'Inspect') {
 }
 
 # ------------------------------------------------------------------------------------------------
+if ($Step -eq 'OpenAddAccount') {
+    $open = @(Find-PageWindow 'Address' | Where-Object { [string]::Equals($_.Name, 'Email Account Setup', [StringComparison]::OrdinalIgnoreCase) })
+    if ($open.Count -gt 0) {
+        Write-Status 'DONE' @(('ALREADY-OPEN window "{0}" ({1}) handle={2}' -f (Short $open[0].Name), $open[0].Process, $open[0].Handle))
+        exit 0
+    }
+    $app = $null
+    try { $app = [Runtime.InteropServices.Marshal]::GetActiveObject('Outlook.Application') } catch { $app = $null }
+    if ($null -eq $app) { Write-Status 'NOT-FOUND' @('no running Outlook to ask for Add Account (start it NOT elevated first)'); exit 3 }
+    $label = ''
+    try {
+        $explorer = $app.ActiveExplorer()
+        if ($null -eq $explorer) { Write-Status 'NOT-FOUND' @('Outlook has no explorer window to carry the command'); exit 3 }
+        $label = [string]$explorer.CommandBars.GetLabelMso('AddAccount')
+        if (-not $explorer.CommandBars.GetEnabledMso('AddAccount')) { Write-Status 'REFUSED' @("Outlook's AddAccount command ('$label') is disabled"); exit 4 }
+    }
+    catch { Write-Status 'NOT-FOUND' @("Outlook does not offer the AddAccount command: $($_.Exception.Message)"); exit 3 }
+    finally { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($app) }
+
+    # The modal command, from a hidden process of its own: it returns when the dialog closes.
+    $helper = @'
+$app = [Runtime.InteropServices.Marshal]::GetActiveObject('Outlook.Application')
+try { $app.ActiveExplorer().CommandBars.ExecuteMso('AddAccount') } finally { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($app) }
+'@
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($helper))
+    $process = Start-Process -FilePath powershell.exe -ArgumentList '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-EncodedCommand', $encoded -WindowStyle Hidden -PassThru
+    $deadline = (Get-Date).AddSeconds($WaitSeconds)
+    while ((Get-Date) -lt $deadline) {
+        $open = @(Find-PageWindow 'Address' | Where-Object { [string]::Equals($_.Name, 'Email Account Setup', [StringComparison]::OrdinalIgnoreCase) })
+        if ($open.Count -gt 0) {
+            Write-Status 'DONE' @(("OPENED '{0}' through ExecuteMso('AddAccount'), helper pid {1}: window ""{2}"" ({3}) handle={4}" -f $label, $process.Id, (Short $open[0].Name), $open[0].Process, $open[0].Handle))
+            exit 0
+        }
+        Start-Sleep -Seconds 1
+    }
+    Write-Status 'NOT-FOUND' @("ExecuteMso('AddAccount') was issued (helper pid $($process.Id)), but no 'Email Account Setup' window appeared within $WaitSeconds s", (Describe-Focus).Text)
+    exit 3
+}
+
+# ------------------------------------------------------------------------------------------------
+# Which sign-in page shows. Read-only: names of the page's controls, never a field's value.
+$MfaPattern = '(?i)(more information required|keep your account secure|verify your identity|approve sign.?in|enter code|security info|authenticator|two-step|multi-factor|additional security verification|action required|help us protect your account|text you a code|call you|use a verification code)'
+$ErrorPattern = '(?i)(account or password is incorrect|incorrect password|account (is|has been) locked|doesn''t exist|we couldn''t find an account|something went wrong|sign-in was blocked|your sign-in was successful but)'
+$DevicePattern = '(?i)(sign in to all (apps|your apps)|stay signed in to all your apps|no, (sign in to )?this app only|allow my organi[sz]ation to manage my device)'
+if ($Step -eq 'Page') {
+    $deadline = (Get-Date).AddSeconds([Math]::Max(1, $WaitSeconds))
+    $kind = 'NONE'
+    $texts = @()
+    $where = ''
+    while ($true) {
+        $kind = 'NONE'
+        $texts = @()
+        $where = ''
+        foreach ($w in @(Find-PageWindow 'Any' | Where-Object { $_.Class -ne 'NUIDialog' })) {
+            $where = ('window "{0}" class={1} ({2})' -f (Short $w.Name), $w.Class, $w.Process)
+            $hasPassword = $false
+            $hasCode = $false
+            foreach ($e in (Get-Descendants $w.Element 1500)) {
+                try { $c = $e.Current } catch { continue }
+                if ($c.IsOffscreen) { continue }
+                if ($c.IsPassword -and $c.IsEnabled) { $hasPassword = $true }
+                if (-not $c.IsPassword -and $c.IsEnabled -and $c.ControlType -eq [System.Windows.Automation.ControlType]::Edit -and
+                    ($c.AutomationId -match 'OTC|otc|code' -or $c.Name -match '(?i)code')) { $hasCode = $true }
+                $name = Short $c.Name
+                if ($name -and @('Text', 'Hyperlink', 'Button', 'Edit') -contains $c.ControlType.ProgrammaticName.Replace('ControlType.', '') -and $texts -notcontains $name) { $texts += $name }
+            }
+            # A code field first: the authenticator's code page also says "Enter code", and an account
+            # that has a TOTP secret answers that page itself. Every other second-factor page is MFA.
+            $joined = $texts -join ' | '
+            if ($hasCode) { $kind = 'CODE' }
+            elseif ($joined -match $MfaPattern) { $kind = 'MFA' }
+            elseif ($hasPassword) { $kind = 'PASSWORD' }
+            elseif ($joined -match $ErrorPattern) { $kind = 'ERROR' }
+            elseif ($joined -match $DevicePattern) { $kind = 'DEVICE' }
+            else { $kind = 'OTHER' }
+            break
+        }
+        # No sign-in window: Outlook's own setup dialog, its VISIBLE MSAA nodes only (a NetUI dialog
+        # carries every page it can show; the hidden ones have STATE_SYSTEM_INVISIBLE set).
+        if ($kind -eq 'NONE') {
+            foreach ($w in @(Find-PageWindow 'Address' | Where-Object { [string]::Equals($_.Name, 'Email Account Setup', [StringComparison]::OrdinalIgnoreCase) })) {
+                $where = ('window "{0}" class={1} ({2})' -f (Short $w.Name), $w.Class, $w.Process)
+                foreach ($n in (Get-MsaaNodes $w)) {
+                    if (($n.State -band $MsaaStateInvisible) -ne 0) { continue }
+                    $name = Short $n.Name
+                    if ($name -and $texts -notcontains $name) { $texts += $name }
+                }
+                $joined = $texts -join ' | '
+                if ($joined -match '(?i)account successfully (added|updated)') { $kind = 'SETUP-ADDED' }
+                elseif ($joined -match '(?i)(something went wrong|couldn''t add your account|couldn''t save your account)') { $kind = 'SETUP-FAILED' }
+                elseif ($joined -match '(?i)(searching for accounts|getting things ready|connecting|signing in)') { $kind = 'SETUP-BUSY' }
+                elseif ($joined -match '(?i)\bConnect\b' -and $joined -match '(?i)email address') { $kind = 'SETUP-START' }
+                else { $kind = 'SETUP-OTHER' }
+                break
+            }
+        }
+        if (@('NONE', 'OTHER', 'SETUP-BUSY', 'SETUP-OTHER') -notcontains $kind) { break }
+        if ((Get-Date) -ge $deadline) { break }
+        Start-Sleep -Seconds 2
+    }
+    $detail = @(('PAGE ' + $kind), $where) + @($texts | Select-Object -First 40 | ForEach-Object { 'TEXT ' + $_ })
+    Write-Status 'DONE' $detail
+    exit 0
+}
+
+# ------------------------------------------------------------------------------------------------
+# Q161 (c): Outlook on the web, in an InPrivate Edge window - so no sign-in outlives the window.
+$OwaUrl = 'https://outlook.office.com/mail/'
+$OwaSignOutUrl = 'https://outlook.office.com/owa/logoff.owa'
+$EdgeExe = 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'
+if ($Step -eq 'OpenBrowser') {
+    if (-not $Browser) { Write-Status 'REFUSED' @('-Step OpenBrowser goes with -Browser'); exit 4 }
+    if (@(Find-PageWindow 'Any').Count -gt 0) { Write-Status 'REFUSED' @('an InPrivate Edge window is open already - close it first (-Step SignOutBrowser)'); exit 4 }
+    if (-not (Test-Path -LiteralPath $EdgeExe)) { Write-Status 'NOT-FOUND' @("Edge is not at $EdgeExe"); exit 3 }
+    Start-Process -FilePath $EdgeExe -ArgumentList '--inprivate', '--no-first-run', '--no-default-browser-check', '--new-window', $OwaUrl | Out-Null
+    $deadline = (Get-Date).AddSeconds($WaitSeconds)
+    while ((Get-Date) -lt $deadline) {
+        $w = @(Find-PageWindow 'Any') | Select-Object -First 1
+        if ($w) { Write-Status 'DONE' @(('OPENED "{0}" ({1}) handle={2}' -f (Short $w.Name), $w.Class, $w.Handle)); exit 0 }
+        Start-Sleep -Seconds 1
+    }
+    Write-Status 'NOT-FOUND' @("no InPrivate Edge window within $WaitSeconds s")
+    exit 3
+}
+if ($Step -eq 'SignOutBrowser') {
+    if (-not $Browser) { Write-Status 'REFUSED' @('-Step SignOutBrowser goes with -Browser'); exit 4 }
+    $open = @(Find-PageWindow 'Any')
+    $detail = @()
+    if ($open.Count -gt 0) {
+        # Outlook on the web's own sign-out, in the same InPrivate session, then every InPrivate window closed:
+        # an InPrivate session's cookies end with its last window.
+        Start-Process -FilePath $EdgeExe -ArgumentList '--inprivate', $OwaSignOutUrl | Out-Null
+        Start-Sleep -Seconds 12
+        $detail += ('signed out through ' + $OwaSignOutUrl)
+        foreach ($w in @(Find-PageWindow 'Any')) { $detail += ('closing "{0}"' -f (Short $w.Name)); [void][OutlookAI.SignInWindow]::PostMessage([IntPtr]$w.Handle, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero) }
+        Start-Sleep -Seconds 5
+    }
+    $left = @(Find-PageWindow 'Any').Count
+    if ($left -gt 0) { Write-Status 'STUCK' (@($detail) + "$left InPrivate window(s) still open"); exit 1 }
+    Write-Status 'DONE' (@($detail) + 'no InPrivate Edge window open')
+    exit 0
+}
+
+if ($Step -eq 'Verify' -and $Browser) {
+    # Outlook on the web has loaded once the InPrivate window's title is Outlook's mail page, not a sign-in page.
+    $deadline = (Get-Date).AddSeconds($WaitSeconds)
+    $seen = 'no InPrivate Edge window'
+    while ((Get-Date) -lt $deadline) {
+        foreach ($w in @(Find-PageWindow 'Any')) {
+            $seen = 'InPrivate window "' + (Short $w.Name) + '"'
+            if ($w.Name -match '(?i)outlook' -and $w.Name -notmatch '(?i)sign in') { Write-Status 'SIGNED-IN' @($seen); exit 0 }
+        }
+        Start-Sleep -Seconds 3
+    }
+    Write-Status 'NOT-SIGNED-IN' @($seen)
+    exit 1
+}
+
 if ($Step -eq 'Verify') {
     if (-not $Account) { Write-Status 'REFUSED' @('-Step Verify needs -Account'); exit 4 }
     $deadline = (Get-Date).AddSeconds($WaitSeconds)
@@ -512,6 +707,32 @@ Bring-ToFront $window
 try { $field.SetFocus() } catch { }
 Start-Sleep -Milliseconds 500
 
+# The address box must be EMPTY before the host types: keystrokes append, and an address typed after
+# a prefilled one is a third address nobody meant. Emptied through its ValuePattern, and read back; a
+# box that cannot be emptied stops the step with nothing typed. An address is not a secret, so it may
+# be read - but it is not written anywhere. An EMPTY NetUITextbox reports its cue banner as its value -
+# measured 2026-10-08: the add-account dialog's untouched box reads "Email address", its own Name - so
+# a value equal to the box's Name is the empty box, not text in it.
+function Test-AddressBoxEmpty($Field, $ValuePattern) {
+    $current = [string]$ValuePattern.Current.Value
+    if ([string]::IsNullOrEmpty($current)) { return $true }
+    return [string]::Equals($current.Trim(), ([string]$Field.Current.Name).Trim(), [StringComparison]::OrdinalIgnoreCase)
+}
+if ($Step -eq 'Address') {
+    $value = $null
+    try { $value = $field.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern) } catch { $value = $null }
+    if ($null -ne $value -and -not (Test-AddressBoxEmpty $field $value)) {
+        try { $value.SetValue('') } catch { }
+        Start-Sleep -Milliseconds 400
+        if (-not (Test-AddressBoxEmpty $field $value)) {
+            Write-Status 'REFUSED' @('the address box holds text that could not be cleared - nothing typed', (Describe-Focus).Text)
+            exit 4
+        }
+        try { $field.SetFocus() } catch { }
+        Start-Sleep -Milliseconds 300
+    }
+}
+
 function Test-FocusOnField {
     $focus = Describe-Focus
     $ok = $false
@@ -521,6 +742,10 @@ function Test-FocusOnField {
         $inWindow = ($focus.Foreground -eq [int64]$window.Handle) -or ($focus.TopHandle -eq [int64]$window.Handle)
         switch ($Step) {
             'Password' { $ok = $focus.IsPassword -and ($same -or $inWindow) }
+            'Address' {
+                if ($Browser) { $ok = (-not $focus.IsPassword) -and ($same -or ($inWindow -and $focus.Aid -eq 'i0116')) }
+                else { $ok = (-not $focus.IsPassword) -and ($same -or ($inWindow -and @('RICHEDIT60W', 'NetUITextbox') -contains $focus.Class)) }
+            }
             default { $ok = $same -or ($inWindow -and $focus.Class -eq $field.Current.ClassName -and $focus.Aid -eq $field.Current.AutomationId) }
         }
     }

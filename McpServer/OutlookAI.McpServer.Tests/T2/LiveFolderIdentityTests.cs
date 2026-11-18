@@ -212,6 +212,7 @@ public sealed class LiveFolderIdentityTests
 
     [Fact]
     [Trait("Requires", "SearchIndex")]
+    [Trait("Requires", "PstStore")]
     public void IndexRows_CarryTheirOwnNodeId_SoAPstFolderIdFindsItsScopeWithoutOutlook()
     {
         IIndexClient client = IndexClientFactory.CreateAuto(out string providerReport);

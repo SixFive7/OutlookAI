@@ -47,6 +47,7 @@ public sealed class LiveAttachmentKindRecallTests
     [Fact]
     [Trait("Requires", "SearchIndex")]
     [Trait("Writes", "Nothing")]
+    [Trait("Requires", "GeneratedPopulation")]
     public void DroppedAttachmentKinds_AreRecoveredByTheNewShape_AndTheGrowthIsMeasured()
     {
         IIndexClient client = Client;
@@ -117,6 +118,7 @@ public sealed class LiveAttachmentKindRecallTests
     [Fact]
     [Trait("Requires", "SearchIndex")]
     [Trait("Writes", "Nothing")]
+    [Trait("Requires", "GeneratedPopulation")]
     public void PostFilter_KeepsMailOnly_AndAttachmentRowsOfEveryKind()
     {
         // Admission moved from SQL to code; prove the code decides the same thing the old
@@ -209,6 +211,7 @@ public sealed class LiveAttachmentKindRecallTests
     [Fact]
     [Trait("Requires", "SearchIndex")]
     [Trait("Writes", "Nothing")]
+    [Trait("Requires", "GeneratedPopulation")]
     public void PreviouslyDroppedAttachmentKinds_SurfaceThroughSearch_AndReadOpensTheParent()
     {
         // Deterministic end-to-end proof through the PRODUCT, read-only on the real
@@ -341,7 +344,7 @@ public sealed class LiveAttachmentKindRecallTests
         // inside the budget is not something a test can command: the crawl outcome is
         // REPORTED, and only what is under our control is asserted.
         string hub = _fixture.Settings.TestHubStoreDisplayName;
-        string marker = "atk" + Guid.NewGuid().ToString("N")[..12];
+        string marker = "atk" + LiveRunMarker.Current + Guid.NewGuid().ToString("N")[..6];
         string token = "zqattach" + Guid.NewGuid().ToString("N")[..10];
         string subject = LiveOutlookTestMailer.SubjectTag + " " + marker + " attachment-kind recall";
         string directory = Path.Combine(Path.GetTempPath(), "OutlookAI-McpTest-" + marker);

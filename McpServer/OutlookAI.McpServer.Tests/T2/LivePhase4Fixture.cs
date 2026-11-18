@@ -26,8 +26,8 @@ public sealed class LivePhase4Fixture : IDisposable
         // Fail-closed per-store count tripwire: no census, no live tier. Cheap after
         // the first fixture (one process-wide baseline).
         LiveStoreCountTripwire.EnsureBaseline(Settings);
-        Service = MailService.CreateDefault();
-        RunMarker = "p4" + Guid.NewGuid().ToString("N").Substring(0, 14);
+        Service = LiveMailServices.CreateDefault();
+        RunMarker = LiveRunMarker.ForFixture("p4");
         _verifySession = new Lazy<OutlookComSession>(
             () => OutlookComSession.Connect(allowStartingOutlook: true),
             LazyThreadSafetyMode.ExecutionAndPublication);

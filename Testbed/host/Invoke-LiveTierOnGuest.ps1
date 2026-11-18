@@ -42,10 +42,33 @@
                    released - on every path, failures included, once the guest was touched.
       8. REPORT  - summary.txt and summary.json in <RepoPath>\.work\guest-live-runs\<run id>\.
 
+    THE EXCHANGE VM (2026-10-08). OutlookAI-Exchange runs here too, with its own STAGE, PREPARE and
+    REST and two things a real mailbox adds. ITS STATE IS CARRIED FORWARD: no checkpoint is restored
+    before or after a run unless -Checkpoint names one, because its mailboxes live on the Exchange
+    server, which no checkpoint restores - a restored .ost is older than the server, and Outlook refuses
+    it at its next start ("Outlook is using an old copy of your Outlook data file", measured on the
+    second write run). So STAGE resumes the VM as the last run left it, PREPARE starts Outlook NOT
+    elevated if it is not running - after Defender's signatures are brought up to date, so that it
+    starts on current ones - and runs Invoke-ExchangeSignIn.ps1 -Mode Preflight: Defender current, so
+    Outlook's Object Model Guard does not stall the run, and every recorded account still SIGNED-IN; REST
+    saves it as it is. With -Checkpoint, the checkpoint is restored, the guest restarted gracefully and
+    its .ost files set aside (guest\Reset-OutlookOfflineStore.ps1) before Outlook starts and downloads
+    the mailboxes afresh. STAGE leaves a running Outlook running (the swap replaces only the suite and
+    its server, which Outlook does not use). Its filter is LiveRunFilters.ExchangeTestAccountWritesNothing - the
+    write run's own filter, narrowed to the tests that write nothing until decision 206 (2026-11-17) settles
+    how the VM's never-activated Office gets back the ability to create items. And every run gets a RUN MARKER - 'oair' and
+    the UTC start to the second - recorded in the host's ledger, C:\OutlookAI-Testbed\exchange-runs\
+    ledger.jsonl, BEFORE the suite starts, and handed to the run in OUTLOOKAI_LIVE_RUN_MARKER with the
+    markers of earlier runs that never reported a clean sweep in OUTLOOKAI_LIVE_PRIOR_RUN_MARKERS: every
+    item the run makes carries its marker, and its sweep takes back its own items and those earlier
+    runs' by marker - never by a subject pattern (T2/LiveRunMarker.cs, Docs/live-tier-on-the-vm.md
+    section 4.4). The ledger lives on the host because a checkpoint restore wipes the guest and leaves
+    the Exchange server as it was.
+
     WHAT IT ENFORCES, so a caller cannot forget it (AGENTS.md "Mailbox Safety", "Test VMs stay
     saved unless in use"):
-      * Only the two test guests. The build VM, the retired OutlookAI-TestVM and anything else are
-        refused, and nothing runs on this workstation: the suite runs inside the guest.
+      * Only the two test guests and the Exchange VM. The build VM, the retired OutlookAI-TestVM and
+        anything else are refused, and nothing runs on this workstation: the suite runs inside the guest.
       * The opt-in exists only inside the guest task of this run; it is never set here.
       * A frozen guest's clock stays where its checkpoint put it (Q130 (a), AGENTS.md): a run from a
         checkpoint whose time sync is off never restarts the guest or rebuilds its hub, the clock is
@@ -71,7 +94,8 @@
     expires; the next run restores its checkpoint first anyway.
 
 .PARAMETER VMName
-    The guest: OutlookAI-Indexed or OutlookAI-Unindexed, or one of their clones (TestbedPool.ps1).
+    The guest: OutlookAI-Indexed or OutlookAI-Unindexed, or one of their clones (TestbedPool.ps1), or
+    the Exchange VM, OutlookAI-Exchange, which is never cloned.
     This or -Kind, never both and never neither: no default picks a guest.
 
 .PARAMETER Kind
@@ -160,8 +184,11 @@ if (Test-Path Variable:\PSNativeCommandUseErrorActionPreference) {
 $Guests = [ordered]@{
     # The resting checkpoints are the FROZEN ones (Q130 (a), decided 2026-10-03): testbed.json's
     # frozenClocks records them, and -SelfTest holds these two names to that record.
-    'OutlookAI-Indexed'   = [ordered]@{ ComputerName = 'OAI-INDEXED'; Indexed = $true; Checkpoint = 'CP-22C-FROZEN-CLOCK' }
-    'OutlookAI-Unindexed' = [ordered]@{ ComputerName = 'OAI-UNINDEXED'; Indexed = $false; Checkpoint = 'CP-16B-FROZEN-CLOCK' }
+    'OutlookAI-Indexed'   = [ordered]@{ ComputerName = 'OAI-INDEXED'; Indexed = $true; Checkpoint = 'CP-22C-FROZEN-CLOCK'; Exchange = $false }
+    'OutlookAI-Unindexed' = [ordered]@{ ComputerName = 'OAI-UNINDEXED'; Indexed = $false; Checkpoint = 'CP-16B-FROZEN-CLOCK'; Exchange = $false }
+    # The Exchange VM (2026-10-08): never frozen, never cloned; its resting checkpoint is the newest
+    # testbed.json's exchangeVm.checkpoints records, and -SelfTest holds the two equal.
+    'OutlookAI-Exchange'  = [ordered]@{ ComputerName = 'OAI-EXCHANGE'; Indexed = $true; Checkpoint = 'CP-08-ADDIN-READY'; Exchange = $true }
 }
 # AND THEIR CLONES (2026-11-17): TestbedPool.ps1's indexed and unindexed pools. A clone is its
 # source copied at the source's frozen checkpoint - New-TestbedClone.ps1 - and rests on a checkpoint
@@ -186,6 +213,12 @@ $SdkInstallerName = 'dotnet-sdk-10.0.401-win-x64.exe'
 $SdkSha512 = 'f0d8f8e7ec24efb05172a65dd80c4a9b1ef17efcebdbf0f57c15f436eea417960a7eeb6726c473a042373d6a8b94ac1adc7d680decbf7d2c45fa5c5662d62265'
 $FilterBase = 'Category=Live&Requires!=DelegateStore&Requires!=CachedExchange'
 $FilterUnindexedExtra = '&Requires!=SearchIndex'
+# The Exchange VM with its test account as the hub: LiveRunFilters.ExchangeTestAccount, and of it only the
+# tests that write nothing (LiveRunFilters.ExchangeTestAccountWritesNothing) until decision 206 settles how
+# its Office gets back the ability to create items (Docs/live-tier-on-the-vm.md section 4.4a).
+$FilterExchange = 'Category=Live&Requires!=LocalSignatures&Requires!=DelegateStore&Requires!=GeneratedPopulation&Requires!=IdentityAccount&Requires!=ProbePopulation&Requires!=PstStore&Writes=Nothing'
+# The host's record of the Exchange VM's run markers: beside the leases, machine state, not the repository.
+$ExchangeLedgerRelative = 'exchange-runs\ledger.jsonl'
 $LeaseReasonPrefix = 'Invoke-LiveTierOnGuest'
 $MinFreeGbForCheckpoint = 60
 $ExitCodes = [ordered]@{ PASS = 0; FAIL = 1; BUILD = 2; INFRA = 3; REFUSED = 4 }
@@ -279,6 +312,11 @@ function Get-PrepareSteps {
 # whose records - liveTestSettings, frozenClocks - it is rendered and verified from.
 function Get-GuestFacts {
     param([string] $Name)
+    # The Exchange VM is no pool's and is never cloned (TestbedPool.ps1): its facts are its own.
+    if ([string]::Equals($Name, 'OutlookAI-Exchange', [System.StringComparison]::OrdinalIgnoreCase)) {
+        $exchange = $Guests['OutlookAI-Exchange']
+        return [pscustomobject]@{ Name = 'OutlookAI-Exchange'; Source = 'OutlookAI-Exchange'; Kind = 'Exchange'; ComputerName = $exchange.ComputerName; Indexed = $exchange.Indexed; Checkpoint = $exchange.Checkpoint; Exchange = $true }
+    }
     $pool = Get-TestbedPoolOf $Name
     if ($pool -ne 'indexed' -and $pool -ne 'unindexed') { return $null }
     $source = $TestbedPools[$pool][0]
@@ -287,7 +325,7 @@ function Get-GuestFacts {
     $facts = $Guests[$source]
     $guestKind = 'Unindexed'
     if ($facts.Indexed) { $guestKind = 'Indexed' }
-    return [pscustomobject]@{ Name = $own; Source = $source; Kind = $guestKind; ComputerName = $facts.ComputerName; Indexed = $facts.Indexed; Checkpoint = $facts.Checkpoint }
+    return [pscustomobject]@{ Name = $own; Source = $source; Kind = $guestKind; ComputerName = $facts.ComputerName; Indexed = $facts.Indexed; Checkpoint = $facts.Checkpoint; Exchange = $false }
 }
 
 # The guests of a kind, in the order -Kind tries them: the source first, then its clones.
@@ -303,7 +341,7 @@ function Get-KindMembers {
 # filter is written into the guest task's script inside double quotes, so a character that would
 # end or expand that string is refused rather than escaped.
 function Get-LiveFilter {
-    param([bool] $Indexed, [string] $Override, [string] $Suffix)
+    param([bool] $Indexed, [string] $Override, [string] $Suffix, [bool] $Exchange = $false)
     foreach ($given in @($Override, $Suffix)) {
         if ($given -match '["`$\r\n]') {
             return [pscustomobject]@{ Filter = $null; Narrowed = $false; Refusal = "a filter may not hold a double quote, a backtick, a dollar sign or a line break: '$given'" }
@@ -321,6 +359,7 @@ function Get-LiveFilter {
     }
     $filter = $FilterBase
     if (-not $Indexed) { $filter += $FilterUnindexedExtra }
+    if ($Exchange) { $filter = $FilterExchange }
     return [pscustomobject]@{ Filter = $filter + $Suffix; Narrowed = [bool]$Suffix; Refusal = $null }
 }
 
@@ -342,7 +381,76 @@ function New-RunId {
     if ($Sha -notmatch '^[0-9a-f]{12,40}$') { throw "Not a commit id: '$Sha'." }
     $short = 'indexed'
     if ($GuestName -match 'Unindexed\d*$') { $short = 'unindexed' }
+    if ($GuestName -match 'Exchange$') { $short = 'exchange' }
     return ('{0:yyyyMMdd-HHmmss}-{1}-{2}' -f $When, $short, $Sha.Substring(0, 12))
+}
+
+# How the Exchange VM's run begins: carried forward from its last run, or - only when a checkpoint is
+# named - restored, restarted and its data files set aside.
+function Get-ExchangeStartPlan {
+    param([bool] $CheckpointNamed)
+    if ($CheckpointNamed) { return @('restore the named checkpoint', 'restart', 'set the .ost files aside', 'rebuild the search index', 'Outlook NOT elevated', 'wait for one index root per indexed store', 'preflight') }
+    return @('resume as the last run left it', 'Outlook NOT elevated if it is not running', 'preflight')
+}
+
+# What a start of Outlook by guest\Start-OutlookUnelevated.ps1 reports about Office's activation wizard -
+# the modal nag a guest past Office's activation grace raises at every start with a window (Testbed/
+# MEDIA.md, "The licence clocks"). The starter closes it and prints 'ACTIVATION-WIZARD-DISMISSALS <n>';
+# an older starter prints nothing, which reads as not reported, never as zero.
+function Get-OutlookStartFacts {
+    param([string] $Output, [string] $Profile)
+    $m = [regex]::Match([string]$Output, 'ACTIVATION-WIZARD-DISMISSALS (\d+)')
+    $n = $null
+    if ($m.Success) { $n = [int]$m.Groups[1].Value }
+    return [ordered]@{ startedByRun = $true; profile = $Profile; activationWizardDismissed = $n }
+}
+
+# The summary's line for it.
+function Format-OutlookStartLine {
+    param($Facts)
+    if ($null -eq $Facts) { return 'outlook    not started by this run (it was running already)' }
+    $wizard = "Office's activation wizard dismissed $($Facts['activationWizardDismissed']) time(s)"
+    if ($null -eq $Facts['activationWizardDismissed']) { $wizard = "Office's activation wizard: NOT REPORTED by the guest's starter" }
+    return "outlook    started by this run, NOT elevated, on profile '$($Facts['profile'])'; $wizard"
+}
+
+# The Exchange VM's run marker: 'oair' and the run's UTC start to the second - lower-case letters and
+# digits, 18 of them, the shape T2/LiveRunMarker.cs accepts. One run at a time holds the guest's lease, so
+# two runs never share a second.
+function New-RunMarker {
+    param([DateTime] $WhenUtc)
+    return 'oair' + $WhenUtc.ToUniversalTime().ToString('yyyyMMddHHmmss', [System.Globalization.CultureInfo]::InvariantCulture)
+}
+
+# One ledger line: a run started, or finished and whether its sweep reported the hub clean.
+function ConvertTo-LedgerLine {
+    param([string] $Marker, [string] $RunId, [string] $Event, [object] $Clean, [string[]] $Priors = @(), [DateTime] $WhenUtc)
+    $entry = [ordered]@{ marker = $Marker; runId = $RunId; event = $Event; utc = $WhenUtc.ToUniversalTime().ToString('o'); clean = $Clean; priors = @($Priors) }
+    return ($entry | ConvertTo-Json -Compress -Depth 4)
+}
+
+# The markers the next run must sweep: every recorded run that never finished clean, newest first, at
+# most -Max of them - and none a clean finish has since covered (a clean run swept its priors too).
+function Get-PriorRunMarkers {
+    param([string[]] $LedgerLines, [string] $Current, [int] $Max = 25)
+    $started = New-Object System.Collections.Generic.List[string]
+    $cleared = New-Object System.Collections.Generic.HashSet[string]
+    foreach ($line in @($LedgerLines)) {
+        if ([string]::IsNullOrWhiteSpace($line)) { continue }
+        $e = $null
+        # A ledger first written by Windows PowerShell 5.1 starts with a byte-order mark.
+        try { $e = $line.TrimStart([char]0xFEFF) | ConvertFrom-Json } catch { continue }
+        $m = [string]$e.marker
+        if ($m -cnotmatch '^[a-z0-9]{12,40}$') { continue }
+        if ([string]$e.event -eq 'started' -and -not $started.Contains($m)) { $started.Add($m) }
+        if ([string]$e.event -eq 'finished' -and $e.clean -eq $true) {
+            [void]$cleared.Add($m)
+            foreach ($p in @($e.priors)) { if ($p) { [void]$cleared.Add([string]$p) } }
+        }
+    }
+    $open = @($started | Where-Object { $_ -cne $Current -and -not $cleared.Contains($_) })
+    [array]::Reverse($open)
+    return @($open | Select-Object -First $Max)
 }
 
 # What a TRX file says - Invoke-TestsOnBuildVm.ps1's reader: outcomes counted from the results,
@@ -518,7 +626,7 @@ function Invoke-SelfTest {
     Check 'the unindexed guest is one, in any case' 'OutlookAI-Unindexed|OAI-UNINDEXED|False' @($u.Name, $u.ComputerName, $u.Indexed)
     Check 'the unindexed guest rests on its frozen checkpoint' 'CP-16B-FROZEN-CLOCK' $u.Checkpoint
     Write-Host '== their clones (TestbedPool.ps1, 2026-11-17) =='
-    Check 'every source of the two guest pools is a guest here, and nothing else is' ((@($TestbedPools['indexed'][0], $TestbedPools['unindexed'][0]) | Sort-Object) -join '|') ((@($Guests.Keys) | Sort-Object) -join '|')
+    Check 'every source of the two guest pools is a guest here, and nothing else is but the Exchange VM' ((@($TestbedPools['indexed'][0], $TestbedPools['unindexed'][0], 'OutlookAI-Exchange') | Sort-Object) -join '|') ((@($Guests.Keys) | Sort-Object) -join '|')
     foreach ($kindName in @('Indexed', 'Unindexed')) {
         $members = @(Get-KindMembers $kindName)
         $source = Get-GuestFacts $members[0]
@@ -532,7 +640,8 @@ function Invoke-SelfTest {
     Check 'a clone named in another case is the clone, spelled as the pool spells it' 'OutlookAI-Indexed2|OutlookAI-Indexed' "$($c.Name)|$($c.Source)"
     Check 'a clone the pool does not list is refused' $true ($null -eq (Get-GuestFacts 'OutlookAI-Indexed9'))
     Check 'a build clone is refused' $true ($null -eq (Get-GuestFacts 'OutlookAI-Build2'))
-    Check 'the Exchange VM is refused' $true ($null -eq (Get-GuestFacts 'OutlookAI-Exchange'))
+    $xe = Get-GuestFacts 'OutlookAI-Exchange'
+    Check 'the Exchange VM is a guest of its own, no pool''s and never cloned' 'OutlookAI-Exchange|OutlookAI-Exchange|Exchange|True' "$($xe.Name)|$($xe.Source)|$($xe.Kind)|$($xe.Exchange)"
     $threw = $false; try { [void](Get-KindMembers 'Exchange') } catch { $threw = $true }
     Check 'there is no third kind' $true $threw
     $runner = [System.IO.File]::ReadAllText($PSCommandPath)
@@ -551,6 +660,9 @@ function Invoke-SelfTest {
     $own = [System.IO.File]::ReadAllText($PSCommandPath)
     Check 'the crash search takes the guest''s clock read before the suite' $true $own.Contains("`$since = Get-CrashEventsSince -GuestRunStartUtc `$guestRunStartUtc")
     Check 'the frozen branch calls the guard with -Verify' $true $own.Contains("'Set-GuestClockFrozen.ps1') -VMName `$facts.Name -Verify")
+    $x = Get-GuestFacts 'OutlookAI-Exchange'
+    Check 'the Exchange VM is one, never frozen, resting on its newest checkpoint' 'OAI-EXCHANGE|True|True|CP-08-ADDIN-READY' @($x.ComputerName, $x.Indexed, $x.Exchange, $x.Checkpoint)
+    Check 'the PST guests are not' 'False|False' @((Get-GuestFacts 'OutlookAI-Indexed').Exchange, (Get-GuestFacts 'OutlookAI-Unindexed').Exchange)
     Check 'the build VM is refused' $true ($null -eq (Get-GuestFacts 'OutlookAI-Build'))
     Check 'the retired test VM is refused' $true ($null -eq (Get-GuestFacts 'OutlookAI-TestVM'))
     Check 'a padded name is refused' $true ($null -eq (Get-GuestFacts ' OutlookAI-Indexed'))
@@ -563,6 +675,20 @@ function Invoke-SelfTest {
     Check 'the unindexed guest also leaves SearchIndex out' 'Category=Live&Requires!=DelegateStore&Requires!=CachedExchange&Requires!=SearchIndex' (Get-LiveFilter $false '' '').Filter
     $f = Get-LiveFilter $true '' '&FullyQualifiedName~X'
     Check 'a suffix narrows it' 'Category=Live&Requires!=DelegateStore&Requires!=CachedExchange&FullyQualifiedName~X|True' @($f.Filter, $f.Narrowed)
+    $f = Get-LiveFilter $true '' '' $true
+    Check 'the Exchange VM runs LiveRunFilters.ExchangeTestAccountWritesNothing' $FilterExchange $f.Filter
+    Check 'which writes nothing while decision 206 is open' $true $FilterExchange.EndsWith('&Writes=Nothing')
+    Check 'and that run is not narrowed' $false $f.Narrowed
+    Check 'the Exchange VM carries its state forward by default' 'resume as the last run left it|Outlook NOT elevated if it is not running|preflight' (Get-ExchangeStartPlan $false)
+    Check 'and a named checkpoint is restored and its data files set aside' $true ((Get-ExchangeStartPlan $true) -contains 'set the .ost files aside')
+    Check 'with the search index rebuilt after them, and its roots waited for after Outlook starts' 'set the .ost files aside|rebuild the search index|Outlook NOT elevated|wait for one index root per indexed store' ((@(Get-ExchangeStartPlan $true) | Select-Object -Skip 2 -First 4) -join '|')
+    Check 'and the runner asks the reset script for both' $true ($runner.Contains("Reset-OutlookOfflineStore.ps1' -Execute -ResetSearchIndex") -and $runner.Contains("Reset-OutlookOfflineStore.ps1' -WaitForIndexRoots"))
+    $os = Get-OutlookStartFacts "  ACTIVATION-WIZARD-DISMISSED 8 s: class NUIDialog, by its Close button`r`nOK: OUTLOOK.EXE pid 9548`r`nACTIVATION-WIZARD-DISMISSALS 1`r`nSTART-OUTLOOK-EXIT 0" 'Outlook'
+    Check 'a start that closed the activation wizard records one dismissal' 1 $os['activationWizardDismissed']
+    Check 'and the summary line says so' "outlook    started by this run, NOT elevated, on profile 'Outlook'; Office's activation wizard dismissed 1 time(s)" (Format-OutlookStartLine $os)
+    Check 'a starter that reported nothing reads as not reported, never as zero' $true ((Format-OutlookStartLine (Get-OutlookStartFacts 'OK: OUTLOOK.EXE pid 1' 'X')) -match 'NOT REPORTED')
+    Check 'no start at all reads as not started' 'outlook    not started by this run (it was running already)' (Format-OutlookStartLine $null)
+    Check 'and a suffix narrows it' $true (Get-LiveFilter $true '' '&FullyQualifiedName~Y' $true).Filter.EndsWith('&Requires!=PstStore&Writes=Nothing&FullyQualifiedName~Y')
     Check 'a suffix that does not start with & is refused' $true ($null -ne (Get-LiveFilter $true '' 'FullyQualifiedName~X').Refusal)
     Check 'a filter that is not Category=Live is refused' $true ($null -ne (Get-LiveFilter $true 'FullyQualifiedName~X' '').Refusal)
     $f = Get-LiveFilter $false 'Category=Live&Requires=SearchIndex' ''
@@ -584,9 +710,29 @@ function Invoke-SelfTest {
     Write-Host '== the run id =='
     Check 'when, guest, commit' '20261003-174500-indexed-d4e31fe12345' (New-RunId ([datetime]'2026-10-03T17:45:00') 'd4e31fe1234567890' 'OutlookAI-Indexed')
     Check 'the unindexed guest' '20261003-174500-unindexed-d4e31fe12345' (New-RunId ([datetime]'2026-10-03T17:45:00') 'd4e31fe1234567890' 'OutlookAI-Unindexed')
+    Check 'the Exchange VM' '20261003-174500-exchange-d4e31fe12345' (New-RunId ([datetime]'2026-10-03T17:45:00') 'd4e31fe1234567890' 'OutlookAI-Exchange')
     Check 'and its clone' '20261003-174500-unindexed-d4e31fe12345' (New-RunId ([datetime]'2026-10-03T17:45:00') 'd4e31fe1234567890' 'OutlookAI-Unindexed2')
     Check 'and the indexed guest''s clone' '20261003-174500-indexed-d4e31fe12345' (New-RunId ([datetime]'2026-10-03T17:45:00') 'd4e31fe1234567890' 'OutlookAI-Indexed2')
     $threw = $false; try { New-RunId (Get-Date) 'HEAD' 'OutlookAI-Indexed' | Out-Null } catch { $threw = $true }
+
+    Write-Host '== the run marker and the ledger (the Exchange VM) =='
+    $when = [DateTime]::SpecifyKind([DateTime]::new(2026, 10, 8, 15, 30, 5), [DateTimeKind]::Utc)
+    Check 'the marker is oair and the UTC start to the second' 'oair20261008153005' (New-RunMarker $when)
+    Check 'and has the shape LiveRunMarker accepts' $true ((New-RunMarker $when) -cmatch '^[a-z0-9]{12,40}$')
+    $ledger = @(
+        (ConvertTo-LedgerLine 'oair20261008100000' 'r1' 'started' $null @() $when),
+        (ConvertTo-LedgerLine 'oair20261008100000' 'r1' 'finished' $false @() $when),
+        (ConvertTo-LedgerLine 'oair20261008110000' 'r2' 'started' $null @('oair20261008100000') $when),
+        (ConvertTo-LedgerLine 'oair20261008120000' 'r3' 'started' $null @() $when),
+        'not json',
+        (ConvertTo-LedgerLine 'BAD' 'r4' 'started' $null @() $when)
+    )
+    Check 'every run that never finished clean is a prior, newest first' 'oair20261008120000|oair20261008110000|oair20261008100000' (Get-PriorRunMarkers $ledger 'oair20261008130000')
+    Check 'the current run is never its own prior' 'oair20261008110000|oair20261008100000' (Get-PriorRunMarkers $ledger 'oair20261008120000')
+    $cleanLine = ConvertTo-LedgerLine 'oair20261008120000' 'r3' 'finished' $true @('oair20261008100000', 'oair20261008110000') $when
+    Check 'a clean finish clears itself and the priors it swept' 0 @(Get-PriorRunMarkers ($ledger + $cleanLine) 'oair20261008130000').Count
+    Check 'at most -Max priors' 1 @(Get-PriorRunMarkers $ledger 'x' -Max 1).Count
+    Check 'an empty ledger has none' 0 @(Get-PriorRunMarkers @() 'x').Count
     Check 'a ref that is not a commit id is refused' $true $threw
 
     Write-Host '== the TRX reader =='
@@ -700,9 +846,14 @@ STACK      the faulting thread
     $sdk = [System.IO.File]::ReadAllText((Join-Path $repo 'Testbed\guest\Install-DotnetSdk.ps1'))
     Check 'Install-DotnetSdk.ps1 builds the source this stages' $true $sdk.Contains("'$GuestRoot\src'")
     $testbed = [System.IO.File]::ReadAllText((Join-Path $repo 'Testbed\testbed.json')) | ConvertFrom-Json
-    foreach ($name in $Guests.Keys) {
+    foreach ($name in @($Guests.Keys | Where-Object { -not $Guests[$_].Exchange })) {
         Check "$name rests on the frozen checkpoint testbed.json records" ([string]$testbed.frozenClocks.$name.checkpoint) $Guests[$name].Checkpoint
     }
+    Check 'the Exchange VM is the one testbed.json exchangeVm names' 'OutlookAI-Exchange|OAI-EXCHANGE' @([string]$testbed.exchangeVm.vmName, [string]$testbed.exchangeVm.computerName)
+    Check 'and rests on the newest checkpoint testbed.json records for it' ([string]@($testbed.exchangeVm.checkpoints)[-1]) $Guests['OutlookAI-Exchange'].Checkpoint
+    Check 'LiveRunFilters.ExchangeTestAccount leaves out exactly what the Exchange VM lacks' $true $filters.Contains('new[] { LocalSignatures, DelegateStore, GeneratedPopulation, IdentityAccount, ProbePopulation, PstStore }')
+    $marker = [System.IO.File]::ReadAllText((Join-Path $repo 'McpServer\OutlookAI.McpServer.Tests\T2\LiveRunMarker.cs'))
+    Check 'the run reads the marker from the variable this sets' $true ($marker.Contains('"OUTLOOKAI_LIVE_RUN_MARKER"') -and $marker.Contains('"OUTLOOKAI_LIVE_PRIOR_RUN_MARKERS"') -and $own.Contains("`$env:OUTLOOKAI_LIVE_RUN_MARKER = '"))
     foreach ($name in $Guests.Keys) {
         $section = $testbed.liveTestSettings.$name
         $indexed = @(@($section.indexedStoreDisplayNames) | Where-Object { $_ }).Count -gt 0
@@ -745,13 +896,17 @@ if ($Kind) {
 }
 else {
     $facts = Get-GuestFacts $VMName
-    if ($null -eq $facts) { Stop-Refused "'$VMName' is not a test guest - only the Outlook guests and their clones: $((@(Get-KindMembers 'Indexed') + @(Get-KindMembers 'Unindexed')) -join ', '). The build VM has Invoke-TestsOnBuildVm.ps1, and nothing here runs on this workstation." }
+    if ($null -eq $facts) { Stop-Refused "'$VMName' is not a test guest - only the Outlook guests and their clones: $((@(Get-KindMembers 'Indexed') + @(Get-KindMembers 'Unindexed')) -join ', '), and OutlookAI-Exchange. The build VM has Invoke-TestsOnBuildVm.ps1, and nothing here runs on this workstation." }
 }
-$filterDecision = Get-LiveFilter $facts.Indexed $Filter $FilterSuffix
+$filterDecision = Get-LiveFilter $facts.Indexed $Filter $FilterSuffix $facts.Exchange
 if ($filterDecision.Refusal) { Stop-Refused $filterDecision.Refusal }
 $runFilter = $filterDecision.Filter
 $narrowed = $filterDecision.Narrowed
 if ($RestOnGreen -and -not $GreenCheckpoint) { Stop-Refused '-RestOnGreen needs -GreenCheckpoint.' }
+# The Exchange VM carries its state forward unless a checkpoint is named (see the header) - read before
+# Use-Guest gives either checkpoint its default.
+$exchangeCarry = [bool]$facts.Exchange -and -not $Checkpoint
+$exchangeRestCarry = [bool]$facts.Exchange -and -not $RestingCheckpoint
 
 # Why a run cannot have this guest from Hyper-V - '' when it can: the VM, the start and resting
 # checkpoints, and no checkpoint already under the green name.
@@ -781,6 +936,7 @@ if (-not $Kind) {
     $refusal = Get-GuestRunRefusal $facts
     if ($refusal) { Stop-Refused $refusal }
     Use-Guest $facts
+    if ($exchangeCarry) { $startIsFrozen = $false }
     if ($startIsFrozen -and $RestOnGreen) { Stop-Refused "-RestOnGreen from the frozen checkpoint '$Checkpoint': a green checkpoint of this run would stand a run later than the frozen instant testbed.json records, and every later run would start there. Make a new frozen checkpoint with Set-GuestClockFrozen.ps1 and record it instead." }
 }
 if (-not $RepoPath) { $RepoPath = Split-Path -Parent (Split-Path -Parent $PSScriptRoot) }
@@ -810,18 +966,38 @@ $revision = [ordered]@{ ref = $Ref; sha = $sha; subject = $subject; repo = $repo
 # Not $kind: PowerShell's names ignore case, and that is the -Kind parameter.
 $kindText = 'unindexed'
 if ($facts.Indexed) { $kindText = 'indexed' }
+if ($facts.Exchange) { $kindText = 'Exchange, test account the hub' }
+# The Exchange VM's run marker and the earlier runs' it must sweep, from the host's ledger.
+$runMarker = $null
+$priorMarkers = @()
+$ledgerPath = $null
+$ledgerOutcome = $null
+if ($facts.Exchange) {
+    . (Join-Path $PSScriptRoot 'TestbedLeasePath.ps1')
+    $ledgerPath = Join-Path (Split-Path -Parent (Get-TestbedLeaseDirectory)) $ExchangeLedgerRelative
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $ledgerPath) | Out-Null
+    $runMarker = New-RunMarker $started
+    $ledgerLines = @()
+    if (Test-Path -LiteralPath $ledgerPath) { $ledgerLines = @(Get-Content -LiteralPath $ledgerPath) }
+    $priorMarkers = @(Get-PriorRunMarkers $ledgerLines $runMarker)
+}
 Say "== Invoke-LiveTierOnGuest: run $runId =="
 if ($Kind) { Say "  guest     whichever $kindText guest is free once the payloads are built: $((Get-KindMembers $Kind) -join ', ') ($($facts.ComputerName)), from and resting on its frozen checkpoint" }
+elseif ($exchangeCarry) { Say "  guest     $($facts.Name) ($($facts.ComputerName), $kindText), carried forward from its last run - no checkpoint restored" }
 else { Say "  guest     $($facts.Name) ($($facts.ComputerName), $kindText), from $Checkpoint, resting on $RestingCheckpoint" }
 if ($startIsFrozen) { Say "  clock     FROZEN - '$Checkpoint' has time sync off: no restart and no hub rebuild; Set-GuestClockFrozen.ps1 -Verify before the suite" }
 Say "  revision  $($sha.Substring(0, 12)) - $subject"
 if ($dirtyCount -gt 0) { Say "  NOTE      $dirtyCount uncommitted change(s) in $repo are NOT in this run - it tests the commit. Commit first to test them." }
 Say "  filter    $runFilter"
+if ($facts.Exchange) { Say "  marker    $runMarker; earlier runs to sweep by marker: $(if ($priorMarkers.Count -gt 0) { $priorMarkers -join ', ' } else { 'none' }) - ledger $ledgerPath" }
 Say "  results   $runDir"
 
 $timings = [ordered]@{}
 $checkpointActions = [ordered]@{ start = $Checkpoint; resting = $RestingCheckpoint; green = $null; restedOn = $null; settingsStaged = $false; saved = $false }
 $crashDumpState = [ordered]@{ armed = $false; proven = $null; guestFolder = $GuestDumpDir; fetched = $false; files = @() }
+# Set when this run starts Outlook itself: what the start met, Office's activation wizard included.
+$outlookStart = $null
+$indexRoots = $null
 $script:dumpsFound = @()
 $suiteStarted = $false
 $stage = ''
@@ -951,7 +1127,7 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "Publish-LiveTierPayload.ps1 failed ($LASTEXITCODE) - publish-livetier.log" }
         # A clone's settings are its source's (Get-GuestFacts): its stores, corpus and sink are copies.
         # ps51-native-stderr-ok: a PowerShell script, not a program - every program it starts goes through its own Invoke-NativeCommand, under 'Continue' inside a try
-        & (Join-Path $PSScriptRoot 'New-LiveTestSettings.ps1') -VMName $facts.Source -RepoRoot $tree -OutPath (Join-Path $runDir 'live-test-settings.json') *> (Join-Path $runDir 'settings.log')
+        & (Join-Path $PSScriptRoot 'New-LiveTestSettings.ps1') -VMName $facts.Source -RepoRoot $tree -CredentialRoot $CredentialRepoRoot -OutPath (Join-Path $runDir 'live-test-settings.json') *> (Join-Path $runDir 'settings.log')
         if ($LASTEXITCODE -ne 0) { throw "New-LiveTestSettings.ps1 refused this guest's settings ($LASTEXITCODE) - settings.log" }
     }
     catch { $stage = 'BUILD'; $stageWhy = $_.Exception.Message; throw }
@@ -1003,8 +1179,15 @@ try {
     $t0 = Get-Date
     try {
         $touched = $true
-        Restore-Guest $Checkpoint
-        Say "restored $Checkpoint"
+        if ($exchangeCarry) {
+            if ((Get-VM -Name $facts.Name).State -ne 'Running') { Start-VM -Name $facts.Name }
+            Wait-Heartbeat
+            Say 'resumed the Exchange VM as its last run left it (its mailboxes live on the server; no checkpoint restored)'
+        }
+        else {
+            Restore-Guest $Checkpoint
+            Say "restored $Checkpoint"
+        }
         $files = @((Join-Path $runDir 'payload\McpServer.zip'), (Join-Path $runDir 'payload\Tools.zip'), (Join-Path $runDir 'livetier\Source.zip'), (Join-Path $runDir 'livetier\NuGet.zip'), (Join-Path $runDir 'live-test-settings.json'))
         # ps51-native-stderr-ok: a PowerShell script, not a program - every program it starts goes through its own Invoke-NativeCommand, under 'Continue' inside a try
         & (Join-Path $PSScriptRoot 'Copy-ToGuest.ps1') -VMName $facts.Name -RepoRoot $CredentialRepoRoot -Path $files -Destination $GuestPayloadDir *> (Join-Path $runDir 'copy.log')
@@ -1014,9 +1197,14 @@ try {
         $guestScripts += [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\guest\$CrashDumpScript"))
         # ps51-native-stderr-ok: a PowerShell script, not a program - every program it starts goes through its own Invoke-NativeCommand, under 'Continue' inside a try
         & (Join-Path $PSScriptRoot 'Copy-ToGuest.ps1') -VMName $facts.Name -RepoRoot $CredentialRepoRoot -Path $guestScripts -Destination $GuestRoot *>> (Join-Path $runDir 'copy.log')
+        # What must not be running while the payload is swapped. The Exchange VM's Outlook stays up: its
+        # resting checkpoint holds it signed in, and it uses nothing the swap replaces.
+        $swapGuard = 'OUTLOOK,OutlookAI.RemediationTools,OutlookAI.McpServer,OutlookAI.ComHost,testhost,dotnet'
+        if ($facts.Exchange) { $swapGuard = 'OutlookAI.RemediationTools,OutlookAI.McpServer,OutlookAI.ComHost,testhost,dotnet' }
         $swap = @"
 `$ErrorActionPreference = 'Stop'
-if (@(Get-Process -Name OUTLOOK,OutlookAI.RemediationTools,OutlookAI.McpServer,OutlookAI.ComHost,testhost,dotnet -ErrorAction SilentlyContinue).Count -gt 0) { throw 'Outlook, the tools, the server or dotnet is running - not replacing anything' }
+if (@(Get-Process -Name $swapGuard -ErrorAction SilentlyContinue).Count -gt 0) { throw 'Outlook, the tools, the server or dotnet is running - not replacing anything' }
+if ('$($facts.Exchange)' -eq 'True') { Get-ChildItem -LiteralPath '$GuestRoot' -Directory | Where-Object { `$_.Name -match '\.pre-\d{8}T\d{6}Z`$' } | Remove-Item -Recurse -Force }
 `$stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
 foreach (`$name in 'server', 'tools', 'src', 'nuget-offline') { `$from = Join-Path '$GuestRoot' `$name; if (Test-Path -LiteralPath `$from) { Rename-Item -LiteralPath `$from -NewName "`$name.pre-`$stamp" } }
 Expand-Archive -LiteralPath '$GuestPayloadDir\McpServer.zip' -DestinationPath '$GuestRoot\server' -Force
@@ -1054,7 +1242,47 @@ Copy-Item -LiteralPath '$GuestPayloadDir\live-test-settings.json' -Destination '
     $prepared = @(Get-PrepareSteps -StartIsFrozen $startIsFrozen -SkipHubReset ([bool]$SkipHubReset))
     try {
         Use-Lease 30
-        if ($startIsFrozen) {
+        if ($facts.Exchange) {
+            if (-not $exchangeCarry) {
+                # A restored checkpoint: its .ost files are older than the server. Outlook quits, Windows
+                # restarts, the files go aside, and the Outlook started below downloads the mailboxes afresh.
+                # ps51-native-stderr-ok: a PowerShell script, not a program - every program it starts goes through its own Invoke-NativeCommand, under 'Continue' inside a try
+                & (Join-Path $PSScriptRoot 'Restart-Guest.ps1') -VMName $facts.Name -Execute -RepoRoot $CredentialRepoRoot -LogPath (Join-Path $runDir 'restart.log') *> (Join-Path $runDir 'restart.out.log')
+                if ($LASTEXITCODE -ne 0) { throw "Restart-Guest.ps1 did not complete ($LASTEXITCODE) - restart.log" }
+                # New data files are new stores to Windows Search, and the old files' roots would stay beside
+                # theirs - a name with two roots is one the live tier's scope finder never guesses between
+                # (T2/LiveIndexScopes.cs). So the catalog is rebuilt from nothing after the set-aside.
+                $o = Invoke-Guest 'reset-ost' "& '$GuestRoot\Reset-OutlookOfflineStore.ps1' -Execute -ResetSearchIndex; `"RESET-OST-EXIT `$LASTEXITCODE`"" 300 -Session0
+                if ($o -notmatch 'RESET-OST-EXIT 0' -or $o -notmatch 'SEARCH-INDEX-RESET') { throw 'Reset-OutlookOfflineStore.ps1 did not set the data files aside and rebuild the search index - guest\reset-ost.log' }
+            }
+            $o = Invoke-Guest 'outlook-running' "if (@(Get-Process -Name OUTLOOK -ErrorAction SilentlyContinue).Count -gt 0) { 'OUTLOOK-RUNNING yes' } else { 'OUTLOOK-RUNNING no' }" 120 -Session0
+            if ($o -match 'OUTLOOK-RUNNING no') {
+                # Defender first, so the Outlook about to start finds its signatures current.
+                # ps51-native-stderr-ok: a PowerShell script, not a program - every program it starts goes through its own Invoke-NativeCommand, under 'Continue' inside a try
+                & (Join-Path $PSScriptRoot 'Invoke-ExchangeSignIn.ps1') -VMName $facts.Name -Mode Preflight -DefenderOnly -RepoRoot $CredentialRepoRoot *> (Join-Path $runDir 'preflight-defender.log')
+                if ($LASTEXITCODE -ne 0) { throw "Defender's signatures could not be brought up to date before Outlook started (exit $LASTEXITCODE) - preflight-defender.log" }
+                $o = Invoke-Guest 'start-outlook' "& '$GuestRoot\Start-OutlookUnelevated.ps1' -Profile 'Outlook' -MinUptimeSeconds 240; `"START-OUTLOOK-EXIT `$LASTEXITCODE`"" 900 -Session0
+                if ($o -notmatch 'START-OUTLOOK-EXIT 0') { throw 'Start-OutlookUnelevated.ps1 did not start Outlook NOT elevated on the profile Outlook - guest\start-outlook.log' }
+                $outlookStart = Get-OutlookStartFacts $o 'Outlook'
+                Say ((Format-OutlookStartLine $outlookStart) -replace '^outlook\s+', 'Outlook ')
+            }
+            if (-not $exchangeCarry) {
+                # Every indexed store needs exactly one root, with something below it, before an index test
+                # runs. Bounded; a store not ready at the end is the tests' to report.
+                $o = Invoke-Guest 'index-roots' "& '$GuestRoot\Reset-OutlookOfflineStore.ps1' -WaitForIndexRoots -TimeoutSeconds 1200" 1500
+                $m = [regex]::Match($o, 'INDEX-ROOTS-(READY|TIMEOUT) (\d+)')
+                $indexRoots = 'not reported (guest\index-roots.log)'
+                if ($m.Success -and $m.Groups[1].Value -eq 'READY') { $indexRoots = "every indexed store has one root, with rows, $($m.Groups[2].Value) s after Outlook started on the rebuilt index" }
+                elseif ($m.Success) { $indexRoots = "NOT every indexed store has one root with rows after $($m.Groups[2].Value) s - index tests may fail for it" }
+                Say "index      $indexRoots"
+            }
+            # Defender current and every account SIGNED-IN, or no run (Testbed/README.md section 4e).
+            # ps51-native-stderr-ok: a PowerShell script, not a program - every program it starts goes through its own Invoke-NativeCommand, under 'Continue' inside a try
+            & (Join-Path $PSScriptRoot 'Invoke-ExchangeSignIn.ps1') -VMName $facts.Name -Mode Preflight -RepoRoot $CredentialRepoRoot *> (Join-Path $runDir 'preflight.log')
+            if ($LASTEXITCODE -ne 0) { throw "Invoke-ExchangeSignIn.ps1 -Mode Preflight did not pass (exit $LASTEXITCODE) - preflight.log: Defender's signatures, or an account no longer signed in (-Mode Reauth -Account <address>)" }
+            $prepared = @(Get-ExchangeStartPlan (-not $exchangeCarry))
+        }
+        elseif ($startIsFrozen) {
             # ps51-native-stderr-ok: a PowerShell script, not a program - it starts no program at all
             & (Join-Path $PSScriptRoot 'Set-GuestClockFrozen.ps1') -VMName $facts.Name -Verify -RepoRoot $CredentialRepoRoot -LogPath (Join-Path $runDir 'frozen-clock.log') *> (Join-Path $runDir 'frozen-clock.out.log')
             if ($LASTEXITCODE -ne 0) { throw "the frozen-clock guard did not say FROZEN (exit $LASTEXITCODE) - the guest's clock left its frozen instant, or this is not its frozen checkpoint: frozen-clock.log" }
@@ -1062,6 +1290,8 @@ Copy-Item -LiteralPath '$GuestPayloadDir\live-test-settings.json' -Destination '
             # the tier profile, its window up. The frozen checkpoint holds Outlook closed so STAGE could swap.
             $o = Invoke-Guest 'start-outlook' "& '$GuestRoot\Start-OutlookUnelevated.ps1' -Profile '$TierProfileName'; `"START-OUTLOOK-EXIT `$LASTEXITCODE`"" 900 -Session0
             if ($o -notmatch 'START-OUTLOOK-EXIT 0') { throw 'Start-OutlookUnelevated.ps1 did not start Outlook NOT elevated on the tier profile - guest\start-outlook.log' }
+            $outlookStart = Get-OutlookStartFacts $o $TierProfileName
+            Say ((Format-OutlookStartLine $outlookStart) -replace '^outlook\s+', 'Outlook ')
         }
         else {
             # ps51-native-stderr-ok: a PowerShell script, not a program - every program it starts goes through its own Invoke-NativeCommand, under 'Continue' inside a try
@@ -1079,8 +1309,14 @@ Copy-Item -LiteralPath '$GuestPayloadDir\live-test-settings.json' -Destination '
 
     # ---- RUN: the suite, NOT elevated, opted in for this run only.
     $t0 = Get-Date
+    $markerLines = ''
+    if ($facts.Exchange) {
+        $markerLines = "`$env:OUTLOOKAI_LIVE_RUN_MARKER = '$runMarker'`r`n`$env:OUTLOOKAI_LIVE_PRIOR_RUN_MARKERS = '$($priorMarkers -join ',')'`r`n"
+        # Recorded BEFORE the suite starts: a run that dies half-way still leaves its marker for the next one.
+        Add-Content -LiteralPath $ledgerPath -Value (ConvertTo-LedgerLine $runMarker $runId 'started' $null $priorMarkers ([DateTime]::UtcNow)) -Encoding UTF8
+    }
     $liveScript = @"
-`$env:OUTLOOKAI_LIVE_OPT_IN = '$($facts.ComputerName)'
+$markerLines`$env:OUTLOOKAI_LIVE_OPT_IN = '$($facts.ComputerName)'
 `$env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'; `$env:DOTNET_NOLOGO = '1'; `$env:MSBUILDDISABLENODEREUSE = '1'
 New-Item -ItemType Directory -Force -Path '$guestRunDir', '$guestRunDir\diag' | Out-Null
 Set-Location '$GuestRoot\src'
@@ -1117,6 +1353,13 @@ exit `$LASTEXITCODE
     if ($cm.Success) { $crashes = [int]$cm.Groups[1].Value }
     Save-CrashDumps
     $crashes = Merge-CrashCount $crashes $script:dumpsFound
+    if ($facts.Exchange) {
+        # Clean when a sweep ran and left nothing this run is answerable for - its own items and the
+        # priors it was handed are then gone, and the ledger stops handing them on.
+        $ledgerOutcome = ($null -ne $consoleFacts -and $consoleFacts.SweepRan -and $null -ne $consoleFacts.ArtifactsLeft -and $consoleFacts.ArtifactsLeft -eq 0)
+        Add-Content -LiteralPath $ledgerPath -Value (ConvertTo-LedgerLine $runMarker $runId 'finished' $ledgerOutcome $priorMarkers ([DateTime]::UtcNow)) -Encoding UTF8
+        Say "ledger: $runMarker finished, clean=$ledgerOutcome"
+    }
     if ($suiteSeconds -ge ($RunTimeoutMinutes * 60 - 60)) { $stage = 'INFRA'; $stageWhy = "the suite did not finish within $RunTimeoutMinutes minutes" }
 
     # ---- GREEN CHECKPOINT, when asked and earned.
@@ -1146,11 +1389,17 @@ finally {
             if ($suiteStarted) { Save-CrashDumps }
             $restOn = $RestingCheckpoint
             if ($RestOnGreen -and $checkpointActions['green']) { $restOn = $GreenCheckpoint }
-            try {
-                Restore-Guest $restOn
-                $checkpointActions['restedOn'] = $restOn
+            if ($exchangeRestCarry -and -not ($RestOnGreen -and $checkpointActions['green'])) {
+                # The Exchange VM rests as the run left it: a restored .ost would be older than the server.
+                $checkpointActions['restedOn'] = 'its own state, carried forward (no checkpoint restored)'
             }
-            catch { Say "RESTORING $restOn FAILED: $($_.Exception.Message)" }
+            else {
+                try {
+                    Restore-Guest $restOn
+                    $checkpointActions['restedOn'] = $restOn
+                }
+                catch { Say "RESTORING $restOn FAILED: $($_.Exception.Message)" }
+            }
             $restSettings = Join-Path $runDir 'live-test-settings.json'
             if ($checkpointActions['restedOn'] -and (Test-Path -LiteralPath $restSettings)) {
                 try {
@@ -1196,6 +1445,9 @@ finally {
 $verdict = Get-LiveVerdict $stage $stageWhy $trx $consoleFacts $crashes $suiteExit $narrowed
 $timings['total'] = Format-Seconds ((Get-Date) - $started).TotalSeconds
 $summary = New-LiveRunSummary -RunId $runId -Verdict $verdict -Revision $revision -Guest $facts.Name -Filter $runFilter -Narrowed $narrowed -Trx $trx -Console $consoleFacts -Crashes $crashes -SuiteExit $suiteExit -Checkpoints $checkpointActions -Timings $timings -Results $runDir -CrashDumps $crashDumpState
+if ($facts.Exchange) { $summary['runMarker'] = [ordered]@{ marker = $runMarker; priors = @($priorMarkers); ledger = $ledgerPath; clean = $ledgerOutcome } }
+$summary['outlookStart'] = $outlookStart
+$summary['indexRoots'] = $indexRoots
 [System.IO.File]::WriteAllText((Join-Path $runDir 'summary.json'), ($summary | ConvertTo-Json -Depth 8))
 
 $lines = New-Object System.Collections.Generic.List[string]
@@ -1203,6 +1455,7 @@ $head = "== $runId - $($verdict.Verdict) (exit $($ExitCodes[$verdict.Verdict]))"
 if ($verdict.Why) { $head += " - $($verdict.Why)" }
 $lines.Add("$head ==")
 $lines.Add("guest      $($facts.Name) from $Checkpoint; filter $runFilter")
+if ($facts.Exchange) { $lines.Add("marker     $runMarker (ledger clean=$ledgerOutcome); earlier runs swept by marker: $(if ($priorMarkers.Count -gt 0) { $priorMarkers -join ', ' } else { 'none' })") }
 $rev = "revision   $($sha.Substring(0, 12)) - $subject"
 if ($dirtyCount -gt 0) { $rev += " ($dirtyCount uncommitted change(s) NOT included)" }
 $lines.Add($rev)
@@ -1229,6 +1482,8 @@ if ($dumpList.Count -gt 0) {
 }
 elseif ($crashDumpState['armed']) { $dumpText += ', none written' }
 $lines.Add("outlook    crashes during the run: $crashText; crash dumps: $dumpText")
+$lines.Add((Format-OutlookStartLine $outlookStart))
+if ($indexRoots) { $lines.Add("index      $indexRoots") }
 $endLine = "guest end  rested on $($checkpointActions['restedOn']); settings staged=$($checkpointActions['settingsStaged']); saved=$($checkpointActions['saved'])"
 if ($checkpointActions['green']) { $endLine += "; green checkpoint $($checkpointActions['green'])" }
 $lines.Add($endLine)
