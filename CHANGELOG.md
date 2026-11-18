@@ -248,7 +248,11 @@ its mailbox tests on, and change nothing you install.
   compose windows are the kind that crashed Outlook on 2026-10-04, and the runner keeps full crash
   dumps. The checkpoint the guest is restored to afterwards removes the setting, so the step runs
   only from a frozen checkpoint, never on the Exchange test machine and never with a green
-  checkpoint. The guest scripts that drive the MCP server share one stdio client now.
+  checkpoint. The values are written as expandable strings unless `-SignatureValueKind String` asks
+  for plain ones. An Outlook start whose main window does not open now names the windows Outlook
+  showed instead: on the indexed test machine Outlook twice stayed on its "Opening" splash for ten
+  minutes after the step, where the unindexed ones started it every time. The guest scripts that
+  drive the MCP server share one stdio client now.
 
 - ✅ **A test-machine probe measures how Windows and the installer remove trust in the leaked key.**
   `Testbed/host/Invoke-TrustRemovalProbe.ps1` runs `Testbed/guest/Measure-TrustRemoval.ps1` on an
@@ -325,8 +329,9 @@ its mailbox tests on, and change nothing you install.
   `OutlookAI-Tier` and `CorpusProfile` recorded as the default, a draft got the running profile's
   default; a folder moved while Outlook ran was listed, written to and used by OutlookAI, and
   Outlook's own list of signatures showed what was in it. What Outlook makes of a default deployed
-  for every account could not be read: its signature settings reported no default with it or
-  without it, written while Outlook ran, so that measurement stays open.
+  for every account could not be read that way, written while Outlook ran: its signature settings
+  reported no default with it or without it. The live runner's -SignatureSettings step measured it
+  on 2026-11-18, with the setting made before Outlook starts.
 
 - ✅ **The Exchange test machine checks folders by ID without writing: 66-character IDs and find_folder.**
   Folders and stores addressed by ID (Q131-Q136) reached a real Exchange mailbox through T1 and one
@@ -822,13 +827,16 @@ its mailbox tests on, and change nothing you install.
   running one, and shows each account's own defaults beside the ones a draft actually gets. It asks a
   running Outlook which profile it has open, and still never starts Outlook.
 
-- 🔧 **OutlookAI follows the administrator's signature policy.**
+- 🔧 **OutlookAI follows the administrator's signature settings the way Outlook itself does.**
   When Group Policy or Cloud Policy forbids signatures, a draft gets none and manage_signature changes
-  nothing. When a policy sets the default for every account, a draft gets that one and changing an
-  account's default is refused with the reason. While such a default is in force a draft may not use
-  another signature or none, until it is measured whether Outlook allows that per message. A default
-  deployed in Outlook's own settings (Common\MailSettings) is used the same way but leaves the choice
-  per message free. OutlookAI never writes a policy.
+  nothing. A default that a policy, or Outlook's own settings (Common\MailSettings), names for new
+  mail or for replies and forwards ranks below the account's own default: a draft gets the account's
+  own, and the setting's only when the account has none. Outlook did that on the test machines on
+  2026-11-18 (Q200 (a), Q201), with the settings made before it started, as plain and as expandable
+  strings: it put the account's own default in a new mail, a reply and a forward, and kept its
+  Signature button open under a policy, so one message may have another signature or none there too.
+  manage_signature still changes no account's default while a policy names one (Q156), and now does
+  under a deployed default. OutlookAI never writes a policy.
 
 - 🔧 **Signatures kept in an Exchange mailbox are left to Outlook.**
   Microsoft 365 Apps from Version 2303 can keep an Exchange Online account's signatures in its
