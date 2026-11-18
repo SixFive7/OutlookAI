@@ -1347,12 +1347,19 @@ account (the other mailbox is a bystander) or a data file. The add-in's tests ru
 and that the automapped online entry of the same mailbox is neither watched nor a bystander
 (`T2/LiveMailboxIdentity.cs`). The runbook's §4.4a records what it found.
 
-**Until decision 206, only the tests that write nothing (2026-11-17).** Office on the VM was never
-activated, and since its grace ran out Outlook there creates no item through its object model: on
-2026-11-17 every test that seeds a mail or makes a draft failed at its first item. So the runner types
+**Office's grace, and the write tests (decision 206).** Office on the VM was never activated, and
+past its 30-day grace Outlook there creates no item through its object model: on 2026-11-17 every test
+that seeds a mail or makes a draft failed at its first item, and from then until 2026-11-18 the runner
+typed only the tests that write nothing. On 2026-11-18 the grace was re-armed once with Office's own
+`OSPPREARM.EXE` (206 (a), runbook §4.4a): 30 days, to 2026-12-18, two re-arms left. A draft was made
+at once, and the runner types the write filter above again. Once the grace runs out again the write
+tests fail at their first item: until it is re-armed, narrow a run with `-FilterSuffix '&Writes=Nothing'`
+to
 `Category=Live&Requires!=LocalSignatures&Requires!=DelegateStore&Requires!=GeneratedPopulation&Requires!=IdentityAccount&Requires!=ProbePopulation&Requires!=PstStore&Writes=Nothing`
-(`LiveRunFilters.ExchangeTestAccountWritesNothing`), the filter above narrowed to `Writes=Nothing`, until
-the maintainer settles how the VM's Office gets that ability back (TODO.md).
+(`LiveRunFilters.ExchangeTestAccountWritesNothing`). To re-arm: a lease, then, over PowerShell Direct
+(elevated), `& 'C:\Program Files\Microsoft Office\Office16\OSPPREARM.EXE'` - "Microsoft Office rearm
+successful." - and Outlook restarted with `host/Restart-Guest.ps1 -Execute`. The licence query in
+`MEDIA.md` reads the state; `SoftwareLicensingProduct.RemainingAppReArmCount` is the count.
 
 **The read-only run (Q108 to Q111), for a settings file that declares `ExchangeGuest`.** Before
 2026-10-08 the VM's one mailbox was also its hub, and it ran only tests that write nothing. That

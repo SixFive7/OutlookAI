@@ -54,9 +54,12 @@
     saves it as it is. With -Checkpoint, the checkpoint is restored, the guest restarted gracefully and
     its .ost files set aside (guest\Reset-OutlookOfflineStore.ps1) before Outlook starts and downloads
     the mailboxes afresh. STAGE leaves a running Outlook running (the swap replaces only the suite and
-    its server, which Outlook does not use). Its filter is LiveRunFilters.ExchangeTestAccountWritesNothing - the
-    write run's own filter, narrowed to the tests that write nothing until decision 206 (2026-11-17) settles
-    how the VM's never-activated Office gets back the ability to create items. And every run gets a RUN MARKER - 'oair' and
+    its server, which Outlook does not use). Its filter is LiveRunFilters.ExchangeTestAccount, the write run's
+    own, again since 2026-11-18: the VM's never-activated Office had passed its grace and Outlook created no
+    item, until decision 206 (a) re-armed the grace once with Office's own OSPPREARM.EXE (Docs/live-tier-on-the-vm.md
+    section 4.4a). Past the grace - next on 2026-12-18 - every write test fails at its first item again; -FilterSuffix
+    '&Writes=Nothing' narrows a run to LiveRunFilters.ExchangeTestAccountWritesNothing until it is re-armed. And every
+    run gets a RUN MARKER - 'oair' and
     the UTC start to the second - recorded in the host's ledger, C:\OutlookAI-Testbed\exchange-runs\
     ledger.jsonl, BEFORE the suite starts, and handed to the run in OUTLOOKAI_LIVE_RUN_MARKER with the
     markers of earlier runs that never reported a clean sweep in OUTLOOKAI_LIVE_PRIOR_RUN_MARKERS: every
@@ -213,10 +216,10 @@ $SdkInstallerName = 'dotnet-sdk-10.0.401-win-x64.exe'
 $SdkSha512 = 'f0d8f8e7ec24efb05172a65dd80c4a9b1ef17efcebdbf0f57c15f436eea417960a7eeb6726c473a042373d6a8b94ac1adc7d680decbf7d2c45fa5c5662d62265'
 $FilterBase = 'Category=Live&Requires!=DelegateStore&Requires!=CachedExchange'
 $FilterUnindexedExtra = '&Requires!=SearchIndex'
-# The Exchange VM with its test account as the hub: LiveRunFilters.ExchangeTestAccount, and of it only the
-# tests that write nothing (LiveRunFilters.ExchangeTestAccountWritesNothing) until decision 206 settles how
-# its Office gets back the ability to create items (Docs/live-tier-on-the-vm.md section 4.4a).
-$FilterExchange = 'Category=Live&Requires!=LocalSignatures&Requires!=DelegateStore&Requires!=GeneratedPopulation&Requires!=IdentityAccount&Requires!=ProbePopulation&Requires!=PstStore&Writes=Nothing'
+# The Exchange VM with its test account as the hub: LiveRunFilters.ExchangeTestAccount, read and write. From
+# 2026-11-17 to decision 206 (a) on 2026-11-18 it was narrowed to the tests that write nothing, because Office
+# there was past its grace and created no item (Docs/live-tier-on-the-vm.md section 4.4a).
+$FilterExchange = 'Category=Live&Requires!=LocalSignatures&Requires!=DelegateStore&Requires!=GeneratedPopulation&Requires!=IdentityAccount&Requires!=ProbePopulation&Requires!=PstStore'
 # The host's record of the Exchange VM's run markers: beside the leases, machine state, not the repository.
 $ExchangeLedgerRelative = 'exchange-runs\ledger.jsonl'
 $LeaseReasonPrefix = 'Invoke-LiveTierOnGuest'
@@ -676,9 +679,11 @@ function Invoke-SelfTest {
     $f = Get-LiveFilter $true '' '&FullyQualifiedName~X'
     Check 'a suffix narrows it' 'Category=Live&Requires!=DelegateStore&Requires!=CachedExchange&FullyQualifiedName~X|True' @($f.Filter, $f.Narrowed)
     $f = Get-LiveFilter $true '' '' $true
-    Check 'the Exchange VM runs LiveRunFilters.ExchangeTestAccountWritesNothing' $FilterExchange $f.Filter
-    Check 'which writes nothing while decision 206 is open' $true $FilterExchange.EndsWith('&Writes=Nothing')
+    Check 'the Exchange VM runs LiveRunFilters.ExchangeTestAccount' $FilterExchange $f.Filter
+    Check 'read and write again since decision 206 (a)' $false $FilterExchange.Contains('Writes=')
     Check 'and that run is not narrowed' $false $f.Narrowed
+    $f = Get-LiveFilter $true '' '&Writes=Nothing' $true
+    Check 'past Office''s grace a suffix narrows it to LiveRunFilters.ExchangeTestAccountWritesNothing' ($FilterExchange + '&Writes=Nothing|True') @($f.Filter, $f.Narrowed)
     Check 'the Exchange VM carries its state forward by default' 'resume as the last run left it|Outlook NOT elevated if it is not running|preflight' (Get-ExchangeStartPlan $false)
     Check 'and a named checkpoint is restored and its data files set aside' $true ((Get-ExchangeStartPlan $true) -contains 'set the .ost files aside')
     Check 'with the search index rebuilt after them, and its roots waited for after Outlook starts' 'set the .ost files aside|rebuild the search index|Outlook NOT elevated|wait for one index root per indexed store' ((@(Get-ExchangeStartPlan $true) | Select-Object -Skip 2 -First 4) -join '|')

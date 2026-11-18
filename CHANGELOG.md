@@ -809,9 +809,8 @@ its mailbox tests on, and change nothing you install.
   was closed. On that machine the runner also starts Outlook no sooner than 240 seconds after a boot:
   started 38 and 79 seconds after one, Outlook put its programmatic-access prompt in front of the
   first address read although the antivirus read up to date, and started 2 and 8 minutes after one it
-  did not. Past the grace Outlook there also created no item through its object model on 2026-11-17,
-  so until the maintainer settles how it gets that back (decision 206, TODO.md) the runner gives the
-  machine only the tests that write nothing.
+  did not. Past the grace Outlook there also created no item through its object model, from 2026-11-17
+  until the grace was re-armed on 2026-11-18.
 
 - ✅ **The Exchange test machine leaves out the signature tests until signature roaming is measured.**
   A signature or a default signature set on the test account could be carried into the mailbox by an
@@ -2068,6 +2067,17 @@ its mailbox tests on, and change nothing you install.
   next - the cost was the accumulating hidden window, not a broken Outlook. This also cannot help
   when the assistant kills the helper outright, which is what happens when Outlook has genuinely
   stopped responding and when a session ends abruptly.
+
+- ✅ **The Exchange test machine makes drafts and mail again, so its write tests run there again.**
+  Its Office LTSC 2024 was never activated, and past its 30-day grace Outlook there refused to create
+  any item through its object model: on 2026-11-17, 41 of 87 tests failed at their first draft or mail
+  while every test that only reads passed, and the runner was narrowed to the tests that write nothing.
+  On 2026-11-18, as the maintainer decided (206 (a)), the grace was reset once with Office's own
+  `OSPPREARM.EXE`: the licence went from notifications to 30 days of grace, and its re-arms left from
+  three to two. A draft test then made and removed its draft at the first try, Outlook started without
+  Office's activation wizard, and the runner gives the machine its whole read-and-write selection again.
+  The grace runs out again on 2026-12-18; a run after that is narrowed to the tests that write nothing
+  with `-FilterSuffix '&Writes=Nothing'` until it is re-armed.
 
 - ✅ **The index-refile measurement no longer fails when Outlook lists a moved folder late.**
   The live test that times how fast the index follows a folder rename and move reads the folder's

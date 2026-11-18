@@ -1962,18 +1962,16 @@
   separate decision. The mailbox's signature
   data is never written.
 
-- [ ] **Decide how Office on the Exchange VM gets back the ability to create items (found 2026-11-17).**
-  Its Office LTSC 2024 volume edition was never activated, its grace ran out in late October, and since
-  then Outlook creates no item through its object model: 41 of a run's 87 tests failed at their first
-  draft or mail, every read passed, and the write tests cannot pass there (runbook §4.4a, "The live runs
-  of 2026-11-17"). The other guests do not meet it because their clocks are frozen inside the grace
-  (Q130). Directions: (1) re-arm Office's grace with its own `ospprearm.exe`, a limited number of times,
-  each run or monthly - free, but the licence terms need a look; (2) install Microsoft 365 Apps there,
-  activated by the test account's own licence if the tenant gives it one - a licensed component, so
-  a decision on AGENTS.md's Dependencies rule, and it would also let Q147 measure real roaming
-  signatures; (3) give the VM a real activation (a MAK or KMS key) - a licence key; (4) keep the VM to
-  `Writes=Nothing` tests until one of these lands. Proving the cause first means one item created by
-  tested helper code after a re-arm.
+- [ ] **Re-arm Office on the Exchange VM again before its grace runs out on 2026-12-18 - two re-arms
+  left (decision 206 (a), 2026-11-18).** Its Office LTSC 2024 volume edition is never activated, and past
+  the 30-day grace Outlook there creates no item through its object model, so every write test fails at
+  its first draft (runbook §4.4a). On 2026-11-18 one re-arm with `OSPPREARM.EXE` gave it 30 days, to about
+  02:56 on 2026-12-18, and took the count from three to two. Before then: lease the VM, run
+  `OSPPREARM.EXE` over PowerShell Direct, restart Outlook with
+  `host/Restart-Guest.ps1 -Execute` (Testbed/README.md §4e), record the new count, and take a checkpoint.
+  What follows the last re-arm is still the maintainer's to decide: 206 (b), Microsoft 365 Apps activated
+  by the test account's own licence, was decided as the fallback for a re-arm that did not work, and he
+  has offered a volume key if neither did.
 
 - [ ] **Delete the one tagged leftover in the Exchange VM mailbox's Sent Items once the maintainer has
   confirmed its id (Q138 (c), decided 2026-11-17).** Found read-only on 2026-11-17: subject

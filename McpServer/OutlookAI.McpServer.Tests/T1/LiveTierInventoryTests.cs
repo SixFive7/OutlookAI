@@ -456,8 +456,9 @@ public sealed class LiveTierInventoryTests
     [Fact]
     public void TheExchangeVmsInterimFilter_IsTheWriteFilterWithWritesNothing()
     {
-        // Decision 206 (2026-11-17): until Office on the Exchange VM can create items again it runs only the
-        // tests of its own filter that write nothing. Literal on purpose, like the filter it narrows.
+        // Decision 206 (2026-11-17): while Office on the Exchange VM is past its grace and creates no item, a run
+        // there is narrowed to the tests of its own filter that write nothing - with -FilterSuffix '&Writes=Nothing'
+        // since the grace was re-armed on 2026-11-18. Literal on purpose, like the filter it narrows.
         Assert.Equal(
             "Category=Live&Requires!=LocalSignatures&Requires!=DelegateStore&Requires!=GeneratedPopulation&Requires!=IdentityAccount&Requires!=ProbePopulation&Requires!=PstStore&Writes=Nothing",
             LiveRunFilters.ExchangeTestAccountWritesNothing);
@@ -468,7 +469,8 @@ public sealed class LiveTierInventoryTests
     public void EveryQuotedExchangeTestAccountFilter_IsTheDerivedOne()
     {
         // The places a person reads the Exchange VM's run from, and the runner that types it: the write run,
-        // or its writes-nothing narrowing while decision 206 is open - and the runner the narrowing alone.
+        // or its writes-nothing narrowing for a VM past Office's grace - and the runner the write run alone,
+        // again since decision 206 (a) re-armed that grace on 2026-11-18.
         string[] derived = { LiveRunFilters.ExchangeTestAccount, LiveRunFilters.ExchangeTestAccountWritesNothing };
         List<string> problems = new();
         foreach (string file in new[] { "Testbed/README.md", "Docs/live-tier-on-the-vm.md", "Testbed/host/Invoke-LiveTierOnGuest.ps1" })
@@ -489,10 +491,10 @@ public sealed class LiveTierInventoryTests
                 }
             }
 
-            if (file.EndsWith(".ps1", StringComparison.Ordinal) && !quotedValues.SequenceEqual(new[] { LiveRunFilters.ExchangeTestAccountWritesNothing }, StringComparer.Ordinal))
+            if (file.EndsWith(".ps1", StringComparison.Ordinal) && !quotedValues.SequenceEqual(new[] { LiveRunFilters.ExchangeTestAccount }, StringComparer.Ordinal))
             {
-                problems.Add(file + " must type the writes-nothing filter " + LiveRunFilters.ExchangeTestAccountWritesNothing
-                    + " and nothing else while decision 206 is open; it quotes " + string.Join(", ", quotedValues));
+                problems.Add(file + " must type the write-run filter " + LiveRunFilters.ExchangeTestAccount
+                    + " and nothing else since decision 206 (a); it quotes " + string.Join(", ", quotedValues));
             }
 
             // The filter before the add-in was installed there (2026-10-08 to 2026-11-17) started with

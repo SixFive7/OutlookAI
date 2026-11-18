@@ -14,8 +14,7 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// refused, never answered as an empty folder.
 /// <para>
 /// Nothing is created, moved or written. create_folder's refusals, and the refusal while Outlook does not
-/// answer, stay with T1: reaching either here would take a write tool or a stopped Outlook, and this VM
-/// runs only the tests that write nothing until decision 206.
+/// answer, stay with T1: reaching either here would take a write tool or a stopped Outlook.
 /// </para>
 /// </summary>
 [Collection(LiveCollections.Phase2)]

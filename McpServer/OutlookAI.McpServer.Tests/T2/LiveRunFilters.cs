@@ -135,13 +135,15 @@ public static class LiveRunFilters
         "Category=Live" + string.Concat(ExchangeTestAccountLacks.Select(c => "&Requires!=" + c));
 
     /// <summary>
-    /// The filter the Exchange VM runs until the maintainer decides how its Office gets back the ability to
-    /// create items (decision 206, asked 2026-11-17): <see cref="ExchangeTestAccount"/>, and of it only the
-    /// tests that carry <see cref="WritesTrait"/>=<see cref="WritesNothing"/>. Its Office LTSC 2024 was never
-    /// activated, and since the grace ran out Outlook there creates no item through its object model: on
-    /// 2026-11-17 every test that seeds a mail or makes a draft failed at its first item, and every test that
-    /// only reads passed (<c>Docs/live-tier-on-the-vm.md</c> section 4.4a). Once 206 is settled the runner goes
-    /// back to <see cref="ExchangeTestAccount"/>.
+    /// The Exchange VM's run while its Office is past its activation grace: <see cref="ExchangeTestAccount"/>,
+    /// and of it only the tests that carry <see cref="WritesTrait"/>=<see cref="WritesNothing"/>. Its Office
+    /// LTSC 2024 was never activated, and past the grace Outlook there creates no item through its object model:
+    /// on 2026-11-17 every test that seeds a mail or makes a draft failed at its first item, and every test that
+    /// only reads passed. The runner typed this filter until decision 206 (a) re-armed the grace once with
+    /// Office's own OSPPREARM.EXE on 2026-11-18, after which a draft was made again and the runner went back to
+    /// <see cref="ExchangeTestAccount"/>; the next time the grace runs out (2026-12-18) a run is narrowed to this
+    /// with <c>-FilterSuffix '&amp;Writes=Nothing'</c> until it is re-armed (<c>Docs/live-tier-on-the-vm.md</c>
+    /// section 4.4a).
     /// </summary>
     public static string ExchangeTestAccountWritesNothing { get; } = ExchangeTestAccount + "&" + WritesTrait + "=" + WritesNothing;
 }
