@@ -296,7 +296,10 @@ its mailbox tests on, and change nothing you install.
   tested commit's add-in with `Publish-AddInPayload.ps1`, installs it on the frozen guest before
   Outlook starts - elevated, then one start NOT elevated to `ADDIN-READY` - and marks the run for the
   test; a run without it gets a PROVED NOTHING line from the test, as a machine without a population
-  does.
+  does. On `OutlookAI-Unindexed` on 2026-11-18, with the add-in of `8cf5431`, the pane wrote the
+  stand-in's four lines as 4 paragraphs, its AI replaced the agent's signature with the one the
+  stand-in named, and that signature's picture was embedded, 0 of 1 left a link (runbook section
+  2.3).
 
 - ✅ **Tests pin the start policy, lock, record, log and report, and live tests time the settle wait.**
   T1 runs every branch of the start policy over every combination of its facts, the record's and the
