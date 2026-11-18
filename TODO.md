@@ -1847,17 +1847,6 @@
   delegate or shared mailbox gets no default signature, and its result says so; a signature the
   agent names still goes in (`QUESTIONS.md` decision log, 2026-11-17, Q147 carried out, item 7).
 
-- [ ] **Find out why Outlook stays on its "Opening" splash on `OutlookAI-Indexed` after the runner's
-  `-SignatureSettings` step (found 2026-11-18).** Twice - a deployed default written as REG_SZ, then a
-  Group Policy default as REG_EXPAND_SZ - `Start-OutlookUnelevated.ps1` saw nothing but the window
-  `MsoSplash 'Opening - Outlook'` for ten minutes after `Set-SignatureSettings.ps1` had made the setting,
-  and the run stopped before its test; on the unindexed guests Outlook started at once after the same
-  step every time, and the measurements of runbook section 4.9 were taken there. Directions: (1) a
-  control run of the step's narrowed filter on the indexed guest without the step, to see whether the
-  step is the cause at all; (2) the step without its registry values, then without its MCP server
-  calls, to bisect; (3) leave it, since the measurement does not need that guest. Recommended: (1),
-  then (2) if the step is the cause.
-
 - [ ] **Decide whether OutlookAI reads the mailbox's own signature folder (Q152), once stream A's R3
   lands.** Q152 (a) is built: OutlookAI reads only what Outlook copies into the local folder, works out
   whether an account's signatures may roam (`SignatureRoaming`: possible on Microsoft 365 Apps 2303+,

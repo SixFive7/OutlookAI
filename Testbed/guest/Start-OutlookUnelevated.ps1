@@ -195,8 +195,8 @@ public static class OaiUnelevatedWin {
     }
     else {
         `$lines.Add('NO-EXPLORER within $Minutes min')
-        # What Outlook showed instead, class and title: a dialog in front of the Explorer window is what has kept it
-        # from opening every time so far (2026-11-18: a start under a deployed signature default).
+        # What Outlook showed instead, class and title - a dialog in front of the Explorer window, or (2026-11-18, on the
+        # indexed guest) nothing but its 'Opening' splash.
         if (`$o) { foreach (`$v in [OaiUnelevatedWin]::Visible([uint32]`$o.Id)) { `$lines.Add('WINDOW ' + `$v) } }
     }
 }

@@ -250,9 +250,8 @@ its mailbox tests on, and change nothing you install.
   only from a frozen checkpoint, never on the Exchange test machine and never with a green
   checkpoint. The values are written as expandable strings unless `-SignatureValueKind String` asks
   for plain ones. An Outlook start whose main window does not open now names the windows Outlook
-  showed instead: on the indexed test machine Outlook twice stayed on its "Opening" splash for ten
-  minutes after the step, where the unindexed ones started it every time. The guest scripts that
-  drive the MCP server share one stdio client now.
+  showed instead; one on the indexed test machine on 2026-11-18 showed nothing but its "Opening"
+  splash for ten minutes. The guest scripts that drive the MCP server share one stdio client now.
 
 - ✅ **A test-machine probe measures how Windows and the installer remove trust in the leaked key.**
   `Testbed/host/Invoke-TrustRemovalProbe.ps1` runs `Testbed/guest/Measure-TrustRemoval.ps1` on an
