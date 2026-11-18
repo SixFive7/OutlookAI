@@ -41,7 +41,7 @@ namespace OutlookAI.Services
     /// Pure by construction — no registry, no filesystem, no Outlook, no COM, no UI — so the
     /// T1 suite pins the shipped code rather than a re-implementation (the file is LINKED into
     /// the test project, exactly like <see cref="McpConfigEditor"/>). Framework-neutral for the
-    /// same reason: it compiles into the net48 add-in and into the .NET 10 test host. Public
+    /// same reason: it compiles into the net48 add-in and into the .NET 11 test host. Public
     /// for that reason too, and only that one — the theory signatures that walk the matrix have
     /// to be able to name these types, the same bargain <c>ComposeSurface</c> makes; nothing
     /// outside the add-in consumes any of it, and the assembly is <c>ComVisible(false)</c>.
@@ -229,7 +229,7 @@ namespace OutlookAI.Services
         /// <summary>
         /// Where <c>ComposeSurface</c> parks a window it must keep off a human's screen.
         /// Mirrored (not referenced) because the add-in is net48 and cannot reference the
-        /// .NET 10 server assembly; the two constants must stay in step.
+        /// .NET 11 server assembly; the two constants must stay in step.
         ///
         /// <para>
         /// That is no longer only a comment. The T1 suite is the one compilation that can see

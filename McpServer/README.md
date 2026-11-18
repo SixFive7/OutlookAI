@@ -14,7 +14,7 @@ Two independent data paths, two processes:
 MCP client (stdio JSON-RPC)
    │
    ▼
-OutlookAI.McpServer.exe          net10.0-windows x64 console host - NEVER touches Outlook
+OutlookAI.McpServer.exe          net11.0-windows x64 console host - NEVER touches Outlook
    ├─ IndexSearch  ── OLE DB `Search.CollatorDSO` → Windows Search SystemIndex
    │                  (WS-SQL; ~10–100 ms per query; works with Outlook closed)
    ├─ EntryIdCodec ── decodes index item URLs (store UID, folder segments, /at= attachment parents)
@@ -40,10 +40,10 @@ Four projects:
 
 | Project | Target | Contents |
 |---|---|---|
-| `OutlookAI.Core` | **net48 + net10.0-windows** | ALL domain logic: index search, EntryID codec, COM gateway/session, mail service, audit, health. Host-neutral — no MCP types, no console assumptions. The net48 target exists so a future in-Outlook (VSTO add-in) host can reference Core without a rewrite; it is CI-gated from day one. |
-| `OutlookAI.McpServer` | net10.0-windows x64 | Thin host: [`ModelContextProtocol`](https://www.nuget.org/packages/ModelContextProtocol) SDK + stdio wiring + the tool attribute surface. stdout carries JSON-RPC; all logging goes to stderr. |
-| `OutlookAI.ComHost` | net10.0-windows x64 | Both ends of the COM pipe: the killable child that owns the STA thread and every Outlook call, and the parent-side supervisor, session proxy and wire protocol. Published into the SAME directory as the server, so it costs ~163 KB rather than a second copy of the dependency set. |
-| `OutlookAI.McpServer.Tests` | net10.0-windows | Three test tiers (below). |
+| `OutlookAI.Core` | **net48 + net11.0-windows** | ALL domain logic: index search, EntryID codec, COM gateway/session, mail service, audit, health. Host-neutral — no MCP types, no console assumptions. The net48 target exists so a future in-Outlook (VSTO add-in) host can reference Core without a rewrite; it is CI-gated from day one. |
+| `OutlookAI.McpServer` | net11.0-windows x64 | Thin host: [`ModelContextProtocol`](https://www.nuget.org/packages/ModelContextProtocol) SDK + stdio wiring + the tool attribute surface. stdout carries JSON-RPC; all logging goes to stderr. |
+| `OutlookAI.ComHost` | net11.0-windows x64 | Both ends of the COM pipe: the killable child that owns the STA thread and every Outlook call, and the parent-side supervisor, session proxy and wire protocol. Published into the SAME directory as the server, so it costs ~163 KB rather than a second copy of the dependency set. |
+| `OutlookAI.McpServer.Tests` | net11.0-windows | Three test tiers (below). |
 
 Design rules (binding — see the code comments for the reasoning):
 
@@ -131,7 +131,7 @@ Term matching (D40, renamed 2026-07-26; cross-column AND added in soak fix 13): 
 
 ## Build and test
 
-Requires the .NET 10 SDK. **Always build by explicit csproj path — never via `OutlookAI.slnx`** (the solution only carries the VSTO add-in, which needs MSBuild + VSTO tooling):
+Requires the .NET 11 SDK (since 2026-11-18, Q172). **Always build by explicit csproj path — never via `OutlookAI.slnx`** (the solution only carries the VSTO add-in, which needs MSBuild + VSTO tooling):
 
 ```
 dotnet build McpServer/OutlookAI.Core/OutlookAI.Core.csproj -c Release
@@ -270,7 +270,7 @@ Building the server and registering the build output by hand still works, and is
 
 ```
 dotnet build McpServer/OutlookAI.McpServer/OutlookAI.McpServer.csproj -c Release
-claude mcp add --scope user outlookai <absolute-path-to>\McpServer\OutlookAI.McpServer\bin\Release\net10.0-windows\OutlookAI.McpServer.exe
+claude mcp add --scope user outlookai <absolute-path-to>\McpServer\OutlookAI.McpServer\bin\Release\net11.0-windows\OutlookAI.McpServer.exe
 ```
 
 Any MCP client works equivalently — the server speaks MCP over stdio.

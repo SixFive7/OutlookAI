@@ -24,9 +24,10 @@ namespace OutlookAI.Services
     /// </para>
     /// <para>
     /// FRAMEWORK-NEUTRAL and INTERNAL, under the rules <c>OfficeVersions.cs</c> documents: the add-in
-    /// compiles this file directly (net48, C# 7.3, nullable off) and <c>OutlookAI.Core</c> links it
-    /// (net48 and net10, nullable on, warnings as errors). So no nullable annotations, no
-    /// <c>return null</c> from a string member, and nothing newer than C# 7.3. Core re-exports it
+    /// compiles this file directly (net48, C# 15, nullable off) and <c>OutlookAI.Core</c> links it
+    /// (net48 and net11, nullable on, warnings as errors). So no nullable annotations, no
+    /// <c>return null</c> from a string member, and no language feature .NET Framework 4.8 cannot
+    /// run. Core re-exports it
     /// through <c>SignatureFolder</c>; the test project must never link it.
     /// </para>
     /// </summary>

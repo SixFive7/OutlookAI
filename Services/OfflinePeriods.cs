@@ -20,9 +20,9 @@ namespace OutlookAI.Services
     ///
     /// <para>
     /// FRAMEWORK-NEUTRAL and INTERNAL, under the rules <c>Services\OfficeVersions.cs</c> documents:
-    /// net48 (the add-in, C# 7.3) and net48 AND net10 inside Core, nullable-enabled with warnings as
-    /// errors - so no nullable annotations, nothing returned or assigned as null, nothing newer than
-    /// C# 7.3. Internal, so the copies in the two assemblies the test assembly can see never collide.
+    /// net48 (the add-in, C# 15) and net48 AND net11 inside Core, nullable-enabled with warnings as
+    /// errors - so no nullable annotations, nothing returned or assigned as null, no language feature
+    /// .NET Framework 4.8 cannot run. Internal, so the copies in the two assemblies the test assembly can see never collide.
     /// </para>
     /// </summary>
     internal static class OfflinePeriods

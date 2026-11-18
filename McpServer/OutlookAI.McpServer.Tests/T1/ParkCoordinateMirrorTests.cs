@@ -7,11 +7,11 @@ namespace OutlookAI.McpServer.Tests.T1;
 /// <summary>
 /// THE ONE CROSS-ASSEMBLY CONSTANT, AND THE ONLY PLACE ANYTHING CHECKS IT.
 ///
-/// <c>ComposeSurface</c> (net10.0, mail server) parks a window it must keep off a human's
+/// <c>ComposeSurface</c> (net11.0, mail server) parks a window it must keep off a human's
 /// screen at <c>(ParkX, ParkY)</c>. <c>McpRegistrationDecision</c> (net48, add-in) has to
 /// recognise that same corner, because "is there a window a human could be asked a question
 /// in?" is exactly the question of whether every visible window is a parked one. The add-in
-/// cannot reference the server assembly - it is net48 and the server is .NET 10 - so the
+/// cannot reference the server assembly - it is net48 and the server is .NET 11 - so the
 /// constant is MIRRORED, and the add-in's copy said so in a comment and left it there.
 ///
 /// A comment is not a mechanism. This file is: the test project references the server

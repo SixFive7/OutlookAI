@@ -243,7 +243,7 @@ It also stands down and reports instead of guessing: when Claude Code is not ins
 
 ```
 dotnet build McpServer/OutlookAI.McpServer/OutlookAI.McpServer.csproj -c Release
-claude mcp add --scope user outlookai <repo>\McpServer\OutlookAI.McpServer\bin\Release\net10.0-windows\OutlookAI.McpServer.exe
+claude mcp add --scope user outlookai <repo>\McpServer\OutlookAI.McpServer\bin\Release\net11.0-windows\OutlookAI.McpServer.exe
 ```
 
 A developer add-in build has no server installed beside it, so the reconcile recognizes that case and leaves such a registration alone. If an installed OutlookAI is also present, it *will* take the registration over on the next Outlook start — that is the drift healing doing its job, and re-running the command above points it back at your build.
@@ -371,7 +371,7 @@ The installer registers the add-in directly via the Windows registry and install
 - Visual Studio 2022
 - Office/SharePoint development workload
 - .NET desktop development workload
-- .NET 10 SDK (for the mail server only)
+- .NET 11 SDK (for the mail server only)
 
 **Steps:**
 1. Clone this repository
@@ -391,7 +391,7 @@ powershell -File Tools\Switch-AddInBuild.ps1 -Status                     # which
 
 Without `-Execute` the first two only show what they would change. The dev build is copied out of the build folder first, so later builds cannot change it underneath you; it carries version 99.99.99.0, so the add-in's updater leaves it alone; and it does not include the mail server. Changes take effect the next time Outlook starts — the script never starts or closes Outlook.
 
-The mail server is a separate .NET 10 project built with `dotnet`, not through the Visual Studio solution — see [`McpServer/README.md`](McpServer/README.md) for its build, test, and registration instructions. The release build publishes it (framework-dependent, win-x64) into the installer payload and stamps it with the **same version as the add-in**, so one release produces one version across the whole product; local developer builds of both carry `99.99.99.0`, which is also the marker the auto-updater uses to leave a developer build alone.
+The mail server is a separate .NET 11 project built with `dotnet`, not through the Visual Studio solution — see [`McpServer/README.md`](McpServer/README.md) for its build, test, and registration instructions. The release build publishes it (framework-dependent, win-x64) into the installer payload and stamps it with the **same version as the add-in**, so one release produces one version across the whole product; local developer builds of both carry `99.99.99.0`, which is also the marker the auto-updater uses to leave a developer build alone.
 
 ---
 

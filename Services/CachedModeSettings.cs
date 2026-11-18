@@ -70,9 +70,9 @@ namespace OutlookAI.Services
     ///
     /// <para>
     /// FRAMEWORK-NEUTRAL and INTERNAL, under the rules every linked file here follows: the add-in
-    /// compiles it (net48, C# 7.3) and the test project LINKS it (net10, nullable-enabled with
-    /// warnings as errors), so no nullable annotations, no null returned or assigned, and nothing
-    /// newer than C# 7.3. It reads and writes through <see cref="ITuningStore"/>, never the registry.
+    /// compiles it (net48, C# 15) and the test project LINKS it (net11, nullable-enabled with
+    /// warnings as errors), so no nullable annotations, no null returned or assigned, and
+    /// no language feature .NET Framework 4.8 cannot run (Properties\LanguageFeatureStandIns.cs). It reads and writes through <see cref="ITuningStore"/>, never the registry.
     /// </para>
     /// </summary>
     internal static class CachedModeSettings

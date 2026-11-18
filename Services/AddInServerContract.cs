@@ -4,7 +4,7 @@ namespace OutlookAI.Services
     /// THE ADD-IN / MAIL SERVER CONTRACT: the values that must be identical on both sides of a
     /// boundary no compiler crosses.
     ///
-    /// The net48 VSTO add-in cannot reference the .NET 10 mail server, and the server
+    /// The net48 VSTO add-in cannot reference the .NET 11 mail server, and the server
     /// deliberately takes no add-in dependency, so everything they agree about is DATA: two HKCU
     /// keys the add-in writes and <c>outlook_health</c> reads, plus the Claude Code
     /// configuration file one of them repairs and the other reports on. Every value below used
@@ -24,9 +24,10 @@ namespace OutlookAI.Services
     ///
     /// <para>
     /// FRAMEWORK-NEUTRAL, and the intersection is narrow: this compiles as net48 (the add-in),
-    /// as net48 AND net10 (Core's dual target) and as net10 (the test host), the last two
+    /// as net48 AND net11 (Core's dual target) and as net11 (the test host), the last two
     /// nullable-enabled with warnings as errors. So no <c>string?</c>, no <c>return null</c> from
-    /// a string member, no target-typed <c>new</c>, and an event would need an initialiser.
+    /// a string member, no language feature .NET Framework 4.8 cannot run (the add-in is C# 15
+    /// since 2026-11-18, and C# 7.3 before it), and an event would need an initialiser.
     /// Holding nothing but constants is the cheapest way to stay inside that intersection, and
     /// it is all this file is for: no probes, no registry access, no logic, nothing to test.
     /// </para>

@@ -2,8 +2,8 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <!-- net10.0-windows x64 console host (v3.MD section 0.4, Option A). -->
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <!-- net11.0-windows x64 console host (v3.MD section 0.4, Option A). -->
+    <TargetFramework>net11.0-windows</TargetFramework>
     <PlatformTarget>x64</PlatformTarget>
     <RootNamespace>OutlookAI.McpServer</RootNamespace>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -40,7 +40,7 @@
       rules have to be the SAME text the sidebar shows: a second copy of the defaults or of
       the registry key path would drift the moment either side is edited, and the drift would
       be invisible (both halves keep working, they just stop agreeing). Framework-neutral by
-      design, which is why the file can serve a net48 VSTO add-in and a net10 console host at
+      design, which is why the file can serve a net48 VSTO add-in and a net11 console host at
       once.
     -->
     <Compile Include="..\..\Services\PromptDefaults.cs" Link="Linked\PromptDefaults.cs" />

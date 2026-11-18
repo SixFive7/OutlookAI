@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <TargetFramework>net11.0-windows</TargetFramework>
     <!-- x64 to match the server host; T2 live tests (Phase 1+) will also need an x64
          test host for the Search.CollatorDSO OLE DB provider. -->
     <PlatformTarget>x64</PlatformTarget>
@@ -32,7 +32,7 @@
     <!-- The audit log's multi-process stress writer (Q117). Referenced for build ORDER only - the
          stress tests start its two executables, they do not load its assembly - and as an outer
          build (SkipGetTargetFrameworkProperties), which is what builds its net48 target as well as
-         its net10.0-windows one. -->
+         its net11.0-windows one. -->
     <ProjectReference Include="..\OutlookAI.AuditLogStress\OutlookAI.AuditLogStress.csproj"
                       ReferenceOutputAssembly="false"
                       SkipGetTargetFrameworkProperties="true" />
@@ -130,11 +130,11 @@
          The ProjectReference above guarantees the exe is built first. -->
     <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
       <_Parameter1>McpServerExePath</_Parameter1>
-      <_Parameter2>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\OutlookAI.McpServer\bin\$(Configuration)\net10.0-windows\OutlookAI.McpServer.exe'))</_Parameter2>
+      <_Parameter2>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\OutlookAI.McpServer\bin\$(Configuration)\net11.0-windows\OutlookAI.McpServer.exe'))</_Parameter2>
     </AssemblyAttribute>
     <!-- Test project directory, so T2 live tests can locate the gitignored
          live-fixtures/ folder (machine-local settings; never committed - v3.MD S6). -->
-    <!-- Where the stress writer's builds land: <this>\net10.0-windows and <this>\net48 (Q117). -->
+    <!-- Where the stress writer's builds land: <this>\net11.0-windows and <this>\net48 (Q117). -->
     <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
       <_Parameter1>AuditLogStressBinDir</_Parameter1>
       <_Parameter2>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\OutlookAI.AuditLogStress\bin\$(Configuration)'))</_Parameter2>

@@ -1130,7 +1130,7 @@ function Resolve-Dotnet {
     if ($onPath.Count -gt 0) { return $onPath[0].Source }
     $c = Join-Path $env:ProgramFiles 'dotnet\dotnet.exe'
     if (Test-Path -LiteralPath $c) { return $c }
-    throw 'REFUSING TO BUILD THE RELEASE: dotnet.exe was not found (PATH, Program Files\dotnet). The release publishes the MCP server with the .NET 10 SDK.'
+    throw 'REFUSING TO BUILD THE RELEASE: dotnet.exe was not found (PATH, Program Files\dotnet). The release publishes the MCP server with the .NET 11 SDK.'
 }
 
 # Start a tool with its output going STRAIGHT TO FILES - never through this process's pipe - and

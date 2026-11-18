@@ -224,8 +224,8 @@ namespace OutlookAI.Services
     /// <para>
     /// SPLIT OUT OF <c>OutlookTuningService</c> so the test project can LINK it and pin the walk -
     /// the add-in is net48/VSTO and nothing can reference it. FRAMEWORK-NEUTRAL and INTERNAL under the
-    /// same rules as the other linked files: C# 7.3, no nullable annotations, nothing null returned
-    /// or assigned. Every value name comes from <see cref="AddInServerContract"/>, which the server's
+    /// same rules as the other linked files: C# 15 but nothing .NET Framework 4.8 cannot run, no
+    /// nullable annotations, nothing null returned or assigned. Every value name comes from <see cref="AddInServerContract"/>, which the server's
     /// <c>HealthReporting</c> reads with.
     /// </para>
     /// </summary>

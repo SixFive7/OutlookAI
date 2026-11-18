@@ -117,7 +117,7 @@ public sealed class McpConfigEditorTests
     {
         // A build output is not under %LOCALAPPDATA%\OutlookAI\Setup, so the portable form
         // would name a different file - register the truth instead.
-        const string build = @"C:\Source\OutlookAI\McpServer\OutlookAI.McpServer\bin\Release\net10.0-windows\OutlookAI.McpServer.exe";
+        const string build = @"C:\Source\OutlookAI\McpServer\OutlookAI.McpServer\bin\Release\net11.0-windows\OutlookAI.McpServer.exe";
 
         Assert.Equal(build, McpConfigEditor.PreferredCommand(build, Env((@"LOCALAPPDATA", @"C:\Users\x\AppData\Local"))));
     }

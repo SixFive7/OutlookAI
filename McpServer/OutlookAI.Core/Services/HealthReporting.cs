@@ -492,7 +492,7 @@ namespace OutlookAI.Core.Services
         {
             // Bound to a non-nullable local once: net48's reference assemblies are not
             // annotated, so the null-state of string.IsNullOrEmpty's argument does not flow
-            // there the way it does on net10, and Core compiles warning-free for both.
+            // there the way it does on net11, and Core compiles warning-free for both.
             string text = value ?? "";
             if (text.Length == 0 || text.IndexOf("${", StringComparison.Ordinal) < 0)
             {

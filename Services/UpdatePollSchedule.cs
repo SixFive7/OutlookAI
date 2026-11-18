@@ -18,8 +18,9 @@ namespace OutlookAI.Services
     ///
     /// <para>
     /// FRAMEWORK-NEUTRAL and INTERNAL, under the same rules as the other linked files: it
-    /// compiles as net48 (the add-in, C# 7.3) and as net10 (the test host, nullable-enabled
-    /// with warnings as errors), so no nullable annotations and nothing newer than C# 7.3. A
+    /// compiles as net48 (the add-in, C# 15) and as net11 (the test host, nullable-enabled
+    /// with warnings as errors), so no nullable annotations and no language feature .NET
+    /// Framework 4.8 cannot run. A
     /// PUBLIC type in a file compiled into two assemblies that can see each other is CS0436,
     /// which is an error here.
     /// </para>

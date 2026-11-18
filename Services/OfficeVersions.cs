@@ -31,12 +31,12 @@ namespace OutlookAI.Services
     ///
     /// <para>
     /// FRAMEWORK-NEUTRAL, and the intersection is narrow - the same one
-    /// <c>Services\AddInServerContract.cs</c> documents: this compiles as net48 (the add-in, which
-    /// sets no <c>LangVersion</c> and therefore gets C# 7.3, nullable off) and as net48 AND net10
-    /// inside Core, nullable-enabled with warnings as errors. So no <c>string?</c>, no
-    /// <c>return null</c> from a string member (which is why detection reports "nothing found" as
-    /// a <c>bool</c> plus an <c>out</c> that is always assigned), no target-typed <c>new</c>, and
-    /// nothing newer than C# 7.3.
+    /// <c>Services\AddInServerContract.cs</c> documents: this compiles as net48 (the add-in, C# 15
+    /// since 2026-11-18 - C# 7.3, the default for .NET Framework, before - nullable off) and as
+    /// net48 AND net11 inside Core, nullable-enabled with warnings as errors. So no <c>string?</c>,
+    /// no <c>return null</c> from a string member (which is why detection reports "nothing found"
+    /// as a <c>bool</c> plus an <c>out</c> that is always assigned), and no language feature .NET
+    /// Framework 4.8 cannot run (<c>Properties\LanguageFeatureStandIns.cs</c>).
     /// </para>
     ///
     /// <para>

@@ -856,16 +856,16 @@ its mailbox tests on, and change nothing you install.
   would overwrite the change or copy it into the mailbox, and says to use Outlook instead. Roaming on
   Microsoft 365 Apps itself is not tested: the test machines run perpetual Office only.
 
-- 📝 **The README's section on Outlook's lifetime and tray icon describes the lifetime pin.**
-  It was written before pins existed. It now says a session that finds Outlook with no window holds a
-  hidden one while it is connected, that the session which started Outlook closes it on the way out
-  and Outlook ends at once, and that a pin left behind keeps Outlook running past Application.Quit()
-  and past closing a window opened over it, while File > Exit ends it. The 10-12 minute exit is now
-  given as what it was: one measurement, on Office LTSC 2021, before pins. What Exit Now does with a
-  pin present is said to be unmeasured, where the old text claimed it disconnects and exits at once.
-  And where it said every draft is written in a compose window nobody sees, it now says what Q149
-  measured on Office LTSC 2024: with no Outlook window open, that window shows at the top left of the
-  screen for 130 to 650 ms and has the foreground while it is there.
+- ⬆️ **The mail server, its tests and its tools build for .NET 11, and the add-in as C# 15 (Q172).**
+  The maintainer moved OutlookAI to .NET 11 on 2026-11-18. Every project under `McpServer/` targets
+  `net11.0-windows`, `OutlookAI.Core` and the audit-log stress writer keep their `net48` target
+  beside it, and the security analysers run at `11.0-all`, whose 94 rules are the ones `10.0-all`
+  ran, so the build found nothing new. The VSTO add-in stays on .NET Framework 4.8, because a VSTO
+  add-in cannot run on modern .NET, and compiles as C# 15 instead of the C# 7.3 a .NET Framework
+  project gets by default; `Properties/LanguageFeatureStandIns.cs` declares, as source, the few
+  types records, init accessors, required members and argument-expression guards look up by name,
+  and a feature that needs the modern runtime the compiler refuses there. Nothing a user sees
+  changes until the mail server carries its own .NET 11 runtime.
 
 - ✅ **The test machines carry the .NET 11 SDK beside .NET 10, on new checkpoints (Q172).**
   OutlookAI is moving to .NET 11 (Q172), and nothing on .NET 11 can be tested until the test
@@ -886,6 +886,17 @@ its mailbox tests on, and change nothing you install.
   for a frozen machine, where every second before the checkpoint moves its clock. The live runner
   names the SDK each machine's install step must find, still .NET 10's until the code moves, and a
   relative output folder no longer breaks the live-tier payload's offline feed check.
+
+- 📝 **The README's section on Outlook's lifetime and tray icon describes the lifetime pin.**
+  It was written before pins existed. It now says a session that finds Outlook with no window holds a
+  hidden one while it is connected, that the session which started Outlook closes it on the way out
+  and Outlook ends at once, and that a pin left behind keeps Outlook running past Application.Quit()
+  and past closing a window opened over it, while File > Exit ends it. The 10-12 minute exit is now
+  given as what it was: one measurement, on Office LTSC 2021, before pins. What Exit Now does with a
+  pin present is said to be unmeasured, where the old text claimed it disconnects and exits at once.
+  And where it said every draft is written in a compose window nobody sees, it now says what Q149
+  measured on Office LTSC 2024: with no Outlook window open, that window shows at the top left of the
+  screen for 130 to 650 ms and has the foreground while it is there.
 
 - ♻️ **The scripts share one copy of their program-call wrapper, in Testbed/guest/ScriptHelpers.ps1 (Q166).**
   Seventeen scripts each declared the same `Invoke-NativeCommand`, the wrapper every program call

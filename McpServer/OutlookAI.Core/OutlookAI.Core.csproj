@@ -2,11 +2,11 @@
 
   <PropertyGroup>
     <!--
-      Multi-target (v3.MD D18 v2 / R10): net10.0-windows is consumed by the MCP server
+      Multi-target (v3.MD D18 v2 / R10): net11.0-windows is consumed by the MCP server
       host today; net48 is CI-gated from day one so the v3.1 event host (most likely
       the existing VSTO add-in, .NET Framework 4.8) can reference Core without rewrite.
     -->
-    <TargetFrameworks>net48;net10.0-windows</TargetFrameworks>
+    <TargetFrameworks>net48;net11.0-windows</TargetFrameworks>
     <RootNamespace>OutlookAI.Core</RootNamespace>
     <!--
       Implicit usings are disabled: the default set includes System.Net.Http, which is
@@ -69,9 +69,10 @@
     <Compile Include="..\..\Services\AddInServerContract.cs" Link="Linked\AddInServerContract.cs" />
     <!--
       And the Office major versions the product supports, plus the probe that finds which one is
-      actually installed. Linked for the same reason and under the same rules (internal, C# 7.3,
-      no nullable annotations): the server used to hardcode 16.0 in the Outlook Search key, that
-      key's Policies mirror and the whole profile registry, so on Outlook 2013 or a future 17.0 it
+      actually installed. Linked for the same reason and under the same rules (internal, C# 15 but
+      nothing .NET Framework 4.8 cannot run, no nullable annotations): the server used to hardcode
+      16.0 in the Outlook Search key, that key's Policies mirror and the whole profile registry, so
+      on Outlook 2013 or a future 17.0 it
       read hives Outlook never writes and reported empty signatures, empty accounts and no search
       settings - indistinguishable from a broken install. Sharing the FILE rather than
       reimplementing the list is what makes both halves probe the same versions in the same order.
@@ -99,7 +100,7 @@
     <!-- dynamic (late-bound Outlook/ADODB COM) needs the C# runtime binder on .NET Framework. -->
     <Reference Include="Microsoft.CSharp" />
     <!--
-      System.Reflection.DispatchProxy is in the box on net10.0 and NOT in net48's default
+      System.Reflection.DispatchProxy is in the box on net11.0 and NOT in net48's default
       reference set, so BudgetedSessionProxy (added 2026-08-19 with the in-process budget)
       compiled on one target and broke the other. The net48 gate exists precisely so Core
       cannot acquire a dependency the v3.1 event host could not take, and this is what it
