@@ -835,7 +835,7 @@ its mailbox tests on, and change nothing you install.
   measured on Office LTSC 2024: with no Outlook window open, that window shows at the top left of the
   screen for 130 to 650 ms and has the foreground while it is there.
 
-- ♻️ **The scripts share one copy of their program-call wrapper, in Testbed/guest/ScriptHelpers.ps1 (Q166).**
+- ♻️ **The scripts share one copy of the helpers they restated, in Testbed/guest/ScriptHelpers.ps1 (Q166).**
   Seventeen scripts each declared the same `Invoke-NativeCommand`, the wrapper every program call
   goes through so that Windows PowerShell 5.1 cannot end a script on the first line a program writes
   to stderr. Thirteen of them now dot-source it from `Testbed/guest/ScriptHelpers.ps1`, where
@@ -849,7 +849,14 @@ its mailbox tests on, and change nothing you install.
   wrapper counts as one through a copy always did, and its new check 4 fails a copy of a shared
   helper anywhere but in a script marked `# travels-alone:`, and there a copy that differs from the
   shared one. Six cases that break those rules were run against it here, and it failed each.
-  `Testbed/README.md` names the file, and its step 4a stages it with the other guest scripts.
+  `Testbed/README.md` names the file, and its step 4a stages it with the other guest scripts. The
+  build and release scripts' own helpers went the same way: the run of a program into log files
+  under a deadline (`Invoke-Logged`, five copies), the tail of such a log (`Show-LogTail`, four),
+  the quoting of one argument (`Format-Argument`, two) and the elevation test (`Test-IsElevated`,
+  two). The build-VM runner, which reaches the VM on its own, keeps its own run of a program,
+  which quotes its arguments and stops the whole process tree, as `Invoke-LoggedStep`. And three
+  `Tools/` scripts that restated the import of the running edition's own Security and Utility
+  modules now dot-source `Testbed/host/OwnEditionModules.ps1`, as the host scripts do.
 
 - ♻️ **The test suite keeps one copy of each stand-in its files share, and of its paths (Q154).**
   Nineteen test files each declared a stand-in for Outlook's connection that runs an operation

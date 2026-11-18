@@ -76,28 +76,9 @@ $ListTimeoutMinutes = 10
 
 function Say([string] $m) { Write-Host ("[{0:HH:mm:ss}] {1}" -f (Get-Date), $m) }
 
-# A program with its output going STRAIGHT TO FILES and a deadline. Restated from
-# Tools/Publish-Release.ps1, which says why.
-function Invoke-Logged {
-    param(
-        [Parameter(Mandatory = $true)] [string] $FilePath,
-        [Parameter(Mandatory = $true)] [string[]] $ArgumentList,
-        [Parameter(Mandatory = $true)] [string] $LogStem,
-        [int] $TimeoutMinutes = 20
-    )
-    $out = "$LogStem.out.txt"
-    $err = "$LogStem.err.txt"
-    foreach ($f in @($out, $err)) { if (Test-Path -LiteralPath $f) { Remove-Item -LiteralPath $f -Force } }
-    $p = Start-Process -FilePath $FilePath -ArgumentList ($ArgumentList -join ' ') -RedirectStandardOutput $out -RedirectStandardError $err -NoNewWindow -PassThru
-    $null = $p.Handle
-    $exited = $p.WaitForExit($TimeoutMinutes * 60 * 1000)
-    if ($exited) { $p.WaitForExit() }
-    if (-not $exited) {
-        try { $p.Kill() } catch { }
-        return [pscustomobject]@{ ExitCode = -1; TimedOut = $true; Out = $out; Err = $err }
-    }
-    return [pscustomobject]@{ ExitCode = $p.ExitCode; TimedOut = $false; Out = $out; Err = $err }
-}
+# A program with its output going STRAIGHT TO FILES and a deadline: Invoke-Logged, one of the helpers
+# the scripts share, dot-sourced from Testbed/guest/ScriptHelpers.ps1 (Q166 (b), decision 215 (a)).
+. (Join-Path $PSScriptRoot '..\Testbed\guest\ScriptHelpers.ps1')
 
 # =============================================================================================
 # PURE DECISIONS - everything -SelfTest checks

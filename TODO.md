@@ -1686,8 +1686,10 @@
   `ThreadWalks`; six more suites - the thread, unindexed-store and folder-walk ones - still spell
   that mailbox's SID, prefix and frontier under names of their own, beside stores of their own).
   PowerShell, into `Testbed/guest/ScriptHelpers.ps1` (decision 215 (a)), held there by
-  check-powershell-51 check 4: P01's `Invoke-NativeCommand` for 13 of its 17 copies, and P09's
-  `Format-Seconds`, the build-VM runner's copy of which rounded 119.6 s to "1 m 60 s".
+  check-powershell-51 check 4: P01's `Invoke-NativeCommand` for 13 of its 17 copies, P09's
+  `Format-Seconds`, the build-VM runner's copy of which rounded 119.6 s to "1 m 60 s", P02's
+  `Invoke-Logged`, `Show-LogTail` and `Format-Argument`, and P12's `Test-IsElevated`; P11's module
+  import is `Testbed/host/OwnEditionModules.ps1`, which the `Tools/` scripts dot-source too.
   Invoke-LiveTierOnGuest.ps1 and Invoke-TrustRemovalProbe.ps1 fold with the rest of S7d,
   Build-Corpus.ps1 and Reset-HubPopulation.ps1 with S7c, and the check lists them until they do.
 

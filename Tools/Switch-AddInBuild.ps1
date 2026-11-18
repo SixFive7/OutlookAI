@@ -203,13 +203,14 @@ $ErrorActionPreference = 'Stop'
 if (Test-Path Variable:\PSNativeCommandUseErrorActionPreference) {
     $PSNativeCommandUseErrorActionPreference = $false
 }
-# The Cert: drive belongs to this module, and nothing here loads it on its own. Measured 2026-09-27,
-# this script's first -BuildOnly: Windows PowerShell 5.1 started by Start-Process from PowerShell 7
-# inherits 7's PSModulePath, so autoloading picked 7's copy of the module, which 5.1 cannot load -
-# New-SelfSignedCertificate then failed on "A drive with the name 'Cert' does not exist", and a
-# plain Import-Module on "the member AuditToString is already present". So the running edition's
-# OWN copy is imported, by path.
-Import-Module (Join-Path $PSHOME 'Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1')
+# The Cert: drive belongs to the Security module, and nothing here loads it on its own. Measured
+# 2026-09-27, this script's first -BuildOnly: Windows PowerShell 5.1 started by Start-Process from
+# PowerShell 7 inherits 7's PSModulePath, so autoloading picked 7's copy of the module, which 5.1
+# cannot load - New-SelfSignedCertificate then failed on "A drive with the name 'Cert' does not
+# exist", and a plain Import-Module on "the member AuditToString is already present". So the
+# running edition's OWN copies of it and of the Utility module are imported, by path, by the file
+# every host and Tools/ script dot-sources for that (Q154).
+. (Join-Path $PSScriptRoot '..\Testbed\host\OwnEditionModules.ps1')
 
 # Defaults that need $PSScriptRoot or the environment are set HERE, not in param(): Windows
 # PowerShell 5.1 leaves $PSScriptRoot empty while param() defaults are evaluated (Q78).
@@ -1447,41 +1448,6 @@ function Resolve-MSBuild {
     return $candidate
 }
 
-# Output straight to files, never through this process's pipe, under a deadline: a build that
-# spawns children can hold a pipe open after it has finished, and the timeout would never fire.
-function Invoke-Logged {
-    param(
-        [Parameter(Mandatory = $true)] [string] $FilePath,
-        [Parameter(Mandatory = $true)] [string[]] $ArgumentList,
-        [Parameter(Mandatory = $true)] [string] $LogStem,
-        [int] $TimeoutMinutes = 20,
-        [string] $WorkingDirectory
-    )
-    $out = "$LogStem.out.txt"
-    $err = "$LogStem.err.txt"
-    foreach ($f in @($out, $err)) { if (Test-Path -LiteralPath $f) { Remove-Item -LiteralPath $f -Force } }
-    $startArgs = @{
-        FilePath = $FilePath; ArgumentList = ($ArgumentList -join ' ')
-        RedirectStandardOutput = $out; RedirectStandardError = $err; NoNewWindow = $true; PassThru = $true
-    }
-    if ($WorkingDirectory) { $startArgs['WorkingDirectory'] = $WorkingDirectory }
-    $p = Start-Process @startArgs
-    $null = $p.Handle
-    $exited = $p.WaitForExit($TimeoutMinutes * 60 * 1000)
-    if ($exited) { $p.WaitForExit() }
-    if (-not $exited) {
-        try { $p.Kill() } catch { }
-        return [pscustomobject]@{ ExitCode = -1; TimedOut = $true; Out = $out; Err = $err }
-    }
-    return [pscustomobject]@{ ExitCode = $p.ExitCode; TimedOut = $false; Out = $out; Err = $err }
-}
-
-function Show-LogTail([string] $Path, [int] $Lines = 30) {
-    if ($Path -and (Test-Path -LiteralPath $Path)) {
-        foreach ($l in (Get-Content -LiteralPath $Path -Tail $Lines)) { Write-Host "      | $l" }
-    }
-}
-
 function Test-IsUnderGitWorkTreeButNotWork {
     param([string] $Path, [string] $WorkTreeRoot)
     if (-not $WorkTreeRoot) { return $false }
@@ -1970,12 +1936,6 @@ function Invoke-SelfTest {
         return 1
     }
     return 0
-}
-
-function Test-IsElevated {
-    $id = [System.Security.Principal.WindowsIdentity]::GetCurrent()
-    $p = New-Object System.Security.Principal.WindowsPrincipal($id)
-    return $p.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
 # =============================================================================================
