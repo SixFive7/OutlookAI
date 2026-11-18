@@ -331,7 +331,7 @@ public sealed class LiveTierInventoryTests
         List<string> problems = new();
         foreach (string file in quoting)
         {
-            string text = File.ReadAllText(Path.Combine(RepoRoot(), file));
+            string text = File.ReadAllText(Path.Combine(RepoPaths.RepoRoot(), file));
             if (!text.Contains(LiveRunFilters.Guest, StringComparison.Ordinal))
             {
                 problems.Add(file + " never quotes the guest filter " + LiveRunFilters.Guest);
@@ -352,7 +352,7 @@ public sealed class LiveTierInventoryTests
             }
         }
 
-        string script = File.ReadAllText(Path.Combine(RepoRoot(), "Testbed", "guest", "Reset-HubPopulation.ps1"));
+        string script = File.ReadAllText(Path.Combine(RepoPaths.RepoRoot(), "Testbed", "guest", "Reset-HubPopulation.ps1"));
         if (!script.Contains("'" + LiveRunFilters.GuestUnindexed + "'", StringComparison.Ordinal))
         {
             problems.Add("Testbed/guest/Reset-HubPopulation.ps1 does not print the unindexed guest's filter " + LiveRunFilters.GuestUnindexed);
@@ -479,7 +479,7 @@ public sealed class LiveTierInventoryTests
         List<string> problems = new();
         foreach (string file in new[] { "Testbed/README.md", "Docs/live-tier-on-the-vm.md", "Testbed/host/Invoke-LiveTierOnGuest.ps1" })
         {
-            string text = File.ReadAllText(Path.Combine(RepoRoot(), file));
+            string text = File.ReadAllText(Path.Combine(RepoPaths.RepoRoot(), file));
             if (!text.Contains(LiveRunFilters.ExchangeTestAccount, StringComparison.Ordinal))
             {
                 problems.Add(file + " never quotes the Exchange VM's write-run filter " + LiveRunFilters.ExchangeTestAccount);
@@ -576,7 +576,7 @@ public sealed class LiveTierInventoryTests
         List<string> problems = new();
         foreach (string file in new[] { "Testbed/README.md", "Docs/live-tier-on-the-vm.md" })
         {
-            string text = File.ReadAllText(Path.Combine(RepoRoot(), file));
+            string text = File.ReadAllText(Path.Combine(RepoPaths.RepoRoot(), file));
             if (!text.Contains(LiveRunFilters.ExchangeGuest, StringComparison.Ordinal))
             {
                 problems.Add(file + " never quotes the Exchange VM's filter " + LiveRunFilters.ExchangeGuest);
@@ -1039,16 +1039,5 @@ public sealed class LiveTierInventoryTests
     private static string Name(MethodInfo method)
     {
         return method.DeclaringType!.Name + "." + method.Name;
-    }
-
-    private static string RepoRoot()
-    {
-        string testProjectDir = typeof(LiveTierInventoryTests).Assembly
-                .GetCustomAttributes<AssemblyMetadataAttribute>()
-                .FirstOrDefault(a => a.Key == "TestProjectDir")?.Value
-            ?? throw new InvalidOperationException("AssemblyMetadata 'TestProjectDir' is missing.");
-
-        // <repo>/McpServer/OutlookAI.McpServer.Tests/ -> <repo>
-        return Path.GetFullPath(Path.Combine(testProjectDir, "..", ".."));
     }
 }

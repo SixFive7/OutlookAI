@@ -1,4 +1,3 @@
-using System.Reflection;
 using Xunit;
 
 namespace OutlookAI.McpServer.Tests.T1;
@@ -20,7 +19,7 @@ public sealed class ConversationTrackingReadTests
     [Fact]
     public void NoProductSource_ReadsConversationIndexTracking()
     {
-        string coreDir = Path.GetFullPath(Path.Combine(TestProjectDir(), "..", "OutlookAI.Core"));
+        string coreDir = Path.GetFullPath(Path.Combine(RepoPaths.TestProjectDir(), "..", "OutlookAI.Core"));
         List<string> offenders = new List<string>();
         int scanned = 0;
         foreach (string file in Directory.EnumerateFiles(coreDir, "*.cs", SearchOption.AllDirectories))
@@ -42,13 +41,5 @@ public sealed class ConversationTrackingReadTests
 
         Assert.True(scanned > 50, "only " + scanned + " Core source file(s) found - this test has stopped proving anything");
         Assert.Empty(offenders);
-    }
-
-    private static string TestProjectDir()
-    {
-        return typeof(ConversationTrackingReadTests).Assembly
-                .GetCustomAttributes<AssemblyMetadataAttribute>()
-                .FirstOrDefault(a => a.Key == "TestProjectDir")?.Value
-            ?? throw new InvalidOperationException("AssemblyMetadata 'TestProjectDir' is missing.");
     }
 }

@@ -141,7 +141,7 @@ public sealed class CorpusUndatedWritePathTests
     }
 
     private static string Source()
-        => File.ReadAllText(Path.Combine(RepoRoot(), "McpServer", "OutlookAI.RemediationTools", "ComCorpusMailbox.cs"));
+        => File.ReadAllText(Path.Combine(RepoPaths.RepoRoot(), "McpServer", "OutlookAI.RemediationTools", "ComCorpusMailbox.cs"));
 
     /// <summary>The text between a method's opening and closing brace at the class member indentation.</summary>
     private static string MethodBody(string source, string signatureStart)
@@ -153,15 +153,5 @@ public sealed class CorpusUndatedWritePathTests
         int close = source.IndexOf(newline + "    }", open + 1, StringComparison.Ordinal);
         Assert.True(open > start && close > open, "could not find the body of " + signatureStart);
         return source.Substring(open, close - open);
-    }
-
-    private static string RepoRoot()
-    {
-        string testProjectDir =
-            typeof(LiveTestSettings).Assembly
-                .GetCustomAttributes<AssemblyMetadataAttribute>()
-                .FirstOrDefault(a => a.Key == "TestProjectDir")?.Value
-            ?? throw new InvalidOperationException("AssemblyMetadata 'TestProjectDir' is missing.");
-        return Path.GetFullPath(Path.Combine(testProjectDir, "..", ".."));
     }
 }
