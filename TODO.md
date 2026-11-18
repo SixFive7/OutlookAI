@@ -1823,23 +1823,11 @@
   `CP-03-SDK-TEST-READY-UTC` on the three build VMs, `CP-22C-FROZEN-CLOCK` and `CP-16B-FROZEN-CLOCK`
   on the Outlook guests, and the guests' old clones `OutlookAI-Indexed2` and `OutlookAI-Unindexed2`,
   copies of those two, stay only for branches whose runners still name them
-  (Docs/live-tier-on-the-vm.md section 4.11). Once no branch does: remove the checkpoints
+  (Docs/live-tier-on-the-vm.md section 4.12). Once no branch does: remove the checkpoints
   (`Remove-VMSnapshot`; Hyper-V merges their disks) and the two clones (`Remove-VM`, then their
   folders under `E:\Hyper-V`), take them out of `Testbed/testbed.json`, and keep
   `.work/media/dotnet-sdk-10.0.401-win-x64.exe` only while a checkpoint still needs it - recording it
-  in section 4.11. `OutlookAI-Exchange`'s older checkpoints are its rebuild points and stay.
-
-- [ ] **Decide whether the draft tools refuse an attachment path Outlook cannot take (found
-  2026-11-18, by save_attachment's live tests).** On the unindexed test guest, `Attachments.Add` on a
-  file called `CON.txt`, given as a `\\?\` path, crashed OUTLOOK.EXE with an access violation inside
-  the call (live run 20261118-050200). The draft tools' `attachments` take any rooted path the server
-  can read (`DraftAttachments.Validate`), and such a path passes every check there, so an agent could
-  crash the user's Outlook through `new_draft`, `reply_draft`, `forward_draft` or `update_draft`. Not
-  measured: whether every `\\?\` path crashes it, or only one that names a device. Directions: (1)
-  refuse `\\?\` and `\\.\` paths, and file names Windows reads as a device, in
-  `DraftAttachments.Validate`, saying why - cheap, and nothing an agent needs; (2) measure first which
-  paths crash it and refuse exactly those - narrower, at the cost of a guest run that crashes Outlook
-  on purpose; (3) leave it: an agent needs its own file tools to make such a file. Recommended: (1).
+  in section 4.12. `OutlookAI-Exchange`'s older checkpoints are its rebuild points and stay.
 
 - [ ] **Decide whether the VM pools keep CPU free for the maintainer, as they keep memory free
   (2026-11-17).** The pools (`Testbed/host/TestbedPool.ps1`) start a member other than the first only

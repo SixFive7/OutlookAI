@@ -262,7 +262,7 @@ Restored on the host with no packs to find, the main branch asks for exactly fou
 and `Microsoft.AspNetCore.App.Ref` (measured 2026-11-18). SDK 10.0.404 is the .NET 10 SDK of the same
 release day and installs exactly those. It replaces 10.0.401 in place, as an SDK of the same feature
 band does: on `OutlookAI-Build3` `dotnet --list-sdks` read `10.0.404` and `11.0.100` afterwards, and
-SDK 11 built the .NET 10 suite there offline (`Docs/live-tier-on-the-vm.md` section 4.11).
+SDK 11 built the .NET 10 suite there offline (`Docs/live-tier-on-the-vm.md` section 4.12).
 
 **Why the frozen guests have SDK 11 and no 10.0.404.** A frozen guest's instant moves by every minute
 between the restore and the checkpoint taken after it (`Docs/live-tier-on-the-vm.md` section 4.5), and
