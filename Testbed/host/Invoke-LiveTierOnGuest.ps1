@@ -978,8 +978,11 @@ STACK      the faulting thread
     $hl = @(Get-DumpHeadline $sample 2)
     Check 'the headline: the exception, where, how - and the top frames, no more than asked' 'access violation|wwlib.dll+0x7BA1A|READING|00  wwlib.dll+0x7BA1A|01  combase.dll!CoTaskMemFree+0x10|5' @($hl[0].Substring(11, 16), $hl[1].Substring(23, 17), $hl[2].Substring(0, 7), $hl[3].Substring(0, 21), $hl[4], $hl.Count)
     Check 'a report with no exception has no headline' 0 @(Get-DumpHeadline 'DUMP x').Count
-    $fetchAt = $own.IndexOf('if ($suiteStarted) { Save-CrashDumps }')
-    Check 'the dumps are fetched before the guest rests - the restore wipes them' $true ($fetchAt -gt 0 -and $fetchAt -lt $own.IndexOf('Restore-Guest $restOn'))
+    # Searched in the run's code alone: in the whole file the first of each text is in this check itself,
+    # and there they stood in the right order whatever the run did - a check that could not fail
+    # (found 2026-11-18).
+    $fetchAt = $runCode.IndexOf('if ($suiteStarted) { Save-CrashDumps }')
+    Check 'the dumps are fetched before the guest rests - the restore wipes them' $true ($fetchAt -gt 0 -and $fetchAt -lt $runCode.IndexOf('Restore-Guest $restOn'))
 
     Write-Host '== the guest''s clock around every guest call (stream K, 2026-11-18) =='
     $sample = "noise`r`nGUEST-CLOCK-BEFORE 2026-10-03T19:46:53.1234567Z W. Europe Standard Time`r`nSDK-EXECUTE-EXIT 0`r`nGUEST-CLOCK-AFTER 2026-10-03T19:47:53.6234567Z W. Europe Standard Time  `r`n"

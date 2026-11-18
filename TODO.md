@@ -1819,6 +1819,18 @@
   every test whose product call converts in the machine's zone, `MailService.ToUtc` (122 tests)
   among them, the Q95 kind. Recommended: (1) now, and (3) for each function as it is next changed.
 
+- [ ] **Take the testbed's last Hyper-V polling out of the scripts the runners call (stream W,
+  2026-11-18).** The runners' own waits read files since the polling cut (`Docs/live-tier-on-the-vm.md`
+  section 4.10), but four pieces still ask Hyper-V the old way: `Testbed/host/Restart-Guest.ps1` and
+  `Testbed/host/Set-GuestClockFrozen.ps1` wait for a guest's heartbeat with `Get-VMIntegrationService`,
+  23 WMI operations a look, where `Test-TestbedHeartbeat` in `Testbed/host/TestbedPool.ps1` asks with
+  one; `Testbed/host/Copy-ToGuest.ps1` and `Testbed/host/Copy-FromGuest.ps1` open a PowerShell Direct
+  session of their own, by the VM's name, for every call, where the live runner now keeps one, by id;
+  and stream W's cheaper sources of a VM's state - the Host Compute Service's enumeration and the
+  hypervisor's partition counters, under a millisecond a read in its measurements
+  (`.work\w-vm-state\` of the main checkout) - are used nowhere. Left for later by the coordinator on
+  2026-11-18, once the polling cut had landed.
+
 - [ ] **Decide whether the draft tools refuse an attachment path Outlook cannot take (found
   2026-11-18, by save_attachment's live tests).** On the unindexed test guest, `Attachments.Add` on a
   file called `CON.txt`, given as a `\\?\` path, crashed OUTLOOK.EXE with an access violation inside
