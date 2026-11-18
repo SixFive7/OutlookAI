@@ -705,6 +705,15 @@ function Invoke-ListFolders([object[]] $Sessions, [switch] $UntilReady) {
     }
 }
 
+# The last $Max characters a session's server wrote to standard error, as the C# session's StderrTail gave them:
+# '<stderr still open>' when the server has not let it go within 3 s.
+function Get-StderrTail($Session, [int] $Max) {
+    if (-not $Session.Stderr.Wait(3000)) { return '<stderr still open>' }
+    $text = [string]$Session.Stderr.Result
+    if ($text.Length -le $Max) { return $text }
+    return $text.Substring($text.Length - $Max)
+}
+
 # The normal end: stdin closed on every session at once, then each awaited.
 function Stop-SessionNormally([object[]] $Sessions) {
     $hosts = @{}
@@ -715,7 +724,8 @@ function Stop-SessionNormally([object[]] $Sessions) {
         $exited = $s.Process.WaitForExit(60000)
         $ms = [Math]::Round($sw.Elapsed.TotalMilliseconds)
         $left = @($hosts[$s.Name] | Where-Object { Get-Process -Id $_ -ErrorAction SilentlyContinue })
-        Write-Event 'end' ("{0}: stdin closed; server {1} after {2} ms (exit code {3}); its COM host {4}" -f $s.Name, $(if ($exited) { 'exited' } else { 'STILL RUNNING' }), $ms, $(if ($s.Process.HasExited) { $s.Process.ExitCode } else { -999 }), $(if ($hosts[$s.Name].Count -eq 0) { 'was never seen' } elseif ($left.Count -eq 0) { 'gone' } else { 'STILL RUNNING' })) ([ordered]@{ name = $s.Name; exited = $exited; ms = $ms; exitCode = $s.ExitCode; stderrTail = $s.StderrTail(400) })
+        $code = $(if ($s.Process.HasExited) { $s.Process.ExitCode } else { -999 })
+        Write-Event 'end' ("{0}: stdin closed; server {1} after {2} ms (exit code {3}); its COM host {4}" -f $s.Name, $(if ($exited) { 'exited' } else { 'STILL RUNNING' }), $ms, $code, $(if ($hosts[$s.Name].Count -eq 0) { 'was never seen' } elseif ($left.Count -eq 0) { 'gone' } else { 'STILL RUNNING' })) ([ordered]@{ name = $s.Name; exited = $exited; ms = $ms; exitCode = $code; stderrTail = (Get-StderrTail $s 400) })
     }
 }
 
