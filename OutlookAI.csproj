@@ -230,6 +230,42 @@
     </Compile>
     <AppDesigner Include="Properties\" />
   </ItemGroup>
+  <!--
+    OUTLOOKAI.CORE, FOR ITS net48 BUILD (Q154 (b) and Q167 (a), decided by the maintainer
+    2026-11-17 and 2026-11-18). Logic the add-in and the MCP server share is written once, in Core.
+    The add-in may use one part of it, the namespace OutlookAI.Core.AddIn, and nothing in that part
+    attaches to Outlook, starts a COM apartment thread or opens the search index: that code must
+    never run inside Outlook's own process (Q164 (a)). Tools/Checks/check-pinned-constants.ps1,
+    check 15, holds both halves of that rule.
+
+    SetTargetFramework names Core's net48 build rather than leaving MSBuild to negotiate it. The
+    build copies OutlookAI.Core.dll and the one package assembly it needs on .NET Framework,
+    System.Reflection.DispatchProxy.dll, beside OutlookAI.dll; the ClickOnce publish lists both,
+    hashed, in the signed OutlookAI.dll.manifest, and the installer's publish\* rule takes them to
+    {app}. Core's System.Data.OleDb package is not among them: its net48 assembly only forwards to
+    the framework's own System.Data, so Core's net48 build references System.Data (measured
+    2026-11-18 in the first build of this reference).
+
+    GlobalPropertiesToRemove is load-bearing. Testbed/host/Publish-AddInPayload.ps1 and
+    Tools/Switch-AddInBuild.ps1 pass the add-in's build settings as GLOBAL properties, and a global
+    property flows into every referenced project:
+      * PrepareForRunDependsOn - guard 1 of Q81, the registration target taken off the chain -
+        names VisualStudioForApplicationsBuild, which Core does not have (MSB4057). The elevated
+        helper this project referenced until Q145 (a) needed the same removal;
+      * DefineConstants (VSTO40;TRACE) would replace Core's own symbols, NETFRAMEWORK among them,
+        which Core's SignatureText compiles on.
+    The rest is the add-in's ClickOnce and signing settings, which a library build ignores,
+    Configuration, which Core takes, and the stand-in targets of Q81's guard 2, which do nothing
+    unless their task is called. Both scripts restore Core's packages first (/restore): the add-in
+    itself has none.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="McpServer\OutlookAI.Core\OutlookAI.Core.csproj">
+      <Name>OutlookAI.Core</Name>
+      <SetTargetFramework>TargetFramework=net48</SetTargetFramework>
+      <GlobalPropertiesToRemove>PrepareForRunDependsOn;DefineConstants</GlobalPropertiesToRemove>
+    </ProjectReference>
+  </ItemGroup>
   <PropertyGroup>
     <VisualStudioVersion Condition="'$(VisualStudioVersion)' == ''">17.0</VisualStudioVersion>
     <VSToolsPath Condition="'$(VSToolsPath)' == ''">$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)</VSToolsPath>

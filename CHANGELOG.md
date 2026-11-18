@@ -249,6 +249,26 @@ its mailbox tests on, and change nothing you install.
   counts the virtual machines here because Hyper-V runs its root scheduler on this host: it read 83 %
   where the hypervisor's own counter read 85 %, of which 29 points were the machines'.
 
+- ✅ **A live run records the guest's clock and time zone around every call it makes into the guest.**
+  In two measurement runs on a frozen-clock test machine, the machine's clock jumped about two hours
+  forward during the suite, and waits of 9,000 and 7,200 seconds ran out after 35 to 40 minutes of real
+  time. Nobody knows why yet. Each call into the guest now reads the guest's UTC time and time zone as
+  its first and last step, and the runner sets the two readings beside its own clock in
+  `guest-clock.log`. A call over which the two clocks ran more than 60 seconds apart, or the time zone
+  changed, is a warning in `run.log`, `summary.txt` and `summary.json`; the run's verdict does not
+  change.
+
+- ✅ **A probe on the Exchange test machine measures what the folder-ID fixes of November rest on.**
+  `Testbed/guest/Measure-FolderIdResolution.ps1` reads, changing nothing, what three of the fixes
+  needed. Reading the top folder of the mailbox Exchange automapped online takes 2 to 3 ms, as it does
+  for the cached stores. That entry and the test account's own cached store carry one StoreID and one
+  provider UID. A folder ID opens in the cached entry whichever StoreID is passed beside it, and an ID
+  no folder has opens there too, as an empty folder whose every property is missing. And the test
+  account's newest index rows are holiday appointments, whose index time is their creation time and
+  whose subjects come back up to five times, created tenths of a second apart. It prints no name,
+  address, ID or subject: those are compared through short hashes (Docs/live-tier-on-the-vm.md
+  section 4.9).
+
 - ✅ **A test-machine probe measures how Windows and the installer remove trust in the leaked key.**
   `Testbed/host/Invoke-TrustRemovalProbe.ps1` runs `Testbed/guest/Measure-TrustRemoval.ps1` on an
   Outlook test machine under its lease, from its frozen checkpoint, and puts the checkpoint back
@@ -336,7 +356,9 @@ its mailbox tests on, and change nothing you install.
   confirmed the IDs and found two things for the folders-by-ID code to settle: the test account's
   storeId names both its cached store and the online entry Exchange automapped, so list_folders and
   find_folder show its folders twice, and an Exchange folder ID no folder has was answered, not
-  refused. create_folder's refusals and the refusal while Outlook does not answer stay with T1:
+  refused. Both are settled: the mailbox is listed and resolved once, through its cached entry, and
+  the ID no folder has is refused. A fourth test checks that every store of the profile has a
+  28-character store ID, the automapped entry's too. create_folder's refusals and the refusal while Outlook does not answer stay with T1:
   reaching them there would take a write or a stopped Outlook. The test-side MCP client on that machine passes find_folder and lets create_folder
   make a folder only in the test account, and the guarded session follows the new folder interface.
 
@@ -783,6 +805,12 @@ its mailbox tests on, and change nothing you install.
 
 ### Changed
 
+- 🔧 **`read` prints a mail's folder as every other tool does: its names joined by `/`.**
+  It printed Outlook's own folder path, with the store's name in front, backslashes between the
+  names and Outlook's codes for `%`, `/` and `\` inside them, while `list_folders`, `find_folder`,
+  `search` and `move_mail` print `Inbox/Projects`. The store and its `storeId` are beside it, and
+  `folderId` is the folder's address. Decided 2026-11-18.
+
 - 💥 **Every tool addresses folders and stores by ID; names and paths are for display only (Q131-Q135).**
   Decided by the maintainer on 2026-10-11, after research found a folder's own Outlook ID unique
   and stable: it survives renames, moves within the mail file, deletion into Deleted Items and
@@ -800,7 +828,20 @@ its mailbox tests on, and change nothing you install.
   answer, so a person can read along. A store whose name another store shares is told apart now,
   where a name could only be refused. A name or path where an ID belongs is refused, with the
   `find_folder` call that finds it; so is an argument this release removed, rather than being
-  ignored, which for `search` would have searched every mailbox.
+  ignored, which for `search` would have searched every mailbox. Every store's ID is 28 characters:
+  the top folder of an Exchange store Outlook does not cache is read too, once each time the list of
+  stores is refreshed (2 to 3 ms, measured on the Exchange test machine), where its ID used to be
+  its whole entry id, which changed when the store's caching mode did. While Outlook says it is
+  offline, that top folder is not asked for, since a call that needs the server can then wait, and
+  the store keeps its long ID until Outlook is connected again. A mailbox the profile holds twice,
+  as its own cached store and as the online entry Exchange automaps for an account with Full Access
+  to it, has one store ID and is listed and resolved once, through the cached entry;
+  `outlook_health` calls the online entry a second view of that mailbox, not a store the index holds
+  nothing for, `list_accounts` names the mailbox it shows (`secondViewOf`), and a search covers the
+  mailbox once, through the cached entry, without checking the same mail live through the online one
+  (decision 207). An Exchange folder ID no folder has is refused: Outlook in cached mode opens such
+  an ID as an empty folder, which read as the top of the mailbox, so a search scoped to it answered
+  for the whole mailbox.
 
 - 🔧 **OutlookAI writes Outlook's Cached Mode settings as your own settings, never as policy.**
   Versions 3.0.0.319 to 3.1.0.325 wrote five of them under Windows' policy key for Outlook, which on
@@ -850,7 +891,7 @@ its mailbox tests on, and change nothing you install.
   measured on Office LTSC 2024: with no Outlook window open, that window shows at the top left of the
   screen for 130 to 650 ms and has the foreground while it is there.
 
-- ♻️ **The scripts share one copy of their program-call wrapper, in Testbed/guest/ScriptHelpers.ps1 (Q166).**
+- ♻️ **The scripts share one copy of the helpers they restated, in Testbed/guest/ScriptHelpers.ps1 (Q166).**
   Seventeen scripts each declared the same `Invoke-NativeCommand`, the wrapper every program call
   goes through so that Windows PowerShell 5.1 cannot end a script on the first line a program writes
   to stderr. Thirteen of them now dot-source it from `Testbed/guest/ScriptHelpers.ps1`, where
@@ -864,7 +905,25 @@ its mailbox tests on, and change nothing you install.
   wrapper counts as one through a copy always did, and its new check 4 fails a copy of a shared
   helper anywhere but in a script marked `# travels-alone:`, and there a copy that differs from the
   shared one. Six cases that break those rules were run against it here, and it failed each.
-  `Testbed/README.md` names the file, and its step 4a stages it with the other guest scripts.
+  `Testbed/README.md` names the file, and its step 4a stages it with the other guest scripts. The
+  build and release scripts' own helpers went the same way: the run of a program into log files
+  under a deadline (`Invoke-Logged`, five copies), the tail of such a log (`Show-LogTail`, four),
+  the quoting of one argument (`Format-Argument`, two) and the elevation test (`Test-IsElevated`,
+  two). The build-VM runner, which reaches the VM on its own, keeps its own run of a program,
+  which quotes its arguments and stops the whole process tree, as `Invoke-LoggedStep`. And three
+  `Tools/` scripts that restated the import of the running edition's own Security and Utility
+  modules now dot-source `Testbed/host/OwnEditionModules.ps1`, as the host scripts do.
+
+- 📝 **If Office's own grace reset fails, the Exchange test machine may get Microsoft 365 Apps (Q206).**
+  The maintainer's decision Q206, 2026-11-18, now in AGENTS.md beside the machine's internet
+  exception. Its Office LTSC 2024 was never activated, and since the grace ran out in late October
+  Outlook there creates no item through its object model, so the machine runs only the tests that
+  write nothing. In his words: *"a with fallback to b with fallback to reporting to me for spla mak
+  keys"*. First Office's own grace-period reset, `ospprearm.exe`; if that does not bring item
+  creation back, Microsoft 365 Apps, activated by the test account's own licence, a licensed
+  component allowed on that machine alone; and failing that, a volume key (SPLA MAK) that the
+  maintainer supplies. Every other condition of the exception stands. `QUESTIONS.md` records the
+  decision with his other answers of that day, to Q138, Q163 to Q182 and Q194 to Q215.
 
 - ♻️ **The test suite keeps one copy of each stand-in its files share, and of its paths (Q154).**
   Nineteen test files each declared a stand-in for Outlook's connection that runs an operation
@@ -887,7 +946,11 @@ its mailbox tests on, and change nothing you install.
   Smaller copies went the same way: the in-memory prompt registry (`FakePromptRegistry`, which also
   replaces the narrower one `PromptLintTests` kept), the setter of a stand-in's out parameter
   (`ProxyArgs`), settings naming only the hub (`HubOnlyLiveSettings`) and a PST store's EntryID
-  (`TestFolders.PstStoreEntryId`). No test changed what it checks: the build machine ran the same
+  (`TestFolders.PstStoreEntryId`). Six suites around the sweep and the exhaustive scan spelled out
+  the same one-mailbox profile - its SID, store, index prefix and frontier - and three of them its
+  mail, its sweep, an exhaustive search of its Inbox and a session that answers the store list, the
+  sweep and the scan as well: `AliceMailbox` holds it once, and `ThreadWalks` the conversation walks
+  three thread suites each built. No test changed what it checks: the build machine ran the same
   tests, by name, before and after each step.
 
 - ✅ **A live run that starts Outlook closes Office's activation wizard and records it.**
@@ -1134,6 +1197,32 @@ its mailbox tests on, and change nothing you install.
   machine that can reach the server. Recovery is immediate rather than delayed: reconnecting to a
   network clears the backoff and checks shortly after, and "Check for updates" always runs straight
   away.
+
+- ♻️ **The add-in references OutlookAI.Core and may use one namespace of it (Q164, Q167).**
+  Until now the add-in kept its own copies of logic the MCP server has in Core, because it did not
+  reference Core (v3's "Phase-6 no-coupling choice"). Q154 (b) ended that, and this is the
+  refactor's first stage, plumbing only: the add-in uses none of Core yet, so nothing it does
+  changes. `OutlookAI.csproj` references Core's net48 build (Q167 (a)) and keeps two of the scripted
+  builds' global properties out of Core's build: `PrepareForRunDependsOn` names a VSTO target Core
+  does not have, and `DefineConstants` would replace Core's own `NETFRAMEWORK` symbol. Both add-in
+  build scripts, `Testbed/host/Publish-AddInPayload.ps1` and `Tools/Switch-AddInBuild.ps1`, restore
+  Core's packages first with MSBuild's `/restore`; guard 1's evaluation still runs no target and
+  restores nothing, and their self-tests check both. `OutlookAI.slnx` holds Core, so F5 in Visual
+  Studio builds it. The installer carries `OutlookAI.Core.dll` and
+  `System.Reflection.DispatchProxy.dll` beside `OutlookAI.dll`, both listed and hashed in the signed
+  add-in manifest, and a release stamps its version into that copy of Core as well. Core's
+  `System.Data.OleDb` package adds nothing there: on .NET Framework its assembly only forwards to
+  the framework's own `System.Data`, which Core's net48 build references instead. The add-in may
+  use only the namespace `OutlookAI.Core.AddIn`, and nothing in it may attach to Outlook, start a
+  COM apartment thread, open a MAPI session or open the search index (Q164 (a)), because the add-in
+  runs inside Outlook's own process. `Tools/Checks/check-pinned-constants.ps1` check 15 holds that
+  rule, and T1 `AddInCoreReferenceTests` the shape of the reference. Measured 2026-11-18: both build
+  scripts built the add-in and left the host unchanged over 318 lines, the installer grew from
+  43,159,206 to 43,435,319 bytes, and a commit from before the reference still builds, its restore
+  finding nothing to do. On `OutlookAI-Unindexed` the build installed from `CP-08` and reached
+  `ADDIN-READY` three times in a row, as master's did; Outlook recorded its loads at 2.11 and 2.13 s
+  against master's 1.75 and 1.72 s, on a host running three build VMs, which two samples do not settle
+  (runbook section 2.3, the last record).
 
 - 📝 **The documents and the TODO list name no real person, address or machine any more (Q189).**
   They quoted the maintainer's computer name, his user name in paths under his profile, his
@@ -1504,21 +1593,31 @@ its mailbox tests on, and change nothing you install.
   index matches it. Measured on the indexed test machine in the follow-up to the folder-name work
   of October (branch `q99-name-encoding-followup`), carried over here.
 
-- 🐛 **A search of a mailbox the index holds twice under one name is refused, not answered from a copy.**
+- 🐛 **A search never takes the stale copy the index keeps of a rebuilt mailbox for the mailbox.**
   After an Exchange offline file (.ost) is rebuilt, Windows Search keeps the old copy of the mailbox
   beside the new one, under the same name and with the same folders; measured on the Exchange test
   machine in November. Where nothing ties the mailbox to one of them by its index number, a search
   scoped to it took the first of the two, which could be the copy that no longer changes. It is
   refused now, naming both, with what to do: read the mailbox with `exhaustive`, or rebuild the
-  Windows Search index. The same holds for a shared mailbox found under its owner's store.
+  Windows Search index. The same holds for a shared mailbox found under its owner's store. A search
+  of every mailbox read both copies and said nothing. Where the index ties the mailbox to one copy
+  by its hash, the other is now left out of it, and the advice says which and why
+  (`index.storeCopiesLeftOut`); a data file's leftover from an earlier path and another Outlook
+  profile's store of the same name are left out the same way. Where nothing ties it, both are still
+  read, and the advice says the results can hold mail moved or deleted since, or the same mail twice
+  (`index.storeCopiesSearched`). `outlook_health` lists such copies with their store
+  (`storeCopies`), and counts the second case as a problem. Decided 2026-11-18.
 
-- 🐛 **A search of a folder with a namesake beside it says the results can include the namesake's mail.**
+- 🐛 **Mail in a folder with a namesake beside it opens, and a search of it says what it can include.**
   Two folders of the same name can sit side by side, as Exchange's two top-level "Conversation
   Action Settings" folders do on the Exchange test machine, and the search index keeps one path for
   both, so a search of one through the index can return the other's mail. Outlook now reports such
   a folder when its ID is looked up, and the search says so in its advice and with
   `scope.pathShared`; `find_folder` lists both folders, each with its own ID, and says they share a
-  path.
+  path. Opening a search result from such a folder (read, thread, save_attachment, open_in_outlook)
+  looked for it in the first folder of that name only, so mail in the second could not be opened.
+  When the first does not hold it, every other folder at the path is tried now, read by its own
+  name, which also finds a folder whose name holds `/`. Decided 2026-11-18.
 
 - 🐛 **A draft's audit line says Outlook's editor was promoted only when Outlook had no window.**
   Since the compose crash fix every draft is written through an activated inspector, and the audit
@@ -1588,6 +1687,15 @@ its mailbox tests on, and change nothing you install.
   folder - Calendar, Quick Step Settings, the mailbox's top level, emptied folders in Deleted
   Items - beside the mail, and none of them could be opened. On the test machine they were 21 of the
   first 100 results.
+
+- ✅ **The build machine's run summaries never print a duration as "1 m 60 s"; seconds round down.**
+  `Testbed/host/Invoke-TestsOnBuildVm.ps1` rounded the seconds of a duration to the nearest whole
+  one after taking the minutes, so 119.6 s read "1 m 60 s" in `summary.txt`, the run log and the
+  history line; under a minute it rounded too, so 59.6 s read "60 s". The live-tier runner's copy of
+  the same function rounded down. One copy is left, in `Testbed/guest/ScriptHelpers.ps1` with the
+  other helpers the scripts share, rounding down at every step, and the build-VM runner uses it; its
+  self-test now pins 59.6 s and 119.6 s. The live-tier runner keeps its copy until its own helpers
+  fold (S7d), which `Tools/Checks/check-powershell-51.ps1` check 4 lists.
 
 - 📝 **The draft tools' descriptions say which drafts the tools can reach.**
   `update_draft` can revise any unsent draft in a Drafts folder, including one you wrote yourself,
@@ -1998,7 +2106,12 @@ its mailbox tests on, and change nothing you install.
   scan could not see any of them, the index could not see meeting requests, and the check for
   brand-new mail returned all of them - so the same search gave different answers at different times
   and nothing said so. All three now return everything: "did my mail bounce?" is answerable, and a
-  meeting request found today no longer disappears once it is indexed.
+  meeting request found today no longer disappears once it is indexed. What a search returns can be
+  opened too: read, thread and the other tools that open a search hit matched it to its item by the
+  time it was received, which an appointment or a task in the results does not have. The index gives
+  such an item its creation time, so that is what it is matched on now, and when several items share
+  the subject, the nearest in time wins: on the Exchange test machine, holiday appointments of one
+  name were created tenths of a second apart.
 
 - 🐛 **A mail search says when it left something out.**
   Three holes could not be seen from the answer at all: mail the check found but could not open,
@@ -2191,6 +2304,31 @@ its mailbox tests on, and change nothing you install.
   next - the cost was the accumulating hidden window, not a broken Outlook. This also cannot help
   when the assistant kills the helper outright, which is what happens when Outlook has genuinely
   stopped responding and when a session ends abruptly.
+
+- ✅ **Test runs that wait for a test machine no longer ask Hyper-V every few seconds.**
+  Every queued run asked Hyper-V about every machine it could use every 5 seconds, through the WMI
+  calls `Get-VM` makes, and read the host's free memory through WMI as well. On the night of
+  2026-11-18, with eighteen runners alive and at most eight of them running, the maintainer's PC
+  lagged, and a trace of 15 seconds counted 32 WMI calls a second, 91 % of them Hyper-V's. A run that
+  waits now takes a ticket in a queue of files and tries only the machines no earlier run wants, first
+  come first served, where a newer run could take a machine before an older one. It tells a free
+  machine from its lock and lease files and the host's memory from Windows' `GlobalMemoryStatusEx`,
+  asks Hyper-V once, before it waits, which of its machines exist, and sleeps until a lock, a lease or
+  a ticket changes, or 30 seconds pass. A running run reads its machine's state and heartbeat with one
+  narrow query each, by the machine's id, instead of `Get-VM` and `Get-VMIntegrationService` (4 and 23
+  WMI calls), and asks its machine how far it got every 15 seconds instead of every 3. A live run makes
+  all its own calls into the guest over one PowerShell Direct session instead of one each, and the
+  idle-saver reads the leases first and asks Hyper-V about the rest in one query. Measured on the same
+  host that morning, a run waiting the old way cost about 0.43 of a logical processor: 0.34 in
+  WmiPrvSE, nearly all of it the memory read, and 0.08 in vmms and the WMI service, which answer
+  Hyper-V's calls. A run waiting the new way costs nothing measurable, and a trace of 15 seconds found
+  no WMI call from it, where each of four queued runs on the old runner made 30 to 34.
+
+- ✅ **A test machine that is running is saved before a checkpoint is restored over it.**
+  Both runners restored a checkpoint over a test machine in whatever state it was, and at the end of a
+  run it is running. In another session's runs that night, a guest restored that way stayed out of
+  PowerShell Direct's reach for six minutes, where one saved first and then restored answered in
+  seconds. The build-VM runner and the live-tier runner now save a running or paused machine first.
 
 - ✅ **The index-refile measurement no longer fails when Outlook lists a moved folder late.**
   The live test that times how fast the index follows a folder rename and move reads the folder's
@@ -2698,6 +2836,31 @@ its mailbox tests on, and change nothing you install.
   would be worse than a gap.
 
 ### Security
+
+- 🔒 **`save_attachment` saves only into OutlookAI's own download folder and folders inside it.**
+  It used to save into any folder the assistant named. The sender of a mail chooses an attachment's
+  content and its name, and the assistant that reads the mail chooses the folder, so a mail could
+  talk it into saving its attachment in the Startup folder, where Windows opens it at the next
+  sign-in. Now it saves in `%LOCALAPPDATA%\OutlookAI\scratch\attachments`, or in a folder inside it
+  named by a relative path such as `invoices`, and refuses anything else with nothing written. The
+  refusal tells the assistant to copy the file elsewhere with its own file tools, under their own
+  permission rules (decision 198 (a)), and the tool's description says the same. A folder is judged
+  by where Windows really puts it. `..` is resolved; network and device paths (`\\server\share`,
+  `\\?\`, `\\.\`), a `:` that is not a drive letter's, and folder names Windows would change are
+  refused on their text; junctions, symbolic links and 8.3 short names are followed to the folder's
+  final path before it is compared. The server checks the folder before Outlook is asked anything,
+  its Outlook process checks it again before it opens the mail, and the writer checks it before and
+  after it makes the folder. The sender's file name is made safe: separators, `:` and the other
+  characters Windows cannot store become `_`, a device name such as `CON` gets a leading `_`,
+  trailing dots and spaces go, and so do the Unicode controls that can make `exe.pdf` read as
+  `fdp.exe`. A file is never replaced. The name is claimed by creating an empty file that must not
+  exist yet, without following a link of that name, and a taken name gets ` (2)`, ` (3)` and so on.
+  All of the tool's file writing is in one class, `AttachmentFileWriter`. A test machine showed it
+  end to end, through the shipped server too: Outlook wrote each attachment into the file claimed
+  for it, a name holding a direction control was saved under its safe name, a name too long for the
+  folder was shortened with its extension kept, and a junction in the download folder that led out
+  was refused by the server and again by its Outlook process. `manage_signature` now also refuses a
+  device name before a dot, such as `nul.backup`, which Windows reads as a device too.
 
 - 🔒 **The installer removes the trust Office saved for add-ins signed with the leaked old key.**
   Clicking Install on Office's "Publisher cannot be verified" prompt for OutlookAI v1.0.0.1 to

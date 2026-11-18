@@ -1661,11 +1661,15 @@
 - [ ] **Fold every duplicated piece of code into one copy, and let the add-in use OutlookAI.Core
   (Q154, decided 2026-11-17).** The maintainer: *"Q154 b - refactor everything to bring this pattern
   everywhere relevant. I want as much code shared as possible. And as a rule no code duplicated."*
-  (`AGENTS.md`, Shared code; `QUESTIONS.md` decision log, 2026-10-11 and 2026-11-17). First the
-  add-in references Core's net48 build behind a small interface, which ends the "Phase-6 no-coupling
-  choice" (the gitignored v3.MD, lines 64, 79-80, 144, 184 and 264, and the comment at the top of the
-  add-in's signature catalog). Q162's signature choice is built on that reference, and Q145's writer
-  of an account's offline period goes into Core for the same reason. Then the copies go. A read-only
+  (`AGENTS.md`, Shared code; `QUESTIONS.md` decision log, 2026-10-11 and 2026-11-17). The add-in
+  references Core's net48 build since stage S1 (Q167 (a)), which ended the "Phase-6 no-coupling
+  choice" (the gitignored v3.MD, lines 64, 79-80, 144, 184 and 264): both add-in build scripts
+  restore Core's packages, the solution holds Core so that F5 builds it, and the add-in may use one
+  part of Core, the namespace `OutlookAI.Core.AddIn`, which nothing in it may use to attach to
+  Outlook, start a COM apartment thread or open the index (Q164 (a); `check-pinned-constants.ps1`
+  check 15). It uses none of Core yet. Q162's signature choice is built on that reference, and Q145's
+  writer of an account's offline period moves into that namespace for the same reason. Then the
+  copies go. A read-only
   survey of master 9f4646d, made 2026-11-17, found 73 groups: the add-in against Core (A01-A12, the
   signature catalog and the signature and draft-region bookmark code among them), the add-in's
   linked source files (L01-L13), the server's own repetition (S01-S14), test doubles and helpers
@@ -1674,18 +1678,31 @@
   its copies, how they diverged, a target home, its blockers and a stage of the survey's refactor
   plan. It is in `.work\dup-survey-2026-11\` of the maintainer's checkout - README.txt,
   inventory.tsv (one row a group), members.tsv (every copy's file and lines) and the detectors' raw
-  output - which is gitignored, so not in a clone. How far, and in what order, is asked as Q163
-  onwards, not answered yet.
+  output - which is gitignored, so not in a clone. How far, and in what order, was decided on
+  2026-11-18 as Q163 to Q171.
   Folded so far, each with its CHANGELOG entry, into `McpServer/OutlookAI.McpServer.Tests/Support/`:
   the survey's T01, T02 and T04 (the stand-ins for Outlook's connection and for the search index),
   T07 (repository paths; four live-tier fixtures in `T2/` still read the test project's folder
   themselves), T08 (readers of compiled code and source text; ComposeOnReopenedDraftTests and
-  ReadOnlyFolderLookupTests keep member cutters with declaration rules of their own) and T09 (but
-  for the registry helpers of the live tier's `T2/` files, which wait for the live step).
+  ReadOnlyFolderLookupTests keep member cutters with declaration rules of their own), T09 (but
+  for the registry helpers of the live tier's `T2/` files, which wait for the live step) and T05
+  (the sweep and scan suites' one-mailbox profile, `AliceMailbox`, and the thread suites' walks,
+  `ThreadWalks`; six more suites - the thread, unindexed-store and folder-walk ones - still spell
+  that mailbox's SID, prefix and frontier under names of their own, beside stores of their own).
   PowerShell, into `Testbed/guest/ScriptHelpers.ps1` (decision 215 (a)), held there by
-  check-powershell-51 check 4: P01's `Invoke-NativeCommand` for 13 of its 17 copies -
-  Invoke-LiveTierOnGuest.ps1 and Invoke-TrustRemovalProbe.ps1 fold with S7d, Build-Corpus.ps1 and
-  Reset-HubPopulation.ps1 with S7c, and the check lists them until they do.
+  check-powershell-51 check 4: P01's `Invoke-NativeCommand` for 13 of its 17 copies, P09's
+  `Format-Seconds`, the build-VM runner's copy of which rounded 119.6 s to "1 m 60 s", P02's
+  `Invoke-Logged`, `Show-LogTail` and `Format-Argument`, and P12's `Test-IsElevated`; P11's module
+  import is `Testbed/host/OwnEditionModules.ps1`, which the `Tools/` scripts dot-source too.
+  Invoke-LiveTierOnGuest.ps1 and Invoke-TrustRemovalProbe.ps1 fold with the rest of S7d,
+  Build-Corpus.ps1 and Reset-HubPopulation.ps1 with S7c, and the check lists them until they do.
+  What remains, one stage at a time: S3, the linked files and the shared logic (L01-L07, A06, A07,
+  A10) into Core, the logic only the add-in runs into `OutlookAI.Core.AddIn` (Q163 (a)); S4, the
+  signature and draft code (A01-A05, A08, A09, A12) with Q162's checkbox, Core winning where the
+  copies drifted apart and the pane's visible differences measured on a test machine first
+  (Q165 (c)), and the pane driven on a test machine (Q168 (b)); S6, the server's own repetition
+  (S01-S14). In parallel: the rest of the shared test code (S5a), the PowerShell helpers (S7), and
+  the rules restated in C# and PowerShell as shared C# source (Q171).
 
 - [ ] **Let the add-in's AI choose the signature by itself, once the add-in uses OutlookAI.Core (Q158
   and Q162, decided 2026-11-17).** Signatures are managed through the MCP server only; the add-in
@@ -1753,8 +1770,9 @@
   0x665A (days) in the account's own Exchange provider section, Outlook's eleven slider positions
   are the eleven pairs of Q143, and a pair written with Outlook closed or while it runs is honoured
   at its next start. The writer is built, in Core: `AccountOfflinePeriodWriter`, with T1
-  `AccountOfflinePeriodWriterTests`. What waits: the add-in referencing Core, which is the
-  code-sharing refactor's first stage and waits on Q163 to Q172. Then implement
+  `AccountOfflinePeriodWriterTests`. The add-in references Core since the code-sharing refactor's
+  first stage (Q167 (a)), but may call only Core's namespace `OutlookAI.Core.AddIn` (Q164 (a)), so
+  what waits is moving the writer, and the profile reader it uses, into it. Then implement
   `IAccountOfflinePeriods` (`Services/AccountOfflinePeriods.cs`, which says what it must do), set it
   in `OutlookTuningService.AccountPeriods`, and tell the user the new period takes effect when
   Outlook next starts. The dialog and the removal below both use it. Not measured: whether a running
@@ -1782,25 +1800,6 @@
   means nothing. Recommended: (1), once the next item is decided, because its three results would
   stop every release until then; (2) only if the list parameters turn out to matter.
 
-- [ ] **Decide where `save_attachment` may write (found by Q146's scan, 2026-11-17).** It writes
-  one attachment of a mail into whatever absolute folder the agent names in `target_dir`.
-  `MailService` only checks that the path is rooted; the COM host creates the folder and saves the
-  file under the attachment's own name, with characters a file name cannot hold replaced, never
-  overwriting. That name and the content come from whoever sent the mail, and the folder from an
-  agent that reads it. So a mail that says "save the attachment to the Startup folder" can put a
-  file the sender chose, under a name the sender chose, where Windows opens it at the next
-  sign-in, with nothing in the way but the agent client's approval of tool calls, if it asks at
-  all. Not measured: whether Outlook's blocking of dangerous attachment types (its Level 1 list)
-  stops this save, which goes through the object model. Directions: (1) only the default
-  folder, `%LOCALAPPDATA%\OutlookAI\scratch\attachments`, and folders under it - closes the hole,
-  and an agent that wants the file elsewhere copies it with its own file tools, under their own
-  approval; (2) the default folder plus folders the user lists in OutlookAI Settings - as safe and
-  more flexible, at the cost of a setting to build; (3) any folder, but no executable or script
-  types outside the default one - keeps the convenience, but such a list is never complete
-  (`.lnk`, `.url`, `.hta`, Office files with macros); (4) any folder but a deny-list - Startup,
-  Windows, Program Files, AppData - the same weakness by folder; (5) leave it: the agent acts as
-  the user, who approves its tool calls. Recommended: (1).
-
 - [ ] **Decide how wide the time-zone check's line is (Q144 follow-up, 2026-11-17).**
   `T1/TimeZoneMarkerTests` fails a test that can read the machine's zone and is not marked
   `[Trait("TimeZone", "Machine")]`, and the build VM runs the marked ones again in W. Europe. It reads
@@ -1820,6 +1819,18 @@
   every test whose product call converts in the machine's zone, `MailService.ToUtc` (122 tests)
   among them, the Q95 kind. Recommended: (1) now, and (3) for each function as it is next changed.
 
+- [ ] **Decide whether the draft tools refuse an attachment path Outlook cannot take (found
+  2026-11-18, by save_attachment's live tests).** On the unindexed test guest, `Attachments.Add` on a
+  file called `CON.txt`, given as a `\\?\` path, crashed OUTLOOK.EXE with an access violation inside
+  the call (live run 20261118-050200). The draft tools' `attachments` take any rooted path the server
+  can read (`DraftAttachments.Validate`), and such a path passes every check there, so an agent could
+  crash the user's Outlook through `new_draft`, `reply_draft`, `forward_draft` or `update_draft`. Not
+  measured: whether every `\\?\` path crashes it, or only one that names a device. Directions: (1)
+  refuse `\\?\` and `\\.\` paths, and file names Windows reads as a device, in
+  `DraftAttachments.Validate`, saying why - cheap, and nothing an agent needs; (2) measure first which
+  paths crash it and refuse exactly those - narrower, at the cost of a guest run that crashes Outlook
+  on purpose; (3) leave it: an agent needs its own file tools to make such a file. Recommended: (1).
+
 
 - [ ] **Waiting for the shared test mailbox (Q109).** The maintainer requested a free shared
   mailbox in his Microsoft 365 tenant on 2026-10-03, with full access for the Exchange VM's
@@ -1831,6 +1842,15 @@
   OutlookAI's reply drafts there the same (Q160, decided 2026-11-17). Until then a reply from a
   delegate or shared mailbox gets no default signature, and its result says so; a signature the
   agent names still goes in (`QUESTIONS.md` decision log, 2026-11-17, Q147 carried out, item 7).
+
+- [ ] **Match what Outlook does with a named signature on a reply from a shared or delegate mailbox,
+  once the shared test mailbox exists (Q203 (d), decided 2026-11-18).** Today a signature the agent
+  names goes into such a reply, and no default does (Q160; `QUESTIONS.md` decision log, 2026-11-17,
+  Q147 carried out, item 7). The maintainer kept that for now, Q203 (a), and decided what follows,
+  (d): once the shared test mailbox of Q109 exists, measure what Outlook itself does with a named
+  signature on a reply from a shared or delegate mailbox, and make OutlookAI's reply drafts there do
+  the same (`QUESTIONS.md` decision log, 2026-11-18). The item above holds the default signature's
+  half (Q160).
 
 - [ ] **Measure whether Outlook lets one message use another signature, or none, under a policy-forced
   default (Q156, G2's policy half).** Until it is measured, OutlookAI refuses a different signature and
@@ -1845,18 +1865,6 @@
   item 5): its first run, on OAI-UNINDEXED on 2026-11-17, could not tell what Outlook does with it -
   Outlook's signature settings, read through a draft's editor, reported no default with it or without
   it - and the value had been written while Outlook ran, which Outlook may read only when it starts.
-
-- [ ] **Decide whether OutlookAI reads the mailbox's own signature folder (Q152), once stream A's R3
-  lands.** Q152 (a) is built: OutlookAI reads only what Outlook copies into the local folder, works out
-  whether an account's signatures may roam (`SignatureRoaming`: possible on Microsoft 365 Apps 2303+,
-  on perpetual Office only where Outlook's `Name (address)` copies of an Exchange account show it), and
-  then leaves those copies and that account's defaults to Outlook. R1 on the Exchange VM (2026-11-17)
-  saw no roaming on Office LTSC 2024, and R3 the same day found none either: a signature made the test
-  account's default in Outlook on the web had no copy in Outlook an hour later or after a restart
-  (runbook §4.4a). The object model's folder list did not show that signature on the server while it
-  existed, so reading the hidden `ApplicationDataRoot` folder would need another route, and stays a
-  separate decision. The mailbox's signature
-  data is never written.
 
 - [ ] **Decide how Office on the Exchange VM gets back the ability to create items (found 2026-11-17).**
   Its Office LTSC 2024 volume edition was never activated, its grace ran out in late October, and since
@@ -1891,7 +1899,11 @@
   keep it and let it stand in for the shared test mailbox of Q109 for the read-only `DelegateStore`
   tests - it is a real delegate store, but its contents are the hub's churn, so the census would need to
   treat it as the hub; (3) keep it undeclared, as now. Recommended: (1) if the shared mailbox of Q109 is
-  still coming, else (2) after a run shows what those tests make of it.
+  still coming, else (2) after a run shows what those tests make of it. The product side is settled by
+  decision 207 (b), 2026-11-18: the maintainer's own Outlook has the same kind of pair, so OutlookAI
+  treats the entry as a second view of the indexed mailbox - one store ID, listed and searched once,
+  through the cached entry, and named so in `outlook_health` and `list_accounts` (`McpServer/README.md`
+  load-bearing fact 18).
 
 - [ ] **Two things the Exchange VM's first runs left open.** (1) The sign-in's verification-code step has
   never met a code page: Microsoft asked for no MFA code on either sign-in of 2026-10-03, nor for the test
@@ -1986,7 +1998,11 @@
   unscoped search to this profile's roots. Recommended: (2). The Exchange half it waited for is
   measured (2026-10-03, Q113 (b), on the Exchange test VM): a cached Exchange mailbox is tied by its
   store hash, input `profileMappingSignature`, so a root the hash did not tie is not this profile's own
-  cached Exchange store. Delegate roots stay `delegateFolder`; a delegate's row is not measured yet.
+  cached Exchange store. Delegate roots stay `delegateFolder`; a delegate's row is not measured yet. Since
+  2026-11-18 (the stale-copy decision) an unscoped search already leaves out another profile's store
+  when it carries the name of a store of this profile that the index ties by its hash - the decoy of
+  runbook section 8 item 24 - and reports it (`index.storeCopiesLeftOut`); another profile's stores of
+  other names are unchanged.
 
 - [ ] **Measure `/ \ * ?` in an ATTACHMENT's file name in an `/at=` URL (Q99 follow-up, 2026-10-03).**
   Measured: the index does not encode `%` there (`OutlookAI 50% off.txt`, `OutlookAI %2A look-alike.txt`
@@ -2003,27 +2019,24 @@
   Recommended: (3), then (2) if `/` comes back raw - a parser change for a spelling nobody has seen
   would be a guess.
 
-- [ ] **Decide what an UNSCOPED search does with the stale copy of a rebuilt .ost (measured by stream A,
-  2026-11-17).** After an Exchange offline file is rebuilt, Windows Search keeps the old copy of the
-  mailbox as a second index store of the same name and folder paths (`<smtp>($9b7b502)` beside the live
-  `<smtp>($b37770e)` on `OutlookAI-Exchange`). A search SCOPED to the mailbox is safe since Q131-Q136: it
-  is tied by hash, or refused when only the name could place it (`MailService.DescribeSeveralIndexStoresNamed`).
-  An UNSCOPED search still reads every index store, so it can return the old copy's rows - mail moved or
-  deleted since, or a second copy of mail that is still there - and nothing says so; Q113 (a) excludes only
-  stores two of THIS profile's stores share. Directions: (a) exclude, from an unscoped search, an index store
-  whose name is a profile store's when another root of that name is tied to it by hash (the stale copy
-  is then the untied one), and say so in advice; (b) report it in `outlook_health` and in the search's
-  advice without excluding it; (c) leave it - the user rebuilds the index. Recommended: (a), because the
-  tied root is measured evidence of which copy is live, and (b) for the case where neither is tied.
-
-- [ ] **Make the index-hit locator take a folder's ID instead of its path where two folders share one
-  (stream A's finding, 2026-11-17).** Two folders of one name can sit side by side - the Exchange guest has
-  two top-level `Conversation Action Settings` - and the index keeps one path for both. `HitLocator` opens
-  an index hit by its entry id when the URL carries one, and falls back to walking the hit's folder PATH
-  (`TryResolveByPath`, `Folders[name]`), which reaches the first of the two. `find_folder` and a folder-ID
-  search already tell the two apart (`scope.pathShared`). Directions: (a) on the path fallback, try every
-  folder at that path, not the first; (b) refuse the fallback when Outlook reports a namesake on the path;
-  (c) leave it - the entry-id route covers ordinary mail. Recommended: (a), the one that finds the item.
+- [ ] **Measure what reading an online-only Exchange store's top folder costs cold, and while its server is unreachable (stream K, 2026-11-18).**
+  Every store's top folder is read now, once per store-list refresh, so an Exchange store Outlook does
+  not cache gets the 28-character S ID like the rest (the store-ID follow-up's option (b),
+  `QUESTIONS.md` decision log, 2026-11-18). Measured on the Exchange VM: 2.2-3.0 ms for the automapped
+  online entry - but warm, because that Outlook has a window and its folder pane holds every top folder
+  open. Not measured: the first read in an Outlook the MCP server started headless, where nothing holds
+  the folder open, and a read while the server cannot be reached. The one wait seen was 26 s, for
+  `GetFolderFromID` of an ID no folder has, while Outlook was reconnecting after the VM resumed and
+  still reported itself connected; the online entry's top folder read in 2.3 ms in that same window. So
+  the read is skipped only while Outlook says it is offline or disconnected
+  (`OutlookComSession.ReadsTopFolder`), and a server lost without Outlook noticing is not covered -
+  while `outlook_health` reads the stores inside its 5 s budget. Directions: (1) measure both,
+  read-only, on the Exchange VM: a first read after a graceful restart with Outlook started headless,
+  and a read with the VM's network adapter disconnected on the host and connected again after; (2) leave
+  it - the rule covers what Outlook knows; (3) read no online-only store's top folder, as before
+  2026-11-18, so such a store keeps its T ID; (4) read an online store's top folder only when a tool
+  asks for its ID, not on every refresh. Recommended: (1), at the next Exchange VM session that restarts
+  Outlook anyway - the network half only if the cold read waits.
 
 - [ ] **Put a release candidate's MCP server in front of one session on the workstation, without installing it.**
   The manual pre-release checks (`Docs/release-manual-checks.md`, Q74 D2) exercise the Exchange-only

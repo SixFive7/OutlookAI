@@ -216,7 +216,7 @@ run either script's `-SelfTest` here.
 
 ## MCP Server (`McpServer/`)
 
-- `McpServer/` holds the MCP server projects (`OutlookAI.Core`, `OutlookAI.McpServer`, `OutlookAI.McpServer.Tests`). Build them with `dotnet build` **by explicit csproj path** — never via `OutlookAI.slnx`, which only contains the VSTO add-in (MSBuild-only).
+- `McpServer/` holds the MCP server projects (`OutlookAI.Core`, `OutlookAI.McpServer`, `OutlookAI.McpServer.Tests`). Build them with `dotnet build` **by explicit csproj path** — never via `OutlookAI.slnx`, which holds the VSTO add-in (MSBuild-only) and `OutlookAI.Core`, which the add-in references, so that F5 in Visual Studio builds both (Q167 (a)).
 - The non-live suite (`dotnet test --filter "Category!=Live"`) runs only on the build VM - next section. Tests marked `Category=Live` need Outlook and a mailbox: they run on the test VMs - the ones that need Exchange on the Exchange VM, `OutlookAI-Exchange` - and never on this workstation (Q116 (a), Mailbox Safety below).
 - Developer documentation: `McpServer/README.md`.
 
@@ -228,8 +228,16 @@ possible. And as a rule no code duplicated."* So share code instead of copying i
 something, look for it, and use what is there. Logic that both the add-in and the MCP server use
 belongs in `McpServer/OutlookAI.Core`, which the add-in references through its net48 build, behind
 a small interface - this ends the "Phase-6 no-coupling choice" that kept the add-in apart from
-Core. The copies that exist today are folded together by the refactor in `TODO.md`, and the
-questions from Q163 on decide how.
+Core. The copies that exist today are folded together by the refactor in `TODO.md`, in the stages
+and the ways Q163 to Q171 decided on 2026-11-18.
+
+**The add-in may use one part of Core, the namespace `OutlookAI.Core.AddIn`**
+(`McpServer/OutlookAI.Core/AddIn/`; Q164 (a)). Logic only the add-in runs moves there too (Q163 (a)),
+and nothing in it attaches to Outlook, starts a COM apartment thread, opens a MAPI session or opens
+the search index: the add-in runs inside Outlook's own process, where a hang or a crash in that code
+takes Outlook down. The rest of Core is public, because the server uses it, so no compiler holds the
+rule; `Tools/Checks/check-pinned-constants.ps1`, check 15, does. Code that part needs from elsewhere
+in Core moves into it, so it names no other part of Core.
 
 ## Tests run on the build VM, never on this workstation (Q94, Q102)
 
@@ -256,7 +264,8 @@ pwsh -File Testbed/host/Invoke-TestsOnBuildVm.ps1 -SkipSuite -SelfTestInclude 'T
   `vm\trx\zone.trx` and every log.
 - **One run per VM, and the build VM is a pool** (2026-11-17): `OutlookAI-Build`, `OutlookAI-Build2`
   and `OutlookAI-Build3` - copies of one machine, `Testbed/host/TestbedPool.ps1` - and a run takes
-  whichever is free; callers queue only while all are busy. `-VMName` pins one. Run it in the
+  whichever is free; callers queue only while all are busy - first come first served, in a queue of
+  files, asking Hyper-V nothing while they wait (2026-11-18). `-VMName` pins one. Run it in the
   background or with a timeout of 20 minutes or more - and in the background while the host is busy:
   a run also waits while the testbed is paused or the host's processors are 70 % busy or more, up
   to its `-QueueTimeoutMinutes` (the section on test VMs below). Never use a VM by hand while runs
@@ -407,11 +416,12 @@ That exception does not generalise to "open source is fine".
 in to his Microsoft 365 tenant, because its one mailbox lives there (Q108). Conditions, all of them:
 that one VM, nothing else on it but what `Testbed/MEDIA.md` already names (no new media, no licensed
 component, nothing downloaded and installed beyond the Office the Office Deployment Tool installs from
-`.work/office-odt/Testbed.xml`); its sign-in through `Testbed/host/Invoke-ExchangeSignIn.ps1`, whose
-credential is read only on the host, in memory (`Testbed/host/Get-ExchangeCredential.ps1`), and
-reaches the VM only as keystrokes; device registration with the tenant declined; Windows' own updates
-left on, without automatic restarts. Every other test VM stays offline. This is not "test VMs may
-have internet". Since 2026-11-17 the OutlookAI add-in itself is installed there too (Q140 (b)).
+`.work/office-odt/Testbed.xml`, save Q206's fallbacks below); its sign-in through
+`Testbed/host/Invoke-ExchangeSignIn.ps1`, whose credential is read only on the host, in memory
+(`Testbed/host/Get-ExchangeCredential.ps1`), and reaches the VM only as keystrokes; device
+registration with the tenant declined; Windows' own updates left on, without automatic restarts.
+Every other test VM stays offline. This is not "test VMs may have internet". Since 2026-11-17 the
+OutlookAI add-in itself is installed there too (Q140 (b)).
 
 **Q161 (c), decided by the maintainer 2026-11-17: Outlook on the web on the Exchange VM, to measure
 roaming signatures.** An agent may sign in to Outlook on the web there. Conditions, all of them:
@@ -420,6 +430,16 @@ hub - never the Exchange VM's mailbox; Windows' own browser, Edge; the password 
 as keystrokes from the host's DPAPI store, as `Testbed/host/Invoke-ExchangeSignIn.ps1` does; "Stay
 signed in" and
 device registration declined; signed out afterwards, and the VM restored to its checkpoint.
+
+**Q206, decided by the maintainer 2026-11-18: Office on the Exchange VM, when it cannot create
+items.** Its Office LTSC 2024 was never activated, and since its grace ran out Outlook there creates
+no item through its object model (runbook §4.4a). In his words: *"a with fallback to b with fallback
+to reporting to me for spla mak keys"*. In that order: Office's own grace-period reset,
+`ospprearm.exe`, which comes with the Office installed there; if that does not bring item creation
+back, Microsoft 365 Apps on `OutlookAI-Exchange`, activated by the test account's own licence - a
+licensed component, allowed on that VM alone; and failing that, a volume key (SPLA MAK) that the
+maintainer supplies, which an agent asks him for and never obtains any other way. Every other
+condition of Q111 stands, and no other test VM gets any of these.
 
 **A third exception, decided by the maintainer 2026-10-03 (Q125): CodeQL, run locally.** The
 CodeQL CLI is free but not open source - it comes under the GitHub CodeQL Terms and Conditions -
@@ -474,7 +494,8 @@ whichever build folder had been built last.
 2. **Agents build the add-in only through `Testbed/host/Publish-AddInPayload.ps1` or
    `Tools/Switch-AddInBuild.ps1`** (`-BuildOnly` when a build is all you need). A release builds
    through the first: `Tools/Publish-Release.ps1` calls it with `-ReleaseSigningThumbprint`. Both build a commit
-   from a `git archive`, stand in the VSTO tasks that write the registry, and prove the host
+   from a `git archive`, restore the packages of `OutlookAI.Core`, which the add-in references
+   (Q167 (a)), stand in the VSTO tasks that write the registry, and prove the host
    unchanged afterwards. `OutlookAI.csproj` no longer registers anything when built outside Visual
    Studio, but a commit from before that change still does — so no plain `msbuild` of the add-in,
    and never `BuildingInsideVisualStudio=true` on a command line, which turns registration back on.
