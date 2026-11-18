@@ -221,8 +221,9 @@ public sealed class LiveSignatureSettingsTests
     /// <item><b>GroupPolicy</b> (Q200): Group Policy names a default for new mail and one for replies and forwards.</item>
     /// <item><b>Preference</b> (Q201): Outlook's general mail settings name the same two, not as a policy.</item>
     /// </list>
-    /// In both the hub account has its own default for new mail only - so the new mail ranks the setting against the
-    /// account's own, and the reply and the forward show what the setting does for an account that has none.
+    /// The hub account has one default of its own - for new mail under the deployed setting, for replies under the
+    /// policy - so each run ranks the setting against the account's own for one scope and shows for the other what the
+    /// setting does for an account that has none.
     /// Outlook's side is read from compose windows opened on the objects Outlook's own commands make - the kind that
     /// crashed Outlook on 2026-10-04 (runbook 4.6), which is why the runner arms full crash dumps. MEASURED lines first,
     /// then the contract. A run without the step proves nothing.
@@ -260,16 +261,21 @@ public sealed class LiveSignatureSettingsTests
         Assert.Equal(source, policy.ReplyForwardSource);
         string settingNew = RequireTestSignature(policy.NewMessage, "the setting's new-mail default");
         string settingReply = RequireTestSignature(policy.ReplyForward, "the setting's reply and forward default");
-        string ownNew = RequireTestSignature(hubRow.NewMessage, "the hub account's own new-mail default");
+        string? ownNew = hubRow.NewMessage == null ? null : RequireTestSignature(hubRow.NewMessage, "the hub account's own new-mail default");
         string? ownReply = hubRow.ReplyForward == null ? null : RequireTestSignature(hubRow.ReplyForward, "the hub account's own reply default");
-        Assert.True(ownReply == null, "the step gives the hub its own new-mail default only");
+        Assert.True(source == SignaturePolicySource.GroupPolicy ? ownNew == null && ownReply != null : ownNew != null && ownReply == null,
+            "the step gives the hub one default of its own: for replies under the policy, for new mail under the deployed setting");
 
         Dictionary<string, string> roles = new(StringComparer.Ordinal)
         {
             [settingNew] = source == SignaturePolicySource.GroupPolicy ? "the policy's new-mail default" : "the deployed new-mail default",
             [settingReply] = source == SignaturePolicySource.GroupPolicy ? "the policy's reply default" : "the deployed reply default",
-            [ownNew] = "the account's own new-mail default",
         };
+        if (ownNew != null)
+        {
+            roles[ownNew] = "the account's own new-mail default";
+        }
+
         if (ownReply != null)
         {
             roles[ownReply] = "the account's own reply default";
@@ -287,7 +293,7 @@ public sealed class LiveSignatureSettingsTests
         // the things this measures).
         string settingKey = SignaturePolicy.KeyPath(source, OutlookProfileRegistry.OfficeVersion);
         string valueKinds = RegistryValueKinds(settingKey, SignaturePolicy.NewSignatureValueName, SignaturePolicy.ReplySignatureValueName);
-        _output.WriteLine($"MEASURED {scenario}: HKCU\\{settingKey} holds {valueKinds}; the hub's own defaults are new '{ownNew}', "
+        _output.WriteLine($"MEASURED {scenario}: HKCU\\{settingKey} holds {valueKinds}; the hub's own defaults are new '{ownNew ?? "-"}', "
             + $"reply '{ownReply ?? "-"}'");
 
         // A mail of this run, for the reply and the forward.
