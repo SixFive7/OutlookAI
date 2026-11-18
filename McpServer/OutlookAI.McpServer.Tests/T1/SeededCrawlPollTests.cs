@@ -218,7 +218,7 @@ public sealed class SeededCrawlPollTests
 
         InvalidOperationException refusal = Assert.Throws<InvalidOperationException>(
             () => SeededCrawlPoll.Report(
-                Settings(LiveMachineProfile.Production),
+                HubOnlyLiveSettings.For(LiveMachineProfile.Production),
                 attachmentRows: 0, pollsCompleted: 0, pollsLost: 5, lines.Add));
 
         // WHAT was not established comes first - a bare "a population was expected and is missing"
@@ -251,7 +251,7 @@ public sealed class SeededCrawlPollTests
         List<string> lines = new();
 
         SeededCrawlVerdict verdict = SeededCrawlPoll.Report(
-            Settings(LiveMachineProfile.Portable),
+            HubOnlyLiveSettings.For(LiveMachineProfile.Portable),
             attachmentRows: 0, pollsCompleted: 0, pollsLost: 5, lines.Add);
 
         Assert.Equal(SeededCrawlVerdict.NothingAsked, verdict);
@@ -272,13 +272,13 @@ public sealed class SeededCrawlPollTests
         // same five lost polls, refused on one profile and merely reported on the other.
         List<string> portableLines = new();
         SeededCrawlVerdict portable = SeededCrawlPoll.Report(
-            Settings(LiveMachineProfile.Portable),
+            HubOnlyLiveSettings.For(LiveMachineProfile.Portable),
             attachmentRows: 0, pollsCompleted: 0, pollsLost: 5, portableLines.Add);
 
         List<string> productionLines = new();
         InvalidOperationException refusal = Assert.Throws<InvalidOperationException>(
             () => SeededCrawlPoll.Report(
-                Settings(LiveMachineProfile.Production),
+                HubOnlyLiveSettings.For(LiveMachineProfile.Production),
                 attachmentRows: 0, pollsCompleted: 0, pollsLost: 5, productionLines.Add));
 
         Assert.Equal(SeededCrawlVerdict.NothingAsked, portable);
@@ -305,7 +305,7 @@ public sealed class SeededCrawlPollTests
         List<string> lines = new();
 
         SeededCrawlVerdict verdict = SeededCrawlPoll.Report(
-            Settings(LiveMachineProfile.Production),
+            HubOnlyLiveSettings.For(LiveMachineProfile.Production),
             attachmentRows: 0, pollsCompleted: 6, pollsLost: 0, lines.Add);
 
         Assert.Equal(SeededCrawlVerdict.NotCrawled, verdict);
@@ -324,7 +324,7 @@ public sealed class SeededCrawlPollTests
         Assert.Equal(
             SeededCrawlVerdict.Crawled,
             SeededCrawlPoll.Report(
-                Settings(profile), attachmentRows: 2, pollsCompleted: 1, pollsLost: 3, lines.Add));
+                HubOnlyLiveSettings.For(profile), attachmentRows: 2, pollsCompleted: 1, pollsLost: 3, lines.Add));
 
         Assert.Empty(lines);
     }
@@ -335,7 +335,7 @@ public sealed class SeededCrawlPollTests
         Assert.Throws<ArgumentNullException>(
             () => SeededCrawlPoll.Report(null!, 0, 0, 1, _ => { }));
         Assert.Throws<ArgumentNullException>(
-            () => SeededCrawlPoll.Report(Settings(LiveMachineProfile.Portable), 0, 0, 1, null!));
+            () => SeededCrawlPoll.Report(HubOnlyLiveSettings.For(LiveMachineProfile.Portable), 0, 0, 1, null!));
     }
 
     [Fact]
@@ -416,21 +416,6 @@ public sealed class SeededCrawlPollTests
     }
 
     // ------------------------------------------------------------------ helpers
-
-    /// <summary>
-    /// A fabricated settings object carrying nothing but the profile and the two fields
-    /// <c>LiveTestSettings</c> will not be constructed without. Synthetic names only (S6) - the
-    /// same shape <c>LivePopulationCoverageTests</c> uses.
-    /// </summary>
-    private static LiveTestSettings Settings(LiveMachineProfile profile)
-    {
-        return new LiveTestSettings
-        {
-            MachineProfile = profile,
-            TestHubStoreDisplayName = "hub@example.test",
-            ExpectedStoreDisplayNames = new List<string> { "hub@example.test" },
-        };
-    }
 
     private static string LiveProbeSource()
     {
