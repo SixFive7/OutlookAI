@@ -1,0 +1,137 @@
+using System.Globalization;
+
+namespace OutlookAI.McpServer.Tests.T2;
+
+/// <summary>What makes a hunting variant's derived drafts (runbook section 4.15).</summary>
+public enum HuntMaker
+{
+    /// <summary>The product's reply_draft and forward_draft, display off: its direct route in a windowed Outlook.</summary>
+    Product,
+
+    /// <summary>
+    /// Reply() or Forward() by the object model, saved, re-opened by its EntryID, its editor read and edited and the
+    /// inspector closed with olSave - the product's direct route without its "Message" form page.
+    /// </summary>
+    NoFormPage,
+
+    /// <summary>Reply() or Forward() on the source, and what it returned released unsaved: Outlook's creator alone.</summary>
+    Bare,
+}
+
+/// <summary>
+/// One variant of the hunt for the crash of OUTLOOK.EXE in mso40uiwin32client.dll (runbook section 4.15; the
+/// coordinator's direction of 2026-11-18, option (b)): what makes the derived drafts, whether Outlook has a window,
+/// and which folder its main window shows. Read from the two variables the hunt's suite script sets
+/// (<c>Invoke-LiveTierOnGuest.ps1 -HuntFirstChance -HuntVariant</c>); pure, so T1 pins every variant.
+/// </summary>
+public sealed class HuntPlan
+{
+    /// <summary>The variable the hunt's suite script names the variant in. Unset in every other run.</summary>
+    public const string VariantVariable = "OUTLOOKAI_HUNT_VARIANT";
+
+    /// <summary>The variable it gives the minutes of one leg - one dotnet test - in.</summary>
+    public const string LegMinutesVariable = "OUTLOOKAI_HUNT_LEG_MINUTES";
+
+    /// <summary>The longest leg: two hours, beyond any run's own time limit.</summary>
+    public const int MostLegMinutes = 120;
+
+    /// <summary>How many failed drafts in a row end a leg whose Outlook is still running.</summary>
+    public const int MostFailuresInARow = 5;
+
+    private HuntPlan(string variant, HuntMaker maker, bool windowless, bool showsCalendar, int legMinutes)
+    {
+        Variant = variant;
+        Maker = maker;
+        Windowless = windowless;
+        ShowsCalendar = showsCalendar;
+        LegMinutes = legMinutes;
+    }
+
+    /// <summary>
+    /// The variants this test runs, in the order the runner lists them; the runner's <c>-HuntVariant</c> takes these and
+    /// its own default, Legs - the tests the crashes struck in, which are not this test's.
+    /// </summary>
+    public static IReadOnlyList<string> Variants { get; } = new[] { "ProductLoop", "OtherFolder", "NoWindow", "NoFormPage", "BareCreators" };
+
+    public string Variant { get; }
+
+    public HuntMaker Maker { get; }
+
+    /// <summary>Whether the drafts are made in an Outlook that COM started, with no window: the windowed one is ended first.</summary>
+    public bool Windowless { get; }
+
+    /// <summary>Whether the main window is moved to the Calendar before the first draft, so no mail of the Inbox is on screen.</summary>
+    public bool ShowsCalendar { get; }
+
+    public int LegMinutes { get; }
+
+    /// <summary>The cell of the variant's attempt lines - one a draft.</summary>
+    public string Cell => "S5-hunt-" + Variant;
+
+    /// <summary>
+    /// The plan the two variables name; null with the reason when they name none - unset outside a hunting run, so
+    /// the test writes a NOT RUN line and makes nothing.
+    /// </summary>
+    public static HuntPlan? Parse(string? variant, string? legMinutes, out string? why)
+    {
+        why = null;
+        if (string.IsNullOrWhiteSpace(variant))
+        {
+            why = "the hunt's variants run only in a hunting run that names one - " + VariantVariable + " is not set";
+            return null;
+        }
+
+        if (!int.TryParse(legMinutes, NumberStyles.None, CultureInfo.InvariantCulture, out int minutes) || minutes < 1 || minutes > MostLegMinutes)
+        {
+            why = LegMinutesVariable + " must be a whole number of minutes from 1 to " + MostLegMinutes.ToString(CultureInfo.InvariantCulture) + ", not '" + legMinutes + "'";
+            return null;
+        }
+
+        switch (variant)
+        {
+            case "ProductLoop":
+                return new HuntPlan(variant, HuntMaker.Product, windowless: false, showsCalendar: false, minutes);
+            case "OtherFolder":
+                return new HuntPlan(variant, HuntMaker.Product, windowless: false, showsCalendar: true, minutes);
+            case "NoWindow":
+                return new HuntPlan(variant, HuntMaker.Product, windowless: true, showsCalendar: false, minutes);
+            case "NoFormPage":
+                return new HuntPlan(variant, HuntMaker.NoFormPage, windowless: false, showsCalendar: false, minutes);
+            case "BareCreators":
+                return new HuntPlan(variant, HuntMaker.Bare, windowless: false, showsCalendar: false, minutes);
+            default:
+                why = "'" + variant + "' is no hunting variant: " + string.Join(", ", Variants);
+                return null;
+        }
+    }
+
+    /// <summary>
+    /// Whether a failure's own text says the Outlook it was made in is going: a COM call that failed in flight
+    /// (RPC_S_CALL_FAILED), a server gone (RPC_S_SERVER_UNAVAILABLE) or a disconnect (RPC_E_DISCONNECTED) - the
+    /// product's messages carry the HRESULT, the object model's exceptions their own. Such a failure waits for the
+    /// process to end: a debugger writing its dump holds Outlook still for a while first.
+    /// </summary>
+    public static bool SaysOutlookIsGoing(string? failureText)
+    {
+        if (string.IsNullOrEmpty(failureText))
+        {
+            return false;
+        }
+
+        foreach (string hresult in new[] { "0x800706BE", "0x800706BA", "0x80010108" })
+        {
+            if (failureText!.Contains(hresult, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>Whether a leg stops after a draft: its Outlook ended, or <see cref="MostFailuresInARow"/> drafts in a row failed.</summary>
+    public static bool StopsAfter(bool outlookAlive, int failuresInARow)
+    {
+        return !outlookAlive || failuresInARow >= MostFailuresInARow;
+    }
+}

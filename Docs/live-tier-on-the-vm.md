@@ -5570,6 +5570,26 @@ The new drafts the same tests make, as many and by the same route, never crashed
 
 What OutlookAI does about it, if anything, is the maintainer's decision.
 
+**The variants** (the coordinator's direction of 2026-11-18, option (b)): which part of a reply or a forward the
+crash needs. `Invoke-LiveTierOnGuest.ps1 -HuntFirstChance -HuntVariant <variant>` runs, instead of the legs above,
+one leg a round of `T2/LiveHuntDerivedDraftTests`, for `-HuntLegMinutes` each: a reply and a forward by turns
+from one mail the leg sends the hub itself, each deleted by its EntryID as soon as it is made, one attempt line a
+draft (cell `S5-hunt-<variant>`) and a summary line a leg - so a run counts the derived drafts that came before a
+crash. ProductLoop is the control: the product's `reply_draft` and `forward_draft`, display off, in the runner's
+windowed Outlook, its main window as Outlook opened it on the Inbox. Each other variant changes one thing:
+
+| Variant | What it changes |
+| --- | --- |
+| OtherFolder | the main window is moved to the Calendar before the first draft, so no mail is on screen |
+| NoWindow | the windowed Outlook is ended once the source has arrived, and the drafts are made in one COM starts, with no window (the product promotes its first draft, and reads the rest directly) |
+| NoFormPage | the drafts are made through the object model the product's direct way - Reply() or Forward() saved, re-opened by EntryID, the editor read, a line put above the quote, `Close(olSave)` - without `ModifiedFormPages.Add("Message")` |
+| BareCreators | only `Reply()` or `Forward()` on the source, the result released unsaved: nothing is written |
+
+Only the hunt's suite script sets the two variables that name a variant and its leg minutes
+(`T2/HuntPlan.cs`), so the loop writes a NOT RUN line and makes nothing in any other run. Every hunting run
+also writes Office's Click-to-Run build, channel and update setting and the hunted module's file - its
+path, size, time and SHA-256 - to its console as `HUNT-OFFICE` lines, which the summary reads back.
+
 
 ## 5. Which tests are in which bucket, and how to find out
 
