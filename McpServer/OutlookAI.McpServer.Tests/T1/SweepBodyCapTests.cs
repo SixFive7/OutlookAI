@@ -522,73 +522,20 @@ public sealed class SweepBodyCapTests
         Func<string, ComItemDetail>? read = null)
     {
         return new MailService(
-            new DirectGateway(StandInSession.Create(ProfileStores, sweep, read)), null, new StubIndexClient(new[] { StorePrefix }, Frontier, everyScope: true));
-    }
-
-    /// <summary>
-    /// A session that answers the profile's store list, the freshness sweep and - for the body
-    /// cache case - one item read, and refuses everything else. A <see cref="DispatchProxy"/>
-    /// rather than a stub per member, so a method added to the contract needs no change here.
-    /// Not sealed: DispatchProxy derives from its TProxy at runtime and refuses a sealed one.
-    /// </summary>
-    private class StandInSession : DispatchProxy
-    {
-        private IReadOnlyList<ComStoreDetail> _stores = Array.Empty<ComStoreDetail>();
-        private Func<string?, ComSweepResult> _sweep = _ => throw new NotSupportedException();
-        private Func<string, ComItemDetail>? _read;
-
-        internal static IOutlookSession Create(
-            IReadOnlyList<ComStoreDetail> stores,
-            Func<string?, ComSweepResult> sweep,
-            Func<string, ComItemDetail>? read)
-        {
-            object proxy = Create<IOutlookSession, StandInSession>()
-                ?? throw new InvalidOperationException("DispatchProxy.Create returned null.");
-            ((StandInSession)proxy)._stores = stores;
-            ((StandInSession)proxy)._sweep = sweep;
-            ((StandInSession)proxy)._read = read;
-            return (IOutlookSession)proxy;
-        }
-
-        /// <inheritdoc />
-        protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
-        {
-            switch (targetMethod?.Name)
-            {
-                case nameof(IOutlookSession.GetProfileName):
-                    return "T1 stand-in profile";
-
-                case nameof(IOutlookSession.GetStoreDetails):
-                    return TestFolders.WithRoots(_stores);
-
-                case nameof(IOutlookSession.TryDescribeFolder):
-                    return TestFolders.Describe(args);
-
-                // Argument 3 is onlyStoreDisplayName; see IOutlookSession.SweepFoldersNewerThan.
-                case nameof(IOutlookSession.SweepFoldersNewerThan):
-                    return _sweep(args?[3] as string);
-
-                // Argument 0 is entryIdHex and argument 4 is the out error; see
-                // IOutlookSession.TryReadItem. The read always succeeds here - what this
-                // fixture exists to show is that read goes to Outlook at all rather than
-                // being served the sweep's truncated copy.
-                case nameof(IOutlookSession.TryReadItem):
-                    if (_read == null)
-                    {
-                        throw new NotSupportedException("This fixture has no item read.");
-                    }
-
+            new DirectGateway(StandInSession.Create(ProfileStores, sweep, read == null ? null
+                // Argument 0 is entryIdHex and argument 4 is the out error; see IOutlookSession.TryReadItem. The
+                // read always succeeds here - what this fixture exists to show is that the read goes to Outlook at
+                // all rather than being served the sweep's truncated copy.
+                : standIn => standIn.Answering(nameof(IOutlookSession.TryReadItem), args =>
+                {
                     if (args != null && args.Length > 4)
                     {
                         args[4] = null;
                     }
 
-                    return _read((string)args![0]!);
-
-                default:
-                    throw new NotSupportedException(
-                        "The stand-in session does not implement " + (targetMethod?.Name ?? "?") + ".");
-            }
-        }
+                    return read((string)args![0]!);
+                }))),
+            null,
+            new StubIndexClient(new[] { StorePrefix }, Frontier, everyScope: true));
     }
 }

@@ -112,9 +112,10 @@
   the nine catch blocks it found writing out the text of the shared `ComObjects.DescribeFailure`
   call it now. S5a has begun: the live tests' window calls are Core's `NativeWindows` and one
   `TestWin32`. What remains, one stage at a time: the rest of S5a - the survey's T03, whose
-  five stand-ins for the COM session that answered the same four members are one `StandInSession`,
-  and whose thirteen others either answer more members (seven) or stand in for something else, the
-  rest of T05, T06, T15 and L11. In parallel: the PowerShell helpers (S7), the two `Get-ShortHash`
+  seven stand-ins for the COM session that answered the same four members are one `StandInSession`,
+  and whose eleven others either answer more members (five: the folder walk's, the sweep cache's,
+  the cross-store retry's and two thread suites') or stand in for something else, the rest of T05,
+  T06, T15 and L11. In parallel: the PowerShell helpers (S7), the two `Get-ShortHash`
   functions of the guest's measurement scripts among them, and the rules restated in C# and
   PowerShell as shared C# source (Q171), the updater's 26 lines that `Tools/Publish-Release.ps1`
   restates among them.
