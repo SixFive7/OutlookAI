@@ -103,8 +103,9 @@ public sealed class SignatureEnvironmentTests
     }
 
     [Fact]
-    public void LocksSignature_IsTheSignatureAPolicyNames_InAnyCase_NotADeployedOne()
+    public void LocksSignature_IsTheSignatureASettingNames_InAnyCase_PolicyOrDeployed()
     {
+        // Q156 (d), measured 2026-11-18: Outlook's Signatures dialog lets no signature be deleted under either setting.
         SignaturePolicy policy = new(false, null, "Corporate", SignaturePolicySource.GroupPolicy, "Corporate reply", SignaturePolicySource.CloudPolicy);
         Assert.True(policy.LocksSignatureFor(false, "corporate"));
         Assert.False(policy.LocksSignatureFor(true, "Corporate"));
@@ -112,13 +113,14 @@ public sealed class SignatureEnvironmentTests
         Assert.False(policy.LocksSignature("Personal"));
 
         SignaturePolicy deployed = new(false, null, "Deployed", SignaturePolicySource.Preference, "Deployed reply", SignaturePolicySource.Preference);
-        Assert.False(deployed.LocksSignature("Deployed"));
-        Assert.False(deployed.LocksSignature("Deployed reply"));
+        Assert.True(deployed.LocksSignature("Deployed"));
+        Assert.True(deployed.LocksSignatureFor(true, "deployed REPLY"));
+        Assert.False(deployed.LocksSignature("Personal"));
         Assert.False(SignaturePolicy.None.LocksSignature("Anything"));
     }
 
     [Fact]
-    public void EffectiveDefault_IsTheAccountsOwn_WhateverASettingNames_AndOnlyAPolicyLocksIt()
+    public void EffectiveDefault_IsTheAccountsOwn_WhateverASettingNames_AndEverySettingLocksIt()
     {
         // Q200 (a), Q201, measured 2026-11-18 (runbook 4.14): Outlook put an account's own default in, and nothing where the
         // account had none - never the policy's or the deployed one's.
@@ -130,8 +132,9 @@ public sealed class SignatureEnvironmentTests
         Assert.Null(policy.EffectiveDefault(false, null));
         Assert.Equal("Own reply", policy.EffectiveDefault(true, "Own reply"));
         Assert.Null(policy.EffectiveDefault(true, null));
-        Assert.False(policy.TakesDefault(false), "a deployed default does not lock the account's own (Q201)");
+        Assert.True(policy.TakesDefault(false), "a deployed default locks the account's own, as Outlook's dialog does (Q156 (d))");
         Assert.True(policy.TakesDefault(true), "a policy does (Q156)");
+        Assert.False(SignaturePolicy.None.TakesDefault(false) || SignaturePolicy.None.TakesDefault(true), "no setting locks nothing");
     }
 
     [Fact]

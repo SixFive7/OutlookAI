@@ -5259,9 +5259,52 @@ counted no tagged item left.
 `list_signatures` and `manage_signature` share - is the account's own default. A draft never gets a policy's or a
 deployed signature as its default (`signatureSource` `policyDefault` is gone), `list_signatures` gives the
 account's own as its effective defaults, another signature or `"none"` in one message is allowed under a policy,
-`manage_signature` still refuses a default change while a policy names one (Q156) and allows it under a deployed
-value, and the policy itself is still read and listed. `DisableSignatures` was not measured and still means no
-signature. Cloud Policy was not measured: the same values in a key of its own, treated as Group Policy.
+and the policy itself is still read and listed. `DisableSignatures` was not measured and still means no
+signature. Cloud Policy was not measured: the same values in a key of its own, treated as Group Policy. What
+`manage_signature` refuses under a setting follows the dialog, below.
+
+**The follow-up of the same day: a third scenario, a control, and Outlook's own Signatures dialog.** The
+maintainer decided (Q156 (d), and the open case of finding 2): measure whether Outlook's own Signatures dialog
+lets a user change the default, or delete the signature a setting names, and make OutlookAI follow; and measure
+the deployed `NewSignature` for an account with no new-mail default of its own. The runner gained two scenarios -
+`PreferenceNoOwnNew`, the deployed setting with the hub's own default for replies only, and `NoSetting`, the
+control: the hub's own defaults for both scopes and no registry value - and `-SignatureDialog`, which opens
+the dialog in the guest task before the suite and runs only the dialog's test
+(`T2/LiveSignatureSettingsTests.SetBeforeOutlookStarted_TheSignaturesDialog_...`). `guest/Measure-SignatureDialog.ps1`
+opens the dialog by Outlook's own command from a helper, waits up to 20 s for it to settle - its signature
+list enabled or holding a signature - reads it through UI Automation, closes it with Escape, and reads the
+signature folder's hashes and every profile's per-account defaults before and after.
+
+| Run (`.work\guest-live-runs\`) | Guest | Scenario | What came back |
+| --- | --- | --- | --- |
+| `20261118-091020-unindexed-fbe6da9bd585` | `OutlookAI-Unindexed` | PreferenceNoOwnNew, what Outlook inserts | new mail: NO signature; reply and forward: the account's own reply default; OutlookAI the same - the insert test PASSED |
+| `20261118-092318-unindexed-5b3f916ff672`, `092319`, `092929` | both | Group Policy, Preference, PreferenceNoOwnNew | the dialog read at once and closed with WM_CLOSE: every control of its signature tab disabled; the insert test that ran after it found the hub's own defaults no longer the step's |
+| `20261118-095528-unindexed-b484d04c8b48` | `OutlookAI-Unindexed2` | Group Policy | the same, closed with Escape after 20 s that did not settle it - and the defaults changed all the same: the dialog's opening, not its close |
+| `20261118-101838-unindexed-48f86f9628d1` | `OutlookAI-Unindexed2` | NoSetting | settled after 2.7 s: the signature list, New and the three boxes enabled, the boxes showing '(none)' for the account shown; nothing changed |
+| `20261118-101955-unindexed-48f86f9628d1` | `OutlookAI-Unindexed` | Group Policy | did not settle in 20 s: the list, New, Delete, Save, Rename and the three boxes disabled, the boxes empty; on opening, both accounts' own defaults became the policy's - the hub's reply default from its own to the policy's and a new-mail one added, the identity account's new-mail default from its own to the policy's and a reply one added |
+| `20261118-102112-unindexed-48f86f9628d1` | `OutlookAI-Unindexed` | Preference | the same as Group Policy, with the deployed values |
+| `20261118-102229-unindexed-48f86f9628d1` | `OutlookAI-Unindexed2` | PreferenceNoOwnNew | the same |
+
+6. **Under Group Policy and under the deployed setting alike, Outlook's Signatures dialog lets a user do nothing
+   with signatures.** It shuts its default choice - the account, New messages and Replies/forwards boxes - its
+   signature list and its New, Delete, Save and Rename buttons, and stays so for 20 s. Without a setting it opens
+   all of them within 3 s. So a user can change no default and delete no signature there, the setting's or another.
+7. **Opening that dialog under either setting rewrites every account's own defaults to the setting's**, with
+   nothing pressed and the dialog closed with Escape - both accounts of the tier profile, both scopes, in all four
+   runs with a setting; none in the control. From then on an account's own default is the setting's, so finding 1
+   holds only until somebody opens the dialog - and a probe that opens it before the insert test changes what
+   that test measures: the two run apart since.
+8. **The deployed `NewSignature` is not used for an account with no new-mail default of its own either** - finding
+   2's open case, measured: the four combinations of setting and scope now all say the same.
+9. **The dialog's signature list shows no items to UI Automation**, enabled or not, so no program can select one
+   signature there: the reading is the list's own state.
+
+**What OutlookAI does since the follow-up:** `manage_signature` refuses a change of an account's default, and
+deleting the signature the setting names, under a policy and under a deployed setting alike
+(`SignaturePolicy.TakesDefault` and `LocksSignature`), where until then a deployed setting left both open. A
+draft's default stays the account's own, read each time - after the dialog's rewrite that is the setting's, as in
+Outlook. Not followed, and open: the dialog also shuts creating, editing, renaming and deleting every other
+signature under a setting, which `manage_signature` still does.
 
 ## 5. Which tests are in which bucket, and how to find out
 

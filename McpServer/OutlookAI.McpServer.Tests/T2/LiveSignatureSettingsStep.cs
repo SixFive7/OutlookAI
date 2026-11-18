@@ -102,6 +102,9 @@ public static class LiveSignatureSettingsStep
             NewMessages: Control(root, "newMessages"),
             RepliesForwards: Control(root, "repliesForwards"),
             Delete: Control(root, "delete"),
+            SignatureList: Control(root, "signatureList"),
+            NewButton: Control(root, "newButton"),
+            ItemsExposed: Flag(root, "itemsExposed"),
             Signatures: Items(root, "signatures")
                 .Select(e => new SignatureDialogEntry(Text(e, "name") ?? string.Empty, Flag(e, "selected") == true, Flag(e, "deleteEnabled"), Text(e, "error")))
                 .ToList(),
@@ -231,6 +234,9 @@ public sealed record SignatureDialogReading(
     SignatureDialogControl? NewMessages,
     SignatureDialogControl? RepliesForwards,
     SignatureDialogControl? Delete,
+    SignatureDialogControl? SignatureList,
+    SignatureDialogControl? NewButton,
+    bool? ItemsExposed,
     IReadOnlyList<SignatureDialogEntry> Signatures,
     int OtherSignatureItems,
     double? SettledAfterSeconds,

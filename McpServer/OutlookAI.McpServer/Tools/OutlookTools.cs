@@ -603,7 +603,8 @@ public static partial class OutlookTools
         + "DESTRUCTIVE: 'delete' permanently removes the signature and 'update' changes it - before either, the previous files "
         + "are automatically backed up under %LOCALAPPDATA%\\OutlookAI\\signature-backups and the path is returned as "
         + "backupPath. Deleting also clears every default that named it. REFUSED, with the reason and nothing written: any "
-        + "write while policy disables signatures, a default change while a policy names one, Outlook's local copy of a "
+        + "write while policy disables signatures, a default change or a delete of the signature a policy or deployed "
+        + "setting names, Outlook's local copy of a "
         + "roaming signature, and a default of an Exchange account whose signatures may roam. Defaults are read back before "
         + "they are reported. Never starts or touches Outlook; every operation is audit-logged.")]
     public static async Task<CallToolResult> ManageSignature(

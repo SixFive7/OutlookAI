@@ -71,6 +71,8 @@ $AccountBoxPattern = '(?i)^\s*e-?mail account'
 $NewMessagesPattern = '(?i)^\s*new messages'
 $RepliesPattern = '(?i)^\s*replies'
 $DeleteButtonPattern = '(?i)^\s*delete\s*$'
+$NewButtonPattern = '(?i)^\s*new\s*$'
+$SignatureListPattern = '(?i)^\s*select signature to edit'
 
 # =============================================================================================
 # PURE PARTS. -SelfTest pins them.
@@ -102,12 +104,13 @@ function Get-FolderChanges([hashtable] $Before, [hashtable] $After) {
     return @($changes)
 }
 
-# The exit code a reading earns: 4 refused; 1 when the dialog was not read, not closed, the folder or the
-# signature defaults changed, or a step failed; 0 otherwise.
+# The exit code a reading earns: 4 refused; 1 when the dialog was not read, not closed, the signature folder
+# changed, or a step failed; 0 otherwise. Changed signature defaults are read and reported, not failed: under an
+# administrator's setting Outlook's dialog rewrites them as it opens (2026-11-18), with nothing pressed.
 function Get-DialogExitCode($Reading) {
     if ($Reading.refused) { return 4 }
     if (-not $Reading.dialogFound -or -not $Reading.closed) { return 1 }
-    if ($Reading.folderUnchanged -ne $true -or $Reading.defaultsUnchanged -ne $true) { return 1 }
+    if ($Reading.folderUnchanged -ne $true) { return 1 }
     if (@($Reading.errors).Count -gt 0) { return 1 }
     return 0
 }
@@ -197,6 +200,7 @@ function Invoke-SelfTest {
     Check 'Replies/forwards is found by its label' 'Replies/forwards:' (Select-DialogControl $controls $RepliesPattern).Name
     Check 'so is the account box' 'hub@vm.invalid' (Select-DialogControl $controls $AccountBoxPattern).Value
     Check 'the Delete button is a button' 'Button' (Select-DialogControl $controls $DeleteButtonPattern 'Button').Type
+    Check 'New is not New messages' $true ($null -eq (Select-DialogControl $controls $NewButtonPattern 'Button'))
     Check 'a label alone is no box' $true ($null -eq (Select-DialogControl @($controls[0]) $NewMessagesPattern))
     Check 'nothing named is nothing' $true ($null -eq (Select-DialogControl $controls '(?i)^stationery'))
 
@@ -209,7 +213,8 @@ function Invoke-SelfTest {
     Check 'a dialog not found is exit 1' 1 (Get-DialogExitCode ([pscustomobject]@{ refused = $null; dialogFound = $false; closed = $false; folderUnchanged = $true; defaultsUnchanged = $true; errors = @() }))
     Check 'a dialog left open is exit 1' 1 (Get-DialogExitCode ([pscustomobject]@{ refused = $null; dialogFound = $true; closed = $false; folderUnchanged = $true; defaultsUnchanged = $true; errors = @() }))
     Check 'a changed folder is exit 1' 1 (Get-DialogExitCode ([pscustomobject]@{ refused = $null; dialogFound = $true; closed = $true; folderUnchanged = $false; defaultsUnchanged = $true; errors = @() }))
-    Check 'changed defaults are exit 1' 1 (Get-DialogExitCode ([pscustomobject]@{ refused = $null; dialogFound = $true; closed = $true; folderUnchanged = $true; defaultsUnchanged = $false; errors = @() }))
+    Check 'changed defaults are reported, not failed - the dialog rewrites them under a setting' 0 (Get-DialogExitCode ([pscustomobject]@{ refused = $null; dialogFound = $true; closed = $true; folderUnchanged = $true; defaultsUnchanged = $false; errors = @() }))
+    Check 'the signature list is found by its name' 'List' (Select-DialogControl @([pscustomobject]@{ Type = 'Text'; Name = 'Select signature to edit'; Enabled = $true; Value = $null }, [pscustomobject]@{ Type = 'List'; Name = 'Select signature to edit'; Enabled = $false; Value = $null }) $SignatureListPattern 'List').Type
     Check 'a step that failed is exit 1' 1 (Get-DialogExitCode ([pscustomobject]@{ refused = $null; dialogFound = $true; closed = $true; folderUnchanged = $true; defaultsUnchanged = $true; errors = @('x') }))
     Check 'a default written as UTF-16 bytes reads as its text' 'bytes:A' (ConvertTo-ValueText ([byte[]](0x41, 0, 0, 0)))
     Check 'a string default as it is, none as none' 'Own|True' @((ConvertTo-ValueText 'Own'), ($null -eq (ConvertTo-ValueText $null)))
@@ -348,6 +353,9 @@ $reading = [ordered]@{
     delete             = $null
     signatures         = @()
     otherSignatureItems = 0
+    signatureList      = $null
+    newButton          = $null
+    itemsExposed       = $null
     settledAfterSeconds = $null
     folderUnchanged    = $null
     folderChanges      = @()
@@ -397,7 +405,15 @@ if ($dialog) {
         $reading['repliesForwards'] = ConvertTo-Plain (Select-DialogControl $records $RepliesPattern)
         $delete = Select-DialogControl $records $DeleteButtonPattern 'Button'
         $reading['delete'] = ConvertTo-Plain $delete
+        # The signature list and its buttons: a list a user cannot select in, and a New button that is shut, leave no
+        # signature to delete, rename or make (the control of 2026-11-18 showed both open).
+        $list = Select-DialogControl $records $SignatureListPattern 'List'
+        $reading['signatureList'] = ConvertTo-Plain $list
+        $reading['newButton'] = ConvertTo-Plain (Select-DialogControl $records $NewButtonPattern 'Button')
         $items = @($records | Where-Object { $_.Type -eq 'ListItem' -and $_.Name })
+        # The list's items are not in the control view of this SDM dialog (the control of 2026-11-18): then no single
+        # signature is selected, and the list's own state is the reading.
+        $reading['itemsExposed'] = ($items.Count -gt 0)
         $testItems = @($items | Where-Object { ([string]$_.Name).StartsWith($TestPrefix, [StringComparison]::Ordinal) })
         $reading['otherSignatureItems'] = $items.Count - $testItems.Count
         $perSignature = New-Object System.Collections.Generic.List[object]
@@ -416,7 +432,7 @@ if ($dialog) {
         if (-not $reading['newMessages']) { $errors.Add('no New messages box was found') }
         if (-not $reading['repliesForwards']) { $errors.Add('no Replies/forwards box was found') }
         if (-not $delete) { $errors.Add('no Delete button was found') }
-        if ($testItems.Count -eq 0) { $errors.Add('no test signature was found in the dialog''s list') }
+        if (-not $list) { $errors.Add('no signature list was found') }
     }
     catch { $errors.Add('reading the dialog failed: ' + $_.Exception.Message) }
     finally { $reading['closed'] = [bool](Close-WithCancel $dialog $DialogName) }
@@ -436,7 +452,7 @@ Write-Reading $reading
 
 Write-Host ("SIGNATURE-DIALOG found={0} class={1} settled after {2} s closed={3} folderUnchanged={4} defaultsUnchanged={5}" -f $reading['dialogFound'], $reading['dialogClass'], $reading['settledAfterSeconds'], $reading['closed'], $reading['folderUnchanged'], $reading['defaultsUnchanged'])
 foreach ($c in $defaultChanges) { Write-Host "  DEFAULTS CHANGED: $c" }
-foreach ($box in @('account', 'newMessages', 'repliesForwards', 'delete')) {
+foreach ($box in @('account', 'newMessages', 'repliesForwards', 'delete', 'signatureList', 'newButton')) {
     $r = $reading[$box]
     if ($r) { Write-Host ("  {0}: '{1}' {2} enabled={3} value='{4}'" -f $box, $r.name, $r.type, $r.enabled, $r.value) } else { Write-Host "  ${box}: not found" }
 }

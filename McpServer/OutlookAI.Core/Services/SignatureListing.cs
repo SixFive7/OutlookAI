@@ -126,7 +126,8 @@ namespace OutlookAI.Core.Services
             if (policy.TakesDefault(false) || policy.TakesDefault(true))
             {
                 return SignaturePolicy.Describe(policy.TakesDefault(false) ? policy.NewMessageSource : policy.ReplyForwardSource)
-                    + " names a default signature, and OutlookAI does not change an account's default under a policy (Q156)";
+                    + " names a default signature, and OutlookAI does not change an account's default while such a setting names one, "
+                    + "as Outlook's own Signatures dialog does not (Q156)";
             }
 
             if (entry.AccountKind == MailAccountKind.Exchange && environment.Roaming.MayRoamFor(entry.Address))

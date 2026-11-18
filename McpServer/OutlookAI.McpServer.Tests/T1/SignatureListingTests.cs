@@ -91,11 +91,14 @@ public sealed class SignatureListingTests : IDisposable
         Assert.Equal("Corporate", forced.Policy!.NewMessage);
         Assert.Equal("groupPolicy", forced.Policy.NewMessageFrom);
 
-        // A deployed default decides nothing either, and leaves the account's defaults to change (Q201).
+        // A deployed default decides nothing either, and locks the account's defaults as a policy does: Outlook's own
+        // Signatures dialog shuts the default choice under it too (measured 2026-11-18, Q156 (d)).
         SignaturesOutcome deployed = SignatureListing.Build(
             Environment(accounts, new FakeSignatureSettings().Policy(SignaturePolicySource.Preference, newMessage: "Deployed")), "Outlook", null, null);
         Assert.Equal("Own", deployed.Profiles[0].Accounts[0].EffectiveNewMessage);
-        Assert.True(deployed.Profiles[0].Accounts[0].DefaultsEditable);
+        Assert.False(deployed.Profiles[0].Accounts[0].DefaultsEditable);
+        Assert.Contains("a deployed Outlook setting (Common\\MailSettings) names a default signature", deployed.Profiles[0].Accounts[0].DefaultsLocked,
+            StringComparison.Ordinal);
         Assert.Null(deployed.Profiles[0].Accounts[1].EffectiveNewMessage);
         Assert.Equal("Deployed", deployed.Policy!.NewMessage);
         Assert.Equal("preference", deployed.Policy.NewMessageFrom);

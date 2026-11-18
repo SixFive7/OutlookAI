@@ -1060,9 +1060,12 @@ its mailbox tests on, and change nothing you install.
   settings made before it started, as plain and as expandable strings: it put the account's own
   default in a new mail, a reply and a forward, put nothing in a reply or a forward of an account
   with no reply default of its own, and kept its Signature button open under a policy, so one message
-  may have another signature or none there too. manage_signature still changes no account's default
-  while a policy names one (Q156), and now does under a deployed default. OutlookAI never writes a
-  policy.
+  may have another signature or none there too. manage_signature changes no account's default, and
+  deletes no signature, that a policy or a deployed default names (Q156): Outlook's own Signatures
+  dialog shuts its default choice, its signature list and its New button under either, and rewrites
+  every account's own defaults to the setting's as it opens, so after that the setting's signature
+  goes in. With no setting the dialog leaves all of it open and changes nothing. OutlookAI never
+  writes a policy.
 
 - 🔧 **Signatures kept in an Exchange mailbox are left to Outlook.**
   Microsoft 365 Apps from Version 2303 can keep an Exchange Online account's signatures in its

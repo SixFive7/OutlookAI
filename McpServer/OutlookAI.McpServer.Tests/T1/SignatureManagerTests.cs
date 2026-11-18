@@ -729,7 +729,7 @@ public sealed class SignatureManagerTests : IDisposable
             SetDefault("S", Profile, "jan@example.com"), store, settings: new FakeSignatureSettings().Policy(source, newMessage: "Corporate")));
 
         Assert.Equal("default_set_by_policy", refusal.Reason);
-        Assert.Contains("does not change an account's default under a policy (Q156)", refusal.Message, StringComparison.Ordinal);
+        Assert.Contains("does not change an account's default while such a setting names one", refusal.Message, StringComparison.Ordinal);
         Assert.Contains("'Corporate'", refusal.Message, StringComparison.Ordinal);
         Assert.Empty(store.Writes);
 
@@ -739,33 +739,46 @@ public sealed class SignatureManagerTests : IDisposable
     }
 
     [Fact]
-    public void Policy_ADeployedDefault_LeavesTheAccountsOwnToChange()
+    public void Policy_ADeployedDefault_RefusesADefaultChangeToo_AsOutlooksOwnDialogDoes()
     {
-        // Q201, measured 2026-11-18: an account's own default ranks above a default deployed in Outlook's
-        // Common\MailSettings, so changing it changes what a draft gets - it is no longer refused.
+        // Q156 (d), measured 2026-11-18: under a default deployed in Outlook's Common\MailSettings, Outlook's own
+        // Signatures dialog shuts its default choice as under a policy, so OutlookAI changes no account's default there.
         SeedSignature("S", withResources: false);
         FakeDefaultsStore store = new FakeDefaultsStore().Account(Profile, "k", "jan@example.com");
+        FakeSignatureSettings deployed = new FakeSignatureSettings().Policy(SignaturePolicySource.Preference, newMessage: "Deployed");
 
-        ManageSignatureOutcome outcome = Manage(SetDefault("S", Profile, "jan@example.com", "both"), store,
-            settings: new FakeSignatureSettings().Policy(SignaturePolicySource.Preference, newMessage: "Deployed", reply: "Deployed reply"));
+        SignatureRefusedException refusal = Assert.Throws<SignatureRefusedException>(() => Manage(
+            SetDefault("S", Profile, "jan@example.com", "both"), store, settings: deployed));
 
-        Assert.Equal(2, outcome.DefaultsChanged!.Count);
-        Assert.Equal(
-            new[] { ("k", SignatureManager.NewSignatureValueName, "S"), ("k", SignatureManager.ReplyForwardSignatureValueName, "S") },
-            store.Writes);
+        Assert.Equal("default_set_by_policy", refusal.Reason);
+        Assert.Contains("a deployed Outlook setting (Common\\MailSettings) names the default signature for new messages", refusal.Message,
+            StringComparison.Ordinal);
+        Assert.Empty(store.Writes);
+
+        // The scope the setting leaves alone is the account's to change.
+        Manage(SetDefault("S", Profile, "jan@example.com", "reply"), store, settings: deployed);
+        Assert.Equal(new[] { ("k", SignatureManager.ReplyForwardSignatureValueName, "S") }, store.Writes);
     }
 
-    [Fact]
-    public void Policy_TheForcedSignature_CannotBeDeleted()
+    [Theory]
+    [InlineData(SignaturePolicySource.GroupPolicy)]
+    [InlineData(SignaturePolicySource.Preference)]
+    public void Policy_TheSignatureASettingNames_CannotBeDeleted(SignaturePolicySource source)
     {
         SeedSignature("Corporate", withResources: false);
 
         SignatureRefusedException refusal = Assert.Throws<SignatureRefusedException>(() => Manage(
             new ManageSignatureRequest { Action = "delete", Name = "corporate" },
-            settings: new FakeSignatureSettings().Policy(SignaturePolicySource.GroupPolicy, reply: "Corporate")));
+            settings: new FakeSignatureSettings().Policy(source, reply: "Corporate")));
 
         Assert.Equal("signature_forced_by_policy", refusal.Reason);
+        Assert.Contains("deleting it would leave the setting naming a signature that is not there", refusal.Message, StringComparison.Ordinal);
         Assert.True(File.Exists(Path.Combine(Dir, "Corporate.htm")));
+
+        // Any other signature may still go.
+        SeedSignature("Personal", withResources: false);
+        Manage(new ManageSignatureRequest { Action = "delete", Name = "Personal" }, settings: new FakeSignatureSettings().Policy(source, reply: "Corporate"));
+        Assert.False(File.Exists(Path.Combine(Dir, "Personal.htm")));
     }
 
     // ------------------------------------------------------------------ roaming (Q152)

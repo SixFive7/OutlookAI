@@ -79,6 +79,9 @@ public sealed class LiveSignatureSettingsStepTests
               "newMessages": { "type": "ComboBox", "name": "New messages:", "enabled": false, "value": "OutlookAI-McpTest-Q200-Forced-New" },
               "repliesForwards": { "type": "ComboBox", "name": "Replies/forwards:", "enabled": false, "value": "OutlookAI-McpTest-Q200-Forced-Reply" },
               "delete": { "type": "Button", "name": "Delete", "enabled": true, "value": null },
+              "signatureList": { "type": "List", "name": "Select signature to edit", "enabled": false, "value": null },
+              "newButton": { "type": "Button", "name": "New", "enabled": false, "value": null },
+              "itemsExposed": false,
               "signatures": [
                 { "name": "OutlookAI-McpTest-Q200-Forced-New", "selected": true, "deleteEnabled": false, "error": null },
                 { "name": "OutlookAI-McpTest-Q200-Own-Reply", "selected": true, "deleteEnabled": true, "error": null }
@@ -102,6 +105,9 @@ public sealed class LiveSignatureSettingsStepTests
         Assert.Equal(false, reading.NewMessages!.Enabled);
         Assert.Equal("OutlookAI-McpTest-Q200-Forced-Reply", reading.RepliesForwards!.Value);
         Assert.Equal(true, reading.Delete!.Enabled);
+        Assert.Equal(false, reading.SignatureList!.Enabled);
+        Assert.Equal("New", reading.NewButton!.Name);
+        Assert.Equal(false, reading.ItemsExposed);
         Assert.Equal(new[] { false, true }, reading.Signatures.Select(s => s.DeleteEnabled!.Value));
         Assert.Equal(1, reading.OtherSignatureItems);
         Assert.Equal(1.5, reading.SettledAfterSeconds);
@@ -134,6 +140,8 @@ public sealed class LiveSignatureSettingsStepTests
         Assert.Equal("Outlook is not running in this session", reading.Refused);
         Assert.False(reading.DialogFound || reading.Closed);
         Assert.Null(reading.NewMessages);
+        Assert.Null(reading.SignatureList);
+        Assert.Null(reading.ItemsExposed);
         Assert.Null(reading.FolderUnchanged);
         SignatureDialogEntry entry = Assert.Single(reading.Signatures);
         Assert.Null(entry.DeleteEnabled);

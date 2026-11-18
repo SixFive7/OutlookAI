@@ -166,11 +166,13 @@ public sealed class LiveSignatureSettingsTests
             Assert.Equal(own.Name, row.NewMessage);
 
             // Q201, measured 2026-11-18 with the setting made before Outlook started (runbook 4.14): the account's own
-            // default ranks above a deployed one. So it is the effective default, and it stays the account's to change.
+            // default ranks above a deployed one, so it is the effective default. But Outlook's own Signatures dialog shuts
+            // the default choice under a deployed setting as under a policy (Q156 (d)), so OutlookAI refuses to change it.
             Assert.Equal(own.Name, row.EffectiveNewMessage);
             Assert.Equal("account", row.DefaultsFrom);
-            Assert.True(row.DefaultsEditable);
-            SetDefault(own.Name, running, hubRow.Account, "new");
+            Assert.False(row.DefaultsEditable);
+            SignatureRefusedException locked = Assert.Throws<SignatureRefusedException>(() => SetDefault(own.Name, running, hubRow.Account, "new"));
+            Assert.Equal("default_set_by_policy", locked.Reason);
 
             DraftOutcome byDefault = Service.NewDraft(
                 LiveStoreWriteGuard.Writable(Hub, StoreWriteKind.Draft, "new_draft"), Hub, cc: null,
@@ -471,11 +473,18 @@ public sealed class LiveSignatureSettingsTests
             + $"; signature defaults unchanged={Show(dialog.DefaultsUnchanged)}"
             + (dialog.DefaultsChanges.Count == 0 ? string.Empty : " (" + string.Join(", ", dialog.DefaultsChanges) + ")"));
         _output.WriteLine($"MEASURED {scenario} Signatures dialog: E-mail account {Box(dialog.Account)}; New messages {Box(dialog.NewMessages)}; "
-            + $"Replies/forwards {Box(dialog.RepliesForwards)}; Delete button enabled={Show(dialog.Delete?.Enabled)}");
+            + $"Replies/forwards {Box(dialog.RepliesForwards)}; signature list enabled={Show(dialog.SignatureList?.Enabled)} "
+            + $"(its items {(dialog.ItemsExposed == true ? "exposed" : "not exposed")}); New enabled={Show(dialog.NewButton?.Enabled)}; "
+            + $"Delete enabled={Show(dialog.Delete?.Enabled)}");
         foreach (SignatureDialogEntry entry in dialog.Signatures)
         {
             _output.WriteLine($"MEASURED {scenario} Signatures dialog: '{entry.Name}' ({(roles.TryGetValue(entry.Name, out string? role) ? role : "another test signature")}) "
                 + $"selected={entry.Selected}, then Delete enabled={Show(entry.DeleteEnabled)}" + (entry.Error == null ? string.Empty : " (" + entry.Error + ")"));
+        }
+
+        foreach (string change in dialog.DefaultsChanges)
+        {
+            _output.WriteLine($"MEASURED {scenario} Signatures dialog: opening it changed a signature default - {change}");
         }
 
         _output.WriteLine($"MEASURED {scenario} Signatures dialog: {dialog.Controls.Count} named controls - "
@@ -484,32 +493,39 @@ public sealed class LiveSignatureSettingsTests
             + $"{(policy.TakesDefault(true) ? "refuses" : "allows")} one of the reply default; it refuses to delete "
             + (roles.Keys.Where(policy.LocksSignature).DefaultIfEmpty("none of them").Aggregate((a, b) => a + ", " + b)));
 
-        // The reading is whole, and the dialog kept nothing.
+        // The reading is whole, and the probe pressed nothing: the folder is as it was, and without a setting - the
+        // control - so is every signature default. Under a setting the dialog rewrites the defaults as it opens,
+        // which is Outlook's doing and a measurement (above), not the probe's.
         Assert.True(dialog.Refused == null, "the dialog probe refused: " + dialog.Refused);
         Assert.True(dialog.Errors.Count == 0, "the dialog probe failed: " + string.Join("; ", dialog.Errors));
         Assert.True(dialog.DialogFound && dialog.Closed, "the Signatures dialog was not both found and closed");
         Assert.True(dialog.FolderUnchanged == true, "the Signatures dialog changed the signature folder: " + string.Join(", ", dialog.FolderChanges));
-        Assert.True(dialog.DefaultsUnchanged == true, "the Signatures dialog changed signature defaults: " + string.Join(", ", dialog.DefaultsChanges));
-        Assert.True(dialog.NewMessages?.Enabled != null && dialog.RepliesForwards?.Enabled != null, "the dialog's default boxes could not be read");
+        if (!LiveSignatureSettingsStep.WritesSetting(scenario))
+        {
+            Assert.True(dialog.DefaultsUnchanged == true, "without a setting the Signatures dialog changed signature defaults: "
+                + string.Join(", ", dialog.DefaultsChanges));
+        }
 
-        // THE CONTRACT: OutlookAI refuses what Outlook's own dialog will not let a user do, and allows what it does.
+        Assert.True(dialog.NewMessages?.Enabled != null && dialog.RepliesForwards?.Enabled != null && dialog.SignatureList?.Enabled != null,
+            "the dialog's default boxes or its signature list could not be read");
+
+        // THE CONTRACT: OutlookAI refuses what Outlook's own dialog will not let a user do, and allows what it does - a
+        // change of each scope's default, and deleting the signature the setting names, which a user can do only from
+        // the signature list.
         bool newLocked = dialog.NewMessages!.Enabled == false;
         bool replyLocked = dialog.RepliesForwards!.Enabled == false;
+        bool listShut = dialog.SignatureList!.Enabled == false;
         Assert.True(newLocked == policy.TakesDefault(false),
             $"the dialog's New messages box is {(newLocked ? "disabled" : "enabled")}, and OutlookAI "
             + $"{(policy.TakesDefault(false) ? "refuses" : "allows")} a change of the new-mail default");
         Assert.True(replyLocked == policy.TakesDefault(true),
             $"the dialog's Replies/forwards box is {(replyLocked ? "disabled" : "enabled")}, and OutlookAI "
             + $"{(policy.TakesDefault(true) ? "refuses" : "allows")} a change of the reply default");
-        foreach (string name in roles.Keys)
+        foreach (string name in new[] { policy.NewMessage, policy.ReplyForward }.OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase))
         {
-            SignatureDialogEntry entry = dialog.Signatures.FirstOrDefault(s => string.Equals(s.Name, name, StringComparison.Ordinal))
-                ?? throw new InvalidOperationException("'" + name + "' (" + roles[name] + ") is not in the dialog's signature list.");
-            Assert.True(entry.Selected && entry.DeleteEnabled != null, "'" + name + "' could not be selected in the dialog, so its Delete button was not read");
-            bool deleteShut = entry.DeleteEnabled == false;
-            Assert.True(deleteShut == policy.LocksSignature(name),
-                $"with '{name}' ({roles[name]}) selected the dialog's Delete button is {(deleteShut ? "disabled" : "enabled")}, and OutlookAI "
-                + $"{(policy.LocksSignature(name) ? "refuses" : "allows")} deleting it");
+            Assert.True(listShut == policy.LocksSignature(name),
+                $"the dialog's signature list is {(listShut ? "disabled, so no signature can be deleted there" : "enabled")}, and OutlookAI "
+                + $"{(policy.LocksSignature(name) ? "refuses" : "allows")} deleting '{name}', which the setting names");
         }
     }
 

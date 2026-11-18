@@ -121,7 +121,8 @@ namespace OutlookAI.Core.Services
 
         /// <summary>
         /// A deployed preference (<c>HKCU\Software\Microsoft\Office\&lt;major&gt;\Common\MailSettings</c>) - not a
-        /// policy: Outlook applies it as the default for every account, and nothing locks it.
+        /// policy, but Outlook's own Signatures dialog treats it as one: it shuts the default choice under it and rewrites
+        /// every account's own defaults to it as it opens (measured 2026-11-18, <see cref="SignaturePolicy.TakesDefault"/>).
         /// </summary>
         Preference,
     }
@@ -133,15 +134,18 @@ namespace OutlookAI.Core.Services
     /// <item><c>DisableSignatures</c> (DWORD 1, the Group Policy "Do not allow signatures for e-mail
     /// messages") - no signature at all.</item>
     /// <item><c>NewSignature</c> / <c>ReplySignature</c> (a string, a signature name) - a default an administrator
-    /// names for new mail and for replies and forwards. From a policy source it is FORCED - OutlookAI does not change
-    /// an account's default under it (Q156); from the preference key it is a deployed default.</item>
+    /// names for new mail and for replies and forwards, from a policy source or from the preference key, where it is a
+    /// deployed default. Under either OutlookAI changes no account's default and deletes no signature it names (Q156),
+    /// as Outlook's own Signatures dialog does not (<see cref="TakesDefault"/>).</item>
     /// </list>
     /// Precedence among them: Cloud Policy over Group Policy (documented, ms-cloudpol) over the preference. But they
     /// do not decide which signature a draft gets. MEASURED 2026-11-18 on Office LTSC 2024 (Q200 (a), Q201;
     /// <c>Docs/live-tier-on-the-vm.md</c> section 4.14), with the values set before Outlook started: Outlook put an
     /// account's own default in a new mail, a reply and a forward, not theirs - as REG_SZ and as REG_EXPAND_SZ - put
-    /// nothing in a reply or a forward of an account with no reply default of its own, under the policy and under the
-    /// deployed setting alike, and kept its Signature button open (<see cref="EffectiveDefault"/>).
+    /// nothing in a new mail, a reply or a forward of an account with no default of its own for it, under the policy and
+    /// under the deployed setting alike, and kept its Signature button open (<see cref="EffectiveDefault"/>). Outlook's
+    /// Signatures dialog, opened under either, rewrites every account's own defaults to the setting's: from then on the
+    /// account's own is the setting's, and OutlookAI, reading the account's own, follows.
     /// </summary>
     public sealed class SignaturePolicy
     {
@@ -219,22 +223,26 @@ namespace OutlookAI.Core.Services
         public string? EffectiveDefault(bool replyOrForward, string? accountsOwn) => accountsOwn;
 
         /// <summary>
-        /// True when a POLICY names that scope's default, so manage_signature refuses to change the account's own (Q156:
-        /// a change of default is refused under a forced default). A deployed preference does not: the account's own
-        /// default ranks above it, so changing it changes what a draft gets (Q201).
+        /// True when an administrator's setting - a policy or a deployed default - names that scope's default, so
+        /// manage_signature refuses to change the account's own (Q156), as Outlook's own Signatures dialog does. MEASURED
+        /// 2026-11-18 (Q156 (d), <c>Docs/live-tier-on-the-vm.md</c> section 4.14): under Group Policy and under the deployed
+        /// setting alike that dialog shuts its New messages and Replies/forwards boxes - and its signature list and its New
+        /// button - and rewrites every account's own defaults to the setting's as it opens; with no setting it leaves them
+        /// open and changes nothing. Until then a deployed default left the account's own to change (Q201).
         /// </summary>
-        public bool TakesDefault(bool replyOrForward) => ForcedFor(replyOrForward);
+        public bool TakesDefault(bool replyOrForward) => DefaultFor(replyOrForward) != null;
 
         /// <summary>
-        /// True when a POLICY names <paramref name="name"/> as that scope's default, so manage_signature refuses to delete
-        /// it (Q156): deleting it would leave the policy naming a signature that is not there. Ignoring case, as signature
-        /// names are file names. The one rule the refusal and the live tier's contract with Outlook's own Signatures dialog
+        /// True when an administrator's setting names <paramref name="name"/> as that scope's default, so manage_signature
+        /// refuses to delete it (Q156): Outlook's own Signatures dialog lets no signature be selected, let alone deleted,
+        /// under such a setting, and deleting it would leave the setting naming a signature that is not there. Ignoring
+        /// case, as signature names are file names. The one rule the refusal and the live tier's contract with that dialog
         /// share.
         /// </summary>
         public bool LocksSignatureFor(bool replyOrForward, string name) =>
-            ForcedFor(replyOrForward) && string.Equals(DefaultFor(replyOrForward), name, StringComparison.OrdinalIgnoreCase);
+            DefaultFor(replyOrForward) != null && string.Equals(DefaultFor(replyOrForward), name, StringComparison.OrdinalIgnoreCase);
 
-        /// <summary>True when a policy names <paramref name="name"/> as either scope's default (<see cref="LocksSignatureFor"/>).</summary>
+        /// <summary>True when a setting names <paramref name="name"/> as either scope's default (<see cref="LocksSignatureFor"/>).</summary>
         public bool LocksSignature(string name) => LocksSignatureFor(false, name) || LocksSignatureFor(true, name);
 
         /// <summary>The source in words, for answers and refusals.</summary>

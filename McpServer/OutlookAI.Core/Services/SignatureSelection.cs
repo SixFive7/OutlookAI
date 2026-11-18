@@ -336,7 +336,7 @@ namespace OutlookAI.Core.Services
                 newMessage.Name,
                 reply.Name,
                 environment.Policy.SignaturesDisabled,
-                environment.Policy.NewMessageForced || environment.Policy.ReplyForwardForced);
+                environment.Policy.TakesDefault(false) || environment.Policy.TakesDefault(true));
         }
 
         // ------------------------------------------------------------------ the parts
@@ -556,7 +556,8 @@ namespace OutlookAI.Core.Services
         public bool SignaturesDisabled { get; }
 
         /// <summary>
-        /// True when a policy names a default, so OutlookAI does not change the account's own (Q156). One message may
+        /// True when a policy or a deployed setting names a default, so OutlookAI does not change the account's own
+        /// (Q156), as Outlook's own Signatures dialog does not (<see cref="SignaturePolicy.TakesDefault"/>). One message may
         /// still have another signature, as Outlook's own compose window allows (measured 2026-11-18, Q200 (a)).
         /// </summary>
         public bool DefaultsForced { get; }

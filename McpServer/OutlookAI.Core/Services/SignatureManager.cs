@@ -728,8 +728,9 @@ namespace OutlookAI.Core.Services
                 {
                     throw new SignatureRefusedException("signature_forced_by_policy",
                         "'" + name + "' is the signature " + SignaturePolicy.Describe(policy.SourceFor(reply)) + " names for "
-                        + (reply ? "replies and forwards" : "new messages") + "; deleting it would leave the policy naming a signature "
-                        + "that is not there. Nothing was written. Ask your administrator to change the policy first.");
+                        + (reply ? "replies and forwards" : "new messages") + "; deleting it would leave the setting naming a signature "
+                        + "that is not there, and Outlook's own Signatures dialog lets no signature be deleted under it. Nothing was "
+                        + "written. Ask your administrator to change the setting first.");
                 }
             }
         }
@@ -782,7 +783,8 @@ namespace OutlookAI.Core.Services
                     throw new SignatureRefusedException("default_set_by_policy",
                         SignaturePolicy.Describe(policy.SourceFor(reply)) + " names the default signature for "
                         + (reply ? "replies and forwards" : "new messages") + ", '" + policy.DefaultFor(reply) + "', and OutlookAI does "
-                        + "not change an account's default under a policy (Q156). Nothing was written.");
+                        + "not change an account's default while such a setting names one: Outlook's own Signatures dialog does not let "
+                        + "a user change it either (Q156). Nothing was written.");
                 }
             }
 
