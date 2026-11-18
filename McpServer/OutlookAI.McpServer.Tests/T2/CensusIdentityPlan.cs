@@ -51,7 +51,7 @@ public sealed class CensusIdentityPlan
 {
     /// <summary>
     /// Largest folder the baseline will walk. Chosen so the folders a person actually works
-    /// in are covered - the 2026-08-18 false alarm was an Inbox of 168, a Postvak IN of 52
+    /// in are covered - the 2026-08-18 false alarm was an Inbox under 200, a Postvak IN near 50
     /// and a junk folder of 1 - while archives and Sent Items stay counted. Raising it buys
     /// precision in bigger folders and costs census time on every run.
     /// </summary>

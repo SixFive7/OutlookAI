@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using OutlookAI.McpServer.Tests.T2;
 using OutlookAI.RemediationTools;
 using Xunit;
 
@@ -11,8 +12,8 @@ namespace OutlookAI.McpServer.Tests.T1;
 /// and this file is the mechanism that keeps it that way.
 ///
 /// <para>
-/// <b>The defect it closes.</b> <c>CorpusPlan.SubjectTag</c> was <c>RemediationRules.SubjectTag</c>
-/// - literally the same constant - and <c>CorpusPlan.BuildSubject</c> put it at the front of
+/// <b>The defect it closes.</b> <c>CorpusPlan.SubjectTag</c> was the live tier's artifact tag
+/// - literally the same constant, then in the incident tooling deleted on 2026-11-18 (Q170) - and <c>CorpusPlan.BuildSubject</c> put it at the front of
 /// every corpus subject. The live tier's post-run artifact sweep walks every store in
 /// <c>expectedStoreDisplayNames</c>, counts subjects containing that tag and calls
 /// <c>DeleteTaggedArtifactsUntilStableZero</c> on anything above zero; its folder set - Drafts,
@@ -48,12 +49,20 @@ public sealed class CorpusTagSeparationTests
 
     /// <summary>
     /// The bracket-free text the live sweep matches on, as a LITERAL rather than as
-    /// <c>RemediationRules.DaslCountFragment</c>. The sweep's own call sites
+    /// <c>LiveArtifactSweep.TagText</c>. The sweep's own call sites
     /// (<c>LiveDraftTests</c> / <c>LiveSendTests</c> <c>ArtifactSweep_AllThreeAccounts_ZeroTaggedRemain</c>,
     /// via <c>LiveOutlookTestMailer.CountTaggedArtifacts</c>) pass this string spelled out, so
     /// pinning the constant instead would leave the real matcher unguarded.
     /// </summary>
     private const string SweepMatchText = "OutlookAI-McpTest";
+
+    /// <summary>
+    /// What the live tier's sweep takes for an artifact: a subject that carries
+    /// <see cref="LiveOutlookTestMailer.SubjectTag"/>, matched ordinally, as every sweep in
+    /// <see cref="LiveOutlookTestMailer"/> spells it.
+    /// </summary>
+    private static bool IsSweptAsArtifact(string? subject)
+        => subject != null && subject.Contains(LiveOutlookTestMailer.SubjectTag, StringComparison.Ordinal);
 
     private static CorpusPlan Plan(string corpusId = CorpusId)
         => new(new CorpusPlanOptions(corpusId, 4242, Anchor));
@@ -63,22 +72,22 @@ public sealed class CorpusTagSeparationTests
     [Fact]
     public void TheCorpusTagAndTheArtifactTagAreDifferentStrings()
     {
-        Assert.NotEqual(RemediationRules.SubjectTag, CorpusPlan.SubjectTag);
+        Assert.NotEqual(LiveOutlookTestMailer.SubjectTag, CorpusPlan.SubjectTag);
 
         // Neither may CONTAIN the other either. Equality alone would still permit
         // "[OutlookAI-McpTest-Corpus]", which an ordinal Contains on the artifact tag matches.
-        Assert.DoesNotContain(RemediationRules.SubjectTag, CorpusPlan.SubjectTag, StringComparison.Ordinal);
-        Assert.DoesNotContain(CorpusPlan.SubjectTag, RemediationRules.SubjectTag, StringComparison.Ordinal);
+        Assert.DoesNotContain(LiveOutlookTestMailer.SubjectTag, CorpusPlan.SubjectTag, StringComparison.Ordinal);
+        Assert.DoesNotContain(CorpusPlan.SubjectTag, LiveOutlookTestMailer.SubjectTag, StringComparison.Ordinal);
     }
 
     [Fact]
     public void NeitherTagCarriesTheOthersBracketFreeFragment()
     {
         // This is the property the sweep actually depends on - see the class remarks.
-        Assert.DoesNotContain(RemediationRules.DaslCountFragment, CorpusPlan.SubjectTag, StringComparison.Ordinal);
-        Assert.DoesNotContain(RemediationRules.DaslCountFragment, CorpusPlan.CorpusTagOpen, StringComparison.Ordinal);
-        Assert.DoesNotContain(CorpusPlan.DaslCountFragment, RemediationRules.SubjectTag, StringComparison.Ordinal);
-        Assert.NotEqual(RemediationRules.DaslCountFragment, CorpusPlan.DaslCountFragment);
+        Assert.DoesNotContain(LiveArtifactSweep.TagText, CorpusPlan.SubjectTag, StringComparison.Ordinal);
+        Assert.DoesNotContain(LiveArtifactSweep.TagText, CorpusPlan.CorpusTagOpen, StringComparison.Ordinal);
+        Assert.DoesNotContain(CorpusPlan.DaslCountFragment, LiveOutlookTestMailer.SubjectTag, StringComparison.Ordinal);
+        Assert.NotEqual(LiveArtifactSweep.TagText, CorpusPlan.DaslCountFragment);
     }
 
     [Fact]
@@ -90,7 +99,7 @@ public sealed class CorpusTagSeparationTests
             string subject = plan.BuildSubject(ordinal);
             Assert.DoesNotContain(SweepMatchText, subject, StringComparison.Ordinal);
             Assert.DoesNotContain(SweepMatchText, subject, StringComparison.OrdinalIgnoreCase);
-            Assert.False(RemediationRules.IsTagged(subject), $"ordinal {ordinal} would be swept as an artifact");
+            Assert.False(IsSweptAsArtifact(subject), $"ordinal {ordinal} would be swept as an artifact");
         }
     }
 
@@ -104,7 +113,7 @@ public sealed class CorpusTagSeparationTests
         {
             string subject = Plan(id).BuildSubject(1);
             Assert.False(
-                RemediationRules.IsTagged(subject),
+                IsSweptAsArtifact(subject),
                 $"corpus id '{id}' produced a subject the artifact sweep would delete");
         }
     }
@@ -115,7 +124,7 @@ public sealed class CorpusTagSeparationTests
         // The other direction. An artifact carrying its own tag must never parse as a corpus
         // item, or corpus-teardown could delete the live tier's leftovers - a store it was
         // never pointed at, deleting items no corpus manifest recorded.
-        string artifact = RemediationRules.SubjectTag + " r7-draft-seed";
+        string artifact = LiveOutlookTestMailer.SubjectTag + " r7-draft-seed";
         Assert.False(CorpusPlan.TryParseOrdinal(artifact, CorpusId, out _));
         Assert.Equal(CorpusSubjectKind.NotCorpus, CorpusPlan.ClassifySubject(artifact, CorpusId, out _));
     }
@@ -140,8 +149,8 @@ public sealed class CorpusTagSeparationTests
         Assert.False(CorpusSafety.MayRewrite("ID-1", legacy, allowlist, CorpusId, 42));
 
         // And the artifact tag on its own is not a corpus key at all.
-        Assert.False(CorpusSafety.MayDelete("ID-1", RemediationRules.SubjectTag + " x", allowlist, CorpusId));
-        Assert.False(CorpusSafety.MayRewrite("ID-1", RemediationRules.SubjectTag + " x", allowlist, CorpusId, 42));
+        Assert.False(CorpusSafety.MayDelete("ID-1", LiveOutlookTestMailer.SubjectTag + " x", allowlist, CorpusId));
+        Assert.False(CorpusSafety.MayRewrite("ID-1", LiveOutlookTestMailer.SubjectTag + " x", allowlist, CorpusId, 42));
     }
 
     [Fact]
@@ -162,7 +171,7 @@ public sealed class CorpusTagSeparationTests
             + "] placement probe";
         Assert.True(CorpusPlan.TryParseOrdinal(probe, CorpusId, out int probeOrdinal));
         Assert.Equal(CorpusPlan.ProbeOrdinal, probeOrdinal);
-        Assert.False(RemediationRules.IsTagged(probe));
+        Assert.False(IsSweptAsArtifact(probe));
     }
 
     // ------------------------------------------------------------------ old-tagged corpora
@@ -200,7 +209,7 @@ public sealed class CorpusTagSeparationTests
         // A mail client, or a half-finished migration, could leave both on one item. The
         // current tag is the one this build wrote, and a later arrival does not take that
         // away - so the item stays deletable by its own manifest.
-        string both = RemediationRules.SubjectTag + Plan().BuildSubject(7);
+        string both = LiveOutlookTestMailer.SubjectTag + Plan().BuildSubject(7);
         Assert.Equal(CorpusSubjectKind.Current, CorpusPlan.ClassifySubject(both, CorpusId, out int ordinal));
         Assert.Equal(7, ordinal);
         Assert.True(CorpusPlan.TryParseOrdinal(both, CorpusId, out _));

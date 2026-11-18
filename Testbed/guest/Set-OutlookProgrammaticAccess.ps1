@@ -19,7 +19,7 @@
       -Verify       after a fresh Outlook start: SmtpAddress='tier@vm.invalid' in 16 ms, no prompt
                     - VERDICT: NO-PROMPT, exit 0.
       ON THE HOST   the dry run, -Execute, -Verify and -Execute -Revert each stopped at "REFUSING TO
-                    RUN. This session is logged on as 'jori'", and the host's own
+                    RUN. This session is logged on as '<user>'", and the host's own
                     ...\Office\16.0\Outlook\Security policy key read identical before and after.
 
     ONE THING THE FIRST GUEST RUN FOUND, AND FIXED. Attaching from a second process to an Outlook
@@ -421,8 +421,8 @@ function Invoke-SelfTest {
 
     Write-Host '== the guard =='
     Check 'vmadmin on OAI-UNINDEXED passes' $true (Test-GuestIdentity -UserName 'vmadmin' -ComputerName 'OAI-UNINDEXED' -Users @('vmadmin') -Prefix 'OAI-')
-    Check 'the maintainer workstation is refused' $false (Test-GuestIdentity -UserName 'jori' -ComputerName 'PC657' -Users @('vmadmin') -Prefix 'OAI-')
-    Check 'vmadmin on a machine not named OAI-* is refused' $false (Test-GuestIdentity -UserName 'vmadmin' -ComputerName 'PC657' -Users @('vmadmin') -Prefix 'OAI-')
+    Check 'the maintainer workstation is refused' $false (Test-GuestIdentity -UserName 'devuser' -ComputerName 'DEV-PC' -Users @('vmadmin') -Prefix 'OAI-')
+    Check 'vmadmin on a machine not named OAI-* is refused' $false (Test-GuestIdentity -UserName 'vmadmin' -ComputerName 'DEV-PC' -Users @('vmadmin') -Prefix 'OAI-')
     Check 'an empty prefix refuses everything' $false (Test-GuestIdentity -UserName 'vmadmin' -ComputerName 'OAI-UNINDEXED' -Users @('vmadmin') -Prefix '')
 
     Write-Host '== WSC context decoding =='
