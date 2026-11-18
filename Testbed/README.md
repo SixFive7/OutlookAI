@@ -1335,15 +1335,16 @@ NOT elevated, at least 240 s after the boot, closing Office's activation wizard 
 pwsh -File Testbed/host/Invoke-LiveTierOnGuest.ps1 -VMName OutlookAI-Exchange [<commit-or-branch>]
 ```
 
-Its filter is `Category=Live&Requires!=LocalSignatures&Requires!=DelegateStore&Requires!=GeneratedPopulation&Requires!=IdentityAccount&Requires!=ProbePopulation&Requires!=PstStore`
+Its filter is `Category=Live&Requires!=LocalSignatures&Requires!=DelegateStore&Requires!=GeneratedPopulation&Requires!=IdentityAccount&Requires!=ProbePopulation&Requires!=PstStore&Requires!=ConfirmedLeftover`
 (`LiveRunFilters.ExchangeTestAccount`, pinned by `T1/LiveTierInventoryTests`): the broadest the VM can
 honestly run - every live test, read and write, except those that write a signature or touch an
 account's default one (`LocalSignatures`: until it is measured whether this Office roams signatures,
 Q147 R1, decided by the maintainer 2026-11-17 - and the test-side MCP client refuses `manage_signature`
 here outright), a delegate store (until the shared test mailbox exists, Q109), the PST guests'
 generated population or their curated probe population (the test account holds neither), an identity
-account (the other mailbox is a bystander) or a data file. The add-in's tests run: it is installed
-(E14). Before the baseline census the tripwire proves the hub's name is the test account's own store
+account (the other mailbox is a bystander) or a data file - and never the one-off removal of the
+bystander's confirmed leftover (`ConfirmedLeftover`, Q138), which runs only when named, below. The
+add-in's tests run: it is installed (E14). Before the baseline census the tripwire proves the hub's name is the test account's own store
 and that the automapped online entry of the same mailbox is neither watched nor a bystander
 (`T2/LiveMailboxIdentity.cs`). The runbook's §4.4a records what it found.
 
@@ -1355,7 +1356,7 @@ typed only the tests that write nothing. On 2026-11-18 the grace was re-armed on
 at once, and the runner types the write filter above again. Once the grace runs out again the write
 tests fail at their first item: until it is re-armed, narrow a run with `-FilterSuffix '&Writes=Nothing'`
 to
-`Category=Live&Requires!=LocalSignatures&Requires!=DelegateStore&Requires!=GeneratedPopulation&Requires!=IdentityAccount&Requires!=ProbePopulation&Requires!=PstStore&Writes=Nothing`
+`Category=Live&Requires!=LocalSignatures&Requires!=DelegateStore&Requires!=GeneratedPopulation&Requires!=IdentityAccount&Requires!=ProbePopulation&Requires!=PstStore&Requires!=ConfirmedLeftover&Writes=Nothing`
 (`LiveRunFilters.ExchangeTestAccountWritesNothing`). To re-arm: a lease, then, over PowerShell Direct
 (elevated), `& 'C:\Program Files\Microsoft Office\Office16\OSPPREARM.EXE'` - "Microsoft Office rearm
 successful." - and Outlook restarted with `host/Restart-Guest.ps1 -Execute`. The licence query in

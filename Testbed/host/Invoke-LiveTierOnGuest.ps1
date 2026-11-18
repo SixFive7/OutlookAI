@@ -219,7 +219,7 @@ $FilterUnindexedExtra = '&Requires!=SearchIndex'
 # The Exchange VM with its test account as the hub: LiveRunFilters.ExchangeTestAccount, read and write. From
 # 2026-11-17 to decision 206 (a) on 2026-11-18 it was narrowed to the tests that write nothing, because Office
 # there was past its grace and created no item (Docs/live-tier-on-the-vm.md section 4.4a).
-$FilterExchange = 'Category=Live&Requires!=LocalSignatures&Requires!=DelegateStore&Requires!=GeneratedPopulation&Requires!=IdentityAccount&Requires!=ProbePopulation&Requires!=PstStore'
+$FilterExchange = 'Category=Live&Requires!=LocalSignatures&Requires!=DelegateStore&Requires!=GeneratedPopulation&Requires!=IdentityAccount&Requires!=ProbePopulation&Requires!=PstStore&Requires!=ConfirmedLeftover'
 # The host's record of the Exchange VM's run markers: beside the leases, machine state, not the repository.
 $ExchangeLedgerRelative = 'exchange-runs\ledger.jsonl'
 $LeaseReasonPrefix = 'Invoke-LiveTierOnGuest'

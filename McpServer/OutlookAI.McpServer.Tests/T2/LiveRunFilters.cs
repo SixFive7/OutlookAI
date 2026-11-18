@@ -115,15 +115,24 @@ public static class LiveRunFilters
     public const string PstStore = "PstStore";
 
     /// <summary>
+    /// A tagged leftover the maintainer confirmed by its EntryID for removal from a bystander - the one write a
+    /// bystander ever gets (Q138, <see cref="T2.ConfirmedLeftover"/>). No derived filter selects a test that
+    /// needs it: the Exchange VM's filter leaves it out, and the one-off removal runs only when it is named.
+    /// </summary>
+    public const string ConfirmedLeftover = "ConfirmedLeftover";
+
+    /// <summary>
     /// What the Exchange VM does NOT have since its test account became the hub (2026-10-08), in the
     /// order its filter names them: signatures that are known to stay local (<see cref="LocalSignatures"/>,
     /// until the roaming measurement); no delegate store until the shared test mailbox exists (Q109); no
     /// generated population - a test there seeds what it needs and the sweep removes it; no identity
     /// account - the other mailbox, the real one, is a bystander no test writes to; no hand-curated probe
-    /// population; and no data file. The add-in it has since 2026-11-17 (Q140 (b)).
+    /// population; and no data file. The add-in it has since 2026-11-17 (Q140 (b)). And it never selects the
+    /// removal of a confirmed leftover (<see cref="ConfirmedLeftover"/>): that one-off write to its bystander
+    /// runs only when named (Q138).
     /// </summary>
     public static IReadOnlyList<string> ExchangeTestAccountLacks { get; } =
-        new[] { LocalSignatures, DelegateStore, GeneratedPopulation, IdentityAccount, ProbePopulation, PstStore };
+        new[] { LocalSignatures, DelegateStore, GeneratedPopulation, IdentityAccount, ProbePopulation, PstStore, ConfirmedLeftover };
 
     /// <summary>
     /// The filter the Exchange VM runs with its test account as the writable hub

@@ -135,6 +135,10 @@ public sealed class LiveTierInventoryTests
         // PST halves of the decode, store-map and folder-id checks measure. The Exchange VM has none.
         "PstStore",
 
+        // A tagged leftover the maintainer confirmed by its EntryID for removal from a bystander (Q138): the
+        // one-off removal needs it, and no derived filter selects it - it runs only when named.
+        "ConfirmedLeftover",
+
         // The two capabilities a dedicated test machine cannot be given - an Exchange profile.
         DelegateStore,
         CachedExchange,
@@ -443,9 +447,9 @@ public sealed class LiveTierInventoryTests
         // Literal on purpose. Everything but what the VM lacks: signatures known to stay local (until the
         // roaming measurement, Q147 R1), no delegate store until the shared test mailbox exists (Q109), no
         // identity account (the real mailbox is a bystander), no hand-curated probe population. The add-in
-        // it has (Q140 (b), 2026-11-17).
+        // it has (Q140 (b), 2026-11-17). And never the one-off removal of a confirmed leftover (Q138).
         Assert.Equal(
-            "Category=Live&Requires!=LocalSignatures&Requires!=DelegateStore&Requires!=GeneratedPopulation&Requires!=IdentityAccount&Requires!=ProbePopulation&Requires!=PstStore",
+            "Category=Live&Requires!=LocalSignatures&Requires!=DelegateStore&Requires!=GeneratedPopulation&Requires!=IdentityAccount&Requires!=ProbePopulation&Requires!=PstStore&Requires!=ConfirmedLeftover",
             LiveRunFilters.ExchangeTestAccount);
         Assert.All(LiveRunFilters.ExchangeTestAccountLacks, c => Assert.Contains(c, AllCapabilities));
         Assert.DoesNotContain(LiveRunFilters.CachedExchange, LiveRunFilters.ExchangeTestAccountLacks);
@@ -460,7 +464,7 @@ public sealed class LiveTierInventoryTests
         // there is narrowed to the tests of its own filter that write nothing - with -FilterSuffix '&Writes=Nothing'
         // since the grace was re-armed on 2026-11-18. Literal on purpose, like the filter it narrows.
         Assert.Equal(
-            "Category=Live&Requires!=LocalSignatures&Requires!=DelegateStore&Requires!=GeneratedPopulation&Requires!=IdentityAccount&Requires!=ProbePopulation&Requires!=PstStore&Writes=Nothing",
+            "Category=Live&Requires!=LocalSignatures&Requires!=DelegateStore&Requires!=GeneratedPopulation&Requires!=IdentityAccount&Requires!=ProbePopulation&Requires!=PstStore&Requires!=ConfirmedLeftover&Writes=Nothing",
             LiveRunFilters.ExchangeTestAccountWritesNothing);
         Assert.StartsWith(LiveRunFilters.ExchangeTestAccount + "&", LiveRunFilters.ExchangeTestAccountWritesNothing, StringComparison.Ordinal);
     }

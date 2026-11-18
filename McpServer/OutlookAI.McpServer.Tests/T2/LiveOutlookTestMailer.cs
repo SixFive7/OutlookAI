@@ -490,6 +490,229 @@ public static class LiveOutlookTestMailer
     }
 
     /// <summary>
+    /// THE ONE WRITE A BYSTANDER EVER GETS (Q138): removes the leftover the maintainer confirmed by its EntryID
+    /// from <paramref name="store"/>, the Exchange VM's bystander, and nothing else. It does not ask
+    /// <see cref="LiveStoreWriteGuard"/>, which refuses every bystander and must go on doing so; its gate is
+    /// <see cref="ConfirmedLeftover.RefusalFor"/> - the Exchange VM's test-account profile, the one declared
+    /// bystander, never the hub - and its selection is the item's EntryID AND its subject, both exactly
+    /// (<see cref="ConfirmedLeftover.IsTheItem"/>).
+    /// <para>
+    /// In order: the tagged rows of the confirmed folder are read (a server-side tag restriction narrows them;
+    /// each row is then judged by EntryID and subject); exactly one must be the item, or nothing is written;
+    /// the item is opened by that EntryID and judged again, with its parent proven to be that folder; it is
+    /// MOVED to the same store's Deleted Items, which hands back the copy and its new EntryID; that copy is
+    /// judged again (<see cref="ConfirmedLeftover.RefusalForMovedCopy"/>) and deleted there, which takes it out
+    /// of Deleted Items for good. Then both folders are read again: no row of the folder may be the item and no
+    /// row of Deleted Items may carry its subject. Only then is the removal recorded
+    /// (<see cref="ConfirmedRemovals"/>), which is what lets the count tripwire accept this one departure.
+    /// </para>
+    /// <para>
+    /// Run it again and it reads, finds nothing and writes nothing. Content-free: nothing of any other item is
+    /// printed or returned - counts only.
+    /// </para>
+    /// </summary>
+    /// <param name="settings">This run's settings: the profile, the bystander and the hub.</param>
+    /// <param name="store">The store to remove it from - the one declared bystander.</param>
+    /// <param name="leftover">The confirmed item: <see cref="ConfirmedLeftover.Q138"/>.</param>
+    /// <returns>What was done and what was read back.</returns>
+    public static ConfirmedLeftoverRemoval RemoveConfirmedLeftover(LiveTestSettings settings, string store, ConfirmedLeftover leftover)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        ArgumentNullException.ThrowIfNull(leftover);
+        string? refusal = leftover.RefusalFor(settings.MachineProfile, settings.BystanderStoreDisplayNames, settings.TestHubStoreDisplayName, store);
+        if (refusal != null)
+        {
+            throw new InvalidOperationException(refusal);
+        }
+
+        return RunSta(() =>
+        {
+            dynamic app = CreateOutlookApplication();
+            dynamic? ns = null;
+            dynamic? stores = null;
+            dynamic? storeObject = null;
+            object? folder = null;
+            object? deletedItems = null;
+            dynamic? item = null;
+            dynamic? itemParent = null;
+            dynamic? moved = null;
+            object? movedParent = null;
+            try
+            {
+                ns = app.GetNamespace("MAPI");
+                stores = ns.Stores;
+                storeObject = FindStore(stores, store)
+                    ?? throw new InvalidOperationException("The bystander store is not in the running profile; nothing was removed.");
+                string storeId = (string)storeObject.StoreID;
+                if (ResolveWithoutCreating((object)ns, (object)storeObject, leftover.DefaultFolderId, out folder, out _)
+                    != OutlookComSession.DefaultFolderResolution.Resolved)
+                {
+                    throw new InvalidOperationException("The confirmed leftover's folder could not be opened; nothing was removed.");
+                }
+
+                if (ResolveWithoutCreating((object)ns, (object)storeObject, 3, out deletedItems, out _)
+                    != OutlookComSession.DefaultFolderResolution.Resolved)
+                {
+                    throw new InvalidOperationException("The bystander's Deleted Items could not be opened; nothing was removed.");
+                }
+
+                string folderId = (string)((dynamic)folder!).EntryID;
+                string deletedItemsId = (string)((dynamic)deletedItems!).EntryID;
+
+                ConfirmedLeftoverSelection selection = leftover.Select(ReadTaggedRows(folder!));
+                if (selection.Outcome == ConfirmedLeftoverOutcome.Ambiguous)
+                {
+                    throw new InvalidOperationException(
+                        "More than one row of the folder reads as the confirmed leftover, which one EntryID cannot be; nothing was removed.");
+                }
+
+                if (selection.Outcome == ConfirmedLeftoverOutcome.NotPresent)
+                {
+                    int copiesNow = CountRowsWithSubject(deletedItems!, leftover.Subject);
+                    return new ConfirmedLeftoverRemoval(Removed: false, Gone: copiesNow == 0, selection.OtherTagged, copiesNow);
+                }
+
+                string entryId = selection.EntryId!;
+                item = ns.GetItemFromID(entryId, storeId);
+                string? openedEntryId = TryRead<string>(() => (string?)item.EntryID);
+                string? openedSubject = TryRead<string>(() => (string?)item.Subject);
+                if (!leftover.IsTheItem(openedEntryId, openedSubject))
+                {
+                    throw new InvalidOperationException(
+                        "The item opened by the confirmed EntryID is not the confirmed leftover (its EntryID or subject differs); nothing was removed.");
+                }
+
+                itemParent = item.Parent;
+                string? parentId = TryRead<string>(() => (string?)itemParent.EntryID);
+                if (!SameEntryId(parentId, folderId))
+                {
+                    throw new InvalidOperationException("The confirmed leftover is not in the folder it was confirmed in; nothing was removed.");
+                }
+
+                moved = item.Move((object)deletedItems!);
+                string? movedEntryId = TryRead<string>(() => (string?)moved.EntryID);
+                string? movedSubject = TryRead<string>(() => (string?)moved.Subject);
+                movedParent = TryRead<object>(() => (object?)moved.Parent);
+                string? movedParentId = movedParent == null ? null : TryRead<string>(() => (string?)((dynamic)movedParent).EntryID);
+                string? movedRefusal = leftover.RefusalForMovedCopy(
+                    movedEntryId, movedSubject, SameEntryId(movedParentId, deletedItemsId), entryId);
+                if (movedRefusal != null)
+                {
+                    throw new InvalidOperationException(movedRefusal + " The item was moved to Deleted Items and is still there.");
+                }
+
+                moved.Delete();
+
+                ConfirmedLeftoverSelection after = leftover.Select(ReadTaggedRows(folder!));
+                int copies = CountRowsWithSubject(deletedItems!, leftover.Subject);
+                bool gone = after.Outcome == ConfirmedLeftoverOutcome.NotPresent && copies == 0;
+                if (gone)
+                {
+                    ConfirmedRemovals.Record(new ConfirmedRemoval(store, entryId));
+                }
+
+                return new ConfirmedLeftoverRemoval(Removed: true, gone, after.OtherTagged, copies);
+            }
+            finally
+            {
+                Release(movedParent);
+                Release(moved);
+                Release(itemParent);
+                Release(item);
+                Release(deletedItems);
+                Release(folder);
+                Release(storeObject);
+                Release(stores);
+                Release(ns);
+                Release(app);
+            }
+        });
+    }
+
+    /// <summary>
+    /// A folder's rows whose subject carries the live-tier tag, as EntryID and subject - read through a table,
+    /// so that no item is opened. The server-side restriction only narrows the rows; every caller judges each
+    /// row itself, ordinally. Throws when the table cannot be read: "could not look" is never "empty".
+    /// </summary>
+    private static List<(string? EntryId, string? Subject)> ReadTaggedRows(object folder)
+    {
+        dynamic? table = null;
+        dynamic? columns = null;
+        List<(string? EntryId, string? Subject)> rows = new();
+        try
+        {
+            table = ((dynamic)folder).GetTable("@SQL=\"urn:schemas:httpmail:subject\" LIKE '%" + LiveArtifactSweep.TagText + "%'");
+            columns = table.Columns;
+            int entryIdAt = -1;
+            int subjectAt = -1;
+            int columnCount = (int)columns.Count;
+            for (int i = 1; i <= columnCount; i++)
+            {
+                dynamic? column = null;
+                try
+                {
+                    column = columns[i];
+                    string? name = (string?)column.Name;
+                    if (string.Equals(name, "EntryID", StringComparison.OrdinalIgnoreCase))
+                    {
+                        entryIdAt = i - 1;
+                    }
+                    else if (string.Equals(name, "Subject", StringComparison.OrdinalIgnoreCase))
+                    {
+                        subjectAt = i - 1;
+                    }
+                }
+                finally
+                {
+                    Release(column);
+                }
+            }
+
+            if (entryIdAt < 0 || subjectAt < 0)
+            {
+                throw new InvalidOperationException("The folder's table has no EntryID or no Subject column; nothing can be judged by them.");
+            }
+
+            while (!(bool)table.EndOfTable)
+            {
+                dynamic? row = null;
+                try
+                {
+                    row = table.GetNextRow();
+                    object[] values = (object[])row.GetValues();
+                    string? entryId = entryIdAt < values.Length ? values[entryIdAt] as string : null;
+                    string? subject = subjectAt < values.Length ? values[subjectAt] as string : null;
+                    rows.Add((entryId, subject));
+                }
+                finally
+                {
+                    Release(row);
+                }
+            }
+
+            return rows;
+        }
+        finally
+        {
+            Release(columns);
+            Release(table);
+        }
+    }
+
+    /// <summary>How many of a folder's tagged rows carry exactly <paramref name="subject"/>. Read-only.</summary>
+    private static int CountRowsWithSubject(object folder, string subject)
+    {
+        return ReadTaggedRows(folder).Count(r => string.Equals(r.Subject, subject, StringComparison.Ordinal));
+    }
+
+    /// <summary>Two EntryIDs read from Outlook, compared as the hex they are.</summary>
+    private static bool SameEntryId(string? left, string? right)
+    {
+        return !string.IsNullOrWhiteSpace(left) && !string.IsNullOrWhiteSpace(right)
+            && string.Equals(left.Trim(), right.Trim(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
     /// Appends text to the BODY of one draft this run created (Phase-5 negative test:
     /// a modified draft must invalidate its send confirm-token). Refuses unless the
     /// item's subject carries BOTH the tag and <paramref name="uniqueMarker"/> (S3

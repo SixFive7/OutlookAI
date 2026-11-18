@@ -4615,12 +4615,12 @@ needed Exchange, and those seven were the workstation run.
 **Since 2026-10-08 the Exchange VM writes - in its dedicated test account (section 4.4a).** Its run
 selects every live test it has the capabilities for, read and write:
 
-`Category=Live&Requires!=LocalSignatures&Requires!=DelegateStore&Requires!=GeneratedPopulation&Requires!=IdentityAccount&Requires!=ProbePopulation&Requires!=PstStore`
+`Category=Live&Requires!=LocalSignatures&Requires!=DelegateStore&Requires!=GeneratedPopulation&Requires!=IdentityAccount&Requires!=ProbePopulation&Requires!=PstStore&Requires!=ConfirmedLeftover`
 
 and only a test that needs a delegate store must still carry `Writes=Nothing`
 (`EveryDelegateStoreTest_DeclaresWritesNothing`): a delegate or shared mailbox is read-only for every
 test, on every machine. From 2026-11-17 to 2026-11-18 the runner narrowed it to the tests that write
-nothing, `Category=Live&Requires!=LocalSignatures&Requires!=DelegateStore&Requires!=GeneratedPopulation&Requires!=IdentityAccount&Requires!=ProbePopulation&Requires!=PstStore&Writes=Nothing`, because the VM's Office created no item past its activation grace; decision
+nothing, `Category=Live&Requires!=LocalSignatures&Requires!=DelegateStore&Requires!=GeneratedPopulation&Requires!=IdentityAccount&Requires!=ProbePopulation&Requires!=PstStore&Requires!=ConfirmedLeftover&Writes=Nothing`, because the VM's Office created no item past its activation grace; decision
 206 (a) re-armed the grace, and a run past it is narrowed the same way with `-FilterSuffix
 '&Writes=Nothing'` (section 4.4a).
 
@@ -4632,9 +4632,10 @@ nothing, `Category=Live&Requires!=LocalSignatures&Requires!=DelegateStore&Requir
 | VM | `--filter "Category=Live&Requires!=DelegateStore&Requires!=CachedExchange"` | 121 |
 | Exchange-only (the Exchange VM, section 4.4; the workstation before Q116 (a)) | `--filter "Category=Live&(Requires=DelegateStore\|Requires=CachedExchange)"` | 7 on the morning of 2026-10-03; 9 once section 4.4 added two |
 
-**The vocabulary, all fifteen values.** Thirteen of them this VM can be given; two it cannot - both are
-an Exchange profile. And three of the thirteen - `GeneratedPopulation` and `PstStore`, named 2026-10-08, and
+**The vocabulary, all sixteen values.** Fourteen of them this VM can be given; two it cannot - both are
+an Exchange profile. And three of the fourteen - `GeneratedPopulation` and `PstStore`, named 2026-10-08, and
 `LocalSignatures`, named 2026-11-17 - are what the Exchange VM, in turn, does not have (section 4.4a).
+The sixteenth, `ConfirmedLeftover` (2026-11-18), is no machine's: no derived filter selects it.
 
 | Capability | What the machine must have |
 | --- | --- |
@@ -4651,10 +4652,11 @@ an Exchange profile. And three of the thirteen - `GeneratedPopulation` and `PstS
 | `ProbePopulation` | the hand-curated population named in the settings file |
 | `GeneratedPopulation` | the guests' GENERATED test data - the hub population and the corpus: nested folders that hold mail, attachments of every kind, mail over 100 KB, many senders, enough recent mail to sample. Named 2026-10-08, when the Exchange VM's empty test account met the thirteen tests that had silently assumed it |
 | `PstStore` | a mailbox in a local .pst data file, whose ids and index names are a data file's - the PST halves of the decode, store-map and folder-id checks |
+| `ConfirmedLeftover` | a tagged leftover in a bystander that the maintainer confirmed by its EntryID for removal - the one write a bystander ever gets (Q138, section 4.4a). Only the one-off `T2/LiveConfirmedLeftoverTests` declares it, and no derived filter selects it: it runs only when named, `-Filter 'Category=Live&Requires=ConfirmedLeftover'` |
 | **`DelegateStore`** | **a delegate/shared mailbox. One of the two capabilities no test machine can be given** |
 | **`CachedExchange`** | **a cached Exchange mailbox, whose entry ids are Exchange's 70-byte form. The other one (Q74 C1, 2026-10-03)** |
 
-`Tools/Checks/check-pinned-constants.ps1` fails the build if any of those fifteen names stops
+`Tools/Checks/check-pinned-constants.ps1` fails the build if any of those sixteen names stops
 appearing in this file, so the table above is load-bearing text and not decoration.
 
 **Why `DelegateStore` and `CachedExchange` are the only production-only capabilities.** A delegate/shared mailbox is

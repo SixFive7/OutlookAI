@@ -234,6 +234,17 @@ its mailbox tests on, and change nothing you install.
   check fails, the reason is written out in full here rather than hidden behind a link. Both
   indicators now take their wording from one place, so they cannot disagree.
 
+- ✅ **A tested one-off removes the one tagged leftover from the Exchange machine's bystander mailbox.**
+  The maintainer confirmed it by its EntryID on 2026-11-18 (Q138): an item the live tests left in that
+  mailbox's Sent Items in July, when they still ran on his own computer. It is the only write that
+  mailbox ever gets. A new live test, which no machine's filter selects and which runs only when named,
+  finds the item by its EntryID and its exact subject, both required, moves it to the mailbox's Deleted
+  Items, checks the copy the move hands back, deletes it there, and reads both folders again. The
+  EntryID is pinned by its SHA-256, so the repository holds no identifier of the real mailbox. The count
+  tripwire, which censuses that mailbox item by item around the run, accepts exactly that departure: a
+  tagged item, by EntryID, from a folder it identified item by item, once. Any other change there still
+  fails the run.
+
 - ✅ **A test-machine probe measures how Windows and the installer remove trust in the leaked key.**
   `Testbed/host/Invoke-TrustRemovalProbe.ps1` runs `Testbed/guest/Measure-TrustRemoval.ps1` on an
   Outlook test machine under its lease, from its frozen checkpoint, and puts the checkpoint back
