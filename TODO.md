@@ -1776,25 +1776,6 @@
   means nothing. Recommended: (1), once the next item is decided, because its three results would
   stop every release until then; (2) only if the list parameters turn out to matter.
 
-- [ ] **Decide where `save_attachment` may write (found by Q146's scan, 2026-11-17).** It writes
-  one attachment of a mail into whatever absolute folder the agent names in `target_dir`.
-  `MailService` only checks that the path is rooted; the COM host creates the folder and saves the
-  file under the attachment's own name, with characters a file name cannot hold replaced, never
-  overwriting. That name and the content come from whoever sent the mail, and the folder from an
-  agent that reads it. So a mail that says "save the attachment to the Startup folder" can put a
-  file the sender chose, under a name the sender chose, where Windows opens it at the next
-  sign-in, with nothing in the way but the agent client's approval of tool calls, if it asks at
-  all. Not measured: whether Outlook's blocking of dangerous attachment types (its Level 1 list)
-  stops this save, which goes through the object model. Directions: (1) only the default
-  folder, `%LOCALAPPDATA%\OutlookAI\scratch\attachments`, and folders under it - closes the hole,
-  and an agent that wants the file elsewhere copies it with its own file tools, under their own
-  approval; (2) the default folder plus folders the user lists in OutlookAI Settings - as safe and
-  more flexible, at the cost of a setting to build; (3) any folder, but no executable or script
-  types outside the default one - keeps the convenience, but such a list is never complete
-  (`.lnk`, `.url`, `.hta`, Office files with macros); (4) any folder but a deny-list - Startup,
-  Windows, Program Files, AppData - the same weakness by folder; (5) leave it: the agent acts as
-  the user, who approves its tool calls. Recommended: (1).
-
 - [ ] **Decide how wide the time-zone check's line is (Q144 follow-up, 2026-11-17).**
   `T1/TimeZoneMarkerTests` fails a test that can read the machine's zone and is not marked
   `[Trait("TimeZone", "Machine")]`, and the build VM runs the marked ones again in W. Europe. It reads

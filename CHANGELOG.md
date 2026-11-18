@@ -2656,6 +2656,27 @@ its mailbox tests on, and change nothing you install.
 
 ### Security
 
+- 🔒 **`save_attachment` saves only into OutlookAI's own download folder and folders inside it.**
+  It used to save into any folder the assistant named. The sender of a mail chooses an attachment's
+  content and its name, and the assistant that reads the mail chooses the folder, so a mail could
+  talk it into saving its attachment in the Startup folder, where Windows opens it at the next
+  sign-in. Now it saves in `%LOCALAPPDATA%\OutlookAI\scratch\attachments`, or in a folder inside it
+  named by a relative path such as `invoices`, and refuses anything else with nothing written. The
+  refusal tells the assistant to copy the file elsewhere with its own file tools, under their own
+  permission rules (decision 198 (a)), and the tool's description says the same. A folder is judged
+  by where Windows really puts it. `..` is resolved; network and device paths (`\\server\share`,
+  `\\?\`, `\\.\`), a `:` that is not a drive letter's, and folder names Windows would change are
+  refused on their text; junctions, symbolic links and 8.3 short names are followed to the folder's
+  final path before it is compared. The server checks the folder before Outlook is asked anything,
+  its Outlook process checks it again before it opens the mail, and the writer checks it before and
+  after it makes the folder. The sender's file name is made safe: separators, `:` and the other
+  characters Windows cannot store become `_`, a device name such as `CON` gets a leading `_`,
+  trailing dots and spaces go, and so do the Unicode controls that can make `exe.pdf` read as
+  `fdp.exe`. A file is never replaced. The name is claimed by creating an empty file that must not
+  exist yet, without following a link of that name, and a taken name gets ` (2)`, ` (3)` and so on.
+  All of the tool's file writing is in one class, `AttachmentFileWriter`. `manage_signature` now
+  also refuses a device name before a dot, such as `nul.backup`, which Windows reads as a device too.
+
 - 🔒 **The installer removes the trust Office saved for add-ins signed with the leaked old key.**
   Clicking Install on Office's "Publisher cannot be verified" prompt for OutlookAI v1.0.0.1 to
   v2.3.1.111 saved a trust entry under `HKCU\Software\Microsoft\VSTO\Security\Inclusion`: where
