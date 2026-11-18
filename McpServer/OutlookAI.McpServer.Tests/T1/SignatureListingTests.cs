@@ -58,7 +58,7 @@ public sealed class SignatureListingTests : IDisposable
     public void WithOutlookNotRunning_TheNoteSaysSo_AndNoProfileIsMarkedRunning()
     {
         SignaturesOutcome outcome = SignatureListing.Build(
-            Environment(new FakeProfileAccountRegistry().Add("Outlook", 1, FakeProfileAccountRegistry.Pop3("a@b.nl"))),
+            Environment(new FakeProfileAccountRegistry().Add("Outlook", 1, FakeProfileAccountRegistry.Pop3("a@b.example"))),
             null, "Outlook is not running", null);
 
         Assert.Null(outcome.RunningProfile);

@@ -53,7 +53,7 @@ public sealed class ThreadScopedStoreTests
 
     private const string BobPrefix = "mapi16://" + Sid + "/" + BobStore + "($c0ffee00)";
 
-    private const string PstStore = "Archive 2019.pst";
+    private const string PstStore = "Archive Old.pst";
 
     /// <summary>A raw EntryID hex: long enough to be accepted without any hit cache or COM locate.</summary>
     private const string AnchorId = "00000000AABBCCDDEEFF00112233445566778899AABBCCDD";

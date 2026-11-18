@@ -765,7 +765,7 @@ public sealed class CorpusPopulationTests
             Assert.True(CorpusPlan.TryParseOrdinal(subject, plan.Options.CorpusId, out int parsed));
             Assert.Equal(o, parsed);
             Assert.Equal(subject, plan.BuildSubject(o));
-            Assert.DoesNotContain(RemediationRules.DaslCountFragment, subject, StringComparison.Ordinal);
+            Assert.DoesNotContain(LiveArtifactSweep.TagText, subject, StringComparison.Ordinal);
             Assert.False(HubCorpus.IsTestArtifact(subject));
         }
     }

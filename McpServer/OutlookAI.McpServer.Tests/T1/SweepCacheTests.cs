@@ -342,7 +342,7 @@ public sealed class SweepCacheTests
 
         // A store the broad sweep had no window for falls back to the entry's scalar base,
         // which is exactly the window such a store was swept with.
-        Assert.True(cache.TryGet(Frontier, "Archive 2019.pst", null, Shallow, Now.AddSeconds(2), out _));
+        Assert.True(cache.TryGet(Frontier, "Archive Old.pst", null, Shallow, Now.AddSeconds(2), out _));
     }
 
     [Fact]

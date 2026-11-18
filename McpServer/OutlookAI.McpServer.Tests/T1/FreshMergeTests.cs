@@ -438,7 +438,7 @@ public sealed class FreshMergeTests
                 Performed = true,
                 FoldersSwept = 4,
                 IndexFrontierMissing = true,
-                StoresWithoutIndex = new[] { "Archive 2019.pst" },
+                StoresWithoutIndex = new[] { "Archive Old.pst" },
             }));
 
         // 9. Rows inside a folder that WAS enumerated and could not be turned into items
@@ -563,12 +563,12 @@ public sealed class FreshMergeTests
             Performed = true,
             FoldersSwept = 4,
             IndexFrontierMissing = true,
-            StoresWithoutIndex = new[] { "Archive 2019.pst", "Old mail.pst" },
+            StoresWithoutIndex = new[] { "Archive Old.pst", "Old mail.pst" },
             CoverageGaps = new[] { FreshMerge.GapNoIndexFrontier },
         };
 
         string line = Assert.Single(MailService.DescribeSweepCoverage(named, "12 minutes", folderScoped: false));
-        Assert.Contains("Archive 2019.pst", line, StringComparison.Ordinal);
+        Assert.Contains("Archive Old.pst", line, StringComparison.Ordinal);
         Assert.Contains("Old mail.pst", line, StringComparison.Ordinal);
 
         // The unindexed-profile case knows the fact but has no catalog to name stores from.
