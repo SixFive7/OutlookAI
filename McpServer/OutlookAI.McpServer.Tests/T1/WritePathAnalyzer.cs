@@ -286,6 +286,14 @@ internal static class WritePathAnalyzer
 
         static bool Exempt(MethodBase method, MethodBase target, IReadOnlyList<IlInstruction> body, int at)
         {
+            // A reviewed file write is keyed by its member and the System.IO call ("...TrySave|File.Replace"), so one
+            // exemption never covers another member's writes, nor another call of the same member.
+            if (FileWrite(target) != null)
+            {
+                return ReadOnlyProductApi.InProductExemptions.ContainsKey(
+                    ReadOnlyProductApi.SourceKeyOf(method) + "|" + target.DeclaringType!.Name + "." + target.Name);
+            }
+
             if (target.DeclaringType?.FullName != "Microsoft.CSharp.RuntimeBinder.Binder" || target.Name != "InvokeMember")
             {
                 return false;

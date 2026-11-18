@@ -565,11 +565,12 @@ public sealed class OutlookSessionRegistryTests
     }
 
     [Fact]
-    public void TheDefaultRegistry_IsAFileUnderTheOutlookAIStateFolder()
+    public void TheDefaultRegistry_IsAFileInTheOutlookAIStateFolder_UnderALockOfThisLogonSession()
     {
-        Assert.Equal(
-            System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "OutlookAI", OutlookSessionRegistry.FileName),
-            OutlookSessionRegistry.Default.FilePath);
+        // Its shape only: the state folder itself is %LOCALAPPDATA%\OutlookAI, which no test names (T1/AuditLogIsolationTests).
+        string path = OutlookSessionRegistry.Default.FilePath;
+        Assert.True(System.IO.Path.IsPathRooted(path), path);
+        Assert.EndsWith(System.IO.Path.DirectorySeparatorChar + System.IO.Path.Combine("OutlookAI", OutlookSessionRegistry.FileName), path, StringComparison.OrdinalIgnoreCase);
         Assert.StartsWith(@"Local\", OutlookSessionRegistry.DefaultMutexName, StringComparison.Ordinal);
     }
 

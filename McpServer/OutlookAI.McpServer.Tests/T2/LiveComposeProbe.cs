@@ -680,19 +680,11 @@ internal sealed class Q180StartObserver : IDisposable
     {
         Q149Attempt attempt = new(Q149Cells.Q180, 1000 + start);
         attempt.Set("kind", "observed").Set("pid", pid);
-        DateTime? startedUtc = null;
+        // The kernel's creation time, as UTC: no machine time zone is read (Q144).
+        long? createdTicks = ProcessStamp.CreationUtcTicks(pid);
+        DateTime? startedUtc = createdTicks == null ? null : new DateTime(createdTicks.Value, DateTimeKind.Utc);
         using (Process? process = TryOpen(pid))
         {
-            if (process != null)
-            {
-                try
-                {
-                    startedUtc = process.StartTime.ToUniversalTime();
-                }
-                catch (Exception ex) when (ex is Win32Exception or InvalidOperationException or NotSupportedException)
-                {
-                }
-            }
 
             string? commandLine = Q149Native.TryReadCommandLine(pid);
             attempt.Set("embedding", commandLine == null ? null : commandLine.Contains("Embedding", StringComparison.OrdinalIgnoreCase))

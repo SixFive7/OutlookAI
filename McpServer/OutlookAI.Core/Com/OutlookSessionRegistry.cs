@@ -4,13 +4,16 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 
 namespace OutlookAI.Core.Com
 {
     /// <summary>
-    /// A process, told apart from a later one that reuses its id by its start time (UTC ticks).
+    /// A process, told apart from a later one that reuses its id by its start time (UTC ticks). The start time is the
+    /// kernel's creation time, read as UTC (<c>GetProcessTimes</c>): <see cref="Process.StartTime"/> converts it to the
+    /// machine's local time, and back would read the machine's time zone, which nothing here needs (Q144).
     /// </summary>
     public readonly struct ProcessStamp : IEquatable<ProcessStamp>
     {
@@ -38,13 +41,38 @@ namespace OutlookAI.Core.Com
                 return null;
             }
 
+            int pid;
             try
             {
-                return new ProcessStamp(process.Id, process.StartTime.ToUniversalTime().Ticks);
+                pid = process.Id;
             }
-            catch (Exception ex) when (ex is InvalidOperationException || ex is System.ComponentModel.Win32Exception || ex is NotSupportedException)
+            catch (InvalidOperationException)
             {
                 return null;
+            }
+
+            long? created = CreationUtcTicks(pid);
+            return created == null ? (ProcessStamp?)null : new ProcessStamp(pid, created.Value);
+        }
+
+        /// <summary>When the process with <paramref name="pid"/> was created, as UTC ticks; null when it cannot be read.</summary>
+        internal static long? CreationUtcTicks(int pid)
+        {
+            IntPtr handle = NativeMethods.OpenProcess(NativeMethods.ProcessQueryLimitedInformation, false, pid);
+            if (handle == IntPtr.Zero)
+            {
+                return null;
+            }
+
+            try
+            {
+                return NativeMethods.GetProcessTimes(handle, out long creation, out _, out _, out _) && creation > 0
+                    ? DateTime.FromFileTimeUtc(creation).Ticks
+                    : (long?)null;
+            }
+            finally
+            {
+                _ = NativeMethods.CloseHandle(handle);
             }
         }
 
@@ -52,7 +80,7 @@ namespace OutlookAI.Core.Com
         {
             using (Process self = Process.GetCurrentProcess())
             {
-                return Of(self) ?? new ProcessStamp(self.Id, 0);
+                return new ProcessStamp(self.Id, CreationUtcTicks(self.Id) ?? 0);
             }
         });
 
@@ -73,30 +101,30 @@ namespace OutlookAI.Core.Com
                 return false;
             }
 
-            Process? process = null;
+            IntPtr handle = NativeMethods.OpenProcess(
+                NativeMethods.ProcessQueryLimitedInformation | NativeMethods.Synchronize, false, stamp.Pid);
+            if (handle == IntPtr.Zero)
+            {
+                // No process with that id - or one this process may not open, which counts as running.
+                return Marshal.GetLastWin32Error() == NativeMethods.ErrorAccessDenied;
+            }
+
             try
             {
-                process = Process.GetProcessById(stamp.Pid);
-                if (process.HasExited)
+                if (stamp.StartedUtcTicks != 0
+                    && NativeMethods.GetProcessTimes(handle, out long creation, out _, out _, out _)
+                    && creation > 0
+                    && DateTime.FromFileTimeUtc(creation).Ticks != stamp.StartedUtcTicks)
                 {
+                    // A later process that reuses the id.
                     return false;
                 }
 
-                ProcessStamp? now = Of(process);
-                return now == null || stamp.StartedUtcTicks == 0 || now.Value.StartedUtcTicks == stamp.StartedUtcTicks;
-            }
-            catch (ArgumentException)
-            {
-                // No process with that id.
-                return false;
-            }
-            catch (Exception ex) when (ex is InvalidOperationException || ex is System.ComponentModel.Win32Exception)
-            {
-                return true;
+                return NativeMethods.WaitForSingleObject(handle, 0) == NativeMethods.WaitTimeout;
             }
             finally
             {
-                process?.Dispose();
+                _ = NativeMethods.CloseHandle(handle);
             }
         }
 
@@ -157,6 +185,28 @@ namespace OutlookAI.Core.Com
         public static bool operator !=(ProcessStamp left, ProcessStamp right)
         {
             return !left.Equals(right);
+        }
+
+        private static class NativeMethods
+        {
+            internal const uint ProcessQueryLimitedInformation = 0x1000;
+            internal const uint Synchronize = 0x00100000;
+            internal const int ErrorAccessDenied = 5;
+            internal const uint WaitTimeout = 0x102;
+
+            [DllImport("kernel32.dll", SetLastError = true)]
+            internal static extern IntPtr OpenProcess(uint desiredAccess, [MarshalAs(UnmanagedType.Bool)] bool inheritHandle, int processId);
+
+            [DllImport("kernel32.dll", SetLastError = true)]
+            [return: MarshalAs(UnmanagedType.Bool)]
+            internal static extern bool GetProcessTimes(IntPtr process, out long creationTime, out long exitTime, out long kernelTime, out long userTime);
+
+            [DllImport("kernel32.dll")]
+            internal static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
+
+            [DllImport("kernel32.dll")]
+            [return: MarshalAs(UnmanagedType.Bool)]
+            internal static extern bool CloseHandle(IntPtr handle);
         }
     }
 

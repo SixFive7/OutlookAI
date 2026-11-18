@@ -120,6 +120,19 @@ public sealed class ReadOnlyLiveTestTests
 
     // ------------------------------------------------------------------ controls: each kind of write is seen
 
+    [Fact]
+    public void Control_AFileWriteInsideTheProduct_IsSeen_UnlessItIsAReviewedOne()
+    {
+        // A draft's temporary body file is a file write no exemption covers; the session registry's save is the reviewed one.
+        MethodBase temporary = typeof(OutlookAI.Core.Com.OutlookComSession).GetMethod("WriteTemporaryHtmlFile", Everything)!;
+        Assert.Contains(
+            WritePathAnalyzer.WalkProduct(new[] { (temporary, "control") }).Findings,
+            f => f.Reason.Contains("writes the file system (File.WriteAllText)", StringComparison.Ordinal));
+
+        MethodBase save = typeof(OutlookAI.Core.Com.OutlookSessionRegistry).GetMethod("TrySave", Everything)!;
+        Assert.Empty(WritePathAnalyzer.WalkProduct(new[] { (save, "control") }).Findings);
+    }
+
     [Theory]
     [InlineData(nameof(Controls.AsksTheWriteGuard), "asks the write guard")]
     [InlineData(nameof(Controls.DraftsThroughTheProduct), "MailService.NewDraft")]

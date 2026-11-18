@@ -151,13 +151,32 @@ internal static class ReadOnlyProductApi
 
     /// <summary>
     /// What the in-product walk may meet and still call a read - each a reviewed case, keyed by the
-    /// source member the call sits in and the late-bound member it calls.
+    /// source member the call sits in and the late-bound member it calls, or the <c>System.IO</c> call it
+    /// makes (<c>File.Replace</c>).
     /// </summary>
     internal static readonly IReadOnlyDictionary<string, string> InProductExemptions = new Dictionary<string, string>(StringComparer.Ordinal)
     {
-        ["OutlookAI.Core.Com.OutlookComSession.Dispose|Close"] =
-            "closes the invisible pin Explorer the session itself opened, and only when the session started Outlook (D49): "
-            + "a window it owns, never an item, a folder or the user's own window",
+        ["OutlookAI.Core.Com.OutlookComSession.LeaveRegistry|Close"] =
+            "closes the invisible pin Explorer the session itself made, when it never joined the session registry and started "
+            + "Outlook, or when its window could not be read and so was never recorded (D49, Q118 (a)): a window OutlookAI owns, "
+            + "never an item, a folder or the user's own window",
+        ["OutlookAI.Core.Com.OutlookComSession.ClosePin|Close"] =
+            "closes the lifetime pin the session itself made, as the last session out or after Outlook's Quit (Q118 (a)), and "
+            + "only while its recorded window is still hidden: a window OutlookAI owns, never an item, a folder or a window a "
+            + "person can see",
+        ["OutlookAI.Core.Com.ComposeSurface.TryClosePinByWindow|Close"] =
+            "closes the lifetime pin another OutlookAI session made, found among Outlook's Explorers by the window handle the "
+            + "session registry recorded, and only while that window is hidden (Q118 (a)): a window OutlookAI owns, never an "
+            + "item, a folder or a window a person can see",
+        ["OutlookAI.Core.Com.OutlookSessionRegistry.TrySave|File.WriteAllText"] =
+            "writes OutlookAI's own session registry, %LOCALAPPDATA%\\OutlookAI\\outlook-sessions.txt (Q118 (a)): which OutlookAI "
+            + "sessions are attached to Outlook and the pin they share - never the mailbox, the profile or the user's files",
+        ["OutlookAI.Core.Com.OutlookSessionRegistry.TrySave|File.Replace"] =
+            "puts the session registry's new text in place of its old in one step (Q118 (a)); OutlookAI's own file",
+        ["OutlookAI.Core.Com.OutlookSessionRegistry.TrySave|File.Move"] =
+            "puts the session registry's first text in place (Q118 (a)); OutlookAI's own file",
+        ["OutlookAI.Core.Com.OutlookSessionRegistry.TrySave|File.Delete"] =
+            "deletes the session registry's own temporary file after a failed save (Q118 (a)); OutlookAI's own file",
     };
 
     /// <summary>
