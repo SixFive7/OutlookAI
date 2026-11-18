@@ -512,6 +512,38 @@ function Invoke-Dotnet {
     }
 }
 
+# Whether a dotnet call did what a rung asks: exit 0 - or an exit code that came back EMPTY while the
+# output itself shows the work was done ($OutputProves). Reading .Handle (Invoke-Dotnet) narrows the
+# Start-Process race without closing it: a process that is gone before .Handle is read leaves no code to
+# read. Measured 2026-11-18 on both indexed guests while the host's processors were saturated: twice
+# "FAIL rung 1: dotnet --list-sdks exited " with 10.0.401 listed on the next line. Every rung's output
+# already holds its own proof - the SDK listed, the probe's sentinel, the tests counted - so that proof
+# decides, and an empty code without it is still a failure; a call that timed out is always one. The
+# process handle is not kept instead: that needs Process.Start with pipes, and a build server that
+# inherits a pipe holds it open after dotnet exits (the stdout files Start-Process writes have no such
+# trap). Pure.
+function Test-DotnetSucceeded {
+    param($Result, [bool] $OutputProves)
+    if ($null -eq $Result -or $Result.TimedOut) { return $false }
+    if ('' -eq [string]$Result.ExitCode) { return $OutputProves }
+    return ($Result.ExitCode -eq 0)
+}
+
+# A dotnet call's exit code for a message: the code, or "(unread)" - never the empty string that once
+# made an unread code look like a failing command. Pure.
+function Format-DotnetExit($Result) {
+    if ($null -eq $Result -or '' -eq [string]$Result.ExitCode) { return '(unread)' }
+    return ('{0}' -f $Result.ExitCode)
+}
+
+# Says so when a rung passes on its output alone, so a log never hides that the code was not read.
+function Confirm-DotnetSucceeded {
+    param($Result, [bool] $OutputProves, [string] $What)
+    $ok = Test-DotnetSucceeded $Result $OutputProves
+    if ($ok -and '' -eq [string]$Result.ExitCode) { Say "    ($($What): its exit code could not be read; its output shows it worked)" }
+    return $ok
+}
+
 function Get-DotnetLogText([string] $outFile, [string] $errFile) {
     $text = ''
     foreach ($f in @($outFile, $errFile)) {
@@ -587,7 +619,8 @@ if ($Execute) {
     $alreadyInstalled = $false
     if ($existing) {
         $probe = Invoke-Dotnet -DotnetPath $existing.Path -Arguments @('--list-sdks') -LogName 'list-sdks-pre' -TimeoutMinutes 5
-        if ($probe.ExitCode -eq 0 -and $probe.Output -match ('(?m)^' + [regex]::Escape($ExpectedSdkVersionPrefix))) {
+        $listed = $probe.Output -match ('(?m)^' + [regex]::Escape($ExpectedSdkVersionPrefix))
+        if ($listed -and (Confirm-DotnetSucceeded $probe $listed 'dotnet --list-sdks')) {
             $alreadyInstalled = $true
             Say "  already an SDK matching '$ExpectedSdkVersionPrefix' at $($existing.Path) - skipping the installer"
         }
@@ -680,9 +713,9 @@ SHA-512, and update Testbed/MEDIA.md so the next rebuilder is not doing this aga
 
         # -Wait on a bundle can return before the work is on disk. Poll for the artefact rather
         # than trusting the exit code on its own.
-        $deadline = (Get-Date).AddMinutes(5)
+        $polled = [System.Diagnostics.Stopwatch]::StartNew()
         $dotnetExe = Join-Path $DotnetRoot 'dotnet.exe'
-        while ((Get-Date) -lt $deadline -and -not (Test-Path -LiteralPath $dotnetExe)) {
+        while ($polled.Elapsed.TotalMinutes -lt 5 -and -not (Test-Path -LiteralPath $dotnetExe)) {
             Start-Sleep -Seconds 5
         }
         if (-not (Test-Path -LiteralPath $dotnetExe)) {
@@ -775,18 +808,20 @@ else {
     # --- rung 1: the SDK answers -------------------------------------------------------------
     $rung1 = $false
     $listSdks = Invoke-Dotnet -DotnetPath $dotnet.Path -Arguments @('--list-sdks') -LogName 'list-sdks' -TimeoutMinutes 5
-    if ($listSdks.ExitCode -ne 0) {
-        Say "  FAIL rung 1: dotnet --list-sdks exited $($listSdks.ExitCode)"
+    $sdkListed = $listSdks.Output -match ('(?m)^' + [regex]::Escape($ExpectedSdkVersionPrefix))
+    if (-not (Confirm-DotnetSucceeded $listSdks $sdkListed 'dotnet --list-sdks')) {
+        Say "  FAIL rung 1: dotnet --list-sdks exited $(Format-DotnetExit $listSdks)"
         Show-Tail $listSdks.Output
     }
-    elseif ($listSdks.Output -notmatch ('(?m)^' + [regex]::Escape($ExpectedSdkVersionPrefix))) {
+    elseif (-not $sdkListed) {
         Say "  FAIL rung 1: no SDK matching '$ExpectedSdkVersionPrefix'. Installed:"
         Show-Tail $listSdks.Output
         $notes += "The wrong SDK is installed: nothing matches '$ExpectedSdkVersionPrefix'. A suite targets the .NET of its own major and does not build without an SDK of that major (Testbed/MEDIA.md)."
     }
     else {
         $info = Invoke-Dotnet -DotnetPath $dotnet.Path -Arguments @('--info') -LogName 'info' -TimeoutMinutes 5
-        $ridOk = ($info.ExitCode -eq 0 -and $info.Output -match '(?i)win-x64')
+        $ridListed = $info.Output -match '(?i)win-x64'
+        $ridOk = ($ridListed -and (Confirm-DotnetSucceeded $info $ridListed 'dotnet --info'))
         if (-not $ridOk) {
             Say '  FAIL rung 1: --info does not report a win-x64 RID.'
             Show-Tail $info.Output
@@ -846,7 +881,8 @@ System.Console.WriteLine("$sentinel " + System.Environment.Version + " " + (Syst
         $probeSdk = Invoke-Dotnet -DotnetPath $dotnet.Path -Arguments @('--version') -LogName 'probe-sdk' -TimeoutMinutes 5 -WorkingDirectory $ProbeDir
         Say ("  rung 2 sdk: " + ($probeSdk.Output.Trim() -split "`r?`n")[0] + "  (global.json: $pinVersion, rollForward $pinRollForward)")
         $run = Invoke-Dotnet -DotnetPath $dotnet.Path -Arguments @('run', '--project', $probeProj, '-c', $Configuration) -LogName 'probe-run' -TimeoutMinutes 15 -WorkingDirectory $ProbeDir
-        if ($run.ExitCode -eq 0 -and $run.Output -match [regex]::Escape($sentinel)) {
+        $sentinelSeen = $run.Output -match [regex]::Escape($sentinel)
+        if ($sentinelSeen -and (Confirm-DotnetSucceeded $run $sentinelSeen 'dotnet run')) {
             $sentinelLine = ''
             foreach ($line in ($run.Output -split "`r?`n")) {
                 if ($line -match [regex]::Escape($sentinel)) {
@@ -866,7 +902,7 @@ System.Console.WriteLine("$sentinel " + System.Environment.Version + " " + (Syst
             }
         }
         else {
-            Say "  FAIL rung 2: the throwaway console project did not build and run (exit $($run.ExitCode), timed out: $($run.TimedOut))."
+            Say "  FAIL rung 2: the throwaway console project did not build and run (exit $(Format-DotnetExit $run), timed out: $($run.TimedOut))."
             Show-Tail $run.Output
             $notes += 'The SDK itself is not working. Nothing about the staged feed or the source can explain this one.'
         }
@@ -900,8 +936,8 @@ System.Console.WriteLine("$sentinel " + System.Environment.Version + " " + (Syst
             if ($line -match '^\s{2,}\S+\.\S+') { $discovered++ }
         }
 
-        if ($listTests.ExitCode -ne 0 -or $discovered -le 0) {
-            Say "  FAIL rung 3: dotnet test --list-tests exited $($listTests.ExitCode) and enumerated $discovered test(s)."
+        if ($discovered -le 0 -or -not (Confirm-DotnetSucceeded $listTests ($discovered -gt 0) 'dotnet test --list-tests')) {
+            Say "  FAIL rung 3: dotnet test --list-tests exited $(Format-DotnetExit $listTests) and enumerated $discovered test(s)."
             Show-Tail $listTests.Output 40
             if ($listTests.Output -match '(?i)unable to load the service index|NU1301|no such host is known|nuget\.org') {
                 $notes += 'The restore tried to reach the network. Check that NuGet.config really cleared the inherited sources and that every package the suite needs is in the staged feed.'
@@ -926,12 +962,13 @@ System.Console.WriteLine("$sentinel " + System.Environment.Version + " " + (Syst
                 $passed = [int]$m.Groups[2].Value
             }
 
-            if ($smoke.ExitCode -eq 0 -and $passed -gt 0 -and $failed -eq 0) {
+            $smokeShown = ($m.Success -and $passed -gt 0 -and $failed -eq 0)
+            if ($smokeShown -and (Confirm-DotnetSucceeded $smoke $smokeShown 'dotnet test')) {
                 Say "  OK   rung 4: $passed test(s) executed and passed, 0 failed."
                 $verdict = $VerdictTestReady
             }
             else {
-                Say "  FAIL rung 4: exit $($smoke.ExitCode), passed $passed, failed $failed."
+                Say "  FAIL rung 4: exit $(Format-DotnetExit $smoke), passed $passed, failed $failed."
                 Show-Tail $smoke.Output 40
                 $verdict = $VerdictBroken
                 $notes += "Discovery worked and execution did not. That is a test-host problem, not an SDK one - read $($smoke.OutFile)."

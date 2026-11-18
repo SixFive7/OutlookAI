@@ -872,3 +872,40 @@ public sealed class ResumableScanTests
         }
     }
 }
+
+/// <summary>
+/// The id the exhaustive scan keys its resume state on (decided 2026-11-18, against the promise that a resumed
+/// scan duplicates nothing). On a cached Exchange store a folder table's EntryID is a 24-byte SHORT-TERM id,
+/// good only in one Outlook session; the scan adds PR_LONGTERM_ENTRYID_FROM_TABLE and keys on that - which
+/// Outlook hands over as an object[] of 70 single bytes, equal to the item's own EntryID (measured on the
+/// Exchange guest the same day). Every id here is synthetic.
+/// </summary>
+public sealed class ScanRowKeyTests
+{
+    private static readonly byte[] LongTerm = Enumerable.Range(0, 70).Select(i => (byte)(i * 3)).ToArray();
+
+    private static string Hex(byte[] bytes) => string.Concat(bytes.Select(b => b.ToString("X2", System.Globalization.CultureInfo.InvariantCulture)));
+
+    [Fact]
+    public void ARowIsKeyedOnItsLongTermId_AsOutlooksTableHandsItOver()
+    {
+        const string shortTerm = "EF000000AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA01020304";
+
+        // An object[] of bytes, as measured; a byte[], as a binary cell could also arrive; a string, as it is.
+        Assert.Equal(Hex(LongTerm), OutlookComSession.ScanRowKey(LongTerm.Cast<object>().ToArray(), shortTerm));
+        Assert.Equal(Hex(LongTerm), OutlookComSession.ScanRowKey(LongTerm, shortTerm));
+        Assert.Equal("00AB", OutlookComSession.ScanRowKey("00AB", shortTerm));
+    }
+
+    [Fact]
+    public void WithoutALongTermCell_TheTablesOwnIdKeysTheRow_AsADataFilesIs()
+    {
+        const string pstId = "0000000011112222333344445555666677778888";
+
+        Assert.Equal(pstId, OutlookComSession.ScanRowKey(null, pstId));
+        Assert.Equal(pstId, OutlookComSession.ScanRowKey(Array.Empty<object>(), pstId));
+        Assert.Equal(pstId, OutlookComSession.ScanRowKey(new object[] { (byte)1, "not a byte" }, pstId));
+        Assert.Equal(pstId, OutlookComSession.ScanRowKey(string.Empty, pstId));
+        Assert.Null(OutlookComSession.TableIdText(new object[] { 1, 2 }));
+    }
+}

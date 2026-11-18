@@ -10075,6 +10075,12 @@ namespace OutlookAI.Core.Com
                     return;
                 }
 
+                // What the resume state is keyed on: the long-term EntryID, where the table can give it
+                // (ScanRowKey) - so that an id this page records still means the same item on the next
+                // page, in this Outlook session or the next.
+                int longTermIndex = TryAddLongTermIdColumn(t);
+                int keyIndex = longTermIndex >= 0 ? longTermIndex : entryIdIndex;
+
                 if (dateIndex < 0)
                 {
                     dateIndex = FindDateColumn(t, out dateProperty);
@@ -10094,7 +10100,7 @@ namespace OutlookAI.Core.Com
 
                 if (plan.Tier == ScanResumeTiers.Ordinal && plan.RowOrdinal > 0)
                 {
-                    if (TrySkipRows(t, plan.RowOrdinal, entryIdIndex, out string? landedOn)
+                    if (TrySkipRows(t, plan.RowOrdinal, keyIndex, out string? landedOn)
                         && landedOn != null
                         && string.Equals(landedOn, plan.WatermarkEntryId, StringComparison.OrdinalIgnoreCase))
                     {
@@ -10146,13 +10152,16 @@ namespace OutlookAI.Core.Com
                             continue;
                         }
 
+                        // The row's resume key is its long-term id; the table's own id still opens the item in
+                        // this session.
+                        string rowKey = ScanRowKey(longTermIndex >= 0 && longTermIndex < values.Length ? values[longTermIndex] : null, entryId);
                         state.RowsConsumedInFolder++;
-                        state.LastRowEntryId = entryId;
+                        state.LastRowEntryId = rowKey;
 
                         // Already returned by an earlier page of this chain. Not a drop and
                         // not a failure: the row is exactly where it was meant to be, and
                         // re-reading it is the price the restart rung was chosen to pay.
-                        if (state.AlreadyEmitted(entryId))
+                        if (state.AlreadyEmitted(rowKey))
                         {
                             continue;
                         }
@@ -10198,7 +10207,7 @@ namespace OutlookAI.Core.Com
                         // received time converted as an item value when it did not. Both halves
                         // are UTC, and the conversion is the point - see ScanCursorDate, which
                         // holds the decision so CI can reach it.
-                        state.Admit(brief, entryId, ScanCursorDate(received, brief.ReceivedTime));
+                        state.Admit(brief, rowKey, ScanCursorDate(received, brief.ReceivedTime));
                     }
                     finally
                     {
@@ -10215,6 +10224,84 @@ namespace OutlookAI.Core.Com
             {
                 Release(table);
             }
+        }
+
+        /// <summary>PR_LONGTERM_ENTRYID_FROM_TABLE, by its MAPI tag, as a table column.</summary>
+        private const string LongTermEntryIdSchema = "http://schemas.microsoft.com/mapi/proptag/0x66700102";
+
+        /// <summary>
+        /// Adds PR_LONGTERM_ENTRYID_FROM_TABLE to a table and returns its position, or -1 when the table will not
+        /// carry it. On a cached Exchange store the table's EntryID column holds a SHORT-TERM id, good only in the
+        /// Outlook session that handed it out, while the item answers with its long-term one (stream E2's finding,
+        /// 2026-11-18); this column carries the long-term id beside it. Measured on the Exchange guest the same day,
+        /// read-only, 25 rows of a cached folder: the column was accepted, every cell was 70 bytes as an object[] and
+        /// equal to the item's own EntryID, the table's ids were 24 bytes (flag byte 0xEF), and two tables of one
+        /// session gave the same short-term ids. A data file's table has no such column, and its EntryID is the
+        /// long-term id already.
+        /// </summary>
+        private int TryAddLongTermIdColumn(dynamic table)
+        {
+            object? columns = null;
+            object? column = null;
+            try
+            {
+                columns = table.Columns;
+                column = ((dynamic)columns!).Add(LongTermEntryIdSchema);
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+                return -1;
+            }
+            finally
+            {
+                Release(column);
+                Release(columns);
+            }
+
+            return FindTableColumn(table, LongTermEntryIdSchema);
+        }
+
+        /// <summary>
+        /// A table cell that holds an id, as hex: a binary cell's bytes - which Outlook's table hands over as an
+        /// array of single bytes, an object[] (measured on the Exchange guest, 2026-11-18) - or a string cell as
+        /// it is; null for an empty or missing cell, or one that is not bytes. Pure.
+        /// </summary>
+        internal static string? TableIdText(object? value)
+        {
+            switch (value)
+            {
+                case byte[] bytes when bytes.Length > 0:
+                    return SpecialFolders.ToHex(bytes);
+                case object[] cells when cells.Length > 0:
+                    byte[] copied = new byte[cells.Length];
+                    for (int i = 0; i < cells.Length; i++)
+                    {
+                        if (cells[i] is not byte b)
+                        {
+                            return null;
+                        }
+
+                        copied[i] = b;
+                    }
+
+                    return SpecialFolders.ToHex(copied);
+                case string text when text.Length > 0:
+                    return text;
+                default:
+                    return null;
+            }
+        }
+
+        /// <summary>
+        /// The id the exhaustive scan keys a row's resume state on - its already-returned set, its date ties and
+        /// its row position: the row's long-term EntryID when the table carries one, else the table's own
+        /// EntryID, which is a data file's long-term id. Keyed on a short-term id, a page after an Outlook
+        /// restart could not tell the items an earlier page returned, and returned them again - against the
+        /// promise that a resumed scan duplicates nothing. Pure.
+        /// </summary>
+        internal static string ScanRowKey(object? longTermValue, string tableEntryId)
+        {
+            return TableIdText(longTermValue) ?? tableEntryId;
         }
 
         /// <summary>
@@ -10418,7 +10505,7 @@ namespace OutlookAI.Core.Com
                 return false;
             }
 
-            landedOn = value as string;
+            landedOn = TableIdText(value);
             return !string.IsNullOrEmpty(landedOn);
         }
 
