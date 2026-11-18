@@ -612,6 +612,181 @@ internal sealed class Q180ColdStartWatch : IDisposable
     }
 }
 
+/// <summary>
+/// Q180 (b): EVERY start of OUTLOOK.EXE while the measurement runs, whoever caused it - a cell's cold start, the
+/// client that re-reads the drafts, the fixture's teardown - watched from outside as it comes up: from the moment it
+/// is first seen until two seconds after Windows first calls it responsive, until it exits, or for three minutes, with
+/// <see cref="OutlookLiveness"/> sampled every 100 ms. One <see cref="Q149Cells.Q180"/> line per start, kind
+/// "observed", written to the console capture only - it runs on its own thread, past the end of any one test. A start
+/// a cell makes itself is also logged by that cell's <see cref="Q180ColdStartWatch"/>, with the moment the object
+/// model first answered.
+/// </summary>
+internal sealed class Q180StartObserver : IDisposable
+{
+    private const int SampleMs = 100;
+    private const int AfterResponsiveMs = 2000;
+    private const int WatchLimitMs = 180_000;
+
+    private readonly HashSet<int> _known = new();
+    private readonly Thread _thread;
+    private volatile bool _stop;
+    private int _starts;
+
+    public Q180StartObserver()
+    {
+        foreach (int pid in OutlookPids())
+        {
+            _ = _known.Add(pid);
+        }
+
+        _thread = new Thread(Watch) { IsBackground = true, Name = "Q180.StartObserver" };
+        _thread.Start();
+    }
+
+    /// <summary>How many starts it has logged.</summary>
+    public int Starts => Volatile.Read(ref _starts);
+
+    public void Dispose()
+    {
+        _stop = true;
+        _thread.Join(TimeSpan.FromSeconds(10));
+    }
+
+    private void Watch()
+    {
+        while (!_stop)
+        {
+            try
+            {
+                foreach (int pid in OutlookPids())
+                {
+                    if (_known.Add(pid))
+                    {
+                        Observe(pid, Interlocked.Increment(ref _starts));
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                // An observer must never take the run down; the gap is logged instead.
+                Console.WriteLine(new Q149Attempt(Q149Cells.Q180, 999).Set("kind", "observed").Set("observerFailure", ex.GetType().Name).ToLine());
+            }
+
+            Thread.Sleep(SampleMs);
+        }
+    }
+
+    private void Observe(int pid, int start)
+    {
+        Q149Attempt attempt = new(Q149Cells.Q180, 1000 + start);
+        attempt.Set("kind", "observed").Set("pid", pid);
+        DateTime? startedUtc = null;
+        using (Process? process = TryOpen(pid))
+        {
+            if (process != null)
+            {
+                try
+                {
+                    startedUtc = process.StartTime.ToUniversalTime();
+                }
+                catch (Exception ex) when (ex is Win32Exception or InvalidOperationException or NotSupportedException)
+                {
+                }
+            }
+
+            string? commandLine = Q149Native.TryReadCommandLine(pid);
+            attempt.Set("embedding", commandLine == null ? null : commandLine.Contains("Embedding", StringComparison.OrdinalIgnoreCase))
+                .Set("firstSeenMsAfterStart", startedUtc == null ? null : (long)(DateTime.UtcNow - startedUtc.Value).TotalMilliseconds);
+            List<(long Ms, string Verdict)> samples = new();
+            List<string> details = new();
+            long? responsiveAt = null;
+            bool exited = false;
+            Stopwatch watched = Stopwatch.StartNew();
+            while (!_stop && watched.ElapsedMilliseconds < WatchLimitMs)
+            {
+                if (process == null || HasExited(process))
+                {
+                    exited = true;
+                    break;
+                }
+
+                long ms = startedUtc == null ? watched.ElapsedMilliseconds : (long)(DateTime.UtcNow - startedUtc.Value).TotalMilliseconds;
+                OutlookLivenessState state = OutlookLiveness.Probe(out string detail);
+                samples.Add((ms, state.ToString()));
+                if (details.Count < 32 && (details.Count == 0 || details[details.Count - 1] != state + ": " + detail))
+                {
+                    details.Add(state + ": " + detail);
+                }
+
+                if (state == OutlookLivenessState.Responsive && responsiveAt == null)
+                {
+                    responsiveAt = watched.ElapsedMilliseconds;
+                }
+
+                if (responsiveAt != null && watched.ElapsedMilliseconds > responsiveAt.Value + AfterResponsiveMs)
+                {
+                    break;
+                }
+
+                Thread.Sleep(SampleMs);
+            }
+
+            (IReadOnlyList<object[]> changes, int hungSamples, long longestHungMs, long? firstResponsive) = Q180Verdicts.Summarize(samples);
+            attempt.Set("readyMs", firstResponsive)
+                .Set("verdicts", changes.ToArray())
+                .Set("verdictDetails", details.ToArray())
+                .Set("samples", samples.Count)
+                .Set("hungSamples", hungSamples)
+                .Set("longestHungMs", longestHungMs)
+                .Set("exitedBeforeResponsive", exited && firstResponsive == null)
+                .Set("neverResponsiveWithin", firstResponsive == null && !exited ? WatchLimitMs : null)
+                .Set("hung", hungSamples > 0 || (firstResponsive == null && !exited));
+        }
+
+        Console.WriteLine(attempt.ToLine());
+    }
+
+    private static Process? TryOpen(int pid)
+    {
+        try
+        {
+            return Process.GetProcessById(pid);
+        }
+        catch (ArgumentException)
+        {
+            return null;
+        }
+    }
+
+    private static bool HasExited(Process process)
+    {
+        try
+        {
+            return process.HasExited;
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or Win32Exception)
+        {
+            return true;
+        }
+    }
+
+    private static List<int> OutlookPids()
+    {
+        Process[] processes = Process.GetProcessesByName("OUTLOOK");
+        try
+        {
+            return processes.Select(p => p.Id).ToList();
+        }
+        finally
+        {
+            foreach (Process p in processes)
+            {
+                p.Dispose();
+            }
+        }
+    }
+}
+
 /// <summary>Release, and the failure description every attempt line uses.</summary>
 internal static class Q149Com
 {

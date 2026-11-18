@@ -148,7 +148,7 @@ namespace OutlookAI.Core.Com
         /// The per-user registry this session joins (Q118 (a)): the sessions attached to its Outlook, the one
         /// lifetime pin they share, and whether a compose window has been promoted in that Outlook (Q208 B).
         /// </summary>
-        private OutlookSessionRegistry _registry = OutlookSessionRegistry.Default;
+        private readonly OutlookSessionRegistry _registry = OutlookSessionRegistry.Default;
 
         /// <summary>This session's key in the registry, or null when it never joined (its Outlook was not found).</summary>
         private string? _sessionKey;
@@ -204,12 +204,6 @@ namespace OutlookAI.Core.Com
 
         /// <summary>What the last leave of the registry decided about the pin - a diagnostic, set by <see cref="Dispose"/>.</summary>
         public string? LeaveOutcome { get; private set; }
-
-        /// <summary>
-        /// The registry a session made by <see cref="Connect(bool, Action{OutlookComSession}, bool, OutlookSessionRegistry)"/>
-        /// uses - the per-user default for every product session.
-        /// </summary>
-        internal OutlookSessionRegistry Registry => _registry;
 
         /// <summary>
         /// D49 diagnostic for the live tests (2026-10-03): whether this session's lifetime pin is
@@ -382,9 +376,16 @@ namespace OutlookAI.Core.Com
                         SessionRegistryRules.PinClosed(state, outlook, record.PinWindow);
                     }
 
+                    if (_composeSurfacePin != null && _ownPinWindow == 0)
+                    {
+                        // This session's own pin, whose window could not be read and so was never recorded, stands.
+                        return 0;
+                    }
+
                     if (_composeSurfacePin != null)
                     {
-                        // This session's earlier pin is no longer recorded: let go of the reference, never Close it here.
+                        // This session's recorded pin is gone, or a person's window now: let go of the reference, never
+                        // Close it here.
                         ComposeSurface.ForgetPin(_composeSurfacePin);
                         Release(_composeSurfacePin);
                         _composeSurfacePin = null;
@@ -478,15 +479,6 @@ namespace OutlookAI.Core.Com
         /// </summary>
         internal static OutlookComSession Connect(bool allowStartingOutlook, Action<OutlookComSession>? onOutlookGone, bool lifetimePin)
         {
-            return Connect(allowStartingOutlook, onOutlookGone, lifetimePin, OutlookSessionRegistry.Default);
-        }
-
-        /// <summary>
-        /// <see cref="Connect(bool, Action{OutlookComSession}, bool)"/> against a registry of the caller's choosing - the
-        /// T2 tests' way to watch the session rules on a registry no product session shares.
-        /// </summary>
-        internal static OutlookComSession Connect(bool allowStartingOutlook, Action<OutlookComSession>? onOutlookGone, bool lifetimePin, OutlookSessionRegistry registry)
-        {
             bool wasRunning = IsOutlookProcessRunning();
             if (!wasRunning)
             {
@@ -506,7 +498,6 @@ namespace OutlookAI.Core.Com
             OutlookComSession session = new OutlookComSession(runner, startedOutlook: !wasRunning);
             session._onOutlookGone = onOutlookGone;
             session._lifetimePinAllowed = lifetimePin;
-            session._registry = registry ?? throw new ArgumentNullException(nameof(registry));
             try
             {
                 runner.Run(() =>
