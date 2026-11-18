@@ -121,7 +121,7 @@ public sealed class LivePaneTests
                             statuses.Add(now);
                         }
 
-                        return LiveOutlookTestMailer.ReadOpenDraft(Hub, draft.EntryId, Marker);
+                        return ReadOpenDraftWhileThePaneWrites(draft.EntryId);
                     },
                     r => r.DraftText.Contains("Stand-in draft, first line", StringComparison.Ordinal)
                          && r.SignatureText.Contains(aisChoice.BodyMarker, StringComparison.Ordinal));
@@ -131,6 +131,7 @@ public sealed class LivePaneTests
                 throw new TimeoutException(
                     ex.Message + "\npane status, in order: " + string.Join(" -> ", statuses.Select(st => "\"" + st + "\""))
                     + "\ninstruction box now: " + PaneControls.Describe(prompt) + "; button now: " + PaneControls.Describe(edit)
+                    + "\nlast failed read of the open draft: " + (_lastOpenDraftReadError ?? "none")
                     + "\nprompts the stand-in received: " + standIn.Prompts().Count
                     + "; the stand-in is still at " + ClaudeCliStandIn.CliPath + ": " + ClaudeCliStandIn.IsInPlace, ex);
             }
@@ -164,10 +165,22 @@ public sealed class LivePaneTests
                 () => PaneControls.Find(opened.Window, "WindowsForms10.BUTTON", "Select the best signature"));
             int promptsBefore = standIn.Prompts().Count;
             PaneControls.Click(selectButton);
-            OpenDraftReading reselected = WaitFor(
-                "the agent's signature, chosen again through Select the best signature",
-                () => LiveOutlookTestMailer.ReadOpenDraft(Hub, draft.EntryId, Marker),
-                r => r.SignatureText.Contains(agentsChoice.BodyMarker, StringComparison.Ordinal));
+            OpenDraftReading reselected;
+            try
+            {
+                reselected = WaitFor(
+                    "the agent's signature, chosen again through Select the best signature",
+                    () => ReadOpenDraftWhileThePaneWrites(draft.EntryId),
+                    r => r.SignatureText.Contains(agentsChoice.BodyMarker, StringComparison.Ordinal));
+            }
+            catch (TimeoutException ex)
+            {
+                throw new TimeoutException(
+                    ex.Message + "\npane status now: \"" + PaneControls.ReadStatus(opened.Window) + "\""
+                    + "\nbutton now: " + PaneControls.Describe(selectButton)
+                    + "\nprompts the stand-in received since the click: " + (standIn.Prompts().Count - promptsBefore)
+                    + "\nlast failed read of the open draft: " + (_lastOpenDraftReadError ?? "none"), ex);
+            }
             string reselectStatus = PaneControls.ReadStatus(opened.Window);
             _output.WriteLine($"select the best signature: {standIn.Prompts().Count - promptsBefore} prompt(s) more, "
                 + $"pane status \"{reselectStatus}\"");
@@ -188,6 +201,29 @@ public sealed class LivePaneTests
         }
 
         Assert.Equal(0, LiveOutlookTestMailer.CountTaggedArtifacts(Hub, Marker));
+    }
+
+    /// <summary>The last read of the open draft that failed while the pane wrote it, for a timeout to name.</summary>
+    private string? _lastOpenDraftReadError;
+
+    /// <summary>
+    /// The open draft, read while the pane may be writing it. A read that fails on a COM error is "not yet",
+    /// not a failure: the pane's signature write takes the signature's bookmark away for a moment, and "The
+    /// requested member of the collection does not exist" is what a read then gets (OutlookAI-Indexed,
+    /// 2026-11-18, at c4e975d, just after "Select the best signature" was clicked). A timeout names the last
+    /// such error.
+    /// </summary>
+    private OpenDraftReading? ReadOpenDraftWhileThePaneWrites(string entryId)
+    {
+        try
+        {
+            return LiveOutlookTestMailer.ReadOpenDraft(Hub, entryId, Marker);
+        }
+        catch (InvalidOperationException ex) when (ex.InnerException is COMException com)
+        {
+            _lastOpenDraftReadError = com.Message;
+            return null;
+        }
     }
 
     private static IntPtr WaitForWindow(string what, Func<IntPtr> find)
