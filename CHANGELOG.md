@@ -288,6 +288,22 @@ its mailbox tests on, and change nothing you install.
   20 seconds after any Outlook start; the server's README and `McpServer/Docs/com-host.md` describe
   the settle wait, the start lock, the limit, the record, the log and the report.
 
+- ✅ **Test runs wait while the PC is 70 % busy or more, and a pause switch holds new ones back.**
+  With every testbed machine running at once, the host's 32 logical processors were 82 to 100 % busy:
+  the maintainer's own work slowed down, and every run took about twice as long. He decided on
+  2026-11-18 (Q195 (e)) that a run starts only while the processors were less than 70 % busy over the
+  last 30 seconds, and that he can stop new runs when he needs the PC, for gaming for example.
+  `pwsh -File Testbed/host/Set-TestbedPause.ps1 -On` holds every new run back until `-Off`, and runs
+  already going finish. The build runner looks at the switch and the load on every turn of its queue,
+  before it touches a build machine; the live runner before its build and on every turn of its wait
+  for a guest; the clone maker before it takes its source. A waiting run holds no machine's lock or
+  lease, keeps its place in the queue, sleeps until a file of the testbed changes or 30 seconds pass,
+  says what it waits for and since when once a minute, and is listed by `Set-TestbedPause.ps1`.
+  A machine another run took in the last two minutes counts at its full size, so the runs that waited
+  do not all start in the second the load dips. The load comes from kernel32's GetSystemTimes, which
+  counts the virtual machines here because Hyper-V runs its root scheduler on this host: it read 83 %
+  where the hypervisor's own counter read 85 %, of which 29 points were the machines'.
+
 - ✅ **The compose measurement also runs the product's own drafting, Outlook's typed text, and cold starts.**
   As the maintainer decided on 2026-11-18, the Q149 suite stays (Q210 (a)) and gains seven cells.
   P1 runs the product's drafts in an Outlook with no window, three starts of ten drafts each,
