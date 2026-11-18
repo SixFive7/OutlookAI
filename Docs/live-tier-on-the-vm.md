@@ -4709,6 +4709,16 @@ Each refusal says what to give instead, and the draft tools' `attachments` descr
 `T1/DraftAttachmentsTests` and `T1/WindowsFileNamesTests` hold every spelling, `T3/SoakBatchCCiToolShapeTests`
 the refusal over stdio on all five tools, and `T2/LiveDraftAttachmentPathTests` the real Outlook.
 
+**After** - run `20261118-071558-unindexed-6ffdf4d09153` on `OutlookAI-Unindexed`, commit `6ffdf4d`: 5 of 5
+passed, no crash. In `LiveDraftAttachmentPathTests` new_draft refused nine paths, each beside an ordinary file:
+the ordinary file, `CON.txt`, the dotted name and a 260-character path through `\\?\`; `CON.txt`, the stream and
+the 260-character path by their ordinary paths; the dotted name through `\??\`; and `\\.\pipe\...`. Each came
+back with its reason above, no draft was made - a count of the refused calls' subject found none - and the same
+OUTLOOK.EXE kept running. A draft made with the ordinary file, files through `\\.\` and `\??\`, and a file whose
+path is exactly 259 characters held all four, each at its own size; update_draft then refused a `\\?\` path, and
+the draft kept its four files. save_attachment's two folder tests and the two attachment tests of
+`LiveUpdateDiscardTests` passed on the same run.
+
 ## 5. Which tests are in which bucket, and how to find out
 
 The classification is **two traits on the test itself**, not a list in a document that can drift -
