@@ -1026,39 +1026,56 @@ Expected: 1</Message></ErrorInfo></Output></UnitTestResult>
     Check 'a VM is looked up in exactly one place, Find-PoolVm' 1 $vmLookups.Count
     $findPoolVm = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Find-PoolVm' }, $true))
     Check 'and it refuses a name that is no build VM before it asks Hyper-V' $true ($findPoolVm.Count -eq 1 -and $findPoolVm[0].Body.Extent.Text.IndexOf('Test-IsBuildVmName') -ge 0 -and $findPoolVm[0].Body.Extent.Text.IndexOf('Test-IsBuildVmName') -lt $findPoolVm[0].Body.Extent.Text.IndexOf('Get-VM '))
-    # The run's code only: this self-test asks the narrow query too, to see it refuse.
-    $stateReads = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Get-TestbedVmState' }, $true) | Where-Object {
-            $up = $_.Parent
-            while ($null -ne $up -and -not ($up -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $up.Name -eq 'Invoke-SelfTest')) { $up = $up.Parent }
-            $null -eq $up
-        })
-    $getStates = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Get-PoolVmStates' }, $true))
-    Check 'a VM''s state is read in exactly one place, Get-PoolVmStates, which refuses a name that is no build VM before it asks' $true ($stateReads.Count -eq 1 -and $getStates.Count -eq 1 -and $getStates[0].Body.Extent.Text.IndexOf('Test-IsBuildVmName') -ge 0 -and $getStates[0].Body.Extent.Text.IndexOf('Test-IsBuildVmName') -lt $getStates[0].Body.Extent.Text.IndexOf('Get-TestbedVmState'))
+    # The run's code only: this self-test asks the narrow queries too, to see them refuse.
+    function Get-RunCalls([string] $Command) {
+        return @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq $Command }, $true) | Where-Object {
+                $up = $_.Parent
+                while ($null -ne $up -and -not ($up -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $up.Name -eq 'Invoke-SelfTest')) { $up = $up.Parent }
+                $null -eq $up
+            })
+    }
+    $getVms = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Get-PoolVms' }, $true))
+    Check 'members are found by name in exactly one place, Get-PoolVms, which refuses a name that is no build VM before it asks' $true ((Get-RunCalls 'Get-TestbedVms').Count -eq 1 -and $getVms.Count -eq 1 -and $getVms[0].Body.Extent.Text.IndexOf('Test-IsBuildVmName') -ge 0 -and $getVms[0].Body.Extent.Text.IndexOf('Test-IsBuildVmName') -lt $getVms[0].Body.Extent.Text.IndexOf('Get-TestbedVms'))
+    Check 'and the state and the heartbeat by the held member''s id, one place each' '1|1' ("{0}|{1}" -f (Get-RunCalls 'Get-TestbedVmStateById').Count, (Get-RunCalls 'Test-TestbedHeartbeat').Count)
+    Check 'Get-VMIntegrationService is asked nothing any more' 0 (Get-RunCalls 'Get-VMIntegrationService').Count
 
     Write-Host ''
     Write-Host '== a run that waits asks Hyper-V nothing (2026-11-18, TestbedPool.ps1) =='
-    Check 'a waiting run looks again at most every 30 s, and a running one asks its guest and its heartbeat every 15 s' '30|15' "$TestbedWaitSeconds|$TestbedGuestPollSeconds"
+    Check 'a waiting run looks again at most every 30 s; a running one asks its guest every 15 s and a heartbeat every 2 s' '30|15|2' "$TestbedWaitSeconds|$TestbedGuestPollSeconds|$TestbedHeartbeatSeconds"
     $enterPoolVm = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Enter-PoolVm' }, $true))
     $body = ''
     if ($enterPoolVm.Count -eq 1) { $body = $enterPoolVm[0].Body.Extent.Text }
     $at = @{}
-    foreach ($mark in @('Get-PoolVmStates $Candidates', '$ticket = Join-TestbedQueue', 'while ($true)', '$ahead = Get-TestbedQueueTurn', 'Get-TestbedLease -VMName $name', '[System.IO.File]::Open($script:lockPath', 'Find-PoolVm $name', '[void](Wait-TestbedChange)', 'finally { Exit-TestbedQueue $ticket }')) { $at[$mark] = $body.IndexOf($mark) }
-    Check 'which members are on this host is asked once, before the queue is joined and the turns begin' $true ($at['Get-PoolVmStates $Candidates'] -ge 0 -and $at['Get-PoolVmStates $Candidates'] -lt $at['$ticket = Join-TestbedQueue'] -and $at['$ticket = Join-TestbedQueue'] -lt $at['while ($true)'])
-    Check 'each turn reads its place in the queue, then a member''s lease and lock - files - before Hyper-V' $true ($at['$ahead = Get-TestbedQueueTurn'] -gt $at['while ($true)'] -and $at['Get-TestbedLease -VMName $name'] -gt $at['$ahead = Get-TestbedQueueTurn'] -and $at['[System.IO.File]::Open($script:lockPath'] -gt $at['Get-TestbedLease -VMName $name'])
-    Check 'Hyper-V is asked about a member only once its lock is had' $true ($at['Find-PoolVm $name'] -gt $at['[System.IO.File]::Open($script:lockPath'] -and $body.IndexOf('Find-PoolVm') -eq $at['Find-PoolVm $name'] -and $body.LastIndexOf('Get-PoolVmStates') -eq $at['Get-PoolVmStates $Candidates'])
+    foreach ($mark in @('Get-PoolVms $Candidates', 'Find-PoolVm $Candidates[$i]', '$ticket = Join-TestbedQueue', 'while ($true)', '$ahead = Get-TestbedQueueTurn', 'Get-TestbedLease -VMName $name', '$available = Get-HostAvailableBytes', '[System.IO.File]::Open($script:lockPath', '[void](Wait-TestbedChange)', 'finally { Exit-TestbedQueue $ticket }')) { $at[$mark] = $body.IndexOf($mark) }
+    Check 'which members are on this host, their ids and startup memory are asked once, before the queue is joined' $true ($at['Get-PoolVms $Candidates'] -ge 0 -and $at['Find-PoolVm $Candidates[$i]'] -gt $at['Get-PoolVms $Candidates'] -and $at['$ticket = Join-TestbedQueue'] -gt $at['Find-PoolVm $Candidates[$i]'] -and $at['while ($true)'] -gt $at['$ticket = Join-TestbedQueue'])
+    Check 'and never in a turn: no Hyper-V call after the turns begin' $true ($body.LastIndexOf('Get-PoolVms') -lt $at['while ($true)'] -and $body.LastIndexOf('Find-PoolVm') -lt $at['while ($true)'] -and $body.IndexOf('Get-VM') -lt 0)
+    Check 'each turn reads its place in the queue, then a member''s lease, the host''s memory and the member''s lock' $true ($at['$ahead = Get-TestbedQueueTurn'] -gt $at['while ($true)'] -and $at['Get-TestbedLease -VMName $name'] -gt $at['$ahead = Get-TestbedQueueTurn'] -and $at['$available = Get-HostAvailableBytes'] -gt $at['Get-TestbedLease -VMName $name'] -and $at['[System.IO.File]::Open($script:lockPath'] -gt $at['$available = Get-HostAvailableBytes'])
     Check 'between turns it sleeps on the testbed''s files, never on a timer of its own, and leaves the queue on every path' $true ($at['[void](Wait-TestbedChange)'] -gt $at['[System.IO.File]::Open($script:lockPath'] -and $body.IndexOf('Start-Sleep') -lt 0 -and $at['finally { Exit-TestbedQueue $ticket }'] -gt $at['[void](Wait-TestbedChange)'])
+    $memory = Get-HostAvailableBytes
+    $poolText = [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot 'TestbedPool.ps1'))
+    $memAt = $poolText.IndexOf('function Get-HostAvailableBytes')
+    $memBody = ''
+    if ($memAt -ge 0) { $memBody = $poolText.Substring($memAt, [Math]::Min(2500, $poolText.Length - $memAt)) }
+    Check 'the host''s memory is read without WMI, from GlobalMemoryStatusEx, and answers' $true ($memory -gt 0 -and $memBody.Contains('GlobalMemoryStatusEx') -and -not $memBody.Contains('Get-CimInstance'))
     $runText = [System.IO.File]::ReadAllText($PSCommandPath)
     $guestRun = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Invoke-GuestRun' }, $true))
     $guestDone = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Wait-GuestDone' }, $true))
     Check 'a running run asks its guest every 15 s, and so does the wait for a guest that outlives its run' $true ($guestRun.Count -eq 1 -and $guestRun[0].Body.Extent.Text.Contains('Start-Sleep -Seconds $TestbedGuestPollSeconds') -and $guestDone.Count -eq 1 -and $guestDone[0].Body.Extent.Text.Contains('Start-Sleep -Seconds $TestbedGuestPollSeconds') -and -not $guestRun[0].Body.Extent.Text.Contains('Start-Sleep -Seconds 3'))
-    Check 'the heartbeat is asked for after 3 s, then every 15 s' $true ($runText.Contains('if ($hbLooks -eq 1) { Start-Sleep -Seconds 3 } else { Start-Sleep -Seconds $TestbedGuestPollSeconds }'))
+    Check 'the heartbeat is one narrow query every 2 s' $true ($runText.Contains('while (-not (Test-TestbedHeartbeat (Get-BuildVmId)))') -and $runText.Contains('Start-Sleep -Seconds $TestbedHeartbeatSeconds'))
+    $restoreBase = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Restore-Base' }, $true))
+    $restoreText = ''
+    if ($restoreBase.Count -eq 1) { $restoreText = $restoreBase[0].Body.Extent.Text }
+    Check 'a running VM is saved before the checkpoint is restored over it' $true ($restoreText.IndexOf("if (`$state -eq 'Running' -or `$state -eq 'Paused')") -ge 0 -and $restoreText.IndexOf('Save-VM -VM $vm') -gt 0 -and $restoreText.IndexOf('Save-VM -VM $vm') -lt $restoreText.IndexOf('Restore-VMSnapshot'))
     $runnerLock = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Enter-RunnerLock' }, $true))
     Check 'the janitor waits on its run''s process handle, and for a lock on the testbed''s files' $true ($runText.Contains('$ended = $watched.WaitForExit(60000)') -and $runnerLock.Count -eq 1 -and $runnerLock[0].Body.Extent.Text.Contains('[void](Wait-TestbedChange)') -and -not $runnerLock[0].Body.Extent.Text.Contains('Start-Sleep'))
     Check 'a VM''s state is Hyper-V''s EnabledState in Get-VM''s words: running, off, saved, paused, and the rest on the way' 'Running|Off|Saved|Paused|Saved|Paused|Starting|Saving|EnabledState 1' ((@(2, 3, 6, 9, 32769, 32768, 10, 32773, 1) | ForEach-Object { ConvertFrom-TestbedEnabledState $_ }) -join '|')
     $threw = ''
-    try { [void](Get-TestbedVmState -Name @("OutlookAI-Build' OR ElementName LIKE '%")) } catch { $threw = $_.Exception.Message }
-    Check 'the narrow query refuses a name that is not plain, before it asks' $true ($threw.Contains('not a plain VM name'))
-    Check 'and asks nothing for no name' 0 @(Get-TestbedVmState -Name @()).Count
+    try { [void](Get-TestbedVms -Name @("OutlookAI-Build' OR ElementName LIKE '%")) } catch { $threw = $_.Exception.Message }
+    Check 'the narrow queries refuse a name that is not plain, before they ask' $true ($threw.Contains('not a plain VM name'))
+    $threw = ''
+    try { [void](Get-TestbedVmStateById "x' OR Name LIKE '%") } catch { $threw = $_.Exception.Message }
+    Check 'and an id that is no GUID' $true ($threw.Contains('not a VM id'))
+    Check 'and ask nothing for no name' 0 @(Get-TestbedVms -Name @()).Count
     $t = { param($name, $run, [string[]] $wants) [pscustomobject]@{ Name = $name; Run = $run; Candidates = $wants } }
     $pool = @('OutlookAI-Build', 'OutlookAI-Build2', 'OutlookAI-Build3')
     $turn = Select-TestbedQueueTurn -Tickets @((& $t '01-1.json' 'early' $pool), (& $t '02-2.json' 'mine' $pool)) -Mine '02-2.json' -Candidates $pool
@@ -1208,13 +1225,13 @@ function Get-LockHolder([string] $OwnerFile) {
 }
 
 # A RUN TAKES WHICHEVER BUILD VM IS FREE (2026-11-17), AND WAITS FOR ONE ASKING HYPER-V NOTHING
-# (2026-11-18, TestbedPool.ps1's banner). Which members are on this host is asked once, in one narrow
-# query. Then the run joins the queue, and each turn tries - in pool order - the members no run that
-# queued before it wants. A member is passed over while somebody holds a lease on it by hand
-# (Set-TestbedLease.ps1, for maintenance) or a run holds its lock - files, both - and, any member but
-# the first, once its lock is had, while the host lacks its startup memory and the reserve
-# TestbedPool.ps1 keeps for the maintainer: the one Get-VM of a turn, for that member alone, asked
-# only when it is free. Once the lock is ours the lease is read again and taken in one step
+# (2026-11-18, TestbedPool.ps1's banner). Which members are on this host, their ids and the startup
+# memory of each but the first are asked once, before the wait. Then the run joins the queue, and each
+# turn tries - in pool order - the members no run that queued before it wants. A member is passed over
+# while somebody holds a lease on it by hand (Set-TestbedLease.ps1, for maintenance), while - any
+# member but the first - the host lacks its startup memory and the reserve TestbedPool.ps1 keeps for
+# the maintainer, or while a run holds its lock: files and GlobalMemoryStatusEx, no Hyper-V and no
+# WMI in a turn at all. Once the lock is ours the lease is read again and taken in one step
 # (Enter-TestbedLeaseClaim), so a lease taken by hand in between still holds the VM back. Between turns
 # the run sleeps until a lock's owner file, a lease or a ticket changes, or 30 s pass. What holds each
 # member back is said once a minute. Returns the lock; $null when the time ran out, with the reasons
@@ -1223,9 +1240,18 @@ function Enter-PoolVm([string[]] $Candidates, [int] $TimeoutMinutes) {
     $deadline = (Get-Date).AddMinutes($TimeoutMinutes)
     $lastSaid = [DateTime]::MinValue
     $queued = $false
-    $onHost = @(Get-PoolVmStates $Candidates | ForEach-Object { $_.Name })
-    $here = @($Candidates | Where-Object { $onHost -contains $_ })
+    # What Hyper-V must say, said once, before the run waits: which members are on this host and their
+    # ids - one narrow query - and the startup memory of each but the first, for the reserve.
+    $ids = @{}
+    foreach ($row in @(Get-PoolVms $Candidates)) { if (-not $ids.ContainsKey($row.Name)) { $ids[$row.Name] = $row.Id } }
+    $here = @($Candidates | Where-Object { $ids.ContainsKey($_) })
     if ($here.Count -eq 0) { throw "no build VM of the pool is on this host ($($Candidates -join ', ')); Testbed/README.md section 1c builds OutlookAI-Build." }
+    $startupBytes = @{}
+    for ($i = 1; $i -lt $Candidates.Count; $i++) {
+        if ($here -notcontains $Candidates[$i]) { continue }
+        $found = @(Find-PoolVm $Candidates[$i])
+        if ($found.Count -eq 1) { $startupBytes[$Candidates[$i]] = [long]$found[0].MemoryStartup }
+    }
     $ticket = Join-TestbedQueue -Run $runId -What "Invoke-TestsOnBuildVm run $runId, $Ref in $repo" -Candidates $here
     try {
         while ($true) {
@@ -1237,21 +1263,21 @@ function Enter-PoolVm([string[]] $Candidates, [int] $TimeoutMinutes) {
                 if ($ahead.ContainsKey($name)) { $why.Add("$name is wanted first by run $($ahead[$name]), queued before this one"); continue }
                 $lease = Get-TestbedLease -VMName $name
                 if ($null -ne $lease -and -not ([string]$lease.reason).StartsWith($LeaseReasonPrefix)) { $why.Add("$name is leased by hand until $($lease.expiresUtc) - '$($lease.reason)'"); continue }
+                if ($i -gt 0) {
+                    # The reserve: the startup memory read before the wait, the host's memory now - no WMI.
+                    if (-not $startupBytes.ContainsKey($name)) { $why.Add("$name is passed over: Hyper-V did not say its startup memory before the wait"); continue }
+                    $need = [long]$startupBytes[$name]
+                    $available = Get-HostAvailableBytes
+                    if (-not (Test-HostHasRoom -NeedBytes $need -AvailableBytes $available)) {
+                        $why.Add(("{0} waits for memory: the host has {1:N1} GB available, under its {2:N0} GB and the {3:N0} GB kept free" -f $name, ($available / 1GB), ($need / 1GB), ($TestbedHostReserveBytes / 1GB)))
+                        continue
+                    }
+                }
                 Use-PoolVm $name
                 $held = $null
                 try { $held = [System.IO.File]::Open($script:lockPath, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None) }
                 catch [System.IO.IOException] { $why.Add("$name is busy with $(Get-LockHolder $script:ownerPath)"); continue }
-                if ($i -gt 0) {
-                    # The member is free: now, and only now, Hyper-V - its startup memory, for the reserve.
-                    $found = @(Find-PoolVm $name)
-                    if ($found.Count -ne 1) { $held.Dispose(); $why.Add("$name is not on this host"); continue }
-                    $available = Get-HostAvailableBytes
-                    if (-not (Test-HostHasRoom -NeedBytes ([long]$found[0].MemoryStartup) -AvailableBytes $available)) {
-                        $held.Dispose()
-                        $why.Add(("{0} waits for memory: the host has {1:N1} GB available, under its {2:N0} GB and the {3:N0} GB kept free" -f $name, ($available / 1GB), ($found[0].MemoryStartup / 1GB), ($TestbedHostReserveBytes / 1GB)))
-                        continue
-                    }
-                }
+                $script:BuildVmId = $ids[$name]
                 $claim = Enter-TestbedLeaseClaim -VMName $name
                 $byHand = $null
                 try {
@@ -1340,19 +1366,30 @@ function Get-BuildVm {
     return $found[0]
 }
 
-# The one place a VM's state is read: members of the build pool, each refused before Hyper-V is asked
-# when it is no build VM, then one narrow query for all of them (TestbedPool.ps1's Get-TestbedVmState),
-# and only rows that are build VMs back.
-function Get-PoolVmStates([string[]] $Names) {
+# The one place members are found by name in the narrow way: each refused before Hyper-V is asked when
+# it is no build VM, then one query for all of them (TestbedPool.ps1's Get-TestbedVms) - name, id and
+# state - and only rows that are build VMs back.
+function Get-PoolVms([string[]] $Names) {
     foreach ($n in @($Names)) { if (-not (Test-IsBuildVmName $n)) { throw "'$n' is not a build VM of the pool ($($BuildVmPool -join ', ')). Refusing to ask about it." } }
-    return @(Get-TestbedVmState -Name $Names | Where-Object { Test-IsBuildVmName $_.Name })
+    return @(Get-TestbedVms -Name $Names | Where-Object { Test-IsBuildVmName $_.Name })
 }
 
-# The state of the member this run or janitor holds: Running, Saved, Off, Paused, or on its way.
-function Get-BuildVmState {
-    $rows = @(Get-PoolVmStates @($BuildVmName))
+# The Hyper-V id of the member this run or janitor holds, asked once (Enter-PoolVm sets it as it
+# takes the member; the janitor asks here).
+function Get-BuildVmId {
+    if ($script:BuildVmId) { return $script:BuildVmId }
+    $rows = @(Get-PoolVms @($BuildVmName))
     if ($rows.Count -ne 1) { throw "expected one VM named '$BuildVmName' on this host and found $($rows.Count). Testbed/README.md section 1c builds OutlookAI-Build; New-TestbedClone.ps1 makes its clones." }
-    return [string]$rows[0].State
+    $script:BuildVmId = [string]$rows[0].Id
+    return $script:BuildVmId
+}
+
+# The state of the member this run or janitor holds - Running, Saved, Off, Paused, or on its way -
+# by its id, one keyed query.
+function Get-BuildVmState {
+    $state = Get-TestbedVmStateById (Get-BuildVmId)
+    if (-not $state) { throw "Hyper-V no longer has '$BuildVmName' (id $(Get-BuildVmId)) on this host." }
+    return [string]$state
 }
 
 function Get-BaseCheckpoint {
@@ -1374,15 +1411,25 @@ function Wait-VmSettled([int] $Seconds) {
     return (Get-BuildVmState)
 }
 
+# A VM that runs - or is paused - is SAVED before the checkpoint is restored over it (2026-11-18): a
+# restore over a running guest left it out of PowerShell Direct's reach for six minutes in stream R1's
+# runs, where saved first and then restored it answered in seconds. A restore over a saved VM leaves
+# it saved, and Start-VM resumes it.
 function Restore-Base {
     $state = Wait-VmSettled 120
     if (@('Running', 'Off', 'Saved', 'Paused') -notcontains $state) { throw "the VM stayed '$state' for two minutes; not restoring a checkpoint over a VM in transition." }
+    if ($state -eq 'Running' -or $state -eq 'Paused') {
+        Save-VM -VM $vm
+        $state = Wait-VmSettled 120
+        if ($state -ne 'Saved' -and $state -ne 'Off') { throw "the VM is '$state' after Save-VM; not restoring a checkpoint over it." }
+    }
     Restore-VMSnapshot -VMSnapshot $checkpoint -Confirm:$false
     return (Wait-VmSettled 60)
 }
 
-# Restores the base checkpoint and leaves the VM saved: restored over a running VM, the base
-# resumes at once, so it is saved - the BASE, not the run - which is what gives the host its RAM back.
+# Restores the base checkpoint and leaves the VM saved: Restore-Base saves a running VM before it
+# restores, so the base comes back saved; a base that resumes all the same is saved here - the BASE,
+# not the run - which is what gives the host its RAM back.
 function Restore-BaseAndSave {
     $final = Restore-Base
     if ($final -eq 'Running') {
@@ -1690,16 +1737,13 @@ try {
     # A checkpoint applied to a RUNNING VM resumes it at once (measured on the first run,
     # 2026-10-03: Running -> Running); applied to a saved or stopped one it leaves it saved.
     if ($stateAfter -ne 'Running') { Start-VM -VM $vm }
+    # The heartbeat, every 2 s, by one narrow query on the VM's id (TestbedPool.ps1's
+    # Test-TestbedHeartbeat) - Get-VMIntegrationService, every second until 2026-11-18, cost 23 WMI
+    # operations a look.
     $hbDeadline = (Get-Date).AddMinutes(3)
-    $hbLooks = 0
-    while ($true) {
-        $hb = Get-VMIntegrationService -VM $vm -Name 'Heartbeat'
-        if ([string]$hb.PrimaryStatusDescription -eq 'OK') { break }
-        if ((Get-Date) -ge $hbDeadline) { throw "the VM's heartbeat did not read OK within 3 minutes of Start-VM (it reads '$($hb.PrimaryStatusDescription)')" }
-        # A resumed VM answers within seconds: one more look after 3 s, then one every 15 s - every
-        # second until 2026-11-18, each look a question to Hyper-V.
-        $hbLooks++
-        if ($hbLooks -eq 1) { Start-Sleep -Seconds 3 } else { Start-Sleep -Seconds $TestbedGuestPollSeconds }
+    while (-not (Test-TestbedHeartbeat (Get-BuildVmId))) {
+        if ((Get-Date) -ge $hbDeadline) { throw "the VM's heartbeat did not read OK within 3 minutes of Start-VM" }
+        Start-Sleep -Seconds $TestbedHeartbeatSeconds
     }
     Measure-Phase 'resume' $t0
 
