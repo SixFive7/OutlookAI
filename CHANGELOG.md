@@ -2309,7 +2309,10 @@ its mailbox tests on, and change nothing you install.
   (the SDK listed, the probe's sentinel printed, the tests counted) and says so in its log. An
   unread code without that proof still fails, and the message reads `(unread)` instead of nothing.
   Keeping the handle instead would have meant reading dotnet's output through pipes, which a build
-  server that inherits one holds open after dotnet exits.
+  server that inherits one holds open after dotnet exits. It runs dotnet and the installer through
+  the shared `Invoke-Logged`, quotes their arguments with `Format-Argument`, shows a failing step's
+  log with `Show-LogTail` and asks `Test-IsElevated`, all from `Testbed/guest/ScriptHelpers.ps1`,
+  staged beside it, instead of its own copies.
 
 - ✅ **The index-refile measurement no longer fails when Outlook lists a moved folder late.**
   The live test that times how fast the index follows a folder rename and move reads the folder's

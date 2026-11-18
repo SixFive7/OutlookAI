@@ -267,6 +267,11 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# Invoke-Logged, Format-Argument, Show-LogTail and Test-IsElevated: the helpers the scripts share, in one
+# copy (Q154, Q166 (b), decision 215 (a)), staged beside this script with the rest of Testbed/guest. The
+# file only defines functions, so loading it cannot fail the way a MAPI interop compile could (THE GUARD).
+. (Join-Path $PSScriptRoot 'ScriptHelpers.ps1')
+
 # ---------------------------------------------------------------------------------------------
 # Everything this script writes or runs, named in one place, so the blast radius is readable
 # without reading the code.
@@ -360,9 +365,7 @@ Do not 'fix' this by widening either default. The defaults are the guard.
 }
 
 function Assert-Elevated {
-    $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
-    $principal = New-Object System.Security.Principal.WindowsPrincipal($identity)
-    if (-not $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    if (-not (Test-IsElevated)) {
         throw @"
 REFUSING TO RUN: this session is not elevated.
 
@@ -404,66 +407,23 @@ function Invoke-Dotnet {
     if (-not $logDir) { $logDir = '.' }
     if (-not (Test-Path -LiteralPath $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
 
-    $outFile = Join-Path $logDir ("dotnet-$LogName.out.txt")
-    $errFile = Join-Path $logDir ("dotnet-$LogName.err.txt")
-    foreach ($f in @($outFile, $errFile)) {
-        if (Test-Path -LiteralPath $f) { Remove-Item -LiteralPath $f -Force }
-    }
-
     $env:MSBUILDDISABLENODEREUSE = '1'
     $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
     $env:DOTNET_NOLOGO = '1'
 
-    # Start-Process joins -ArgumentList with spaces and quotes NOTHING, so an argument that
-    # contains a space silently becomes two arguments. Every path here is space-free by default,
-    # but -SourceRoot and -InstallerPath are parameters and 'C:\Program Files\...' is exactly the
-    # value somebody would pass.
-    $quoted = @()
-    foreach ($a in $Arguments) {
-        if ($a -match '\s') { $quoted += ('"' + $a + '"') } else { $quoted += $a }
-    }
-
-    $startArgs = @{
-        FilePath               = $DotnetPath
-        ArgumentList           = $quoted
-        RedirectStandardOutput = $outFile
-        RedirectStandardError  = $errFile
-        NoNewWindow            = $true
-        PassThru               = $true
-    }
-    if ($WorkingDirectory) { $startArgs['WorkingDirectory'] = $WorkingDirectory }
-
+    # Invoke-Logged (ScriptHelpers.ps1): the output straight to files, a deadline, and the exit code
+    # read through .Handle - which narrows the Start-Process race without closing it (Test-DotnetSucceeded).
+    # Start-Process quotes nothing, so every argument goes through Format-Argument: -SourceRoot and
+    # -InstallerPath are parameters, and 'C:\Program Files\...' is exactly the value somebody would pass.
     Say ("    dotnet " + ($Arguments -join ' '))
-    $process = Start-Process @startArgs
-    # TOUCH .Handle BEFORE WAITING. Start-Process -PassThru hands back a Process object whose
-    # native handle is not retained, and once the process exits .NET has nothing left to read the
-    # code from: ExitCode comes back $null. Reading .Handle forces the handle to be cached, which
-    # is what keeps ExitCode readable afterwards.
-    # MEASURED 2026-09-17 on OAI-INDEXED, first run of this script: the SDK installed correctly and
-    # every rung was then reported as a failure, because $null is not 0. The messages read
-    # "the installer exited ." and "dotnet --list-sdks exited " - an EMPTY code, not a bad one,
-    # which is the signature of this bug rather than of a failing command.
-    $null = $process.Handle
-    $exited = $process.WaitForExit($TimeoutMinutes * 60 * 1000)
-    # The timeout overload returns as soon as the process object signals. Call the parameterless
-    # overload afterwards so redirected output is flushed and the exit state has settled.
-    if ($exited) { $process.WaitForExit() }
-
-    if (-not $exited) {
-        try { $process.Kill() } catch { }
-        return [pscustomobject]@{
-            ExitCode = -1
-            TimedOut = $true
-            Output   = (Get-DotnetLogText $outFile $errFile)
-            OutFile  = $outFile
-        }
-    }
-
+    $logged = Invoke-Logged -FilePath $DotnetPath -ArgumentList @($Arguments | ForEach-Object { Format-Argument $_ }) `
+        -LogStem (Join-Path $logDir "dotnet-$LogName") -TimeoutMinutes $TimeoutMinutes -WorkingDirectory $WorkingDirectory
     return [pscustomobject]@{
-        ExitCode = $process.ExitCode
-        TimedOut = $false
-        Output   = (Get-DotnetLogText $outFile $errFile)
-        OutFile  = $outFile
+        ExitCode = $logged.ExitCode
+        TimedOut = $logged.TimedOut
+        Output   = (Get-DotnetLogText $logged.Out $logged.Err)
+        OutFile  = $logged.Out
+        ErrFile  = $logged.Err
     }
 }
 
@@ -508,15 +468,6 @@ function Get-DotnetLogText([string] $outFile, [string] $errFile) {
         }
     }
     return $text
-}
-
-function Show-Tail([string] $text, [int] $lines = 25) {
-    if (-not $text) { return }
-    $all = $text -split "`r?`n"
-    $start = [Math]::Max(0, $all.Count - $lines)
-    for ($i = $start; $i -lt $all.Count; $i++) {
-        if ($all[$i]) { Say ("      | " + $all[$i]) }
-    }
 }
 
 # Resolve dotnet HONESTLY: PATH first, because that is what every other caller on this guest
@@ -632,16 +583,9 @@ SHA-512, and update Testbed/MEDIA.md so the next rebuilder is not doing this aga
         # this project has measured and banned outright (guest/Register-InteractiveTask.ps1).
         # The session is already elevated, asserted above, so the bundle needs no elevation of
         # its own.
-        $installerArgs = @()
-        foreach ($a in $arguments) {
-            if ($a -match '\s') { $installerArgs += ('"' + $a + '"') } else { $installerArgs += $a }
-        }
-        $installer = Start-Process -FilePath $InstallerPath -ArgumentList $installerArgs -PassThru -NoNewWindow
-        $null = $installer.Handle   # see Invoke-Dotnet: without this, ExitCode reads $null
-        $exited = $installer.WaitForExit($InstallTimeoutMinutes * 60 * 1000)
-        if ($exited) { $installer.WaitForExit() }
-        if (-not $exited) {
-            try { $installer.Kill() } catch { }
+        $installer = Invoke-Logged -FilePath $InstallerPath -ArgumentList @($arguments | ForEach-Object { Format-Argument $_ }) `
+            -LogStem (Join-Path (Split-Path -Parent $LogPath) 'dotnet-sdk-installer') -TimeoutMinutes $InstallTimeoutMinutes
+        if ($installer.TimedOut) {
             throw "The installer did not finish within $InstallTimeoutMinutes minutes. Its own log is at $installLog; read that before re-running."
         }
 
@@ -658,7 +602,7 @@ SHA-512, and update Testbed/MEDIA.md so the next rebuilder is not doing this aga
             # Assigned then thrown: PowerShell does NOT parse a multi-line parenthesised expression
             # after `throw` - it reports "Missing closing ')'". Measured 2026-09-17.
             $emptyCodeMessage = "The installer exit code came back EMPTY, which is not the same as a failure - "
-            $emptyCodeMessage += "it is this script failing to read it. See the .Handle note in Invoke-Dotnet. "
+            $emptyCodeMessage += "it is this script failing to read it. See the .Handle note in Invoke-Logged (ScriptHelpers.ps1). "
             $emptyCodeMessage += "Check $installLog and run dotnet --list-sdks before assuming the install went wrong."
             throw $emptyCodeMessage
         }
@@ -668,9 +612,9 @@ SHA-512, and update Testbed/MEDIA.md so the next rebuilder is not doing this aga
 
         # -Wait on a bundle can return before the work is on disk. Poll for the artefact rather
         # than trusting the exit code on its own.
-        $deadline = (Get-Date).AddMinutes(5)
+        $polled = [System.Diagnostics.Stopwatch]::StartNew()
         $dotnetExe = Join-Path $DotnetRoot 'dotnet.exe'
-        while ((Get-Date) -lt $deadline -and -not (Test-Path -LiteralPath $dotnetExe)) {
+        while ($polled.Elapsed.TotalMinutes -lt 5 -and -not (Test-Path -LiteralPath $dotnetExe)) {
             Start-Sleep -Seconds 5
         }
         if (-not (Test-Path -LiteralPath $dotnetExe)) {
@@ -759,11 +703,11 @@ else {
     $sdkListed = $listSdks.Output -match ('(?m)^' + [regex]::Escape($ExpectedSdkVersionPrefix))
     if (-not (Confirm-DotnetSucceeded $listSdks $sdkListed 'dotnet --list-sdks')) {
         Say "  FAIL rung 1: dotnet --list-sdks exited $(Format-DotnetExit $listSdks)"
-        Show-Tail $listSdks.Output
+        Show-LogTail $listSdks.OutFile; Show-LogTail $listSdks.ErrFile
     }
     elseif (-not $sdkListed) {
         Say "  FAIL rung 1: no SDK matching '$ExpectedSdkVersionPrefix'. Installed:"
-        Show-Tail $listSdks.Output
+        Show-LogTail $listSdks.OutFile; Show-LogTail $listSdks.ErrFile
         $notes += "The wrong SDK is installed. The suite targets net10.0-windows and will not build without a .NET 10 SDK."
     }
     else {
@@ -772,7 +716,7 @@ else {
         $ridOk = ($ridListed -and (Confirm-DotnetSucceeded $info $ridListed 'dotnet --info'))
         if (-not $ridOk) {
             Say '  FAIL rung 1: --info does not report a win-x64 RID.'
-            Show-Tail $info.Output
+            Show-LogTail $info.OutFile; Show-LogTail $info.ErrFile
             $notes += 'x64 is not optional: both projects set PlatformTarget x64 and the index tier needs an x64 host for Search.CollatorDSO.'
         }
         else {
@@ -835,7 +779,7 @@ System.Console.WriteLine("$sentinel " + System.Environment.Version + " " + (Syst
         }
         else {
             Say "  FAIL rung 2: the throwaway console project did not build and run (exit $(Format-DotnetExit $run), timed out: $($run.TimedOut))."
-            Show-Tail $run.Output
+            Show-LogTail $run.OutFile; Show-LogTail $run.ErrFile
             $notes += 'The SDK itself is not working. Nothing about the staged feed or the source can explain this one.'
         }
 
@@ -870,7 +814,7 @@ System.Console.WriteLine("$sentinel " + System.Environment.Version + " " + (Syst
 
         if ($discovered -le 0 -or -not (Confirm-DotnetSucceeded $listTests ($discovered -gt 0) 'dotnet test --list-tests')) {
             Say "  FAIL rung 3: dotnet test --list-tests exited $(Format-DotnetExit $listTests) and enumerated $discovered test(s)."
-            Show-Tail $listTests.Output 40
+            Show-LogTail $listTests.OutFile 40; Show-LogTail $listTests.ErrFile 40
             if ($listTests.Output -match '(?i)unable to load the service index|NU1301|no such host is known|nuget\.org') {
                 $notes += 'The restore tried to reach the network. Check that NuGet.config really cleared the inherited sources and that every package the suite needs is in the staged feed.'
             }
@@ -901,7 +845,7 @@ System.Console.WriteLine("$sentinel " + System.Environment.Version + " " + (Syst
             }
             else {
                 Say "  FAIL rung 4: exit $(Format-DotnetExit $smoke), passed $passed, failed $failed."
-                Show-Tail $smoke.Output 40
+                Show-LogTail $smoke.OutFile 40; Show-LogTail $smoke.ErrFile 40
                 $verdict = $VerdictBroken
                 $notes += "Discovery worked and execution did not. That is a test-host problem, not an SDK one - read $($smoke.OutFile)."
             }
