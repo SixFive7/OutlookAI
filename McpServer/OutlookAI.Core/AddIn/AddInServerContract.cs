@@ -87,8 +87,8 @@ namespace OutlookAI.Core.AddIn
         // outlook_health's tuning.uiSearchBackend - which show_search_results then uses to decide
         // whether to tell an agent that the user's Outlook search box is looking somewhere other
         // than the corpus the agent searched. The KEY PATH is version-dependent and is therefore
-        // built by Services\OfficeVersions.cs (OutlookSearchKeyPath), which both trees also
-        // compile; only the VALUE NAME is a constant, and it lives here with the rest of them.
+        // built by OfficeVersions.OutlookSearchKeyPath, beside this file; only the VALUE NAME is a
+        // constant, and it lives here with the rest of them.
 
         /// <summary>
         /// DWORD under the Outlook Search key: nonzero points Outlook's own search box at the

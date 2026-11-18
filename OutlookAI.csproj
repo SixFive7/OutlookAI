@@ -365,7 +365,7 @@ else
   </PropertyGroup>
   <!-- This section defines VSTO properties that describe the host-changeable project properties.
 
-       The two 16.0 literals below are NOT the hardcoded-hive defect that Services\OfficeVersions.cs
+       The two 16.0 literals below are NOT the hardcoded-hive defect that OfficeVersions (OutlookAI.Core)
        exists to fix, and they are deliberately left alone. They are design-time only: OfficeVersion
        selects the VSTO project flavour and DebugInfoExeName tells F5 which OUTLOOK.EXE to launch on
        the DEVELOPER's machine. Nothing here is compiled into the add-in or read at run time, and

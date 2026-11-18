@@ -768,6 +768,21 @@ its mailbox tests on, and change nothing you install.
 
 ### Changed
 
+- 🔧 **The add-in changes only its own entry in `~/.claude.json`, and leaves every other server alone.**
+  When it registers its mail server for all of your projects, the add-in read Claude Code's
+  settings file with .NET's `JavaScriptSerializer` and wrote the whole `mcpServers` section back, so
+  every other server's entry came back reformatted each time. It now writes its `outlookai` entry
+  into the file as it stands, the way it has always written a project's `.mcp.json`, and every other
+  byte stays as it was; the new text is checked before it replaces the file, as before. An entry the
+  add-in wrote keeps the keys added to it since, such as `env`, and loses those only a remote server
+  has; an entry anyone else wrote is replaced whole, as before. Ours is written as
+  `{ "type": "stdio", "command": "...", "args": [], "env": {} }`. Two kinds of file it used to
+  rewrite are left untouched now, and the registration reports an error that says so: one whose
+  `mcpServers` is `null`, and one that is not well-formed JSON although `JavaScriptSerializer` read
+  it - single quotes, unquoted names, leading zeros or a line break inside a string, none of which
+  Claude Code can read either. The code is OutlookAI.Core's since the add-in began to use it (Q154),
+  and T1 `McpUserConfigTests` pins it.
+
 - 💥 **Every tool addresses folders and stores by ID; names and paths are for display only (Q131-Q135).**
   Decided by the maintainer on 2026-10-11, after research found a folder's own Outlook ID unique
   and stable: it survives renames, moves within the mail file, deletion into Deleted Items and
@@ -1101,11 +1116,33 @@ its mailbox tests on, and change nothing you install.
   network clears the backoff and checks shortly after, and "Check for updates" always runs straight
   away.
 
+- ♻️ **The fourteen files the add-in shared by linking are OutlookAI.Core's, in one namespace (Q163).**
+  The MCP server, Core and the test project compiled fourteen of the add-in's source files as
+  linked copies: the registry contract between the add-in and the server, the Office versions, the
+  signature folder rule, the offline periods, the MCP configuration surgery and the decision when to
+  act on it, the prompt store, its defaults and its checks, the update schedule, the tuning
+  reconcile, and the Cached Mode settings with the seam for an account's offline period and the
+  removal of what an earlier version wrote as policy. They are OutlookAI.Core's own now, public in
+  `OutlookAI.Core.AddIn` (`McpServer/OutlookAI.Core/AddIn/`); the add-in uses them from the
+  `OutlookAI.Core.dll` installed beside it, and nothing is linked into Core any more (Q163 (a)).
+  `outlook_health` reads `~/.claude.json`, expands `${VAR}` references and compares paths with the
+  add-in's `McpConfigEditor` where it had copies of all three, so `EnvironmentExpansionParityTests`,
+  which held the two expansions equal, is gone; `ComposeSurface` takes its park coordinates from
+  `McpRegistrationDecision`, so `ParkCoordinateMirrorTests` is gone too. The add-in's registry root
+  is one constant, `AddInServerContract.AppKeyPath`, which the tuning, registration and prompt keys
+  are built from. The add-in's own reader of `~/.claude.json`, built on `JavaScriptSerializer` where
+  no test could load it, is gone as well: whether the file may be touched, what the `outlookai`
+  entry is and the rewrite are `McpConfigEditor`'s, and T1 `McpUserConfigTests` pins them. Check 15
+  holds the namespace to its rule with fourteen files in it, and the guest installer's 41 pinned
+  lines, the payload's two contract files and checks 4, 12 and 13 follow the files.
+  `Tools/Switch-AddInBuild.ps1 -BuildOnly` built each of the stage's three commits and left the host
+  unchanged.
+
 - ♻️ **The add-in references OutlookAI.Core and may use one namespace of it (Q164, Q167).**
   Until now the add-in kept its own copies of logic the MCP server has in Core, because it did not
-  reference Core (v3's "Phase-6 no-coupling choice"). Q154 (b) ended that, and this is the
-  refactor's first stage, plumbing only: the add-in uses none of Core yet, so nothing it does
-  changes. `OutlookAI.csproj` references Core's net48 build (Q167 (a)) and keeps two of the scripted
+  reference Core (v3's "Phase-6 no-coupling choice"). Q154 (b) ended that, and this was the
+  refactor's first stage, plumbing only, which changed nothing the add-in does.
+  `OutlookAI.csproj` references Core's net48 build (Q167 (a)) and keeps two of the scripted
   builds' global properties out of Core's build: `PrepareForRunDependsOn` names a VSTO target Core
   does not have, and `DefineConstants` would replace Core's own `NETFRAMEWORK` symbol. Both add-in
   build scripts, `Testbed/host/Publish-AddInPayload.ps1` and `Tools/Switch-AddInBuild.ps1`, restore
@@ -1481,6 +1518,14 @@ its mailbox tests on, and change nothing you install.
   sweep fragment, the definitions the sweep matches with, instead of the incident tool's copy.
 
 ### Fixed
+
+- 🐛 **The health report says when Claude Code's `~/.claude.json` cannot be read whole.**
+  `outlook_health` called the MCP registration `absent` when the file was there but read back
+  empty, which can happen in the moment Claude Code rewrites it. A file cut off part-way, or with
+  more after its closing brace, could be called `absent` too, or have its command read out of the
+  part before the break and be reported `ok` or `drifted`. Both are `unreadable` now: the server
+  reads the file with the add-in's code, by the rule the add-in applies before it writes there, and
+  only a file that is not there at all is `absent`. T1 `McpRegistrationHealthTests` pins the rule.
 
 - 🐛 **A move names a folder whose name holds `/`, `\` or `%` the way list_folders does.**
   `move_mail` and `archive_mail` printed the folders an item left and went to as Outlook writes them,

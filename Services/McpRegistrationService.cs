@@ -62,8 +62,8 @@ namespace OutlookAI.Services
         /// The key this service owns. Its path, and every value name written under it, live in
         /// <see cref="AddInServerContract"/>: the MCP server's <c>outlook_health</c> reads this
         /// key to report what the last reconcile did, and that key IS the contract between the
-        /// two components. One definition compiled into both, rather than a comment on each side
-        /// claiming to mirror the other.
+        /// two components. One definition, OutlookAI.Core's, used by both, rather than a comment on
+        /// each side claiming to mirror the other.
         /// </summary>
         internal const string McpKeyPath = AddInServerContract.McpKeyPath;
         internal const string InstallDirValueName = "InstallDir";

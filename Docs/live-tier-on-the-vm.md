@@ -431,7 +431,7 @@ from-scratch rebuild replaces the guests (see `Testbed/README.md` section 1b).
 
 **Which tests need it, and exactly what they read.** Two, both through
 `McpServer/OutlookAI.Core/Services/HealthReporting.cs` (`ReadTuningState`), over
-`HKCU\Software\OutlookAI\Tuning`, with the value names of `Services/AddInServerContract.cs`:
+`HKCU\Software\OutlookAI\Tuning`, with the value names of `McpServer/OutlookAI.Core/AddIn/AddInServerContract.cs`:
 
 | Test | Declares | Asserts | Reads |
 | --- | --- | --- | --- |
@@ -447,7 +447,7 @@ declares nothing that keeps it off the unindexed one - and there it asserts
 deliberately keeps true.
 
 **Why a build from a commit, not a released installer.** The add-in and the server agree about those
-values through one file compiled into both. The suite on a guest is built from a named commit
+values through one file both are built with. The suite on a guest is built from a named commit
 (`Testbed/host/Publish-LiveTierPayload.ps1`); pairing it with the last release's add-in would test a
 contract nobody changed together. So `Testbed/host/Publish-AddInPayload.ps1` builds the add-in from a
 commit too, and records the hashes of the two contract files; the guest compares them with the
@@ -687,7 +687,7 @@ Group Policy only to show a value an organization sets - or one an earlier Outlo
 by `Tuning\Applied` (Q151 (a)) - and leaves such a value alone. So the reconcile above lists nothing in
 `Tuning\NeedsAdministrator`, and the walk is 11 values, not 13. An existing account's own offline period
 lives in its Outlook profile, which OutlookAI does not write yet: the settings dialog says how to set it
-in Account Settings (`Services/CachedModeSettings.cs`, `Services/AccountOfflinePeriods.cs`). Run on a
+in Account Settings (`McpServer/OutlookAI.Core/AddIn/CachedModeSettings.cs`, `McpServer/OutlookAI.Core/AddIn/AccountOfflinePeriods.cs`). Run on a
 guest on 2026-11-18 (the next record). The record above stays as what was measured then.
 
 **The add-in with OutlookAI.Core beside it (Q167 (a), the code-sharing refactor's first stage), against

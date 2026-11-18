@@ -159,12 +159,27 @@ $intentionallyAbsent = @(
     @{
         Path       = 'Services/CachedModePolicy.cs'
         MustIgnore = $false
-        Why        = 'DELETED 2026-11-17 by Q145 (a), with the elevated helper it served: OutlookAI writes the Cached Mode values as the user''s own settings now (Services/CachedModeSettings.cs) and needs no administrator. Docs/live-tier-on-the-vm.md still names it because its Q128 record says what was built and measured then, and is deliberately not rewritten.'
+        Why        = 'DELETED 2026-11-17 by Q145 (a), with the elevated helper it served: OutlookAI writes the Cached Mode values as the user''s own settings now (McpServer/OutlookAI.Core/AddIn/CachedModeSettings.cs) and needs no administrator. Docs/live-tier-on-the-vm.md still names it because its Q128 record says what was built and measured then, and is deliberately not rewritten.'
     }
     @{
         Path       = 'Services/PolicyWriterRequest.cs'
         MustIgnore = $false
         Why        = 'DELETED 2026-11-17 by Q145 (a): the elevated helper''s command line, gone with the helper (PolicyWriter/). Docs/live-tier-on-the-vm.md still names it in its Q128 record, deliberately not rewritten.'
+    }
+    @{
+        Path       = 'Services/AddInServerContract.cs'
+        MustIgnore = $false
+        Why        = 'MOVED 2026-11-18 by the code-sharing refactor''s stage S3 (Q163 (a)) to McpServer/OutlookAI.Core/AddIn/AddInServerContract.cs, which the add-in and the server both use. Docs/live-tier-on-the-vm.md still names the old path in its Q128 record, which says what was built and measured then, deliberately not rewritten.'
+    }
+    @{
+        Path       = 'Services/TuningReconciler.cs'
+        MustIgnore = $false
+        Why        = 'MOVED 2026-11-18 by the code-sharing refactor''s stage S3 (Q163 (a)) to McpServer/OutlookAI.Core/AddIn/TuningReconciler.cs. Docs/live-tier-on-the-vm.md still names the old path in its Q128 record, which says what was built and measured then, deliberately not rewritten.'
+    }
+    @{
+        Path       = 'Services/SignatureFolderLocation.cs'
+        MustIgnore = $false
+        Why        = 'MOVED 2026-11-18 by the code-sharing refactor''s stage S3 (Q163 (a)) to McpServer/OutlookAI.Core/AddIn/SignatureFolderLocation.cs. QUESTIONS.md still names the old path in the record of a decision, and a decision''s record is left as it was written.'
     }
     @{
         Path       = 'McpServer/OutlookAI.McpServer.Tests/live-fixtures/live-test-settings.json'

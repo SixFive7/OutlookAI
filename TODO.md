@@ -1667,9 +1667,12 @@
   restore Core's packages, the solution holds Core so that F5 builds it, and the add-in may use one
   part of Core, the namespace `OutlookAI.Core.AddIn`, which nothing in it may use to attach to
   Outlook, start a COM apartment thread or open the index (Q164 (a); `check-pinned-constants.ps1`
-  check 15). It uses none of Core yet. Q162's signature choice is built on that reference, and Q145's
-  writer of an account's offline period moves into that namespace for the same reason. Then the
-  copies go. A read-only
+  check 15). It has used that namespace since stage S3: the fourteen files the server, Core or the
+  tests compiled as linked copies of the add-in's (L01-L07) are Core's, in
+  `McpServer/OutlookAI.Core/AddIn/`, and the reading of `~/.claude.json`, the `${VAR}` expansion and
+  the add-in's registry root (A06, A07, A10) have one copy each. Q162's signature choice is built on
+  that reference, and Q145's writer of an account's offline period goes into that namespace, beside
+  the seam it implements, for the same reason. A read-only
   survey of master 9f4646d, made 2026-11-17, found 73 groups: the add-in against Core (A01-A12, the
   signature catalog and the signature and draft-region bookmark code among them), the add-in's
   linked source files (L01-L13), the server's own repetition (S01-S14), test doubles and helpers
@@ -1686,13 +1689,12 @@
   themselves), T08 (readers of compiled code and source text; ComposeOnReopenedDraftTests and
   ReadOnlyFolderLookupTests keep member cutters with declaration rules of their own) and T09's
   reader of the committed example settings.
-  What remains, one stage at a time: S3, the linked files and the shared logic (L01-L07, A06, A07,
-  A10) into Core, the logic only the add-in runs into `OutlookAI.Core.AddIn` (Q163 (a)); S4, the
-  signature and draft code (A01-A05, A08, A09, A12) with Q162's checkbox, Core winning where the
-  copies drifted apart and the pane's visible differences measured on a test machine first
-  (Q165 (c)), and the pane driven on a test machine (Q168 (b)); S6, the server's own repetition
-  (S01-S14). In parallel: the rest of the shared test code (S5a), the PowerShell helpers (S7), and
-  the rules restated in C# and PowerShell as shared C# source (Q171).
+  What remains, one stage at a time: S4, the signature and draft code (A01-A05, A08, A09, A12) with
+  Q162's checkbox, Core winning where the copies drifted apart and the pane's visible differences
+  measured on a test machine first (Q165 (c)), and the pane driven on a test machine (Q168 (b));
+  S6, the server's own repetition (S01-S14). In parallel: the rest of the shared test code (S5a),
+  the PowerShell helpers (S7), and the rules restated in C# and PowerShell as shared C# source
+  (Q171).
 
 - [ ] **Let the add-in's AI choose the signature by itself, once the add-in uses OutlookAI.Core (Q158
   and Q162, decided 2026-11-17).** Signatures are managed through the MCP server only; the add-in
@@ -1721,7 +1723,7 @@
   reads 12 months under the policy's All, and removing the policy alone would make Outlook drop that
   account's offline mail older than 12 months (inferred from Microsoft's KB 2733062).
   `Tuning\Applied` records which values OutlookAI wrote itself. The removal is built and tested, and
-  nothing calls it (`Services/EarlierPolicyRemoval.cs`, `OutlookTuningService.RemoveEarlierPolicyValues`,
+  nothing calls it (`McpServer/OutlookAI.Core/AddIn/EarlierPolicyRemoval.cs`, `OutlookTuningService.RemoveEarlierPolicyValues`,
   T1 `EarlierPolicyRemovalTests`): it sets every account's own period to All first, through
   `IAccountOfflinePeriods`, and refuses whole until the add-in can (the item on the account's own
   period, below). Wiring it to a button or to startup is the change his word will be. **Open before
@@ -1763,7 +1765,7 @@
   `AccountOfflinePeriodWriterTests`. The add-in references Core since the code-sharing refactor's
   first stage (Q167 (a)), but may call only Core's namespace `OutlookAI.Core.AddIn` (Q164 (a)), so
   what waits is moving the writer, and the profile reader it uses, into it. Then implement
-  `IAccountOfflinePeriods` (`Services/AccountOfflinePeriods.cs`, which says what it must do), set it
+  `IAccountOfflinePeriods` (`McpServer/OutlookAI.Core/AddIn/AccountOfflinePeriods.cs`, which says what it must do), set it
   in `OutlookTuningService.AccountPeriods`, and tell the user the new period takes effect when
   Outlook next starts. The dialog and the removal below both use it. Not measured: whether a running
   Outlook applies a written pair before it restarts, and whether Outlook then really downloads that
