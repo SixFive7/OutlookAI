@@ -193,7 +193,7 @@ public sealed class EarlierPolicyRemovalTests
         // Q151 (a): built, and run nowhere. The one way in is OutlookTuningService's
         // RemoveEarlierPolicyValues, and nothing calls that - wiring it to a button or a startup is
         // the maintainer's request, and this test changes with it.
-        string root = CachedModeSettingsTests.RepoRoot();
+        string root = RepoPaths.RepoRoot();
         var sources = Directory.GetFiles(root, "*.cs", SearchOption.TopDirectoryOnly)
             .Concat(Directory.GetFiles(Path.Combine(root, "Services"), "*.cs", SearchOption.AllDirectories))
             .Concat(Directory.GetFiles(Path.Combine(root, "TaskPane"), "*.cs", SearchOption.AllDirectories))

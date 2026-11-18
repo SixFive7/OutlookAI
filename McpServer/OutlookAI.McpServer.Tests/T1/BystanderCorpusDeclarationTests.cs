@@ -1,4 +1,3 @@
-using System.Reflection;
 using OutlookAI.McpServer.Tests.T2;
 using Xunit;
 
@@ -40,34 +39,13 @@ namespace OutlookAI.McpServer.Tests.T1;
 /// </summary>
 public sealed class BystanderCorpusDeclarationTests
 {
-    /// <summary>The committed example, located from the same assembly metadata the loader uses.</summary>
-    private static string ExamplePath()
-    {
-        string testProjectDir =
-            typeof(LiveTestSettings).Assembly
-                .GetCustomAttributes<AssemblyMetadataAttribute>()
-                .FirstOrDefault(a => a.Key == "TestProjectDir")?.Value
-            ?? throw new InvalidOperationException("AssemblyMetadata 'TestProjectDir' is missing.");
-
-        // <repo>/McpServer/OutlookAI.McpServer.Tests/ -> <repo>
-        string repoRoot = Path.GetFullPath(Path.Combine(testProjectDir, "..", ".."));
-        return Path.Combine(repoRoot, "Testbed", "live-test-settings.example.json");
-    }
-
-    private static LiveTestSettings Example()
-    {
-        string path = ExamplePath();
-        Assert.True(File.Exists(path), "the committed example settings file is missing: " + path);
-        return LiveTestSettings.Parse(File.ReadAllText(path));
-    }
-
     [Fact]
     public void TheCommittedExampleStillLoadsThroughTheRealLoader()
     {
         // The example is what a rebuilder copies. A key it spells differently from the loader,
         // or a block the validator rejects, is a refusal on a machine nobody is watching - and
         // nothing but this test reads the file.
-        LiveTestSettings settings = Example();
+        LiveTestSettings settings = ExampleLiveSettings.Load();
 
         Assert.Equal(LiveMachineProfile.Portable, settings.MachineProfile);
         Assert.NotEmpty(settings.TestHubStoreDisplayName);
@@ -81,7 +59,7 @@ public sealed class BystanderCorpusDeclarationTests
     {
         // Derived from the corpus block rather than hard-coded, so renaming the corpus store in
         // the example cannot quietly drop it out of the declaration.
-        LiveTestSettings settings = Example();
+        LiveTestSettings settings = ExampleLiveSettings.Load();
         string corpusStore = settings.Corpus!.StoreDisplayName;
 
         Assert.Contains(
@@ -96,7 +74,7 @@ public sealed class BystanderCorpusDeclarationTests
     [InlineData(StoreWriteKind.Folder)]
     public void NothingMayWriteToTheCorpusStore(StoreWriteKind kind)
     {
-        LiveTestSettings settings = Example();
+        LiveTestSettings settings = ExampleLiveSettings.Load();
         StoreWriteAllowlist allowlist = LiveStoreWriteGuard.Build(settings);
         string corpusStore = settings.Corpus!.StoreDisplayName;
 
@@ -111,7 +89,7 @@ public sealed class BystanderCorpusDeclarationTests
     {
         // The defect this declaration closes. LivePhase4Fixture.IdentityAccounts is exactly this
         // call, and on the documented VM layout the corpus store was the only answer it had.
-        LiveTestSettings settings = Example();
+        LiveTestSettings settings = ExampleLiveSettings.Load();
 
         IReadOnlyList<string> accounts = LiveStoreWriteGuard.Build(settings)
             .IdentityAccountsAmong(settings.ExpectedStoreDisplayNames);
@@ -122,7 +100,7 @@ public sealed class BystanderCorpusDeclarationTests
     [Fact]
     public void TheCensusStillWatchesEveryDeclaredBystanderIncludingTheCorpus()
     {
-        LiveTestSettings settings = Example();
+        LiveTestSettings settings = ExampleLiveSettings.Load();
         IReadOnlyList<string> watched = LiveStoreCountTripwire.WatchedStores(settings);
 
         foreach (string bystander in settings.BystanderStoreDisplayNames)
@@ -141,7 +119,7 @@ public sealed class BystanderCorpusDeclarationTests
         // the tier - which is why Corpus B, in the OTHER Windows account's profile, must be
         // declared in THAT machine's settings file and not in this one. Nothing in the tier can
         // tell those two mistakes apart, so the example must not model one.
-        LiveTestSettings settings = Example();
+        LiveTestSettings settings = ExampleLiveSettings.Load();
 
         foreach (string bystander in settings.BystanderStoreDisplayNames)
         {
@@ -157,7 +135,7 @@ public sealed class BystanderCorpusDeclarationTests
     {
         // End to end on the committed file: sound, and with stores the census could actually
         // fail on. If the example ever stops being runnable, this is where it shows.
-        LiveTestSettings settings = Example();
+        LiveTestSettings settings = ExampleLiveSettings.Load();
 
         TripwireWatchReport report = TripwireWatchSoundness.Require(
             LiveStoreCountTripwire.WatchedStores(settings),

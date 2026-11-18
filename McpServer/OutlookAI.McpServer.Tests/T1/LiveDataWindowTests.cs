@@ -120,7 +120,7 @@ public sealed class LiveDataWindowTests
         // The indexed guest's corpus as testbed.json declares it: the window the test asks for selects
         // exactly the items 'corpus-plan' printed for 30 days before the build (expectedPlan,
         // selectedByWindowDays) - big-store rows, on every run, frozen clock or real one.
-        JsonObject root = JsonNode.Parse(File.ReadAllText(Path.Combine(RepoRoot(), "Testbed", "testbed.json")))!.AsObject();
+        JsonObject root = JsonNode.Parse(File.ReadAllText(Path.Combine(RepoPaths.RepoRoot(), "Testbed", "testbed.json")))!.AsObject();
         JsonObject declared = root["liveTestSettings"]!["OutlookAI-Indexed"]!["corpus"]!.AsObject();
         var corpus = new CorpusSettings
         {
@@ -170,17 +170,5 @@ public sealed class LiveDataWindowTests
         // The window it used to compute inline - DateTime.UtcNow.AddDays(-30) - is gone, and with it any
         // other way of moving the window by the clock.
         Assert.DoesNotContain(calls, m => m.DeclaringType == typeof(DateTime) && m.Name is "AddDays" or "AddHours" or "Subtract");
-    }
-
-    private static string RepoRoot()
-    {
-        string testProjectDir =
-            typeof(LiveTestSettings).Assembly
-                .GetCustomAttributes<AssemblyMetadataAttribute>()
-                .FirstOrDefault(a => a.Key == "TestProjectDir")?.Value
-            ?? throw new InvalidOperationException("AssemblyMetadata 'TestProjectDir' is missing.");
-
-        // <repo>/McpServer/OutlookAI.McpServer.Tests/ -> <repo>
-        return Path.GetFullPath(Path.Combine(testProjectDir, "..", ".."));
     }
 }

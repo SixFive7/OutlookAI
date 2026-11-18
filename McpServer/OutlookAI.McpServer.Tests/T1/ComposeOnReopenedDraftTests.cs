@@ -1,4 +1,3 @@
-using System.Reflection;
 using System.Text.RegularExpressions;
 using Xunit;
 
@@ -320,10 +319,6 @@ public sealed class ComposeOnReopenedDraftTests
 
     private static string SourcePath(string file)
     {
-        string testProjectDir = typeof(ComposeOnReopenedDraftTests).Assembly
-                .GetCustomAttributes<AssemblyMetadataAttribute>()
-                .FirstOrDefault(a => a.Key == "TestProjectDir")?.Value
-            ?? throw new InvalidOperationException("AssemblyMetadata 'TestProjectDir' is missing.");
-        return Path.GetFullPath(Path.Combine(testProjectDir, "..", file));
+        return Path.GetFullPath(Path.Combine(RepoPaths.TestProjectDir(), "..", file));
     }
 }

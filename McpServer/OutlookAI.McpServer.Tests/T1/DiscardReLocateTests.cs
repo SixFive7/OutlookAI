@@ -1,4 +1,3 @@
-using System.Reflection;
 using Xunit;
 
 namespace OutlookAI.McpServer.Tests.T1;
@@ -59,10 +58,7 @@ public sealed class DiscardReLocateTests
 
     private static string CoreSource()
     {
-        string testProjectDir = typeof(DiscardReLocateTests).Assembly
-                .GetCustomAttributes<AssemblyMetadataAttribute>()
-                .FirstOrDefault(a => a.Key == "TestProjectDir")?.Value
-            ?? throw new InvalidOperationException("AssemblyMetadata 'TestProjectDir' is missing.");
+        string testProjectDir = RepoPaths.TestProjectDir();
 
         // <repo>/McpServer/OutlookAI.McpServer.Tests/ -> <repo>/McpServer/OutlookAI.Core/Com/OutlookComSession.cs
         return File.ReadAllText(Path.GetFullPath(

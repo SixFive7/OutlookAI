@@ -1,4 +1,3 @@
-using System.Reflection;
 using System.Text.RegularExpressions;
 using OutlookAI.McpServer.Tests.T2;
 using Xunit;
@@ -85,15 +84,5 @@ public sealed class CorpusProbeSweepFinallyTests
     private static int LineOf(string source, int index) => source.AsSpan(0, index).Count('\n') + 1;
 
     private static string Source()
-        => File.ReadAllText(Path.Combine(RepoRoot(), "McpServer", "OutlookAI.RemediationTools", "CorpusCommands.cs"));
-
-    private static string RepoRoot()
-    {
-        string testProjectDir =
-            typeof(LiveTestSettings).Assembly
-                .GetCustomAttributes<AssemblyMetadataAttribute>()
-                .FirstOrDefault(a => a.Key == "TestProjectDir")?.Value
-            ?? throw new InvalidOperationException("AssemblyMetadata 'TestProjectDir' is missing.");
-        return Path.GetFullPath(Path.Combine(testProjectDir, "..", ".."));
-    }
+        => File.ReadAllText(Path.Combine(RepoPaths.RepoRoot(), "McpServer", "OutlookAI.RemediationTools", "CorpusCommands.cs"));
 }
