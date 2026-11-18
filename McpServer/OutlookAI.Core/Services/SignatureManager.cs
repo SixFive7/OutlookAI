@@ -724,7 +724,7 @@ namespace OutlookAI.Core.Services
         {
             foreach (bool reply in new[] { false, true })
             {
-                if (policy.ForcedFor(reply) && string.Equals(policy.DefaultFor(reply), name, StringComparison.OrdinalIgnoreCase))
+                if (policy.LocksSignatureFor(reply, name))
                 {
                     throw new SignatureRefusedException("signature_forced_by_policy",
                         "'" + name + "' is the signature " + SignaturePolicy.Describe(policy.SourceFor(reply)) + " names for "

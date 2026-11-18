@@ -225,6 +225,18 @@ namespace OutlookAI.Core.Services
         /// </summary>
         public bool TakesDefault(bool replyOrForward) => ForcedFor(replyOrForward);
 
+        /// <summary>
+        /// True when a POLICY names <paramref name="name"/> as that scope's default, so manage_signature refuses to delete
+        /// it (Q156): deleting it would leave the policy naming a signature that is not there. Ignoring case, as signature
+        /// names are file names. The one rule the refusal and the live tier's contract with Outlook's own Signatures dialog
+        /// share.
+        /// </summary>
+        public bool LocksSignatureFor(bool replyOrForward, string name) =>
+            ForcedFor(replyOrForward) && string.Equals(DefaultFor(replyOrForward), name, StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>True when a policy names <paramref name="name"/> as either scope's default (<see cref="LocksSignatureFor"/>).</summary>
+        public bool LocksSignature(string name) => LocksSignatureFor(false, name) || LocksSignatureFor(true, name);
+
         /// <summary>The source in words, for answers and refusals.</summary>
         public static string Describe(SignaturePolicySource? source)
         {

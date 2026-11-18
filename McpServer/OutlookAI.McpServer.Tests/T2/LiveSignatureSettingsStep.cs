@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace OutlookAI.McpServer.Tests.T2;
 
 /// <summary>
@@ -29,8 +31,101 @@ public static class LiveSignatureSettingsStep
     /// <summary>Q201: a default deployed in Outlook's general mail settings, <c>Common\MailSettings</c>.</summary>
     public const string Preference = "Preference";
 
+    /// <summary>
+    /// Q201 again, with the hub account's own default for replies instead of new mail (decided 2026-11-18): a deployed
+    /// new-mail value for an account with no new-mail default of its own, the case the first two leave open.
+    /// </summary>
+    public const string PreferenceNoOwnNew = "PreferenceNoOwnNew";
+
     /// <summary>Every scenario the guest script sets, as the runner's parameter spells it.</summary>
-    public static IReadOnlyList<string> Scenarios { get; } = new[] { GroupPolicy, Preference };
+    public static IReadOnlyList<string> Scenarios { get; } = new[] { GroupPolicy, Preference, PreferenceNoOwnNew };
+
+    /// <summary>
+    /// The variable the live runner sets inside the guest task of a run with the step: where
+    /// <c>Testbed/guest/Measure-SignatureDialog.ps1</c> wrote its reading of Outlook's own Signatures dialog, taken
+    /// before the suite started.
+    /// </summary>
+    public const string DialogVariableName = "OUTLOOKAI_LIVE_SIGNATURE_DIALOG";
+
+    /// <summary>
+    /// Whether the step gave the hub account its one own default for replies and forwards - under
+    /// <see cref="GroupPolicy"/> and <see cref="PreferenceNoOwnNew"/> - rather than for new mail, under
+    /// <see cref="Preference"/>. The scope it left without one shows what the setting does for an account with none.
+    /// </summary>
+    public static bool HubOwnDefaultIsForReplies(string scenario) => scenario switch
+    {
+        GroupPolicy => true,
+        Preference => false,
+        PreferenceNoOwnNew => true,
+        _ => throw new ArgumentException("'" + scenario + "' is no signature setting the live runner makes.", nameof(scenario)),
+    };
+
+    /// <summary>Where this run's reading of the Signatures dialog is, or null when the runner read none.</summary>
+    public static string? DialogReadingPath
+    {
+        get
+        {
+            string? value = Environment.GetEnvironmentVariable(DialogVariableName);
+            return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+        }
+    }
+
+    /// <summary>
+    /// A reading of Outlook's Signatures dialog as <c>Measure-SignatureDialog.ps1</c> writes it. Windows PowerShell 5.1's
+    /// <c>ConvertTo-Json</c> writes a list of one as that one item, so a list is read from either.
+    /// </summary>
+    public static SignatureDialogReading ParseDialogReading(string json)
+    {
+        ArgumentNullException.ThrowIfNull(json);
+        using JsonDocument document = JsonDocument.Parse(json);
+        JsonElement root = document.RootElement;
+        return new SignatureDialogReading(
+            Refused: Text(root, "refused"),
+            DialogFound: Flag(root, "dialogFound") == true,
+            DialogClass: Text(root, "dialogClass"),
+            Closed: Flag(root, "closed") == true,
+            Account: Control(root, "account"),
+            NewMessages: Control(root, "newMessages"),
+            RepliesForwards: Control(root, "repliesForwards"),
+            Delete: Control(root, "delete"),
+            Signatures: Items(root, "signatures")
+                .Select(e => new SignatureDialogEntry(Text(e, "name") ?? string.Empty, Flag(e, "selected") == true, Flag(e, "deleteEnabled"), Text(e, "error")))
+                .ToList(),
+            OtherSignatureItems: root.TryGetProperty("otherSignatureItems", out JsonElement other) && other.ValueKind == JsonValueKind.Number ? other.GetInt32() : 0,
+            FolderUnchanged: Flag(root, "folderUnchanged"),
+            FolderChanges: Items(root, "folderChanges").Select(e => e.ToString()).ToList(),
+            Controls: Items(root, "controls").Select(ControlOf).ToList(),
+            Errors: Items(root, "errors").Select(e => e.ToString()).ToList());
+    }
+
+    private static IEnumerable<JsonElement> Items(JsonElement parent, string name)
+    {
+        if (!parent.TryGetProperty(name, out JsonElement value))
+        {
+            return Array.Empty<JsonElement>();
+        }
+
+        return value.ValueKind switch
+        {
+            JsonValueKind.Array => value.EnumerateArray().ToList(),
+            JsonValueKind.Null or JsonValueKind.Undefined => Array.Empty<JsonElement>(),
+            _ => new[] { value },
+        };
+    }
+
+    private static string? Text(JsonElement parent, string name) =>
+        parent.TryGetProperty(name, out JsonElement value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+
+    private static bool? Flag(JsonElement parent, string name) =>
+        parent.TryGetProperty(name, out JsonElement value) && (value.ValueKind == JsonValueKind.True || value.ValueKind == JsonValueKind.False)
+            ? value.GetBoolean()
+            : null;
+
+    private static SignatureDialogControl? Control(JsonElement parent, string name) =>
+        parent.TryGetProperty(name, out JsonElement value) && value.ValueKind == JsonValueKind.Object ? ControlOf(value) : null;
+
+    private static SignatureDialogControl ControlOf(JsonElement value) =>
+        new(Text(value, "type"), Text(value, "name"), Flag(value, "enabled"), Text(value, "value"));
 
     /// <summary>What a reading shows when no signature went in.</summary>
     public const string NoSignature = "(none)";
@@ -102,3 +197,26 @@ public static class LiveSignatureSettingsStep
         return regionHolds ? AnotherSignature : NoSignature;
     }
 }
+
+/// <summary>One control of Outlook's Signatures dialog: its UI Automation type, name, whether it is enabled, its value.</summary>
+public sealed record SignatureDialogControl(string? Type, string? Name, bool? Enabled, string? Value);
+
+/// <summary>One test signature selected in the dialog's list, and whether its Delete button was enabled then.</summary>
+public sealed record SignatureDialogEntry(string Name, bool Selected, bool? DeleteEnabled, string? Error);
+
+/// <summary>What <c>Measure-SignatureDialog.ps1</c> read off Outlook's Signatures dialog (Q156, 2026-11-18).</summary>
+public sealed record SignatureDialogReading(
+    string? Refused,
+    bool DialogFound,
+    string? DialogClass,
+    bool Closed,
+    SignatureDialogControl? Account,
+    SignatureDialogControl? NewMessages,
+    SignatureDialogControl? RepliesForwards,
+    SignatureDialogControl? Delete,
+    IReadOnlyList<SignatureDialogEntry> Signatures,
+    int OtherSignatureItems,
+    bool? FolderUnchanged,
+    IReadOnlyList<string> FolderChanges,
+    IReadOnlyList<SignatureDialogControl> Controls,
+    IReadOnlyList<string> Errors);

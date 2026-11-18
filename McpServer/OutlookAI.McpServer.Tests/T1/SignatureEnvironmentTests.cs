@@ -103,6 +103,21 @@ public sealed class SignatureEnvironmentTests
     }
 
     [Fact]
+    public void LocksSignature_IsTheSignatureAPolicyNames_InAnyCase_NotADeployedOne()
+    {
+        SignaturePolicy policy = new(false, null, "Corporate", SignaturePolicySource.GroupPolicy, "Corporate reply", SignaturePolicySource.CloudPolicy);
+        Assert.True(policy.LocksSignatureFor(false, "corporate"));
+        Assert.False(policy.LocksSignatureFor(true, "Corporate"));
+        Assert.True(policy.LocksSignature("Corporate reply"));
+        Assert.False(policy.LocksSignature("Personal"));
+
+        SignaturePolicy deployed = new(false, null, "Deployed", SignaturePolicySource.Preference, "Deployed reply", SignaturePolicySource.Preference);
+        Assert.False(deployed.LocksSignature("Deployed"));
+        Assert.False(deployed.LocksSignature("Deployed reply"));
+        Assert.False(SignaturePolicy.None.LocksSignature("Anything"));
+    }
+
+    [Fact]
     public void EffectiveDefault_IsTheAccountsOwn_WhateverASettingNames_AndOnlyAPolicyLocksIt()
     {
         // Q200 (a), Q201, measured 2026-11-18 (runbook 4.11): Outlook put an account's own default in, and nothing where the

@@ -252,6 +252,13 @@ its mailbox tests on, and change nothing you install.
   for plain ones. An Outlook start whose main window does not open now names the windows Outlook
   showed instead; one on the indexed test machine on 2026-11-18 showed nothing but its "Opening"
   splash for ten minutes. The guest scripts that drive the MCP server share one stdio client now.
+  A third scenario, `-SignatureSettings PreferenceNoOwnNew`, gives the hub account its own default
+  for replies under the deployed setting, so a new mail shows what that setting does for an account
+  with no new-mail default of its own. And every such run reads Outlook's own Signatures dialog
+  before the suite, through `Measure-SignatureDialog.ps1`, which presses nothing but Cancel: whether
+  its New messages and Replies/forwards boxes and its Delete button are open, which a second live
+  test holds OutlookAI's refusals to. The two probes that read Outlook's dialogs share one copy of
+  that code, `OutlookDialogUia.ps1`.
 
 - ✅ **A probe on the Exchange test machine measures what the folder-ID fixes of November rest on.**
   `Testbed/guest/Measure-FolderIdResolution.ps1` reads, changing nothing, what three of the fixes

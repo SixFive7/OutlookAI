@@ -220,10 +220,12 @@ public sealed class LiveSignatureSettingsTests
     /// <list type="bullet">
     /// <item><b>GroupPolicy</b> (Q200): Group Policy names a default for new mail and one for replies and forwards.</item>
     /// <item><b>Preference</b> (Q201): Outlook's general mail settings name the same two, not as a policy.</item>
+    /// <item><b>PreferenceNoOwnNew</b> (Q201): the same deployed setting, the hub's own default for replies instead.</item>
     /// </list>
-    /// The hub account has one default of its own - for new mail under the deployed setting, for replies under the
-    /// policy - so each run ranks the setting against the account's own for one scope and shows for the other what the
-    /// setting does for an account that has none.
+    /// The hub account has one default of its own - for new mail under Preference, for replies under the policy and
+    /// under PreferenceNoOwnNew (<see cref="LiveSignatureSettingsStep.HubOwnDefaultIsForReplies"/>) - so each run ranks
+    /// the setting against the account's own for one scope and shows for the other what the setting does for an account
+    /// that has none.
     /// Outlook's side is read from compose windows opened on the objects Outlook's own commands make - the kind that
     /// crashed Outlook on 2026-10-04 (runbook 4.6), which is why the runner arms full crash dumps. MEASURED lines first,
     /// then the contract. A run without the step proves nothing.
@@ -263,8 +265,9 @@ public sealed class LiveSignatureSettingsTests
         string settingReply = RequireTestSignature(policy.ReplyForward, "the setting's reply and forward default");
         string? ownNew = hubRow.NewMessage == null ? null : RequireTestSignature(hubRow.NewMessage, "the hub account's own new-mail default");
         string? ownReply = hubRow.ReplyForward == null ? null : RequireTestSignature(hubRow.ReplyForward, "the hub account's own reply default");
-        Assert.True(source == SignaturePolicySource.GroupPolicy ? ownNew == null && ownReply != null : ownNew != null && ownReply == null,
-            "the step gives the hub one default of its own: for replies under the policy, for new mail under the deployed setting");
+        bool ownIsForReplies = LiveSignatureSettingsStep.HubOwnDefaultIsForReplies(scenario);
+        Assert.True(ownIsForReplies ? ownNew == null && ownReply != null : ownNew != null && ownReply == null,
+            $"the {scenario} step gives the hub one default of its own, for {(ownIsForReplies ? "replies" : "new mail")}");
 
         Dictionary<string, string> roles = new(StringComparer.Ordinal)
         {
@@ -391,6 +394,113 @@ public sealed class LiveSignatureSettingsTests
         }
 
         Assert.Equal(0, LiveOutlookTestMailer.CountTaggedArtifacts(Hub, Marker));
+    }
+
+    /// <summary>
+    /// Q156, decided by the maintainer 2026-11-18 ((d) of the measurement's decisions): with the same signature setting
+    /// made before Outlook started, what Outlook's OWN Signatures dialog lets a user do - read by the runner before the
+    /// suite (<c>Testbed/guest/Measure-SignatureDialog.ps1</c>, closed as Cancel does), handed over in
+    /// <see cref="LiveSignatureSettingsStep.DialogVariableName"/> - and that OutlookAI allows the same: a default the
+    /// dialog's New messages or Replies/forwards box will not let a user change is one manage_signature refuses to change
+    /// (<see cref="SignaturePolicy.TakesDefault"/>), and a signature the dialog's Delete button will not delete is one
+    /// manage_signature refuses to delete (<see cref="SignaturePolicy.LocksSignature"/>). Read-only: OutlookAI's side is
+    /// the decision it takes, asked of the policy it reads. MEASURED lines first, then the contract. A run without the
+    /// step proves nothing.
+    /// </summary>
+    [Fact]
+    [Trait("Requires", "MailAccount")]
+    [Trait("Requires", "LocalSignatures")]
+    public void SetBeforeOutlookStarted_TheSignaturesDialog_LetsAUserChangeAndDeleteWhatOutlookAIDoes()
+    {
+        string? scenario = LiveSignatureSettingsStep.Current;
+        if (scenario == null)
+        {
+            _fixture.Settings.RequireProductionPopulation(
+                "a signature setting the live runner's -SignatureSettings step made before Outlook started");
+            _output.WriteLine("PROVED NOTHING: what Outlook's own Signatures dialog allows under an administrator's signature "
+                + "setting (Q156) needs the live runner's -SignatureSettings step, which reads the dialog before the suite; this "
+                + "run had none.");
+            return;
+        }
+
+        string path = LiveSignatureSettingsStep.DialogReadingPath
+            ?? throw new InvalidOperationException("The runner made the " + scenario + " setting but read no Signatures dialog: "
+                + LiveSignatureSettingsStep.DialogVariableName + " is not set in the guest task.");
+        Assert.True(File.Exists(path), "The runner's reading of the Signatures dialog is missing: " + path
+            + ". signature-dialog.log beside it says why.");
+        SignatureDialogReading dialog = LiveSignatureSettingsStep.ParseDialogReading(File.ReadAllText(path));
+
+        string running = _fixture.VerifySession.GetProfileName();
+        SignatureDefaultsRow hubRow = HubRow(running)
+            ?? throw new InvalidOperationException("The hub account is not in the running profile's account list, where the "
+                + "step set its own defaults.");
+        SignaturePolicy policy = SignaturePolicy.Read(new LiveSignatureSettingsRegistry(), OutlookProfileRegistry.OfficeVersion);
+        string settingNew = RequireTestSignature(policy.NewMessage, "the setting's new-mail default");
+        string settingReply = RequireTestSignature(policy.ReplyForward, "the setting's reply and forward default");
+        string setting = policy.NewMessageSource == SignaturePolicySource.GroupPolicy ? "the policy's" : "the deployed";
+        Dictionary<string, string> roles = new(StringComparer.Ordinal)
+        {
+            [settingNew] = setting + " new-mail default",
+            [settingReply] = setting + " reply default",
+        };
+        if (hubRow.NewMessage != null)
+        {
+            roles[RequireTestSignature(hubRow.NewMessage, "the hub account's own new-mail default")] = "the account's own new-mail default";
+        }
+
+        if (hubRow.ReplyForward != null)
+        {
+            roles[RequireTestSignature(hubRow.ReplyForward, "the hub account's own reply default")] = "the account's own reply default";
+        }
+
+        string Box(SignatureDialogControl? control) => control == null
+            ? "not found"
+            : $"'{control.Value ?? "-"}' ({control.Type}, enabled={Show(control.Enabled)})";
+
+        // MEASURED: the dialog as Outlook showed it under the setting.
+        _output.WriteLine($"MEASURED {scenario} Signatures dialog: found={dialog.DialogFound} class={dialog.DialogClass ?? "-"} "
+            + $"closed={dialog.Closed}; signature folder unchanged={Show(dialog.FolderUnchanged)}"
+            + (dialog.FolderChanges.Count == 0 ? string.Empty : " (" + string.Join(", ", dialog.FolderChanges) + ")"));
+        _output.WriteLine($"MEASURED {scenario} Signatures dialog: E-mail account {Box(dialog.Account)}; New messages {Box(dialog.NewMessages)}; "
+            + $"Replies/forwards {Box(dialog.RepliesForwards)}; Delete button enabled={Show(dialog.Delete?.Enabled)}");
+        foreach (SignatureDialogEntry entry in dialog.Signatures)
+        {
+            _output.WriteLine($"MEASURED {scenario} Signatures dialog: '{entry.Name}' ({(roles.TryGetValue(entry.Name, out string? role) ? role : "another test signature")}) "
+                + $"selected={entry.Selected}, then Delete enabled={Show(entry.DeleteEnabled)}" + (entry.Error == null ? string.Empty : " (" + entry.Error + ")"));
+        }
+
+        _output.WriteLine($"MEASURED {scenario} Signatures dialog: {dialog.Controls.Count} named controls - "
+            + string.Join(" | ", dialog.Controls.Select(c => c.Type + " '" + c.Name + "'" + (c.Enabled == false ? " disabled" : string.Empty))));
+        _output.WriteLine($"MEASURED {scenario}: OutlookAI {(policy.TakesDefault(false) ? "refuses" : "allows")} a change of the new-mail default, "
+            + $"{(policy.TakesDefault(true) ? "refuses" : "allows")} one of the reply default; it refuses to delete "
+            + (roles.Keys.Where(policy.LocksSignature).DefaultIfEmpty("none of them").Aggregate((a, b) => a + ", " + b)));
+
+        // The reading is whole, and the dialog kept nothing.
+        Assert.True(dialog.Refused == null, "the dialog probe refused: " + dialog.Refused);
+        Assert.True(dialog.Errors.Count == 0, "the dialog probe failed: " + string.Join("; ", dialog.Errors));
+        Assert.True(dialog.DialogFound && dialog.Closed, "the Signatures dialog was not both found and closed");
+        Assert.True(dialog.FolderUnchanged == true, "the Signatures dialog changed the signature folder: " + string.Join(", ", dialog.FolderChanges));
+        Assert.True(dialog.NewMessages?.Enabled != null && dialog.RepliesForwards?.Enabled != null, "the dialog's default boxes could not be read");
+
+        // THE CONTRACT: OutlookAI refuses what Outlook's own dialog will not let a user do, and allows what it does.
+        bool newLocked = dialog.NewMessages!.Enabled == false;
+        bool replyLocked = dialog.RepliesForwards!.Enabled == false;
+        Assert.True(newLocked == policy.TakesDefault(false),
+            $"the dialog's New messages box is {(newLocked ? "disabled" : "enabled")}, and OutlookAI "
+            + $"{(policy.TakesDefault(false) ? "refuses" : "allows")} a change of the new-mail default");
+        Assert.True(replyLocked == policy.TakesDefault(true),
+            $"the dialog's Replies/forwards box is {(replyLocked ? "disabled" : "enabled")}, and OutlookAI "
+            + $"{(policy.TakesDefault(true) ? "refuses" : "allows")} a change of the reply default");
+        foreach (string name in roles.Keys)
+        {
+            SignatureDialogEntry entry = dialog.Signatures.FirstOrDefault(s => string.Equals(s.Name, name, StringComparison.Ordinal))
+                ?? throw new InvalidOperationException("'" + name + "' (" + roles[name] + ") is not in the dialog's signature list.");
+            Assert.True(entry.Selected && entry.DeleteEnabled != null, "'" + name + "' could not be selected in the dialog, so its Delete button was not read");
+            bool deleteShut = entry.DeleteEnabled == false;
+            Assert.True(deleteShut == policy.LocksSignature(name),
+                $"with '{name}' ({roles[name]}) selected the dialog's Delete button is {(deleteShut ? "disabled" : "enabled")}, and OutlookAI "
+                + $"{(policy.LocksSignature(name) ? "refuses" : "allows")} deleting it");
+        }
     }
 
     [Fact]

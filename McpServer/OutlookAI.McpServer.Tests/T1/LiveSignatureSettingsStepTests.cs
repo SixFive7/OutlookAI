@@ -22,6 +22,7 @@ public sealed class LiveSignatureSettingsStepTests
     [InlineData("   ", null)]
     [InlineData("GroupPolicy", "GroupPolicy")]
     [InlineData(" Preference ", "Preference")]
+    [InlineData("PreferenceNoOwnNew", "PreferenceNoOwnNew")]
     public void TheVariable_NamesAScenario_OrNone(string? value, string? expected)
     {
         Assert.Equal(expected, LiveSignatureSettingsStep.Parse(value));
@@ -40,8 +41,93 @@ public sealed class LiveSignatureSettingsStepTests
     [Fact]
     public void TheScenarios_AreTheOnesTheRunnerTakes()
     {
-        Assert.Equal(new[] { "GroupPolicy", "Preference" }, LiveSignatureSettingsStep.Scenarios);
+        Assert.Equal(new[] { "GroupPolicy", "Preference", "PreferenceNoOwnNew" }, LiveSignatureSettingsStep.Scenarios);
         Assert.Equal("OUTLOOKAI_LIVE_SIGNATURE_SETTINGS", LiveSignatureSettingsStep.VariableName);
+        Assert.Equal("OUTLOOKAI_LIVE_SIGNATURE_DIALOG", LiveSignatureSettingsStep.DialogVariableName);
+    }
+
+    [Theory]
+    [InlineData("GroupPolicy", true)]
+    [InlineData("Preference", false)]
+    [InlineData("PreferenceNoOwnNew", true)]
+    public void TheHubsOneOwnDefault_IsForRepliesUnlessTheScenarioIsPreference(string scenario, bool forReplies)
+    {
+        Assert.Equal(forReplies, LiveSignatureSettingsStep.HubOwnDefaultIsForReplies(scenario));
+    }
+
+    [Fact]
+    public void AnUnknownScenario_HasNoOwnDefaultPlan()
+    {
+        Assert.Throws<ArgumentException>(() => LiveSignatureSettingsStep.HubOwnDefaultIsForReplies("CloudPolicy"));
+    }
+
+    [Fact]
+    public void TheDialogsReading_IsReadWhole()
+    {
+        const string Json = """
+            {
+              "probe": "Measure-SignatureDialog",
+              "refused": null,
+              "dialogFound": true,
+              "dialogClass": "bosa_sdm_Mso96",
+              "closed": true,
+              "account": { "type": "ComboBox", "name": "E-mail account:", "enabled": true, "value": "hub@vm.invalid" },
+              "newMessages": { "type": "ComboBox", "name": "New messages:", "enabled": false, "value": "OutlookAI-McpTest-Q200-Forced-New" },
+              "repliesForwards": { "type": "ComboBox", "name": "Replies/forwards:", "enabled": false, "value": "OutlookAI-McpTest-Q200-Forced-Reply" },
+              "delete": { "type": "Button", "name": "Delete", "enabled": true, "value": null },
+              "signatures": [
+                { "name": "OutlookAI-McpTest-Q200-Forced-New", "selected": true, "deleteEnabled": false, "error": null },
+                { "name": "OutlookAI-McpTest-Q200-Own-Reply", "selected": true, "deleteEnabled": true, "error": null }
+              ],
+              "otherSignatureItems": 1,
+              "folderUnchanged": true,
+              "folderChanges": [],
+              "controls": [ { "type": "Button", "name": "Cancel", "enabled": true, "value": null } ],
+              "errors": []
+            }
+            """;
+        SignatureDialogReading reading = LiveSignatureSettingsStep.ParseDialogReading(Json);
+
+        Assert.Null(reading.Refused);
+        Assert.True(reading.DialogFound && reading.Closed);
+        Assert.Equal("bosa_sdm_Mso96", reading.DialogClass);
+        Assert.Equal("hub@vm.invalid", reading.Account!.Value);
+        Assert.Equal(false, reading.NewMessages!.Enabled);
+        Assert.Equal("OutlookAI-McpTest-Q200-Forced-Reply", reading.RepliesForwards!.Value);
+        Assert.Equal(true, reading.Delete!.Enabled);
+        Assert.Equal(new[] { false, true }, reading.Signatures.Select(s => s.DeleteEnabled!.Value));
+        Assert.Equal(1, reading.OtherSignatureItems);
+        Assert.Equal(true, reading.FolderUnchanged);
+        Assert.Empty(reading.FolderChanges);
+        Assert.Equal("Cancel", Assert.Single(reading.Controls).Name);
+        Assert.Empty(reading.Errors);
+    }
+
+    [Fact]
+    public void AListOfOne_WrittenAsItsItem_IsStillAList_AndWhatIsMissingIsUnread()
+    {
+        // Windows PowerShell 5.1's ConvertTo-Json can write a list of one as the item itself.
+        const string Json = """
+            {
+              "refused": "Outlook is not running in this session",
+              "dialogFound": false,
+              "signatures": { "name": "OutlookAI-McpTest-X", "selected": false, "deleteEnabled": null, "error": "no pattern" },
+              "folderChanges": "changed OutlookAI-McpTest-X.htm",
+              "errors": "the dialog did not open"
+            }
+            """;
+        SignatureDialogReading reading = LiveSignatureSettingsStep.ParseDialogReading(Json);
+
+        Assert.Equal("Outlook is not running in this session", reading.Refused);
+        Assert.False(reading.DialogFound || reading.Closed);
+        Assert.Null(reading.NewMessages);
+        Assert.Null(reading.FolderUnchanged);
+        SignatureDialogEntry entry = Assert.Single(reading.Signatures);
+        Assert.Null(entry.DeleteEnabled);
+        Assert.Equal("no pattern", entry.Error);
+        Assert.Equal("changed OutlookAI-McpTest-X.htm", Assert.Single(reading.FolderChanges));
+        Assert.Equal("the dialog did not open", Assert.Single(reading.Errors));
+        Assert.Empty(reading.Controls);
     }
 
     [Fact]

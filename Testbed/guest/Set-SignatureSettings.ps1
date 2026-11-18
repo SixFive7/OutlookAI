@@ -20,15 +20,18 @@
     Outlook itself inserts in a new mail, a reply and a forward, and holds OutlookAI to the same.
 
     THE SCENARIOS (-Scenario), each a plan Get-SignatureSettingsPlan returns:
-      GroupPolicy  Q200. HKCU\Software\Policies\Microsoft\Office\<major>\Common\MailSettings: NewSignature and
-                   ReplySignature, naming two test signatures.
-      Preference   Q201. HKCU\Software\Microsoft\Office\<major>\Common\MailSettings: the same two values, there not a
-                   policy but a deployed setting.
-    The hub account gets ONE default of its own, a third test signature: for new mail under the deployed setting, for
-    replies and forwards under the policy. So each run ranks the setting against the account's own default for one
-    scope, and shows for the other what the setting does for an account that has none of its own - the deployed
-    setting for replies, the policy for new mail. (The first policy runs, 2026-11-18, gave the hub its own default for
-    both: Outlook put the account's own in, not the policy's.)
+      GroupPolicy         Q200. HKCU\Software\Policies\Microsoft\Office\<major>\Common\MailSettings: NewSignature
+                          and ReplySignature, naming two test signatures.
+      Preference          Q201. HKCU\Software\Microsoft\Office\<major>\Common\MailSettings: the same two values,
+                          there not a policy but a deployed setting.
+      PreferenceNoOwnNew  Q201 again, with the hub's own default for replies instead of new mail (decided
+                          2026-11-18): the one case the first two leave open, a deployed new-mail value for an
+                          account with no new-mail default of its own.
+    The hub account gets ONE default of its own, a third test signature: for new mail under Preference, for replies
+    and forwards under GroupPolicy and PreferenceNoOwnNew. So each run ranks the setting against the account's own
+    default for one scope, and shows for the other what the setting does for an account that has none of its own.
+    (The first policy runs, 2026-11-18, gave the hub its own default for both: Outlook put the account's own in, not
+    the policy's.)
 
     THE VALUES' KIND (-ValueKind). ExpandString, REG_EXPAND_SZ, by default: what signature vendors tell
     administrators to write and what Outlook was reported to honour where a plain string stopped working (Microsoft
@@ -44,8 +47,7 @@
          names, which Set-AccountSignature.ps1 takes too: list_signatures, for the folder, the profile and the
          account; manage_signature create for each signature of the plan, its HTML holding its own name, so a mail
          shows which went in; then manage_signature set_default for the hub account's own defaults. All before
-         step 3: manage_signature refuses a default change while a policy or a deployed default names one for
-         every account.
+         step 3: manage_signature refuses a default change while a policy names one.
       3. Writes the plan's two registry values.
       4. Verifies through list_signatures and the registry: VERDICT: SET, exit 0, or VERDICT: NOT-SET with what is
          not as planned, exit 1.
@@ -56,7 +58,7 @@
     EXIT CODES: 0 SET, or the dry run; 1 NOT-SET; 4 REFUSED - step 1, or the request itself.
 
 .PARAMETER Scenario
-    GroupPolicy (Q200) or Preference (Q201).
+    GroupPolicy (Q200), Preference (Q201) or PreferenceNoOwnNew (Q201, the hub's own default for replies only).
 
 .PARAMETER Account
     The hub account's address, whose own defaults the plan sets. Default: the hub the staged live-test settings
@@ -80,7 +82,7 @@
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('GroupPolicy', 'Preference')] [string] $Scenario,
+    [ValidateSet('GroupPolicy', 'Preference', 'PreferenceNoOwnNew')] [string] $Scenario,
     [ValidateSet('ExpandString', 'String')] [string] $ValueKind = 'ExpandString',
     [switch]   $Execute,
     [switch]   $Verify,
@@ -121,15 +123,19 @@ function Get-SignatureSettingsPlan {
         $key = "Software\Policies\Microsoft\Office\$OfficeVersion\Common\MailSettings"
         $token = 'groupPolicy'
     }
-    elseif ($Scenario -eq 'Preference') {
+    elseif ($Scenario -eq 'Preference' -or $Scenario -eq 'PreferenceNoOwnNew') {
         $settingNew = $TestPrefix + 'Q201-Deployed-New'
         $settingReply = $TestPrefix + 'Q201-Deployed-Reply'
         $ownNew = $TestPrefix + 'Q201-Own-New'
         $ownReply = $null
+        if ($Scenario -eq 'PreferenceNoOwnNew') {
+            $ownNew = $null
+            $ownReply = $TestPrefix + 'Q201-Own-Reply'
+        }
         $key = "Software\Microsoft\Office\$OfficeVersion\Common\MailSettings"
         $token = 'preference'
     }
-    else { throw "'$Scenario' is no scenario: GroupPolicy or Preference." }
+    else { throw "'$Scenario' is no scenario: GroupPolicy, Preference or PreferenceNoOwnNew." }
     $signatures = @($settingNew, $settingReply)
     if ($ownNew) { $signatures += $ownNew }
     if ($ownReply) { $signatures += $ownReply }
@@ -227,7 +233,10 @@ function Invoke-SelfTest {
     Check 'and list_signatures names its source preference' 'preference' $p.Source
     Check 'the hub has its own new-mail default only' 'OutlookAI-McpTest-Q201-Own-New|True' @($p.OwnNew, ($null -eq $p.OwnReply))
     Check 'three signatures' 3 @($p.Signatures).Count
-    foreach ($plan in @($g, $p)) {
+    $n = Get-SignatureSettingsPlan 'PreferenceNoOwnNew' '16.0'
+    Check 'the third scenario is the deployed setting too' 'Software\Microsoft\Office\16.0\Common\MailSettings|preference' @($n.Key, $n.Source)
+    Check 'and the hub has its own reply default only' 'OutlookAI-McpTest-Q201-Deployed-New|OutlookAI-McpTest-Q201-Deployed-Reply|OutlookAI-McpTest-Q201-Own-Reply|True' (@($n.Signatures) + @($null -eq $n.OwnNew))
+    foreach ($plan in @($g, $p, $n)) {
         foreach ($name in $plan.Signatures) {
             Check "$name is a test signature" $true $name.StartsWith($TestPrefix, [System.StringComparison]::Ordinal)
             Check "$name is in no other name of its plan" 1 @($plan.Signatures | Where-Object { $_.Contains($name) }).Count
@@ -304,6 +313,16 @@ function Invoke-SelfTest {
     Check 'under the policy too, an own default the plan did not set is NOT-SET' 'NOT-SET' (Get-SettingsVerdict $g $gOwnReply).Verdict
     $pSet['Own'] = [pscustomobject]@{ newMessage = $p.OwnNew; replyForward = 'Identity' }
     Check 'an own reply default the plan did not set is NOT-SET' 'NOT-SET' (Get-SettingsVerdict $p $pSet).Verdict
+    $nSet = @{
+        Values     = @{ NewSignature = $n.SettingNew; ReplySignature = $n.SettingReply }
+        Kinds      = @{ NewSignature = 'ExpandString'; ReplySignature = 'ExpandString' }
+        Policy     = [pscustomobject]@{ newMessage = $n.SettingNew; newMessageFrom = 'preference'; replyForward = $n.SettingReply; replyForwardFrom = 'preference' }
+        Own        = [pscustomobject]@{ newMessage = $null; replyForward = $n.OwnReply }
+        Signatures = @($n.Signatures)
+    }
+    Check 'the deployed setting with no own new-mail default is SET' 'SET' (Get-SettingsVerdict $n $nSet).Verdict
+    $nSet['Own'] = [pscustomobject]@{ newMessage = $p.OwnNew; replyForward = $n.OwnReply }
+    Check 'and NOT-SET when the hub has a new-mail default of its own' 'NOT-SET' (Get-SettingsVerdict $n $nSet).Verdict
     Check 'no policy at all is NOT-SET' 'NOT-SET' (Get-SettingsVerdict $g @{ Values = @{}; Kinds = @{}; Policy = $null; Own = $null; Signatures = @() }).Verdict
 
     # The stdio client's pure parts (McpStdioClient.ps1).
