@@ -261,7 +261,10 @@ if ($SelfTest) { exit (Invoke-SelfTest) }
 # THE CLONES.
 # =============================================================================================
 . (Join-Path $PSScriptRoot 'TestbedLeasePath.ps1')
-function Say([string] $m) { Write-Host ("[{0:HH:mm:ss}] {1}" -f (Get-Date), $m) }
+# Say is one of the helpers the scripts share, dot-sourced from Testbed/guest/ScriptHelpers.ps1 (Q154,
+# Q166 (b), decision 215 (a)), which says why.
+. (Join-Path $PSScriptRoot '..\guest\ScriptHelpers.ps1')
+
 function Stop-Refused([string] $Why) { Say "REFUSED: $Why"; exit 4 }
 
 function Get-TimeSyncEnabled($Services) {

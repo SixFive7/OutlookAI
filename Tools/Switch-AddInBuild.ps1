@@ -272,8 +272,6 @@ $WatchedCertStores = @('My', 'TrustedPublisher', 'Root', 'CA', 'TrustedPeople', 
 
 $script:SelfTestActive = $false
 
-function Say([string] $m) { Write-Host ("[{0:HH:mm:ss}] {1}" -f (Get-Date), $m) }
-
 # Every program call goes through Invoke-NativeCommand, so that Windows PowerShell 5.1 cannot end
 # the script on a program's first stderr line (Q78). It is one of the helpers the scripts share,
 # dot-sourced from Testbed/guest/ScriptHelpers.ps1 (Q166 (b), decision 215 (a)), which says why.

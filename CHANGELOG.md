@@ -856,7 +856,13 @@ its mailbox tests on, and change nothing you install.
   two). The build-VM runner, which reaches the VM on its own, keeps its own run of a program,
   which quotes its arguments and stops the whole process tree, as `Invoke-LoggedStep`. And three
   `Tools/` scripts that restated the import of the running edition's own Security and Utility
-  modules now dot-source `Testbed/host/OwnEditionModules.ps1`, as the host scripts do.
+  modules now dot-source `Testbed/host/OwnEditionModules.ps1`, as the host scripts do. The
+  progress line `Say` had 27 copies in 12 bodies: the 18 that print the time and the message, and
+  append the line to the script's log where it keeps one, are one function now, in the shared
+  file. Five scripts that collect their lines into a report and print them without the time now
+  share `Write-ReportLine`. The mail sink's installer, whose log starts only once its guards have
+  passed, calls its own `Write-SinkLog`, and the build-VM runner, which reaches the VM on its own
+  and appends to its log in a way the host can read while it grows, its own `Write-RunLog`.
 
 - ♻️ **The test suite keeps one copy of each stand-in its files share, and of its paths (Q154).**
   Nineteen test files each declared a stand-in for Outlook's connection that runs an operation

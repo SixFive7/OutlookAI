@@ -302,20 +302,9 @@ $VerdictSdkOnly   = 'SDK-ONLY'
 $VerdictTestReady = 'TEST-READY'
 $VerdictBroken    = 'BROKEN'
 
-function Say([string] $m) {
-    $line = "[{0:HH:mm:ss}] {1}" -f (Get-Date), $m
-    Write-Host $line
-    if ($LogPath) {
-        try {
-            $dir = Split-Path -Parent $LogPath
-            if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
-            Add-Content -LiteralPath $LogPath -Value $line -Encoding UTF8
-        }
-        catch {
-            # A log that cannot be written must not stop the work it was recording.
-        }
-    }
-}
+# Say is one of the helpers the scripts share, dot-sourced from ScriptHelpers.ps1, which travels with the
+# guest scripts (Q154, Q166 (b), decision 215 (a)) and says why. It appends to $LogPath when there is one.
+. (Join-Path $PSScriptRoot 'ScriptHelpers.ps1')
 
 # ---------------------------------------------------------------------------------------------
 # THE GUARD. FIRST CALL IN EVERY PATH, -Verify included - a verification builds a Release tree
