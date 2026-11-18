@@ -152,7 +152,10 @@
 
     WHAT THE INSTALLER DOES NOT CARRY: the MCP server. The release puts it in {app}\McpServer; the
     live tier never uses that copy - it builds and spawns its own from the suite source - and the
-    add-in only needs it to register itself with Claude Code, which a guest does not have.
+    add-in only needs it to register itself with Claude Code, which a guest does not have. Nor the
+    helper that sets up the server's private .NET runtime (Q172): it comes with the server. A test of
+    the installed product itself - setup's runtime step, the server it leaves behind - builds with
+    -WithServer, and then the installer carries both, as a release's does (-WithServer, below).
 
     OUTLOOKAI.CORE, AND THE RESTORE (Q167 (a), decided by the maintainer 2026-11-18). The add-in
     references McpServer/OutlookAI.Core for its net48 build (OutlookAI.csproj says how), so the build
@@ -181,6 +184,9 @@
         other copy, so one release has one version;
       * the MCP server is published into publish\McpServer, framework-dependent, with the same
         version, so the installer carries it, and both of its executables must carry the version;
+      * so is the helper that sets up the server's private .NET runtime, OutlookAI.RuntimeSetup,
+        into publish\RuntimeSetup - for .NET Framework 4.8, because it runs before any .NET 11 is on
+        the machine - and its executable must carry the version too (Q172, 2026-11-18);
       * it stops at the UNSIGNED installer: no guest manifest, no AddIn.zip. Signing the installer
         and publishing it are Tools/Publish-Release.ps1's.
 
@@ -236,6 +242,12 @@
     the server in the installer, and stop at the unsigned installer. -Version must then be the
     release's own, never 99.99.99.0.
 
+.PARAMETER WithServer
+    A testbed build whose installer carries the MCP server and its runtime helper, as a release's
+    does: everything else as without it - the throwaway certificate, 99.99.99.0, the guest manifest
+    and AddIn.zip. For a test of the installed product on a guest (Q172, 2026-11-18): setup's runtime
+    step, and the server it leaves in {app}\McpServer. A release has them anyway.
+
 .PARAMETER CompareInstalledTargets
     Compare guard 2's stand-ins with the installed VSTO targets and exit: 0 when every Visual Studio
     with the Office workload here passes, 1 when one does not or when there is none. Reads one XML
@@ -258,6 +270,7 @@ param(
     [string] $Version = '99.99.99.0',
     [int]    $BuildTimeoutMinutes = 20,
     [string] $ReleaseSigningThumbprint,
+    [switch] $WithServer,
     [switch] $CompareInstalledTargets,
     [switch] $SelfTest
 )
@@ -325,6 +338,8 @@ $DeveloperVersion = '99.99.99.0'
 
 # The two executables the MCP server's publish must produce, each stamped with the release version.
 $ServerExecutables = @('OutlookAI.McpServer.exe', 'OutlookAI.ComHost.exe')
+# The helper Installer.iss runs from {app}\RuntimeSetup to set up the server's runtime (Q172).
+$RuntimeSetupExecutable = 'OutlookAI.RuntimeSetup.exe'
 
 # The host state guard 3 compares. Keys under HKCU, and CurrentUser certificate stores.
 $WatchedRegistry = @(
@@ -686,6 +701,18 @@ function Get-ServerPublishArgumentList {
         "-p:Version=$Version", '-o', $output, '--disable-build-servers', '--nologo')
 }
 
+# The runtime helper: .NET Framework 4.8, for which -r and --self-contained mean nothing - it runs on
+# the Framework every supported Windows has, before any .NET 11 is on the machine (Q172).
+function Get-RuntimeSetupPublishArgumentList {
+    param([string] $ProjectPath, [string] $Version, [string] $OutputDir)
+    $project = $ProjectPath
+    if ($project -match '\s') { $project = '"' + $project + '"' }
+    $output = $OutputDir
+    if ($output -match '\s') { $output = '"' + $output + '"' }
+    return @('publish', $project, '-c', 'Release', '-f', 'net48',
+        "-p:Version=$Version", '-o', $output, '--disable-build-servers', '--nologo')
+}
+
 function Test-ThumbprintText { param([string] $Value) return [bool]($Value -match '^[0-9A-Fa-f]{40}$') }
 
 # Lines of a snapshot that belong to one key, so the registration key can be compared on its own.
@@ -1003,6 +1030,12 @@ AwQ=</Modulus><Exponent>AQAB</Exponent></RSAKeyValue></KeyValue></KeyInfo></Sign
     $spaced = Get-ServerPublishArgumentList -ProjectPath 'C:\a b\s.csproj' -Version '1.2.3.4' -OutputDir 'C:\a b\out'
     Test-Case 'paths with a space are quoted' '"C:\a b\s.csproj"|"C:\a b\out"' ($spaced[1] + '|' + $spaced[10])
     Test-Case 'the two executables the release must stamp' 'OutlookAI.McpServer.exe,OutlookAI.ComHost.exe' ($ServerExecutables -join ',')
+    $setupArgs = Get-RuntimeSetupPublishArgumentList -ProjectPath 'C:\b\source\McpServer\OutlookAI.RuntimeSetup\OutlookAI.RuntimeSetup.csproj' -Version '3.1.1.900' -OutputDir 'C:\b\source\publish\RuntimeSetup'
+    Test-Case 'the runtime helper is published, Release, for .NET Framework 4.8' 'publish|-c Release|-f net48' ('{0}|{1} {2}|{3} {4}' -f $setupArgs[0], $setupArgs[2], $setupArgs[3], $setupArgs[4], $setupArgs[5])
+    Test-Case 'with the release version' $true ($setupArgs -contains '-p:Version=3.1.1.900')
+    Test-Case 'into publish\RuntimeSetup, where Installer.iss runs it from' $true ($setupArgs -contains 'C:\b\source\publish\RuntimeSetup')
+    Test-Case 'with no runtime identifier - a .NET Framework executable has none' $false (($setupArgs -contains '-r') -or (($setupArgs -join ' ').Contains('--self-contained')))
+    Test-Case 'the executable Installer.iss runs' $true ([System.IO.File]::ReadAllText((Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) 'Installer.iss')).Contains("{app}\RuntimeSetup\$RuntimeSetupExecutable"))
 
     Write-Host ''
     Write-Host '== the output directory =='
@@ -1609,7 +1642,7 @@ if (-not $built) {
 }
 
 # ---------------------------------------------------------------------------------------------
-if ($Release) {
+if ($Release -or $WithServer) {
     Say ''
     Say '== MCP server (the release''s "Publish MCP server", into the same tree) =='
     $serverOut = Join-Path $sourceDir 'publish\McpServer'
@@ -1630,6 +1663,22 @@ if ($Release) {
         if ($stamped -ne $Version) { throw "$name is stamped $stamped, not $Version." }
         Say "  $name $stamped"
     }
+
+    # The helper Installer.iss runs to set up the server's private .NET runtime (Q172).
+    $setupOut = Join-Path $sourceDir 'publish\RuntimeSetup'
+    $setupProject = Join-Path $sourceDir 'McpServer\OutlookAI.RuntimeSetup\OutlookAI.RuntimeSetup.csproj'
+    $setupArgs = Get-RuntimeSetupPublishArgumentList -ProjectPath $setupProject -Version $Version -OutputDir $setupOut
+    Say "  dotnet $($setupArgs -join ' ')"
+    $setupPublish = Invoke-Logged -FilePath $dotnet -ArgumentList $setupArgs -LogStem (Join-Path $OutDir 'dotnet-publish-runtimesetup') -TimeoutMinutes $BuildTimeoutMinutes -WorkingDirectory $sourceDir
+    if ($setupPublish.TimedOut -or $setupPublish.ExitCode -ne 0) {
+        Show-LogTail $setupPublish.Out 40
+        throw "dotnet publish of the runtime helper exited $($setupPublish.ExitCode) (timed out: $($setupPublish.TimedOut))."
+    }
+    $setupExe = Join-Path $setupOut $RuntimeSetupExecutable
+    if (-not (Test-Path -LiteralPath $setupExe)) { throw "$RuntimeSetupExecutable is missing from the runtime helper's publish output." }
+    $setupStamped = (Get-Item -LiteralPath $setupExe).VersionInfo.FileVersion
+    if ($setupStamped -ne $Version) { throw "$RuntimeSetupExecutable is stamped $setupStamped, not $Version." }
+    Say "  $RuntimeSetupExecutable $setupStamped"
     $payloadMb = [math]::Round((Get-ChildItem -LiteralPath (Join-Path $sourceDir 'publish') -Recurse -File | Measure-Object Length -Sum).Sum / 1MB, 2)
     Say "  total uncompressed payload $payloadMb MB"
 }

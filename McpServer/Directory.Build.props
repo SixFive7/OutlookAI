@@ -35,6 +35,27 @@
     <EnableNETAnalyzers>true</EnableNETAnalyzers>
     <AnalysisLevelSecurity>11.0-all</AnalysisLevelSecurity>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'OutlookAI.McpServer'">
+    <!--
+      THE RUNTIME THE INSTALLED SERVER STARTS ON (Q172, decided by the maintainer 2026-11-18). The SDK
+      writes these into the PUBLISHED apphost only - a build's own keeps the default search, so a
+      developer build and the test suite run on their SDK's machine-wide runtime as before. The
+      published one looks in two places, in this order: ..\..\dotnet from its own folder - setup
+      puts it in %LOCALAPPDATA%\OutlookAI\Setup\McpServer, so that is %LOCALAPPDATA%\OutlookAI\dotnet,
+      the private copy of Microsoft's runtime setup downloads there - and then the machine-wide .NET.
+      Not DOTNET_ROOT: a variable pointing at another .NET would shadow both. OutlookAI.Core.AddIn's
+      ServerRuntime names the folder and the version, and Tools/Checks/check-pinned-constants.ps1
+      holds the three together. Measured 2026-11-18 with SDK 11.0.100 on a scratch app: with the
+      private copy there, the apphost ran on it although a machine-wide .NET 11 was installed; with
+      it gone, on the machine-wide one; and with AppRelative alone and no copy, it refused to start.
+      NOT THE COM HOST'S: the server's publish leaves out a referenced executable whose apphost has
+      these options (measured the same day - its publish apphost is made only when it is published
+      itself), so the COM host keeps the default search and the server starts it with DOTNET_ROOT
+      naming the server's own runtime (ComHostSupervisor.OwnRuntimeVariables): one runtime for both.
+    -->
+    <AppHostDotNetSearch>AppRelative;Global</AppHostDotNetSearch>
+    <AppHostRelativeDotNet>..\..\dotnet</AppHostRelativeDotNet>
+  </PropertyGroup>
   <ItemGroup>
     <!--
       Every [DllImport] in these assemblies loads its DLL from System32 and nowhere else (CA5392,

@@ -185,17 +185,18 @@ if ($supportedRaw -and $issVersions) {
 
 # ---------------------------------------------------------------------------------------------
 # 5. .NET runtime download page.
-#    McpRegistrationService.DotnetRuntimeDownloadUrl == Installer.iss NetRuntime10ManualUrl.
-#    Both send a user with no runtime to the same page, one from setup and one from Settings.
+#    McpRegistrationService.DotnetRuntimeDownloadUrl == Installer.iss ServerRuntimeManualUrl.
+#    Both send a user whose server has no runtime to the same page, one from setup and one from
+#    Settings, when setup could not put the private copy in place (Q172).
 # ---------------------------------------------------------------------------------------------
 $script:Checks++
 $csUrl = Get-Pinned 'Services/McpRegistrationService.cs' `
     'DotnetRuntimeDownloadUrl\s*=\s*"([^"]+)"' 'runtime download URL (McpRegistrationService.cs)'
 $issUrl = Get-Pinned 'Installer.iss' `
-    '(?m)^\s*#define\s+NetRuntime10ManualUrl\s+"([^"]+)"' 'runtime download URL (Installer.iss)'
+    '(?m)^\s*#define\s+ServerRuntimeManualUrl\s+"([^"]+)"' 'runtime download URL (Installer.iss)'
 if ($csUrl -and $issUrl) {
     if ($csUrl -cne $issUrl) {
-        Fail "runtime download URL" "McpRegistrationService.DotnetRuntimeDownloadUrl is '$csUrl' but Installer.iss NetRuntime10ManualUrl is '$issUrl'. One of the two places that tell a user where to get the runtime is now pointing somewhere else."
+        Fail "runtime download URL" "McpRegistrationService.DotnetRuntimeDownloadUrl is '$csUrl' but Installer.iss ServerRuntimeManualUrl is '$issUrl'. One of the two places that tell a user where to get the runtime is now pointing somewhere else."
     } else {
         Pass "runtime download URL" $csUrl
     }
@@ -273,40 +274,58 @@ if ($addInStatuses -and $addInDocList) {
 }
 
 # ---------------------------------------------------------------------------------------------
-# 8. The .NET 10 runtime probe.
-#    McpRegistrationService.IsDotnetRuntime10Installed's version prefix ==
-#    Installer.iss IsNetRuntime10Installed's. Both walk the shared-framework directory and
-#    accept a Microsoft.NETCore.App folder whose name starts with the same three characters;
-#    the server's roll-forward is Minor, so EXACTLY 10.x is the answer both must give - a
-#    ">= 10" reading would report a satisfied prerequisite on a machine where the server
-#    cannot start.
-#
-#    They are a knowing mirror in two languages, and Pascal cannot read a C# constant, so this
-#    is the only thing that can relate them. The failure is quiet in both directions: setup
-#    skipping a runtime install the machine needed, or Settings reporting a missing runtime
-#    that is right there - each one a status message rather than a crash, which is exactly why
-#    a drifted pair could sit unnoticed.
-#
-#    The Pascal side is checked twice, because it spells the prefix as a LENGTH plus a literal
-#    and the two can disagree with each other: Copy(name, 1, 3) = '10.' is only meaningful
-#    while the length matches the literal it is compared against. Copy(name, 1, 2) = '10.' can
-#    never be true, and Copy(name, 1, 4) = '10.' is false for every 10.x folder there is - both
-#    of which would silently turn the installer's probe into "no runtime, ever".
+# 8. The mail server's private .NET runtime (Q172, decided by the maintainer 2026-11-18).
+#    Four files name the same runtime, and no compiler sees more than one of them:
+#      * OutlookAI.Core.AddIn's ServerRuntime.Version - the version setup's helper installs, and
+#        the one the add-in looks for - must have the major of the target framework of both
+#        shipped executables, OutlookAI.McpServer and OutlookAI.ComHost: their runtimeconfig asks
+#        for that major and no other, so a private copy of another major is one they never use;
+#      * McpServer/Directory.Build.props' AppHostRelativeDotNet must be ..\..\ and
+#        ServerRuntime.FolderName - the folder setup fills, seen from {app}\McpServer - and
+#        AppHostDotNetSearch must look there first;
+#      * Installer.iss's [UninstallDelete] must delete that folder, in {localappdata}\OutlookAI;
+#      * and the manual download page both #5's copies name must be that major's.
+#    Each mismatch is silent where it happens: a server that falls back to a machine-wide runtime,
+#    or to none, a runtime the uninstaller leaves behind, a page for the wrong .NET.
 # ---------------------------------------------------------------------------------------------
 $script:Checks++
-$csRuntimePrefix = Get-Pinned 'Services/McpRegistrationService.cs' `
-    'name\.StartsWith\("([^"]+)",\s*StringComparison\.Ordinal\)' '.NET runtime version prefix (McpRegistrationService.cs)'
-$issRuntimePrefix = Get-Pinned 'Installer.iss' `
-    "Copy\(FindRec\.Name,\s*1,\s*\d+\)\s*=\s*'([^']*)'" '.NET runtime version prefix (Installer.iss)'
-$issRuntimePrefixLength = Get-Pinned 'Installer.iss' `
-    "Copy\(FindRec\.Name,\s*1,\s*(\d+)\)\s*=\s*'[^']*'" '.NET runtime prefix length (Installer.iss)'
-if ($csRuntimePrefix -and $issRuntimePrefix -and $issRuntimePrefixLength) {
-    if ($csRuntimePrefix -cne $issRuntimePrefix) {
-        Fail ".NET runtime version prefix" "McpRegistrationService accepts a shared-framework folder starting '$csRuntimePrefix' but Installer.iss accepts one starting '$issRuntimePrefix'. Setup and the add-in would disagree about whether the runtime the mail server needs is installed - one of them silently, because both report the answer rather than failing on it."
-    } elseif ([int]$issRuntimePrefixLength -ne $issRuntimePrefix.Length) {
-        Fail ".NET runtime version prefix" "Installer.iss compares Copy(FindRec.Name, 1, $issRuntimePrefixLength) against '$issRuntimePrefix', which is $($issRuntimePrefix.Length) characters. Those cannot both be right: the comparison is either always false or matching a prefix nobody intended, so setup would decide the runtime is missing on every machine."
+$runtimeVersion = Get-Pinned 'McpServer/OutlookAI.Core/AddIn/ServerRuntime.cs' `
+    'public const string Version = "([^"]+)";' 'private runtime version (ServerRuntime.cs)'
+$runtimeFolder = Get-Pinned 'McpServer/OutlookAI.Core/AddIn/ServerRuntime.cs' `
+    'public const string FolderName = "([^"]+)";' 'private runtime folder (ServerRuntime.cs)'
+$serverTfm = Get-Pinned 'McpServer/OutlookAI.McpServer/OutlookAI.McpServer.csproj' `
+    '<TargetFramework>net(\d+)\.0-windows</TargetFramework>' 'target framework (OutlookAI.McpServer.csproj)'
+$comHostTfm = Get-Pinned 'McpServer/OutlookAI.ComHost/OutlookAI.ComHost.csproj' `
+    '<TargetFramework>net(\d+)\.0-windows</TargetFramework>' 'target framework (OutlookAI.ComHost.csproj)'
+$relativeDotnet = Get-Pinned 'McpServer/Directory.Build.props' `
+    '<AppHostRelativeDotNet>([^<]+)</AppHostRelativeDotNet>' 'apphost runtime folder (McpServer/Directory.Build.props)'
+$dotnetSearch = Get-Pinned 'McpServer/Directory.Build.props' `
+    '<AppHostDotNetSearch>([^<]+)</AppHostDotNetSearch>' 'apphost runtime search (McpServer/Directory.Build.props)'
+$uninstallText = Read-Source 'Installer.iss'
+if ($runtimeVersion -and $runtimeFolder -and $serverTfm -and $comHostTfm -and $relativeDotnet -and $dotnetSearch -and $null -ne $uninstallText -and $csUrl -and $issUrl) {
+    $major = $runtimeVersion.Split('.')[0]
+    $problems = @()
+    if ($serverTfm -ne $major -or $comHostTfm -ne $major) {
+        $problems += "ServerRuntime.Version is $runtimeVersion, but OutlookAI.McpServer targets net$serverTfm.0 and OutlookAI.ComHost net$comHostTfm.0: their runtimeconfig asks for their own major, and a private runtime of another is one they never start on."
+    }
+    if ($relativeDotnet -cne ('..\..\' + $runtimeFolder)) {
+        $problems += "AppHostRelativeDotNet is '$relativeDotnet', not '..\..\$runtimeFolder': from {app}\McpServer the apphost would look somewhere setup never puts the runtime."
+    }
+    if (-not ($dotnetSearch -split ';')[0].Trim().Equals('AppRelative', [System.StringComparison]::Ordinal)) {
+        $problems += "AppHostDotNetSearch is '$dotnetSearch': the apphost must look in the private runtime folder first, or a machine-wide .NET shadows the copy setup installed."
+    }
+    $uninstallLine = '(?m)^Type:\s*filesandordirs;\s*Name:\s*"\{localappdata\}\\OutlookAI\\' + [regex]::Escape($runtimeFolder) + '"\s*$'
+    if ($uninstallText -notmatch '(?m)^\[UninstallDelete\]' -or $uninstallText -notmatch $uninstallLine) {
+        $problems += "Installer.iss's [UninstallDelete] does not delete {localappdata}\OutlookAI\${runtimeFolder}: an uninstall would leave the private runtime behind."
+    }
+    $page = 'https://dotnet.microsoft.com/download/dotnet/' + $major + '.0'
+    if ($csUrl -cne $page) {
+        $problems += "the manual download page is '$csUrl', not '$page', the page of .NET $major."
+    }
+    if ($problems.Count -gt 0) {
+        Fail "private .NET runtime" ($problems -join ' ')
     } else {
-        Pass ".NET runtime version prefix" "$csRuntimePrefix (Copy length $issRuntimePrefixLength)"
+        Pass "private .NET runtime" "$runtimeVersion in {localappdata}\OutlookAI\$runtimeFolder, net$major.0, $dotnetSearch"
     }
 }
 

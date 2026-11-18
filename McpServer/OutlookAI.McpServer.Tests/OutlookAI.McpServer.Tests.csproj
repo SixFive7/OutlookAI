@@ -29,6 +29,10 @@
          its plans, safety rules and manifests without Outlook, and the project keeps compiling.
          Its incident commands went on 2026-11-18 (Q170 (a)). -->
     <ProjectReference Include="..\OutlookAI.RemediationTools\OutlookAI.RemediationTools.csproj" />
+    <!-- The helper setup runs to put the mail server's private .NET runtime in place (Q172):
+         referenced so T1 PrivateRuntimeTests can run its one class against packages built by the
+         test. Its net11.0-windows build; the net48 one is what ships. -->
+    <ProjectReference Include="..\OutlookAI.RuntimeSetup\OutlookAI.RuntimeSetup.csproj" />
     <!-- The audit log's multi-process stress writer (Q117). Referenced for build ORDER only - the
          stress tests start its two executables, they do not load its assembly - and as an outer
          build (SkipGetTargetFrameworkProperties), which is what builds its net48 target as well as
