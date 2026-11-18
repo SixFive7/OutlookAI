@@ -6,6 +6,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using Microsoft.Win32.SafeHandles;
+using OutlookAI.Core.AddIn;
 
 namespace OutlookAI.Core.Audit
 {
@@ -158,9 +159,8 @@ namespace OutlookAI.Core.Audit
         /// </summary>
         private static string? _redirectedDirectory;
 
-        /// <summary>Shared OutlookAI state root (v3.MD section 0.5.2).</summary>
-        public static string DefaultDirectory =>
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "OutlookAI");
+        /// <summary>Shared OutlookAI state root (v3.MD section 0.5.2): <see cref="SharedState.Root"/>.</summary>
+        public static string DefaultDirectory => SharedState.Root;
 
         /// <summary>Full path of the audit log file every write op appends to.</summary>
         public static string DefaultLogPath => Path.Combine(DefaultDirectory, LogFileName);

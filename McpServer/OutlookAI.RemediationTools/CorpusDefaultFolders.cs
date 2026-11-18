@@ -25,7 +25,8 @@ namespace OutlookAI.RemediationTools;
 /// MS-OXOSFLD section 2.2.3 that names Drafts: a binary entry id on the Inbox -
 /// <c>PR_IPM_APPOINTMENT_ENTRYID</c> (0x36D00102), <c>PR_IPM_CONTACT_ENTRYID</c> (0x36D10102) and
 /// <c>PR_IPM_TASK_ENTRYID</c> (0x36D40102) - read second off the store object, and opened with
-/// <c>GetFolderFromID</c>, which cannot create anything. The Inbox itself is proven present first
+/// <c>GetFolderFromID</c>, which cannot create anything - through the product's own
+/// <see cref="SpecialFolders.OpenDesignated"/>. The Inbox itself is proven present first
 /// through <see cref="SpecialFolders.Resolve"/>. Not designated: ABSENT. Not readable: UNREADABLE,
 /// never absent, because a census that read a failure as absence would lose items it should count.
 /// </para>
@@ -79,7 +80,7 @@ public static class CorpusDefaultFolders
         {
             try
             {
-                primary = OpenDesignated(store, store.ReadFolderProperty(inbox!, schema), out folder);
+                primary = SpecialFolders.OpenDesignated(store, store.ReadFolderProperty(inbox!, schema), null, out folder);
             }
             finally
             {
@@ -95,50 +96,12 @@ public static class CorpusDefaultFolders
         // A store with no Inbox has nothing designated on one (primary stays Absent), and one whose
         // Inbox would not open is Unreadable. The store object is read second, as SpecialFolders
         // reads Drafts; a hit there resolves, anything else leaves the Inbox's answer standing.
-        if (OpenDesignated(store, store.ReadStoreProperty(schema), out folder) == OutlookComSession.DefaultFolderResolution.Resolved)
+        if (SpecialFolders.OpenDesignated(store, store.ReadStoreProperty(schema), null, out folder) == OutlookComSession.DefaultFolderResolution.Resolved)
         {
             return OutlookComSession.DefaultFolderResolution.Resolved;
         }
 
         return primary;
-    }
-
-    private static OutlookComSession.DefaultFolderResolution OpenDesignated(
-        ISpecialFolderStore store, PropertyRead designation, out object? folder)
-    {
-        folder = null;
-        if (designation.Status == PropertyReadStatus.NotFound)
-        {
-            return OutlookComSession.DefaultFolderResolution.Absent;
-        }
-
-        if (designation.Status != PropertyReadStatus.Found)
-        {
-            return OutlookComSession.DefaultFolderResolution.Unreadable;
-        }
-
-        DesignatedEntryId entryId = SpecialFolders.ReadEntryId(designation.Value);
-        if (entryId.Kind == DesignatedEntryIdKind.None)
-        {
-            return OutlookComSession.DefaultFolderResolution.Absent;
-        }
-
-        if (entryId.Kind != DesignatedEntryIdKind.EntryId)
-        {
-            return OutlookComSession.DefaultFolderResolution.Unreadable;
-        }
-
-        PropertyReadStatus opened = store.OpenFolder(entryId.Hex!, out object? candidate);
-        if (opened == PropertyReadStatus.Found && candidate != null)
-        {
-            folder = candidate;
-            return OutlookComSession.DefaultFolderResolution.Resolved;
-        }
-
-        store.Release(candidate);
-        return opened == PropertyReadStatus.Failed
-            ? OutlookComSession.DefaultFolderResolution.Unreadable
-            : OutlookComSession.DefaultFolderResolution.Absent;
     }
 }
 

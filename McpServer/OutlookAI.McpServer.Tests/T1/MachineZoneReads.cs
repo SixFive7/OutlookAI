@@ -40,7 +40,9 @@ namespace OutlookAI.McpServer.Tests.T1;
 /// can reach a read, not only when it does: on 2026-11-17, 145 of the 323 tests it found reach the
 /// zone only through a product conversion that reads it for a Local value alone -
 /// <c>WsSqlBuilder.FormatUtc</c>, <c>DaslDateLiteral.FormatUtc</c>, <c>IndexRowMapper.AsUtcDateTime</c>,
-/// <c>IndexSearchService.GetStaleness</c> and <c>ComDateValue.FromTableValue</c>. Running such a test
+/// <c>IndexSearchService.GetStaleness</c> and <c>ComDateValue.FromTableValue</c> - four since the code-sharing
+/// refactor's stage S6, when <c>WsSqlBuilder</c> began rendering its dates through
+/// <c>DaslDateLiteral.FormatUtc</c>. Running such a test
 /// in a second zone costs milliseconds and proves nothing wrong; missing one is what the second pass
 /// exists to prevent.
 /// </para>

@@ -5,7 +5,9 @@ namespace OutlookAI.Core.Audit
     /// <summary>
     /// CRC-32 (IEEE 802.3: reflected, polynomial 0xEDB88320, initial and final value 0xFFFFFFFF -
     /// the zlib/PNG/Ethernet one) for the audit log's per-line <c>crc</c> field (Q117), and as the
-    /// anchor a resume position checks its line against.
+    /// anchor a resume position checks its line against. Public since the code-sharing refactor's
+    /// stage S6, when the test corpus's PNG writer (<c>CorpusAttachmentContent</c>) stopped keeping a
+    /// copy of its own.
     /// <para>
     /// Written out rather than taken from <c>System.IO.Hashing</c>: that is a NuGet package, this is
     /// twenty lines, and the same code has to run unchanged in the .NET Framework 4.8 add-in that will
@@ -13,12 +15,12 @@ namespace OutlookAI.Core.Audit
     /// overwritten or spliced, not one forged on purpose by someone who can edit the file anyway.
     /// </para>
     /// </summary>
-    internal static class AuditCrc32
+    public static class AuditCrc32
     {
         private static readonly uint[] Table = BuildTable();
 
         /// <summary>The CRC-32 of <paramref name="count"/> bytes of <paramref name="bytes"/> from <paramref name="offset"/>.</summary>
-        internal static uint Compute(byte[] bytes, int offset, int count)
+        public static uint Compute(byte[] bytes, int offset, int count)
         {
             if (bytes == null)
             {

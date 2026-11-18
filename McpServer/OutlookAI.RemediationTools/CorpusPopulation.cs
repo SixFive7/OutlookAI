@@ -1042,6 +1042,29 @@ public sealed class CorpusPopulation
     /// <summary>How many undated rows the bystander carries when it carries any: forty-two - see the layout's last block.</summary>
     internal const int BystanderUndatedRows = 42;
 
+    /// <summary>
+    /// The slot of message <paramref name="position"/> of conversation <paramref name="thread"/>: the even
+    /// positions received in the Inbox, the odd ones sent from Sent Items, at a fixed age. Both populations
+    /// build their conversations of this; each wrote the slot out until the code-sharing refactor's stage S6.
+    /// </summary>
+    private static Slot ThreadMessage(
+        int index, int thread, int position, CorpusAttachmentKind[] attachments, bool unread, long ageSeconds)
+    {
+        bool received = position % 2 == 0;
+        return new Slot(
+            received ? SlotRole.Inbound : SlotRole.Outbound,
+            received ? Inbox : SentItems,
+            "thread",
+            index,
+            new ThreadSlot(thread, position),
+            attachments,
+            Unread: unread,
+            ProbeTerm: false,
+            FixedAgeSeconds: ageSeconds,
+            AgeFromSeconds: 0,
+            AgeToSeconds: 0);
+    }
+
     private static (Slot[] Slots, IReadOnlyList<CorpusPopulationFolder> Folders) HubLayout(bool includeUndated, bool includeContacts)
     {
         var projects = new CorpusPopulationFolder(SubfolderIdBase + 1, Inbox, CorpusManifest.CreatedFolderPrefix + "-Projects", "Inbox");
@@ -1056,20 +1079,14 @@ public sealed class CorpusPopulation
         {
             for (int p = 0; p < 4; p++)
             {
-                bool received = p % 2 == 0;
                 long age = 60L + (t * 216_000L) + ((3 - p) * 21_600L);
-                slots.Add(new Slot(
-                    received ? SlotRole.Inbound : SlotRole.Outbound,
-                    received ? Inbox : SentItems,
-                    "thread",
+                slots.Add(ThreadMessage(
                     slots.Count,
-                    new ThreadSlot(t, p),
+                    t,
+                    p,
                     t == 1 && p == 0 ? new[] { CorpusAttachmentKind.Message } : Array.Empty<CorpusAttachmentKind>(),
-                    Unread: t == 2 && p == 2,
-                    ProbeTerm: false,
-                    FixedAgeSeconds: age,
-                    AgeFromSeconds: 0,
-                    AgeToSeconds: 0));
+                    unread: t == 2 && p == 2,
+                    age));
             }
         }
 
@@ -1177,20 +1194,8 @@ public sealed class CorpusPopulation
         {
             for (int p = 0; p < 3; p++)
             {
-                bool received = p % 2 == 0;
                 long age = 86_400L + (t * 1_728_000L) + ((2 - p) * 86_400L);
-                slots.Add(new Slot(
-                    received ? SlotRole.Inbound : SlotRole.Outbound,
-                    received ? Inbox : SentItems,
-                    "thread",
-                    slots.Count,
-                    new ThreadSlot(t, p),
-                    Array.Empty<CorpusAttachmentKind>(),
-                    Unread: false,
-                    ProbeTerm: false,
-                    FixedAgeSeconds: age,
-                    AgeFromSeconds: 0,
-                    AgeToSeconds: 0));
+                slots.Add(ThreadMessage(slots.Count, t, p, Array.Empty<CorpusAttachmentKind>(), unread: false, age));
             }
         }
 

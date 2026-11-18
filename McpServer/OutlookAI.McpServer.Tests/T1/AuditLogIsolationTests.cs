@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Reflection;
+using OutlookAI.Core.AddIn;
 using OutlookAI.Core.Audit;
 using OutlookAI.Core.Services;
 using Xunit;
@@ -232,8 +233,9 @@ public sealed class AuditLogIsolationTests
     {
         // A ratchet over the compiled IL of every type in this assembly - nested and
         // compiler-generated ones included, which is where async and lambda bodies live. What it
-        // looks for is any way of NAMING the real log: the two AuditLog properties, and the
-        // %LOCALAPPDATA% lookup a test would use to build the path by hand. A new mention fails
+        // looks for is any way of NAMING the real log: the two AuditLog properties, SharedState.Root
+        // that they are built on (since the code-sharing refactor's stage S6), and the %LOCALAPPDATA%
+        // lookup a test would use to build the path by hand. A new mention fails
         // until it is added to MayNameTheRealLog with its reason; an entry that no longer
         // mentions it fails too, so the list can only shrink on purpose.
         //
@@ -242,6 +244,7 @@ public sealed class AuditLogIsolationTests
         // and paths handed to another process.
         MethodBase defaultDirectory = typeof(AuditLog).GetProperty(nameof(AuditLog.DefaultDirectory))!.GetMethod!;
         MethodBase defaultLogPath = typeof(AuditLog).GetProperty(nameof(AuditLog.DefaultLogPath))!.GetMethod!;
+        MethodBase sharedRoot = typeof(SharedState).GetProperty(nameof(SharedState.Root))!.GetMethod!;
         MethodBase getFolderPath = typeof(Environment).GetMethod(
             nameof(Environment.GetFolderPath), new[] { typeof(Environment.SpecialFolder) })!;
 
@@ -269,6 +272,10 @@ public sealed class AuditLogIsolationTests
                     else if (SameMethod(target, defaultLogPath))
                     {
                         what = "AuditLog.DefaultLogPath";
+                    }
+                    else if (SameMethod(target, sharedRoot))
+                    {
+                        what = "SharedState.Root";
                     }
                     else if (SameMethod(target, getFolderPath) && PushesLocalApplicationData(il, offset))
                     {

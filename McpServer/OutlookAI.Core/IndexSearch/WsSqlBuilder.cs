@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
+using OutlookAI.Core.Com;
 
 namespace OutlookAI.Core.IndexSearch
 {
@@ -249,12 +250,12 @@ namespace OutlookAI.Core.IndexSearch
 
             if (query.ReceivedOnOrAfterUtc.HasValue)
             {
-                where.Add(DateReceivedColumn + " >= '" + FormatUtc(query.ReceivedOnOrAfterUtc.Value) + "'");
+                where.Add(DateReceivedColumn + " >= '" + DaslDateLiteral.FormatUtc(query.ReceivedOnOrAfterUtc.Value) + "'");
             }
 
             if (query.ReceivedBeforeUtc.HasValue)
             {
-                where.Add(DateReceivedColumn + " < '" + FormatUtc(query.ReceivedBeforeUtc.Value) + "'");
+                where.Add(DateReceivedColumn + " < '" + DaslDateLiteral.FormatUtc(query.ReceivedBeforeUtc.Value) + "'");
             }
 
             if (requireOrderKeyPresent)
@@ -316,7 +317,7 @@ namespace OutlookAI.Core.IndexSearch
                 case IndexOrder.SizeDescending:
                     return SizeColumn + " >= 0";
                 case IndexOrder.DateReceivedDescending:
-                    return DateReceivedColumn + " >= '" + FormatUtc(OrderKeyFloorUtc) + "'";
+                    return DateReceivedColumn + " >= '" + DaslDateLiteral.FormatUtc(OrderKeyFloorUtc) + "'";
                 default:
                     throw new ArgumentException("Unknown IndexOrder value.", nameof(order));
             }
@@ -663,14 +664,6 @@ namespace OutlookAI.Core.IndexSearch
         private static string QuotedContainsValue(string validatedTerm)
         {
             return "\"" + validatedTerm.Replace("'", "''") + "\"";
-        }
-
-        private static string FormatUtc(DateTime value)
-        {
-            // Unspecified kinds are taken as already-UTC (the property names carry the
-            // Utc suffix); only Local values are converted.
-            DateTime utc = value.Kind == DateTimeKind.Local ? value.ToUniversalTime() : value;
-            return utc.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
         }
     }
 }

@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using OutlookAI.Core.Audit;
 
 namespace OutlookAI.RemediationTools;
 
@@ -12,7 +13,8 @@ namespace OutlookAI.RemediationTools;
 /// 9), so the same pixels could compress to different bytes on a different runtime - and "a
 /// from-scratch rebuild reproduces it byte-for-byte" would then be true on one machine only. So the
 /// image data goes into STORED deflate blocks (BTYPE 00): valid zlib that any decoder reads, whose
-/// every byte is decided here. CRC-32 and Adler-32 are computed here for the same reason.
+/// every byte is decided here. CRC-32 and Adler-32 are computed by hand for the same reason - the
+/// CRC-32 by OutlookAI.Core's <see cref="AuditCrc32"/>, the one the audit log uses.
 /// </para>
 /// <para>
 /// Text kinds are pure ASCII with CRLF line ends, which is what the formats specify and what makes
@@ -22,8 +24,6 @@ namespace OutlookAI.RemediationTools;
 public static class CorpusAttachmentContent
 {
     private static readonly byte[] PngSignature = { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A };
-
-    private static readonly uint[] CrcTable = BuildCrcTable();
 
     /// <summary>
     /// An 8-bit RGB PNG of <paramref name="width"/> x <paramref name="height"/> whose channel values
@@ -114,16 +114,7 @@ public static class CorpusAttachmentContent
     /// CRC-32 as PNG and zlib's gzip wrapper define it (polynomial 0xEDB88320, reflected). Public so
     /// T1 can check a population image the way a decoder would.
     /// </summary>
-    public static uint Crc32(ReadOnlySpan<byte> data)
-    {
-        uint crc = 0xFFFF_FFFFu;
-        foreach (byte b in data)
-        {
-            crc = CrcTable[(crc ^ b) & 0xFF] ^ (crc >> 8);
-        }
-
-        return crc ^ 0xFFFF_FFFFu;
-    }
+    public static uint Crc32(ReadOnlySpan<byte> data) => AuditCrc32.Compute(data.ToArray(), 0, data.Length);
 
     /// <summary>Adler-32, the checksum that closes a zlib stream.</summary>
     public static uint Adler32(ReadOnlySpan<byte> data)
@@ -199,22 +190,5 @@ public static class CorpusAttachmentContent
         }
 
         return Encoding.ASCII.GetBytes(text);
-    }
-
-    private static uint[] BuildCrcTable()
-    {
-        var table = new uint[256];
-        for (uint n = 0; n < 256; n++)
-        {
-            uint c = n;
-            for (int k = 0; k < 8; k++)
-            {
-                c = (c & 1) != 0 ? 0xEDB88320u ^ (c >> 1) : c >> 1;
-            }
-
-            table[n] = c;
-        }
-
-        return table;
     }
 }

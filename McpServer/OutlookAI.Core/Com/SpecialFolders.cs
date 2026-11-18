@@ -848,46 +848,53 @@ namespace OutlookAI.Core.Com
             out object? folder)
         {
             folder = null;
-            if (designation.Status == PropertyReadStatus.NotFound)
-            {
-                return OutlookComSession.DefaultFolderResolution.Absent;
-            }
-
-            if (designation.Status != PropertyReadStatus.Found)
-            {
-                return OutlookComSession.DefaultFolderResolution.Unreadable;
-            }
-
-            return OpenEntryId(store, ReadPersistDataEntryId(designation.Value, persistId), out folder);
+            return Unread(designation)
+                ?? OpenEntryId(store, ReadPersistDataEntryId(designation.Value, persistId), out folder);
         }
 
         /// <summary>
-        /// Turns one designation read into a folder. NotFound: absent. Failed or an
-        /// unrecognisable value: unreadable. An entry id that no longer opens
-        /// (<c>MAPI_E_NOT_FOUND</c>) names a folder that is gone, so that is absent too; any
-        /// other failure to open it is unreadable.
+        /// Turns one designation read into a folder - the entry id at <paramref name="index"/> of a
+        /// multi-valued designation, or the one a single-valued designation holds when
+        /// <paramref name="index"/> is null. NotFound: absent. Failed or an unrecognisable value:
+        /// unreadable. An entry id that no longer opens (<c>MAPI_E_NOT_FOUND</c>) names a folder that is
+        /// gone, so that is absent too; any other failure to open it is unreadable. Creates nothing.
+        /// Public for the corpus tool's Calendar, Contacts and Tasks (<c>CorpusDefaultFolders</c>), which
+        /// kept a copy until the code-sharing refactor's stage S6. <paramref name="folder"/> is set only
+        /// when it resolves, and the caller releases it.
         /// </summary>
-        private static OutlookComSession.DefaultFolderResolution OpenDesignated(
+        public static OutlookComSession.DefaultFolderResolution OpenDesignated(
             ISpecialFolderStore store,
             PropertyRead designation,
             int? index,
             out object? folder)
         {
             folder = null;
-            if (designation.Status == PropertyReadStatus.NotFound)
+            OutlookComSession.DefaultFolderResolution? unread = Unread(designation);
+            if (unread != null)
             {
-                return OutlookComSession.DefaultFolderResolution.Absent;
-            }
-
-            if (designation.Status != PropertyReadStatus.Found)
-            {
-                return OutlookComSession.DefaultFolderResolution.Unreadable;
+                return unread.Value;
             }
 
             DesignatedEntryId entryId = index.HasValue
                 ? ReadEntryIdAt(designation.Value, index.Value)
                 : ReadEntryId(designation.Value);
             return OpenEntryId(store, entryId, out folder);
+        }
+
+        /// <summary>
+        /// What a designation read says before an entry id is read from it: absent when there is no
+        /// value, unreadable when the read failed, null when there is a value to read.
+        /// </summary>
+        private static OutlookComSession.DefaultFolderResolution? Unread(PropertyRead designation)
+        {
+            if (designation.Status == PropertyReadStatus.NotFound)
+            {
+                return OutlookComSession.DefaultFolderResolution.Absent;
+            }
+
+            return designation.Status != PropertyReadStatus.Found
+                ? OutlookComSession.DefaultFolderResolution.Unreadable
+                : null;
         }
 
         /// <summary>

@@ -30,9 +30,10 @@ namespace OutlookAI.Core.Com
     /// thread culture, or a non-Gregorian calendar culture each break it, and each breaks
     /// it SILENTLY, the same way this defect did). A 4-digit leading year cannot be a day
     /// or a month, so <c>yyyy-MM-dd</c> is unambiguous under a day-first, month-first or
-    /// year-first locale alike; it is also the literal the Windows Search tier already
-    /// emits (<c>WsSqlBuilder.FormatUtc</c>), so one shape now covers both query languages,
-    /// and it is a constant string that T1 can pin under ANY thread culture.
+    /// year-first locale alike; it is also the literal the Windows Search tier emits - since
+    /// the code-sharing refactor's stage S6 <c>WsSqlBuilder</c> renders its dates here rather
+    /// than through a copy of its own - so one shape covers both query languages, and it is a
+    /// constant string that T1 can pin under ANY thread culture.
     /// </para>
     /// <para>
     /// MEASURED FORMAT MATRIX (read-only probe, this machine, <c>Folder.GetTable</c> AND
