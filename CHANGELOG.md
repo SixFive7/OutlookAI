@@ -1168,7 +1168,7 @@ its mailbox tests on, and change nothing you install.
   would overwrite the change or copy it into the mailbox, and says to use Outlook instead. Roaming on
   Microsoft 365 Apps itself is not tested: the test machines run perpetual Office only.
 
-- ♻️ **OutlookAI writes and reads hexadecimal in one place, and each id and hash keeps its case (Q154).**
+- ♻️ **Bytes are written as hex and read back in one place, and no id or hash changes case (Q154).**
   The code-sharing refactor's hex stage. Nine writers of bytes as hexadecimal, six of a SHA-256,
   two of a number and three readers each had their own copy - in the entry and store ids, the index
   search's rows, the special and archive folders, the profile's sections, the COM session's tables
@@ -1185,7 +1185,9 @@ its mailbox tests on, and change nothing you install.
   a byte with nothing between them. Three checks of hexadecimal digits that stage S6 had missed -
   in a profile section's registry key, a resumable search's token and the audit log's reading of a
   CRC - use `Hex` too, and the COM session reads a binary value that comes as an array of
-  single bytes in one place, where it had two copies.
+  single bytes in one place, where it had two copies. What stays is .NET's own formatting and
+  parsing of a number in a message or an escape, such as an HRESULT, a character's code or a store
+  hash's digits.
 
 - ♻️ **The mail server keeps one copy of what it had written two to five times over (Q154).**
   The code-sharing refactor's stage S6 folds the server's own repetition that the survey of

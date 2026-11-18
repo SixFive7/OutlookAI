@@ -108,8 +108,10 @@
   thirteen STA operations, which each open the corpus store and release it the same way (S14) -
   COM code only a corpus build, scan and teardown on a test machine exercise, so it folds in S5b,
   whose proof has them. S10 had gone already with the incident commands (Q170 (a)). The hex stage
-  put every writer and reader of hexadecimal in the product into Core's `Hex`. What remains, one
-  stage at a time: the rest of the shared test code (S5a) - the live tier's own Win32 window
+  put the product's writers of bytes as hexadecimal, and its readers of them, into Core's `Hex`; it
+  found nine catch blocks in the COM session and the mail service that write out the text of the
+  shared `ComObjects.DescribeFailure` rather than call it. What remains, one stage at a time: those
+  nine, then the rest of the shared test code (S5a) - the live tier's own Win32 window
   declarations among it, which can use Core's `NativeWindows` now, and the four hex writers the
   tests keep beside .NET's own. In parallel: the PowerShell helpers (S7), the two `Get-ShortHash`
   functions of the guest's measurement scripts among them, and the rules restated in C# and
