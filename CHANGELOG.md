@@ -1090,9 +1090,11 @@ its mailbox tests on, and change nothing you install.
   build scripts, `Testbed/host/Publish-AddInPayload.ps1` and `Tools/Switch-AddInBuild.ps1`, restore
   Core's packages first with MSBuild's `/restore`; guard 1's evaluation still runs no target and
   restores nothing, and their self-tests check both. `OutlookAI.slnx` holds Core, so F5 in Visual
-  Studio builds it. The installer carries `OutlookAI.Core.dll`, `System.Data.OleDb.dll` and
-  `System.Reflection.DispatchProxy.dll` beside `OutlookAI.dll`, each listed and hashed in the signed
-  add-in manifest, and a release stamps its version into that copy of Core as well. The add-in may
+  Studio builds it. The installer carries `OutlookAI.Core.dll` and
+  `System.Reflection.DispatchProxy.dll` beside `OutlookAI.dll`, both listed and hashed in the signed
+  add-in manifest, and a release stamps its version into that copy of Core as well. Core's
+  `System.Data.OleDb` package adds nothing there: on .NET Framework its assembly only forwards to
+  the framework's own `System.Data`, which Core's net48 build references instead. The add-in may
   use only the namespace `OutlookAI.Core.AddIn`, and nothing in it may attach to Outlook, start a
   COM apartment thread, open a MAPI session or open the search index (Q164 (a)), because the add-in
   runs inside Outlook's own process. `Tools/Checks/check-pinned-constants.ps1` check 15 holds that

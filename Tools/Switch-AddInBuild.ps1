@@ -75,7 +75,7 @@
              These guards do not rely on the commit's own OutlookAI.csproj, so a commit from
              before Q81 builds just as safely. The build restores first (/restore): the add-in
              references OutlookAI.Core (Q167 (a)), whose packages the restore brings, and the
-             flattened output carries OutlookAI.Core.dll and its two package assemblies.
+             flattened output carries OutlookAI.Core.dll and System.Reflection.DispatchProxy.dll.
           2. Copies the flattened publish output into a NEW folder,
              %LOCALAPPDATA%\OutlookAI\DevBuilds\<yyyyMMdd-HHmmss>-<commit>, which no build ever
              writes into.

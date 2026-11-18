@@ -239,10 +239,12 @@
     check 15, holds both halves of that rule.
 
     SetTargetFramework names Core's net48 build rather than leaving MSBuild to negotiate it. The
-    build copies OutlookAI.Core.dll and the two package assemblies Core's net48 build carries,
-    System.Data.OleDb.dll and System.Reflection.DispatchProxy.dll, beside OutlookAI.dll; the
-    ClickOnce publish lists all three, hashed, in the signed OutlookAI.dll.manifest, and the
-    installer's publish\* rule takes them to {app}.
+    build copies OutlookAI.Core.dll and the one package assembly it needs on .NET Framework,
+    System.Reflection.DispatchProxy.dll, beside OutlookAI.dll; the ClickOnce publish lists both,
+    hashed, in the signed OutlookAI.dll.manifest, and the installer's publish\* rule takes them to
+    {app}. Core's System.Data.OleDb package is not among them: its net48 assembly only forwards to
+    the framework's own System.Data, so Core's net48 build references System.Data (measured
+    2026-11-18 in the first build of this reference).
 
     GlobalPropertiesToRemove is load-bearing. Testbed/host/Publish-AddInPayload.ps1 and
     Tools/Switch-AddInBuild.ps1 pass the add-in's build settings as GLOBAL properties, and a global

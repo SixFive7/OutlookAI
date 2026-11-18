@@ -745,7 +745,8 @@ if ($null -ne $addinProjText -and $null -ne $coreProjText) {
     $addinFiles = @($addinProj.SelectNodes('//m:Compile', $msb) | ForEach-Object { $_.GetAttribute('Include').Replace('\', '/') })
 
     # Core's files: every .cs under its folder but its build output, and every file it links.
-    $rootLength = $RepoRoot.TrimEnd('\', '/').Length + 1
+    # The full path, so that a relative -RepoRoot cuts the same relative names as the default.
+    $rootLength = (Resolve-Path -LiteralPath $RepoRoot).ProviderPath.TrimEnd('\', '/').Length + 1
     $coreDir = Join-Path $RepoRoot $coreDirRel
     $coreFiles = @(Get-ChildItem -LiteralPath $coreDir -Filter '*.cs' -File -Recurse -ErrorAction SilentlyContinue |
             ForEach-Object { $_.FullName.Substring($rootLength).Replace('\', '/') } |

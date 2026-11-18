@@ -157,12 +157,12 @@
     OUTLOOKAI.CORE, AND THE RESTORE (Q167 (a), decided by the maintainer 2026-11-18). The add-in
     references McpServer/OutlookAI.Core for its net48 build (OutlookAI.csproj says how), so the build
     restores first - MSBuild's own /restore, which restores Core's packages in an evaluation of its own
-    before the build evaluates anything - and the publish carries OutlookAI.Core.dll and Core's two
-    package assemblies beside OutlookAI.dll. The add-in's own project has no package. The restore
-    writes Core's obj\ inside the build tree and NuGet's own caches under the user profile, as any
-    restore does; the guards do not change, and guard 1's evaluation still runs no target and
-    restores nothing (Get-MSBuildEvaluationArgumentList). A commit from before the reference builds
-    as it did: the restore then finds nothing to do.
+    before the build evaluates anything - and the publish carries OutlookAI.Core.dll and
+    System.Reflection.DispatchProxy.dll beside OutlookAI.dll. The add-in's own project has no
+    package. The restore writes Core's obj\ inside the build tree and NuGet's own caches under the
+    user profile, as any restore does; the guards do not change, and guard 1's evaluation still runs
+    no target and restores nothing (Get-MSBuildEvaluationArgumentList). A commit from before the
+    reference builds as it did: the restore then finds nothing to do.
 
     THE RELEASE BUILD (-ReleaseSigningThumbprint). There is no CI any more: on 2026-10-03 the
     maintainer decided that only his own machine builds and tests ("No CI pipelines on github"),
