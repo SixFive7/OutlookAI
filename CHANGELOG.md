@@ -2678,8 +2678,12 @@ its mailbox tests on, and change nothing you install.
   trailing dots and spaces go, and so do the Unicode controls that can make `exe.pdf` read as
   `fdp.exe`. A file is never replaced. The name is claimed by creating an empty file that must not
   exist yet, without following a link of that name, and a taken name gets ` (2)`, ` (3)` and so on.
-  All of the tool's file writing is in one class, `AttachmentFileWriter`. `manage_signature` now
-  also refuses a device name before a dot, such as `nul.backup`, which Windows reads as a device too.
+  All of the tool's file writing is in one class, `AttachmentFileWriter`. A test machine showed it
+  end to end, through the shipped server too: Outlook wrote each attachment into the file claimed
+  for it, a name holding a direction control was saved under its safe name, a name too long for the
+  folder was shortened with its extension kept, and a junction in the download folder that led out
+  was refused by the server and again by its Outlook process. `manage_signature` now also refuses a
+  device name before a dot, such as `nul.backup`, which Windows reads as a device too.
 
 - 🔒 **The installer removes the trust Office saved for add-ins signed with the leaked old key.**
   Clicking Install on Office's "Publisher cannot be verified" prompt for OutlookAI v1.0.0.1 to
