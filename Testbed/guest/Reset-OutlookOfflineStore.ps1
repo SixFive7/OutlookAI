@@ -72,7 +72,7 @@ param(
     [Parameter(ParameterSetName = 'Run')] [string] $Folder,
     [Parameter(ParameterSetName = 'Run')] [switch] $ResetSearchIndex,
     [Parameter(Mandatory = $true, ParameterSetName = 'WaitIndex')] [switch] $WaitForIndexRoots,
-    [Parameter(ParameterSetName = 'WaitIndex')] [string] $SettingsPath = 'C:\OutlookAI-Q5\src\McpServer\OutlookAI.McpServer.Tests\live-fixtures\live-test-settings.json',
+    [Parameter(ParameterSetName = 'WaitIndex')] [string] $SettingsPath,
     [Parameter(ParameterSetName = 'WaitIndex')] [ValidateRange(0, 7200)] [int] $TimeoutSeconds = 1200,
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'WaitIndex')] [string[]] $ExpectedUser = @('vmadmin'),
@@ -114,14 +114,6 @@ function Get-StoresNotReady {
     return $notReady.ToArray()
 }
 
-# Every non-empty string of one list field of the live-test settings' JSON text. Pure.
-function Get-SettingsList {
-    param([string] $Json, [string] $Field)
-    $settings = $Json | ConvertFrom-Json
-    if (-not ($settings.PSObject.Properties.Name -contains $Field)) { return @() }
-    return @($settings.$Field | Where-Object { $_ -is [string] -and $_ })
-}
-
 # Each index root of this user's mapi16 scope, with the rows below it, read from Windows Search. Reads only.
 function Read-IndexRoots {
     $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
@@ -143,6 +135,11 @@ function Read-IndexRoots {
     return $rows
 }
 
+# The staged live-test settings and how a field of them is read (Q189 (b)): one copy for every guest
+# script that needs them (AGENTS.md, Shared code).
+. "$PSScriptRoot\StagedLiveTestSettings.ps1"
+if (-not $SettingsPath) { $SettingsPath = $StagedSettingsPath }
+
 if ($SelfTest) {
     Write-Host "Reset-OutlookOfflineStore.ps1 -SelfTest under PowerShell $($PSVersionTable.PSVersion). No guest, no Outlook."
     $script:fails = 0
@@ -162,8 +159,16 @@ if ($SelfTest) {
     Check 'nor one whose one root holds nothing' 'hub@example.invalid' ((Get-StoresNotReady $stores @{ 'hub@example.invalid($1)' = 0; 'real@example.invalid($2)' = 40 }) -join '|')
     Check 'one root each, with rows, is ready' 0 @(Get-StoresNotReady $stores @{ 'Hub@Example.invalid($1)' = 19; 'real@example.invalid($2)' = 40 }).Count
     Check 'a root of a longer name is not the store''s' 'hub@example.invalid' ((Get-StoresNotReady @('hub@example.invalid') @{ 'hub@example.invalid.test($1)' = 5 }) -join '|')
-    Check 'the indexed stores are read from the staged settings' 'hub@example.invalid|real@example.invalid' ((Get-SettingsList '{ "indexedStoreDisplayNames": [ "hub@example.invalid", "", "real@example.invalid" ] }' 'indexedStoreDisplayNames') -join '|')
-    Check 'an absent list is empty' 0 @(Get-SettingsList '{ "probeTerm": "" }' 'indexedStoreDisplayNames').Count
+    Check 'the indexed stores are read from the staged settings' 'hub@example.invalid|real@example.invalid' ((Get-SettingsStrings '{ "indexedStoreDisplayNames": [ "hub@example.invalid", "", "real@example.invalid" ] }' 'indexedStoreDisplayNames') -join '|')
+    Check 'an absent list is empty' 0 @(Get-SettingsStrings '{ "probeTerm": "" }' 'indexedStoreDisplayNames').Count
+    # StagedLiveTestSettings.ps1, which the Exchange VM's probes share: a field's first string, from text or a file.
+    $staged = '{ "testHubStoreDisplayName": "hub@example.invalid", "bystanderStoreDisplayNames": [ "", "real@example.invalid" ], "probeTerm": "" }'
+    Check 'the hub is the one the staged settings name' 'hub@example.invalid' (Get-SettingsValue $staged 'testHubStoreDisplayName')
+    Check 'a list gives its first non-empty name' 'real@example.invalid' (Get-SettingsValue $staged 'bystanderStoreDisplayNames')
+    Check 'an empty field gives nothing' $true ($null -eq (Get-SettingsValue $staged 'probeTerm'))
+    Check 'an absent field gives nothing' $true ($null -eq (Get-SettingsValue $staged 'mailSink'))
+    Check 'no staged settings give nothing' $true ($null -eq (Get-StagedSettingsValue (Join-Path ([System.IO.Path]::GetTempPath()) ('no-such-settings-' + [guid]::NewGuid().ToString('N') + '.json')) 'testHubStoreDisplayName'))
+    Check 'the staged file is where the live runner puts it' 'C:\OutlookAI-Q5\src\McpServer\OutlookAI.McpServer.Tests\live-fixtures\live-test-settings.json' $StagedSettingsPath
     Write-Host ''
     if ($script:fails -gt 0) { Write-Host "$script:fails FAILED"; exit 1 }
     Write-Host 'All passed.'
@@ -176,7 +181,7 @@ Assert-TestbedGuest -ExpectedUser $ExpectedUser
 
 if ($WaitForIndexRoots) {
     $stores = @()
-    if (Test-Path -LiteralPath $SettingsPath) { $stores = @(Get-SettingsList (Get-Content -LiteralPath $SettingsPath -Raw) 'indexedStoreDisplayNames') }
+    if (Test-Path -LiteralPath $SettingsPath) { $stores = @(Get-SettingsStrings (Get-Content -LiteralPath $SettingsPath -Raw) 'indexedStoreDisplayNames') }
     if ($stores.Count -eq 0) { Write-Host "INDEX-ROOTS-READY 0: no staged settings at $SettingsPath name an indexed store"; exit 0 }
     $t0 = Get-Date
     $lastError = ''

@@ -61,7 +61,7 @@ param(
     [ValidateSet('R0', 'R1', 'R2')] [string] $Step,
     [string] $Hub,
     [string] $Bystander,
-    [string] $SettingsPath = 'C:\OutlookAI-Q5\src\McpServer\OutlookAI.McpServer.Tests\live-fixtures\live-test-settings.json',
+    [string] $SettingsPath,
     [string] $OutPath,
     [int]    $DialogWaitSeconds = 20,
     [string[]] $ExpectedUser = @('vmadmin'),
@@ -142,20 +142,10 @@ function Get-RoamingVerdict([string[]] $SignatureDialogNames, [string[]] $Genera
 # SELF-TEST
 # =============================================================================================
 
-# Q189 (b): no real mailbox's address is written in this repository. The first non-empty string of one
-# field of the staged live-test settings - testHubStoreDisplayName, or the first of a list - or $null
-# when the file or the field is absent.
-function Get-SettingsValue([string] $Json, [string] $Field) {
-    $settings = $Json | ConvertFrom-Json
-    if (-not ($settings.PSObject.Properties.Name -contains $Field)) { return $null }
-    $values = @($settings.$Field | Where-Object { $_ -is [string] -and $_ })
-    if ($values.Count -eq 0) { return $null }
-    return [string]$values[0]
-}
-function Get-StagedSettingsValue([string] $Path, [string] $Field) {
-    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return $null }
-    return (Get-SettingsValue (Get-Content -LiteralPath $Path -Raw) $Field)
-}
+# The staged live-test settings and how a field of them is read (Q189 (b)): one copy for every guest
+# script that needs them (AGENTS.md, Shared code).
+. "$PSScriptRoot\StagedLiveTestSettings.ps1"
+if (-not $SettingsPath) { $SettingsPath = $StagedSettingsPath }
 
 function Invoke-SelfTest {
     $script:p = 0; $script:f = 0
@@ -199,12 +189,6 @@ function Invoke-SelfTest {
     Check 'the Signatures dialog and Options are closed with Cancel' ((Get-Content -LiteralPath $PSCommandPath -Raw) -match "Close-WithCancel")
 
     Write-Host ''
-    $staged = '{ "testHubStoreDisplayName": "hub@example.invalid", "bystanderStoreDisplayNames": [ "", "real@example.invalid" ], "probeTerm": "" }'
-    Check 'without -Hub, the hub is the one the staged settings name' ((Get-SettingsValue $staged 'testHubStoreDisplayName') -eq 'hub@example.invalid')
-    Check 'a list gives its first non-empty name' ((Get-SettingsValue $staged 'bystanderStoreDisplayNames') -eq 'real@example.invalid')
-    Check 'an empty field gives nothing' ($null -eq (Get-SettingsValue $staged 'probeTerm'))
-    Check 'an absent field gives nothing' ($null -eq (Get-SettingsValue $staged 'mailSink'))
-    Check 'no staged settings give nothing' ($null -eq (Get-StagedSettingsValue (Join-Path ([System.IO.Path]::GetTempPath()) ('no-such-settings-' + [guid]::NewGuid().ToString('N') + '.json')) 'testHubStoreDisplayName'))
     Write-Host ("SelfTest: {0} passed, {1} failed." -f $script:p, $script:f)
     if ($script:f -gt 0) { exit 1 }
     exit 0
