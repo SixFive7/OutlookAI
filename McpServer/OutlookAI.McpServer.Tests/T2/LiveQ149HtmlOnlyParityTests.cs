@@ -89,18 +89,7 @@ public sealed class LiveQ149HtmlOnlyParityTests
         _aspects.Clear();
         using TestSignature signature = TestSignature.Create(Run.Marker);
         using Q149OutlookClient client = Q149OutlookClient.Connect(new Stopwatch(), allowStart: false);
-        string storeId = client.Run((app, ns) =>
-        {
-            dynamic? store = Q149Drafts.FindStore(ns, Run.Hub);
-            try
-            {
-                return (string)store!.StoreID;
-            }
-            finally
-            {
-                Q149Com.Release(store);
-            }
-        });
+        string storeId = Q149Drafts.HubStoreId(Run, client);
 
         // C2: a new mail, both ways.
         List<(string Product, string Message, string AsImported, string Token)> newMail = new();
@@ -110,7 +99,7 @@ public sealed class LiveQ149HtmlOnlyParityTests
         }
 
         // C4: a reply and a forward, both ways, of a mail this run sent itself.
-        string sourceEntryId = SeedSource(storeId, out string quoteToken);
+        string sourceEntryId = Q149Drafts.SeedSelfSentSource(Run, "c4-source", out string quoteToken);
         for (int i = 1; i <= derivedPairs; i++)
         {
             DerivedPair(client, storeId, signature, sourceEntryId, quoteToken, forward: false, i);
@@ -212,17 +201,6 @@ public sealed class LiveQ149HtmlOnlyParityTests
     }
 
     // ------------------------------------------------------------------ C4: reply and forward
-
-    private string SeedSource(string storeId, out string quoteToken)
-    {
-        quoteToken = "Q149QUOTE" + Run.Marker;
-        string subject = Run.TaggedSubject("c4-source");
-        DateTime sentUtc = LiveOutlookTestMailer.SendSelfMail(Run.Hub, subject, "Origineel bericht " + quoteToken + "\r\nTweede regel.", attachmentPath: null);
-        using OutlookComSession session = OutlookComSession.Connect(allowStartingOutlook: false, onOutlookGone: null, lifetimePin: false);
-        ComMailBrief arrived = LiveInboxArrival.WaitFor(session, Run.Hub, subject, sentUtc);
-        Run.Allow(arrived.EntryId);
-        return arrived.EntryId;
-    }
 
     private void DerivedPair(Q149OutlookClient client, string storeId, TestSignature signature, string sourceEntryId, string quoteToken, bool forward, int i)
     {

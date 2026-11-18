@@ -1667,9 +1667,12 @@
   restore Core's packages, the solution holds Core so that F5 builds it, and the add-in may use one
   part of Core, the namespace `OutlookAI.Core.AddIn`, which nothing in it may use to attach to
   Outlook, start a COM apartment thread or open the index (Q164 (a); `check-pinned-constants.ps1`
-  check 15). It uses none of Core yet. Q162's signature choice is built on that reference, and Q145's
-  writer of an account's offline period moves into that namespace for the same reason. Then the
-  copies go. A read-only
+  check 15). It has used that namespace since stage S3: the fourteen files the server, Core or the
+  tests compiled as linked copies of the add-in's (L01-L07) are Core's, in
+  `McpServer/OutlookAI.Core/AddIn/`, and the reading of `~/.claude.json`, the `${VAR}` expansion and
+  the add-in's registry root (A06, A07, A10) have one copy each. Q162's signature choice is built on
+  that reference, and Q145's writer of an account's offline period goes into that namespace, beside
+  the seam it implements, for the same reason. A read-only
   survey of master 9f4646d, made 2026-11-17, found 73 groups: the add-in against Core (A01-A12, the
   signature catalog and the signature and draft-region bookmark code among them), the add-in's
   linked source files (L01-L13), the server's own repetition (S01-S14), test doubles and helpers
@@ -1692,17 +1695,20 @@
   PowerShell, into `Testbed/guest/ScriptHelpers.ps1` (decision 215 (a)), held there by
   check-powershell-51 check 4: P01's `Invoke-NativeCommand` for 13 of its 17 copies, P09's
   `Format-Seconds`, the build-VM runner's copy of which rounded 119.6 s to "1 m 60 s", P02's
-  `Invoke-Logged`, `Show-LogTail` and `Format-Argument`, and P12's `Test-IsElevated`; P11's module
+  `Invoke-Logged`, `Show-LogTail` and `Format-Argument`, P12's `Test-IsElevated`, and P03's `Say` for
+  the 18 copies that print the time and append to the script's log (the SDK installer, which travels
+  alone, keeps an identical copy), beside `Write-ReportLine` for
+  the five scripts that collect a report (the mail sink's installer and the build-VM runner keep
+  their different ones as `Write-SinkLog` and `Write-RunLog`); P11's module
   import is `Testbed/host/OwnEditionModules.ps1`, which the `Tools/` scripts dot-source too.
   Invoke-LiveTierOnGuest.ps1 and Invoke-TrustRemovalProbe.ps1 fold with the rest of S7d,
   Build-Corpus.ps1 and Reset-HubPopulation.ps1 with S7c, and the check lists them until they do.
-  What remains, one stage at a time: S3, the linked files and the shared logic (L01-L07, A06, A07,
-  A10) into Core, the logic only the add-in runs into `OutlookAI.Core.AddIn` (Q163 (a)); S4, the
-  signature and draft code (A01-A05, A08, A09, A12) with Q162's checkbox, Core winning where the
-  copies drifted apart and the pane's visible differences measured on a test machine first
-  (Q165 (c)), and the pane driven on a test machine (Q168 (b)); S6, the server's own repetition
-  (S01-S14). In parallel: the rest of the shared test code (S5a), the PowerShell helpers (S7), and
-  the rules restated in C# and PowerShell as shared C# source (Q171).
+  What remains, one stage at a time: S4, the signature and draft code (A01-A05, A08, A09, A12) with
+  Q162's checkbox, Core winning where the copies drifted apart and the pane's visible differences
+  measured on a test machine first (Q165 (c)), and the pane driven on a test machine (Q168 (b));
+  S6, the server's own repetition (S01-S14). In parallel: the rest of the shared test code (S5a),
+  the PowerShell helpers (S7), and the rules restated in C# and PowerShell as shared C# source
+  (Q171).
 
 - [ ] **Let the add-in's AI choose the signature by itself, once the add-in uses OutlookAI.Core (Q158
   and Q162, decided 2026-11-17).** Signatures are managed through the MCP server only; the add-in
@@ -1731,7 +1737,7 @@
   reads 12 months under the policy's All, and removing the policy alone would make Outlook drop that
   account's offline mail older than 12 months (inferred from Microsoft's KB 2733062).
   `Tuning\Applied` records which values OutlookAI wrote itself. The removal is built and tested, and
-  nothing calls it (`Services/EarlierPolicyRemoval.cs`, `OutlookTuningService.RemoveEarlierPolicyValues`,
+  nothing calls it (`McpServer/OutlookAI.Core/AddIn/EarlierPolicyRemoval.cs`, `OutlookTuningService.RemoveEarlierPolicyValues`,
   T1 `EarlierPolicyRemovalTests`): it sets every account's own period to All first, through
   `IAccountOfflinePeriods`, and refuses whole until the add-in can (the item on the account's own
   period, below). Wiring it to a button or to startup is the change his word will be. **Open before
@@ -1773,7 +1779,7 @@
   `AccountOfflinePeriodWriterTests`. The add-in references Core since the code-sharing refactor's
   first stage (Q167 (a)), but may call only Core's namespace `OutlookAI.Core.AddIn` (Q164 (a)), so
   what waits is moving the writer, and the profile reader it uses, into it. Then implement
-  `IAccountOfflinePeriods` (`Services/AccountOfflinePeriods.cs`, which says what it must do), set it
+  `IAccountOfflinePeriods` (`McpServer/OutlookAI.Core/AddIn/AccountOfflinePeriods.cs`, which says what it must do), set it
   in `OutlookTuningService.AccountPeriods`, and tell the user the new period takes effect when
   Outlook next starts. The dialog and the removal below both use it. Not measured: whether a running
   Outlook applies a written pair before it restarts, and whether Outlook then really downloads that
@@ -1831,6 +1837,14 @@
   (`.work\w-vm-state\` of the main checkout) - are used nowhere. Left for later by the coordinator on
   2026-11-18, once the polling cut had landed.
 
+- [ ] **Remove the testbed's .NET 10 checkpoints once every branch is on .NET 11 (Q172).**
+  `CP-03-SDK-TEST-READY-UTC` on the three build VMs, and `CP-22C-FROZEN-CLOCK` and
+  `CP-16B-FROZEN-CLOCK` on the Outlook guests, stay only for branches whose runners still name them
+  (Docs/live-tier-on-the-vm.md section 4.12). Once no branch does: remove them (`Remove-VMSnapshot`;
+  Hyper-V merges their disks), take them out of `Testbed/testbed.json`, and keep
+  `.work/media/dotnet-sdk-10.0.401-win-x64.exe` only while a checkpoint still needs it - recording it
+  in section 4.12. `OutlookAI-Exchange`'s older checkpoints are its rebuild points and stay.
+
 
 
 - [ ] **Waiting for the shared test mailbox (Q109).** The maintainer requested a free shared
@@ -1867,27 +1881,27 @@
   Outlook's signature settings, read through a draft's editor, reported no default with it or without
   it - and the value had been written while Outlook ran, which Outlook may read only when it starts.
 
-- [ ] **Decide how Office on the Exchange VM gets back the ability to create items (found 2026-11-17).**
-  Its Office LTSC 2024 volume edition was never activated, its grace ran out in late October, and since
-  then Outlook creates no item through its object model: 41 of a run's 87 tests failed at their first
-  draft or mail, every read passed, and the write tests cannot pass there (runbook §4.4a, "The live runs
-  of 2026-11-17"). The other guests do not meet it because their clocks are frozen inside the grace
-  (Q130). Directions: (1) re-arm Office's grace with its own `ospprearm.exe`, a limited number of times,
-  each run or monthly - free, but the licence terms need a look; (2) install Microsoft 365 Apps there,
-  activated by the test account's own licence if the tenant gives it one - a licensed component, so
-  a decision on AGENTS.md's Dependencies rule, and it would also let Q147 measure real roaming
-  signatures; (3) give the VM a real activation (a MAK or KMS key) - a licence key; (4) keep the VM to
-  `Writes=Nothing` tests until one of these lands. Proving the cause first means one item created by
-  tested helper code after a re-arm.
+- [ ] **Re-arm Office on the Exchange VM again before its grace runs out on 2026-12-18 - two re-arms
+  left (decision 206 (a), 2026-11-18).** Its Office LTSC 2024 volume edition is never activated, and past
+  the 30-day grace Outlook there creates no item through its object model, so every write test fails at
+  its first draft (runbook §4.4a). On 2026-11-18 one re-arm with `OSPPREARM.EXE` gave it 30 days, to about
+  02:56 on 2026-12-18, and took the count from three to two; checkpoint `CP-09-OFFICE-REARMED` holds
+  that state, and a restore of an older checkpoint brings the expired grace back. Before then: lease the VM, run
+  `OSPPREARM.EXE` over PowerShell Direct, restart Outlook with
+  `host/Restart-Guest.ps1 -Execute` (Testbed/README.md §4e), record the new count, and take a checkpoint.
+  What follows the last re-arm is still the maintainer's to decide: 206 (b), Microsoft 365 Apps activated
+  by the test account's own licence, was decided as the fallback for a re-arm that did not work, and he
+  has offered a volume key if neither did.
 
-- [ ] **Delete the one tagged leftover in the Exchange VM mailbox's Sent Items once the maintainer has
-  confirmed its id (Q138 (c), decided 2026-11-17).** Found read-only on 2026-11-17: subject
-  `[OutlookAI-McpTest]
-  d3994a2ad25309442 d39 move seed`, sent 2026-07-26 03:46:54 (W. Europe), EntryID beginning
-  `000000009D47E954`, in the real mailbox's Sent Items; nothing else tagged in either mailbox. After his
-  confirmation: delete exactly that EntryID - EntryID allowlist AND ordinal tag match - through tested
-  helper code and the suite, then remove it from Deleted Items too. The only write the real mailbox
-  ever gets.
+- [ ] **Decide how the Q138 leftover leaves the Exchange VM bystander's Deleted Items (2026-11-18).** The
+  tested one-off moved the confirmed item out of the bystander's Sent Items on 2026-11-18, but the delete
+  in Deleted Items did not purge it (runbook §4.4a, run 10): it sits there under a new EntryID, which the
+  maintainer has not confirmed, and the rule is an EntryID allowlist AND an ordinal tag match.
+  Directions: (1) he confirms the new EntryID (read on the host, kept out of the repository), and the
+  same helper, with a second pin and the copy opened afresh, purges it - tried in the test account first;
+  (2) leave it, for him to empty or for the tenant's retention to take; (3) purge it by its exact subject
+  and its move-stable received time and size, without a confirmed EntryID - weaker than the rule.
+  Recommended: (1).
 
 - [ ] **Decide what to do about the test account's automapping into the Exchange VM's mailbox.** Since
   the test account joined the profile, Outlook shows a THIRD store, named by the test account's display
@@ -1913,58 +1927,48 @@
   `T2/LiveSearchInTests` throw NullReference when the settings carry no `subjectOnlyProbe` instead of
   refusing with the remedy.
 
-- [ ] **Stop D49's lifetime pins being left behind, once Q149's measurement has said whether pins
-  stay (Q118 (a), approved 2026-10-11, on hold for Q149).** Approved: a per-user list of live
-  sessions and the pins they made, by owner PID and pin window handle; the last session out closes
-  the pin; the pins of dead sessions are closed; `outlook_health` lists the sessions; and a
-  machine-wide lock, so sessions that start Outlook at once make one pin. The window handles also let
-  the show-me path recognise a pin (S6, below). On hold for the maintainer's choice between keeping
-  Word with pins made only while drafting - then build (a) for those pins - and writing drafts as HTML
-  with no compose window and no pins - then this item goes (`QUESTIONS.md` decision log, 2026-10-11
-  and 2026-11-17). Q149 (d) measured on 2026-11-17 that pins stay for as long as drafts go through
-  Word: without one, the compose window's close ended a window-less Outlook in 40 of 40 drafts on
-  Office LTSC 2024 (`Docs/research/q149-draft-text`). **Measured** 2026-10-03 on
-  `OAI-UNINDEXED` (`McpServer/Docs/com-host.md`, "Pins left behind, measured"): a session pins only
-  when it finds no Explorer, so against a user's open Outlook no
-  pin is ever made (11 sessions, 0 pins). A pin is LEFT when its maker did not start Outlook - sessions
-  that connect while Outlook is starting or running window-less all pin, and none of them closes its
-  own (2 at once left 1, 3 at once left 3) - or when the maker's COM host is killed. A pin left keeps a
-  window-less OUTLOOK.EXE up: `Application.Quit()` did not end it (3 of 3), nor did the user's close of
-  the window they had opened over it (2 of 2); File > Exit did. **S6 is true in one state:** after
-  that close, `ActiveExplorer()` returns the hidden pin, the show-me path's `Activate()` makes it
-  visible, and the user's close of it ends Outlook - harmless there, because the close raised Quit
-  and dropped every attached session, so the pin had no live owner. **What the research of
-  2026-10-11 found (a) also needs** (`.work\research-2026-10-11\q118-tray\report.md` of the
-  maintainer's checkout, gitignored): record who started this OUTLOOK.EXE once per process, not per
-  session, because a starter that leaves first ends Outlook under the others today; close only pins
-  recorded by window handle, never a visible window or another program's hidden Explorer; while
-  another session lives, adopt a dead session's pin rather than close it, since closing the only
-  Explorer ends Outlook under everyone; let any session that hears Quit close the shared pin, so the
-  user's exit wins for every session; mark "Outlook is exiting" across processes, so a new server's
-  first call waits for that process to end instead of starting another; and have `outlook_health`
-  also say who started Outlook and what will end it. Never measured: the tray icon in any of these
-  states, and what its Exit Now does to a pinned Outlook.
+- [ ] **What the session registry of Q118 (a) leaves open (built 2026-11-18, `McpServer/Docs/com-host.md`,
+  "One pin, shared, closed by the last session out").** Every session joins a per-user list, Outlook
+  has one pin shared by every session, the last session out or one that hears Quit closes it, and a
+  dead session's pin is adopted. Three things are not covered. (1) **A pin whose every session was
+  killed, with no OutlookAI session after it**, stays until the next session starts and later leaves:
+  a COM host killed by its deadline is replaced only on its server's next call, and a server that
+  ends before one leaves the dead host's pin in Outlook. `outlook_health` names it as a problem and
+  File > Exit ends Outlook meanwhile. Options: the server, as it ends, starts a short COM host only to
+  leave the registry when it holds a pin no live session owns; or posts WM_CLOSE to the recorded pin
+  window, which needs no COM but has never been measured on a hidden Explorer; or nothing more. (2)
+  **The cross-process "Outlook is exiting" mark** the 2026-10-11 research proposed, so a new server's
+  first call waits for an exiting Outlook instead of starting another
+  (`.work\research-2026-10-11\q118-tray\report.md` of the maintainer's checkout): it is about when
+  Outlook is started, which is Q175's other half. (3) **Never measured**: the tray icon's Exit Now
+  with a pin present.
 
-- [ ] **Put a reply's or forward's text above the quoted original's header block, not inside it.**
-  Measured on 2026-11-17 by Q149 (`Docs/research/q149-draft-text`, "Found on the way"): all 12
-  replies and forwards the product wrote with a signature, on both Office LTSC 2024 test guests, had
-  the body and the signature under the line that heads the quoted original. Word lays out their first
-  eleven paragraphs with that block's top border, and the first of them in Times New Roman. A reply
-  made with no inspector - every reply since the re-opened-draft compose (`c4595b1`) - has no
-  `_MailAutoSig`, so `ApplySignatureToDocument` places the signature at the start of `_MailOriginal`,
-  which sits inside the header block's bordered `div`, and `InsertBodyAboveSignature` then writes the
-  body above the signature, inside the same block. A reply without a signature was not measured. Cell
-  C4 of `T2/LiveQ149HtmlOnlyParityTests` shows it: today's reply against one laid out as `Reply()`
-  leaves it.
+- [ ] **The first draft after each start of an Outlook with no window still shows its compose window.**
+  Q208 B (2026-11-18) promotes a compose window once per Outlook process instead of once per draft:
+  the first draft in a window-less Outlook activates its window, which on Office LTSC 2024 shows where
+  Outlook places it, (25,25) to (156,156), 768 x 519, for 81-410 ms (Q149 stage 4, 15 timed
+  promotions; 130-646 ms in stage 1); every later draft in that process, from any session, reads its
+  editor directly and shows nothing (152 of 152). On the test guests the window took neither the
+  foreground (GetForegroundWindow, every 10 ms) nor a key from a person typing in another program, but
+  their foreground lock time-out never runs out (2147483647 ms): on a machine with Windows' default of
+  200 s, after 200 s without input, whether it takes the foreground is unmeasured.
+  `ComposeSurface.PromoteForWordEditor` parks the window off-screen before `Activate()`, and
+  `Activate()` puts it back where Outlook keeps it. Untried ways to keep that one moment off the
+  screen: set `Inspector.Left` and `Top` through the object model before `Activate()` (Outlook may
+  place the window where its own properties say rather than where Windows was told), or
+  `Inspector.WindowState` minimized; each needs a Q149-style cell measuring the window shown and the
+  editor had.
 
-- [ ] **Stop the compose window showing on screen in an Outlook with no window.** Measured on
-  2026-11-17 by Q149 (`Docs/research/q149-draft-text`, cells L1 and L1c): in 50 of 50 drafts on the
-  two Office LTSC 2024 test guests, the editor promotion showed the compose window at (25,25),
-  768 x 519, for 130-646 ms, and gave Outlook the foreground. `ComposeSurface.PromoteForWordEditor`
-  parks the window off-screen before `Activate()`, and `Activate()` puts it back where Outlook keeps
-  it; the sweep after it hides it again. With an Outlook window open it stays off-screen (40 of 40).
-  How to fix it depends on Q149's decision: writing drafts as HTML shows nothing, and one promotion
-  per Outlook process (cells W6 and W7) would show it once per process instead of once per draft.
+- [ ] **Decide what Q211 (b)'s measurement changes: with a signature, a draft's text takes the
+  signature's spacing.** Measured 2026-11-18 (`Docs/research/q149-draft-text`, stage 4): text typed in
+  Outlook's own compose window is Word's "Normal" style, 0 pt before and after, a paragraph per line,
+  in a new mail, a reply and a forward. The product's drafts match it in style and spacing without a
+  signature. With one, the text and the blank line after it are "Normal (Web)", 5 pt before and after,
+  because the text goes in at the start of the signature's first paragraph and takes its format. The
+  product also writes the text's lines as soft line breaks in one paragraph. Options: give the
+  inserted text the document's "Normal" style once it is in; insert the text before the signature
+  rather than into it; write a paragraph per line as well; or leave it. The maintainer decides
+  (Q211).
 
 - [ ] **Let the count tripwire's census read a table date by its column spelling too.**
   `CensusTableRow.ReadUtc` still calls the one-argument `ComDateValue.FromTableValue`, which takes every

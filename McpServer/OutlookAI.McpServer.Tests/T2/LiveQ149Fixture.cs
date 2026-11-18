@@ -20,6 +20,7 @@ public sealed class LiveQ149Fixture : IDisposable
 {
     private ITestOutputHelper? _output;
     private MailService? _service;
+    private Q180StartObserver? _starts;
 
     public LiveQ149Fixture()
     {
@@ -28,6 +29,9 @@ public sealed class LiveQ149Fixture : IDisposable
         ShouldRun = Q149RunGate.ShouldRun(LiveTierRunPlan.Current);
         Run = new Q149Run(Settings, "q9" + Guid.NewGuid().ToString("N").Substring(0, 14), line => _output?.WriteLine(line));
         SignatureSnapshot = SignatureDirectorySnapshot.Capture();
+
+        // Q180 (b): every start of Outlook while the measurement runs is logged, whoever causes it.
+        _starts = ShouldRun ? new Q180StartObserver() : null;
     }
 
     public LiveTestSettings Settings { get; }
@@ -77,6 +81,12 @@ public sealed class LiveQ149Fixture : IDisposable
         }
         finally
         {
+            _starts?.Dispose();
+            if (_starts != null)
+            {
+                Console.WriteLine("q149: Q180 observer logged " + _starts.Starts + " start(s) of Outlook");
+            }
+
             ReleaseService();
             try
             {

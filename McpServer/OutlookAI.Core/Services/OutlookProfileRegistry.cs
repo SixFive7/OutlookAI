@@ -3,9 +3,9 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 
 // The Office major versions this product supports and the probe that finds the installed one.
-// Services\OfficeVersions.cs is LINKED into this project (see OutlookAI.Core.csproj), so this is
-// not a copy of the add-in's list - it is the add-in's list, probed in the add-in's order.
-using OfficeVersions = global::OutlookAI.Services.OfficeVersions;
+// Core's AddIn\OfficeVersions.cs is the add-in's too (Q163 (a), Q167 (a)), so this is not a copy of
+// the add-in's list - it is the add-in's list, probed in the add-in's order.
+using OfficeVersions = global::OutlookAI.Core.AddIn.OfficeVersions;
 
 namespace OutlookAI.Core.Services
 {
@@ -32,8 +32,9 @@ namespace OutlookAI.Core.Services
         /// Office majors this product looks for, NEWEST FIRST - the probe order, so a machine
         /// with two Office versions installed is treated as the newer of them. The same array
         /// the add-in probes and the same one <c>Installer.iss</c>'s resiliency exemptions are
-        /// checked against; public here because <c>HealthReporting</c>'s diagnostic has to name
-        /// what it looked for, and the type holding it is internal (CS0436 - see that file).
+        /// checked against; read-only here, because <c>HealthReporting</c>'s diagnostic names what
+        /// it looked for and <c>OfficeVersions.Supported</c> is an array anyone holding it could
+        /// change.
         /// </summary>
         public static readonly IReadOnlyList<string> SupportedOfficeVersions =
             new ReadOnlyCollection<string>((string[])OfficeVersions.Supported.Clone());

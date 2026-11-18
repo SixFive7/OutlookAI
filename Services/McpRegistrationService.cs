@@ -3,8 +3,8 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Text;
-using System.Web.Script.Serialization;
 using Microsoft.Win32;
+using OutlookAI.Core.AddIn;
 
 namespace OutlookAI.Services
 {
@@ -62,12 +62,12 @@ namespace OutlookAI.Services
         /// The key this service owns. Its path, and every value name written under it, live in
         /// <see cref="AddInServerContract"/>: the MCP server's <c>outlook_health</c> reads this
         /// key to report what the last reconcile did, and that key IS the contract between the
-        /// two components. One definition compiled into both, rather than a comment on each side
-        /// claiming to mirror the other.
+        /// two components. One definition, OutlookAI.Core's, used by both, rather than a comment on
+        /// each side claiming to mirror the other.
         /// </summary>
         internal const string McpKeyPath = AddInServerContract.McpKeyPath;
         internal const string InstallDirValueName = "InstallDir";
-        internal const string AppKeyPath = @"Software\OutlookAI";
+        internal const string AppKeyPath = AddInServerContract.AppKeyPath;
 
         /// <summary>Server name under <c>mcpServers</c>; matches what Phase 2 registered.</summary>
         internal const string ServerName = McpConfigEditor.ServerName;
@@ -262,17 +262,16 @@ namespace OutlookAI.Services
             {
                 lock (_gate)
                 {
-                    string configPath = ClaudeConfigPath();
+                    string configPath = McpConfigEditor.UserConfigPath();
                     bool configExists = File.Exists(configPath);
                     string raw = configExists ? ReadSharedSettled(configPath) : "";
 
-                    Dictionary<string, object> root;
-                    bool parsed = TryParseConfig(configExists, raw, out root);
+                    bool parsed = McpConfigEditor.IsReadableConfig(configExists, raw);
                     string serverPath = ResolveInstalledServerPath();
 
                     var decision = McpRegistrationDecision.Decide(
                         ReadDword(GlobalRegistrationValueName),
-                        ClassifyEntry(parsed, root, serverPath),
+                        ClassifyEntry(parsed, raw, serverPath),
                         canAskUser: true,
                         intentJustDeclared: false);
 
@@ -409,7 +408,7 @@ namespace OutlookAI.Services
 
         private static RegistrationSnapshot ReconcileCore(bool intentJustDeclared)
         {
-            string configPath = ClaudeConfigPath();
+            string configPath = McpConfigEditor.UserConfigPath();
             string serverPath = ResolveInstalledServerPath();
 
             var snap = new RegistrationSnapshot
@@ -435,13 +434,12 @@ namespace OutlookAI.Services
                 return snap;
             }
 
-            Dictionary<string, object> root;
-            bool parsed = TryParseConfig(configExists, raw, out root);
-            snap.RegisteredCommand = parsed ? ReadRegisteredCommand(root) : null;
+            bool parsed = McpConfigEditor.IsReadableConfig(configExists, raw);
+            snap.RegisteredCommand = ReadRegisteredCommand(parsed, raw);
 
             // (0) The two facts every decision below is made from: what the user has already
             // said (tri-state, and "nothing" is a state), and what is actually in the file.
-            var entry = ClassifyEntry(parsed, root, serverPath);
+            var entry = ClassifyEntry(parsed, raw, serverPath);
             int? stored = ReadDword(GlobalRegistrationValueName);
 
             // Resolved before anything else can stand in the way, so the settings dialog
@@ -544,7 +542,7 @@ namespace OutlookAI.Services
 
             bool entryIsOurs = entry == McpRegistrationDecision.EntryState.Ours;
 
-            if (entryIsOurs && commandCorrect && IsStdioEntry(root) && !HasRemoteKeys(root))
+            if (entryIsOurs && commandCorrect && McpConfigEditor.IsStdioEntry(raw) && !McpConfigEditor.HasRemoteKeys(raw))
             {
                 snap.Status = StatusOk;
                 snap.Detail = "Registered for all your projects, pointing at the installed mail server.";
@@ -553,7 +551,7 @@ namespace OutlookAI.Services
 
             string updated;
             string spliceError;
-            if (!TryBuildUpdatedConfig(raw, configExists, root, desiredCommand, serverPath, entryIsOurs, out updated, out spliceError))
+            if (!TryBuildUpdatedConfig(raw, configExists, desiredCommand, serverPath, entryIsOurs, out updated, out spliceError))
             {
                 snap.Status = StatusError;
                 snap.Detail = "Could not update the registration safely: " + spliceError + ". The file was left untouched.";
@@ -766,19 +764,6 @@ namespace OutlookAI.Services
         // ===== Paths and probes =====
 
         /// <summary>
-        /// The user-scope configuration file. The file name comes from
-        /// <see cref="AddInServerContract"/> because the MCP server reads the very same file to
-        /// report whether the registration names it - see
-        /// <c>HealthReporting.TryReadRegisteredCommand</c>, which resolves it the same way.
-        /// </summary>
-        internal static string ClaudeConfigPath()
-        {
-            return Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                AddInServerContract.ClaudeConfigFileName);
-        }
-
-        /// <summary>
         /// Claude Code is present if it has written its config file, or if its CLI is where
         /// the add-in already expects it (see <see cref="ClaudeService"/>).
         /// </summary>
@@ -903,200 +888,25 @@ namespace OutlookAI.Services
         }
 
         // ===== JSON: read, splice, verify =====
+        //
+        // Since the code-sharing refactor's stage S3 (Q154) this file reads and writes
+        // ~/.claude.json through OutlookAI.Core's McpConfigEditor, the scanner outlook_health reads
+        // it with, and the rules below are pinned by T1 there. Until then it parsed the file with
+        // JavaScriptSerializer and re-rendered the whole mcpServers section; now only our entry is
+        // written, and every other server keeps its bytes.
 
-        private static Dictionary<string, object> TryParseObject(string json)
+        /// <summary>What <c>mcpServers.outlookai</c> is: <see cref="McpConfigEditor.ClassifyServerEntry"/>.</summary>
+        internal static McpRegistrationDecision.EntryState ClassifyEntry(bool parsed, string raw, string installedServerPath)
         {
-            try
-            {
-                var serializer = new JavaScriptSerializer { MaxJsonLength = int.MaxValue };
-                return serializer.Deserialize<Dictionary<string, object>>(json);
-            }
-            catch
-            {
-                return null;
-            }
+            return McpConfigEditor.ClassifyServerEntry(
+                parsed, raw, installedServerPath, Path.GetFileName(RelativeServerPath), McpConfigEditor.ProcessEnvironmentLookup());
         }
 
-        /// <summary>
-        /// Classifies the file text once: false when it must never be written to.
-        ///
-        /// A file that is on disk yet reads back with nothing in it is a FAILED READ, not a
-        /// machine with no configuration — the CLI truncates before it flushes, and the shared
-        /// read is what makes that window visible. Scoring it "no config yet" would have the
-        /// splice write a fresh one-property document, and the atomic replace would then move
-        /// the user's real configuration aside as a backup the CLI's own open handle promptly
-        /// overwrites. So it is classified exactly as a file that does not parse: unreadable,
-        /// and therefore untouched.
-        ///
-        /// A genuinely ABSENT file is readable-with-nothing-in-it: true, with a null
-        /// <paramref name="root"/>. That is the one state a whole new document may be built for.
-        /// </summary>
-        private static bool TryParseConfig(bool configExists, string raw, out Dictionary<string, object> root)
+        /// <summary>The registered command, or null when there is none or the file was not readable.</summary>
+        private static string ReadRegisteredCommand(bool parsed, string raw)
         {
-            root = null;
-
-            if (McpConfigEditor.ExistsButReadsEmpty(configExists, raw))
-                return false;
-            if (raw == null || raw.Trim().Length == 0)
-                return true;
-
-            root = TryParseObject(raw);
-            return root != null;
-        }
-
-        private static string ReadRegisteredCommand(Dictionary<string, object> root)
-        {
-            var entry = ReadServerEntry(root);
-            if (entry == null)
-                return null;
-            object command;
-            return entry.TryGetValue(AddInServerContract.CommandProperty, out command) ? command as string : null;
-        }
-
-        /// <summary>The <c>outlookai</c> member's value, whatever shape it is; false when there is none.</summary>
-        private static bool TryGetServerMember(Dictionary<string, object> root, out object value)
-        {
-            value = null;
-            if (root == null)
-                return false;
-            object servers;
-            if (!root.TryGetValue(McpConfigEditor.ServersProperty, out servers))
-                return false;
-            var map = servers as Dictionary<string, object>;
-            if (map == null)
-                return false;
-            return map.TryGetValue(ServerName, out value);
-        }
-
-        private static Dictionary<string, object> ReadServerEntry(Dictionary<string, object> root)
-        {
-            object value;
-            if (!TryGetServerMember(root, out value))
-                return null;
-            return value as Dictionary<string, object>;
-        }
-
-        /// <summary>
-        /// What <c>mcpServers.outlookai</c> IS — the single judgement everything else hangs off.
-        ///
-        /// "Ours" is deliberately narrow: a stdio entry whose <c>command</c>, once Claude Code's
-        /// <c>${VAR}</c> forms are expanded, names the mail server installed on this machine.
-        /// Anything else is FOREIGN, and foreign means untouchable — not adopted as a silent
-        /// opt-in, not overwritten, not deleted. The case that motivates the whole rule is a
-        /// user who ran <c>claude mcp add --scope user outlookai -- C:\my\wrapper.cmd</c> on
-        /// purpose: treating that as our own entry would quietly destroy it, in either
-        /// direction, on the next Outlook start.
-        ///
-        /// A remote entry (<c>url</c>) is foreign for a second reason as well: rewriting it as
-        /// a stdio command while its <c>url</c> stayed behind would leave a hybrid that is
-        /// neither.
-        /// </summary>
-        internal static McpRegistrationDecision.EntryState ClassifyEntry(
-            bool parsed, Dictionary<string, object> root, string installedServerPath)
-        {
-            if (!parsed)
-                return McpRegistrationDecision.EntryState.Unreadable;
-
-            object value;
-            if (!TryGetServerMember(root, out value))
-                return McpRegistrationDecision.EntryState.Absent;
-
-            var entry = value as Dictionary<string, object>;
-            if (entry == null)
-                return McpRegistrationDecision.EntryState.Foreign;
-
-            if (entry.ContainsKey("url") || entry.ContainsKey("httpUrl"))
-                return McpRegistrationDecision.EntryState.Foreign;
-
-            object type;
-            if (entry.TryGetValue("type", out type)
-                && !string.Equals(type as string, "stdio", StringComparison.OrdinalIgnoreCase))
-            {
-                return McpRegistrationDecision.EntryState.Foreign;
-            }
-
-            object command;
-            entry.TryGetValue(AddInServerContract.CommandProperty, out command);
-            string text = command as string;
-            if (string.IsNullOrEmpty(text))
-                return McpRegistrationDecision.EntryState.Foreign;
-
-            string expanded = McpConfigEditor.ExpandEnvironmentReferences(
-                text, McpConfigEditor.ProcessEnvironmentLookup());
-            if (string.IsNullOrEmpty(expanded))
-                return McpRegistrationDecision.EntryState.Foreign;
-
-            if (!string.IsNullOrEmpty(installedServerPath))
-            {
-                return IsSamePath(expanded, installedServerPath)
-                    ? McpRegistrationDecision.EntryState.Ours
-                    : McpRegistrationDecision.EntryState.Foreign;
-            }
-
-            // No installed server to compare against (an older install layout, or a developer
-            // add-in build). Our executable's own file name is the only evidence left — and it
-            // is enough for the one thing that still matters here: telling a stale entry of
-            // OURS, which the deregistration path may remove, from a command the user chose,
-            // which it may not.
-            return NamesOurServerExecutable(expanded)
-                ? McpRegistrationDecision.EntryState.Ours
-                : McpRegistrationDecision.EntryState.Foreign;
-        }
-
-        private static bool NamesOurServerExecutable(string command)
-        {
-            try
-            {
-                return string.Equals(
-                    Path.GetFileName(command),
-                    Path.GetFileName(RelativeServerPath),
-                    StringComparison.OrdinalIgnoreCase);
-            }
-            catch (Exception ex)
-            {
-                // A value with invalid path characters names no executable of ours.
-                System.Diagnostics.Debug.WriteLine("server name compare: " + ex.Message);
-                return false;
-            }
-        }
-
-        /// <summary>
-        /// Whether our entry still carries keys that only belong to a REMOTE server. They are
-        /// meaningless beside a <c>command</c>, and an entry holding both is exactly the hybrid
-        /// an earlier version could produce by overwriting a remote entry key by key — so its
-        /// presence means "not yet correct", and the rewrite below drops them.
-        /// </summary>
-        private static bool HasRemoteKeys(Dictionary<string, object> root)
-        {
-            var entry = ReadServerEntry(root);
-            if (entry == null)
-                return false;
-            return entry.ContainsKey("url") || entry.ContainsKey("httpUrl") || entry.ContainsKey("headers");
-        }
-
-        /// <summary>
-        /// Whether the registered entry is a stdio server this reconcile may keep maintaining.
-        ///
-        /// A hand-written entry legitimately omits <c>type</c> — stdio is what a <c>command</c>
-        /// means — so requiring an explicit type would score every such entry as drift and
-        /// rewrite the file on every single Outlook start. A remote entry (<c>url</c>) is the
-        /// case that must still score false: taking one of those over would break it.
-        /// </summary>
-        private static bool IsStdioEntry(Dictionary<string, object> root)
-        {
-            var entry = ReadServerEntry(root);
-            if (entry == null)
-                return false;
-
-            object type;
-            if (entry.TryGetValue("type", out type))
-                return string.Equals(type as string, "stdio", StringComparison.OrdinalIgnoreCase);
-
-            object command;
-            if (!entry.TryGetValue(AddInServerContract.CommandProperty, out command) || string.IsNullOrEmpty(command as string))
-                return false;
-
-            return !entry.ContainsKey("url") && !entry.ContainsKey("httpUrl");
+            string command;
+            return parsed && McpConfigEditor.TryReadServerCommand(raw, out command) ? command : null;
         }
 
         internal static bool IsSamePath(string a, string b)
@@ -1105,170 +915,31 @@ namespace OutlookAI.Services
         }
 
         /// <summary>
-        /// Produces the new file content by replacing ONLY the <c>mcpServers</c> value (or
-        /// inserting the whole property when absent). Everything outside that span is copied
-        /// through byte for byte, so no unrelated setting is reformatted. The result is
-        /// re-parsed and checked before it is returned.
-        ///
-        /// <paramref name="command"/> is what gets written (possibly an environment-variable
-        /// form); <paramref name="serverPath"/> is the real file it must resolve to, and both
-        /// halves of that are verified here — an entry that reads back as something else, or
-        /// that no longer names the installed server once expanded, is never written.
-        ///
-        /// <paramref name="configExists"/> gates the one branch that does NOT splice: a whole
-        /// new document may only be produced for a file that is genuinely absent. It is belt
-        /// and braces behind the classification in <see cref="ReconcileCore"/> — the branch
-        /// replaces the entire file, so it must never be reachable for a file that is on disk
-        /// but merely read back empty.
-        ///
-        /// <paramref name="keepExistingEntryKeys"/> is true ONLY when the entry being rewritten
-        /// is already ours. Extra keys on our own entry — an <c>env</c> variable someone added
-        /// by hand — are then carried through, which is the promise made to a user maintaining
-        /// their own registration. Keys on an entry that is NOT ours are dropped, because
-        /// merging into one produces exactly the nonsense this used to write: a remote server's
-        /// <c>url</c> left sitting beside a <c>command</c>, an entry that is neither shape.
+        /// The new file content, from <see cref="McpConfigEditor.TryBuildUserConfig"/>: only our
+        /// entry is written, everything else is copied through byte for byte, and the result is
+        /// verified before it is returned. <paramref name="command"/> is what gets written (possibly
+        /// an environment-variable form); <paramref name="serverPath"/> is the real file it must
+        /// resolve to - the one check the shared splice cannot make, so it is made here, and an
+        /// entry that no longer names the installed server once expanded is never written.
         /// </summary>
         internal static bool TryBuildUpdatedConfig(
             string raw,
             bool configExists,
-            Dictionary<string, object> root,
             string command,
             string serverPath,
             bool keepExistingEntryKeys,
             out string updated,
             out string error)
         {
-            updated = null;
-            error = null;
-
-            var serializer = new JavaScriptSerializer { MaxJsonLength = int.MaxValue };
-
-            // Every other server survives verbatim.
-            var servers = new Dictionary<string, object>(StringComparer.Ordinal);
-            object existingServers;
-            if (root != null && root.TryGetValue(McpConfigEditor.ServersProperty, out existingServers))
+            if (!McpConfigEditor.TryBuildUserConfig(raw, configExists, command, keepExistingEntryKeys, out updated, out error))
             {
-                var map = existingServers as Dictionary<string, object>;
-                if (map != null)
-                {
-                    foreach (var kv in map)
-                        servers[kv.Key] = kv.Value;
-                }
-                else if (existingServers != null)
-                {
-                    error = "the mcpServers setting is not an object";
-                    return false;
-                }
-            }
-
-            Dictionary<string, object> entry = null;
-            object ours;
-            if (keepExistingEntryKeys && servers.TryGetValue(ServerName, out ours))
-                entry = ours as Dictionary<string, object>;
-            entry = entry == null
-                ? new Dictionary<string, object>(StringComparer.Ordinal)
-                : new Dictionary<string, object>(entry, StringComparer.Ordinal);
-
-            // A stdio server never has these. Removed unconditionally so an entry that once
-            // carried them cannot come back out of here as a half-remote hybrid.
-            entry.Remove("url");
-            entry.Remove("httpUrl");
-            entry.Remove("headers");
-
-            entry["type"] = "stdio";
-            entry[AddInServerContract.CommandProperty] = command;
-            if (!entry.ContainsKey("args"))
-                entry["args"] = new object[0];
-            if (!entry.ContainsKey("env"))
-                entry["env"] = new Dictionary<string, object>(StringComparer.Ordinal);
-
-            servers[ServerName] = entry;
-
-            string serversJson;
-            try
-            {
-                serversJson = serializer.Serialize(servers);
-            }
-            catch (Exception ex)
-            {
-                error = "could not render the mcpServers section (" + ex.Message + ")";
-                return false;
-            }
-
-            int expectedTopLevelKeys;
-            if (raw.Trim().Length == 0)
-            {
-                if (McpConfigEditor.ExistsButReadsEmpty(configExists, raw))
-                {
-                    error = "the configuration file is on disk but read back empty";
-                    return false;
-                }
-
-                updated = "{\"" + McpConfigEditor.ServersProperty + "\":" + serversJson + "}";
-                expectedTopLevelKeys = 1;
-            }
-            else
-            {
-                int valueStart, valueEnd;
-                if (McpConfigEditor.TryFindTopLevelValueSpan(raw, McpConfigEditor.ServersProperty, out valueStart, out valueEnd))
-                {
-                    updated = raw.Substring(0, valueStart) + serversJson + raw.Substring(valueEnd);
-                    expectedTopLevelKeys = root.Count;
-                }
-                else
-                {
-                    int brace = raw.IndexOf('{');
-                    if (brace < 0)
-                    {
-                        error = "the configuration file is not a JSON object";
-                        return false;
-                    }
-                    string separator = McpConfigEditor.HasAnyContentAfterBrace(raw, brace) ? "," : "";
-                    updated = raw.Substring(0, brace + 1)
-                        + "\"" + McpConfigEditor.ServersProperty + "\":" + serversJson + separator
-                        + raw.Substring(brace + 1);
-                    expectedTopLevelKeys = root.Count + 1;
-                }
-            }
-
-            // Verify before anyone gets to write it.
-            var reparsed = TryParseObject(updated);
-            if (reparsed == null)
-            {
-                error = "the updated configuration did not parse back";
-                updated = null;
-                return false;
-            }
-            if (reparsed.Count != expectedTopLevelKeys)
-            {
-                error = "the updated configuration changed the number of top-level settings";
                 updated = null;
                 return false;
             }
 
-            string readBack = ReadRegisteredCommand(reparsed);
-            if (!string.Equals(readBack, command, StringComparison.Ordinal))
-            {
-                error = "the updated configuration does not name the installed server";
-                updated = null;
-                return false;
-            }
-            if (!IsSamePath(McpConfigEditor.ExpandEnvironmentReferences(readBack, McpConfigEditor.ProcessEnvironmentLookup()), serverPath))
+            if (!IsSamePath(McpConfigEditor.ExpandEnvironmentReferences(command, McpConfigEditor.ProcessEnvironmentLookup()), serverPath))
             {
                 error = "the registered command does not resolve to the installed server";
-                updated = null;
-                return false;
-            }
-
-            // And nobody else's server was gained or lost on the way through. A multiset
-            // comparison for the same reason the project-scope builder uses one: a check the
-            // wrong file can satisfy is worse than no check at all.
-            var expectedServers = McpConfigEditor.ListServerNames(raw);
-            if (!expectedServers.Contains(ServerName))
-                expectedServers.Add(ServerName);
-            if (!McpConfigEditor.SameMultiset(expectedServers, McpConfigEditor.ListServerNames(updated)))
-            {
-                error = "the update would have changed which MCP servers are configured";
                 updated = null;
                 return false;
             }

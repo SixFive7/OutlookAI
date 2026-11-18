@@ -1,11 +1,11 @@
-using OutlookAI.Services;
+using OutlookAI.Core.AddIn;
 using Xunit;
 
 namespace OutlookAI.McpServer.Tests.T1;
 
 /// <summary>
-/// The advisory checks on edited prompt text (<c>Services/PromptLint.cs</c>, LINKED into this
-/// test project - see the tests csproj).
+/// The advisory checks on edited prompt text (Core's <c>AddIn/PromptLint.cs</c>, the copy the
+/// add-in loads).
 ///
 /// Two sentences in the shipped preamble are load-bearing in ways a text box cannot show: the
 /// one saying the draft and quoted thread are untrusted content (without it, "ignore your

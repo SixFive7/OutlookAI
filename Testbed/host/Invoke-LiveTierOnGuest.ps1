@@ -63,9 +63,12 @@
     saves it as it is. With -Checkpoint, the checkpoint is restored, the guest restarted gracefully and
     its .ost files set aside (guest\Reset-OutlookOfflineStore.ps1) before Outlook starts and downloads
     the mailboxes afresh. STAGE leaves a running Outlook running (the swap replaces only the suite and
-    its server, which Outlook does not use). Its filter is LiveRunFilters.ExchangeTestAccountWritesNothing - the
-    write run's own filter, narrowed to the tests that write nothing until decision 206 (2026-11-17) settles
-    how the VM's never-activated Office gets back the ability to create items. And every run gets a RUN MARKER - 'oair' and
+    its server, which Outlook does not use). Its filter is LiveRunFilters.ExchangeTestAccount, the write run's
+    own, again since 2026-11-18: the VM's never-activated Office had passed its grace and Outlook created no
+    item, until decision 206 (a) re-armed the grace once with Office's own OSPPREARM.EXE (Docs/live-tier-on-the-vm.md
+    section 4.4a). Past the grace - next on 2026-12-18 - every write test fails at its first item again; -FilterSuffix
+    '&Writes=Nothing' narrows a run to LiveRunFilters.ExchangeTestAccountWritesNothing until it is re-armed. And every
+    run gets a RUN MARKER - 'oair' and
     the UTC start to the second - recorded in the host's ledger, C:\OutlookAI-Testbed\exchange-runs\
     ledger.jsonl, BEFORE the suite starts, and handed to the run in OUTLOOKAI_LIVE_RUN_MARKER with the
     markers of earlier runs that never reported a clean sweep in OUTLOOKAI_LIVE_PRIOR_RUN_MARKERS: every
@@ -201,7 +204,7 @@ $Guests = [ordered]@{
     'OutlookAI-Unindexed' = [ordered]@{ ComputerName = 'OAI-UNINDEXED'; Indexed = $false; Checkpoint = 'CP-16B-FROZEN-CLOCK'; Exchange = $false }
     # The Exchange VM (2026-10-08): never frozen, never cloned; its resting checkpoint is the newest
     # testbed.json's exchangeVm.checkpoints records, and -SelfTest holds the two equal.
-    'OutlookAI-Exchange'  = [ordered]@{ ComputerName = 'OAI-EXCHANGE'; Indexed = $true; Checkpoint = 'CP-08-ADDIN-READY'; Exchange = $true }
+    'OutlookAI-Exchange'  = [ordered]@{ ComputerName = 'OAI-EXCHANGE'; Indexed = $true; Checkpoint = 'CP-10-SDK11'; Exchange = $true }
 }
 # AND THEIR CLONES (2026-11-17): TestbedPool.ps1's indexed and unindexed pools. A clone is its
 # source copied at the source's frozen checkpoint - New-TestbedClone.ps1 - and rests on a checkpoint
@@ -224,14 +227,21 @@ $GuestSettingsPath = 'C:\OutlookAI-Q5\src\McpServer\OutlookAI.McpServer.Tests\li
 # tested, because the frozen checkpoints predate it - and fetched into dumps\ before the guest rests.
 $GuestDumpDir = 'C:\OutlookAI-Q5\crash-dumps'
 $CrashDumpScript = 'Set-OutlookCrashDumps.ps1'
+# The SDK a run's commit installs when its guest lacks it, and the SDK its verification looks for:
+# Install-DotnetSdk.ps1 -Execute and -Verify, the commit's own copy, told all three below, so that
+# copy's defaults do not decide (they name the .NET 11 SDK since 2026-11-18). Still .NET 10's on
+# 2026-11-18 (Q172): the frozen checkpoints this restores hold 10.0.401 alone, and CP-10-SDK11
+# holds 10.0.404 beside SDK 11, which '10.' matches too. It moves to the .NET 11 SDK with the code,
+# and the frozen checkpoints with it (Testbed/MEDIA.md). Hashed on the host before every run.
 $SdkInstallerName = 'dotnet-sdk-10.0.401-win-x64.exe'
 $SdkSha512 = 'f0d8f8e7ec24efb05172a65dd80c4a9b1ef17efcebdbf0f57c15f436eea417960a7eeb6726c473a042373d6a8b94ac1adc7d680decbf7d2c45fa5c5662d62265'
+$SdkVersionPrefix = '10.'
 $FilterBase = 'Category=Live&Requires!=DelegateStore&Requires!=CachedExchange'
 $FilterUnindexedExtra = '&Requires!=SearchIndex'
-# The Exchange VM with its test account as the hub: LiveRunFilters.ExchangeTestAccount, and of it only the
-# tests that write nothing (LiveRunFilters.ExchangeTestAccountWritesNothing) until decision 206 settles how
-# its Office gets back the ability to create items (Docs/live-tier-on-the-vm.md section 4.4a).
-$FilterExchange = 'Category=Live&Requires!=LocalSignatures&Requires!=DelegateStore&Requires!=GeneratedPopulation&Requires!=IdentityAccount&Requires!=ProbePopulation&Requires!=PstStore&Writes=Nothing'
+# The Exchange VM with its test account as the hub: LiveRunFilters.ExchangeTestAccount, read and write. From
+# 2026-11-17 to decision 206 (a) on 2026-11-18 it was narrowed to the tests that write nothing, because Office
+# there was past its grace and created no item (Docs/live-tier-on-the-vm.md section 4.4a).
+$FilterExchange = 'Category=Live&Requires!=LocalSignatures&Requires!=DelegateStore&Requires!=GeneratedPopulation&Requires!=IdentityAccount&Requires!=ProbePopulation&Requires!=PstStore&Requires!=ConfirmedLeftover'
 # The host's record of the Exchange VM's run markers: beside the leases, machine state, not the repository.
 $ExchangeLedgerRelative = 'exchange-runs\ledger.jsonl'
 $LeaseReasonPrefix = 'Invoke-LiveTierOnGuest'
@@ -782,7 +792,7 @@ function Invoke-SelfTest {
     Check 'the crash search takes the guest''s clock read before the suite' $true $own.Contains("`$since = Get-CrashEventsSince -GuestRunStartUtc `$guestRunStartUtc")
     Check 'the frozen branch calls the guard with -Verify' $true $own.Contains("'Set-GuestClockFrozen.ps1') -VMName `$facts.Name -Verify")
     $x = Get-GuestFacts 'OutlookAI-Exchange'
-    Check 'the Exchange VM is one, never frozen, resting on its newest checkpoint' 'OAI-EXCHANGE|True|True|CP-08-ADDIN-READY' @($x.ComputerName, $x.Indexed, $x.Exchange, $x.Checkpoint)
+    Check 'the Exchange VM is one, never frozen, resting on its newest checkpoint' 'OAI-EXCHANGE|True|True|CP-10-SDK11' @($x.ComputerName, $x.Indexed, $x.Exchange, $x.Checkpoint)
     Check 'the PST guests are not' 'False|False' @((Get-GuestFacts 'OutlookAI-Indexed').Exchange, (Get-GuestFacts 'OutlookAI-Unindexed').Exchange)
     Check 'the build VM is refused' $true ($null -eq (Get-GuestFacts 'OutlookAI-Build'))
     Check 'the retired test VM is refused' $true ($null -eq (Get-GuestFacts 'OutlookAI-TestVM'))
@@ -797,9 +807,11 @@ function Invoke-SelfTest {
     $f = Get-LiveFilter $true '' '&FullyQualifiedName~X'
     Check 'a suffix narrows it' 'Category=Live&Requires!=DelegateStore&Requires!=CachedExchange&FullyQualifiedName~X|True' @($f.Filter, $f.Narrowed)
     $f = Get-LiveFilter $true '' '' $true
-    Check 'the Exchange VM runs LiveRunFilters.ExchangeTestAccountWritesNothing' $FilterExchange $f.Filter
-    Check 'which writes nothing while decision 206 is open' $true $FilterExchange.EndsWith('&Writes=Nothing')
+    Check 'the Exchange VM runs LiveRunFilters.ExchangeTestAccount' $FilterExchange $f.Filter
+    Check 'read and write again since decision 206 (a)' $false $FilterExchange.Contains('Writes=')
     Check 'and that run is not narrowed' $false $f.Narrowed
+    $f = Get-LiveFilter $true '' '&Writes=Nothing' $true
+    Check 'past Office''s grace a suffix narrows it to LiveRunFilters.ExchangeTestAccountWritesNothing' ($FilterExchange + '&Writes=Nothing|True') @($f.Filter, $f.Narrowed)
     Check 'the Exchange VM carries its state forward by default' 'resume as the last run left it|Outlook NOT elevated if it is not running|preflight' (Get-ExchangeStartPlan $false)
     Check 'and a named checkpoint is restored and its data files set aside' $true ((Get-ExchangeStartPlan $true) -contains 'set the .ost files aside')
     Check 'with the search index rebuilt after them, and its roots waited for after Outlook starts' 'set the .ost files aside|rebuild the search index|Outlook NOT elevated|wait for one index root per indexed store' ((@(Get-ExchangeStartPlan $true) | Select-Object -Skip 2 -First 4) -join '|')
@@ -809,7 +821,7 @@ function Invoke-SelfTest {
     Check 'and the summary line says so' "outlook    started by this run, NOT elevated, on profile 'Outlook'; Office's activation wizard dismissed 1 time(s)" (Format-OutlookStartLine $os)
     Check 'a starter that reported nothing reads as not reported, never as zero' $true ((Format-OutlookStartLine (Get-OutlookStartFacts 'OK: OUTLOOK.EXE pid 1' 'X')) -match 'NOT REPORTED')
     Check 'no start at all reads as not started' 'outlook    not started by this run (it was running already)' (Format-OutlookStartLine $null)
-    Check 'and a suffix narrows it' $true (Get-LiveFilter $true '' '&FullyQualifiedName~Y' $true).Filter.EndsWith('&Requires!=PstStore&Writes=Nothing&FullyQualifiedName~Y')
+    Check 'and a suffix narrows it' ($FilterExchange + '&FullyQualifiedName~Y') (Get-LiveFilter $true '' '&FullyQualifiedName~Y' $true).Filter
     Check 'a suffix that does not start with & is refused' $true ($null -ne (Get-LiveFilter $true '' 'FullyQualifiedName~X').Refusal)
     Check 'a filter that is not Category=Live is refused' $true ($null -ne (Get-LiveFilter $true 'FullyQualifiedName~X' '').Refusal)
     $f = Get-LiveFilter $false 'Category=Live&Requires=SearchIndex' ''
@@ -1034,13 +1046,16 @@ STACK      the faulting thread
     }
     $sdk = [System.IO.File]::ReadAllText((Join-Path $repo 'Testbed\guest\Install-DotnetSdk.ps1'))
     Check 'Install-DotnetSdk.ps1 builds the source this stages' $true $sdk.Contains("'$GuestRoot\src'")
+    Check 'and takes the installer and the version prefix this names it' $true ($sdk.Contains('[string]   $InstallerPath ') -and $sdk.Contains('[string]   $ExpectedSdkVersionPrefix '))
+    Check 'both calls name them' 2 ([regex]::Matches($own, [regex]::Escape("& .\Install-DotnetSdk.ps1 `$sdkNamed -")).Count)
     $testbed = [System.IO.File]::ReadAllText((Join-Path $repo 'Testbed\testbed.json')) | ConvertFrom-Json
     foreach ($name in @($Guests.Keys | Where-Object { -not $Guests[$_].Exchange })) {
         Check "$name rests on the frozen checkpoint testbed.json records" ([string]$testbed.frozenClocks.$name.checkpoint) $Guests[$name].Checkpoint
     }
     Check 'the Exchange VM is the one testbed.json exchangeVm names' 'OutlookAI-Exchange|OAI-EXCHANGE' @([string]$testbed.exchangeVm.vmName, [string]$testbed.exchangeVm.computerName)
     Check 'and rests on the newest checkpoint testbed.json records for it' ([string]@($testbed.exchangeVm.checkpoints)[-1]) $Guests['OutlookAI-Exchange'].Checkpoint
-    Check 'LiveRunFilters.ExchangeTestAccount leaves out exactly what the Exchange VM lacks' $true $filters.Contains('new[] { LocalSignatures, DelegateStore, GeneratedPopulation, IdentityAccount, ProbePopulation, PstStore }')
+    Check 'LiveRunFilters.ExchangeTestAccount leaves out exactly what the Exchange VM lacks, and the one-off removal' $true $filters.Contains('new[] { LocalSignatures, DelegateStore, GeneratedPopulation, IdentityAccount, ProbePopulation, PstStore, ConfirmedLeftover }')
+    Check 'and the filter here is that list, in that order' ('Category=Live' + ((@('LocalSignatures', 'DelegateStore', 'GeneratedPopulation', 'IdentityAccount', 'ProbePopulation', 'PstStore', 'ConfirmedLeftover') | ForEach-Object { '&Requires!=' + $_ }) -join '')) $FilterExchange
     $marker = [System.IO.File]::ReadAllText((Join-Path $repo 'McpServer\OutlookAI.McpServer.Tests\T2\LiveRunMarker.cs'))
     Check 'the run reads the marker from the variable this sets' $true ($marker.Contains('"OUTLOOKAI_LIVE_RUN_MARKER"') -and $marker.Contains('"OUTLOOKAI_LIVE_PRIOR_RUN_MARKERS"') -and $own.Contains("`$env:OUTLOOKAI_LIVE_RUN_MARKER = '"))
     foreach ($name in $Guests.Keys) {
@@ -1545,9 +1560,10 @@ Copy-Item -LiteralPath '$GuestPayloadDir\live-test-settings.json' -Destination '
             $crashDumpState['proven'] = ($o -match 'VERDICT: PROVEN')
             Say "crash dumps proven: $($crashDumpState['proven']) - guest\crash-dumps-prove.log"
         }
-        $o = Invoke-Guest 'sdk-execute' "Set-Location '$GuestRoot'; & .\Install-DotnetSdk.ps1 -ExpectedSha512 '$SdkSha512' -Execute; `"SDK-EXECUTE-EXIT `$LASTEXITCODE`"" 1800 -Session0
+        $sdkNamed = "-InstallerPath '$GuestRoot\media\$SdkInstallerName' -ExpectedSdkVersionPrefix '$SdkVersionPrefix'"
+        $o = Invoke-Guest 'sdk-execute' "Set-Location '$GuestRoot'; & .\Install-DotnetSdk.ps1 $sdkNamed -ExpectedSha512 '$SdkSha512' -Execute; `"SDK-EXECUTE-EXIT `$LASTEXITCODE`"" 1800 -Session0
         if ($o -notmatch 'SDK-EXECUTE-EXIT 0') { throw 'Install-DotnetSdk.ps1 -Execute failed - guest\sdk-execute.log' }
-        $o = Invoke-Guest 'sdk-verify' "Set-Location '$GuestRoot'; & .\Install-DotnetSdk.ps1 -Verify; `"SDK-VERIFY-EXIT `$LASTEXITCODE`"" 1800 -Session0
+        $o = Invoke-Guest 'sdk-verify' "Set-Location '$GuestRoot'; & .\Install-DotnetSdk.ps1 $sdkNamed -Verify; `"SDK-VERIFY-EXIT `$LASTEXITCODE`"" 1800 -Session0
         if ($o -notmatch 'VERDICT: TEST-READY') { $stage = 'BUILD'; $stageWhy = 'the suite is not TEST-READY on the guest - it did not build or enumerate there (guest\sdk-verify.log)'; throw $stageWhy }
     }
     catch { if (-not $stage) { $stage = 'INFRA'; $stageWhy = "staging failed: $($_.Exception.Message)" }; throw }

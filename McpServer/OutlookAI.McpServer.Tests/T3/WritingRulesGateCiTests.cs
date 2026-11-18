@@ -1,6 +1,6 @@
 using System.Text.Json;
 using OutlookAI.McpServer.Tools;
-using OutlookAI.Services;
+using OutlookAI.Core.AddIn;
 using Xunit;
 using Xunit.Abstractions;
 

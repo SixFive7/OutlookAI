@@ -431,7 +431,7 @@ from-scratch rebuild replaces the guests (see `Testbed/README.md` section 1b).
 
 **Which tests need it, and exactly what they read.** Two, both through
 `McpServer/OutlookAI.Core/Services/HealthReporting.cs` (`ReadTuningState`), over
-`HKCU\Software\OutlookAI\Tuning`, with the value names of `Services/AddInServerContract.cs`:
+`HKCU\Software\OutlookAI\Tuning`, with the value names of `McpServer/OutlookAI.Core/AddIn/AddInServerContract.cs`:
 
 | Test | Declares | Asserts | Reads |
 | --- | --- | --- | --- |
@@ -447,7 +447,7 @@ declares nothing that keeps it off the unindexed one - and there it asserts
 deliberately keeps true.
 
 **Why a build from a commit, not a released installer.** The add-in and the server agree about those
-values through one file compiled into both. The suite on a guest is built from a named commit
+values through one file both are built with. The suite on a guest is built from a named commit
 (`Testbed/host/Publish-LiveTierPayload.ps1`); pairing it with the last release's add-in would test a
 contract nobody changed together. So `Testbed/host/Publish-AddInPayload.ps1` builds the add-in from a
 commit too, and records the hashes of the two contract files; the guest compares them with the
@@ -687,7 +687,7 @@ Group Policy only to show a value an organization sets - or one an earlier Outlo
 by `Tuning\Applied` (Q151 (a)) - and leaves such a value alone. So the reconcile above lists nothing in
 `Tuning\NeedsAdministrator`, and the walk is 11 values, not 13. An existing account's own offline period
 lives in its Outlook profile, which OutlookAI does not write yet: the settings dialog says how to set it
-in Account Settings (`Services/CachedModeSettings.cs`, `Services/AccountOfflinePeriods.cs`). Run on a
+in Account Settings (`McpServer/OutlookAI.Core/AddIn/CachedModeSettings.cs`, `McpServer/OutlookAI.Core/AddIn/AccountOfflinePeriods.cs`). Run on a
 guest on 2026-11-18 (the next record). The record above stays as what was measured then.
 
 **The add-in with OutlookAI.Core beside it (Q167 (a), the code-sharing refactor's first stage), against
@@ -714,6 +714,53 @@ host or the VSTO runtime handling two more listed assemblies is not settled by t
 that first calls Core at startup measures it again. (A first attempt applied `CP-08` over the guest while
 it still ran: it came back running but unreachable over PowerShell Direct for six minutes, and the
 script now saves a running guest before applying a checkpoint.)
+
+**The add-in calling OutlookAI.Core at startup (the code-sharing refactor's stage S3), against the build
+before the refactor - `OutlookAI-Unindexed`, from `CP-16B-FROZEN-CLOCK`, 2026-11-18.** Two payloads, built
+on the host by `Testbed/host/Publish-AddInPayload.ps1`: `b9a8b97`, whose add-in runs its tuning walk, its
+registration decision and its reading of `~/.claude.json` through Core, and `14907d3` again. Guard 3
+`UNCHANGED` over 318 host lines. Four passes, alternating and `14907d3` first, each from a script under the
+guest's lease: the frozen checkpoint applied over the saved guest (time synchronisation off), staged as in
+the record above, `-Phase Install`, `-Phase FirstRun` twice, then `~/.claude.json` written with one other
+server in it and `HKCU\Software\OutlookAI\Mcp\GlobalRegistrationEnabled` set to 1, and `-Phase FirstRun`
+once more. Then the frozen checkpoint restored, the guest saved and the lease released. The checkpoint
+carries two load times of its own, 1,265 and 657 ms, which every pass read after its own three; the host
+ran three build VMs throughout.
+
+| Pass | Payload | Install | Three starts | Load times Outlook recorded, first start first |
+| --- | --- | --- | --- | --- |
+| 1 | `14907d3` | `INSTALLED-NEVER-RAN`, 2, 55 s | `ADDIN-READY`, 0, each time | 5,906, 1,093 and 1,406 ms |
+| 2 | `b9a8b97` | the same, 29 s | the same | 3,953, 766 and 937 ms |
+| 3 | `14907d3` | the same, 28 s | the same | 4,203, 750 and 688 ms |
+| 4 | `b9a8b97` | the same, 54 s | the same | 4,610, 1,453 and 1,656 ms |
+
+Every start reached `ADDIN-READY`. In every pass the registration reconcile said `claude_code_not_installed`
+before the seed and `server_not_installed` after it: `b9a8b97`'s, with Core's code, read the seeded file,
+found no `outlookai` entry and decided to register, and stopped where a testbed payload always stops, because
+its installer carries no mail server (`Installer.iss`); the seeded file was left as it was. The first start
+after an install took 3.9 to 5.9 s and the later ones 0.7 to 1.7 s with either build. The passes of one build
+differ more than the two builds do, so loading Core at startup costs nothing these four passes can measure on
+a busy host.
+
+**The add-in's registration in `~/.claude.json` before and after S3 - `OutlookAI-Unindexed2`, from
+`CP-16B-FROZEN-CLOCK`, 2026-11-18.** The same two payloads, one pass each, `14907d3` first, under the
+guest's lease: the install and one `-Phase FirstRun` as above; then, with Outlook closed, an empty file put
+where the add-in looks for the mail server, `{app}\McpServer\OutlookAI.McpServer.exe` - a testbed installer
+carries none, and the registration only checks that the file is there - `GlobalRegistrationEnabled` set to
+1, and `~/.claude.json` written with two servers: `other`, laid out by hand with four-space indents, an
+escaped `\u00e9`, `1.50` and an array on one line, and `outlookai` as an earlier version wrote it, the
+installed server's absolute path and an `env` key a person added; then `-Phase FirstRun` once more.
+Registration on with an entry of ours is the case the add-in rewrites without asking. With no entry at all
+it asks first, and a test machine has nobody to answer: a first probe without our entry found
+`awaiting_choice` with both builds, and the file untouched.
+
+Both builds reported `healed`, wrote the portable command
+`${LOCALAPPDATA}/OutlookAI/Setup/McpServer/OutlookAI.McpServer.exe`, kept the `env` key, added
+`"type": "stdio"` and `"args": []`, and kept the file they replaced as `~/.claude.json.outlookai-backup`;
+both results parse. `14907d3` wrote the whole `mcpServers` section back on one line, `other` included, and
+its `\u00e9` came back as `é`. `b9a8b97` left every byte outside the `outlookai` entry as it was and wrote
+that entry on one line in its place: `{ "type": "stdio", "command": "${LOCALAPPDATA}/...", "env": {
+"OUTLOOKAI_LOG": "1" }, "args": [] }`.
 
 **Checkpoint `CP-03-OUTLOOKAI-INSTALLED` once `-Phase FirstRun` prints `ADDIN-READY`.** `CP-05-ADDIN-TRUSTED`
 is no longer a separate manual step - the trust entry is part of the scripted install - and the name
@@ -3772,7 +3819,9 @@ measurement: a delegate store's row and a second profile are untested here.
 **The leftover in Sent Items.** One item whose subject carries `OutlookAI-McpTest`, found by the
 read-only count; nothing this VM ran created it - the census identifies the same items before and
 after every run. It is test data, so under the maintainer's rule (Q129 (a)) it must go; on this
-read-only machine nothing removes it, and nothing will by hand.
+read-only machine nothing removes it, and nothing will by hand. On 2026-11-18 a tested one-off moved it
+to the bystander's Deleted Items, after the maintainer had confirmed it by its EntryID (Q138, section
+4.4a); its purge from there waits for his decision.
 
 **Phase 2 - PROPOSED 2026-10-03; BUILT 2026-10-08 for the test account (section 4.4a), never for this
 mailbox, which has been a read-only bystander since.** What writing in this real mailbox would rest on, each
@@ -3936,6 +3985,64 @@ only):
   the confound: whether "Store my Outlook settings in the cloud" or the connected-experience policies
   kept the copy away could not be read, because Options is disabled past the activation grace (Q194).
 
+- **Q147 R3 again, with Office's online features allowed (2026-11-18, Q194 (b)).** The maintainer's
+  order: the four connected-experience policy values the testbed sets - `disconnectedstate`,
+  `usercontentdisabled`, `downloadcontentdisabled` and `controllerconnectedservicesenabled`, each 2,
+  under the user's `Software\Policies\Microsoft\office\16.0\common\privacy` - removed on this VM
+  first, `sendtelemetry` 3 kept, then R3 by the same procedure. One more thing differed from the first
+  run, and this run does not separate it: Office was inside its grace, re-armed that morning (decision
+  206 (a)), where on 2026-11-17 it was past it. Local times (UTC+1):
+
+  1. 03:46 the four values removed over PowerShell Direct; Windows restarted
+     (`host/Restart-Guest.ps1 -Execute`), Defender brought current, Outlook started NOT elevated 240 s
+     after the boot - no activation wizard - and both accounts read `SIGNED-IN`.
+  2. 03:54 to 04:00, R0 to R2 before anything was made: no signature setting anywhere, no signature
+     file, the classic dialog with no sign of roaming; File > Options enabled, inside the grace, and
+     "Store my Outlook settings in the cloud" offered and **on** - the probe reads that checkbox's state
+     since this run; R2 no `ApplicationDataRoot`, as before.
+  3. 04:00 the test account signed in to Outlook on the web (`-Mode OwaSignIn`: no code asked for,
+     "Stay signed in?" No). Settings > Account > Signatures read "No signature yet"; Add signature:
+     `OutlookAI-McpTest-Roam1118`, one marker line and a 24x24 picture (Insert > Pictures, through
+     Edge's file chooser), "Set default for new messages" on and replies off; saved at 04:22:09. The
+     page then listed it as the default for new messages, and "(No signature)" for replies.
+  4. Meanwhile Outlook on the desktop had put up "Your privacy matters", an informational notice -
+     "Your organization has given you the ability to use optional cloud-backed services" - with one
+     Close button; the policy values had kept it away until then. Closed with that button at 04:25:26.
+  5. **04:25:31 the signature was in Outlook**: `OutlookAI-McpTest-Roam1118 (<address>).htm` (537
+     bytes, the picture inside it as a `data:` URI, no picture folder) and `.txt` (118 bytes) in the
+     signature folder - the `<name> (<address>)` copy classic Outlook keeps of a roaming signature -
+     and the test account's own "New Signature" set to that name. "Reply-Forward Signature" stayed
+     unset, MailSettings untouched, and the bystander's account had nothing. R1 read roams=True from
+     those copies, although the classic dialog itself still showed no account selector and no
+     "Signatures on this device"; R2 still saw no `ApplicationDataRoot` through the object model.
+  6. The same at +15 min (04:37) and +1 h (05:22), and after a graceful restart of Windows and Outlook
+     (05:25 to 05:33): the two files unchanged, by hash, and the default still set.
+
+  **So Office LTSC 2024 16.0.17932.21000 does roam signatures, once the testbed's connected-experience
+  policies are gone**: the copy arrived about three minutes after the save, 5 s after Outlook's privacy
+  notice was closed, and stayed across a restart. Whether the policies alone kept it away on 2026-11-17,
+  or the expired grace as well, this run cannot say. OutlookAI's evidence rule for perpetual Office -
+  roaming only where Outlook's own `<name> (<address>)` copies show it (Q152 (a)) - reads this account
+  as roaming, from exactly those copies. The draft check of the plan was not run: before it could be,
+  another stream's lease took the VM, and its restore of `CP-09-OFFICE-REARMED` put the policies back
+  and took the local copies away.
+
+  **The variant that separates the two (2026-11-18, 06:27 to 06:32).** That restore left the signature
+  in Outlook on the web and the policies in place, with the grace still running. The next run started
+  Outlook on .ost files freshly downloaded from the server, and both accounts read connected (mode 700).
+  At 06:32 Outlook had no copy of the signature and no default for it, and its Options' General page no
+  longer offered "Store my Outlook settings in the cloud" at all - 75 named controls, against 78 without
+  the policies. **So it is the connected-experience policies that keep roaming signatures away on this
+  Office, not the expired grace**: they take the cloud-settings option itself away. A second reading at
+  06:35, eight minutes into the connection, was the same.
+
+  **The cleanup.** The signature was deleted in Outlook on the web at 06:43:59 (Delete signature, then
+  OK on "Delete the signature?"); after a reload the page read "No signature yet", and both defaults
+  "No signature yet". The test account signed out (`-Mode OwaSignOut`, 06:46, every InPrivate window
+  closed), and R0 to R2 read clean at 06:47: no signature setting for any account or in MailSettings, no
+  signature file, roams=False, no `ApplicationDataRoot`. The VM went back to `CP-10-SDK11`, the
+  checkpoint the other stream had built on `CP-09-OFFICE-REARMED`, at the end of the session.
+
 **The live runs of 2026-11-17** (`host/Invoke-LiveTierOnGuest.ps1 -VMName OutlookAI-Exchange`; results
 in `.work\guest-live-runs\<run>\` of the branch's worktree).
 
@@ -3945,6 +4052,10 @@ in `.work\guest-live-runs\<run>\` of the branch's worktree).
 | 2 | `8a66b74`, the addresses read at run time | carried forward | 1 (`LiveDraftTests.NewDraft_Hub_LandsInHubDrafts_...`) | 0 | 1 | 20 s | already running, no dialog open |
 | 5 | `40c64f8`, `Writes=Nothing` only (decision 206) | `CP-08-ADDIN-READY`, both .ost files set aside, the search index rebuilt | 25 | 23 | 2 | 49 s | started by the run; the activation wizard closed once |
 | 6 | `d5f3d34`, master `9550802` (folders and stores by ID) merged, `Writes=Nothing` only | carried forward | 28 | 23 | 5 | 1 m 15 s | already running |
+| 7 | `c85becc`, the write filter narrowed to `LiveDraftTests.NewDraft_Hub_LandsInHubDrafts` (decision 206 (a)) | carried forward: Office re-armed, Windows restarted | 1 | 1 | 0 | 19 s | started by the run; no activation wizard |
+| 8 | `1488047`, master `14907d3` merged - the write filter again | carried forward | 106 | 95 | 11 | 19 m 44 s | already running |
+| 9 | `d7c0d3e`, `Requires=ConfirmedLeftover` (Q138) | `CP-10-SDK11`, both .ost files set aside, the search index rebuilt | 1 | 0 | 1 | 32 s | started by the run; no activation wizard |
+| 10 | `c2a21c4`, `Requires=ConfirmedLeftover` (Q138) | carried forward | 1 | 0 | 1 | 1 m 35 s | already running |
 
 Both runs left no tagged item behind (run 1 swept every store to zero; run 2 created nothing), the
 count tripwire found no change outside the test account, Outlook did not crash, and the mailbox
@@ -3964,7 +4075,8 @@ from the credential files at render time (Q189 (b)), checked against the guest's
   frozen guests stay inside theirs (Q130) - this VM cannot, because Microsoft 365 needs the real time.
   So the expired grace is the most likely cause; it is not proven, because no item was created by hand
   to try it (AGENTS.md, Mailbox Safety rule 1). Microsoft documents notifications, not lost functions,
-  for an unactivated volume edition. Until it is settled the VM's write tests cannot pass (TODO.md).
+  for an unactivated volume edition. Proven on 2026-11-18 by decision 206 (a), below: after one re-arm
+  the same draft test made its draft, and a whole write run made every item it tried to.
 - **No index scope for the test account (6).** After the day's set-asides the catalog held more than
   one root under each mailbox's name - the run's sample found three for the real mailbox - and the
   scope finder, which never guesses between two roots of one name (`T2/LiveIndexScopes.cs`), found
@@ -4014,6 +4126,75 @@ added three tests that write nothing (`T2/LiveExchangeFolderIdTests.cs`). What t
 
 None of this is mended on the branch: the first two are the folders-by-ID code's to settle, and depend
 on what the maintainer decides about the automapped entry; this section records them.
+
+**Decision 206 (a): Office's grace re-armed, and the write run again (2026-11-18).** The maintainer's
+order: re-arm the grace once with Office's own tool, which also proves the cause; Microsoft 365 Apps
+with the test account's licence only if that did not bring item creation back; a volume key from him
+if neither did. Every step under a lease, the bystander's settings untouched:
+
+1. Read over PowerShell Direct with the licence query of `Testbed/MEDIA.md`: `LicenseStatus` 5
+   (notifications), `LicenseStatusReason` 0xC004F056, `GracePeriodRemaining` 0, SKU
+   `Office24ProPlus2024VL_KMS_Client_AE`, `RemainingAppReArmCount` and `RemainingSkuReArmCount` 3.
+2. 02:55 local: `C:\Program Files\Microsoft Office\Office16\OSPPREARM.EXE`, no argument, elevated: exit
+   0, "Microsoft Office rearm successful." Read again: `LicenseStatus` 2 (out-of-box grace), reason
+   0x4004F00C, 43,200 minutes - 30 days, to about 02:56 on 2026-12-18 - and **two re-arms left** of each
+   count. Windows' own re-arm count is not touched by it.
+3. Outlook quit gracefully and Windows restarted (`host/Restart-Guest.ps1 -Execute`, 43 s).
+4. Run 7, one draft test: the runner started Outlook, with no activation wizard to close, and the draft
+   landed in the test account's Drafts and was deleted - the cause proven, against the E_ABORT of runs 1
+   and 2.
+5. Run 8, the whole write selection, which the runner types again since this commit: 106 tests, 95
+   passed, and none failed to make an item - no E_ABORT and no "The operation failed." anywhere in its
+   output. The proofs: the test account held no tagged item and no test folder before; the two sweeps
+   deleted 12 and 4 of the run's own items and left it at zero; the bystander was counted and not swept,
+   one tagged item before and after (the Q138 leftover, below); the count tripwire censused the bystander
+   item by item - 25 folders, 19 identified, 5 items - with 0 failures and 0 notes; Outlook did not
+   crash.
+6. Checkpoint `CP-09-OFFICE-REARMED`, taken with the VM saved after run 8: the newest, and the one the
+   runner rests on.
+
+Run 8's eleven failures, none of them Office's: five tests met the test account's mailbox twice - its
+cached store and the entry automapped through the bystander's Full Access - and found two folders or
+stores where they assert one (`ListFolders_TestHub_FullTree_...`, `FindFolder_FindsTheInboxByItsName_...`,
+`MoveChain_TestFolderRoundTrip_...`, `GotoFolder_HubFolder_...`, `AFolderId_IsFoundMadeAndMovedInto_...`);
+three found an Exchange folder ID no folder has answered instead of refused
+(`AFolderIdNoFolderHas_IsRefused_...`, `ASearchScopedToAnExchangeFolderId_...`,
+`FolderScopedSweep_AnUnknownFolderId_...`) - both run 6's findings, for the folder-ID stream;
+`Health_OnThisMachine_...` read `degraded` for the automapped entry's missing index and
+`Thread_IndexPath_AndComFallback` met `NoSubjectTimeMatch`, as in runs 5 and 6; and
+`LiveDisconnectRecoveryTests.OutlookExit_...` closed the one Explorer window the run's Outlook had been
+started with and then met an `ObjectDisposedException` in `TryCloseInvisibleExplorers` - not analysed
+further here.
+
+**Q138: the bystander's leftover, out of its Sent Items (2026-11-18).** The maintainer confirmed the one
+tagged item the workstation years left in the bystander's Sent Items by its EntryID, and the tested
+one-off `T2/LiveConfirmedLeftoverTests` (`-Filter 'Category=Live&Requires=ConfirmedLeftover'`) ran twice:
+
+1. Run 9 (`d7c0d3e`, from `CP-10-SDK11`, the .ost files downloaded afresh): **nothing removed**. The
+   helper found one tagged row in Sent Items whose subject is the pinned one exactly, and whose id did not
+   hash to the pin: a folder table's EntryID column on a cached Exchange store hands out a 24-byte
+   short-term id, while the item answers with its 70-byte long-term one - the form the maintainer
+   confirmed (a read-only check of that row: provider id equal, the rest not). The tripwire found no
+   change. Since `c2a21c4` the pin is checked against the long-term id the opened item gives, and the
+   removal recorded under the table's id, which is the one the census knows the item by.
+2. Run 10 (`c2a21c4`, carried forward): the item matched, its parent was proven to be Sent Items, it was
+   **moved to the bystander's Deleted Items**, and the copy the move handed back passed its check (the
+   pinned subject, in Deleted Items, a new EntryID). Its `Delete()` returned without error but **did not
+   purge it**: read back, Deleted Items still held one row with the pinned subject, so the removal was not
+   recorded and the test failed; the count tripwire, which accepts only a recorded removal, failed the
+   run on exactly that departure - Sent Items 2 to 1, the departed item TEST-TAGGED with the leftover's
+   sent time, Deleted Items 4 to 5, every other folder of the bystander unchanged, at the post-run census
+   and both re-censuses. A read-only check afterwards: Sent Items holds its one other item, and Deleted
+   Items holds the leftover under a new 70-byte EntryID, received 2026-07-26 03:46, 7,312 bytes.
+
+The item is now where an ordinary delete in Outlook puts it. Purging it from Deleted Items needs an
+EntryID the maintainer has not confirmed - its new one - so it waits for his decision (TODO.md); why the
+returned copy's `Delete()` did not purge is not established - a copy opened afresh by its new EntryID is
+the obvious next try, in the test account first.
+
+**The grace runs out again about 02:56 on 2026-12-18** (TODO.md). Past it every write test fails at its
+first item again; until a re-arm, a run narrows itself with `-FilterSuffix '&Writes=Nothing'`. A re-arm
+is the steps above; what follows the last of the two left is the maintainer's to decide.
 
 ### 4.5 The frozen guest clocks - both Outlook guests, 2026-10-03 (Q130 (a) and (b))
 
@@ -4796,7 +4977,100 @@ path is exactly 259 characters held all four, each at its own size; update_draft
 the draft kept its four files. save_attachment's two folder tests and the two attachment tests of
 `LiveUpdateDiscardTests` passed on the same run.
 
-### 4.12 The load limit and the pause switch - every testbed VM, 2026-11-18 (Q195 (e))
+### 4.12 The .NET 11 SDK beside .NET 10 - the build pool, both Outlook guests and the Exchange VM, 2026-11-18 (Q172)
+
+**Why this section exists.** The maintainer moved OutlookAI to .NET 11 on 2026-11-18 (Q172). Nothing
+on .NET 11 can be tested before the checkpoints a runner restores carry the .NET 11 SDK, and while
+every branch moves, the ones still on .NET 10 have to keep building. `Testbed/MEDIA.md`, "The .NET
+SDK", has the media and why .NET 10's 10.0.404 sits beside 11.0.100; `Testbed/README.md` section 1c,
+row B11, the procedure for a build VM. Raw logs: `.work\dotnet11\runs\` of the worktree
+`stream-u-dotnet11-runtime`, one folder per VM, each with its driver's `driver.log` and `record.json`.
+
+**Checked first, on the host:**
+
+| Check | Finding |
+| --- | --- |
+| The media | `dotnet-sdk-11.0.100-win-x64.exe`, 236,244,816 bytes, and `dotnet-sdk-10.0.404-win-x64.exe`, 218,476,784 bytes, downloaded from `builds.dotnet.microsoft.com`; each SHA-512 equal to the one in Microsoft's release metadata (11.0.0 and 10.0.15); Authenticode valid, signed by `CN=.NET, O=Microsoft Corporation` with a certificate valid from 2026-04-16 - before every frozen guest's clock, which section 4.5 named as unmeasured |
+| What SDK 11 needs to build .NET 10 offline | its bundled versions file: `TargetingPackVersion="10.0.15"` and `AppHostPackVersion="10.0.15"` for `net10.0`. A restore of every project of the main branch with an empty pack folder fetched four packages beyond the 54 the feed holds, each 10.0.15: `Microsoft.NETCore.App.Ref`, `Microsoft.NETCore.App.Host.win-x64`, `Microsoft.WindowsDesktop.App.Ref`, `Microsoft.AspNetCore.App.Ref` - 26.6 MB as packages. SDK 10.0.401 carries 10.0.12, so on an offline guest SDK 11 cannot build a .NET 10 branch beside it alone |
+| The main branch, built by SDK 11 on the host | `dotnet build` of the test project, Release: 0 warnings, 0 errors, 44 s - the host has had only SDK 11 since 2026-11-13. Retargeted to `net11.0-windows` (a scratch copy), the same, with the security analysers at `11.0-all` too |
+| The base feed | 54 packages before and after expanding a feed staged from `a7c3fbe`: the restore graph has not moved since `e4b00fa` |
+
+**The build pool: `CP-04-SDK11-TEST-READY-UTC` on each member, one at a time.** Each under the
+runner's lock and a lease, by a driver that waited for the member's executing run to end, took the
+lock and then the lease, wrote the runner's owner file, and put the VM back on `CP-03` and saved it on
+any failure. Steps as B11; the first member copied everything over PowerShell Direct, the later ones
+from a disc image.
+
+| Member, in order | Waiting for its run | Staging the installers | 10.0.404, `-Execute` with its verify | 11.0.100, the same | Restart | `-Verify` | Settle | `CP-04-SDK11-TEST-READY-UTC` taken | Proving restore, host minus guest | Rests |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `OutlookAI-Build3` | 6 min 30 s | PowerShell Direct, 168 s | 14 min 09 s | 7 min 41 s | 2 min 31 s | 3 min 43 s | 11 min 51 s | 2026-11-18T03:56:59Z | 0.7 s | Saved |
+| `OutlookAI-Build2` | 18 min 32 s | disc image, 26 s | 9 min 00 s | 5 min 06 s | 1 min 40 s | 1 min 27 s | 3 min 05 s | 2026-11-18T04:48:48Z | 0.3 s | Saved |
+| `OutlookAI-Build` | 8 min 57 s | disc image, 20 s | 7 min 45 s | 4 min 04 s | 1 min 17 s | 1 min 03 s | 4 min 13 s | 2026-11-18T05:32:15Z | 0.2 s | Saved |
+
+Each member was out of the pool only from its "holding" to its "Rests": runs that came while one was
+being made took the other two. **Two things went wrong and were put right.** The first try on
+`OutlookAI-Build2` stopped itself 23 s after its restore: its check that the disc was out read the
+drive before Hyper-V had applied the eject, so it put `CP-03` back, saved the VM and gave it to the
+next run within 30 s; the driver now waits up to 20 s for an eject to show. And on `OutlookAI-Build`
+a queued run took the runner's lock in the second the run before it let go, though the driver asked
+every quarter second; the driver then took the lease first, over that executing run's own (the
+coordinator's direction: wait for each VM's executing run to finish under your lease), so that every
+later run passed the VM over, and took the lock when that run let go of it - the run finished as it
+would, restoring `CP-03`, and released only its own lease.
+
+**What the rungs showed on each member** - `Install-DotnetSdk.ps1`, first with 10.0.404 and then with
+11.0.100, then `-Verify` after the restart: 10.0.404 replaced 10.0.401 (rung 1 listed `10.0.404` and,
+after the second install, `11.0.100`; `--list-runtimes` lists .NET 10.0.15 and 11.0.0, each of
+`Microsoft.NETCore.App`, `Microsoft.AspNetCore.App` and `Microsoft.WindowsDesktop.App`, and no 10.0.12);
+rung 2's probe ran as `10.0.15 x64` pinned to SDK 10.0.404, then as `11.0.0 x64` pinned to SDK 11.0.100;
+rung 3 discovered 4,318 tests of the staged suite (`a7c3fbe`, still `net10.0-windows`) both times -
+the second time built by SDK 11, offline, from 10.0.404's packs - and rung 4 ran 17 of 17. The zone
+read `UTC` and `vmadmin`'s password `never` on every member.
+
+
+
+**The two Outlook guests: new frozen checkpoints with SDK 11 - not yet the ones a run restores.** By
+section 4.5's "Making a new frozen checkpoint", each under a lease, and as fast as it could be done,
+because every second between the restore and the next checkpoint moves the frozen instant and the
+indexed guest's frontier margin had 6 minutes 49 seconds left: the frozen checkpoint restored (time sync
+off travels with it); the installer from a disc image attached to the running guest, not copied over
+PowerShell Direct; `Install-DotnetSdk.ps1 -Execute -SkipVerify` (new: install, write the machine
+environment, stop); the disc ejected; an ordinary running checkpoint. Then, the instant no longer at
+stake, `-Verify` for `11.` and for `10.` on the guest that kept running - rungs 1 and 2, `SDK-ONLY` both
+times, since every run's own staging proves the suite - and `Set-GuestClockFrozen.ps1 -FromCheckpoint
+<ordinary> -NewCheckpoint <frozen> -Execute`. OUTLOOK.EXE never ran. SDK 10.0.404 is not on them:
+`Testbed/MEDIA.md` says why, and why the live runner moves to them only with the code.
+
+| Guest | From | Installer | Restore to ordinary checkpoint | Ordinary | New frozen | Frozen instant | Offset over 20 s | Proving restore |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `OutlookAI-Indexed` | `CP-22C-FROZEN-CLOCK`, 17:43:33Z | 3 min 35 s | 291.5 s | `CP-23C-SDK11` | `CP-24C-FROZEN-CLOCK` | **2026-10-03T17:48:32Z** (1791049712), 4 min 59 s after the old one | moved 1.7 s at most | 0.4 s before the instant |
+| `OutlookAI-Unindexed` | `CP-16B-FROZEN-CLOCK`, 14:50:40Z | 3 min 44 s | 299.8 s | `CP-17B-SDK11` | `CP-18B-FROZEN-CLOCK` | **2026-10-03T14:55:50Z** (1791039350), 5 min 10 s after the old one | moved 1.1 s at most | 1.6 s before the instant |
+
+Both verifies listed `10.0.401` and `11.0.100`, and rung 2's probe ran as `11.0.0 x64` by SDK 11.0.100
+and as `10.0.12 x64` by SDK 10.0.401, each pinned. **What the new instants leave:** at the end of the
+longest run a frozen record allows (its instant plus 90 minutes), the indexed hub's newest dated item
+(17:25:22Z) is 113.2 minutes old, under the 115-minute frontier margin - 1.8 minutes to spare, where the
+old instant left 6.8 - and the unindexed hub's about 109 minutes. `testbed.json`'s
+`frozenClocks._dotnet11Next` records both; they become the guests' `frozenClocks` records, and
+`T1/FrozenGuestClockTests` proves them, in the commit that moves the code to .NET 11, which also makes
+the clones again from them (section 4.7: a frozen guest's clone cannot make its own).
+
+**`OutlookAI-Exchange`: `CP-10-SDK11`.** Its runs carry its state forward, so the SDKs belong in a
+checkpoint a run can restore. Under a lease, and by the coordinator's direction of 05:43: the first
+attempt went into the state the runs had carried forward and was stopped part-way through the 10.0.404
+install, before it had taken any checkpoint, because that state was stream E2's roaming-signature test
+(four Office policy values removed, a test signature's roaming copy, and the test account's default
+pointing at it); `CP-09-OFFICE-REARMED`, E2's checkpoint of 03:40 with Office re-armed and its policies
+in place, was restored over it, which discarded that attempt too. On that state: the installers from a
+disc image, copied in; `Install-DotnetSdk.ps1 -Execute -SkipVerify` for 10.0.404 (the installer 6 min
+45 s, `INSTALLED`), then `-Execute` for 11.0.100 (8 min 13 s with its verify, `TEST-READY`: SDK 11
+built the staged suite, 4,318 tests discovered, 17 of 17 run); no restart, Outlook not touched (it was
+not running in `CP-09`); `CP-10-SDK11` taken running at 2026-11-18T05:01:38Z, a child of
+`CP-09-OFFICE-REARMED`, and the VM saved. It is the newest checkpoint: the live runner's resting
+checkpoint for this VM, the one a run that names `-Checkpoint` restores; a run that names none carries
+the state forward as before.
+
+### 4.13 The load limit and the pause switch - every testbed VM, 2026-11-18 (Q195 (e))
 
 **Why this section exists.** Section 4.7 ended on an open question: the pools kept memory free for the
 maintainer and nothing kept processor time free, and with every member busy the host read 82 to 100 %
@@ -4917,13 +5191,14 @@ needed Exchange, and those seven were the workstation run.
 **Since 2026-10-08 the Exchange VM writes - in its dedicated test account (section 4.4a).** Its run
 selects every live test it has the capabilities for, read and write:
 
-`Category=Live&Requires!=LocalSignatures&Requires!=DelegateStore&Requires!=GeneratedPopulation&Requires!=IdentityAccount&Requires!=ProbePopulation&Requires!=PstStore`
+`Category=Live&Requires!=LocalSignatures&Requires!=DelegateStore&Requires!=GeneratedPopulation&Requires!=IdentityAccount&Requires!=ProbePopulation&Requires!=PstStore&Requires!=ConfirmedLeftover`
 
 and only a test that needs a delegate store must still carry `Writes=Nothing`
 (`EveryDelegateStoreTest_DeclaresWritesNothing`): a delegate or shared mailbox is read-only for every
-test, on every machine. Until decision 206 (2026-11-17) the runner narrows it to the tests that write
-nothing, `Category=Live&Requires!=LocalSignatures&Requires!=DelegateStore&Requires!=GeneratedPopulation&Requires!=IdentityAccount&Requires!=ProbePopulation&Requires!=PstStore&Writes=Nothing`, because the VM's Office creates no item since its activation grace ran out
-(section 4.4a).
+test, on every machine. From 2026-11-17 to 2026-11-18 the runner narrowed it to the tests that write
+nothing, `Category=Live&Requires!=LocalSignatures&Requires!=DelegateStore&Requires!=GeneratedPopulation&Requires!=IdentityAccount&Requires!=ProbePopulation&Requires!=PstStore&Requires!=ConfirmedLeftover&Writes=Nothing`, because the VM's Office created no item past its activation grace; decision
+206 (a) re-armed the grace, and a run past it is narrowed the same way with `-FilterSuffix
+'&Writes=Nothing'` (section 4.4a).
 
 **The three buckets, all computed:**
 
@@ -4933,9 +5208,10 @@ nothing, `Category=Live&Requires!=LocalSignatures&Requires!=DelegateStore&Requir
 | VM | `--filter "Category=Live&Requires!=DelegateStore&Requires!=CachedExchange"` | 121 |
 | Exchange-only (the Exchange VM, section 4.4; the workstation before Q116 (a)) | `--filter "Category=Live&(Requires=DelegateStore\|Requires=CachedExchange)"` | 7 on the morning of 2026-10-03; 9 once section 4.4 added two |
 
-**The vocabulary, all fifteen values.** Thirteen of them this VM can be given; two it cannot - both are
-an Exchange profile. And three of the thirteen - `GeneratedPopulation` and `PstStore`, named 2026-10-08, and
+**The vocabulary, all sixteen values.** Fourteen of them this VM can be given; two it cannot - both are
+an Exchange profile. And three of the fourteen - `GeneratedPopulation` and `PstStore`, named 2026-10-08, and
 `LocalSignatures`, named 2026-11-17 - are what the Exchange VM, in turn, does not have (section 4.4a).
+The sixteenth, `ConfirmedLeftover` (2026-11-18), is no machine's: no derived filter selects it.
 
 | Capability | What the machine must have |
 | --- | --- |
@@ -4952,10 +5228,11 @@ an Exchange profile. And three of the thirteen - `GeneratedPopulation` and `PstS
 | `ProbePopulation` | the hand-curated population named in the settings file |
 | `GeneratedPopulation` | the guests' GENERATED test data - the hub population and the corpus: nested folders that hold mail, attachments of every kind, mail over 100 KB, many senders, enough recent mail to sample. Named 2026-10-08, when the Exchange VM's empty test account met the thirteen tests that had silently assumed it |
 | `PstStore` | a mailbox in a local .pst data file, whose ids and index names are a data file's - the PST halves of the decode, store-map and folder-id checks |
+| `ConfirmedLeftover` | a tagged leftover in a bystander that the maintainer confirmed by its EntryID for removal - the one write a bystander ever gets (Q138, section 4.4a). Only the one-off `T2/LiveConfirmedLeftoverTests` declares it, and no derived filter selects it: it runs only when named, `-Filter 'Category=Live&Requires=ConfirmedLeftover'` |
 | **`DelegateStore`** | **a delegate/shared mailbox. One of the two capabilities no test machine can be given** |
 | **`CachedExchange`** | **a cached Exchange mailbox, whose entry ids are Exchange's 70-byte form. The other one (Q74 C1, 2026-10-03)** |
 
-`Tools/Checks/check-pinned-constants.ps1` fails the build if any of those fifteen names stops
+`Tools/Checks/check-pinned-constants.ps1` fails the build if any of those sixteen names stops
 appearing in this file, so the table above is load-bearing text and not decoration.
 
 **Why `DelegateStore` and `CachedExchange` are the only production-only capabilities.** A delegate/shared mailbox is

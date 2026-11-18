@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using System.Windows.Forms;
 using OutlookAI.Services;
 using Outlook = Microsoft.Office.Interop.Outlook;
+using OutlookAI.Core.AddIn;
 
 namespace OutlookAI.TaskPane
 {

@@ -183,9 +183,11 @@ function Assert-TestbedGuestLocal {
 }
 Assert-TestbedGuestLocal
 
-$lines = New-Object System.Collections.Generic.List[string]
-function Say([string] $Text) { $lines.Add($Text); Write-Host $Text }
-Say ("MEASURE-EXCHANGE-INDEX-IDS on {0} at {1}" -f $env:COMPUTERNAME, (Get-Date).ToString('o'))
+$ReportLines = New-Object System.Collections.Generic.List[string]
+# Write-ReportLine prints a line and keeps it in $ReportLines; it is one of the helpers the scripts share,
+# dot-sourced from ScriptHelpers.ps1, which travels with the guest scripts (Q154, Q166 (b), decision 215 (a)).
+. (Join-Path $PSScriptRoot 'ScriptHelpers.ps1')
+Write-ReportLine ("MEASURE-EXCHANGE-INDEX-IDS on {0} at {1}" -f $env:COMPUTERNAME, (Get-Date).ToString('o'))
 
 function Get-BinaryHex($Accessor, [string] $Tag) {
     try { return [string]$Accessor.BinaryToString($Accessor.GetProperty('http://schemas.microsoft.com/mapi/proptag/' + $Tag)) } catch { return $null }
@@ -196,14 +198,14 @@ try {
     $store = $null
     foreach ($s in $app.Session.Stores) { if ([string]$s.DisplayName -ieq $Hub) { $store = $s } }
     if (-not $store) { throw "no store named '$Hub'" }
-    Say ("store '{0}': ExchangeStoreType {1}, cached {2}, data file {3}" -f $Hub, [int]$store.ExchangeStoreType, $store.IsCachedExchange, $(if ($store.FilePath) { Split-Path -Leaf $store.FilePath } else { '-' }))
+    Write-ReportLine ("store '{0}': ExchangeStoreType {1}, cached {2}, data file {3}" -f $Hub, [int]$store.ExchangeStoreType, $store.IsCachedExchange, $(if ($store.FilePath) { Split-Path -Leaf $store.FilePath } else { '-' }))
     $top = $store.GetRootFolder()
     $topName = [string]$top.Name
     $folders = @()
     foreach ($f in $top.Folders) {
         $folders += [pscustomobject]@{ Name = [string]$f.Name; EntryId = [string]$f.EntryID; RecordKey = (Get-BinaryHex $f.PropertyAccessor '0x0FF90102'); SourceKey = (Get-BinaryHex $f.PropertyAccessor '0x65E00102'); Items = [int]$f.Items.Count }
     }
-    Say ("top-level folders: {0}" -f $folders.Count)
+    Write-ReportLine ("top-level folders: {0}" -f $folders.Count)
 
     # The index: every row under this user's mapi16 scope, grouped by root; only this store's roots are read further.
     $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
@@ -225,17 +227,17 @@ try {
     }
     $rs.Close(); $conn.Close()
     $roots = @($rows | Group-Object Root)
-    Say ("index: {0} root(s) for this store, {1} row(s); {2} root(s) of other stores, not read" -f $roots.Count, $rows.Count, $otherRoots.Count)
+    Write-ReportLine ("index: {0} root(s) for this store, {1} row(s); {2} root(s) of other stores, not read" -f $roots.Count, $rows.Count, $otherRoots.Count)
     foreach ($g in $roots) {
         $types = ($g.Group | Group-Object Type | ForEach-Object { "'$($_.Name)' $($_.Count)" }) -join ', '
-        Say ("  root {0}: {1} row(s) - by System.ItemType: {2}" -f $g.Name, $g.Count, $types)
+        Write-ReportLine ("  root {0}: {1} row(s) - by System.ItemType: {2}" -f $g.Name, $g.Count, $types)
     }
 
     foreach ($g in $roots) {
-        Say ("== root {0} ==" -f $g.Name)
+        Write-ReportLine ("== root {0} ==" -f $g.Name)
         # Every folder row of the test account's own store, as the index files it: the path under the root,
         # the row's name and its System.ProviderItemID. Folder names of the test account only.
-        foreach ($r in @($g.Group | Sort-Object Path)) { Say ("  row {0} name '{1}' ProviderItemID {2}" -f $r.Path, $r.Name, $(if ($r.ProviderItemId) { $r.ProviderItemId } else { '(none)' })) }
+        foreach ($r in @($g.Group | Sort-Object Path)) { Write-ReportLine ("  row {0} name '{1}' ProviderItemID {2}" -f $r.Path, $r.Name, $(if ($r.ProviderItemId) { $r.ProviderItemId } else { '(none)' })) }
         # The top folder's own row is the one named as Outlook names it; a top-level folder's row is one level under it.
         # The top folder is /0 - the IPM subtree; /1 is the store's other subtree (measured 2026-11-17).
         $topPath = '/0'
@@ -246,20 +248,20 @@ try {
             $candidates = Get-Candidates $folder.EntryId $folder.RecordKey
             $layout = ConvertFrom-ExchangeFolderId $folder.EntryId
             $idText = if ($layout) { "46-byte id, type $($layout.FolderType), counter $($layout.GlobalCounter)" } else { "$($folder.EntryId.Length / 2)-byte id" }
-            if ($own.Count -eq 0) { Say ("  '{0}' ({1} items, {2}): no own row at /0/<its name>" -f $folder.Name, $folder.Items, $idText); continue }
+            if ($own.Count -eq 0) { Write-ReportLine ("  '{0}' ({1} items, {2}): no own row at /0/<its name>" -f $folder.Name, $folder.Items, $idText); continue }
             $rowId = $own[0].ProviderItemId
             $matched = @(Get-Matches $candidates $rowId)
             $perFolder += ($matched -join ',')
-            Say ("  '{0}' ({1} items, {2}): row ProviderItemID {3}; record key {4}; candidates {5}; MATCHED {6}" -f $folder.Name, $folder.Items, $idText, $(if ($rowId) { $rowId } else { '(none)' }),
+            Write-ReportLine ("  '{0}' ({1} items, {2}): row ProviderItemID {3}; record key {4}; candidates {5}; MATCHED {6}" -f $folder.Name, $folder.Items, $idText, $(if ($rowId) { $rowId } else { '(none)' }),
                 $(if ($folder.RecordKey) { $folder.RecordKey } else { '-' }),
                 (($candidates.Keys | ForEach-Object { "$_=$($candidates[$_])" }) -join ' '), $(if ($matched.Count) { $matched -join ',' } else { 'nothing' }))
         }
-        Say ("VERDICT root {0}: {1} - over {2} folder(s) whose own row was found" -f $g.Name, (Get-RouteVerdict $perFolder), $perFolder.Count)
+        Write-ReportLine ("VERDICT root {0}: {1} - over {2} folder(s) whose own row was found" -f $g.Name, (Get-RouteVerdict $perFolder), $perFolder.Count)
     }
 }
-catch { Say ('FAILED: ' + $_.Exception.Message) }
+catch { Write-ReportLine ('FAILED: ' + $_.Exception.Message) }
 finally {
     $dir = Split-Path -Parent $OutPath
     if (-not (Test-Path -LiteralPath $dir)) { [void][System.IO.Directory]::CreateDirectory($dir) }
-    [System.IO.File]::WriteAllLines($OutPath, $lines)
+    [System.IO.File]::WriteAllLines($OutPath, $ReportLines)
 }

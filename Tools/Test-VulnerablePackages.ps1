@@ -75,8 +75,6 @@ $AdvisorySource = 'https://api.nuget.org/v3/index.json'
 $ProjectRoot = 'McpServer'
 $ListTimeoutMinutes = 10
 
-function Say([string] $m) { Write-Host ("[{0:HH:mm:ss}] {1}" -f (Get-Date), $m) }
-
 # A program with its output going STRAIGHT TO FILES and a deadline: Invoke-Logged, one of the helpers
 # the scripts share, dot-sourced from Testbed/guest/ScriptHelpers.ps1 (Q166 (b), decision 215 (a)).
 . (Join-Path $PSScriptRoot '..\Testbed\guest\ScriptHelpers.ps1')

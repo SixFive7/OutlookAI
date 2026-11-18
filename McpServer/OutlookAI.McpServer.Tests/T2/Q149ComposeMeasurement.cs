@@ -98,6 +98,96 @@ public static class Q149Cells
 
     /// <summary>What a stage-3 item holds with no inspector ever: the stylesheet question.</summary>
     public const string C1 = "S3-C1-no-inspector-template";
+
+    // Stage 1 again, as the product drafts since Q208 B (decided 2026-11-18): the measured design, end to end.
+
+    /// <summary>
+    /// The product's drafts in a window-less Outlook, through update_draft: one promotion per Outlook start - the
+    /// one moment a compose window may show - then every later draft read directly with no window; the commits
+    /// re-read; and the last session out closing the pin, which ends that Outlook.
+    /// </summary>
+    public const string P1 = "S1-P1-product-one-promotion-per-start";
+
+    /// <summary>
+    /// Two product sessions drafting in one window-less Outlook: one pin between them, the first session out leaves
+    /// it, the second drafts on, and the last out closes it by its window - a pin it did not make (Q118 (a)).
+    /// </summary>
+    public const string P2 = "S1-P2-shared-pin-last-out";
+
+    /// <summary>
+    /// A COM-started Outlook in which an Explorer was displayed: every product draft reads its editor directly, no
+    /// window is activated, and no pin is made - the user's window case of Q208 B for an Outlook OutlookAI started.
+    /// </summary>
+    public const string P3 = "S1-P3-com-start-with-a-window";
+
+    /// <summary>
+    /// P1's drafts while a person types: keystrokes through SendInput into the program in the foreground from just before
+    /// each draft until it returns - so Windows' foreground lock is engaged, as it is at a desk - and where every key
+    /// went: the person's program, Outlook, or the stored draft.
+    /// </summary>
+    public const string P4 = "S1-P4-product-while-a-person-types";
+
+    /// <summary>P3's drafts - an Outlook that shows a window - while a person types, as in <see cref="P4"/>.</summary>
+    public const string P5 = "S1-P5-with-a-window-while-a-person-types";
+
+    // Stage 4 - Q211 (b) and Q180 (b), decided 2026-11-18.
+
+    /// <summary>
+    /// What Outlook's own compose window makes of typed text - paragraph style and spacing - in a new mail, a reply
+    /// and a forward, beside the product's drafts of the same text (Q211 (b)).
+    /// </summary>
+    public const string Q211 = "S4-Q211-typed-text";
+
+    /// <summary>One cold start of the run: the time until Outlook is ready, its liveness verdicts, and any hang (Q180 (b)).</summary>
+    public const string Q180 = "S4-Q180-cold-start";
+}
+
+/// <summary>
+/// Q180 (b), decided 2026-11-18: a cold start's liveness verdicts - <see cref="OutlookAI.Core.Com.OutlookLiveness"/>
+/// sampled from the start request until Outlook is ready - reduced to what one log line carries. Pure, so T1 pins it.
+/// </summary>
+public static class Q180Verdicts
+{
+    /// <summary>
+    /// The samples (milliseconds into the start, verdict) collapsed to their changes, how many said hung, the longest
+    /// run of hung samples in milliseconds, and when the first "Responsive" came - null when none did.
+    /// </summary>
+    public static (IReadOnlyList<object[]> Changes, int HungSamples, long LongestHungMs, long? FirstResponsiveMs) Summarize(
+        IReadOnlyList<(long Ms, string Verdict)> samples)
+    {
+        List<object[]> changes = new();
+        int hung = 0;
+        long longest = 0;
+        long? hungSince = null;
+        long? firstResponsive = null;
+        string? last = null;
+        foreach ((long ms, string verdict) in samples ?? Array.Empty<(long, string)>())
+        {
+            if (!string.Equals(verdict, last, StringComparison.Ordinal))
+            {
+                changes.Add(new object[] { ms, verdict });
+                last = verdict;
+            }
+
+            if (string.Equals(verdict, "Hung", StringComparison.Ordinal))
+            {
+                hung++;
+                hungSince ??= ms;
+                longest = Math.Max(longest, ms - hungSince.Value);
+            }
+            else
+            {
+                hungSince = null;
+            }
+
+            if (firstResponsive == null && string.Equals(verdict, "Responsive", StringComparison.Ordinal))
+            {
+                firstResponsive = ms;
+            }
+        }
+
+        return (changes, hung, longest, firstResponsive);
+    }
 }
 
 /// <summary>

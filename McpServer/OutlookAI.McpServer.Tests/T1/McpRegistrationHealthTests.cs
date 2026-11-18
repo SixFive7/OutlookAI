@@ -5,12 +5,10 @@ namespace OutlookAI.McpServer.Tests.T1;
 
 /// <summary>
 /// Pure logic behind outlook_health's <c>registration</c> block (Phase 8 / D6 v2 / R11):
-/// the drift verdict, and the hand-scanned reader that pulls
-/// mcpServers -> outlookai -> command out of Claude Code's config text.
-///
-/// The reader is hand-scanned rather than deserialized so it compiles on both Core targets
-/// (net48 has no System.Text.Json and Core takes no JSON dependency), which is exactly why
-/// it is worth pinning here: it is parsing code we own.
+/// the drift verdict, and the reading of mcpServers -> outlookai -> command out of Claude
+/// Code's config text - through the add-in's own <c>McpConfigEditor</c> since stage S3 of the
+/// code-sharing refactor (Q154), so the file the add-in writes is read here by the same
+/// scanner and judged by the same rule. Its ${VAR} expansion is pinned in McpConfigEditorTests.
 /// </summary>
 public sealed class McpRegistrationHealthTests
 {
@@ -75,47 +73,6 @@ public sealed class McpRegistrationHealthTests
         Assert.Equal(
             HealthReporting.RegistrationDrifted,
             HealthReporting.DescribeMcpRegistration("${OUTLOOKAI_TEST_UNSET}", ServerPath));
-    }
-
-    // ===== ExpandEnvironmentReferences =====
-
-    [Theory]
-    [InlineData("${SET}/x", "value/x")]
-    [InlineData("${UNSET:-fallback}/x", "fallback/x")]
-    [InlineData("${SET:-fallback}/x", "value/x")]
-    [InlineData("a/${UNSET}b", "a/b")]
-    [InlineData("${SET}-${SET}", "value-value")]
-    // Not references: literal, never guessed at.
-    [InlineData(@"C:\plain\path.exe", @"C:\plain\path.exe")]
-    [InlineData("costs $5", "costs $5")]
-    [InlineData("${unterminated", "${unterminated")]
-    [InlineData("${}", "${}")]
-    public void ExpandsTheFormsClaudeCodeDocuments(string value, string expected)
-    {
-        Assert.Equal(expected, HealthReporting.ExpandEnvironmentReferences(
-            value, name => name == "SET" ? "value" : null));
-    }
-
-    [Theory]
-    [InlineData(null, "")]
-    [InlineData("", "")]
-    public void ExpandingNothingYieldsNothing(string? value, string expected)
-    {
-        Assert.Equal(expected, HealthReporting.ExpandEnvironmentReferences(value));
-    }
-
-    [Fact]
-    public void ExpansionFallsBackToTheProcessEnvironment()
-    {
-        Environment.SetEnvironmentVariable("OUTLOOKAI_TEST_ROOT", "here");
-        try
-        {
-            Assert.Equal("here/x", HealthReporting.ExpandEnvironmentReferences("${OUTLOOKAI_TEST_ROOT}/x"));
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("OUTLOOKAI_TEST_ROOT", null);
-        }
     }
 
     [Fact]
@@ -263,6 +220,57 @@ public sealed class McpRegistrationHealthTests
     public void TruncatedInput_TerminatesWithoutThrowing(string json)
     {
         Assert.Null(HealthReporting.ExtractRegisteredCommand(json, out _));
+    }
+
+    [Theory]
+    // A file caught mid-rewrite, or broken: the add-in will not touch it, and the report says
+    // it could not read it instead of calling it unregistered. Until stage S3 the first two of
+    // these read as registered - the command came before the break - and the last as "absent".
+    [InlineData("""{"mcpServers":{"outlookai":{"command":"OK.exe"}}""")]
+    [InlineData("""{"mcpServers":{"outlookai":{"command":"OK.exe"}}},""")]
+    [InlineData("{")]
+    public void AnObjectThatDoesNotParse_IsUnreadable(string json)
+    {
+        string? command = HealthReporting.ExtractRegisteredCommand(json, out bool readable);
+
+        Assert.False(readable);
+        Assert.Null(command);
+    }
+
+    // ===== ReadRegisteredCommand: the file, by the add-in's rule =====
+
+    [Fact]
+    public void AnAbsentFile_IsReadableWithNoCommand()
+    {
+        string? command = HealthReporting.ReadRegisteredCommand(fileExists: false, text: null, out bool readable);
+
+        Assert.True(readable);
+        Assert.Null(command);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData(null)]
+    public void AFileThatIsThereButReadsEmpty_IsUnreadable(string? text)
+    {
+        // The Claude Code CLI truncates the file before it flushes, and the read is shared with
+        // it, so an empty read of a file that exists is a failed read: the add-in never writes
+        // over it, and outlook_health says unreadable. Until stage S3 it said "absent" here.
+        string? command = HealthReporting.ReadRegisteredCommand(fileExists: true, text, out bool readable);
+
+        Assert.False(readable);
+        Assert.Null(command);
+    }
+
+    [Fact]
+    public void AFileThatHoldsTheRegistration_IsRead()
+    {
+        string? command = HealthReporting.ReadRegisteredCommand(
+            fileExists: true, """{"mcpServers":{"outlookai":{"command":"OK.exe"}}}""", out bool readable);
+
+        Assert.True(readable);
+        Assert.Equal("OK.exe", command);
     }
 
     [Fact]

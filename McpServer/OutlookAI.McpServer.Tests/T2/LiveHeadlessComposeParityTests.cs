@@ -142,6 +142,12 @@ public sealed class LiveHeadlessComposeParityTests
         Assert.DoesNotContain("C:\\Users", html, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("<v:rect", html, StringComparison.OrdinalIgnoreCase);
 
+        // Q208 B: committed through the inspector's form page, then saved again with its subject and recipients - still an
+        // ordinary message, with no one-off form in it.
+        (string messageClass, IReadOnlyList<string> formProperties) = LiveOutlookTestMailer.ReadFormFacts(Hub, outcome.EntryId, Marker);
+        Assert.Equal("IPM.Note", messageClass, ignoreCase: true);
+        Assert.True(formProperties.Count == 0, "the new draft carries form-definition properties: " + string.Join(", ", formProperties));
+
         AttachmentView image = Assert.Single(outcome.Attachments!);
         Assert.True(
             image.SizeBytes > 0,

@@ -1,13 +1,13 @@
 using System.Security;
 
-using OutlookAI.Services;
+using OutlookAI.Core.AddIn;
 using Xunit;
 
 namespace OutlookAI.McpServer.Tests.T1;
 
 /// <summary>
-/// The add-in's tuning reconcile, <c>Services\TuningReconciler.cs</c>, LINKED into this assembly and
-/// run against a fabricated registry.
+/// The add-in's tuning reconcile, Core's <c>AddIn\TuningReconciler.cs</c> - the copy the add-in
+/// loads - run against a fabricated registry.
 ///
 /// <para>
 /// WHAT IT PINS. (1) Q128, decided 2026-10-03: the walk used to sit in one try block, so the first
@@ -25,8 +25,8 @@ namespace OutlookAI.McpServer.Tests.T1;
 /// <para>
 /// The catalog below has the add-in's shape: four search values, the five Cached Mode entries
 /// exactly as the add-in builds them (<see cref="CachedModeSettings.CatalogEntries"/>), and two OST
-/// sizes, in that order. The add-in's own catalog lives in <c>OutlookTuningService</c>, which is
-/// net48/VSTO and cannot be linked; what is pinned here is the walk.
+/// sizes, in that order. The add-in's own catalog lives in its <c>OutlookTuningService</c>, which
+/// no test can load (it is the add-in's, net48/VSTO); what is pinned here is the walk.
 /// </para>
 /// </summary>
 public sealed class TuningReconcilerTests
