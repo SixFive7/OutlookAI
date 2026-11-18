@@ -992,6 +992,11 @@ STACK      the faulting thread
     Check 'a guest call reads this host''s clock with the session open, the guest''s first and last, and this host''s again after' $true ($marks['$session = Get-GuestSession'] -ge 0 -and $marks['$hostBefore = [DateTime]::UtcNow'] -gt $marks['$session = Get-GuestSession'] -and $marks['$out = Invoke-Command -Session $session -ScriptBlock'] -gt $marks['$hostBefore = [DateTime]::UtcNow'] -and $marks['"GUEST-CLOCK-BEFORE $([DateTime]::UtcNow.ToString(''o'')) $([TimeZoneInfo]::Local.Id)"'] -gt $marks['$out = Invoke-Command -Session $session -ScriptBlock'] -and $marks['Set-ExecutionPolicy -Scope Process'] -gt $marks['"GUEST-CLOCK-BEFORE $([DateTime]::UtcNow.ToString(''o'')) $([TimeZoneInfo]::Local.Id)"'] -and $marks['"GUEST-CLOCK-AFTER $([DateTime]::UtcNow.ToString(''o'')) $([TimeZoneInfo]::Local.Id)"'] -gt $marks['Set-ExecutionPolicy -Scope Process'] -and $marks['$hostAfter = [DateTime]::UtcNow'] -gt $marks['"GUEST-CLOCK-AFTER $([DateTime]::UtcNow.ToString(''o'')) $([TimeZoneInfo]::Local.Id)"'] -and $marks['Add-GuestClockRecord $Name $out $hostBefore $hostAfter'] -gt $marks['$hostAfter = [DateTime]::UtcNow'])
     Check 'and the guest reads its zone afresh each time, as its session''s process keeps the first it read' 2 ([regex]::Matches($invokeGuest, [regex]::Escape('[TimeZoneInfo]::ClearCachedData()'))).Count
     Check 'every guest call goes through it: the only other is the clock read before the suite' $true (([regex]::Matches($runCode, '(?m)^\s*\$o = Invoke-Guest ')).Count -ge 10 -and ([regex]::Matches($runCode, 'Invoke-Command -Session ')).Count -eq 2)
+    $asTheRunKeepsThem = New-Object System.Collections.Generic.List[object]
+    foreach ($record in $records) { $asTheRunKeepsThem.Add($record) }
+    $listJson = New-GuestClockSummaryJson $asTheRunKeepsThem.ToArray()
+    $listLine = Format-GuestClockSummary $asTheRunKeepsThem.ToArray()
+    Check 'the report reads the records as the run keeps them: a list, given as an array, never @() of it' 'True|3|True' @(($runCode.Contains('New-GuestClockSummaryJson $guestClockRecords.ToArray()') -and $runCode.Contains('Format-GuestClockSummary $guestClockRecords.ToArray()') -and -not $runCode.Contains('@($guestClockRecords)')), $listJson.calls, $listLine.StartsWith('clock      MOVED in 1 of 3'))
     Check 'summary.json carries the record, its moves an array at every length' $true ($runCode.Contains("`$summary['guestClock'] = New-GuestClockSummaryJson") -and ((New-GuestClockSummaryJson $records | ConvertTo-Json -Depth 5) -match '"moved":\s*\[') -and ((New-GuestClockSummaryJson @() | ConvertTo-Json -Depth 5) -match '"moved":\s*\[\s*\]'))
 
     Write-Host '== the constants, against the files they copy =='
@@ -1694,7 +1699,9 @@ $summary = New-LiveRunSummary -RunId $runId -Verdict $verdict -Revision $revisio
 if ($facts.Exchange) { $summary['runMarker'] = [ordered]@{ marker = $runMarker; priors = @($priorMarkers); ledger = $ledgerPath; clean = $ledgerOutcome } }
 $summary['outlookStart'] = $outlookStart
 $summary['indexRoots'] = $indexRoots
-$summary['guestClock'] = New-GuestClockSummaryJson @($guestClockRecords)
+# ToArray(), never @(...): @() of a List[object] given to an [object[]] parameter fails with "Argument
+# types do not match" under Windows PowerShell 5.1 and PowerShell 7.7 alike (measured 2026-11-18).
+$summary['guestClock'] = New-GuestClockSummaryJson $guestClockRecords.ToArray()
 [System.IO.File]::WriteAllText((Join-Path $runDir 'summary.json'), ($summary | ConvertTo-Json -Depth 8))
 
 $lines = New-Object System.Collections.Generic.List[string]
@@ -1731,7 +1738,7 @@ elseif ($crashDumpState['armed']) { $dumpText += ', none written' }
 $lines.Add("outlook    crashes during the run: $crashText; crash dumps: $dumpText")
 $lines.Add((Format-OutlookStartLine $outlookStart))
 if ($indexRoots) { $lines.Add("index      $indexRoots") }
-$lines.Add((Format-GuestClockSummary @($guestClockRecords)))
+$lines.Add((Format-GuestClockSummary $guestClockRecords.ToArray()))
 $endLine = "guest end  rested on $($checkpointActions['restedOn']); settings staged=$($checkpointActions['settingsStaged']); saved=$($checkpointActions['saved'])"
 if ($checkpointActions['green']) { $endLine += "; green checkpoint $($checkpointActions['green'])" }
 $lines.Add($endLine)
