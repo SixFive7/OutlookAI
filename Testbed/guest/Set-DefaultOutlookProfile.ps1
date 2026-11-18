@@ -197,23 +197,6 @@ $script:OfficeRootKeyPath = 'HKCU:\Software\Microsoft\Office'
 # =============================================================================================
 
 <#
-    Whether an ...\Office\<major>\Outlook key with these values and subkeys is a REAL Outlook
-    hive, or just the shell this product's installer leaves behind. Mirrors
-    OfficeVersions.IsOutlookHive exactly, case-insensitive footprint comparison included.
-#>
-function Test-IsOutlookHive {
-    param([string[]] $ValueNames, [string[]] $SubKeyNames)
-
-    if ($null -ne $ValueNames -and $ValueNames.Count -gt 0) { return $true }
-    if ($null -eq $SubKeyNames) { return $false }
-
-    foreach ($subKey in $SubKeyNames) {
-        if ($subKey -ne $script:InstallerFootprintSubKeyName) { return $true }
-    }
-    return $false
-}
-
-<#
     Picks the hive to work in, from candidates shaped
     @{ Version = '16.0'; Path = '...'; ValueNames = @(); SubKeyNames = @() }.
 
@@ -304,39 +287,6 @@ supports, so nothing here will choose it for you. If it is the one Outlook reall
     }
 
     return [pscustomobject]@{ Chosen = $null; RealHives = $real; Problem = $problem }
-}
-
-<#
-    The line(s) printed under the chosen hive when other Outlook-shaped keys exist. Pure.
-
-    MEASURED 2026-09-24 on OAI-UNINDEXED: HKCU\Software\Microsoft\Office\8.0\Outlook holds exactly
-    one value, First-Run, and nothing else. The shape rule rightly calls any key with a value a
-    hive, so the first guest run printed "other real Outlook hive(s) here: 8.0 - use -OfficeVersion
-    if this one is wrong" - an invitation to point Outlook at Office 97's hive. An unsupported
-    major is still NAMED, because hiding it would also hide a genuine second Outlook, but it is no
-    longer offered as the fix.
-#>
-function Format-OtherHiveNote {
-    param([string] $ChosenVersion, [object[]] $RealHives)
-
-    $supported = @()
-    $unsupported = @()
-    if ($null -ne $RealHives) {
-        foreach ($hive in $RealHives) {
-            if ($null -eq $hive -or $hive.Version -eq $ChosenVersion) { continue }
-            if ($script:SupportedOfficeVersions -contains $hive.Version) { $supported += $hive.Version }
-            else { $unsupported += $hive.Version }
-        }
-    }
-
-    $lines = @()
-    if ($supported.Count -gt 0) {
-        $lines += "other supported Outlook hive(s) here: $($supported -join ', ') - use -OfficeVersion if this one is wrong"
-    }
-    if ($unsupported.Count -gt 0) {
-        $lines += "also an Outlook-shaped key under unsupported major(s) $($unsupported -join ', ') - never chosen, and not a fix for anything"
-    }
-    return , $lines
 }
 
 <#
@@ -720,6 +670,10 @@ function Invoke-SelfTest {
     return 0
 }
 
+# The Outlook profile helpers are among the helpers the scripts share, dot-sourced from ScriptHelpers.ps1
+# beside this script (Q154, Q166 (b), decision 215 (a)) - before the self-test, which holds them too.
+. (Join-Path $PSScriptRoot 'ScriptHelpers.ps1')
+
 if ($SelfTest) { exit (Invoke-SelfTest) }
 
 # =============================================================================================
@@ -734,43 +688,6 @@ if ($SelfTest) { exit (Invoke-SelfTest) }
 # registry, and on the maintainer's workstation that is a real profile with real delegate
 # mailboxes. Refusing early costs nothing and is the whole point of the guard.
 Assert-TestbedGuest -ExpectedUser $ExpectedUser
-
-<#
-    Every ...\Office\<major>\Outlook key on this machine, as Select-OutlookHive's candidates.
-    Reads only: no value is written and no key is created.
-#>
-function Get-OutlookHiveCandidate {
-    if (-not (Test-Path -LiteralPath $script:OfficeRootKeyPath)) { return , @() }
-
-    $candidates = @()
-    foreach ($version in (Get-ChildItem -LiteralPath $script:OfficeRootKeyPath -ErrorAction SilentlyContinue)) {
-        if ($version.PSChildName -notmatch '^\d+\.\d+$') { continue }
-
-        $outlookPath = "$script:OfficeRootKeyPath\$($version.PSChildName)\Outlook"
-        if (-not (Test-Path -LiteralPath $outlookPath)) { continue }
-
-        $key = Get-Item -LiteralPath $outlookPath
-        $candidates += [pscustomobject]@{
-            Version     = $version.PSChildName
-            Path        = $outlookPath
-            ValueNames  = @($key.GetValueNames())
-            SubKeyNames = @($key.GetSubKeyNames())
-        }
-    }
-    return , $candidates
-}
-
-<#
-    The profile names: the subkey names under <hive>\Profiles. A subkey IS a profile.
-#>
-function Get-OutlookProfileName {
-    param([string] $ProfilesKeyPath)
-
-    if (-not (Test-Path -LiteralPath $ProfilesKeyPath)) { return , @() }
-    $names = @(Get-ChildItem -LiteralPath $ProfilesKeyPath -ErrorAction SilentlyContinue |
-            ForEach-Object { $_.PSChildName })
-    return , $names
-}
 
 $selection = Select-OutlookHive -Candidates (Get-OutlookHiveCandidate) -RequestedVersion $OfficeVersion
 if ($null -eq $selection.Chosen) { throw $selection.Problem }

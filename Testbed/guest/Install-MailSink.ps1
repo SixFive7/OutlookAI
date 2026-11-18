@@ -780,21 +780,26 @@ function Open-Log {
     Write-SinkLog (Format-Invariant 'Install-MailSink.ps1 - {0:yyyy-MM-dd HH:mm:ss} - {1} on {2} as {3}' @((Get-Date), ($given -join ' '), $env:COMPUTERNAME, $env:USERNAME))
 }
 
-function Assert-TestbedGuestLocal {
-    $who = $env:USERNAME
+# travels-alone: Testbed/host/Get-MailSinkMedia.ps1 has this one script copied to the guest on its own.
+# The guest guard: Test-GuestIdentity and Assert-TestbedGuestIdentity, copies of ScriptHelpers.ps1's that
+# Tools/Checks/check-powershell-51.ps1 check 4 holds identical, then what this script would have done elsewhere.
+function Test-GuestIdentity {
+    param([string] $UserName, [string] $ComputerName, [string[]] $Users, [string] $Prefix)
     $userOk = $false
-    foreach ($candidate in $ExpectedUser) { if ($who -eq $candidate) { $userOk = $true } }
-    $machine = $env:COMPUTERNAME
-    $machineOk = [bool] ($ExpectedComputerNamePrefix -and $machine -and
-        $machine.StartsWith($ExpectedComputerNamePrefix, [System.StringComparison]::OrdinalIgnoreCase))
-    if ($userOk -and $machineOk) { return }
+    foreach ($u in $Users) { if ($UserName -eq $u) { $userOk = $true } }
+    $machineOk = [bool]($Prefix -and $ComputerName -and $ComputerName.StartsWith($Prefix, [System.StringComparison]::OrdinalIgnoreCase))
+    return ($userOk -and $machineOk)
+}
 
-    throw @"
-REFUSING TO RUN.
+function Assert-TestbedGuestIdentity {
+    param([string] $Why)
+    $users = @($script:ExpectedUser)
+    $prefix = [string]$script:ExpectedComputerNamePrefix
+    if (Test-GuestIdentity -UserName $env:USERNAME -ComputerName $env:COMPUTERNAME -Users $users -Prefix $prefix) { return }
+    throw ("REFUSING TO RUN.`n`n  logged on as : '{0}'          (allowed: {1})`n  computer name: '{2}'      (must start with: '{3}')`n`n{4}" -f $env:USERNAME, ($users -join ', '), $env:COMPUTERNAME, $prefix, $Why)
+}
 
-  logged on as : '$who'          (allowed: $($ExpectedUser -join ', '))
-  computer name: '$machine'      (must start with: '$ExpectedComputerNamePrefix')
-
+$GuestGuardWhy = @"
 This script registers a SYSTEM task that listens on the SMTP and POP3 ports and submits mail to
 it. On the maintainer's workstation that would put an unauthenticated listener on port $SmtpPort
 of a machine holding real mail. The testbed guests autologon as 'vmadmin' and are named 'OAI-*'
@@ -804,7 +809,6 @@ by Testbed/host/New-AnswerFile.ps1. If you built a guest differently, say so:
 
 Do not 'fix' this by widening either default. The defaults are the guard.
 "@
-}
 
 function Assert-Elevated {
     $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
@@ -1557,7 +1561,7 @@ function Show-Plan {
 }
 
 function Invoke-Execute {
-    Assert-TestbedGuestLocal
+    Assert-TestbedGuestIdentity -Why $GuestGuardWhy
     Assert-Elevated
     Assert-OutlookNotRunning
     Open-Log
@@ -1668,7 +1672,7 @@ function Invoke-Execute {
 function Invoke-Verify {
     param([switch] $SkipGuards)
     if (-not $SkipGuards) {
-        Assert-TestbedGuestLocal
+        Assert-TestbedGuestIdentity -Why $GuestGuardWhy
         Assert-Elevated
         Open-Log
     }
@@ -1781,7 +1785,7 @@ function Invoke-Verify {
 }
 
 function Invoke-Uninstall {
-    Assert-TestbedGuestLocal
+    Assert-TestbedGuestIdentity -Why $GuestGuardWhy
     Assert-Elevated
     Assert-OutlookNotRunning
     Open-Log

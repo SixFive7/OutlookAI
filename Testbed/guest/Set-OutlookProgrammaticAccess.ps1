@@ -339,14 +339,6 @@ function Test-IsGuardPromptText {
     return $Text.TrimStart().StartsWith('A program is trying to', [System.StringComparison]::Ordinal)
 }
 
-function Test-GuestIdentity {
-    param([string] $UserName, [string] $ComputerName, [string[]] $Users, [string] $Prefix)
-    $userOk = $false
-    foreach ($u in $Users) { if ($UserName -eq $u) { $userOk = $true } }
-    $machineOk = [bool]($Prefix -and $ComputerName -and $ComputerName.StartsWith($Prefix, [System.StringComparison]::OrdinalIgnoreCase))
-    return ($userOk -and $machineOk)
-}
-
 # WSC productState, decoded the community-documented way - context only, never a verdict. The low
 # byte is the signature state: 0x00 up to date, 0x10 out of date.
 function Format-WscState {
@@ -460,6 +452,11 @@ function Invoke-SelfTest {
     exit 0
 }
 
+# Say and Test-GuestIdentity are among the helpers the scripts share, dot-sourced from ScriptHelpers.ps1,
+# which travels with the guest scripts (Q154, Q166 (b), decision 215 (a)) and says why: before the
+# self-test, which holds Test-GuestIdentity too. Say appends to $LogPath when there is one.
+. (Join-Path $PSScriptRoot 'ScriptHelpers.ps1')
+
 if ($SelfTest) { Invoke-SelfTest }
 
 # =============================================================================================
@@ -470,10 +467,6 @@ Assert-TestbedGuest -ExpectedUser $ExpectedUser
 if (-not (Test-GuestIdentity -UserName $env:USERNAME -ComputerName $env:COMPUTERNAME -Users $ExpectedUser -Prefix $ExpectedComputerNamePrefix)) {
     throw "REFUSING TO RUN: the computer name '$env:COMPUTERNAME' does not start with '$ExpectedComputerNamePrefix'. The testbed guests are named OAI-* by Testbed/host/New-AnswerFile.ps1; this script disables Outlook's programmatic-access prompts and must never run anywhere else. If you named a guest differently, pass -ExpectedComputerNamePrefix. Do not widen the default."
 }
-
-# Say is one of the helpers the scripts share, dot-sourced from ScriptHelpers.ps1, which travels with the
-# guest scripts (Q154, Q166 (b), decision 215 (a)) and says why. It appends to $LogPath when there is one.
-. (Join-Path $PSScriptRoot 'ScriptHelpers.ps1')
 
 # =============================================================================================
 # READING THE MACHINE
