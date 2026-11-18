@@ -753,8 +753,11 @@ namespace OutlookAI.TaskPane
             return group;
         }
 
-        /// <summary>A left-to-right row of buttons, as tall as the buttons are.</summary>
-        private static FlowLayoutPanel NewButtonRow(string name, params Button[] buttons)
+        /// <summary>
+        /// A left-to-right row of controls - buttons, and the label a prompt section shows beside its
+        /// reset button - as tall as they are, wrapping when the dialog is narrow.
+        /// </summary>
+        private static FlowLayoutPanel NewButtonRow(string name, params Control[] controls)
         {
             var row = new FlowLayoutPanel
             {
@@ -766,8 +769,8 @@ namespace OutlookAI.TaskPane
                 AutoSizeMode = AutoSizeMode.GrowAndShrink,
                 Margin = Padding.Empty,
             };
-            foreach (Button button in buttons)
-                row.Controls.Add(button);
+            foreach (Control control in controls)
+                row.Controls.Add(control);
             return row;
         }
 

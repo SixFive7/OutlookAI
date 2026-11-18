@@ -397,18 +397,7 @@ namespace OutlookAI.TaskPane
             reset.Click += (s, e) => RestoreSectionDefault(captured);
             _sectionEditors[index].TextChanged += (s, e) => OnSectionEdited(captured);
 
-            var actions = new FlowLayoutPanel
-            {
-                Name = "sectionActions" + section,
-                Dock = DockStyle.Fill,
-                FlowDirection = FlowDirection.LeftToRight,
-                WrapContents = true,
-                AutoSize = true,
-                AutoSizeMode = AutoSizeMode.GrowAndShrink,
-                Margin = Padding.Empty,
-            };
-            actions.Controls.Add(reset);
-            actions.Controls.Add(_sectionState[index]);
+            var actions = NewButtonRow("sectionActions" + section, reset, _sectionState[index]);
 
             inner.Controls.Add(NewLabel(SectionPurpose(section), LabelRole.Secondary, wrap: true), 0, 0);
             inner.Controls.Add(_sectionEditors[index], 0, 1);
