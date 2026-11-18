@@ -179,16 +179,19 @@ namespace OutlookAI.Core.Com
                     break;
             }
 
-            text.Append(" Process: OUTLOOK.EXE, PID ").Append(pid);
-            if (facts.ProcessStartUtc is DateTime started)
+            if (facts.ProcessId != null)
             {
-                text.Append(", started ").Append(Ago(facts.NowUtc - started)).Append(" ago (").Append(Utc(started)).Append(')');
-            }
+                text.Append(" Process: OUTLOOK.EXE, PID ").Append(pid);
+                if (facts.ProcessStartUtc is DateTime started)
+                {
+                    text.Append(", started ").Append(Ago(facts.NowUtc - started)).Append(" ago (").Append(Utc(started)).Append(')');
+                }
 
-            text.Append(facts.StartedByServerProcessId is int server
-                ? ", by OutlookAI for its server process " + server.ToString(CultureInfo.InvariantCulture)
-                : string.Empty);
-            text.Append('.');
+                text.Append(facts.StartedByServerProcessId is int server
+                    ? ", by OutlookAI for its server process " + server.ToString(CultureInfo.InvariantCulture)
+                    : string.Empty);
+                text.Append('.');
+            }
 
             if (facts.NotRespondingSinceUtc is DateTime since)
             {
@@ -203,6 +206,19 @@ namespace OutlookAI.Core.Com
                         + " has been waiting in start-up step '" + connect.Step + "' since " + Utc(connect.StepSinceUtc) + "."
                     : " The OutlookAI connection of server process " + connect.ServerProcessId.ToString(CultureInfo.InvariantCulture)
                         + " stopped in start-up step '" + connect.Step + "' at " + Utc(connect.StepSinceUtc) + " without finishing.");
+            }
+
+            if (facts.ProcessId == null)
+            {
+                // A connection stuck asking Windows for an Outlook that never appeared: nothing to end.
+                text.Append(" No OUTLOOK.EXE is running, so there is nothing to end: the server ends that connection at its "
+                    + "time limit, and the next request tries again.");
+                if (facts.LogPath.Length > 0)
+                {
+                    text.Append(" The start log, with no mail content, for a report: ").Append(facts.LogPath).Append('.');
+                }
+
+                return text.ToString();
             }
 
             if (facts.Kind == OutlookStuckKind.ConnectStuck)

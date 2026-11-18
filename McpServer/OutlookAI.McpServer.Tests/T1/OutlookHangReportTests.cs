@@ -67,7 +67,7 @@ public sealed class OutlookHangReportTests
     }
 
     [Fact]
-    public void EveryReport_CarriesTheRisksOfEndingIt_AndThatOutlookAINeverDoes()
+    public void EveryReportOnAProcess_CarriesTheRisksOfEndingIt_AndThatOutlookAINeverDoes()
     {
         foreach (OutlookStuckKind kind in new[] { OutlookStuckKind.Hung, OutlookStuckKind.NoWindows, OutlookStuckKind.ConnectStuck })
         {
@@ -132,6 +132,23 @@ public sealed class OutlookHangReportTests
         Assert.StartsWith("Outlook is not answering OutlookAI:", report, StringComparison.Ordinal);
         Assert.Contains("server process 68964 has been waiting in start-up step 'logon' since 2026-11-15 15:28:00 UTC", report, StringComparison.Ordinal);
         Assert.Contains("dialog", report, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AConnectionStuckWithNoOutlookRunning_SendsNobodyToTaskManager()
+    {
+        // Stuck asking Windows to start an Outlook that never appeared: there is no process to end, and the
+        // server ends the connection at its own time limit.
+        OutlookHangFacts facts = new(
+            OutlookStuckKind.ConnectStuck,
+            "an OutlookAI connection has been trying to start Outlook for 130 s and no OUTLOOK.EXE is running",
+            null, null, false, false, null, null, null, true, Now, "log");
+
+        string report = OutlookHangReport.Describe(facts);
+
+        Assert.Contains("nothing to end", report, StringComparison.Ordinal);
+        Assert.DoesNotContain("Task Manager", report, StringComparison.Ordinal);
+        Assert.DoesNotContain("PID", report, StringComparison.Ordinal);
     }
 
     [Fact]
