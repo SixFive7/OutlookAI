@@ -8,6 +8,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using OutlookAI.Core.AddIn;
+using OutlookAI.Core.Interop;
 
 namespace OutlookAI.Core.Com
 {
@@ -73,7 +74,7 @@ namespace OutlookAI.Core.Com
             }
             finally
             {
-                _ = NativeMethods.CloseHandle(handle);
+                _ = Kernel32.CloseHandle(handle);
             }
         }
 
@@ -125,7 +126,7 @@ namespace OutlookAI.Core.Com
             }
             finally
             {
-                _ = NativeMethods.CloseHandle(handle);
+                _ = Kernel32.CloseHandle(handle);
             }
         }
 
@@ -204,10 +205,6 @@ namespace OutlookAI.Core.Com
 
             [DllImport("kernel32.dll")]
             internal static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
-
-            [DllImport("kernel32.dll")]
-            [return: MarshalAs(UnmanagedType.Bool)]
-            internal static extern bool CloseHandle(IntPtr handle);
         }
     }
 

@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using Microsoft.Win32;
+using OutlookAI.Core.Interop;
 using AddInServerContract = OutlookAI.Core.AddIn.AddInServerContract;
 
 namespace OutlookAI.Core.Com
@@ -301,7 +302,7 @@ namespace OutlookAI.Core.Com
             }
             finally
             {
-                _ = NativeMethods.CloseHandle(thread);
+                _ = Kernel32.CloseHandle(thread);
             }
         }
 
@@ -344,10 +345,6 @@ namespace OutlookAI.Core.Com
             [DllImport("kernel32.dll", SetLastError = true)]
             [return: MarshalAs(UnmanagedType.Bool)]
             internal static extern bool GetThreadTimes(IntPtr thread, out long creation, out long exit, out long kernel, out long user);
-
-            [DllImport("kernel32.dll", SetLastError = true)]
-            [return: MarshalAs(UnmanagedType.Bool)]
-            internal static extern bool CloseHandle(IntPtr handle);
 
             [DllImport("user32.dll", SetLastError = true)]
             internal static extern IntPtr SendMessageTimeoutW(

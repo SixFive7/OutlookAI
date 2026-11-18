@@ -7,6 +7,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using Microsoft.Win32.SafeHandles;
 using OutlookAI.Core.AddIn;
+using OutlookAI.Core.Interop;
 
 namespace OutlookAI.Core.Services
 {
@@ -736,7 +737,7 @@ namespace OutlookAI.Core.Services
             {
                 // Access 0: the handle answers questions about the folder and can do nothing else.
                 // Backup semantics is what lets CreateFileW open a folder at all.
-                using (SafeFileHandle handle = CreateFileW(directory, 0, ShareAll, IntPtr.Zero, OpenExisting, FileFlagBackupSemantics, IntPtr.Zero))
+                using (SafeFileHandle handle = Kernel32.CreateFileW(directory, 0, ShareAll, IntPtr.Zero, OpenExisting, FileFlagBackupSemantics, IntPtr.Zero))
                 {
                     if (handle.IsInvalid)
                     {
@@ -765,7 +766,7 @@ namespace OutlookAI.Core.Services
             {
                 // CREATE_NEW fails when anything has the name; FILE_FLAG_OPEN_REPARSE_POINT makes a link
                 // of that name count as the name rather than lead the new file somewhere else.
-                using (SafeFileHandle handle = CreateFileW(
+                using (SafeFileHandle handle = Kernel32.CreateFileW(
                     path, GenericWrite, ShareAll, IntPtr.Zero, CreateNew, FileAttributeNormal | FileFlagOpenReparsePoint, IntPtr.Zero))
                 {
                     return handle.IsInvalid ? Marshal.GetLastWin32Error() : 0;
@@ -813,16 +814,6 @@ namespace OutlookAI.Core.Services
 
                 return path;
             }
-
-            [DllImport("kernel32.dll", EntryPoint = "CreateFileW", CharSet = CharSet.Unicode, SetLastError = true)]
-            private static extern SafeFileHandle CreateFileW(
-                string lpFileName,
-                uint dwDesiredAccess,
-                uint dwShareMode,
-                IntPtr lpSecurityAttributes,
-                uint dwCreationDisposition,
-                uint dwFlagsAndAttributes,
-                IntPtr hTemplateFile);
 
             [DllImport("kernel32.dll", EntryPoint = "GetFileAttributesW", CharSet = CharSet.Unicode, SetLastError = true)]
             private static extern uint GetFileAttributesW(string lpFileName);

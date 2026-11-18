@@ -1239,6 +1239,10 @@ its mailbox tests on, and change nothing you install.
   before its call are one `WritingDraftAsync`. Left as they are, with their reasons in the TODO
   list: the two draft results' shared fields, the tools' and the COM host's parameter lists, and
   the corpus tool's thirteen operations that open the corpus store and release it the same way.
+  Since S6, Core declares each Win32 call once: the audit log's opening of its file and the
+  attachment writer's of a folder or a file were one declaration written twice, as were the session
+  registry's and the start observer's closing of a handle, and the audit log declared the current
+  process's id beside the one the add-in's window calls declare.
 
 - ♻️ **The live tests end and restart Outlook through one shared helper.**
   The compose measurement's stop in `LiveComposeProbe`, whose `Application.Quit()` from a client
@@ -2184,12 +2188,16 @@ its mailbox tests on, and change nothing you install.
 
 ### Fixed
 
-- 🐛 **The add-in reads a `\u` escape in `~/.claude.json` only when four hex digits follow it.**
-  Its reader of the file's values parsed those four characters with .NET's hex number parsing, which
-  allows spaces around the digits, so `\u 41 ` read as `A`, though JSON has no such escape. It reads
-  them through Core's `Hex` now, as the check that guards every write to the file always did, and
-  anything else keeps the reader's fallback: the `u`, and the characters after it as they stand.
-  The code-sharing refactor's hex stage found it, and a T1 test pins both.
+- 🐛 **A `\u` escape or a numeric HTML entity with a space or a sign in it stays text.**
+  The add-in's reader of the values in `~/.claude.json` parsed a `\u` escape's four characters with
+  .NET's hex number parsing, which allows spaces around the digits, so `\u 41 ` read as `A`, though
+  JSON has no such escape. OutlookAI's reader of HTML as text, which gives a mail's body and a
+  signature's text, parsed a numeric entity's digits the same way, and a decimal one's with a sign
+  allowed too, so `&# 65;`, `&#+65;` and `&#x 41;` each read as `A`, where a browser shows them as
+  written. Both read hexadecimal digits through Core's `Hex` now, and a decimal entity's digits as
+  the ten digits alone, as the check that guards every write to `~/.claude.json` always read an
+  escape; anything else keeps each reader's fallback, the text as it stands. The code-sharing
+  refactor's hex stage found them, and T1 theories pin both.
 
 - 🐛 **The task pane finds a Claude Code installed while Outlook runs, without a restart.**
   The pane remembered that Claude Code was missing when Outlook started, and every request then

@@ -59,6 +59,34 @@ public sealed class HtmlToTextTests
         Assert.Contains("&unknownentity;", text, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("&#65;", "A")]
+    [InlineData("&#0065;", "A")]
+    [InlineData("&#x41;", "A")]
+    [InlineData("&#X41;", "A")]
+    [InlineData("&#x1F600;", "\U0001F600")]
+    public void ANumericEntity_OfDigitsAlone_IsDecoded(string entity, string decoded)
+    {
+        Assert.Equal("x" + decoded + "y", HtmlToText.Convert("x" + entity + "y"));
+    }
+
+    [Theory]
+    [InlineData("&# 65;")]
+    [InlineData("&#65 ;")]
+    [InlineData("&#+65;")]
+    [InlineData("&#-65;")]
+    [InlineData("&#x 41;")]
+    [InlineData("&#x41 ;")]
+    [InlineData("&#x+41;")]
+    [InlineData("&#x-41;")]
+    public void ANumericEntity_WithASpaceOrASign_StaysText(string entity)
+    {
+        // Digits and nothing else: decimal after &#, hexadecimal after &#x. .NET's number parsing, which read
+        // them until the code-sharing refactor's S5a, let a space through either side of the digits and a sign
+        // before decimal ones, so "&# 65;", "&#65 ;", "&#+65;", "&#x 41;" and "&#x41 ;" each read as "A".
+        Assert.Contains(entity, HtmlToText.Convert("x" + entity + "y"), StringComparison.Ordinal);
+    }
+
     [Fact]
     public void BlankLineRuns_CollapseToOneBlankLine()
     {
