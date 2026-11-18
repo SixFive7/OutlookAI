@@ -150,7 +150,11 @@ if (Test-Path Variable:\PSNativeCommandUseErrorActionPreference) {
 . (Join-Path $PSScriptRoot 'OwnEditionModules.ps1')
 
 if (-not $OutDir) { $OutDir = Join-Path $RepoRoot '.work\testbed-livetier-payload' }
-if (-not $SdkInstallerPath) { $SdkInstallerPath = Join-Path $RepoRoot '.work\media\dotnet-sdk-10.0.401-win-x64.exe' }
+# Made absolute: the feed check's NuGet.config names the feed by this path, and NuGet reads a
+# relative source against the config file's own folder - so a relative -OutDir failed every
+# project's check with "the local source doesn't exist" (measured 2026-11-18).
+$OutDir = [System.IO.Path]::GetFullPath($OutDir)
+if (-not $SdkInstallerPath) { $SdkInstallerPath = Join-Path $RepoRoot '.work\media\dotnet-sdk-11.0.100-win-x64.exe' }
 
 # Where each artefact goes on the guest. Repeated in the instructions this script prints, and
 # kept here so there is one place to change it.
@@ -172,8 +176,6 @@ New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $env:MSBUILDDISABLENODEREUSE = '1'
 $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
 $env:DOTNET_NOLOGO = '1'
-
-function Say([string] $m) { Write-Host ("[{0:HH:mm:ss}] {1}" -f (Get-Date), $m) }
 function SizeMb([string] $path) { return [math]::Round((Get-Item -LiteralPath $path).Length / 1MB, 1) }
 
 # Every program call goes through Invoke-NativeCommand, so that Windows PowerShell 5.1 cannot end

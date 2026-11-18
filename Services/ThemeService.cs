@@ -3,6 +3,7 @@ using System.Drawing;
 using System.Runtime.InteropServices;
 using System.Threading;
 using Microsoft.Win32;
+using OutlookAI.Core.AddIn;
 
 namespace OutlookAI.Services
 {

@@ -1,13 +1,13 @@
 using System.Xml.Linq;
 
-using OutlookAI.Services;
+using OutlookAI.Core.AddIn;
 using Xunit;
 
 namespace OutlookAI.McpServer.Tests.T1;
 
 /// <summary>
-/// The Cached Mode settings the add-in keeps applied - <c>Services\CachedModeSettings.cs</c>, LINKED -
-/// and the guarantee that nothing in the add-in needs an administrator any more.
+/// The Cached Mode settings the add-in keeps applied - Core's <c>AddIn\CachedModeSettings.cs</c>, the
+/// copy the add-in loads - and the guarantee that nothing in the add-in needs an administrator any more.
 ///
 /// <para>
 /// WHAT IT PINS. Q143: the offline period offers exactly the eleven windows Microsoft documents, each

@@ -326,7 +326,15 @@ public static class LiveStoreCountTripwire
         CensusPass after = Capture(baseline.Keys.ToList(), "post-run", hub, baseline);
         stopwatch.Stop();
 
-        TripwireVerdict verdict = StoreCountTripwire.Evaluate(baseline, after.Census, hub, lazyStores);
+        // The confirmed removals this process made (Q138) - empty on every run but the one that removed one.
+        IReadOnlyList<ConfirmedRemoval> confirmedRemovals = ConfirmedRemovals.Current;
+        if (confirmedRemovals.Count > 0)
+        {
+            Console.WriteLine("[tripwire] confirmed removal(s) this run: " + string.Join(", ", confirmedRemovals.Select(r => "1 in '" + r.Store + "'"))
+                + " - each accepted as a departure only from a folder identified item by item, and only when the census saw its tag.");
+        }
+
+        TripwireVerdict verdict = StoreCountTripwire.Evaluate(baseline, after.Census, hub, lazyStores, confirmedRemovals);
         TripwireRetryReport retry = TripwireRetryReport.NotNeeded();
         if (verdict.Failed)
         {
@@ -427,7 +435,7 @@ public static class LiveStoreCountTripwire
                 "re-census " + attempt.ToString(CultureInfo.InvariantCulture),
                 _hub,
                 _baseline);
-            return StoreCountTripwire.Evaluate(_baseline, again.Census, _hub, _lazyStores);
+            return StoreCountTripwire.Evaluate(_baseline, again.Census, _hub, _lazyStores, ConfirmedRemovals.Current);
         }
 
         /// <summary>

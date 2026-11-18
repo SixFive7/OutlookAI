@@ -15,7 +15,7 @@ been unrebuildable. Hence the rule at the bottom of this file.
 | --- | --- | --- |
 | Windows | A Windows 11 x64 image | **STAGED 2026-08-24**: `.work/media/Win11_25H2_EnglishInternational_x64_v2.iso` (7.9 GB, gitignored). Consumer multi-edition, volume label `CCCOMA_X64FRE_EN-GB_DV9`, so it carries Pro. |
 | Office | Office Deployment Tool + a configuration | **STAGED**: `.work/office-odt/` (gitignored), holding `setup.exe` and `Workstation.xml`. A testbed-specific `Testbed.xml` sits beside them — see below. |
-| .NET SDK | The .NET 10 SDK, **win-x64**, as the `.exe` installer | **STAGED 2026-09-17**: `.work/media/dotnet-sdk-10.0.401-win-x64.exe` (215,437,248 bytes, gitignored), SHA-512 **matched against Microsoft's published hash**. It is what lets a guest run `dotnet test` at all — see "The .NET SDK" below for the version, the source and the hash. |
+| .NET SDK | The .NET 11 SDK, and a .NET 10 SDK beside it, **win-x64**, as `.exe` installers | **STAGED 2026-11-18** (Q172): `.work/media/dotnet-sdk-11.0.100-win-x64.exe` (236,244,816 bytes) and `.work/media/dotnet-sdk-10.0.404-win-x64.exe` (218,476,784 bytes), gitignored, each SHA-512 **matched against Microsoft's published hash**. The checkpoints made before that day hold `.work/media/dotnet-sdk-10.0.401-win-x64.exe` (215,437,248 bytes, staged 2026-09-17), kept for the branches whose runners still name them. They are what let a guest run `dotnet test` at all - see "The .NET SDK" below for the versions, the sources and the hashes. |
 | Mail sink | Inbucket **3.1.1**, the Windows x64 release zip | **STAGED 2026-09-24**: `.work/media/inbucket_3.1.1_windows_amd64.zip` (11,444,052 bytes, gitignored), SHA-256 **matched three ways** - the maintainers' own checksums file, GitHub's asset digest, and the file itself. The one third-party program on the guests, by the maintainer's decision - see "The mail sink" below. `Testbed/host/Get-MailSinkMedia.ps1` stages it. |
 | VSTO runtime | `vstor_redist.exe` 10.0.60917.00, the Visual Studio 2010 Tools for Office runtime redistributable — **the same file every release compiles into its installer** | **Declared 2026-09-24; its home is `.work/media/vstor_redist.exe`.** On this machine an identical copy (same SHA-256, Microsoft-signed) sits at `Redist/vstor_redist.exe`, where a local release build expects it, and that is what the first host builds used. See "The add-in" below. |
 
@@ -233,7 +233,51 @@ forbids "anything a rebuilder would have to download and install beyond the medi
 that rule points at, the same one the Windows ISO, the Office Deployment Tool and the mail sink
 package already use. Microsoft's own SDK, free, no licence key, no third-party component.
 
-### Which version, and why
+### Since 2026-11-18: the .NET 11 SDK, and the .NET 10 SDK beside it (Q172)
+
+The maintainer moved OutlookAI to .NET 11 on 2026-11-18 (Q172), so every checkpoint a runner restores
+from then on holds the .NET 11 SDK, and the build VMs and `OutlookAI-Exchange` a .NET 10 SDK beside it,
+so that a branch still on .NET 10 keeps building there.
+
+| | .NET 11 | .NET 10, beside it |
+| --- | --- | --- |
+| Pinned version | **11.0.100** - what the host runs, read with `dotnet --list-sdks` on 2026-11-18 | **10.0.404** |
+| Release | .NET 11.0.0, 2026-11-10 | .NET 10.0.15, the same day |
+| File | `dotnet-sdk-11.0.100-win-x64.exe` - **236,244,816 bytes** | `dotnet-sdk-10.0.404-win-x64.exe` - **218,476,784 bytes** |
+| Staged at | `.work/media/` on the host, beside the 10.0.401 installer | the same |
+| Recorded hash (SHA-512) | `9777f9c9b8ea136a3aa5284f6bd33b0f1b3133fbc96d05d5c725683ccc101bc2fb2830c4182e199ec236c61a5e703a77b05770dcf3c881552ef77c7ada0584ff` | `c86b0aeb8c5ce0cd6dd290fb2b10bb112302d849d05cbcbcbc0ed4e5a15f66d1376e05bc77910bf66580d6a779390ec863e2bd6e51e7e21880d587b8b30c7b08` |
+| Hash provenance | **Matched against Microsoft's own published value**: `https://builds.dotnet.microsoft.com/dotnet/release-metadata/11.0/releases.json`, release **11.0.0**, `sdk.files[]`, the entry named `dotnet-sdk-win-x64.exe` (the metadata names it without the version, as below) | `https://builds.dotnet.microsoft.com/dotnet/release-metadata/10.0/releases.json`, release **10.0.15**, `sdks[]` 10.0.404, the same entry name |
+| Signature | Authenticode valid, `CN=.NET, O=Microsoft Corporation`, a certificate valid from 2026-04-16 - before every frozen guest's clock | the same certificate |
+| On | the build VMs' `CP-04-SDK11-TEST-READY-UTC`, the Outlook guests' new frozen checkpoints, `OutlookAI-Exchange` | the build VMs' `CP-04-SDK11-TEST-READY-UTC` and `OutlookAI-Exchange` - not the frozen guests (below) |
+| Installed with | `Testbed/guest/Install-DotnetSdk.ps1`, whose defaults name it: `-ExpectedSha512 <hash> -Execute` | the same script, `-InstallerPath <it> -ExpectedSdkVersionPrefix 10.0.404 -ExpectedSha512 <hash> -Execute` - an exact prefix, because the 10.0.401 already there satisfies `10.` |
+
+**Why 10.0.404, and not the 10.0.401 the older checkpoints hold.** This repository has no
+`global.json`, so `dotnet` builds with the newest SDK it has: where SDK 11 is installed, a .NET 10
+branch is built by SDK 11, as it is on the host. SDK 11.0.100 builds a `net10.0` project against
+.NET 10's **10.0.15** targeting packs - its `Microsoft.NETCoreSdk.BundledVersions.props` says
+`TargetingPackVersion="10.0.15"`, and the apphost pack the same - and downloads them from NuGet when
+they are not installed. The host has them; a guest has no network, and SDK 10.0.401 carries 10.0.12.
+Restored on the host with no packs to find, the main branch asks for exactly four, each 10.0.15:
+`Microsoft.NETCore.App.Ref`, `Microsoft.NETCore.App.Host.win-x64`, `Microsoft.WindowsDesktop.App.Ref`
+and `Microsoft.AspNetCore.App.Ref` (measured 2026-11-18). SDK 10.0.404 is the .NET 10 SDK of the same
+release day and installs exactly those. It replaces 10.0.401 in place, as an SDK of the same feature
+band does: on `OutlookAI-Build3` `dotnet --list-sdks` read `10.0.404` and `11.0.100` afterwards, and
+SDK 11 built the .NET 10 suite there offline (`Docs/live-tier-on-the-vm.md` section 4.12).
+
+**Why the frozen guests have SDK 11 and no 10.0.404.** A frozen guest's instant moves by every minute
+between the restore and the checkpoint taken after it (`Docs/live-tier-on-the-vm.md` section 4.5), and
+the indexed guest's frontier margin leaves 6 minutes 49 seconds. On `OutlookAI-Build3`, under the
+morning's load, the 10.0.404 installer took 7 minutes 5 seconds - an upgrade, removing 10.0.401's
+packages first - and the 11.0.100 one 3 minutes 2 seconds. So the new frozen checkpoints hold 10.0.401
+beside 11.0.100 and build .NET 11 branches only: there a .NET 10 branch, built by SDK 11, would ask for
+the 10.0.15 packs and fail its restore offline. The live runner therefore moves to them in the commit
+that moves the code to .NET 11, and until then restores the frozen checkpoints a .NET 10 branch needs.
+
+### Until 2026-11-18: SDK 10.0.401, and why
+
+*The SDK of every checkpoint made before 2026-11-18 (Q172), kept for the branches whose runners still
+name those checkpoints. What follows is how it was chosen, and the reasoning still holds: pin the
+guests to the host's SDK.*
 
 | | Value |
 | --- | --- |
@@ -321,7 +365,8 @@ not written**: `Testbed/host/New-LiveTestSettings.ps1` builds it from the guest'
 ### Installing it, and where in the build order it goes
 
     pwsh -File Testbed/host/Publish-LiveTierPayload.ps1
-    pwsh -File Testbed/host/Copy-ToGuest.ps1 -VMName <guest> -Path .work\media\dotnet-sdk-10.0.401-win-x64.exe -Destination C:\OutlookAI-Q5\media\dotnet-sdk-10.0.401-win-x64.exe
+    pwsh -File Testbed/host/Copy-ToGuest.ps1 -VMName <guest> -Path .work\media\dotnet-sdk-10.0.404-win-x64.exe -Destination C:\OutlookAI-Q5\media\dotnet-sdk-10.0.404-win-x64.exe
+    pwsh -File Testbed/host/Copy-ToGuest.ps1 -VMName <guest> -Path .work\media\dotnet-sdk-11.0.100-win-x64.exe -Destination C:\OutlookAI-Q5\media\dotnet-sdk-11.0.100-win-x64.exe
     pwsh -File Testbed/host/Copy-ToGuest.ps1 -VMName <guest> -Path .work\testbed-livetier-payload\Source.zip -Destination C:\OutlookAI-Q5\Source.zip
     pwsh -File Testbed/host/Copy-ToGuest.ps1 -VMName <guest> -Path .work\testbed-livetier-payload\NuGet.zip  -Destination C:\OutlookAI-Q5\NuGet.zip
 
@@ -332,7 +377,16 @@ Outlook cannot finish starting in session 0.
 
     Expand-Archive C:\OutlookAI-Q5\Source.zip -DestinationPath C:\OutlookAI-Q5\src            -Force
     Expand-Archive C:\OutlookAI-Q5\NuGet.zip  -DestinationPath C:\OutlookAI-Q5\nuget-offline  -Force
-    .\Install-DotnetSdk.ps1 -ExpectedSha512 <hash> -Execute
+    .\Install-DotnetSdk.ps1 -InstallerPath C:\OutlookAI-Q5\media\dotnet-sdk-10.0.404-win-x64.exe -ExpectedSdkVersionPrefix 10.0.404 -ExpectedSha512 <its hash> -Execute
+    .\Install-DotnetSdk.ps1 -ExpectedSha512 <11.0.100's hash> -Execute
+
+The .NET 10 SDK first: the second run's verify builds the staged suite with SDK 11, and a .NET 10
+suite needs 10.0.404's packs for that. A frozen guest gets the second line alone (above).
+**Copying the installers over PowerShell Direct is slow** - 434 MB took 142 s on
+`OutlookAI-Build3` on 2026-11-18, about 3 MB/s with the host busy. Where time matters, put them on a
+disc image and attach it: `oscdimg -u1 -udfver102 -l<label> <folder> <image>.iso` (the same tool as the
+answer volume), `Set-VMDvdDrive -VMName <vm> -ControllerNumber 0 -ControllerLocation 1 -Path <image>.iso`
+on the running guest, run or copy from its drive, and eject it (`-Path $null`) before any checkpoint.
 
 **Budget ~2.5 GB on the guest's C:** — roughly 900 MB installed SDK, ~300 MB extracted package
 cache, and a Release build of the suite on top.
@@ -614,6 +668,13 @@ code. So "no functional loss" is measured for the read path and *inferred* for t
 from Microsoft's wording. If a write path did degrade past grace, this measurement would not have
 seen it.
 
+**Corrected 2026-11-18: on the Exchange VM the write path DID stop past grace, and a re-arm brought
+it back.** Past its grace that guest's Outlook created no item through its object model - `Items.Add`
+answered E_ABORT (0x80004004) and `CreateItem` "The operation failed." - while every read worked; one
+re-arm with Office's own `OSPPREARM.EXE` and an Outlook restart later, a draft was made at once and a
+whole write run made every item it tried to (section below, and `Docs/live-tier-on-the-vm.md` section
+4.4a). So "no functional loss" holds for the reads measured here and is wrong for creating items.
+
 **THE COLD START WAS THE ACTUAL RISK, AND IT HAS NOW BEEN MEASURED. IT DOES NOT HAPPEN.**
 
 The concern was a modal activation prompt appearing when Outlook is **started** on a past-grace
@@ -676,6 +737,15 @@ puts it out of reach of a probe.
   Settings and the Signatures dialog still open.
 - The two Outlook guests do not meet the wizard: their clocks are frozen at 2026-10-03, 18 days after
   their Office was installed, inside the grace.
+- **Past grace Outlook creates no item, and a re-arm fixes it (decision 206 (a), measured 2026-11-18).**
+  Read before: `LicenseStatus` 5, `LicenseStatusReason` 0xC004F056, `GracePeriodRemaining` 0,
+  `RemainingAppReArmCount` and `RemainingSkuReArmCount` 3. Over PowerShell Direct, elevated,
+  `C:\Program Files\Microsoft Office\Office16\OSPPREARM.EXE` with no argument: exit 0, "Microsoft Office
+  rearm successful." Read after: `LicenseStatus` 2 (out-of-box grace), `LicenseStatusReason` 0x4004F00C,
+  `GracePeriodRemaining` 43,200 minutes - 30 days, to about 02:56 on 2026-12-18 - and both re-arm counts
+  2. Outlook restarted gracefully (`Testbed/host/Restart-Guest.ps1 -Execute`), started again without the
+  Activation Wizard, and made a draft at the first try. The re-arm is in checkpoint
+  `CP-09-OFFICE-REARMED`; a checkpoint restored from before it brings the expired grace back.
 
 ### Reading the licence state — the query, and why it is shaped this way
 
@@ -815,7 +885,7 @@ test there sends mail. Its NuGet feed and its source are artefacts, staged from 
 | Media | On the build VM |
 | --- | --- |
 | Windows 11 image | yes - the unattended install, 2026-10-03 |
-| .NET SDK 10.0.401 | yes - `C:\OutlookAI-Q5\media\`, installed by `Testbed/guest/Install-DotnetSdk.ps1` |
+| .NET SDK 11.0.100 and 10.0.404 | yes, since `CP-04-SDK11-TEST-READY-UTC` (2026-11-18, Q172) - `C:\OutlookAI-Q5\media\`, installed by `Testbed/guest/Install-DotnetSdk.ps1`; 10.0.401 in `CP-01` to `CP-03` |
 | Office Deployment Tool and `Testbed.xml` | no - an optional later step (README section 1c), for the day a test needs Office |
 | Mail sink, VSTO runtime | no |
 
@@ -830,8 +900,9 @@ its own, which the restore at its end discards: straight after one, it held 30 M
 
 **`OutlookAI-Exchange` (`Testbed/README.md` section 1d; Q108 to Q111, 2026-10-03) needs no media
 this file does not already name.** Windows from the image above, unattended, with the same answer
-file; Office from `.work/office-odt/Testbed.xml`, unchanged; the .NET SDK pinned above. Two things
-come out differently, both because it is online (Q111):
+file; Office from `.work/office-odt/Testbed.xml`, unchanged; the .NET SDK pinned above - 10.0.401
+until 2026-11-18, 11.0.100 and 10.0.404 since (Q172). Two things come out differently, both because it
+is online (Q111):
 
 * **Office came from Microsoft's content network, so it is a later build of the same channel**:
   16.0.17932.21000, against the other guests' 16.0.17932.20884 (`PerpetualVL2024`, x64, and updates

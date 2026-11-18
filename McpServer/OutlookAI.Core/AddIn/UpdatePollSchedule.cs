@@ -1,6 +1,6 @@
 using System;
 
-namespace OutlookAI.Services
+namespace OutlookAI.Core.AddIn
 {
     /// <summary>
     /// WHEN THE UPDATER IS ALLOWED TO TOUCH THE NETWORK: the first-check delay and the
@@ -8,30 +8,21 @@ namespace OutlookAI.Services
     ///
     /// <para>
     /// It lives in its own file, holding no state and touching nothing, for one reason: this
-    /// is the only part of <see cref="UpdateService"/> that can be tested. The rest of that
+    /// is the only part of the add-in's <c>UpdateService</c> that can be tested. The rest of that
     /// class is an <c>HttpClient</c>, a <c>System.Threading.Timer</c> and Outlook's process
-    /// lifetime, none of which a test host has. This file is LINKED into
-    /// <c>OutlookAI.McpServer.Tests</c> (T1 <c>UpdatePollScheduleTests</c>) the same way
-    /// <c>AddInServerContract.cs</c> and <c>McpConfigEditor.cs</c> are, so the curve the
-    /// add-in actually ships is the curve the suite pins - not a copy of it.
-    /// </para>
-    ///
-    /// <para>
-    /// FRAMEWORK-NEUTRAL and INTERNAL, under the same rules as the other linked files: it
-    /// compiles as net48 (the add-in, C# 7.3) and as net10 (the test host, nullable-enabled
-    /// with warnings as errors), so no nullable annotations and nothing newer than C# 7.3. A
-    /// PUBLIC type in a file compiled into two assemblies that can see each other is CS0436,
-    /// which is an error here.
+    /// lifetime, none of which a test host has. OutlookAI.Core's, in the add-in namespace
+    /// (Q163 (a)), so the curve the add-in ships is the curve T1 <c>UpdatePollScheduleTests</c>
+    /// pins - one compiled copy, not a copy of it.
     /// </para>
     /// </summary>
-    internal static class UpdatePollSchedule
+    public static class UpdatePollSchedule
     {
         /// <summary>
         /// How often a healthy machine looks for an update. Every sentence in the product that
         /// says how often OutlookAI checks builds itself from this
-        /// (<see cref="UpdateService.PollIntervalDescription"/>) rather than restating it.
+        /// (the add-in's <c>UpdateService.PollIntervalDescription</c>) rather than restating it.
         /// </summary>
-        internal static readonly TimeSpan BaseInterval = TimeSpan.FromMinutes(10);
+        public static readonly TimeSpan BaseInterval = TimeSpan.FromMinutes(10);
 
         /// <summary>
         /// HOW LONG THE UPDATER WAITS AFTER A DISRUPTIVE EVENT BEFORE TOUCHING THE NETWORK,
@@ -56,7 +47,7 @@ namespace OutlookAI.Services
         /// update notices it at all - the poll behind it is ten minutes wide.
         /// </para>
         /// </summary>
-        internal static readonly TimeSpan SettleDelay = TimeSpan.FromSeconds(30);
+        public static readonly TimeSpan SettleDelay = TimeSpan.FromSeconds(30);
 
         /// <summary>
         /// HOW MANY CONSECUTIVE FAILURES ARE TOLERATED AT FULL RATE before the interval starts
@@ -66,7 +57,7 @@ namespace OutlookAI.Services
         /// those at full rate means a blip never costs the user a late update, and it is the
         /// only cost of not backing off from the first failure.
         /// </summary>
-        internal const int FailuresBeforeBackoff = 3;
+        public const int FailuresBeforeBackoff = 3;
 
         /// <summary>
         /// THE CEILING ON THE BACKOFF, and therefore the worst case for how long a machine
@@ -93,7 +84,7 @@ namespace OutlookAI.Services
         /// the sidebar and in Settings runs now and restarts the poll clock from there.
         /// </para>
         /// </summary>
-        internal static readonly TimeSpan MaxInterval = TimeSpan.FromHours(2);
+        public static readonly TimeSpan MaxInterval = TimeSpan.FromHours(2);
 
         /// <summary>
         /// Guards <c>2^doublings</c> against a failure count that has been climbing for months.
@@ -125,7 +116,7 @@ namespace OutlookAI.Services
         /// values are treated as zero rather than rejected - this decides a timer's due time,
         /// and there is no caller for whom throwing here would be better than polling.
         /// </param>
-        internal static TimeSpan DelayAfter(int consecutiveFailures)
+        public static TimeSpan DelayAfter(int consecutiveFailures)
         {
             if (consecutiveFailures < FailuresBeforeBackoff)
                 return BaseInterval;
@@ -143,7 +134,7 @@ namespace OutlookAI.Services
         /// force is longer than <see cref="BaseInterval"/>. Exists so a caller can say so
         /// without re-deriving the threshold.
         /// </summary>
-        internal static bool IsBackingOff(int consecutiveFailures)
+        public static bool IsBackingOff(int consecutiveFailures)
         {
             return consecutiveFailures >= FailuresBeforeBackoff;
         }

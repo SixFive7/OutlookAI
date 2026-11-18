@@ -471,18 +471,9 @@ if (-not (Test-GuestIdentity -UserName $env:USERNAME -ComputerName $env:COMPUTER
     throw "REFUSING TO RUN: the computer name '$env:COMPUTERNAME' does not start with '$ExpectedComputerNamePrefix'. The testbed guests are named OAI-* by Testbed/host/New-AnswerFile.ps1; this script disables Outlook's programmatic-access prompts and must never run anywhere else. If you named a guest differently, pass -ExpectedComputerNamePrefix. Do not widen the default."
 }
 
-function Say([string] $m) {
-    $line = "[{0:HH:mm:ss}] {1}" -f (Get-Date), $m
-    Write-Host $line
-    if ($LogPath) {
-        try {
-            $dir = Split-Path -Parent $LogPath
-            if ($dir -and -not (Test-Path -LiteralPath $dir)) { [void][System.IO.Directory]::CreateDirectory($dir) }
-            Add-Content -LiteralPath $LogPath -Value $line -Encoding UTF8
-        }
-        catch { }
-    }
-}
+# Say is one of the helpers the scripts share, dot-sourced from ScriptHelpers.ps1, which travels with the
+# guest scripts (Q154, Q166 (b), decision 215 (a)) and says why. It appends to $LogPath when there is one.
+. (Join-Path $PSScriptRoot 'ScriptHelpers.ps1')
 
 # =============================================================================================
 # READING THE MACHINE

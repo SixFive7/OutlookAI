@@ -325,7 +325,9 @@ $NonInboxPstNids = @{
     0x8062 = 'the spam search folder'
 }
 
-function Say([string] $m) { Write-Host ("[{0:HH:mm:ss}] {1}" -f (Get-Date), $m) }
+# Say is one of the helpers the scripts share, dot-sourced from ScriptHelpers.ps1, which travels with the
+# guest scripts (Q154, Q166 (b), decision 215 (a)) and says why.
+. (Join-Path $PSScriptRoot 'ScriptHelpers.ps1')
 
 # =============================================================================================
 # PURE DECISIONS. No registry, no COM, no files. -SelfTest drives every one of them.

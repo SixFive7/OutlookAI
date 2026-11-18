@@ -417,20 +417,9 @@ $ProbeMailSql = "SELECT TOP 1 System.ItemUrl FROM SystemIndex WHERE System.Kind=
 $ClusionReasonNames = @{ 0 = 'UNKNOWNSCOPE'; 1 = 'DEFAULT'; 2 = 'USER'; 3 = 'GROUPPOLICY' }   # SearchAPI.h:2697-2702
 $CatalogStatusNames = @{ 0 = 'IDLE'; 1 = 'PAUSED'; 2 = 'RECOVERING'; 3 = 'FULL_CRAWL'; 4 = 'INCREMENTAL_CRAWL'; 5 = 'PROCESSING_NOTIFICATIONS'; 6 = 'SHUTTING_DOWN' }   # SearchAPI.h:3720-3729
 
-function Say([string] $m) {
-    $line = "[{0:HH:mm:ss}] {1}" -f (Get-Date), $m
-    Write-Host $line
-    if ($LogPath) {
-        try {
-            $dir = Split-Path -Parent $LogPath
-            if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
-            Add-Content -LiteralPath $LogPath -Value $line -Encoding UTF8
-        }
-        catch {
-            # A log that cannot be written must not stop the work it was recording.
-        }
-    }
-}
+# Say is one of the helpers the scripts share, dot-sourced from ScriptHelpers.ps1, which travels with the
+# guest scripts (Q154, Q166 (b), decision 215 (a)) and says why. It appends to $LogPath when there is one.
+. (Join-Path $PSScriptRoot 'ScriptHelpers.ps1')
 
 # ---------------------------------------------------------------------------------------------
 # THE GUARD. FIRST CALL IN EVERY PATH THAT WRITES - and in -Verify too, because a verification

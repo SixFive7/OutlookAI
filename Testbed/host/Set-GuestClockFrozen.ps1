@@ -149,13 +149,9 @@ $script:NeverFrozen = @{
     'OutlookAI-Exchange' = 'the Exchange VM is never frozen: Microsoft 365 sign-in needs real time'
 }
 
-function Say([string] $m) {
-    $line = "[{0:HH:mm:ss}] {1}" -f (Get-Date), $m
-    Write-Host $line
-    if ($LogPath) {
-        try { Add-Content -LiteralPath $LogPath -Value $line -Encoding UTF8 } catch { }
-    }
-}
+# Say is one of the helpers the scripts share, dot-sourced from Testbed/guest/ScriptHelpers.ps1 (Q154,
+# Q166 (b), decision 215 (a)), which says why. It appends to $LogPath when there is one.
+. (Join-Path $PSScriptRoot '..\guest\ScriptHelpers.ps1')
 
 # ---------------------------------------------------------------------------------------------
 # Pure parts - -SelfTest pins them
