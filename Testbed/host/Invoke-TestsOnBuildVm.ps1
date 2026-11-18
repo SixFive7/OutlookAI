@@ -765,8 +765,11 @@ function Invoke-SelfTest {
         try { [void](New-RunDirectory -Parent $claimScratch -RunId '..\escape') } catch { $threw = $_.Exception.Message }
         Check 'a run id that is no plain name is refused' $true ($threw.Contains('Not a run id'))
         $threw = ''
-        try { [void](New-RunDirectory -Parent $claimScratch -RunId 'full' -MaxTries 1); [void](New-RunDirectory -Parent $claimScratch -RunId 'full' -MaxTries 1) } catch { $threw = $_.Exception.Message }
-        Check 'and when every name it may try is taken it refuses, saying so' $true ($threw.Contains('are all taken'))
+        try { 1..4 | ForEach-Object { [void](New-RunDirectory -Parent $claimScratch -RunId 'full' -MaxTries 3) } } catch { $threw = $_.Exception.Message }
+        Check 'and when every name it may try is taken it refuses, saying so' $true ($threw.Contains('full and -2 to -3 are all taken'))
+        $threw = ''
+        try { [void](New-RunDirectory -Parent $claimScratch -RunId 'full' -MaxTries 1) } catch { $threw = $_.Exception.Message }
+        Check 'with -MaxTries 1 it claims the one name or refuses, trying no other' $true ($threw.Contains('full is already taken'))
         Check 'no claim directory is left behind' 0 @(Get-ChildItem -LiteralPath $claimScratch -Force -Filter '.claim-*').Count
 
         # The race as it happens: two creators, each a process of its own, claim one name 25 times at once.

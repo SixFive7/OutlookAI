@@ -2289,7 +2289,10 @@ its mailbox tests on, and change nothing you install.
   its summary, and the build-machine runner's janitor accepts it. The build-machine runner's
   self-test pins the helper, two processes racing to claim one name 25 times each among its checks,
   and each runner's self-test that it claims its folder this way before anything is named after the
-  run.
+  run. `Tools/Switch-AddInBuild.ps1`, which names its build folder and the dev build it puts in
+  Outlook the same way, claims both with the same helper: two builds of one commit started in the
+  same second get a folder each, and a dev build's folder that another run made first refuses the
+  second, where it used to be copied into.
 
 - ✅ **The Exchange machine's preflight says when Outlook has refused an old .ost file.**
   On 2026-11-18 the preflight stopped two live runs on the Exchange test machine: the real mailbox was

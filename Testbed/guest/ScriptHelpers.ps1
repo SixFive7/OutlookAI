@@ -219,7 +219,8 @@ function New-RunId {
 # -3, and so on. Two runs of one commit started in the same second shared one directory until
 # 2026-11-18: stream K2's two indexed runs at 12:14:18 wrote one log, one's git worktree add failed, and
 # the other's build failed when the first deleted the tree. Returns RunId - the name the run goes by
-# from here on - and Path, the directory's full path. -Parent is made when it is missing.
+# from here on - and Path, the directory's full path. -Parent is made when it is missing. -MaxTries 1
+# claims the one name or refuses: Switch-AddInBuild.ps1's dev build folder, which is never reused.
 function New-RunDirectory {
     param([Parameter(Mandatory = $true)] [string] $Parent, [Parameter(Mandatory = $true)] [string] $RunId, [int] $MaxTries = 99)
     if ($RunId -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$') { throw "Not a run id: '$RunId'." }
@@ -242,7 +243,8 @@ function New-RunDirectory {
                 if (-not (Test-Path -LiteralPath $path)) { throw }
             }
         }
-        throw "REFUSING: $RunId and the $($MaxTries - 1) names after it are all taken under $parentFull."
+        if ($MaxTries -le 1) { throw "REFUSING: $RunId is already taken under $parentFull." }
+        throw "REFUSING: $RunId and -2 to -$MaxTries are all taken under $parentFull."
     }
     finally {
         if (Test-Path -LiteralPath $claim) { Remove-Item -LiteralPath $claim -Recurse -Force -ErrorAction SilentlyContinue }
