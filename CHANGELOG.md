@@ -1032,7 +1032,17 @@ its mailbox tests on, and change nothing you install.
   and asks for a heartbeat with one narrow query where it asked 23 WMI operations. `Restart-Guest.ps1`
   and `Set-GuestClockFrozen.ps1`, which print what a heartbeat reads, share `Get-VmHeartbeatStatus`.
   Check 4 now holds the host's pool and lease files, `TestbedPool.ps1` and `TestbedLeasePath.ps1`, to
-  one copy as well.
+  one copy as well. The guest guard went the same way: whether a session is a test guest's - its
+  account and the prefix of its computer name - and the refusal a script throws on any other machine
+  are `Test-GuestIdentity` and `Assert-TestbedGuestIdentity` in the shared file, which each script
+  hands its own words for what it would have done there. Five guest scripts call them from the file;
+  five that reach a machine on their own - the first-logon script, the SDK and mail sink installers,
+  the crash-dump arming and the unelevated Outlook start - keep copies check 4 holds identical. Where
+  a guard took an empty prefix to match every computer name, the shared one refuses it, and the
+  Exchange VM's three measurements and the Outlook start now refuse in the same words as the rest.
+  `check-testbed-references` check 9 accepts the shared guard only after the script dot-sources the
+  file, and fails a shared guard that stops reading the account or stops throwing; both failures were
+  made on a scratch copy, and it reported each.
 
 - 📝 **If Office's own grace reset fails, the Exchange test machine may get Microsoft 365 Apps (Q206).**
   The maintainer's decision Q206, 2026-11-18, now in AGENTS.md beside the machine's internet

@@ -247,3 +247,27 @@ function Get-VmHeartbeatStatus([string] $VMName) {
     if (-not $hb) { return 'absent' }
     return [string]$hb.PrimaryStatusDescription
 }
+
+# Whether a session is a test guest's, by the two marks a guest built from the answer file carries: the
+# account logged on is one of -Users, and the computer name starts with -Prefix - Testbed/host/
+# New-AnswerFile.ps1 names a guest 'OAI-...'. An empty prefix matches nothing, never everything.
+function Test-GuestIdentity {
+    param([string] $UserName, [string] $ComputerName, [string[]] $Users, [string] $Prefix)
+    $userOk = $false
+    foreach ($u in $Users) { if ($UserName -eq $u) { $userOk = $true } }
+    $machineOk = [bool]($Prefix -and $ComputerName -and $ComputerName.StartsWith($Prefix, [System.StringComparison]::OrdinalIgnoreCase))
+    return ($userOk -and $machineOk)
+}
+
+# THE GUEST GUARD of a script that must touch no machine but a test guest: it returns on one - the
+# calling script's own $ExpectedUser and $ExpectedComputerNamePrefix, read as $script: variables - and
+# otherwise throws a refusal that says who is logged on where and then -Why, what the script would
+# have done to the machine. Tools/Checks/check-testbed-references.ps1 check 9 holds every guest script
+# that writes to calling a guard before its first write.
+function Assert-TestbedGuestIdentity {
+    param([string] $Why)
+    $users = @($script:ExpectedUser)
+    $prefix = [string]$script:ExpectedComputerNamePrefix
+    if (Test-GuestIdentity -UserName $env:USERNAME -ComputerName $env:COMPUTERNAME -Users $users -Prefix $prefix) { return }
+    throw ("REFUSING TO RUN.`n`n  logged on as : '{0}'          (allowed: {1})`n  computer name: '{2}'      (must start with: '{3}')`n`n{4}" -f $env:USERNAME, ($users -join ', '), $env:COMPUTERNAME, $prefix, $Why)
+}

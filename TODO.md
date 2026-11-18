@@ -1706,6 +1706,10 @@
   guest runners' id, state, heartbeat wait and checkpoint restore went into
   `Testbed/host/TestbedPool.ps1`, beside the narrow queries they ask (S7d step 2), and check 4 holds
   that file and `TestbedLeasePath.ps1` to one copy too; its list of copies not folded yet is empty.
+  P05's guest guard is `Test-GuestIdentity` and `Assert-TestbedGuestIdentity` in the shared file
+  (S7c step 2), five scripts that travel alone keeping identical copies; P05's elevation, bitness
+  and Outlook-closed guards, which differ script by script, and P06's profile helpers (S7c step 3)
+  are left.
   What remains, one stage at a time: S4, the signature and draft code (A01-A05, A08, A09, A12) with
   Q162's checkbox, Core winning where the copies drifted apart and the pane's visible differences
   measured on a test machine first (Q165 (c)), and the pane driven on a test machine (Q168 (b));

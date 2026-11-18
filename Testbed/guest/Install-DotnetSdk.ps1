@@ -367,28 +367,25 @@ function Say([string] $m) {
 # THE GUARD. FIRST CALL IN EVERY PATH, -Verify included - a verification builds a Release tree
 # inside the source root and executes test code, and neither belongs on a workstation either.
 # ---------------------------------------------------------------------------------------------
-function Assert-TestbedGuestLocal {
-    $who = $env:USERNAME
+# The guest guard: Test-GuestIdentity and Assert-TestbedGuestIdentity, copies of ScriptHelpers.ps1's that
+# Tools/Checks/check-powershell-51.ps1 check 4 holds identical, then what this script would have done elsewhere.
+function Test-GuestIdentity {
+    param([string] $UserName, [string] $ComputerName, [string[]] $Users, [string] $Prefix)
     $userOk = $false
-    foreach ($candidate in $ExpectedUser) {
-        if ($who -eq $candidate) { $userOk = $true }
-    }
+    foreach ($u in $Users) { if ($UserName -eq $u) { $userOk = $true } }
+    $machineOk = [bool]($Prefix -and $ComputerName -and $ComputerName.StartsWith($Prefix, [System.StringComparison]::OrdinalIgnoreCase))
+    return ($userOk -and $machineOk)
+}
 
-    $machine = $env:COMPUTERNAME
-    $machineOk = $false
-    if ($ExpectedComputerNamePrefix -and $machine -and
-        $machine.StartsWith($ExpectedComputerNamePrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
-        $machineOk = $true
-    }
+function Assert-TestbedGuestIdentity {
+    param([string] $Why)
+    $users = @($script:ExpectedUser)
+    $prefix = [string]$script:ExpectedComputerNamePrefix
+    if (Test-GuestIdentity -UserName $env:USERNAME -ComputerName $env:COMPUTERNAME -Users $users -Prefix $prefix) { return }
+    throw ("REFUSING TO RUN.`n`n  logged on as : '{0}'          (allowed: {1})`n  computer name: '{2}'      (must start with: '{3}')`n`n{4}" -f $env:USERNAME, ($users -join ', '), $env:COMPUTERNAME, $prefix, $Why)
+}
 
-    if ($userOk -and $machineOk) { return }
-
-    throw @"
-REFUSING TO RUN.
-
-  logged on as : '$who'          (allowed: $($ExpectedUser -join ', '))
-  computer name: '$machine'      (must start with: '$ExpectedComputerNamePrefix')
-
+$GuestGuardWhy = @"
 This script installs a .NET SDK system-wide, edits machine environment variables, and then
 builds and executes test code out of a staged source tree. None of that belongs on a machine
 with real mail on it, and an SDK arriving on a workstation by accident is the kind of change
@@ -403,7 +400,6 @@ else, say so:
 
 Do not 'fix' this by widening either default. The defaults are the guard.
 "@
-}
 
 function Assert-Elevated {
     $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
@@ -563,7 +559,7 @@ function Update-SessionPath {
 # Dry run.
 # ---------------------------------------------------------------------------------------------
 if (-not ($Execute -or $Verify)) {
-    Assert-TestbedGuestLocal
+    Assert-TestbedGuestIdentity -Why $GuestGuardWhy
     Say 'DRY RUN. Would:'
     Say "    check   $InstallerPath against a SHA-512 supplied with -ExpectedSha512"
     Say ("    run     " + (Split-Path -Leaf $InstallerPath) + ' ' + ($InstallerArguments -join ' '))
@@ -575,7 +571,7 @@ if (-not ($Execute -or $Verify)) {
     return
 }
 
-Assert-TestbedGuestLocal
+Assert-TestbedGuestIdentity -Why $GuestGuardWhy
 
 # ---------------------------------------------------------------------------------------------
 # Execute.
