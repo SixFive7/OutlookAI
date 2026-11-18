@@ -166,7 +166,7 @@ public sealed class LivePaneTests
 
     private static T WaitFor<T>(string what, Func<T?> read, Func<T, bool> done)
     {
-        DateTime deadline = DateTime.UtcNow + PaneTimeout;
+        LiveWaitBudget wait = LiveWaitBudget.Of(PaneTimeout);
         T? last = default;
         while (true)
         {
@@ -176,7 +176,7 @@ public sealed class LivePaneTests
                 return last;
             }
 
-            if (DateTime.UtcNow >= deadline)
+            if (!wait.HasTimeLeft)
             {
                 throw new TimeoutException($"waited {PaneTimeout.TotalSeconds:F0} s for {what}; last seen: {last?.ToString() ?? "nothing"}");
             }

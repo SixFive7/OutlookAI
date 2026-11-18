@@ -762,6 +762,20 @@ its `\u00e9` came back as `é`. `b9a8b97` left every byte outside the `outlookai
 that entry on one line in its place: `{ "type": "stdio", "command": "${LOCALAPPDATA}/...", "env": {
 "OUTLOOKAI_LOG": "1" }, "args": [] }`.
 
+**The task pane on OutlookAI.Core's code (the code-sharing refactor's stage S4), driven - `OutlookAI-Unindexed`,
+from `CP-16B-FROZEN-CLOCK`, 2026-11-18, run `20261118-095640-unindexed-8cf5431a1050`.** `T2/LivePaneTests`
+through `host/Invoke-LiveTierOnGuest.ps1 -WithAddIn`, which installed the add-in of `8cf5431` over the
+checkpoint's and reached `ADDIN-READY`. The MCP server opened a tagged draft in a compose window with one test
+signature, holding a 1-pixel picture; the test typed an instruction into the pane, clicked "Edit current
+draft" with `BM_CLICK`, and the pane's two requests went to the Claude CLI stand-in. Read off the open window:
+the stand-in's four lines - the third one empty - became 4 paragraphs and no soft line break, as the pane has
+always written them; the pane's AI then chose the second test signature, as the stand-in answered, and it
+replaced the agent's (Q162 (b)); and its picture was in the document embedded, 0 of 1 left a link (D47). The
+first two pane runs that day failed before this one: their add-in was the checkpoint's, which still showed
+"Claude Code CLI was not found" for a CLI installed after Outlook started - which is what `-WithAddIn` and the
+add-in's new re-check of the CLI are for. Not measured here: the recipients' SMTP addresses, which only an
+Exchange recipient's X.500 one would change, and no PST guest has one.
+
 **Checkpoint `CP-03-OUTLOOKAI-INSTALLED` once `-Phase FirstRun` prints `ADDIN-READY`.** `CP-05-ADDIN-TRUSTED`
 is no longer a separate manual step - the trust entry is part of the scripted install - and the name
 survives only as the hand-built guest's history.
