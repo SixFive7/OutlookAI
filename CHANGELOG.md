@@ -794,7 +794,10 @@ its mailbox tests on, and change nothing you install.
   `mcpServers` is `null`, and one that is not well-formed JSON although `JavaScriptSerializer` read
   it - single quotes, unquoted names, leading zeros or a line break inside a string, none of which
   Claude Code can read either. The code is OutlookAI.Core's since the add-in began to use it (Q154),
-  and T1 `McpUserConfigTests` pins it.
+  and T1 `McpUserConfigTests` pins it. Measured on a test machine on 2026-11-18, over a settings file
+  holding a server laid out by hand and our entry as an earlier version wrote it: the earlier add-in
+  wrote the whole `mcpServers` section back on one line and unescaped the hand-written server's `é`,
+  and this one changed its own entry and nothing else (runbook section 2.3).
 
 - 🔧 **`read` prints a mail's folder as every other tool does: its names joined by `/`.**
   It printed Outlook's own folder path, with the store's name in front, backslashes between the
@@ -1208,8 +1211,12 @@ its mailbox tests on, and change nothing you install.
   entry is and the rewrite are `McpConfigEditor`'s, and T1 `McpUserConfigTests` pins them. Check 15
   holds the namespace to its rule with fourteen files in it, and the guest installer's 41 pinned
   lines, the payload's two contract files and checks 4, 12 and 13 follow the files.
-  `Tools/Switch-AddInBuild.ps1 -BuildOnly` built each of the stage's three commits and left the host
-  unchanged.
+  `Tools/Switch-AddInBuild.ps1 -BuildOnly` built the stage's three code commits and both merges with
+  master, and left the host unchanged. On `OutlookAI-Unindexed`, in four passes alternating with the
+  build from before the add-in referenced Core, every start reached `ADDIN-READY`, and the load times
+  Outlook recorded differed more between two passes of one build than between the builds: 3.9 and
+  4.6 s for the first start after an install and 0.8 to 1.7 s after it, against 4.2 and 5.9 s and 0.7
+  to 1.4 s (runbook section 2.3).
 
 - ♻️ **The add-in references OutlookAI.Core and may use one namespace of it (Q164, Q167).**
   Until now the add-in kept its own copies of logic the MCP server has in Core, because it did not

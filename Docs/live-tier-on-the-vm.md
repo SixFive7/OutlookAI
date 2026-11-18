@@ -715,6 +715,53 @@ that first calls Core at startup measures it again. (A first attempt applied `CP
 it still ran: it came back running but unreachable over PowerShell Direct for six minutes, and the
 script now saves a running guest before applying a checkpoint.)
 
+**The add-in calling OutlookAI.Core at startup (the code-sharing refactor's stage S3), against the build
+before the refactor - `OutlookAI-Unindexed`, from `CP-16B-FROZEN-CLOCK`, 2026-11-18.** Two payloads, built
+on the host by `Testbed/host/Publish-AddInPayload.ps1`: `b9a8b97`, whose add-in runs its tuning walk, its
+registration decision and its reading of `~/.claude.json` through Core, and `14907d3` again. Guard 3
+`UNCHANGED` over 318 host lines. Four passes, alternating and `14907d3` first, each from a script under the
+guest's lease: the frozen checkpoint applied over the saved guest (time synchronisation off), staged as in
+the record above, `-Phase Install`, `-Phase FirstRun` twice, then `~/.claude.json` written with one other
+server in it and `HKCU\Software\OutlookAI\Mcp\GlobalRegistrationEnabled` set to 1, and `-Phase FirstRun`
+once more. Then the frozen checkpoint restored, the guest saved and the lease released. The checkpoint
+carries two load times of its own, 1,265 and 657 ms, which every pass read after its own three; the host
+ran three build VMs throughout.
+
+| Pass | Payload | Install | Three starts | Load times Outlook recorded, first start first |
+| --- | --- | --- | --- | --- |
+| 1 | `14907d3` | `INSTALLED-NEVER-RAN`, 2, 55 s | `ADDIN-READY`, 0, each time | 5,906, 1,093 and 1,406 ms |
+| 2 | `b9a8b97` | the same, 29 s | the same | 3,953, 766 and 937 ms |
+| 3 | `14907d3` | the same, 28 s | the same | 4,203, 750 and 688 ms |
+| 4 | `b9a8b97` | the same, 54 s | the same | 4,610, 1,453 and 1,656 ms |
+
+Every start reached `ADDIN-READY`. In every pass the registration reconcile said `claude_code_not_installed`
+before the seed and `server_not_installed` after it: `b9a8b97`'s, with Core's code, read the seeded file,
+found no `outlookai` entry and decided to register, and stopped where a testbed payload always stops, because
+its installer carries no mail server (`Installer.iss`); the seeded file was left as it was. The first start
+after an install took 3.9 to 5.9 s and the later ones 0.7 to 1.7 s with either build. The passes of one build
+differ more than the two builds do, so loading Core at startup costs nothing these four passes can measure on
+a busy host.
+
+**The add-in's registration in `~/.claude.json` before and after S3 - `OutlookAI-Unindexed2`, from
+`CP-16B-FROZEN-CLOCK`, 2026-11-18.** The same two payloads, one pass each, `14907d3` first, under the
+guest's lease: the install and one `-Phase FirstRun` as above; then, with Outlook closed, an empty file put
+where the add-in looks for the mail server, `{app}\McpServer\OutlookAI.McpServer.exe` - a testbed installer
+carries none, and the registration only checks that the file is there - `GlobalRegistrationEnabled` set to
+1, and `~/.claude.json` written with two servers: `other`, laid out by hand with four-space indents, an
+escaped `\u00e9`, `1.50` and an array on one line, and `outlookai` as an earlier version wrote it, the
+installed server's absolute path and an `env` key a person added; then `-Phase FirstRun` once more.
+Registration on with an entry of ours is the case the add-in rewrites without asking. With no entry at all
+it asks first, and a test machine has nobody to answer: a first probe without our entry found
+`awaiting_choice` with both builds, and the file untouched.
+
+Both builds reported `healed`, wrote the portable command
+`${LOCALAPPDATA}/OutlookAI/Setup/McpServer/OutlookAI.McpServer.exe`, kept the `env` key, added
+`"type": "stdio"` and `"args": []`, and kept the file they replaced as `~/.claude.json.outlookai-backup`;
+both results parse. `14907d3` wrote the whole `mcpServers` section back on one line, `other` included, and
+its `\u00e9` came back as `é`. `b9a8b97` left every byte outside the `outlookai` entry as it was and wrote
+that entry on one line in its place: `{ "type": "stdio", "command": "${LOCALAPPDATA}/...", "env": {
+"OUTLOOKAI_LOG": "1" }, "args": [] }`.
+
 **Checkpoint `CP-03-OUTLOOKAI-INSTALLED` once `-Phase FirstRun` prints `ADDIN-READY`.** `CP-05-ADDIN-TRUSTED`
 is no longer a separate manual step - the trust entry is part of the scripted install - and the name
 survives only as the hand-built guest's history.
