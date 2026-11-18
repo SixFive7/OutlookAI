@@ -133,13 +133,20 @@ namespace OutlookAI.RuntimeSetup
         /// network otherwise. Never throws: setup is waiting, and an unhandled exception could leave a
         /// crash dialog it waits on.
         /// </summary>
-        public static ExitCode Run(string? from)
+        public static ExitCode Run(string? from) => Run(from, ServerRuntime.DefaultRoot());
+
+        /// <summary>
+        /// <see cref="Run(string)"/> into another runtime folder: the whole of what setup gets - the real
+        /// download, the checks, the unpack and the swap - for a proof against a scratch folder (Q172
+        /// phase 4). Setup's helper never names one: its only argument is <c>--from</c>.
+        /// </summary>
+        public static ExitCode Run(string? from, string root)
         {
             PrivateRuntime? runtime = null;
             try
             {
                 using var http = new HttpClient { Timeout = ConnectTimeout };
-                runtime = new PrivateRuntime(ServerRuntime.DefaultRoot(), Package.Pinned, HttpDownload(http));
+                runtime = new PrivateRuntime(root, Package.Pinned, HttpDownload(http));
                 using var cancel = new CancellationTokenSource(RunTimeout);
                 string? staged = string.IsNullOrEmpty(from) ? null : Path.Combine(from, PackageFileName);
                 Outcome outcome = runtime.Ensure(staged, cancel.Token);
