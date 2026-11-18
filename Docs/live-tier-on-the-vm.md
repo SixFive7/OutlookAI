@@ -5671,6 +5671,22 @@ That is where the next hunt would look.
 that crashes: the loops never did, even windowed, and the tests that do crash display their compose windows by
 design, which a window-less Outlook cannot be asked to do without showing windows.
 
+**The ablations** (the coordinator's direction of 2026-11-18, evening): the crashing tests run with one of their steps
+left out, to find the one the crash needs. `-HuntAblate` names it to the typed-text tests
+(`HuntPlan.AblateVariable`, read by `T2/LiveQ149TypedTextTests.cs`):
+
+| `-HuntAblate` | What the typed-text tests leave out |
+| --- | --- |
+| `new` | the new mail: only the reply and the forward are typed and made |
+| `layout` | reading Word's layout: no paragraph is walked, in the typed window or in the product's drafts, which are still re-opened and promoted |
+| `signature` | the test signature: the product's second draft of each kind is made without one, and none is made |
+| `source` | a source mail of each test's own: the tests of a leg share the first one's |
+
+And `-HuntVariant PersonTyping` asks the users' question directly: does a person typing in a compose window while an
+agent drafts set it off? A compose window - a new mail or a reply, by turns - stays open on screen, a line is typed into
+it before each of the product's replies and forwards, and it is closed discarding after five of them
+(`HuntPlan.DraftsPerOpenWindow`).
+
 **A frozen clock jumped in every hunt that ran past 35 minutes.** The guest's clock left its frozen instant for the
 real date in the middle of all seven: `OutlookAI-Unindexed` and `OutlookAI-Unindexed3` (both `CP-18B-FROZEN-CLOCK`)
 about 36 minutes into the suite, at the same guest time, and `OutlookAI-Indexed` and `OutlookAI-Indexed3`

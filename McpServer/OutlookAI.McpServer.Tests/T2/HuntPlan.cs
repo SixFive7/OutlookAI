@@ -2,6 +2,28 @@ using System.Globalization;
 
 namespace OutlookAI.McpServer.Tests.T2;
 
+/// <summary>
+/// The step of the typed-text tests a hunting run leaves out (the coordinator's direction of 2026-11-18, after the
+/// variants): every crash the hunt caught struck in those tests, and none in the loops, which do less.
+/// </summary>
+public enum HuntAblation
+{
+    /// <summary>Nothing left out: the tests as they are.</summary>
+    None,
+
+    /// <summary>No new mail: only the reply and the forward are typed and made, never the new mail beside them.</summary>
+    NewMail,
+
+    /// <summary>No layout read: Word's paragraphs are never walked, in the typed window or in the product's drafts re-opened after.</summary>
+    Layout,
+
+    /// <summary>No signature: the product's second draft of each kind is made without the test signature, which is never made.</summary>
+    Signature,
+
+    /// <summary>One source mail: the tests of a leg share the first one's, where each sends itself its own.</summary>
+    Source,
+}
+
 /// <summary>What makes a hunting variant's derived drafts (runbook section 4.15).</summary>
 public enum HuntMaker
 {
@@ -43,6 +65,12 @@ public sealed class HuntPlan
     /// </summary>
     public const string ShowEachVariable = "OUTLOOKAI_HUNT_SHOW_EACH";
 
+    /// <summary>The variable the hunt's suite script names the typed-text tests' ablation in (<see cref="HuntAblation"/>). Unset in every other run.</summary>
+    public const string AblateVariable = "OUTLOOKAI_HUNT_ABLATE";
+
+    /// <summary>PersonTyping: how many of the product's drafts are made while one compose window stays open and typed into.</summary>
+    public const int DraftsPerOpenWindow = 5;
+
     /// <summary>The longest leg: two hours, beyond any run's own time limit.</summary>
     public const int MostLegMinutes = 120;
 
@@ -55,9 +83,10 @@ public sealed class HuntPlan
     /// <summary>How many failed drafts in a row end a leg whose Outlook is still running.</summary>
     public const int MostFailuresInARow = 5;
 
-    private HuntPlan(string variant, HuntMaker maker, bool windowless, bool showsCalendar, int legMinutes, bool showsEach, bool typesEach = false)
+    private HuntPlan(string variant, HuntMaker maker, bool windowless, bool showsCalendar, int legMinutes, bool showsEach, bool typesEach = false, bool keepsAWindowOpen = false)
     {
         TypesEach = typesEach;
+        KeepsAWindowOpen = keepsAWindowOpen;
         Variant = variant;
         Maker = maker;
         Windowless = windowless;
@@ -70,7 +99,7 @@ public sealed class HuntPlan
     /// The variants this test runs, in the order the runner lists them; the runner's <c>-HuntVariant</c> takes these and
     /// its own default, Legs - the tests the crashes struck in, which are not this test's.
     /// </summary>
-    public static IReadOnlyList<string> Variants { get; } = new[] { "ProductLoop", "OtherFolder", "NoWindow", "NoFormPage", "BareCreators" };
+    public static IReadOnlyList<string> Variants { get; } = new[] { "ProductLoop", "OtherFolder", "NoWindow", "NoFormPage", "BareCreators", "PersonTyping" };
 
     public string Variant { get; }
 
@@ -93,6 +122,13 @@ public sealed class HuntPlan
 
     /// <summary>Whether the window shown before each draft is displayed on screen and typed into, rather than promoted.</summary>
     public bool TypesEach { get; }
+
+    /// <summary>
+    /// PersonTyping: a compose window stays open on screen - a new mail or a reply, by turns - and a line is typed into it
+    /// before each of the product's drafts, <see cref="DraftsPerOpenWindow"/> of them, before it is closed discarding: a
+    /// person writing in Outlook while an agent drafts replies and forwards.
+    /// </summary>
+    public bool KeepsAWindowOpen { get; }
 
     /// <summary>The cell of the variant's attempt lines - one a draft.</summary>
     public string Cell => "S5-hunt-" + Variant + (TypesEach ? "-typed" : ShowsEach ? "-shown" : string.Empty);
@@ -155,6 +191,8 @@ public sealed class HuntPlan
                 return new HuntPlan(variant, HuntMaker.NoFormPage, windowless: false, showsCalendar: false, minutes, shows, types);
             case "BareCreators":
                 return new HuntPlan(variant, HuntMaker.Bare, windowless: false, showsCalendar: false, minutes, shows, types);
+            case "PersonTyping":
+                return new HuntPlan(variant, HuntMaker.Product, windowless: false, showsCalendar: false, minutes, showsEach: false, typesEach: false, keepsAWindowOpen: true);
             case CalendarStep:
                 return new HuntPlan(variant, HuntMaker.None, windowless: false, showsCalendar: true, minutes, showsEach: false);
             default:
@@ -185,6 +223,29 @@ public sealed class HuntPlan
         }
 
         return false;
+    }
+
+    /// <summary>The ablation <see cref="AblateVariable"/> names: unset or empty is none; null with the reason for anything unknown.</summary>
+    public static HuntAblation? ParseAblation(string? value, out string? why)
+    {
+        why = null;
+        switch (value)
+        {
+            case null:
+            case "":
+                return HuntAblation.None;
+            case "new":
+                return HuntAblation.NewMail;
+            case "layout":
+                return HuntAblation.Layout;
+            case "signature":
+                return HuntAblation.Signature;
+            case "source":
+                return HuntAblation.Source;
+            default:
+                why = AblateVariable + " must be new, layout, signature or source, not '" + value + "'";
+                return null;
+        }
     }
 
     /// <summary>Whether a leg stops after a draft: its Outlook ended, or <see cref="MostFailuresInARow"/> drafts in a row failed.</summary>

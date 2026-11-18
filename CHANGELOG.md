@@ -307,8 +307,13 @@ its mailbox tests on, and change nothing you install.
   window shown and closed: a reply or forward made through the object model, promoted the product's
   own way and closed discarding, which is what the typed-text tests do before each of the product's
   drafts, and with `-HuntTypeEach` that window is displayed on screen and typed into as those tests
-  do. Every hunting run also records Office's build and the hunted
-  module's file, and the summary shows both. `-HuntWithoutAddIn` turns OutlookAI's own add-in off
+  do. PersonTyping keeps a compose window open on screen and types a line into it before each of
+  the product's drafts, five drafts a window, as a person writes while an agent drafts. With
+  `-HuntAblate` the typed-text tests leave out one of their steps: the new mail beside the reply and
+  the forward, reading Word's layout, the test signature, or a source mail of their own. With
+  `-HuntTraceClr` the .NET runtime's own exception events are traced on the guest with Windows'
+  logman and tracerpt, and their XML is fetched. Every hunting run also records Office's build and
+  the hunted module's file, and the summary shows both. `-HuntWithoutAddIn` turns OutlookAI's own add-in off
   for the run, LoadBehavior 0 before Outlook starts, and the restore after the run brings the
   checkpoint's value back. Every Outlook guest's checkpoint holds the add-in installed and loading,
   and inside Outlook it hooks every inspector and puts its task pane on each one that is activated.

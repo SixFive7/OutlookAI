@@ -32,6 +32,45 @@ public sealed class HuntPlanTests
         Assert.False(plan.ShowsEach);
     }
 
+    [Theory]
+    [InlineData(null, HuntAblation.None)]
+    [InlineData("", HuntAblation.None)]
+    [InlineData("new", HuntAblation.NewMail)]
+    [InlineData("layout", HuntAblation.Layout)]
+    [InlineData("signature", HuntAblation.Signature)]
+    [InlineData("source", HuntAblation.Source)]
+    public void TheTypedTextTests_LeaveOutTheStepTheHuntNames(string? value, HuntAblation expected)
+    {
+        Assert.Equal(expected, HuntPlan.ParseAblation(value, out string? why));
+        Assert.Null(why);
+    }
+
+    [Theory]
+    [InlineData("Layout")]
+    [InlineData("newmail")]
+    [InlineData("all")]
+    public void AnUnknownAblation_IsRefused(string value)
+    {
+        Assert.Null(HuntPlan.ParseAblation(value, out string? why));
+        Assert.Contains("must be new, layout, signature or source", why, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PersonTyping_KeepsAWindowOpenWhileTheProductDrafts()
+    {
+        HuntPlan? plan = HuntPlan.Parse("PersonTyping", "10", null, out string? why);
+
+        Assert.NotNull(plan);
+        Assert.Null(why);
+        Assert.Equal(HuntMaker.Product, plan!.Maker);
+        Assert.True(plan.KeepsAWindowOpen);
+        Assert.False(plan.ShowsEach);
+        Assert.False(plan.Windowless);
+        Assert.Equal("S5-hunt-PersonTyping", plan.Cell);
+        Assert.True(HuntPlan.DraftsPerOpenWindow > 1);
+        Assert.False(HuntPlan.Parse("ProductLoop", "10", null, out _)!.KeepsAWindowOpen);
+    }
+
     [Fact]
     public void TheCalendarStep_MovesTheMainWindowAndMakesNothing()
     {
@@ -117,6 +156,7 @@ public sealed class HuntPlanTests
         Assert.Contains("$HuntVariantVariable = '" + HuntPlan.VariantVariable + "'", runner, StringComparison.Ordinal);
         Assert.Contains("$HuntLegMinutesVariable = '" + HuntPlan.LegMinutesVariable + "'", runner, StringComparison.Ordinal);
         Assert.Contains("$HuntShowEachVariable = '" + HuntPlan.ShowEachVariable + "'", runner, StringComparison.Ordinal);
+        Assert.Contains("$HuntAblateVariable = '" + HuntPlan.AblateVariable + "'", runner, StringComparison.Ordinal);
         Assert.Contains("FullyQualifiedName~" + typeof(LiveHuntDerivedDraftTests).FullName, runner, StringComparison.Ordinal);
     }
 
