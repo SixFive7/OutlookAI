@@ -2,9 +2,10 @@
 
   <PropertyGroup>
     <!--
-      Multi-target (v3.MD D18 v2 / R10): net10.0-windows is consumed by the MCP server
-      host today; net48 is CI-gated from day one so the v3.1 event host (most likely
-      the existing VSTO add-in, .NET Framework 4.8) can reference Core without rewrite.
+      Multi-target (v3.MD D18 v2 / R10): net10.0-windows is the MCP server's; net48 is the
+      VSTO add-in's (.NET Framework 4.8), which references Core since Q167 (a) - the reason
+      the net48 target was built from day one. The add-in may use only the namespace
+      OutlookAI.Core.AddIn (Q164 (a); Tools/Checks/check-pinned-constants.ps1, check 15).
     -->
     <TargetFrameworks>net48;net10.0-windows</TargetFrameworks>
     <RootNamespace>OutlookAI.Core</RootNamespace>

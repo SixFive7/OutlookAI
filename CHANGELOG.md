@@ -889,7 +889,7 @@ its mailbox tests on, and change nothing you install.
   measured on Office LTSC 2024: with no Outlook window open, that window shows at the top left of the
   screen for 130 to 650 ms and has the foreground while it is there.
 
-- ♻️ **The scripts share one copy of their program-call wrapper, in Testbed/guest/ScriptHelpers.ps1 (Q166).**
+- ♻️ **The scripts share one copy of the helpers they restated, in Testbed/guest/ScriptHelpers.ps1 (Q166).**
   Seventeen scripts each declared the same `Invoke-NativeCommand`, the wrapper every program call
   goes through so that Windows PowerShell 5.1 cannot end a script on the first line a program writes
   to stderr. Thirteen of them now dot-source it from `Testbed/guest/ScriptHelpers.ps1`, where
@@ -903,7 +903,14 @@ its mailbox tests on, and change nothing you install.
   wrapper counts as one through a copy always did, and its new check 4 fails a copy of a shared
   helper anywhere but in a script marked `# travels-alone:`, and there a copy that differs from the
   shared one. Six cases that break those rules were run against it here, and it failed each.
-  `Testbed/README.md` names the file, and its step 4a stages it with the other guest scripts.
+  `Testbed/README.md` names the file, and its step 4a stages it with the other guest scripts. The
+  build and release scripts' own helpers went the same way: the run of a program into log files
+  under a deadline (`Invoke-Logged`, five copies), the tail of such a log (`Show-LogTail`, four),
+  the quoting of one argument (`Format-Argument`, two) and the elevation test (`Test-IsElevated`,
+  two). The build-VM runner, which reaches the VM on its own, keeps its own run of a program,
+  which quotes its arguments and stops the whole process tree, as `Invoke-LoggedStep`. And three
+  `Tools/` scripts that restated the import of the running edition's own Security and Utility
+  modules now dot-source `Testbed/host/OwnEditionModules.ps1`, as the host scripts do.
 
 - 📝 **If Office's own grace reset fails, the Exchange test machine may get Microsoft 365 Apps (Q206).**
   The maintainer's decision Q206, 2026-11-18, now in AGENTS.md beside the machine's internet
@@ -1187,6 +1194,32 @@ its mailbox tests on, and change nothing you install.
   machine that can reach the server. Recovery is immediate rather than delayed: reconnecting to a
   network clears the backoff and checks shortly after, and "Check for updates" always runs straight
   away.
+
+- ♻️ **The add-in references OutlookAI.Core and may use one namespace of it (Q164, Q167).**
+  Until now the add-in kept its own copies of logic the MCP server has in Core, because it did not
+  reference Core (v3's "Phase-6 no-coupling choice"). Q154 (b) ended that, and this is the
+  refactor's first stage, plumbing only: the add-in uses none of Core yet, so nothing it does
+  changes. `OutlookAI.csproj` references Core's net48 build (Q167 (a)) and keeps two of the scripted
+  builds' global properties out of Core's build: `PrepareForRunDependsOn` names a VSTO target Core
+  does not have, and `DefineConstants` would replace Core's own `NETFRAMEWORK` symbol. Both add-in
+  build scripts, `Testbed/host/Publish-AddInPayload.ps1` and `Tools/Switch-AddInBuild.ps1`, restore
+  Core's packages first with MSBuild's `/restore`; guard 1's evaluation still runs no target and
+  restores nothing, and their self-tests check both. `OutlookAI.slnx` holds Core, so F5 in Visual
+  Studio builds it. The installer carries `OutlookAI.Core.dll` and
+  `System.Reflection.DispatchProxy.dll` beside `OutlookAI.dll`, both listed and hashed in the signed
+  add-in manifest, and a release stamps its version into that copy of Core as well. Core's
+  `System.Data.OleDb` package adds nothing there: on .NET Framework its assembly only forwards to
+  the framework's own `System.Data`, which Core's net48 build references instead. The add-in may
+  use only the namespace `OutlookAI.Core.AddIn`, and nothing in it may attach to Outlook, start a
+  COM apartment thread, open a MAPI session or open the search index (Q164 (a)), because the add-in
+  runs inside Outlook's own process. `Tools/Checks/check-pinned-constants.ps1` check 15 holds that
+  rule, and T1 `AddInCoreReferenceTests` the shape of the reference. Measured 2026-11-18: both build
+  scripts built the add-in and left the host unchanged over 318 lines, the installer grew from
+  43,159,206 to 43,435,319 bytes, and a commit from before the reference still builds, its restore
+  finding nothing to do. On `OutlookAI-Unindexed` the build installed from `CP-08` and reached
+  `ADDIN-READY` three times in a row, as master's did; Outlook recorded its loads at 2.11 and 2.13 s
+  against master's 1.75 and 1.72 s, on a host running three build VMs, which two samples do not settle
+  (runbook section 2.3, the last record).
 
 - 📝 **The documents and the TODO list name no real person, address or machine any more (Q189).**
   They quoted the maintainer's computer name, his user name in paths under his profile, his
