@@ -732,9 +732,9 @@ namespace OutlookAI.Core.Services
                 if (policy.ForcedFor(reply) && string.Equals(policy.DefaultFor(reply), name, StringComparison.OrdinalIgnoreCase))
                 {
                     throw new SignatureRefusedException("signature_forced_by_policy",
-                        "'" + name + "' is the signature " + SignaturePolicy.Describe(policy.SourceFor(reply)) + " sets for every "
-                        + (reply ? "reply and forward" : "new message") + "; deleting it would leave Outlook's forced default naming "
-                        + "nothing. Nothing was written. Ask your administrator to change the policy first.");
+                        "'" + name + "' is the signature " + SignaturePolicy.Describe(policy.SourceFor(reply)) + " names for "
+                        + (reply ? "replies and forwards" : "new messages") + "; deleting it would leave the policy naming a signature "
+                        + "that is not there. Nothing was written. Ask your administrator to change the policy first.");
                 }
             }
         }
