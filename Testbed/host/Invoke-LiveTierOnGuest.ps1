@@ -85,6 +85,17 @@
       * The summary names tests, stores and counts, never a subject or a body.
       * The VM rule: a live lease while the guest is in use; saved and released at the end.
 
+    A SIGNATURE SETTING BEFORE OUTLOOK STARTS (-SignatureSettings, 2026-11-18, Q200 (a) and Q201). An
+    administrator's signature policy, a default deployed in Outlook's general mail settings and an
+    account's own defaults are read by Outlook when it starts, and the suite runs NOT elevated, where
+    HKCU\Software\Policies cannot be written. So with -SignatureSettings GroupPolicy or Preference,
+    PREPARE runs guest\Set-SignatureSettings.ps1 -Execute elevated in session 0 between the frozen-clock
+    guard and Outlook's start: it makes the setting, its test signatures and the hub account's own
+    defaults, and says SET or the run stops. The run is narrowed to the one test that measures what
+    Outlook itself then inserts (T2/LiveSignatureSettingsTests.SetBeforeOutlookStarted_...), told the
+    scenario in OUTLOOKAI_LIVE_SIGNATURE_SETTINGS. Only from a frozen start, never on the Exchange VM and
+    never with -GreenCheckpoint or -Filter: the checkpoint restored at REST is what takes the setting away.
+
     EXIT CODES: 0 PASS; 1 FAIL - a test, a safety verdict or Outlook failed, or the filter selected
     nothing; 2 BUILD - the commit did not build, stage or become TEST-READY; 3 INFRA - not tested
     (lease, VM, guest calls, time); 4 REFUSED - the request itself.
@@ -140,6 +151,12 @@
     program (never Outlook) and waits for its full dump. Recorded in the summary; a failed proof does
     not stop the run. Once per guest is enough - runbook section 4.6.
 
+.PARAMETER SignatureSettings
+    GroupPolicy (Q200 (a)) or Preference (Q201): makes that signature setting on the guest before
+    Outlook starts, through guest\Set-SignatureSettings.ps1 run elevated, and narrows the run to the test
+    that measures what Outlook then inserts. A frozen start of an Outlook guest only; refused on the
+    Exchange VM, with -GreenCheckpoint and with -Filter.
+
 .PARAMETER SelfTest
     Checks the pure parts - the guest table, the filter, the lease decision, the TRX and console
     readers, the verdict table, summary.json's shape - and the constants against the files they
@@ -165,6 +182,7 @@ param(
     [Parameter(ParameterSetName = 'Run')] [switch] $RestOnGreen,
     [Parameter(ParameterSetName = 'Run')] [switch] $SkipHubReset,
     [Parameter(ParameterSetName = 'Run')] [switch] $ProveCrashDumps,
+    [Parameter(ParameterSetName = 'Run')] [ValidateSet('GroupPolicy', 'Preference')] [string] $SignatureSettings,
     [Parameter(ParameterSetName = 'Run')] [string] $ResultsRoot,
     [Parameter(ParameterSetName = 'Run')] [string] $CredentialRepoRoot,
     [Parameter(ParameterSetName = 'Run')] [string] $SdkInstallerPath,
@@ -209,6 +227,11 @@ $GuestSettingsPath = 'C:\OutlookAI-Q5\src\McpServer\OutlookAI.McpServer.Tests\li
 # tested, because the frozen checkpoints predate it - and fetched into dumps\ before the guest rests.
 $GuestDumpDir = 'C:\OutlookAI-Q5\crash-dumps'
 $CrashDumpScript = 'Set-OutlookCrashDumps.ps1'
+# The -SignatureSettings step (Q200 (a), Q201): the guest script that makes the setting before Outlook starts, the
+# variable that tells the suite which it made, and the one test such a run is narrowed to.
+$SignatureSettingsScript = 'Set-SignatureSettings.ps1'
+$SignatureSettingsVariable = 'OUTLOOKAI_LIVE_SIGNATURE_SETTINGS'
+$SignatureSettingsTest = 'LiveSignatureSettingsTests.SetBeforeOutlookStarted'
 $SdkInstallerName = 'dotnet-sdk-10.0.401-win-x64.exe'
 $SdkSha512 = 'f0d8f8e7ec24efb05172a65dd80c4a9b1ef17efcebdbf0f57c15f436eea417960a7eeb6726c473a042373d6a8b94ac1adc7d680decbf7d2c45fa5c5662d62265'
 $FilterBase = 'Category=Live&Requires!=DelegateStore&Requires!=CachedExchange'
@@ -300,10 +323,24 @@ function Merge-CrashCount {
 # What PREPARE does, by whether the start checkpoint is frozen (its time sync off, Q130 (a)). A frozen
 # start is verified, never restarted or rebuilt: either would leave the instant its data was built for.
 function Get-PrepareSteps {
-    param([bool] $StartIsFrozen, [bool] $SkipHubReset)
+    param([bool] $StartIsFrozen, [bool] $SkipHubReset, [string] $SignatureSettings = '')
+    if ($StartIsFrozen -and $SignatureSettings) { return @('frozen-clock guard', "signature setting $SignatureSettings, before Outlook starts", 'Outlook NOT elevated') }
     if ($StartIsFrozen) { return @('frozen-clock guard', 'Outlook NOT elevated') }
     if ($SkipHubReset) { return @('restart') }
     return @('restart', 'hub rebuild')
+}
+
+# Why a run may not take the -SignatureSettings step, or '' when it may (or when it was not asked for). The step
+# writes settings Outlook reads when it starts, so it runs only where Outlook starts once, after it - a frozen start
+# (Q130 (a)) - and only where the checkpoint restored at REST takes the setting away again.
+function Get-SignatureSettingsRefusal {
+    param([string] $Scenario, [bool] $Exchange, [bool] $StartIsFrozen, [string] $GreenCheckpoint, [string] $Override)
+    if (-not $Scenario) { return '' }
+    if ($Exchange) { return '-SignatureSettings on the Exchange VM: its state is carried from run to run, so no checkpoint restore would take the setting away again.' }
+    if ($GreenCheckpoint) { return "-SignatureSettings with -GreenCheckpoint: that checkpoint would keep the setting, and a run resting on it would start under it." }
+    if ($Override) { return '-SignatureSettings with -Filter: the step''s run is narrowed to its own test; -FilterSuffix narrows it further.' }
+    if (-not $StartIsFrozen) { return '-SignatureSettings from a checkpoint that is not frozen: such a start restarts the guest and rebuilds its hub, starting Outlook more than once. The step runs from a frozen checkpoint, where Outlook starts once, after it.' }
+    return ''
 }
 
 # The guest's facts, or $null for anything that is not a test guest - one of the two Outlook guests
@@ -341,7 +378,7 @@ function Get-KindMembers {
 # filter is written into the guest task's script inside double quotes, so a character that would
 # end or expand that string is refused rather than escaped.
 function Get-LiveFilter {
-    param([bool] $Indexed, [string] $Override, [string] $Suffix, [bool] $Exchange = $false)
+    param([bool] $Indexed, [string] $Override, [string] $Suffix, [bool] $Exchange = $false, [string] $SignatureSettings = '')
     foreach ($given in @($Override, $Suffix)) {
         if ($given -match '["`$\r\n]') {
             return [pscustomobject]@{ Filter = $null; Narrowed = $false; Refusal = "a filter may not hold a double quote, a backtick, a dollar sign or a line break: '$given'" }
@@ -360,7 +397,11 @@ function Get-LiveFilter {
     $filter = $FilterBase
     if (-not $Indexed) { $filter += $FilterUnindexedExtra }
     if ($Exchange) { $filter = $FilterExchange }
-    return [pscustomobject]@{ Filter = $filter + $Suffix; Narrowed = [bool]$Suffix; Refusal = $null }
+    # A run that made a signature setting before Outlook started runs the one test that measures it: every other
+    # signature test would meet a setting it was not written for.
+    $step = ''
+    if ($SignatureSettings) { $step = "&FullyQualifiedName~$SignatureSettingsTest" }
+    return [pscustomobject]@{ Filter = $filter + $Suffix + $step; Narrowed = ([bool]$Suffix -or [bool]$step); Refusal = $null }
 }
 
 # A lease as Set-TestbedLease.ps1 writes it, judged for THIS run: 'free' (none, expired or
@@ -654,6 +695,28 @@ function Invoke-SelfTest {
     Check 'the profile a frozen start opens is the one step 9a opens' $true $hubReset.Contains("[string] `$TierProfileName = '$TierProfileName'")
     Check 'an unfrozen start is restarted and its hub rebuilt' 'restart|hub rebuild' (Get-PrepareSteps -StartIsFrozen $false -SkipHubReset $false)
     Check 'an unfrozen start with -SkipHubReset is only restarted' 'restart' (Get-PrepareSteps -StartIsFrozen $false -SkipHubReset $true)
+    Write-Host '== a signature setting before Outlook starts (Q200 (a), Q201) =='
+    Check 'a frozen start makes the setting between the clock guard and Outlook''s start' 'frozen-clock guard|signature setting GroupPolicy, before Outlook starts|Outlook NOT elevated' (Get-PrepareSteps -StartIsFrozen $true -SkipHubReset $false -SignatureSettings 'GroupPolicy')
+    Check 'no step asked for is no refusal' '' (Get-SignatureSettingsRefusal '' $true $false 'G' 'F')
+    Check 'a frozen start of an Outlook guest may take it' '' (Get-SignatureSettingsRefusal 'Preference' $false $true '' '')
+    Check 'refused on the Exchange VM' $true ((Get-SignatureSettingsRefusal 'GroupPolicy' $true $true '' '') -like '*Exchange VM*')
+    Check 'refused with a green checkpoint, which would keep it' $true ((Get-SignatureSettingsRefusal 'GroupPolicy' $false $true 'CP-GREEN' '') -like '*-GreenCheckpoint*')
+    Check 'refused with -Filter' $true ((Get-SignatureSettingsRefusal 'GroupPolicy' $false $true '' 'Category=Live') -like '*-Filter*')
+    Check 'refused from a start that is not frozen' $true ((Get-SignatureSettingsRefusal 'GroupPolicy' $false $false '' '') -like '*not frozen*')
+    $f = Get-LiveFilter $false '' '' $false 'GroupPolicy'
+    Check 'the run is narrowed to the test that measures it' "Category=Live&Requires!=DelegateStore&Requires!=CachedExchange&Requires!=SearchIndex&FullyQualifiedName~$SignatureSettingsTest|True" @($f.Filter, $f.Narrowed)
+    Check 'and a suffix narrows it further' $true ((Get-LiveFilter $true '' '&Requires=Transport' $false 'Preference').Filter.EndsWith("&Requires=Transport&FullyQualifiedName~$SignatureSettingsTest"))
+    $settingsTests = [System.IO.File]::ReadAllText((Join-Path $repo 'McpServer\OutlookAI.McpServer.Tests\T2\LiveSignatureSettingsTests.cs'))
+    Check 'the test the filter names exists' $true $settingsTests.Contains('public void ' + ($SignatureSettingsTest.Split('.')[1]) + '_')
+    $stepCs = [System.IO.File]::ReadAllText((Join-Path $repo 'McpServer\OutlookAI.McpServer.Tests\T2\LiveSignatureSettingsStep.cs'))
+    Check 'the suite reads the scenario from the variable this sets' $true ($stepCs.Contains("`"$SignatureSettingsVariable`"") -and $own.Contains("`$SignatureSettingsVariable = '$SignatureSettingsVariable'") -and $runner.Contains('`$env:$SignatureSettingsVariable = '))
+    Check 'and knows the scenarios this takes' $true $stepCs.Contains('Scenarios { get; } = new[] { GroupPolicy, Preference }')
+    $settingsScript = [System.IO.File]::ReadAllText((Join-Path $repo "Testbed\guest\$SignatureSettingsScript"))
+    Check 'the guest script takes the same scenarios' $true ($settingsScript.Contains("[ValidateSet('GroupPolicy', 'Preference')] [string] `$Scenario") -and $runner.Contains("[ValidateSet('GroupPolicy', 'Preference')] [string] `$SignatureSettings"))
+    # The LAST of each: the run's own code comes after this self-test, which names both.
+    $stepAt = $own.LastIndexOf("Invoke-Guest 'signature-settings'")
+    $frozenStartAt = $own.LastIndexOf("-Profile '`$TierProfileName'; ")
+    Check 'the setting is made before the frozen start''s Outlook starts' $true ($stepAt -gt 0 -and $frozenStartAt -gt $stepAt)
     $hostStart = [DateTime]::SpecifyKind([DateTime]::new(2026, 10, 3, 21, 0, 0), [DateTimeKind]::Utc)
     Check 'crash events are searched from the GUEST''s clock - a frozen guest''s is hours behind the host''s' '2026-10-03T14:50:00.0000000Z' (Get-CrashEventsSince -GuestRunStartUtc '2026-10-03T14:51:00.0000000Z' -HostRunStartUtc $hostStart)
     Check 'and from the host''s only when the guest''s could not be read' '2026-10-03T20:59:00.0000000Z' (Get-CrashEventsSince -GuestRunStartUtc '' -HostRunStartUtc $hostStart)
@@ -898,7 +961,7 @@ else {
     $facts = Get-GuestFacts $VMName
     if ($null -eq $facts) { Stop-Refused "'$VMName' is not a test guest - only the Outlook guests and their clones: $((@(Get-KindMembers 'Indexed') + @(Get-KindMembers 'Unindexed')) -join ', '), and OutlookAI-Exchange. The build VM has Invoke-TestsOnBuildVm.ps1, and nothing here runs on this workstation." }
 }
-$filterDecision = Get-LiveFilter $facts.Indexed $Filter $FilterSuffix $facts.Exchange
+$filterDecision = Get-LiveFilter $facts.Indexed $Filter $FilterSuffix $facts.Exchange $SignatureSettings
 if ($filterDecision.Refusal) { Stop-Refused $filterDecision.Refusal }
 $runFilter = $filterDecision.Filter
 $narrowed = $filterDecision.Narrowed
@@ -939,6 +1002,10 @@ if (-not $Kind) {
     if ($exchangeCarry) { $startIsFrozen = $false }
     if ($startIsFrozen -and $RestOnGreen) { Stop-Refused "-RestOnGreen from the frozen checkpoint '$Checkpoint': a green checkpoint of this run would stand a run later than the frozen instant testbed.json records, and every later run would start there. Make a new frozen checkpoint with Set-GuestClockFrozen.ps1 and record it instead." }
 }
+# With -Kind the guest is taken later, and every guest of a kind starts from its frozen checkpoint; it is checked
+# again once taken.
+$stepRefusal = Get-SignatureSettingsRefusal $SignatureSettings ([bool]$facts.Exchange) ($startIsFrozen -or [bool]$Kind) $GreenCheckpoint $Filter
+if ($stepRefusal) { Stop-Refused $stepRefusal }
 if (-not $RepoPath) { $RepoPath = Split-Path -Parent (Split-Path -Parent $PSScriptRoot) }
 $repo = [System.IO.Path]::GetFullPath($RepoPath)
 if (-not $CredentialRepoRoot) {
@@ -995,6 +1062,9 @@ Say "  results   $runDir"
 $timings = [ordered]@{}
 $checkpointActions = [ordered]@{ start = $Checkpoint; resting = $RestingCheckpoint; green = $null; restedOn = $null; settingsStaged = $false; saved = $false }
 $crashDumpState = [ordered]@{ armed = $false; proven = $null; guestFolder = $GuestDumpDir; fetched = $false; files = @() }
+# The -SignatureSettings step, when asked for: the scenario, and whether the guest script said SET.
+$signatureSettingsState = $null
+if ($SignatureSettings) { $signatureSettingsState = [ordered]@{ scenario = $SignatureSettings; set = $false; log = 'guest\signature-settings.log' } }
 # Set when this run starts Outlook itself: what the start met, Office's activation wizard included.
 $outlookStart = $null
 $indexRoots = $null
@@ -1170,6 +1240,8 @@ try {
         Use-Guest $takenGuest
         $checkpointActions['start'] = $Checkpoint
         $checkpointActions['resting'] = $RestingCheckpoint
+        $stepRefusal = Get-SignatureSettingsRefusal $SignatureSettings ([bool]$facts.Exchange) $startIsFrozen $GreenCheckpoint $Filter
+        if ($stepRefusal) { $stage = 'INFRA'; $stageWhy = "the guest taken cannot take the step: $stepRefusal"; throw $stageWhy }
     }
     $timings['lease'] = Format-Seconds ((Get-Date) - $t0).TotalSeconds
     Say "lease taken on $($facts.Name) ($($timings['lease']))$(if ($Kind) { " - from $Checkpoint$(if ($startIsFrozen) { ', frozen' })" })"
@@ -1239,7 +1311,7 @@ Copy-Item -LiteralPath '$GuestPayloadDir\live-test-settings.json' -Destination '
 
     # ---- PREPARE: from a frozen checkpoint the clock guard only; otherwise a graceful restart and the hub rebuild.
     $t0 = Get-Date
-    $prepared = @(Get-PrepareSteps -StartIsFrozen $startIsFrozen -SkipHubReset ([bool]$SkipHubReset))
+    $prepared = @(Get-PrepareSteps -StartIsFrozen $startIsFrozen -SkipHubReset ([bool]$SkipHubReset) -SignatureSettings $SignatureSettings)
     try {
         Use-Lease 30
         if ($facts.Exchange) {
@@ -1286,6 +1358,14 @@ Copy-Item -LiteralPath '$GuestPayloadDir\live-test-settings.json' -Destination '
             # ps51-native-stderr-ok: a PowerShell script, not a program - it starts no program at all
             & (Join-Path $PSScriptRoot 'Set-GuestClockFrozen.ps1') -VMName $facts.Name -Verify -RepoRoot $CredentialRepoRoot -LogPath (Join-Path $runDir 'frozen-clock.log') *> (Join-Path $runDir 'frozen-clock.out.log')
             if ($LASTEXITCODE -ne 0) { throw "the frozen-clock guard did not say FROZEN (exit $LASTEXITCODE) - the guest's clock left its frozen instant, or this is not its frozen checkpoint: frozen-clock.log" }
+            if ($SignatureSettings) {
+                # Q200 (a), Q201: the setting, its test signatures and the hub's own defaults, made elevated while
+                # Outlook is closed - Outlook reads them when it starts, just below. The restore at REST undoes them.
+                $o = Invoke-Guest 'signature-settings' "& '$GuestRoot\$SignatureSettingsScript' -Scenario $SignatureSettings -Execute; `"SIGNATURE-SETTINGS-EXIT `$LASTEXITCODE`"" 900 -Session0
+                $signatureSettingsState['set'] = ($o -match 'VERDICT: SET' -and $o -match 'SIGNATURE-SETTINGS-EXIT 0')
+                if (-not $signatureSettingsState['set']) { throw "the signature setting $SignatureSettings was not made before Outlook started - guest\signature-settings.log" }
+                Say "signature  $SignatureSettings made before Outlook starts: the setting, its test signatures and the hub's own defaults (guest\signature-settings.log)"
+            }
             # The state step 9a hands the suite over in, without its rebuild: Outlook running NOT elevated on
             # the tier profile, its window up. The frozen checkpoint holds Outlook closed so STAGE could swap.
             $o = Invoke-Guest 'start-outlook' "& '$GuestRoot\Start-OutlookUnelevated.ps1' -Profile '$TierProfileName'; `"START-OUTLOOK-EXIT `$LASTEXITCODE`"" 900 -Session0
@@ -1310,6 +1390,7 @@ Copy-Item -LiteralPath '$GuestPayloadDir\live-test-settings.json' -Destination '
     # ---- RUN: the suite, NOT elevated, opted in for this run only.
     $t0 = Get-Date
     $markerLines = ''
+    if ($SignatureSettings) { $markerLines = "`$env:$SignatureSettingsVariable = '$SignatureSettings'`r`n" }
     if ($facts.Exchange) {
         $markerLines = "`$env:OUTLOOKAI_LIVE_RUN_MARKER = '$runMarker'`r`n`$env:OUTLOOKAI_LIVE_PRIOR_RUN_MARKERS = '$($priorMarkers -join ',')'`r`n"
         # Recorded BEFORE the suite starts: a run that dies half-way still leaves its marker for the next one.
@@ -1447,6 +1528,7 @@ $timings['total'] = Format-Seconds ((Get-Date) - $started).TotalSeconds
 $summary = New-LiveRunSummary -RunId $runId -Verdict $verdict -Revision $revision -Guest $facts.Name -Filter $runFilter -Narrowed $narrowed -Trx $trx -Console $consoleFacts -Crashes $crashes -SuiteExit $suiteExit -Checkpoints $checkpointActions -Timings $timings -Results $runDir -CrashDumps $crashDumpState
 if ($facts.Exchange) { $summary['runMarker'] = [ordered]@{ marker = $runMarker; priors = @($priorMarkers); ledger = $ledgerPath; clean = $ledgerOutcome } }
 $summary['outlookStart'] = $outlookStart
+$summary['signatureSettings'] = $signatureSettingsState
 $summary['indexRoots'] = $indexRoots
 [System.IO.File]::WriteAllText((Join-Path $runDir 'summary.json'), ($summary | ConvertTo-Json -Depth 8))
 
@@ -1483,6 +1565,7 @@ if ($dumpList.Count -gt 0) {
 elseif ($crashDumpState['armed']) { $dumpText += ', none written' }
 $lines.Add("outlook    crashes during the run: $crashText; crash dumps: $dumpText")
 $lines.Add((Format-OutlookStartLine $outlookStart))
+if ($null -ne $signatureSettingsState) { $lines.Add("signature  $($signatureSettingsState['scenario']) made before Outlook started: $(if ($signatureSettingsState['set']) { 'SET' } else { 'NOT SET' }) ($($signatureSettingsState['log']))") }
 if ($indexRoots) { $lines.Add("index      $indexRoots") }
 $endLine = "guest end  rested on $($checkpointActions['restedOn']); settings staged=$($checkpointActions['settingsStaged']); saved=$($checkpointActions['saved'])"
 if ($checkpointActions['green']) { $endLine += "; green checkpoint $($checkpointActions['green'])" }

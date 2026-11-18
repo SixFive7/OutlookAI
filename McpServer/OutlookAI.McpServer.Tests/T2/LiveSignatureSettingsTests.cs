@@ -1,4 +1,5 @@
 using Microsoft.Win32;
+using OutlookAI.Core.Com;
 using OutlookAI.Core.Services;
 using Xunit;
 using Xunit.Abstractions;
@@ -9,11 +10,16 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// The measurements G1-G3 of the signature research (2026-10-11, section 7) on a PST guest, run as
 /// live tests so they go through the live tier and its guards (Q147): which profile's defaults a
 /// draft gets when Outlook runs on a profile that is not the recorded default (G1); a deployed
-/// default in <c>Common\MailSettings</c> against an account's own (G2, the preference half - the
-/// policy half needs an elevated step the tier does not have); and a relocated signature folder
-/// (G3). Each states what OutlookAI does as a CONTRACT and what Outlook's own signature engine
-/// reports as a MEASUREMENT (a "MEASURED" line - recorded, never asserted, because it is what is
-/// being found out).
+/// default in <c>Common\MailSettings</c> against an account's own (G2, written while Outlook runs);
+/// and a relocated signature folder (G3). Each states what OutlookAI does as a CONTRACT and what
+/// Outlook's own signature engine reports as a MEASUREMENT (a "MEASURED" line - recorded, never
+/// asserted, because it is what is being found out).
+/// <para>
+/// And the settings Outlook reads only when it starts - an administrator's policy, a deployed default
+/// and the accounts' own defaults - set BEFORE it starts by the live runner's <c>-SignatureSettings</c>
+/// step (Q200 (a), Q201): what Outlook ITSELF inserts in a new mail, a reply and a forward, measured,
+/// and OutlookAI held to doing the same.
+/// </para>
 /// <para>
 /// Every setting a test changes is user-writable, read first, and put back exactly in finally; the
 /// Phase-4 fixture's registry snapshot fails the run if anything is not. Signatures carry the test
@@ -204,6 +210,173 @@ public sealed class LiveSignatureSettingsTests
         Assert.Equal(0, LiveOutlookTestMailer.CountTaggedArtifacts(Hub, Marker));
     }
 
+    /// <summary>
+    /// Q200 (a) and Q201, decided by the maintainer 2026-11-18. With a signature setting an administrator made BEFORE
+    /// Outlook started - <see cref="LiveSignatureSettingsStep"/> - what Outlook ITSELF inserts in a new mail, a reply
+    /// and a forward of the hub, whether its compose window leaves one message's signature to the user (its Signature
+    /// button), and that OutlookAI inserts the same and allows the same.
+    /// <list type="bullet">
+    /// <item><b>GroupPolicy</b> (Q200): Group Policy forces a default for new mail and one for replies and forwards,
+    /// and the hub account has its own default for each.</item>
+    /// <item><b>Preference</b> (Q201): Outlook's general mail settings name a default for each, and the hub account
+    /// has its own for new mail only - so the new mail ranks the two, and the reply and the forward show what a
+    /// deployed default does for an account that has none of its own.</item>
+    /// </list>
+    /// Outlook's side is read from compose windows opened on the objects Outlook's own commands make - the kind that
+    /// crashed Outlook on 2026-10-04 (runbook 4.6), which is why the runner arms full crash dumps. MEASURED lines first,
+    /// then the contract. A run without the step proves nothing.
+    /// </summary>
+    [Fact]
+    [Trait("Requires", "MailAccount")]
+    [Trait("Requires", "Transport")]
+    [Trait("Requires", "LocalSignatures")]
+    public void SetBeforeOutlookStarted_WhatOutlookInsertsInANewMailAReplyAndAForward_IsWhatOutlookAIInserts()
+    {
+        string? scenario = LiveSignatureSettingsStep.Current;
+        if (scenario == null)
+        {
+            _fixture.Settings.RequireProductionPopulation(
+                "a signature setting the live runner's -SignatureSettings step made before Outlook started");
+            _output.WriteLine("PROVED NOTHING: what Outlook itself inserts under an administrator's signature setting (Q200, "
+                + "Q201) needs the live runner's -SignatureSettings step, which makes the setting before Outlook starts; this run "
+                + "had none.");
+            return;
+        }
+
+        string running = _fixture.VerifySession.GetProfileName();
+        SignatureDefaultsRow hubRow = HubRow(running)
+            ?? throw new InvalidOperationException("The hub account is not in the running profile's account list, where the "
+                + "step set its own defaults.");
+
+        // What the step promised, or there is nothing to read: both defaults of the setting from its own source, and
+        // nothing but test signatures named.
+        SignaturePolicySource source = scenario == LiveSignatureSettingsStep.GroupPolicy
+            ? SignaturePolicySource.GroupPolicy
+            : SignaturePolicySource.Preference;
+        SignaturePolicy policy = SignaturePolicy.Read(new LiveSignatureSettingsRegistry(), OutlookProfileRegistry.OfficeVersion);
+        Assert.False(policy.SignaturesDisabled, "the step never disables signatures");
+        Assert.Equal(source, policy.NewMessageSource);
+        Assert.Equal(source, policy.ReplyForwardSource);
+        string settingNew = RequireTestSignature(policy.NewMessage, "the setting's new-mail default");
+        string settingReply = RequireTestSignature(policy.ReplyForward, "the setting's reply and forward default");
+        string ownNew = RequireTestSignature(hubRow.NewMessage, "the hub account's own new-mail default");
+        string? ownReply = hubRow.ReplyForward == null ? null : RequireTestSignature(hubRow.ReplyForward, "the hub account's own reply default");
+        Assert.True((ownReply != null) == (source == SignaturePolicySource.GroupPolicy),
+            "the step gives the hub its own reply default under the policy, and none under the deployed setting");
+
+        Dictionary<string, string> roles = new(StringComparer.Ordinal)
+        {
+            [settingNew] = source == SignaturePolicySource.GroupPolicy ? "the policy's new-mail default" : "the deployed new-mail default",
+            [settingReply] = source == SignaturePolicySource.GroupPolicy ? "the policy's reply default" : "the deployed reply default",
+            [ownNew] = "the account's own new-mail default",
+        };
+        if (ownReply != null)
+        {
+            roles[ownReply] = "the account's own reply default";
+        }
+
+        List<string> candidates = roles.Keys.ToList();
+        foreach (string name in candidates)
+        {
+            Assert.True(File.Exists(Path.Combine(SignatureCatalog.DefaultSignatureDirectory, name + ".htm")), name + " is not in the signature folder");
+        }
+
+        string Role(string inserted) => roles.TryGetValue(inserted, out string? role) ? "'" + inserted + "' (" + role + ")" : inserted;
+
+        // A mail of this run, for the reply and the forward.
+        string seedSubject = _fixture.TaggedSubject("signature-step-seed");
+        DateTime sentUtc = LiveOutlookTestMailer.SendSelfMail(Hub, seedSubject, "Seed for the signature setting measurement " + Marker, attachmentPath: null);
+        ComMailBrief seed = LiveInboxArrival.WaitFor(_fixture.VerifySession, Hub, seedSubject, sentUtc);
+
+        List<string> drafts = new();
+        try
+        {
+            // OUTLOOK'S SIDE: what it inserts itself, and whether its compose window leaves the choice to the user.
+            Dictionary<OutlookComposeKind, string> outlookInserted = new();
+            Dictionary<OutlookComposeKind, bool?> signatureMenu = new();
+            List<string> unread = new();
+            foreach (OutlookComposeKind kind in new[] { OutlookComposeKind.New, OutlookComposeKind.Reply, OutlookComposeKind.Forward })
+            {
+                OutlookOwnSignatureReading reading = LiveOutlookTestMailer.ReadOutlookOwnSignature(
+                    Hub, Hub, kind, kind == OutlookComposeKind.New ? null : seed.EntryId, Marker);
+                string inserted = LiveSignatureSettingsStep.Classify(reading.SignatureRegionText, reading.DocumentText, candidates);
+                outlookInserted[kind] = inserted;
+                signatureMenu[kind] = reading.SignatureMenuEnabled;
+                IReadOnlyList<string> listed = reading.Engine.Entries;
+                _output.WriteLine($"MEASURED {scenario} {kind}: Outlook inserted {Role(inserted)}; its signature region "
+                    + $"{(reading.SignatureRegionFound ? "is there" : "is not there")}; sends from {(ProfileAccountEntries.AddressEquals(reading.SendingAccount, Hub) ? "the hub" : reading.SendingAccount == null ? "(unread)" : "another account")}; "
+                    + $"Signature button enabled={Show(reading.SignatureMenuEnabled)} visible={Show(reading.SignatureMenuVisible)}"
+                    + (reading.SignatureMenuError == null ? string.Empty : " (" + reading.SignatureMenuError + ")")
+                    + $"; Word's engine new='{ShowName(reading.Engine.NewMessageSignature)}' reply='{ShowName(reading.Engine.ReplyMessageSignature)}', "
+                    + $"{listed.Count} listed, {listed.Count(n => candidates.Contains(n, StringComparer.Ordinal))} of the step's"
+                    + (reading.Engine.Error == null ? string.Empty : " (" + reading.Engine.Error + ")")
+                    + $"; error={reading.Error ?? "-"}");
+                if (reading.Error != null || inserted == LiveSignatureSettingsStep.NotRead)
+                {
+                    unread.Add(kind + ": " + (reading.Error ?? "nothing to read"));
+                }
+            }
+
+            // OUTLOOKAI'S SIDE: the default a draft gets, and whether one message may have another signature or none.
+            Dictionary<OutlookComposeKind, string> outlookAiInserted = new();
+            DraftOutcome newDraft = Service.NewDraft(
+                LiveStoreWriteGuard.Writable(Hub, StoreWriteKind.Draft, "new_draft"), Hub, cc: null,
+                _fixture.TaggedSubject("signature-step-new"), "Signature step new mail " + Marker, display: false, signature: null);
+            drafts.Add(newDraft.EntryId);
+            outlookAiInserted[OutlookComposeKind.New] = InsertedByOutlookAI(newDraft, candidates);
+            DraftOutcome replyDraft = Service.ReplyDraft(seed.EntryId, "Signature step reply " + Marker, replyAll: false, display: false, signature: null);
+            drafts.Add(replyDraft.EntryId);
+            outlookAiInserted[OutlookComposeKind.Reply] = InsertedByOutlookAI(replyDraft, candidates);
+            DraftOutcome forwardDraft = Service.ForwardDraft(seed.EntryId, "Signature step forward " + Marker, to: Hub, display: false, signature: null);
+            drafts.Add(forwardDraft.EntryId);
+            outlookAiInserted[OutlookComposeKind.Forward] = InsertedByOutlookAI(forwardDraft, candidates);
+
+            string anotherNew = candidates.First(c => !string.Equals(c, outlookInserted[OutlookComposeKind.New], StringComparison.Ordinal));
+            (bool namedAllowed, string namedWhy) = TryDraft(drafts, () => Service.NewDraft(
+                LiveStoreWriteGuard.Writable(Hub, StoreWriteKind.Draft, "new_draft"), Hub, cc: null,
+                _fixture.TaggedSubject("signature-step-named"), "Signature step named " + Marker, display: false, signature: anotherNew));
+            (bool noneAllowed, string noneWhy) = TryDraft(drafts, () => Service.NewDraft(
+                LiveStoreWriteGuard.Writable(Hub, StoreWriteKind.Draft, "new_draft"), Hub, cc: null,
+                _fixture.TaggedSubject("signature-step-none"), "Signature step none " + Marker, display: false, signature: SignatureManager.NoSignatureKeyword));
+            foreach (OutlookComposeKind kind in outlookAiInserted.Keys)
+            {
+                _output.WriteLine($"MEASURED {scenario} {kind}: OutlookAI inserts {Role(outlookAiInserted[kind])}");
+            }
+
+            _output.WriteLine($"MEASURED {scenario}: OutlookAI {(namedAllowed ? "allows" : "refuses")} '{anotherNew}' in one new mail ({namedWhy}) "
+                + $"and {(noneAllowed ? "allows" : "refuses")} none ({noneWhy})");
+
+            // THE CONTRACT: OutlookAI does what Outlook does (Q156, Q201).
+            Assert.True(unread.Count == 0, "Outlook's side could not be read: " + string.Join("; ", unread));
+            foreach (OutlookComposeKind kind in outlookInserted.Keys)
+            {
+                Assert.True(
+                    string.Equals(outlookInserted[kind], outlookAiInserted[kind], StringComparison.Ordinal),
+                    $"{kind}: Outlook inserts {Role(outlookInserted[kind])}, OutlookAI {Role(outlookAiInserted[kind])}");
+            }
+
+            bool? outlookLeavesTheChoice = signatureMenu[OutlookComposeKind.New];
+            Assert.True(outlookLeavesTheChoice != null, "the Signature button of Outlook's new mail could not be read");
+            Assert.True(namedAllowed == outlookLeavesTheChoice.Value,
+                $"Outlook's Signature button is {(outlookLeavesTheChoice.Value ? "enabled" : "disabled")}, and OutlookAI "
+                + $"{(namedAllowed ? "allows" : "refuses")} another signature in one message ({namedWhy})");
+            Assert.True(noneAllowed == outlookLeavesTheChoice.Value,
+                $"Outlook's Signature button is {(outlookLeavesTheChoice.Value ? "enabled" : "disabled")}, and OutlookAI "
+                + $"{(noneAllowed ? "allows" : "refuses")} no signature in one message ({noneWhy})");
+        }
+        finally
+        {
+            foreach (string draft in drafts)
+            {
+                DeleteDraft(draft);
+            }
+
+            LiveOutlookTestMailer.DeleteTaggedArtifactsUntilStableZero(Hub, Marker);
+        }
+
+        Assert.Equal(0, LiveOutlookTestMailer.CountTaggedArtifacts(Hub, Marker));
+    }
+
     [Fact]
     [Trait("Requires", "MailAccount")]
     [Trait("Requires", "LocalSignatures")]
@@ -264,6 +437,49 @@ public sealed class LiveSignatureSettingsTests
     }
 
     // ------------------------------------------------------------------ helpers
+
+    /// <summary>A name the step set, which must be a test signature's - the only kind a test may name (rule 6).</summary>
+    private static string RequireTestSignature(string? name, string what)
+    {
+        Assert.True(name != null, what + " is not set - the step sets it");
+        Assert.True(name!.StartsWith(SignatureCatalog.TestSignaturePrefix, StringComparison.Ordinal),
+            what + " is not a test signature - the step names only " + SignatureCatalog.TestSignaturePrefix + "* ones");
+        return name;
+    }
+
+    /// <summary>Which candidate a draft of OutlookAI's carries, read back from the saved draft.</summary>
+    private string InsertedByOutlookAI(DraftOutcome draft, IReadOnlyList<string> candidates)
+    {
+        return LiveSignatureSettingsStep.Classify(null, Service.Read(draft.EntryId).Body, candidates);
+    }
+
+    /// <summary>Makes a draft; true when OutlookAI made it, false with the reason when it refused the signature.</summary>
+    private static (bool Allowed, string Why) TryDraft(List<string> drafts, Func<DraftOutcome> make)
+    {
+        try
+        {
+            DraftOutcome draft = make();
+            drafts.Add(draft.EntryId);
+            return (true, draft.SignatureSource ?? "-");
+        }
+        catch (SignatureRefusedException refusal)
+        {
+            return (false, refusal.Reason);
+        }
+    }
+
+    private static string Show(bool? value) => value == null ? "(unread)" : value.Value ? "true" : "false";
+
+    /// <summary>A signature name as a log may show it: a test signature's whole, any other as what it is.</summary>
+    private static string ShowName(string? name)
+    {
+        if (string.IsNullOrEmpty(name))
+        {
+            return "-";
+        }
+
+        return name.StartsWith(SignatureCatalog.TestSignaturePrefix, StringComparison.Ordinal) ? name : "(not a test signature)";
+    }
 
     private SignatureDefaultsRow? HubRow(string profile)
     {

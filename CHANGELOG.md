@@ -234,6 +234,22 @@ its mailbox tests on, and change nothing you install.
   check fails, the reason is written out in full here rather than hidden behind a link. Both
   indicators now take their wording from one place, so they cannot disagree.
 
+- ✅ **A live run can set a signature policy before Outlook starts, and measure what Outlook inserts.**
+  Outlook reads an administrator's signature policy, a default deployed in its general mail settings
+  and an account's own defaults when it starts, and the live tests run without administrator rights,
+  where a policy cannot be written. So the live runner takes `-SignatureSettings GroupPolicy` or
+  `-SignatureSettings Preference` (Q200 (a) and Q201, decided by the maintainer 2026-11-18): after
+  the clock guard and before Outlook starts, a new guest script, `Set-SignatureSettings.ps1`, run as
+  administrator, writes Group Policy's NewSignature and ReplySignature, or the same two in Outlook's
+  own MailSettings, makes the test signatures they name and gives the hub account its own defaults
+  beside them, through the shipped manage_signature. The run is narrowed to one live test, which
+  opens a new mail, a reply and a forward the way Outlook's own commands do, reads which signature
+  Outlook put in and whether its Signature button is open, and holds OutlookAI to the same. Those
+  compose windows are the kind that crashed Outlook on 2026-10-04, and the runner keeps full crash
+  dumps. The checkpoint the guest is restored to afterwards removes the setting, so the step runs
+  only from a frozen checkpoint, never on the Exchange test machine and never with a green
+  checkpoint. The guest scripts that drive the MCP server share one stdio client now.
+
 - ✅ **A test-machine probe measures how Windows and the installer remove trust in the leaked key.**
   `Testbed/host/Invoke-TrustRemovalProbe.ps1` runs `Testbed/guest/Measure-TrustRemoval.ps1` on an
   Outlook test machine under its lease, from its frozen checkpoint, and puts the checkpoint back
