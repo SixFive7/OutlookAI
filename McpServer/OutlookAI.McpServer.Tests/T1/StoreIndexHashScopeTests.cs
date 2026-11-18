@@ -372,7 +372,7 @@ public sealed class StoreIndexHashScopeTests
         // gave last is still the right input: a store's id and own name do not change while it is
         // attached. Without it the map could not be rebuilt, and the PST would fall to the name rule.
         var index = new StubIndexClient(new[] { DecoyRoot, IdentityOwnRoot }, IdentityOwnRoot, DecoyRoot);
-        var gateway = new DirectGateway(ProfileSession.Create(new[] { Identity }, Sweep));
+        var gateway = new DirectGateway(StandInSession.Create(new[] { Identity }, Sweep));
         using MailService service = new MailService(gateway, null, index);
         service.Search(Request("identity@vm.invalid"));
 
@@ -424,7 +424,7 @@ public sealed class StoreIndexHashScopeTests
 
     private static MailService Service(StubIndexClient index, params ComStoreDetail[] stores)
     {
-        return new MailService(new DirectGateway(ProfileSession.Create(stores, Sweep)), null, index);
+        return new MailService(new DirectGateway(StandInSession.Create(stores, Sweep)), null, index);
     }
 
     private static ComSweepResult Sweep(string? onlyStore)
@@ -545,37 +545,6 @@ public sealed class StoreIndexHashScopeTests
             }
 
             return row;
-        }
-    }
-
-    /// <summary>A session answering the store list and the sweep, refusing everything else. Not sealed: DispatchProxy.</summary>
-    private class ProfileSession : DispatchProxy
-    {
-        private IReadOnlyList<ComStoreDetail> _stores = Array.Empty<ComStoreDetail>();
-        private Func<string?, ComSweepResult> _sweep = _ => throw new NotSupportedException();
-
-        internal static IOutlookSession Create(IReadOnlyList<ComStoreDetail> stores, Func<string?, ComSweepResult> sweep)
-        {
-            object proxy = Create<IOutlookSession, ProfileSession>()
-                ?? throw new InvalidOperationException("DispatchProxy.Create returned null.");
-            ((ProfileSession)proxy)._stores = stores;
-            ((ProfileSession)proxy)._sweep = sweep;
-            return (IOutlookSession)proxy;
-        }
-
-        /// <inheritdoc />
-        protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
-        {
-            return targetMethod?.Name switch
-            {
-                nameof(IOutlookSession.GetProfileName) => "T1 stand-in profile",
-                nameof(IOutlookSession.GetStoreDetails) => TestFolders.WithRoots(_stores),
-                nameof(IOutlookSession.TryDescribeFolder) => TestFolders.Describe(args),
-                nameof(IOutlookSession.SweepFoldersNewerThan) => _sweep(args?[3] as string),
-                _ => throw new NotSupportedException(
-                    "The stand-in session was asked for " + (targetMethod?.Name ?? "an unnamed member")
-                    + ", which this test does not model."),
-            };
         }
     }
 }
