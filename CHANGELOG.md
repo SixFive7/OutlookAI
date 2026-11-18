@@ -1168,6 +1168,13 @@ its mailbox tests on, and change nothing you install.
   would overwrite the change or copy it into the mailbox, and says to use Outlook instead. Roaming on
   Microsoft 365 Apps itself is not tested: the test machines run perpetual Office only.
 
+- ♻️ **A failed COM call is described in one place, where nine catch blocks wrote out its text (Q154).**
+  The COM session and the mail service named a failed call as "COMException 0x" and its HRESULT in
+  eight digits in nine catch blocks, each writing out the text of the shared
+  `ComObjects.DescribeFailure` - which the add-in's compose code and the rest of the COM session
+  already call - rather than calling it. They call it now, and say what they said before. The hex
+  stage of the code-sharing refactor found them.
+
 - ♻️ **Bytes are written as hex and read back in one place, and no id or hash changes case (Q154).**
   The code-sharing refactor's hex stage. Nine writers of bytes as hexadecimal, six of a SHA-256,
   two of a number and three readers each had their own copy - in the entry and store ids, the index

@@ -2474,9 +2474,7 @@ namespace OutlookAI.Core.Services
                     // whole search. Late-bound COM maps some HRESULTs to plain .NET
                     // exception types (e.g. E_INVALIDARG -> ArgumentException).
                     info.Performed = false;
-                    info.Error = ex is System.Runtime.InteropServices.COMException com
-                        ? string.Format(CultureInfo.InvariantCulture, "COMException 0x{0:X8}", com.HResult)
-                        : ex.GetType().Name;
+                    info.Error = ComObjects.DescribeFailure(ex);
                     return NoteProfileStoresWithoutIndex(info, request.ScopeStoreName, perStoreBase);
                 }
 
@@ -4147,8 +4145,7 @@ namespace OutlookAI.Core.Services
             {
                 OutlookUnavailableException => ex.Message,
                 TimeoutException => ex.Message,
-                System.Runtime.InteropServices.COMException com =>
-                    string.Format(CultureInfo.InvariantCulture, "COMException 0x{0:X8}", com.HResult),
+                System.Runtime.InteropServices.COMException com => ComObjects.DescribeFailure(com),
                 InvalidOperationException => fallback,
                 _ => ex.GetType().Name,
             };
