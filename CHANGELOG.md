@@ -835,6 +835,22 @@ its mailbox tests on, and change nothing you install.
   measured on Office LTSC 2024: with no Outlook window open, that window shows at the top left of the
   screen for 130 to 650 ms and has the foreground while it is there.
 
+- ♻️ **The scripts share one copy of their program-call wrapper, in Testbed/guest/ScriptHelpers.ps1 (Q166).**
+  Seventeen scripts each declared the same `Invoke-NativeCommand`, the wrapper every program call
+  goes through so that Windows PowerShell 5.1 cannot end a script on the first line a program writes
+  to stderr. Thirteen of them now dot-source it from `Testbed/guest/ScriptHelpers.ps1`, where
+  decision 215 (a) put the helpers the scripts share, so that every route that carries the guest
+  scripts to a test machine carries the file too; the two test runners and the two guest scripts
+  left fold with the steps that prove them by a real run. It is a dot-sourced file and not a module
+  because a module does not pass the caller's error settings through: measured 2026-11-18, a script
+  running a program through the wrapper from a module died on that first stderr line under Windows
+  PowerShell 5.1, and came back with the program's exit code when the same function was dot-sourced.
+  `Tools/Checks/check-powershell-51.ps1` now follows dot-sourced files, so a call through the shared
+  wrapper counts as one through a copy always did, and its new check 4 fails a copy of a shared
+  helper anywhere but in a script marked `# travels-alone:`, and there a copy that differs from the
+  shared one. Six cases that break those rules were run against it here, and it failed each.
+  `Testbed/README.md` names the file, and its step 4a stages it with the other guest scripts.
+
 - ♻️ **The test suite keeps one copy of each stand-in its files share, and of its paths (Q154).**
   Nineteen test files each declared a stand-in for Outlook's connection that runs an operation
   straight against a fake session, seventeen of them byte for byte, and the suite held six more
