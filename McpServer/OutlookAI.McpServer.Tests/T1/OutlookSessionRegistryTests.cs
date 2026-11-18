@@ -536,15 +536,22 @@ public sealed class OutlookSessionRegistryTests
         });
         dies.Start();
         dies.Join();
-        abandoned?.Dispose();
-
-        temp.Registry(s => true).Update(state =>
+        try
         {
-            SessionRegistryRules.Join(state, Session(HostA, 1, Outlook));
-            return 0;
-        }, out RegistryAccess access);
+            // The dead thread's handle stays open, so the mutex is the abandoned one, not a fresh one of the same name.
+            temp.Registry(s => true).Update(state =>
+            {
+                SessionRegistryRules.Join(state, Session(HostA, 1, Outlook));
+                return 0;
+            }, out RegistryAccess access);
 
-        Assert.Equal(RegistryAccess.Locked, access);
+            Assert.Equal(RegistryAccess.Locked, access);
+            Assert.Single(temp.Registry(s => true).TryRead()!.Sessions);
+        }
+        finally
+        {
+            abandoned?.Dispose();
+        }
     }
 
     [Fact]
