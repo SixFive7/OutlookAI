@@ -179,6 +179,15 @@ function Invoke-SelfTest {
         $stale = [ordered]@{ pid = $PID; processStartUnix = 1; what = 'a run that was stopped'; why = 'x'; sinceUnix = 1; updatedUnix = 1 }
         [System.IO.File]::WriteAllText((Join-Path (Join-Path $scratch 'waiting') '424242.json'), ($stale | ConvertTo-Json))
         Check 'one whose process is gone - or is another process now - is dropped, not listed' '0|False' ("{0}|{1}" -f @(Get-TestbedWaiting).Count, (Test-Path -LiteralPath (Join-Path (Join-Path $scratch 'waiting') '424242.json')))
+        # A record that goes between the list and the read is passed over, not a throw (2026-11-18).
+        Set-TestbedWaiting -What 'a self-test run' -Why 'the switch' -Since (Get-Date)
+        $waitingDir = Join-Path (Get-TestbedGateDirectory) 'waiting'
+        $listed = @(Get-TestbedStateFiles $waitingDir)
+        Remove-TestbedWaiting
+        $threw = ''
+        $read = @()
+        try { $read = @(Read-TestbedLiveRecords -Paths $listed) } catch { $threw = $_.Exception.Message }
+        Check 'a waiting record deleted between the list and the read is passed over, and nothing throws' '1|0|' ("{0}|{1}|{2}" -f $listed.Count, $read.Count, $threw)
 
         Write-Host ''
         Write-Host '== this machine''s processor times, read for real =='

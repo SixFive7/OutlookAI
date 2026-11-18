@@ -2057,6 +2057,18 @@ its mailbox tests on, and change nothing you install.
   Items - beside the mail, and none of them could be opened. On the test machine they were 21 of the
   first 100 results.
 
+- ✅ **A queued test run no longer stops when another run's ticket goes as it reads the queue.**
+  Stream M's build run 20261118-092047 ended as not tested before it started: "An object at the
+  specified path ...\queue\<ticket>.json does not exist". Two runs had found the same ended run's
+  ticket and both deleted it, and PowerShell's Remove-Item throws for a file that goes between its own
+  look and its delete - and under Windows PowerShell 5.1 says "Access is denied" for one already
+  pending delete - whatever -ErrorAction says. On a scratch queue whose tickets came and went, it threw
+  in 183 of 600 turns under PowerShell 7.7 and in 150 of 600 under 5.1. The queue, the gate's waiting
+  records, its pause switch and leaving the queue now list file names alone, count a file they cannot
+  read as gone, and delete through one helper that never throws: the same 600 turns threw in none. The
+  self-tests pin a ticket deleted between the list and the read, one ticket deleted twice, and a queue
+  whose tickets come and go while 100 turns read it.
+
 - ✅ **The disconnect test no longer fails when Outlook quits just before its pin is released.**
   Closing Outlook's last window can make it quit, so the test releases the lifetime pin only on a
   session that is still connected. When Outlook quit between that check and the call, the test
