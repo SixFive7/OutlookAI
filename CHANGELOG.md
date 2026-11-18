@@ -835,17 +835,21 @@ its mailbox tests on, and change nothing you install.
   measured on Office LTSC 2024: with no Outlook window open, that window shows at the top left of the
   screen for 130 to 650 ms and has the foreground while it is there.
 
-- ♻️ **The test suite keeps one copy of its stand-ins for Outlook's connection, and of its paths (Q154).**
+- ♻️ **The test suite keeps one copy of each stand-in its files share, and of its paths (Q154).**
   Nineteen test files each declared a stand-in for Outlook's connection that runs an operation
   straight against a fake session, seventeen of them byte for byte, and the suite held six more
-  copies of it and of two other such stand-ins under four other names. Twenty-five files read the
-  test project's folder out of the test assembly in their own words, and three parsed the committed
-  example live-test settings the same way. `McpServer/OutlookAI.McpServer.Tests/Support/` now holds
-  one of each: `DirectGateway`, which also takes the two positions two of its copies had drifted
-  into (Outlook reported as not connected while an operation still runs, and every operation refused
-  as by an Outlook that does not answer), `DeadGateway`, `RecordingGateway`, `RepoPaths`, moved
-  there, and `ExampleLiveSettings`. No test changed what it checks: the build machine ran 4,167
-  tests before and after.
+  copies of it and of two other such stand-ins under four other names. Thirteen declared a stand-in
+  for the search index that answers the questions the product asks around a search, in nine bodies
+  that had drifted apart one option at a time. Twenty-five files read the test project's folder out
+  of the test assembly in their own words, and three parsed the committed example live-test settings
+  the same way. `McpServer/OutlookAI.McpServer.Tests/Support/` now holds one of each:
+  `DirectGateway`, which also takes the two positions two of its copies had drifted into (Outlook
+  reported as not connected while an operation still runs, and every operation refused as by an
+  Outlook that does not answer), `DeadGateway`, `RecordingGateway`, `StubIndexClient`, which the
+  three suites whose index answers in its own way derive from, `IndexRows`, `RepoPaths`, moved
+  there, and `ExampleLiveSettings`. `StoreIndexHashScopeTests` keeps its own index stand-in, which
+  answers different questions. No test changed what it checks: the build machine ran the same tests,
+  by name, before and after each step.
 
 - ✅ **A live run that starts Outlook closes Office's activation wizard and records it.**
   Past Office's 30-day activation grace, which the Exchange test machine's real clock has crossed,

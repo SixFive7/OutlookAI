@@ -134,30 +134,22 @@ public sealed class FolderIdSearchRouteTests
             Statements.Add(sql);
             if (sql.Contains("DIRECTORY='" + UserRoot + "'", StringComparison.Ordinal))
             {
-                return Rows(StorePrefix);
+                return IndexRows.Urls(StorePrefix);
             }
 
             if (sql.Contains("System.ProviderItemID=", StringComparison.Ordinal))
             {
-                return _folderUrl == null ? Rows() : Rows(_folderUrl);
+                return _folderUrl == null ? IndexRows.Urls() : IndexRows.Urls(_folderUrl);
             }
 
             if (_folderEntryId != null && sql.StartsWith("SELECT TOP 200 System.ItemUrl FROM SystemIndex WHERE SCOPE='" + StorePrefix + "/'", StringComparison.Ordinal))
             {
                 byte[] item = Convert.FromHexString(_folderEntryId);
                 BitConverter.GetBytes(0x00200024u).CopyTo(item, 20); // a message node id in the same store
-                return Rows(StorePrefix + "/0/Inbox/" + EntryIdCodec.EncodeBytes(item));
+                return IndexRows.Urls(StorePrefix + "/0/Inbox/" + EntryIdCodec.EncodeBytes(item));
             }
 
-            return Rows();
-        }
-
-        private static IReadOnlyList<IReadOnlyDictionary<string, object?>> Rows(params string[] urls)
-        {
-            return urls.Select(u => (IReadOnlyDictionary<string, object?>)new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-            {
-                ["System.ItemUrl"] = u,
-            }).ToList();
+            return IndexRows.Urls();
         }
     }
 

@@ -288,7 +288,7 @@ public sealed class ScanDepthAndSweepScopeTests
     private static MailService Service(Func<string?, ComExhaustiveResult>? scan = null)
     {
         return new MailService(
-            new DirectGateway(StandInSession.Create(ProfileStores, Sweep, scan)), null, new StubIndexClient());
+            new DirectGateway(StandInSession.Create(ProfileStores, Sweep, scan)), null, new StubIndexClient(new[] { StorePrefix }, Frontier, everyScope: true));
     }
 
     /// <summary>A scan whose walk refused a subtree for being too deep.</summary>
@@ -337,50 +337,6 @@ public sealed class ScanDepthAndSweepScopeTests
             hasAttachments: false,
             sizeBytes: 2048,
             body: "test body");
-    }
-
-    /// <summary>An index that knows this one store and holds no search rows.</summary>
-    private sealed class StubIndexClient : IIndexClient
-    {
-        private const string DiscoveryTail = " System.ItemUrl FROM SystemIndex WHERE System.Kind='email'";
-
-        public IndexProviderKind Provider => IndexProviderKind.OleDb;
-
-        public IReadOnlyList<IReadOnlyDictionary<string, object?>> ExecuteRows(
-            string sql, int maxRows, int? commandTimeoutSeconds = null)
-        {
-            if (sql.EndsWith(DiscoveryTail, StringComparison.Ordinal))
-            {
-                return Rows(new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-                {
-                    ["System.ItemUrl"] = StorePrefix + "/0/Inbox/sampled-item",
-                });
-            }
-
-            if (sql.Contains("System.Message.DateReceived FROM SystemIndex", StringComparison.Ordinal))
-            {
-                return Rows(new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-                {
-                    ["System.Message.DateReceived"] = Frontier,
-                });
-            }
-
-            if (sql.StartsWith("SELECT TOP 1 System.ItemUrl FROM SystemIndex WHERE", StringComparison.Ordinal))
-            {
-                return Rows(new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-                {
-                    ["System.ItemUrl"] = StorePrefix + "/0/Inbox/probed-item",
-                });
-            }
-
-            return Array.Empty<IReadOnlyDictionary<string, object?>>();
-        }
-
-        private static IReadOnlyList<IReadOnlyDictionary<string, object?>> Rows(
-            IReadOnlyDictionary<string, object?> row)
-        {
-            return new[] { row };
-        }
     }
 
     /// <summary>Answers the store list, the sweep and the scan; refuses everything else.</summary>

@@ -420,87 +420,9 @@ public sealed class ThreadScopedStoreTests
             new DirectGateway(ScopedSession.Create(profileStores ?? TwoMailboxes)), null, index);
     }
 
-    private static StubIndexClient BothIndexed() => new(new[] { AlicePrefix, BobPrefix });
+    private static StubIndexClient BothIndexed() => new(new[] { AlicePrefix, BobPrefix }, Frontier);
 
-    private static StubIndexClient OnlyAliceIndexed() => new(new[] { AlicePrefix });
-
-    /// <summary>
-    /// A Windows Search stand-in that knows a chosen SET of store prefixes and nothing else,
-    /// answering the probe statements by shape and returning NO conversation rows - which is
-    /// the state this file is about: a scoped query cannot produce a row from a store it was
-    /// scoped away from, so the evidence unwalked_store needs is gone by construction.
-    /// </summary>
-    private sealed class StubIndexClient : IIndexClient
-    {
-        private const string DiscoveryTail = " System.ItemUrl FROM SystemIndex WHERE System.Kind='email'";
-
-        private readonly IReadOnlyList<string> _knownPrefixes;
-
-        internal StubIndexClient(IReadOnlyList<string> knownPrefixes)
-        {
-            _knownPrefixes = knownPrefixes;
-        }
-
-        public IndexProviderKind Provider => IndexProviderKind.OleDb;
-
-        public IReadOnlyList<IReadOnlyDictionary<string, object?>> ExecuteRows(
-            string sql, int maxRows, int? commandTimeoutSeconds = null)
-        {
-            if (sql.EndsWith(DiscoveryTail, StringComparison.Ordinal))
-            {
-                return _knownPrefixes
-                    .Select(p => (IReadOnlyDictionary<string, object?>)new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-                    {
-                        ["System.ItemUrl"] = p + "/0/Inbox/sampled-item",
-                    })
-                    .ToList();
-            }
-
-            if (sql.Contains("System.Message.DateReceived FROM SystemIndex", StringComparison.Ordinal))
-            {
-                return Known(sql)
-                    ? Rows(new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-                    {
-                        ["System.Message.DateReceived"] = Frontier,
-                    })
-                    : Array.Empty<IReadOnlyDictionary<string, object?>>();
-            }
-
-            if (sql.StartsWith("SELECT TOP 1 System.ItemUrl FROM SystemIndex WHERE", StringComparison.Ordinal))
-            {
-                return Known(sql)
-                    ? Rows(new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-                    {
-                        ["System.ItemUrl"] = _knownPrefixes[0] + "/0/Inbox/probed-item",
-                    })
-                    : Array.Empty<IReadOnlyDictionary<string, object?>>();
-            }
-
-            return Array.Empty<IReadOnlyDictionary<string, object?>>();
-        }
-
-        private static IReadOnlyList<IReadOnlyDictionary<string, object?>> Rows(IReadOnlyDictionary<string, object?> row)
-        {
-            return new[] { row };
-        }
-
-        private bool Known(string sql)
-        {
-            int start = sql.IndexOf("SCOPE='", StringComparison.Ordinal);
-            if (start < 0)
-            {
-                return _knownPrefixes.Count > 0;
-            }
-
-            start += "SCOPE='".Length;
-            int end = sql.IndexOf('\'', start);
-            string scope = end < 0 ? sql.Substring(start) : sql.Substring(start, end - start);
-
-            return _knownPrefixes.Any(p =>
-                string.Equals(scope, p, StringComparison.OrdinalIgnoreCase)
-                || scope.StartsWith(p + "/0/", StringComparison.OrdinalIgnoreCase));
-        }
-    }
+    private static StubIndexClient OnlyAliceIndexed() => new(new[] { AlicePrefix }, Frontier);
 
     /// <summary>
     /// A session that answers the store list, one freshness sweep (so a search can register a
