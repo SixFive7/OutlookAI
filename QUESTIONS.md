@@ -369,6 +369,54 @@ spelling".** See the decision log below.
 
 ## Decision log
 
+### 2026-11-18 - the folder-ID follow-ups carried out (stream K), decision 207 (b) with them
+
+**Primer.** Folders and stores addressed by ID (Q131-Q136, the entry below) left four follow-ups open, and
+the Exchange VM's first read-only run of them (runbook 4.4a, run 6) found three more. Each was decided
+before it was built - under the maintainer's Q131/Q132 delegation, "what you think is the most stable",
+or by him (207). What was measured on the way is in `Docs/live-tier-on-the-vm.md` section 4.9.
+
+- **The stale copy of a rebuilt .ost in an UNSCOPED search: (a) and (b) together.** Where another index
+  store of a store's name is tied to it by its hash, the untied one is the stale copy and is left out, and
+  the advice says so (`index.storeCopiesLeftOut`); where none is tied, nothing is left out and the copies
+  are reported (`index.storeCopiesSearched`); `outlook_health` lists them per store (`storeCopies`).
+- **The index-hit locator and two folders that share a path: (a).** The path fallback tries every folder at
+  the path, not only the first (`Core/Com/FolderPathCandidates.cs`).
+- **Store IDs for an Exchange store Outlook does not cache: (b).** Every store's top folder is read once per
+  store-list refresh, so every store gets the 28-character S ID. Measured first, read-only: 2.2-3.5 ms for
+  the automapped online entry on the Exchange VM, as for the cached stores.
+- **`read`'s `folder`: (a).** The folder's names joined by `/`, as every other tool prints a folder.
+- **One store ID named two stores (run 6).** Decided under the delegation: an ID never resolves to two stores
+  or two folders; a mailbox that appears as two store entries is listed and resolved once, through its
+  cached (indexed) entry (`Core/Com/StoreTwins.cs`). Measured: the two entries share their `StoreID` byte for
+  byte and their top folders' provider UID, and a folder ID opens in the cached entry whatever `StoreID` is
+  passed beside it.
+- **Decision 207 (b), by the maintainer.** `outlook_health` calls the other entry a second view of an indexed
+  mailbox (`matchedBy: "secondView"`), not a degradation; search covers the mailbox once, through the indexed
+  entry, without sweeping the same mail live through the second one. An online-only store with no cached
+  twin keeps its own S ID.
+- **An Exchange folder ID no folder has was answered (run 6).** Refused now. Measured: in cached mode
+  `GetFolderFromID` opens such an ID - with or without a `StoreID`, in the cached entry, not the online one -
+  as an empty stand-in whose every MAPI property is `MAPI_E_NOT_FOUND`; described, it read as the top of the
+  store. A folder without a record key is no folder.
+- **The thread test that could not open its index member (run 6).** Within existing decisions (gap B3, Q98
+  (f)): the member was a holiday appointment, which has no ReceivedTime; the index files its creation time,
+  so the locator matches an item without a ReceivedTime on its CreationTime, and the nearest candidate in
+  time wins - the holidays of one name were created tenths of a second apart.
+- **Decision 212 (a), by the maintainer:** with Outlook closed, a folder search on an Exchange mailbox may
+  start Outlook, as built.
+
+Decided on the maintainer's behalf while building it: another store of the profile that is tied to nothing
+and could be filed under the copies' name keeps them in an unscoped search, since they might be its own;
+copies an unscoped search reads are a health problem, copies it leaves out advice; a second view's row in
+`outlook_health` takes the kept entry's `inLocalIndex`, and `list_accounts` names the mailbox a second view
+shows (`secondViewOf`); the kept entry of two is the one Outlook keeps locally, then one that is not a
+delegate's entry, then the first in the profile's order; the namesake walk runs only after the folder
+`Folders[name]` gives failed, so an ordinary hit pays nothing for it, and it also reaches a folder whose
+name holds `/`. Not measured: a cold read of an online store's top folder in a headless Outlook (the Exchange
+VM's Outlook is windowed, and its folder pane holds every top folder open), and what that read costs while the
+server is unreachable.
+
 ### 2026-11-17 - Q131-Q136 carried out: folders and stores addressed by ID
 
 The answers, with their primers, are in the next entry ("Folders and stores by id"). What was built
