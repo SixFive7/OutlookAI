@@ -1999,7 +1999,11 @@
   keep it and let it stand in for the shared test mailbox of Q109 for the read-only `DelegateStore`
   tests - it is a real delegate store, but its contents are the hub's churn, so the census would need to
   treat it as the hub; (3) keep it undeclared, as now. Recommended: (1) if the shared mailbox of Q109 is
-  still coming, else (2) after a run shows what those tests make of it.
+  still coming, else (2) after a run shows what those tests make of it. The product side is settled by
+  decision 207 (b), 2026-11-18: the maintainer's own Outlook has the same kind of pair, so OutlookAI
+  treats the entry as a second view of the indexed mailbox - one store ID, listed and searched once,
+  through the cached entry, and named so in `outlook_health` and `list_accounts` (`McpServer/README.md`
+  load-bearing fact 18).
 
 - [ ] **Two things the Exchange VM's first runs left open.** (1) The sign-in's verification-code step has
   never met a code page: Microsoft asked for no MFA code on either sign-in of 2026-10-03, nor for the test
@@ -2094,7 +2098,11 @@
   unscoped search to this profile's roots. Recommended: (2). The Exchange half it waited for is
   measured (2026-10-03, Q113 (b), on the Exchange test VM): a cached Exchange mailbox is tied by its
   store hash, input `profileMappingSignature`, so a root the hash did not tie is not this profile's own
-  cached Exchange store. Delegate roots stay `delegateFolder`; a delegate's row is not measured yet.
+  cached Exchange store. Delegate roots stay `delegateFolder`; a delegate's row is not measured yet. Since
+  2026-11-18 (the stale-copy decision) an unscoped search already leaves out another profile's store
+  when it carries the name of a store of this profile that the index ties by its hash - the decoy of
+  runbook section 8 item 24 - and reports it (`index.storeCopiesLeftOut`); another profile's stores of
+  other names are unchanged.
 
 - [ ] **Measure `/ \ * ?` in an ATTACHMENT's file name in an `/at=` URL (Q99 follow-up, 2026-10-03).**
   Measured: the index does not encode `%` there (`OutlookAI 50% off.txt`, `OutlookAI %2A look-alike.txt`
@@ -2110,28 +2118,6 @@
   carrying such a file name to a guest's mail sink, so the index's spelling can be measured.
   Recommended: (3), then (2) if `/` comes back raw - a parser change for a spelling nobody has seen
   would be a guess.
-
-- [ ] **Decide what an UNSCOPED search does with the stale copy of a rebuilt .ost (measured by stream A,
-  2026-11-17).** After an Exchange offline file is rebuilt, Windows Search keeps the old copy of the
-  mailbox as a second index store of the same name and folder paths (`<smtp>($9b7b502)` beside the live
-  `<smtp>($b37770e)` on `OutlookAI-Exchange`). A search SCOPED to the mailbox is safe since Q131-Q136: it
-  is tied by hash, or refused when only the name could place it (`MailService.DescribeSeveralIndexStoresNamed`).
-  An UNSCOPED search still reads every index store, so it can return the old copy's rows - mail moved or
-  deleted since, or a second copy of mail that is still there - and nothing says so; Q113 (a) excludes only
-  stores two of THIS profile's stores share. Directions: (a) exclude, from an unscoped search, an index store
-  whose name is a profile store's when another root of that name is tied to it by hash (the stale copy
-  is then the untied one), and say so in advice; (b) report it in `outlook_health` and in the search's
-  advice without excluding it; (c) leave it - the user rebuilds the index. Recommended: (a), because the
-  tied root is measured evidence of which copy is live, and (b) for the case where neither is tied.
-
-- [ ] **Make the index-hit locator take a folder's ID instead of its path where two folders share one
-  (stream A's finding, 2026-11-17).** Two folders of one name can sit side by side - the Exchange guest has
-  two top-level `Conversation Action Settings` - and the index keeps one path for both. `HitLocator` opens
-  an index hit by its entry id when the URL carries one, and falls back to walking the hit's folder PATH
-  (`TryResolveByPath`, `Folders[name]`), which reaches the first of the two. `find_folder` and a folder-ID
-  search already tell the two apart (`scope.pathShared`). Directions: (a) on the path fallback, try every
-  folder at that path, not the first; (b) refuse the fallback when Outlook reports a namesake on the path;
-  (c) leave it - the entry-id route covers ordinary mail. Recommended: (a), the one that finds the item.
 
 - [ ] **Put a release candidate's MCP server in front of one session on the workstation, without installing it.**
   The manual pre-release checks (`Docs/release-manual-checks.md`, Q74 D2) exercise the Exchange-only

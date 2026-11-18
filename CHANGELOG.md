@@ -234,6 +234,17 @@ its mailbox tests on, and change nothing you install.
   check fails, the reason is written out in full here rather than hidden behind a link. Both
   indicators now take their wording from one place, so they cannot disagree.
 
+- ✅ **A probe on the Exchange test machine measures what the folder-ID fixes of November rest on.**
+  `Testbed/guest/Measure-FolderIdResolution.ps1` reads, changing nothing, what three of the fixes
+  needed. Reading the top folder of the mailbox Exchange automapped online takes 2 to 3 ms, as it does
+  for the cached stores. That entry and the test account's own cached store carry one StoreID and one
+  provider UID. A folder ID opens in the cached entry whichever StoreID is passed beside it, and an ID
+  no folder has opens there too, as an empty folder whose every property is missing. And the test
+  account's newest index rows are holiday appointments, whose index time is their creation time and
+  whose subjects come back up to five times, created tenths of a second apart. It prints no name,
+  address, ID or subject: those are compared through short hashes (Docs/live-tier-on-the-vm.md
+  section 4.9).
+
 - ✅ **A test-machine probe measures how Windows and the installer remove trust in the leaked key.**
   `Testbed/host/Invoke-TrustRemovalProbe.ps1` runs `Testbed/guest/Measure-TrustRemoval.ps1` on an
   Outlook test machine under its lease, from its frozen checkpoint, and puts the checkpoint back
@@ -321,7 +332,9 @@ its mailbox tests on, and change nothing you install.
   confirmed the IDs and found two things for the folders-by-ID code to settle: the test account's
   storeId names both its cached store and the online entry Exchange automapped, so list_folders and
   find_folder show its folders twice, and an Exchange folder ID no folder has was answered, not
-  refused. create_folder's refusals and the refusal while Outlook does not answer stay with T1:
+  refused. Both are settled: the mailbox is listed and resolved once, through its cached entry, and
+  the ID no folder has is refused. A fourth test checks that every store of the profile has a
+  28-character store ID, the automapped entry's too. create_folder's refusals and the refusal while Outlook does not answer stay with T1:
   reaching them there would take a write or a stopped Outlook. The test-side MCP client on that machine passes find_folder and lets create_folder
   make a folder only in the test account, and the guarded session follows the new folder interface.
 
@@ -733,6 +746,12 @@ its mailbox tests on, and change nothing you install.
 
 ### Changed
 
+- 🔧 **`read` prints a mail's folder as every other tool does: its names joined by `/`.**
+  It printed Outlook's own folder path, with the store's name in front, backslashes between the
+  names and Outlook's codes for `%`, `/` and `\` inside them, while `list_folders`, `find_folder`,
+  `search` and `move_mail` print `Inbox/Projects`. The store and its `storeId` are beside it, and
+  `folderId` is the folder's address. Decided 2026-11-18.
+
 - 💥 **Every tool addresses folders and stores by ID; names and paths are for display only (Q131-Q135).**
   Decided by the maintainer on 2026-10-11, after research found a folder's own Outlook ID unique
   and stable: it survives renames, moves within the mail file, deletion into Deleted Items and
@@ -750,7 +769,18 @@ its mailbox tests on, and change nothing you install.
   answer, so a person can read along. A store whose name another store shares is told apart now,
   where a name could only be refused. A name or path where an ID belongs is refused, with the
   `find_folder` call that finds it; so is an argument this release removed, rather than being
-  ignored, which for `search` would have searched every mailbox.
+  ignored, which for `search` would have searched every mailbox. Every store's ID is 28 characters:
+  the top folder of an Exchange store Outlook does not cache is read too, once each time the list of
+  stores is refreshed (2 to 3 ms, measured on the Exchange test machine), where its ID used to be its
+  whole entry id, which changed when the store's caching mode did. A mailbox the profile holds twice,
+  as its own cached store and as the online entry Exchange automaps for an account with Full Access
+  to it, has one store ID and is listed and resolved once, through the cached entry; `outlook_health`
+  calls the online entry a second view of that mailbox, not a store the index holds nothing for,
+  `list_accounts` names the mailbox it shows (`secondViewOf`), and a search covers the mailbox once,
+  through the cached entry, without checking the same mail live through the online one (decision
+  207). An Exchange
+  folder ID no folder has is refused: Outlook in cached mode opens such an ID as an empty folder,
+  which read as the top of the mailbox, so a search scoped to it answered for the whole mailbox.
 
 - 🔧 **OutlookAI writes Outlook's Cached Mode settings as your own settings, never as policy.**
   Versions 3.0.0.319 to 3.1.0.325 wrote five of them under Windows' policy key for Outlook, which on
@@ -1381,21 +1411,31 @@ its mailbox tests on, and change nothing you install.
   index matches it. Measured on the indexed test machine in the follow-up to the folder-name work
   of October (branch `q99-name-encoding-followup`), carried over here.
 
-- 🐛 **A search of a mailbox the index holds twice under one name is refused, not answered from a copy.**
+- 🐛 **A search never takes the stale copy the index keeps of a rebuilt mailbox for the mailbox.**
   After an Exchange offline file (.ost) is rebuilt, Windows Search keeps the old copy of the mailbox
   beside the new one, under the same name and with the same folders; measured on the Exchange test
   machine in November. Where nothing ties the mailbox to one of them by its index number, a search
   scoped to it took the first of the two, which could be the copy that no longer changes. It is
   refused now, naming both, with what to do: read the mailbox with `exhaustive`, or rebuild the
-  Windows Search index. The same holds for a shared mailbox found under its owner's store.
+  Windows Search index. The same holds for a shared mailbox found under its owner's store. A search
+  of every mailbox read both copies and said nothing. Where the index ties the mailbox to one copy
+  by its hash, the other is now left out of it, and the advice says which and why
+  (`index.storeCopiesLeftOut`); a data file's leftover from an earlier path and another Outlook
+  profile's store of the same name are left out the same way. Where nothing ties it, both are still
+  read, and the advice says the results can hold mail moved or deleted since, or the same mail twice
+  (`index.storeCopiesSearched`). `outlook_health` lists such copies with their store
+  (`storeCopies`), and counts the second case as a problem. Decided 2026-11-18.
 
-- 🐛 **A search of a folder with a namesake beside it says the results can include the namesake's mail.**
+- 🐛 **Mail in a folder with a namesake beside it opens, and a search of it says what it can include.**
   Two folders of the same name can sit side by side, as Exchange's two top-level "Conversation
   Action Settings" folders do on the Exchange test machine, and the search index keeps one path for
   both, so a search of one through the index can return the other's mail. Outlook now reports such
   a folder when its ID is looked up, and the search says so in its advice and with
   `scope.pathShared`; `find_folder` lists both folders, each with its own ID, and says they share a
-  path.
+  path. Opening a search result from such a folder (read, thread, save_attachment, open_in_outlook)
+  looked for it in the first folder of that name only, so mail in the second could not be opened.
+  When the first does not hold it, every other folder at the path is tried now, read by its own
+  name, which also finds a folder whose name holds `/`. Decided 2026-11-18.
 
 - 🐛 **A draft's audit line says Outlook's editor was promoted only when Outlook had no window.**
   Since the compose crash fix every draft is written through an activated inspector, and the audit
@@ -1875,7 +1915,12 @@ its mailbox tests on, and change nothing you install.
   scan could not see any of them, the index could not see meeting requests, and the check for
   brand-new mail returned all of them - so the same search gave different answers at different times
   and nothing said so. All three now return everything: "did my mail bounce?" is answerable, and a
-  meeting request found today no longer disappears once it is indexed.
+  meeting request found today no longer disappears once it is indexed. What a search returns can be
+  opened too: read, thread and the other tools that open a search hit matched it to its item by the
+  time it was received, which an appointment or a task in the results does not have. The index gives
+  such an item its creation time, so that is what it is matched on now, and when several items share
+  the subject, the nearest in time wins: on the Exchange test machine, holiday appointments of one
+  name were created tenths of a second apart.
 
 - 🐛 **A mail search says when it left something out.**
   Three holes could not be seen from the answer at all: mail the check found but could not open,
