@@ -243,7 +243,8 @@ its mailbox tests on, and change nothing you install.
   already going finish. The build runner looks at the switch and the load on every turn of its queue,
   before it touches a build machine; the live runner before its build and on every turn of its wait
   for a guest; the clone maker before it takes its source. A waiting run holds no machine's lock or
-  lease, says what it waits for and since when once a minute, and is listed by `Set-TestbedPause.ps1`.
+  lease, keeps its place in the queue, sleeps until a file of the testbed changes or 30 seconds pass,
+  says what it waits for and since when once a minute, and is listed by `Set-TestbedPause.ps1`.
   A machine another run took in the last two minutes counts at its full size, so the runs that waited
   do not all start in the second the load dips. The load comes from kernel32's GetSystemTimes, which
   counts the virtual machines here because Hyper-V runs its root scheduler on this host: it read 83 %

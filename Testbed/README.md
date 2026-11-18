@@ -1581,7 +1581,7 @@ taken its lease yet is not immediately put back to sleep.
 | `host/TestbedLeasePath.ps1` | Where leases live, and how one is read. Dot-sourced by both sides so they cannot disagree. |
 | `host/Invoke-TestbedIdleSave.ps1` | The saver. `-WhatIf` reports without changing anything. The one script here that keeps a VM-name default, because its `-VMName` is an allowlist rather than a target (§4a) - since 2026-11-17 every member of every pool in `host/TestbedPool.ps1` and `OutlookAI-Exchange`, so a clone is watched from the day it joins its pool. |
 | `host/Register-IdleSaveTask.ps1` | Registers it as the invoking user at ordinary privilege, every 15 minutes. Needs local `Hyper-V Administrators` membership, **not** elevation - `Save-VM` does not require it, and a standing elevated task would outlive the reason it was created. |
-| `host/TestbedLoad.ps1` | **The gate** (Q195 (e), 2026-11-18): the pause switch, the load limit - under 70 % busy over the last 30 s, the VMs other runs took in the last 120 s counted at their size - and the files that hold them, `%SystemDrive%\OutlookAI-Testbed\gate\`. Dot-sourced by both runners, `host/New-TestbedClone.ps1` and `host/Set-TestbedPause.ps1`, so they cannot disagree. Reads the host's processor times with `GetSystemTimes`, compiled by `Add-Type`. |
+| `host/TestbedLoad.ps1` | **The gate** (Q195 (e), 2026-11-18): the pause switch, the load limit - under 70 % busy over the last 30 s, the VMs other runs took in the last 120 s counted at their size - and the files that hold them, `%SystemDrive%\OutlookAI-Testbed\gate\`. Dot-sourced by both runners, `host/New-TestbedClone.ps1` and `host/Set-TestbedPause.ps1`, so they cannot disagree. Reads the host's processor times with `GetSystemTimes`, compiled by `Add-Type`, and sleeps between looks with `host/TestbedPool.ps1`'s wait on the testbed's files, 30 s at most. |
 | `host/Set-TestbedPause.ps1` | **The pause switch** (Q195 (e)): `-On [-Reason <text>]` holds every new run back, `-Off` lets them start, neither prints the switch, the load, the runs that wait and the testbed VMs that run. Runs already going finish. `-SelfTest` covers the gate's decisions and files on a scratch directory and reads this machine's processor times once. |
 | `host/Invoke-TestbedIdleSave.vbs` | The task's action: `wscript.exe` starts the saver with its window hidden from creation and waits for it. The task started `powershell.exe` directly until 2026-10-03, and every run opened a console window that took the maintainer's focus for 1-2 s. |
 
@@ -1609,14 +1609,19 @@ work slowed down, and every run took about twice as long. So a run starts only t
   this host runs the hypervisor's root scheduler (runbook section 4.11 has the measurements). Task
   Manager shows a higher figure, % Processor Utility, which weighs frequency boost in.
 - **Where a run starts.** `host/Invoke-TestsOnBuildVm.ps1` looks at the gate on every turn of its queue
-  before it touches a build VM; `host/Invoke-LiveTierOnGuest.ps1` before its build and on every turn of
-  its wait for a guest; `host/New-TestbedClone.ps1 -Execute` before it takes the source. A run that
+  before it touches a build VM - before its place in the queue, a lease or a lock;
+  `host/Invoke-LiveTierOnGuest.ps1` before its build and on every turn of its wait for a guest, the
+  same way; `host/New-TestbedClone.ps1 -Execute` before it takes the source. A turn the gate holds back
+  keeps the run's ticket in the testbed's queue (`host/TestbedPool.ps1`), so the runs start in the
+  order they came when it opens. A run that
   takes a VM decides it under the gate's claim and writes its start there, so two runs never both
   start on the same reading. The janitor and the idle-saver are not gated: they put VMs away.
 - **A waiting run holds nothing and says so**: what it waits for, and since when, once a minute in its
   own output, and in `gate\waiting\<pid>.json`, which `Set-TestbedPause.ps1` lists. It waits up to
   its own limit - `-QueueTimeoutMinutes`, `-LeaseWaitMinutes` - and then ends as INFRA, not tested.
-  The first look at the load takes 30 s; a run that waits looks again at once, from its own readings.
+  The first look at the load takes 30 s. Between looks a run sleeps until a file of the testbed's
+  state changes - the switch turned off wakes every waiting run at once - or 30 s pass, and then reads
+  the load from its own readings, without waiting a window out again.
   `summary.txt`'s time line gives the build runner's wait at the gate as `gate`.
 - **Nothing runs in the background for it**: no task, no service, no sampling process, so no window
   can open. A run measures in its own process while it waits.

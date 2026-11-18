@@ -4790,6 +4790,16 @@ starts, deciding and writing one's own is one step, under `Enter-TestbedLeaseCla
 While the host is quiet this changes nothing: three build runs at 30 % count 30, 42.5 and 55 % and all
 start, as before.
 
+**In the queue (2026-11-18, once the polling cut of section 4.10 had landed).** The gate now sits
+inside the testbed's queue. Every turn of a queued build run, and every turn of a live run's wait for a
+guest, looks at the switch and the load first - before its place in the queue, any lease or any lock -
+and a turn the gate holds back touches nothing but keeps the run's ticket, so the queue's order holds
+when it opens. Once a member's lock or a guest's lease is had, the start is decided under the gate's
+claim, as before. Between looks a run sleeps on the testbed's files - the switch's file, the starts,
+the leases, the locks' owner files, the tickets - for at most 30 s, as a queued run does, where it
+looked every 5 s; turning the switch off wakes every waiting run at once. The live run's wait before
+its build and the clone maker's wait before its export sleep the same way.
+
 **The proofs** - real runs of this branch, while about ten other agents' runs, on runners from before
 the gate, kept every build VM and two guests busy and the host at 93 to 100 % (the gate's own reading
 and `\Processor(_Total)\% Processor Time` alike):
