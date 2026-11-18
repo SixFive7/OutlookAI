@@ -2312,6 +2312,31 @@ its mailbox tests on, and change nothing you install.
   when the assistant kills the helper outright, which is what happens when Outlook has genuinely
   stopped responding and when a session ends abruptly.
 
+- ✅ **Test runs that wait for a test machine no longer ask Hyper-V every few seconds.**
+  Every queued run asked Hyper-V about every machine it could use every 5 seconds, through the WMI
+  calls `Get-VM` makes, and read the host's free memory through WMI as well. On the night of
+  2026-11-18, with eighteen runners alive and at most eight of them running, the maintainer's PC
+  lagged, and a trace of 15 seconds counted 32 WMI calls a second, 91 % of them Hyper-V's. A run that
+  waits now takes a ticket in a queue of files and tries only the machines no earlier run wants, first
+  come first served, where a newer run could take a machine before an older one. It tells a free
+  machine from its lock and lease files and the host's memory from Windows' `GlobalMemoryStatusEx`,
+  asks Hyper-V once, before it waits, which of its machines exist, and sleeps until a lock, a lease or
+  a ticket changes, or 30 seconds pass. A running run reads its machine's state and heartbeat with one
+  narrow query each, by the machine's id, instead of `Get-VM` and `Get-VMIntegrationService` (4 and 23
+  WMI calls), and asks its machine how far it got every 15 seconds instead of every 3. A live run makes
+  all its own calls into the guest over one PowerShell Direct session instead of one each, and the
+  idle-saver reads the leases first and asks Hyper-V about the rest in one query. Measured on the same
+  host that morning, a run waiting the old way cost about 0.43 of a logical processor: 0.34 in
+  WmiPrvSE, nearly all of it the memory read, and 0.08 in vmms and the WMI service, which answer
+  Hyper-V's calls. A run waiting the new way costs nothing measurable, and a trace of 15 seconds found
+  no WMI call from it, where each of four queued runs on the old runner made 30 to 34.
+
+- ✅ **A test machine that is running is saved before a checkpoint is restored over it.**
+  Both runners restored a checkpoint over a test machine in whatever state it was, and at the end of a
+  run it is running. In another session's runs that night, a guest restored that way stayed out of
+  PowerShell Direct's reach for six minutes, where one saved first and then restored answered in
+  seconds. The build-VM runner and the live-tier runner now save a running or paused machine first.
+
 - ✅ **The index-refile measurement no longer fails when Outlook lists a moved folder late.**
   The live test that times how fast the index follows a folder rename and move reads the folder's
   ID under its new parent right after moving it. On the copy of the indexed test machine the parent

@@ -27,10 +27,33 @@
     ONE MORE VM ONLY WHEN THE HOST HAS THE MEMORY FOR IT, AND SOME TO SPARE. The maintainer works
     on this PC. A pool's first member is taken whenever it is free, as the one VM always was. Any
     other member is taken only when the host's available memory covers that VM's startup memory
-    plus $TestbedHostReserveBytes, 16 GB - read from Win32_OperatingSystem.FreePhysicalMemory, which
-    is what Windows calls available, free and standby together (measured on this host 2026-11-17:
-    63.9 GB there, 64.2 GB from the Memory\Available MBytes counter). A run that finds no member it
-    may take waits, as runs waited for the one VM before.
+    plus $TestbedHostReserveBytes, 16 GB - read from kernel32's GlobalMemoryStatusEx, which is what
+    Windows calls available, free and standby together, and costs no WMI call (2026-11-18: 28.0 GB
+    there where Win32_OperatingSystem.FreePhysicalMemory, read until then, said 28.1 GB - and that
+    read took about 2 s, stream W measured). A run that finds no member it may take waits, as
+    runs waited for the one VM before.
+
+    WAITING ASKS HYPER-V NOTHING (2026-11-18, the maintainer's PC lagging). Every queued run asked
+    Hyper-V about every member every 5 s - Get-VM, which reads each VM's summary, settings and their
+    associations through WMI, served inside vmms.exe and the WMI service at normal priority whatever
+    the caller's: a WMI-Activity trace at 04:09 that night counted 32 operations a second, 91 % of
+    them those, all from waiting runners - about 0.2 to 0.6 of a logical processor in vmms and the
+    WMI service, stream W measured. (WmiPrvSE's 3.4 to 3.8 processors that night were other programs
+    listing processes, not the runners.) So a run that waits now:
+      - joins a QUEUE, a ticket file in %SystemDrive%\OutlookAI-Testbed\queue\ naming the VMs it
+        can use (Join-TestbedQueue). It tries a VM only while no run that queued before it wants
+        that VM (Get-TestbedQueueTurn): one run at a time tries each VM, first come first served,
+        and every other run waits on the queue's files only. A run of a checkout from before the
+        queue takes no ticket and takes a free VM as it always did;
+      - asks whether a VM is free of FILES only - a build VM's lock, a lease, the queue - and the
+        host's memory of GlobalMemoryStatusEx; what Hyper-V must tell it - whether its VMs exist,
+        their ids, their startup memory - it asks once, before it starts waiting;
+      - sleeps until a file of the testbed's state changes - a lock's owner file, a lease, a ticket -
+        or 30 s pass (Wait-TestbedChange): no poll in between, and none more often than that;
+      - and a run that runs reads its VM's state and heartbeat with one narrow CIM query each, by
+        the VM's id, on a session kept for the process (Get-TestbedVms, Get-TestbedVmStateById,
+        Test-TestbedHeartbeat) - never Get-VM or Get-VMIntegrationService, which cost 4 and 23 WMI
+        operations a call (stream W, 2026-11-18).
 #>
 
 # The pools, the source first: the member every run tried first before there were clones.
@@ -78,9 +101,51 @@ function Test-HostHasRoom {
 }
 
 # The host's available memory, in bytes, or -1 when it cannot be read - which Test-HostHasRoom
-# reads as no room: an extra VM is never started on a guess.
+# reads as no room: an extra VM is never started on a guess. kernel32's GlobalMemoryStatusEx, no WMI
+# (the banner), compiled once a process by Add-Type - on Windows PowerShell 5.1 the .NET Framework's
+# own csc.exe, so nothing is installed for it (AGENTS.md, Dependencies). C# 5.
 function Get-HostAvailableBytes {
-    try { return ([long](Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop).FreePhysicalMemory) * 1024 }
+    try {
+        if (-not ('OutlookAI.Testbed.HostMemory' -as [type])) {
+            Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+namespace OutlookAI.Testbed
+{
+    public static class HostMemory
+    {
+        [StructLayout(LayoutKind.Sequential)]
+        private class MemoryStatusEx
+        {
+            public uint Length = 64;
+            public uint MemoryLoad;
+            public ulong TotalPhys;
+            public ulong AvailPhys;
+            public ulong TotalPageFile;
+            public ulong AvailPageFile;
+            public ulong TotalVirtual;
+            public ulong AvailVirtual;
+            public ulong AvailExtendedVirtual;
+        }
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool GlobalMemoryStatusEx([In, Out] MemoryStatusEx status);
+
+        // Available physical memory - free and standby - in bytes; -1 when Windows does not say.
+        public static long AvailableBytes()
+        {
+            MemoryStatusEx status = new MemoryStatusEx();
+            if (!GlobalMemoryStatusEx(status)) { return -1; }
+            return (long)status.AvailPhys;
+        }
+    }
+}
+'@
+        }
+        return [long][OutlookAI.Testbed.HostMemory]::AvailableBytes()
+    }
     catch { return -1 }
 }
 
@@ -103,4 +168,196 @@ function Get-BuildRunnerLockNames {
         return [pscustomobject]@{ Lock = 'runner.lock'; Owner = 'runner.owner.json' }
     }
     return [pscustomobject]@{ Lock = "runner.$VmName.lock"; Owner = "runner.$VmName.owner.json" }
+}
+
+# =============================================================================================
+# WAITING ASKS HYPER-V NOTHING (2026-11-18) - the banner. The build runner's -SelfTest pins the pure
+# parts and the queue's files.
+# =============================================================================================
+
+# How long a waiting run sleeps at most before it looks again, and how often a running one asks its
+# guest how far it got: the maintainer's ceilings on polling, 2026-11-18. A heartbeat is one narrow
+# query (Test-TestbedHeartbeat), asked every 2 s while a VM comes up, as stream W measured cheap.
+$TestbedWaitSeconds = 30
+$TestbedGuestPollSeconds = 15
+$TestbedHeartbeatSeconds = 2
+# Set by a -SelfTest to a scratch directory; empty, the queue is the machine's.
+$TestbedQueueDirectoryOverride = ''
+
+# A VM's state from Hyper-V's Msvm_ComputerSystem.EnabledState, in Get-VM's words: Running, Off,
+# Saved and Paused are settled, and anything else is on its way to one of them. Both numberings
+# Hyper-V has used are read.
+function ConvertFrom-TestbedEnabledState {
+    param([int] $EnabledState)
+    switch ($EnabledState) {
+        2 { return 'Running' }
+        3 { return 'Off' }
+        6 { return 'Saved' }
+        9 { return 'Paused' }
+        32768 { return 'Paused' }
+        32769 { return 'Saved' }
+        10 { return 'Starting' }
+        32770 { return 'Starting' }
+        4 { return 'Stopping' }
+        32774 { return 'Stopping' }
+        32771 { return 'Snapshotting' }
+        32773 { return 'Saving' }
+        32776 { return 'Pausing' }
+        32777 { return 'Resuming' }
+    }
+    return "EnabledState $EnabledState"
+}
+
+# Which of $Candidates a queued run may NOT try yet, each with the run ahead of it that wants it: a
+# run tries a VM only while no live ticket before its own names that VM. $Tickets are the live
+# tickets with Name - the file name, which sorts them in queue order - Run and Candidates. Pure.
+function Select-TestbedQueueTurn {
+    param([object[]] $Tickets, [string] $Mine, [string[]] $Candidates)
+    $ahead = @{}
+    foreach ($t in @(@($Tickets) | Where-Object { $null -ne $_ } | Sort-Object { [string]$_.Name })) {
+        if ([string]$t.Name -eq $Mine) { break }
+        foreach ($wanted in @($t.Candidates)) {
+            foreach ($candidate in @($Candidates)) {
+                if ([string]::Equals([string]$wanted, [string]$candidate, [System.StringComparison]::OrdinalIgnoreCase) -and -not $ahead.ContainsKey($candidate)) { $ahead[$candidate] = [string]$t.Run }
+            }
+        }
+    }
+    return $ahead
+}
+
+# Where waiting runs queue: machine-wide, beside the build runner's directory and the leases.
+function Get-TestbedQueueDirectory {
+    $dir = [string]$TestbedQueueDirectoryOverride
+    if (-not $dir) { $dir = Join-Path (Split-Path -Parent (Get-BuildRunnerDirectory)) 'queue' }
+    if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+    return $dir
+}
+
+# A run joins the queue for the VMs it can use: a ticket named for when it joined, so that the names
+# sort in queue order, holding what it is and which VMs it wants. -Ahead puts it before every run
+# already waiting: New-TestbedClone.ps1, whose export holds its source for half a minute and ends the
+# queue it jumps. Returns the ticket: Path, Name and the Json it was written with.
+function Join-TestbedQueue {
+    param([string] $Run, [string] $What, [string[]] $Candidates, [switch] $Ahead)
+    $ticks = [DateTime]::UtcNow.Ticks
+    if ($Ahead) { $ticks = 0L }
+    $name = '{0:D19}-{1}.json' -f $ticks, $PID
+    $record = [ordered]@{
+        pid              = $PID
+        processStartUnix = ([DateTimeOffset](Get-Process -Id $PID).StartTime).ToUnixTimeSeconds()
+        run              = $Run
+        what             = $What
+        candidates       = @($Candidates)
+        joinedUnix       = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+    }
+    $json = ConvertTo-Json -InputObject $record -Depth 3
+    $path = Join-Path (Get-TestbedQueueDirectory) $name
+    [System.IO.File]::WriteAllText($path, $json, (New-Object System.Text.UTF8Encoding($false)))
+    return [pscustomobject]@{ Path = $path; Name = $name; Json = $json }
+}
+
+# Leaves the queue: the ticket goes. Never throws.
+function Exit-TestbedQueue {
+    param([object] $Ticket)
+    try { if ($null -ne $Ticket -and (Test-Path -LiteralPath $Ticket.Path)) { Remove-Item -LiteralPath $Ticket.Path -Force } } catch { }
+}
+
+# Whether a ticket's run still lives: its process, started when the ticket says - not another that
+# took its id since.
+function Test-TestbedTicketAlive {
+    param([object] $Record)
+    $p = $null
+    try { $p = Get-Process -Id ([int]$Record.pid) -ErrorAction SilentlyContinue } catch { }
+    if ($null -eq $p) { return $false }
+    try { return (([DateTimeOffset]$p.StartTime).ToUnixTimeSeconds() -eq [long]$Record.processStartUnix) } catch { return $true }
+}
+
+# This run's turn in the queue: the tickets ahead of its own are read, those of runs that have ended -
+# stopped while they waited - deleted, and Select-TestbedQueueTurn says which of $Candidates it may
+# not try yet. A ticket of its own that has gone is written again under its name, so the run keeps
+# its place. Files only.
+function Get-TestbedQueueTurn {
+    param([object] $Ticket, [string] $Run, [string[]] $Candidates)
+    $dir = Get-TestbedQueueDirectory
+    if (-not (Test-Path -LiteralPath $Ticket.Path)) { [System.IO.File]::WriteAllText($Ticket.Path, $Ticket.Json, (New-Object System.Text.UTF8Encoding($false))) }
+    $live = @()
+    foreach ($f in @(Get-ChildItem -LiteralPath $dir -Filter '*.json' -File -ErrorAction SilentlyContinue | Sort-Object Name)) {
+        if ($f.Name -eq $Ticket.Name) { break }
+        $t = $null
+        try { $t = [System.IO.File]::ReadAllText($f.FullName) | ConvertFrom-Json } catch { continue }
+        if ($null -eq $t) { continue }
+        if (-not (Test-TestbedTicketAlive $t)) { Remove-Item -LiteralPath $f.FullName -Force -ErrorAction SilentlyContinue; continue }
+        $live += [pscustomobject]@{ Name = $f.Name; Run = [string]$t.run; Candidates = @($t.candidates) }
+    }
+    $live += [pscustomobject]@{ Name = $Ticket.Name; Run = $Run; Candidates = @($Candidates) }
+    return (Select-TestbedQueueTurn -Tickets $live -Mine $Ticket.Name -Candidates $Candidates)
+}
+
+# Sleeps until a .json file under the testbed's state directory changes - a build VM's owner file
+# as a run lets its lock go, a lease, a ticket - or $Seconds pass. A FileSystemWatcher: no poll at
+# all in between. After a change it gives the writer a second to finish - a run removes its owner
+# file just before it lets go of its lock. $true when something changed.
+function Wait-TestbedChange {
+    param([int] $Seconds = $TestbedWaitSeconds)
+    $root = Split-Path -Parent (Get-BuildRunnerDirectory)
+    $watcher = New-Object System.IO.FileSystemWatcher($root, '*.json')
+    try {
+        $watcher.IncludeSubdirectories = $true
+        $watcher.NotifyFilter = [System.IO.NotifyFilters]::FileName -bor [System.IO.NotifyFilters]::LastWrite
+        $result = $watcher.WaitForChanged([System.IO.WatcherChangeTypes]::All, [int]($Seconds * 1000))
+    }
+    finally { $watcher.Dispose() }
+    if ($result.TimedOut) { return $false }
+    Start-Sleep -Seconds 1
+    return $true
+}
+
+# THE NARROW QUERIES (stream W, 2026-11-18): one DCOM CIM session for the process - a new session a
+# call costs three WMI operations where a kept one costs one - and every query naming the properties
+# it reads: Get-VM starts with an enumeration of Msvm_SummaryInformation that cost vmms 810 ms of processor when
+# asked for everything, and Get-VMIntegrationService costs 23 operations a call.
+function Get-TestbedCimSession {
+    if ($null -eq $script:TestbedCimSession) { $script:TestbedCimSession = New-CimSession -SessionOption (New-CimSessionOption -Protocol Dcom) }
+    return $script:TestbedCimSession
+}
+
+# VMs by name, in ONE query for all of them: each one's Hyper-V id - Msvm_ComputerSystem.Name, which
+# the other narrow queries ask by - and its state. Asked once a run, before it waits: whether its VMs
+# exist. A name that is no plain VM name is refused before anything is asked. One row per VM found -
+# a name Hyper-V has twice gives two - with Name, Id and State.
+function Get-TestbedVms {
+    param([string[]] $Name)
+    $names = @($Name | Where-Object { $_ })
+    foreach ($n in $names) { if ($n -notmatch '^[A-Za-z0-9._-]{1,64}$') { throw "'$n' is not a plain VM name; refusing to ask Hyper-V about it." } }
+    if ($names.Count -eq 0) { return @() }
+    $where = (@($names | ForEach-Object { "ElementName='$_'" }) -join ' OR ')
+    $rows = @(Get-CimInstance -CimSession (Get-TestbedCimSession) -Namespace 'root\virtualization\v2' -Query "SELECT Name, ElementName, EnabledState FROM Msvm_ComputerSystem WHERE $where" -ErrorAction Stop)
+    return @($rows | ForEach-Object { [pscustomobject]@{ Name = [string]$_.ElementName; Id = [string]$_.Name; State = (ConvertFrom-TestbedEnabledState ([int]$_.EnabledState)) } })
+}
+
+# A VM's Hyper-V id as these queries take it: a GUID and nothing else, so it can go into WQL as it is.
+function Assert-TestbedVmId {
+    param([string] $Id)
+    if ($Id -notmatch '^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$') { throw "'$Id' is not a VM id; refusing to ask Hyper-V about it." }
+}
+
+# A VM's state by its id - Running, Saved, Off, Paused, or on its way to one: Msvm_ComputerSystem's
+# EnabledState, one keyed query. '' when Hyper-V has no VM of that id.
+function Get-TestbedVmStateById {
+    param([string] $Id)
+    Assert-TestbedVmId $Id
+    $rows = @(Get-CimInstance -CimSession (Get-TestbedCimSession) -Namespace 'root\virtualization\v2' -Query "SELECT EnabledState FROM Msvm_ComputerSystem WHERE Name='$Id'" -ErrorAction Stop)
+    if ($rows.Count -ne 1) { return '' }
+    return (ConvertFrom-TestbedEnabledState ([int]$rows[0].EnabledState))
+}
+
+# Whether a VM's heartbeat reads OK, by its id: Msvm_HeartbeatComponent's OperationalStatus, whose
+# first value is 2 for OK - one narrow query, where Get-VMIntegrationService costs 23 operations.
+function Test-TestbedHeartbeat {
+    param([string] $Id)
+    Assert-TestbedVmId $Id
+    $rows = @(Get-CimInstance -CimSession (Get-TestbedCimSession) -Namespace 'root\virtualization\v2' -Query "SELECT OperationalStatus FROM Msvm_HeartbeatComponent WHERE SystemName='$Id'" -ErrorAction Stop)
+    if ($rows.Count -lt 1) { return $false }
+    $status = @($rows[0].OperationalStatus)
+    return ($status.Count -gt 0 -and [int]$status[0] -eq 2)
 }

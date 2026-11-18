@@ -1822,10 +1822,10 @@
 - [ ] **Remove the testbed's .NET 10 checkpoints once every branch is on .NET 11 (Q172).**
   `CP-03-SDK-TEST-READY-UTC` on the three build VMs, and `CP-22C-FROZEN-CLOCK` and
   `CP-16B-FROZEN-CLOCK` on the Outlook guests, stay only for branches whose runners still name them
-  (Docs/live-tier-on-the-vm.md section 4.10). Once no branch does: remove them (`Remove-VMSnapshot`;
+  (Docs/live-tier-on-the-vm.md section 4.11). Once no branch does: remove them (`Remove-VMSnapshot`;
   Hyper-V merges their disks), take them out of `Testbed/testbed.json`, and keep
   `.work/media/dotnet-sdk-10.0.401-win-x64.exe` only while a checkpoint still needs it - recording it
-  in section 4.10. `OutlookAI-Exchange`'s older checkpoints are its rebuild points and stay.
+  in section 4.11. `OutlookAI-Exchange`'s older checkpoints are its rebuild points and stay.
 
 - [ ] **Decide whether the draft tools refuse an attachment path Outlook cannot take (found
   2026-11-18, by save_attachment's live tests).** On the unindexed test guest, `Attachments.Add` on a
