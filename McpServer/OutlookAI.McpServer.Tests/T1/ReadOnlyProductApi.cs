@@ -94,6 +94,15 @@ internal static class ReadOnlyProductApi
         ["OutlookAI.Core.Services.SweepInfo"] = Data,
         ["OutlookAI.Core.Services.ThreadOutcome"] = Data,
         ["OutlookAI.Core.Services.TuningHealthView"] = Data,
+        ["OutlookAI.Core.Services.OutlookStartHealthView"] = Data,
+        // The start protections (Q175, Q176 (c), 2026-11-18): what one look at Outlook's start saw, and how
+        // one connection went. Win32 and registry READS; nothing here can write.
+        ["OutlookAI.Core.Com.OutlookConnectTrace"] = Data,
+        ["OutlookAI.Core.Com.OutlookConnectRecord"] = Data,
+        ["OutlookAI.Core.Com.OutlookLivenessSnapshot"] = Data,
+        ["OutlookAI.Core.Com.OutlookStartObservation"] = Data,
+        ["OutlookAI.Core.Com.ComHostIdentity"] = "this process's id and its server's, read from the environment",
+        ["OutlookAI.Core.Com.AddInStartupStamp"] = "reads the add-in's start-up stamp and its registration from the registry; writes nothing",
 
         // The corpus freshness check the Phase-1 fixture runs (LiveCorpusFreshness): parses a manifest
         // file and plans against it. Planning only - the corpus tool's write commands live elsewhere.
@@ -130,6 +139,16 @@ internal static class ReadOnlyProductApi
         ["OutlookAI.Core.Services.MailService.CreateDefault"] = "builds the service and its gateway; attaches to nothing yet",
         ["OutlookAI.Core.Services.MailService..ctor"] = "builds the service over the gateway it is handed; attaches to nothing yet",
         ["OutlookAI.Core.Com.ComGateway..ctor"] = "builds the gateway; it attaches to Outlook only when an operation runs",
+        ["OutlookAI.Core.Com.ComGateway.Run"] =
+            "attaches (Connect) and hands the session to the operation it is given; what that operation does is walked where it is written",
+        ["OutlookAI.Core.Com.ComGateway.Dispose"] = "releases the gateway's COM session (OutlookComSession.Dispose)",
+        ["OutlookAI.Core.Com.IOutlookSession.GetProfileName"] = "reads the profile's name - the connection's own liveness ping",
+        ["OutlookAI.Core.Com.OutlookComSession.get_LastConnectTrace"] = "reads how the last connection in this process went, from memory",
+        ["OutlookAI.Core.Com.OutlookStartObserver.Observe"] =
+            "looks at Outlook's start without COM: its windows, its start time, the add-in's stamp, the start lock and record (Q175)",
+        ["OutlookAI.Core.Com.OutlookStartRecord.ReadConnect"] = "reads the start record's connection value (Q176 (c))",
+        ["OutlookAI.Core.Com.OutlookStartLog.get_EffectivePath"] = "names the start log's path; opens nothing",
+        ["OutlookAI.Core.Audit.AuditLog.get_IsRedirected"] = "says whether this process's audit lines go to a throwaway directory",
         ["OutlookAI.Core.Com.IOutlookSession.TryReadItem"] =
             "reads one item's properties - the read tool's own reader (MailService.Read); reads UnRead and never sets it",
         ["OutlookAI.Core.Com.IOutlookSession.GetStoreDetails"] = "reads the profile's stores and their Exchange type",
@@ -158,6 +177,23 @@ internal static class ReadOnlyProductApi
         ["OutlookAI.Core.Com.OutlookComSession.Dispose|Close"] =
             "closes the invisible pin Explorer the session itself opened, and only when the session started Outlook (D49): "
             + "a window it owns, never an item, a folder or the user's own window",
+
+        // The start record (Q176 (c), 2026-11-18): OutlookAI's own bookkeeping about Outlook's start, under
+        // HKCU\Software\OutlookAI\OutlookStart - which connection is in which step, who started Outlook, when it
+        // was first seen hung or with a window. Every connection and every request's gate writes it, the way
+        // attaching to Outlook has always counted as a read here: no mail, no folder, no Outlook setting.
+        ["OutlookAI.Core.Com.OutlookStartRecord.WriteValue|RegistryKey.CreateSubKey"] =
+            "creates OutlookAI's own start-record key; no mail and no Outlook setting",
+        ["OutlookAI.Core.Com.OutlookStartRecord.WriteValue|RegistryKey.SetValue"] =
+            "writes one value of OutlookAI's own start record; no mail and no Outlook setting",
+        ["OutlookAI.Core.Com.OutlookStartRecord.ClearNote|RegistryKey.DeleteValue"] =
+            "removes the start record's not-responding note once Outlook answers again",
+
+        // The start log (Q178 (e)): rotated past about 1 MB beside the audit log, with no mail content.
+        ["OutlookAI.Core.Com.OutlookStartLog.RotateIfFull|File.Delete"] =
+            "drops the previous start log when the current one is full; OutlookAI's own diagnostics file",
+        ["OutlookAI.Core.Com.OutlookStartLog.RotateIfFull|File.Move"] =
+            "moves a full start log aside; OutlookAI's own diagnostics file",
     };
 
     /// <summary>

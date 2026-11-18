@@ -286,12 +286,25 @@ internal static class WritePathAnalyzer
 
         static bool Exempt(MethodBase method, MethodBase target, IReadOnlyList<IlInstruction> body, int at)
         {
-            if (target.DeclaringType?.FullName != "Microsoft.CSharp.RuntimeBinder.Binder" || target.Name != "InvokeMember")
+            // Keyed by the source member and what it calls: a late-bound member's name, or - for a registry or
+            // file write - the framework member, such as RegistryKey.SetValue (the start record's own writes,
+            // 2026-11-18). A property SET on a COM object is never exempt.
+            string called;
+            if (target.DeclaringType?.FullName == "Microsoft.CSharp.RuntimeBinder.Binder")
             {
-                return false;
+                if (target.Name != "InvokeMember")
+                {
+                    return false;
+                }
+
+                called = BinderMemberName(body, at) ?? "?";
+            }
+            else
+            {
+                called = target.DeclaringType?.Name + "." + target.Name;
             }
 
-            string key = ReadOnlyProductApi.SourceKeyOf(method) + "|" + (BinderMemberName(body, at) ?? "?");
+            string key = ReadOnlyProductApi.SourceKeyOf(method) + "|" + called;
             return ReadOnlyProductApi.InProductExemptions.ContainsKey(key);
         }
 
