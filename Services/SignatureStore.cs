@@ -9,8 +9,10 @@ namespace OutlookAI.Services
 {
     /// <summary>
     /// Read-only enumeration of the installed Outlook signatures for the task pane's
-    /// "Select the best signature" action (D38). Deliberately self-contained in the
-    /// add-in (NO OutlookAI.Core reference - the Phase-6 no-coupling choice): reads
+    /// "Select the best signature" action (D38). Written self-contained in the add-in
+    /// under the Phase-6 no-coupling choice, which Q154 (b) ended: the add-in references
+    /// OutlookAI.Core since Q167 (a), and this copy of Core's SignatureCatalog goes when the
+    /// task pane moves to Core's signature code (TODO.md, Q154 and Q162). It reads
     /// the signature folder Outlook records (<see cref="SignatureFolderLocation"/>, the
     /// rule the server shares), groups the rendition files by base name, and
     /// derives a short plain-text excerpt (language/purpose detection hint for the AI)

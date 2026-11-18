@@ -24,9 +24,10 @@
 
     WHAT IT CHECKS. Every *.csproj under McpServer\ - the server, the COM host and Core that ship,
     and the test and tool projects that run on the test VMs against real mailboxes, as the review
-    it replaces read every manifest. The add-in and its helper are not in it because they have no
-    package to check: both are old-style projects whose references are the .NET Framework's and
-    Office's own. `dotnet list package` restores a project before it lists it, so nothing needs
+    it replaces read every manifest. The add-in is not in it because it has no package of its own: an
+    old-style project whose references are the .NET Framework's, Office's, and OutlookAI.Core's
+    (Q167 (a)) - and the two packages it ships beside itself are Core's, checked here as Core's.
+    `dotnet list package` restores a project before it lists it, so nothing needs
     building first; the advisories come from nuget.org, which serves the GitHub Advisory Database.
 
     A RUN THAT COULD NOT ASK IS NOT A PASS. The command exits 0 when it finds a vulnerable package -
@@ -76,28 +77,9 @@ $ListTimeoutMinutes = 10
 
 function Say([string] $m) { Write-Host ("[{0:HH:mm:ss}] {1}" -f (Get-Date), $m) }
 
-# A program with its output going STRAIGHT TO FILES and a deadline. Restated from
-# Tools/Publish-Release.ps1, which says why.
-function Invoke-Logged {
-    param(
-        [Parameter(Mandatory = $true)] [string] $FilePath,
-        [Parameter(Mandatory = $true)] [string[]] $ArgumentList,
-        [Parameter(Mandatory = $true)] [string] $LogStem,
-        [int] $TimeoutMinutes = 20
-    )
-    $out = "$LogStem.out.txt"
-    $err = "$LogStem.err.txt"
-    foreach ($f in @($out, $err)) { if (Test-Path -LiteralPath $f) { Remove-Item -LiteralPath $f -Force } }
-    $p = Start-Process -FilePath $FilePath -ArgumentList ($ArgumentList -join ' ') -RedirectStandardOutput $out -RedirectStandardError $err -NoNewWindow -PassThru
-    $null = $p.Handle
-    $exited = $p.WaitForExit($TimeoutMinutes * 60 * 1000)
-    if ($exited) { $p.WaitForExit() }
-    if (-not $exited) {
-        try { $p.Kill() } catch { }
-        return [pscustomobject]@{ ExitCode = -1; TimedOut = $true; Out = $out; Err = $err }
-    }
-    return [pscustomobject]@{ ExitCode = $p.ExitCode; TimedOut = $false; Out = $out; Err = $err }
-}
+# A program with its output going STRAIGHT TO FILES and a deadline: Invoke-Logged, one of the helpers
+# the scripts share, dot-sourced from Testbed/guest/ScriptHelpers.ps1 (Q166 (b), decision 215 (a)).
+. (Join-Path $PSScriptRoot '..\Testbed\guest\ScriptHelpers.ps1')
 
 # =============================================================================================
 # PURE DECISIONS - everything -SelfTest checks
