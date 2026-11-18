@@ -42,6 +42,11 @@
          The suite runs in UTC (Q126 (a)), where the machine's zone and UTC are one zone; the marked
          tests are the ones that can read the machine's zone, and T1/TimeZoneMarkerTests fails one
          that is not marked.
+      4a. THE PRIVATE LIST OF PERSONAL DATA (Q196 (c)): when the host staged one beside the run, it is
+         moved into the source tree's gitignored .work\personal-data\, where
+         Tools/Checks/check-personal-data.ps1 reads it, and removed again after the self-tests. It is
+         never in the results directory, so never zipped or fetched, and the host reverts the VM. run.json
+         says whether it was placed; nothing prints its contents.
       5. SELF-TESTS: every script under Testbed\ and Tools\ that declares a [switch] $SelfTest is run
          with -SelfTest alone, in Windows PowerShell 5.1, one process each, output to a file, time
          limited. Found by the syntax tree, not by a list, so a new self-test is run the day it lands;
@@ -550,6 +555,10 @@ $OfflineConfig = Join-Path $RunRoot 'NuGet.offline.config'
 $RunLog = Join-Path $ResultsDir 'run.log'
 $RunJson = Join-Path $ResultsDir 'run.json'
 $ResultsZip = Join-Path $RunRoot 'results.zip'
+# The private list of personal data (Q196 (c)): where the host stages it, beside the run - the name
+# Invoke-TestsOnBuildVm.ps1 copies it to - and where the guard reads it, in the source tree's .work.
+$StagedPrivateList = Join-Path $RunRoot 'personal-data\identifiers.json'
+$PlacedPrivateList = Join-Path $SourceRoot '.work\personal-data\identifiers.json'
 $DoneFile = Join-Path $RunRoot 'done.txt'
 
 foreach ($stale in @($ResultsZip, $DoneFile)) {
@@ -678,6 +687,7 @@ $record = [ordered]@{
     zonePass      = $null
     selfTests     = @()
     selfTestSkips = @()
+    privateList   = $null
     missingPackages = @()
     notes         = @()
 }
@@ -793,6 +803,19 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 $fileCount = @(Get-ChildItem -LiteralPath $SourceRoot -Recurse -File).Count
 $record['phases']['expand'] = [ordered]@{ seconds = [math]::Round(((Get-Date) - $t0).TotalSeconds, 1); files = $fileCount }
 Say "expanded $fileCount file(s) into $SourceRoot in $($record['phases']['expand'].seconds) s"
+
+# The private list of personal data (Q196 (c)), if the host staged one: into the source tree's .work,
+# where the guard looks - never into the results, which are zipped and fetched.
+if (Test-Path -LiteralPath $StagedPrivateList -PathType Leaf) {
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $PlacedPrivateList) | Out-Null
+    Move-Item -LiteralPath $StagedPrivateList -Destination $PlacedPrivateList -Force
+    $record['privateList'] = 'placed'
+    Say 'personal data: the staged private list is in place for the self-tests; it is not in the results'
+}
+else {
+    $record['privateList'] = 'absent'
+    Say 'personal data: no private list was staged - check-personal-data will not check the known identifiers'
+}
 
 $restoreState = 'skipped'
 $buildState = 'skipped'
@@ -1055,6 +1078,11 @@ if (-not $request['skipSelfTests'] -and $restoreState -ne 'missing') {
 }
 elseif ($request['skipSelfTests']) {
     Say 'self-tests: skipped by the request'
+}
+
+# The private list leaves the tree once the self-tests are done; the revert would take it anyway.
+if (Test-Path -LiteralPath (Split-Path -Parent $PlacedPrivateList)) {
+    Remove-Item -LiteralPath (Split-Path -Parent $PlacedPrivateList) -Recurse -Force
 }
 
 # ---------------------------------------------------------------------------------------------

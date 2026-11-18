@@ -108,15 +108,19 @@ Never copy a value out of it, nor out of `.work/history-audit-2026-11/`. The mai
 in LICENSE and as the author and committer of his commits (Q186 (a)).
 
 - **`Tools/Checks/check-personal-data.ps1` is the fifth guard** (Q190 (a)): the release runs it, and
-  its `-SelfTest` runs on the build VM. It matches the identifiers by their SHA-256 in
-  `Tools/Checks/personal-data.json`, never by value, plus generic shapes. Until Q189 is done, that
-  file's baseline lets HEAD keep, per file, the occurrences it still has - and not one more.
+  its `-SelfTest` runs on the build VM. It knows the identifiers from the private list alone - nothing
+  about them is committed, not even a hash (Q196 (c)) - and checks generic shapes besides. The build
+  VM runner copies the private list into each run, straight from the checkout to a VM that has no
+  network and is reverted after the run, and never fetches it back; a run that finds no list says so
+  on its summary's first line, and the tree check refuses to pass without one (exit 3).
+  `Tools/Checks/personal-data.json` holds only a baseline: per file and rule, the occurrences HEAD
+  may still hold, and not one more.
 - **Git hooks run it on every commit and push** (Q190 (b)): `pwsh -File Tools/Install-GitHooks.ps1
   -Execute` puts them in the main repository's `.git/hooks`, which every worktree shares. A hook that
   refuses names the file, line and rule, never the value: write the placeholder and commit again.
   Never `--no-verify`.
-- A new identifier goes into the private list first; `-HashIdentifiers -Execute` then writes its
-  hash into the committed list.
+- A new identifier goes into the private list, and only there: the hooks, a release and the next
+  build-VM run read it from that file.
 
 ## Build and Release
 

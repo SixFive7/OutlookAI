@@ -14,25 +14,31 @@
     placeholders are ever committed (c), and the key and certificate patterns in .gitignore (e).
 
     WHAT IT FINDS
-      1. KNOWN IDENTIFIERS, BY HASH ONLY. Tools/Checks/personal-data.json lists the SHA-256 of each
-         identifier, never the value. This check hashes every word of every file it reads and looks
-         the hashes up. A word is a run of letters and digits, compared in lower case, so an address
-         matches whatever punctuation joins its words, and a match never starts or ends inside a
-         longer word ("majority" holds no name). An identifier of several words also lists the hash
-         of its first word, and only where that word stands are the runs that start with it hashed:
-         a whole tree is then a few tens of thousands of hashes, not millions. An identifier may be
-         allowed in named files: the maintainer's name in LICENSE (Q186).
-      2. THE PRIVATE LIST. The values themselves, each with the placeholder to write instead, live
-         only in the maintainer's checkout, in .work\personal-data\identifiers.json, which git ignores
-         (Q190 (c)). Where that file exists - on the workstation, so in a release and in the git
-         hooks - it is read as well, so a value is guarded before its hash is committed.
-      3. GENERIC SHAPES, which need no list: an e-mail address outside the reserved domains (RFC 2606
+      1. KNOWN IDENTIFIERS, FROM THE PRIVATE LIST ONLY. The values, each with the placeholder to write
+         instead, live in one place: the maintainer's checkout, .work\personal-data\identifiers.json,
+         which git ignores (Q190 (c)). Nothing about them is committed - no value and no fingerprint
+         of one (Q196 (c)): a committed hash of a short word is found again by hashing a dictionary.
+         The list is read where the check runs: in the git hooks and in a release, from the checkout
+         or the main checkout an agent's worktree belongs to; on the build VM, from the copy
+         Testbed/host/Invoke-TestsOnBuildVm.ps1 stages into each run of a VM that has no network and
+         is reverted after every run. A word is a run of letters and digits, compared in lower case,
+         so an address matches whatever punctuation joins its words, and a match never starts or
+         ends inside a longer word ("majority" holds no name). The values are hashed in memory and
+         every word of a file is looked up by its hash; an identifier of several words is looked for
+         only where its first word stands. An identifier may be allowed in named files: the
+         maintainer's name in LICENSE (Q186).
+      2. GENERIC SHAPES, which need no list: an e-mail address outside the reserved domains (RFC 2606
          and RFC 6761); a Windows profile path or a Claude project folder with a real-looking user
          name; a private key block; a key or certificate file (.pfx, .p12, .snk, .pem, .key); a
          Windows default computer name (DESKTOP-, LAPTOP-, WIN- and its random suffix).
-      4. THE NAMES OF THE MACHINE IT RUNS ON: its user name, its computer name and its account SID,
+      3. THE NAMES OF THE MACHINE IT RUNS ON: its user name, its computer name and its account SID,
          except a testbed VM's (OAI-*) and that VM's own account.
-      5. AND .gitignore STILL COVERS the key and certificate files.
+      4. AND .gitignore STILL COVERS the key and certificate files.
+
+    WITHOUT THE PRIVATE LIST it cannot check the known identifiers, and says so instead of passing:
+    the tree check exits 3 (not checked), the -SelfTest prints NOT CHECKED beside its real-tree pass
+    and the build-VM runner's summary names the missing list, and a hook still checks the generic
+    shapes and this machine's names and says what it left out.
 
     THE BASELINE, UNTIL Q189 IS DONE. HEAD still carries values that tests and testbed files need until
     they read them from somewhere else (Q189). personal-data.json's baseline says, per file and per
@@ -48,10 +54,8 @@
       -Hook commit-msg F   The commit message in file F, up to git's scissors line.
       -Hook pre-push R U   Every commit the push sends to remote R that R does not have yet: its
                            message and what it adds, per file. Git's ref lines arrive on stdin.
-      -HashIdentifiers     Show the committed list's identifiers as the private list makes them;
-                           with -Execute, write them into personal-data.json. Prints no value.
       -SelfTest            Synthetic cases for every rule, then the commit's own files against the
-                           committed list and its baseline. Runs on the build VM.
+                           staged private list and the baseline. Runs on the build VM.
 
     IT PRINTS NO VALUE. A finding names the file, the line and column, and the identifier's id and
     kind; a generic finding shows its value masked. Its output can end up in a log, a TODO item or a
@@ -60,11 +64,10 @@
     WHAT IT CANNOT SEE, stated rather than implied. A value glued into a longer word ("xyzSmith"), a
     name the list does not hold, a fact about a mailbox that is no name at all (an item count), and
     binary files: a file with a NUL byte in its first 8 KB is skipped, except that a key or certificate
-    file is found by its name. And since the hash of a short word can be found by hashing a dictionary
-    of words, a committed hash protects a value from casual reading only.
+    file is found by its name.
 
-    EXIT CODES: 0 clean; 1 personal data found; 3 not checked - nothing could be read, or git failed;
-    4 refused - a malformed list or an unusable argument.
+    EXIT CODES: 0 clean; 1 personal data found; 3 not checked - no private list, nothing could be
+    read, or git failed; 4 refused - a malformed list or an unusable argument.
 
     WINDOWS POWERSHELL 5.1 AND POWERSHELL 7 BOTH. No ternary, no ??, ASCII only.
 
@@ -73,7 +76,7 @@
     runs the hook in.
 
 .PARAMETER ListPath
-    The committed list. Defaults to personal-data.json beside this script.
+    The committed baseline. Defaults to personal-data.json beside this script.
 
 .PARAMETER IdentifiersFile
     The private list. Defaults to .work\personal-data\identifiers.json under -RepoRoot, then under the
@@ -93,15 +96,8 @@
     What git passes the hook: the message file for commit-msg, the remote's name and URL for
     pre-push.
 
-.PARAMETER HashIdentifiers
-    Compare the committed list with the private list; with -Execute, write the private list's
-    hashes into the committed list.
-
-.PARAMETER Execute
-    With -HashIdentifiers: write the committed list.
-
 .PARAMETER SelfTest
-    Synthetic cases, then this commit's own files against the committed list. Build VM only.
+    Synthetic cases, then this commit's own files against the staged private list. Build VM only.
 
 .EXAMPLE
     pwsh -File Tools/Checks/check-personal-data.ps1
@@ -116,8 +112,6 @@ param(
     [Parameter(ParameterSetName = 'Tree')] [string] $ReportPath,
     [Parameter(Mandatory = $true, ParameterSetName = 'Hook')] [ValidateSet('pre-commit', 'commit-msg', 'pre-push')] [string] $Hook,
     [Parameter(ParameterSetName = 'Hook', ValueFromRemainingArguments = $true)] [string[]] $HookArguments = @(),
-    [Parameter(Mandatory = $true, ParameterSetName = 'Hash')] [switch] $HashIdentifiers,
-    [Parameter(ParameterSetName = 'Hash')] [switch] $Execute,
     [Parameter(Mandatory = $true, ParameterSetName = 'SelfTest')] [switch] $SelfTest
 )
 # Defaults that need $PSScriptRoot are set in the body, not in param(): Windows PowerShell 5.1
@@ -133,9 +127,8 @@ if (Test-Path Variable:\PSNativeCommandUseErrorActionPreference) {
 # Constants. -SelfTest pins each of them.
 # ---------------------------------------------------------------------------------------------
 
-# Hashed in front of every value, so that a committed hash is not one any public table of
-# SHA-256(word) already holds. Changing it changes every hash: personal-data.json is then
-# rewritten with -HashIdentifiers -Execute.
+# Hashed in front of every value and every word the matcher looks up. Nothing hashed is kept or
+# committed (Q196 (c)); the salt only has to be the same on both sides of one run.
 $Salt = 'OutlookAI personal data v1|'
 
 # Where the private list lives, relative to a checkout.
@@ -570,12 +563,12 @@ function Get-MachineEntries([string] $UserName, [string] $ComputerName, [string]
     return @($entries)
 }
 
-# The committed list, the private list and the machine's names as one catalog: entries deduplicated
-# by hash (the committed entry wins, with its allowances), and the matcher over them.
-function New-Catalog($Committed, $Private, $Machine) {
+# The private list and the machine's names as one catalog: entries deduplicated by hash (the
+# private entry wins, with its allowances), and the matcher over them.
+function New-Catalog($Private, $Machine) {
     $entries = New-Object System.Collections.ArrayList
     $seen = @{}
-    foreach ($group in @($Committed, $Private, $Machine)) {
+    foreach ($group in @($Private, $Machine)) {
         foreach ($e in @($group)) {
             if ($null -eq $e) { continue }
             if ($seen.ContainsKey($e.Hash)) { continue }
@@ -849,28 +842,12 @@ function ConvertFrom-PrePushInput([string] $Text) {
 # ---------------------------------------------------------------------------------------------
 
 function Read-CommittedList([string] $Path) {
-    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "the committed list $Path does not exist" }
-    $json = [System.IO.File]::ReadAllText($Path) | ConvertFrom-Json
-    $entries = @()
-    $ids = @{}
-    foreach ($i in @($json.identifiers)) {
-        if ($null -eq $i) { continue }
-        if (-not ($i.id -match '^[a-z][a-z0-9-]{1,30}$')) { throw "an identifier in $Path has the id '$($i.id)': lower-case letters, digits and hyphens" }
-        if ($ids.ContainsKey($i.id)) { throw "the id $($i.id) is listed twice in $Path" }
-        $ids[$i.id] = $true
-        if (-not ([string]$i.sha256 -cmatch '^[0-9a-f]{64}$')) { throw "the identifier $($i.id) in $Path has no SHA-256 of 64 lower-case hex digits" }
-        if (-not $i.kind) { throw "the identifier $($i.id) in $Path says no kind" }
-        $words = 1
-        $first = ''
-        if ($null -ne $i.words) {
-            $words = [int]$i.words
-            if ($words -lt 2 -or $words -gt 6) { throw "the identifier $($i.id) in $Path has $words words; an entry that says its words has 2 to 6" }
-            if (-not ([string]$i.first -cmatch '^[0-9a-f]{64}$')) { throw "the identifier $($i.id) in $Path has several words but no SHA-256 of its first" }
-            $first = [string]$i.first
-        }
-        $entries += New-IdentifierEntry $i.id $i.kind $i.sha256 $first $words @($i.allowedIn) 'committed'
-    }
-    return [pscustomobject]@{ Entries = @($entries); Baseline = @($json.baseline | Where-Object { $null -ne $_ }); Raw = $json }
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "the committed baseline $Path does not exist" }
+    $text = [System.IO.File]::ReadAllText($Path)
+    # Q196 (c): nothing about an identifier is committed, its fingerprint included.
+    if ($text -match '"(identifiers|sha256|first)"\s*:') { throw "$Path carries identifiers or their hashes; Q196 (c) keeps every one of them in the private list only" }
+    $json = $text | ConvertFrom-Json
+    return [pscustomobject]@{ Baseline = @($json.baseline | Where-Object { $null -ne $_ }); Raw = $json }
 }
 
 function Read-PrivateList([string] $Path) {
@@ -1057,52 +1034,12 @@ function Invoke-TreeCheck([string] $Root, $Catalog, $Baseline, [bool] $WithUntra
 }
 
 # ---------------------------------------------------------------------------------------------
-# The list's maintenance: hashes from the private list. Prints ids and kinds, never a value.
-# ---------------------------------------------------------------------------------------------
-
-function ConvertTo-JsonString([string] $s) {
-    return '"' + $s.Replace('\', '\\').Replace('"', '\"') + '"'
-}
-
-function ConvertTo-CommittedListJson($About, $Identifiers, $Baseline) {
-    $nl = "`n"
-    $sb = New-Object System.Text.StringBuilder
-    [void]$sb.Append('{' + $nl + '  "about": [' + $nl)
-    $aboutLines = @($About)
-    for ($i = 0; $i -lt $aboutLines.Count; $i++) {
-        $comma = ','
-        if ($i -eq $aboutLines.Count - 1) { $comma = '' }
-        [void]$sb.Append('    ' + (ConvertTo-JsonString $aboutLines[$i]) + $comma + $nl)
-    }
-    [void]$sb.Append('  ],' + $nl + '  "identifiers": [' + $nl)
-    $ids = @($Identifiers)
-    for ($i = 0; $i -lt $ids.Count; $i++) {
-        $e = $ids[$i]
-        $allowed = @($e.AllowedIn | ForEach-Object { ConvertTo-JsonString $_ }) -join ', '
-        $comma = ','
-        if ($i -eq $ids.Count - 1) { $comma = '' }
-        $several = ''
-        if ($e.Words -gt 1) { $several = ', "words": ' + $e.Words + ', "first": ' + (ConvertTo-JsonString $e.First) }
-        [void]$sb.Append('    { "id": ' + (ConvertTo-JsonString $e.Id) + ', "kind": ' + (ConvertTo-JsonString $e.Kind) + ', "sha256": ' + (ConvertTo-JsonString $e.Hash) + $several + ', "allowedIn": [' + $allowed + '] }' + $comma + $nl)
-    }
-    [void]$sb.Append('  ],' + $nl + '  "baseline": [' + $nl)
-    $base = @($Baseline | Where-Object { $null -ne $_ })
-    for ($i = 0; $i -lt $base.Count; $i++) {
-        $b = $base[$i]
-        $comma = ','
-        if ($i -eq $base.Count - 1) { $comma = '' }
-        [void]$sb.Append('    { "path": ' + (ConvertTo-JsonString ([string]$b.path)) + ', "rule": ' + (ConvertTo-JsonString ([string]$b.rule)) + ', "count": ' + [int]$b.count + ' }' + $comma + $nl)
-    }
-    [void]$sb.Append('  ]' + $nl + '}' + $nl)
-    return $sb.ToString()
-}
-
-# ---------------------------------------------------------------------------------------------
 # SELF-TEST
 # ---------------------------------------------------------------------------------------------
 function Invoke-SelfTest {
     $script:Checks = 0
     $script:Failures = @()
+    $script:PrivateListState = 'identifiers not reached'
 
     # Compared with -ceq; never -like, whose brackets are a character class.
     function Test-Case {
@@ -1136,16 +1073,16 @@ function Invoke-SelfTest {
     Test-Case 'a value is its lower-case words, one space apart' 'ab cd ef 12' (ConvertTo-NormalizedIdentifier 'Ab-Cd  EF.12')
     Test-Case 'an address is its words' 'someone example net' (ConvertTo-NormalizedIdentifier ('Someone' + $at + 'Example.NET'))
     Test-Case 'letters with diacritics are letters' ('zo' + [char]0x00EB + ' m' + [char]0x00FC + 'ller') (ConvertTo-NormalizedIdentifier ('Zo' + [char]0x00EB + ' M' + [char]0x00FC + 'ller'))
-    Test-Case 'the salt is pinned: changing it changes every committed hash' 'OutlookAI personal data v1|' $Salt
+    Test-Case 'the salt is pinned' 'OutlookAI personal data v1|' $Salt
     $pinned = Get-IdentifierHash 'Zebra Finch'
     Test-Case 'the hash is SHA-256 of the salt and the normalized words, pinned' 'c685da9104cb8e753c6079885f3e75e8c00777450cf040f8e357298b91ed6693' $pinned
     Test-Case 'the same words in another case and punctuation hash alike' $pinned (Get-IdentifierHash 'zebra-FINCH')
 
-    $zebra = New-EntryFromValue 'pdx1' 'a synthetic bird' 'zebrafinch' @('LICENSE') 'committed'
-    $pair = New-EntryFromValue 'pdx2' 'a synthetic pair' 'lorem ipsum' @() 'committed'
+    $zebra = New-EntryFromValue 'pdx1' 'a synthetic bird' 'zebrafinch' @('LICENSE') 'private'
+    $pair = New-EntryFromValue 'pdx2' 'a synthetic pair' 'lorem ipsum' @() 'private'
     Test-Case 'a value of two words is found by its first' "2 $(Get-IdentifierHash 'lorem')" "$($pair.Words) $($pair.First)"
     Test-Case 'a value of one word has no first' '1 ' "$($zebra.Words) $($zebra.First)"
-    $catalog = New-Catalog @($zebra, $pair) @() @()
+    $catalog = New-Catalog @($zebra, $pair) @()
 
     Write-Host ''
     Write-Host '== known identifiers =='
@@ -1158,15 +1095,15 @@ function Invoke-SelfTest {
     Test-Case 'an allowance covers its file' 0 @(Find-PersonalData 'Copyright ZebraFinch' 'LICENSE' $catalog).Count
     Test-Case 'and only its file' 1 @(Find-PersonalData 'Copyright ZebraFinch' 'Docs/LICENSE.md' $catalog).Count
     Test-Case 'a finding carries no value' '' @(Find-PersonalData 'zebrafinch' 'x.cs' $catalog)[0].Shown
-    $twice = New-Catalog @($zebra) @((New-EntryFromValue 'private' 'the same value, privately' 'ZEBRAFINCH' @() 'private')) @()
-    Test-Case 'the private list adds no second entry for a committed hash' 1 @($twice.Entries).Count
-    Test-Case 'and the committed one keeps its allowance' 0 @(Find-PersonalData 'zebrafinch' 'LICENSE' $twice).Count
+    $twice = New-Catalog @($zebra) @((New-EntryFromValue 'this-machine-user' 'the same value, as a machine name' 'ZEBRAFINCH' @() 'machine'))
+    Test-Case 'a machine name equal to a listed value adds no second entry' 1 @($twice.Entries).Count
+    Test-Case 'and the listed one keeps its allowance' 0 @(Find-PersonalData 'zebrafinch' 'LICENSE' $twice).Count
 
     Write-Host ''
     Write-Host '== the machine running the check =='
     $machine = @(Get-MachineEntries $realUser ('PC' + '4711') 'S-1-5-21-1234567890-2345678901-3456789012-1001')
     Test-Case 'its user, its computer and its SID are identifiers' 'this-machine-user this-machine-name this-machine-sid' (@($machine | ForEach-Object { $_.Id }) -join ' ')
-    $mc = New-Catalog @() @() $machine
+    $mc = New-Catalog @() $machine
     Test-Case 'its user name is found in a sentence' 'this-machine-user' @(Find-PersonalData "logged on as $realUser here" 'x.md' $mc)[0].Rule
     Test-Case 'its SID by the part that names the machine' 'this-machine-sid' @(Find-PersonalData 'S-1-5-21-1234567890-1-2-500' 'x.md' $mc)[0].Rule
     Test-Case 'a testbed VM and its account are not' 0 @(Get-MachineEntries 'vmadmin' 'OAI-BUILD' '').Count
@@ -1249,35 +1186,55 @@ function Invoke-SelfTest {
     Test-Case 'an argument with a space is quoted for git' 'log "a b" "c\"d"' (ConvertTo-ArgumentString @('log', 'a b', 'c"d'))
 
     Write-Host ''
-    Write-Host '== the committed list, read as the release reads it =='
+    Write-Host '== the committed baseline, and the private list as this run has it =='
     $repoRoot = $RepoRoot
     $listOk = $true
     try { $list = Read-CommittedList $ListPath } catch { $listOk = $false; Test-Case "personal-data.json reads: $($_.Exception.Message)" $true $false }
+    $fingerprint = New-Item -ItemType File -Force -Path (Join-Path ([System.IO.Path]::GetTempPath()) ('oai-pd-' + [guid]::NewGuid().ToString('N') + '.json'))
+    try {
+        [System.IO.File]::WriteAllText($fingerprint.FullName, '{ "identifiers": [ { "id": "x", "sha256": "00" } ], "baseline": [] }')
+        $refused = $false
+        try { [void](Read-CommittedList $fingerprint.FullName) } catch { $refused = $true }
+        Test-Case 'a committed list that carries an identifier hash is refused (Q196 (c))' $true $refused
+    }
+    finally { Remove-Item -LiteralPath $fingerprint.FullName -Force }
     if ($listOk) {
-        Test-Case 'personal-data.json reads' $true $true
-        Test-Case 'it lists identifiers' $true (@($list.Entries).Count -gt 0)
-        Test-Case 'every allowance names a file in the tree' '' (@($list.Entries | ForEach-Object { $_.AllowedIn } | Where-Object { $_ -and -not (Test-Path -LiteralPath (Join-Path $repoRoot $_) -PathType Leaf) }) -join ' ')
-        $known = @{}
-        foreach ($e in $list.Entries) { $known[$e.Id] = $true }
-        foreach ($r in @('email', 'user-path', 'private-key', 'machine-name')) { $known[$r] = $true }
-        Test-Case 'every baseline entry names a known rule' '' (@($list.Baseline | Where-Object { -not $known.ContainsKey([string]$_.rule) } | ForEach-Object { "$($_.path) $($_.rule)" }) -join ' ')
+        Test-Case 'personal-data.json reads, and carries no identifier' $true $true
+        $privatePath = Resolve-PrivateListPath $repoRoot
+        $private = @()
+        if ($privatePath) { $private = @(Read-PrivateList $privatePath) }
+        $ids = @{}
+        foreach ($p in $private) { $ids[$p.Id] = $true }
+        $generic = @('email', 'user-path', 'private-key', 'machine-name')
+        Test-Case 'every baseline entry names a known rule' '' (@($list.Baseline | Where-Object { $generic -notcontains [string]$_.rule -and -not ([string]$_.rule -match '^[a-z][a-z0-9-]{1,30}$') } | ForEach-Object { "$($_.path) $($_.rule)" }) -join ' ')
         Test-Case 'and a count above zero' '' (@($list.Baseline | Where-Object { [int]$_.count -lt 1 } | ForEach-Object { "$($_.path) $($_.rule)" }) -join ' ')
-        $round = ConvertTo-CommittedListJson $list.Raw.about $list.Entries $list.Baseline
-        Test-Case 'and -HashIdentifiers -Execute would write it back byte for byte' ([System.IO.File]::ReadAllText($ListPath).Replace("`r`n", "`n")) $round
 
         Write-Host ''
-        Write-Host '== this commit''s own files, against the committed list and its baseline =='
+        Write-Host '== this commit''s own files, against the private list and the baseline =='
         $vm = Get-CurrentMachine
-        $realCatalog = New-Catalog $list.Entries @() (Get-MachineEntries $vm.UserName $vm.ComputerName $vm.UserSid)
-        $result = Invoke-TreeCheck $repoRoot $realCatalog $list.Baseline $false
+        $realCatalog = New-Catalog $private (Get-MachineEntries $vm.UserName $vm.ComputerName $vm.UserSid)
+        $baseline = @($list.Baseline)
+        if (-not $privatePath) {
+            # Without the list the identifier rules cannot be measured: hold the tree to the generic
+            # shapes alone, and say so where the run's log and its summary read it.
+            Write-Host '  NOT CHECKED: the known identifiers - no private list was staged for this run (Testbed/host/Invoke-TestsOnBuildVm.ps1)'
+            $baseline = @($baseline | Where-Object { $generic -contains [string]$_.rule })
+        }
+        else {
+            Write-Host "  identifiers: $($private.Count) from the staged private list"
+            Test-Case 'every baseline entry for an identifier names one on the private list' '' (@($list.Baseline | Where-Object { $generic -notcontains [string]$_.rule -and -not $ids.ContainsKey([string]$_.rule) } | ForEach-Object { "$($_.path) $($_.rule)" }) -join ' ')
+        }
+        $result = Invoke-TreeCheck $repoRoot $realCatalog $baseline $false
         Write-Host "  read $($result.Scanned) text files of $($result.Files), by $($result.Source)"
         Test-Case 'it read the tree' $true ($result.Scanned -gt 100)
         foreach ($n in $result.Notices) { Write-Host "  NOTE $n" }
         Test-Case 'no personal data beyond the baseline' '' ($result.Failures -join ' | ')
+        $script:PrivateListState = 'identifiers NOT checked: no private list'
+        if ($privatePath) { $script:PrivateListState = "identifiers checked against the private list ($($private.Count))" }
     }
 
     Write-Host ''
-    Write-Host "$($script:Checks) assertion(s), $($script:Failures.Count) failure(s)."
+    Write-Host "$($script:Checks) assertion(s), $($script:Failures.Count) failure(s); $($script:PrivateListState)."
     if ($script:Failures.Count -gt 0) {
         foreach ($x in $script:Failures) { Write-Host "  FAILED: $x" }
         return 1
@@ -1317,27 +1274,7 @@ if ($privatePath) {
     catch { Write-Host "REFUSED: the private list $privatePath does not read: $($_.Exception.Message)"; exit $ExitRefused }
 }
 $machine = Get-CurrentMachine
-$catalog = New-Catalog $committed.Entries $private (Get-MachineEntries $machine.UserName $machine.ComputerName $machine.UserSid)
-
-if ($HashIdentifiers) {
-    if (-not $privatePath) { Write-Host "REFUSED: no private list - looked for $PrivateListRelative under $RepoRoot and the main checkout."; exit $ExitRefused }
-    $committedById = @{}
-    foreach ($c in $committed.Entries) { $committedById[$c.Id] = $c }
-    Write-Host "The private list has $($private.Count) identifier(s); the committed list $($committed.Entries.Count)."
-    foreach ($p in $private) {
-        $state = 'new'
-        if ($committedById.ContainsKey($p.Id)) {
-            if ($committedById[$p.Id].Hash -eq $p.Hash) { $state = 'same' } else { $state = 'changed' }
-        }
-        Write-Host ("  {0,-8} {1,-8} {2}" -f $p.Id, $state, $p.Kind)
-    }
-    foreach ($c in $committed.Entries) { if (@($private | Where-Object { $_.Id -eq $c.Id }).Count -eq 0) { Write-Host ("  {0,-8} {1,-8} {2}" -f $c.Id, 'dropped', $c.Kind) } }
-    if (-not $Execute) { Write-Host 'Dry run: nothing written. -Execute writes these hashes into the committed list.'; exit $ExitClean }
-    $json = ConvertTo-CommittedListJson $committed.Raw.about $private $committed.Baseline
-    [System.IO.File]::WriteAllText($ListPath, $json, (New-Object System.Text.UTF8Encoding($false)))
-    Write-Host "Wrote $ListPath."
-    exit $ExitClean
-}
+$catalog = New-Catalog $private (Get-MachineEntries $machine.UserName $machine.ComputerName $machine.UserSid)
 
 if ($Hook) {
     $label = "personal-data $Hook"
@@ -1400,14 +1337,17 @@ if ($Hook) {
     Write-Host '  Write a placeholder instead: a reserved domain (example.com, *.invalid, *.test), <user>, or the'
     Write-Host '  placeholder the private list names for that identifier. The value itself belongs only in'
     Write-Host "  $PrivateListRelative. Never bypass this with --no-verify."
-    if (-not $privatePath) { Write-Host "  (No private list was found, so only the committed hashes and the generic shapes were checked.)" }
+    if (-not $privatePath) { Write-Host "  (No private list was found under $PrivateListRelative here or in the main checkout: only the generic shapes and this machine's names were checked.)" }
     exit $ExitFound
 }
 
 # The tree.
 Write-Host "Checking that no personal data has reached $RepoRoot"
-$sourceNote = 'the committed list'
-if ($privatePath) { $sourceNote = "the committed list and the private list ($($private.Count))" }
+if (-not $privatePath) {
+    Write-Host "::error::PERSONAL DATA NOT CHECKED - no private list at $PrivateListRelative under $RepoRoot or the main checkout. The known identifiers live there only (Q196 (c)); without it this check cannot say the tree is clean."
+    exit $ExitNotChecked
+}
+$sourceNote = "the private list ($($private.Count))"
 Write-Host "  identifiers: $(@($catalog.Entries).Count) from $sourceNote and this machine's names; generic shapes: e-mail, profile paths, private keys, key files, default computer names"
 $result = Invoke-TreeCheck $RepoRoot $catalog $committed.Baseline ([bool]$IncludeWorkingTree)
 if ($ReportPath) {

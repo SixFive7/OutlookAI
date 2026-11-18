@@ -401,20 +401,24 @@ its mailbox tests on, and change nothing you install.
   An audit of 2026-11-17 found a third party's shared mailbox, a delegate's name, a colleague's first
   name and the maintainer's own user name, computer name and mailbox details in this public
   repository, most of them written there by agents. `Tools/Checks/check-personal-data.ps1` looks
-  for them in every tracked file: by SHA-256 against `Tools/Checks/personal-data.json`, which holds
-  no value, and by shape - an e-mail address outside the reserved domains, a profile path with a
-  real-looking user name, a private key, a key or certificate file, a Windows default computer
-  name, and the names of the machine it runs on. A finding names the file, the line and the rule,
-  never the value. The release runs it under both PowerShells, and its self-test runs on the build
-  VM. Until the tests and the testbed stop needing the values (Q189), a baseline lets HEAD keep, per
-  file, the occurrences it has and not one more. `.gitignore` now also keeps out `*.p12`, `*.snk`,
-  `*.pem` and `*.key` beside `*.pfx`, and the guard fails if those rules go (Q190).
+  for them in every tracked file: the known values from a private list kept only in the maintainer's
+  checkout - nothing about them is committed, not even a hash, which a dictionary would turn back
+  into a short word (Q196) - and, by shape, an e-mail address outside the reserved domains, a profile
+  path with a real-looking user name, a private key, a key or certificate file, a Windows default
+  computer name, and the names of the machine it runs on. A finding names the file, the line and the
+  rule, never the value. The release runs it under both PowerShells and refuses to pass without the
+  private list. Its self-test runs on the build VM, which gets a copy of the list for each run: it
+  goes straight from the checkout to the VM, is never fetched back, and is reverted with the VM, and
+  a run that finds no list says so on its summary's first line. A baseline in
+  `Tools/Checks/personal-data.json` lets HEAD keep, per file, the occurrences it still has and not
+  one more. `.gitignore` now also keeps out `*.p12`, `*.snk`, `*.pem` and `*.key` beside `*.pfx`,
+  and the guard fails if those rules go (Q190).
 
 - ✅ **Git hooks refuse a commit, a commit message or a push that would publish personal data.**
   `Tools/Install-GitHooks.ps1 -Execute` puts pre-commit, commit-msg and pre-push hooks into the main
   repository's `.git/hooks`, which every worktree shares, with a copy of the guard for them to run,
-  so a worktree on an older branch is checked as well. Besides the committed hashes they read the
-  private list of real values in the maintainer's checkout. A commit fails only when it adds an
+  so a worktree on an older branch is checked as well. They read the private list of real values in
+  the maintainer's checkout, from any worktree. A commit fails only when it adds an
   occurrence to a file, so an edit next to a value HEAD still holds goes through. Tried in a scratch
   repository on 2026-11-17: a value in a file, in a commit message and in a pushed commit was
   refused, from the main checkout and from a linked worktree, and a clean commit and push went

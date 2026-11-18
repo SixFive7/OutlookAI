@@ -14,7 +14,7 @@
     repository uses: one install covers the maintainer's checkout and every agent's worktree, whatever
     branch it has out. Each hook is a three-line sh script - Git for Windows runs hooks in its own sh -
     that hands over to Windows PowerShell 5.1, which every Windows has, running a COPY of the check
-    and of its committed list that this script puts in <repository>\.git\hooks\outlookai-personal-data\.
+    and of its committed baseline that this script puts in <repository>\.git\hooks\outlookai-personal-data\.
     A copy, so that a worktree checked out at an older commit, which has no check at all, is checked
     all the same. Run this again after either file changes; without -Execute it says whether the
     installed copy is current. The private list stays where it is, in the main checkout's

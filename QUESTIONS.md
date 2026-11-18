@@ -425,8 +425,9 @@ in file contents, his Windows user name, his computer name and facts about his m
   still holds.
 - **Q190 - keeping it out.** *"190 rec"*. **Decided: (a) + (b) + (c) + (e)**, built the same day:
   (a) `Tools/Checks/check-personal-data.ps1`, the fifth guard, which the release runs and whose
-  self-test runs on the build VM. It matches the identifiers by their salted SHA-256 in
-  `Tools/Checks/personal-data.json`, never by value, plus generic shapes: e-mail addresses outside
+  self-test runs on the build VM. It matched the identifiers by their salted SHA-256, committed in
+  `Tools/Checks/personal-data.json` - until Q196 (c) kept them in the private list only - plus
+  generic shapes: e-mail addresses outside
   the reserved domains, profile paths with a real-looking user name, private keys, key files,
   Windows default computer names, and the names of the machine it runs on. (b) Git hooks -
   pre-commit, commit-msg and pre-push - installed by `Tools/Install-GitHooks.ps1` into the main
@@ -446,6 +447,14 @@ in file contents, his Windows user name, his computer name and facts about his m
   details Q185 removes. *"b"*. **Decided: (b)**: the next installer removes the old certificate from
   every trust store by its thumbprint, `E205060633DD7062D4F90033130542948A69D068`, and ships no copy;
   the untrusted-list entry stays on his own PC, where it is done.
+- **Q196 - the committed hashes, 2026-11-18.** Q190 (a) committed the salted SHA-256 of each
+  identifier so that the build VM could check without the values. A short value's hash is found
+  again by hashing a dictionary: the computer name came back from its thousand candidates at once.
+  **Decided: (c)**: commit no fingerprints. The private list is the only place the identifiers
+  are; the build-VM runner copies it into each run, onto a VM that has no internet and is reverted
+  after every run, and never fetches it back; a run without it says so in its summary.
+  `Tools/Checks/personal-data.json` keeps the baseline alone, and the guard refuses it if it carries
+  an identifier or a hash. The hooks and a release read the list where it lies.
 
 ### 2026-11-17 - Q131-Q136 carried out: folders and stores addressed by ID
 

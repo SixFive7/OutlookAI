@@ -1,26 +1,22 @@
 # TODO
 
-- [ ] **Take the personal data out of the public history (Q183 to Q193): HEAD stops needing it,
-  then the history is rewritten at a quiet point and force-pushed.**
+- [ ] **Take the personal data out of the public history (Q183 to Q196): rewrite the history at a
+  quiet point and force-push.**
   The audit of 2026-11-17 and the maintainer's answers are in QUESTIONS.md's decision log; the
   inventory with the values stays in `.work/history-audit-2026-11/` of the maintainer's checkout,
   and no value goes into a committed file, this one included (AGENTS.md, Personal data). Done: the
   purge of the 198 commits left over from the earlier rewrites was asked of GitHub Support (Q183);
-  the old signing key is out of his store and on his untrusted list (Q184); Q190's safeguards are in -
-  `Tools/Checks/check-personal-data.ps1`, the hooks of `Tools/Install-GitHooks.ps1`, the AGENTS.md
-  rule and the key-file patterns in `.gitignore`. Left, in order:
-  1. HEAD stops needing the values (Q189): tests and self-tests use placeholders; live and testbed
-     runs read the Exchange VM's mailbox from the gitignored live-test settings file and check it
-     against the guest's Outlook at run time; `Testbed/testbed.json` holds a placeholder. The
-     baseline in `Tools/Checks/personal-data.json` lists every file and rule still to go, and is
-     empty when this step is done.
-  2. The rewrite (Q185 (b), Q187 (a), Q188 (a), Q191 (a)), only at a quiet point: the in-flight
+  the old signing key is out of his store and on his untrusted list (Q184); Q190's safeguards are in,
+  with the identifiers in the private list only (Q196); and HEAD needs no value any more (Q189) -
+  the one entry left in `Tools/Checks/personal-data.json`'s baseline is a measured test address
+  that came back one character short. Left, in order:
+  1. The rewrite (Q185 (b), Q187 (a), Q188 (a), Q191 (a)), only at a quiet point: the in-flight
      branches landed and work frozen; `git filter-repo` on a fresh `--mirror` clone, with the rules in
      `.work/history-rewrite/` of the maintainer's checkout; the audit's scanner run on the result,
      finding nothing, and the commit count unchanged; then the force-push of master and the moved
      tags - as updates of the same tag names, never a delete and a re-create - on his word; then every
      clone and worktree made again. His name and e-mail stay as author and committer (Q186 (a)).
-  3. After the force-push: `gh api repos/SixFive7/OutlookAI/releases/latest` still names the newest
+  2. After the force-push: `gh api repos/SixFive7/OutlookAI/releases/latest` still names the newest
      release; a second Support request names the commits the rewrite replaced; the 522 old Actions run
      records are deleted and the leftover "Dependabot Updates" workflow is disabled through the API;
      and one normal commit repoints the commit IDs cited in tracked files, from filter-repo's commit

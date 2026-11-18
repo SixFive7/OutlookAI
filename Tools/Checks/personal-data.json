@@ -1,28 +1,12 @@
 {
   "about": [
-    "Personal data that must stay out of this public repository, by SHA-256 only: Q185 and Q190 (a), QUESTIONS.md.",
-    "Read by Tools/Checks/check-personal-data.ps1, which says how a value is hashed and matched. The values live",
-    "only in the maintainer's checkout, in .work/personal-data/identifiers.json; -HashIdentifiers -Execute writes",
-    "their hashes here. The baseline counts, per file and rule, the occurrences HEAD still needs until Q189 is",
-    "done: more fails, fewer is reported. One entry per line, exactly as -HashIdentifiers -Execute writes them."
-  ],
-  "identifiers": [
-    { "id": "pd01", "kind": "a third-party organisation's name and mail domain", "sha256": "8f8725b803e21cf30a637c4a158e0613eeba617f9a5644ee364b10551ec3d6fc", "allowedIn": [] },
-    { "id": "pd02", "kind": "a third-party shared mailbox's local part and display name", "sha256": "cc5275924ed0c33c962e1aa72dc07caf03c31a3fc3abc4959a38df7c0a53853a", "allowedIn": [] },
-    { "id": "pd03", "kind": "a colleague's first name", "sha256": "14cf61c393445eae0342b46f26b5407af8675d910f4228a3c8564a6e0ae873e0", "allowedIn": [] },
-    { "id": "pd04", "kind": "a delegate's surname", "sha256": "670e4024409bf4cd67fba3d2d3a52d80c6d3f616a7c63c0ea247d7388a731280", "allowedIn": [] },
-    { "id": "pd05", "kind": "a delegate's surname", "sha256": "d8546b342145b4602fff4bd7ebaee4f2a9f22446d295f4a7ceaef6ef9d16cfa8", "allowedIn": [] },
-    { "id": "pd06", "kind": "the maintainer's first name and Windows user name", "sha256": "250ca0472e3fcb8e00e0a50809e3ed3d79d8af2e96250067f457f9c248cd6f6c", "allowedIn": ["LICENSE"] },
-    { "id": "pd07", "kind": "the maintainer's surname and personal mail domain", "sha256": "e5895dca7b7054a72dc765e12f4944e88eba9e6a3a031e8da05a10418324dcc5", "allowedIn": ["LICENSE"] },
-    { "id": "pd08", "kind": "the maintainer's business mail domain", "sha256": "ec139c8329235e2e79e891f10f685c4f37a1b702ddc8f8c82e78b56c3b5a195d", "allowedIn": [] },
-    { "id": "pd09", "kind": "the maintainer's computer name", "sha256": "e6bd1cc0b22b595377429196bc7d74940307776b25326e670cdf48a41c7166ea", "allowedIn": [] },
-    { "id": "pd10", "kind": "a mail store in the maintainer's real Outlook profile", "sha256": "e2faa9f1034ad35e9f4d75ff3dffd4dbd8154a7eae473de6e6b985fa507e3131", "words": 2, "first": "04e72491284c1a5357a4dab9d66c1991bca571db7d655c75d81569ddfdf66d79", "allowedIn": [] },
-    { "id": "pd11", "kind": "an Outlook add-in on the maintainer's computer", "sha256": "db319cd82600cbc95226e8daa1686ba25b63fec422b00f4ea7e5f0544f718cee", "words": 2, "first": "3432e7dc21016e137b538bb6ca8cc7574ee292e6bc877a4afa83d4a5bc57aa6a", "allowedIn": [] },
-    { "id": "pd12", "kind": "the account SID of the maintainer's computer", "sha256": "f7980d5985b4c714599071677c22075684e5c70a5c2434b76a34519e26497ca3", "allowedIn": [] }
+    "The baseline of Tools/Checks/check-personal-data.ps1 (Q190 (a)): per file and rule, how many occurrences of",
+    "personal data HEAD may still hold - more fails, fewer is reported so the ceiling comes down. It names files and",
+    "rule ids only. The identifiers themselves, and anything derived from them, live only in the maintainer's",
+    "checkout, in .work/personal-data/identifiers.json (Q196 (c)); the guard refuses this file if it carries any.",
+    "One entry per line."
   ],
   "baseline": [
-    { "path": "Docs/live-tier-on-the-vm.md", "rule": "email", "count": 1 },
-    { "path": "McpServer/OutlookAI.McpServer.Tests/T1/ComHostProtocolTests.cs", "rule": "pd10", "count": 2 },
-    { "path": "McpServer/OutlookAI.McpServer.Tests/T1/SweepScopeAndWindowTests.cs", "rule": "pd10", "count": 1 }
+    { "path": "Docs/live-tier-on-the-vm.md", "rule": "email", "count": 1 }
   ]
 }
