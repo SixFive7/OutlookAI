@@ -239,6 +239,51 @@ namespace OutlookAI.Core.AddIn
         }
 
         /// <summary>
+        /// Our entry, for a rewrite: <see cref="RenderEntryInline"/> unless
+        /// <paramref name="keepExistingEntryKeys"/> and the entry at <paramref name="entryStart"/> is
+        /// an object. Then its members stay, in their order and as written, except the keys only a
+        /// REMOTE server has, which go; <c>type</c> and <c>command</c> get our values, either where
+        /// they stood or first when the entry had none; and <c>args</c> and <c>env</c> are added last
+        /// when missing. A key that occurs twice is written once, with its first value.
+        /// </summary>
+        private static string RenderEntry(string json, int entryStart, string command, bool keepExistingEntryKeys)
+        {
+            if (!keepExistingEntryKeys || json[entryStart] != '{')
+                return RenderEntryInline(command);
+
+            string typeMember = "\"type\": \"stdio\"";
+            string commandMember = "\"" + AddInServerContract.CommandProperty + "\": \"" + EscapeJsonString(command ?? "") + "\"";
+            var members = new List<string>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            int i = SkipWhitespace(json, entryStart + 1);
+            string name;
+            int memberStart, valueStart, valueEnd;
+            while (TryNextMember(json, ref i, out name, out memberStart, out valueStart, out valueEnd))
+            {
+                if (!seen.Add(name) || name == "url" || name == "httpUrl" || name == "headers")
+                    continue;
+                if (name == "type")
+                    members.Add(typeMember);
+                else if (name == AddInServerContract.CommandProperty)
+                    members.Add(commandMember);
+                else
+                    members.Add("\"" + EscapeJsonString(name) + "\": " + json.Substring(valueStart, valueEnd - valueStart));
+            }
+
+            var first = new List<string>();
+            if (!seen.Contains("type"))
+                first.Add(typeMember);
+            if (!seen.Contains(AddInServerContract.CommandProperty))
+                first.Add(commandMember);
+            members.InsertRange(0, first);
+            if (!seen.Contains("args"))
+                members.Add("\"args\": []");
+            if (!seen.Contains("env"))
+                members.Add("\"env\": {}");
+            return "{ " + string.Join(", ", members) + " }";
+        }
+
+        /// <summary>
         /// A whole new project <c>.mcp.json</c>. Pretty-printed with LF endings because this
         /// file is normally committed and read in diffs.
         /// </summary>
@@ -302,6 +347,50 @@ namespace OutlookAI.Core.AddIn
         public static bool TryBuildProjectConfig(
             string raw, bool fileExists, string command, out string updated, out string error)
         {
+            return TryBuildConfigWithServer(
+                raw, fileExists, command, keepExistingEntryKeys: false, leaveMatchingEntryAlone: true,
+                out updated, out error);
+        }
+
+        /// <summary>
+        /// Produces the content of the user-scope <c>~/.claude.json</c> that registers our server, by
+        /// the same splice as <see cref="TryBuildProjectConfig"/>: every other server and every other
+        /// byte of the file survive as written, and the result is verified before the caller may
+        /// write it. A file that is genuinely absent yields a fresh document; a file that does not
+        /// parse, or exists yet reads back empty, is refused.
+        ///
+        /// <para>
+        /// <paramref name="keepExistingEntryKeys"/> is true ONLY when the entry being rewritten is
+        /// already ours. Its other keys - an <c>env</c> variable someone added by hand - are then
+        /// carried through, which is the promise made to a user maintaining their own registration;
+        /// the keys only a REMOTE server has (<c>url</c>, <c>httpUrl</c>, <c>headers</c>) go, so the
+        /// entry cannot come out of here as a half-remote hybrid. An entry that is NOT ours is
+        /// replaced whole, because merging into one produces exactly the nonsense an earlier version
+        /// wrote: a remote server's <c>url</c> left beside a <c>command</c>. The entry is written
+        /// even when it already names the command - the caller decides whether a rewrite is due, and
+        /// a hybrid with the right command is one.
+        /// </para>
+        ///
+        /// <para>
+        /// The add-in's <c>McpRegistrationService</c> did this with <c>JavaScriptSerializer</c> until
+        /// the code-sharing refactor's stage S3, re-rendering the whole <c>mcpServers</c> section and
+        /// with it every other server's entry; now only our entry is written (Q154, Q165 (c)).
+        /// </para>
+        /// </summary>
+        public static bool TryBuildUserConfig(
+            string raw, bool fileExists, string command, bool keepExistingEntryKeys,
+            out string updated, out string error)
+        {
+            return TryBuildConfigWithServer(
+                raw, fileExists, command, keepExistingEntryKeys, leaveMatchingEntryAlone: false,
+                out updated, out error);
+        }
+
+        /// <summary>The splice both scopes share; see the two builders above.</summary>
+        private static bool TryBuildConfigWithServer(
+            string raw, bool fileExists, string command, bool keepExistingEntryKeys, bool leaveMatchingEntryAlone,
+            out string updated, out string error)
+        {
             updated = "";
             error = "";
 
@@ -360,15 +449,17 @@ namespace OutlookAI.Core.AddIn
                     int memberStart, valueStart, valueEnd;
                     if (TryFindMemberSpan(raw, serversStart, ServerName, out memberStart, out valueStart, out valueEnd))
                     {
-                        // An entry that already names this exact command is left completely
-                        // alone — same rule as the user-scope reconcile. Re-running the
-                        // button must not reformat a file under source control, and must
-                        // not produce a diff that says nothing.
+                        // In a project's file, an entry that already names this exact command is
+                        // left completely alone: re-running the button must not reformat a file
+                        // under source control, and must not produce a diff that says nothing.
                         string existing;
-                        candidate = TryReadServerCommand(raw, out existing)
+                        candidate = leaveMatchingEntryAlone
+                                    && TryReadServerCommand(raw, out existing)
                                     && string.Equals(existing, command, StringComparison.Ordinal)
                             ? raw
-                            : raw.Substring(0, valueStart) + entry + raw.Substring(valueEnd);
+                            : raw.Substring(0, valueStart)
+                              + RenderEntry(raw, valueStart, command, keepExistingEntryKeys)
+                              + raw.Substring(valueEnd);
                     }
                     else
                     {
@@ -591,6 +682,176 @@ namespace OutlookAI.Core.AddIn
 
             command = Unescape(json.Substring(commandStart + 1, commandEnd - commandStart - 2));
             return true;
+        }
+
+        /// <summary>
+        /// Whether a config file may be read and written at all: false for a file that is there but
+        /// read back empty (<see cref="ExistsButReadsEmpty"/>) and for text that is not one
+        /// well-formed JSON object; true for an ABSENT file, which holds nothing, and for a valid
+        /// object. The one rule the add-in repairs <c>~/.claude.json</c> by and <c>outlook_health</c>
+        /// reports on it by.
+        /// </summary>
+        public static bool IsReadableConfig(bool fileExists, string? raw)
+        {
+            if (ExistsButReadsEmpty(fileExists, raw ?? ""))
+                return false;
+            if (raw == null || raw.Trim().Length == 0)
+                return true;
+            string error;
+            return TryValidateJsonObject(raw, out error);
+        }
+
+        /// <summary>
+        /// What <c>mcpServers.outlookai</c> IS - the single judgement the add-in's registration
+        /// reconcile hangs everything off. <paramref name="readable"/> is <see cref="IsReadableConfig"/>.
+        ///
+        /// <para>
+        /// "Ours" is deliberately narrow: a stdio entry whose <c>command</c>, once Claude Code's
+        /// <c>${VAR}</c> forms are expanded, names <paramref name="installedServerPath"/> - or, when
+        /// no server is installed (an older install layout, or a developer build of the add-in), whose
+        /// file name is <paramref name="serverExecutableFileName"/>, which is enough to tell a stale
+        /// entry of ours, which deregistration may remove, from a command the user chose, which it may
+        /// not. Anything else is FOREIGN, and foreign means untouchable - not adopted as a silent
+        /// opt-in, not overwritten, not deleted. The case that motivates the whole rule is a user who
+        /// ran <c>claude mcp add --scope user outlookai -- C:\my\wrapper.cmd</c> on purpose. A remote
+        /// entry (<c>url</c>) is foreign for a second reason as well: rewriting it as a stdio command
+        /// while its <c>url</c> stayed behind would leave a hybrid that is neither.
+        /// </para>
+        ///
+        /// <para>
+        /// The add-in's <c>McpRegistrationService.ClassifyEntry</c> judged a
+        /// <c>JavaScriptSerializer</c> dictionary until the code-sharing refactor's stage S3; this
+        /// reads the same members out of the text with the scanner <c>outlook_health</c> reads the
+        /// file with, and is pinned by T1.
+        /// </para>
+        /// </summary>
+        public static McpRegistrationDecision.EntryState ClassifyServerEntry(
+            bool readable, string raw, string installedServerPath, string serverExecutableFileName,
+            Func<string, string?>? lookup = null)
+        {
+            if (!readable)
+                return McpRegistrationDecision.EntryState.Unreadable;
+
+            int entryStart, entryEnd;
+            if (!TryFindServerEntry(raw, out entryStart, out entryEnd))
+                return McpRegistrationDecision.EntryState.Absent;
+            if (raw[entryStart] != '{')
+                return McpRegistrationDecision.EntryState.Foreign;
+            if (HasMember(raw, entryStart, "url") || HasMember(raw, entryStart, "httpUrl"))
+                return McpRegistrationDecision.EntryState.Foreign;
+
+            string type;
+            if (HasMember(raw, entryStart, "type")
+                && !(TryReadStringMember(raw, entryStart, "type", out type)
+                     && string.Equals(type, "stdio", StringComparison.OrdinalIgnoreCase)))
+            {
+                return McpRegistrationDecision.EntryState.Foreign;
+            }
+
+            string command;
+            if (!TryReadStringMember(raw, entryStart, AddInServerContract.CommandProperty, out command) || command.Length == 0)
+                return McpRegistrationDecision.EntryState.Foreign;
+
+            string expanded = ExpandEnvironmentReferences(command, lookup);
+            if (expanded.Length == 0)
+                return McpRegistrationDecision.EntryState.Foreign;
+
+            if (!string.IsNullOrEmpty(installedServerPath))
+            {
+                return SamePath(expanded, installedServerPath)
+                    ? McpRegistrationDecision.EntryState.Ours
+                    : McpRegistrationDecision.EntryState.Foreign;
+            }
+
+            return NamesExecutable(expanded, serverExecutableFileName)
+                ? McpRegistrationDecision.EntryState.Ours
+                : McpRegistrationDecision.EntryState.Foreign;
+        }
+
+        /// <summary>
+        /// Whether our entry still carries keys that only belong to a REMOTE server. They are
+        /// meaningless beside a <c>command</c>, and an entry holding both is exactly the hybrid an
+        /// earlier version could produce by overwriting a remote entry key by key - so their presence
+        /// means "not yet correct", and <see cref="TryBuildUserConfig"/> drops them.
+        /// </summary>
+        public static bool HasRemoteKeys(string raw)
+        {
+            int entryStart, entryEnd;
+            if (!TryFindServerEntry(raw, out entryStart, out entryEnd) || raw[entryStart] != '{')
+                return false;
+            return HasMember(raw, entryStart, "url") || HasMember(raw, entryStart, "httpUrl") || HasMember(raw, entryStart, "headers");
+        }
+
+        /// <summary>
+        /// Whether the registered entry is a stdio server the reconcile may keep maintaining. A
+        /// hand-written entry legitimately omits <c>type</c> - stdio is what a <c>command</c> means -
+        /// so requiring an explicit type would score every such entry as drift and rewrite the file on
+        /// every single Outlook start. A remote entry (<c>url</c>) is the case that must still score
+        /// false: taking one of those over would break it.
+        /// </summary>
+        public static bool IsStdioEntry(string raw)
+        {
+            int entryStart, entryEnd;
+            if (!TryFindServerEntry(raw, out entryStart, out entryEnd) || raw[entryStart] != '{')
+                return false;
+
+            string value;
+            if (HasMember(raw, entryStart, "type"))
+                return TryReadStringMember(raw, entryStart, "type", out value)
+                       && string.Equals(value, "stdio", StringComparison.OrdinalIgnoreCase);
+
+            if (!TryReadStringMember(raw, entryStart, AddInServerContract.CommandProperty, out value) || value.Length == 0)
+                return false;
+            return !HasMember(raw, entryStart, "url") && !HasMember(raw, entryStart, "httpUrl");
+        }
+
+        /// <summary>The value span of the top-level <c>mcpServers.outlookai</c>, or false when there is none.</summary>
+        private static bool TryFindServerEntry(string raw, out int entryStart, out int entryEnd)
+        {
+            entryStart = -1;
+            entryEnd = -1;
+            if (string.IsNullOrEmpty(raw))
+                return false;
+            int serversStart, serversEnd;
+            if (!TryFindTopLevelValueSpan(raw, ServersProperty, out serversStart, out serversEnd) || raw[serversStart] != '{')
+                return false;
+            int memberStart;
+            return TryFindMemberSpan(raw, serversStart, ServerName, out memberStart, out entryStart, out entryEnd);
+        }
+
+        /// <summary>Whether the object at <paramref name="objectStart"/> has a direct member of that name.</summary>
+        private static bool HasMember(string json, int objectStart, string name)
+        {
+            int memberStart, valueStart, valueEnd;
+            return TryFindMemberSpan(json, objectStart, name, out memberStart, out valueStart, out valueEnd);
+        }
+
+        /// <summary>A direct member's value when it is a JSON string; false for any other value, or none.</summary>
+        private static bool TryReadStringMember(string json, int objectStart, string name, out string value)
+        {
+            value = "";
+            int memberStart, valueStart, valueEnd;
+            if (!TryFindMemberSpan(json, objectStart, name, out memberStart, out valueStart, out valueEnd) || json[valueStart] != '"')
+                return false;
+            value = Unescape(json.Substring(valueStart + 1, valueEnd - valueStart - 2));
+            return true;
+        }
+
+        /// <summary>Whether a command's file name is the server executable's; false for a value that is no path.</summary>
+        private static bool NamesExecutable(string command, string executableFileName)
+        {
+            if (string.IsNullOrEmpty(executableFileName))
+                return false;
+            try
+            {
+                return string.Equals(Path.GetFileName(command), executableFileName, StringComparison.OrdinalIgnoreCase);
+            }
+            catch (Exception ex) when (!(ex is OutOfMemoryException))
+            {
+                // A value with invalid path characters names no executable of ours.
+                System.Diagnostics.Debug.WriteLine("server name compare: " + ex.Message);
+                return false;
+            }
         }
 
         /// <summary>Names under <c>mcpServers</c> (empty when absent or not an object).</summary>

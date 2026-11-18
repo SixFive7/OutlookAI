@@ -545,28 +545,22 @@ namespace OutlookAI.Core.Services
         }
 
         /// <summary>
-        /// The registration a configuration file holds, judged by the rule the add-in repairs it by
-        /// (pure, T1-pinned). An ABSENT file is readable and holds nothing. A file that is there but
-        /// reads back empty is UNREADABLE, not unregistered: the Claude Code CLI truncates the file
-        /// before it flushes, and a read taken in between is a failed read
-        /// (<see cref="McpConfigEditor.ExistsButReadsEmpty"/>). Until stage S3 of the code-sharing
-        /// refactor this report called such a file "absent" while the add-in called it unreadable.
+        /// The registration a configuration file holds, judged by the rule the add-in repairs it by,
+        /// <see cref="McpConfigEditor.IsReadableConfig"/> (pure, T1-pinned). An ABSENT file is readable
+        /// and holds nothing. A file that is there but reads back empty is UNREADABLE, not
+        /// unregistered: the Claude Code CLI truncates the file before it flushes, and a read taken in
+        /// between is a failed read. Until stage S3 of the code-sharing refactor this report called
+        /// such a file "absent" while the add-in called it unreadable.
         /// </summary>
         public static string? ReadRegisteredCommand(bool fileExists, string? text, out bool readable)
         {
-            readable = true;
-            if (!fileExists)
+            readable = McpConfigEditor.IsReadableConfig(fileExists, text);
+            if (!readable || !fileExists || text == null)
             {
                 return null;
             }
 
-            if (McpConfigEditor.ExistsButReadsEmpty(fileExists, text ?? ""))
-            {
-                readable = false;
-                return null;
-            }
-
-            return ExtractRegisteredCommand(text, out readable);
+            return McpConfigEditor.TryReadServerCommand(text, out string command) ? command : null;
         }
 
         /// <summary>
