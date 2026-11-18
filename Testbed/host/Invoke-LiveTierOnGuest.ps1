@@ -728,7 +728,7 @@ function Invoke-SelfTest {
     $restoreText = ''
     if ($restoreAt -ge 0) { $restoreText = $runCode.Substring($restoreAt, [Math]::Min(700, $runCode.Length - $restoreAt)) }
     Check 'a running guest is saved before a checkpoint is restored over it, and its session closed' $true ($restoreText.IndexOf('Close-GuestSession') -gt 0 -and $restoreText.IndexOf('Save-VM -Name $facts.Name') -gt 0 -and $restoreText.IndexOf('Save-VM -Name $facts.Name') -lt $restoreText.IndexOf('Restore-VMSnapshot'))
-    Check 'and the session is closed before every restart, which ends it' $true (([regex]::Matches($runCode, 'Close-GuestSession\s+&\s+\(Join-Path \$PSScriptRoot ''Restart-Guest\.ps1''\)')).Count -eq 2)
+    Check 'and the session is closed before every restart, which ends it' $true (([regex]::Matches($runCode, 'Close-GuestSession\s+# ps51-native-stderr-ok:[^\n]*\n\s*&\s+\(Join-Path \$PSScriptRoot ''Restart-Guest\.ps1''\)')).Count -eq 2)
     Check 'a guest''s state is read with the narrow query, never Get-VM''s' $true ($runCode.Contains('function Get-GuestVmState') -and -not $runCode.Contains('(Get-VM -Name $facts.Name).State'))
 
     Write-Host '== the run id =='
@@ -1325,8 +1325,8 @@ Copy-Item -LiteralPath '$GuestPayloadDir\live-test-settings.json' -Destination '
             if (-not $exchangeCarry) {
                 # A restored checkpoint: its .ost files are older than the server. Outlook quits, Windows
                 # restarts, the files go aside, and the Outlook started below downloads the mailboxes afresh.
-                # ps51-native-stderr-ok: a PowerShell script, not a program - every program it starts goes through its own Invoke-NativeCommand, under 'Continue' inside a try
                 Close-GuestSession
+                # ps51-native-stderr-ok: a PowerShell script, not a program - every program it starts goes through its own Invoke-NativeCommand, under 'Continue' inside a try
                 & (Join-Path $PSScriptRoot 'Restart-Guest.ps1') -VMName $facts.Name -Execute -RepoRoot $CredentialRepoRoot -LogPath (Join-Path $runDir 'restart.log') *> (Join-Path $runDir 'restart.out.log')
                 if ($LASTEXITCODE -ne 0) { throw "Restart-Guest.ps1 did not complete ($LASTEXITCODE) - restart.log" }
                 # New data files are new stores to Windows Search, and the old files' roots would stay beside
@@ -1374,8 +1374,8 @@ Copy-Item -LiteralPath '$GuestPayloadDir\live-test-settings.json' -Destination '
             Say ((Format-OutlookStartLine $outlookStart) -replace '^outlook\s+', 'Outlook ')
         }
         else {
-            # ps51-native-stderr-ok: a PowerShell script, not a program - every program it starts goes through its own Invoke-NativeCommand, under 'Continue' inside a try
             Close-GuestSession
+            # ps51-native-stderr-ok: a PowerShell script, not a program - every program it starts goes through its own Invoke-NativeCommand, under 'Continue' inside a try
             & (Join-Path $PSScriptRoot 'Restart-Guest.ps1') -VMName $facts.Name -Execute -CancelLogonPrompt -RepoRoot $CredentialRepoRoot -LogPath (Join-Path $runDir 'restart.log') *> (Join-Path $runDir 'restart.out.log')
             if ($LASTEXITCODE -ne 0) { throw "Restart-Guest.ps1 did not complete ($LASTEXITCODE) - restart.log" }
             if (-not $SkipHubReset) {
