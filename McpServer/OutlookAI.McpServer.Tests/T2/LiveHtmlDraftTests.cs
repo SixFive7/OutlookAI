@@ -2,6 +2,7 @@ using OutlookAI.Core.Com;
 using OutlookAI.Core.Services;
 using Xunit;
 using Xunit.Abstractions;
+using static OutlookAI.McpServer.Tests.T2.LiveDraftChecks;
 
 namespace OutlookAI.McpServer.Tests.T2;
 
@@ -391,39 +392,11 @@ public sealed class LiveHtmlDraftTests
             what + " must appear as real markup in the saved HTML");
     }
 
-    private static int RequireIndexOf(string html, string needle, string what)
-    {
-        int at = html.IndexOf(needle, StringComparison.Ordinal);
-        Assert.True(at >= 0, what + " must be present in the draft HTML");
-        return at;
-    }
+    private void AssertBodyAboveIntactSignature(string html, string bodyMarker, string signatureMarker, string label) =>
+        LiveDraftChecks.AssertBodyAboveIntactSignature(html, bodyMarker, signatureMarker, label, _output.WriteLine);
 
-    private void AssertBodyAboveIntactSignature(string html, string bodyMarker, string signatureMarker, string label)
-    {
-        int bodyAt = RequireIndexOf(html, bodyMarker, "agent body");
-        int anchorAt = RequireIndexOf(html, "_MailAutoSig", "signature region");
-        int signatureAt = RequireIndexOf(html, signatureMarker, "signature content");
-
-        Assert.True(bodyAt < anchorAt, $"{label}: agent body must precede the signature region (body@{bodyAt} sig@{anchorAt})");
-        Assert.True(bodyAt < signatureAt, $"{label}: agent body must precede the signature content");
-        Assert.Contains("<img", html, StringComparison.OrdinalIgnoreCase);
-        AssertBodyInsideWordSection(html, bodyAt);
-        _output.WriteLine($"[{label}]: bodyAt={bodyAt} signatureAnchorAt={anchorAt} signatureContentAt={signatureAt}");
-    }
-
-    private static void AssertBodyInsideWordSection(string html, int bodyAt)
-    {
-        int section = html.IndexOf("WordSection1", StringComparison.OrdinalIgnoreCase);
-        Assert.True(section >= 0, "Outlook's WordSection container must be present");
-        Assert.True(bodyAt > section, $"agent body must sit INSIDE WordSection1 (section@{section} body@{bodyAt})");
-    }
-
-    private string RequireHtmlBody(string entryId)
-    {
-        string? html = _fixture.VerifySession.TryGetHtmlBody(entryId, _fixture.GetStoreId(Hub), out string? error);
-        Assert.True(!string.IsNullOrEmpty(html), $"draft HTML unavailable: {error ?? "empty"}");
-        return html!;
-    }
+    private string RequireHtmlBody(string entryId) =>
+        LiveDraftChecks.RequireHtmlBody(_fixture.VerifySession, entryId, _fixture.GetStoreId(Hub));
 
     private bool WaitForInspector(string entryId, TimeSpan timeout)
     {
@@ -447,32 +420,7 @@ public sealed class LiveHtmlDraftTests
         return LiveInboxArrival.WaitFor(_fixture.VerifySession, Hub, seedSubject, sentUtc);
     }
 
-    private void CleanupDraft(string entryId)
-    {
-        for (int attempt = 0; attempt < 3; attempt++)
-        {
-            try
-            {
-                LiveOutlookTestMailer.DeleteItemByEntryId(Hub, entryId, Marker);
-                LiveOutlookTestMailer.DeleteTaggedArtifacts(Hub, Marker);
-                return;
-            }
-            catch (Exception) when (attempt < 2)
-            {
-                Thread.Sleep(1000);
-            }
-        }
-    }
+    private void CleanupDraft(string entryId) => LiveDraftCleanup.DeleteDraft(Hub, Marker, entryId);
 
-    private void AssertNoTaggedArtifactsRemain()
-    {
-        int remaining = LiveOutlookTestMailer.CountTaggedArtifactsAfterPurgingStragglers(
-            Hub, Marker, folderIds: null, out int stragglers);
-        if (stragglers > 0)
-        {
-            _output.WriteLine($"cleanup[{Hub}]: {stragglers} late-materialized artifact(s) purged (documented lag)");
-        }
-
-        Assert.Equal(0, remaining);
-    }
+    private void AssertNoTaggedArtifactsRemain() => LiveDraftCleanup.AssertNoTaggedArtifactsRemain(Hub, Marker, _output);
 }

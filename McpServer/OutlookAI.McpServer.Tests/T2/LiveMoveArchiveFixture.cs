@@ -83,19 +83,14 @@ public sealed class LiveMoveArchiveFixture : IDisposable
     /// <summary>Builds a tagged subject: [OutlookAI-McpTest] + run marker + label.</summary>
     public string TaggedSubject(string label)
     {
-        return LiveOutlookTestMailer.SubjectTag + " " + RunMarker + " " + label;
+        return LiveOutlookTestMailer.TaggedSubject(RunMarker, label);
     }
 
     /// <summary>This run's test folder name (carries the folder name prefix, D39).</summary>
     public string TestFolderName => LiveOutlookTestMailer.TestFolderNamePrefix;
 
     /// <summary>StoreID of a store by display name (via the verify session).</summary>
-    public string GetStoreId(string storeDisplayName)
-    {
-        return VerifySession.GetStores()
-                .FirstOrDefault(s => string.Equals(s.DisplayName, storeDisplayName, StringComparison.OrdinalIgnoreCase))?.StoreId
-            ?? throw new InvalidOperationException("Store not found by display name.");
-    }
+    public string GetStoreId(string storeDisplayName) => LiveIds.StoreIdOf(VerifySession, storeDisplayName);
 
     /// <summary>
     /// Post-cleanup reconciliation belt (call AFTER a test's own stable-zero sweep):
@@ -158,6 +153,80 @@ public sealed class LiveMoveArchiveFixture : IDisposable
         throw new InvalidOperationException(
             "Hub reconciliation FAILED - baseline-era item counts moved (pre -> post-cleanup): "
             + string.Join(", ", damage));
+    }
+
+    /// <summary>
+    /// A folder suite's clean-up in the hub (S3): each item it made, deleted by its EntryID - the mailer checks the
+    /// tag and this run's marker - then the test folders, then the hub's sweep set, its Archive folder included,
+    /// purged to a stable zero. A delete that fails is passed over: the sweep is the authority. The one copy of what
+    /// four folder suites each restated (Q154).
+    /// </summary>
+    public void CleanUpHub(IEnumerable<string?> entryIds)
+    {
+        string hub = Settings.TestHubStoreDisplayName;
+        foreach (string? entryId in entryIds.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (entryId == null)
+            {
+                continue;
+            }
+
+            try
+            {
+                LiveOutlookTestMailer.DeleteItemByEntryId(hub, entryId, RunMarker);
+            }
+            catch (Exception)
+            {
+                // The stable-zero sweep below is the authority.
+            }
+        }
+
+        LiveOutlookTestMailer.DeleteTestFolders(hub);
+        LiveOutlookTestMailer.DeleteTaggedArtifactsUntilStableZero(
+            hub, RunMarker, folderIds: LiveOutlookTestMailer.HubSweepFolderIdsWithArchive);
+    }
+
+    /// <summary>
+    /// The hub's zero-artifact proof after a folder suite's test, its Sync Issues subtree included since soak fix 15 -
+    /// a tagged artifact was once found stranded in Local Failures, where nothing had ever swept. Straggler-tolerant
+    /// like the move/archive suites (batch A): the stable-zero sweep returns after its 10 s window, but under a
+    /// full-suite load a seeded item can still materialize after it, and one purge pass is not enough either (a
+    /// straggler can materialize between the purge and the count that follows it - measured), so it drives to a
+    /// STABLE zero first and only then applies the straggler-tolerant count (S3-legal: tag AND this run's marker).
+    /// <para>
+    /// FOLDERS: what must be zero is LIVE test folders - anything still holding items, or still sitting outside
+    /// Deleted Items. A test folder created and removed inside ONE Outlook session can wedge EMPTY in Deleted Items
+    /// until Outlook restarts (Folders.Remove keeps failing with the synchronization error), which DeleteTestFolders
+    /// documents, reports and tolerates; asserting the raw count pinned that Outlook limitation, not the contract.
+    /// Then the store is re-walked against its baseline (<see cref="VerifyHubReconciled"/>). The one copy of what
+    /// three folder suites each restated (Q154).
+    /// </para>
+    /// </summary>
+    public void AssertHubClean(Action<string> output)
+    {
+        string hub = Settings.TestHubStoreDisplayName;
+        LiveOutlookTestMailer.DeleteTaggedArtifactsUntilStableZero(
+            hub, RunMarker, folderIds: LiveOutlookTestMailer.HubSweepFolderIdsWithArchive);
+
+        int remaining = LiveOutlookTestMailer.CountTaggedArtifactsAfterPurgingStragglers(
+            hub, RunMarker, LiveOutlookTestMailer.HubSweepFolderIdsWithArchive, out int stragglersPurged);
+        if (stragglersPurged > 0)
+        {
+            output($"cleanup[{hub}]: {stragglersPurged} late-materialized artifact(s) purged (documented lag)");
+        }
+
+        Assert.Equal(0, remaining);
+
+        int liveTestFolders = LiveOutlookTestMailer.CountLiveTestFolders(hub, out int wedgedEmpty);
+        if (wedgedEmpty > 0)
+        {
+            output(
+                $"cleanup[{hub}]: {wedgedEmpty} empty test folder(s) wedged in Deleted Items until Outlook restarts "
+                + "(documented same-session limitation, no items involved)");
+        }
+
+        Assert.Equal(0, liveTestFolders);
+        output(VerifyHubReconciled());
     }
 
     public void Dispose()

@@ -135,6 +135,10 @@ public sealed class LiveTierInventoryTests
         // PST halves of the decode, store-map and folder-id checks measure. The Exchange VM has none.
         "PstStore",
 
+        // A tagged leftover the maintainer confirmed by its EntryID for removal from a bystander (Q138): the
+        // one-off removal needs it, and no derived filter selects it - it runs only when named.
+        "ConfirmedLeftover",
+
         // The two capabilities a dedicated test machine cannot be given - an Exchange profile.
         DelegateStore,
         CachedExchange,
@@ -443,9 +447,9 @@ public sealed class LiveTierInventoryTests
         // Literal on purpose. Everything but what the VM lacks: signatures known to stay local (until the
         // roaming measurement, Q147 R1), no delegate store until the shared test mailbox exists (Q109), no
         // identity account (the real mailbox is a bystander), no hand-curated probe population. The add-in
-        // it has (Q140 (b), 2026-11-17).
+        // it has (Q140 (b), 2026-11-17). And never the one-off removal of a confirmed leftover (Q138).
         Assert.Equal(
-            "Category=Live&Requires!=LocalSignatures&Requires!=DelegateStore&Requires!=GeneratedPopulation&Requires!=IdentityAccount&Requires!=ProbePopulation&Requires!=PstStore",
+            "Category=Live&Requires!=LocalSignatures&Requires!=DelegateStore&Requires!=GeneratedPopulation&Requires!=IdentityAccount&Requires!=ProbePopulation&Requires!=PstStore&Requires!=ConfirmedLeftover",
             LiveRunFilters.ExchangeTestAccount);
         Assert.All(LiveRunFilters.ExchangeTestAccountLacks, c => Assert.Contains(c, AllCapabilities));
         Assert.DoesNotContain(LiveRunFilters.CachedExchange, LiveRunFilters.ExchangeTestAccountLacks);
@@ -454,12 +458,32 @@ public sealed class LiveTierInventoryTests
     }
 
     [Fact]
+    public void TheConfirmedLeftoverRemoval_IsOneTest_ThatNoDerivedFilterSelects()
+    {
+        // Q138: the one write a bystander ever gets runs only when named. One method declares the capability;
+        // the PST guests leave out CachedExchange, which it also needs; the read-only Exchange filter takes only
+        // Writes=Nothing, which it does not carry; and the Exchange VM's write filter, and its narrowing past
+        // Office's grace, leave the capability out by name.
+        MethodInfo test = Assert.Single(LiveTestMethods(), m => TraitValues(m, "Requires").Contains(LiveRunFilters.ConfirmedLeftover));
+        Assert.Equal(typeof(LiveConfirmedLeftoverTests), test.DeclaringType);
+        Assert.Contains(LiveRunFilters.CachedExchange, TraitValues(test, "Requires"));
+        Assert.DoesNotContain(LiveRunFilters.WritesNothing, TraitValues(test, LiveRunFilters.WritesTrait));
+
+        Assert.Contains("Requires!=" + LiveRunFilters.CachedExchange, LiveRunFilters.Guest, StringComparison.Ordinal);
+        Assert.Contains("Requires!=" + LiveRunFilters.CachedExchange, LiveRunFilters.GuestUnindexed, StringComparison.Ordinal);
+        Assert.Contains(LiveRunFilters.WritesTrait + "=" + LiveRunFilters.WritesNothing, LiveRunFilters.ExchangeGuest, StringComparison.Ordinal);
+        Assert.Contains("Requires!=" + LiveRunFilters.ConfirmedLeftover, LiveRunFilters.ExchangeTestAccount, StringComparison.Ordinal);
+        Assert.Contains("Requires!=" + LiveRunFilters.ConfirmedLeftover, LiveRunFilters.ExchangeTestAccountWritesNothing, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void TheExchangeVmsInterimFilter_IsTheWriteFilterWithWritesNothing()
     {
-        // Decision 206 (2026-11-17): until Office on the Exchange VM can create items again it runs only the
-        // tests of its own filter that write nothing. Literal on purpose, like the filter it narrows.
+        // Decision 206 (2026-11-17): while Office on the Exchange VM is past its grace and creates no item, a run
+        // there is narrowed to the tests of its own filter that write nothing - with -FilterSuffix '&Writes=Nothing'
+        // since the grace was re-armed on 2026-11-18. Literal on purpose, like the filter it narrows.
         Assert.Equal(
-            "Category=Live&Requires!=LocalSignatures&Requires!=DelegateStore&Requires!=GeneratedPopulation&Requires!=IdentityAccount&Requires!=ProbePopulation&Requires!=PstStore&Writes=Nothing",
+            "Category=Live&Requires!=LocalSignatures&Requires!=DelegateStore&Requires!=GeneratedPopulation&Requires!=IdentityAccount&Requires!=ProbePopulation&Requires!=PstStore&Requires!=ConfirmedLeftover&Writes=Nothing",
             LiveRunFilters.ExchangeTestAccountWritesNothing);
         Assert.StartsWith(LiveRunFilters.ExchangeTestAccount + "&", LiveRunFilters.ExchangeTestAccountWritesNothing, StringComparison.Ordinal);
     }
@@ -468,7 +492,8 @@ public sealed class LiveTierInventoryTests
     public void EveryQuotedExchangeTestAccountFilter_IsTheDerivedOne()
     {
         // The places a person reads the Exchange VM's run from, and the runner that types it: the write run,
-        // or its writes-nothing narrowing while decision 206 is open - and the runner the narrowing alone.
+        // or its writes-nothing narrowing for a VM past Office's grace - and the runner the write run alone,
+        // again since decision 206 (a) re-armed that grace on 2026-11-18.
         string[] derived = { LiveRunFilters.ExchangeTestAccount, LiveRunFilters.ExchangeTestAccountWritesNothing };
         List<string> problems = new();
         foreach (string file in new[] { "Testbed/README.md", "Docs/live-tier-on-the-vm.md", "Testbed/host/Invoke-LiveTierOnGuest.ps1" })
@@ -489,10 +514,10 @@ public sealed class LiveTierInventoryTests
                 }
             }
 
-            if (file.EndsWith(".ps1", StringComparison.Ordinal) && !quotedValues.SequenceEqual(new[] { LiveRunFilters.ExchangeTestAccountWritesNothing }, StringComparer.Ordinal))
+            if (file.EndsWith(".ps1", StringComparison.Ordinal) && !quotedValues.SequenceEqual(new[] { LiveRunFilters.ExchangeTestAccount }, StringComparer.Ordinal))
             {
-                problems.Add(file + " must type the writes-nothing filter " + LiveRunFilters.ExchangeTestAccountWritesNothing
-                    + " and nothing else while decision 206 is open; it quotes " + string.Join(", ", quotedValues));
+                problems.Add(file + " must type the write-run filter " + LiveRunFilters.ExchangeTestAccount
+                    + " and nothing else since decision 206 (a); it quotes " + string.Join(", ", quotedValues));
             }
 
             // The filter before the add-in was installed there (2026-10-08 to 2026-11-17) started with

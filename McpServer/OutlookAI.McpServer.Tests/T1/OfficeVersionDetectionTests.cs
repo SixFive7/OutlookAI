@@ -86,7 +86,7 @@ public sealed class OfficeVersionDetectionTests
     [Fact]
     public void SupportedVersions_AreTheAddInsList_NewestFirst()
     {
-        // Shared FILE, not a mirror: Services\OfficeVersions.cs is linked into OutlookAI.Core,
+        // One class, not a mirror: Core's AddIn\OfficeVersions.cs is what the add-in uses too,
         // so this asserts the add-in's own list. The ORDER is load-bearing - it is the probe
         // order - which is why this is a sequence comparison and not a set comparison.
         Assert.Equal(new[] { "16.0", "17.0", "15.0" }, OutlookProfileRegistry.SupportedOfficeVersions);

@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using Microsoft.CSharp.RuntimeBinder;
@@ -14,15 +15,49 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// </summary>
 public static class LiveOutlookTestMailer
 {
+    /// <summary>
+    /// The live tier's tag without its brackets, and its one spelling (Q154): <see cref="SubjectTag"/> and
+    /// <see cref="TestFolderNamePrefix"/> are made of it. It is also what a DASL <c>LIKE</c> prefilter matches, since
+    /// a <c>[</c> inside a LIKE pattern opens a character class - the mechanism that destroyed real mail in the
+    /// 2026-07-25 incident. <c>T1/CorpusTagSeparationTests</c> keeps the corpus tag apart from it.
+    /// </summary>
+    public const string TagText = "OutlookAI-McpTest";
+
     /// <summary>The S3 subject tag every test artifact must carry.</summary>
-    public const string SubjectTag = "[OutlookAI-McpTest]";
+    public const string SubjectTag = "[" + TagText + "]";
 
     /// <summary>
     /// Name prefix every TEST FOLDER must carry (D39 move tests). Folder cleanup
     /// matches this with ordinal Contains via the tested helpers only - never shell
     /// patterns (the 7d standing rule).
     /// </summary>
-    public const string TestFolderNamePrefix = "OutlookAI-McpTest-Folder";
+    public const string TestFolderNamePrefix = TagText + "-Folder";
+
+    /// <summary>
+    /// Whether <paramref name="subject"/> carries <see cref="SubjectTag"/>, matched ORDINALLY: the tag test behind
+    /// every delete, move and refusal of this class and of every sweep (S3; AGENTS.md mailbox-safety rule 2 -
+    /// never a pattern, never a culture). A missing subject carries nothing.
+    /// </summary>
+    public static bool CarriesSubjectTag([NotNullWhen(true)] string? subject)
+    {
+        return subject != null && subject.Contains(SubjectTag, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Whether <paramref name="subject"/> mentions <see cref="SubjectTag"/> in any letter case: the test of the
+    /// READING filters, which leave test artifacts out of what a search, a census or a ground truth counts. Never a
+    /// delete's test - that is <see cref="CarriesSubjectTag"/>, which is ordinal.
+    /// </summary>
+    public static bool MentionsSubjectTag([NotNullWhen(true)] string? subject)
+    {
+        return subject != null && subject.Contains(SubjectTag, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>A subject for a test item of this run: the tag, the run's marker, then the label.</summary>
+    public static string TaggedSubject(string runMarker, string label)
+    {
+        return SubjectTag + " " + runMarker + " " + label;
+    }
 
     /// <summary>
     /// Default-folder ids swept for tagged artifacts: Drafts, Inbox, Sent Items, the
@@ -123,7 +158,7 @@ public static class LiveOutlookTestMailer
         string smtpAddress, string subject, string body, IReadOnlyList<string>? attachmentPaths)
     {
         LiveStoreWriteGuard.Assert(smtpAddress, StoreWriteKind.Send, nameof(SendSelfMail));
-        if (!subject.Contains(SubjectTag, StringComparison.Ordinal))
+        if (!CarriesSubjectTag(subject))
         {
             throw new ArgumentException($"Test mail subject must carry the {SubjectTag} tag (S3).", nameof(subject));
         }
@@ -467,8 +502,7 @@ public static class LiveOutlookTestMailer
                 {
                 }
 
-                if (subject == null
-                    || !subject.Contains(SubjectTag, StringComparison.Ordinal)
+                if (!CarriesSubjectTag(subject)
                     || !subject.Contains(uniqueMarker, StringComparison.OrdinalIgnoreCase))
                 {
                     throw new InvalidOperationException(
@@ -487,6 +521,279 @@ public static class LiveOutlookTestMailer
                 Release(app);
             }
         });
+    }
+
+    /// <summary>
+    /// THE ONE WRITE A BYSTANDER EVER GETS (Q138): removes the leftover the maintainer confirmed by its EntryID
+    /// from <paramref name="store"/>, the Exchange VM's bystander, and nothing else. It does not ask
+    /// <see cref="LiveStoreWriteGuard"/>, which refuses every bystander and must go on doing so; its gate is
+    /// <see cref="ConfirmedLeftover.RefusalFor"/> - the Exchange VM's test-account profile, the one declared
+    /// bystander, never the hub - and its selection is the item's EntryID AND its subject, both exactly
+    /// (<see cref="ConfirmedLeftover.IsTheItem"/>).
+    /// <para>
+    /// In order: the tagged rows of the confirmed folder are read (a server-side tag restriction narrows them),
+    /// each row's item opened for its LONG-TERM EntryID, and each judged by that EntryID and its subject;
+    /// exactly one must be the item, or nothing is written; its parent is proven to be that folder; it is
+    /// MOVED to the same store's Deleted Items, which hands back the copy and its new EntryID; that copy is
+    /// judged again (<see cref="ConfirmedLeftover.RefusalForMovedCopy"/>) and deleted there, which takes it out
+    /// of Deleted Items for good. Then both folders are read again: no row of the folder may be the item and no
+    /// row of Deleted Items may carry its subject. Only then is the removal recorded
+    /// (<see cref="ConfirmedRemovals"/>), which is what lets the count tripwire accept this one departure.
+    /// </para>
+    /// <para>
+    /// <b>Two EntryIDs, measured 2026-11-18.</b> For a cached Exchange store a folder table's EntryID column
+    /// hands out a 24-byte SHORT-TERM id, valid for the running Outlook's session, while the item itself
+    /// answers with its 70-byte long-term one - the form the maintainer confirmed. So the pin is checked
+    /// against the long-term id the opened item gives, and the removal is recorded under the table's id,
+    /// which is the one the count tripwire's census knows the item by. The first run of this helper, reading
+    /// only the table's id, matched nothing and removed nothing.
+    /// </para>
+    /// <para>
+    /// Run it again and it reads, finds nothing and writes nothing. Content-free: nothing of any other item is
+    /// printed or returned - counts only.
+    /// </para>
+    /// </summary>
+    /// <param name="settings">This run's settings: the profile, the bystander and the hub.</param>
+    /// <param name="store">The store to remove it from - the one declared bystander.</param>
+    /// <param name="leftover">The confirmed item: <see cref="ConfirmedLeftover.Q138"/>.</param>
+    /// <returns>What was done and what was read back.</returns>
+    public static ConfirmedLeftoverRemoval RemoveConfirmedLeftover(LiveTestSettings settings, string store, ConfirmedLeftover leftover)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        ArgumentNullException.ThrowIfNull(leftover);
+        string? refusal = leftover.RefusalFor(settings.MachineProfile, settings.BystanderStoreDisplayNames, settings.TestHubStoreDisplayName, store);
+        if (refusal != null)
+        {
+            throw new InvalidOperationException(refusal);
+        }
+
+        return RunSta(() =>
+        {
+            dynamic app = CreateOutlookApplication();
+            dynamic? ns = null;
+            dynamic? stores = null;
+            dynamic? storeObject = null;
+            object? folder = null;
+            object? deletedItems = null;
+            dynamic? item = null;
+            dynamic? itemParent = null;
+            dynamic? moved = null;
+            object? movedParent = null;
+            try
+            {
+                ns = app.GetNamespace("MAPI");
+                stores = ns.Stores;
+                storeObject = FindStore(stores, store)
+                    ?? throw new InvalidOperationException("The bystander store is not in the running profile; nothing was removed.");
+                string storeId = (string)storeObject.StoreID;
+                if (ResolveWithoutCreating((object)ns, (object)storeObject, leftover.DefaultFolderId, out folder, out _)
+                    != OutlookComSession.DefaultFolderResolution.Resolved)
+                {
+                    throw new InvalidOperationException("The confirmed leftover's folder could not be opened; nothing was removed.");
+                }
+
+                if (ResolveWithoutCreating((object)ns, (object)storeObject, 3, out deletedItems, out _)
+                    != OutlookComSession.DefaultFolderResolution.Resolved)
+                {
+                    throw new InvalidOperationException("The bystander's Deleted Items could not be opened; nothing was removed.");
+                }
+
+                string folderId = (string)((dynamic)folder!).EntryID;
+                string deletedItemsId = (string)((dynamic)deletedItems!).EntryID;
+
+                List<TaggedRow> rows = ReadTaggedRowsWithLongTermIds((object)ns, storeId, folder!);
+                ConfirmedLeftoverSelection selection = leftover.Select(rows.Select(r => (r.LongTermEntryId, r.Subject)));
+                if (selection.Outcome == ConfirmedLeftoverOutcome.Ambiguous)
+                {
+                    throw new InvalidOperationException(
+                        "More than one row of the folder reads as the confirmed leftover, which one EntryID cannot be; nothing was removed.");
+                }
+
+                if (selection.Outcome == ConfirmedLeftoverOutcome.NotPresent)
+                {
+                    int copiesNow = CountRowsWithSubject(deletedItems!, leftover.Subject);
+                    return new ConfirmedLeftoverRemoval(Removed: false, Gone: copiesNow == 0, selection.OtherTagged, copiesNow);
+                }
+
+                string entryId = selection.EntryId!;
+                string tableEntryId = rows.First(r => SameEntryId(r.LongTermEntryId, entryId)).TableEntryId!;
+                item = ns.GetItemFromID(tableEntryId, storeId);
+                string? openedEntryId = TryRead<string>(() => (string?)item.EntryID);
+                string? openedSubject = TryRead<string>(() => (string?)item.Subject);
+                if (!leftover.IsTheItem(openedEntryId, openedSubject))
+                {
+                    throw new InvalidOperationException(
+                        "The item opened by the confirmed EntryID is not the confirmed leftover (its EntryID or subject differs); nothing was removed.");
+                }
+
+                itemParent = item.Parent;
+                string? parentId = TryRead<string>(() => (string?)itemParent.EntryID);
+                if (!SameEntryId(parentId, folderId))
+                {
+                    throw new InvalidOperationException("The confirmed leftover is not in the folder it was confirmed in; nothing was removed.");
+                }
+
+                moved = item.Move((object)deletedItems!);
+                string? movedEntryId = TryRead<string>(() => (string?)moved.EntryID);
+                string? movedSubject = TryRead<string>(() => (string?)moved.Subject);
+                movedParent = TryRead<object>(() => (object?)moved.Parent);
+                string? movedParentId = movedParent == null ? null : TryRead<string>(() => (string?)((dynamic)movedParent).EntryID);
+                string? movedRefusal = leftover.RefusalForMovedCopy(
+                    movedEntryId, movedSubject, SameEntryId(movedParentId, deletedItemsId), entryId);
+                if (movedRefusal != null)
+                {
+                    throw new InvalidOperationException(movedRefusal + " The item was moved to Deleted Items and is still there.");
+                }
+
+                moved.Delete();
+
+                ConfirmedLeftoverSelection after = leftover.Select(
+                    ReadTaggedRowsWithLongTermIds((object)ns, storeId, folder!).Select(r => (r.LongTermEntryId, r.Subject)));
+                int copies = CountRowsWithSubject(deletedItems!, leftover.Subject);
+                bool gone = after.Outcome == ConfirmedLeftoverOutcome.NotPresent && copies == 0;
+                if (gone)
+                {
+                    // Under the id the census knows it by: the table's, in this Outlook session.
+                    ConfirmedRemovals.Record(new ConfirmedRemoval(store, tableEntryId));
+                }
+
+                return new ConfirmedLeftoverRemoval(Removed: true, gone, after.OtherTagged, copies);
+            }
+            finally
+            {
+                Release(movedParent);
+                Release(moved);
+                Release(itemParent);
+                Release(item);
+                Release(deletedItems);
+                Release(folder);
+                Release(storeObject);
+                Release(stores);
+                Release(ns);
+                Release(app);
+            }
+        });
+    }
+
+    /// <summary>
+    /// A folder's rows whose subject carries the live-tier tag, as EntryID and subject - read through a table,
+    /// so that no item is opened. The server-side restriction only narrows the rows; every caller judges each
+    /// row itself, ordinally. Throws when the table cannot be read: "could not look" is never "empty".
+    /// </summary>
+    private static List<(string? EntryId, string? Subject)> ReadTaggedRows(object folder)
+    {
+        dynamic? table = null;
+        dynamic? columns = null;
+        List<(string? EntryId, string? Subject)> rows = new();
+        try
+        {
+            table = ((dynamic)folder).GetTable("@SQL=\"urn:schemas:httpmail:subject\" LIKE '%" + LiveArtifactSweep.TagText + "%'");
+            columns = table.Columns;
+            int entryIdAt = -1;
+            int subjectAt = -1;
+            int columnCount = (int)columns.Count;
+            for (int i = 1; i <= columnCount; i++)
+            {
+                dynamic? column = null;
+                try
+                {
+                    column = columns[i];
+                    string? name = (string?)column.Name;
+                    if (string.Equals(name, "EntryID", StringComparison.OrdinalIgnoreCase))
+                    {
+                        entryIdAt = i - 1;
+                    }
+                    else if (string.Equals(name, "Subject", StringComparison.OrdinalIgnoreCase))
+                    {
+                        subjectAt = i - 1;
+                    }
+                }
+                finally
+                {
+                    Release(column);
+                }
+            }
+
+            if (entryIdAt < 0 || subjectAt < 0)
+            {
+                throw new InvalidOperationException("The folder's table has no EntryID or no Subject column; nothing can be judged by them.");
+            }
+
+            while (!(bool)table.EndOfTable)
+            {
+                dynamic? row = null;
+                try
+                {
+                    row = table.GetNextRow();
+                    object[] values = (object[])row.GetValues();
+                    string? entryId = entryIdAt < values.Length ? values[entryIdAt] as string : null;
+                    string? subject = subjectAt < values.Length ? values[subjectAt] as string : null;
+                    rows.Add((entryId, subject));
+                }
+                finally
+                {
+                    Release(row);
+                }
+            }
+
+            return rows;
+        }
+        finally
+        {
+            Release(columns);
+            Release(table);
+        }
+    }
+
+    /// <summary>
+    /// A folder's tagged rows, each with the long-term EntryID its item answers with - the table's own id is a
+    /// short-term one on a cached Exchange store. Each item is opened only to read that id, and released.
+    /// Read-only. A row whose item cannot be opened keeps a null long-term id, which matches no pin.
+    /// </summary>
+    private static List<TaggedRow> ReadTaggedRowsWithLongTermIds(object session, string storeId, object folder)
+    {
+        List<TaggedRow> rows = new();
+        foreach ((string? tableId, string? subject) in ReadTaggedRows(folder))
+        {
+            string? longTerm = null;
+            if (!string.IsNullOrWhiteSpace(tableId))
+            {
+                dynamic? opened = null;
+                try
+                {
+                    opened = ((dynamic)session).GetItemFromID(tableId, storeId);
+                    longTerm = TryRead<string>(() => (string?)opened.EntryID);
+                }
+                catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+                {
+                    longTerm = null;
+                }
+                finally
+                {
+                    Release(opened);
+                }
+            }
+
+            rows.Add(new TaggedRow(tableId, longTerm, subject));
+        }
+
+        return rows;
+    }
+
+    /// <summary>One tagged row: the table's id, the item's long-term id, and the subject.</summary>
+    private sealed record TaggedRow(string? TableEntryId, string? LongTermEntryId, string? Subject);
+
+    /// <summary>How many of a folder's tagged rows carry exactly <paramref name="subject"/>. Read-only.</summary>
+    private static int CountRowsWithSubject(object folder, string subject)
+    {
+        return ReadTaggedRows(folder).Count(r => string.Equals(r.Subject, subject, StringComparison.Ordinal));
+    }
+
+    /// <summary>Two EntryIDs read from Outlook, compared as the hex they are.</summary>
+    private static bool SameEntryId(string? left, string? right)
+    {
+        return !string.IsNullOrWhiteSpace(left) && !string.IsNullOrWhiteSpace(right)
+            && string.Equals(left.Trim(), right.Trim(), StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -533,8 +840,7 @@ public static class LiveOutlookTestMailer
                 {
                 }
 
-                if (subject == null
-                    || !subject.Contains(SubjectTag, StringComparison.Ordinal)
+                if (!CarriesSubjectTag(subject)
                     || !subject.Contains(uniqueMarker, StringComparison.OrdinalIgnoreCase))
                 {
                     throw new InvalidOperationException(
@@ -606,8 +912,7 @@ public static class LiveOutlookTestMailer
                 {
                 }
 
-                if (subject == null
-                    || !subject.Contains(SubjectTag, StringComparison.Ordinal)
+                if (!CarriesSubjectTag(subject)
                     || !subject.Contains(uniqueMarker, StringComparison.OrdinalIgnoreCase))
                 {
                     throw new InvalidOperationException(
@@ -893,7 +1198,7 @@ public static class LiveOutlookTestMailer
         string storeDisplayName, string subject, string body, IReadOnlyList<string> attachmentPaths)
     {
         LiveStoreWriteGuard.Assert(storeDisplayName, StoreWriteKind.Draft, nameof(SaveTaggedDraftWithAttachments));
-        if (!subject.Contains(SubjectTag, StringComparison.Ordinal))
+        if (!CarriesSubjectTag(subject))
         {
             throw new ArgumentException($"Test draft subject must carry the {SubjectTag} tag (S3).", nameof(subject));
         }
@@ -1017,8 +1322,7 @@ public static class LiveOutlookTestMailer
                 // The item first: refuse before anything is created if it is not this run's.
                 item = ns.GetItemFromID(itemEntryId, storeId);
                 string? subject = (string?)item.Subject;
-                if (subject == null
-                    || !subject.Contains(SubjectTag, StringComparison.Ordinal)
+                if (!CarriesSubjectTag(subject)
                     || !subject.Contains(uniqueMarker, StringComparison.Ordinal))
                 {
                     throw new InvalidOperationException(
@@ -2516,7 +2820,7 @@ public static class LiveOutlookTestMailer
                     {
                     }
 
-                    if (subject != null && subject.Contains(SubjectTag, StringComparison.Ordinal))
+                    if (CarriesSubjectTag(subject))
                     {
                         moved = item.Move(inbox);
                         moved.Delete(); // recorded on the Inbox, purged by the folder-3 sweep pass
@@ -2687,7 +2991,7 @@ public static class LiveOutlookTestMailer
                     {
                     }
 
-                    if (subject == null || !subject.Contains(SubjectTag, StringComparison.Ordinal))
+                    if (!CarriesSubjectTag(subject))
                     {
                         throw new InvalidOperationException(
                             "Refusing to delete test folder: it contains an item without the test tag (S3).");
@@ -2783,8 +3087,7 @@ public static class LiveOutlookTestMailer
                     {
                     }
 
-                    if (subject != null
-                        && subject.Contains(SubjectTag, StringComparison.Ordinal)
+                    if (CarriesSubjectTag(subject)
                         && subject.Contains(uniqueMarker, StringComparison.OrdinalIgnoreCase))
                     {
                         item.Delete();
@@ -3177,7 +3480,7 @@ public static class LiveOutlookTestMailer
                     ?? throw new InvalidOperationException("Store not found for the signature-engine read.");
                 item = ns.GetItemFromID(entryIdHex, (string)store.StoreID);
                 string? subject = (string?)item.Subject;
-                if (subject == null || !subject.Contains(SubjectTag, StringComparison.Ordinal)
+                if (!CarriesSubjectTag(subject)
                     || !subject.Contains(uniqueMarker, StringComparison.OrdinalIgnoreCase))
                 {
                     throw new InvalidOperationException(
@@ -3223,6 +3526,126 @@ public static class LiveOutlookTestMailer
                 Release(entries);
                 Release(signature);
                 Release(word);
+                if (inspector != null)
+                {
+                    try
+                    {
+                        ((dynamic)inspector).Close(1); // olDiscard: nothing is saved
+                    }
+                    catch (COMException)
+                    {
+                    }
+                }
+
+                Release(document);
+                Release(inspector);
+                Release(item);
+                Release(store);
+                Release(stores);
+                Release(ns);
+                Release(app);
+            }
+        });
+    }
+
+    /// <summary>
+    /// A draft of this run's message class and the form-definition properties it carries (READ-ONLY, tag and marker
+    /// checked first, S3). Every compose since Q208 B (2026-11-18) that reads its editor without activating commits
+    /// through the inspector's "Message" form page and <c>Close(olSave)</c>; a form page could make the item a one-off
+    /// form, which is sent as a TNEF attachment. Q149's B3 and W7 found none (100 of 100), on drafts saved by the close
+    /// alone; the product's new drafts, replies and forwards are saved once more after it, which this reads.
+    /// </summary>
+    public static (string MessageClass, IReadOnlyList<string> FormPropertiesPresent) ReadFormFacts(string storeDisplayName, string entryIdHex, string uniqueMarker)
+    {
+        if (string.IsNullOrWhiteSpace(uniqueMarker) || uniqueMarker.Length < 12)
+        {
+            throw new ArgumentException("Marker too weak for a safe item filter (S3).", nameof(uniqueMarker));
+        }
+
+        return RunSta<(string, IReadOnlyList<string>)>(() =>
+        {
+            dynamic app = CreateOutlookApplication();
+            dynamic? ns = null;
+            dynamic? stores = null;
+            dynamic? store = null;
+            dynamic? item = null;
+            try
+            {
+                ns = app.GetNamespace("MAPI");
+                stores = ns.Stores;
+                store = FindStore(stores, storeDisplayName)
+                    ?? throw new InvalidOperationException("Store not found for the form read.");
+                item = ns.GetItemFromID(entryIdHex, (string)store.StoreID);
+                string? subject = (string?)item.Subject;
+                if (subject == null || !subject.Contains(SubjectTag, StringComparison.Ordinal)
+                    || !subject.Contains(uniqueMarker, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException(
+                        "Refusing to read the item: its subject does not carry both the test tag and this run's marker (S3).");
+                }
+
+                return ((string?)item.MessageClass ?? string.Empty, LiveComposeProbe.FormPropertiesPresent((object)item));
+            }
+            finally
+            {
+                Release(item);
+                Release(store);
+                Release(stores);
+                Release(ns);
+                Release(app);
+            }
+        });
+    }
+
+    /// <summary>
+    /// How Word lays out a draft of this run, paragraph by paragraph (<see cref="Q149Editor.ReadLook"/>): text,
+    /// top border, style, font, spacing. The instrument of Q209 (a)'s check that a reply's or forward's own text sits
+    /// above the quoted header block (<see cref="QuotedDraftLayout"/>).
+    /// <para>
+    /// READ-ONLY, the way <see cref="ReadSignatureEngine"/> is: the draft must carry the test tag and this run's
+    /// marker (S3), it is opened by EntryID - an inspector on a re-opened item - its editor had through the product's
+    /// promotion (off-screen in a windowed Outlook, B0: 40 of 40), and its inspector closed DISCARDING, so nothing is
+    /// saved. Throws when the editor cannot be had: a layout check that read nothing must not pass.
+    /// </para>
+    /// </summary>
+    public static IReadOnlyList<WordParagraphLook> ReadDraftLook(string storeDisplayName, string entryIdHex, string uniqueMarker)
+    {
+        if (string.IsNullOrWhiteSpace(uniqueMarker) || uniqueMarker.Length < 12)
+        {
+            throw new ArgumentException("Marker too weak for a safe item filter (S3).", nameof(uniqueMarker));
+        }
+
+        return RunSta<IReadOnlyList<WordParagraphLook>>(() =>
+        {
+            dynamic app = CreateOutlookApplication();
+            dynamic? ns = null;
+            dynamic? stores = null;
+            dynamic? store = null;
+            dynamic? item = null;
+            object? inspector = null;
+            object? document = null;
+            try
+            {
+                ns = app.GetNamespace("MAPI");
+                stores = ns.Stores;
+                store = FindStore(stores, storeDisplayName)
+                    ?? throw new InvalidOperationException("Store not found for the layout read.");
+                item = ns.GetItemFromID(entryIdHex, (string)store.StoreID);
+                string? subject = (string?)item.Subject;
+                if (subject == null || !subject.Contains(SubjectTag, StringComparison.Ordinal)
+                    || !subject.Contains(uniqueMarker, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException(
+                        "Refusing to open the item: its subject does not carry both the test tag and this run's marker (S3).");
+                }
+
+                inspector = item.GetInspector;
+                document = ComposeSurface.PromoteForWordEditor(inspector!, out string? promoteError)
+                    ?? throw new InvalidOperationException("The draft's Word editor could not be had: " + (promoteError ?? "unknown"));
+                return Q149Editor.ReadLook(document);
+            }
+            finally
+            {
                 if (inspector != null)
                 {
                     try

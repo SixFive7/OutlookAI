@@ -7,6 +7,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Web.Script.Serialization;
+using OutlookAI.Core.AddIn;
 
 namespace OutlookAI.Services
 {
@@ -43,7 +44,7 @@ namespace OutlookAI.Services
         /// default). The timeout stays deliberately registry-only and undocumented in the UI -
         /// it exists so a genuinely slow link can be worked around on the spot, not as a feature.
         /// </summary>
-        private const string AppKeyPath = @"Software\OutlookAI";
+        private const string AppKeyPath = AddInServerContract.AppKeyPath;
         private const string ModelValueName = "Model";
         private const string RequestTimeoutValueName = "RequestTimeoutSeconds";
 

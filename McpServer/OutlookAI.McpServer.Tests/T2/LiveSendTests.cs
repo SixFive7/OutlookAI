@@ -179,66 +179,19 @@ public sealed class LiveSendTests
     [Trait("Requires", "MultipleStores")]
     public void ArtifactSweep_AllThreeAccounts_ZeroTaggedRemain()
     {
-        // S3 post-suite proof: NO item tagged [OutlookAI-McpTest] - from this or any
-        // earlier run - remains in Drafts/Inbox/Sent/Deleted of ANY account. Late-
-        // materializing self-send copies of earlier collections (documented sent-copy
-        // lag) are purged first, then stable zero is asserted (counts only, S4).
-        //
-        // WHICH stores are visited, and which of them may be purged, is ArtifactSweepPolicy's
-        // decision and not this loop's. It walks the COUNT TRIPWIRE'S OWN watched set - the
-        // primaries, the delegate/shared mailboxes and the declared bystanders - so the two
-        // guards cover one set rather than two overlapping ones. Everything the allowlist
-        // refuses a delete on is COUNTED and left alone, and a non-zero count in one of those
-        // FAILS the run rather than being tidied away: nothing else would report it, because
-        // the count tripwire fires on a decrease and an artifact arriving is an increase.
-        //
-        // The tag text stays spelled out here on purpose: it is what CountTaggedArtifacts
-        // matches, and T1/CorpusTagSeparationTests pins the corpus apart from this literal.
-        //
-        // On the Exchange VM's test account (2026-10-08) the purge takes the tag AND a recorded run's marker
-        // only, and a store nothing may write to may keep the tagged items it held before the run
-        // (LiveArtifactSweep, LiveArtifactBaseline).
-        ArtifactSweepPolicy.Run(
-            _fixture.Settings,
-            store => LiveArtifactSweep.CountTagged(_fixture.Settings, store),
-            store => LiveArtifactSweep.PurgeUntilStableZero(_fixture.Settings, store),
-            _output.WriteLine,
-            LiveArtifactBaseline.Current);
+        // S3 post-suite proof, shared with LiveDraftTests: LiveArtifactSweep says what it covers and why.
+        LiveArtifactSweep.ProveNoTaggedArtifactRemains(_fixture.Settings, _output.WriteLine);
     }
 
     // ------------------------------------------------------------------ helpers
 
-    private void CleanupDraft(string entryId)
-    {
-        for (int attempt = 0; attempt < 3; attempt++)
-        {
-            try
-            {
-                LiveOutlookTestMailer.DeleteItemByEntryId(Hub, entryId, Marker);
-                LiveOutlookTestMailer.DeleteTaggedArtifacts(Hub, Marker);
-                return;
-            }
-            catch (Exception) when (attempt < 2)
-            {
-                Thread.Sleep(1000);
-            }
-        }
-    }
+    private void CleanupDraft(string entryId) => LiveDraftCleanup.DeleteDraft(Hub, Marker, entryId);
 
     // The log THIS process appends to. The service runs in-process here, so since Q86 its lines
     // go to the test run's throwaway directory (AuditIsolation), never the machine's real log.
-    private static int CountAuditLines()
-    {
-        string path = AuditLog.EffectiveLogPath;
-        return File.Exists(path) ? File.ReadAllLines(path).Length : 0;
-    }
+    private static int CountAuditLines() => AuditLines.Count(AuditLog.EffectiveLogPath);
 
-    private static IReadOnlyList<string> ReadAuditLinesAfter(int skipCount)
-    {
-        string path = AuditLog.EffectiveLogPath;
-        Assert.True(File.Exists(path), "audit log must exist after send-policy operations");
-        return File.ReadAllLines(path).Skip(skipCount).ToList();
-    }
+    private static IReadOnlyList<string> ReadAuditLinesAfter(int skipCount) => AuditLines.After(AuditLog.EffectiveLogPath, skipCount);
 
     private static int CountLines(IReadOnlyList<string> lines, string opFragment, string entryId)
     {

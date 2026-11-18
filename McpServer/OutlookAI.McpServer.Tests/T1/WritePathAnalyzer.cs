@@ -265,6 +265,15 @@ internal static class WritePathAnalyzer
                 string name = target.DeclaringType?.Assembly.GetName().Name ?? string.Empty;
                 if (ProductAssemblies.Contains(name))
                 {
+                    // A reviewed call into a product member that writes, keyed by the caller and the callee
+                    // ("...TrySave|SignatureManager.WriteFileSafely"): not followed from that caller, and followed - its
+                    // writes findings - from every other.
+                    if (ReadOnlyProductApi.InProductExemptions.ContainsKey(
+                        ReadOnlyProductApi.SourceKeyOf(method) + "|" + target.DeclaringType!.Name + "." + target.Name))
+                    {
+                        continue;
+                    }
+
                     Enqueue(target, method);
                     foreach (MethodBase implementation in ProductImplementationsOf(target))
                     {
@@ -286,6 +295,14 @@ internal static class WritePathAnalyzer
 
         static bool Exempt(MethodBase method, MethodBase target, IReadOnlyList<IlInstruction> body, int at)
         {
+            // A reviewed file write is keyed by its member and the System.IO call ("...TrySave|File.Replace"), so one
+            // exemption never covers another member's writes, nor another call of the same member.
+            if (FileWrite(target) != null)
+            {
+                return ReadOnlyProductApi.InProductExemptions.ContainsKey(
+                    ReadOnlyProductApi.SourceKeyOf(method) + "|" + target.DeclaringType!.Name + "." + target.Name);
+            }
+
             if (target.DeclaringType?.FullName != "Microsoft.CSharp.RuntimeBinder.Binder" || target.Name != "InvokeMember")
             {
                 return false;

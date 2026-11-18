@@ -38,7 +38,7 @@ public sealed class Q149Run
 
     public string TaggedSubject(string label)
     {
-        return LiveOutlookTestMailer.SubjectTag + " " + Marker + " q149 " + label;
+        return LiveOutlookTestMailer.TaggedSubject(Marker, "q149 " + label);
     }
 
     /// <summary>Records an EntryID as one this run created, so it may later be changed or deleted.</summary>
@@ -125,6 +125,39 @@ internal static class Q149Drafts
         });
         run.Allow(entryId);
         return (entryId, storeId, before);
+    }
+
+    /// <summary>
+    /// A mail this run sends the hub itself, tagged and in the run's allowlist once it has arrived - the source every
+    /// reply and forward of the measurement is made from. Returns its EntryID; <paramref name="quoteToken"/> is a word
+    /// that occurs only in its body.
+    /// </summary>
+    internal static string SeedSelfSentSource(Q149Run run, string label, out string quoteToken)
+    {
+        quoteToken = "Q149QUOTE" + run.Marker;
+        string subject = run.TaggedSubject(label);
+        DateTime sentUtc = LiveOutlookTestMailer.SendSelfMail(run.Hub, subject, "Origineel bericht " + quoteToken + "\r\nTweede regel.", attachmentPath: null);
+        using OutlookComSession session = OutlookComSession.Connect(allowStartingOutlook: false, onOutlookGone: null, lifetimePin: false);
+        ComMailBrief arrived = LiveInboxArrival.WaitFor(session, run.Hub, subject, sentUtc);
+        run.Allow(arrived.EntryId);
+        return arrived.EntryId;
+    }
+
+    /// <summary>The hub's StoreID, read through <paramref name="client"/>.</summary>
+    internal static string HubStoreId(Q149Run run, Q149OutlookClient client)
+    {
+        return client.Run((app, ns) =>
+        {
+            dynamic? store = FindStore(ns, run.Hub);
+            try
+            {
+                return (string)store!.StoreID;
+            }
+            finally
+            {
+                Q149Com.Release(store);
+            }
+        });
     }
 
     /// <summary>
@@ -274,33 +307,9 @@ internal static class Q149Drafts
                 string html = (string?)item.HTMLBody ?? string.Empty;
                 List<string> recipients = ReadRecipients(item);
                 string messageClass = (string?)item.MessageClass ?? string.Empty;
-                List<string> present = new();
-                dynamic accessor = item.PropertyAccessor;
-                try
-                {
-                    foreach ((string name, string tag) in LiveComposeProbe.FormProperties)
-                    {
-                        try
-                        {
-                            object? value = accessor.GetProperty(tag);
-                            if (value != null)
-                            {
-                                present.Add(name);
-                            }
-                        }
-                        catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
-                        {
-                            // Absent: the property is not there to read.
-                        }
-                    }
-                }
-                finally
-                {
-                    Q149Com.Release(accessor);
-                }
-
+                IReadOnlyList<string> present = LiveComposeProbe.FormPropertiesPresent((object)item);
                 (int count, long bytes, int hidden) = ReadAttachments((object)item);
-                return (html, (IReadOnlyList<string>)recipients, messageClass, (IReadOnlyList<string>)present, count, bytes, hidden);
+                return (html, (IReadOnlyList<string>)recipients, messageClass, present, count, bytes, hidden);
             }
             finally
             {

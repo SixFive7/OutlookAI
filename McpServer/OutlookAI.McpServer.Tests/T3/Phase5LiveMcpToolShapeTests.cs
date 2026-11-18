@@ -248,18 +248,9 @@ public sealed class Phase5LiveMcpToolShapeTests
     // The REAL log, deliberately: the lines asserted here are written by the server CHILD process,
     // which this test process's audit redirect (AuditIsolation, Q86) cannot reach - nothing may
     // redirect a shipped process. This class runs only in the live tier, on a test machine.
-    private static int CountAuditLines()
-    {
-        string path = AuditLog.DefaultLogPath;
-        return File.Exists(path) ? File.ReadAllLines(path).Length : 0;
-    }
+    private static int CountAuditLines() => AuditLines.Count(AuditLog.DefaultLogPath);
 
-    private static IReadOnlyList<string> ReadAuditLinesAfter(int skipCount)
-    {
-        string path = AuditLog.DefaultLogPath;
-        Assert.True(File.Exists(path), "audit log must exist after send operations");
-        return File.ReadAllLines(path).Skip(skipCount).ToList();
-    }
+    private static IReadOnlyList<string> ReadAuditLinesAfter(int skipCount) => AuditLines.After(AuditLog.DefaultLogPath, skipCount);
 
     private static int IndexOfLine(IReadOnlyList<string> lines, string opFragment, string entryId, string? extraFragment)
     {
