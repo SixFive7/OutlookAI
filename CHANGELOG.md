@@ -282,11 +282,12 @@ its mailbox tests on, and change nothing you install.
   A third scenario, `-SignatureSettings PreferenceNoOwnNew`, gives the hub account its own default
   for replies under the deployed setting, so a new mail shows what that setting does for an account
   with no new-mail default of its own, and a fourth, `NoSetting`, gives it both own defaults and makes
-  no setting at all, as the control. And every such run reads Outlook's own Signatures dialog
-  before the suite, through `Measure-SignatureDialog.ps1`, which presses nothing but Cancel: whether
-  its New messages and Replies/forwards boxes and its Delete button are open, which a second live
-  test holds OutlookAI's refusals to. The two probes that read Outlook's dialogs share one copy of
-  that code, `OutlookDialogUia.ps1`.
+  no setting at all, as the control. With `-SignatureDialog` a run reads Outlook's own Signatures
+  dialog before the suite instead, through `Measure-SignatureDialog.ps1`, which presses nothing but
+  Cancel: whether its default boxes, its signature list and its buttons are open, which a second
+  live test holds OutlookAI's refusals to. It runs apart from the insert test because opening the
+  dialog under a setting rewrites the accounts' own defaults. The two probes that read Outlook's
+  dialogs share one copy of that code, `OutlookDialogUia.ps1`.
 
 - ✅ **Tests pin the start policy, lock, record, log and report, and live tests time the settle wait.**
   T1 runs every branch of the start policy over every combination of its facts, the record's and the
