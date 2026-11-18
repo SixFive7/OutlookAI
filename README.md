@@ -374,11 +374,11 @@ The installer registers the add-in directly via the Windows registry and install
 - Visual Studio 2022
 - Office/SharePoint development workload
 - .NET desktop development workload
-- .NET 10 SDK (for the mail server only)
+- .NET 10 SDK (for the mail server, and for `OutlookAI.Core`, which the add-in references)
 
 **Steps:**
 1. Clone this repository
-2. Open `OutlookAI.csproj` in Visual Studio
+2. Open `OutlookAI.slnx` in Visual Studio - the add-in and `OutlookAI.Core`, which it references
 3. Restore NuGet packages
 4. Build > Rebuild Solution
 

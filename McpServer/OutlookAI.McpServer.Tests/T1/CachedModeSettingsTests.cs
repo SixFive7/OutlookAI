@@ -471,22 +471,31 @@ public sealed class CachedModeSettingsTests
     // ===== Q145 (a): nothing needs an administrator =====
 
     [Fact]
-    public void TheSolution_HoldsTheAddInAlone_AndTheElevatedHelperIsGone()
+    public void TheElevatedHelperIsGone_FromTheSolutionAndTheTree()
     {
         XDocument solution = XDocument.Load(Path.Combine(RepoPaths.RepoRoot(), "OutlookAI.slnx"));
 
-        Assert.Equal(new[] { "OutlookAI.csproj" }, solution.Descendants("Project").Select(p => (string?)p.Attribute("Path")));
+        Assert.DoesNotContain(solution.Descendants("Project"),
+            p => ((string?)p.Attribute("Path") ?? "").Contains("PolicyWriter", StringComparison.OrdinalIgnoreCase));
         // The project file, not the folder: a checkout that built the helper before keeps its bin and obj.
         Assert.False(File.Exists(Path.Combine(RepoPaths.RepoRoot(), "PolicyWriter", "OutlookAI.PolicyWriter.csproj")), "PolicyWriter/ was the elevated helper");
     }
 
     [Fact]
-    public void TheAddInBuildsNoOtherProject_AndShipsNoProgramBesideItself()
+    public void TheAddInBuildsNoProgram_AndShipsNoneBesideItself()
     {
         XDocument addIn = XDocument.Load(Path.Combine(RepoPaths.RepoRoot(), "OutlookAI.csproj"));
         XNamespace ns = addIn.Root!.Name.Namespace;
 
-        Assert.Empty(addIn.Descendants(ns + "ProjectReference"));
+        // Its one project reference is OutlookAI.Core, a library (AddInCoreReferenceTests, Q167 (a)).
+        // No project it references may build a program.
+        foreach (XElement reference in addIn.Descendants(ns + "ProjectReference"))
+        {
+            string include = ((string?)reference.Attribute("Include") ?? "").Replace('\\', Path.DirectorySeparatorChar);
+            XDocument project = XDocument.Load(Path.Combine(RepoPaths.RepoRoot(), include));
+            Assert.DoesNotContain(project.Descendants().Where(e => e.Name.LocalName == "OutputType"),
+                o => o.Value.Trim().EndsWith("Exe", StringComparison.OrdinalIgnoreCase));
+        }
         Assert.DoesNotContain(addIn.Descendants(ns + "Content"),
             c => ((string?)c.Attribute("Include") ?? "").EndsWith(".exe", StringComparison.OrdinalIgnoreCase));
     }
