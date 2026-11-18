@@ -4631,6 +4631,59 @@ entry, and `outlook_health` calls the online one a second view (decision 207 (b)
 key is no folder; and the locator matches an item without a `ReceivedTime` on its `CreationTime`, nearest
 first.
 
+### 4.10 Draft attachment paths that crash Outlook - `OutlookAI-Unindexed2`, 2026-11-18 (stream P2)
+
+**Why this section exists.** save_attachment's live name test once attached files to a draft from `\\?\`
+paths - `CON.txt` and a name ending in dots and spaces - and OUTLOOK.EXE died with an access violation inside
+`Attachments.Add` (run `20261118-050200-unindexed-d0ab66fafd11`, in stream P's worktree). The draft tools hand
+Outlook any path `DraftAttachments.Validate` accepts, and that path passed every check there, so an agent could
+end the user's Outlook with one draft call. Whether the prefix or the name did it was not known.
+
+**The measurement.** A probe test, never merged (`T2.LiveDraftAttachmentPathProbeTests`, commit `2eb600e` on the
+stream's branch), made one tagged hub draft per path through
+`LiveOutlookTestMailer.SaveTaggedDraftWithAttachments` - Outlook's own `Attachments.Add(path)`, the call the draft
+tools make - and logged what the validation said first, whether the OUTLOOK.EXE that took the call survived, and,
+for a draft Outlook made, the attachment's name and whose content it held, saved back through save_attachment. Run
+`20261118-063303-unindexed-2eb600ea1ead` on `OutlookAI-Unindexed2`, crash dumps armed, Outlook 16.0.17932.20996 on
+Windows 10.0.26200. The validation of the day accepted all ten paths:
+
+| # | The path | What Outlook did |
+| --- | --- | --- |
+| 1 | an ordinary file, by its ordinary path | attached it, holding the file's own content |
+| 2 | an alternate data stream of it, `p2-plain.txt:p2stream` | refused: `0x80070002`, "File name or directory name is not valid." |
+| 3 | a file called `CON.txt`, by its ordinary path | refused: `0x80070057`, "Value does not fall within the expected range." |
+| 4 | a path of 304 characters | refused: `0x80070003`, "Path does not exist. Verify the path is correct." |
+| 5 | the ordinary file through `\??\C:\...` | attached it, holding the file's own content |
+| 6 | the ordinary file through `\\.\C:\...` | attached it, holding the file's own content |
+| 7 | the ordinary file through `\\?\C:\...` | crashed |
+| 8 | a name ending in dots and spaces, through `\\?\` | crashed |
+| 9 | `CON.txt` through `\\?\` | crashed |
+| 10 | the 304-character path through `\\?\` | crashed |
+
+Case 3 shows too that the guest's Windows keeps `C:\...\CON.txt` as an ordinary file: the validation read its 51
+bytes back through the ordinary path. By Microsoft's naming rules, Windows 10 reads that path as the console.
+
+**What the dumps say** - all four, and P's: `access violation (0xC0000005)` READING address 0 at
+`OUTLOOK.EXE+0x1504005`, reached from the incoming `IDispatch::Invoke` of `Attachments.Add`. The faulting code is
+`mov rax,[rcx]; mov rax,[rax+0x90]; call ...` with `rcx` 0 - a method called through a null interface pointer -
+and `rax` still held `0x800C000E`, URL Moniker's `INET_E_SECURITY_PROBLEM`, from the call before. Which call
+failed is not known: Office publishes no symbols for this build (4.6). So the crash is the `\\?\` prefix,
+whatever the file is called, and nothing OutlookAI could do inside the call would prevent it. Each crashed
+Outlook exited with `0xE0000002`, and the next case started a new one. One dump is kept whole,
+`OUTLOOK.EXE.5172.dmp` (case 7), with the report beside each of the four in the run's `dumps\`; the other three,
+about 800 MB each, were deleted for disk space once read.
+
+**The fix** (`McpServer/OutlookAI.Core/Services/DraftAttachments.cs`). `DraftAttachments.Validate` refuses, on the
+text and before the disk is asked: a `\\?\` path, with either separator and `\\?\UNC\` too, naming its ordinary
+path; a file named after a Windows device, by the rule `manage_signature` and save_attachment use
+(`WindowsFileNames`); a `:` that is not a drive letter's; and, once Windows has made the path full, one longer
+than 259 characters. `\\.\C:\...` and `\??\C:\...` stay accepted, as measured. The rest of the device namespace -
+a pipe, a device, a volume, a share reached through it - names no file on a drive and is refused without a
+measurement, and so is a `\??\` path to a name ending in a dot or a space, which only such a path can reach.
+Each refusal says what to give instead, and the draft tools' `attachments` description lists them (Q157 (a)).
+`T1/DraftAttachmentsTests` and `T1/WindowsFileNamesTests` hold every spelling, `T3/SoakBatchCCiToolShapeTests`
+the refusal over stdio on all five tools, and `T2/LiveDraftAttachmentPathTests` the real Outlook.
+
 ## 5. Which tests are in which bucket, and how to find out
 
 The classification is **two traits on the test itself**, not a list in a document that can drift -

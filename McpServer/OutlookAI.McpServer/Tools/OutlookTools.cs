@@ -786,13 +786,19 @@ public static partial class OutlookTools
         + "<li>/<tr>/<td> gets the list or table it needs. Everything that was changed comes back in htmlAdjustments, so read that "
         + "field. VERIFY THE RESULT with read include_html=true - read's plain text hides layout problems.";
 
+    // The paths Outlook crashes on or will not attach (measured 2026-11-18, DraftAttachments) are in the
+    // description, not only in the refusal - Q157 (a)'s rule that the agent learns them from the tool itself.
     private const string AttachmentsHint = "Files to attach, as ABSOLUTE paths on this machine (e.g. "
         + "\"C:\\\\Users\\\\me\\\\Documents\\\\offer.pdf\"). Any readable file is allowed - there is no folder restriction. "
-        + "Every path is checked BEFORE anything is written: if even one is missing, unreadable, empty or a directory, "
-        + "NOTHING is attached and no draft is created/changed, and the error names each bad path with its own reason, so "
-        + "fix them and call again. Max 20 files and 150 MB per call. The result reports the files that ended up on the "
-        + "saved draft with their names and sizes. Attaching a file to a draft that already has a pending send "
-        + "confirm_token invalidates that token.";
+        + "Refused, because Outlook crashes on them or will not attach them: a path starting with \\\\?\\ (give the "
+        + "ordinary path instead, C:\\... or \\\\server\\share\\...), a file named after a Windows device (CON, PRN, AUX, NUL, "
+        + "COM0-COM9, LPT0-LPT9, with or without an extension), an alternate data stream (file.txt:stream) and a path "
+        + "longer than 259 characters - copy such a file to another name or a shorter path with your own file tools, and "
+        + "attach the copy. Every path is checked BEFORE anything is written: if even one is missing, unreadable, empty, a "
+        + "directory or refused, NOTHING is attached and no draft is created/changed, and the error names each bad path with "
+        + "its own reason, so fix them and call again. Max 20 files and 150 MB per call. The result reports the files that "
+        + "ended up on the saved draft with their names and sizes. Attaching a file to a draft that already has a pending "
+        + "send confirm_token invalidates that token.";
 
     // The conversationId sentence is a decision (2026-10-03, QUESTIONS.md decision log): measured on a
     // POP3 data file under Office LTSC 2024, Outlook gives a renamed reply the id it derives from the kept

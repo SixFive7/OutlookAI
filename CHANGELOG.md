@@ -2755,6 +2755,21 @@ its mailbox tests on, and change nothing you install.
 
 ### Security
 
+- 🔒 **The draft tools refuse an attachment path that crashes Outlook or that Outlook will not attach.**
+  They handed Outlook any absolute path to a readable file, and a `\\?\` path crashed OUTLOOK.EXE
+  inside `Attachments.Add`: on a test machine it did so four times out of four, whatever the file was
+  called, so an assistant could crash your Outlook with one `new_draft`, `reply_draft`,
+  `replyall_draft`, `forward_draft` or `update_draft` call. Outlook also would not attach a file named
+  after a Windows device (`CON.txt`), an alternate data stream (`file.txt:stream`) or a path of 304
+  characters, which left a draft without a file the assistant believed it had attached. All of these
+  are now refused before Outlook is asked anything, and the whole call with them: a `\\?\` path, with
+  the ordinary path to give instead; a file named after a device; a `:` that is not a drive letter's;
+  and a path longer than 259 characters. `\\.\C:\...` and `\??\C:\...` attached the right file and are
+  still accepted, and any other device path, such as a pipe, is refused. Each refusal says what to do
+  instead, and so does the `attachments` description of each draft tool. The rules about Windows names
+  are shared with `save_attachment` and `manage_signature` (`WindowsFileNames`). The measurement is in
+  Docs/live-tier-on-the-vm.md section 4.10.
+
 - 🔒 **`save_attachment` saves only into OutlookAI's own download folder and folders inside it.**
   It used to save into any folder the assistant named. The sender of a mail chooses an attachment's
   content and its name, and the assistant that reads the mail chooses the folder, so a mail could

@@ -201,4 +201,287 @@ public sealed class DraftAttachmentsTests : IDisposable
     {
         Assert.Empty(DraftAttachments.ValidateRemoveNames(null));
     }
+
+    // ------------------------------------------------------------------ the paths Outlook cannot be handed
+    //
+    // Measured on the unindexed test guest 2026-11-18 (runbook section 4.10): a \\?\ path crashed
+    // OUTLOOK.EXE inside Attachments.Add four times out of four, whatever the file was called; Outlook
+    // refused a file called CON.txt, an alternate data stream and a 304-character path; it attached the
+    // right file from \\.\C:\... and \??\C:\... . Every spelling below is judged on its text, so most
+    // need no file at all.
+
+    [Theory]
+    [InlineData(@"\\?\C:\Users\me\Documents\offer.pdf", @"C:\Users\me\Documents\offer.pdf")]
+    [InlineData("//?/C:/Users/me/offer.pdf", "C:/Users/me/offer.pdf")]
+    [InlineData(@"\\?/C:\offer.pdf", @"C:\offer.pdf")]
+    [InlineData(@"\\?\UNC\server\share\offer.pdf", @"\\server\share\offer.pdf")]
+    [InlineData(@"\\?\unc\server\share\offer.pdf", @"\\server\share\offer.pdf")]
+    [InlineData(@"\\?\C:\x\CON.txt", @"C:\x\CON.txt")]
+    [InlineData(@"\\?\C:\x\offer.pdf. . .", @"C:\x\offer.pdf. . .")]
+    public void AQuestionMarkPath_IsRefused_BecauseOutlookCrashesOnIt_AndTheRefusalGivesItsOrdinaryPath(string asked, string ordinary)
+    {
+        string? reason = DraftAttachments.RefuseOnItsText(asked);
+
+        Assert.NotNull(reason);
+        Assert.Contains(@"is a \\?\ path, and Outlook crashes", reason, StringComparison.Ordinal);
+        Assert.EndsWith("give the file's ordinary path instead, '" + ordinary + "'", reason, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(@"\\?\Volume{12345678-1234-1234-1234-123456789012}\offer.pdf")]
+    [InlineData(@"\\?\GLOBALROOT\Device\HarddiskVolume3\offer.pdf")]
+    public void AQuestionMarkPathWithNoDriveOrShare_IsRefused_WithAnExampleOfAnOrdinaryPath(string asked)
+    {
+        string? reason = DraftAttachments.RefuseOnItsText(asked);
+
+        Assert.NotNull(reason);
+        Assert.Contains("Outlook crashes", reason, StringComparison.Ordinal);
+        Assert.EndsWith(@"such as 'C:\folder\file.pdf'", reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AQuestionMarkPath_ToARealFile_IsRefusedWhole_BeforeOutlookCouldBeAsked()
+    {
+        // The file is there and readable: until 2026-11-18 this path passed every check and reached
+        // Attachments.Add, which crashed Outlook.
+        string file = WriteFile("plain.txt");
+        string asked = @"\\?\" + file;
+
+        ArgumentException ex = Assert.Throws<ArgumentException>(() => DraftAttachments.Validate(new[] { WriteFile("ok.txt"), asked }));
+
+        Assert.Contains("'" + asked + "': is a \\\\?\\ path, and Outlook crashes", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("'" + file + "'", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("1 unusable entry", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("no draft was changed", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(@"\\.\")]
+    [InlineData(@"\??\")]
+    [InlineData("//./")]
+    public void ADotOrNtPathToAFileOnADrive_IsAccepted_AsGiven_BecauseOutlookAttachedTheRightFileFromIt(string prefix)
+    {
+        string file = WriteFile("plain.txt", "12345");
+
+        DraftAttachmentFile accepted = Assert.Single(DraftAttachments.Validate(new[] { prefix + file }));
+
+        Assert.Equal("plain.txt", accepted.FileName);
+        Assert.Equal(5, accepted.SizeBytes);
+        Assert.Equal(file, accepted.Path.Substring(4), ignoreCase: true);
+        Assert.Null(DraftAttachments.RefuseOnItsText(prefix + file));
+    }
+
+    [Theory]
+    [InlineData(@"\\.\")]
+    [InlineData(@"\??\")]
+    public void TheSameFile_ByItsOrdinaryPathAndThroughTheDeviceNamespace_IsListedTwice(string prefix)
+    {
+        string file = WriteFile("twice.txt");
+
+        ArgumentException ex = Assert.Throws<ArgumentException>(() => DraftAttachments.Validate(new[] { file, prefix + file }));
+
+        Assert.Contains("'" + prefix + file + "': the same file is listed more than once", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(@"\\.\pipe\outlookai")]
+    [InlineData(@"\\.\COM1")]
+    [InlineData(@"\\.\PhysicalDrive0")]
+    [InlineData(@"\\.\GLOBALROOT\Device\HarddiskVolume3\offer.pdf")]
+    [InlineData(@"\\.\UNC\server\share\offer.pdf")]
+    [InlineData(@"\??\UNC\server\share\offer.pdf")]
+    [InlineData(@"\??\Volume{12345678-1234-1234-1234-123456789012}\offer.pdf")]
+    [InlineData(@"\\.\C:")]
+    [InlineData("//./pipe/outlookai")]
+    public void ADevicePathThatNamesNoFileOnADrive_IsRefusedOnItsText_SoNothingOpensIt(string asked)
+    {
+        string? reason = DraftAttachments.RefuseOnItsText(asked);
+
+        Assert.NotNull(reason);
+        Assert.Contains("names no file on a drive", reason, StringComparison.Ordinal);
+        Assert.Contains(@"'\\server\share\file.pdf'", reason, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("offer.pdf.")]
+    [InlineData("offer.pdf ")]
+    [InlineData("offer.pdf. . .")]
+    public void AnNtPathToANameEndingInADotOrASpace_IsRefused(string name)
+    {
+        string? reason = DraftAttachments.RefuseOnItsText(@"\??\C:\x\" + name);
+
+        Assert.NotNull(reason);
+        Assert.Contains("ends in a dot or a space", reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ADotPathToANameEndingInADot_IsNormalizedLikeAnOrdinaryPath_ToTheFileWithoutIt()
+    {
+        // \\.\ is normalized as an ordinary path is: Windows drops the dots, and the file without them
+        // is the one attached - from \\.\ as from C:\.
+        string file = WriteFile("normalized.txt");
+
+        DraftAttachmentFile accepted = Assert.Single(DraftAttachments.Validate(new[] { @"\\.\" + file + ". ." }));
+
+        Assert.Equal("normalized.txt", accepted.FileName);
+    }
+
+    [Theory]
+    [InlineData("CON")]
+    [InlineData("CON.txt")]
+    [InlineData("con.TXT")]
+    [InlineData("NUL")]
+    [InlineData("nul.tar.gz")]
+    [InlineData("PRN .pdf")]
+    [InlineData("AUX.doc")]
+    [InlineData("COM1.log")]
+    [InlineData("COM\u00B9.txt")]
+    [InlineData("LPT9")]
+    [InlineData("CONIN$")]
+    [InlineData("conout$.txt")]
+    public void AFileCalledAfterAWindowsDevice_IsRefusedOnItsName_ThroughEveryKindOfPath(string name)
+    {
+        foreach (string asked in new[]
+        {
+            Path.Combine(_directory, name), @"\\.\" + Path.Combine(_directory, name), @"\??\" + Path.Combine(_directory, name),
+            @"\\server\share\" + name, "C:/x/" + name,
+        })
+        {
+            string? reason = DraftAttachments.RefuseOnItsText(asked);
+
+            Assert.NotNull(reason);
+            Assert.Contains("is called after a Windows device ('" + name + "')", reason, StringComparison.Ordinal);
+            Assert.Contains("such as '_" + name + "'", reason, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void AFileCalledConTxt_ThatReallyExists_IsRefused_NotAttachedAndNotReportedMissing()
+    {
+        // Windows 11 keeps C:\x\CON.txt as an ordinary file; Windows 10 reads it as the console. Outlook
+        // refused it on the guest, and crashed on it from a \\?\ path - so it is refused, on every Windows.
+        string con = Path.Combine(_directory, "CON.txt");
+        File.WriteAllText(@"\\?\" + con, "a file called CON.txt");
+        try
+        {
+            foreach (string asked in new[] { con, @"\\.\" + con, @"\??\" + con, @"\\?\" + con })
+            {
+                ArgumentException ex = Assert.Throws<ArgumentException>(() => DraftAttachments.Validate(new[] { asked }));
+
+                Assert.Contains("'" + asked + "': is ", ex.Message, StringComparison.Ordinal);
+                Assert.DoesNotContain("no such file", ex.Message, StringComparison.Ordinal);
+            }
+        }
+        finally
+        {
+            ScratchFiles.TryDeleteFile(@"\\?\" + con);
+        }
+    }
+
+    [Fact]
+    public void AnAlternateDataStream_IsRefused_EvenWhenItExists_ThroughEveryKindOfPath()
+    {
+        string file = WriteFile("host.txt");
+        string stream = file + ":hidden";
+        File.WriteAllText(stream, "the stream's own content");
+
+        foreach (string asked in new[] { stream, file + "::$DATA", @"\??\" + stream, @"\\.\" + stream, @"\\server\share\host.txt:hidden" })
+        {
+            string? reason = DraftAttachments.RefuseOnItsText(asked);
+
+            Assert.NotNull(reason);
+            Assert.Contains("alternate data stream", reason, StringComparison.Ordinal);
+        }
+
+        ArgumentException ex = Assert.Throws<ArgumentException>(() => DraftAttachments.Validate(new[] { stream }));
+        Assert.Contains("'" + stream + "': holds a ':' that is not a drive letter's", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ADriveRelativePath_IsRefused_ForItsColon()
+    {
+        string? reason = DraftAttachments.RefuseOnItsText("C:offer.pdf");
+
+        Assert.NotNull(reason);
+        Assert.Contains("relative to a drive's current folder", reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void APathOverWindowsOrdinaryLimit_IsRefused_NamingItsLength_AndOneAtTheLimitIsAccepted()
+    {
+        string atTheLimit = WriteFileWithPathLength(WindowsFileNames.MaxPathChars, "at");
+        string over = WriteFileWithPathLength(WindowsFileNames.MaxPathChars + 1, "over");
+
+        DraftAttachmentFile accepted = Assert.Single(DraftAttachments.Validate(new[] { atTheLimit }));
+        Assert.Equal(WindowsFileNames.MaxPathChars, accepted.Path.Length);
+
+        ArgumentException ex = Assert.Throws<ArgumentException>(() => DraftAttachments.Validate(new[] { over }));
+        Assert.Contains(
+            "'" + over + "': is " + (WindowsFileNames.MaxPathChars + 1) + " characters long, and Outlook attaches a file only from a path "
+            + "of at most " + WindowsFileNames.MaxPathChars,
+            ex.Message,
+            StringComparison.Ordinal);
+
+        // Through the device namespace the prefix counts too: Outlook is handed the whole string.
+        Assert.Throws<ArgumentException>(() => DraftAttachments.Validate(new[] { @"\\.\" + atTheLimit }));
+    }
+
+    [Theory]
+    [InlineData(@"C:\Users\me\Documents\offer.pdf")]
+    [InlineData("C:/Users/me/offer.pdf")]
+    [InlineData(@"\\server\share\offer.pdf")]
+    [InlineData(@"\\server\share\CONSOLE.txt")]
+    [InlineData(@"C:\x\con-notes.txt")]
+    [InlineData(@"C:\CON\offer.pdf")]
+    [InlineData(@"C:\x\offer.pdf.")]
+    [InlineData(@"C:\x\.hidden")]
+    public void AnOrdinaryPath_PassesTheTextChecks_WhereverItIs(string asked)
+    {
+        // The grant stands (D46): no folder is refused, a share included - only the spellings above.
+        Assert.Null(DraftAttachments.RefuseOnItsText(asked));
+    }
+
+    [Fact]
+    public void EveryPathOutlookCannotBeHanded_IsNamedWithItsOwnReason_InOneRefusal()
+    {
+        string good = WriteFile("good.txt");
+        string verbatim = @"\\?\" + WriteFile("verbatim.txt");
+        string device = Path.Combine(_directory, "NUL.txt");
+        string stream = good + ":hidden";
+
+        ArgumentException ex = Assert.Throws<ArgumentException>(
+            () => DraftAttachments.Validate(new[] { good, verbatim, device, stream }));
+
+        Assert.Contains("3 unusable entries", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("'" + verbatim + "': is a \\\\?\\ path", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("'" + device + "': is called after a Windows device", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("'" + stream + "': holds a ':'", ex.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A file of this test whose full path is exactly <paramref name="length"/> characters, in folders
+    /// of at most 200 characters each.
+    /// </summary>
+    private string WriteFileWithPathLength(int length, string label)
+    {
+        string folder = Path.Combine(_directory, label);
+        string name = label + ".txt";
+        while (folder.Length + 1 + name.Length < length)
+        {
+            int room = length - folder.Length - 1 - name.Length;
+            if (room <= 200)
+            {
+                name = label + new string('n', room) + ".txt";
+                break;
+            }
+
+            folder = Path.Combine(folder, new string('d', 150));
+        }
+
+        string path = Path.Combine(folder, name);
+        Assert.Equal(length, path.Length);
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(path, "a file whose path is " + length + " characters long");
+        return path;
+    }
 }

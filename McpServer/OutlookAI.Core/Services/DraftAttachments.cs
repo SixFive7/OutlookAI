@@ -35,13 +35,28 @@ namespace OutlookAI.Core.Services
     /// The user granted NO path restrictions - any absolute path the server process can
     /// read may be attached - so the checks here are about the file being ATTACHABLE, not
     /// about where it lives: rooted path, exists, is a file and not a directory, is
-    /// actually readable, and the set stays within a sane size/count budget.
+    /// actually readable, the set stays within a sane size/count budget, and the path is
+    /// one Outlook can be handed.
     /// <para>
     /// FAIL-CLOSED AND WHOLE-SET (the deliberate design choice, D46): if ANY entry is bad
     /// the whole call is refused before a single COM object is touched, and the message
     /// names EVERY offending path with its own reason. Attaching the good subset would
     /// produce a mail that silently misses a file the agent believes it sent, which is
     /// worse than a refusal the agent can correct in one retry.
+    /// </para>
+    /// <para>
+    /// <b>The paths Outlook cannot be handed</b>, measured on the unindexed test guest
+    /// 2026-11-18 (Outlook 16.0.17932.20996, Windows 10.0.26200; runbook section 4.10), one draft
+    /// per path, are refused on their text, before the disk is asked anything:
+    /// a <c>\\?\</c> path crashed OUTLOOK.EXE inside <c>Attachments.Add</c> every time, four of four,
+    /// whatever the file was called - an ordinary name, <c>CON.txt</c>, a name ending in dots and
+    /// spaces, a path over 260 characters; a file called after a Windows device, an alternate data
+    /// stream (<c>file.txt:stream</c>) and a path longer than <see cref="WindowsFileNames.MaxPathChars"/>
+    /// Outlook refused, so a draft would have been made without them. <c>\\.\C:\...</c> and
+    /// <c>\??\C:\...</c> attached the right file and stay accepted; the rest of the device namespace
+    /// - pipes, devices, volumes, shares reached through it - names no file on a drive and is refused,
+    /// and so is a <c>\??\</c> path to a name ending in a dot or a space, which only such a path can
+    /// reach. Every refusal says what to give instead.
     /// </para>
     /// Pure logic apart from the file-system probes, so T1 pins it directly.
     /// </summary>
@@ -99,7 +114,7 @@ namespace OutlookAI.Core.Services
                     continue;
                 }
 
-                if (!seen.Add(fullPath))
+                if (!seen.Add(OnItsDrive(fullPath)))
                 {
                     problems.Add("'" + path + "': the same file is listed more than once");
                     continue;
@@ -205,7 +220,20 @@ namespace OutlookAI.Core.Services
                     return "not an absolute path (the server has no working directory an agent can rely on)";
                 }
 
+                // On the text first, before the disk is asked anything - and again on what Windows makes of
+                // it, which on Windows 10 turns C:\x\CON.txt into \\.\CON.
+                string? refused = RefuseOnItsText(path);
+                if (refused != null)
+                {
+                    return refused;
+                }
+
                 fullPath = Path.GetFullPath(path);
+                refused = RefuseOnItsText(fullPath);
+                if (refused != null)
+                {
+                    return refused;
+                }
             }
             catch (ArgumentException)
             {
@@ -218,6 +246,13 @@ namespace OutlookAI.Core.Services
             catch (PathTooLongException)
             {
                 return "path is too long";
+            }
+
+            if (fullPath.Length > WindowsFileNames.MaxPathChars)
+            {
+                return "is " + fullPath.Length.ToString(CultureInfo.InvariantCulture) + " characters long, and Outlook attaches a file "
+                    + "only from a path of at most " + WindowsFileNames.MaxPathChars.ToString(CultureInfo.InvariantCulture)
+                    + " - copy it to a shorter path with your own file tools, and attach the copy";
             }
 
             if (Directory.Exists(fullPath))
@@ -270,6 +305,89 @@ namespace OutlookAI.Core.Services
             }
 
             return null;
+        }
+
+        /// <summary>
+        /// Why Outlook cannot be handed <paramref name="path"/>, judged on its text alone (the class
+        /// summary says what was measured); null when nothing on the text is wrong. Each reason ends in
+        /// what to give instead. Internal so T1 can hold every spelling to it without a disk.
+        /// </summary>
+        internal static string? RefuseOnItsText(string path)
+        {
+            string onItsDrive = path;
+            if (WindowsFileNames.IsDeviceNamespacePath(path))
+            {
+                // \\?\ and //?/ have the '?' third; \??\ has it second too.
+                if (path[2] == '?' && path[1] != '?')
+                {
+                    string? ordinary = OrdinaryPathOf(path.Substring(4));
+                    return @"is a \\?\ path, and Outlook crashes when it attaches a file from one - give the file's ordinary path instead"
+                        + (ordinary == null ? @", such as 'C:\folder\file.pdf'" : ", '" + ordinary + "'");
+                }
+
+                string rest = path.Substring(4);
+                if (!StartsWithDrive(rest))
+                {
+                    return @"is a device path that names no file on a drive - a pipe, a device, a volume or a share reached through \\.\ "
+                        + @"or \??\ - give the file's ordinary path, such as 'C:\folder\file.pdf' or '\\server\share\file.pdf'";
+                }
+
+                // \??\ hands the rest to Windows untouched, so it reaches a name Windows drops the end of
+                // anywhere else; \\.\ is normalized like an ordinary path.
+                if (path[1] == '?' && WindowsFileNames.EndsInDotOrSpace(Path.GetFileName(rest)))
+                {
+                    return @"names a file whose name ends in a dot or a space, which only a device path can reach, and Outlook crashed "
+                        + @"attaching such a file from a \\?\ path - copy it under a name without them, with your own file tools, and "
+                        + "attach the copy";
+                }
+
+                onItsDrive = rest;
+            }
+
+            if (WindowsFileNames.HasColonBeyondTheDrive(onItsDrive))
+            {
+                return "holds a ':' that is not a drive letter's - it names an alternate data stream of a file, which Outlook will not "
+                    + "attach, or a path relative to a drive's current folder - give the full path of the file itself, or copy the "
+                    + "stream into a file of its own with your own file tools and attach that";
+            }
+
+            string name = Path.GetFileName(onItsDrive);
+            if (WindowsFileNames.IsReservedDeviceName(name))
+            {
+                return "is called after a Windows device ('" + name + "'), and Outlook will not attach a file of that name - copy it "
+                    + "under another name, such as '_" + name + "', with your own file tools, and attach the copy";
+            }
+
+            return null;
+        }
+
+        /// <summary>The ordinary path a <c>\\?\</c> path's rest names - <c>C:\...</c> or <c>\\server\share\...</c> - or null.</summary>
+        private static string? OrdinaryPathOf(string rest)
+        {
+            if (StartsWithDrive(rest))
+            {
+                return rest;
+            }
+
+            if (rest.Length > 4 && rest.StartsWith("UNC", StringComparison.OrdinalIgnoreCase) && (rest[3] == '\\' || rest[3] == '/'))
+            {
+                return @"\\" + rest.Substring(4);
+            }
+
+            return null;
+        }
+
+        /// <summary>A path's comparable form: a <c>\\.\C:\</c> or <c>\??\C:\</c> path as its ordinary <c>C:\</c> path.</summary>
+        private static string OnItsDrive(string fullPath)
+        {
+            return WindowsFileNames.IsDeviceNamespacePath(fullPath) && StartsWithDrive(fullPath.Substring(4))
+                ? fullPath.Substring(4)
+                : fullPath;
+        }
+
+        private static bool StartsWithDrive(string path)
+        {
+            return path.Length >= 3 && WindowsFileNames.IsAsciiLetter(path[0]) && path[1] == ':' && (path[2] == '\\' || path[2] == '/');
         }
     }
 }
