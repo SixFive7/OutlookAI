@@ -245,39 +245,9 @@ $script:OfficeRootKeyPath = 'HKCU:\Software\Microsoft\Office'
 # Outlook version this product supports: OutlookProfileRegistry.AccountsSubKeyName.
 $script:AccountsSubKeyName = '9375CFF0413111d3B88A00104B2A6676'
 
-# NOT EVERY ENTRY IN THAT CONTAINER IS A MAIL ACCOUNT - measured on OAI-UNINDEXED 2026-09-24, and
-# the preflight's first guest run refused the real corpus profile over it. Outlook lists EVERY
-# MAPI service of the profile there, wrapping the non-account ones under one CLSID: CorpusProfile,
-# whose COM Accounts.Count is 0, holds two entries - clsid {ED475414-...} 'Outlook Address Book'
-# (Service Name CONTAB) and {ED475414-...} 'Outlook Data File' (MSUPST MS) - and the tier
-# profile holds the same two plus its POP3 account, clsid {ED475411-...}. A wrapper around a data
-# file or an address book is not an account; anything else is counted, including a wrapper around
-# a service not named here (an Exchange mailbox is a wrapper around MSEMS), so an unknown shape
-# refuses rather than slipping through. The service names are the ones section 6 of this
-# project's .prf files maps.
-$script:ServiceWrapperClsid = '{ED475414-B0D6-11D2-8C3B-00104B2A6676}'
-$script:NonMailServiceNames = @('MSUPST MS', 'MSPST MS', 'CONTAB', 'EMABLT', 'MSPST AB')
-
 # =============================================================================================
 # PURE PREFLIGHT DECISIONS. No registry, no processes, no tool, no Outlook, no output.
 # =============================================================================================
-
-<#
-    Mirrors OfficeVersions.IsOutlookHive: at least one VALUE, or at least one subkey that is not
-    'Resiliency' - which this product's own installer writes under every supported major, so a
-    bare key-exists probe answers 16.0 on a machine running Outlook 2013.
-#>
-function Test-IsOutlookHive {
-    param([string[]] $ValueNames, [string[]] $SubKeyNames)
-
-    if ($null -ne $ValueNames -and $ValueNames.Count -gt 0) { return $true }
-    if ($null -eq $SubKeyNames) { return $false }
-
-    foreach ($subKey in $SubKeyNames) {
-        if ($subKey -ne $script:InstallerFootprintSubKeyName) { return $true }
-    }
-    return $false
-}
 
 <#
     The first candidate that is a real hive, in the product's probe order - or the one named by
@@ -309,22 +279,6 @@ function Select-OutlookHive {
         }
     }
     return $null
-}
-
-<#
-    Whether one entry of the account-manager container is a MAIL account. Pure.
-
-    $false only for a service wrapper ($script:ServiceWrapperClsid) around a data file or an
-    address book. Everything else is an account - including a wrapper around a service this list
-    does not name, and an entry whose clsid cannot be read - because the cost of calling a real
-    account "not one" is a build that queues mail, and the cost of the opposite is a refusal that
-    names the entry.
-#>
-function Test-IsMailAccountEntry {
-    param([string] $Clsid, [string] $ServiceName)
-
-    if ($Clsid -eq $script:ServiceWrapperClsid -and $script:NonMailServiceNames -contains $ServiceName) { return $false }
-    return $true
 }
 
 <#
@@ -770,6 +724,10 @@ function Invoke-SelfTest {
     return 0
 }
 
+# The Outlook profile helpers are among the helpers the scripts share, dot-sourced from ScriptHelpers.ps1
+# beside this script (Q154, Q166 (b), decision 215 (a)) - before the self-test, which holds them too.
+. (Join-Path $PSScriptRoot 'ScriptHelpers.ps1')
+
 if ($SelfTest) { exit (Invoke-SelfTest) }
 
 # =============================================================================================
@@ -795,12 +753,6 @@ then on the guest: Expand-Archive C:\OutlookAI-Q5\Tools.zip -DestinationPath C:\
 
 $identity = @('--corpus-id', $CorpusId, '--seed', "$Seed", '--anchor', $Anchor, '--count', "$Count")
 $target = @('--store', $Store, '--allow-store', $Store)
-
-# Every program call goes through Invoke-NativeCommand, so that Windows PowerShell 5.1 cannot end
-# the script on a program's first stderr line (Q78). It is one of the helpers the scripts share,
-# dot-sourced from ScriptHelpers.ps1 beside this script (Q154, Q166 (b), decision 215 (a)), which
-# says why; Testbed/README.md step 4a stages the two together.
-. (Join-Path $PSScriptRoot 'ScriptHelpers.ps1')
 
 function Invoke-Corpus {
     param([string] $Verb, [string[]] $Arguments, [switch] $Fatal)
@@ -905,7 +857,7 @@ function Get-CorpusPreflightFact {
             $accountsKeyPath = Join-Path (Join-Path $profilesKeyPath $defaultProfile) $script:AccountsSubKeyName
             try {
                 if (Test-Path -LiteralPath $accountsKeyPath) {
-                    # MAIL accounts, not entries: see $script:ServiceWrapperClsid for why the two differ.
+                    # MAIL accounts, not entries: Test-IsMailAccountEntry (ScriptHelpers.ps1) says why the two differ.
                     $accountEntryCount = 0
                     foreach ($entry in @(Get-ChildItem -LiteralPath $accountsKeyPath -ErrorAction Stop)) {
                         $clsid = [string] $entry.GetValue('clsid', '')

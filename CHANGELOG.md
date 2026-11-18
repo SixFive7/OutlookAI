@@ -1042,7 +1042,12 @@ its mailbox tests on, and change nothing you install.
   Exchange VM's three measurements and the Outlook start now refuse in the same words as the rest.
   `check-testbed-references` check 9 accepts the shared guard only after the script dot-sources the
   file, and fails a shared guard that stops reading the account or stops throwing; both failures were
-  made on a scratch copy, and it reported each.
+  made on a scratch copy, and it reported each. The Outlook profile scripts' helpers went the same
+  way: whether a registry key is a real Outlook hive or the installer's shell, the note on the other
+  hives, the hives and the profiles on a machine, the profile a .prf names and whether a profile
+  entry is a mail account were restated in `New-OutlookProfile.ps1`, `Set-DefaultOutlookProfile.ps1`,
+  `New-TierProfile.ps1` and `Build-Corpus.ps1`, two to four copies each, and are one copy in the
+  shared file now; each script keeps the Office constants they read.
 
 - 📝 **If Office's own grace reset fails, the Exchange test machine may get Microsoft 365 Apps (Q206).**
   The maintainer's decision Q206, 2026-11-18, now in AGENTS.md beside the machine's internet
