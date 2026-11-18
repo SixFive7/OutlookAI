@@ -88,8 +88,8 @@ param(
 $ErrorActionPreference = 'Stop'
 
 . (Join-Path $PSScriptRoot 'TestbedLeasePath.ps1')
+. (Join-Path $PSScriptRoot 'TestbedPool.ps1')
 if (-not $PSBoundParameters.ContainsKey('VMName')) {
-    . (Join-Path $PSScriptRoot 'TestbedPool.ps1')
     $VMName = @(Get-TestbedPoolMembers) + @('OutlookAI-Exchange')
 }
 
@@ -102,14 +102,28 @@ function Write-Line {
     try { Add-Content -LiteralPath $log -Value $line -Encoding UTF8 } catch { }
 }
 
-# Prove Hyper-V is reachable BEFORE the loop. Without this the per-VM
+# THE LEASE FIRST (2026-11-18, stream W): a leased VM is left alone without a question to Hyper-V,
+# and the others are asked about in ONE narrow query of their state (TestbedPool.ps1's
+# Get-TestbedVms) - where every VM was a Get-VM, and the check below one more for every VM there is.
+$unleased = @()
+foreach ($name in $VMName) {
+    $lease = Get-TestbedLease -VMName $name
+    if ($lease) {
+        Write-Verbose "$name is leased until $($lease.expiresUtc) ($($lease.reason)); leaving it alone."
+        continue
+    }
+    $unleased += $name
+}
+
+# Prove Hyper-V is reachable BEFORE the loop - with that one query. Without this the per-VM
 # '-ErrorAction SilentlyContinue' swallows a permissions failure exactly as it swallows a VM
 # that lives on another host, and a run without Hyper-V access would skip every VM, print
 # nothing, exit 0, and look like a machine where nothing was ever idle. Measured: that is
 # precisely what an unelevated dry run did - the cause being the account's Hyper-V group
 # membership, not the elevation, which this task deliberately does not have.
+$states = @()
 try {
-    Get-VM -ErrorAction Stop | Out-Null
+    $states = @(Get-TestbedVms -Name $unleased)
 } catch {
     Write-Line "CANNOT QUERY HYPER-V - nothing was checked: $($_.Exception.Message)"
     Write-Line "Save-VM needs local 'Hyper-V Administrators' membership, NOT elevation - and as"
@@ -119,20 +133,18 @@ try {
     exit 1
 }
 
-foreach ($name in $VMName) {
+foreach ($name in $unleased) {
+    $row = @($states | Where-Object { $_.Name -eq $name })
+    if ($row.Count -eq 0) { continue }               # genuinely not on this host
+
+    if ($row[0].State -ne 'Running') {
+        Write-Verbose "$name is $($row[0].State); nothing to do."
+        continue
+    }
+
+    # Running and unleased: only now Get-VM, for its uptime and the memory a save gives back.
     $vm = Get-VM -Name $name -ErrorAction SilentlyContinue
-    if (-not $vm) { continue }                       # genuinely not on this host
-
-    if ($vm.State -ne 'Running') {
-        Write-Verbose "$name is $($vm.State); nothing to do."
-        continue
-    }
-
-    $lease = Get-TestbedLease -VMName $name
-    if ($lease) {
-        Write-Verbose "$name is leased until $($lease.expiresUtc) ($($lease.reason)); leaving it alone."
-        continue
-    }
+    if (-not $vm) { continue }
 
     if ($vm.Uptime.TotalMinutes -lt $MinimumUptimeMinutes) {
         # A VM that has just come up may belong to work that has not taken its lease yet.
