@@ -224,15 +224,38 @@ public sealed class ComHostPolicyTests
     }
 
     [Fact]
-    public void InFlight_ClientCancellation_OutranksEverythingElse()
+    public void InFlight_ClientCancellation_StopsTheWaiting()
     {
-        // Even past the deadline, and even with the host apparently gone: the response is
-        // going to be suppressed by the SDK regardless, so there is nothing to gain by
-        // killing a host that may be perfectly healthy.
+        // Within its budget a cancelled request is no longer awaited: the SDK suppresses the response.
         InFlightVerdict verdict = ComHostPolicy.DecideInFlight(
-            new InFlightInput(999_999, 5_000, ChildAlive: false, ClientCancelled: true));
+            new InFlightInput(500, 5_000, ChildAlive: true, ClientCancelled: true));
 
         Assert.Equal(InFlightVerdict.AbandonClientCancelled, verdict);
+    }
+
+    [Fact]
+    public void InFlight_ClientCancellation_DoesNotStopTheDeadline()
+    {
+        // Q179 (b), decided by the maintainer 2026-11-18. This used to be "client cancellation outranks
+        // everything", and the cancel path disarmed the deadline with it - so a wedged call nobody awaited
+        // any more held the host for good. On 2026-11-15 one stayed stuck for twelve minutes, and when that
+        // Outlook was ended its retry started Outlook again. Past its deadline a cancelled request is
+        // reclaimed like any other.
+        InFlightVerdict verdict = ComHostPolicy.DecideInFlight(
+            new InFlightInput(5_000, 5_000, ChildAlive: true, ClientCancelled: true));
+
+        Assert.Equal(InFlightVerdict.TimeoutKillChild, verdict);
+    }
+
+    [Fact]
+    public void InFlight_AHostAlreadyGone_IsNeverKilled_CancelledOrNot()
+    {
+        Assert.Equal(
+            InFlightVerdict.FailChildDied,
+            ComHostPolicy.DecideInFlight(new InFlightInput(999_999, 5_000, ChildAlive: false, ClientCancelled: true)));
+        Assert.Equal(
+            InFlightVerdict.FailChildDied,
+            ComHostPolicy.DecideInFlight(new InFlightInput(10, 5_000, ChildAlive: false, ClientCancelled: true)));
     }
 
     // ---------------------------------------------------------------- DeadlineFor

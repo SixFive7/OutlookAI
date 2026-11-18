@@ -130,6 +130,32 @@ public sealed class SessionRetryClassificationTests
     }
 
     [Fact]
+    public void TheRebuild_MayNeverStartOutlook()
+    {
+        // Q179 (c), decided by the maintainer 2026-11-18. On 2026-11-15 a hung Outlook was ended by hand,
+        // the read stuck inside it failed with a disconnect, and the rebuild started Outlook again 67 ms
+        // later, for a request whose client had left twelve minutes before. The rebuild attaches; only the
+        // next request, through its own gate, may start Outlook (Q150 (a): "on the next call").
+        Assert.False(ComGateway.RebuildMayStartOutlook);
+    }
+
+    [Fact]
+    public void TheRebuildsReconnect_WithNoOutlookRunning_RefusesBeforeAnyComCall()
+    {
+        // Run where no Outlook exists - the build VM - so the refusal is the only thing it can meet. Asked
+        // to attach only, the connect refuses on the process list alone: no Outlook.Application request, no
+        // start lock, no thread.
+        Assert.False(ComGateway.IsOutlookRunning(), "this check needs a machine with no Outlook running - the build VM");
+        using ComGateway gateway = new(allowStartingOutlook: true);
+
+        OutlookUnavailableException refused = Assert.Throws<OutlookUnavailableException>(
+            () => gateway.GetOrConnect(mayStartOutlook: ComGateway.RebuildMayStartOutlook));
+
+        Assert.Contains("starting it was not allowed", refused.Message, StringComparison.Ordinal);
+        Assert.False(ComGateway.IsOutlookRunning());
+    }
+
+    [Fact]
     public void TheRoutingProxy_AsksForTheRebuildOnEveryRead_AndOnNoWrite()
     {
         // The table read at the one place that can act on it. Every contract method is

@@ -796,7 +796,7 @@ namespace OutlookAI.Core.Com
         public static IReadOnlyList<WindowState> SnapshotOutlookWindows()
         {
             HashSet<int> pids = new HashSet<int>();
-            foreach (Process p in Process.GetProcessesByName("OUTLOOK"))
+            foreach (Process p in OutlookProcesses.InThisSession())
             {
                 try
                 {

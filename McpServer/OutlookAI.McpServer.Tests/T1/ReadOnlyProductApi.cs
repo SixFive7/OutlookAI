@@ -173,6 +173,23 @@ internal static class ReadOnlyProductApi
             "writes OutlookAI's own session registry, %LOCALAPPDATA%\\OutlookAI\\outlook-sessions.txt (Q118 (a)), through Core's "
             + "one file replace: which OutlookAI sessions are attached to Outlook and the pin they share - never the mailbox, "
             + "the profile or the user's files. A signature write through the same member is still a finding on every other path",
+
+        // The start record (Q176 (c), 2026-11-18): OutlookAI's own bookkeeping about Outlook's start, under
+        // HKCU\Software\OutlookAI\OutlookStart - which connection is in which step, who started Outlook, when it
+        // was first seen hung or with a window. Every connection and every request's gate writes it, the way
+        // attaching to Outlook has always counted as a read here: no mail, no folder, no Outlook setting.
+        ["OutlookAI.Core.Com.OutlookStartRecord.WriteValue|RegistryKey.CreateSubKey"] =
+            "creates OutlookAI's own start-record key; no mail and no Outlook setting",
+        ["OutlookAI.Core.Com.OutlookStartRecord.WriteValue|RegistryKey.SetValue"] =
+            "writes one value of OutlookAI's own start record; no mail and no Outlook setting",
+        ["OutlookAI.Core.Com.OutlookStartRecord.ClearNote|RegistryKey.DeleteValue"] =
+            "removes the start record's not-responding note once Outlook answers again",
+
+        // The start log (Q178 (e)): rotated past about 1 MB beside the audit log, with no mail content.
+        ["OutlookAI.Core.Com.OutlookStartLog.RotateIfFull|File.Delete"] =
+            "drops the previous start log when the current one is full; OutlookAI's own diagnostics file",
+        ["OutlookAI.Core.Com.OutlookStartLog.RotateIfFull|File.Move"] =
+            "moves a full start log aside; OutlookAI's own diagnostics file",
     };
 
     /// <summary>
