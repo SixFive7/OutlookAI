@@ -280,6 +280,21 @@ its mailbox tests on, and change nothing you install.
   check fails, the reason is written out in full here rather than hidden behind a link. Both
   indicators now take their wording from one place, so they cannot disagree.
 
+- ✅ **A hunting run puts a debugger on Outlook to catch the mso40uiwin32client.dll crash in a dump.**
+  Two Outlook crashes in that module on 2026-11-18 left no dump, though Windows Error Reporting's
+  local dumps were armed, and the evidence says the dump was lost inside WER.
+  `Invoke-LiveTierOnGuest.ps1 -HuntFirstChance` attaches
+  `Testbed/guest/Watch-OutlookFirstChance.ps1`, Windows' own debugging API through `Add-Type`, to
+  every Outlook of the suite's session. It writes one full dump at the first first-chance access
+  violation in `mso40uiwin32client.dll`, before any handler runs, and one at any second-chance
+  exception, and passes every exception back to Outlook; kill-on-exit is off, so Outlook outlives
+  it. Meanwhile the suite repeats the tests the two crashes struck in, the Q149 typed-text tests and
+  the reply with a signature beside the forward that failed after it, each in a dotnet test of its
+  own, for up to 20 rounds or 60 minutes or until a dump. The dumps land beside the WER evidence,
+  and the summary says how many rounds ran. Off by default, so no ordinary run has a debugger
+  attached, and refused on the Exchange VM, with a filter or with a signature step; the runner's and
+  the debugger's self-tests pin the switch, the module and every decision (runbook section 4.15).
+
 - ✅ **A live run keeps Windows' own report of every Outlook crash beside its dumps.**
   Two Outlook crashes on 2026-11-18, both in `mso40uiwin32client.dll` while a draft was written,
   left an Application Error event and no dump, though the run had armed Windows Error Reporting's

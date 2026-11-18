@@ -5484,6 +5484,20 @@ its source, after a program named `OUTLOOK.EXE` - a copy of `rundll32.exe`, not 
 such crash will say which report WER filed, of what kind and with what status; whether it leaves a dump is not
 settled by this.
 
+**The hunt** (the coordinator's decision of 2026-11-18). `Invoke-LiveTierOnGuest.ps1 -HuntFirstChance` is the one
+run that leaves a dump of this crash for certain: `guest/Watch-OutlookFirstChance.ps1`, Windows' own debugging API
+through `Add-Type`, is attached to every OUTLOOK.EXE of the suite's session as it appears and writes one full
+dump at the first first-chance access violation in `mso40uiwin32client.dll` - before Outlook's, Office's or
+WER's handlers run - and one at any second-chance exception, then passes the exception back to Outlook. The
+suite repeats the tests the two crashes struck in, each leg in a dotnet test of its own: the Q149 typed-text
+tests (`LiveQ149TypedTextTests`, K2's crash was in its reply), and stream U's - the crash struck inside
+`LiveSignatureTests.ReplyDraft_WithSignature_InsertsAboveQuote_ThenUpdateSwapsItForAnother_ThenNoneRemovesIt`
+(17:07:35 to 17:08:00 by its TRX, the crash at 17:07:41.9), and
+`LiveDraftOptionsTests.ForwardDraft_CcBccAppend_AndSubjectOverrideKeepsTheForwardedContent`, which its summary
+named first, failed after it. Both crashes were the product's reply drafted with a signature in a windowed
+Outlook. Off by default and refused on the Exchange VM: a debugger changes what it is attached to, and a
+full dump holds the mailbox.
+
 ## 5. Which tests are in which bucket, and how to find out
 
 The classification is **two traits on the test itself**, not a list in a document that can drift -
