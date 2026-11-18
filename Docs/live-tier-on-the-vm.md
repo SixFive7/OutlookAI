@@ -4581,6 +4581,102 @@ anywhere; the computer's stores; an install run with administrator rights on pur
 build. Nothing here loaded an add-in through an entry: that the runtime trusts an entry's key without
 the certificate is the IL above and section 4.5's measurement.
 
+### 4.9 Signature settings an administrator makes, set before Outlook starts - the Outlook guests, 2026-11-18 (Q200, Q201)
+
+**Why this section exists.** OutlookAI follows an administrator's signature rules (Q156). A Group Policy or
+Cloud Policy `NewSignature` / `ReplySignature` under `...\Common\MailSettings` was taken as every account's
+forced default, and a default deployed in Outlook's own `Common\MailSettings` was ranked above an account's own
+default, on the research's word (QUESTIONS.md, the Q147 decision log, item 5). Two questions were open: whether
+Outlook lets one message use another signature, or none, under a forced default - until measured, OutlookAI
+refused both - and where a deployed default ranks against an account's own. G2's first run (2026-11-17) could
+not tell, because the value was written while Outlook ran and Outlook reads these settings when it starts; and
+the live tier runs NOT elevated, where `HKCU\Software\Policies` is read-only. The maintainer decided on
+2026-11-18 (Q200 (a), Q201): a runner step sets the setting as administrator before Outlook starts, the guest's
+checkpoint undoes it, and a live test reads what Outlook inserts in a new mail, a reply and a forward. Raw
+results: `.work\guest-live-runs\` of the worktree `stream-l-signature-followups`.
+
+**How it runs, one call per scenario:**
+
+    pwsh -File Testbed/host/Invoke-LiveTierOnGuest.ps1 -Kind Unindexed <commit> -SignatureSettings GroupPolicy
+    pwsh -File Testbed/host/Invoke-LiveTierOnGuest.ps1 -Kind Unindexed <commit> -SignatureSettings Preference [-SignatureValueKind String]
+
+From the guest's frozen checkpoint, after the frozen-clock guard and before Outlook starts, the runner runs
+`Testbed/guest/Set-SignatureSettings.ps1 -Scenario <name> -ValueKind <kind> -Execute` in session 0 over
+PowerShell Direct - elevated, Outlook closed. Through the shipped MCP server over stdio it makes the scenario's
+test signatures (`manage_signature create`, each one's HTML its own name) and the hub account's own default
+(`manage_signature set_default`), then writes the two registry values, REG_EXPAND_SZ unless `String` is
+asked for, and says `SET`, or the run stops:
+
+| Scenario | Registry values | The hub account's own defaults |
+| --- | --- | --- |
+| `GroupPolicy` (Q200) | `HKCU\Software\Policies\Microsoft\Office\16.0\Common\MailSettings`: `NewSignature` = `OutlookAI-McpTest-Q200-Forced-New`, `ReplySignature` = `OutlookAI-McpTest-Q200-Forced-Reply` | replies and forwards `OutlookAI-McpTest-Q200-Own-Reply`; none for new mail |
+| `Preference` (Q201) | `HKCU\Software\Microsoft\Office\16.0\Common\MailSettings`: `NewSignature` = `OutlookAI-McpTest-Q201-Deployed-New`, `ReplySignature` = `OutlookAI-McpTest-Q201-Deployed-Reply` | new mail `OutlookAI-McpTest-Q201-Own-New`; none for replies |
+
+So each run ranks the setting against the account's own default for one scope and shows, for the other, what the
+setting does for an account with none of its own: the policy for new mail, the deployed setting for replies. (The
+first policy runs gave the hub its own default for both, and then for new mail only.) Outlook then starts NOT
+elevated on the tier profile, and the run is narrowed to
+`T2/LiveSignatureSettingsTests.SetBeforeOutlookStarted_WhatOutlookInsertsInANewMailAReplyAndAForward_IsWhatOutlookAIInserts`,
+told the scenario in `OUTLOOKAI_LIVE_SIGNATURE_SETTINGS`. The test checks that the step's state is what it
+promised, sends one tagged mail to the hub for the reply and the forward, and opens three compose windows the way
+Outlook's own New Email, Reply and Forward make them - an item added to the hub's Drafts with the hub account
+sending, `Reply()` and `Forward()` on that mail - each with an inspector on the object the creator returned:
+where Outlook inserts its default signature (section 4.6, item 6), and the shape that crashed Outlook on
+2026-10-04, so crash dumps are armed at every run. From each it reads the `_MailAutoSig` region and the
+document's text, the compose ribbon's Signature button (`SignatureInsertMenu`, `CommandBars.GetEnabledMso` and
+`GetVisibleMso`) and Word's `EmailSignature` view, and closes the inspector discarding: nothing is saved. Then
+OutlookAI's own drafts - `new_draft`, `reply_draft` and `forward_draft` with the signature left out, and
+`new_draft` with another signature and with `"none"` - and the contract: OutlookAI inserts what Outlook inserts,
+and allows another signature or none in one message exactly when Outlook's Signature button is open.
+
+**The runs.** Each rested on its frozen checkpoint, the guest saved and its lease released; crash dumps were
+armed in every one, and Outlook crashed in none. Every run that reached its test ended with the count tripwire's
+post-run census at 0 failures; the test deletes its drafts and its seed mail in a finally, and the two that passed
+counted no tagged item left.
+
+| Run (`.work\guest-live-runs\`) | Guest | Setting, kind | The hub's own defaults | What came back |
+| --- | --- | --- | --- | --- |
+| `20261118-033717-unindexed-b66dcbd4f2f6` | `OutlookAI-Unindexed2` | Group Policy, REG_SZ | new mail and replies | reply and forward: the account's own reply default; the new mail not read - its editor answered NoWordEditor (0x80004005), the session's first compose window while Word was still loading (the reading asks ten times since). FAIL against the rule of then |
+| `20261118-033720-indexed-b66dcbd4f2f6` | `OutlookAI-Indexed` | deployed, REG_SZ | new mail | INFRA: Outlook showed no main window within 10 minutes; other runs met the same on the indexed guests that day (the host under full load is one suspect) |
+| `20261118-040336-unindexed-8859ce1d66a3` | `OutlookAI-Unindexed` | Group Policy, REG_EXPAND_SZ | new mail and replies | new mail, reply and forward: the account's own defaults. FAIL against the rule of then |
+| `20261118-040340-indexed-8859ce1d66a3` | `OutlookAI-Indexed2` | Group Policy, REG_SZ | new mail and replies | BUILD: the guest's `dotnet --list-sdks` exited with no code at TEST-READY; not measured |
+| `20261118-043844-indexed-678c23c56249` | `OutlookAI-Indexed` | Group Policy, REG_EXPAND_SZ | new mail | INFRA: Outlook's start showed nothing but `MsoSplash 'Opening - Outlook'` for 10 minutes - the first start with the window listing |
+| `20261118-051741-unindexed-3d7655a42bb0` | `OutlookAI-Unindexed` | deployed, REG_EXPAND_SZ | new mail | new mail: the account's own default; reply and forward: NO signature. FAIL against the first follow-up, which used the setting where the account had none |
+| `20261118-052836-unindexed-82b81858ee37` | `OutlookAI-Unindexed2` | Group Policy, REG_EXPAND_SZ | new mail | new mail: the account's own default; reply and forward: NO signature. FAIL likewise |
+| `20261118-054317-unindexed-b96e49febb79` | `OutlookAI-Unindexed2` | Group Policy, REG_EXPAND_SZ | replies | new mail: NO signature; reply and forward: the account's own reply default. FAIL likewise |
+| `20261118-054923-unindexed-f1e1d4264337` | `OutlookAI-Unindexed2` | deployed, REG_EXPAND_SZ | new mail | the same as `051741` - and OutlookAI, following the account's own default only, inserted the same: PASS |
+| `20261118-055832-unindexed-f1e1d4264337` | `OutlookAI-Unindexed` | Group Policy, REG_EXPAND_SZ | replies | the same as `054317` - and OutlookAI the same: PASS |
+
+**What Outlook does - Office LTSC 2024, 16.0.17932:**
+
+1. **An account's own default is what goes in, whatever a policy or a deployed setting names.** A new mail, a
+   reply and a forward got the account's own default under Group Policy (REG_SZ and REG_EXPAND_SZ) and under the
+   deployed value (REG_EXPAND_SZ), in all seven runs that read a compose window with one.
+2. **The setting is not used for an account with no default of its own either.** A reply and a forward of the hub
+   with no reply default got no signature at all under the deployed `ReplySignature` and under Group Policy's;
+   a new mail with no new-mail default got none under Group Policy's `NewSignature`. Not measured: a new mail
+   with no default of its own under the deployed `NewSignature` - read as the other three. So on this Office
+   these values do not decide what Outlook inserts. A Microsoft support engineer's test of 2023 (Microsoft Q&A,
+   "Outlook 365: Signature forced by registry not working anymore") saw the same with an account's own default
+   set - the value shown, greyed out, in the Signatures dialog and the account's own default in the new mail - and
+   saw the value take effect where no default was set, which these runs did not. Writing the values as
+   REG_EXPAND_SZ, as signature vendors tell administrators to, made no difference here.
+3. **Outlook's Signature button stays open under a policy**, enabled and visible in every new mail, reply and
+   forward of every run: one message may still get another signature from it, or none.
+4. **Word's `EmailSignature` reported no default in any run, with or without a setting**, and listed every
+   signature in the folder. It is no view of what Outlook inserts - the reason G1 to G3 could not read one.
+5. **The first compose window of an Outlook session can refuse its editor for a moment** (NoWordEditor,
+   0x80004005): the new mail of every run since the reading asks again took two attempts, a second apart; the
+   reply and the forward one.
+
+**What OutlookAI does since:** `SignaturePolicy.EffectiveDefault` - the one rule the draft tools,
+`list_signatures` and `manage_signature` share - is the account's own default. A draft never gets a policy's or a
+deployed signature as its default (`signatureSource` `policyDefault` is gone), `list_signatures` gives the
+account's own as its effective defaults, another signature or `"none"` in one message is allowed under a policy,
+`manage_signature` still refuses a default change while a policy names one (Q156) and allows it under a deployed
+value, and the policy itself is still read and listed. `DisableSignatures` was not measured and still means no
+signature. Cloud Policy was not measured: the same values in a key of its own, treated as Group Policy.
+
 ## 5. Which tests are in which bucket, and how to find out
 
 The classification is **two traits on the test itself**, not a list in a document that can drift -
