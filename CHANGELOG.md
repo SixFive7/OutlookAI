@@ -1224,7 +1224,8 @@ its mailbox tests on, and change nothing you install.
   are made of, and the mailer's twelve inline ordinal tag checks, and four more elsewhere, now ask one
   ordinal predicate, `CarriesSubjectTag`; the reading filters that leave test items out of a
   search, a census or a ground truth ask `MentionsSubjectTag`, which ignores letter case as each of
-  them did. A test's tagged subject is built once (`TaggedSubject`). `LiveDraftChecks` holds the
+  them did. A test's tagged subject is built once (`TaggedSubject`), the subject the signature work's
+  Outlook-made draft gets since among them. `LiveDraftChecks` holds the
   draft suites' reads of a draft and of where its body sits, which seven suites restated in up to
   four copies each; `LiveDraftCleanup` deletes their drafts and proves none is left; the folder
   suites' clean-up and zero-artifact proof are methods of the fixture they share; the two
