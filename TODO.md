@@ -113,8 +113,16 @@
   call it now. S5a has begun: the live tests' window calls are Core's `NativeWindows` and one
   `TestWin32`. The survey's T03 is done: its eighteen stand-ins for the COM session are
   `StandInSession` and `ForwardingSession`; and so is T05's rest, the five suites that spelled out
-  `AliceMailbox`'s profile and the index and thread-member builders they repeated. What remains, one
-  stage at a time: the rest of S5a - T06, T15 and L11. In parallel: the PowerShell helpers (S7), the two `Get-ShortHash`
+  `AliceMailbox`'s profile and the index and thread-member builders they repeated. T15 is done too: the
+  over-long subject's refusal is checked through one `DraftRefusals`, the move/archive suites prove
+  the hub clean through their fixture, and `AuditLogIsolationTests` keeps its own path comparison on
+  purpose - it guards `AuditLog`'s, and a guard that borrowed the code under test would agree with
+  its mistakes. L11 stays as it is: `StressLines.cs` is one source the stress tool compiles and the
+  tests link, so they recompute every line they expect from the code that wrote it without loading
+  the tool's assembly. What remains of S5a is T06: the setups it counted are shared now - no run of
+  15 identical lines is left between two T1 files - and what is left are parallel tests of parallel
+  features, such as the two thread suites' capped lists of unqueried and unindexed stores, which a
+  [Theory] would fold only by renaming them. In parallel: the PowerShell helpers (S7), the two `Get-ShortHash`
   functions of the guest's measurement scripts among them, and the rules restated in C# and
   PowerShell as shared C# source (Q171), the updater's 26 lines that `Tools/Publish-Release.ps1`
   restates among them.
