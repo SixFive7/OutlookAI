@@ -150,7 +150,7 @@ if (Test-Path Variable:\PSNativeCommandUseErrorActionPreference) {
 . (Join-Path $PSScriptRoot 'OwnEditionModules.ps1')
 
 if (-not $OutDir) { $OutDir = Join-Path $RepoRoot '.work\testbed-livetier-payload' }
-if (-not $SdkInstallerPath) { $SdkInstallerPath = Join-Path $RepoRoot '.work\media\dotnet-sdk-10.0.401-win-x64.exe' }
+if (-not $SdkInstallerPath) { $SdkInstallerPath = Join-Path $RepoRoot '.work\media\dotnet-sdk-11.0.100-win-x64.exe' }
 
 # Where each artefact goes on the guest. Repeated in the instructions this script prints, and
 # kept here so there is one place to change it.
