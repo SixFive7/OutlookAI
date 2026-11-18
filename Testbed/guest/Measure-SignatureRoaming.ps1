@@ -95,19 +95,13 @@ $ProbeTags = [ordered]@{
 # PURE PARTS
 # =============================================================================================
 
-function Get-ShortHash([string] $Text) {
-    $sha = [System.Security.Cryptography.SHA256]::Create()
-    try { $h = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes([string]$Text)) } finally { $sha.Dispose() }
-    return (($h[0..3] | ForEach-Object { $_.ToString('x2') }) -join '')
-}
-
 # A name as it may be printed: the test prefix's and GUID-shaped ones as they are, any other hashed.
 function Get-PrintableName([string] $Name, [string] $BystanderAddress) {
     if ([string]::IsNullOrEmpty($Name)) { return '(empty)' }
-    if ($BystanderAddress -and $Name.IndexOf($BystanderAddress, [StringComparison]::OrdinalIgnoreCase) -ge 0) { return 'name#' + (Get-ShortHash $Name) + ' (carries the bystander''s address)' }
+    if ($BystanderAddress -and $Name.IndexOf($BystanderAddress, [StringComparison]::OrdinalIgnoreCase) -ge 0) { return 'name#' + (Get-ShortHash $Name -Digits 8) + ' (carries the bystander''s address)' }
     if ($Name.StartsWith($SignaturePrefix, [StringComparison]::Ordinal)) { return $Name }
     if ($Name -match '^\{?[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\}?$') { return $Name }
-    return 'name#' + (Get-ShortHash $Name)
+    return 'name#' + (Get-ShortHash $Name -Digits 8)
 }
 
 # The local copy classic Outlook keeps of a roaming signature is named '<name> (<address>)' (report
@@ -164,6 +158,7 @@ function Invoke-SelfTest {
     Check 'a test-prefixed signature name prints as it is' ((Get-PrintableName 'OutlookAI-McpTest-Roam1117' 'b@example.invalid') -eq 'OutlookAI-McpTest-Roam1117')
     Check 'a GUID-shaped folder name prints as it is' ((Get-PrintableName '49499048-0129-47f5-b95e-f9d315b861a6' 'b@example.invalid') -eq '49499048-0129-47f5-b95e-f9d315b861a6')
     Check 'any other name is hashed' ((Get-PrintableName 'Alex work' 'b@example.invalid') -match '^name#[0-9a-f]{8}$')
+    Check 'to the first 8 hex digits of its SHA-256, case kept, as this script''s own copy made it (Get-ShortHash, shared from ScriptHelpers.ps1)' ((Get-PrintableName 'Alex work' 'b@example.invalid') -eq 'name#5a04527f' -and (Get-PrintableName 'ALEX WORK' 'b@example.invalid') -ne 'name#5a04527f')
     Check 'a name carrying the bystander''s address is hashed and says so' ((Get-PrintableName 'Sig (b@example.invalid)' 'b@example.invalid') -match '^name#[0-9a-f]{8} \(carries the bystander')
     Check 'even a test-prefixed one, when it carries the bystander''s address' ((Get-PrintableName 'OutlookAI-McpTest-X (b@example.invalid)' 'b@example.invalid') -match '^name#')
     Check 'the roaming copy''s address is read off "<name> (<address>)"' ((Get-RoamingCopyAddress 'Work (a@example.com)') -eq 'a@example.com')
@@ -207,6 +202,11 @@ function Invoke-SelfTest {
     exit 0
 }
 
+# Write-ReportLine prints a line and keeps it in $ReportLines, and Get-ShortHash is how a name is printed;
+# both are among the helpers the scripts share, dot-sourced from ScriptHelpers.ps1, which travels with the
+# guest scripts (Q154, Q166 (b), decision 215 (a)) - before the self-test, which holds the hash too.
+. (Join-Path $PSScriptRoot 'ScriptHelpers.ps1')
+
 if ($SelfTest) { Invoke-SelfTest }
 if (-not $Hub) { $Hub = Get-StagedSettingsValue $SettingsPath 'testHubStoreDisplayName' }
 if (-not $Hub) { throw "No -Hub, and no staged live-test settings at $SettingsPath name one: give the test account's address, or stage the settings (Invoke-LiveTierOnGuest.ps1 does on every run)." }
@@ -214,9 +214,6 @@ if (-not $Bystander) { $Bystander = Get-StagedSettingsValue $SettingsPath 'bysta
 if (-not $Step) { throw '-Step is mandatory: R0, R1 or R2.' }
 
 # The guest guard: the autologon account on the Exchange VM, both.
-# Write-ReportLine prints a line and keeps it in $ReportLines; it is one of the helpers the scripts share,
-# dot-sourced from ScriptHelpers.ps1, which travels with the guest scripts (Q154, Q166 (b), decision 215 (a)).
-. (Join-Path $PSScriptRoot 'ScriptHelpers.ps1')
 # The guest guard is Assert-TestbedGuestIdentity, one of the helpers the scripts share (Q154, S7c),
 # dot-sourced from ScriptHelpers.ps1: this is what it says this script would have done elsewhere.
 $GuestGuardWhy = @"

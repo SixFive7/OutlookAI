@@ -1423,7 +1423,10 @@ its mailbox tests on, and change nothing you install.
   two copies and an older one in `Build-Corpus.ps1`, which now reads the shared one's choice) and
   what `-Verify` does about ImportPRF (`Resolve-ImportPrfClearance`, two copies) are one copy too,
   and so is the one helper of the self-tests with a single form, `ConvertTo-SelfTestText`, which four
-  of them compared values by.
+  of them compared values by. The measurements' short hash went the same way: the two scripts on the
+  Exchange machine that print a value they may not show as a SHA-256 prefix each had their own
+  `Get-ShortHash`, one of 12 digits that ignores case and one of 8 that keeps it, and both call the
+  shared one now, each saying which it needs, so every hash they print is the one they printed before.
 
 - 📝 **If Office's own grace reset fails, the Exchange test machine may get Microsoft 365 Apps (Q206).**
   The maintainer's decision Q206, 2026-11-18, now in AGENTS.md beside the machine's internet

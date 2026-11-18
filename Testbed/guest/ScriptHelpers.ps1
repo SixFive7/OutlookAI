@@ -345,6 +345,22 @@ function Assert-TestbedGuestIdentity {
     throw ("REFUSING TO RUN.`n`n  logged on as : '{0}'          (allowed: {1})`n  computer name: '{2}'      (must start with: '{3}')`n`n{4}" -f $env:USERNAME, ($users -join ', '), $env:COMPUTERNAME, $prefix, $Why)
 }
 
+# ---- The measurements' helpers (Q154, S7).
+
+# The first -Digits hex digits - 12 unless a caller says otherwise - of the SHA-256 of a value's UTF-8, or
+# of its upper-case spelling with -IgnoreCase: enough for a measurement to say two values are equal or
+# not, and not enough to say what a value is. $null for no value. Measure-FolderIdResolution.ps1 compares
+# ids and names whatever their case; Measure-SignatureRoaming.ps1 prints a name as 8 digits, as its
+# earlier records do. Each held a copy until 2026-11-18.
+function Get-ShortHash {
+    param([string] $Value, [ValidateRange(1, 64)] [int] $Digits = 12, [switch] $IgnoreCase)
+    if ([string]::IsNullOrEmpty($Value)) { return $null }
+    if ($IgnoreCase) { $Value = $Value.ToUpperInvariant() }
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try { $bytes = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($Value)) } finally { $sha.Dispose() }
+    return (-join @($bytes | ForEach-Object { $_.ToString('x2') })).Substring(0, $Digits)
+}
+
 # ---- The self-tests' helpers (Q154, S7a: P04).
 
 # A value as a self-test prints and compares it: '<null>' for $null, an array as [a, b] item by item, and
