@@ -32,19 +32,26 @@ public sealed class HuntPlan
     /// <summary>The variable it gives the minutes of one leg - one dotnet test - in.</summary>
     public const string LegMinutesVariable = "OUTLOOKAI_HUNT_LEG_MINUTES";
 
+    /// <summary>
+    /// The variable that, set to 1, has every draft come after a compose window shown and closed: a reply or forward the
+    /// object model made, opened in an inspector the product's own way (parked, activated, hidden), closed discarding.
+    /// </summary>
+    public const string ShowEachVariable = "OUTLOOKAI_HUNT_SHOW_EACH";
+
     /// <summary>The longest leg: two hours, beyond any run's own time limit.</summary>
     public const int MostLegMinutes = 120;
 
     /// <summary>How many failed drafts in a row end a leg whose Outlook is still running.</summary>
     public const int MostFailuresInARow = 5;
 
-    private HuntPlan(string variant, HuntMaker maker, bool windowless, bool showsCalendar, int legMinutes)
+    private HuntPlan(string variant, HuntMaker maker, bool windowless, bool showsCalendar, int legMinutes, bool showsEach)
     {
         Variant = variant;
         Maker = maker;
         Windowless = windowless;
         ShowsCalendar = showsCalendar;
         LegMinutes = legMinutes;
+        ShowsEach = showsEach;
     }
 
     /// <summary>
@@ -65,14 +72,27 @@ public sealed class HuntPlan
 
     public int LegMinutes { get; }
 
+    /// <summary>
+    /// Whether every draft comes after a compose window shown and closed (<see cref="ShowEachVariable"/>): what the
+    /// typed-text tests, where every hunted crash struck, do before each of the product's drafts - and what the loops
+    /// without it, which never crashed, do not.
+    /// </summary>
+    public bool ShowsEach { get; }
+
     /// <summary>The cell of the variant's attempt lines - one a draft.</summary>
-    public string Cell => "S5-hunt-" + Variant;
+    public string Cell => "S5-hunt-" + Variant + (ShowsEach ? "-shown" : string.Empty);
 
     /// <summary>
     /// The plan the two variables name; null with the reason when they name none - unset outside a hunting run, so
     /// the test writes a NOT RUN line and makes nothing.
     /// </summary>
     public static HuntPlan? Parse(string? variant, string? legMinutes, out string? why)
+    {
+        return Parse(variant, legMinutes, showEach: null, out why);
+    }
+
+    /// <summary><see cref="Parse(string?, string?, out string?)"/>, with <see cref="ShowEachVariable"/>: "1" shows a window before each draft, unset or "0" does not.</summary>
+    public static HuntPlan? Parse(string? variant, string? legMinutes, string? showEach, out string? why)
     {
         why = null;
         if (string.IsNullOrWhiteSpace(variant))
@@ -87,18 +107,34 @@ public sealed class HuntPlan
             return null;
         }
 
+        bool shows;
+        switch (showEach)
+        {
+            case null:
+            case "":
+            case "0":
+                shows = false;
+                break;
+            case "1":
+                shows = true;
+                break;
+            default:
+                why = ShowEachVariable + " must be 1 or 0, not '" + showEach + "'";
+                return null;
+        }
+
         switch (variant)
         {
             case "ProductLoop":
-                return new HuntPlan(variant, HuntMaker.Product, windowless: false, showsCalendar: false, minutes);
+                return new HuntPlan(variant, HuntMaker.Product, windowless: false, showsCalendar: false, minutes, shows);
             case "OtherFolder":
-                return new HuntPlan(variant, HuntMaker.Product, windowless: false, showsCalendar: true, minutes);
+                return new HuntPlan(variant, HuntMaker.Product, windowless: false, showsCalendar: true, minutes, shows);
             case "NoWindow":
-                return new HuntPlan(variant, HuntMaker.Product, windowless: true, showsCalendar: false, minutes);
+                return new HuntPlan(variant, HuntMaker.Product, windowless: true, showsCalendar: false, minutes, shows);
             case "NoFormPage":
-                return new HuntPlan(variant, HuntMaker.NoFormPage, windowless: false, showsCalendar: false, minutes);
+                return new HuntPlan(variant, HuntMaker.NoFormPage, windowless: false, showsCalendar: false, minutes, shows);
             case "BareCreators":
-                return new HuntPlan(variant, HuntMaker.Bare, windowless: false, showsCalendar: false, minutes);
+                return new HuntPlan(variant, HuntMaker.Bare, windowless: false, showsCalendar: false, minutes, shows);
             default:
                 why = "'" + variant + "' is no hunting variant: " + string.Join(", ", Variants);
                 return null;

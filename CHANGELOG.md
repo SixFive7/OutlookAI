@@ -302,7 +302,10 @@ its mailbox tests on, and change nothing you install.
   NoWindow in an Outlook that COM started with no window. NoFormPage follows the product's direct
   route through the object model without the "Message" form page, and BareCreators calls Reply() or
   Forward() and releases the result unsaved. Only the hunt's suite script names a variant, so the loop
-  makes nothing in any other run. Every hunting run also records Office's build and the hunted
+  makes nothing in any other run. With `-HuntShowEach` every draft of a loop comes after a compose
+  window shown and closed: a reply or forward made through the object model, promoted the product's
+  own way and closed discarding, which is what the typed-text tests do before each of the product's
+  drafts. Every hunting run also records Office's build and the hunted
   module's file, and the summary shows both. `-HuntWithoutAddIn` turns OutlookAI's own add-in off
   for the run, LoadBehavior 0 before Outlook starts, and the restore after the run brings the
   checkpoint's value back. Every Outlook guest's checkpoint holds the add-in installed and loading,

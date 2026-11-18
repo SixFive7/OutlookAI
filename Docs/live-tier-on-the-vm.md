@@ -5585,8 +5585,12 @@ windowed Outlook, its main window as Outlook opened it on the Inbox. Each other 
 | NoFormPage | the drafts are made through the object model the product's direct way - Reply() or Forward() saved, re-opened by EntryID, the editor read, a line put above the quote, `Close(olSave)` - without `ModifiedFormPages.Add("Message")` |
 | BareCreators | only `Reply()` or `Forward()` on the source, the result released unsaved: nothing is written |
 
-Only the hunt's suite script sets the two variables that name a variant and its leg minutes
-(`T2/HuntPlan.cs`), so the loop writes a NOT RUN line and makes nothing in any other run. Every hunting run
+Only the hunt's suite script sets the variables that name a variant, its leg minutes and whether a window is shown
+before each draft (`T2/HuntPlan.cs`), so the loop writes a NOT RUN line and makes nothing in any other run. With
+`-HuntShowEach`, every draft of the loop comes after a compose window shown and closed: a reply or forward the object
+model makes and saves, opened in an inspector and promoted the product's own way - parked off screen, activated,
+hidden, as the typed-text tests read every draft - then closed discarding and deleted. Without it a loop shows no
+window at all. Every hunting run
 also writes Office's Click-to-Run build, channel and update setting and the hunted module's file - its
 path, size, time and SHA-256 - to its console as `HUNT-OFFICE` lines, which the summary reads back.
 

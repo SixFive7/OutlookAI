@@ -213,6 +213,13 @@
     With a -HuntVariant other than Legs: the minutes of one leg, one dotnet test of the loop (default 10, at most
     -HuntMinutes).
 
+.PARAMETER HuntShowEach
+    With a -HuntVariant other than Legs: every draft of the loop comes after a compose window shown and closed - a
+    reply or forward the object model made, opened in an inspector and promoted the product's own way (parked,
+    activated, hidden), closed discarding - as the typed-text tests read every draft before the product makes the
+    next. The loops without it, which make no window, never crashed (2026-11-18); every hunted crash struck after such
+    windows.
+
 .PARAMETER HuntWithoutAddIn
     With -HuntFirstChance: OutlookAI's own add-in, which every Outlook guest's frozen checkpoint holds installed and
     loading (LoadBehavior 3), is turned off for the run - LoadBehavior 0, written before Outlook starts, so no Outlook
@@ -272,6 +279,7 @@ param(
     [Parameter(ParameterSetName = 'Run')] [ValidateSet('Legs', 'ProductLoop', 'OtherFolder', 'NoWindow', 'NoFormPage', 'BareCreators')] [string] $HuntVariant = 'Legs',
     [Parameter(ParameterSetName = 'Run')] [int] $HuntLegMinutes = 10,
     [Parameter(ParameterSetName = 'Run')] [switch] $HuntWithoutAddIn,
+    [Parameter(ParameterSetName = 'Run')] [switch] $HuntShowEach,
     [Parameter(ParameterSetName = 'Run')] [switch] $WithAddIn,
     [Parameter(ParameterSetName = 'Run')] [string] $VstoRuntimePath,
     [Parameter(ParameterSetName = 'Run')] [ValidateSet('GroupPolicy', 'Preference', 'PreferenceNoOwnNew', 'NoSetting')] [string] $SignatureSettings,
@@ -340,6 +348,7 @@ $HuntLegs = [ordered]@{
 # no other run sets, so the loop makes nothing anywhere else (T2.HuntPlan; T1.HuntPlanTests holds both sides to one list).
 $HuntVariantVariable = 'OUTLOOKAI_HUNT_VARIANT'
 $HuntLegMinutesVariable = 'OUTLOOKAI_HUNT_LEG_MINUTES'
+$HuntShowEachVariable = 'OUTLOOKAI_HUNT_SHOW_EACH'
 $HuntLoopLeg = '&FullyQualifiedName~OutlookAI.McpServer.Tests.T2.LiveHuntDerivedDraftTests'
 # -HuntWithoutAddIn: the key Install-OutlookAIAddIn.ps1 registers the add-in under, for the user Outlook runs as.
 $AddInRegistryKey = 'HKCU:\Software\Microsoft\Office\Outlook\Addins\OutlookAI'
@@ -446,12 +455,14 @@ function Merge-CrashCount {
 # Outlook test guest only - never the Exchange VM, whose Outlook holds a real mailbox that a full dump would hold too -
 # and its rounds and minutes are bounded, inside the run's own time limit. Pure.
 function Get-HuntRefusal {
-    param([bool] $Hunt, [bool] $Exchange, [string] $Filter, [string] $FilterSuffix, [string] $SignatureSettings, [bool] $SignatureDialog, [int] $Rounds, [int] $Minutes, [int] $RunTimeoutMinutes, [string] $Variant = 'Legs', [int] $LegMinutes = 10, [bool] $WithoutAddIn = $false, [bool] $WithAddIn = $false)
+    param([bool] $Hunt, [bool] $Exchange, [string] $Filter, [string] $FilterSuffix, [string] $SignatureSettings, [bool] $SignatureDialog, [int] $Rounds, [int] $Minutes, [int] $RunTimeoutMinutes, [string] $Variant = 'Legs', [int] $LegMinutes = 10, [bool] $WithoutAddIn = $false, [bool] $WithAddIn = $false, [bool] $ShowEach = $false)
     if (-not $Hunt) {
         if ($Variant -and $Variant -ne 'Legs') { return "-HuntVariant $Variant is a hunting run's: give -HuntFirstChance with it." }
         if ($WithoutAddIn) { return "-HuntWithoutAddIn is a hunting run's: give -HuntFirstChance with it." }
+        if ($ShowEach) { return "-HuntShowEach is a hunting run's: give -HuntFirstChance and a -HuntVariant with it." }
         return ''
     }
+    if ($ShowEach -and (-not $Variant -or $Variant -eq 'Legs')) { return '-HuntShowEach shows a window before each draft of a loop: give a -HuntVariant other than Legs, whose typed-text tests show their own.' }
     if ($WithoutAddIn -and $WithAddIn) { return '-HuntWithoutAddIn turns the add-in off and -WithAddIn installs it: give one.' }
     if ($Exchange) { return '-HuntFirstChance attaches a debugger to Outlook and writes its whole memory to a dump: never on the Exchange VM, whose Outlook holds a real mailbox.' }
     if ($Filter -or $FilterSuffix) { return '-HuntFirstChance runs its own tests, the ones the crashes of 2026-11-18 struck in: give no -Filter or -FilterSuffix.' }
@@ -485,10 +496,10 @@ function Get-HuntLegs {
 # file is named for its round and leg. The rounds end at -HuntRounds, at -HuntMinutes, or at the first dump the
 # debugger wrote. Pure.
 function Get-HuntSuiteScript {
-    param([string] $OptIn, [string] $GuestRunDir, [string] $GuestRoot, [System.Collections.IDictionary] $Filters, [int] $Rounds, [int] $Minutes, [string] $Module, [string] $DumpDir, [string] $ScriptName, [string] $Variant = 'Legs', [int] $LegMinutes = 10)
+    param([string] $OptIn, [string] $GuestRunDir, [string] $GuestRoot, [System.Collections.IDictionary] $Filters, [int] $Rounds, [int] $Minutes, [string] $Module, [string] $DumpDir, [string] $ScriptName, [string] $Variant = 'Legs', [int] $LegMinutes = 10, [bool] $ShowEach = $false)
     $legLines = (@($Filters.Keys) | ForEach-Object { "`$legs += ,@('$_', '$($Filters[$_])')" }) -join "`r`n"
     $variantLines = ''
-    if ($Variant -and $Variant -ne 'Legs') { $variantLines = "`$env:$HuntVariantVariable = '$Variant'`r`n`$env:$HuntLegMinutesVariable = '$LegMinutes'`r`n" }
+    if ($Variant -and $Variant -ne 'Legs') { $variantLines = "`$env:$HuntVariantVariable = '$Variant'`r`n`$env:$HuntLegMinutesVariable = '$LegMinutes'`r`n`$env:$HuntShowEachVariable = '$([int]$ShowEach)'`r`n" }
     return @"
 $variantLines`$env:OUTLOOKAI_LIVE_OPT_IN = '$OptIn'
 `$env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'; `$env:DOTNET_NOLOGO = '1'; `$env:MSBUILDDISABLENODEREUSE = '1'
@@ -1332,7 +1343,10 @@ STACK      the faulting thread
     $err = $null
     [void][System.Management.Automation.Language.Parser]::ParseInput($loopHunt, [ref]$null, [ref]$err)
     Check 'a variant''s suite script parses' 0 @($err).Count
-    Check 'it names the variant and its leg minutes to the test before anything runs' $true ($loopHunt.StartsWith("`$env:OUTLOOKAI_HUNT_VARIANT = 'NoFormPage'`r`n`$env:OUTLOOKAI_HUNT_LEG_MINUTES = '12'`r`n") -and $loopHunt.Contains("`$legs += ,@('loop', 'F&L')"))
+    Check 'it names the variant and its leg minutes to the test before anything runs' $true ($loopHunt.StartsWith("`$env:OUTLOOKAI_HUNT_VARIANT = 'NoFormPage'`r`n`$env:OUTLOOKAI_HUNT_LEG_MINUTES = '12'`r`n`$env:OUTLOOKAI_HUNT_SHOW_EACH = '0'`r`n") -and $loopHunt.Contains("`$legs += ,@('loop', 'F&L')"))
+    $shownHunt = Get-HuntSuiteScript -OptIn 'OAI-INDEXED' -GuestRunDir 'C:\r' -GuestRoot 'C:\g' -Filters ([ordered]@{ loop = 'F&L' }) -Rounds 20 -Minutes 60 -Module 'mso40uiwin32client.dll' -DumpDir 'C:\d' -ScriptName $FirstChanceScript -Variant 'ProductLoop' -LegMinutes 10 -ShowEach $true
+    Check 'and -HuntShowEach tells it to show a window before each draft' $true ($shownHunt.Contains("`$env:OUTLOOKAI_HUNT_SHOW_EACH = '1'`r`n"))
+    Check '-HuntShowEach is a loop''s, in a hunting run' 'hunt|loop|' "$(if ((Get-HuntRefusal $false $false '' '' '' $false 20 60 120 'ProductLoop' 10 $false $false $true) -match 'give -HuntFirstChance') { 'hunt' })|$(if ((Get-HuntRefusal $true $false '' '' '' $false 20 60 120 'Legs' 10 $false $false $true) -match 'other than Legs') { 'loop' })|$(Get-HuntRefusal $true $false '' '' '' $false 20 60 120 'ProductLoop' 10 $false $false $true)"
     Check 'and Legs names none - its tests are not the loop''s' $false ($hunt.Contains('OUTLOOKAI_HUNT_VARIANT'))
     Check 'every hunting run records Office''s build and the hunted module''s file before the debugger starts' $true ($hunt.Contains("'HKLM:\SOFTWARE\Microsoft\Office\ClickToRun\Configuration'") -and $hunt.Contains("-Filter 'mso40uiwin32client.dll'") -and $hunt.IndexOf('HUNT-OFFICE') -gt 0 -and $hunt.IndexOf('HUNT-OFFICE') -lt $hunt.IndexOf('Start-Process'))
     $office = Read-HuntOffice "x`r`nHUNT-OFFICE VersionToReport = 16.0.17932.20996`r`nHUNT-OFFICE UpdatesEnabled = False`r`nHUNT-OFFICE module C:\m.dll, 5 bytes, written 2026-09-12T00:00:00.0000000Z, SHA-256 AB`r`n"
@@ -1496,7 +1510,7 @@ if ($WithAddIn -and ($facts.Exchange -or (-not $Kind -and -not $startIsFrozen)))
 # again once taken.
 $stepRefusal = Get-SignatureSettingsRefusal $SignatureSettings ([bool]$facts.Exchange) ($startIsFrozen -or [bool]$Kind) $GreenCheckpoint $Filter ([bool]$SignatureDialog)
 if ($stepRefusal) { Stop-Refused $stepRefusal }
-$huntRefusal = Get-HuntRefusal ([bool]$HuntFirstChance) ([bool]$facts.Exchange) $Filter $FilterSuffix $SignatureSettings ([bool]$SignatureDialog) $HuntRounds $HuntMinutes $RunTimeoutMinutes $HuntVariant $HuntLegMinutes ([bool]$HuntWithoutAddIn) ([bool]$WithAddIn)
+$huntRefusal = Get-HuntRefusal ([bool]$HuntFirstChance) ([bool]$facts.Exchange) $Filter $FilterSuffix $SignatureSettings ([bool]$SignatureDialog) $HuntRounds $HuntMinutes $RunTimeoutMinutes $HuntVariant $HuntLegMinutes ([bool]$HuntWithoutAddIn) ([bool]$WithAddIn) ([bool]$HuntShowEach)
 if ($huntRefusal) { Stop-Refused $huntRefusal }
 # A hunting run runs its own tests (Get-HuntSuiteScript): narrowed, and every leg's filter the guest's derived one with
 # the leg's suffix.
@@ -2090,7 +2104,7 @@ Copy-Item -LiteralPath '$GuestPayloadDir\live-test-settings.json' -Destination '
         Add-Content -LiteralPath $ledgerPath -Value (ConvertTo-LedgerLine $runMarker $runId 'started' $null $priorMarkers ([DateTime]::UtcNow)) -Encoding UTF8
     }
     if ($HuntFirstChance) {
-        $liveScript = Get-HuntSuiteScript -OptIn $facts.ComputerName -GuestRunDir $guestRunDir -GuestRoot $GuestRoot -Filters $huntFilters -Rounds $HuntRounds -Minutes $HuntMinutes -Module $HuntModule -DumpDir $GuestDumpDir -ScriptName $FirstChanceScript -Variant $HuntVariant -LegMinutes $HuntLegMinutes
+        $liveScript = Get-HuntSuiteScript -OptIn $facts.ComputerName -GuestRunDir $guestRunDir -GuestRoot $GuestRoot -Filters $huntFilters -Rounds $HuntRounds -Minutes $HuntMinutes -Module $HuntModule -DumpDir $GuestDumpDir -ScriptName $FirstChanceScript -Variant $HuntVariant -LegMinutes $HuntLegMinutes -ShowEach ([bool]$HuntShowEach)
         Say "hunt: a debugger on every OUTLOOK.EXE, dumping the first first-chance access violation in $HuntModule; variant $HuntVariant, at most $HuntRounds round(s) of $(@($huntFilters.Keys) -join ' and ') in $HuntMinutes minute(s)$(if ($HuntVariant -ne 'Legs') { ", $HuntLegMinutes a leg" })"
     }
     else {
@@ -2245,7 +2259,7 @@ $summary['outlookStart'] = $outlookStart
 $summary['signatureSettings'] = $signatureSettingsState
 $summary['indexRoots'] = $indexRoots
 $huntDumps = @(@($crashDumpState['files']) | Where-Object { [string]$_['name'] -match 'chance\.dmp$' } | ForEach-Object { [string]$_['name'] })
-if ($HuntFirstChance) { $summary['hunt'] = [ordered]@{ module = $HuntModule; variant = $HuntVariant; legMinutes = $(if ($HuntVariant -ne 'Legs') { $HuntLegMinutes } else { $null }); legs = $huntFilters; roundsAsked = $HuntRounds; minutes = $HuntMinutes; roundsRun = $huntRoundsRun; dumps = $huntDumps; office = $huntOffice; addIn = $huntAddIn; log = "results\$($facts.Name)\first-chance.log" } }
+if ($HuntFirstChance) { $summary['hunt'] = [ordered]@{ module = $HuntModule; variant = $HuntVariant; showEach = [bool]$HuntShowEach; legMinutes = $(if ($HuntVariant -ne 'Legs') { $HuntLegMinutes } else { $null }); legs = $huntFilters; roundsAsked = $HuntRounds; minutes = $HuntMinutes; roundsRun = $huntRoundsRun; dumps = $huntDumps; office = $huntOffice; addIn = $huntAddIn; log = "results\$($facts.Name)\first-chance.log" } }
 # ToArray(), never @(...): @() of a List[object] given to an [object[]] parameter fails with "Argument
 # types do not match" under Windows PowerShell 5.1 and PowerShell 7.7 alike (measured 2026-11-18).
 $summary['guestClock'] = New-GuestClockSummaryJson $guestClockRecords.ToArray()
@@ -2292,7 +2306,7 @@ $lines.Add("outlook    crashes during the run: $crashText; crash dumps: $dumpTex
 if ($HuntFirstChance) {
     $roundsText = 'not read'
     if ($huntRoundsRun -ge 0) { $roundsText = [string]$huntRoundsRun }
-    $lines.Add("hunt       variant $HuntVariant, OutlookAI's add-in $huntAddIn, $roundsText of at most $HuntRounds round(s) of $(@($huntFilters.Keys) -join ' and ') in $HuntMinutes min, a debugger on every OUTLOOK.EXE: $($huntDumps.Count) first- or second-chance dump(s) in $HuntModule's hunt (results\$($facts.Name)\first-chance.log)")
+    $lines.Add("hunt       variant $HuntVariant$(if ($HuntShowEach) { ', a window shown before each draft' }), OutlookAI's add-in $huntAddIn, $roundsText of at most $HuntRounds round(s) of $(@($huntFilters.Keys) -join ' and ') in $HuntMinutes min, a debugger on every OUTLOOK.EXE: $($huntDumps.Count) first- or second-chance dump(s) in $HuntModule's hunt (results\$($facts.Name)\first-chance.log)")
     if ($null -ne $huntOffice) { $lines.Add("office     $($huntOffice['VersionToReport']) $($huntOffice['ProductReleaseIds']) $($huntOffice['Platform']), $($huntOffice['AudienceData']), updates enabled: $($huntOffice['UpdatesEnabled']); $($huntOffice['module'])") }
 }
 $lines.Add((Format-OutlookStartLine $outlookStart))

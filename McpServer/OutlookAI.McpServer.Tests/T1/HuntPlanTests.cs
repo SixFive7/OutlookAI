@@ -29,6 +29,33 @@ public sealed class HuntPlanTests
         Assert.Equal(showsCalendar, plan.ShowsCalendar);
         Assert.Equal(10, plan.LegMinutes);
         Assert.Equal("S5-hunt-" + variant, plan.Cell);
+        Assert.False(plan.ShowsEach);
+    }
+
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData("", false)]
+    [InlineData("0", false)]
+    [InlineData("1", true)]
+    public void AWindowShownBeforeEachDraft_IsAskedForByOne(string? showEach, bool shows)
+    {
+        HuntPlan? plan = HuntPlan.Parse("NoFormPage", "10", showEach, out string? why);
+
+        Assert.NotNull(plan);
+        Assert.Null(why);
+        Assert.Equal(shows, plan!.ShowsEach);
+        Assert.Equal(HuntMaker.NoFormPage, plan.Maker);
+        Assert.Equal(shows ? "S5-hunt-NoFormPage-shown" : "S5-hunt-NoFormPage", plan.Cell);
+    }
+
+    [Theory]
+    [InlineData("2")]
+    [InlineData("yes")]
+    [InlineData("true")]
+    public void AnythingElse_IsNoPlan(string showEach)
+    {
+        Assert.Null(HuntPlan.Parse("ProductLoop", "10", showEach, out string? why));
+        Assert.Contains("must be 1 or 0", why, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -60,6 +87,7 @@ public sealed class HuntPlanTests
         Assert.Equal(new[] { "Legs" }.Concat(HuntPlan.Variants).ToArray(), offered);
         Assert.Contains("$HuntVariantVariable = '" + HuntPlan.VariantVariable + "'", runner, StringComparison.Ordinal);
         Assert.Contains("$HuntLegMinutesVariable = '" + HuntPlan.LegMinutesVariable + "'", runner, StringComparison.Ordinal);
+        Assert.Contains("$HuntShowEachVariable = '" + HuntPlan.ShowEachVariable + "'", runner, StringComparison.Ordinal);
         Assert.Contains("FullyQualifiedName~" + typeof(LiveHuntDerivedDraftTests).FullName, runner, StringComparison.Ordinal);
     }
 

@@ -25,6 +25,9 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// which is what keeps such an edit (B3; without it, B2, the edit is not kept - nothing here needs it kept).</item>
 /// <item>BareCreators: Reply() or Forward() on the source, and what it returned released unsaved.</item>
 /// </list>
+/// With <see cref="HuntPlan.ShowsEach"/> every draft comes after a compose window shown and closed - a reply or forward
+/// the object model made, promoted the product's own way and closed discarding - as the typed-text tests do before each
+/// of the product's drafts; the loops without it make no window at all.
 /// Gated twice: it runs only in a run that selects the compose collection alone (<see cref="Q149RunGate"/>), and only
 /// when the hunt's suite script named a variant (<see cref="HuntPlan.VariantVariable"/>); anywhere else it writes a
 /// NOT RUN line and makes nothing. Every draft is the hub's, carries the tag and this run's marker, and is deleted by
@@ -64,6 +67,7 @@ public sealed class LiveHuntDerivedDraftTests
         HuntPlan? plan = HuntPlan.Parse(
             Environment.GetEnvironmentVariable(HuntPlan.VariantVariable),
             Environment.GetEnvironmentVariable(HuntPlan.LegMinutesVariable),
+            Environment.GetEnvironmentVariable(HuntPlan.ShowEachVariable),
             out string? why);
         if (plan == null)
         {
@@ -119,7 +123,8 @@ public sealed class LiveHuntDerivedDraftTests
         start.Set("pid", pid)
             .Set("embedding", commandLine == null ? null : commandLine.Contains("Embedding", StringComparison.OrdinalIgnoreCase))
             .Set("legMinutes", plan.LegMinutes)
-            .Set("maker", plan.Maker.ToString());
+            .Set("maker", plan.Maker.ToString())
+            .Set("showsEach", plan.ShowsEach);
         if (plan.ShowsCalendar)
         {
             start.Set("moved", MoveMainWindowToTheCalendar(client));
@@ -149,6 +154,11 @@ public sealed class LiveHuntDerivedDraftTests
             bool going = false;
             try
             {
+                if (plan.ShowsEach)
+                {
+                    ShowAndClose(drafts, client, sourceEntryId, storeId, forward, i, attempt);
+                }
+
                 entryId = plan.Maker switch
                 {
                     HuntMaker.Product => ProductDraft(sourceEntryId, forward, i),
@@ -283,6 +293,65 @@ public sealed class LiveHuntDerivedDraftTests
             }
         });
         return null;
+    }
+
+    /// <summary>
+    /// ShowsEach: a reply or forward the object model makes and saves (<see cref="Q149Drafts.CreateDerivedWithoutInspector"/>),
+    /// opened in an inspector and promoted the product's own way - parked off screen, activated, hidden
+    /// (<see cref="ComposeSurface.PromoteForWordEditor(object, out string?)"/>), as the typed-text tests read every draft -
+    /// then closed discarding and deleted. Activating it is what OutlookAI's own add-in puts its task pane on; closing it
+    /// is what the add-in takes the pane off at.
+    /// </summary>
+    private void ShowAndClose(Q149Run drafts, Q149OutlookClient client, string sourceEntryId, string storeId, bool forward, int i, Q149Attempt attempt)
+    {
+        Stopwatch shown = Stopwatch.StartNew();
+        (string entryId, _) = Q149Drafts.CreateDerivedWithoutInspector(drafts, client, sourceEntryId, storeId, forward, "hunt-shown-" + i.ToString(CultureInfo.InvariantCulture));
+        try
+        {
+            string? error = client.Run<string?>((app, ns) =>
+            {
+                dynamic? item = null;
+                object? inspector = null;
+                object? document = null;
+                try
+                {
+                    item = ns.GetItemFromID(entryId, storeId);
+                    Q149Drafts.RequireOwnUnsentDraft(drafts, item);
+                    inspector = (object)item.GetInspector;
+                    document = ComposeSurface.PromoteForWordEditor(inspector, out string? promoteError);
+                    return document == null ? (promoteError ?? "NoWordEditor") : null;
+                }
+                finally
+                {
+                    Q149Com.Release(document);
+                    if (inspector != null)
+                    {
+                        try
+                        {
+                            ((dynamic)inspector).Close(LiveComposeProbe.OlDiscard);
+                        }
+                        catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+                        {
+                        }
+                    }
+
+                    Q149Com.Release(inspector);
+                    Q149Com.Release(item);
+                }
+            });
+            attempt.Set("shownMs", shown.ElapsedMilliseconds).Set("shownError", error);
+        }
+        finally
+        {
+            try
+            {
+                attempt.Set("shownDeleted", LiveOutlookTestMailer.DeleteItemByEntryId(Run.Hub, entryId, Run.Marker));
+            }
+            catch (Exception ex) when (ex is InvalidOperationException || OutlookComSession.IsComCallFailure(ex))
+            {
+                attempt.Set("shownDeleteFailure", Q149Com.Failure(ex));
+            }
+        }
     }
 
     /// <summary>A line above everything in the draft - above the quote, where the product puts its text.</summary>
