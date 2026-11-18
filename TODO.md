@@ -1680,10 +1680,11 @@
   `Invoke-NativeCommand`, `Say` and `Stop-Refused` word for word, and `Get-TaskExit` but for the
   marker it reads (`PROBE-TASK-EXIT` where the runner reads `RUN-REGISTER-EXIT`); decision 166 says
   how they are folded.
-  Folded so far, each with its CHANGELOG entry: the test suite's stand-ins for Outlook's
-  connection and its repository paths, in `McpServer/OutlookAI.McpServer.Tests/Support/` - the
-  survey's T01, T04 and T07, but for four live-tier fixtures in `T2/` that still read the test
-  project's folder themselves, and T09's reader of the committed example settings.
+  Folded so far, each with its CHANGELOG entry: the test suite's stand-ins for Outlook's connection
+  and for the search index, and its repository paths, in
+  `McpServer/OutlookAI.McpServer.Tests/Support/` - the survey's T01, T02, T04 and T07, but for four
+  live-tier fixtures in `T2/` that still read the test project's folder themselves, and T09's reader
+  of the committed example settings.
 
 - [ ] **Let the add-in's AI choose the signature by itself, once the add-in uses OutlookAI.Core (Q158
   and Q162, decided 2026-11-17).** Signatures are managed through the MCP server only; the add-in
