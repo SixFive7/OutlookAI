@@ -2912,6 +2912,72 @@ namespace OutlookAI.Core.Services
         /// and being recovered from, which was previously indistinguishable from silence.
         /// </summary>
         public ComHostDiagnostics? ComHost { get; set; }
+
+        /// <summary>
+        /// The running Outlook's start, and OutlookAI's part in it (Q178 (e)): its process and start time,
+        /// whether OutlookAI started it, whether it ever showed a window, since when it has not responded,
+        /// and the start-up step an OutlookAI connection is in. Read without COM, so it answers for an
+        /// Outlook that is hung or still starting.
+        /// </summary>
+        public OutlookStartHealthView? Start { get; set; }
+    }
+
+    /// <summary>
+    /// The start block of <c>outlook_health</c> (Q176 (c), Q178 (e), decided by the maintainer 2026-11-18).
+    /// Everything here comes from Windows, the registry and the start record - never from Outlook itself.
+    /// </summary>
+    public sealed class OutlookStartHealthView
+    {
+        /// <summary>
+        /// The start policy's verdict: "not-running", "settling" (started recently, nothing is opened in it
+        /// yet), "ready", or "not-responding" (hung, or still starting past the limit).
+        /// </summary>
+        public string State { get; set; } = string.Empty;
+
+        /// <summary>Why, in words.</summary>
+        public string? Detail { get; set; }
+
+        /// <summary>The OUTLOOK.EXE's process id - what to end in Task Manager if it has to be ended.</summary>
+        public int? ProcessId { get; set; }
+
+        /// <summary>When it started (UTC).</summary>
+        public DateTime? StartedUtc { get; set; }
+
+        /// <summary>
+        /// "outlookai" when an OutlookAI connection started it; "unknown" when OutlookAI's record does not name it
+        /// - the user, another program, or an OutlookAI from before the record started it.
+        /// </summary>
+        public string? StartedBy { get; set; }
+
+        /// <summary>The OutlookAI server process whose connection started it.</summary>
+        public int? StartedByServerProcessId { get; set; }
+
+        /// <summary>Whether a window of it is on screen now - an Outlook started by a program has none.</summary>
+        public bool? HasWindow { get; set; }
+
+        /// <summary>Whether it was ever seen with a window, now or by an OutlookAI process before.</summary>
+        public bool? EverShowedWindow { get; set; }
+
+        /// <summary>When an OutlookAI process first saw it not responding (UTC); null while it responds.</summary>
+        public DateTime? NotRespondingSinceUtc { get; set; }
+
+        /// <summary>
+        /// The start-up step of the last OutlookAI connection to this Outlook - "connected" when it finished,
+        /// "failed" when it gave up, a step's name while it is in it or when it died there.
+        /// </summary>
+        public string? StartStep { get; set; }
+
+        /// <summary>Since when that connection has been in that step (UTC).</summary>
+        public DateTime? StartStepSinceUtc { get; set; }
+
+        /// <summary>The server process that connection works for.</summary>
+        public int? StartStepServerProcessId { get; set; }
+
+        /// <summary>Whether the OutlookAI add-in has finished starting inside it; null when no add-in is set to load.</summary>
+        public bool? AddInStarted { get; set; }
+
+        /// <summary>The start log, with no mail content - what a report about a hang needs.</summary>
+        public string LogPath { get; set; } = string.Empty;
     }
 
     /// <summary>Index block of the outlook_health report (Phase 7; per-store rows merged from index_status in D37).</summary>

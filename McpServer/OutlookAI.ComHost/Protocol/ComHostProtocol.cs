@@ -36,8 +36,11 @@ namespace OutlookAI.ComHost.Protocol
         /// <summary>Environment variable carrying the pipe name from parent to child.</summary>
         internal const string PipeNameVariable = "OUTLOOKAI_COMHOST_PIPE";
 
-        /// <summary>Environment variable carrying the parent PID so the child can exit if orphaned.</summary>
-        internal const string ParentPidVariable = "OUTLOOKAI_COMHOST_PARENT_PID";
+        /// <summary>
+        /// Environment variable carrying the parent PID so the child can exit if orphaned. Core reads the same
+        /// variable to name the server in the start record and log, so the name is defined there.
+        /// </summary>
+        internal const string ParentPidVariable = OutlookAI.Core.Com.ComHostIdentity.ParentPidVariable;
 
         /// <summary>
         /// Shared serializer options. Web defaults (camelCase) to match the tool payload

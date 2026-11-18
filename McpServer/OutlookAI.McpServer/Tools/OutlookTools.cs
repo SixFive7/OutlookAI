@@ -1257,6 +1257,16 @@ public static partial class OutlookTools
                 outcome: MutationOutcome.Unchanged,
                 retryAfterSeconds: ex.RetryAfterSeconds);
         }
+        catch (OutlookNotRespondingException ex)
+        {
+            // Q177 (a), Q178 (e): an Outlook that is not responding, or never finished starting. The message
+            // is the whole report - what is stuck and why, the process, how to end it and what that risks -
+            // and the type is the one agents already know for an unresponsive Outlook.
+            return Error("OutlookUnresponsive", ex.Message, OutlookNotRespondingException.AgentAdvice,
+                // Refused before anything was dispatched, at the gate or before a connection opened a mailbox.
+                outcome: MutationOutcome.Unchanged,
+                retryAfterSeconds: ex.RetryAfterSeconds);
+        }
         catch (ComHostUnresponsiveException ex)
         {
             return Error("OutlookUnresponsive", ex.Message,

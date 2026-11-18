@@ -149,8 +149,29 @@ namespace OutlookAI.Core.Com
             StartedOutlook = startedOutlook;
         }
 
-        /// <summary>True when connecting had to launch a new OUTLOOK.EXE process.</summary>
-        public bool StartedOutlook { get; }
+        /// <summary>
+        /// True when connecting had to launch a new OUTLOOK.EXE process. Decided under the start lock: a
+        /// connection that waited for another one finds the Outlook that one started, and attaches.
+        /// </summary>
+        public bool StartedOutlook { get; private set; }
+
+        /// <summary>How this session's connection went - its waits and why they ended (Q175); null before it connected.</summary>
+        public OutlookConnectTrace? ConnectTrace { get; private set; }
+
+        /// <summary>
+        /// The trace of the last connection any session in this process made, for the live tier, which
+        /// measures what the settle wait costs without holding the session that paid it.
+        /// </summary>
+        public static OutlookConnectTrace? LastConnectTrace => System.Threading.Volatile.Read(ref _lastConnectTrace);
+
+        private static OutlookConnectTrace? _lastConnectTrace;
+
+        /// <summary>
+        /// The Outlook objects of connections abandoned because Outlook stopped responding while they held
+        /// them. Kept for the life of the process, never released: a release is a call into the Outlook that
+        /// is not answering, and it would block for good - the thread asking, or the finalizer.
+        /// </summary>
+        private static readonly List<object> AbandonedReferences = new List<object>();
 
         /// <summary>PID of the OUTLOOK.EXE this session watches (null when the probe failed).</summary>
         public int? OutlookProcessId { get; private set; }
@@ -361,19 +382,12 @@ namespace OutlookAI.Core.Com
         /// </summary>
         internal static OutlookComSession Connect(bool allowStartingOutlook, Action<OutlookComSession>? onOutlookGone, bool lifetimePin)
         {
+            // The refusals that need nothing but a process list come first, before the start lock is taken
+            // or a thread is made: they cost nothing and touch no Outlook.
             bool wasRunning = IsOutlookProcessRunning();
             if (!wasRunning)
             {
-                if (IsInstallerMutexHeld())
-                {
-                    throw new InvalidOperationException(
-                        "Outlook is not running and the OutlookAISetup installer mutex is held - retry after the add-in update completes (D17).");
-                }
-
-                if (!allowStartingOutlook)
-                {
-                    throw new InvalidOperationException("Outlook is not running and starting it was not allowed.");
-                }
+                RefuseStartIfForbidden(allowStartingOutlook);
             }
 
             PumpedStaRunner runner = new PumpedStaRunner("OutlookAI.ComGateway.Sta");
@@ -384,50 +398,21 @@ namespace OutlookAI.Core.Com
             {
                 runner.Run(() =>
                 {
-                    Type progIdType = Type.GetTypeFromProgID("Outlook.Application")
-                        ?? throw new InvalidOperationException("Outlook.Application ProgID is not registered.");
-                    session._application = Activator.CreateInstance(progIdType)
-                        ?? throw new InvalidOperationException("Failed to create Outlook.Application.");
-                    dynamic app = session._application;
-                    dynamic ns = app.GetNamespace("MAPI");
-                    session._namespace = (object)ns;
-                    try
+                    // Q175 (e): one connection at a time, across every OutlookAI process of the user. Q175 (a):
+                    // no mailbox is opened before Outlook has settled. Q176 (c), Q178 (e): every step is in the
+                    // start record and the start log. All three are OutlookStartGuard's; see it for why.
+                    using (OutlookStartGuard guard = OutlookStartGuard.Enter(wasRunning))
                     {
-                        // Binds the default profile when Outlook was cold-started by us; a
-                        // no-op/benign failure when a session is already active.
-                        ns.Logon(Type.Missing, Type.Missing, false, false);
+                        try
+                        {
+                            ConnectUnderGuard(session, guard, allowStartingOutlook);
+                        }
+                        catch (Exception ex)
+                        {
+                            guard.Failed(ex);
+                            throw;
+                        }
                     }
-                    catch (COMException)
-                    {
-                    }
-
-                    // SF-2, part 1 - DEFENSE-IN-DEPTH: advise the Application Quit sink on
-                    // the pumped STA (section 0.5.2). Probe-measured 2026-07-23: on this
-                    // build the event does NOT fire for a programmatic Quit from another
-                    // client (Outlook parks instead) - the process-exit watcher below is
-                    // the load-bearing signal; the sink covers any path that does raise
-                    // the event, at near-zero cost. Best-effort either way.
-                    try
-                    {
-                        session._quitSink = new OutlookQuitSink(() => session.SignalOutlookGone(GoneByQuitEvent));
-                        session._quitSinkRegistration = OutlookQuitSink.TryAdvise(session._application, session._quitSink);
-                        session.QuitSinkActive = session._quitSinkRegistration != null;
-                    }
-                    catch (Exception ex) when (IsComCallFailure(ex))
-                    {
-                        session.QuitSinkActive = false;
-                    }
-
-                    // D49 THE PROCESS PIN. A window-less Outlook EXITS the moment the only
-                    // Inspector closes (D49 probe row 1, Office LTSC 2021; Q149 L1, 40 of 40 on LTSC 2024) - the compose path's own
-                    // last step, so every headless draft was killing the instance it had
-                    // just used, taking update_draft (com_failure) and three live-suite
-                    // collections (RPC_S_SERVER_UNAVAILABLE) with it. A NON-DISPLAYED
-                    // Explorer owns an invisible window that keeps the process alive; it
-                    // shows nothing, leaves Process.MainWindowHandle zero (so outlook_health
-                    // still reports headless), and does not cost the user promotability -
-                    // launching outlook.exe with the pin held still opens a normal window.
-                    session.EnsureComposeSurfacePin();
                 });
 
                 // SF-2 fix, part 2: watch the OUTLOOK.EXE process itself (crash / hard
@@ -436,11 +421,147 @@ namespace OutlookAI.Core.Com
                 session.WireProcessExitWatch();
                 return session;
             }
+            catch (OutlookNotRespondingException) when (session._application != null)
+            {
+                // Outlook stopped answering while this connection held its Application: releasing it would
+                // be a call into that Outlook, and would block for good. Abandon, never Dispose.
+                session.AbandonAfterHang();
+                throw;
+            }
             catch
             {
                 session.Dispose();
                 throw;
             }
+        }
+
+        /// <summary>
+        /// The connection's steps, on the STA thread, holding the start lock. Each step is recorded before it
+        /// is taken, so a connection that hangs inside one leaves its name and its time behind.
+        /// </summary>
+        private static void ConnectUnderGuard(OutlookComSession session, OutlookStartGuard guard, bool allowStartingOutlook)
+        {
+            // Again, under the lock: a connection that waited may find the Outlook another one started - and
+            // attach - or find the one it saw gone.
+            bool running = IsOutlookProcessRunning();
+            if (!running)
+            {
+                RefuseStartIfForbidden(allowStartingOutlook);
+            }
+
+            session.StartedOutlook = !running;
+            guard.SetStartingOutlook(!running);
+
+            // Attaching: the settle wait comes BEFORE asking for Outlook.Application, which blocks with no
+            // limit against a hung Outlook (Docs/com-host.md). The gate in front of every request looks too,
+            // but an in-process caller has no gate.
+            if (running)
+            {
+                guard.AwaitSettled(startedHere: false);
+            }
+
+            guard.BeginStep(OutlookStartSteps.CreateApplication);
+            Type progIdType = Type.GetTypeFromProgID("Outlook.Application")
+                ?? throw new InvalidOperationException("Outlook.Application ProgID is not registered.");
+            session._application = Activator.CreateInstance(progIdType)
+                ?? throw new InvalidOperationException("Failed to create Outlook.Application.");
+
+            // Starting: Outlook now runs with no window, its add-ins loading and nothing opened yet. The hang
+            // of 2026-11-15 began with the calls below arriving within its first second.
+            if (!running)
+            {
+                guard.AwaitSettled(startedHere: true);
+            }
+
+            guard.BeginStep(OutlookStartSteps.Namespace);
+            dynamic app = session._application;
+            dynamic ns = app.GetNamespace("MAPI");
+            session._namespace = (object)ns;
+            guard.BeginStep(OutlookStartSteps.Logon);
+            try
+            {
+                // Binds the default profile when Outlook was cold-started by us; a
+                // no-op/benign failure when a session is already active.
+                ns.Logon(Type.Missing, Type.Missing, false, false);
+            }
+            catch (COMException)
+            {
+            }
+
+            // SF-2, part 1 - DEFENSE-IN-DEPTH: advise the Application Quit sink on
+            // the pumped STA (section 0.5.2). Probe-measured 2026-07-23: on this
+            // build the event does NOT fire for a programmatic Quit from another
+            // client (Outlook parks instead) - the process-exit watcher below is
+            // the load-bearing signal; the sink covers any path that does raise
+            // the event, at near-zero cost. Best-effort either way.
+            guard.BeginStep(OutlookStartSteps.QuitSink);
+            try
+            {
+                session._quitSink = new OutlookQuitSink(() => session.SignalOutlookGone(GoneByQuitEvent));
+                session._quitSinkRegistration = OutlookQuitSink.TryAdvise(session._application, session._quitSink);
+                session.QuitSinkActive = session._quitSinkRegistration != null;
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+                session.QuitSinkActive = false;
+            }
+
+            // D49 THE PROCESS PIN. A window-less Outlook EXITS the moment the only
+            // Inspector closes (D49 probe row 1, Office LTSC 2021; Q149 L1, 40 of 40 on LTSC 2024) - the compose path's own
+            // last step, so every headless draft was killing the instance it had
+            // just used, taking update_draft (com_failure) and three live-suite
+            // collections (RPC_S_SERVER_UNAVAILABLE) with it. A NON-DISPLAYED
+            // Explorer owns an invisible window that keeps the process alive; it
+            // shows nothing, leaves Process.MainWindowHandle zero (so outlook_health
+            // still reports headless), and does not cost the user promotability -
+            // launching outlook.exe with the pin held still opens a normal window.
+            guard.BeginStep(OutlookStartSteps.Pin);
+            session.EnsureComposeSurfacePin();
+
+            guard.Connected();
+            session.ConnectTrace = guard.Trace;
+            System.Threading.Volatile.Write(ref _lastConnectTrace, guard.Trace);
+        }
+
+        /// <summary>The D17 refusals, for an Outlook that is not running and would have to be started.</summary>
+        private static void RefuseStartIfForbidden(bool allowStartingOutlook)
+        {
+            if (IsInstallerMutexHeld())
+            {
+                throw new InvalidOperationException(
+                    "Outlook is not running and the OutlookAISetup installer mutex is held - retry after the add-in update completes (D17).");
+            }
+
+            if (!allowStartingOutlook)
+            {
+                throw new InvalidOperationException("Outlook is not running and starting it was not allowed.");
+            }
+        }
+
+        /// <summary>
+        /// Ends this session without a single call into Outlook, for a connection that found Outlook not
+        /// responding while it held Outlook's objects. They are parked for the life of the process
+        /// (<see cref="AbandonedReferences"/>), and the STA thread is left idle rather than ended: ending it
+        /// would make COM tear its apartment down, which releases what it holds - into the same Outlook.
+        /// </summary>
+        private void AbandonAfterHang()
+        {
+            _disposed = true;
+            lock (AbandonedReferences)
+            {
+                if (_application != null)
+                {
+                    AbandonedReferences.Add(_application);
+                }
+
+                if (_namespace != null)
+                {
+                    AbandonedReferences.Add(_namespace);
+                }
+            }
+
+            _application = null;
+            _namespace = null;
         }
 
         private void WireProcessExitWatch()

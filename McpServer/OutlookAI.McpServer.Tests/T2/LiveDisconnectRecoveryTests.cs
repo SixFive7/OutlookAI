@@ -243,6 +243,7 @@ public sealed class LiveDisconnectRecoveryTests
             _ = clock.Step(
                 "re-autostart Outlook headless for the scenario",
                 () => independentGateway.Run(s => ((OutlookComSession)s).GetStores().Count));
+            AssertTheColdStartSettled("the re-autostart for the scenario");
             baselineWindows = WindowProbe.VisibleOutlookWindows();
             if (baselineWindows.Count != 0)
             {
@@ -477,12 +478,30 @@ public sealed class LiveDisconnectRecoveryTests
         // of its own and cannot be given one from this side.
         AccountsOutcome reattached = clock.Step("reattach: list_accounts must re-autostart Outlook", service.ListAccounts);
         Assert.True(reattached.Accounts.Count > 0);
+        AssertTheColdStartSettled("the reattach");
         HealthOutcome healed = clock.Step("health after the reattach", service.Health);
         lastHealth = Describe(healed);
         Assert.True(healed.Outlook.Running);
         Assert.True(healed.Outlook.ComConnected);
         Assert.True(healed.Outlook.Headless == true, "D17 re-autostart must come up headless (D33)");
         _output.WriteLine($"gateway reattached: Outlook re-autostarted headless ({clock.Spent})");
+    }
+
+    /// <summary>
+    /// The cold start a step just made, as the connection that made it saw it - and what the settle wait cost
+    /// (Q175 (a), measured here because this is the one test that stops and starts Outlook). A start must
+    /// have waited until Outlook was 20 s old with its add-in started and its main thread idle, and inside the
+    /// starting limit: these guests have no add-in that keeps it busy, so anything else is a defect.
+    /// </summary>
+    private void AssertTheColdStartSettled(string which)
+    {
+        OutlookConnectTrace? trace = OutlookComSession.LastConnectTrace;
+        _output.WriteLine("cold start (" + which + "): " + (trace?.Describe() ?? "no connection trace in this process"));
+        Assert.True(trace is { StartedOutlook: true }, which + ": the last connection in this process did not start Outlook");
+        Assert.Equal(OutlookStartPolicy.SettledCode, trace!.SettleOutcome);
+        Assert.True(
+            trace.AgeAtSettleMilliseconds >= OutlookStartPolicy.MinimumAgeMilliseconds,
+            which + ": the settle wait ended before Outlook was " + OutlookStartPolicy.MinimumAgeMilliseconds + " ms old");
     }
 
     /// <summary>One health reading, short enough to sit inside a failure message.</summary>

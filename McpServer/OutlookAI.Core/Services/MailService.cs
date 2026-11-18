@@ -7081,18 +7081,23 @@ namespace OutlookAI.Core.Services
             // Windows' own verdict on Outlook, obtained without COM. Costs microseconds,
             // cannot block, and stays truthful when every COM-shaped thing is stuck - so
             // health can state plainly what is wrong instead of inferring it from its own
-            // failures.
-            OutlookLivenessState liveness = OutlookLiveness.Probe(out string livenessDetail);
-            if (liveness == OutlookLivenessState.Hung)
+            // failures. Read through the start policy (Q175, Q176 (c)): an Outlook that has not
+            // settled since it started, or that has been starting for too long, is told apart
+            // from one that is up - and a hung one gets the report every other tool gives
+            // (Q178 (e)), which for an Outlook with no window is NOT "restart Outlook" or
+            // "clears by itself": the user can neither see nor close it.
+            OutlookStartObservation startObservation = OutlookStartObserver.Observe();
+            OutlookStartVerdict start = OutlookStartPolicy.Decide(startObservation.ToFacts());
+            OutlookStartRecord.NoteWhatWasSeen(startObservation, start);
+            OutlookLivenessState liveness = startObservation.Windows.State;
+            if (start.State == OutlookStartState.NotResponding)
             {
-                problems.Add("Outlook is running but is NOT RESPONDING (" + livenessDetail + "). Windows reports its "
-                    + "windows as hung, so anything needing Outlook is refused immediately rather than left waiting. "
-                    + "search still returns indexed mail. Restarting Outlook clears this.");
+                problems.Add(OutlookHangReport.DescribeNow(start, startObservation));
             }
-            else if (liveness == OutlookLivenessState.Starting)
+            else if (start.State == OutlookStartState.Settling)
             {
-                problems.Add("Outlook is still starting up. Requests needing it return retry guidance instead of "
-                    + "waiting; search returns indexed mail meanwhile.");
+                problems.Add("Outlook is still starting up (" + start.Reason + "). Requests needing it return retry "
+                    + "guidance instead of waiting; search returns indexed mail meanwhile.");
             }
 
             // Which Office hive every registry-backed answer below is coming out of. Reported
@@ -7106,11 +7111,13 @@ namespace OutlookAI.Core.Services
             }
 
 
-            // Outlook + stores (attach-only while running; never a cold start).
+            // Outlook + stores (attach-only while running; never a cold start). Only once Outlook has
+            // settled: before that no connection may open its mailboxes (Q175 (a)), and an in-process
+            // gateway would wait out the settle inside this report.
             bool comProbeFailed = false;
             int? storesReachable = null;
             List<string>? storeNames = null;
-            if (outlookRunning)
+            if (outlookRunning && start.State == OutlookStartState.Ready)
             {
                 try
                 {
@@ -7124,6 +7131,12 @@ namespace OutlookAI.Core.Services
                     {
                         problems.Add("Outlook is running but reports no stores.");
                     }
+                }
+                catch (OutlookNotRespondingException ex)
+                {
+                    // The connection found Outlook not responding while it waited: its report is the problem.
+                    comProbeFailed = true;
+                    problems.Add(ex.Message);
                 }
                 catch (Exception ex) when (ex is not OutOfMemoryException)
                 {
@@ -7369,11 +7382,13 @@ namespace OutlookAI.Core.Services
                     ComConnected = _gateway.ProbeConnected(),
                     Responding = liveness == OutlookLivenessState.NotRunning
                         ? (bool?)null
-                        : liveness == OutlookLivenessState.Responsive,
-                    State = OutlookLiveness.Describe(liveness),
+                        : liveness == OutlookLivenessState.Responsive && start.State != OutlookStartState.NotResponding,
+                    // An Outlook still without windows past the starting limit is stuck, not starting (Q176 (c)).
+                    State = OutlookLiveness.Describe(start.State == OutlookStartState.NotResponding ? OutlookLivenessState.Hung : liveness),
                     StoresReachable = storesReachable,
                     Stores = storeNames,
                     ComHost = comHost,
+                    Start = DescribeStart(startObservation, start),
                 },
                 Index = new IndexHealthView
                 {
@@ -7391,6 +7406,48 @@ namespace OutlookAI.Core.Services
                 // The apphost that was actually launched, which is precisely what a
                 // registration has to name in order to spawn this server.
                 Registration = HealthReporting.ReadMcpRegistration(HealthReporting.CurrentProcessPath()),
+            };
+        }
+
+        /// <summary>
+        /// The start block of <c>outlook_health</c> (Q178 (e)): what one look at Outlook's start saw, with the
+        /// start record's notes - from Windows and the registry only, so it answers for a hung Outlook too.
+        /// Internal so T1 can build it from a look of its own.
+        /// </summary>
+        internal static OutlookStartHealthView DescribeStart(OutlookStartObservation observation, OutlookStartVerdict start)
+        {
+            OutlookHangFacts facts = OutlookHangReport.FactsFor(
+                start,
+                observation,
+                OutlookStartRecord.ReadNote(OutlookStartRecord.StartedValueName),
+                OutlookStartRecord.ReadNote(OutlookStartRecord.NotRespondingValueName),
+                OutlookStartRecord.ReadNote(OutlookStartRecord.WindowSeenValueName),
+                OutlookStartLog.EffectivePath);
+            int? pid = observation.Windows.ProcessId;
+            OutlookConnectRecord? connect = observation.Connect;
+            bool connectIsAboutThis = connect != null && (pid == null || connect.OutlookProcessId == null || connect.OutlookProcessId == pid);
+            return new OutlookStartHealthView
+            {
+                State = start.State switch
+                {
+                    OutlookStartState.Settling => "settling",
+                    OutlookStartState.Ready => "ready",
+                    OutlookStartState.NotResponding => "not-responding",
+                    _ => "not-running",
+                },
+                Detail = start.Reason,
+                ProcessId = pid,
+                StartedUtc = observation.ProcessStartUtc,
+                StartedBy = pid == null ? null : facts.StartedByServerProcessId != null ? "outlookai" : "unknown",
+                StartedByServerProcessId = facts.StartedByServerProcessId,
+                HasWindow = pid == null ? (bool?)null : observation.Windows.HasVisibleWindow,
+                EverShowedWindow = pid == null ? (bool?)null : facts.EverShowedWindow,
+                NotRespondingSinceUtc = facts.NotRespondingSinceUtc,
+                StartStep = connectIsAboutThis ? connect!.Step : null,
+                StartStepSinceUtc = connectIsAboutThis ? connect!.StepSinceUtc : (DateTime?)null,
+                StartStepServerProcessId = connectIsAboutThis ? connect!.ServerProcessId : (int?)null,
+                AddInStarted = pid == null ? (bool?)null : observation.AddIn.AsFact,
+                LogPath = OutlookStartLog.EffectivePath,
             };
         }
 
