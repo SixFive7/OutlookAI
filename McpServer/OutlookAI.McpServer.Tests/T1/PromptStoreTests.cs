@@ -25,133 +25,6 @@ public sealed class PromptStoreTests
 {
     // ===== Fabricated backing store =====
 
-    /// <summary>
-    /// In-memory <see cref="IPromptRegistry"/>. Case-insensitive on both key and value names,
-    /// like the registry, and able to fail on demand so the store's failure paths are reachable.
-    /// </summary>
-    private sealed class FakeRegistry : IPromptRegistry
-    {
-        private readonly Dictionary<string, Dictionary<string, object>> _keys =
-            new(StringComparer.OrdinalIgnoreCase);
-
-        internal bool ThrowOnRead { get; set; }
-        internal bool ThrowOnWrite { get; set; }
-        internal int StringWrites { get; private set; }
-        internal int DwordWrites { get; private set; }
-        internal int Deletes { get; private set; }
-
-        internal int TotalWrites => StringWrites + DwordWrites;
-
-        internal void Seed(string subKey, string valueName, object value)
-        {
-            Key(subKey, create: true)![valueName] = value;
-        }
-
-        internal bool Has(string subKey, string valueName)
-        {
-            Dictionary<string, object>? key = Key(subKey, create: false);
-            return key != null && key.ContainsKey(valueName);
-        }
-
-        internal string? Raw(string subKey, string valueName)
-        {
-            Dictionary<string, object>? key = Key(subKey, create: false);
-            if (key == null || !key.TryGetValue(valueName, out var value))
-            {
-                return null;
-            }
-            return value as string;
-        }
-
-        public bool TryReadString(string subKey, string valueName, out string value)
-        {
-            if (ThrowOnRead)
-            {
-                throw new InvalidOperationException("fabricated read failure");
-            }
-            value = string.Empty;
-            Dictionary<string, object>? key = Key(subKey, create: false);
-            if (key == null || !key.TryGetValue(valueName, out var stored) || stored is not string text)
-            {
-                return false;
-            }
-            value = text;
-            return true;
-        }
-
-        public bool TryReadDword(string subKey, string valueName, out int value)
-        {
-            if (ThrowOnRead)
-            {
-                throw new InvalidOperationException("fabricated read failure");
-            }
-            value = 0;
-            Dictionary<string, object>? key = Key(subKey, create: false);
-            if (key == null || !key.TryGetValue(valueName, out var stored) || stored is not int number)
-            {
-                return false;
-            }
-            value = number;
-            return true;
-        }
-
-        public void WriteString(string subKey, string valueName, string value)
-        {
-            if (ThrowOnWrite)
-            {
-                throw new InvalidOperationException("fabricated write failure");
-            }
-            StringWrites++;
-            Key(subKey, create: true)![valueName] = value;
-        }
-
-        public void WriteDword(string subKey, string valueName, int value)
-        {
-            if (ThrowOnWrite)
-            {
-                throw new InvalidOperationException("fabricated write failure");
-            }
-            DwordWrites++;
-            Key(subKey, create: true)![valueName] = value;
-        }
-
-        public void DeleteValue(string subKey, string valueName)
-        {
-            if (ThrowOnWrite)
-            {
-                throw new InvalidOperationException("fabricated write failure");
-            }
-            Deletes++;
-            Key(subKey, create: false)?.Remove(valueName);
-        }
-
-        public IList<string> ListValueNames(string subKey)
-        {
-            if (ThrowOnRead)
-            {
-                throw new InvalidOperationException("fabricated read failure");
-            }
-            Dictionary<string, object>? key = Key(subKey, create: false);
-            return key == null ? new List<string>() : new List<string>(key.Keys);
-        }
-
-        private Dictionary<string, object>? Key(string subKey, bool create)
-        {
-            string name = subKey ?? string.Empty;
-            if (_keys.TryGetValue(name, out var key))
-            {
-                return key;
-            }
-            if (!create)
-            {
-                return null;
-            }
-            key = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
-            _keys[name] = key;
-            return key;
-        }
-    }
-
     private const string Root = "";
     private const string Prompts = PromptStore.ButtonPromptsSubKey;
     private const string Sections = PromptStore.SectionsSubKey;
@@ -161,9 +34,9 @@ public sealed class PromptStoreTests
         "Proofread", "Revise", "Shorten", "Lengthen", "Formal", "Friendly"
     };
 
-    private static (PromptStoreCore Store, FakeRegistry Registry) NewStore()
+    private static (PromptStoreCore Store, FakePromptRegistry Registry) NewStore()
     {
-        var registry = new FakeRegistry();
+        var registry = new FakePromptRegistry();
         return (new PromptStoreCore(registry), registry);
     }
 
@@ -177,7 +50,7 @@ public sealed class PromptStoreTests
     [Fact]
     public void NothingStored_GivesTheSixShippedButtonsInPaneOrder()
     {
-        (PromptStoreCore store, FakeRegistry registry) = NewStore();
+        (PromptStoreCore store, FakePromptRegistry registry) = NewStore();
 
         IList<PromptButton> buttons = store.GetButtons();
 
@@ -285,7 +158,7 @@ public sealed class PromptStoreTests
     [Fact]
     public void StoredPromptOverride_WinsOverTheShippedText_EvenWithNoStoredOrder()
     {
-        (PromptStoreCore store, FakeRegistry registry) = NewStore();
+        (PromptStoreCore store, FakePromptRegistry registry) = NewStore();
         registry.Seed(Prompts, "Formal", "Formal: rewrite it in Dutch.");
 
         PromptButton formal = store.GetButtons().Single(b => b.Name == "Formal");
@@ -300,7 +173,7 @@ public sealed class PromptStoreTests
     [Fact]
     public void StoredSectionOverride_WinsOverTheShippedText()
     {
-        (PromptStoreCore store, FakeRegistry registry) = NewStore();
+        (PromptStoreCore store, FakePromptRegistry registry) = NewStore();
         registry.Seed(Sections, "SignatureRule", "Write like a pirate.");
 
         Assert.Equal("Write like a pirate.", store.GetSection(PromptSection.SignatureRule));
@@ -322,7 +195,7 @@ public sealed class PromptStoreTests
     [Fact]
     public void OverrideEqualToTheShippedText_IsNotReportedAsCustomized()
     {
-        (PromptStoreCore store, FakeRegistry registry) = NewStore();
+        (PromptStoreCore store, FakePromptRegistry registry) = NewStore();
         registry.Seed(Sections, "Preamble", PromptDefaults.Preamble);
         registry.Seed(Prompts, "Revise", PromptDefaults.RevisePrompt);
 
@@ -333,7 +206,7 @@ public sealed class PromptStoreTests
     [Fact]
     public void BlankPromptOverride_IsTreatedAsAbsent_SoTheButtonStillHasAnInstruction()
     {
-        (PromptStoreCore store, FakeRegistry registry) = NewStore();
+        (PromptStoreCore store, FakePromptRegistry registry) = NewStore();
         registry.Seed(Prompts, "Shorten", "   ");
 
         Assert.Equal(PromptDefaults.ShortenPrompt, store.GetButtons().Single(b => b.Name == "Shorten").Prompt);
@@ -344,7 +217,7 @@ public sealed class PromptStoreTests
     [Fact]
     public void SetSection_ThenGetSection_RoundTripsThroughStorage()
     {
-        (PromptStoreCore store, FakeRegistry registry) = NewStore();
+        (PromptStoreCore store, FakePromptRegistry registry) = NewStore();
 
         Assert.True(store.SetSection(PromptSection.Preamble, "You are terse."));
 
@@ -357,7 +230,7 @@ public sealed class PromptStoreTests
     [Fact]
     public void SetSection_ToTheShippedText_DeletesTheOverrideInsteadOfStoringACopyOfIt()
     {
-        (PromptStoreCore store, FakeRegistry registry) = NewStore();
+        (PromptStoreCore store, FakePromptRegistry registry) = NewStore();
         store.SetSection(PromptSection.ReplyRules, "Answer the pirate.");
         Assert.True(registry.Has(Sections, "ReplyRules"));
 
@@ -371,7 +244,7 @@ public sealed class PromptStoreTests
     [Fact]
     public void SetSection_TextThatOnlyDiffersInLineEndingsOrPadding_IsNotACustomization()
     {
-        (PromptStoreCore store, FakeRegistry registry) = NewStore();
+        (PromptStoreCore store, FakePromptRegistry registry) = NewStore();
 
         // What a multiline text box hands back after a round trip through an editor.
         string reflowed = PromptDefaults.Preamble.Replace("\r\n", "\n") + "\n";
@@ -385,7 +258,7 @@ public sealed class PromptStoreTests
     [Fact]
     public void ResetSection_DeletesTheOverride()
     {
-        (PromptStoreCore store, FakeRegistry registry) = NewStore();
+        (PromptStoreCore store, FakePromptRegistry registry) = NewStore();
         store.SetSection(PromptSection.SignatureSelection, "Pick the shortest one.");
 
         Assert.True(store.ResetSection(PromptSection.SignatureSelection));
@@ -397,7 +270,7 @@ public sealed class PromptStoreTests
     [Fact]
     public void SectionValueNames_AreTheEnumNames()
     {
-        (PromptStoreCore store, FakeRegistry registry) = NewStore();
+        (PromptStoreCore store, FakePromptRegistry registry) = NewStore();
 
         foreach (PromptSection section in Enum.GetValues<PromptSection>())
         {
@@ -411,7 +284,7 @@ public sealed class PromptStoreTests
     [Fact]
     public void SaveButtons_WritesTheOrder_AndNoPromptThatEqualsTheShippedOne()
     {
-        (PromptStoreCore store, FakeRegistry registry) = NewStore();
+        (PromptStoreCore store, FakePromptRegistry registry) = NewStore();
 
         Assert.True(store.SaveButtons(Defaults()).Succeeded);
 
@@ -439,7 +312,7 @@ public sealed class PromptStoreTests
     [Fact]
     public void SaveButtons_StoresOnlyTheEditedPrompt()
     {
-        (PromptStoreCore store, FakeRegistry registry) = NewStore();
+        (PromptStoreCore store, FakePromptRegistry registry) = NewStore();
         List<PromptButton> buttons = Defaults();
         buttons[4] = new PromptButton("Formal", "Formal: rewrite it in Dutch.");
 
@@ -452,7 +325,7 @@ public sealed class PromptStoreTests
     [Fact]
     public void SaveButtons_EditThenPutTheShippedTextBack_LeavesNoOverrideBehind()
     {
-        (PromptStoreCore store, FakeRegistry registry) = NewStore();
+        (PromptStoreCore store, FakePromptRegistry registry) = NewStore();
         List<PromptButton> edited = Defaults();
         edited[0] = new PromptButton("Proofread", "Proofread: only fix typos.");
         store.SaveButtons(edited);
@@ -467,7 +340,7 @@ public sealed class PromptStoreTests
     [Fact]
     public void SaveButtons_APromptDifferingOnlyInLineEndingsOrPadding_IsNotStored()
     {
-        (PromptStoreCore store, FakeRegistry registry) = NewStore();
+        (PromptStoreCore store, FakePromptRegistry registry) = NewStore();
         List<PromptButton> buttons = Defaults();
         buttons[1] = new PromptButton("Revise", "  " + PromptDefaults.RevisePrompt + "\r\n");
 
@@ -479,7 +352,7 @@ public sealed class PromptStoreTests
     [Fact]
     public void SaveButtons_ADeletedShippedButton_StaysDeleted()
     {
-        (PromptStoreCore store, FakeRegistry registry) = NewStore();
+        (PromptStoreCore store, FakePromptRegistry registry) = NewStore();
         List<PromptButton> buttons = Defaults();
         buttons.RemoveAll(b => b.Name == "Shorten");
 
@@ -496,7 +369,7 @@ public sealed class PromptStoreTests
     [Fact]
     public void SaveButtons_AnEmptyList_MeansNoButtons_AndIsNotMistakenForNothingStored()
     {
-        (PromptStoreCore store, FakeRegistry registry) = NewStore();
+        (PromptStoreCore store, FakePromptRegistry registry) = NewStore();
 
         Assert.True(store.SaveButtons(new List<PromptButton>()).Succeeded);
 
@@ -523,7 +396,7 @@ public sealed class PromptStoreTests
     [Fact]
     public void SaveButtons_RenamingBuildsANewButton_AndPrunesTheOldOverride()
     {
-        (PromptStoreCore store, FakeRegistry registry) = NewStore();
+        (PromptStoreCore store, FakePromptRegistry registry) = NewStore();
         List<PromptButton> buttons = Defaults();
         buttons[4] = new PromptButton("Formal", "Formal: rewrite it in Dutch.");
         store.SaveButtons(buttons);
@@ -559,7 +432,7 @@ public sealed class PromptStoreTests
     [Fact]
     public void SaveButtons_PrunesOverridesNoButtonPointsAt()
     {
-        (PromptStoreCore store, FakeRegistry registry) = NewStore();
+        (PromptStoreCore store, FakePromptRegistry registry) = NewStore();
         registry.Seed(Prompts, "GoneAges", "left over from an older version");
 
         Assert.True(store.SaveButtons(Defaults()).Succeeded);
@@ -570,7 +443,7 @@ public sealed class PromptStoreTests
     [Fact]
     public void ResetButtonPrompt_DropsTheOverride_AndTheShippedTextComesBack()
     {
-        (PromptStoreCore store, FakeRegistry registry) = NewStore();
+        (PromptStoreCore store, FakePromptRegistry registry) = NewStore();
         List<PromptButton> buttons = Defaults();
         buttons[3] = new PromptButton("Lengthen", "Lengthen: add three paragraphs.");
         store.SaveButtons(buttons);
@@ -586,7 +459,7 @@ public sealed class PromptStoreTests
     [Fact]
     public void RestoreDefaultButtons_DropsTheOrderAndEveryOverride()
     {
-        (PromptStoreCore store, FakeRegistry registry) = NewStore();
+        (PromptStoreCore store, FakePromptRegistry registry) = NewStore();
         List<PromptButton> buttons = Defaults();
         buttons.RemoveAt(0);
         buttons[0] = new PromptButton("Revise", "Revise: be brutal.");
@@ -608,7 +481,7 @@ public sealed class PromptStoreTests
     [Fact]
     public void SaveButtons_TwoNamesDifferingOnlyInCase_AreRejected_AndNothingIsWritten()
     {
-        (PromptStoreCore store, FakeRegistry registry) = NewStore();
+        (PromptStoreCore store, FakePromptRegistry registry) = NewStore();
         List<PromptButton> buttons = Defaults();
         buttons.Add(new PromptButton("formal", "Formal: again, but lowercase."));
 
@@ -630,7 +503,7 @@ public sealed class PromptStoreTests
     [InlineData("For\rmal2", "cannot contain line breaks or tabs")]
     public void SaveButtons_AnUnusableName_IsRejected_AndNothingIsWritten(string name, string expected)
     {
-        (PromptStoreCore store, FakeRegistry registry) = NewStore();
+        (PromptStoreCore store, FakePromptRegistry registry) = NewStore();
         List<PromptButton> buttons = Defaults();
         buttons.Add(new PromptButton(name, "Do the thing."));
 
@@ -669,7 +542,7 @@ public sealed class PromptStoreTests
     [InlineData("   ")]
     public void SaveButtons_ABlankPrompt_IsRejected_BecauseItWouldSendAnEmptyAction(string prompt)
     {
-        (PromptStoreCore store, FakeRegistry registry) = NewStore();
+        (PromptStoreCore store, FakePromptRegistry registry) = NewStore();
         List<PromptButton> buttons = Defaults();
         buttons.Add(new PromptButton("Bullets", prompt));
 
@@ -699,7 +572,7 @@ public sealed class PromptStoreTests
     [Fact]
     public void ValidateButtons_AnswersWithoutWritingAnything()
     {
-        (PromptStoreCore store, FakeRegistry registry) = NewStore();
+        (PromptStoreCore store, FakePromptRegistry registry) = NewStore();
 
         Assert.True(store.ValidateButtons(Defaults()).Succeeded);
         Assert.False(store.ValidateButtons(new List<PromptButton> { new PromptButton("", "x") }).Succeeded);
@@ -709,7 +582,7 @@ public sealed class PromptStoreTests
     [Fact]
     public void SaveButtons_WithNoListAtAll_IsRejectedRatherThanClearingEverything()
     {
-        (PromptStoreCore store, FakeRegistry registry) = NewStore();
+        (PromptStoreCore store, FakePromptRegistry registry) = NewStore();
 
         PromptValidationResult result = store.SaveButtons(null!);
 
@@ -722,7 +595,7 @@ public sealed class PromptStoreTests
     [Fact]
     public void SchemaVersion_IsStampedOnTheFirstWrite_AndNotRewrittenAfterwards()
     {
-        (PromptStoreCore store, FakeRegistry registry) = NewStore();
+        (PromptStoreCore store, FakePromptRegistry registry) = NewStore();
 
         store.SetSection(PromptSection.Preamble, "You are terse.");
         Assert.Equal(1, registry.DwordWrites);
@@ -735,7 +608,7 @@ public sealed class PromptStoreTests
     [Fact]
     public void SchemaVersion_IsRestampedIfSomethingRemovesIt()
     {
-        (PromptStoreCore store, FakeRegistry registry) = NewStore();
+        (PromptStoreCore store, FakePromptRegistry registry) = NewStore();
         store.SetSection(PromptSection.Preamble, "You are terse.");
         registry.DeleteValue(Root, PromptStore.SchemaVersionValueName);
 
@@ -777,7 +650,7 @@ public sealed class PromptStoreTests
     [Fact]
     public void ASubscriberThatThrows_DoesNotTurnASuccessfulSaveIntoAFailure()
     {
-        (PromptStoreCore store, FakeRegistry registry) = NewStore();
+        (PromptStoreCore store, FakePromptRegistry registry) = NewStore();
         store.Changed += (sender, e) => throw new InvalidOperationException("pane rebuild blew up");
 
         Assert.True(store.SaveButtons(Defaults()).Succeeded);
@@ -789,7 +662,7 @@ public sealed class PromptStoreTests
     [Fact]
     public void AFailedWrite_IsReported_AndDoesNotRaiseChanged()
     {
-        (PromptStoreCore store, FakeRegistry registry) = NewStore();
+        (PromptStoreCore store, FakePromptRegistry registry) = NewStore();
         int raised = 0;
         store.Changed += (sender, e) => raised++;
         registry.ThrowOnWrite = true;
@@ -808,7 +681,7 @@ public sealed class PromptStoreTests
     [Fact]
     public void AReadThatBlowsUp_FallsBackToTheShippedText_AndNeverThrows()
     {
-        (PromptStoreCore store, FakeRegistry registry) = NewStore();
+        (PromptStoreCore store, FakePromptRegistry registry) = NewStore();
         registry.Seed(Root, PromptStore.ButtonsValueName, "Proofread");
         registry.ThrowOnRead = true;
 
@@ -821,7 +694,7 @@ public sealed class PromptStoreTests
     [Fact]
     public void AValueOfTheWrongType_IsTreatedAsAbsent()
     {
-        (PromptStoreCore store, FakeRegistry registry) = NewStore();
+        (PromptStoreCore store, FakePromptRegistry registry) = NewStore();
         registry.Seed(Root, PromptStore.ButtonsValueName, 42);
         registry.Seed(Sections, "Preamble", 42);
 
@@ -832,7 +705,7 @@ public sealed class PromptStoreTests
     [Fact]
     public void ACorruptOrder_YieldsOnlyTheNamesThatCanStillBecomeButtons()
     {
-        (PromptStoreCore store, FakeRegistry registry) = NewStore();
+        (PromptStoreCore store, FakePromptRegistry registry) = NewStore();
         // Blank lines, padding, a duplicate that differs only in case, CRLF, and a name whose
         // prompt override is long gone.
         registry.Seed(Root, PromptStore.ButtonsValueName,
@@ -847,7 +720,7 @@ public sealed class PromptStoreTests
     [Fact]
     public void IsButtonCustomized_IsCaseInsensitive_LikeRegistryValueNames()
     {
-        (PromptStoreCore store, FakeRegistry registry) = NewStore();
+        (PromptStoreCore store, FakePromptRegistry registry) = NewStore();
         registry.Seed(Prompts, "formal", "Formal: rewrite it in Dutch.");
 
         Assert.True(store.IsButtonCustomized("Formal"));
