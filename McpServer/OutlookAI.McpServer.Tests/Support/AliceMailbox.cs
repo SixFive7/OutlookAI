@@ -98,6 +98,17 @@ internal static class AliceMailbox
     public static StubIndexClient Index() => new(new[] { StorePrefix }, Frontier, everyScope: true);
 
     /// <summary>
+    /// An index that holds the profile's store alone, whose search answers <paramref name="searchRows"/> or nothing:
+    /// what four suites around an unindexed store each built.
+    /// </summary>
+    public static StubIndexClient OnlyAliceIndexed(IReadOnlyList<IReadOnlyDictionary<string, object?>>? searchRows = null) =>
+        new(new[] { StorePrefix }, Frontier) { SearchRows = searchRows ?? IndexRows.None };
+
+    /// <summary>An index that holds no store, whose search answers <paramref name="searchRows"/> or nothing: three suites' own.</summary>
+    public static StubIndexClient NothingIndexed(IReadOnlyList<IReadOnlyDictionary<string, object?>>? searchRows = null) =>
+        new(Array.Empty<string>(), Frontier) { SearchRows = searchRows ?? IndexRows.None };
+
+    /// <summary>
     /// The product over the profile: <paramref name="index"/> or <see cref="Index"/>, a session whose sweep is
     /// <paramref name="sweep"/> or <see cref="Sweep"/>, and whose exhaustive scan is <paramref name="scan"/> -
     /// or refused, when there is none.

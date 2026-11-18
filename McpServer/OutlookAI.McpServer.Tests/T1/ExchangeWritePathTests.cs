@@ -435,7 +435,7 @@ public sealed class ExchangeWritePathTests
     {
         private StandIn()
         {
-            AsSession = Proxy.Create(this);
+            AsSession = ForwardingSession.Create(Handle);
         }
 
         internal IOutlookSession AsSession { get; }
@@ -499,27 +499,6 @@ public sealed class ExchangeWritePathTests
             }
 
             throw new InvalidOperationException(method.Name + " has no parameter named '" + name + "'.");
-        }
-
-        /// <summary>Not sealed: <see cref="DispatchProxy"/> derives from it at runtime.</summary>
-        internal class Proxy : DispatchProxy
-        {
-            private StandIn _owner = null!;
-
-            internal static IOutlookSession Create(StandIn owner)
-            {
-                object proxy = Create<IOutlookSession, Proxy>()
-                    ?? throw new InvalidOperationException("DispatchProxy.Create returned null.");
-                ((Proxy)proxy)._owner = owner;
-                return (IOutlookSession)proxy;
-            }
-
-            /// <inheritdoc />
-            protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
-            {
-                ArgumentNullException.ThrowIfNull(targetMethod);
-                return _owner.Handle(targetMethod, args);
-            }
         }
     }
 }

@@ -207,17 +207,7 @@ public sealed class DraftOptionsCiToolShapeTests
         Assert.Equal("InvalidArgument", error.GetProperty("type").GetString());
 
         string message = error.GetProperty("message").GetString()!;
-        Assert.Contains("subject", message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains(
-            "max " + MailService.SubjectCharsCap.ToString(CultureInfo.InvariantCulture) + " characters",
-            message,
-            StringComparison.Ordinal);
-        Assert.Contains(
-            supplied.ToString(CultureInfo.InvariantCulture) + " characters supplied",
-            message,
-            StringComparison.Ordinal);
-        Assert.Contains("Nothing was created or changed", message, StringComparison.Ordinal);
-        Assert.Contains("call again", message, StringComparison.OrdinalIgnoreCase);
+        DraftRefusals.AssertOverlongSubjectMessage(message, supplied);
 
         // Pre-COM, and provably so: this ran on a machine that may have no Outlook at all,
         // and the answer is the validation error rather than an Outlook-state error.

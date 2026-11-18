@@ -41,11 +41,11 @@ namespace OutlookAI.McpServer.Tests.T1;
 /// </summary>
 public sealed class ThreadUnindexedStoreTests
 {
-    private const string Sid = "{S-1-5-21-1111111111-2222222222-3333333333-1001}";
+    private const string Sid = AliceMailbox.Sid;
 
-    private const string IndexedStore = "alice@example.com";
+    private const string IndexedStore = AliceMailbox.Store;
 
-    private const string IndexedPrefix = "mapi16://" + Sid + "/" + IndexedStore + "($deadbeef)";
+    private const string IndexedPrefix = AliceMailbox.StorePrefix;
 
     private const string PstStore = "Archive Old.pst";
 
@@ -54,7 +54,7 @@ public sealed class ThreadUnindexedStoreTests
     /// <summary>A raw EntryID hex: long enough to be accepted without any hit cache or COM locate.</summary>
     private const string AnchorId = "00000000AABBCCDDEEFF00112233445566778899AABBCCDD";
 
-    private static readonly DateTime Frontier = new(2026, 8, 18, 9, 30, 0, DateTimeKind.Utc);
+    private static readonly DateTime Frontier = AliceMailbox.Frontier;
 
     // ======================================================= the pure rule (the exclusion)
 
@@ -127,12 +127,7 @@ public sealed class ThreadUnindexedStoreTests
         ThreadLiveInfo live = Walked(IndexedStore);
         live.StoresWithoutIndex = new[] { PstStore };
 
-        Assert.Contains(
-            FreshMerge.ThreadGapUnindexedStore,
-            FreshMerge.DescribeThreadCoverageGaps(live, new[] { IndexedStore })!);
-        Assert.Equal(
-            FreshMerge.FreshnessPartial,
-            FreshMerge.ClassifyThreadFreshness(live, new[] { IndexedStore }));
+        ThreadWalks.AssertNamedStoresRaiseTheCode("the stores without an index", live, FreshMerge.ThreadGapUnindexedStore, IndexedStore);
     }
 
     [Fact]
@@ -145,13 +140,7 @@ public sealed class ThreadUnindexedStoreTests
         string line = Assert.Single(MailService.DescribeThreadCoverage(
             live, FreshMerge.FreshnessPartial, store: null, scopeWidened: false, top: 50)!);
 
-        Assert.Contains(PstStore, line, StringComparison.Ordinal);
-        Assert.Contains(IndexedStore, line, StringComparison.Ordinal);
-        Assert.Contains("TELL THE USER", line, StringComparison.Ordinal);
-
-        // The weaker claim is the honest one: this is "we could not ask", not "we asked and
-        // there was nothing there". An agent that reports the second has invented a fact.
-        Assert.Contains("cannot be established", line, StringComparison.Ordinal);
+        ThreadWalks.AssertSentenceNamesTheStoresAndWithdrawsTheStrongerClaim("the stores without an index", line, IndexedStore, PstStore);
     }
 
     [Fact]
@@ -166,11 +155,7 @@ public sealed class ThreadUnindexedStoreTests
         live.StoresWithoutIndexTotal = 30;
         live.CoverageGaps = new[] { FreshMerge.ThreadGapUnindexedStore };
 
-        string line = Assert.Single(MailService.DescribeThreadCoverage(
-            live, FreshMerge.FreshnessPartial, store: null, scopeWidened: false, top: 50)!);
-
-        Assert.Contains("and 18 more", line, StringComparison.Ordinal);
-        Assert.Contains("live.storesWithoutIndexTotal", line, StringComparison.Ordinal);
+        ThreadWalks.AssertCappedListSaysHowManyMore("the stores without an index", live, null, "live.storesWithoutIndexTotal");
     }
 
     // ============================================================ through the whole tool
@@ -182,7 +167,7 @@ public sealed class ThreadUnindexedStoreTests
         // The shipped defect, end to end: one indexed mailbox, one data file the index has
         // never opened, a conversation walked in the mailbox. The answer used to be
         // freshness "live" with degraded absent and no field naming the data file.
-        using MailService service = Service(OnlyAliceIndexed());
+        using MailService service = Service(AliceMailbox.OnlyAliceIndexed());
 
         ThreadOutcome outcome = service.Thread(conversationId: null, id: AnchorId, storeId: null);
 
@@ -219,7 +204,7 @@ public sealed class ThreadUnindexedStoreTests
         // An all-PST profile of ONE store: the index holds nothing for it, and the walk
         // covered it completely. Reporting it would degrade every thread on such a machine.
         using MailService service = Service(
-            NothingIndexed(), new[] { new ComStoreDetail(PstStore, "store-pst", 3, null) }, walkedStore: PstStore);
+            AliceMailbox.NothingIndexed(), new[] { new ComStoreDetail(PstStore, "store-pst", 3, null) }, walkedStore: PstStore);
 
         ThreadOutcome outcome = service.Thread(conversationId: null, id: AnchorId, storeId: null);
 
@@ -235,7 +220,7 @@ public sealed class ThreadUnindexedStoreTests
         // naming pass follows. The store list is the only evidence, and an empty one is no
         // evidence; a null one (Outlook unreachable) takes the same branch of
         // StoresMissingFromIndex, which is why one fixture covers both.
-        using MailService service = Service(OnlyAliceIndexed(), profileStores: Array.Empty<ComStoreDetail>());
+        using MailService service = Service(AliceMailbox.OnlyAliceIndexed(), profileStores: Array.Empty<ComStoreDetail>());
 
         ThreadOutcome outcome = service.Thread(conversationId: null, id: AnchorId, storeId: null);
 
@@ -253,7 +238,7 @@ public sealed class ThreadUnindexedStoreTests
             stores.Add(new ComStoreDetail("Archive " + i + ".pst", "store-" + i, 3, null));
         }
 
-        using MailService service = Service(OnlyAliceIndexed(), stores);
+        using MailService service = Service(AliceMailbox.OnlyAliceIndexed(), stores);
 
         ThreadOutcome outcome = service.Thread(conversationId: null, id: AnchorId, storeId: null);
 
@@ -279,11 +264,7 @@ public sealed class ThreadUnindexedStoreTests
             new DirectGateway(WalkSession.Create(profileStores ?? MixedProfile, walkedStore)), null, index);
     }
 
-    private static StubIndexClient OnlyAliceIndexed() => new(new[] { IndexedPrefix }, Frontier);
-
     private static StubIndexClient EverythingIndexed() => new(new[] { IndexedPrefix, PstPrefix }, Frontier);
-
-    private static StubIndexClient NothingIndexed() => new(Array.Empty<string>(), Frontier);
 
     /// <summary>
     /// A session that answers the profile's store list and one conversation walk, and refuses

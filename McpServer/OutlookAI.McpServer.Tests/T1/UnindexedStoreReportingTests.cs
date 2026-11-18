@@ -63,17 +63,17 @@ namespace OutlookAI.McpServer.Tests.T1;
 [Trait("TimeZone", "Machine")]
 public sealed class UnindexedStoreReportingTests
 {
-    private const string Sid = "{S-1-5-21-1111111111-2222222222-3333333333-1001}";
+    private const string Sid = AliceMailbox.Sid;
 
     /// <summary>An ordinary Exchange store, present in both the profile and the index.</summary>
-    private const string IndexedStore = "alice@example.com";
+    private const string IndexedStore = AliceMailbox.Store;
 
-    private const string IndexedPrefix = "mapi16://" + Sid + "/" + IndexedStore + "($deadbeef)";
+    private const string IndexedPrefix = AliceMailbox.StorePrefix;
 
     /// <summary>The archive the profile has mounted and Windows Search has never opened.</summary>
     private const string PstStore = "Archive Old.pst";
 
-    private static readonly DateTime Frontier = new(2026, 8, 18, 9, 30, 0, DateTimeKind.Utc);
+    private static readonly DateTime Frontier = AliceMailbox.Frontier;
 
     private static readonly ComStoreDetail[] ProfileStores =
     {
@@ -90,7 +90,7 @@ public sealed class UnindexedStoreReportingTests
         // PST - where a 2019 archive's mail actually is - is in neither tier, because the
         // index has nothing for it and the sweep window ends 7 days back. The answer used to
         // be freshness:"live" with degraded absent over exactly that.
-        using MailService service = Service(OnlyAliceIndexed());
+        using MailService service = Service(AliceMailbox.OnlyAliceIndexed());
 
         SearchOutcome outcome = service.Search(OldMailRequest());
 
@@ -107,7 +107,7 @@ public sealed class UnindexedStoreReportingTests
     {
         // The code and the sentence are two renderings of one decision, so a caller that
         // reads advice and a caller that branches on fields learn the same thing.
-        using MailService service = Service(OnlyAliceIndexed());
+        using MailService service = Service(AliceMailbox.OnlyAliceIndexed());
 
         SearchOutcome outcome = service.Search(OldMailRequest());
 
@@ -124,7 +124,7 @@ public sealed class UnindexedStoreReportingTests
     {
         // Two independent holes: the sweep never opens an attachment, AND the index holds no
         // mail for one store. The answer has to say both - it is missing both tiers there.
-        using MailService service = Service(OnlyAliceIndexed());
+        using MailService service = Service(AliceMailbox.OnlyAliceIndexed());
 
         SearchOutcome outcome = service.Search(new SearchRequest
         {
@@ -149,7 +149,7 @@ public sealed class UnindexedStoreReportingTests
         // Outlook answered for the store list and then threw on the sweep itself - a timeout
         // or a COM fault mid-walk. "The sweep failed" does not make "the index has nothing
         // for this store" go away, and the remedy differs: retry versus exhaustive:true.
-        using MailService service = Service(OnlyAliceIndexed(), FailingSweep);
+        using MailService service = Service(AliceMailbox.OnlyAliceIndexed(), FailingSweep);
 
         SearchOutcome outcome = service.Search(Request());
 
@@ -183,7 +183,7 @@ public sealed class UnindexedStoreReportingTests
         // Silence here means "not established", never "indexed". With no store list there is
         // no evidence, and inventing a missing store from an absent list would be the same
         // defect pointing the other way. The answer is still honestly index-only.
-        using MailService service = new MailService(new DeadGateway(), null, OnlyAliceIndexed());
+        using MailService service = new MailService(new DeadGateway(), null, AliceMailbox.OnlyAliceIndexed());
 
         SearchOutcome outcome = service.Search(Request());
 
@@ -200,7 +200,7 @@ public sealed class UnindexedStoreReportingTests
         // scope, so a null there IS the answer. Asking Outlook for a profile-wide list would
         // be a round trip that cannot change anything.
         using MailService service = new MailService(
-            new DirectGateway(StandInSession.Create(ProfileStores, Sweep, null, out StandInSession session)), null, OnlyAliceIndexed());
+            new DirectGateway(StandInSession.Create(ProfileStores, Sweep, null, out StandInSession session)), null, AliceMailbox.OnlyAliceIndexed());
 
         SearchOutcome outcome = service.Search(new SearchRequest
         {
@@ -226,7 +226,7 @@ public sealed class UnindexedStoreReportingTests
     {
         // The regression guard on what 79c1827 shipped: when the sweep DOES run, its own
         // per-store counters are the store list, and no extra round trip is spent.
-        using MailService service = Service(OnlyAliceIndexed());
+        using MailService service = Service(AliceMailbox.OnlyAliceIndexed());
 
         SearchOutcome outcome = service.Search(Request());
 
@@ -262,12 +262,6 @@ public sealed class UnindexedStoreReportingTests
     {
         return new MailService(
             new DirectGateway(StandInSession.Create(ProfileStores, sweep ?? Sweep)), null, index);
-    }
-
-    /// <summary>The mixed profile: the Exchange store indexed, the data file not.</summary>
-    private static StubIndexClient OnlyAliceIndexed()
-    {
-        return new StubIndexClient(new[] { IndexedPrefix }, Frontier);
     }
 
     /// <summary>Both stores in the catalog, both with a frontier - nothing to report.</summary>

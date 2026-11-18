@@ -535,82 +535,48 @@ public sealed class ComHostErrorFidelityTests
     /// <summary>
     /// A stand-in Outlook session that answers however the test asks, per operation.
     /// <para>
-    /// A <see cref="DispatchProxy"/> for the reason the production fault session is one: it
-    /// is a REAL object reached through <c>targetMethod.Invoke</c>, so whatever it raises
-    /// travels the exact reflective hop a real session's failure travels - which is where
-    /// the message used to be lost. Twenty-six hand-written stubs would not.
+    /// A <see cref="DispatchProxy"/> - the shared <see cref="ForwardingSession"/> - for the reason
+    /// the production fault session is one: it is a REAL object reached through
+    /// <c>targetMethod.Invoke</c>, so whatever it raises travels the exact reflective hop a real
+    /// session's failure travels - which is where the message used to be lost. Twenty-six
+    /// hand-written stubs would not.
     /// </para>
     /// </summary>
-    internal class ScriptedSession : DispatchProxy
+    internal static class ScriptedSession
     {
-        private Func<string, Exception?> _script = _ => null;
-        private Func<string, object?> _answers = _ => null;
-
         /// <param name="script">What each operation should throw, or null to succeed.</param>
         /// <param name="answers">
         /// What a succeeding operation should RETURN, or null for the contract's usual
         /// "null plus a not-found token". Only the refusal test needs this: every other
         /// test here is about a failure, and a failure never reaches the return value.
         /// </param>
-        internal static IOutlookSession Create(Func<string, Exception?> script, Func<string, object?>? answers = null)
-        {
-            object proxy = Create<IOutlookSession, ScriptedSession>()
-                ?? throw new InvalidOperationException("DispatchProxy.Create returned null.");
-            ((ScriptedSession)proxy)._script = script;
-            if (answers != null)
-            {
-                ((ScriptedSession)proxy)._answers = answers;
-            }
-
-            return (IOutlookSession)proxy;
-        }
-
-        /// <inheritdoc />
-        protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
-        {
-            ArgumentNullException.ThrowIfNull(targetMethod);
-
-            Exception? failure = _script(targetMethod.Name);
-            if (failure != null)
-            {
-                throw failure;
-            }
-
-            // Nothing scripted: report failure the way most of this contract does - null,
-            // with the not-found token in the by-ref error parameter. EVERY out parameter is
-            // assigned, not just that one: an out slot left as the proxy handed it over is
-            // unboxed on the way back and takes the call down with a failure that has
-            // nothing to do with the boundary (`out long sizeBytes` on save_attachment
-            // found this).
-            ParameterInfo[] parameters = targetMethod.GetParameters();
-            for (int i = 0; args != null && i < parameters.Length && i < args.Length; i++)
-            {
-                ParameterInfo parameter = parameters[i];
-                if (!parameter.IsOut)
+        internal static IOutlookSession Create(Func<string, Exception?> script, Func<string, object?>? answers = null) =>
+            ForwardingSession.Create(
+                (member, args) =>
                 {
-                    continue;
-                }
+                    Exception? failure = script(member.Name);
+                    if (failure != null)
+                    {
+                        throw failure;
+                    }
 
-                if (IsErrorOutput(parameter))
-                {
-                    args[i] = ComErrorTokens.ItemNotFound;
-                    continue;
-                }
+                    // Nothing scripted: report failure the way most of this contract does - null,
+                    // with the not-found token in the by-ref error parameter. Every other out
+                    // parameter gets its default from ForwardingSession: an out slot left as the
+                    // proxy handed it over is unboxed on the way back and takes the call down with
+                    // a failure that has nothing to do with the boundary (`out long sizeBytes` on
+                    // save_attachment found this).
+                    ParameterInfo[] parameters = member.GetParameters();
+                    for (int i = 0; args != null && i < parameters.Length && i < args.Length; i++)
+                    {
+                        if (parameters[i].IsOut && IsErrorOutput(parameters[i]))
+                        {
+                            args[i] = ComErrorTokens.ItemNotFound;
+                        }
+                    }
 
-                Type slot = parameter.ParameterType.GetElementType()!;
-                args[i] = slot.IsValueType ? Activator.CreateInstance(slot) : null;
-            }
-
-            object? answer = _answers(targetMethod.Name);
-            if (answer != null)
-            {
-                return answer;
-            }
-
-            Type returnType = targetMethod.ReturnType;
-            return returnType != typeof(void) && returnType.IsValueType
-                ? Activator.CreateInstance(returnType)
-                : null;
-        }
+                    return answers?.Invoke(member.Name);
+                },
+                defaultsForTheRest: true);
     }
 }
