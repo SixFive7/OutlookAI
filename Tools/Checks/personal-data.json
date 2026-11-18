@@ -23,11 +23,6 @@
   "baseline": [
     { "path": "Docs/live-tier-on-the-vm.md", "rule": "email", "count": 1 },
     { "path": "McpServer/OutlookAI.McpServer.Tests/T1/ComHostProtocolTests.cs", "rule": "pd10", "count": 2 },
-    { "path": "McpServer/OutlookAI.McpServer.Tests/T1/RemediationRulesTests.cs", "rule": "pd02", "count": 2 },
-    { "path": "McpServer/OutlookAI.McpServer.Tests/T1/SweepScopeAndWindowTests.cs", "rule": "pd10", "count": 1 },
-    { "path": "McpServer/OutlookAI.RemediationTools/McpMoveClient.cs", "rule": "pd02", "count": 1 },
-    { "path": "McpServer/OutlookAI.RemediationTools/Program.cs", "rule": "pd02", "count": 1 },
-    { "path": "McpServer/OutlookAI.RemediationTools/RemediationRules.cs", "rule": "pd02", "count": 5 },
-    { "path": "McpServer/OutlookAI.RemediationTools/RemediationRules.cs", "rule": "pd06", "count": 2 }
+    { "path": "McpServer/OutlookAI.McpServer.Tests/T1/SweepScopeAndWindowTests.cs", "rule": "pd10", "count": 1 }
   ]
 }

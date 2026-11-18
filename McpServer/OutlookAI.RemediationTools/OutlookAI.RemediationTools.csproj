@@ -2,10 +2,10 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <!-- One-shot operator console for the 2026-07-25 incident remediation
-         (v3.MD section 0.8, SOAK FIX LOG entry 7 closure). net10.0-windows x64 like
-         the server host; COM against the same profile. NOT part of the product
-         surface - the shipped MCP server keeps zero delete tools (S1 v2). -->
+    <!-- Operator console for the synthetic measurement corpus and the test guests' fixture
+         populations (Program.cs). net10.0-windows x64 like the server host; COM against
+         the guest's profile. NOT part of the product surface - the shipped MCP server keeps
+         zero delete tools (S1 v2). Its incident commands went on 2026-11-18 (Q170 (a)). -->
     <TargetFramework>net10.0-windows</TargetFramework>
     <PlatformTarget>x64</PlatformTarget>
     <RootNamespace>OutlookAI.RemediationTools</RootNamespace>

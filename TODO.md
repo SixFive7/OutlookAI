@@ -2611,7 +2611,7 @@
     - **`corpus-reindex` and the post-teardown count looked only at Inbox/Sent/Junk/Deleted**, so
       with all 40 000 items in Drafts the recovery path would have reported ZERO and teardown
       would have claimed a clean store. Drafts (16) and Outbox (4) are in the scan set now. Same
-      lesson as the Outbox omission `ComMailbox.SweepFolderIds` already records.
+      lesson as the Outbox omission the live tier's sweep already records.
     - **Nothing in the tool noticed any of the three.** A person looking at Outlook found them.
       `corpus-census` closes that: a read-only scan compared against the plan - right count,
       right folders, one copy each, nothing stranded in Drafts or the Outbox - run by every

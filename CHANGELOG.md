@@ -1421,6 +1421,14 @@ its mailbox tests on, and change nothing you install.
   `show_search_results` are gone too, replaced by `store_id` and `folder_id`. A call that still
   passes one is refused, naming what replaced it.
 
+- 🗑️ **The operator console keeps its corpus commands and loses the July 2026 incident ones (Q170).**
+  The maintainer closed that incident, so `OutlookAI.RemediationTools` no longer has `audit`,
+  `refile`, `purge` and `dedupe`, nor the decision rules, mailbox helper and MCP client only they
+  used, nor their T1 test. What the test machines use stays: the corpus and fixture-population
+  commands, their COM session and their STA runner, all of which still build. The corpus tests
+  that proved the corpus tag apart from the artifact tag now read the live tier's own tag and
+  sweep fragment, the definitions the sweep matches with, instead of the incident tool's copy.
+
 ### Fixed
 
 - 🐛 **A move names a folder whose name holds `/`, `\` or `%` the way list_folders does.**

@@ -25,9 +25,9 @@
   <ItemGroup>
     <ProjectReference Include="..\OutlookAI.Core\OutlookAI.Core.csproj" />
     <ProjectReference Include="..\OutlookAI.McpServer\OutlookAI.McpServer.csproj" />
-    <!-- Incident-7 remediation console (one-shot operator tool): referenced so its
-         decision rules stay pinned by T1 RemediationRulesTests and the project keeps
-         compiling in CI. -->
+    <!-- The corpus console (OutlookAI.RemediationTools): referenced so the T1 and T2 tiers pin
+         its plans, safety rules and manifests without Outlook, and the project keeps compiling.
+         Its incident commands went on 2026-11-18 (Q170 (a)). -->
     <ProjectReference Include="..\OutlookAI.RemediationTools\OutlookAI.RemediationTools.csproj" />
     <!-- The audit log's multi-process stress writer (Q117). Referenced for build ORDER only - the
          stress tests start its two executables, they do not load its assembly - and as an outer
