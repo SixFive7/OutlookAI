@@ -674,10 +674,6 @@ namespace OutlookAI.Core.Services
         /// </summary>
         public const int MinimumItemBudgetMs = 1_000;
 
-        /// <summary>Default directory attachments are saved to when the caller names none.</summary>
-        public static string DefaultAttachmentDirectory =>
-            Path.Combine(SharedStateDirectory, "scratch", "attachments");
-
         /// <summary>Shared OutlookAI state root (v3.MD section 0.5.2: %LOCALAPPDATA%\OutlookAI).</summary>
         public static string SharedStateDirectory =>
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "OutlookAI");
@@ -3514,7 +3510,16 @@ namespace OutlookAI.Core.Services
 
         // ------------------------------------------------------------------ save_attachment
 
-        /// <summary>Saves one attachment of a hit/EntryID to disk and returns the absolute path.</summary>
+        /// <summary>
+        /// Saves one attachment of a hit/EntryID to disk and returns the absolute path - into
+        /// OutlookAI's download folder or a folder inside it, and nowhere else (Q198 (a);
+        /// <see cref="AttachmentFileWriter"/>).
+        /// </summary>
+        /// <param name="targetDirectory">
+        /// Null for the download folder itself; a relative path for a folder inside it; or a full path
+        /// that must lead into it. Anything else is refused with
+        /// <see cref="AttachmentFolderRefusedException"/> before Outlook is asked anything.
+        /// </param>
         public SaveAttachmentOutcome SaveAttachment(string id, int attachmentIndex, string? targetDirectory = null)
         {
             if (string.IsNullOrWhiteSpace(id))
@@ -3527,11 +3532,10 @@ namespace OutlookAI.Core.Services
                 throw new ArgumentException("attachment_index is 1-based.", nameof(attachmentIndex));
             }
 
-            string directory = targetDirectory ?? DefaultAttachmentDirectory;
-            if (!Path.IsPathRooted(directory))
-            {
-                throw new ArgumentException("target_dir must be an absolute path.", nameof(targetDirectory));
-            }
+            // The folder is decided here, on the disk, before Outlook is started or asked anything; the
+            // COM host checks it again, and the writer once more right before the write. What travels on
+            // is its final path, so the write never goes through the spelling the agent gave.
+            string directory = AttachmentFileWriter.CheckFolder(targetDirectory);
 
             (string entryId, string? storeId, string? _, long _, string? hitId) = ResolveToEntryId(id);
             (string path, long size) = _gateway.Run(s =>
@@ -3613,14 +3617,21 @@ namespace OutlookAI.Core.Services
         /// </summary>
         private static Exception BuildAttachmentSaveFailure(string? comError, string? attemptedPath, string directory)
         {
+            if (Com.ComErrorTokens.TryRead(comError, Com.ComErrorTokens.SaveFolderRefused, out string refusal))
+            {
+                // Q198 (a), refused in the COM host - before the item was opened, or by the writer
+                // before it made or wrote anything - so nothing reached the disk.
+                return new AttachmentFolderRefusedException(refusal);
+            }
+
             bool nothingWasWritten =
                 string.Equals(comError, Com.ComErrorTokens.ItemNotFound, StringComparison.Ordinal)
                 || (comError != null && comError.StartsWith("AttachmentIndexOutOfRange", StringComparison.Ordinal));
 
             if (nothingWasWritten)
             {
-                // Both are decided before Directory.CreateDirectory runs, so nothing reached
-                // the disk - the only two codes here that can say so.
+                // Both are decided before AttachmentFileWriter.Save makes the folder, so nothing
+                // reached the disk - the only two codes here that can say so.
                 return new OperationOutcomeException(
                     Com.MutationOutcome.Unchanged,
                     "The attachment could not be saved (" + comError + "). Nothing was written to disk. "

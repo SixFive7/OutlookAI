@@ -883,6 +883,17 @@ its mailbox tests on, and change nothing you install.
   shared one. Six cases that break those rules were run against it here, and it failed each.
   `Testbed/README.md` names the file, and its step 4a stages it with the other guest scripts.
 
+- 📝 **If Office's own grace reset fails, the Exchange test machine may get Microsoft 365 Apps (Q206).**
+  The maintainer's decision Q206, 2026-11-18, now in AGENTS.md beside the machine's internet
+  exception. Its Office LTSC 2024 was never activated, and since the grace ran out in late October
+  Outlook there creates no item through its object model, so the machine runs only the tests that
+  write nothing. In his words: *"a with fallback to b with fallback to reporting to me for spla mak
+  keys"*. First Office's own grace-period reset, `ospprearm.exe`; if that does not bring item
+  creation back, Microsoft 365 Apps, activated by the test account's own licence, a licensed
+  component allowed on that machine alone; and failing that, a volume key (SPLA MAK) that the
+  maintainer supplies. Every other condition of the exception stands. `QUESTIONS.md` records the
+  decision with his other answers of that day, to Q138, Q163 to Q182 and Q194 to Q215.
+
 - ♻️ **The test suite keeps one copy of each stand-in its files share, and of its paths (Q154).**
   Nineteen test files each declared a stand-in for Outlook's connection that runs an operation
   straight against a fake session, seventeen of them byte for byte, and the suite held six more
@@ -904,7 +915,11 @@ its mailbox tests on, and change nothing you install.
   Smaller copies went the same way: the in-memory prompt registry (`FakePromptRegistry`, which also
   replaces the narrower one `PromptLintTests` kept), the setter of a stand-in's out parameter
   (`ProxyArgs`), settings naming only the hub (`HubOnlyLiveSettings`) and a PST store's EntryID
-  (`TestFolders.PstStoreEntryId`). No test changed what it checks: the build machine ran the same
+  (`TestFolders.PstStoreEntryId`). Six suites around the sweep and the exhaustive scan spelled out
+  the same one-mailbox profile - its SID, store, index prefix and frontier - and three of them its
+  mail, its sweep, an exhaustive search of its Inbox and a session that answers the store list, the
+  sweep and the scan as well: `AliceMailbox` holds it once, and `ThreadWalks` the conversation walks
+  three thread suites each built. No test changed what it checks: the build machine ran the same
   tests, by name, before and after each step.
 
 - ✅ **A live run that starts Outlook closes Office's activation wizard and records it.**
@@ -2769,6 +2784,31 @@ its mailbox tests on, and change nothing you install.
   would be worse than a gap.
 
 ### Security
+
+- 🔒 **`save_attachment` saves only into OutlookAI's own download folder and folders inside it.**
+  It used to save into any folder the assistant named. The sender of a mail chooses an attachment's
+  content and its name, and the assistant that reads the mail chooses the folder, so a mail could
+  talk it into saving its attachment in the Startup folder, where Windows opens it at the next
+  sign-in. Now it saves in `%LOCALAPPDATA%\OutlookAI\scratch\attachments`, or in a folder inside it
+  named by a relative path such as `invoices`, and refuses anything else with nothing written. The
+  refusal tells the assistant to copy the file elsewhere with its own file tools, under their own
+  permission rules (decision 198 (a)), and the tool's description says the same. A folder is judged
+  by where Windows really puts it. `..` is resolved; network and device paths (`\\server\share`,
+  `\\?\`, `\\.\`), a `:` that is not a drive letter's, and folder names Windows would change are
+  refused on their text; junctions, symbolic links and 8.3 short names are followed to the folder's
+  final path before it is compared. The server checks the folder before Outlook is asked anything,
+  its Outlook process checks it again before it opens the mail, and the writer checks it before and
+  after it makes the folder. The sender's file name is made safe: separators, `:` and the other
+  characters Windows cannot store become `_`, a device name such as `CON` gets a leading `_`,
+  trailing dots and spaces go, and so do the Unicode controls that can make `exe.pdf` read as
+  `fdp.exe`. A file is never replaced. The name is claimed by creating an empty file that must not
+  exist yet, without following a link of that name, and a taken name gets ` (2)`, ` (3)` and so on.
+  All of the tool's file writing is in one class, `AttachmentFileWriter`. A test machine showed it
+  end to end, through the shipped server too: Outlook wrote each attachment into the file claimed
+  for it, a name holding a direction control was saved under its safe name, a name too long for the
+  folder was shortened with its extension kept, and a junction in the download folder that led out
+  was refused by the server and again by its Outlook process. `manage_signature` now also refuses a
+  device name before a dot, such as `nul.backup`, which Windows reads as a device too.
 
 - 🔒 **The installer removes the trust Office saved for add-ins signed with the leaked old key.**
   Clicking Install on Office's "Publisher cannot be verified" prompt for OutlookAI v1.0.0.1 to

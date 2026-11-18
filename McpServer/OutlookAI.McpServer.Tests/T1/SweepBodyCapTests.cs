@@ -41,15 +41,13 @@ namespace OutlookAI.McpServer.Tests.T1;
 /// </summary>
 public sealed class SweepBodyCapTests
 {
-    private const string Sid = "{S-1-5-21-1111111111-2222222222-3333333333-1001}";
-
-    private const string Store = "alice@example.com";
+    private const string Store = AliceMailbox.Store;
 
     private const string OtherStore = "Archive Old.pst";
 
-    private const string StorePrefix = "mapi16://" + Sid + "/" + Store + "($deadbeef)";
+    private const string StorePrefix = AliceMailbox.StorePrefix;
 
-    private static readonly DateTime Frontier = new(2026, 8, 18, 9, 30, 0, DateTimeKind.Utc);
+    private static readonly DateTime Frontier = AliceMailbox.Frontier;
 
     private static readonly ComStoreDetail[] ProfileStores =
     {

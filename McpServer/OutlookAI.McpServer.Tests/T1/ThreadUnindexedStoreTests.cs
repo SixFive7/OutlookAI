@@ -9,6 +9,8 @@ using OutlookAI.Core.Services;
 
 using Xunit;
 
+using static OutlookAI.McpServer.Tests.ThreadWalks;
+
 namespace OutlookAI.McpServer.Tests.T1;
 
 /// <summary>
@@ -261,17 +263,6 @@ public sealed class ThreadUnindexedStoreTests
     }
 
     // ================================================================== fixtures
-
-    private static ThreadLiveInfo Walked(string? anchorStore)
-    {
-        return new ThreadLiveInfo
-        {
-            Performed = true,
-            MembersWalked = 3,
-            MembersAdded = 3,
-            AnchorStore = anchorStore,
-        };
-    }
 
     private static readonly ComStoreDetail[] MixedProfile =
     {

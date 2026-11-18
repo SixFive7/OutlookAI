@@ -1276,9 +1276,11 @@ namespace OutlookAI.Core.Com
         }
 
         /// <summary>
-        /// Saves one attachment (1-based index) of an item to
-        /// <paramref name="targetDirectory"/> (created if missing). Never overwrites: an
-        /// existing name gets a numeric suffix. Returns the full saved path.
+        /// Saves one attachment (1-based index) of an item into
+        /// <paramref name="targetDirectory"/> (created if missing), which must be OutlookAI's
+        /// download folder or a folder inside it (Q198 (a)). Never overwrites: an existing name
+        /// gets a numeric suffix. Returns the full saved path. Every file it writes is written by
+        /// <see cref="Services.AttachmentFileWriter"/>.
         /// </summary>
         /// <param name="attemptedPath">
         /// The path the write was aimed at, reported even when the call fails. A
@@ -1306,6 +1308,20 @@ namespace OutlookAI.Core.Com
             if (string.IsNullOrWhiteSpace(targetDirectory))
             {
                 throw new ArgumentException("Target directory must not be blank.", nameof(targetDirectory));
+            }
+
+            // Q198 (a): the folder is checked here as well as by the caller, because this is the
+            // process that writes - and before Outlook is asked anything, so a refused folder opens
+            // no item and fans out to no other store. Reading the disk only: nothing is written.
+            try
+            {
+                Services.AttachmentFileWriter.CheckFolder(targetDirectory);
+            }
+            catch (Services.AttachmentFolderRefusedException refused)
+            {
+                sizeBytes = 0;
+                error = ComErrorTokens.With(ComErrorTokens.SaveFolderRefused, refused.Message);
+                return null;
             }
 
             string? capturedError = null;
@@ -1351,40 +1367,24 @@ namespace OutlookAI.Core.Com
                     }
 
                     attachment = attachmentCollection[attachmentIndex];
-                    string fileName;
-                    try
-                    {
-                        fileName = (string)((dynamic)attachment!).FileName;
-                    }
-                    catch (COMException)
-                    {
-                        fileName = "attachment";
-                    }
 
-                    Directory.CreateDirectory(targetDirectory);
-                    string fullPath = MakeUniquePath(targetDirectory, SanitizeFileName(fileName));
-
-                    // Published BEFORE the write, so a SaveAsFile that throws part-way can
-                    // still tell the caller where the remains are.
-                    capturedPath = fullPath;
-                    ((dynamic)attachment!).SaveAsFile(fullPath);
-
-                    // Past this line the file is WRITTEN. Measuring it is reporting, not
-                    // saving, so it must not be able to turn a completed save into a
-                    // reported failure - which is exactly what it did while this sat bare
-                    // inside the try: an IOException from the size read answered
-                    // "Attachment could not be saved" over a file that was saved in full.
-                    try
-                    {
-                        capturedSize = new FileInfo(fullPath).Length;
-                    }
-                    catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException || ex is ArgumentException)
-                    {
-                        // Size unknown; the path is what the caller needs and it is returned.
-                        capturedSize = 0;
-                    }
-
-                    return fullPath;
+                    // Everything from here to the file on disk is the writer's: the folder checked
+                    // again and made, the sender's name made safe, a free name claimed, the write,
+                    // and the size read back - which is reporting, not saving, so it cannot turn a
+                    // completed save into a reported failure. The claimed path is published BEFORE
+                    // the write, so a SaveAsFile that throws part-way can still tell the caller
+                    // where the remains are.
+                    (string savedPath, long savedSize) = Services.AttachmentFileWriter.Save(
+                        attachment!, targetDirectory, claimed => capturedPath = claimed);
+                    capturedSize = savedSize;
+                    return savedPath;
+                }
+                catch (Services.AttachmentFolderRefusedException refused)
+                {
+                    // The folder changed between the check above and the write's own check, and
+                    // the write refused it before making or writing anything.
+                    capturedError = ComErrorTokens.With(ComErrorTokens.SaveFolderRefused, refused.Message);
+                    return null;
                 }
                 catch (COMException ex)
                 {
@@ -11654,43 +11654,6 @@ namespace OutlookAI.Core.Com
         private static string EscapeDaslValue(string value)
         {
             return value.Replace("'", "''");
-        }
-
-        private static string SanitizeFileName(string fileName)
-        {
-            char[] invalid = Path.GetInvalidFileNameChars();
-            System.Text.StringBuilder sb = new System.Text.StringBuilder(fileName.Length);
-            foreach (char c in fileName)
-            {
-                sb.Append(Array.IndexOf(invalid, c) >= 0 ? '_' : c);
-            }
-
-            string sanitized = sb.ToString().Trim();
-            return sanitized.Length == 0 ? "attachment" : sanitized;
-        }
-
-        private static string MakeUniquePath(string directory, string fileName)
-        {
-            string candidate = Path.Combine(directory, fileName);
-            if (!File.Exists(candidate))
-            {
-                return candidate;
-            }
-
-            string baseName = Path.GetFileNameWithoutExtension(fileName);
-            string extension = Path.GetExtension(fileName);
-            for (int i = 2; i < 10000; i++)
-            {
-                candidate = Path.Combine(
-                    directory,
-                    string.Format(CultureInfo.InvariantCulture, "{0} ({1}){2}", baseName, i, extension));
-                if (!File.Exists(candidate))
-                {
-                    return candidate;
-                }
-            }
-
-            throw new IOException("Could not find a free file name in the target directory.");
         }
 
         /// <summary>

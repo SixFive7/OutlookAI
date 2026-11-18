@@ -4,6 +4,8 @@ using OutlookAI.Core.Services;
 
 using Xunit;
 
+using static OutlookAI.McpServer.Tests.ThreadWalks;
+
 namespace OutlookAI.McpServer.Tests.T1;
 
 /// <summary>
@@ -45,7 +47,7 @@ public sealed class ThreadDerivedStoreReportingTests
     public void TheNarrowedLookupSentence_OffersOnlyTheRemedyThatStillWorks()
     {
         string line = Assert.Single(MailService.DescribeThreadCoverage(
-            Unqueried(), FreshMerge.FreshnessPartial, AliceStore, scopeWidened: false, top: 50)!);
+            Unqueried(AliceStore, BobStore), FreshMerge.FreshnessPartial, AliceStore, scopeWidened: false, top: 50)!);
 
         Assert.Contains("without store", line, StringComparison.Ordinal);
         Assert.DoesNotContain("conversation_id", line, StringComparison.Ordinal);
@@ -72,19 +74,5 @@ public sealed class ThreadDerivedStoreReportingTests
         Assert.Equal(
             new[] { "live", "freshness", "store", "scopeWidened", "top" },
             method.GetParameters().Select(p => p.Name).ToArray());
-    }
-
-    /// <summary>A walk of Alice's store with Bob's named as the one nobody asked about.</summary>
-    private static ThreadLiveInfo Unqueried()
-    {
-        return new ThreadLiveInfo
-        {
-            Performed = true,
-            MembersWalked = 3,
-            MembersAdded = 3,
-            AnchorStore = AliceStore,
-            StoresNotQueried = new[] { BobStore },
-            CoverageGaps = new[] { FreshMerge.ThreadGapUnqueriedStore },
-        };
     }
 }
