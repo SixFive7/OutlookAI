@@ -706,7 +706,7 @@ function Invoke-SelfTest {
     Check 'and every clone it lists is a build VM' 0 @($BuildVmPool | Where-Object { -not (Test-IsBuildVmName $_) }).Count
     Check 'OutlookAI-Indexed is not' $false (Test-IsBuildVmName 'OutlookAI-Indexed')
     Check 'OutlookAI-Unindexed is not' $false (Test-IsBuildVmName 'OutlookAI-Unindexed')
-    Check 'nor an Outlook guest''s clone' $false (Test-IsBuildVmName 'OutlookAI-Indexed2')
+    Check 'nor an Outlook guest''s clone' $false (Test-IsBuildVmName 'OutlookAI-Indexed3')
     Check 'nor the Exchange VM' $false (Test-IsBuildVmName 'OutlookAI-Exchange')
     Check 'a clone the pool does not list is not' $false (Test-IsBuildVmName 'OutlookAI-Build9')
     Check 'nor a name that merely starts the same way' $false (Test-IsBuildVmName 'OutlookAI-Builder')
@@ -906,6 +906,12 @@ Expected: 1</Message></ErrorInfo></Output></UnitTestResult>
     Check 'staged and placed: checked, nothing on the first line' 'checked |' "$($ok.State) |$($ok.Headline)"
     Check 'self-tests skipped: nothing to say' 'self-tests skipped' (Get-PersonalDataState $true '' $null @()).State
     Check 'the guest stages it where this stages it' $true ([System.IO.File]::ReadAllText((Join-Path $PSScriptRoot "..\guest\$GuestScriptName")).Contains("'$GuestPrivateListRelative'"))
+    $ownText = [System.IO.File]::ReadAllText($PSCommandPath)
+    # Each needle is split in two, so that these lines cannot find themselves: written whole, the
+    # first found this line, ahead of the call it looks for, and the check failed on a correct runner.
+    $retry = $ownText.IndexOf('$code = Invoke-GuestRun' + ' -Attempt 2')
+    $restage = if ($retry -gt 0) { $ownText.LastIndexOf('if ($privateList) {' + ' Copy-Item', $retry) } else { -1 }
+    Check 'and stages it again before a second attempt, which expands the source afresh' $true ($retry -gt 0 -and $restage -gt $ownText.IndexOf("packages: `$added package(s)"))
     $j = New-RunSummary -RunId 'x' -Verdict ([pscustomobject]@{ Verdict = 'PASS'; Why = '' }) -Revision ([ordered]@{}) -Filter '' -Trx $null -SelfTests @() -SelfTestSkips @() -GuestVerdict 'PASS' -HostError '' -BuildErrors @() -PackagesStaged $false -Timings ([ordered]@{}) -GuestPhases ([ordered]@{}) -Results 'C:\x' -Vm 'OutlookAI-Build' -PersonalData $none.State
     Check 'summary.json carries the state' 'not checked: no private list' $j.personalData
 
@@ -1935,6 +1941,10 @@ try {
         $packagesStaged = $true
         Measure-Phase 'packages' $tp
         Say "packages: $added package(s) added to the VM's feed for this run only - the base checkpoint keeps its own feed"
+        # The private list again: the first attempt moved it into the source tree, which the second
+        # expands afresh, so without this the known identifiers went unchecked on every run that
+        # staged packages (found 2026-11-18, Q172: 11.0.0 packages the base feed predates).
+        if ($privateList) { Copy-Item -LiteralPath $privateList -Destination (Join-Path $GuestRunRoot $GuestPrivateListRelative) -ToSession $session }
         $t0 = Get-Date
         $code = Invoke-GuestRun -Attempt 2
     }

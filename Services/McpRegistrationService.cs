@@ -105,7 +105,17 @@ namespace OutlookAI.Services
         internal const string StatusAwaitingChoice = "awaiting_choice";
         internal const string StatusError = "error";
 
-        internal const string DotnetRuntimeDownloadUrl = "https://dotnet.microsoft.com/download/dotnet/10.0";
+        internal const string DotnetRuntimeDownloadUrl = "https://dotnet.microsoft.com/download/dotnet/11.0";
+
+        /// <summary>
+        /// What a missing runtime means and what to do (Q172): setup downloads the server's own copy of
+        /// the .NET 11 runtime into the user's profile, so running it again is the first remedy, and a
+        /// machine-wide .NET 11 is the other place the server looks.
+        /// </summary>
+        internal const string RuntimeMissingDetail =
+            "The .NET 11 runtime the mail server needs is not installed, so registration was skipped. "
+            + "OutlookAI's installer downloads its own copy: run the installer again, or install the .NET 11 runtime from "
+            + DotnetRuntimeDownloadUrl + ", then restart Outlook.";
 
         private static readonly object _gate = new object();
 
@@ -503,13 +513,14 @@ namespace OutlookAI.Services
                 return snap;
             }
 
-            // (6) The server needs the .NET 10 runtime. Registering a server that cannot start
-            // would surface as a failed MCP server in every Claude session, so report instead
-            // and heal on a later start once the runtime is there.
-            if (!IsDotnetRuntime10Installed())
+            // (6) The server needs the .NET 11 runtime: the private copy setup downloads, or a
+            // machine-wide one (ServerDotnetRuntime). Registering a server that cannot start would
+            // surface as a failed MCP server in every Claude session, so report instead and heal
+            // on a later start once the runtime is there.
+            if (!ServerDotnetRuntime.IsAvailable())
             {
                 snap.Status = StatusNoRuntime;
-                snap.Detail = "The .NET 10 runtime the mail server needs is not installed, so registration was skipped. Install it from " + DotnetRuntimeDownloadUrl + " and restart Outlook.";
+                snap.Detail = RuntimeMissingDetail;
                 return snap;
             }
 
@@ -671,10 +682,10 @@ namespace OutlookAI.Services
                 return false;
             }
 
-            if (!IsDotnetRuntime10Installed())
+            if (!ServerDotnetRuntime.IsAvailable())
             {
                 status = StatusNoRuntime;
-                detail = "The .NET 10 runtime the mail server needs is not installed, so registration was skipped. Install it from " + DotnetRuntimeDownloadUrl + " and restart Outlook.";
+                detail = RuntimeMissingDetail;
                 return false;
             }
 
@@ -826,65 +837,6 @@ namespace OutlookAI.Services
             }
 
             return null;
-        }
-
-        /// <summary>
-        /// True when some Microsoft.NETCore.App 10.x shared framework is present. Exactly
-        /// 10.x: the server's default roll-forward (Minor) accepts a newer 10.x but not 11.x.
-        /// Probes the filesystem because the sharedfx registry key is absent on machines that
-        /// do have the runtime.
-        /// <para>
-        /// Installer.iss asks the same question the same way in Pascal
-        /// (<c>IsNetRuntime10Installed</c>), because setup has to decide before the add-in
-        /// exists. The two version prefixes are compared by
-        /// Tools/Checks/check-pinned-constants.ps1 - neither language can read the other's
-        /// constant, and a disagreement here shows up only as a status message.
-        /// </para>
-        /// </summary>
-        internal static bool IsDotnetRuntime10Installed()
-        {
-            try
-            {
-                // The 64-bit registry view and the 64-bit Program Files explicitly: Outlook
-                // may be a 32-bit process, and under WOW64 the default view would redirect
-                // into Wow6432Node and to the 32-bit Program Files - neither of which is
-                // where the x64 runtime this server needs lives.
-                string root = null;
-                using (var hklm = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64))
-                using (var key = hklm.OpenSubKey(@"SOFTWARE\dotnet\Setup\InstalledVersions\x64\sharedhost"))
-                {
-                    if (key != null)
-                    {
-                        var path = key.GetValue("Path") as string;
-                        if (!string.IsNullOrEmpty(path))
-                            root = Path.Combine(path, @"shared\Microsoft.NETCore.App");
-                    }
-                }
-
-                if (string.IsNullOrEmpty(root))
-                {
-                    string programFiles = Environment.GetEnvironmentVariable("ProgramW6432");
-                    if (string.IsNullOrEmpty(programFiles))
-                        programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
-                    root = Path.Combine(programFiles, @"dotnet\shared\Microsoft.NETCore.App");
-                }
-
-                if (!Directory.Exists(root))
-                    return false;
-
-                foreach (var d in Directory.GetDirectories(root))
-                {
-                    string name = Path.GetFileName(d);
-                    if (name != null && name.StartsWith("10.", StringComparison.Ordinal))
-                        return true;
-                }
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine("dotnet runtime probe: " + ex.Message);
-            }
-
-            return false;
         }
 
         // ===== JSON: read, splice, verify =====

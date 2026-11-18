@@ -9,7 +9,7 @@
       runtimes appending to one file, under one lock, rather than only that it compiles for net48.
     -->
     <OutputType>Exe</OutputType>
-    <TargetFrameworks>net48;net10.0-windows</TargetFrameworks>
+    <TargetFrameworks>net48;net11.0-windows</TargetFrameworks>
     <RootNamespace>OutlookAI.AuditLogStress</RootNamespace>
     <ImplicitUsings>disable</ImplicitUsings>
     <IsPackable>false</IsPackable>

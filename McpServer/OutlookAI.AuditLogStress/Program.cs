@@ -13,7 +13,7 @@ namespace OutlookAI.AuditLogStress
 {
     /// <summary>
     /// The audit log's multi-process stress writer (Q117, 2026-10-03) - test tooling, never shipped.
-    /// <c>T1/AuditLogStressTests</c> starts copies of it, the .NET 10 and the .NET Framework 4.8 build
+    /// <c>T1/AuditLogStressTests</c> starts copies of it, the .NET 11 and the .NET Framework 4.8 build
     /// side by side, against one throwaway log under %TEMP%: many PROCESSES appending to one file is
     /// the case the writer exists for, and threads in one test host cannot stand in for it.
     /// <code>

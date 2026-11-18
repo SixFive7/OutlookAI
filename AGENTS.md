@@ -133,8 +133,9 @@ section after next); builds and the five guards run on this workstation; and a r
 
 **Security scanning replaced CodeQL's and the dependency review's, here (Q125, decided by the
 maintainer 2026-10-03).** Every build runs the .NET SDK's security analysers - every Security rule
-.NET 10 ships, each finding a build error: `McpServer/Directory.Build.props` for the server's
-projects, `NetSecurityAnalyzers.targets` (imported by `OutlookAI.csproj`) for the add-in, which
+.NET 11 ships (`11.0-all` since Q172, 2026-11-18), each finding a build error:
+`McpServer/Directory.Build.props` for the server's projects, `NetSecurityAnalyzers.targets`
+(imported by `OutlookAI.csproj`) for the add-in, which
 says how and why. Fix a real finding; suppress a false positive
 only at its site, with `[SuppressMessage(..., Justification = "<why it is safe>")]`. And every
 release runs `Tools/Test-VulnerablePackages.ps1` (no NuGet package with a known vulnerability) and
@@ -182,7 +183,7 @@ everything except publishing; `-Execute` publishes. In order, it:
     with the signed installer, and fast-forwards a local master that sat on the released commit.
 
 Everything lands in `.work\release\v<version>\`; `release.json` there is the record. It needs
-Visual Studio with the Office workload, Inno Setup 6, the Windows SDK's signtool, the .NET 10 SDK,
+Visual Studio with the Office workload, Inno Setup 6, the Windows SDK's signtool, the .NET 11 SDK,
 `gh` logged in, and the staged VSTO runtime (`Testbed/MEDIA.md`). Run it in the background or with a
 timeout of 30 minutes or more: the build VM's run is inside it.
 
@@ -293,9 +294,11 @@ pwsh -File Testbed/host/Invoke-LiveTierOnGuest.ps1 -VMName OutlookAI-Indexed [<c
 pwsh -File Testbed/host/Invoke-LiveTierOnGuest.ps1 -Kind Indexed [<commit-or-branch>]   # whichever indexed guest is free
 ```
 
-Each Outlook guest has a clone since 2026-11-17 - `OutlookAI-Indexed2`, `OutlookAI-Unindexed2`, copies
-of their source at its frozen checkpoint (`Testbed/host/TestbedPool.ps1`) - and `-Kind` takes
-whichever guest of that kind is free. `-VMName` names one guest, a clone included.
+Each Outlook guest has a clone - `OutlookAI-Indexed3`, `OutlookAI-Unindexed3` since the move to .NET 11
+(Q172, 2026-11-18), copies of their source at its frozen checkpoint (`Testbed/host/TestbedPool.ps1`) -
+and `-Kind` takes whichever guest of that kind is free. `-VMName` names one guest, a clone included.
+`OutlookAI-Indexed2` and `OutlookAI-Unindexed2`, the clones from before, serve only the branches not
+yet on .NET 11.
 
 It tests a commit, like the build-VM runner, and enforces the rest itself: the lease (it waits,
 and never takes over one somebody else holds), the checkpoint, the graceful restart, step 9a,

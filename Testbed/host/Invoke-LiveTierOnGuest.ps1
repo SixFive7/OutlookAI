@@ -238,8 +238,8 @@ if (Test-Path Variable:\PSNativeCommandUseErrorActionPreference) {
 $Guests = [ordered]@{
     # The resting checkpoints are the FROZEN ones (Q130 (a), decided 2026-10-03): testbed.json's
     # frozenClocks records them, and -SelfTest holds these two names to that record.
-    'OutlookAI-Indexed'   = [ordered]@{ ComputerName = 'OAI-INDEXED'; Indexed = $true; Checkpoint = 'CP-22C-FROZEN-CLOCK'; Exchange = $false }
-    'OutlookAI-Unindexed' = [ordered]@{ ComputerName = 'OAI-UNINDEXED'; Indexed = $false; Checkpoint = 'CP-16B-FROZEN-CLOCK'; Exchange = $false }
+    'OutlookAI-Indexed'   = [ordered]@{ ComputerName = 'OAI-INDEXED'; Indexed = $true; Checkpoint = 'CP-24C-FROZEN-CLOCK'; Exchange = $false }
+    'OutlookAI-Unindexed' = [ordered]@{ ComputerName = 'OAI-UNINDEXED'; Indexed = $false; Checkpoint = 'CP-18B-FROZEN-CLOCK'; Exchange = $false }
     # The Exchange VM (2026-10-08): never frozen, never cloned; its resting checkpoint is the newest
     # testbed.json's exchangeVm.checkpoints records, and -SelfTest holds the two equal.
     'OutlookAI-Exchange'  = [ordered]@{ ComputerName = 'OAI-EXCHANGE'; Indexed = $true; Checkpoint = 'CP-10-SDK11'; Exchange = $true }
@@ -279,13 +279,14 @@ $SignatureDialogVariable = 'OUTLOOKAI_LIVE_SIGNATURE_DIALOG'
 $SignatureDialogReading = 'signature-dialog.json'
 # The SDK a run's commit installs when its guest lacks it, and the SDK its verification looks for:
 # Install-DotnetSdk.ps1 -Execute and -Verify, the commit's own copy, told all three below, so that
-# copy's defaults do not decide (they name the .NET 11 SDK since 2026-11-18). Still .NET 10's on
-# 2026-11-18 (Q172): the frozen checkpoints this restores hold 10.0.401 alone, and CP-10-SDK11
-# holds 10.0.404 beside SDK 11, which '10.' matches too. It moves to the .NET 11 SDK with the code,
-# and the frozen checkpoints with it (Testbed/MEDIA.md). Hashed on the host before every run.
-$SdkInstallerName = 'dotnet-sdk-10.0.401-win-x64.exe'
-$SdkSha512 = 'f0d8f8e7ec24efb05172a65dd80c4a9b1ef17efcebdbf0f57c15f436eea417960a7eeb6726c473a042373d6a8b94ac1adc7d680decbf7d2c45fa5c5662d62265'
-$SdkVersionPrefix = '10.'
+# copy's defaults do not decide. The .NET 11 SDK since the code moved to .NET 11 (Q172,
+# 2026-11-18): every checkpoint this restores holds 11.0.100 - the frozen ones beside 10.0.401,
+# CP-10-SDK11 beside 10.0.404 - so a run installs nothing. A branch still on .NET 10 keeps the
+# runner that names 10.0.401 and the frozen checkpoints before these (Testbed/MEDIA.md). Hashed on
+# the host before every run.
+$SdkInstallerName = 'dotnet-sdk-11.0.100-win-x64.exe'
+$SdkSha512 = '9777f9c9b8ea136a3aa5284f6bd33b0f1b3133fbc96d05d5c725683ccc101bc2fb2830c4182e199ec236c61a5e703a77b05770dcf3c881552ef77c7ada0584ff'
+$SdkVersionPrefix = '11.'
 $FilterBase = 'Category=Live&Requires!=DelegateStore&Requires!=CachedExchange'
 $FilterUnindexedExtra = '&Requires!=SearchIndex'
 # The Exchange VM with its test account as the hub: LiveRunFilters.ExchangeTestAccount, read and write. From
@@ -779,10 +780,10 @@ function Invoke-SelfTest {
 
     Write-Host '== the guests =='
     $i = Get-GuestFacts 'OutlookAI-Indexed'
-    Check 'the indexed guest is a test guest, resting on its frozen checkpoint' 'OAI-INDEXED|True|CP-22C-FROZEN-CLOCK' @($i.ComputerName, $i.Indexed, $i.Checkpoint)
+    Check 'the indexed guest is a test guest, resting on its frozen checkpoint' 'OAI-INDEXED|True|CP-24C-FROZEN-CLOCK' @($i.ComputerName, $i.Indexed, $i.Checkpoint)
     $u = Get-GuestFacts 'outlookai-unindexed'
     Check 'the unindexed guest is one, in any case' 'OutlookAI-Unindexed|OAI-UNINDEXED|False' @($u.Name, $u.ComputerName, $u.Indexed)
-    Check 'the unindexed guest rests on its frozen checkpoint' 'CP-16B-FROZEN-CLOCK' $u.Checkpoint
+    Check 'the unindexed guest rests on its frozen checkpoint' 'CP-18B-FROZEN-CLOCK' $u.Checkpoint
     Write-Host '== their clones (TestbedPool.ps1, 2026-11-17) =='
     Check 'every source of the two guest pools is a guest here, and nothing else is but the Exchange VM' ((@($TestbedPools['indexed'][0], $TestbedPools['unindexed'][0], 'OutlookAI-Exchange') | Sort-Object) -join '|') ((@($Guests.Keys) | Sort-Object) -join '|')
     foreach ($kindName in @('Indexed', 'Unindexed')) {
@@ -794,8 +795,8 @@ function Invoke-SelfTest {
             Check "$clone is a test guest: its source's facts under its own name" "$clone|$($source.Name)|$kindName|$($source.ComputerName)|$($source.Indexed)|$($source.Checkpoint)" ("{0}|{1}|{2}|{3}|{4}|{5}" -f $f.Name, $f.Source, $f.Kind, $f.ComputerName, $f.Indexed, $f.Checkpoint)
         }
     }
-    $c = Get-GuestFacts 'outlookai-indexed2'
-    Check 'a clone named in another case is the clone, spelled as the pool spells it' 'OutlookAI-Indexed2|OutlookAI-Indexed' "$($c.Name)|$($c.Source)"
+    $c = Get-GuestFacts 'outlookai-indexed3'
+    Check 'a clone named in another case is the clone, spelled as the pool spells it' 'OutlookAI-Indexed3|OutlookAI-Indexed' "$($c.Name)|$($c.Source)"
     Check 'a clone the pool does not list is refused' $true ($null -eq (Get-GuestFacts 'OutlookAI-Indexed9'))
     Check 'a build clone is refused' $true ($null -eq (Get-GuestFacts 'OutlookAI-Build2'))
     $xe = Get-GuestFacts 'OutlookAI-Exchange'
@@ -942,8 +943,8 @@ function Invoke-SelfTest {
     Check 'when, guest, commit' '20261003-174500-indexed-d4e31fe12345' (New-RunId ([datetime]'2026-10-03T17:45:00') 'd4e31fe1234567890' (Get-RunLabel 'OutlookAI-Indexed'))
     Check 'the unindexed guest' '20261003-174500-unindexed-d4e31fe12345' (New-RunId ([datetime]'2026-10-03T17:45:00') 'd4e31fe1234567890' (Get-RunLabel 'OutlookAI-Unindexed'))
     Check 'the Exchange VM' '20261003-174500-exchange-d4e31fe12345' (New-RunId ([datetime]'2026-10-03T17:45:00') 'd4e31fe1234567890' (Get-RunLabel 'OutlookAI-Exchange'))
-    Check 'and its clone' '20261003-174500-unindexed-d4e31fe12345' (New-RunId ([datetime]'2026-10-03T17:45:00') 'd4e31fe1234567890' (Get-RunLabel 'OutlookAI-Unindexed2'))
-    Check 'and the indexed guest''s clone' '20261003-174500-indexed-d4e31fe12345' (New-RunId ([datetime]'2026-10-03T17:45:00') 'd4e31fe1234567890' (Get-RunLabel 'OutlookAI-Indexed2'))
+    Check 'and its clone' '20261003-174500-unindexed-d4e31fe12345' (New-RunId ([datetime]'2026-10-03T17:45:00') 'd4e31fe1234567890' (Get-RunLabel 'OutlookAI-Unindexed3'))
+    Check 'and the indexed guest''s clone' '20261003-174500-indexed-d4e31fe12345' (New-RunId ([datetime]'2026-10-03T17:45:00') 'd4e31fe1234567890' (Get-RunLabel 'OutlookAI-Indexed3'))
     $threw = $false; try { New-RunId (Get-Date) 'HEAD' (Get-RunLabel 'OutlookAI-Indexed') | Out-Null } catch { $threw = $true }
 
     Write-Host '== the run marker and the ledger (the Exchange VM) =='

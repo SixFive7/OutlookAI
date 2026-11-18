@@ -232,11 +232,13 @@
   (`.work\w-vm-state\` of the main checkout) - are used nowhere. Left for later by the coordinator on
   2026-11-18, once the polling cut had landed.
 
-- [ ] **Remove the testbed's .NET 10 checkpoints once every branch is on .NET 11 (Q172).**
-  `CP-03-SDK-TEST-READY-UTC` on the three build VMs, and `CP-22C-FROZEN-CLOCK` and
-  `CP-16B-FROZEN-CLOCK` on the Outlook guests, stay only for branches whose runners still name them
-  (Docs/live-tier-on-the-vm.md section 4.12). Once no branch does: remove them (`Remove-VMSnapshot`;
-  Hyper-V merges their disks), take them out of `Testbed/testbed.json`, and keep
+- [ ] **Remove the testbed's .NET 10 checkpoints and clones once every branch is on .NET 11 (Q172).**
+  `CP-03-SDK-TEST-READY-UTC` on the three build VMs, `CP-22C-FROZEN-CLOCK` and `CP-16B-FROZEN-CLOCK`
+  on the Outlook guests, and the guests' old clones `OutlookAI-Indexed2` and `OutlookAI-Unindexed2`,
+  copies of those two, stay only for branches whose runners still name them
+  (Docs/live-tier-on-the-vm.md section 4.12). Once no branch does: remove the checkpoints
+  (`Remove-VMSnapshot`; Hyper-V merges their disks) and the two clones (`Remove-VM`, then their
+  folders under `E:\Hyper-V`), take them out of `Testbed/testbed.json`, and keep
   `.work/media/dotnet-sdk-10.0.401-win-x64.exe` only while a checkpoint still needs it - recording it
   in section 4.12. `OutlookAI-Exchange`'s older checkpoints are its rebuild points and stay.
 
