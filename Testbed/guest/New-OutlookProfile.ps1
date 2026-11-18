@@ -343,23 +343,6 @@ $script:AddressBookBlockName = 'Outlook Address Book'
 # =============================================================================================
 
 <#
-    Whether an ...\Office\<major>\Outlook key with these values and subkeys is a REAL Outlook
-    hive, or just the shell this product's installer leaves behind. Mirrors
-    OfficeVersions.IsOutlookHive exactly, case-insensitive footprint comparison included.
-#>
-function Test-IsOutlookHive {
-    param([string[]] $ValueNames, [string[]] $SubKeyNames)
-
-    if ($null -ne $ValueNames -and $ValueNames.Count -gt 0) { return $true }
-    if ($null -eq $SubKeyNames) { return $false }
-
-    foreach ($subKey in $SubKeyNames) {
-        if ($subKey -ne $script:InstallerFootprintSubKeyName) { return $true }
-    }
-    return $false
-}
-
-<#
     Picks the hive to work in, from candidates shaped
     @{ Version = '16.0'; Path = '...'; ValueNames = @(); SubKeyNames = @() }.
 
@@ -448,35 +431,6 @@ supports, so nothing here will choose it for you. If it is the one Outlook reall
     }
 
     return [pscustomobject]@{ Chosen = $null; RealHives = $real; Problem = $problem }
-}
-
-<#
-    The line(s) printed under the chosen hive when other Outlook-shaped keys exist. Pure; the same
-    function as Set-DefaultOutlookProfile.ps1's, for the same measured reason: on OAI-UNINDEXED,
-    HKCU\Software\Microsoft\Office\8.0\Outlook holds one value (First-Run) and nothing else, and the
-    old note offered "-OfficeVersion 8.0" as the fix. An unsupported major is named, never offered.
-#>
-function Format-OtherHiveNote {
-    param([string] $ChosenVersion, [object[]] $RealHives)
-
-    $supported = @()
-    $unsupported = @()
-    if ($null -ne $RealHives) {
-        foreach ($hive in $RealHives) {
-            if ($null -eq $hive -or $hive.Version -eq $ChosenVersion) { continue }
-            if ($script:SupportedOfficeVersions -contains $hive.Version) { $supported += $hive.Version }
-            else { $unsupported += $hive.Version }
-        }
-    }
-
-    $lines = @()
-    if ($supported.Count -gt 0) {
-        $lines += "other supported Outlook hive(s) here: $($supported -join ', ') - use -OfficeVersion if this one is wrong"
-    }
-    if ($unsupported.Count -gt 0) {
-        $lines += "also an Outlook-shaped key under unsupported major(s) $($unsupported -join ', ') - never chosen, and not a fix for anything"
-    }
-    return , $lines
 }
 
 <#
@@ -840,22 +794,6 @@ function New-ProfilePrfText {
 }
 
 <#
-    Whether one entry of a profile's account-manager key is a MAIL account. Pure; the same rule as
-    Build-Corpus.ps1's, from the same measurement (OAI-UNINDEXED, 2026-09-24): Outlook lists every
-    MAPI service there, wrapping data files and address books under one CLSID - the account-less
-    CorpusProfile holds {ED475414-...} 'Outlook Data File' (MSUPST MS) and {ED475414-...} 'Outlook
-    Address Book' (CONTAB) with COM Accounts.Count 0, and the tier profile's POP3 account is
-    {ED475411-...}. Only a wrapper around a data file or an address book is excluded; anything
-    else - an Exchange wrapper (MSEMS), a service nobody named, an unreadable clsid - counts.
-#>
-function Test-IsMailAccountEntry {
-    param([string] $Clsid, [string] $ServiceName)
-
-    if ($Clsid -eq '{ED475414-B0D6-11D2-8C3B-00104B2A6676}' -and @('MSUPST MS', 'MSPST MS', 'CONTAB', 'EMABLT', 'MSPST AB') -contains $ServiceName) { return $false }
-    return $true
-}
-
-<#
     Where -Execute writes the .prf when -PrfPath is not given. One function, because -Verify has to
     find the same file again - it dates the import by it - and two spellings of one rule drift.
 #>
@@ -888,34 +826,6 @@ function Select-StrayPst {
         $strays += $file.Name
     }
     return , $strays
-}
-
-<#
-    The ProfileName= a .prf carries, read from its text. Pure, so -SelfTest walks it.
-
-    Only the [General] section counts - it is where Outlook reads the name - and the first
-    ProfileName= there wins. $null when there is none: a file that names no profile is not one
-    this script wrote, and nothing is decided on its behalf.
-#>
-function Get-PrfProfileName {
-    param([string] $Text)
-
-    if ([string]::IsNullOrEmpty($Text)) { return $null }
-    $section = ''
-    foreach ($raw in ($Text -split "`r?`n")) {
-        $line = $raw.Trim()
-        if ($line.StartsWith(';')) { continue }
-        if ($line.StartsWith('[') -and $line.EndsWith(']')) {
-            $section = $line.Substring(1, $line.Length - 2).Trim()
-            continue
-        }
-        if ($section -eq 'General' -and $line.StartsWith('ProfileName=', [System.StringComparison]::OrdinalIgnoreCase)) {
-            $value = $line.Substring('ProfileName='.Length).Trim()
-            if ($value.Length -gt 0) { return $value }
-            return $null
-        }
-    }
-    return $null
 }
 
 <#
@@ -1656,6 +1566,10 @@ function Invoke-SelfTest {
     return 0
 }
 
+# The Outlook profile helpers are among the helpers the scripts share, dot-sourced from ScriptHelpers.ps1
+# beside this script (Q154, Q166 (b), decision 215 (a)) - before the self-test, which holds them too.
+. (Join-Path $PSScriptRoot 'ScriptHelpers.ps1')
+
 if ($SelfTest) { exit (Invoke-SelfTest) }
 
 # =============================================================================================
@@ -1670,43 +1584,6 @@ if ($SelfTest) { exit (Invoke-SelfTest) }
 # Outlook profiles, and on the maintainer's workstation that is a real profile with real delegate
 # mailboxes. Refusing early costs nothing and is the whole point of the guard.
 Assert-TestbedGuest -ExpectedUser $ExpectedUser
-
-<#
-    Every ...\Office\<major>\Outlook key on this machine, as Select-OutlookHive's candidates.
-    Reads only: no value is written and no key is created.
-#>
-function Get-OutlookHiveCandidate {
-    if (-not (Test-Path -LiteralPath $script:OfficeRootKeyPath)) { return , @() }
-
-    $candidates = @()
-    foreach ($version in (Get-ChildItem -LiteralPath $script:OfficeRootKeyPath -ErrorAction SilentlyContinue)) {
-        if ($version.PSChildName -notmatch '^\d+\.\d+$') { continue }
-
-        $outlookPath = "$script:OfficeRootKeyPath\$($version.PSChildName)\Outlook"
-        if (-not (Test-Path -LiteralPath $outlookPath)) { continue }
-
-        $key = Get-Item -LiteralPath $outlookPath
-        $candidates += [pscustomobject]@{
-            Version     = $version.PSChildName
-            Path        = $outlookPath
-            ValueNames  = @($key.GetValueNames())
-            SubKeyNames = @($key.GetSubKeyNames())
-        }
-    }
-    return , $candidates
-}
-
-<#
-    The profile names: the subkey names under <hive>\Profiles. A subkey IS a profile.
-#>
-function Get-OutlookProfileName {
-    param([string] $ProfilesKeyPath)
-
-    if (-not (Test-Path -LiteralPath $ProfilesKeyPath)) { return , @() }
-    $names = @(Get-ChildItem -LiteralPath $ProfilesKeyPath -ErrorAction SilentlyContinue |
-            ForEach-Object { $_.PSChildName })
-    return , $names
-}
 
 <#
     How many MAIL accounts a profile's account-manager key holds. $null when the key or the profile

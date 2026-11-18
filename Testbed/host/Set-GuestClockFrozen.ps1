@@ -149,8 +149,9 @@ $script:NeverFrozen = @{
     'OutlookAI-Exchange' = 'the Exchange VM is never frozen: Microsoft 365 sign-in needs real time'
 }
 
-# Say is one of the helpers the scripts share, dot-sourced from Testbed/guest/ScriptHelpers.ps1 (Q154,
-# Q166 (b), decision 215 (a)), which says why. It appends to $LogPath when there is one.
+# Say and Get-VmHeartbeatStatus are among the helpers the scripts share, dot-sourced from
+# Testbed/guest/ScriptHelpers.ps1 (Q154, Q166 (b), decision 215 (a)), which says why. Say appends to
+# $LogPath when there is one.
 . (Join-Path $PSScriptRoot '..\guest\ScriptHelpers.ps1')
 
 # ---------------------------------------------------------------------------------------------
@@ -399,12 +400,6 @@ if ($making -and ($NewCheckpoint -notmatch '^[A-Za-z0-9._-]{1,80}$')) { Say "REF
 # ---------------------------------------------------------------------------------------------
 function Get-VmState { return [string](Get-VM -Name $VMName -ErrorAction Stop).State }
 
-function Get-Heartbeat {
-    $hb = Get-VMIntegrationService -VMName $VMName -Name 'Heartbeat' -ErrorAction SilentlyContinue
-    if (-not $hb) { return 'absent' }
-    return [string]$hb.PrimaryStatusDescription
-}
-
 # The guest's clock against the host's, the host read on both sides of the call.
 function Read-GuestClock {
     $h0 = [DateTime]::UtcNow
@@ -421,7 +416,7 @@ function Read-GuestClock {
 function Wait-GuestAnswers([int] $Minutes) {
     $deadline = (Get-Date).AddMinutes($Minutes)
     while ((Get-Date) -lt $deadline) {
-        if ((Get-Heartbeat) -eq 'OK') {
+        if ((Get-VmHeartbeatStatus $VMName) -eq 'OK') {
             try { return (Read-GuestClock) } catch { }
         }
         Start-Sleep -Seconds 2

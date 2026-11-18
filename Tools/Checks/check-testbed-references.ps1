@@ -76,7 +76,8 @@
        renders into something the live tier's loader accepts.
 
     9. EVERY GUEST SCRIPT THAT WRITES CALLS THE GUEST GUARD, AND BEFORE ITS FIRST WRITE. The
-       guard (Assert-TestbedGuest, or a restated Assert-TestbedGuestLocal) is what keeps a
+       guard (Assert-TestbedGuest, the shared Assert-TestbedGuestIdentity, or a script's own
+       Assert-TestbedGuestLocal) is what keeps a
        testbed script off the maintainer's workstation, where the Outlook profile is real. Three
        scripts were found on 2026-09-24 writing without one - one of them renaming stores while
        its banner claimed an identity check it did not have. So this parses every script under
@@ -799,10 +800,11 @@ $script:Checks++
 # workstation is already the harm: it is the real profile, with real delegate mailboxes.
 #
 # WHAT COUNTS AS THE GUARD. A call to Assert-TestbedGuest (OutlookMapiInterop.ps1, which the file
-# must dot-source first) or to Assert-TestbedGuestLocal (a restatement the file itself defines,
-# which must read $env:USERNAME and throw). And the shared one is itself checked: a guard whose
-# body stopped reading $env:USERNAME or stopped throwing would satisfy every call site while
-# guarding nothing.
+# must dot-source first), to Assert-TestbedGuestIdentity (ScriptHelpers.ps1, which the file must
+# dot-source first - or a copy the file itself defines, in a script that travels alone) or to
+# Assert-TestbedGuestLocal (a guard the file itself defines). A guard the file defines must read
+# $env:USERNAME and throw. And the shared ones are themselves checked: a guard whose body stopped
+# reading $env:USERNAME or stopped throwing would satisfy every call site while guarding nothing.
 #
 # BEFORE THE FIRST WRITE. Statements are walked in source order, expanding calls into the same
 # file's functions, and the first guard-or-write event must be the guard. Branches are NOT
@@ -847,7 +849,7 @@ $guardWriteCommands = @{
 }
 $guardItemCommands = @('New-Item', 'Remove-Item', 'Set-Item', 'Rename-Item', 'Move-Item', 'Copy-Item', 'Clear-Item')
 $guardRegistryMembers = @('SetValue', 'DeleteValue', 'CreateSubKey', 'DeleteSubKey', 'DeleteSubKeyTree')
-$guardNames = @('Assert-TestbedGuest', 'Assert-TestbedGuestLocal')
+$guardNames = @('Assert-TestbedGuest', 'Assert-TestbedGuestIdentity', 'Assert-TestbedGuestLocal')
 
 # EMPTY SINCE 2026-09-24, the same day it was written: its four entries - Build-Corpus.ps1,
 # Complete-FirstLogon.ps1, Measure-SweepCost.ps1 and Register-InteractiveTask.ps1 - were given
@@ -874,7 +876,7 @@ function Invoke-GuardWalk {
             }, $true) | Sort-Object { $_.Extent.StartOffset })
 
     foreach ($node in $nodes) {
-        if ($null -ne $State.Guard -and $null -ne $State.Write -and $null -ne $State.Interop) { return }
+        if ($null -ne $State.Guard -and $null -ne $State.Write -and $null -ne $State.Interop -and $null -ne $State.Helpers) { return }
 
         # A nested function's body runs only when called - and a call is expanded where it happens.
         $inner = $false
@@ -892,6 +894,9 @@ function Invoke-GuardWalk {
             $name = $node.GetCommandName()
             if ($node.InvocationOperator -eq 'Dot' -and $node.Extent.Text -match 'OutlookMapiInterop\.ps1') {
                 $kind = 'interop'; $what = 'the dot-source of OutlookMapiInterop.ps1'
+            }
+            elseif ($node.InvocationOperator -eq 'Dot' -and $node.Extent.Text -match 'ScriptHelpers\.ps1') {
+                $kind = 'helpers'; $what = 'the dot-source of ScriptHelpers.ps1'
             }
             elseif (-not $name) { continue }
             else {
@@ -942,6 +947,7 @@ function Invoke-GuardWalk {
         if ($kind -eq 'guard' -and $null -eq $State.Guard) { $State.Guard = $event }
         if ($kind -eq 'write' -and $null -eq $State.Write) { $State.Write = $event }
         if ($kind -eq 'interop' -and $null -eq $State.Interop) { $State.Interop = $event }
+        if ($kind -eq 'helpers' -and $null -eq $State.Helpers) { $State.Helpers = $event }
     }
 }
 
@@ -967,6 +973,17 @@ else {
         $guardProblems += 'Assert-TestbedGuest in Testbed/guest/OutlookMapiInterop.ps1 is missing, duplicated, or no longer both reads $env:USERNAME and throws. Every guarded call site trusts it; a gutted guard passes them all while guarding nothing.'
     }
 }
+$helpersPath = Join-Path $guestDir 'ScriptHelpers.ps1'
+if (-not (Test-Path -LiteralPath $helpersPath)) {
+    $guardProblems += 'Testbed/guest/ScriptHelpers.ps1 does not exist, so Assert-TestbedGuestIdentity is defined nowhere and every script calling it fails - or this check is out of date.'
+}
+else {
+    $helpersAst = [System.Management.Automation.Language.Parser]::ParseFile($helpersPath, [ref]$null, [ref]$null)
+    $sharedIdentity = @($helpersAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Assert-TestbedGuestIdentity' }, $true))
+    if ($sharedIdentity.Count -ne 1 -or $sharedIdentity[0].Body.Extent.Text -notmatch '\$env:USERNAME' -or $sharedIdentity[0].Body.Extent.Text -notmatch '\bthrow\b') {
+        $guardProblems += 'Assert-TestbedGuestIdentity in Testbed/guest/ScriptHelpers.ps1 is missing, duplicated, or no longer both reads $env:USERNAME and throws. Every guarded call site trusts it; a gutted guard passes them all while guarding nothing.'
+    }
+}
 
 $exemptionIndex = @{}
 foreach ($e in $guardExemptions) { $exemptionIndex[$e.Path.ToLowerInvariant()] = $e }
@@ -982,7 +999,7 @@ foreach ($file in $guestScripts) {
     foreach ($fd in $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)) {
         $functions[$fd.Name] = $fd
     }
-    $walk = @{ Events = 0; Guard = $null; Write = $null; Interop = $null }
+    $walk = @{ Events = 0; Guard = $null; Write = $null; Interop = $null; Helpers = $null }
     Invoke-GuardWalk -Ast $ast -Functions $functions -State $walk -Chain @() -Pure @{}
 
     $problem = $null
@@ -995,6 +1012,18 @@ foreach ($file in $guestScripts) {
     }
     elseif ($walk.Write.Seq -lt $walk.Guard.Seq) {
         $problem = "$rel calls the guard, but only after it first writes: $($walk.Write.What), line $($walk.Write.Line), comes before $($walk.Guard.What), line $($walk.Guard.Line). A guard that runs after a write has already failed."
+    }
+    elseif ($walk.Guard.What -like 'Assert-TestbedGuestIdentity*') {
+        # The shared guard - or a copy of it in a script that travels alone, which must be a real one.
+        $copy = $functions['Assert-TestbedGuestIdentity']
+        if ($null -ne $copy) {
+            if ($copy.Body.Extent.Text -notmatch '\$env:USERNAME' -or $copy.Body.Extent.Text -notmatch '\bthrow\b') {
+                $problem = "$rel calls Assert-TestbedGuestIdentity, and its own copy of it no longer both reads `$env:USERNAME and throws."
+            }
+        }
+        elseif ($null -eq $walk.Helpers -or $walk.Helpers.Seq -gt $walk.Guard.Seq) {
+            $problem = "$rel calls Assert-TestbedGuestIdentity without first dot-sourcing ScriptHelpers.ps1, which is where it is defined - at run time that is a 'not recognized' error rather than a refusal."
+        }
     }
     elseif ($walk.Guard.What -like 'Assert-TestbedGuestLocal*') {
         # A restated guard must be a real one.

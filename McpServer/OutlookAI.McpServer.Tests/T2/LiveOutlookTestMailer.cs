@@ -3801,7 +3801,7 @@ public static class LiveOutlookTestMailer
                     ?? throw new InvalidOperationException("Store not found for the form read.");
                 item = ns.GetItemFromID(entryIdHex, (string)store.StoreID);
                 string? subject = (string?)item.Subject;
-                if (subject == null || !subject.Contains(SubjectTag, StringComparison.Ordinal)
+                if (!CarriesSubjectTag(subject)
                     || !subject.Contains(uniqueMarker, StringComparison.OrdinalIgnoreCase))
                 {
                     throw new InvalidOperationException(
@@ -3856,7 +3856,7 @@ public static class LiveOutlookTestMailer
                     ?? throw new InvalidOperationException("Store not found for the layout read.");
                 item = ns.GetItemFromID(entryIdHex, (string)store.StoreID);
                 string? subject = (string?)item.Subject;
-                if (subject == null || !subject.Contains(SubjectTag, StringComparison.Ordinal)
+                if (!CarriesSubjectTag(subject)
                     || !subject.Contains(uniqueMarker, StringComparison.OrdinalIgnoreCase))
                 {
                     throw new InvalidOperationException(

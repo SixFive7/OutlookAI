@@ -83,27 +83,17 @@ param(
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'TestbedPool.ps1')
 . (Join-Path $PSScriptRoot 'TestbedLeasePath.ps1')
+# Every program call goes through Invoke-NativeCommand, so that Windows PowerShell 5.1 cannot end
+# the script on a program's first stderr line (Q78). It is one of the helpers the scripts share,
+# dot-sourced from Testbed/guest/ScriptHelpers.ps1 (Q154, Q166 (b), decision 215 (a)), which says why;
+# so are Say, Stop-Refused, the run id, the lease decision and the guest task's exit code, which the
+# live runner uses too.
+. (Join-Path $PSScriptRoot '..\guest\ScriptHelpers.ps1')
 
 $GuestDir = 'C:\OutlookAI-Q5\trust-removal'
 $LeaseReasonPrefix = 'Invoke-TrustRemovalProbe'
 $ExitCodes = [ordered]@{ PASS = 0; FAIL = 1; INFRA = 3; REFUSED = 4 }
 $ProbeTimeoutSeconds = 1800
-
-# A NATIVE PROGRAM RUNS THROUGH HERE (Q78): 'Continue' in this scope only, stderr lines as strings,
-# the exit code left in $LASTEXITCODE - as Invoke-LiveTierOnGuest.ps1 does.
-function Invoke-NativeCommand {
-    param([Parameter(Mandatory = $true)] [scriptblock] $NativeCommand)
-
-    $ErrorActionPreference = 'Continue'
-    try {
-        & $NativeCommand | ForEach-Object {
-            if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.Exception.Message } else { $_ }
-        }
-    }
-    catch {
-        throw
-    }
-}
 
 # =================================================================================================
 # PURE DECISIONS. -SelfTest pins them.
@@ -131,17 +121,6 @@ function Get-RestingCheckpoint {
     return [string]$record.checkpoint
 }
 
-# A lease as Set-TestbedLease.ps1 writes it, judged for this run: free, ours or theirs.
-function Get-LeaseDecision {
-    param([object] $Lease, [string] $RunId, [long] $NowUnix)
-    if ($null -eq $Lease) { return 'free' }
-    $expires = 0L
-    try { $expires = [long]$Lease.expiresUnix } catch { return 'free' }
-    if ($expires -le $NowUnix) { return 'free' }
-    if (([string]$Lease.reason) -ceq "$LeaseReasonPrefix $RunId") { return 'ours' }
-    return 'theirs'
-}
-
 # The interactive task's script: the staged probe with this run's arguments. Every value is one this
 # script chose, never free text, so it is written into the task's script as it is.
 function Get-ProbeCommand {
@@ -150,14 +129,6 @@ function Get-ProbeCommand {
     if ($Scenario -eq 'RootStorePrompt') { $command += " -HoldSeconds $HoldSeconds" }
     if ($WithInstaller) { $command += " -InstallerPath '$GuestDir\$InstallerName' -InstallerScript '$GuestDir\Installer.iss'" }
     return $command
-}
-
-# The exit code Register-InteractiveTask.ps1 reports for the work, from its output.
-function Get-TaskExit {
-    param([string] $Text)
-    $m = [regex]::Match($Text, 'PROBE-TASK-EXIT: (-?\d+)')
-    if ($m.Success) { return [int]$m.Groups[1].Value }
-    return $null
 }
 
 function Invoke-SelfTest {
@@ -182,16 +153,24 @@ function Invoke-SelfTest {
         }
     }
 
-    Check 'no lease is free' ((Get-LeaseDecision $null 'r' 100) -eq 'free')
-    Check 'an expired lease is free' ((Get-LeaseDecision ([pscustomobject]@{ expiresUnix = 99; reason = 'x' }) 'r' 100) -eq 'free')
-    Check 'this run''s lease is ours' ((Get-LeaseDecision ([pscustomobject]@{ expiresUnix = 200; reason = "$LeaseReasonPrefix r" }) 'r' 100) -eq 'ours')
-    Check 'anyone else''s live lease is theirs' ((Get-LeaseDecision ([pscustomobject]@{ expiresUnix = 200; reason = 'Invoke-LiveTierOnGuest r' }) 'r' 100) -eq 'theirs')
+    $mine = "$LeaseReasonPrefix r"
+    Check 'a run''s lease reason is this probe''s name and the run id' ($mine -ceq 'Invoke-TrustRemovalProbe r')
+    Check 'no lease is free' ((Get-LeaseDecision $null $mine 100) -eq 'free')
+    Check 'an expired lease is free' ((Get-LeaseDecision ([pscustomobject]@{ expiresUnix = 99; reason = 'x' }) $mine 100) -eq 'free')
+    Check 'this run''s lease is ours' ((Get-LeaseDecision ([pscustomobject]@{ expiresUnix = 200; reason = $mine }) $mine 100) -eq 'ours')
+    Check 'anyone else''s live lease is theirs' ((Get-LeaseDecision ([pscustomobject]@{ expiresUnix = 200; reason = 'Invoke-LiveTierOnGuest r' }) $mine 100) -eq 'theirs')
+    $own = [System.IO.File]::ReadAllText($PSCommandPath)
+    # The run's code only: what follows the -SelfTest dispatch, below this function.
+    $runCode = $own.Substring($own.LastIndexOf('if ($SelfTest) { Invoke-SelfTest }'))
+    Check 'the probe asks with its run''s own reason' ($runCode.Contains('Get-LeaseDecision (Get-TestbedLease -VMName $VMName) "$LeaseReasonPrefix $runId"'))
 
     $c = Get-ProbeCommand -Scenario 'RootStorePrompt' -HoldSeconds 120 -WithInstaller $false -InstallerName ''
     Check 'the probe runs with -Execute and the hold' ($c -ceq "& '$GuestDir\Measure-TrustRemoval.ps1' -Scenario RootStorePrompt -Execute -LogDir '$GuestDir\results' -HoldSeconds 120")
     $c = Get-ProbeCommand -Scenario 'InstallerCleanup' -HoldSeconds 120 -WithInstaller $true -InstallerName 'OutlookAI-v1.exe'
     Check 'the installer round names the staged installer and Installer.iss' ($c.EndsWith("-InstallerPath '$GuestDir\OutlookAI-v1.exe' -InstallerScript '$GuestDir\Installer.iss'"))
-    Check 'the task exit is read back' ((Get-TaskExit "x`nPROBE-TASK-EXIT: 1`n") -eq 1)
+    Check 'the task exit is read back' ((Get-TaskExit "x`nRUN-REGISTER-EXIT: 1`n") -eq 1)
+    Check 'and the probe''s call writes the line it is read from' ($runCode.Contains('"RUN-REGISTER-EXIT: $LASTEXITCODE"'))
+    Check 'the guest is restored through TestbedPool.ps1, which saves a running guest first: on the way in, and at rest' (([regex]::Matches($runCode, 'Restore-TestbedCheckpoint -Name \$VMName -Checkpoint \$checkpoint')).Count -eq 2 -and -not $runCode.Contains('Get-VMIntegrationService'))
     Check 'no exit line is no exit' ($null -eq (Get-TaskExit 'nothing'))
 
     Write-Host ''
@@ -201,16 +180,6 @@ function Invoke-SelfTest {
 }
 
 if ($SelfTest) { Invoke-SelfTest }
-
-function Say([string] $Message) {
-    $line = '[{0:HH:mm:ss}] {1}' -f (Get-Date), $Message
-    Write-Host $line
-    if ($script:LogPath) { Add-Content -LiteralPath $script:LogPath -Value $line -Encoding UTF8 }
-}
-function Stop-Refused([string] $Why) {
-    Write-Host "REFUSED: $Why"
-    exit $ExitCodes['REFUSED']
-}
 
 $refusal = Get-VmRefusal $VMName
 if ($refusal) { Stop-Refused $refusal }
@@ -231,9 +200,10 @@ if (-not $CredentialRepoRoot) {
     $CredentialRepoRoot = Split-Path -Parent ([System.IO.Path]::GetFullPath($common))
 }
 $sha = (@(Invoke-NativeCommand { & git -C $repo rev-parse HEAD 2>&1 }) | Out-String).Trim()
+if ($LASTEXITCODE -ne 0 -or $sha -notmatch '^[0-9a-f]{40}$') { Stop-Refused "git could not read HEAD in $repo - $sha" }
 $dirty = @(Invoke-NativeCommand { & git -C $repo status --porcelain -- 'Testbed/guest/Measure-TrustRemoval.ps1' 'Testbed/guest/Register-InteractiveTask.ps1' 'Testbed/guest/OutlookMapiInterop.ps1' 'Installer.iss' 2>&1 } | Where-Object { $_ })
 
-$runId = '{0:yyyyMMdd-HHmmss}-{1}-{2}' -f (Get-Date), $Scenario, $sha.Substring(0, [Math]::Min(12, $sha.Length))
+$runId = New-RunId (Get-Date) $sha $Scenario
 $runDir = Join-Path $repo ".work\trust-removal-runs\$runId"
 $command = Get-ProbeCommand -Scenario $Scenario -HoldSeconds $HoldSeconds -WithInstaller ($Scenario -eq 'InstallerCleanup') -InstallerName ([System.IO.Path]::GetFileName([string]$InstallerPath))
 
@@ -256,7 +226,7 @@ $session = $null
 try {
     $claim = Enter-TestbedLeaseClaim -VMName $VMName
     try {
-        $decision = Get-LeaseDecision (Get-TestbedLease -VMName $VMName) $runId ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())
+        $decision = Get-LeaseDecision (Get-TestbedLease -VMName $VMName) "$LeaseReasonPrefix $runId" ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())
         if ($decision -eq 'theirs') { throw "the lease on $VMName is held by somebody else - not touching the guest" }
         & (Join-Path $PSScriptRoot 'Set-TestbedLease.ps1') -VMName $VMName -Minutes 60 -Reason "$LeaseReasonPrefix $runId" | Out-Null
         $leased = $true
@@ -266,13 +236,9 @@ try {
 
     if (-not (Get-VMSnapshot -VMName $VMName -Name $checkpoint -ErrorAction SilentlyContinue)) { throw "$VMName has no checkpoint named $checkpoint" }
     $touched = $true
-    Restore-VMSnapshot -VMName $VMName -Name $checkpoint -Confirm:$false
-    if ((Get-VM -Name $VMName).State -ne 'Running') { Start-VM -Name $VMName }
-    $deadline = (Get-Date).AddMinutes(5)
-    while ((Get-VMIntegrationService -VMName $VMName -Name 'Heartbeat').PrimaryStatusDescription -ne 'OK') {
-        if ((Get-Date) -gt $deadline) { throw "the guest's heartbeat did not come back within 5 minutes" }
-        Start-Sleep -Seconds 3
-    }
+    # TestbedPool.ps1's restore, as the live runner's: a guest that runs is saved first, and the
+    # heartbeat is one narrow query on its id, every 2 s.
+    [void](Restore-TestbedCheckpoint -Name $VMName -Checkpoint $checkpoint -Start)
     Say "restored $checkpoint and running"
 
     $credential = & (Join-Path $PSScriptRoot 'Get-GuestCredential.ps1') -RepoRoot $CredentialRepoRoot -VMName $VMName
@@ -300,7 +266,7 @@ try {
         $ErrorActionPreference = 'Continue'
         Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
         try { & (Join-Path $dir 'Register-InteractiveTask.ps1') -Script $text -TimeoutSeconds $timeout -RunLevel $level *>&1 | Out-String -Width 400 } catch { "GUEST-CALL-THREW: $($_.Exception.Message)" }
-        "PROBE-TASK-EXIT: $LASTEXITCODE"
+        "RUN-REGISTER-EXIT: $LASTEXITCODE"
     } -ArgumentList $GuestDir, $command, $ProbeTimeoutSeconds, $RunLevel 2>&1 | Out-String -Width 400
     [System.IO.File]::WriteAllText((Join-Path $runDir 'probe.out.txt'), $out)
     Write-Host $out
@@ -320,9 +286,9 @@ finally {
     if ($null -ne $session) { Remove-PSSession $session -ErrorAction SilentlyContinue }
     if ($touched) {
         try {
-            Restore-VMSnapshot -VMName $VMName -Name $checkpoint -Confirm:$false
-            if ((Get-VM -Name $VMName).State -eq 'Running') { Save-VM -Name $VMName }
-            Say "rested: $checkpoint restored, $VMName $((Get-VM -Name $VMName).State)"
+            $after = Restore-TestbedCheckpoint -Name $VMName -Checkpoint $checkpoint
+            if ($after -eq 'Running') { Save-VM -Name $VMName }
+            Say "rested: $checkpoint restored, $VMName $(Get-TestbedVmState $VMName)"
         }
         catch { Say "REST FAILED - restore $checkpoint on $VMName and save it by hand: $($_.Exception.Message)"; $verdict = 'INFRA' }
     }

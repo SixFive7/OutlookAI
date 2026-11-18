@@ -71,21 +71,30 @@
   T07 (repository paths), T08 (readers of compiled code and source text; ComposeOnReopenedDraftTests and
   ReadOnlyFolderLookupTests keep member cutters with declaration rules of their own), T09, T10 to
   T12 (the live tier's helpers, audit lines and tool-surface readers, with the test tags and the
-  mailer's tag checks; streams adding new inline tag checks fold theirs when they land) and T05
+  mailer's tag checks, the two the drafting stream added since among them; a stream adding another
+  inline tag check folds it when it lands) and T05
   (the sweep and scan suites' one-mailbox profile, `AliceMailbox`, and the thread suites' walks,
   `ThreadWalks`; six more suites - the thread, unindexed-store and folder-walk ones - still spell
   that mailbox's SID, prefix and frontier under names of their own, beside stores of their own).
   PowerShell, into `Testbed/guest/ScriptHelpers.ps1` (decision 215 (a)), held there by
-  check-powershell-51 check 4: P01's `Invoke-NativeCommand` for 13 of its 17 copies, P09's
-  `Format-Seconds`, the build-VM runner's copy of which rounded 119.6 s to "1 m 60 s", P02's
+  check-powershell-51 check 4: P01's `Invoke-NativeCommand` for all 17 of its copies, P09's
+  `Format-Seconds`, the build-VM runner's copy of which rounded 119.6 s to "1 m 60 s", and the
+  runners' `Stop-Refused`, `New-RunId`, `ConvertFrom-TrxText`, `Get-LeaseDecision` and
+  `Get-TaskExit`, which the live runner, the trust-removal probe and the build-VM runner share, P02's
   `Invoke-Logged`, `Show-LogTail` and `Format-Argument`, P12's `Test-IsElevated`, and P03's `Say` for
-  the 18 copies that print the time and append to the script's log (the SDK installer, which travels
-  alone, keeps an identical copy), beside `Write-ReportLine` for
+  the 18 copies that print the time and append to the script's log, and the two runners' (the SDK
+  installer, which travels alone, keeps an identical copy), beside `Write-ReportLine` for
   the five scripts that collect a report (the mail sink's installer and the build-VM runner keep
   their different ones as `Write-SinkLog` and `Write-RunLog`); P11's module
-  import is `Testbed/host/OwnEditionModules.ps1`, which the `Tools/` scripts dot-source too.
-  Invoke-LiveTierOnGuest.ps1 and Invoke-TrustRemovalProbe.ps1 fold with the rest of S7d,
-  Build-Corpus.ps1 and Reset-HubPopulation.ps1 with S7c, and the check lists them until they do.
+  import is `Testbed/host/OwnEditionModules.ps1`, which the `Tools/` scripts dot-source too. The
+  guest runners' id, state, heartbeat wait and checkpoint restore went into
+  `Testbed/host/TestbedPool.ps1`, beside the narrow queries they ask (S7d step 2), and check 4 holds
+  that file and `TestbedLeasePath.ps1` to one copy too; its list of copies not folded yet is empty.
+  P05's guest guard is `Test-GuestIdentity` and `Assert-TestbedGuestIdentity` in the shared file
+  (S7c step 2), five scripts that travel alone keeping identical copies, and P06's Outlook profile
+  helpers are there too (S7c step 3), each script keeping the Office constants they read. Left: P05's
+  elevation, bitness and Outlook-closed guards and P06's `Select-OutlookHive` and
+  `Resolve-ImportPrfClearance`, whose copies differ script by script.
   What remains, one stage at a time: S4, the signature and draft code (A01-A05, A08, A09, A12) with
   Q162's checkbox, Core winning where the copies drifted apart and the pane's visible differences
   measured on a test machine first (Q165 (c)), and the pane driven on a test machine (Q168 (b));
