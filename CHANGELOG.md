@@ -398,9 +398,12 @@ its mailbox tests on, and change nothing you install.
   opens Outlook's Signatures dialog and closes it with Cancel, and looks for the hidden folder roaming
   signatures live in: on 2026-11-17 Office LTSC 2024 16.0.17932.21000 showed the classic dialog with no
   sign of roaming, and a signature made the test account's default in Outlook on the web had no copy
-  in Outlook an hour later or after a restart, so that Outlook does not roam signatures (Q147 R3). The
-  hidden folder could not be seen on the server even while that signature existed, so the probe's
-  server-side reading proves nothing.
+  in Outlook an hour later or after a restart (Q147 R3). That was the testbed's four
+  connected-experience policy values, not the Office version: with them removed, on 2026-11-18, the
+  same Outlook had the signature from Outlook on the web within about three minutes, as a copy named
+  "Name (address)", and made it the account's default for new mail; with them in place nothing came
+  (decision 194 (b)). The hidden folder could not be seen on the server even while that signature
+  existed, so the probe's server-side reading proves nothing.
   `Measure-OfflineWindow.ps1` moves the test account's "Download email for the past" slider through its
   eleven positions and reads the profile after each: the months are property 0x6649 and the days
   0x665A, always written as a pair, and LTSC 2024 offers 3 and 5 years; a pair written into the profile
@@ -874,8 +877,10 @@ its mailbox tests on, and change nothing you install.
   Microsoft 365 Apps from Version 2303 can keep an Exchange Online account's signatures in its
   mailbox, with a copy on the computer named "Name (address)". OutlookAI treats that as possible on
   Microsoft 365 Apps unless DisableRoamingSignatures is set, and on perpetual Office, such as the
-  Office LTSC 2024 the test machines run, only where Outlook's own copies show it: LTSC 2024 showed no
-  sign of it on the Exchange test machine. Where an account's signatures may live in its mailbox,
+  Office LTSC 2024 the test machines run, only where Outlook's own copies show it. LTSC 2024 roams
+  too: on the Exchange test machine it showed no sign of it while the testbed's connected-experience
+  policy values were set, and had a signature from Outlook on the web within about three minutes once
+  they were removed, as such a copy. Where an account's signatures may live in its mailbox,
   OutlookAI does not edit or delete their copies or change the account's defaults, because Outlook
   would overwrite the change or copy it into the mailbox, and says to use Outlook instead. Roaming on
   Microsoft 365 Apps itself is not tested: the test machines run perpetual Office only.

@@ -167,8 +167,10 @@ public sealed class SignatureEnvironmentTests
     [Fact]
     public void Roaming_Ltsc2024_IsOff_UnlessOutlooksOwnCopiesShowIt_ForThoseExchangeAccountsOnly()
     {
-        // R1 on the Exchange test machine (2026-11-17): Office LTSC 2024 showed no sign of roaming. Not a
-        // proof, so the verdict stays open to Outlook's own evidence.
+        // R1 on the Exchange test machine (2026-11-17): Office LTSC 2024 showed no sign of roaming while the
+        // testbed's connected-experience policy values were set; with them removed it roamed a signature made
+        // in Outlook on the web, as a 'Name (address)' copy (stream E2's R3 run 2, 2026-11-18). So the verdict
+        // stays open to Outlook's own evidence, which told it both ways.
         SignatureRoaming roaming = SignatureRoaming.Read(new FakeSignatureSettings().Ltsc2024(), "16.0");
         Assert.Equal(SignatureRoamingState.Off, roaming.State);
         Assert.True(roaming.EvidenceDecides);

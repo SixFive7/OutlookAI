@@ -5982,8 +5982,12 @@ unrecorded or unverified.
   handling of them - an account's copies (`Name (address)`) read-only and its defaults left to
   Outlook where its signatures may roam - is proven in T1 only (`T1/SignatureEnvironmentTests`,
   `SignatureManagerTests`, `SignatureSelectionTests`), against fakes of the registry and the folder.
-  Office LTSC 2024, which every test machine runs, showed no roaming on the Exchange test VM (stream
-  A's R1, 2026-11-17); whether a copy appears there once a cloud signature exists is R3's question.
+  Office LTSC 2024, which every test machine runs, showed no roaming on the Exchange test VM while the
+  testbed's four connected-experience policy values were set (stream A's R1 and R3, 2026-11-17); with
+  them removed it had a signature made in Outlook on the web within about three minutes, as a
+  `Name (address)` copy, and made it the account's default for new mail (stream E2's R3 run 2,
+  2026-11-18, decision 194 (b)). So the policy, not the Office version, kept roaming away, and the
+  copies told it both ways.
   G2 is settled since 2026-11-18: with the setting made before Outlook starts, by the runner's
   `-SignatureSettings` step (section 4.11), an account's own default ranks above a Group Policy's and a
   deployed one. Cloud Policy was not measured: it is the same value in a key of its own, and OutlookAI

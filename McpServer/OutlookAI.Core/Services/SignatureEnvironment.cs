@@ -433,10 +433,15 @@ namespace OutlookAI.Core.Services
     /// <para>
     /// <b>Generic on purpose (2026-11-17).</b> Office LTSC 2024 showed no sign of roaming on the
     /// Exchange test machine - Outlook's classic Signatures dialog, no account selector, no copies
-    /// (stream A's R1) - but that is not proof, so a perpetual Office is OFF only until Outlook's own
-    /// copies say otherwise: <see cref="WithEvidence"/> turns it EVIDENT for exactly the Exchange
-    /// accounts that have them. Microsoft 365 Apps is POSSIBLE on Microsoft's word alone. Switched
-    /// off, or an Office too old for the feature, stays off whatever files lie about.
+    /// (stream A's R1) - but that was the testbed's four connected-experience policy values, not the
+    /// Office version: with them removed, the same Office had a signature made in Outlook on the web
+    /// within about three minutes, as a <c>&lt;name&gt; (&lt;address&gt;)</c> copy, and made it the
+    /// account's default for new mail; with them in place nothing came (stream E2's R3 run 2,
+    /// 2026-11-18, decision 194 (b)). So a perpetual Office is OFF only until Outlook's own copies say
+    /// otherwise: <see cref="WithEvidence"/> turns it EVIDENT for exactly the Exchange accounts that
+    /// have them, which told it both ways in that run. Microsoft 365 Apps is POSSIBLE on Microsoft's
+    /// word alone. Switched off, or an Office too old for the feature, stays off whatever files lie
+    /// about.
     /// </para>
     /// </summary>
     public sealed class SignatureRoaming
@@ -582,7 +587,8 @@ namespace OutlookAI.Core.Services
                     ? "the Office build could not be read"
                     : "Office " + (build.ProductReleaseIds ?? "(product unknown)") + " " + build.Version + " is not Microsoft 365 Apps")
                 + ", so the signature files on this machine are authoritative - unless Outlook keeps roaming copies here (signatures "
-                + "named 'Name (address)' after an Exchange account), which would show that it roams after all",
+                + "named 'Name (address)' after an Exchange account): a perpetual Office roams too where policy allows it, and its "
+                + "copies show it",
                 null, build, evidenceDecides: true);
         }
 
