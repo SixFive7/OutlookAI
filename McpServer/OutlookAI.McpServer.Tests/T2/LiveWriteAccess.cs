@@ -52,11 +52,24 @@ public static class LiveWriteAccess
 
     /// <summary>
     /// True when <paramref name="profile"/> refuses every write, the test mailbox included. Only
-    /// <see cref="LiveMachineProfile.Portable"/> may write.
+    /// <see cref="LiveMachineProfile.Portable"/> - a PST test guest - and, since 2026-10-08,
+    /// <see cref="LiveMachineProfile.ExchangeTestAccount"/> - the Exchange VM writing in its dedicated
+    /// test account alone, under the recipient allowlist - may write.
     /// </summary>
     public static bool RefusesEveryWrite(LiveMachineProfile profile)
     {
-        return profile != LiveMachineProfile.Portable;
+        return profile != LiveMachineProfile.Portable && profile != LiveMachineProfile.ExchangeTestAccount;
+    }
+
+    /// <summary>
+    /// True when <paramref name="profile"/> may send mail to the internet, so that every address a test
+    /// gives - To, Cc, Bcc, of a draft, a reply, a forward or a send - must be the hub's own
+    /// (<see cref="RecipientAllowlist"/>, Q110). Only the Exchange VM: the PST guests are offline and
+    /// their mail ends in a loopback sink.
+    /// </summary>
+    public static bool ArmsRecipientAllowlist(LiveMachineProfile profile)
+    {
+        return profile == LiveMachineProfile.ExchangeTestAccount;
     }
 
     /// <summary>
@@ -119,9 +132,13 @@ public static class LiveWriteAccess
 
         try
         {
-            return RefusesEveryWrite(loadSettings().MachineProfile)
-                ? StdioWritePosture.ReadOnly
-                : StdioWritePosture.Writable;
+            LiveMachineProfile profile = loadSettings().MachineProfile;
+            if (RefusesEveryWrite(profile))
+            {
+                return StdioWritePosture.ReadOnly;
+            }
+
+            return ArmsRecipientAllowlist(profile) ? StdioWritePosture.WritableHubOnly : StdioWritePosture.Writable;
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
@@ -150,4 +167,11 @@ public enum StdioWritePosture
 
     /// <summary>A live run on a machine that declares <see cref="LiveMachineProfile.Portable"/>.</summary>
     Writable = 2,
+
+    /// <summary>
+    /// A live run on the Exchange VM's test account (<see cref="LiveMachineProfile.ExchangeTestAccount"/>):
+    /// write-capable tools go out, but only ones that address nobody but the hub and touch only this run's
+    /// own tagged items there - <see cref="StdioHubOnlyGate"/> decides each one before it is sent.
+    /// </summary>
+    WritableHubOnly = 3,
 }

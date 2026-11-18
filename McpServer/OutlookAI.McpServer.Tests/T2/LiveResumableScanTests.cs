@@ -110,6 +110,7 @@ public sealed class LiveResumableScanTests
     [Fact]
     [Trait("Requires", "OutlookInstance")]
     [Trait("Writes", "Nothing")]
+    [Trait("Requires", "GeneratedPopulation")]
     public void APagedScan_ReturnsExactlyWhatOneUnpagedScanReturns_WithNoDuplicates()
     {
         // One page that covers the whole scope, as ground truth.

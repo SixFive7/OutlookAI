@@ -162,8 +162,9 @@ public static class LiveRunOptIn
             + " THE MAINTAINER'S WORKSTATION RUNS NO LIVE TEST (AGENTS.md, Mailbox Safety; Q116 (a)): this variable only "
             + "says a run was intended - it makes no test read-only - and it must never be set there; a run that set it "
             + "would be refused anyway, by the workstation's own profile (Testbed/README.md, section 4d). The Exchange-only "
-            + "tests run on the Exchange test VM, with the filter " + LiveRunFilters.ExchangeGuest
-            + " (Testbed/README.md, section 4e).";
+            + "tests run on the Exchange test VM, with the filter " + LiveRunFilters.ExchangeTestAccount
+            + " through Testbed/host/Invoke-LiveTierOnGuest.ps1 -VMName OutlookAI-Exchange, or read-only with "
+            + LiveRunFilters.ExchangeGuest + " (Testbed/README.md, section 4e).";
     }
 
     /// <summary>

@@ -166,7 +166,9 @@ public sealed class TripwireRetryPolicy
     /// </summary>
     public static TripwireRetryPolicy For(LiveMachineProfile profile)
     {
-        if (profile == LiveMachineProfile.ExchangeGuest)
+        // The test account's VM is the same real Exchange profile: the real mailbox it watches syncs and
+        // has an owner, and a re-run would be a second live run against both accounts.
+        if (profile == LiveMachineProfile.ExchangeGuest || profile == LiveMachineProfile.ExchangeTestAccount)
         {
             return ExchangeGuest;
         }

@@ -201,9 +201,10 @@ public static class ArtifactSweepPolicy
         LiveTestSettings settings,
         Func<string, int> countTagged,
         Action<string> purgeUntilStableZero,
-        Action<string> report)
+        Action<string> report,
+        IReadOnlyDictionary<string, int>? preExisting = null)
     {
-        return Run(Assess(settings), countTagged, purgeUntilStableZero, report);
+        return Run(Assess(settings), countTagged, purgeUntilStableZero, report, preExisting);
     }
 
     /// <summary>
@@ -226,12 +227,19 @@ public static class ArtifactSweepPolicy
     /// <param name="countTagged">Counts tagged items in one store. Read-only.</param>
     /// <param name="purgeUntilStableZero">Deletes tagged items from one store until the count holds at zero.</param>
     /// <param name="report">Where the per-store lines go - normally <c>ITestOutputHelper.WriteLine</c>.</param>
+    /// <param name="preExisting">
+    /// Tagged items a store the plan may NOT purge held before the run (<see cref="LiveArtifactBaseline"/>),
+    /// by store. Such a store passes when its count is still exactly that - those items are reported and
+    /// left alone - and fails when it has more (an arrival) or fewer (one left a store nothing may delete
+    /// from). Null or absent: zero, the rule before 2026-10-08. A store the plan may purge ignores it.
+    /// </param>
     /// <returns>The plan that was walked, so a caller may assert on its shape.</returns>
     public static ArtifactSweepPlan Run(
         ArtifactSweepPlan plan,
         Func<string, int> countTagged,
         Action<string> purgeUntilStableZero,
-        Action<string> report)
+        Action<string> report,
+        IReadOnlyDictionary<string, int>? preExisting = null)
     {
         ArgumentNullException.ThrowIfNull(plan);
         ArgumentNullException.ThrowIfNull(countTagged);
@@ -260,8 +268,14 @@ public static class ArtifactSweepPolicy
                 count = countTagged(step.Store);
             }
 
-            report(step.Announce(count));
-            string? refusal = step.Refusal(count);
+            int before = 0;
+            if (!step.MayDelete && preExisting != null && preExisting.TryGetValue(step.Store, out int known) && known > 0)
+            {
+                before = known;
+            }
+
+            report(step.Announce(count, before));
+            string? refusal = step.Refusal(count, before);
             if (refusal != null)
             {
                 refusals.Add(refusal);
@@ -330,10 +344,21 @@ public sealed class ArtifactSweepStep
     /// leaving a reader to infer from a zero that the store was swept clean.
     /// </summary>
     /// <param name="count">The final count for this store.</param>
-    public string Announce(int count)
+    /// <param name="preExisting">
+    /// For a store counted and not swept: the tagged items it held before the run. The line then reports
+    /// what the RUN left - the count less those - and names the ones that were already there.
+    /// </param>
+    public string Announce(int count, int preExisting = 0)
     {
-        string line = "sweep[" + Store + "]: taggedArtifacts=" + count;
-        return MayDelete ? line : line + " - COUNTED, NOT SWEPT (" + Because() + ")";
+        if (MayDelete || preExisting <= 0)
+        {
+            string line = "sweep[" + Store + "]: taggedArtifacts=" + count;
+            return MayDelete ? line : line + " - COUNTED, NOT SWEPT (" + Because() + ")";
+        }
+
+        return "sweep[" + Store + "]: taggedArtifacts=" + Math.Max(0, count - preExisting) + " - COUNTED, NOT SWEPT ("
+            + Because() + "); preExisting=" + preExisting + " tagged item(s) this store held before the run, read "
+            + count + " now - left alone, not this run's";
     }
 
     /// <summary>
@@ -344,8 +369,21 @@ public sealed class ArtifactSweepStep
     /// this is an increase.
     /// </summary>
     /// <param name="count">The final count for this store.</param>
-    public string? Refusal(int count)
+    /// <param name="preExisting">For a store counted and not swept: the tagged items it held before the run.</param>
+    public string? Refusal(int count, int preExisting = 0)
     {
+        if (!MayDelete && preExisting > 0)
+        {
+            if (count < preExisting)
+            {
+                return "sweep[" + Store + "]: " + (preExisting - count) + " of the " + preExisting + " tagged item(s) this store held "
+                    + "before the run are gone, and " + Because() + " - nothing in the run may delete from it. Find out what "
+                    + "removed them before running again.";
+            }
+
+            return count > preExisting ? Residue(count - preExisting) : null;
+        }
+
         if (count <= 0)
         {
             return null;

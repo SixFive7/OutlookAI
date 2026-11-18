@@ -128,6 +128,11 @@ public static class LiveOutlookTestMailer
             throw new ArgumentException($"Test mail subject must carry the {SubjectTag} tag (S3).", nameof(subject));
         }
 
+        // Where mail reaches the internet (the Exchange VM's test account), the one address this sends to
+        // must be the hub's, and the subject must carry the run's marker as well as the tag (2026-10-08).
+        LiveRecipientGuard.Assert(new[] { smtpAddress }, nameof(SendSelfMail));
+        RefuseUnmarkedSubject(subject, nameof(SendSelfMail));
+
         return RunSta(() =>
         {
             dynamic app = CreateOutlookApplication();
@@ -266,6 +271,20 @@ public static class LiveOutlookTestMailer
                 Release(app);
             }
         });
+    }
+
+    /// <summary>
+    /// Where <see cref="LiveRunItemCheck.Current"/> is armed - the Exchange VM's test account - refuses a
+    /// subject that does not carry this run's marker beside the tag: an item without it is one no sweep of
+    /// this run, and no later run's leftover sweep, may take back. Elsewhere it returns.
+    /// </summary>
+    private static void RefuseUnmarkedSubject(string subject, string operation)
+    {
+        string? refusal = LiveRunItemCheck.Current?.RefusalForNewSubject(subject, operation);
+        if (refusal != null)
+        {
+            throw new InvalidOperationException(refusal);
+        }
     }
 
     /// <summary>
@@ -616,6 +635,121 @@ public static class LiveOutlookTestMailer
     }
 
     /// <summary>
+    /// READ-ONLY and content-free: every store entry of the profile with the mailbox it is, and every account
+    /// with the store entry it delivers to (<see cref="LiveMailboxIdentity"/>). The mailbox is the store's
+    /// <c>PR_STORE_RECORD_KEY</c>; no item, folder or address is read - <c>Account.DisplayName</c>, not
+    /// <c>SmtpAddress</c>, so the Object Model Guard has nothing to ask about.
+    /// </summary>
+    public static MailboxIdentityReading ReadMailboxIdentities()
+    {
+        const string RecordKey = "http://schemas.microsoft.com/mapi/proptag/0x0FFA0102";
+        return RunSta(() =>
+        {
+            dynamic app = CreateOutlookApplication();
+            dynamic? ns = null;
+            dynamic? stores = null;
+            dynamic? accounts = null;
+            List<MailboxStoreEntry> storeList = new();
+            List<MailboxAccountEntry> accountList = new();
+            try
+            {
+                ns = app.GetNamespace("MAPI");
+                stores = ns.Stores;
+                int storeCount = (int)stores.Count;
+                for (int i = 1; i <= storeCount; i++)
+                {
+                    dynamic? store = null;
+                    try
+                    {
+                        store = stores.Item(i);
+                        string name = (string?)store.DisplayName ?? string.Empty;
+                        int? type = null;
+                        bool? cached = null;
+                        try { type = (int)store.ExchangeStoreType; } catch (COMException) { } catch (RuntimeBinderException) { }
+                        try { cached = (bool)store.IsCachedExchange; } catch (COMException) { } catch (RuntimeBinderException) { }
+                        storeList.Add(new MailboxStoreEntry(name, type, cached, ReadHexProperty(store, RecordKey)));
+                    }
+                    finally
+                    {
+                        Release(store);
+                    }
+                }
+
+                accounts = ns.Accounts;
+                int accountCount = (int)accounts.Count;
+                for (int i = 1; i <= accountCount; i++)
+                {
+                    dynamic? account = null;
+                    dynamic? delivery = null;
+                    try
+                    {
+                        account = accounts.Item(i);
+                        string name = (string?)account.DisplayName ?? string.Empty;
+                        string? deliveryName = null;
+                        string? deliveryKey = null;
+                        try
+                        {
+                            delivery = account.DeliveryStore;
+                            if (delivery != null)
+                            {
+                                deliveryName = (string?)delivery.DisplayName;
+                                deliveryKey = ReadHexProperty(delivery, RecordKey);
+                            }
+                        }
+                        catch (COMException) { }
+                        catch (RuntimeBinderException) { }
+
+                        accountList.Add(new MailboxAccountEntry(name, deliveryName, deliveryKey));
+                    }
+                    finally
+                    {
+                        Release(delivery);
+                        Release(account);
+                    }
+                }
+
+                return new MailboxIdentityReading(storeList, accountList);
+            }
+            finally
+            {
+                Release(accounts);
+                Release(stores);
+                Release(ns);
+                Release(app);
+            }
+        });
+    }
+
+    /// <summary>A binary MAPI property of a store, in upper-case hex, or null when it cannot be read.</summary>
+    private static string? ReadHexProperty(dynamic store, string tag)
+    {
+        dynamic? accessor = null;
+        try
+        {
+            accessor = store.PropertyAccessor;
+            object? value = accessor.GetProperty(tag);
+            return value switch
+            {
+                byte[] bytes when bytes.Length > 0 => Convert.ToHexString(bytes),
+                string text when text.Length > 0 => text.ToUpperInvariant(),
+                _ => null,
+            };
+        }
+        catch (COMException)
+        {
+            return null;
+        }
+        catch (RuntimeBinderException)
+        {
+            return null;
+        }
+        finally
+        {
+            Release(accessor);
+        }
+    }
+
+    /// <summary>
     /// Counts items whose subject contains <paramref name="subjectFragment"/> across
     /// the store's default folders (default set: Drafts, Inbox, Sent Items, Deleted
     /// Items; hub archive coverage via <see cref="HubSweepFolderIdsWithArchive"/>) -
@@ -763,6 +897,8 @@ public static class LiveOutlookTestMailer
         {
             throw new ArgumentException($"Test draft subject must carry the {SubjectTag} tag (S3).", nameof(subject));
         }
+
+        RefuseUnmarkedSubject(subject, nameof(SaveTaggedDraftWithAttachments));
 
         return RunSta(() =>
         {

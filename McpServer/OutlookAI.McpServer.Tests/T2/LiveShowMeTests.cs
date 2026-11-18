@@ -94,6 +94,7 @@ public sealed class LiveShowMeTests
     [Fact]
     [Trait("Requires", "SearchIndex")]
     [Trait("Requires", "InteractiveDesktop")]
+    [Trait("Requires", "GeneratedPopulation")]
     public void OpenInOutlook_HubMail_InspectorForRightEntryIdThenClosedByTest()
     {
         // A hub mail to display - prefer an already-read one (Display can mark unread
@@ -139,6 +140,7 @@ public sealed class LiveShowMeTests
 
     [Fact]
     [Trait("Requires", "InteractiveDesktop")]
+    [Trait("Requires", "GeneratedPopulation")]
     public void ShowSearchResults_ScopeFeatureTest_AndHubScopedScreenshot()
     {
         // Park the window on the hub store first: current_folder/subfolders scopes then

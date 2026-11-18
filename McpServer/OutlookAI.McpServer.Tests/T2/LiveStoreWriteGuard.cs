@@ -54,6 +54,18 @@ public static class LiveStoreWriteGuard
                 settings.BystanderStoreDisplayNames);
         }
 
+        // The Exchange VM's test account: the hub and nothing else. No identity grant at all - every other
+        // store there is real mail - so a store the settings forgot to declare a bystander is refused as hard
+        // as one they did declare (LiveTestSettings.Validate refuses such a file anyway).
+        if (settings.MachineProfile == LiveMachineProfile.ExchangeTestAccount)
+        {
+            return new StoreWriteAllowlist(
+                settings.TestHubStoreDisplayName,
+                identityDraftStores: null,
+                settings.ExpectedDelegateStoreDisplayNames,
+                settings.BystanderStoreDisplayNames);
+        }
+
         return new StoreWriteAllowlist(
             settings.TestHubStoreDisplayName,
             settings.ExpectedStoreDisplayNames,

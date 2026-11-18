@@ -47,6 +47,7 @@ public sealed class LiveMailServiceTests
     [Fact]
     [Trait("Requires", "SearchIndex")]
     [Trait("Writes", "Nothing")]
+    [Trait("Requires", "PstStore")]
     public void StoreMap_EveryIndexedStore_IsMatchedByItsOwnNameAndHash_InHealthAndInAScopedSearch()
     {
         _ = Service.ListAccounts(); // Outlook up, as the health test makes sure of
@@ -85,6 +86,7 @@ public sealed class LiveMailServiceTests
     [Trait("Requires", "SearchIndex")]
     [Trait("Requires", "MultipleStores")]
     [Trait("Writes", "Nothing")]
+    [Trait("Requires", "GeneratedPopulation")]
     public void RoundTrip_SearchThenRead_TenHitsAcrossStores()
     {
         List<HitSummary> hits = new();
@@ -233,6 +235,7 @@ public sealed class LiveMailServiceTests
     [Trait("Requires", "SearchIndex")]
     [Trait("Requires", "MultipleStores")]
     [Trait("Writes", "Nothing")]
+    [Trait("Requires", "GeneratedPopulation")]
     public void Truncation_MailOver100KB_FlagsAndTotalsCorrect()
     {
         const int cap = 20000;
@@ -294,6 +297,7 @@ public sealed class LiveMailServiceTests
     [Fact]
     [Trait("Requires", "SearchIndex")]
     [Trait("Requires", "MultipleStores")]
+    [Trait("Requires", "GeneratedPopulation")]
     public void AttachmentHit_ReadParent_SaveToScratch()
     {
         HitSummary? attachmentHit = null;

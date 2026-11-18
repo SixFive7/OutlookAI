@@ -201,8 +201,10 @@ public sealed class ReadOnlyLiveTestTests
 
         foreach (string memberKey in ReadOnlyProductApi.Members.Keys)
         {
+            // Constructors too, under the key the walk gives them (Type..ctor): constructing a service or a
+            // gateway is a product call like any other, and its body is walked like any other.
             List<MethodBase> members = types
-                .SelectMany(t => t.GetMethods(Everything).Cast<MethodBase>())
+                .SelectMany(t => t.GetMethods(Everything).Cast<MethodBase>().Concat(t.GetConstructors(Everything)))
                 .Where(m => ReadOnlyProductApi.KeyOf(m) == memberKey)
                 .ToList();
             yield return (memberKey, members);

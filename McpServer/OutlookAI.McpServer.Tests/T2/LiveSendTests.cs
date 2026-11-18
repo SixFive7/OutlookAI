@@ -118,9 +118,7 @@ public sealed class LiveSendTests
     {
         int auditBefore = CountAuditLines();
         // Same wiring as production, but a 2 s TTL so expiry is provable live.
-        using var shortTtlService = new MailService(
-            new ComGateway(allowStartingOutlook: true),
-            new SendConfirmationTokens(TimeSpan.FromSeconds(2)));
+        using var shortTtlService = LiveMailServices.Create(new SendConfirmationTokens(TimeSpan.FromSeconds(2)));
 
         string? draftEntryId = null;
         try
@@ -196,11 +194,16 @@ public sealed class LiveSendTests
         //
         // The tag text stays spelled out here on purpose: it is what CountTaggedArtifacts
         // matches, and T1/CorpusTagSeparationTests pins the corpus apart from this literal.
+        //
+        // On the Exchange VM's test account (2026-10-08) the purge takes the tag AND a recorded run's marker
+        // only, and a store nothing may write to may keep the tagged items it held before the run
+        // (LiveArtifactSweep, LiveArtifactBaseline).
         ArtifactSweepPolicy.Run(
             _fixture.Settings,
-            store => LiveOutlookTestMailer.CountTaggedArtifacts(store, "OutlookAI-McpTest"),
-            store => LiveOutlookTestMailer.DeleteTaggedArtifactsUntilStableZero(store, "OutlookAI-McpTest"),
-            _output.WriteLine);
+            store => LiveArtifactSweep.CountTagged(_fixture.Settings, store),
+            store => LiveArtifactSweep.PurgeUntilStableZero(_fixture.Settings, store),
+            _output.WriteLine,
+            LiveArtifactBaseline.Current);
     }
 
     // ------------------------------------------------------------------ helpers

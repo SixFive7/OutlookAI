@@ -1955,44 +1955,54 @@
   whether an account's signatures may roam (`SignatureRoaming`: possible on Microsoft 365 Apps 2303+,
   on perpetual Office only where Outlook's `Name (address)` copies of an Exchange account show it), and
   then leaves those copies and that account's defaults to Outlook. R1 on the Exchange VM (2026-11-17)
-  saw no roaming on Office LTSC 2024; R3 creates a real cloud signature in Outlook on the web and shows
-  whether a copy appears. If it does, LTSC 2024 roams and the evidence rule already covers it; reading
-  the hidden `ApplicationDataRoot` folder itself stays a separate decision. The mailbox's signature
+  saw no roaming on Office LTSC 2024, and R3 the same day found none either: a signature made the test
+  account's default in Outlook on the web had no copy in Outlook an hour later or after a restart
+  (runbook §4.4a). The object model's folder list did not show that signature on the server while it
+  existed, so reading the hidden `ApplicationDataRoot` folder would need another route, and stays a
+  separate decision. The mailbox's signature
   data is never written.
 
-- [ ] **Approve, amend or refuse the Exchange VM's Phase 2 write-safety design** (proposed
-  2026-10-03, `Docs/live-tier-on-the-vm.md` section 4.4). Until then `OutlookAI-Exchange` is
-  read-only - profile `ExchangeGuest` - and runs only `Writes=Nothing` tests (`Testbed/README.md`
-  section 4e). Nothing in the design is built.
+- [ ] **Decide how Office on the Exchange VM gets back the ability to create items (found 2026-11-17).**
+  Its Office LTSC 2024 volume edition was never activated, its grace ran out in late October, and since
+  then Outlook creates no item through its object model: 41 of a run's 87 tests failed at their first
+  draft or mail, every read passed, and the write tests cannot pass there (runbook §4.4a, "The live runs
+  of 2026-11-17"). The other guests do not meet it because their clocks are frozen inside the grace
+  (Q130). Directions: (1) re-arm Office's grace with its own `ospprearm.exe`, a limited number of times,
+  each run or monthly - free, but the licence terms need a look; (2) install Microsoft 365 Apps there,
+  activated by the test account's own licence if the tenant gives it one - a licensed component, so
+  a decision on AGENTS.md's Dependencies rule, and it would also let Q147 measure real roaming
+  signatures; (3) give the VM a real activation (a MAK or KMS key) - a licence key; (4) keep the VM to
+  `Writes=Nothing` tests until one of these lands. Proving the cause first means one item created by
+  tested helper code after a re-arm.
 
-- [ ] **Decide how the one tagged leftover in telefonie's Sent Items goes.** The Exchange VM's
-  read-only count (`T2/LiveExchangeHubArtifactTests`) found one item whose subject carries
-  `OutlookAI-McpTest` in the mailbox's Sent Items on 2026-10-03 - from the workstation years, not from
-  the VM. It fails that test on every run until it is gone, and only a tested sweep on an approved
-  write run may remove it. Directions: (1) remove it with the existing tested sweep on the first
-  approved Phase 2 run - it carries the tag, so `DeleteTaggedArtifactsUntilStableZero` takes it, but
-  no run marker of a recorded run, so that would be a deletion by tag alone; (2) a one-off tested
-  helper that deletes exactly the one EntryID the maintainer confirms; (3) he deletes it himself in
-  Outlook on the web. Recommended: (3) - one item, his mailbox, and no deletion rule loosened for it.
+- [ ] **Delete the one tagged leftover in the Exchange VM mailbox's Sent Items once the maintainer has
+  confirmed its id (Q138 (c), decided 2026-11-17).** Found read-only on 2026-11-17: subject
+  `[OutlookAI-McpTest]
+  d3994a2ad25309442 d39 move seed`, sent 2026-07-26 03:46:54 (W. Europe), EntryID beginning
+  `000000009D47E954`, in the real mailbox's Sent Items; nothing else tagged in either mailbox. After his
+  confirmation: delete exactly that EntryID - EntryID allowlist AND ordinal tag match - through tested
+  helper code and the suite, then remove it from Deleted Items too. The only write the real mailbox
+  ever gets.
 
-- [ ] **Decide whether the Exchange VM gets the add-in.** Not installed (Phase 1 needed no write to the
-  profile's configuration): `T2/LiveHealthTests` and the `AddInRegistry` tests need it, and on an
-  Exchange profile its tuning reconcile writes Cached Mode policy values that change how the mailbox
-  syncs - and an unelevated Outlook cannot finish that reconcile at all (the open item above). Decide
-  with that item.
+- [ ] **Decide what to do about the test account's automapping into the Exchange VM's mailbox.** Since
+  the test account joined the profile, Outlook shows a THIRD store, named by the test account's display
+  name: the test account's mailbox once more, as an online delegate store under the real mailbox's
+  account - Exchange automaps a mailbox to a user with Full Access to it, so the real mailbox holds Full
+  Access to the test account (a tenant setting, not the VM's). The settings leave it undeclared: it
+  is the hub seen through another account, so a census of it
+  would read the hub's own test traffic as a loss, and the write guards refuse it by name. Directions:
+  (1) remove that Full Access, or re-grant it with automapping off (a colleague, in the tenant); (2)
+  keep it and let it stand in for the shared test mailbox of Q109 for the read-only `DelegateStore`
+  tests - it is a real delegate store, but its contents are the hub's churn, so the census would need to
+  treat it as the hub; (3) keep it undeclared, as now. Recommended: (1) if the shared mailbox of Q109 is
+  still coming, else (2) after a run shows what those tests make of it.
 
-- [ ] **Four things the Exchange VM's first runs left open.** (4) Outlook's Object Model Guard
-  stalls a run whenever Defender's signatures are stale (`Testbed/README.md` section 1d, item 4):
-  `host/Invoke-ExchangeSignIn.ps1 -Mode Preflight` updates them before every run. Decide whether the
-  VM also gets Q80's auto-approve policy (`guest/Set-OutlookProgrammaticAccess.ps1`), which removes
-  the dependency but lets any process on that online VM read addresses without a prompt - so far
-  only the offline guests have it. (1) The sign-in's verification-code
-  step has never met a code page: Microsoft asked for no MFA code on either sign-in of 2026-10-03, so
-  only the RFC test vectors stand behind the TOTP generator - the first code page will be its first
-  real proof. (2) `T2/LiveHealthTests.Health_OnThisMachine_ReportsOkWithFullDetail` reads the add-in's
-  tuning state without declaring `Requires=AddInRegistry`, so it fails on any machine without the add-in
-  instead of being filtered out. (3) The five `T2/LiveSearchInTests` throw NullReference when the
-  settings carry no `subjectOnlyProbe` instead of refusing with the remedy.
+- [ ] **Two things the Exchange VM's first runs left open.** (1) The sign-in's verification-code step has
+  never met a code page: Microsoft asked for no MFA code on either sign-in of 2026-10-03, nor for the test
+  account's on 2026-10-08, nor in Outlook on the web on 2026-11-17, so only the RFC test vectors stand
+  behind the TOTP generator - the first code page will be its first real proof. (2) The five
+  `T2/LiveSearchInTests` throw NullReference when the settings carry no `subjectOnlyProbe` instead of
+  refusing with the remedy.
 
 - [ ] **Stop D49's lifetime pins being left behind, once Q149's measurement has said whether pins
   stay (Q118 (a), approved 2026-10-11, on hold for Q149).** Approved: a per-user list of live

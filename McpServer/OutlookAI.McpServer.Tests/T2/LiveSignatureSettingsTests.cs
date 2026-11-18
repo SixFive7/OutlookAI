@@ -41,6 +41,7 @@ public sealed class LiveSignatureSettingsTests
 
     [Fact]
     [Trait("Requires", "MailAccount")]
+    [Trait("Requires", "LocalSignatures")]
     public void G1_ADraftGetsTheRunningProfilesDefault_WhicheverProfileIsRecordedAsTheDefault()
     {
         string running = _fixture.VerifySession.GetProfileName();
@@ -120,6 +121,7 @@ public sealed class LiveSignatureSettingsTests
 
     [Fact]
     [Trait("Requires", "MailAccount")]
+    [Trait("Requires", "LocalSignatures")]
     public void G2_ADeployedDefault_IsWhatADraftGets_AnotherChoiceStaysAllowed_AndOutlooksViewIsRecorded()
     {
         string running = _fixture.VerifySession.GetProfileName();
@@ -204,6 +206,7 @@ public sealed class LiveSignatureSettingsTests
 
     [Fact]
     [Trait("Requires", "MailAccount")]
+    [Trait("Requires", "LocalSignatures")]
     public void G3_ARelocatedSignatureFolder_IsWhereSignaturesAreListedWrittenAndInserted()
     {
         string key = SignatureFolder.RegistryKeyPath;

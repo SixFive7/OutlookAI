@@ -39,6 +39,21 @@
 .PARAMETER MaxMinutes
     How long to wait for Outlook's main window.
 
+.PARAMETER MinUptimeSeconds
+    Start Outlook only once the guest has been up this long; 0, the default, starts it at once. The
+    Exchange VM's runs pass 240: there an Outlook started within about two minutes of a boot raised the
+    Object Model Guard prompt on the first out-of-process address read although Security Center read
+    Defender up to date, and one started later did not (measured 2026-11-17; the maintainer keeps the
+    Defender preflight as the only remedy, no auto-approve policy - Q139 (a)).
+
+    OFFICE'S ACTIVATION WIZARD. On a guest past Office's 30-day activation grace (Testbed/MEDIA.md, "The
+    licence clocks") every start with a window raises the modal "Microsoft Office Activation Wizard",
+    and the Explorer window does not open until it is closed. The starter closes it with its own Close
+    button - WM_CLOSE to that one window if the button cannot be pressed - never anything else on it,
+    and says so: an ACTIVATION-WIZARD-DISMISSED line per dismissal, and ACTIVATION-WIZARD-DISMISSALS
+    <n> at the end, which Testbed/host/Invoke-LiveTierOnGuest.ps1 records in its summary. A wizard that
+    will not close fails the start.
+
 .PARAMETER SelfTest
     Pure: checks the task definition this script builds (Interactive, RunLevel LIMITED, the profile
     passed through quoting intact) and the refusal texts. No task, no process, any machine.
@@ -52,6 +67,7 @@
 param(
     [string]   $Profile,
     [int]      $MaxMinutes = 10,
+    [int]      $MinUptimeSeconds = 0,
     [string[]] $ExpectedUser = @('vmadmin'),
     [string]   $ExpectedComputerNamePrefix = 'OAI-',
     [string]   $OutlookExe = 'C:\Program Files\Microsoft Office\root\Office16\OUTLOOK.EXE',
@@ -62,12 +78,21 @@ param(
 $ErrorActionPreference = 'Stop'
 $TaskName = 'OutlookAI-Unelevated'
 
+# Office's nag once its activation grace has run out (Testbed/MEDIA.md, "The licence clocks"): a modal
+# window of OUTLOOK.EXE with exactly this title, which keeps the Explorer window from opening until it
+# is closed. Measured on OutlookAI-Exchange, 2026-11-17 - 45 days after Office was installed there,
+# 15 past its 30-day grace.
+$ActivationWizardTitle = 'Microsoft Office Activation Wizard'
+
 # The script the task runs, in session 1, at RunLevel Limited: start Outlook on the profile, then
-# wait until its Explorer window (class rctrl_renwnd32) is visible. Writes result.txt last.
+# wait until its Explorer window (class rctrl_renwnd32) is visible. Office's activation wizard, if
+# it comes up, is closed by its own Close button - WM_CLOSE to that window alone if the button cannot
+# be pressed - and every dismissal is a line of the result. Writes result.txt last.
 function New-StarterScript([string] $Exe, [string] $ProfileName, [int] $Minutes, [string] $ResultPath) {
     $p = $ProfileName.Replace("'", "''")
     $e = $Exe.Replace("'", "''")
     $r = $ResultPath.Replace("'", "''")
+    $w = $ActivationWizardTitle.Replace("'", "''")
     return @"
 `$ErrorActionPreference = 'Stop'
 `$lines = New-Object System.Collections.Generic.List[string]
@@ -82,6 +107,8 @@ public static class OaiUnelevatedWin {
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder sb, int max);
     [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
     [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+    [DllImport("user32.dll")] static extern bool IsWindow(IntPtr h);
+    [DllImport("user32.dll")] static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
     public static string Explorer(uint pid) {
         string found = null;
         EnumWindows(delegate (IntPtr h, IntPtr l) {
@@ -94,24 +121,90 @@ public static class OaiUnelevatedWin {
         }, IntPtr.Zero);
         return found;
     }
+    public static IntPtr Titled(uint pid, string title) {
+        IntPtr found = IntPtr.Zero;
+        EnumWindows(delegate (IntPtr h, IntPtr l) {
+            uint p; GetWindowThreadProcessId(h, out p);
+            if (p != pid || !IsWindowVisible(h)) return true;
+            StringBuilder t = new StringBuilder(512); GetWindowText(h, t, 512);
+            if (t.ToString() != title) return true;
+            found = h; return false;
+        }, IntPtr.Zero);
+        return found;
+    }
+    public static string ClassOf(IntPtr h) { StringBuilder c = new StringBuilder(256); GetClassName(h, c, 256); return c.ToString(); }
+    public static bool Shown(IntPtr h) { return IsWindow(h) && IsWindowVisible(h); }
+    public static bool PostClose(IntPtr h) { return PostMessage(h, 0x0010, IntPtr.Zero, IntPtr.Zero); }
 }
 '@
+    }
+    function Close-ActivationWizard([IntPtr] `$h, [datetime] `$t0) {
+        `$cls = [OaiUnelevatedWin]::ClassOf(`$h)
+        `$how = `$null
+        try {
+            Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+            `$ae = [System.Windows.Automation.AutomationElement]
+            `$button = New-Object System.Windows.Automation.AndCondition((New-Object System.Windows.Automation.PropertyCondition(`$ae::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)), (New-Object System.Windows.Automation.PropertyCondition(`$ae::NameProperty, 'Close')))
+            `$close = `$ae::FromHandle(`$h).FindFirst([System.Windows.Automation.TreeScope]::Descendants, `$button)
+            if (`$close) { `$close.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke(); `$how = 'its Close button' }
+        }
+        catch { `$how = `$null }
+        `$until = (Get-Date).AddSeconds(10)
+        while (`$how -and [OaiUnelevatedWin]::Shown(`$h) -and (Get-Date) -lt `$until) { Start-Sleep -Milliseconds 500 }
+        if ([OaiUnelevatedWin]::Shown(`$h)) {
+            [void][OaiUnelevatedWin]::PostClose(`$h)
+            `$how = 'WM_CLOSE to that window' + `$(if (`$how) { ' (its Close button did not close it)' } else { ' (no Close button could be pressed)' })
+            `$until = (Get-Date).AddSeconds(10)
+            while ([OaiUnelevatedWin]::Shown(`$h) -and (Get-Date) -lt `$until) { Start-Sleep -Milliseconds 500 }
+        }
+        if ([OaiUnelevatedWin]::Shown(`$h)) { return ('ACTIVATION-WIZARD-STUCK {0:N0} s: class {1} - neither its Close button nor WM_CLOSE closed it' -f ((Get-Date) - `$t0).TotalSeconds, `$cls) }
+        return ('ACTIVATION-WIZARD-DISMISSED {0:N0} s: class {1}, by {2}' -f ((Get-Date) - `$t0).TotalSeconds, `$cls, `$how)
     }
     `$t0 = Get-Date
     Start-Process -FilePath '$e' -ArgumentList @('/profile', '"$p"') | Out-Null
     `$lines.Add(('started OUTLOOK.EXE /profile "{0}" at {1:HH:mm:ss}' -f '$p', `$t0))
     `$window = `$null
+    `$wizards = 0
     while (((Get-Date) - `$t0).TotalMinutes -lt $Minutes) {
         `$o = Get-Process -Name OUTLOOK -ErrorAction SilentlyContinue | Select-Object -First 1
-        if (`$o) { `$window = [OaiUnelevatedWin]::Explorer([uint32]`$o.Id); if (`$window) { break } }
+        if (`$o) {
+            `$h = [OaiUnelevatedWin]::Titled([uint32]`$o.Id, '$w')
+            if (`$h -ne [IntPtr]::Zero -and `$wizards -lt 5) { `$wizards++; `$lines.Add((Close-ActivationWizard `$h `$t0)) }
+            `$window = [OaiUnelevatedWin]::Explorer([uint32]`$o.Id); if (`$window) { break }
+        }
         Start-Sleep -Seconds 3
     }
-    if (`$window) { `$lines.Add(('EXPLORER-UP {0:N0} s: {1}' -f ((Get-Date) - `$t0).TotalSeconds, `$window)) }
+    if (`$window) {
+        `$lines.Add(('EXPLORER-UP {0:N0} s: {1}' -f ((Get-Date) - `$t0).TotalSeconds, `$window))
+        # A wizard raised just after the Explorer window is closed the same way.
+        Start-Sleep -Seconds 5
+        `$h = [OaiUnelevatedWin]::Titled([uint32]`$o.Id, '$w')
+        if (`$h -ne [IntPtr]::Zero -and `$wizards -lt 5) { `$wizards++; `$lines.Add((Close-ActivationWizard `$h `$t0)) }
+    }
     else { `$lines.Add('NO-EXPLORER within $Minutes min') }
 }
 catch { `$lines.Add('STARTER FAILED: ' + `$_.Exception.Message) }
 finally { Set-Content -LiteralPath '$r' -Value `$lines -Encoding UTF8 }
 "@
+}
+
+# How long to wait before starting Outlook so that the guest has been up -MinUptimeSeconds. Measured on
+# OutlookAI-Exchange, 2026-11-17: an Outlook started 38 s and 79 s after a boot put the Object Model Guard's
+# Allow/Deny prompt in front of the first out-of-process address read, with Security Center reading Defender
+# up to date (productState 0x061100) before the start; one started 2 min and 8 min after a boot did not. Pure.
+function Get-UptimeWait([double] $UptimeSeconds, [int] $MinUptimeSeconds) {
+    if ($MinUptimeSeconds -le 0 -or $UptimeSeconds -ge $MinUptimeSeconds) { return 0 }
+    return [int][Math]::Ceiling($MinUptimeSeconds - $UptimeSeconds)
+}
+
+# What the starter's result says about Office's activation wizard: how many times it was dismissed,
+# and whether one stayed up. Pure, so -SelfTest pins it.
+function Get-ActivationWizardTally([string[]] $Lines) {
+    $all = @($Lines | Where-Object { $null -ne $_ })
+    return [pscustomobject]@{
+        Dismissed = @($all | Where-Object { $_ -match '^ACTIVATION-WIZARD-DISMISSED ' }).Count
+        Stuck     = @($all | Where-Object { $_ -match '^ACTIVATION-WIZARD-STUCK ' }).Count
+    }
 }
 
 function Get-TaskDefinitionText {
@@ -131,6 +224,19 @@ function Invoke-SelfTest {
     Check 'the starter writes its result last, in a finally' ($text -match 'finally \{ Set-Content -LiteralPath')
     Check 'the starter never quits or kills Outlook' (-not ($text -match '(?i)(\.Quit\(|Stop-Process|taskkill|\.Kill\()'))
     Check 'the starter makes no COM call' (-not ($text -match '(?i)(GetActiveObject|New-Object\s+-ComObject)'))
+    Check 'the starter looks for Office''s activation wizard by its exact title' ($text -match [regex]::Escape("Titled([uint32]`$o.Id, 'Microsoft Office Activation Wizard')") -and $text -match [regex]::Escape('if (t.ToString() != title) return true;'))
+    Check 'it presses the wizard''s Close button - never Change Product Key or a link' ($text -match [regex]::Escape("NameProperty, 'Close')") -and -not ($text -match '(?i)(Change Product Key|Learn more|Hyperlink)'))
+    Check 'WM_CLOSE goes only to the wizard''s own window, and only when the button did not close it' (@([regex]::Matches($text, 'PostClose\(')).Count -eq 2 -and $text -match [regex]::Escape('if ([OaiUnelevatedWin]::Shown($h)) {') -and $text -match [regex]::Escape('[void][OaiUnelevatedWin]::PostClose($h)'))
+    Check 'every dismissal, and a wizard that stayed up, is a line of the result' ($text -match 'ACTIVATION-WIZARD-DISMISSED' -and $text -match 'ACTIVATION-WIZARD-STUCK')
+    Check 'a wizard raised again is dismissed at most five times' (@([regex]::Matches($text, [regex]::Escape('$wizards -lt 5'))).Count -eq 2)
+    $tally = Get-ActivationWizardTally @('started OUTLOOK.EXE', 'ACTIVATION-WIZARD-DISMISSED 270 s: class NUIDialog, by its Close button', 'EXPLORER-UP 277 s: Inbox')
+    Check 'the tally counts one dismissal and nothing stuck' ($tally.Dismissed -eq 1 -and $tally.Stuck -eq 0)
+    $tally = Get-ActivationWizardTally @('ACTIVATION-WIZARD-STUCK 40 s: class X - neither', 'NO-EXPLORER within 10 min')
+    Check 'and a wizard that stayed up as stuck' ($tally.Dismissed -eq 0 -and $tally.Stuck -eq 1)
+    Check 'and no wizard at all as nothing' ((Get-ActivationWizardTally @('EXPLORER-UP 3 s: Inbox')).Dismissed -eq 0 -and (Get-ActivationWizardTally @()).Stuck -eq 0)
+    Check 'a guest up 79 s waits 161 s more for a 240 s minimum' ((Get-UptimeWait 79 240) -eq 161)
+    Check 'a guest up longer than the minimum does not wait' ((Get-UptimeWait 480 240) -eq 0)
+    Check 'no minimum, no wait - the default, for every guest but the Exchange VM' ((Get-UptimeWait 5 0) -eq 0)
     Check 'the task definition is Interactive and LIMITED' ((Get-TaskDefinitionText) -match 'LogonType=Interactive RunLevel=Limited')
     # Read off the PARSED file, so the text of this check cannot count as a use of what it forbids.
     $ast = [System.Management.Automation.Language.Parser]::ParseFile($PSCommandPath, [ref] $null, [ref] $null)
@@ -183,6 +289,13 @@ if (-not (Test-Path -LiteralPath $profileKey)) {
 }
 if (-not (Test-Path -LiteralPath $OutlookExe)) { throw "Outlook is not at $OutlookExe." }
 
+$uptime = ((Get-Date) - (Get-CimInstance Win32_OperatingSystem).LastBootUpTime).TotalSeconds
+$wait = Get-UptimeWait $uptime $MinUptimeSeconds
+if ($wait -gt 0) {
+    Write-Host ("waiting {0} s before starting Outlook: the guest has been up {1:N0} s, and an Outlook started within about two minutes of a boot met the Object Model Guard prompt (measured 2026-11-17)" -f $wait, $uptime)
+    Start-Sleep -Seconds $wait
+}
+
 $jobDir = Join-Path $JobRoot ('unelevated-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path $jobDir | Out-Null
 $starter = Join-Path $jobDir 'start.ps1'
@@ -224,6 +337,10 @@ if ($elevation -ne 0) {
     Write-Host "FAILED: OUTLOOK.EXE pid $($outlook[0].Id) reads elevation=$elevation. An elevated Outlook does not feed the index; this start achieved nothing."
     exit 1
 }
+$wizard = Get-ActivationWizardTally $lines
+if ($wizard.Stuck -gt 0) { Write-Host "FAILED: Office's activation wizard ('$ActivationWizardTitle') stayed up - see the ACTIVATION-WIZARD-STUCK line above. Outlook (pid $($outlook[0].Id)) is left running."; exit 1 }
 if (-not ($lines -match '^EXPLORER-UP')) { Write-Host "FAILED: Outlook (pid $($outlook[0].Id), not elevated) showed no main window in $MaxMinutes min."; exit 1 }
 Write-Host "OK: OUTLOOK.EXE pid $($outlook[0].Id) in session $($outlook[0].SessionId), NOT elevated, profile '$Profile'. Left running - close it with Testbed/host/Restart-Guest.ps1."
+# The runner reads this line into its summary: a run that started Outlook says whether Office's nag was in the way.
+Write-Host "ACTIVATION-WIZARD-DISMISSALS $($wizard.Dismissed)"
 exit 0

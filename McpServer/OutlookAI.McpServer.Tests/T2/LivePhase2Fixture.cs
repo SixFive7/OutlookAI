@@ -19,7 +19,7 @@ public sealed class LivePhase2Fixture : IDisposable
         // Fail-closed per-store count tripwire: no census, no live tier. Cheap after
         // the first fixture (one process-wide baseline).
         LiveStoreCountTripwire.EnsureBaseline(Settings);
-        Service = MailService.CreateDefault();
+        Service = LiveMailServices.CreateDefault();
     }
 
     public LiveTestSettings Settings { get; }
