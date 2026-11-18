@@ -215,12 +215,7 @@ namespace OutlookAI.Core.Com
                     return located;
                 }
 
-                // Keep the most informative reason: "the folder exists, the item is not in
-                // it" beats "no folder of that name".
-                if (leafError != null && !string.Equals(leafError, "FolderNotFound", StringComparison.Ordinal))
-                {
-                    error = leafError;
-                }
+                error = MoreInformative(error, leafError);
             }
 
             // Say WHICH shape of failure this was: no folder of that name anywhere, or a
@@ -231,6 +226,19 @@ namespace OutlookAI.Core.Com
             }
 
             return null;
+        }
+
+        /// <summary>
+        /// Of two reasons a hit was not found, the one worth keeping: "the folder exists, the item is
+        /// not in it" - any reason but <c>FolderNotFound</c> - beats "no folder of that name", and a
+        /// later such reason replaces an earlier one. Shared by the delegate leaf walk and the walk
+        /// over every folder that shares a path (<see cref="OutlookComSession.TryResolveByPath"/>). Pure.
+        /// </summary>
+        public static string? MoreInformative(string? kept, string? candidate)
+        {
+            return candidate != null && !string.Equals(candidate, "FolderNotFound", StringComparison.Ordinal)
+                ? candidate
+                : kept;
         }
 
         /// <summary>

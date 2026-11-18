@@ -215,16 +215,75 @@ namespace OutlookAI.Core.IndexSearch
     }
 
     /// <summary>
+    /// Index stores that carry the name of one of the profile's stores while nothing ties them to it -
+    /// what Windows Search keeps of an Outlook data file that was rebuilt (measured by stream A on the
+    /// Exchange guest, 2026-11-17: <c>&lt;address&gt;($9b7b502)</c> beside the live
+    /// <c>&lt;address&gt;($b37770e)</c>, the same folder paths under both), or a store of another Outlook
+    /// profile with the same name. Decided 2026-11-18 (the TODO item's (a) and (b) together): when
+    /// another index store of that name IS tied to the store by its hash, that one is the live copy and
+    /// an unscoped search leaves these out (<see cref="LeftOut"/>), saying so; when none is, nothing is
+    /// left out and they are only reported. <c>outlook_health</c> reports both.
+    /// </summary>
+    public sealed class StoreIndexCopies
+    {
+        internal StoreIndexCopies(StoreIndexMatch store, StoreScopeInfo? live, IReadOnlyList<StoreScopeInfo> copies, bool leftOut, string? sharedNameWith)
+        {
+            Store = store;
+            Live = live;
+            Copies = copies;
+            LeftOut = leftOut;
+            SharedNameWith = sharedNameWith;
+        }
+
+        /// <summary>The profile's store whose name the copies carry.</summary>
+        public StoreIndexMatch Store { get; }
+
+        /// <summary>
+        /// The index store tied to <see cref="Store"/> by its hash - by name and hash, or (the Exchange
+        /// exception) by hash - or null when no index store of the name is tied to it.
+        /// </summary>
+        public StoreScopeInfo? Live { get; }
+
+        /// <summary>The index stores of the name that nothing in the profile ties to any store, in index order.</summary>
+        public IReadOnlyList<StoreScopeInfo> Copies { get; }
+
+        /// <summary>
+        /// True when an unscoped search leaves <see cref="Copies"/> out: <see cref="Live"/> is set, so the
+        /// store is searched through its own index store, and no other store of the profile that is tied to
+        /// nothing carries the name - one that does might be filed under one of the copies, so they are then
+        /// searched and only reported (<see cref="SharedNameWith"/> names it).
+        /// </summary>
+        public bool LeftOut { get; }
+
+        /// <summary>The display name of another store of the profile, tied to nothing, that carries the name too; null when none does.</summary>
+        public string? SharedNameWith { get; }
+    }
+
+    /// <summary>
     /// Every Outlook store tied to the index store that is its own, and the index stores no
     /// Outlook store claimed. Built by <see cref="StoreIndexMatcher.Match"/>.
     /// </summary>
     public sealed class StoreIndexMap
     {
-        internal StoreIndexMap(IReadOnlyList<StoreIndexMatch> stores, IReadOnlyList<StoreScopeInfo> unclaimed)
+        internal StoreIndexMap(
+            IReadOnlyList<StoreIndexMatch> stores, IReadOnlyList<StoreScopeInfo> unclaimed, IReadOnlyList<StoreIndexCopies>? copies = null)
         {
             Stores = stores;
             Unclaimed = unclaimed;
+            Copies = copies ?? Array.Empty<StoreIndexCopies>();
         }
+
+        /// <summary>
+        /// The index stores that carry a store's name while nothing ties them to it, one entry per store
+        /// that has any (<see cref="StoreIndexCopies"/>), in store order.
+        /// </summary>
+        public IReadOnlyList<StoreIndexCopies> Copies { get; }
+
+        /// <summary>The copies an unscoped search leaves out (<see cref="StoreIndexCopies.LeftOut"/>).</summary>
+        public IReadOnlyList<StoreIndexCopies> CopiesLeftOut => Copies.Where(c => c.LeftOut).ToList();
+
+        /// <summary>The copies an unscoped search reads, and reports (<see cref="StoreIndexCopies.LeftOut"/> false).</summary>
+        public IReadOnlyList<StoreIndexCopies> CopiesSearched => Copies.Where(c => !c.LeftOut).ToList();
 
         /// <summary>One entry per store, in the order the stores were given.</summary>
         public IReadOnlyList<StoreIndexMatch> Stores { get; }
@@ -459,7 +518,89 @@ namespace OutlookAI.Core.IndexSearch
                 }
             }
 
-            return new StoreIndexMap(results.Select(m => m!).ToList(), unclaimed);
+            List<StoreIndexMatch> matches = results.Select(m => m!).ToList();
+            return new StoreIndexMap(matches, unclaimed, FindCopies(matches, roots, claimedRoots));
+        }
+
+        /// <summary>
+        /// The index stores that carry a store's name while nothing ties them to it
+        /// (<see cref="StoreIndexCopies"/>), decided 2026-11-18 from the TODO item on the stale copy of a
+        /// rebuilt .ost: (a) for a store tied by its hash - by name and hash, or by hash in the Exchange
+        /// exception - every other index store of its live index store's name that no store claimed is a
+        /// copy an unscoped search leaves out; unless another store of the profile that is tied to nothing
+        /// could be filed under that name, which keeps them in (never a guess). (b) for an Exchange store
+        /// the hash did not decide (the name rule), two or more index stores of its name are copies that
+        /// are searched and reported, since nothing says which is live.
+        /// </summary>
+        private static IReadOnlyList<StoreIndexCopies> FindCopies(
+            IReadOnlyList<StoreIndexMatch> matches, IReadOnlyList<StoreScopeInfo> roots, bool[] claimedRoots)
+        {
+            var ownedRoots = new HashSet<StoreScopeInfo>(
+                matches.Where(IsTied).Select(m => m.Root!).Concat(matches.SelectMany(m => m.Contested)));
+            var found = new List<StoreIndexCopies>();
+            foreach (StoreIndexMatch match in matches)
+            {
+                if (IsTied(match))
+                {
+                    StoreScopeInfo live = match.Root!;
+                    string? name = IndexName(live);
+                    List<StoreScopeInfo> copies = Enumerable.Range(0, roots.Count)
+                        .Where(r => !claimedRoots[r] && !ReferenceEquals(roots[r], live) && SameName(IndexName(roots[r]), name))
+                        .Select(r => roots[r])
+                        .ToList();
+                    if (copies.Count == 0)
+                    {
+                        continue;
+                    }
+
+                    StoreIndexMatch? rival = matches.FirstOrDefault(o => !ReferenceEquals(o, match) && MayBeFiledUnder(o, name));
+                    found.Add(new StoreIndexCopies(match, live, copies, rival == null, rival?.Store.DisplayName));
+                }
+                else if (match.Kind == StoreIndexMatchKind.NameRule && !match.Store.NameUnreadable)
+                {
+                    List<StoreScopeInfo> named = roots
+                        .Where(r => !ownedRoots.Contains(r) && SameName(r.StoreDisplayName, match.Store.DisplayName))
+                        .ToList();
+                    if (named.Count >= 2)
+                    {
+                        found.Add(new StoreIndexCopies(match, null, named, false, null));
+                    }
+                }
+            }
+
+            return found;
+        }
+
+        /// <summary>Whether a store is tied to an index store of its own by its hash.</summary>
+        private static bool IsTied(StoreIndexMatch match)
+        {
+            return match.Root != null
+                && (match.Kind == StoreIndexMatchKind.NameAndHash || match.Kind == StoreIndexMatchKind.StoreHash);
+        }
+
+        /// <summary>
+        /// Whether a store tied to nothing could be the one an index store of <paramref name="name"/> is filed
+        /// under: an Exchange store the hash did not decide, by the display name the name rule takes; a store
+        /// that is not a PST file, by its own name, its hash input being unmeasured. A PST tied to nothing is
+        /// not in the index - its rule is measured - and a tied or delegate store has its own place.
+        /// </summary>
+        private static bool MayBeFiledUnder(StoreIndexMatch match, string? name)
+        {
+            switch (match.Kind)
+            {
+                case StoreIndexMatchKind.NameRule:
+                    return SameName(match.Store.DisplayName, name);
+                case StoreIndexMatchKind.None:
+                    return !match.Store.IsPstFile && SameName(match.Store.OwnName, name);
+                default:
+                    return false;
+            }
+        }
+
+        /// <summary>Two names the way the index is matched: ordinal, case-insensitive, white space at either end not counted.</summary>
+        private static bool SameName(string? a, string? b)
+        {
+            return a != null && b != null && string.Equals(a.Trim(), b.Trim(), StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>
@@ -483,10 +624,7 @@ namespace OutlookAI.Core.IndexSearch
         /// <summary>Whether <paramref name="ownName"/> is the name <paramref name="root"/> is filed under (see the class remarks).</summary>
         internal static bool NamesAgree(string? ownName, StoreScopeInfo root)
         {
-            string? indexName = IndexName(root);
-            return ownName != null
-                && indexName != null
-                && string.Equals(ownName.Trim(), indexName.Trim(), StringComparison.OrdinalIgnoreCase);
+            return SameName(ownName, IndexName(root));
         }
 
         private static StoreHashCandidate? HashHit(StoreIndexIdentity store, StoreScopeInfo root)

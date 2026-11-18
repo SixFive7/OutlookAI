@@ -1151,6 +1151,26 @@ namespace OutlookAI.Core.Services
         /// </summary>
         public IReadOnlyList<string>? StoresUnmatched { get; set; }
 
+        /// <summary>
+        /// Index stores (<c>name($hash)</c>) an UNSCOPED search left out because they carry the name of a store
+        /// of this profile while nothing ties them to it, and another index store of that name IS tied to the
+        /// store by its hash - the live copy, which was searched. Windows Search keeps such an old copy after an
+        /// Outlook data file (.ost) is rebuilt; another profile's store of the same name looks the same (decided
+        /// 2026-11-18). Nothing of this profile is missing, so it does not set <c>degraded</c>; advice names the
+        /// store each belongs to. Null when there are none - on every scoped search. Capped like
+        /// <see cref="StoresUnmatched"/>.
+        /// </summary>
+        public IReadOnlyList<string>? StoreCopiesLeftOut { get; set; }
+
+        /// <summary>
+        /// Index stores an UNSCOPED search read although they carry the name of a store of this profile beside
+        /// another index store of that name, because nothing says which one is the store's own: none is tied to
+        /// it by its hash (or another store tied to nothing carries the name too). Results can then include mail
+        /// moved or deleted since, or the same mail twice; advice says so and names the stores. Null when there
+        /// are none. Capped like <see cref="StoresUnmatched"/>.
+        /// </summary>
+        public IReadOnlyList<string>? StoreCopiesSearched { get; set; }
+
         /// <summary>Rows the SQL statement returned, before admission (the denominator of <see cref="RowsDropped"/>).</summary>
         public int RowsScanned { get; set; }
 
@@ -1393,7 +1413,12 @@ namespace OutlookAI.Core.Services
         /// <summary>The store's ID (Q133).</summary>
         public string? StoreId { get; set; }
 
-        /// <summary>Folder path as Outlook reports it - for reading only.</summary>
+        /// <summary>
+        /// The folder's names from the top of its store down, joined by <c>/</c> (<c>Inbox/Projects</c>), as
+        /// every other tool prints a folder - for reading only; <see cref="FolderId"/> is its address and the
+        /// store is beside it. Until 2026-11-18 this was Outlook's own <c>FolderPath</c>, with the store's name,
+        /// backslashes and Outlook's escapes (<see cref="MailService.DescribeReadFolder"/>).
+        /// </summary>
         public string? Folder { get; set; }
 
         /// <summary>The folder's ID (Q131): pass it as folder_id to search this folder or to move mail back into it.</summary>
@@ -1835,6 +1860,19 @@ namespace OutlookAI.Core.Services
         /// exception, a hash claimed twice, after which the store took the name rule.
         /// </summary>
         public string? MatchNote { get; set; }
+
+        /// <summary>
+        /// Other index stores (<c>name($hash)</c>) that carry this store's name while nothing ties them to it
+        /// (decided 2026-11-18): what Windows Search keeps of an Outlook data file that was rebuilt, or another
+        /// profile's store of the same name. With <see cref="StoreCopiesLeftOut"/> true, <see cref="IndexStore"/>
+        /// is tied to the store by its hash and unscoped searches leave these out; false, nothing says which is
+        /// the store's own, so unscoped searches read them all and a scoped search is refused. Absent when there
+        /// are none.
+        /// </summary>
+        public IReadOnlyList<string>? StoreCopies { get; set; }
+
+        /// <summary>Whether unscoped searches leave <see cref="StoreCopies"/> out; absent when there are none.</summary>
+        public bool? StoreCopiesLeftOut { get; set; }
     }
 
     /// <summary>Account view for list_accounts.</summary>
