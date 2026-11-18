@@ -135,6 +135,9 @@ internal static class ReadOnlyProductApi
         ["OutlookAI.Core.Com.IOutlookSession.GetStoreDetails"] = "reads the profile's stores and their Exchange type",
         ["OutlookAI.Core.Com.IOutlookSession.TryGetSendableDraftState"] =
             "reads a draft's recipients, subject and state - what the send path reads before it sends; it sends nothing",
+        ["OutlookAI.Core.Com.IOutlookSession.TryDescribeFolder"] =
+            "opens one folder by its entry id (GetFolderFromID) and describes it - the store the Exchange VM's stdio gate "
+            + "checks a create_folder parent against; GetFolderFromID creates nothing (Q131-Q136)",
         ["OutlookAI.Core.Services.MailService.Dispose"] = "releases the gateway's COM session",
         ["OutlookAI.Core.Services.MailService.Search"] = "the search tool: index query plus a read-only sweep; its cache is in memory",
         ["OutlookAI.Core.Services.MailService.ClearSweepCache"] = "empties the in-memory sweep cache",

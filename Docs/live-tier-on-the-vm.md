@@ -3919,6 +3919,7 @@ in `.work\guest-live-runs\<run>\` of the branch's worktree).
 | 1 | `6b84aab`, master `3ae6eae` merged | `CP-08-ADDIN-READY`, both .ost files set aside | 87 | 35 | 52 | 4 m 59 s | started by the run; the activation wizard closed once |
 | 2 | `8a66b74`, the addresses read at run time | carried forward | 1 (`LiveDraftTests.NewDraft_Hub_LandsInHubDrafts_...`) | 0 | 1 | 20 s | already running, no dialog open |
 | 5 | `40c64f8`, `Writes=Nothing` only (decision 206) | `CP-08-ADDIN-READY`, both .ost files set aside, the search index rebuilt | 25 | 23 | 2 | 49 s | started by the run; the activation wizard closed once |
+| 6 | `d5f3d34`, master `9550802` (folders and stores by ID) merged, `Writes=Nothing` only | carried forward | 28 | 23 | 5 | 1 m 15 s | already running |
 
 Both runs left no tagged item behind (run 1 swept every store to zero; run 2 created nothing), the
 count tripwire found no change outside the test account, Outlook did not crash, and the mailbox
@@ -3966,6 +3967,28 @@ so not a stale row - a question for the product's open-by-index path, not analys
 tests proved nothing for want of data on this machine: an index frontier younger than its UTC offset,
 an indexed mail with an attachment in the first indexed store, and a resume token from an exhaustive
 scan of the empty hub.
+
+**Run 6: folders and stores by ID on a real Exchange mailbox (2026-11-18).** Master's change to folder
+and store IDs (Q131-Q136) had reached Exchange through T1 and the Q132 measurement only, so the branch
+added three tests that write nothing (`T2/LiveExchangeFolderIdTests.cs`). What they and the rest found:
+
+- **The 66-character IDs hold.** `list_folders` for the test account's `storeId` gave 74 folders, every
+  ID 66 characters of kind X, each reading back to a 46-byte entry id.
+- **One `storeId` names two stores.** The test account's mailbox is in the profile twice - its cached
+  store and the online entry Exchange automapped (section 4.4a) - and `list_folders` for the cached
+  store's `storeId` answered with both: `LiveMailServiceTests.ListFolders_TestHub_FullTree_...` found two
+  stores where it asserts one, which is also why there were 74 folders. `find_folder` for `Inbox` in
+  that store offered two exact matches, so `FindFolder_FindsTheInboxByItsName_...` could not name one.
+- **An Exchange folder ID no folder has was not refused.** A search scoped to the Inbox's ID answered,
+  but one scoped to the root's ID with its six counter bytes set to `FF` - built by
+  `LiveIds.UnknownFolderIdIn`, the helper master's own refusal test uses - answered too, where Q131-Q136
+  say it must be refused as no folder's. Whether the second store entry is what answers it was not
+  established.
+- `LiveHealthTests.Health_...` (the automapped entry again) and
+  `LiveMailServiceTests.Thread_IndexPath_AndComFallback` failed as in run 5.
+
+None of this is mended on the branch: the first two are the folders-by-ID code's to settle, and depend
+on what the maintainer decides about the automapped entry; this section records them.
 
 ### 4.5 The frozen guest clocks - both Outlook guests, 2026-10-03 (Q130 (a) and (b))
 

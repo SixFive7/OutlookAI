@@ -304,9 +304,12 @@ its mailbox tests on, and change nothing you install.
   measurement only. Three live tests that write nothing now run on that machine: every folder of the
   test account carries a 66-character folder ID of kind X that reads back to an Exchange entry id,
   find_folder finds the Inbox by its name under the ID list_folders gives, and a search scoped to that
-  ID answers while an Exchange-shaped ID no folder has is refused. create_folder's refusals and the
-  refusal while Outlook does not answer stay with T1: reaching them there would take a write or a
-  stopped Outlook. The test-side MCP client on that machine passes find_folder and lets create_folder
+  ID answers while an Exchange-shaped ID no folder has is refused. Their first run, on 2026-11-18,
+  confirmed the IDs and found two things for the folders-by-ID code to settle: the test account's
+  storeId names both its cached store and the online entry Exchange automapped, so list_folders and
+  find_folder show its folders twice, and an Exchange folder ID no folder has was answered, not
+  refused. create_folder's refusals and the refusal while Outlook does not answer stay with T1:
+  reaching them there would take a write or a stopped Outlook. The test-side MCP client on that machine passes find_folder and lets create_folder
   make a folder only in the test account, and the guarded session follows the new folder interface.
 
 - ✅ **The Exchange test machine writes in a dedicated test account, and only there.**
