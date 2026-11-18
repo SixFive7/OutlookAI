@@ -101,6 +101,15 @@ namespace OutlookAI.Core.Services
                 return matches[0];
             }
 
+            // One mailbox in two store entries - its own cached store and the online entry Exchange automapped
+            // beside it - answers to one ID, and is resolved through its kept entry, never refused and never
+            // guessed (StoreTwins, decided 2026-11-18): an ID never resolves to two stores.
+            ComStoreDetail? kept = KeptEntryAmong(stores, matches);
+            if (kept != null)
+            {
+                return kept;
+            }
+
             if (matches.Count == 0)
             {
                 throw new ArgumentException(
@@ -116,6 +125,68 @@ namespace OutlookAI.Core.Services
                 + " - one mailbox seen through two stores carries one identity, so the ID cannot say which is meant and "
                 + "nothing is picked at random. Address a folder of it by its folderId instead (find_folder, list_folders).",
                 parameterName);
+        }
+
+        /// <summary>
+        /// The kept entry of the one mailbox <paramref name="matches"/> are entries of (<see cref="StoreTwins"/>),
+        /// or null when they are not all entries of one mailbox - two mailboxes are never picked between. Pure.
+        /// </summary>
+        internal static ComStoreDetail? KeptEntryAmong(IReadOnlyList<ComStoreDetail> stores, IReadOnlyList<ComStoreDetail> matches)
+        {
+            if (matches.Count < 2)
+            {
+                return null;
+            }
+
+            int[] keptEntryOf = StoreTwins.KeptEntryOf(stores);
+            List<ComStoreDetail> keptOnes = matches
+                .Where(m => KeptEntryOf(stores, keptEntryOf, m) < 0)
+                .ToList();
+            if (keptOnes.Count != 1)
+            {
+                return null;
+            }
+
+            ComStoreDetail kept = keptOnes[0];
+            int keptIndex = IndexOf(stores, kept);
+            return matches.All(m => ReferenceEquals(m, kept) || KeptEntryOf(stores, keptEntryOf, m) == keptIndex) ? kept : null;
+        }
+
+        /// <summary>
+        /// The store of the profile with this own entry id (<c>Store.StoreID</c>) - the kept entry when two entries of
+        /// one mailbox share it (<see cref="StoreTwins"/>), so every lookup by StoreID lands where an ID resolves. Null
+        /// when none has it. Pure.
+        /// </summary>
+        internal static ComStoreDetail? StoreWithEntryId(IReadOnlyList<ComStoreDetail>? stores, string? storeEntryId)
+        {
+            if (stores == null || string.IsNullOrEmpty(storeEntryId))
+            {
+                return null;
+            }
+
+            List<ComStoreDetail> withId = stores
+                .Where(d => string.Equals(d.StoreId, storeEntryId, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            return withId.Count <= 1 ? withId.FirstOrDefault() : KeptEntryAmong(stores, withId) ?? withId[0];
+        }
+
+        private static int KeptEntryOf(IReadOnlyList<ComStoreDetail> stores, int[] keptEntryOf, ComStoreDetail store)
+        {
+            int index = IndexOf(stores, store);
+            return index < 0 ? -1 : keptEntryOf[index];
+        }
+
+        private static int IndexOf(IReadOnlyList<ComStoreDetail> stores, ComStoreDetail store)
+        {
+            for (int i = 0; i < stores.Count; i++)
+            {
+                if (ReferenceEquals(stores[i], store))
+                {
+                    return i;
+                }
+            }
+
+            return -1;
         }
 
         /// <summary>"The stores here are: 'A' (S...), 'B' (S...)." - capped, for a refusal.</summary>
@@ -185,9 +256,7 @@ namespace OutlookAI.Core.Services
         {
             if (!string.IsNullOrEmpty(storeEntryId))
             {
-                IReadOnlyList<ComStoreDetail>? known = LastKnownStoreDetails();
-                ComStoreDetail? detail = known?.FirstOrDefault(d =>
-                    string.Equals(d.StoreId, storeEntryId, StringComparison.OrdinalIgnoreCase));
+                ComStoreDetail? detail = StoreWithEntryId(LastKnownStoreDetails(), storeEntryId);
                 if (detail != null)
                 {
                     return StoreIdOf(detail);
@@ -208,9 +277,7 @@ namespace OutlookAI.Core.Services
                 return null;
             }
 
-            ComStoreDetail? byId = account.DeliveryStoreEntryId == null
-                ? null
-                : stores.FirstOrDefault(d => string.Equals(d.StoreId, account.DeliveryStoreEntryId, StringComparison.OrdinalIgnoreCase));
+            ComStoreDetail? byId = StoreWithEntryId(stores, account.DeliveryStoreEntryId);
             if (byId != null)
             {
                 return StoreIdOf(byId);
@@ -377,8 +444,7 @@ namespace OutlookAI.Core.Services
             request.ScopeFolderPath = FolderScopeResolver.JoinNames(detail.PathSegments);
             request.ScopeFolderPathShared = detail.PathShared;
             folderFoundVia = FolderFoundViaOutlook;
-            ComStoreDetail? storeDetail = TryGetStoreDetailsForIds()?.FirstOrDefault(d =>
-                string.Equals(d.StoreId, detail.StoreEntryId, StringComparison.OrdinalIgnoreCase));
+            ComStoreDetail? storeDetail = StoreWithEntryId(TryGetStoreDetailsForIds(), detail.StoreEntryId);
             return ResolveFolderScope(
                 storeDetail, detail.StoreDisplayName, detail.IsStoreRoot ? null : detail.PathSegments, request.IncludeSubfolders);
         }
@@ -743,8 +809,13 @@ namespace OutlookAI.Core.Services
                     : (StoreNameDecision.NameRule, null, null);
             }
 
-            StoreIndexMatch? match = map.Stores.FirstOrDefault(m =>
-                string.Equals(m.Store.StoreEntryId, detail.StoreId, StringComparison.OrdinalIgnoreCase));
+            // Two entries of one mailbox share a StoreID (StoreTwins): the one the index ties is the kept,
+            // cached entry, and a delegate's entry is never a store of its own in the index.
+            StoreIndexMatch? match = map.Stores
+                .Where(m => string.Equals(m.Store.StoreEntryId, detail.StoreId, StringComparison.OrdinalIgnoreCase))
+                .OrderBy(m => m.Kind == StoreIndexMatchKind.NameAndHash || m.Kind == StoreIndexMatchKind.StoreHash ? 0
+                    : m.Kind == StoreIndexMatchKind.Delegate ? 2 : 1)
+                .FirstOrDefault();
             if (match == null)
             {
                 return (StoreNameDecision.NameRule, null, null);
@@ -945,9 +1016,7 @@ namespace OutlookAI.Core.Services
                 return null;
             }
 
-            ComStoreDetail? detail = stores?.FirstOrDefault(d =>
-                !string.IsNullOrEmpty(root.StoreEntryId)
-                && string.Equals(d.StoreId, root.StoreEntryId, StringComparison.OrdinalIgnoreCase));
+            ComStoreDetail? detail = StoreWithEntryId(stores, root.StoreEntryId);
             return detail != null ? StoreIdOf(detail) : OutlookIds.StoreIdOf(root.RootFolderEntryId, root.StoreEntryId);
         }
 

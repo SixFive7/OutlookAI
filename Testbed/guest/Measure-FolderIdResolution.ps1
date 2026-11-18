@@ -393,14 +393,36 @@ function Get-OpenLine([string] $Label, [string] $FolderIdHex, [string] $StoreIdH
         $where = '?'
         try { $owner = $folder.Store; $where = Get-EntryPosition $owner } catch { $where = 'storeUnreadable ' + (Get-HResult $_) }
         $sameId = $false
-        try { $sameId = ([string]$folder.EntryID).ToUpperInvariant() -eq $FolderIdHex.ToUpperInvariant() } catch { }
+        $openedId = $null
+        try { $openedId = [string]$folder.EntryID; $sameId = $openedId.ToUpperInvariant() -eq $FolderIdHex.ToUpperInvariant() } catch { }
+        # When it opened ANOTHER folder than the one asked for: is that a store's top folder?
+        $isTop = @($entries | Where-Object { $_.RootId -and $openedId -and $_.RootId.ToUpperInvariant() -eq $openedId.ToUpperInvariant() }).Count -gt 0
         $nameRead = 'ok'
-        try { [void][string]$folder.Name } catch { $nameRead = 'FAILS ' + (Get-HResult $_) }
+        try { $nameRead = 'ok (hash ' + (Get-ShortHash ([string]$folder.Name)) + ')' } catch { $nameRead = 'FAILS ' + (Get-HResult $_) }
         $typeRead = 'ok'
-        try { [void][int]$folder.DefaultItemType } catch { $typeRead = 'FAILS ' + (Get-HResult $_) }
+        try { $typeRead = 'ok (' + [int]$folder.DefaultItemType + ')' } catch { $typeRead = 'FAILS ' + (Get-HResult $_) }
         $countRead = 'ok'
-        try { $items = $folder.Items; [void][int]$items.Count } catch { $countRead = 'FAILS ' + (Get-HResult $_) }
-        return ($Label + ' OPENED in ' + $opened + ' ms in entry ' + $where + '; same entry id ' + $sameId + '; Name ' + $nameRead + '; DefaultItemType ' + $typeRead + '; Items.Count ' + $countRead)
+        try { $items = $folder.Items; $countRead = 'ok (' + [int]$items.Count + ')' } catch { $countRead = 'FAILS ' + (Get-HResult $_) }
+        # What tells a folder Outlook hands out for an id no folder has from a real one: its parent, its
+        # path, and the properties a real folder carries.
+        $parentText = 'none'
+        $parent = $null
+        try {
+            $parent = $folder.Parent
+            $parentId = $null
+            try { $parentId = [string]$parent.EntryID } catch { }
+            $parentIsTop = @($entries | Where-Object { $_.RootId -and $parentId -and $_.RootId.ToUpperInvariant() -eq $parentId.ToUpperInvariant() }).Count -gt 0
+            $parentText = $(if ($parentId) { 'a folder (a store''s top folder ' + $parentIsTop + ')' } else { 'no entry id (the namespace)' })
+        }
+        catch { $parentText = 'FAILS ' + (Get-HResult $_) }
+        finally { Release $parent }
+        $pathText = 'unreadable'
+        try { $pathText = 'segments ' + @(([string]$folder.FolderPath).TrimStart('\') -split '\\').Count } catch { $pathText = 'FAILS ' + (Get-HResult $_) }
+        $props = @()
+        foreach ($tag in @(@('parentEntryId', '0x0E090102'), @('sourceKey', '0x65E00102'), @('recordKey', '0x0FF90102'), @('folderType', '0x36010003'), @('subfolders', '0x360A000B'), @('contentCount', '0x36020003'))) {
+            try { [void]$folder.PropertyAccessor.GetProperty('http://schemas.microsoft.com/mapi/proptag/' + $tag[1]); $props += ($tag[0] + ' ok') } catch { $props += ($tag[0] + ' ' + (Get-HResult $_)) }
+        }
+        return ($Label + ' OPENED in ' + $opened + ' ms in entry ' + $where + '; same entry id ' + $sameId + '; a store''s top folder ' + $isTop + '; Name ' + $nameRead + '; DefaultItemType ' + $typeRead + '; Items.Count ' + $countRead + '; Parent ' + $parentText + '; FolderPath ' + $pathText + '; ' + ($props -join ', '))
     }
     catch {
         return ($Label + ' REFUSED ' + (Get-HResult $_) + ' after ' + (Ms $sw.Elapsed.TotalMilliseconds) + ' ms')

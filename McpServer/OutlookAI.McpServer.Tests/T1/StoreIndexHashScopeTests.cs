@@ -232,6 +232,67 @@ public sealed class StoreIndexHashScopeTests
     }
 
     [Fact]
+    public void ARebuiltOstsOldCopy_AnUnscopedSearchLeavesItOut_AndSaysSo()
+    {
+        // Measured by stream A on the Exchange guest (2026-11-17): after an .ost is rebuilt, Windows Search keeps the old
+        // copy of the mailbox as a second root of the same name and folder paths. The mailbox is tied to the live
+        // copy by its hash, so the untied one is the stale copy, and an unscoped search leaves it out (decided
+        // 2026-11-18, the TODO item's (a)) - saying so, and naming both.
+        string liveRoot = UserRoot + "alice@example.com($" + StoreHash.Compute(new byte[] { 0x0A, 0x0B, 0x0C, 0x0D }).ToString("x", CultureInfo.InvariantCulture) + ")";
+        string oldRoot = UserRoot + "alice@example.com($9b7b502)";
+        var alice = new ComStoreDetail("alice@example.com", "00112233", 0, true, false,
+            filePath: @"C:\Users\a\alice.ost", mappingSignatureHex: "0A0B0C0D");
+        var index = new StubIndexClient(new[] { oldRoot, liveRoot }, liveRoot, liveRoot) { MoreMailRoots = new[] { oldRoot } };
+        using MailService service = Service(index, alice);
+
+        SearchOutcome outcome = service.Search(Unscoped());
+
+        Assert.Equal(2, outcome.Index!.RowsScanned);
+        Assert.Equal(1, outcome.Index.RowsDropped);
+        Assert.Single(outcome.Hits, h => h.Source != "live");
+        Assert.Equal(new[] { "alice@example.com($9b7b502)" }, outcome.Index.StoreCopiesLeftOut);
+        Assert.Null(outcome.Index.StoreCopiesSearched);
+        Assert.Contains(outcome.Advice ?? Array.Empty<string>(), a =>
+            a.StartsWith("Left out of this search:", StringComparison.Ordinal)
+            && a.Contains("alice@example.com($9b7b502) left out", StringComparison.Ordinal));
+
+        // A search scoped to the mailbox reaches the live copy alone, as it did.
+        index.Statements.Clear();
+        service.Search(Request("alice@example.com"));
+        Assert.Contains("SCOPE='" + liveRoot, Assert.Single(index.Statements, IsTheSearch), StringComparison.Ordinal);
+
+        // Control: the live copy alone - nothing left out, nothing said.
+        var single = new StubIndexClient(new[] { liveRoot }, liveRoot, liveRoot);
+        using MailService plain = Service(single, alice);
+        SearchOutcome alone = plain.Search(Unscoped());
+        Assert.Equal(0, alone.Index!.RowsDropped);
+        Assert.Null(alone.Index.StoreCopiesLeftOut);
+        Assert.DoesNotContain(alone.Advice ?? Array.Empty<string>(), a => a.StartsWith("Left out of this search:", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void WhenNothingTiesTheMailbox_AnUnscopedSearchReadsEveryCopy_AndSaysSo()
+    {
+        // The TODO item's (b): no copy is tied by the store's hash, so nothing says which is live. Nothing is left
+        // out, and the copies are reported.
+        string a = UserRoot + "alice@example.com($2468ace0)";
+        string b = UserRoot + "alice@example.com($13579bdf)";
+        var alice = new ComStoreDetail("alice@example.com", "00112233", 0, true, false,
+            filePath: @"C:\Users\a\alice.ost", mappingSignatureHex: "0E0F1011");
+        var index = new StubIndexClient(new[] { a, b }, a, a) { MoreMailRoots = new[] { b } };
+        using MailService service = Service(index, alice);
+
+        SearchOutcome outcome = service.Search(Unscoped());
+
+        Assert.Equal(0, outcome.Index!.RowsDropped);
+        Assert.Equal(2, outcome.Hits.Count(h => h.Source != "live"));
+        Assert.Equal(new[] { "alice@example.com($2468ace0)", "alice@example.com($13579bdf)" }, outcome.Index.StoreCopiesSearched);
+        Assert.Null(outcome.Index.StoreCopiesLeftOut);
+        Assert.Contains(outcome.Advice ?? Array.Empty<string>(), x =>
+            x.StartsWith("This search read every index store", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void TwoStoresOfOneName_AreToldApartByTheirIds_AndEachSearchesItsOwnIndexStore()
     {
         // Two data files both called 'Shared' in the profile, each indexed under its own name and hash. A

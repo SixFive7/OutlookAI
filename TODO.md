@@ -1775,7 +1775,11 @@
   plan. It is in `.work\dup-survey-2026-11\` of the maintainer's checkout - README.txt,
   inventory.tsv (one row a group), members.tsv (every copy's file and lines) and the detectors' raw
   output - which is gitignored, so not in a clone. How far, and in what order, is asked as Q163
-  onwards, not answered yet.
+  onwards, not answered yet. Since the survey, `Testbed/host/Invoke-TrustRemovalProbe.ps1` (Q193)
+  restates five helpers of `Testbed/host/Invoke-LiveTierOnGuest.ps1`: `Get-LeaseDecision`,
+  `Invoke-NativeCommand`, `Say` and `Stop-Refused` word for word, and `Get-TaskExit` but for the
+  marker it reads (`PROBE-TASK-EXIT` where the runner reads `RUN-REGISTER-EXIT`); decision 166 says
+  how they are folded.
 
 - [ ] **Let the add-in's AI choose the signature by itself, once the add-in uses OutlookAI.Core (Q158
   and Q162, decided 2026-11-17).** Signatures are managed through the MCP server only; the add-in
