@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
+using OutlookAI.Core.AddIn;
 
 namespace OutlookAI.Core.Mapi
 {
@@ -683,21 +684,7 @@ namespace OutlookAI.Core.Mapi
         private static bool LooksLikeHexEntryId(string input)
         {
             string trimmed = input.Trim();
-            if (trimmed.Length < 40 || (trimmed.Length % 2) != 0)
-            {
-                return false;
-            }
-
-            foreach (char c in trimmed)
-            {
-                bool hex = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
-                if (!hex)
-                {
-                    return false;
-                }
-            }
-
-            return true;
+            return trimmed.Length >= 40 && (trimmed.Length % 2) == 0 && Hex.IsAllDigits(trimmed);
         }
 
         /// <summary>The input quoted for a message, cut so a pasted document cannot flood the answer.</summary>

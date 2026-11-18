@@ -6,6 +6,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using Microsoft.Win32.SafeHandles;
+using OutlookAI.Core.AddIn;
 
 namespace OutlookAI.Core.Services
 {
@@ -91,7 +92,7 @@ namespace OutlookAI.Core.Services
         /// OutlookAI's download folder: <c>%LOCALAPPDATA%\OutlookAI\scratch\attachments</c>. Every
         /// attachment <c>save_attachment</c> saves is in it or in a folder inside it.
         /// </summary>
-        public static string DownloadFolder => Path.Combine(MailService.SharedStateDirectory, "scratch", "attachments");
+        public static string DownloadFolder => Path.Combine(SharedState.Root, "scratch", "attachments");
 
         /// <summary>
         /// The folder a save into <paramref name="targetDirectory"/> would write to - its final path,

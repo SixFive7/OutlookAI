@@ -7,6 +7,7 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
+using OutlookAI.Core.AddIn;
 
 namespace OutlookAI.Core.Com
 {
@@ -768,7 +769,7 @@ namespace OutlookAI.Core.Com
 
         /// <summary>The registry every product session uses: <c>%LOCALAPPDATA%\OutlookAI\outlook-sessions.txt</c>.</summary>
         public static OutlookSessionRegistry Default { get; } = new OutlookSessionRegistry(
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "OutlookAI", FileName),
+            Path.Combine(SharedState.Root, FileName),
             DefaultMutexName);
 
         /// <summary>The file this registry reads and writes.</summary>

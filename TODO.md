@@ -101,10 +101,16 @@
   reason. Left: the self-test helpers (P04) but `ConvertTo-SelfTestText`, shared too. Check 4 reads
   nested functions now, and the helpers' seven `Test-Case` and thirteen `Check` shapes share their
   names, so they fold under names of their own or into one harness.
-  What remains, one stage at a time: S6, the server's own repetition (S01-S14), and of S4's A12 the
-  scaffold the pane's three AI actions each repeat around the compose document. In parallel: the
-  rest of the shared test code (S5a) - the live tier's own Win32 window declarations among it, which
-  can use Core's `NativeWindows` now - the PowerShell helpers (S7), and the rules restated in C# and
+  S6 folded the server's own repetition, the survey's S01 to S14, but for four shapes it left: the
+  two draft results' shared fields (S04, S11), which a base class would move to one block of the
+  JSON every draft tool returns; the parameter lists the draft tools and the COM host's two invoke
+  methods each declare (S12, S13); and the corpus tool's thirteen STA operations, which each open
+  the corpus store and release it the same way (S14) - COM code only a corpus build, scan and
+  teardown on a test machine exercise, which S5b's proof has and S6's had not. S10 had gone already
+  with the incident commands (Q170 (a)). What remains, one stage at a time: of S4's A12 the scaffold
+  the pane's three AI actions each repeat around the compose document. In parallel: the rest of the
+  shared test code (S5a) - the live tier's own Win32 window declarations among it, which can use
+  Core's `NativeWindows` now - the PowerShell helpers (S7), and the rules restated in C# and
   PowerShell as shared C# source (Q171).
   S7 also takes the two MCP stdio clients left beside `Testbed/guest/McpStdioClient.ps1`:
   `Invoke-GuestMeasure.ps1`'s, kept as found, and `Measure-PinWindows.ps1`'s C# session class.
@@ -197,7 +203,8 @@
   only one that does: 145 of the 323 marked tests reach the zone only through five product
   conversions that convert a value already marked Local and nothing else - `WsSqlBuilder.FormatUtc`,
   `DaslDateLiteral.FormatUtc`, `IndexRowMapper.AsUtcDateTime`, `IndexSearchService.GetStaleness`,
-  `ComDateValue.FromTableValue`. Under the rule that a marked test is rewritten to set its own zone
+  `ComDateValue.FromTableValue`; four since the code-sharing refactor's stage S6, when `WsSqlBuilder`
+  began rendering its dates through `DaslDateLiteral.FormatUtc`. Under the rule that a marked test is rewritten to set its own zone
   when next touched, those 145 can lose their marks only if the product changes. Measured
   2026-11-17 with a scratch copy of the walk. Directions: (1) keep the line as it is -
   nothing to maintain, 323 marks, and the 383 marked cases take about a second of test time; (2)

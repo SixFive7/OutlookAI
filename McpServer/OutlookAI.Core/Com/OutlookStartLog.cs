@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Text;
 using Microsoft.Win32.SafeHandles;
+using OutlookAI.Core.AddIn;
 using OutlookAI.Core.Audit;
 
 namespace OutlookAI.Core.Com
@@ -81,7 +82,7 @@ namespace OutlookAI.Core.Com
         internal const int MaxValueLength = 120;
 
         /// <summary>Where a shipped OutlookAI writes the log - for health and the README.</summary>
-        public static string DefaultPath => Path.Combine(AuditLog.DefaultDirectory, FileName);
+        public static string DefaultPath => Path.Combine(SharedState.Root, FileName);
 
         /// <summary>Where THIS process writes it: <see cref="DefaultPath"/>, or a test run's throwaway directory.</summary>
         public static string EffectivePath => Path.Combine(AuditLog.EffectiveDirectory, FileName);

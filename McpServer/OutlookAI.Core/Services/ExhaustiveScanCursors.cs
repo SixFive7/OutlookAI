@@ -1,9 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
-using System.Security.Cryptography;
 using System.Text;
 
+using OutlookAI.Core.AddIn;
 using OutlookAI.Core.Com;
 
 namespace OutlookAI.Core.Services
@@ -359,7 +359,7 @@ namespace OutlookAI.Core.Services
             }
 
             DateTime now = _utcNow();
-            string token = TokenPrefix + NewRandomHex(TokenHexLength / 2);
+            string token = TokenPrefix + Hex.NewRandom(TokenHexLength / 2);
             lock (_lock)
             {
                 PruneLocked(now);
@@ -477,7 +477,7 @@ namespace OutlookAI.Core.Services
                 }
             }
 
-            ExhaustiveScanSession session = new ExhaustiveScanSession(NewRandomHex(8), fingerprint, now);
+            ExhaustiveScanSession session = new ExhaustiveScanSession(Hex.NewRandom(8), fingerprint, now);
             _sessions[session.SessionId] = session;
             return session;
         }
@@ -502,20 +502,11 @@ namespace OutlookAI.Core.Services
 
         private void PruneLocked(DateTime now)
         {
-            List<string> expired = new List<string>();
-            foreach (KeyValuePair<string, ExhaustiveScanSession> pair in _sessions)
-            {
-                if (now - pair.Value.IssuedUtc > TimeToLive)
-                {
-                    expired.Add(pair.Key);
-                }
-            }
-
-            for (int i = 0; i < expired.Count; i++)
+            foreach (string sessionId in ExpiringEntries.ExpiredKeys(_sessions, s => s.IssuedUtc, now, TimeToLive))
             {
                 // The SESSION goes; its tokens stay reachable only through it, so removing it
                 // is what turns a later replay into "unknown" rather than a null dereference.
-                RemoveSessionLocked(expired[i]);
+                RemoveSessionLocked(sessionId);
             }
         }
 
@@ -524,29 +515,6 @@ namespace OutlookAI.Core.Services
             return value.HasValue
                 ? value.Value.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture)
                 : null!;
-        }
-
-        private static string NewRandomHex(int byteCount)
-        {
-            byte[] bytes = new byte[byteCount];
-            using (RandomNumberGenerator rng = RandomNumberGenerator.Create())
-            {
-                rng.GetBytes(bytes);
-            }
-
-            char[] hex = new char[bytes.Length * 2];
-            for (int i = 0; i < bytes.Length; i++)
-            {
-                hex[i * 2] = ToHexDigit(bytes[i] >> 4);
-                hex[(i * 2) + 1] = ToHexDigit(bytes[i] & 0xF);
-            }
-
-            return new string(hex);
-        }
-
-        private static char ToHexDigit(int value)
-        {
-            return (char)(value < 10 ? '0' + value : 'a' + (value - 10));
         }
     }
 }

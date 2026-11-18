@@ -93,13 +93,6 @@ namespace OutlookAI.Core.Com
         public const string AdmitEveryClassClause = MessageClassProp + " like '%'";
 
         /// <summary>
-        /// Longest accepted search term. THE SAME limit the index tier enforces, not a
-        /// second copy of it: the two modes answer the same user query and must agree on
-        /// which terms are valid.
-        /// </summary>
-        private const int MaxTermLength = IndexSearch.WsSqlBuilder.MaxTermLength;
-
-        /// <summary>
         /// Builds the full restriction. Always a valid non-empty filter, even without terms
         /// or date bounds (the CALLER enforces the exhaustive-mode bounding rules): with
         /// nothing to restrict on it emits <see cref="AdmitEveryClassClause"/>, which
@@ -155,7 +148,7 @@ namespace OutlookAI.Core.Com
                 for (int i = 0; i < terms.Count; i++)
                 {
                     clauses.Add(BuildTermClause(
-                        ValidateTerm(terms[i], "terms[" + i.ToString(CultureInfo.InvariantCulture) + "]"),
+                        SearchTermRules.ValidateTerm(terms[i], "terms[" + i.ToString(CultureInfo.InvariantCulture) + "]"),
                         engine,
                         searchIn));
                 }
@@ -216,60 +209,6 @@ namespace OutlookAI.Core.Com
                 default:
                     throw new ArgumentException("Unknown SearchIn value.", nameof(searchIn));
             }
-        }
-
-        /// <summary>
-        /// Validates a term with the same charset contract as the index search
-        /// (letters/digits plus space @ . _ - ' +; optional single trailing '*'), keeping
-        /// agent-facing semantics identical across modes and the DASL literal safe.
-        /// </summary>
-        public static string ValidateTerm(string term, string parameterName)
-        {
-            if (term == null)
-            {
-                throw new ArgumentException("Term must not be null.", parameterName);
-            }
-
-            string trimmed = term.Trim();
-            if (trimmed.Length == 0)
-            {
-                throw new ArgumentException("Term must not be blank.", parameterName);
-            }
-
-            if (trimmed.Length > MaxTermLength)
-            {
-                throw new ArgumentException("Term too long.", parameterName);
-            }
-
-            if (trimmed == "*")
-            {
-                throw new ArgumentException("Bare '*' is not a valid term.", parameterName);
-            }
-
-            for (int i = 0; i < trimmed.Length; i++)
-            {
-                char c = trimmed[i];
-                if (c == '*')
-                {
-                    if (i != trimmed.Length - 1)
-                    {
-                        throw new ArgumentException("'*' is only allowed as the final character (prefix match).", parameterName);
-                    }
-
-                    continue;
-                }
-
-                bool allowed = char.IsLetterOrDigit(c)
-                    || c == ' ' || c == '@' || c == '.' || c == '_' || c == '-' || c == '\'' || c == '+';
-                if (!allowed)
-                {
-                    throw new ArgumentException(
-                        string.Format(CultureInfo.InvariantCulture, "Term contains unsupported character '{0}'.", c),
-                        parameterName);
-                }
-            }
-
-            return trimmed;
         }
 
         private static string EscapeDaslValue(string value)

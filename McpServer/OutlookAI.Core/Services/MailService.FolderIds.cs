@@ -800,13 +800,7 @@ namespace OutlookAI.Core.Services
             StoreIndexMap? map = TryGetStoreIndexMap(commandTimeoutSeconds);
             if (map == null)
             {
-                bool listingFailed;
-                lock (_catalogLock)
-                {
-                    listingFailed = _storeIndexListingFailed;
-                }
-
-                return listingFailed && detail.ExchangeStoreType == 3
+                return StoreIndexListingFailed() && detail.ExchangeStoreType == 3
                     ? (StoreNameDecision.Refused, null, DescribeUnreadableStoreList(detail.DisplayName))
                     : (StoreNameDecision.NameRule, null, null);
             }
@@ -823,18 +817,7 @@ namespace OutlookAI.Core.Services
                 return (StoreNameDecision.NameRule, null, null);
             }
 
-            switch (match.Kind)
-            {
-                case StoreIndexMatchKind.NameAndHash:
-                case StoreIndexMatchKind.StoreHash:
-                    return (StoreNameDecision.Tied, match.Root, null);
-                case StoreIndexMatchKind.None:
-                    return (StoreNameDecision.NotIndexed, null, null);
-                case StoreIndexMatchKind.Ambiguous:
-                    return (StoreNameDecision.Refused, null, DescribeUnmatchableStore(match));
-                default:
-                    return (StoreNameDecision.NameRule, null, null);
-            }
+            return DecideStoreMatch(match);
         }
 
         // ------------------------------------------------------------------ find_folder (Q136 (ii))
@@ -1204,28 +1187,9 @@ namespace OutlookAI.Core.Services
                     Com.MutationOutcome.Unchanged, DescribeMoveRefusal(refusal, targetEcho) + " Nothing was moved.");
             }
 
-            List<MoveItemView> items = new List<MoveItemView>(requestIds.Count);
-            bool auditBroken = false;
-            Stopwatch batchClock = Stopwatch.StartNew();
-            foreach (string id in requestIds)
-            {
-                if (auditBroken)
-                {
-                    items.Add(FailedItem(id, "Not attempted: the audit log is unavailable (every move must be audited)."));
-                    continue;
-                }
-
-                int itemBudgetMs = RemainingBatchBudgetMs(batchClock);
-                if (itemBudgetMs < MinimumItemBudgetMs)
-                {
-                    items.Add(FailedItem(id, BatchBudgetExhaustedMessage));
-                    continue;
-                }
-
-                MoveItemView item = MoveOne(id, target.EntryId, targetEcho, itemBudgetMs, out bool auditFailed);
-                auditBroken |= auditFailed;
-                items.Add(item);
-            }
+            List<MoveItemView> items = MoveBatch(
+                requestIds,
+                (string id, int itemBudgetMs, out bool auditFailed) => MoveOne(id, target.EntryId, targetEcho, itemBudgetMs, out auditFailed));
 
             int movedCount = items.Count(i => i.Ok);
             return new MoveMailOutcome
@@ -1245,16 +1209,10 @@ namespace OutlookAI.Core.Services
         private MoveItemView MoveOne(string id, string targetEntryId, string targetEcho, int itemBudgetMs, out bool auditFailed)
         {
             auditFailed = false;
-            string entryId;
-            string? storeId;
-            string? hitId;
-            try
+            MoveItemView? unresolved = ResolveMoveId(id, out string entryId, out string? storeId, out string? hitId);
+            if (unresolved != null)
             {
-                (entryId, storeId, _, _, hitId) = ResolveToEntryId(id);
-            }
-            catch (Exception ex) when (ex is ArgumentException || ex is InvalidOperationException)
-            {
-                return FailedItem(id, ex.Message);
+                return unresolved;
             }
 
             try

@@ -16,9 +16,9 @@ namespace OutlookAI.McpServer.Tests.T1;
 /// symptom would have been "exhaustive search says my query is invalid" long after the edit.
 /// </para>
 /// <para>
-/// The limit is now declared once and derived by the other tier, and this test proves the
-/// BEHAVIOUR rather than the equality of two fields: both builders are driven with a term at
-/// the boundary and one past it.
+/// Both tiers now validate through one rule, <c>SearchTermRules.ValidateTerm</c> (the
+/// code-sharing refactor's stage S6), and this test proves the BEHAVIOUR rather than the
+/// equality of two fields: both builders are driven with a term at the boundary and one past it.
 /// </para>
 /// </summary>
 [Trait("TimeZone", "Machine")]
@@ -40,7 +40,7 @@ public sealed class SearchTermLimitParityTests
     [Fact]
     public void ATermAtTheLimit_IsAcceptedByBothTiers()
     {
-        string term = TermOfLength(WsSqlBuilder.MaxTermLength);
+        string term = TermOfLength(SearchTermRules.MaxTermLength);
 
         string sql = BuildIndexStatement(term);
         string dasl = BuildExhaustiveFilter(term);
@@ -50,13 +50,13 @@ public sealed class SearchTermLimitParityTests
     }
 
     /// <summary>
-    /// A term one character past the limit is rejected by BOTH tiers. Break either constant
-    /// and exactly one of these two assertions fails, naming the tier that drifted.
+    /// A term one character past the limit is rejected by BOTH tiers. A tier that stopped
+    /// validating through the shared rule fails its own assertion here, naming it.
     /// </summary>
     [Fact]
     public void ATermPastTheLimit_IsRejectedByBothTiers()
     {
-        string term = TermOfLength(WsSqlBuilder.MaxTermLength + 1);
+        string term = TermOfLength(SearchTermRules.MaxTermLength + 1);
 
         ArgumentException indexTier = Assert.Throws<ArgumentException>(() => BuildIndexStatement(term));
         ArgumentException comTier = Assert.Throws<ArgumentException>(() => BuildExhaustiveFilter(term));

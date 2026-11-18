@@ -182,22 +182,8 @@ public static class CorpusDateFidelity
     /// The rung to build with: the first in <see cref="Ladder"/> order that fully verified.
     /// <see cref="CorpusDateWriteMethod.None"/> when none did.
     /// </summary>
-    public static CorpusDateWriteMethod Choose(IReadOnlyCollection<CorpusDateProbe> probes)
-    {
-        ArgumentNullException.ThrowIfNull(probes);
-        foreach (CorpusDateWriteMethod method in Ladder)
-        {
-            foreach (CorpusDateProbe probe in probes)
-            {
-                if (probe.Method == method && IsUsable(probe))
-                {
-                    return method;
-                }
-            }
-        }
-
-        return CorpusDateWriteMethod.None;
-    }
+    public static CorpusDateWriteMethod Choose(IReadOnlyCollection<CorpusDateProbe> probes) =>
+        CorpusProbeLadder.FirstVerified(Ladder, probes, p => p.Method, IsUsable, CorpusDateWriteMethod.None);
 
     /// <summary>
     /// Whether the build may proceed, and what to print either way. An undated corpus is

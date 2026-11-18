@@ -48,8 +48,7 @@ namespace OutlookAI.Core.AddIn
         /// <summary>%LOCALAPPDATA%\OutlookAI\dotnet, where setup installs the private copy.</summary>
         public static string DefaultRoot()
         {
-            return Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "OutlookAI", FolderName);
+            return Path.Combine(SharedState.Root, FolderName);
         }
 
         /// <summary>

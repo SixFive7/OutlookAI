@@ -862,13 +862,10 @@ namespace OutlookAI.Core.Com
             string? capturedError = null;
             ComOpenResult? result = _runner.Run<ComOpenResult?>(() =>
             {
-                dynamic ns = _namespace!;
                 object? itemObject = null;
                 try
                 {
-                    itemObject = storeId != null
-                        ? ns.GetItemFromID(entryIdHex, storeId)
-                        : ns.GetItemFromID(entryIdHex);
+                    itemObject = OpenItem(entryIdHex, storeId);
                     return Snapshot(itemObject);
                 }
                 catch (COMException ex)
@@ -1349,14 +1346,11 @@ namespace OutlookAI.Core.Com
             string? capturedError = null;
             IReadOnlyList<string>? result = _runner.Run<IReadOnlyList<string>?>(() =>
             {
-                dynamic ns = _namespace!;
                 object? itemObject = null;
                 object? attachments = null;
                 try
                 {
-                    itemObject = storeId != null
-                        ? ns.GetItemFromID(entryIdHex, storeId)
-                        : ns.GetItemFromID(entryIdHex);
+                    itemObject = OpenItem(entryIdHex, storeId);
                     dynamic item = itemObject!;
                     attachments = item.Attachments;
                     dynamic attachmentCollection = attachments!;
@@ -1507,15 +1501,12 @@ namespace OutlookAI.Core.Com
             string? capturedError = null;
             ComItemDetail? result = _runner.Run<ComItemDetail?>(() =>
             {
-                dynamic ns = _namespace!;
                 object? itemObject = null;
                 try
                 {
                     try
                     {
-                        itemObject = storeId != null
-                            ? ns.GetItemFromID(entryIdHex, storeId)
-                            : ns.GetItemFromID(entryIdHex);
+                        itemObject = OpenItem(entryIdHex, storeId);
                     }
                     catch (Exception ex) when (ex is COMException || ex is Microsoft.CSharp.RuntimeBinder.RuntimeBinderException)
                     {
@@ -1603,7 +1594,6 @@ namespace OutlookAI.Core.Com
             long capturedSize = 0;
             string? path = _runner.Run<string?>(() =>
             {
-                dynamic ns = _namespace!;
                 object? itemObject = null;
                 object? attachments = null;
                 object? attachment = null;
@@ -1611,9 +1601,7 @@ namespace OutlookAI.Core.Com
                 {
                     try
                     {
-                        itemObject = storeId != null
-                            ? ns.GetItemFromID(entryIdHex, storeId)
-                            : ns.GetItemFromID(entryIdHex);
+                        itemObject = OpenItem(entryIdHex, storeId);
                     }
                     catch (COMException)
                     {
@@ -3569,9 +3557,7 @@ namespace OutlookAI.Core.Com
                 object? table = null;
                 try
                 {
-                    itemObject = storeId != null
-                        ? ns.GetItemFromID(entryIdHex, storeId)
-                        : ns.GetItemFromID(entryIdHex);
+                    itemObject = OpenItem(entryIdHex, storeId);
                     dynamic item = itemObject!;
                     try
                     {
@@ -3673,15 +3659,12 @@ namespace OutlookAI.Core.Com
             string? capturedError = null;
             ComOpenResult? result = _runner.Run<ComOpenResult?>(() =>
             {
-                dynamic ns = _namespace!;
                 object? itemObject = null;
                 try
                 {
                     try
                     {
-                        itemObject = storeId != null
-                            ? ns.GetItemFromID(entryIdHex, storeId)
-                            : ns.GetItemFromID(entryIdHex);
+                        itemObject = OpenItem(entryIdHex, storeId);
                     }
                     catch (Exception ex) when (IsComCallFailure(ex))
                     {
@@ -4679,7 +4662,6 @@ namespace OutlookAI.Core.Com
                 // D49: an unpinned session kills the Outlook it composes in - see
                 // EnsureComposeSurfacePin. Idempotent; a field test when already pinned.
                 EnsureComposeSurfacePin();
-                dynamic ns = _namespace!;
                 object? source = null;
                 object? sourceParent = null;
                 object? sourceStore = null;
@@ -4694,9 +4676,7 @@ namespace OutlookAI.Core.Com
                 {
                     try
                     {
-                        source = sourceStoreId != null
-                            ? ns.GetItemFromID(sourceEntryIdHex, sourceStoreId)
-                            : ns.GetItemFromID(sourceEntryIdHex);
+                        source = OpenItem(sourceEntryIdHex, sourceStoreId);
                     }
                     catch (Exception ex) when (IsComCallFailure(ex))
                     {
@@ -4930,15 +4910,12 @@ namespace OutlookAI.Core.Com
             string? capturedError = null;
             ComDraftInfo? result = _runner.Run<ComDraftInfo?>(() =>
             {
-                dynamic ns = _namespace!;
                 object? itemObject = null;
                 try
                 {
                     try
                     {
-                        itemObject = storeId != null
-                            ? ns.GetItemFromID(entryIdHex, storeId)
-                            : ns.GetItemFromID(entryIdHex);
+                        itemObject = OpenItem(entryIdHex, storeId);
                     }
                     catch (Exception ex) when (IsComCallFailure(ex))
                     {
@@ -4982,13 +4959,10 @@ namespace OutlookAI.Core.Com
             string? capturedError = null;
             string? result = _runner.Run<string?>(() =>
             {
-                dynamic ns = _namespace!;
                 object? itemObject = null;
                 try
                 {
-                    itemObject = storeId != null
-                        ? ns.GetItemFromID(entryIdHex, storeId)
-                        : ns.GetItemFromID(entryIdHex);
+                    itemObject = OpenItem(entryIdHex, storeId);
                     return TryGetString(() => (string?)((dynamic)itemObject!).HTMLBody);
                 }
                 catch (Exception ex) when (IsComCallFailure(ex))
@@ -5312,35 +5286,17 @@ namespace OutlookAI.Core.Com
                 object? targetStore = null;
                 try
                 {
-                    try
+                    capturedError = OpenMailItem(entryIdHex, storeId, out item);
+                    if (capturedError != null)
                     {
-                        item = storeId != null
-                            ? ns.GetItemFromID(entryIdHex, storeId)
-                            : ns.GetItemFromID(entryIdHex);
-                    }
-                    catch (Exception ex) when (IsComCallFailure(ex))
-                    {
-                        capturedError = ComErrorTokens.ItemNotFound;
-                        return null;
-                    }
-
-                    if (!IsMailItem(item!))
-                    {
-                        capturedError = "NotAMailItem";
                         return null;
                     }
 
                     dynamic mail = item!;
-                    parent = mail.Parent;
-                    dynamic parentFolder = parent!;
-                    string fromFolderPath = (string)parentFolder.FolderPath;
-                    string parentEntryId = (string)parentFolder.EntryID;
-                    itemStore = parentFolder.Store;
+                    MoveOrigin origin = ReadMoveOrigin(item!, out parent, out itemStore);
                     dynamic ownStore = itemStore!;
-                    string ownStoreName = (string)ownStore.DisplayName;
-                    string ownStoreId = (string)ownStore.StoreID;
 
-                    targetFolder = OpenFolderByEntryId(ns, targetFolderEntryId, ownStoreId);
+                    targetFolder = OpenFolderByEntryId(ns, targetFolderEntryId, origin.StoreId);
                     if (targetFolder == null)
                     {
                         capturedError = "TargetFolderNotFound";
@@ -5351,9 +5307,9 @@ namespace OutlookAI.Core.Com
                     targetStore = ((dynamic)openedTarget).Store;
                     object targetStoreObject = targetStore!;
                     string? targetStoreId = TryGetString(() => (string?)((dynamic)targetStoreObject).StoreID);
-                    if (!string.Equals(targetStoreId, ownStoreId, StringComparison.OrdinalIgnoreCase))
+                    if (!string.Equals(targetStoreId, origin.StoreId, StringComparison.OrdinalIgnoreCase))
                     {
-                        capturedError = "CrossStoreTarget:" + ownStoreName;
+                        capturedError = "CrossStoreTarget:" + origin.StoreName;
                         return null;
                     }
 
@@ -5365,7 +5321,7 @@ namespace OutlookAI.Core.Com
                         return null;
                     }
 
-                    string? guardError = VerifyMoveTarget(ownStore, (object)ns, openedTarget, parentEntryId);
+                    string? guardError = VerifyMoveTarget(ownStore, (object)ns, openedTarget, origin.FolderEntryId);
                     if (guardError != null)
                     {
                         capturedError = guardError;
@@ -5373,7 +5329,7 @@ namespace OutlookAI.Core.Com
                     }
 
                     return ExecuteMove(
-                        mail, openedTarget, entryIdHex, ownStoreName, fromFolderPath, Array.Empty<string>(), parentEntryId);
+                        mail, openedTarget, entryIdHex, origin.StoreName, origin.FolderPath, Array.Empty<string>(), origin.FolderEntryId);
                 }
                 catch (Exception ex) when (IsComCallFailure(ex))
                 {
@@ -5901,7 +5857,7 @@ namespace OutlookAI.Core.Com
         /// <see cref="TryResolveOrCreateArchiveFolder"/>). Same-store is enforced (the item's
         /// own store must match <paramref name="targetStoreId"/>); an item already in
         /// the target folder is refused with <c>AlreadyInTargetFolder</c>. Result
-        /// semantics identical to <see cref="TryMoveItemToPath"/>.
+        /// semantics identical to <see cref="TryMoveItemToFolder"/>.
         /// </summary>
         public ComMoveItemResult? TryMoveItemToFolderId(
             string entryIdHex,
@@ -5931,41 +5887,21 @@ namespace OutlookAI.Core.Com
                 object? targetFolder = null;
                 try
                 {
-                    try
+                    capturedError = OpenMailItem(entryIdHex, storeId, out item);
+                    if (capturedError != null)
                     {
-                        item = storeId != null
-                            ? ns.GetItemFromID(entryIdHex, storeId)
-                            : ns.GetItemFromID(entryIdHex);
-                    }
-                    catch (Exception ex) when (IsComCallFailure(ex))
-                    {
-                        capturedError = ComErrorTokens.ItemNotFound;
-                        return null;
-                    }
-
-                    if (!IsMailItem(item!))
-                    {
-                        capturedError = "NotAMailItem";
                         return null;
                     }
 
                     dynamic mail = item!;
-                    parent = mail.Parent;
-                    dynamic parentFolder = parent!;
-                    string fromFolderPath = (string)parentFolder.FolderPath;
-                    string parentEntryId = (string)parentFolder.EntryID;
-                    itemStore = parentFolder.Store;
-                    dynamic ownStore = itemStore!;
-                    string ownStoreName = (string)ownStore.DisplayName;
-                    string ownStoreId = (string)ownStore.StoreID;
-
-                    if (!string.Equals(ownStoreId, targetStoreId, StringComparison.OrdinalIgnoreCase))
+                    MoveOrigin origin = ReadMoveOrigin(item!, out parent, out itemStore);
+                    if (!string.Equals(origin.StoreId, targetStoreId, StringComparison.OrdinalIgnoreCase))
                     {
-                        capturedError = "CrossStoreTarget:" + ownStoreName;
+                        capturedError = "CrossStoreTarget:" + origin.StoreName;
                         return null;
                     }
 
-                    if (string.Equals(parentEntryId, targetFolderEntryId, StringComparison.OrdinalIgnoreCase))
+                    if (string.Equals(origin.FolderEntryId, targetFolderEntryId, StringComparison.OrdinalIgnoreCase))
                     {
                         capturedError = "AlreadyInTargetFolder";
                         return null;
@@ -5981,7 +5917,8 @@ namespace OutlookAI.Core.Com
                         return null;
                     }
 
-                    return ExecuteMove(mail, targetFolder!, entryIdHex, ownStoreName, fromFolderPath, Array.Empty<string>(), parentEntryId);
+                    return ExecuteMove(
+                        mail, targetFolder!, entryIdHex, origin.StoreName, origin.FolderPath, Array.Empty<string>(), origin.FolderEntryId);
                 }
                 catch (Exception ex) when (IsComCallFailure(ex))
                 {
@@ -6180,30 +6117,17 @@ namespace OutlookAI.Core.Com
             string? capturedError = null;
             ComSendableDraftState? result = _runner.Run<ComSendableDraftState?>(() =>
             {
-                dynamic ns = _namespace!;
                 object? item = null;
                 object? account = null;
                 try
                 {
-                    try
+                    // ItemNotFound is set at the OPEN and nowhere else. Everything after it - "not a
+                    // mail item", "already sent", an unreadable body - is an ANSWER about the draft
+                    // that was found, and answering it again in another store would be asking a
+                    // question that has been settled.
+                    capturedError = OpenMailItem(entryIdHex, storeId, out item);
+                    if (capturedError != null)
                     {
-                        item = storeId != null
-                            ? ns.GetItemFromID(entryIdHex, storeId)
-                            : ns.GetItemFromID(entryIdHex);
-                    }
-                    catch (Exception ex) when (IsComCallFailure(ex))
-                    {
-                        // Set at the OPEN and nowhere else. Everything after this point -
-                        // "not a mail item", "already sent", an unreadable body - is an
-                        // ANSWER about the draft that was found, and answering it again in
-                        // another store would be asking a question that has been settled.
-                        capturedError = ComErrorTokens.ItemNotFound;
-                        return null;
-                    }
-
-                    if (!IsMailItem(item!))
-                    {
-                        capturedError = "NotAMailItem";
                         return null;
                     }
 
@@ -6312,14 +6236,11 @@ namespace OutlookAI.Core.Com
             string? capturedError = null;
             ComSendResult? result = _runner.Run<ComSendResult?>(() =>
             {
-                dynamic ns = _namespace!;
                 object? item = null;
                 object? account = null;
                 try
                 {
-                    item = storeId != null
-                        ? ns.GetItemFromID(entryIdHex, storeId)
-                        : ns.GetItemFromID(entryIdHex);
+                    item = OpenItem(entryIdHex, storeId);
 
                     if (!IsMailItem(item!))
                     {
@@ -6522,9 +6443,7 @@ namespace OutlookAI.Core.Com
                 {
                     try
                     {
-                        item = storeId != null
-                            ? ns.GetItemFromID(entryIdHex, storeId)
-                            : ns.GetItemFromID(entryIdHex);
+                        item = OpenItem(entryIdHex, storeId);
                     }
                     catch (Exception ex) when (IsComCallFailure(ex))
                     {
@@ -6638,9 +6557,7 @@ namespace OutlookAI.Core.Com
 
                     // Re-open AFTER the inspector committed: this instance carries the Word
                     // edits, so saving it cannot undo them.
-                    fresh = storeId != null
-                        ? ns.GetItemFromID(entryIdHex, storeId)
-                        : ns.GetItemFromID(entryIdHex);
+                    fresh = OpenItem(entryIdHex, storeId);
                     dynamic draft = fresh!;
 
                     // Attachments: ADDITIONS FIRST, then removals, and both from a plan
@@ -6855,9 +6772,7 @@ namespace OutlookAI.Core.Com
                 {
                     try
                     {
-                        item = storeId != null
-                            ? ns.GetItemFromID(entryIdHex, storeId)
-                            : ns.GetItemFromID(entryIdHex);
+                        item = OpenItem(entryIdHex, storeId);
                     }
                     catch (Exception ex) when (IsComCallFailure(ex))
                     {
@@ -7726,6 +7641,76 @@ namespace OutlookAI.Core.Com
             }
         }
 
+        /// <summary>
+        /// STA-side: the item with this EntryID, from the store with this StoreID when one is given -
+        /// the faster open, and for some stores the only one - else from whichever store has it. Throws
+        /// as <c>GetItemFromID</c> does. Every work item that opens an item by its id opens it here; each
+        /// wrote the two calls out for itself until the code-sharing refactor's stage S6.
+        /// </summary>
+        private object OpenItem(string entryIdHex, string? storeId)
+        {
+            dynamic ns = _namespace!;
+            return storeId != null ? ns.GetItemFromID(entryIdHex, storeId) : ns.GetItemFromID(entryIdHex);
+        }
+
+        /// <summary>
+        /// STA-side: opens the mail item a call acts on, or says why it cannot: <c>ItemNotFound</c> when
+        /// the open fails - set at the OPEN and nowhere else, the token the cross-store retry keys on -
+        /// and <c>NotAMailItem</c> for anything but a mail item. Whatever was opened comes back in
+        /// <paramref name="item"/> either way, for the caller's finally to release.
+        /// </summary>
+        private string? OpenMailItem(string entryIdHex, string? storeId, out object? item)
+        {
+            item = null;
+            try
+            {
+                item = OpenItem(entryIdHex, storeId);
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+                return ComErrorTokens.ItemNotFound;
+            }
+
+            return IsMailItem(item) ? null : "NotAMailItem";
+        }
+
+        /// <summary>Where a mail item a move starts from is now: its folder and that folder's store.</summary>
+        private readonly struct MoveOrigin
+        {
+            public MoveOrigin(string folderPath, string folderEntryId, string storeName, string storeId)
+            {
+                FolderPath = folderPath;
+                FolderEntryId = folderEntryId;
+                StoreName = storeName;
+                StoreId = storeId;
+            }
+
+            public string FolderPath { get; }
+
+            public string FolderEntryId { get; }
+
+            public string StoreName { get; }
+
+            public string StoreId { get; }
+        }
+
+        /// <summary>
+        /// STA-side: reads where a mail item is now, for a move. The folder and the store come back in
+        /// <paramref name="parent"/> and <paramref name="store"/> as soon as each is read, so the caller's
+        /// finally releases them even when a later read throws.
+        /// </summary>
+        private static MoveOrigin ReadMoveOrigin(object mailItem, out object? parent, out object? store)
+        {
+            store = null;
+            parent = ((dynamic)mailItem).Parent;
+            dynamic folder = parent!;
+            string folderPath = (string)folder.FolderPath;
+            string folderEntryId = (string)folder.EntryID;
+            store = folder.Store;
+            dynamic ownStore = store!;
+            return new MoveOrigin(folderPath, folderEntryId, (string)ownStore.DisplayName, (string)ownStore.StoreID);
+        }
+
         /// <summary>STA-side: true when the object reports OlObjectClass 43 (olMail).</summary>
         private static bool IsMailItem(object itemObject)
         {
@@ -7815,9 +7800,7 @@ namespace OutlookAI.Core.Com
             {
                 try
                 {
-                    reopened = reopenStoreId != null
-                        ? ((dynamic)_namespace!).GetItemFromID(entryId, reopenStoreId)
-                        : ((dynamic)_namespace!).GetItemFromID(entryId);
+                    reopened = OpenItem(entryId, reopenStoreId);
                 }
                 catch (Exception ex) when (IsComCallFailure(ex))
                 {
@@ -8227,13 +8210,10 @@ namespace OutlookAI.Core.Com
             // Outlook cannot complete what it was asked and the re-snapshot 1.5 s later
             // reads exactly what the first one did.
             PumpedStaRunner.PumpedWait(RecipientResnapshotDelayMs);
-            dynamic ns = _namespace!;
             object? reopened = null;
             try
             {
-                reopened = info.StoreId != null
-                    ? ns.GetItemFromID(info.EntryId, info.StoreId)
-                    : ns.GetItemFromID(info.EntryId);
+                reopened = OpenItem(info.EntryId, info.StoreId);
                 ComDraftInfo retry = SnapshotDraft(
                     reopened!, fallbackStoreName, fallbackStoreId, fallbackFolderName, fallbackFolderEntryId, fallbackSendUsingSmtp);
                 return retry.Recipients.Count > 0 ? retry : info;
@@ -8308,10 +8288,7 @@ namespace OutlookAI.Core.Com
                 object? reopened = null;
                 try
                 {
-                    dynamic ns = _namespace!;
-                    reopened = string.IsNullOrEmpty(storeId)
-                        ? ns.GetItemFromID(entryId)
-                        : ns.GetItemFromID(entryId, storeId);
+                    reopened = OpenItem(entryId, string.IsNullOrEmpty(storeId) ? null : storeId);
                     IReadOnlyList<ComAttachmentInfo> fresh = SnapshotAttachments(reopened!);
                     if (AttachmentSnapshotMerge.IsBetter(fresh, best))
                     {
@@ -11274,7 +11251,6 @@ namespace OutlookAI.Core.Com
                     return null;
                 }
 
-                dynamic ns = _namespace!;
                 int scanned = 0;
                 ClosestByTime<ComOpenResult> nearest = new ClosestByTime<ComOpenResult>(toleranceSeconds);
                 while (!(bool)t.EndOfTable && scanned < GetTableProbeMaxRows)
@@ -11293,7 +11269,7 @@ namespace OutlookAI.Core.Com
 
                         try
                         {
-                            itemObject = storeId != null ? ns.GetItemFromID(entryId, storeId) : ns.GetItemFromID(entryId);
+                            itemObject = OpenItem(entryId, storeId);
                         }
                         catch (COMException)
                         {
@@ -11748,8 +11724,7 @@ namespace OutlookAI.Core.Com
             object? item = null;
             try
             {
-                dynamic ns = _namespace!;
-                item = storeId == null ? ns.GetItemFromID(entryId) : ns.GetItemFromID(entryId, storeId);
+                item = OpenItem(entryId, storeId);
                 DateTime? itemRaw = TryGetDateTime(() => (DateTime)((dynamic)item!).ReceivedTime);
                 return new ComTableDateKindProbe(
                     storeDisplayName,

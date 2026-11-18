@@ -350,10 +350,7 @@ namespace OutlookAI.Core.Services
         private static readonly string[] Actions = { "create", "update", "delete", "set_default", "clear_default" };
 
         /// <summary>Default backup root: %LOCALAPPDATA%\OutlookAI\signature-backups.</summary>
-        public static string DefaultBackupRoot =>
-            Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "OutlookAI", "signature-backups");
+        public static string DefaultBackupRoot => Path.Combine(SharedState.Root, "signature-backups");
 
         /// <summary>
         /// Executes one manage_signature operation. <paramref name="directory"/>,

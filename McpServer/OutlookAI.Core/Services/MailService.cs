@@ -675,10 +675,6 @@ namespace OutlookAI.Core.Services
         /// </summary>
         public const int MinimumItemBudgetMs = 1_000;
 
-        /// <summary>Shared OutlookAI state root (v3.MD section 0.5.2: %LOCALAPPDATA%\OutlookAI).</summary>
-        public static string SharedStateDirectory =>
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "OutlookAI");
-
         /// <summary>Provider report captured when the index client was created (diagnostics).</summary>
         public string? ProviderReport
         {
@@ -6491,28 +6487,9 @@ namespace OutlookAI.Core.Services
 
             Dictionary<string, (ComArchiveFolderInfo? Info, string? Error, string? CreatedPath)> archiveByStore =
                 new Dictionary<string, (ComArchiveFolderInfo?, string?, string?)>(StringComparer.OrdinalIgnoreCase);
-            List<MoveItemView> items = new List<MoveItemView>(requestIds.Count);
-            bool auditBroken = false;
-            Stopwatch batchClock = Stopwatch.StartNew();
-            foreach (string id in requestIds)
-            {
-                if (auditBroken)
-                {
-                    items.Add(FailedItem(id, "Not attempted: the audit log is unavailable (every move must be audited)."));
-                    continue;
-                }
-
-                int itemBudgetMs = RemainingBatchBudgetMs(batchClock);
-                if (itemBudgetMs < MinimumItemBudgetMs)
-                {
-                    items.Add(FailedItem(id, BatchBudgetExhaustedMessage));
-                    continue;
-                }
-
-                MoveItemView item = ArchiveOne(id, archiveByStore, itemBudgetMs, out bool auditFailed);
-                auditBroken |= auditFailed;
-                items.Add(item);
-            }
+            List<MoveItemView> items = MoveBatch(
+                requestIds,
+                (string id, int itemBudgetMs, out bool auditFailed) => ArchiveOne(id, archiveByStore, itemBudgetMs, out auditFailed));
 
             int archivedCount = items.Count(i => i.Ok);
             List<ArchiveFolderView> resolved = archiveByStore.Values
@@ -6568,6 +6545,43 @@ namespace OutlookAI.Core.Services
         /// plus a whole extra deadline.
         /// </para>
         /// </summary>
+        /// <summary>One id of a move_mail or archive_mail batch moved: its result, and whether its audit write failed.</summary>
+        private delegate MoveItemView MoveOneItem(string id, int itemBudgetMs, out bool auditFailed);
+
+        /// <summary>
+        /// The batch move_mail and archive_mail both walk: each id in turn through <paramref name="moveOne"/>,
+        /// within the batch's time - an id the time left no longer covers is reported, not tried - and never
+        /// past a failed audit write, since every move must be audited: the rest are reported as not
+        /// attempted. The two tools wrote this walk out each until the code-sharing refactor's stage S6.
+        /// </summary>
+        private static List<MoveItemView> MoveBatch(IReadOnlyList<string> requestIds, MoveOneItem moveOne)
+        {
+            List<MoveItemView> items = new List<MoveItemView>(requestIds.Count);
+            bool auditBroken = false;
+            Stopwatch batchClock = Stopwatch.StartNew();
+            foreach (string id in requestIds)
+            {
+                if (auditBroken)
+                {
+                    items.Add(FailedItem(id, "Not attempted: the audit log is unavailable (every move must be audited)."));
+                    continue;
+                }
+
+                int itemBudgetMs = RemainingBatchBudgetMs(batchClock);
+                if (itemBudgetMs < MinimumItemBudgetMs)
+                {
+                    items.Add(FailedItem(id, BatchBudgetExhaustedMessage));
+                    continue;
+                }
+
+                MoveItemView item = moveOne(id, itemBudgetMs, out bool auditFailed);
+                auditBroken |= auditFailed;
+                items.Add(item);
+            }
+
+            return items;
+        }
+
         private static int RemainingBatchBudgetMs(Stopwatch batchClock)
         {
             long remaining = MoveBatchBudgetMs - batchClock.ElapsedMilliseconds;
@@ -6594,16 +6608,10 @@ namespace OutlookAI.Core.Services
             out bool auditFailed)
         {
             auditFailed = false;
-            string entryId;
-            string? storeId;
-            string? hitId;
-            try
+            MoveItemView? unresolved = ResolveMoveId(id, out string entryId, out string? storeId, out string? hitId);
+            if (unresolved != null)
             {
-                (entryId, storeId, _, _, hitId) = ResolveToEntryId(id);
-            }
-            catch (Exception ex) when (ex is ArgumentException || ex is InvalidOperationException)
-            {
-                return FailedItem(id, ex.Message);
+                return unresolved;
             }
 
             try
@@ -6766,6 +6774,26 @@ namespace OutlookAI.Core.Services
         /// <c>Ok</c> could never carry: <c>Ok=false</c> spans "not moved", "moved but not
         /// audited" and "nobody knows", and a boolean has room for two of those.
         /// </summary>
+        /// <summary>
+        /// The EntryID, store and hit id one id of a move batch names - or, when it names no item, that id's
+        /// failed result. move_mail and archive_mail start each item here.
+        /// </summary>
+        private MoveItemView? ResolveMoveId(string id, out string entryId, out string? storeId, out string? hitId)
+        {
+            entryId = string.Empty;
+            storeId = null;
+            hitId = null;
+            try
+            {
+                (entryId, storeId, _, _, hitId) = ResolveToEntryId(id);
+                return null;
+            }
+            catch (Exception ex) when (ex is ArgumentException || ex is InvalidOperationException)
+            {
+                return FailedItem(id, ex.Message);
+            }
+        }
+
         private static MoveItemView FailedItem(string id, string error, string outcome = Com.MutationOutcome.Unchanged)
         {
             return new MoveItemView { Id = id, Ok = false, Error = error, Outcome = outcome };
@@ -7924,7 +7952,7 @@ namespace OutlookAI.Core.Services
                     + "and pass that.");
             }
 
-            if (id.Length < MinRawEntryIdHexChars || id.Length % 2 != 0 || !IsHex(id))
+            if (id.Length < MinRawEntryIdHexChars || id.Length % 2 != 0 || !Hex.IsAllDigits(id))
             {
                 throw new ArgumentException(
                     "entry_id must be a full EntryID in hex (at least "
@@ -8412,7 +8440,7 @@ namespace OutlookAI.Core.Services
             // and longer than a hit id ("h7") is handed to Outlook, which is the authority
             // on whether it opens. The comment used to claim 140 while the code said 48,
             // three times looser than its own stated truth and with nothing pinning either.
-            if (id.Length >= MinRawEntryIdHexChars && id.Length % 2 == 0 && IsHex(id))
+            if (id.Length >= MinRawEntryIdHexChars && id.Length % 2 == 0 && Hex.IsAllDigits(id))
             {
                 return (id, null, "directEntryId", 0, null);
             }
@@ -9387,13 +9415,7 @@ namespace OutlookAI.Core.Services
                 // Exchange cannot be located: refused, never looked up by name. Otherwise - the index
                 // lists no store at all, or Outlook has never answered so no store's kind is known -
                 // the name rule runs as before.
-                bool listingFailed;
-                lock (_catalogLock)
-                {
-                    listingFailed = _storeIndexListingFailed;
-                }
-
-                return listingFailed && IsKnownNonExchangeStore(displayName)
+                return StoreIndexListingFailed() && IsKnownNonExchangeStore(displayName)
                     ? (StoreNameDecision.Refused, null, DescribeUnreadableStoreList(displayName))
                     : (StoreNameDecision.NameRule, null, null);
             }
@@ -9417,7 +9439,17 @@ namespace OutlookAI.Core.Services
                     : (StoreNameDecision.Refused, null, DescribeSharedStoreName(displayName, named));
             }
 
-            StoreIndexMatch match = named[0];
+            return DecideStoreMatch(named[0]);
+        }
+
+        /// <summary>
+        /// The decision the store map's match for one store makes, whether the store was found by its
+        /// name (<see cref="DecideStoreName"/>) or by its identity (<c>DecideStore</c>): tied to its own
+        /// index store, not indexed, refused - or the name rule, for the open exception (Exchange) and a
+        /// delegate. The two kept a copy each until the code-sharing refactor's stage S6.
+        /// </summary>
+        private static (StoreNameDecision Decision, StoreScopeInfo? Root, string? Refusal) DecideStoreMatch(StoreIndexMatch match)
+        {
             switch (match.Kind)
             {
                 case StoreIndexMatchKind.NameAndHash:
@@ -9430,6 +9462,15 @@ namespace OutlookAI.Core.Services
                 default:
                     // NameRule (the open exception, Exchange) and Delegate: as before.
                     return (StoreNameDecision.NameRule, null, null);
+            }
+        }
+
+        /// <summary>Whether the index's list of stores could not be read the last time it was asked for.</summary>
+        private bool StoreIndexListingFailed()
+        {
+            lock (_catalogLock)
+            {
+                return _storeIndexListingFailed;
             }
         }
 
@@ -9675,20 +9716,6 @@ namespace OutlookAI.Core.Services
         private static int Clamp(int value, int min, int max)
         {
             return value < min ? min : value > max ? max : value;
-        }
-
-        private static bool IsHex(string value)
-        {
-            foreach (char c in value)
-            {
-                bool hex = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
-                if (!hex)
-                {
-                    return false;
-                }
-            }
-
-            return true;
         }
 
         private sealed class CachedHit

@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Security.Cryptography;
+using OutlookAI.Core.AddIn;
 
 namespace OutlookAI.Core.Services
 {
@@ -119,7 +119,7 @@ namespace OutlookAI.Core.Services
                 throw new ArgumentException("Content hash must not be blank.", nameof(contentHash));
             }
 
-            string token = TokenPrefix + NewRandomHex(16);
+            string token = TokenPrefix + Hex.NewRandom(16);
             DateTime now = _utcNow();
             lock (_lock)
             {
@@ -203,37 +203,10 @@ namespace OutlookAI.Core.Services
 
         private void PruneLocked(DateTime now)
         {
-            List<string> expired = _tokens
-                .Where(p => now - p.Value.IssuedUtc > TimeToLive)
-                .Select(p => p.Key)
-                .ToList();
-            foreach (string key in expired)
+            foreach (string key in ExpiringEntries.ExpiredKeys(_tokens, t => t.IssuedUtc, now, TimeToLive))
             {
                 _tokens.Remove(key);
             }
-        }
-
-        private static string NewRandomHex(int byteCount)
-        {
-            byte[] bytes = new byte[byteCount];
-            using (RandomNumberGenerator rng = RandomNumberGenerator.Create())
-            {
-                rng.GetBytes(bytes);
-            }
-
-            char[] hex = new char[bytes.Length * 2];
-            for (int i = 0; i < bytes.Length; i++)
-            {
-                hex[i * 2] = ToHexDigit(bytes[i] >> 4);
-                hex[(i * 2) + 1] = ToHexDigit(bytes[i] & 0xF);
-            }
-
-            return new string(hex);
-        }
-
-        private static char ToHexDigit(int value)
-        {
-            return (char)(value < 10 ? '0' + value : 'a' + (value - 10));
         }
 
         private sealed class PendingToken

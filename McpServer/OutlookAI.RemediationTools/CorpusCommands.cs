@@ -789,16 +789,8 @@ public static class CorpusCommands
                 + "(the PropertyAccessor converted this store's write from local time).");
         }
 
-        CorpusManifest manifest = existing ?? CorpusManifest.Create(new CorpusManifestHeader(
-            CorpusManifest.CurrentVersion,
-            planOptions.CorpusId,
-            planOptions.Seed,
-            CorpusManifest.FormatUtc(planOptions.AnchorUtc),
-            planOptions.ShapeKey,
-            options.Store!,
-            facts.FilePath,
-            chosen.ToString(),
-            placement.ToString()));
+        CorpusManifest manifest = existing ?? CorpusManifest.Create(
+            ManifestHeader(planOptions, options, facts, chosen.ToString(), placement.ToString()));
 
         // SCOPED, not a using declaration. The census below reads this manifest back, and it
         // must read a file nobody is holding open for write - see CorpusManifest.ReadFile for
@@ -1406,16 +1398,7 @@ public static class CorpusCommands
             return 0;
         }
 
-        var header = new CorpusManifestHeader(
-            CorpusManifest.CurrentVersion,
-            planOptions.CorpusId,
-            planOptions.Seed,
-            CorpusManifest.FormatUtc(planOptions.AnchorUtc),
-            planOptions.ShapeKey,
-            options.Store!,
-            facts.FilePath,
-            "reindexed",
-            "reindexed");
+        CorpusManifestHeader header = ManifestHeader(planOptions, options, facts, "reindexed", "reindexed");
         using (StreamWriter writer = OpenManifest(options.ManifestPath!, writeHeader: true, header))
         {
             // The created folders first, as a build writes them: teardown removes a folder only
@@ -1444,6 +1427,24 @@ public static class CorpusCommands
     /// independent COM facts must agree the target is a local .pst. Prints the verdict
     /// either way.
     /// </summary>
+    /// <summary>
+    /// The header a manifest opens with: the plan it was built from and the store it was built in, then
+    /// how dates were written and items placed. A build and a re-index each wrote it out until the
+    /// code-sharing refactor's stage S6.
+    /// </summary>
+    private static CorpusManifestHeader ManifestHeader(
+        CorpusPlanOptions planOptions, CorpusOptions options, CorpusStoreFacts facts, string dateWriteMethod, string placementMethod) =>
+        new CorpusManifestHeader(
+            CorpusManifest.CurrentVersion,
+            planOptions.CorpusId,
+            planOptions.Seed,
+            CorpusManifest.FormatUtc(planOptions.AnchorUtc),
+            planOptions.ShapeKey,
+            options.Store!,
+            facts.FilePath,
+            dateWriteMethod,
+            placementMethod);
+
     private static bool Vet(CorpusOptions options, TextWriter output, out CorpusStoreFacts facts)
     {
         if (string.IsNullOrWhiteSpace(options.Store))

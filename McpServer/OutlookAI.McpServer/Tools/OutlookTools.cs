@@ -817,6 +817,15 @@ public static partial class OutlookTools
         + "mailbox the renamed draft also keeps the original's conversationId; in a POP3/IMAP mailbox or data file Outlook "
         + "derives it from the kept topic instead, so there it differs from the original's. Max 255 characters.";
 
+    private const string ToHint = "To recipient address(es), separated by ';' or ','.";
+
+    private const string ReplyToIdHint = "Hit id (e.g. h12) or full EntryID hex of the mail to reply to.";
+
+    private const string ReplyBodyHint = "Plain-text reply body. Placed ABOVE the quoted original. Use body_html instead when the reply needs formatting; "
+        + "exactly one of body or body_html is required.";
+
+    private const string DerivedDisplayHint = "Open the draft in an Outlook window for the user (default true).";
+
     [McpServerTool(Name = "new_draft")]
     [Description("Create a NEW email draft for the user - saved into the chosen account's Drafts folder with that account's "
         + "identity and signature, and opened on screen (default) so the user can review, edit and send it themselves. "
@@ -826,7 +835,7 @@ public static partial class OutlookTools
     public static async Task<CallToolResult> NewDraft(
         [Description("Sending account SMTP address (see list_accounts) - determines the From identity, the Drafts folder and the signature.")]
         string account,
-        [Description("To recipient address(es), separated by ';' or ','.")] string to,
+        [Description(ToHint)] string to,
         [Description("Subject line.")] string subject,
         [Description("Plain-text body. Placed ABOVE the account's signature. Use body_html instead when the message needs formatting "
             + "(headings, bold, lists, tables); exactly one of body or body_html is required.")]
@@ -842,13 +851,7 @@ public static partial class OutlookTools
         [Description(AttachmentsHint)] string[]? attachments = null,
         CancellationToken cancellationToken = default)
     {
-        CallToolResult? writingRules = WritingRulesRejection(body, body_html);
-        if (writingRules != null)
-        {
-            return writingRules;
-        }
-
-        return await GuardAsync(cancellationToken, () => ServerRuntime.Service.NewDraft(
+        return await WritingDraftAsync(body, body_html, cancellationToken, () => ServerRuntime.Service.NewDraft(
             account, to, cc, subject, body, display, signature, bcc, importance, request_read_receipt, body_html, attachments));
     }
 
@@ -858,28 +861,20 @@ public static partial class OutlookTools
         + "The draft is saved to Drafts and opened on screen (default) for the user to review, edit and send. NOTHING IS SENT."
         + OutcomeHint)]
     public static async Task<CallToolResult> ReplyDraft(
-        [Description("Hit id (e.g. h12) or full EntryID hex of the mail to reply to.")] string id,
-        [Description("Plain-text reply body. Placed ABOVE the quoted original. Use body_html instead when the reply needs formatting; "
-            + "exactly one of body or body_html is required.")]
-        string? body = null,
+        [Description(ReplyToIdHint)] string id,
+        [Description(ReplyBodyHint)] string? body = null,
         [Description(BodyHtmlHint)] string? body_html = null,
         [Description(CcHint)] string? cc = null,
         [Description(BccHint)] string? bcc = null,
         [Description(DerivedSubjectHint)] string? subject = null,
-        [Description("Open the draft in an Outlook window for the user (default true).")] bool display = true,
+        [Description(DerivedDisplayHint)] bool display = true,
         [Description(DerivedSignatureHint)] string? signature = null,
         [Description(ImportanceHint)] string? importance = null,
         [Description(ReadReceiptHint)] bool? request_read_receipt = null,
         [Description(AttachmentsHint)] string[]? attachments = null,
         CancellationToken cancellationToken = default)
     {
-        CallToolResult? writingRules = WritingRulesRejection(body, body_html);
-        if (writingRules != null)
-        {
-            return writingRules;
-        }
-
-        return await GuardAsync(cancellationToken, () => ServerRuntime.Service.ReplyDraft(
+        return await WritingDraftAsync(body, body_html, cancellationToken, () => ServerRuntime.Service.ReplyDraft(
             id, body, replyAll: false, display, signature, cc, bcc, subject, importance, request_read_receipt, body_html, attachments));
     }
 
@@ -889,28 +884,20 @@ public static partial class OutlookTools
         + "Saved to Drafts and opened on screen (default) for the user to review, edit and send. NOTHING IS SENT."
         + OutcomeHint)]
     public static async Task<CallToolResult> ReplyAllDraft(
-        [Description("Hit id (e.g. h12) or full EntryID hex of the mail to reply to.")] string id,
-        [Description("Plain-text reply body. Placed ABOVE the quoted original. Use body_html instead when the reply needs formatting; "
-            + "exactly one of body or body_html is required.")]
-        string? body = null,
+        [Description(ReplyToIdHint)] string id,
+        [Description(ReplyBodyHint)] string? body = null,
         [Description(BodyHtmlHint)] string? body_html = null,
         [Description(CcHint)] string? cc = null,
         [Description(BccHint)] string? bcc = null,
         [Description(DerivedSubjectHint)] string? subject = null,
-        [Description("Open the draft in an Outlook window for the user (default true).")] bool display = true,
+        [Description(DerivedDisplayHint)] bool display = true,
         [Description(DerivedSignatureHint)] string? signature = null,
         [Description(ImportanceHint)] string? importance = null,
         [Description(ReadReceiptHint)] bool? request_read_receipt = null,
         [Description(AttachmentsHint)] string[]? attachments = null,
         CancellationToken cancellationToken = default)
     {
-        CallToolResult? writingRules = WritingRulesRejection(body, body_html);
-        if (writingRules != null)
-        {
-            return writingRules;
-        }
-
-        return await GuardAsync(cancellationToken, () => ServerRuntime.Service.ReplyDraft(
+        return await WritingDraftAsync(body, body_html, cancellationToken, () => ServerRuntime.Service.ReplyDraft(
             id, body, replyAll: true, display, signature, cc, bcc, subject, importance, request_read_receipt, body_html, attachments));
     }
 
@@ -921,7 +908,7 @@ public static partial class OutlookTools
         + OutcomeHint)]
     public static async Task<CallToolResult> ForwardDraft(
         [Description("Hit id (e.g. h12) or full EntryID hex of the mail to forward.")] string id,
-        [Description("To recipient address(es), separated by ';' or ','.")] string to,
+        [Description(ToHint)] string to,
         [Description("Plain-text body. Placed ABOVE the forwarded mail. Use body_html instead when the message needs formatting; "
             + "exactly one of body or body_html is required.")]
         string? body = null,
@@ -929,20 +916,14 @@ public static partial class OutlookTools
         [Description(CcHint)] string? cc = null,
         [Description(BccHint)] string? bcc = null,
         [Description(DerivedSubjectHint)] string? subject = null,
-        [Description("Open the draft in an Outlook window for the user (default true).")] bool display = true,
+        [Description(DerivedDisplayHint)] bool display = true,
         [Description(DerivedSignatureHint)] string? signature = null,
         [Description(ImportanceHint)] string? importance = null,
         [Description(ReadReceiptHint)] bool? request_read_receipt = null,
         [Description(AttachmentsHint)] string[]? attachments = null,
         CancellationToken cancellationToken = default)
     {
-        CallToolResult? writingRules = WritingRulesRejection(body, body_html);
-        if (writingRules != null)
-        {
-            return writingRules;
-        }
-
-        return await GuardAsync(cancellationToken, () => ServerRuntime.Service.ForwardDraft(
+        return await WritingDraftAsync(body, body_html, cancellationToken, () => ServerRuntime.Service.ForwardDraft(
             id, body, to, display, signature, cc, bcc, subject, importance, request_read_receipt, body_html, attachments));
     }
 
@@ -1005,13 +986,7 @@ public static partial class OutlookTools
         // Gated only when this revision actually rewrites the body. Changing recipients, a
         // subject, a signature or attachments is not writing, and refusing it to hand over
         // rules about wording would be a rejection with nothing to act on.
-        CallToolResult? writingRules = WritingRulesRejection(body, body_html);
-        if (writingRules != null)
-        {
-            return writingRules;
-        }
-
-        return await GuardAsync(cancellationToken, () => ServerRuntime.Service.UpdateDraft(
+        return await WritingDraftAsync(body, body_html, cancellationToken, () => ServerRuntime.Service.UpdateDraft(
             id, body, body_html, subject, to, cc, bcc, importance, request_read_receipt, signature,
             attachments, remove_attachments, display));
     }
@@ -1082,6 +1057,18 @@ public static partial class OutlookTools
     /// layer's judgement to make on the retry.
     /// </para>
     /// </summary>
+    /// <summary>
+    /// What every drafting tool runs: the user's writing rules first, when the call writes a body
+    /// (<see cref="WritingRulesRejection"/>), then the call itself under <see cref="GuardAsync"/>. The five
+    /// tools each wrote this out until the code-sharing refactor's stage S6.
+    /// </summary>
+    private static async Task<CallToolResult> WritingDraftAsync<T>(
+        string? body, string? bodyHtml, CancellationToken cancellationToken, Func<T> operation)
+    {
+        CallToolResult? writingRules = WritingRulesRejection(body, bodyHtml);
+        return writingRules ?? await GuardAsync(cancellationToken, operation);
+    }
+
     private static CallToolResult? WritingRulesRejection(string? body, string? bodyHtml)
     {
         if (!WritingRulesGate.Shared.TryClaimDelivery(body != null || bodyHtml != null, out string rules))

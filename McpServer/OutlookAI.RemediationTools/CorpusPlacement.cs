@@ -267,22 +267,8 @@ public static class CorpusPlacement
     /// <see cref="NonDefaultStoreLadder"/> order, that fully verified. <see cref="CorpusPlacementMethod.None"/>
     /// when none did.
     /// </summary>
-    public static CorpusPlacementMethod Choose(IReadOnlyCollection<CorpusPlacementProbe> probes)
-    {
-        ArgumentNullException.ThrowIfNull(probes);
-        foreach (CorpusPlacementMethod method in Ladder.Concat(NonDefaultStoreLadder))
-        {
-            foreach (CorpusPlacementProbe probe in probes)
-            {
-                if (probe.Method == method && IsUsable(probe))
-                {
-                    return method;
-                }
-            }
-        }
-
-        return CorpusPlacementMethod.None;
-    }
+    public static CorpusPlacementMethod Choose(IReadOnlyCollection<CorpusPlacementProbe> probes) =>
+        CorpusProbeLadder.FirstVerified(Ladder.Concat(NonDefaultStoreLadder), probes, p => p.Method, IsUsable, CorpusPlacementMethod.None);
 
     /// <summary>
     /// Whether the build may proceed, and what to print either way.

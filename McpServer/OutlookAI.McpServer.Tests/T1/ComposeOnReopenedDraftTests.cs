@@ -55,7 +55,9 @@ public sealed class ComposeOnReopenedDraftTests
         string body = CodeOnly(MemberBody("ComposeReopened"));
 
         int save = body.IndexOf("created.Save();", StringComparison.Ordinal);
-        int reopen = body.IndexOf(".GetItemFromID(entryId", StringComparison.Ordinal);
+        // The re-open by EntryID is OpenItem, the session's one open by id since the code-sharing
+        // refactor's stage S6; that it calls GetItemFromID is pinned below.
+        int reopen = body.IndexOf("OpenItem(entryId", StringComparison.Ordinal);
         int release = body.IndexOf("Release(mail);", StringComparison.Ordinal);
         int replace = body.IndexOf("mail = reopened;", StringComparison.Ordinal);
         int revise = body.IndexOf("ReviseHeldDocument(", StringComparison.Ordinal);
@@ -89,7 +91,21 @@ public sealed class ComposeOnReopenedDraftTests
         Assert.Equal(
             new[] { "ComposeReopened", "TryUpdateDraft" },
             MembersContaining("ReviseHeldDocument(").Where(m => m != "ReviseHeldDocument").OrderBy(m => m, StringComparer.Ordinal).ToArray());
-        Assert.Contains(".GetItemFromID(", CodeOnly(MemberBody("TryUpdateDraft")), StringComparison.Ordinal);
+        Assert.Contains("OpenItem(", CodeOnly(MemberBody("TryUpdateDraft")), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void OpenItem_OpensByEntryId_AndNothingElse()
+    {
+        // The one open by id every work item goes through (stage S6): GetItemFromID, with the store when
+        // one is given - no inspector, no display, nothing that changes the item.
+        string body = CodeOnly(MemberBody("OpenItem"));
+        Assert.Contains(".GetItemFromID(entryIdHex, storeId)", body, StringComparison.Ordinal);
+        Assert.Contains(".GetItemFromID(entryIdHex)", body, StringComparison.Ordinal);
+        foreach (string work in InspectorWork)
+        {
+            Assert.False(body.Contains(work, StringComparison.Ordinal), "OpenItem does inspector work (" + work + ")");
+        }
     }
 
     [Fact]

@@ -768,10 +768,7 @@ namespace OutlookAI.Core.AddIn
         /// </summary>
         private static string WriteTemporaryHtmlFile(string html, bool hasBoundary)
         {
-            string directory = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "OutlookAI",
-                "tmp");
+            string directory = Path.Combine(SharedState.Root, "tmp");
             Directory.CreateDirectory(directory);
             PurgeStaleTemporaryFiles(directory);
 

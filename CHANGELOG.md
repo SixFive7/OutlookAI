@@ -1153,6 +1153,35 @@ its mailbox tests on, and change nothing you install.
   would overwrite the change or copy it into the mailbox, and says to use Outlook instead. Roaming on
   Microsoft 365 Apps itself is not tested: the test machines run perpetual Office only.
 
+- ♻️ **The mail server keeps one copy of what it had written two to five times over (Q154).**
+  The code-sharing refactor's stage S6 folds the server's own repetition that the survey of
+  2026-11-17 found, its groups S01 to S14. The index search and the exhaustive scan check a
+  search term through one rule, `SearchTermRules`, where each had a copy that differed only in
+  how it refused a bare `*`: both now say "Bare '*' is not a valid term." The index search renders
+  its dates with the exhaustive scan's `DaslDateLiteral`, the same format and the same rule for a
+  local time. Hexadecimal digits are checked in one place, `Hex`, in the add-in's part of
+  OutlookAI.Core, where the add-in's editor of `~/.claude.json` finds it too; the five copies
+  differed in what they made of an empty string, and each caller now says. The send
+  confirmations, the resumable searches and the update_draft intents make their random tokens
+  with `Hex.NewRandom` and list their expired entries with `ExpiringEntries`, where each had its
+  own copy of both. Everything that lives under `%LOCALAPPDATA%\OutlookAI` - the audit log, the
+  session registry, Outlook's start log, attachment downloads, signature backups, the add-in's
+  temporary HTML and the private .NET runtime - finds that folder through `SharedState.Root`,
+  where six places built it; the check that no test names the real audit log watches that name
+  too. The COM session opens an item by its EntryID in one place, `OpenItem`, where 21 work items
+  wrote out the two calls; checks a mail item through `OpenMailItem`; and reads where a moved item
+  is through `ReadMoveOrigin`, for both moves. move_mail and archive_mail walk their batch through
+  one `MoveBatch`, and the index store map decides a store found by name and one found by identity
+  through one `DecideStoreMatch`. The corpus tool's PNG writer takes its CRC-32 from the audit
+  log's `AuditCrc32` and its designated Calendar, Contacts and Tasks from the product's
+  `SpecialFolders.OpenDesignated`, where it kept copies of both; its build and re-index write one
+  manifest header, its two populations one conversation message, and its date and placement
+  probes pick their rung through one `CorpusProbeLadder`. The draft tools' descriptions that two
+  or three tools wrote out word for word are constants, and the writing rules each tool checked
+  before its call are one `WritingDraftAsync`. Left as they are, with their reasons in the TODO
+  list: the two draft results' shared fields, the tools' and the COM host's parameter lists, and
+  the corpus tool's thirteen operations that open the corpus store and release it the same way.
+
 - ♻️ **The live tests end and restart Outlook through one shared helper.**
   The compose measurement's stop in `LiveComposeProbe`, whose `Application.Quit()` from a client
   holding nothing else was private there, and the quit protocol `LiveDisconnectRecoveryTests`
