@@ -100,8 +100,9 @@
     A SIGNATURE SETTING BEFORE OUTLOOK STARTS (-SignatureSettings, 2026-11-18, Q200 (a) and Q201). An
     administrator's signature policy, a default deployed in Outlook's general mail settings and an
     account's own defaults are read by Outlook when it starts, and the suite runs NOT elevated, where
-    HKCU\Software\Policies cannot be written. So with -SignatureSettings GroupPolicy, Preference or
-    PreferenceNoOwnNew, PREPARE runs guest\Set-SignatureSettings.ps1 -Execute elevated in session 0
+    HKCU\Software\Policies cannot be written. So with -SignatureSettings GroupPolicy, Preference,
+    PreferenceNoOwnNew or NoSetting (the control), PREPARE runs guest\Set-SignatureSettings.ps1 -Execute
+    elevated in session 0
     between the frozen-clock guard and Outlook's start: it makes the setting, its test signatures and the
     hub account's own defaults, and says SET or the run stops. The guest task then reads Outlook's own
     Signatures dialog before the suite - guest\Measure-SignatureDialog.ps1, at Outlook's integrity level,
@@ -167,8 +168,9 @@
     not stop the run. Once per guest is enough - runbook section 4.6.
 
 .PARAMETER SignatureSettings
-    GroupPolicy (Q200 (a)), Preference (Q201) or PreferenceNoOwnNew (Q201, the hub's own default for
-    replies only): makes that signature setting on the guest before Outlook starts, through
+    GroupPolicy (Q200 (a)), Preference (Q201), PreferenceNoOwnNew (Q201, the hub's own default for
+    replies only) or NoSetting (the control - the hub's own defaults and no setting): makes that
+    signature setting on the guest before Outlook starts, through
     guest\Set-SignatureSettings.ps1 run elevated, reads Outlook's Signatures dialog before the suite, and
     narrows the run to the tests that measure what Outlook then does. A frozen start of an Outlook guest
     only; refused on the Exchange VM, with -GreenCheckpoint and with -Filter.
@@ -206,7 +208,7 @@ param(
     [Parameter(ParameterSetName = 'Run')] [switch] $RestOnGreen,
     [Parameter(ParameterSetName = 'Run')] [switch] $SkipHubReset,
     [Parameter(ParameterSetName = 'Run')] [switch] $ProveCrashDumps,
-    [Parameter(ParameterSetName = 'Run')] [ValidateSet('GroupPolicy', 'Preference', 'PreferenceNoOwnNew')] [string] $SignatureSettings,
+    [Parameter(ParameterSetName = 'Run')] [ValidateSet('GroupPolicy', 'Preference', 'PreferenceNoOwnNew', 'NoSetting')] [string] $SignatureSettings,
     [Parameter(ParameterSetName = 'Run')] [ValidateSet('ExpandString', 'String')] [string] $SignatureValueKind = 'ExpandString',
     [Parameter(ParameterSetName = 'Run')] [string] $ResultsRoot,
     [Parameter(ParameterSetName = 'Run')] [string] $CredentialRepoRoot,
@@ -867,9 +869,9 @@ function Invoke-SelfTest {
     Check 'the test the filter names exists' $true $settingsTests.Contains('public void ' + ($SignatureSettingsTest.Split('.')[1]) + '_')
     $stepCs = [System.IO.File]::ReadAllText((Join-Path $repo 'McpServer\OutlookAI.McpServer.Tests\T2\LiveSignatureSettingsStep.cs'))
     Check 'the suite reads the scenario from the variable this sets' $true ($stepCs.Contains("`"$SignatureSettingsVariable`"") -and $runner.Contains("`$SignatureSettingsVariable = '$SignatureSettingsVariable'") -and $runner.Contains('`$env:$SignatureSettingsVariable = '))
-    Check 'and knows the scenarios this takes' $true $stepCs.Contains('Scenarios { get; } = new[] { GroupPolicy, Preference, PreferenceNoOwnNew }')
+    Check 'and knows the scenarios this takes' $true $stepCs.Contains('Scenarios { get; } = new[] { GroupPolicy, Preference, PreferenceNoOwnNew, NoSetting }')
     $settingsScript = [System.IO.File]::ReadAllText((Join-Path $repo "Testbed\guest\$SignatureSettingsScript"))
-    Check 'the guest script takes the same scenarios' $true ($settingsScript.Contains("[ValidateSet('GroupPolicy', 'Preference', 'PreferenceNoOwnNew')] [string] `$Scenario") -and $runner.Contains("[ValidateSet('GroupPolicy', 'Preference', 'PreferenceNoOwnNew')] [string] `$SignatureSettings"))
+    Check 'the guest script takes the same scenarios' $true ($settingsScript.Contains("[ValidateSet('GroupPolicy', 'Preference', 'PreferenceNoOwnNew', 'NoSetting')] [string] `$Scenario") -and $runner.Contains("[ValidateSet('GroupPolicy', 'Preference', 'PreferenceNoOwnNew', 'NoSetting')] [string] `$SignatureSettings"))
     Check 'and the same value kinds, with the same default' $true ($settingsScript.Contains("[ValidateSet('ExpandString', 'String')] [string] `$ValueKind = 'ExpandString'") -and $runner.Contains("[ValidateSet('ExpandString', 'String')] [string] `$SignatureValueKind = 'ExpandString'") -and $runner.Contains("-Scenario `$SignatureSettings -ValueKind `$SignatureValueKind -Execute"))
     # The LAST of each: the run's own code comes after this self-test, which names both.
     $stepAt = $runner.LastIndexOf("Invoke-Guest 'signature-settings'")

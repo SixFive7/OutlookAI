@@ -37,8 +37,14 @@ public static class LiveSignatureSettingsStep
     /// </summary>
     public const string PreferenceNoOwnNew = "PreferenceNoOwnNew";
 
+    /// <summary>
+    /// The control (Q156 (d), 2026-11-18): the hub account's own defaults for new mail and for replies, their test
+    /// signatures, and no setting at all - what Outlook's Signatures dialog and compose windows do without one.
+    /// </summary>
+    public const string NoSetting = "NoSetting";
+
     /// <summary>Every scenario the guest script sets, as the runner's parameter spells it.</summary>
-    public static IReadOnlyList<string> Scenarios { get; } = new[] { GroupPolicy, Preference, PreferenceNoOwnNew };
+    public static IReadOnlyList<string> Scenarios { get; } = new[] { GroupPolicy, Preference, PreferenceNoOwnNew, NoSetting };
 
     /// <summary>
     /// The variable the live runner sets inside the guest task of a run with the step: where
@@ -48,17 +54,25 @@ public static class LiveSignatureSettingsStep
     public const string DialogVariableName = "OUTLOOKAI_LIVE_SIGNATURE_DIALOG";
 
     /// <summary>
-    /// Whether the step gave the hub account its one own default for replies and forwards - under
-    /// <see cref="GroupPolicy"/> and <see cref="PreferenceNoOwnNew"/> - rather than for new mail, under
-    /// <see cref="Preference"/>. The scope it left without one shows what the setting does for an account with none.
+    /// The own defaults the step gives the hub account: for replies and forwards only under <see cref="GroupPolicy"/>
+    /// and <see cref="PreferenceNoOwnNew"/>, for new mail only under <see cref="Preference"/> - the scope left without
+    /// one shows what the setting does for an account with none - and both under the control, <see cref="NoSetting"/>.
     /// </summary>
-    public static bool HubOwnDefaultIsForReplies(string scenario) => scenario switch
+    public static (bool NewMail, bool Replies) HubOwnDefaults(string scenario) => scenario switch
     {
-        GroupPolicy => true,
-        Preference => false,
-        PreferenceNoOwnNew => true,
+        GroupPolicy => (false, true),
+        Preference => (true, false),
+        PreferenceNoOwnNew => (false, true),
+        NoSetting => (true, true),
         _ => throw new ArgumentException("'" + scenario + "' is no signature setting the live runner makes.", nameof(scenario)),
     };
+
+    /// <summary>Whether the scenario makes a setting: every one but the control.</summary>
+    public static bool WritesSetting(string scenario)
+    {
+        _ = HubOwnDefaults(scenario);
+        return scenario != NoSetting;
+    }
 
     /// <summary>Where this run's reading of the Signatures dialog is, or null when the runner read none.</summary>
     public static string? DialogReadingPath

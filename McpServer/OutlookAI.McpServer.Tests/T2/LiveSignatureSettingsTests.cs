@@ -223,7 +223,7 @@ public sealed class LiveSignatureSettingsTests
     /// <item><b>PreferenceNoOwnNew</b> (Q201): the same deployed setting, the hub's own default for replies instead.</item>
     /// </list>
     /// The hub account has one default of its own - for new mail under Preference, for replies under the policy and
-    /// under PreferenceNoOwnNew (<see cref="LiveSignatureSettingsStep.HubOwnDefaultIsForReplies"/>) - so each run ranks
+    /// under PreferenceNoOwnNew (<see cref="LiveSignatureSettingsStep.HubOwnDefaults"/>) - so each run ranks
     /// the setting against the account's own for one scope and shows for the other what the setting does for an account
     /// that has none.
     /// Outlook's side is read from compose windows opened on the objects Outlook's own commands make - the kind that
@@ -259,21 +259,28 @@ public sealed class LiveSignatureSettingsTests
             : SignaturePolicySource.Preference;
         SignaturePolicy policy = SignaturePolicy.Read(new LiveSignatureSettingsRegistry(), OutlookProfileRegistry.OfficeVersion);
         Assert.False(policy.SignaturesDisabled, "the step never disables signatures");
-        Assert.Equal(source, policy.NewMessageSource);
-        Assert.Equal(source, policy.ReplyForwardSource);
-        string settingNew = RequireTestSignature(policy.NewMessage, "the setting's new-mail default");
-        string settingReply = RequireTestSignature(policy.ReplyForward, "the setting's reply and forward default");
+        Dictionary<string, string> roles = new(StringComparer.Ordinal);
+        if (LiveSignatureSettingsStep.WritesSetting(scenario))
+        {
+            Assert.Equal(source, policy.NewMessageSource);
+            Assert.Equal(source, policy.ReplyForwardSource);
+            roles[RequireTestSignature(policy.NewMessage, "the setting's new-mail default")] =
+                source == SignaturePolicySource.GroupPolicy ? "the policy's new-mail default" : "the deployed new-mail default";
+            roles[RequireTestSignature(policy.ReplyForward, "the setting's reply and forward default")] =
+                source == SignaturePolicySource.GroupPolicy ? "the policy's reply default" : "the deployed reply default";
+        }
+        else
+        {
+            Assert.True(policy.NewMessage == null && policy.ReplyForward == null, "the control makes no setting, and OutlookAI reads none");
+        }
+
         string? ownNew = hubRow.NewMessage == null ? null : RequireTestSignature(hubRow.NewMessage, "the hub account's own new-mail default");
         string? ownReply = hubRow.ReplyForward == null ? null : RequireTestSignature(hubRow.ReplyForward, "the hub account's own reply default");
-        bool ownIsForReplies = LiveSignatureSettingsStep.HubOwnDefaultIsForReplies(scenario);
-        Assert.True(ownIsForReplies ? ownNew == null && ownReply != null : ownNew != null && ownReply == null,
-            $"the {scenario} step gives the hub one default of its own, for {(ownIsForReplies ? "replies" : "new mail")}");
-
-        Dictionary<string, string> roles = new(StringComparer.Ordinal)
-        {
-            [settingNew] = source == SignaturePolicySource.GroupPolicy ? "the policy's new-mail default" : "the deployed new-mail default",
-            [settingReply] = source == SignaturePolicySource.GroupPolicy ? "the policy's reply default" : "the deployed reply default",
-        };
+        (bool ownNewPlanned, bool ownReplyPlanned) = LiveSignatureSettingsStep.HubOwnDefaults(scenario);
+        Assert.True((ownNew != null) == ownNewPlanned && (ownReply != null) == ownReplyPlanned,
+            $"the {scenario} step gives the hub its own defaults for {(ownNewPlanned ? "new mail" : string.Empty)}"
+            + $"{(ownNewPlanned && ownReplyPlanned ? " and " : string.Empty)}{(ownReplyPlanned ? "replies" : string.Empty)}; "
+            + $"the profile holds new '{ownNew ?? "-"}', reply '{ownReply ?? "-"}'");
         if (ownNew != null)
         {
             roles[ownNew] = "the account's own new-mail default";
@@ -435,14 +442,13 @@ public sealed class LiveSignatureSettingsTests
             ?? throw new InvalidOperationException("The hub account is not in the running profile's account list, where the "
                 + "step set its own defaults.");
         SignaturePolicy policy = SignaturePolicy.Read(new LiveSignatureSettingsRegistry(), OutlookProfileRegistry.OfficeVersion);
-        string settingNew = RequireTestSignature(policy.NewMessage, "the setting's new-mail default");
-        string settingReply = RequireTestSignature(policy.ReplyForward, "the setting's reply and forward default");
         string setting = policy.NewMessageSource == SignaturePolicySource.GroupPolicy ? "the policy's" : "the deployed";
-        Dictionary<string, string> roles = new(StringComparer.Ordinal)
+        Dictionary<string, string> roles = new(StringComparer.Ordinal);
+        if (LiveSignatureSettingsStep.WritesSetting(scenario))
         {
-            [settingNew] = setting + " new-mail default",
-            [settingReply] = setting + " reply default",
-        };
+            roles[RequireTestSignature(policy.NewMessage, "the setting's new-mail default")] = setting + " new-mail default";
+            roles[RequireTestSignature(policy.ReplyForward, "the setting's reply and forward default")] = setting + " reply default";
+        }
         if (hubRow.NewMessage != null)
         {
             roles[RequireTestSignature(hubRow.NewMessage, "the hub account's own new-mail default")] = "the account's own new-mail default";

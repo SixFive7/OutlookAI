@@ -23,6 +23,7 @@ public sealed class LiveSignatureSettingsStepTests
     [InlineData("GroupPolicy", "GroupPolicy")]
     [InlineData(" Preference ", "Preference")]
     [InlineData("PreferenceNoOwnNew", "PreferenceNoOwnNew")]
+    [InlineData("NoSetting", "NoSetting")]
     public void TheVariable_NamesAScenario_OrNone(string? value, string? expected)
     {
         Assert.Equal(expected, LiveSignatureSettingsStep.Parse(value));
@@ -41,24 +42,27 @@ public sealed class LiveSignatureSettingsStepTests
     [Fact]
     public void TheScenarios_AreTheOnesTheRunnerTakes()
     {
-        Assert.Equal(new[] { "GroupPolicy", "Preference", "PreferenceNoOwnNew" }, LiveSignatureSettingsStep.Scenarios);
+        Assert.Equal(new[] { "GroupPolicy", "Preference", "PreferenceNoOwnNew", "NoSetting" }, LiveSignatureSettingsStep.Scenarios);
         Assert.Equal("OUTLOOKAI_LIVE_SIGNATURE_SETTINGS", LiveSignatureSettingsStep.VariableName);
         Assert.Equal("OUTLOOKAI_LIVE_SIGNATURE_DIALOG", LiveSignatureSettingsStep.DialogVariableName);
     }
 
     [Theory]
-    [InlineData("GroupPolicy", true)]
-    [InlineData("Preference", false)]
-    [InlineData("PreferenceNoOwnNew", true)]
-    public void TheHubsOneOwnDefault_IsForRepliesUnlessTheScenarioIsPreference(string scenario, bool forReplies)
+    [InlineData("GroupPolicy", false, true, true)]
+    [InlineData("Preference", true, false, true)]
+    [InlineData("PreferenceNoOwnNew", false, true, true)]
+    [InlineData("NoSetting", true, true, false)]
+    public void TheHubsOwnDefaults_AndWhetherASettingIsMade_FollowTheScenario(string scenario, bool newMail, bool replies, bool writesSetting)
     {
-        Assert.Equal(forReplies, LiveSignatureSettingsStep.HubOwnDefaultIsForReplies(scenario));
+        Assert.Equal((newMail, replies), LiveSignatureSettingsStep.HubOwnDefaults(scenario));
+        Assert.Equal(writesSetting, LiveSignatureSettingsStep.WritesSetting(scenario));
     }
 
     [Fact]
-    public void AnUnknownScenario_HasNoOwnDefaultPlan()
+    public void AnUnknownScenario_HasNoPlan()
     {
-        Assert.Throws<ArgumentException>(() => LiveSignatureSettingsStep.HubOwnDefaultIsForReplies("CloudPolicy"));
+        Assert.Throws<ArgumentException>(() => LiveSignatureSettingsStep.HubOwnDefaults("CloudPolicy"));
+        Assert.Throws<ArgumentException>(() => LiveSignatureSettingsStep.WritesSetting("CloudPolicy"));
     }
 
     [Fact]

@@ -27,6 +27,9 @@
       PreferenceNoOwnNew  Q201 again, with the hub's own default for replies instead of new mail (decided
                           2026-11-18): the one case the first two leave open, a deployed new-mail value for an
                           account with no new-mail default of its own.
+      NoSetting           The control: the hub's own defaults for new mail and for replies, their test
+                          signatures, and no setting at all - what Outlook's Signatures dialog and its compose
+                          windows do without one (Q156 (d), 2026-11-18).
     The hub account gets ONE default of its own, a third test signature: for new mail under Preference, for replies
     and forwards under GroupPolicy and PreferenceNoOwnNew. So each run ranks the setting against the account's own
     default for one scope, and shows for the other what the setting does for an account that has none of its own.
@@ -58,7 +61,8 @@
     EXIT CODES: 0 SET, or the dry run; 1 NOT-SET; 4 REFUSED - step 1, or the request itself.
 
 .PARAMETER Scenario
-    GroupPolicy (Q200), Preference (Q201) or PreferenceNoOwnNew (Q201, the hub's own default for replies only).
+    GroupPolicy (Q200), Preference (Q201), PreferenceNoOwnNew (Q201, the hub's own default for replies only) or
+    NoSetting (the control: the hub's own defaults, no setting).
 
 .PARAMETER Account
     The hub account's address, whose own defaults the plan sets. Default: the hub the staged live-test settings
@@ -82,7 +86,7 @@
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('GroupPolicy', 'Preference', 'PreferenceNoOwnNew')] [string] $Scenario,
+    [ValidateSet('GroupPolicy', 'Preference', 'PreferenceNoOwnNew', 'NoSetting')] [string] $Scenario,
     [ValidateSet('ExpandString', 'String')] [string] $ValueKind = 'ExpandString',
     [switch]   $Execute,
     [switch]   $Verify,
@@ -135,20 +139,28 @@ function Get-SignatureSettingsPlan {
         $key = "Software\Microsoft\Office\$OfficeVersion\Common\MailSettings"
         $token = 'preference'
     }
-    else { throw "'$Scenario' is no scenario: GroupPolicy, Preference or PreferenceNoOwnNew." }
-    $signatures = @($settingNew, $settingReply)
-    if ($ownNew) { $signatures += $ownNew }
-    if ($ownReply) { $signatures += $ownReply }
+    elseif ($Scenario -eq 'NoSetting') {
+        # The control writes no value: the deployed setting's key is only read, to be sure it holds none.
+        $settingNew = $null
+        $settingReply = $null
+        $ownNew = $TestPrefix + 'Q156-Own-New'
+        $ownReply = $TestPrefix + 'Q156-Own-Reply'
+        $key = "Software\Microsoft\Office\$OfficeVersion\Common\MailSettings"
+        $token = $null
+    }
+    else { throw "'$Scenario' is no scenario: GroupPolicy, Preference, PreferenceNoOwnNew or NoSetting." }
+    $signatures = @(@($settingNew, $settingReply, $ownNew, $ownReply) | Where-Object { $_ })
     return [pscustomobject]@{
-        Scenario     = $Scenario
-        Source       = $token
-        Key          = $key
-        ValueKind    = $ValueKind
-        SettingNew   = $settingNew
-        SettingReply = $settingReply
-        OwnNew       = $ownNew
-        OwnReply     = $ownReply
-        Signatures   = $signatures
+        Scenario      = $Scenario
+        Source        = $token
+        Key           = $key
+        ValueKind     = $ValueKind
+        WritesSetting = ($null -ne $settingNew)
+        SettingNew    = $settingNew
+        SettingReply  = $settingReply
+        OwnNew        = $ownNew
+        OwnReply      = $ownReply
+        Signatures    = $signatures
     }
 }
 
@@ -183,14 +195,23 @@ function Get-StepRefusal {
 function Get-SettingsVerdict {
     param([object] $Plan, [hashtable] $Observed)
     $missing = New-Object System.Collections.Generic.List[string]
+    $policy = $Observed.Policy
+    if (-not $Plan.WritesSetting) {
+        # The control: no value of either name, and nothing OutlookAI reads as a setting.
+        foreach ($name in @('NewSignature', 'ReplySignature')) {
+            if ($null -ne $Observed.Values[$name]) { $missing.Add("HKCU\$($Plan.Key)\$name holds '$($Observed.Values[$name])', where the control has none") }
+        }
+        if ($null -ne $policy -and ($policy.newMessage -or $policy.replyForward)) { $missing.Add("OutlookAI reads a setting ('$($policy.newMessage)', '$($policy.replyForward)') where the control has none") }
+    }
     foreach ($pair in @(@('NewSignature', $Plan.SettingNew), @('ReplySignature', $Plan.SettingReply))) {
+        if (-not $Plan.WritesSetting) { break }
         $data = $Observed.Values[$pair[0]]
         if ([string]$data -cne $pair[1]) { $missing.Add("HKCU\$($Plan.Key)\$($pair[0]) is '$data', not '$($pair[1])'") }
         $kind = [string]$Observed.Kinds[$pair[0]]
         if ($null -ne $data -and $kind -cne $Plan.ValueKind) { $missing.Add("HKCU\$($Plan.Key)\$($pair[0]) is a $kind value, not $($Plan.ValueKind)") }
     }
-    $policy = $Observed.Policy
-    if ($null -eq $policy) { $missing.Add('list_signatures reported no policy or deployed default') }
+    if (-not $Plan.WritesSetting) { }
+    elseif ($null -eq $policy) { $missing.Add('list_signatures reported no policy or deployed default') }
     else {
         if ([string]$policy.newMessage -cne $Plan.SettingNew -or [string]$policy.newMessageFrom -cne $Plan.Source) { $missing.Add("OutlookAI reads the new-mail default as '$($policy.newMessage)' from '$($policy.newMessageFrom)', not '$($Plan.SettingNew)' from '$($Plan.Source)'") }
         if ([string]$policy.replyForward -cne $Plan.SettingReply -or [string]$policy.replyForwardFrom -cne $Plan.Source) { $missing.Add("OutlookAI reads the reply default as '$($policy.replyForward)' from '$($policy.replyForwardFrom)', not '$($Plan.SettingReply)' from '$($Plan.Source)'") }
@@ -236,7 +257,10 @@ function Invoke-SelfTest {
     $n = Get-SignatureSettingsPlan 'PreferenceNoOwnNew' '16.0'
     Check 'the third scenario is the deployed setting too' 'Software\Microsoft\Office\16.0\Common\MailSettings|preference' @($n.Key, $n.Source)
     Check 'and the hub has its own reply default only' 'OutlookAI-McpTest-Q201-Deployed-New|OutlookAI-McpTest-Q201-Deployed-Reply|OutlookAI-McpTest-Q201-Own-Reply|True' (@($n.Signatures) + @($null -eq $n.OwnNew))
-    foreach ($plan in @($g, $p, $n)) {
+    $c = Get-SignatureSettingsPlan 'NoSetting' '16.0'
+    Check 'the control writes no setting, and gives the hub both own defaults' 'False|OutlookAI-McpTest-Q156-Own-New|OutlookAI-McpTest-Q156-Own-Reply' (@($c.WritesSetting) + @($c.Signatures))
+    Check 'the other three write theirs' 'True|True|True' @($g.WritesSetting, $p.WritesSetting, $n.WritesSetting)
+    foreach ($plan in @($g, $p, $n, $c)) {
         foreach ($name in $plan.Signatures) {
             Check "$name is a test signature" $true $name.StartsWith($TestPrefix, [System.StringComparison]::Ordinal)
             Check "$name is in no other name of its plan" 1 @($plan.Signatures | Where-Object { $_.Contains($name) }).Count
@@ -323,6 +347,16 @@ function Invoke-SelfTest {
     Check 'the deployed setting with no own new-mail default is SET' 'SET' (Get-SettingsVerdict $n $nSet).Verdict
     $nSet['Own'] = [pscustomobject]@{ newMessage = $p.OwnNew; replyForward = $n.OwnReply }
     Check 'and NOT-SET when the hub has a new-mail default of its own' 'NOT-SET' (Get-SettingsVerdict $n $nSet).Verdict
+    $cSet = @{
+        Values     = @{ NewSignature = $null; ReplySignature = $null }
+        Kinds      = @{ NewSignature = $null; ReplySignature = $null }
+        Policy     = [pscustomobject]@{ newMessage = $null; newMessageFrom = $null; replyForward = $null; replyForwardFrom = $null }
+        Own        = [pscustomobject]@{ newMessage = $c.OwnNew; replyForward = $c.OwnReply }
+        Signatures = @($c.Signatures)
+    }
+    Check 'the control with both own defaults and no setting is SET' 'SET' (Get-SettingsVerdict $c $cSet).Verdict
+    $cSet['Values'] = @{ NewSignature = 'Somebody'; ReplySignature = $null }
+    Check 'and NOT-SET where a setting is there after all' 'NOT-SET' (Get-SettingsVerdict $c $cSet).Verdict
     Check 'no policy at all is NOT-SET' 'NOT-SET' (Get-SettingsVerdict $g @{ Values = @{}; Kinds = @{}; Policy = $null; Own = $null; Signatures = @() }).Verdict
 
     # The stdio client's pure parts (McpStdioClient.ps1).
@@ -449,11 +483,14 @@ try {
             [void](Invoke-McpTool -Session $session -Tool 'manage_signature' -Arguments @{ action = 'set_default'; name = $d.Name; default_for = @{ profile = $OutlookProfile; account = $Account; scope = $d.Scope } })
             Write-Host "default   : $Account, $($d.Scope): $($d.Name)"
         }
-        $path = "HKCU:\$($plan.Key)"
-        if (-not (Test-Path -LiteralPath $path)) { New-Item -Path $path -Force | Out-Null }
-        New-ItemProperty -LiteralPath $path -Name 'NewSignature' -PropertyType $plan.ValueKind -Value $plan.SettingNew -Force | Out-Null
-        New-ItemProperty -LiteralPath $path -Name 'ReplySignature' -PropertyType $plan.ValueKind -Value $plan.SettingReply -Force | Out-Null
-        Write-Host "written   : HKCU\$($plan.Key) NewSignature, ReplySignature, as $($plan.ValueKind)"
+        if ($plan.WritesSetting) {
+            $path = "HKCU:\$($plan.Key)"
+            if (-not (Test-Path -LiteralPath $path)) { New-Item -Path $path -Force | Out-Null }
+            New-ItemProperty -LiteralPath $path -Name 'NewSignature' -PropertyType $plan.ValueKind -Value $plan.SettingNew -Force | Out-Null
+            New-ItemProperty -LiteralPath $path -Name 'ReplySignature' -PropertyType $plan.ValueKind -Value $plan.SettingReply -Force | Out-Null
+            Write-Host "written   : HKCU\$($plan.Key) NewSignature, ReplySignature, as $($plan.ValueKind)"
+        }
+        else { Write-Host 'written   : no setting - the control' }
     }
 
     $after = Read-ListedState $session

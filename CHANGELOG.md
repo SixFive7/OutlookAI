@@ -252,7 +252,8 @@ its mailbox tests on, and change nothing you install.
   for plain ones. The guest scripts that drive the MCP server share one stdio client now.
   A third scenario, `-SignatureSettings PreferenceNoOwnNew`, gives the hub account its own default
   for replies under the deployed setting, so a new mail shows what that setting does for an account
-  with no new-mail default of its own. And every such run reads Outlook's own Signatures dialog
+  with no new-mail default of its own, and a fourth, `NoSetting`, gives it both own defaults and makes
+  no setting at all, as the control. And every such run reads Outlook's own Signatures dialog
   before the suite, through `Measure-SignatureDialog.ps1`, which presses nothing but Cancel: whether
   its New messages and Replies/forwards boxes and its Delete button are open, which a second live
   test holds OutlookAI's refusals to. The two probes that read Outlook's dialogs share one copy of

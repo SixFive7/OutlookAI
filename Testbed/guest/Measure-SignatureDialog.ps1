@@ -112,12 +112,27 @@ function Get-DialogExitCode($Reading) {
     return 0
 }
 
-# A registry value as text that compares: a string as it is, bytes - Outlook's per-account defaults are
-# UTF-16 with a NUL - as hex, anything else as its string.
+# A registry value as text that compares and reads: a string as it is, bytes - Outlook's per-account
+# defaults are UTF-16 with a NUL - as 'bytes:' and their text, anything else as its string. The names it
+# reads on a test guest are test signatures' and the guest's own.
 function ConvertTo-ValueText($Value) {
     if ($null -eq $Value) { return $null }
-    if ($Value -is [byte[]]) { return ([System.BitConverter]::ToString($Value)) }
+    if ($Value -is [byte[]]) { return 'bytes:' + [System.Text.Encoding]::Unicode.GetString($Value).TrimEnd([char]0) }
     return [string]$Value
+}
+
+# What changed between two readings of the signature defaults, value by value: 'changed <name>: <before>
+# -> <after>', 'added <name>: <after>', 'removed <name>: <before>', sorted. Empty when nothing did.
+function Get-DefaultsChanges([hashtable] $Before, [hashtable] $After) {
+    $changes = New-Object System.Collections.Generic.List[string]
+    foreach ($k in @($Before.Keys | Sort-Object)) {
+        if (-not $After.ContainsKey($k)) { $changes.Add("removed ${k}: '$($Before[$k])'") }
+        elseif ([string]$After[$k] -cne [string]$Before[$k]) { $changes.Add("changed ${k}: '$($Before[$k])' -> '$($After[$k])'") }
+    }
+    foreach ($k in @($After.Keys | Sort-Object)) {
+        if (-not $Before.ContainsKey($k)) { $changes.Add("added ${k}: '$($After[$k])'") }
+    }
+    return @($changes)
 }
 
 # What may never happen in this file or OutlookDialogUia.ps1, read off their syntax trees so this text
@@ -196,8 +211,9 @@ function Invoke-SelfTest {
     Check 'a changed folder is exit 1' 1 (Get-DialogExitCode ([pscustomobject]@{ refused = $null; dialogFound = $true; closed = $true; folderUnchanged = $false; defaultsUnchanged = $true; errors = @() }))
     Check 'changed defaults are exit 1' 1 (Get-DialogExitCode ([pscustomobject]@{ refused = $null; dialogFound = $true; closed = $true; folderUnchanged = $true; defaultsUnchanged = $false; errors = @() }))
     Check 'a step that failed is exit 1' 1 (Get-DialogExitCode ([pscustomobject]@{ refused = $null; dialogFound = $true; closed = $true; folderUnchanged = $true; defaultsUnchanged = $true; errors = @('x') }))
-    Check 'a default written as UTF-16 bytes compares as hex' '41-00-00-00' (ConvertTo-ValueText ([byte[]](0x41, 0, 0, 0)))
+    Check 'a default written as UTF-16 bytes reads as its text' 'bytes:A' (ConvertTo-ValueText ([byte[]](0x41, 0, 0, 0)))
     Check 'a string default as it is, none as none' 'Own|True' @((ConvertTo-ValueText 'Own'), ($null -eq (ConvertTo-ValueText $null)))
+    Check 'a changed default says what it was and became' "changed P\1\New Signature: 'bytes:A' -> 'bytes:B'|added P\2\New Signature: 'X'" (Get-DefaultsChanges @{ 'P\1\New Signature' = 'bytes:A' } @{ 'P\1\New Signature' = 'bytes:B'; 'P\2\New Signature' = 'X' })
 
     $shared = Join-Path $PSScriptRoot 'OutlookDialogUia.ps1'
     $violations = @(Get-ReadOnlyViolations @($PSCommandPath, $shared))
@@ -412,7 +428,7 @@ $after = Get-FolderHashes
 $changes = @(Get-FolderChanges $before $after)
 $reading['folderUnchanged'] = ($changes.Count -eq 0)
 $reading['folderChanges'] = $changes
-$defaultChanges = @(Get-FolderChanges $defaultsBefore (Get-SignatureDefaultValues))
+$defaultChanges = @(Get-DefaultsChanges $defaultsBefore (Get-SignatureDefaultValues))
 $reading['defaultsUnchanged'] = ($defaultChanges.Count -eq 0)
 $reading['defaultsChanges'] = $defaultChanges
 $reading['errors'] = $errors.ToArray()
