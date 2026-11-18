@@ -93,38 +93,64 @@ public sealed class LiveOutlookRestartTests
     }
 
     [Fact]
-    public void AStepsOwnFailureIsTakenOutOfTheBoundedWrapper()
+    public void ABoundedStepThatFailsThrowsItsOwnFailure_NotAWrapper()
     {
-        // Task.Wait passes a faulted step's failure on inside an AggregateException; the stop's catches test the
-        // step's own failure (the Q149 smoke on OutlookAI-Indexed, 2026-11-18).
-        Exception caught = Assert.ThrowsAny<Exception>(() =>
+        // The stop's catches and the Q149 cells' own look for the step's own failure. Task.Wait handed it on inside
+        // an AggregateException, which none of them looked for (the Q149 smoke on OutlookAI-Indexed, 2026-11-18).
+        Assert.Throws<ObjectDisposedException>(() =>
             LiveOutlookRestart.Bounded<int>("a step", TimeSpan.FromSeconds(30), () => throw new ObjectDisposedException("session")));
 
-        Assert.IsType<ObjectDisposedException>(LiveOutlookRestart.StepFailure(caught));
-        Assert.True(LiveOutlookRestart.IsSessionGone(LiveOutlookRestart.StepFailure(caught)));
-
         InvalidOperationException own = new("exited while starting");
-        Assert.Same(own, LiveOutlookRestart.StepFailure(new AggregateException(new AggregateException(own))));
-        Assert.Same(own, LiveOutlookRestart.StepFailure(own));
+        Assert.Same(own, Assert.Throws<InvalidOperationException>(() =>
+            LiveOutlookRestart.Bounded<int>("a step", TimeSpan.FromSeconds(30), () => throw own)));
 
-        // Two failures at once are not one step's failure, and stay as they came.
-        AggregateException two = new(new InvalidOperationException("a"), new InvalidOperationException("b"));
-        Assert.Same(two, LiveOutlookRestart.StepFailure(two));
+        Assert.Equal(7, LiveOutlookRestart.Bounded("a step", TimeSpan.FromSeconds(30), () => 7));
     }
 
     [Fact]
-    public void TheStopsCatchesTestTheStepsOwnFailure()
+    public void ABoundedStepThatOverrunsItsBudgetIsATimeoutNamingTheStep()
     {
-        string[] lines = SourceText.Lines(SourceText.LiveSource("LiveOutlookRestart.cs"));
-        string stop = string.Join("\n", StopBody());
-        string going = SourceText.MemberBody(lines, "private static bool IsOutlookGoing(Exception ex)", "    ", "LiveOutlookRestart.cs");
+        ManualResetEventSlim release = new(false);
+        TimeoutException timeout = Assert.Throws<TimeoutException>(() =>
+            LiveOutlookRestart.Bounded("the step that hangs", TimeSpan.FromMilliseconds(100), () => release.Wait(TimeSpan.FromSeconds(30))));
+        release.Set();
 
-        // The count's catch: an Outlook that ended by itself while it was counted.
-        Assert.Contains("catch (Exception ex) when (StepFailure(ex) is InvalidOperationException)", stop, StringComparison.Ordinal);
-        Assert.DoesNotContain("catch (InvalidOperationException)", stop, StringComparison.Ordinal);
+        Assert.StartsWith("the step that hangs did not finish within ", timeout.Message, StringComparison.Ordinal);
+        Assert.EndsWith("nothing was killed.", timeout.Message, StringComparison.Ordinal);
+    }
 
-        // The rungs' catch: a session that died under the close, or an Outlook already gone.
-        Assert.Contains("StepFailure(ex)", going, StringComparison.Ordinal);
+    [Fact]
+    public void BoundedNeverWaitsThroughTaskWait()
+    {
+        string bounded = SourceText.MemberBody(
+            SourceText.Lines(SourceText.LiveSource("LiveOutlookRestart.cs")),
+            "internal static T Bounded<T>(string what, TimeSpan budget, Func<T> work)",
+            "    ",
+            "LiveOutlookRestart.cs");
+
+        Assert.DoesNotContain(".Wait(", bounded, StringComparison.Ordinal);
+        Assert.Contains("task.GetAwaiter().GetResult()", bounded, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AnOutlookThatEndsByItselfIsSettledBeforeTheStopReturns()
+    {
+        string[] stop = StopBody();
+
+        // The early return: an Outlook that was running when the stop began and ended within its first wait.
+        int wasRunning = Index(stop, "bool wasRunning = OutlookProcessCount() > 0;");
+        int firstWait = Index(stop, "WaitForNoOutlook(TimeSpan.FromSeconds(5))");
+        int firstReturn = Index(stop, "return true;");
+        int[] settles = Indexes(stop, "Thread.Sleep(SettleAfterExitMs);");
+        Assert.True(wasRunning < firstWait, "the stop must know whether an Outlook ran before it waits for one to end");
+        Assert.True(
+            settles.Length >= 2 && firstWait < settles[0] && settles[0] < firstReturn,
+            $"the early return must settle before it returns; found the wait at {firstWait}, settles at {string.Join(",", settles)}, the return at {firstReturn}");
+
+        // The count's catch: an Outlook that ended by itself while it was counted is waited for, then settled.
+        string text = string.Join("\n", stop);
+        Assert.Contains("catch (InvalidOperationException ex)", text, StringComparison.Ordinal);
+        Assert.Contains("if (!WaitForNoOutlook(RungBudget))", text, StringComparison.Ordinal);
     }
 
     [Fact]

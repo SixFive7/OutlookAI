@@ -80,11 +80,17 @@ public static class LiveOutlookRestart
         "Nobody composes mail on a test guest, so an open Inspector is one an earlier test or step left open - and "
         + "making Outlook exit would throw away whatever it holds. Find what opened it before re-running.";
 
-    /// <summary>Runs <paramref name="work"/> on its own thread and gives up after <paramref name="budget"/>, naming <paramref name="what"/>.</summary>
+    /// <summary>
+    /// Runs <paramref name="work"/> on its own thread and gives up after <paramref name="budget"/>, naming
+    /// <paramref name="what"/>. A step that fails throws its own failure, as a direct call would. Not
+    /// <c>Task.Wait</c>: it hands a failed step's failure on inside an <see cref="AggregateException"/>, which no
+    /// catch around a bounded step looks for - the stop's and the Q149 cells' own never matched (the Q149 smoke on
+    /// OutlookAI-Indexed, 2026-11-18). The disconnect test's bounded step waits the same way.
+    /// </summary>
     internal static T Bounded<T>(string what, TimeSpan budget, Func<T> work)
     {
         Task<T> task = Task.Run(work);
-        if (!task.Wait(budget))
+        if (!ReferenceEquals(Task.WhenAny(task, Task.Delay(budget)).GetAwaiter().GetResult(), task))
         {
             throw new TimeoutException(what + " did not finish within " + budget.TotalSeconds.ToString("0", CultureInfo.InvariantCulture)
                 + " s - Outlook is probably wedged; nothing was killed.");
@@ -150,9 +156,19 @@ public static class LiveOutlookRestart
         ArgumentNullException.ThrowIfNull(log);
 
         // An Outlook already on its way out is given a moment to finish, so nothing below attaches to - or, in a
-        // race, starts a new Outlook on top of - an instance that is ending by itself.
+        // race, starts a new Outlook on top of - an instance that is ending by itself. One that does end is settled
+        // like any rung's, so the caller's next start does not land on its heels: in the Q149 smoke of 2026-11-18 a
+        // start less than a second after an exit was followed by a crash in mso40uiwin32client.dll - whether it
+        // caused it is not known.
+        bool wasRunning = OutlookProcessCount() > 0;
         if (WaitForNoOutlook(TimeSpan.FromSeconds(5)))
         {
+            if (wasRunning)
+            {
+                log("stop: OUTLOOK.EXE ended by itself");
+                Thread.Sleep(SettleAfterExitMs);
+            }
+
             return true;
         }
 
@@ -167,14 +183,14 @@ public static class LiveOutlookRestart
         {
             (inspectors, outbox) = ReadSafetyCounts();
         }
-        catch (Exception ex) when (StepFailure(ex) is InvalidOperationException)
+        catch (InvalidOperationException ex)
         {
             if (!WaitForNoOutlook(RungBudget))
             {
                 throw;
             }
 
-            log("stop: Outlook ended by itself while its S7 counts were read (" + StepFailure(ex).Message + ")");
+            log("stop: Outlook ended by itself while its S7 counts were read (" + ex.Message + ")");
             Thread.Sleep(SettleAfterExitMs);
             return true;
         }
@@ -509,7 +525,7 @@ public static class LiveOutlookRestart
         }
         catch (Exception ex) when (IsOutlookGoing(ex))
         {
-            log("stop: the session died under the Explorer close (" + DescribeGone(StepFailure(ex)) + ") - Outlook was already going");
+            log("stop: the session died under the Explorer close (" + DescribeGone(ex) + ") - Outlook was already going");
             return 0;
         }
     }
@@ -541,7 +557,7 @@ public static class LiveOutlookRestart
         }
         catch (Exception ex) when (IsOutlookGoing(ex))
         {
-            log("stop: the session died while showing an Explorer (" + DescribeGone(StepFailure(ex)) + ") - Outlook was already going");
+            log("stop: the session died while showing an Explorer (" + DescribeGone(ex) + ") - Outlook was already going");
             return null;
         }
 
@@ -586,28 +602,10 @@ public static class LiveOutlookRestart
         return ex is COMException com ? "0x" + com.HResult.ToString("X8", CultureInfo.InvariantCulture) : ex.GetType().Name;
     }
 
-    /// <summary>
-    /// The failure a step threw itself, out of the <see cref="AggregateException"/> that <see cref="Bounded{T}"/>
-    /// passes it on in: <c>Task.Wait</c> throws a faulted task's failure wrapped, before <c>GetResult</c> is reached.
-    /// The stop's catches test the step's own failure, and saw only the wrapper until the Q149 smoke of 2026-11-18 on
-    /// OutlookAI-Indexed failed on one. Pure.
-    /// </summary>
-    internal static Exception StepFailure(Exception ex)
-    {
-        ArgumentNullException.ThrowIfNull(ex);
-        while (ex is AggregateException aggregate && aggregate.InnerExceptions.Count == 1)
-        {
-            ex = aggregate.InnerExceptions[0];
-        }
-
-        return ex;
-    }
-
     /// <summary>A rung's call that failed because Outlook is going away under it - or is already gone.</summary>
     private static bool IsOutlookGoing(Exception ex)
     {
-        Exception failure = StepFailure(ex);
-        return IsSessionGone(failure) || (failure is InvalidOperationException && OutlookProcessCount() == 0);
+        return IsSessionGone(ex) || (ex is InvalidOperationException && OutlookProcessCount() == 0);
     }
 
     private static void QuitFromAnEmptyClient()
