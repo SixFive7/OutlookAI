@@ -203,13 +203,50 @@ function Stop-Refused([string] $Why) {
 }
 
 # A run directory's name: when the run started, what it ran where the runner names that - a guest's
-# kind, a probe's scenario - and the first 12 characters of the commit. Sortable, unique per second and
-# commit, and readable in a directory listing. Anything but a commit id is refused.
+# kind, a probe's scenario - and the first 12 characters of the commit. Sortable and readable in a
+# directory listing, but not unique: two runs of one commit started in the same second get the same
+# name, which New-RunDirectory then tells apart. Anything but a commit id is refused.
 function New-RunId {
     param([DateTime] $When, [string] $Sha, [string] $Label = '')
     if ($Sha -notmatch '^[0-9a-f]{12,40}$') { throw "Not a commit id: '$Sha'." }
     if ($Label) { return ('{0:yyyyMMdd-HHmmss}-{1}-{2}' -f $When, $Label, $Sha.Substring(0, 12)) }
     return ('{0:yyyyMMdd-HHmmss}-{1}' -f $When, $Sha.Substring(0, 12))
+}
+
+# A run's own directory under -Parent, made so that no other run can have it, before anything is named
+# after the run. The directory is made under a name nobody else uses and then renamed to -RunId; a
+# rename fails when the name is taken, which New-Item -Force never does, and a taken name gets -2, then
+# -3, and so on. Two runs of one commit started in the same second shared one directory until
+# 2026-11-18: stream K2's two indexed runs at 12:14:18 wrote one log, one's git worktree add failed, and
+# the other's build failed when the first deleted the tree. Returns RunId - the name the run goes by
+# from here on - and Path, the directory's full path. -Parent is made when it is missing.
+function New-RunDirectory {
+    param([Parameter(Mandatory = $true)] [string] $Parent, [Parameter(Mandatory = $true)] [string] $RunId, [int] $MaxTries = 99)
+    if ($RunId -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$') { throw "Not a run id: '$RunId'." }
+    if (-not (Test-Path -LiteralPath $Parent)) { New-Item -ItemType Directory -Force -Path $Parent | Out-Null }
+    $parentFull = (Resolve-Path -LiteralPath $Parent).ProviderPath
+    $claim = Join-Path $parentFull ('.claim-' + [guid]::NewGuid().ToString('N'))
+    [void][System.IO.Directory]::CreateDirectory($claim)
+    try {
+        for ($n = 1; $n -le $MaxTries; $n++) {
+            $id = $RunId
+            if ($n -gt 1) { $id = '{0}-{1}' -f $RunId, $n }
+            $path = Join-Path $parentFull $id
+            try {
+                [System.IO.Directory]::Move($claim, $path)
+                return [pscustomobject]@{ RunId = $id; Path = $path }
+            }
+            catch {
+                # Taken: the name is there. Anything else - the parent gone, no access - is no reason to
+                # try the next name.
+                if (-not (Test-Path -LiteralPath $path)) { throw }
+            }
+        }
+        throw "REFUSING: $RunId and the $($MaxTries - 1) names after it are all taken under $parentFull."
+    }
+    finally {
+        if (Test-Path -LiteralPath $claim) { Remove-Item -LiteralPath $claim -Recurse -Force -ErrorAction SilentlyContinue }
+    }
 }
 
 # What a TRX file says. Outcomes are counted from the results themselves, and the file's own
