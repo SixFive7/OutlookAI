@@ -892,7 +892,11 @@ its mailbox tests on, and change nothing you install.
   Smaller copies went the same way: the in-memory prompt registry (`FakePromptRegistry`, which also
   replaces the narrower one `PromptLintTests` kept), the setter of a stand-in's out parameter
   (`ProxyArgs`), settings naming only the hub (`HubOnlyLiveSettings`) and a PST store's EntryID
-  (`TestFolders.PstStoreEntryId`). No test changed what it checks: the build machine ran the same
+  (`TestFolders.PstStoreEntryId`). Six suites around the sweep and the exhaustive scan spelled out
+  the same one-mailbox profile - its SID, store, index prefix and frontier - and three of them its
+  mail, its sweep, an exhaustive search of its Inbox and a session that answers the store list, the
+  sweep and the scan as well: `AliceMailbox` holds it once, and `ThreadWalks` the conversation walks
+  three thread suites each built. No test changed what it checks: the build machine ran the same
   tests, by name, before and after each step.
 
 - ✅ **A live run that starts Outlook closes Office's activation wizard and records it.**
@@ -1593,6 +1597,15 @@ its mailbox tests on, and change nothing you install.
   folder - Calendar, Quick Step Settings, the mailbox's top level, emptied folders in Deleted
   Items - beside the mail, and none of them could be opened. On the test machine they were 21 of the
   first 100 results.
+
+- ✅ **The build machine's run summaries never print a duration as "1 m 60 s"; seconds round down.**
+  `Testbed/host/Invoke-TestsOnBuildVm.ps1` rounded the seconds of a duration to the nearest whole
+  one after taking the minutes, so 119.6 s read "1 m 60 s" in `summary.txt`, the run log and the
+  history line; under a minute it rounded too, so 59.6 s read "60 s". The live-tier runner's copy of
+  the same function rounded down. One copy is left, in `Testbed/guest/ScriptHelpers.ps1` with the
+  other helpers the scripts share, rounding down at every step, and the build-VM runner uses it; its
+  self-test now pins 59.6 s and 119.6 s. The live-tier runner keeps its copy until its own helpers
+  fold (S7d), which `Tools/Checks/check-powershell-51.ps1` check 4 lists.
 
 - 📝 **The draft tools' descriptions say which drafts the tools can reach.**
   `update_draft` can revise any unsent draft in a Drafts folder, including one you wrote yourself,

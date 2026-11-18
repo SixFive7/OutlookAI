@@ -63,3 +63,13 @@ function Invoke-NativeCommand {
         throw
     }
 }
+
+# A duration as a person reads it: "45 s" under a minute, "4 m 05 s" from one minute on. Whole
+# seconds, rounded down at every step, so the seconds never read 60: the build-VM runner's copy
+# rounded them instead and printed 119.6 s as "1 m 60 s".
+function Format-Seconds {
+    param([double] $Seconds)
+    $whole = [int][Math]::Floor($Seconds)
+    if ($whole -lt 60) { return ('{0} s' -f $whole) }
+    return ('{0} m {1:00} s' -f [int][Math]::Floor($whole / 60), ($whole % 60))
+}

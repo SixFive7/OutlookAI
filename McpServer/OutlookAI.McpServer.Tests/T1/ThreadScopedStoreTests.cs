@@ -9,6 +9,8 @@ using OutlookAI.Core.Services;
 
 using Xunit;
 
+using static OutlookAI.McpServer.Tests.ThreadWalks;
+
 namespace OutlookAI.McpServer.Tests.T1;
 
 /// <summary>
@@ -184,7 +186,7 @@ public sealed class ThreadScopedStoreTests
     public void TheSentence_NamesTheScope_TheWalkedStore_AndWithdrawsTheStrongerClaim()
     {
         string line = Assert.Single(MailService.DescribeThreadCoverage(
-            Unqueried(), FreshMerge.FreshnessPartial, AliceStore, scopeWidened: false, top: 50)!);
+            Unqueried(AliceStore, BobStore), FreshMerge.FreshnessPartial, AliceStore, scopeWidened: false, top: 50)!);
 
         Assert.Contains(AliceStore, line, StringComparison.Ordinal);
         Assert.Contains(BobStore, line, StringComparison.Ordinal);
@@ -198,7 +200,7 @@ public sealed class ThreadScopedStoreTests
     public void TheSentence_TellsACallerWhoCHOSETheScope_ToDropIt()
     {
         string line = Assert.Single(MailService.DescribeThreadCoverage(
-            Unqueried(), FreshMerge.FreshnessPartial, AliceStore, scopeWidened: false, top: 50)!);
+            Unqueried(AliceStore, BobStore), FreshMerge.FreshnessPartial, AliceStore, scopeWidened: false, top: 50)!);
 
         Assert.Contains("without store", line, StringComparison.Ordinal);
         Assert.DoesNotContain("DERIVED", line, StringComparison.Ordinal);
@@ -214,7 +216,7 @@ public sealed class ThreadScopedStoreTests
         // The sentence must not offer it: advice for a state the code cannot be in is worse
         // than none, because a caller who follows it sees the warning stay.
         string line = Assert.Single(MailService.DescribeThreadCoverage(
-            Unqueried(), FreshMerge.FreshnessPartial, AliceStore, scopeWidened: false, top: 50)!);
+            Unqueried(AliceStore, BobStore), FreshMerge.FreshnessPartial, AliceStore, scopeWidened: false, top: 50)!);
 
         Assert.Contains("without store", line, StringComparison.Ordinal);
         Assert.DoesNotContain("conversation_id", line, StringComparison.Ordinal);
@@ -391,26 +393,6 @@ public sealed class ThreadScopedStoreTests
     }
 
     // ================================================================== fixtures
-
-    private static ThreadLiveInfo Walked(string? anchorStore)
-    {
-        return new ThreadLiveInfo
-        {
-            Performed = true,
-            MembersWalked = 3,
-            MembersAdded = 3,
-            AnchorStore = anchorStore,
-        };
-    }
-
-    /// <summary>A walk of Alice's store with Bob's named as never asked about.</summary>
-    private static ThreadLiveInfo Unqueried()
-    {
-        ThreadLiveInfo live = Walked(AliceStore);
-        live.StoresNotQueried = new[] { BobStore };
-        live.CoverageGaps = new[] { FreshMerge.ThreadGapUnqueriedStore };
-        return live;
-    }
 
     private static MailService Service(
         StubIndexClient index,

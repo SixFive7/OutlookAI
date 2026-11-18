@@ -1680,12 +1680,16 @@
   the survey's T01, T02 and T04 (the stand-ins for Outlook's connection and for the search index),
   T07 (repository paths; four live-tier fixtures in `T2/` still read the test project's folder
   themselves), T08 (readers of compiled code and source text; ComposeOnReopenedDraftTests and
-  ReadOnlyFolderLookupTests keep member cutters with declaration rules of their own) and T09 (but
-  for the registry helpers of the live tier's `T2/` files, which wait for the live step).
+  ReadOnlyFolderLookupTests keep member cutters with declaration rules of their own), T09 (but
+  for the registry helpers of the live tier's `T2/` files, which wait for the live step) and T05
+  (the sweep and scan suites' one-mailbox profile, `AliceMailbox`, and the thread suites' walks,
+  `ThreadWalks`; six more suites - the thread, unindexed-store and folder-walk ones - still spell
+  that mailbox's SID, prefix and frontier under names of their own, beside stores of their own).
   PowerShell, into `Testbed/guest/ScriptHelpers.ps1` (decision 215 (a)), held there by
-  check-powershell-51 check 4: P01's `Invoke-NativeCommand` for 13 of its 17 copies -
-  Invoke-LiveTierOnGuest.ps1 and Invoke-TrustRemovalProbe.ps1 fold with S7d, Build-Corpus.ps1 and
-  Reset-HubPopulation.ps1 with S7c, and the check lists them until they do.
+  check-powershell-51 check 4: P01's `Invoke-NativeCommand` for 13 of its 17 copies, and P09's
+  `Format-Seconds`, the build-VM runner's copy of which rounded 119.6 s to "1 m 60 s".
+  Invoke-LiveTierOnGuest.ps1 and Invoke-TrustRemovalProbe.ps1 fold with the rest of S7d,
+  Build-Corpus.ps1 and Reset-HubPopulation.ps1 with S7c, and the check lists them until they do.
 
 - [ ] **Let the add-in's AI choose the signature by itself, once the add-in uses OutlookAI.Core (Q158
   and Q162, decided 2026-11-17).** Signatures are managed through the MCP server only; the add-in
