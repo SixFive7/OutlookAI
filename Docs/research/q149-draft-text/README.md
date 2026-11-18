@@ -119,8 +119,14 @@ cold start of that run (Q180 (b)). These cells measure the product as it then dr
 | **P1** | The product's drafts in a window-less Outlook, through update_draft: each draft's route (direct or the promotion), every window Windows showed, every change of foreground; then the session ends - the last session out - and Outlook's exit is watched; the commits re-read | 3 starts x 10 | `LiveQ149WindowlessComposeTests` |
 | P2 | Two product sessions in one window-less Outlook: the first drafts and so makes the pin, the second drafts on it, the first leaves - Outlook must stay up - and the last out closes a pin it did not make | 1 start, 5 drafts | the same |
 | P3 | A COM-started Outlook in which an Explorer was then displayed (parked off-screen): every product draft must read directly, activate nothing and make no pin | 5 | the same |
+| P4 | P1 while a person types: a window of the test's own holds the foreground and types a character no draft holds, every 40 ms, from just before each draft until it returns; where every key went - that window, Outlook, or the stored draft | 2 starts x 5 | the same |
+| P5 | P3 while a person types, as in P4 | 5 | the same |
 | **Q211** | A draft saved with no inspector (new mail, reply, forward), re-opened and displayed - Outlook's own compose window - typed into at Outlook's insertion point through Word (`Selection.TypeText`, `TypeParagraph`), its layout read and the window closed discarding; beside it the product's drafts of the same text, with no signature and with the test signature | 2 rounds x 3 kinds x 3 | `LiveQ149TypedTextTests` |
-| Q180 | Every cold start of these cells: the time until Outlook first answered, `OutlookLiveness`'s verdict every 100 ms from the start request until 2 s after, the milestones, and any step that did not return within its budget | every start | both |
+| Q180 | Every cold start of these cells: the time until Outlook first answered, `OutlookLiveness`'s verdict every 100 ms from the start request until 2 s after, the milestones, and any step that did not return within its budget; and every OUTLOOK.EXE that started during the run, from its creation until it answered | every start | both |
+
+In P1 to P5 a small window of the test's own takes the foreground before each draft, standing in for the
+program a person is typing in, and a hook on every foreground change of the desktop records where the
+foreground went during the draft and for how long it was not on that window.
 
 ### What is not run, and why
 
@@ -148,8 +154,10 @@ and each class's `Smoke_*` test runs every cell once (`&FullyQualifiedName~Smoke
 window-less cell is a test of its own (`L1_...`, `L1c_...`, `L2_...`, `W2_...` to `W7_...`), so a run can
 take a group of them by name - `&(FullyQualifiedName~.L1_|FullyQualifiedName~.L1c_)` - and stay short.
 The measurement was run that way: one group of cells per run, with `-Kind Unindexed` or `-Kind Indexed`
-so that the runs spread over both guests of a kind. Stage 4 runs as one group:
-`-FilterSuffix '&(FullyQualifiedName~.P1_|FullyQualifiedName~.P2_|FullyQualifiedName~.P3_|FullyQualifiedName~.Q211_)'`. On the frozen checkpoints of 2026-10-03 a run's guest
+so that the runs spread over both guests of a kind. Stage 4 runs as two groups,
+`-FilterSuffix '&(FullyQualifiedName~.P1_|FullyQualifiedName~.P2_|FullyQualifiedName~.P3_|FullyQualifiedName~.P4_|FullyQualifiedName~.P5_)'`
+and `-FilterSuffix '&FullyQualifiedName~.Q211_'`: a run whose test process does not end is fetched with
+nothing, so a Q211 that blocked would take the P cells' lines with it. On the frozen checkpoints of 2026-10-03 a run's guest
 account stopped answering about 40 minutes after the restore, and the first smoke run lost its results
 that way; every run in the results is on the checkpoints recorded since, `CP-16B` and `CP-22C`.
 
