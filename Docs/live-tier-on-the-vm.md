@@ -5585,6 +5585,9 @@ windowed Outlook, its main window as Outlook opened it on the Inbox. Each other 
 | NoFormPage | the drafts are made through the object model the product's direct way - Reply() or Forward() saved, re-opened by EntryID, the editor read, a line put above the quote, `Close(olSave)` - without `ModifiedFormPages.Add("Message")` |
 | BareCreators | only `Reply()` or `Forward()` on the source, the result released unsaved: nothing is written |
 
+`-HuntVariant LegsOtherFolder` runs the legs above instead, each round after a step of the same test,
+`CalendarOnly`, that moves the main window to the Calendar and makes nothing.
+
 Only the hunt's suite script sets the variables that name a variant, its leg minutes and whether a window is shown
 before each draft (`T2/HuntPlan.cs`), so the loop writes a NOT RUN line and makes nothing in any other run. With
 `-HuntShowEach`, every draft of the loop comes after a compose window shown and closed: a reply or forward the object

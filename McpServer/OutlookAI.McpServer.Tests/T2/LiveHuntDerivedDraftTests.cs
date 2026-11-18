@@ -83,6 +83,16 @@ public sealed class LiveHuntDerivedDraftTests
         // The source is sent and arrives in an Outlook with its window up - the runner's, or one started the way a
         // user starts it - in every variant: a window-less Outlook is had only after it.
         LiveComposeProbe.EnsureWindowedOutlook(Run.Settings, Run.Log);
+        if (plan.Maker == HuntMaker.None)
+        {
+            // The CalendarOnly step: the main window moved, said, and nothing made.
+            using Q149OutlookClient mover = Q149OutlookClient.Connect(new Stopwatch(), allowStart: false);
+            Q149Attempt step = new(plan.Cell + "-outlook", 0);
+            step.Set("moved", MoveMainWindowToTheCalendar(mover)).Set("mainWindow", DescribeMainWindow(mover)).Set("visibleWindows", WindowProbe.VisibleOutlookWindows().Count);
+            Run.Write(step);
+            return;
+        }
+
         string sourceEntryId = Q149Drafts.SeedSelfSentSource(Run, "hunt-source", out _);
         if (plan.Windowless)
         {

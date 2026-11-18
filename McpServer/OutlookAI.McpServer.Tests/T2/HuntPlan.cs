@@ -16,6 +16,9 @@ public enum HuntMaker
 
     /// <summary>Reply() or Forward() on the source, and what it returned released unsaved: Outlook's creator alone.</summary>
     Bare,
+
+    /// <summary>No draft at all: the step only moves the main window (<see cref="HuntPlan.CalendarStep"/>).</summary>
+    None,
 }
 
 /// <summary>
@@ -40,6 +43,12 @@ public sealed class HuntPlan
 
     /// <summary>The longest leg: two hours, beyond any run's own time limit.</summary>
     public const int MostLegMinutes = 120;
+
+    /// <summary>
+    /// The step the runner's LegsOtherFolder puts before the typed-text tests in every round: the main window moved to
+    /// the Calendar, and no draft - so the tests the crashes struck in run with no mail of the Inbox on screen.
+    /// </summary>
+    public const string CalendarStep = "CalendarOnly";
 
     /// <summary>How many failed drafts in a row end a leg whose Outlook is still running.</summary>
     public const int MostFailuresInARow = 5;
@@ -135,6 +144,8 @@ public sealed class HuntPlan
                 return new HuntPlan(variant, HuntMaker.NoFormPage, windowless: false, showsCalendar: false, minutes, shows);
             case "BareCreators":
                 return new HuntPlan(variant, HuntMaker.Bare, windowless: false, showsCalendar: false, minutes, shows);
+            case CalendarStep:
+                return new HuntPlan(variant, HuntMaker.None, windowless: false, showsCalendar: true, minutes, showsEach: false);
             default:
                 why = "'" + variant + "' is no hunting variant: " + string.Join(", ", Variants);
                 return null;

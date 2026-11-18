@@ -294,7 +294,8 @@ its mailbox tests on, and change nothing you install.
   and the summary says how many rounds ran. Off by default, so no ordinary run has a debugger
   attached, and refused on the Exchange VM, with a filter or with a signature step; the runner's and
   the debugger's self-tests pin the switch, the module and every decision (runbook section 4.15).
-  `-HuntVariant` narrows the trigger down. Legs, the default, is the run above. Every other variant
+  `-HuntVariant` narrows the trigger down. Legs, the default, is the run above, and LegsOtherFolder
+  runs the same tests after a step that moves the main window to the Calendar. Every other variant
   runs `T2/LiveHuntDerivedDraftTests` instead, which makes derived drafts in a loop for
   `-HuntLegMinutes` (10 by default) or until Outlook ends, and writes one line per draft, so a run
   counts the drafts before a crash. ProductLoop, the control, makes the product's replies and forwards

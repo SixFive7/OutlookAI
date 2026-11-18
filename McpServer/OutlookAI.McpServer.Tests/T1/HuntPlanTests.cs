@@ -32,6 +32,20 @@ public sealed class HuntPlanTests
         Assert.False(plan.ShowsEach);
     }
 
+    [Fact]
+    public void TheCalendarStep_MovesTheMainWindowAndMakesNothing()
+    {
+        HuntPlan? plan = HuntPlan.Parse(HuntPlan.CalendarStep, "1", "0", out string? why);
+
+        Assert.NotNull(plan);
+        Assert.Null(why);
+        Assert.Equal(HuntMaker.None, plan!.Maker);
+        Assert.True(plan.ShowsCalendar);
+        Assert.False(plan.Windowless);
+        Assert.False(plan.ShowsEach);
+        Assert.DoesNotContain(HuntPlan.CalendarStep, HuntPlan.Variants);
+    }
+
     [Theory]
     [InlineData(null, false)]
     [InlineData("", false)]
@@ -84,7 +98,8 @@ public sealed class HuntPlanTests
         Assert.True(set.Success, "the runner's -HuntVariant, with its ValidateSet and its default Legs, was not found");
         string[] offered = Regex.Matches(set.Groups[1].Value, "'([^']+)'").Select(m => m.Groups[1].Value).ToArray();
 
-        Assert.Equal(new[] { "Legs" }.Concat(HuntPlan.Variants).ToArray(), offered);
+        Assert.Equal(new[] { "Legs", "LegsOtherFolder" }.Concat(HuntPlan.Variants).ToArray(), offered);
+        Assert.Contains("'LegsOtherFolder' { return '" + HuntPlan.CalendarStep + "' }", runner, StringComparison.Ordinal);
         Assert.Contains("$HuntVariantVariable = '" + HuntPlan.VariantVariable + "'", runner, StringComparison.Ordinal);
         Assert.Contains("$HuntLegMinutesVariable = '" + HuntPlan.LegMinutesVariable + "'", runner, StringComparison.Ordinal);
         Assert.Contains("$HuntShowEachVariable = '" + HuntPlan.ShowEachVariable + "'", runner, StringComparison.Ordinal);

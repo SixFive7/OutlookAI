@@ -202,7 +202,8 @@
 
 .PARAMETER HuntVariant
     With -HuntFirstChance: what each round runs (the coordinator's direction of 2026-11-18, option (b); runbook
-    section 4.15). Legs, the default, runs the tests the crashes struck in, as before. Every other value runs one leg a
+    section 4.15). Legs, the default, runs the tests the crashes struck in, as before. LegsOtherFolder runs them too,
+    each round after a step that moves the main window to the Calendar. Every other value runs one leg a
     round, T2.LiveHuntDerivedDraftTests, which makes derived drafts in a loop for -HuntLegMinutes or until Outlook ends,
     one attempt line a draft: ProductLoop, the control - the product's reply_draft and forward_draft in the windowed
     Outlook; OtherFolder - the same with the main window on the Calendar; NoWindow - the same in an Outlook COM started,
@@ -276,7 +277,7 @@ param(
     [Parameter(ParameterSetName = 'Run')] [switch] $HuntFirstChance,
     [Parameter(ParameterSetName = 'Run')] [int] $HuntRounds = 20,
     [Parameter(ParameterSetName = 'Run')] [int] $HuntMinutes = 60,
-    [Parameter(ParameterSetName = 'Run')] [ValidateSet('Legs', 'ProductLoop', 'OtherFolder', 'NoWindow', 'NoFormPage', 'BareCreators')] [string] $HuntVariant = 'Legs',
+    [Parameter(ParameterSetName = 'Run')] [ValidateSet('Legs', 'LegsOtherFolder', 'ProductLoop', 'OtherFolder', 'NoWindow', 'NoFormPage', 'BareCreators')] [string] $HuntVariant = 'Legs',
     [Parameter(ParameterSetName = 'Run')] [int] $HuntLegMinutes = 10,
     [Parameter(ParameterSetName = 'Run')] [switch] $HuntWithoutAddIn,
     [Parameter(ParameterSetName = 'Run')] [switch] $HuntShowEach,
@@ -462,7 +463,7 @@ function Get-HuntRefusal {
         if ($ShowEach) { return "-HuntShowEach is a hunting run's: give -HuntFirstChance and a -HuntVariant with it." }
         return ''
     }
-    if ($ShowEach -and (-not $Variant -or $Variant -eq 'Legs')) { return '-HuntShowEach shows a window before each draft of a loop: give a -HuntVariant other than Legs, whose typed-text tests show their own.' }
+    if ($ShowEach -and -not (Test-HuntLoopVariant $Variant)) { return '-HuntShowEach shows a window before each draft of a loop: give a -HuntVariant other than Legs and LegsOtherFolder, whose typed-text tests show their own.' }
     if ($WithoutAddIn -and $WithAddIn) { return '-HuntWithoutAddIn turns the add-in off and -WithAddIn installs it: give one.' }
     if ($Exchange) { return '-HuntFirstChance attaches a debugger to Outlook and writes its whole memory to a dump: never on the Exchange VM, whose Outlook holds a real mailbox.' }
     if ($Filter -or $FilterSuffix) { return '-HuntFirstChance runs its own tests, the ones the crashes of 2026-11-18 struck in: give no -Filter or -FilterSuffix.' }
@@ -470,7 +471,7 @@ function Get-HuntRefusal {
     if ($Rounds -lt 1 -or $Rounds -gt 100) { return "-HuntRounds must be 1 to 100, not $Rounds." }
     $most = $RunTimeoutMinutes - 15
     if ($Minutes -lt 1 -or $Minutes -gt $most) { return "-HuntMinutes must be 1 to $most - inside the run's time limit of $RunTimeoutMinutes minutes, with room for the build and the stop - not $Minutes." }
-    if ($Variant -and $Variant -ne 'Legs' -and ($LegMinutes -lt 1 -or $LegMinutes -gt $Minutes)) { return "-HuntLegMinutes must be 1 to -HuntMinutes ($Minutes), not $LegMinutes." }
+    if ((Test-HuntLoopVariant $Variant) -and ($LegMinutes -lt 1 -or $LegMinutes -gt $Minutes)) { return "-HuntLegMinutes must be 1 to -HuntMinutes ($Minutes), not $LegMinutes." }
     return ''
 }
 
@@ -487,7 +488,25 @@ function Get-AddInOffScript {
 function Get-HuntLegs {
     param([string] $Variant)
     if (-not $Variant -or $Variant -eq 'Legs') { return $HuntLegs }
+    if ($Variant -eq 'LegsOtherFolder') { return [ordered]@{ calendar = $HuntLoopLeg; typed = $HuntLegs['typed']; drafts = $HuntLegs['drafts'] } }
     return [ordered]@{ loop = $HuntLoopLeg }
+}
+
+# The variant the hunting test is told for a runner's -HuntVariant: none for Legs, whose legs are not the test's;
+# CalendarOnly for LegsOtherFolder, the step before its legs (T2.HuntPlan.CalendarStep); the loop's own name else. Pure.
+function Get-HuntTestVariant {
+    param([string] $Variant)
+    switch ($Variant) {
+        'Legs' { return '' }
+        'LegsOtherFolder' { return 'CalendarOnly' }
+        default { return $Variant }
+    }
+}
+
+# Whether a runner's -HuntVariant runs the loop: every one but the two that run the tests the crashes struck in. Pure.
+function Test-HuntLoopVariant {
+    param([string] $Variant)
+    return [bool]($Variant -and $Variant -ne 'Legs' -and $Variant -ne 'LegsOtherFolder')
 }
 
 # The suite's script for a hunting run. The debugger is started through the shell (Start-Process), so it inherits
@@ -499,7 +518,8 @@ function Get-HuntSuiteScript {
     param([string] $OptIn, [string] $GuestRunDir, [string] $GuestRoot, [System.Collections.IDictionary] $Filters, [int] $Rounds, [int] $Minutes, [string] $Module, [string] $DumpDir, [string] $ScriptName, [string] $Variant = 'Legs', [int] $LegMinutes = 10, [bool] $ShowEach = $false)
     $legLines = (@($Filters.Keys) | ForEach-Object { "`$legs += ,@('$_', '$($Filters[$_])')" }) -join "`r`n"
     $variantLines = ''
-    if ($Variant -and $Variant -ne 'Legs') { $variantLines = "`$env:$HuntVariantVariable = '$Variant'`r`n`$env:$HuntLegMinutesVariable = '$LegMinutes'`r`n`$env:$HuntShowEachVariable = '$([int]$ShowEach)'`r`n" }
+    $testVariant = Get-HuntTestVariant $Variant
+    if ($testVariant) { $variantLines = "`$env:$HuntVariantVariable = '$testVariant'`r`n`$env:$HuntLegMinutesVariable = '$LegMinutes'`r`n`$env:$HuntShowEachVariable = '$([int]$ShowEach)'`r`n" }
     return @"
 $variantLines`$env:OUTLOOKAI_LIVE_OPT_IN = '$OptIn'
 `$env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'; `$env:DOTNET_NOLOGO = '1'; `$env:MSBUILDDISABLENODEREUSE = '1'
@@ -1336,6 +1356,10 @@ STACK      the faulting thread
     $variantParam = @($paramAst | Where-Object { $_.Name.VariablePath.UserPath -eq 'HuntVariant' })
     Check 'the variant is Legs unless given - the tests the crashes struck in, as before' 'Legs' ([string]$variantParam[0].DefaultValue.Value)
     Check 'Legs runs those legs, and every other variant the one loop leg' 'typed|drafts|loop' "$(@((Get-HuntLegs 'Legs').Keys) -join '|')|$(@((Get-HuntLegs 'NoWindow').Keys) -join '|')"
+    Check 'LegsOtherFolder runs the calendar step before the tests the crashes struck in' 'calendar|typed|drafts' (@((Get-HuntLegs 'LegsOtherFolder').Keys) -join '|')
+    Check 'and tells the hunting test the step, CalendarOnly; Legs tells it nothing; a loop its own name' 'CalendarOnly||NoWindow' "$(Get-HuntTestVariant 'LegsOtherFolder')|$(Get-HuntTestVariant 'Legs')|$(Get-HuntTestVariant 'NoWindow')"
+    $folderHunt = Get-HuntSuiteScript -OptIn 'OAI-INDEXED' -GuestRunDir 'C:\r' -GuestRoot 'C:\g' -Filters ([ordered]@{ calendar = 'F&L'; typed = 'F&A'; drafts = 'F&(B|C)' }) -Rounds 20 -Minutes 60 -Module 'mso40uiwin32client.dll' -DumpDir 'C:\d' -ScriptName $FirstChanceScript -Variant 'LegsOtherFolder' -LegMinutes 1
+    Check 'whose suite script names the step to the test and runs the step first each round' $true ($folderHunt.StartsWith("`$env:OUTLOOKAI_HUNT_VARIANT = 'CalendarOnly'`r`n") -and $folderHunt.IndexOf("`$legs += ,@('calendar'") -lt $folderHunt.IndexOf("`$legs += ,@('typed'"))
     Check 'the loop leg is the hunting test''s class' '&FullyQualifiedName~OutlookAI.McpServer.Tests.T2.LiveHuntDerivedDraftTests' ((Get-HuntLegs 'BareCreators')['loop'])
     Check 'a variant without the hunt is refused' $true ((Get-HuntRefusal $false $false '' '' '' $false 20 60 120 'NoWindow' 10) -match 'give -HuntFirstChance')
     Check 'a leg is 1 to -HuntMinutes minutes' '1|1|' "$([int][bool](Get-HuntRefusal $true $false '' '' '' $false 20 60 120 'ProductLoop' 0))|$([int][bool](Get-HuntRefusal $true $false '' '' '' $false 20 60 120 'ProductLoop' 61))|$(Get-HuntRefusal $true $false '' '' '' $false 20 60 120 'ProductLoop' 60)"
@@ -2106,7 +2130,7 @@ Copy-Item -LiteralPath '$GuestPayloadDir\live-test-settings.json' -Destination '
     }
     if ($HuntFirstChance) {
         $liveScript = Get-HuntSuiteScript -OptIn $facts.ComputerName -GuestRunDir $guestRunDir -GuestRoot $GuestRoot -Filters $huntFilters -Rounds $HuntRounds -Minutes $HuntMinutes -Module $HuntModule -DumpDir $GuestDumpDir -ScriptName $FirstChanceScript -Variant $HuntVariant -LegMinutes $HuntLegMinutes -ShowEach ([bool]$HuntShowEach)
-        Say "hunt: a debugger on every OUTLOOK.EXE, dumping the first first-chance access violation in $HuntModule; variant $HuntVariant, at most $HuntRounds round(s) of $(@($huntFilters.Keys) -join ' and ') in $HuntMinutes minute(s)$(if ($HuntVariant -ne 'Legs') { ", $HuntLegMinutes a leg" })"
+        Say "hunt: a debugger on every OUTLOOK.EXE, dumping the first first-chance access violation in $HuntModule; variant $HuntVariant, at most $HuntRounds round(s) of $(@($huntFilters.Keys) -join ' and ') in $HuntMinutes minute(s)$(if (Test-HuntLoopVariant $HuntVariant) { ", $HuntLegMinutes a leg" })"
     }
     else {
     $liveScript = @"
@@ -2260,7 +2284,7 @@ $summary['outlookStart'] = $outlookStart
 $summary['signatureSettings'] = $signatureSettingsState
 $summary['indexRoots'] = $indexRoots
 $huntDumps = @(@($crashDumpState['files']) | Where-Object { [string]$_['name'] -match 'chance\.dmp$' } | ForEach-Object { [string]$_['name'] })
-if ($HuntFirstChance) { $summary['hunt'] = [ordered]@{ module = $HuntModule; variant = $HuntVariant; showEach = [bool]$HuntShowEach; legMinutes = $(if ($HuntVariant -ne 'Legs') { $HuntLegMinutes } else { $null }); legs = $huntFilters; roundsAsked = $HuntRounds; minutes = $HuntMinutes; roundsRun = $huntRoundsRun; dumps = $huntDumps; office = $huntOffice; addIn = $huntAddIn; log = "results\$($facts.Name)\first-chance.log" } }
+if ($HuntFirstChance) { $summary['hunt'] = [ordered]@{ module = $HuntModule; variant = $HuntVariant; showEach = [bool]$HuntShowEach; legMinutes = $(if (Test-HuntLoopVariant $HuntVariant) { $HuntLegMinutes } else { $null }); legs = $huntFilters; roundsAsked = $HuntRounds; minutes = $HuntMinutes; roundsRun = $huntRoundsRun; dumps = $huntDumps; office = $huntOffice; addIn = $huntAddIn; log = "results\$($facts.Name)\first-chance.log" } }
 # ToArray(), never @(...): @() of a List[object] given to an [object[]] parameter fails with "Argument
 # types do not match" under Windows PowerShell 5.1 and PowerShell 7.7 alike (measured 2026-11-18).
 $summary['guestClock'] = New-GuestClockSummaryJson $guestClockRecords.ToArray()
