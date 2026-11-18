@@ -870,7 +870,7 @@ namespace OutlookAI.Core.Com
                 }
                 catch (COMException ex)
                 {
-                    capturedError = string.Format(CultureInfo.InvariantCulture, "COMException 0x{0:X8}", ex.HResult);
+                    capturedError = DescribeComFailure(ex);
                     return null;
                 }
                 catch (Exception ex) when (ex is InvalidOperationException || ex is ArgumentException
@@ -958,7 +958,7 @@ namespace OutlookAI.Core.Com
                 }
                 catch (COMException ex)
                 {
-                    reason = string.Format(CultureInfo.InvariantCulture, "COMException 0x{0:X8}", ex.HResult);
+                    reason = DescribeComFailure(ex);
                 }
                 finally
                 {
@@ -1068,7 +1068,7 @@ namespace OutlookAI.Core.Com
                     catch (COMException ex)
                     {
                         found = null;
-                        probeError = string.Format(CultureInfo.InvariantCulture, "COMException 0x{0:X8}", ex.HResult);
+                        probeError = DescribeComFailure(ex);
                     }
 
                     if (found != null)
@@ -1378,7 +1378,7 @@ namespace OutlookAI.Core.Com
                 }
                 catch (COMException ex)
                 {
-                    capturedError = string.Format(CultureInfo.InvariantCulture, "COMException 0x{0:X8}", ex.HResult);
+                    capturedError = DescribeComFailure(ex);
                     return null;
                 }
                 finally
@@ -1522,7 +1522,7 @@ namespace OutlookAI.Core.Com
                 }
                 catch (COMException ex)
                 {
-                    capturedError = string.Format(CultureInfo.InvariantCulture, "COMException 0x{0:X8}", ex.HResult);
+                    capturedError = DescribeComFailure(ex);
                     return null;
                 }
                 catch (Microsoft.CSharp.RuntimeBinder.RuntimeBinderException)
@@ -1650,7 +1650,7 @@ namespace OutlookAI.Core.Com
                 }
                 catch (COMException ex)
                 {
-                    capturedError = string.Format(CultureInfo.InvariantCulture, "COMException 0x{0:X8}", ex.HResult);
+                    capturedError = DescribeComFailure(ex);
                     return null;
                 }
                 catch (IOException ex)
@@ -3624,7 +3624,7 @@ namespace OutlookAI.Core.Com
                 }
                 catch (COMException ex)
                 {
-                    capturedError = string.Format(CultureInfo.InvariantCulture, "COMException 0x{0:X8}", ex.HResult);
+                    capturedError = DescribeComFailure(ex);
                     return null;
                 }
                 finally

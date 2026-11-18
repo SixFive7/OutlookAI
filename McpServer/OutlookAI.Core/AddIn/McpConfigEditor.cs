@@ -1131,15 +1131,14 @@ namespace OutlookAI.Core.AddIn
                     case 'b': sb.Append('\b'); break;
                     case 'f': sb.Append('\f'); break;
                     case 'u':
-                        if (i + 4 < s.Length)
+                        // Exactly four hex digits, as TryValidateJsonObject requires of a file: .NET's
+                        // hex number parsing, which read them until the code-sharing refactor's S5a,
+                        // let a space through, so "\u 41 " read as "A".
+                        if (i + 4 < s.Length && Hex.TryDecode(s.Substring(i + 1, 4), out byte[] unit))
                         {
-                            int code;
-                            if (int.TryParse(s.Substring(i + 1, 4), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out code))
-                            {
-                                sb.Append((char)code);
-                                i += 4;
-                                break;
-                            }
+                            sb.Append((char)((unit[0] << 8) | unit[1]));
+                            i += 4;
+                            break;
                         }
                         sb.Append(c);
                         break;

@@ -1,6 +1,7 @@
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
+using OutlookAI.Core.AddIn;
 
 namespace OutlookAI.McpServer.Tests.T2;
 
@@ -110,10 +111,10 @@ internal static class ScreenCapture
     {
         for (int attempt = 1; attempt <= ForegroundAttempts; attempt++)
         {
-            NativeMethods.SetForegroundWindow(window);
+            TestWin32.SetForegroundWindow(window);
             Thread.Sleep(RepaintDelayMs); // repaint after the z-order change
 
-            if (NativeMethods.GetForegroundWindow() != window)
+            if (TestWin32.GetForegroundWindow() != window)
             {
                 continue;
             }
@@ -121,10 +122,10 @@ internal static class ScreenCapture
             // Prefer the DWM extended frame bounds: GetWindowRect includes the invisible
             // resize border, whose pixels belong to whatever window lies BEHIND Outlook -
             // the frame bounds keep foreign content out of the capture entirely.
-            NativeMethods.RECT rect;
-            int hr = NativeMethods.DwmGetWindowAttribute(
-                window, NativeMethods.DWMWA_EXTENDED_FRAME_BOUNDS, out rect, Marshal.SizeOf<NativeMethods.RECT>());
-            if (hr != 0 && !NativeMethods.GetWindowRect(window, out rect))
+            NativeWindows.RECT rect;
+            int hr = TestWin32.DwmGetWindowAttribute(
+                window, TestWin32.DWMWA_EXTENDED_FRAME_BOUNDS, out rect, Marshal.SizeOf<NativeWindows.RECT>());
+            if (hr != 0 && !NativeWindows.GetWindowRect(window, out rect))
             {
                 throw new InvalidOperationException("GetWindowRect failed for the Outlook window.");
             }
@@ -148,7 +149,7 @@ internal static class ScreenCapture
                 // Re-verify BEFORE writing: a toast or an installer dialog can appear
                 // between the foreground check and CopyFromScreen, and that is exactly
                 // what would land in the image.
-                if (NativeMethods.GetForegroundWindow() != window)
+                if (TestWin32.GetForegroundWindow() != window)
                 {
                     continue;
                 }
@@ -167,22 +168,22 @@ internal static class ScreenCapture
     private static IntPtr FindOutlookWindowByCaptionFragment(string captionFragment)
     {
         IntPtr found = IntPtr.Zero;
-        NativeMethods.EnumWindows((hwnd, _) =>
+        NativeWindows.EnumWindows((hwnd, _) =>
         {
-            if (!NativeMethods.IsWindowVisible(hwnd))
+            if (!NativeWindows.IsWindowVisible(hwnd))
             {
                 return true;
             }
 
             var className = new System.Text.StringBuilder(64);
-            _ = NativeMethods.GetClassNameW(hwnd, className, className.Capacity);
+            _ = NativeWindows.GetClassNameW(hwnd, className, className.Capacity);
             if (!string.Equals(className.ToString(), OutlookExplorerWindowClass, StringComparison.Ordinal))
             {
                 return true;
             }
 
             var caption = new System.Text.StringBuilder(512);
-            _ = NativeMethods.GetWindowTextW(hwnd, caption, caption.Capacity);
+            _ = TestWin32.GetWindowTextW(hwnd, caption, caption.Capacity);
             if (caption.ToString().IndexOf(captionFragment, StringComparison.OrdinalIgnoreCase) >= 0)
             {
                 found = hwnd;
@@ -199,8 +200,8 @@ internal static class ScreenCapture
     {
         if (!string.IsNullOrEmpty(caption))
         {
-            IntPtr exact = NativeMethods.FindWindowW(OutlookExplorerWindowClass, caption);
-            if (exact != IntPtr.Zero && NativeMethods.IsWindowVisible(exact))
+            IntPtr exact = TestWin32.FindWindowW(OutlookExplorerWindowClass, caption);
+            if (exact != IntPtr.Zero && NativeWindows.IsWindowVisible(exact))
             {
                 return exact;
             }
@@ -210,21 +211,21 @@ internal static class ScreenCapture
         // (captions can change asynchronously while a search is populating).
         IntPtr best = IntPtr.Zero;
         long bestArea = 0;
-        NativeMethods.EnumWindows((hwnd, _) =>
+        NativeWindows.EnumWindows((hwnd, _) =>
         {
-            if (!NativeMethods.IsWindowVisible(hwnd))
+            if (!NativeWindows.IsWindowVisible(hwnd))
             {
                 return true;
             }
 
             var className = new System.Text.StringBuilder(64);
-            _ = NativeMethods.GetClassNameW(hwnd, className, className.Capacity);
+            _ = NativeWindows.GetClassNameW(hwnd, className, className.Capacity);
             if (!string.Equals(className.ToString(), OutlookExplorerWindowClass, StringComparison.Ordinal))
             {
                 return true;
             }
 
-            if (NativeMethods.GetWindowRect(hwnd, out NativeMethods.RECT r))
+            if (NativeWindows.GetWindowRect(hwnd, out NativeWindows.RECT r))
             {
                 long area = (long)(r.Right - r.Left) * (r.Bottom - r.Top);
                 if (area > bestArea)
@@ -238,69 +239,5 @@ internal static class ScreenCapture
         }, IntPtr.Zero);
 
         return best;
-    }
-
-    /// <summary>The test project's Win32 window imports: ScreenCapture's own, and UserVisibleWindows' too.</summary>
-    internal static class NativeMethods
-    {
-        [StructLayout(LayoutKind.Sequential)]
-        internal struct RECT
-        {
-            public int Left;
-            public int Top;
-            public int Right;
-            public int Bottom;
-        }
-
-        internal delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
-
-        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-        internal static extern IntPtr FindWindowW(string? lpClassName, string? lpWindowName);
-
-        [DllImport("user32.dll")]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        internal static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
-
-        [DllImport("user32.dll")]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        internal static extern bool SetForegroundWindow(IntPtr hWnd);
-
-        [DllImport("user32.dll")]
-        internal static extern IntPtr GetForegroundWindow();
-
-        [DllImport("user32.dll")]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        internal static extern bool IsWindowVisible(IntPtr hWnd);
-
-        [DllImport("user32.dll")]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        internal static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
-
-        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-        internal static extern int GetClassNameW(IntPtr hWnd, System.Text.StringBuilder lpClassName, int nMaxCount);
-
-        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-        internal static extern int GetWindowTextW(IntPtr hWnd, System.Text.StringBuilder lpString, int nMaxCount);
-
-        internal const int DWMWA_EXTENDED_FRAME_BOUNDS = 9;
-
-        [DllImport("dwmapi.dll")]
-        internal static extern int DwmGetWindowAttribute(IntPtr hwnd, int dwAttribute, out RECT pvAttribute, int cbAttribute);
-
-        /// <summary>Non-zero when DWM cloaks the window: drawn nowhere, though IsWindowVisible says TRUE.</summary>
-        internal const int DWMWA_CLOAKED = 14;
-
-        [DllImport("dwmapi.dll")]
-        internal static extern int DwmGetWindowAttribute(IntPtr hwnd, int dwAttribute, out int pvAttribute, int cbAttribute);
-
-        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-        internal static extern int GetWindowTextLengthW(IntPtr hWnd);
-
-        [DllImport("user32.dll")]
-        internal static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
-
-        [DllImport("user32.dll")]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        internal static extern bool IsIconic(IntPtr hWnd);
     }
 }

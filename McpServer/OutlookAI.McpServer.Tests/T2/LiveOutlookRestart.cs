@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text;
 using Microsoft.Win32;
+using OutlookAI.Core.AddIn;
 using OutlookAI.Core.Com;
 
 namespace OutlookAI.McpServer.Tests.T2;
@@ -684,21 +685,21 @@ internal static class WindowProbe
             return result;
         }
 
-        NativeMethods.EnumWindows((hwnd, _) =>
+        NativeWindows.EnumWindows((hwnd, _) =>
         {
-            if (!NativeMethods.IsWindowVisible(hwnd))
+            if (!NativeWindows.IsWindowVisible(hwnd))
             {
                 return true;
             }
 
-            NativeMethods.GetWindowThreadProcessId(hwnd, out uint pid);
+            NativeWindows.GetWindowThreadProcessId(hwnd, out uint pid);
             if (!outlookPids.Contains((int)pid))
             {
                 return true;
             }
 
             StringBuilder className = new(64);
-            _ = NativeMethods.GetClassName(hwnd, className, className.Capacity);
+            _ = NativeWindows.GetClassNameW(hwnd, className, className.Capacity);
             if (string.Equals(className.ToString(), "rctrl_renwnd32", StringComparison.Ordinal))
             {
                 result.Add(hwnd);
@@ -712,7 +713,7 @@ internal static class WindowProbe
     internal static void PostClose(IntPtr hwnd)
     {
         const uint WmClose = 0x0010;
-        _ = NativeMethods.PostMessage(hwnd, WmClose, IntPtr.Zero, IntPtr.Zero);
+        _ = TestWin32.PostMessageW(hwnd, WmClose, IntPtr.Zero, IntPtr.Zero);
     }
 
     /// <summary>Seconds since the interactive user's last keyboard/mouse input.</summary>
@@ -732,8 +733,6 @@ internal static class WindowProbe
 
     private static class NativeMethods
     {
-        internal delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
-
         [StructLayout(LayoutKind.Sequential)]
         internal struct LASTINPUTINFO
         {
@@ -744,23 +743,5 @@ internal static class WindowProbe
         [DllImport("user32.dll")]
         [return: MarshalAs(UnmanagedType.Bool)]
         internal static extern bool GetLastInputInfo(ref LASTINPUTINFO plii);
-
-        [DllImport("user32.dll")]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        internal static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
-
-        [DllImport("user32.dll")]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        internal static extern bool IsWindowVisible(IntPtr hWnd);
-
-        [DllImport("user32.dll")]
-        internal static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
-
-        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-        internal static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
-
-        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        internal static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
     }
 }

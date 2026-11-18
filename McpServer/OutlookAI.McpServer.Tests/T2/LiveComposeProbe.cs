@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text;
+using OutlookAI.Core.AddIn;
 using OutlookAI.Core.Com;
 using OutlookAI.Core.Services;
 
@@ -585,7 +586,7 @@ internal sealed class Q149ForegroundHolder : IDisposable
     public bool Created => _hwnd != IntPtr.Zero;
 
     /// <summary>True when the holder's window is the foreground window now.</summary>
-    public bool HasForeground => _hwnd != IntPtr.Zero && Q149Native.GetForegroundWindow() == _hwnd;
+    public bool HasForeground => _hwnd != IntPtr.Zero && TestWin32.GetForegroundWindow() == _hwnd;
 
     /// <summary>Where the foreground timelines stand now, in their milliseconds - pass it to <see cref="AwaySince"/> after a draft.</summary>
     public long Mark()
@@ -662,19 +663,19 @@ internal sealed class Q149ForegroundHolder : IDisposable
             return false;
         }
 
-        IntPtr current = Q149Native.GetForegroundWindow();
+        IntPtr current = TestWin32.GetForegroundWindow();
         if (current == _hwnd)
         {
             return true;
         }
 
         uint mine = Q149Native.GetCurrentThreadId();
-        uint theirs = current == IntPtr.Zero ? 0 : Q149Native.GetWindowThreadProcessId(current, out _);
+        uint theirs = current == IntPtr.Zero ? 0 : NativeWindows.GetWindowThreadProcessId(current, out _);
         bool attached = theirs != 0 && theirs != mine && AttachThreadInput(mine, theirs, true);
         try
         {
             _ = BringWindowToTop(_hwnd);
-            _ = SetForegroundWindow(_hwnd);
+            _ = TestWin32.SetForegroundWindow(_hwnd);
         }
         finally
         {
@@ -747,7 +748,7 @@ internal sealed class Q149ForegroundHolder : IDisposable
         _sampler?.Join(TimeSpan.FromSeconds(2));
         if (_hwnd != IntPtr.Zero)
         {
-            _ = PostMessage(_hwnd, WmClose, IntPtr.Zero, IntPtr.Zero);
+            _ = TestWin32.PostMessageW(_hwnd, WmClose, IntPtr.Zero, IntPtr.Zero);
         }
         else if (_threadId != 0)
         {
@@ -823,7 +824,7 @@ internal sealed class Q149ForegroundHolder : IDisposable
         };
         while (_typing)
         {
-            IntPtr foreground = Q149Native.GetForegroundWindow();
+            IntPtr foreground = TestWin32.GetForegroundWindow();
             if (foreground == IntPtr.Zero || (foreground != _hwnd && Q149Native.OutlookClassOf(foreground) == null))
             {
                 _skipped++;
@@ -857,7 +858,7 @@ internal sealed class Q149ForegroundHolder : IDisposable
         IntPtr last = new(-1);
         while (!_closing)
         {
-            IntPtr now = Q149Native.GetForegroundWindow();
+            IntPtr now = TestWin32.GetForegroundWindow();
             if (now != last)
             {
                 last = now;
@@ -993,14 +994,6 @@ internal sealed class Q149ForegroundHolder : IDisposable
 
     [DllImport("user32.dll")]
     private static extern void PostQuitMessage(int exitCode);
-
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool PostMessage(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
-
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool SetForegroundWindow(IntPtr hwnd);
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
@@ -1413,7 +1406,7 @@ internal sealed class Q149WindowWatch : IDisposable
                 _ => "other",
             };
 
-            if (what == "move" && !Q149Native.IsWindowVisible(hwnd))
+            if (what == "move" && !NativeWindows.IsWindowVisible(hwnd))
             {
                 // A hidden window moving - the product's own parking - is nothing anyone could see.
                 return;
@@ -1467,15 +1460,8 @@ internal static class Q149Native
     internal const uint WinEventOutOfContext = 0x0000;
     internal const uint GaRoot = 2;
     internal const uint WmQuit = 0x0012;
-    internal const int SwHide = 0;
     internal const int SwShowNoActivate = 4;
-    internal const uint SwpNoSize = 0x0001;
-    internal const uint SwpNoZOrder = 0x0004;
-    internal const uint SwpNoActivate = 0x0010;
-
     internal delegate void WinEventProc(IntPtr hook, uint eventType, IntPtr hwnd, int idObject, int idChild, uint thread, uint time);
-
-    internal delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr lParam);
 
     /// <summary>One top-level window of OUTLOOK.EXE.</summary>
     internal sealed record TopWindow(IntPtr Handle, string ClassName, bool Visible, bool OnScreen);
@@ -1505,15 +1491,6 @@ internal static class Q149Native
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    internal struct RECT
-    {
-        public int Left;
-        public int Top;
-        public int Right;
-        public int Bottom;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
     private struct UnicodeString
     {
         public ushort Length;
@@ -1539,12 +1516,12 @@ internal static class Q149Native
             return windows;
         }
 
-        _ = EnumWindows((hwnd, lParam) =>
+        _ = NativeWindows.EnumWindows((hwnd, lParam) =>
         {
-            _ = GetWindowThreadProcessId(hwnd, out uint pid);
+            _ = NativeWindows.GetWindowThreadProcessId(hwnd, out uint pid);
             if (pids.Contains(pid))
             {
-                windows.Add(new TopWindow(hwnd, ClassOf(hwnd), IsWindowVisible(hwnd), IsOnScreen(hwnd)));
+                windows.Add(new TopWindow(hwnd, ClassOf(hwnd), NativeWindows.IsWindowVisible(hwnd), IsOnScreen(hwnd)));
             }
 
             return true;
@@ -1555,7 +1532,7 @@ internal static class Q149Native
     internal static string ClassOf(IntPtr hwnd)
     {
         StringBuilder name = new(64);
-        _ = GetClassName(hwnd, name, name.Capacity);
+        _ = NativeWindows.GetClassNameW(hwnd, name, name.Capacity);
         return name.ToString();
     }
 
@@ -1602,7 +1579,7 @@ internal static class Q149Native
         const uint WmGetText = 0x000D;
         const uint SmtoAbortIfHung = 0x0002;
         List<string> labels = new();
-        _ = EnumChildWindows(dialog, (child, _) =>
+        _ = TestWin32.EnumChildWindows(dialog, (child, _) =>
         {
             if (labels.Count < 8 && string.Equals(ClassOf(child), "Button", StringComparison.Ordinal))
             {
@@ -1618,17 +1595,13 @@ internal static class Q149Native
         return labels;
     }
 
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool EnumChildWindows(IntPtr parent, EnumWindowsProc callback, IntPtr lParam);
-
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern IntPtr SendMessageTimeout(IntPtr hwnd, uint message, IntPtr wParam, StringBuilder lParam, uint flags, uint timeoutMs, out IntPtr result);
 
     /// <summary>Visible, of real size, and not parked far off the screen - where a person could see it.</summary>
     internal static bool IsOnScreen(IntPtr hwnd)
     {
-        if (!IsWindowVisible(hwnd) || !GetWindowRect(hwnd, out RECT r))
+        if (!NativeWindows.IsWindowVisible(hwnd) || !NativeWindows.GetWindowRect(hwnd, out NativeWindows.RECT r))
         {
             return false;
         }
@@ -1644,12 +1617,12 @@ internal static class Q149Native
     /// <summary>"on|off|hidden left,top widthxheight" - where a window is, and whether a person could see it there.</summary>
     internal static string DescribePlace(IntPtr hwnd)
     {
-        if (!GetWindowRect(hwnd, out RECT r))
+        if (!NativeWindows.GetWindowRect(hwnd, out NativeWindows.RECT r))
         {
             return "unknown";
         }
 
-        string state = !IsWindowVisible(hwnd) ? "hidden" : IsOnScreen(hwnd) ? "on" : "off";
+        string state = !NativeWindows.IsWindowVisible(hwnd) ? "hidden" : IsOnScreen(hwnd) ? "on" : "off";
         return string.Format(System.Globalization.CultureInfo.InvariantCulture, "{0} {1},{2} {3}x{4}", state, r.Left, r.Top, r.Right - r.Left, r.Bottom - r.Top);
     }
 
@@ -1659,14 +1632,14 @@ internal static class Q149Native
     /// </summary>
     internal static string DescribeForeground()
     {
-        IntPtr foreground = GetForegroundWindow();
+        IntPtr foreground = TestWin32.GetForegroundWindow();
         return foreground == IntPtr.Zero ? "none" : Describe(foreground);
     }
 
     /// <summary><paramref name="window"/> as one line, as <see cref="DescribeForeground"/> gives the foreground window.</summary>
     internal static string Describe(IntPtr window)
     {
-        _ = GetWindowThreadProcessId(window, out uint pid);
+        _ = NativeWindows.GetWindowThreadProcessId(window, out uint pid);
         string owner;
         try
         {
@@ -1685,14 +1658,14 @@ internal static class Q149Native
     /// <summary>Whether the foreground window belongs to an OUTLOOK.EXE, and its class - null when there is none.</summary>
     internal static string? ForegroundOutlookClass()
     {
-        IntPtr foreground = GetForegroundWindow();
+        IntPtr foreground = TestWin32.GetForegroundWindow();
         return foreground == IntPtr.Zero ? null : OutlookClassOf(foreground);
     }
 
     /// <summary>The class of <paramref name="window"/> when an OUTLOOK.EXE owns it; null when another process does.</summary>
     internal static string? OutlookClassOf(IntPtr window)
     {
-        _ = GetWindowThreadProcessId(window, out uint pid);
+        _ = NativeWindows.GetWindowThreadProcessId(window, out uint pid);
         try
         {
             using Process owner = Process.GetProcessById((int)pid);
@@ -1721,7 +1694,7 @@ internal static class Q149Native
 
     internal static void Park(IntPtr hwnd)
     {
-        _ = SetWindowPos(hwnd, IntPtr.Zero, ComposeSurface.ParkX, ComposeSurface.ParkY, 0, 0, SwpNoSize | SwpNoZOrder | SwpNoActivate);
+        _ = NativeWindows.SetWindowPos(hwnd, IntPtr.Zero, ComposeSurface.ParkX, ComposeSurface.ParkY, 0, 0, NativeWindows.SWP_NOSIZE | NativeWindows.SWP_NOZORDER | NativeWindows.SWP_NOACTIVATE);
     }
 
     /// <summary>
@@ -1794,35 +1767,6 @@ internal static class Q149Native
 
     [DllImport("user32.dll")]
     internal static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);
-
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    internal static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
-
-    [DllImport("user32.dll")]
-    internal static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
-
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    internal static extern bool IsWindowVisible(IntPtr hwnd);
-
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    internal static extern int GetClassName(IntPtr hwnd, StringBuilder className, int maxCount);
-
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    internal static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
-
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    internal static extern bool SetWindowPos(IntPtr hwnd, IntPtr insertAfter, int x, int y, int cx, int cy, uint flags);
-
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    internal static extern bool ShowWindow(IntPtr hwnd, int command);
-
-    [DllImport("user32.dll")]
-    internal static extern IntPtr GetForegroundWindow();
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern IntPtr OpenProcess(uint access, [MarshalAs(UnmanagedType.Bool)] bool inherit, uint processId);

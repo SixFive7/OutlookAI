@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using System.Text;
+using OutlookAI.Core.AddIn;
 using OutlookAI.Core.Services;
 using Xunit;
 using Xunit.Abstractions;
@@ -189,21 +190,21 @@ public sealed class LiveHeadlessGuaranteeTests
         }
 
         int count = 0;
-        NativeMethods.EnumWindows((hwnd, _) =>
+        NativeWindows.EnumWindows((hwnd, _) =>
         {
-            if (!NativeMethods.IsWindowVisible(hwnd))
+            if (!NativeWindows.IsWindowVisible(hwnd))
             {
                 return true;
             }
 
-            NativeMethods.GetWindowThreadProcessId(hwnd, out uint pid);
+            NativeWindows.GetWindowThreadProcessId(hwnd, out uint pid);
             if (!outlookPids.Contains((int)pid))
             {
                 return true;
             }
 
             StringBuilder className = new(64);
-            _ = NativeMethods.GetClassName(hwnd, className, className.Capacity);
+            _ = NativeWindows.GetClassNameW(hwnd, className, className.Capacity);
             if (string.Equals(className.ToString(), "rctrl_renwnd32", StringComparison.Ordinal))
             {
                 count++;
@@ -212,24 +213,5 @@ public sealed class LiveHeadlessGuaranteeTests
             return true;
         }, IntPtr.Zero);
         return count;
-    }
-
-    private static class NativeMethods
-    {
-        internal delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
-
-        [DllImport("user32.dll")]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        internal static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
-
-        [DllImport("user32.dll")]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        internal static extern bool IsWindowVisible(IntPtr hWnd);
-
-        [DllImport("user32.dll")]
-        internal static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
-
-        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-        internal static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
     }
 }

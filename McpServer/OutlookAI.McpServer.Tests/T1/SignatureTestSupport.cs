@@ -317,7 +317,7 @@ internal static class TestPictures
 
     public static string Hex(byte[] data)
     {
-        return string.Concat(data.Select(b => b.ToString("x2", System.Globalization.CultureInfo.InvariantCulture)));
+        return Convert.ToHexStringLower(data);
     }
 
     private static IEnumerable<byte> Chunk(string type, byte[] data)

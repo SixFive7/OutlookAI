@@ -5,6 +5,7 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using OutlookAI.Core.AddIn;
 using OutlookAI.Core.Com;
 
 namespace OutlookAI.McpServer.Tests.T2;
@@ -145,14 +146,14 @@ internal static class UserVisibleWindows
     private static Window Read(IntPtr handle, DateTime at)
     {
         StringBuilder className = new StringBuilder(256);
-        _ = ScreenCapture.NativeMethods.GetClassNameW(handle, className, className.Capacity);
-        int length = ScreenCapture.NativeMethods.GetWindowTextLengthW(handle);
+        _ = NativeWindows.GetClassNameW(handle, className, className.Capacity);
+        int length = TestWin32.GetWindowTextLengthW(handle);
         StringBuilder title = new StringBuilder(Math.Max(length, 0) + 1);
-        _ = ScreenCapture.NativeMethods.GetWindowTextW(handle, title, title.Capacity);
-        _ = ScreenCapture.NativeMethods.GetWindowThreadProcessId(handle, out uint pid);
-        _ = ScreenCapture.NativeMethods.GetWindowRect(handle, out ScreenCapture.NativeMethods.RECT r);
-        bool cloaked = ScreenCapture.NativeMethods.DwmGetWindowAttribute(handle, ScreenCapture.NativeMethods.DWMWA_CLOAKED, out int c, sizeof(int)) == 0 && c != 0;
-        bool minimized = ScreenCapture.NativeMethods.IsIconic(handle);
+        _ = TestWin32.GetWindowTextW(handle, title, title.Capacity);
+        _ = NativeWindows.GetWindowThreadProcessId(handle, out uint pid);
+        _ = NativeWindows.GetWindowRect(handle, out NativeWindows.RECT r);
+        bool cloaked = TestWin32.DwmGetWindowAttribute(handle, TestWin32.DWMWA_CLOAKED, out int c, sizeof(int)) == 0 && c != 0;
+        bool minimized = NativeWindows.IsIconic(handle);
         return new Window(handle, className.ToString(), title.ToString(), (int)pid, r.Left, r.Top, r.Right, r.Bottom, cloaked, minimized, at);
     }
 }

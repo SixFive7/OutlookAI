@@ -1183,6 +1183,13 @@ its mailbox tests on, and change nothing you install.
   would overwrite the change or copy it into the mailbox, and says to use Outlook instead. Roaming on
   Microsoft 365 Apps itself is not tested: the test machines run perpetual Office only.
 
+- ♻️ **A failed COM call is described in one place, where nine catch blocks wrote out its text (Q154).**
+  The COM session and the mail service named a failed call as "COMException 0x" and its HRESULT in
+  eight digits in nine catch blocks, each writing out the text of the shared
+  `ComObjects.DescribeFailure` - which the add-in's compose code and the rest of the COM session
+  already call - rather than calling it. They call it now, and say what they said before. The hex
+  stage of the code-sharing refactor found them.
+
 - ♻️ **Bytes are written as hex and read back in one place, and no id or hash changes case (Q154).**
   The code-sharing refactor's hex stage. Nine writers of bytes as hexadecimal, six of a SHA-256,
   two of a number and three readers each had their own copy - in the entry and store ids, the index
@@ -1425,7 +1432,7 @@ its mailbox tests on, and change nothing you install.
   maintainer supplies. Every other condition of the exception stands. `QUESTIONS.md` records the
   decision with his other answers of that day, to Q138, Q163 to Q182 and Q194 to Q215.
 
-- ♻️ **The test suite keeps one copy of each stand-in its files share, and of its paths (Q154).**
+- ♻️ **The test suite keeps one copy of each stand-in, helper and Win32 call its files share (Q154).**
   Nineteen test files each declared a stand-in for Outlook's connection that runs an operation
   straight against a fake session, seventeen of them byte for byte, and the suite held six more
   copies of it and of two other such stand-ins under four other names. Thirteen declared a stand-in
@@ -1465,8 +1472,14 @@ its mailbox tests on, and change nothing you install.
   tool surface through `ToolShapes`; the corpus helpers live in `HubCorpus`, scratch files go
   through `ScratchFiles`, a store's id through `LiveIds`, an index scope through `LiveIndexScopes`
   and the registry through `RawRegistryValues`; and four fixtures read the test project's folder
-  through `RepoPaths`. No test changed what it checks: the build machine ran the same tests, by
-  name, before and after each step, and the 164 live test methods are the same 164.
+  through `RepoPaths`. The live tests make the window calls the product makes too through Core's
+  `NativeWindows`, where six of their files declared their own - 24 declarations, with two copies
+  of its `RECT`, five of its callback and four of its constants - and `TestWin32` declares the calls
+  only tests make: the screen capture's, and those two or three test files each declared, a
+  foreground window, a child walk, a window's text and a posted message among them. Two test
+  helpers that wrote bytes as hex by hand use .NET's own writer. No test changed what it checks:
+  the build machine ran the same tests, by name, before and after each step, and the 164 live test
+  methods are the same 164.
 
 - ✅ **The draft tests read where Word lays out a reply's text, and check no draft became a form.**
   The reply, reply-all and forward tests now read Word's own layout of each draft and fail when its
@@ -2170,6 +2183,13 @@ its mailbox tests on, and change nothing you install.
   sweep fragment, the definitions the sweep matches with, instead of the incident tool's copy.
 
 ### Fixed
+
+- 🐛 **The add-in reads a `\u` escape in `~/.claude.json` only when four hex digits follow it.**
+  Its reader of the file's values parsed those four characters with .NET's hex number parsing, which
+  allows spaces around the digits, so `\u 41 ` read as `A`, though JSON has no such escape. It reads
+  them through Core's `Hex` now, as the check that guards every write to the file always did, and
+  anything else keeps the reader's fallback: the `u`, and the characters after it as they stand.
+  The code-sharing refactor's hex stage found it, and a T1 test pins both.
 
 - 🐛 **The task pane finds a Claude Code installed while Outlook runs, without a restart.**
   The pane remembered that Claude Code was missing when Outlook started, and every request then

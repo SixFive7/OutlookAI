@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using OutlookAI.Core.AddIn;
 using OutlookAI.Core.Com;
 using OutlookAI.Core.Services;
 using Xunit;
@@ -1407,11 +1408,11 @@ public sealed class LiveQ149WindowlessComposeTests
             }
         }
 
-        IntPtr foreground = Q149Native.GetForegroundWindow();
-        _ = Q149Native.ShowWindow(hwnd, Q149Native.SwShowNoActivate);
+        IntPtr foreground = TestWin32.GetForegroundWindow();
+        _ = NativeWindows.ShowWindow(hwnd, Q149Native.SwShowNoActivate);
         PumpedStaRunner.PumpedWait(60);
-        _ = Q149Native.ShowWindow(hwnd, Q149Native.SwHide);
-        attempt.Set("foregroundChangedByShow", Q149Native.GetForegroundWindow() != foreground);
+        _ = NativeWindows.ShowWindow(hwnd, NativeWindows.SW_HIDE);
+        attempt.Set("foregroundChangedByShow", TestWin32.GetForegroundWindow() != foreground);
     }
 
     /// <summary>A6b: an Explorer on the hub's Drafts - never the pin's folder, which would hand back the pin - displayed, parked, closed.</summary>
