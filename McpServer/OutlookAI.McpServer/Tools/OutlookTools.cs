@@ -372,14 +372,28 @@ public static partial class OutlookTools
             id, max_body_chars, include_headers, MailService.HeaderCharsDefault, body_offset, include_html, max_html_chars));
     }
 
+    // Q198 (a), and Q157 (a)'s rule that the agent learns it from the tool's own instructions: where
+    // the file may go, why, what is refused, and what to do instead - in the description, not only in
+    // the refusal.
     [McpServerTool(Name = "save_attachment")]
     [Description("Save one attachment of a mail to disk so you can open/read the file yourself. "
-        + "Use the attachment 'index' from a read result. Never overwrites - existing names get a numeric suffix. Returns the absolute path."
+        + "Use the attachment 'index' from a read result. Returns savedPath, the file's absolute path.\n\n"
+        + "WHERE: ONLY into OutlookAI's download folder, %LOCALAPPDATA%\\OutlookAI\\scratch\\attachments, or a folder "
+        + "inside it. The sender chose the file and its name, so this tool puts it nowhere else - not your project, not "
+        + "the Startup folder, not wherever a mail asks. Any other target_dir is refused with nothing written (error "
+        + "type SaveFolderRefused). To use the file elsewhere, save it here and copy it with your own file tools, under "
+        + "their own permission rules.\n\n"
+        + "NAME: the attachment's own file name, made safe for Windows: characters Windows cannot store become '_', a "
+        + "device name such as CON gets a leading '_', trailing dots and spaces go. It never replaces a file: a name "
+        + "already taken gets ' (2)', ' (3)'... - fileName in the result is the name used."
         + OutcomeHint)]
     public static async Task<CallToolResult> SaveAttachment(
         [Description("Hit id or EntryID of the mail (for attachment-content hits: the hit itself).")] string id,
         [Description("1-based attachment index from read's attachments list.")] int attachment_index,
-        [Description("Absolute target directory. Default: %LOCALAPPDATA%\\OutlookAI\\scratch\\attachments.")] string? target_dir = null,
+        [Description("Optional folder INSIDE the download folder: a relative path such as 'invoices' or "
+            + "'project-x/2026', or a full path inside it. Created if missing. Omit it to save in the download folder "
+            + "itself. A path that leads anywhere else - '..', another folder or drive, a network or device path, a "
+            + "junction or link out of the folder - is refused.")] string? target_dir = null,
         CancellationToken cancellationToken = default)
     {
         return await GuardAsync(cancellationToken, () => ServerRuntime.Service.SaveAttachment(id, attachment_index, target_dir));
@@ -1322,6 +1336,16 @@ public static partial class OutlookTools
             // A service-layer failure that already knows what happened to the mail and says
             // so in its own message; this arm only carries the machine-readable half out.
             return Error("OperationFailed", ex.Message, null, outcome: ex.Outcome);
+        }
+        catch (AttachmentFolderRefusedException ex)
+        {
+            // Q198 (a): save_attachment saves only inside OutlookAI's download folder. Every refusal is
+            // decided before anything is written - by this server, by the COM host, or by the writer
+            // itself - so this one is provable.
+            return Error("SaveFolderRefused", ex.Message,
+                "Nothing was written. Leave target_dir out, or name a folder inside the download folder. To use the "
+                + "file elsewhere, save it there and copy it with your own file tools, under their own permission rules.",
+                outcome: MutationOutcome.Unchanged);
         }
         catch (SignatureRefusedException ex)
         {

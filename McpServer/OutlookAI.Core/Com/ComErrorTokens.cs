@@ -100,6 +100,15 @@ namespace OutlookAI.Core.Com
         public const string SignatureRefused = "SignatureRefused";
 
         /// <summary>
+        /// save_attachment's folder was refused in the COM host (Q198 (a)): it is not inside OutlookAI's
+        /// download folder, or a junction or link leads out of it. Decided before the item is opened, or by
+        /// the writer before it makes or writes anything - so nothing was written. Written as
+        /// <c>SaveFolderRefused:&lt;message&gt;</c>; the detail is the refusal an agent reads, which names the
+        /// folder asked for and the download folder - paths, never mail content.
+        /// </summary>
+        public const string SaveFolderRefused = "SaveFolderRefused";
+
+        /// <summary>
         /// A token with its detail, in the <c>Token:detail</c> shape the service layer reads back
         /// with <see cref="TryRead"/>. The detail is content-free (a COM failure's type and
         /// HRESULT), never a subject, a body or a name.

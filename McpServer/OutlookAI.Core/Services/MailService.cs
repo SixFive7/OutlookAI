@@ -674,10 +674,6 @@ namespace OutlookAI.Core.Services
         /// </summary>
         public const int MinimumItemBudgetMs = 1_000;
 
-        /// <summary>Default directory attachments are saved to when the caller names none.</summary>
-        public static string DefaultAttachmentDirectory =>
-            Path.Combine(SharedStateDirectory, "scratch", "attachments");
-
         /// <summary>Shared OutlookAI state root (v3.MD section 0.5.2: %LOCALAPPDATA%\OutlookAI).</summary>
         public static string SharedStateDirectory =>
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "OutlookAI");
@@ -759,19 +755,26 @@ namespace OutlookAI.Core.Services
             // an index store two of this profile's stores share - name and hash alike - are left out,
             // and those stores are reported as unmatched (index.storesUnmatched) instead. A scoped
             // search never gets this far for such a store: ResolveFolderScope refused it.
-            IReadOnlyList<StoreIndexMatch> unmatchable = request.ScopeStoreName == null
-                ? TryGetStoreIndexMap(SearchIndexTimeoutSeconds)?.Unmatchable ?? Array.Empty<StoreIndexMatch>()
-                : Array.Empty<StoreIndexMatch>();
+            //
+            // Nor the stale copy of a store (decided 2026-11-18, the TODO item's (a) and (b)): an index
+            // store that carries a store's name while another index store of that name is tied to the
+            // store by its hash is left out - the tied one is the live copy - and when none is tied the
+            // copies are searched and reported (StoreIndexMap.Copies). A scoped search reaches only the
+            // tied one, or is refused (DescribeSeveralIndexStoresNamed).
+            StoreIndexMap? unscopedMap = request.ScopeStoreName == null ? TryGetStoreIndexMap(SearchIndexTimeoutSeconds) : null;
+            IReadOnlyList<StoreIndexMatch> unmatchable = unscopedMap?.Unmatchable ?? Array.Empty<StoreIndexMatch>();
+            IReadOnlyList<StoreIndexCopies> copiesLeftOut = unscopedMap?.CopiesLeftOut ?? Array.Empty<StoreIndexCopies>();
+            IReadOnlyList<StoreIndexCopies> copiesSearched = unscopedMap?.CopiesSearched ?? Array.Empty<StoreIndexCopies>();
+            List<string> excludedPrefixes = unmatchable.SelectMany(m => m.Contested)
+                .Concat(copiesLeftOut.SelectMany(c => c.Copies))
+                .Select(r => r.StorePrefix)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
 
             IndexQuery query = new IndexQuery
             {
                 Scope = folderScope?.Scope,
-                ExcludedStorePrefixes = unmatchable.Count == 0
-                    ? null
-                    : unmatchable.SelectMany(m => m.Contested)
-                        .Select(r => r.StorePrefix)
-                        .Distinct(StringComparer.OrdinalIgnoreCase)
-                        .ToList(),
+                ExcludedStorePrefixes = excludedPrefixes.Count == 0 ? null : excludedPrefixes,
                 FolderPathsAnyOf = folderScope?.FolderPaths,
                 Terms = terms.Count > 0 ? terms : null,
                 SearchIn = request.SearchIn,
@@ -985,6 +988,16 @@ namespace OutlookAI.Core.Services
                 advice.Add("INCOMPLETE RESULTS - " + DescribeUnmatchableStores(storesUnmatched));
             }
 
+            if (copiesLeftOut.Count > 0)
+            {
+                advice.Add(DescribeStoreCopiesLeftOut(copiesLeftOut, forHealth: false));
+            }
+
+            if (copiesSearched.Count > 0)
+            {
+                advice.Add(DescribeStoreCopiesSearched(copiesSearched, forHealth: false));
+            }
+
             if (indexResult.CandidatesExhausted)
             {
                 // The index tier admits rows in code over an over-fetched candidate list, so
@@ -1027,6 +1040,8 @@ namespace OutlookAI.Core.Services
                     StoreNotIndexed = indexAddressable ? (bool?)null : true,
                     FolderNotIndexed = folderNotIndexed,
                     StoresUnmatched = storesUnmatched?.Take(UnindexedStoreListCap).ToList(),
+                    StoreCopiesLeftOut = CopySegments(copiesLeftOut),
+                    StoreCopiesSearched = CopySegments(copiesSearched),
 
                     // Gaps B4/B5: what this tier read, and how it matched. The widest body
                     // scope of the three and the only whole-word one, stated so the other two
@@ -3447,7 +3462,7 @@ namespace OutlookAI.Core.Services
                 EntryId = detail.EntryId,
                 Store = detail.StoreDisplayName,
                 StoreId = OutlookIds.StoreIdOfEntryId(detail.FolderEntryId ?? detail.EntryId),
-                Folder = detail.FolderPath,
+                Folder = DescribeReadFolder(detail.FolderPath, detail.StoreDisplayName),
                 FolderId = OutlookIds.FolderIdFromEntryId(detail.FolderEntryId),
                 Subject = detail.Subject,
                 FromName = detail.SenderName,
@@ -3479,9 +3494,32 @@ namespace OutlookAI.Core.Services
             };
         }
 
+        /// <summary>
+        /// read's <c>folder</c>: the folder's names from the top of its store down, joined by <c>/</c> - the
+        /// way list_folders, find_folder, search and move_mail print a folder - from Outlook's own
+        /// <c>Folder.FolderPath</c> (<c>\\Store\Inbox\Projects</c>), whose store name, backslashes and
+        /// escapes it used to hand on as they were. The store is beside it as <c>store</c> and
+        /// <c>storeId</c>, the folder's address as <c>folderId</c>. Null when Outlook gave no path. Pure.
+        /// </summary>
+        public static string? DescribeReadFolder(string? outlookFolderPath, string? storeDisplayName)
+        {
+            return outlookFolderPath == null
+                ? null
+                : OutlookComSession.ToStoreRelativeFolderPath(outlookFolderPath, storeDisplayName);
+        }
+
         // ------------------------------------------------------------------ save_attachment
 
-        /// <summary>Saves one attachment of a hit/EntryID to disk and returns the absolute path.</summary>
+        /// <summary>
+        /// Saves one attachment of a hit/EntryID to disk and returns the absolute path - into
+        /// OutlookAI's download folder or a folder inside it, and nowhere else (Q198 (a);
+        /// <see cref="AttachmentFileWriter"/>).
+        /// </summary>
+        /// <param name="targetDirectory">
+        /// Null for the download folder itself; a relative path for a folder inside it; or a full path
+        /// that must lead into it. Anything else is refused with
+        /// <see cref="AttachmentFolderRefusedException"/> before Outlook is asked anything.
+        /// </param>
         public SaveAttachmentOutcome SaveAttachment(string id, int attachmentIndex, string? targetDirectory = null)
         {
             if (string.IsNullOrWhiteSpace(id))
@@ -3494,11 +3532,10 @@ namespace OutlookAI.Core.Services
                 throw new ArgumentException("attachment_index is 1-based.", nameof(attachmentIndex));
             }
 
-            string directory = targetDirectory ?? DefaultAttachmentDirectory;
-            if (!Path.IsPathRooted(directory))
-            {
-                throw new ArgumentException("target_dir must be an absolute path.", nameof(targetDirectory));
-            }
+            // The folder is decided here, on the disk, before Outlook is started or asked anything; the
+            // COM host checks it again, and the writer once more right before the write. What travels on
+            // is its final path, so the write never goes through the spelling the agent gave.
+            string directory = AttachmentFileWriter.CheckFolder(targetDirectory);
 
             (string entryId, string? storeId, string? _, long _, string? hitId) = ResolveToEntryId(id);
             (string path, long size) = _gateway.Run(s =>
@@ -3580,14 +3617,21 @@ namespace OutlookAI.Core.Services
         /// </summary>
         private static Exception BuildAttachmentSaveFailure(string? comError, string? attemptedPath, string directory)
         {
+            if (Com.ComErrorTokens.TryRead(comError, Com.ComErrorTokens.SaveFolderRefused, out string refusal))
+            {
+                // Q198 (a), refused in the COM host - before the item was opened, or by the writer
+                // before it made or wrote anything - so nothing reached the disk.
+                return new AttachmentFolderRefusedException(refusal);
+            }
+
             bool nothingWasWritten =
                 string.Equals(comError, Com.ComErrorTokens.ItemNotFound, StringComparison.Ordinal)
                 || (comError != null && comError.StartsWith("AttachmentIndexOutOfRange", StringComparison.Ordinal));
 
             if (nothingWasWritten)
             {
-                // Both are decided before Directory.CreateDirectory runs, so nothing reached
-                // the disk - the only two codes here that can say so.
+                // Both are decided before AttachmentFileWriter.Save makes the folder, so nothing
+                // reached the disk - the only two codes here that can say so.
                 return new OperationOutcomeException(
                     Com.MutationOutcome.Unchanged,
                     "The attachment could not be saved (" + comError + "). Nothing was written to disk. "
@@ -7110,6 +7154,10 @@ namespace OutlookAI.Core.Services
             bool comProbeFailed = false;
             int? storesReachable = null;
             List<string>? storeNames = null;
+
+            // The stores the index has to cover - a second view of an indexed mailbox is covered through its kept entry
+            // (decision 207 (b)), so it is never named as a store the index holds nothing for.
+            List<string>? indexedStoreNames = null;
             if (outlookRunning)
             {
                 try
@@ -7120,6 +7168,7 @@ namespace OutlookAI.Core.Services
                     IReadOnlyList<ComStoreDetail> stores = _gateway.Run(GetStoreDetails, HealthProbeBudgetMs);
                     storesReachable = stores.Count;
                     storeNames = stores.Select(s => s.DisplayName).ToList();
+                    indexedStoreNames = WithoutSecondViews(stores).Select(s => s.DisplayName).ToList();
                     if (stores.Count == 0)
                     {
                         problems.Add("Outlook is running but reports no stores.");
@@ -7282,7 +7331,7 @@ namespace OutlookAI.Core.Services
                     // one and absent from the other was reported by neither - which is precisely
                     // the store whose searches fall back to a fixed window, i.e. the condition an
                     // operator opens this tool to find. Both lists were already in hand.
-                    AddStoresMissingFromIndex(perStore, storeNames, perStoreComplete, indexClock, problems);
+                    AddStoresMissingFromIndex(perStore, indexedStoreNames, perStoreComplete, indexClock, problems);
                 }
             }
             catch (Exception ex) when (ex is not OutOfMemoryException)
@@ -7846,8 +7895,10 @@ namespace OutlookAI.Core.Services
             }
 
             List<StoreView> storeViews = new List<StoreView>(stores.Count);
-            foreach (ComStoreDetail store in stores)
+            int[] keptEntryOf = StoreTwins.KeptEntryOf(stores);
+            for (int position = 0; position < stores.Count; position++)
             {
+                ComStoreDetail store = stores[position];
                 // Live-verified on this machine (Phase 2): delegate caches report
                 // OlExchangeStoreType 1 (olExchangeDelegateMailbox) and, despite being
                 // locally cached AND indexed, IsCachedExchange=false - so index
@@ -7885,6 +7936,10 @@ namespace OutlookAI.Core.Services
                     OnlineOnly = onlineOnly,
                     LocallySearchable = !onlineOnly,
                     InLocalIndex = inLocalIndex,
+
+                    // Decision 207 (b): a second view of an indexed mailbox says whose, and that it is not a store of
+                    // its own to search; its storeId is that mailbox's.
+                    SecondViewOf = keptEntryOf[position] >= 0 ? stores[keptEntryOf[position]].DisplayName : null,
                 });
             }
 
@@ -8511,6 +8566,75 @@ namespace OutlookAI.Core.Services
         }
 
         /// <summary>
+        /// The index stores of <paramref name="copies"/>, one <c>name($hash)</c> each, capped at
+        /// <see cref="UnindexedStoreListCap"/> - the field beside the advice, which carries them all - or
+        /// null when there are none. Pure.
+        /// </summary>
+        internal static IReadOnlyList<string>? CopySegments(IReadOnlyList<StoreIndexCopies> copies)
+        {
+            List<string> segments = (copies ?? Array.Empty<StoreIndexCopies>())
+                .SelectMany(c => c.Copies)
+                .Select(r => r.StoreSegment)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            return segments.Count == 0 ? null : segments.Take(UnindexedStoreListCap).ToList();
+        }
+
+        /// <summary>
+        /// The unscoped search's advice and outlook_health's line for index stores an unscoped search
+        /// leaves out as another copy of a store whose own index store is tied to it by its hash (decided
+        /// 2026-11-18) - one wording, two callers. Pure.
+        /// </summary>
+        internal static string DescribeStoreCopiesLeftOut(IReadOnlyList<StoreIndexCopies> copies, bool forHealth)
+        {
+            if (copies == null)
+            {
+                throw new ArgumentNullException(nameof(copies));
+            }
+
+            string each = string.Join("; ", copies.Select(c =>
+                "'" + c.Store.Store.DisplayName + "' is searched through " + c.Live?.StoreSegment
+                + ", and " + string.Join(", ", c.Copies.Select(r => r.StoreSegment)) + " left out"));
+            return (forHealth ? "Unscoped searches leave out" : "Left out of this search:")
+                + " index stores that carry the name of a store of this profile while nothing ties them to it, because "
+                + "another index store of that name is tied to the store by its hash - " + each + ". Windows Search keeps "
+                + "such an old copy after an Outlook data file (.ost) is rebuilt, and another Outlook profile's store of "
+                + "the same name looks the same. Rebuilding the Windows Search index removes an old copy"
+                + (forHealth ? "." : "; outlook_health lists them per store under storeCopies.");
+        }
+
+        /// <summary>
+        /// The unscoped search's advice and outlook_health's problem for index stores that carry a store's
+        /// name while none is tied to it, so an unscoped search reads them all (decided 2026-11-18) - one
+        /// wording, two callers. Pure.
+        /// </summary>
+        internal static string DescribeStoreCopiesSearched(IReadOnlyList<StoreIndexCopies> copies, bool forHealth)
+        {
+            if (copies == null)
+            {
+                throw new ArgumentNullException(nameof(copies));
+            }
+
+            string each = string.Join("; ", copies.Select(c =>
+            {
+                string segments = string.Join(", ", c.Copies.Select(r => r.StoreSegment));
+                return c.Live == null
+                    ? "'" + c.Store.Store.DisplayName + "': " + segments + ", none tied to it"
+                    : "'" + c.Store.Store.DisplayName + "': " + segments + " beside its own " + c.Live.StoreSegment
+                        + ", kept in because '" + c.SharedNameWith + "' carries the name too and no index store is tied to it";
+            }));
+            return (forHealth ? "Unscoped searches read" : "This search read")
+                + " every index store that carries the name of a store of this profile, because nothing says which one "
+                + "is the store's own - " + each + ". After an Outlook data file (.ost) is rebuilt, Windows Search keeps "
+                + "the old copy beside the new one, with the same folders, so "
+                + (forHealth ? "an unscoped search" : "these results")
+                + " can include mail moved or deleted since, or the same mail twice"
+                + (forHealth ? ", and a search scoped to such a store is refused" : string.Empty)
+                + ". Rebuilding the Windows Search index removes the old copy"
+                + (forHealth ? "." : "; outlook_health lists them per store under storeCopies.");
+        }
+
+        /// <summary>
         /// The health rows when a store map could be built (Q92/Q99, Q113): one row per store of the
         /// profile, under the name Outlook gives it, saying how it was tied to the index
         /// (<see cref="StoreStaleness.MatchedBy"/>) and whether anything lies BELOW its index root.
@@ -8537,6 +8661,7 @@ namespace OutlookAI.Core.Services
         {
             var tiedByName = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var unmatchable = new List<StoreIndexMatch>();
+            var secondViewRows = new List<(StoreStaleness Row, string? Kept)>();
             bool complete = true;
             foreach (StoreIndexMatch match in map.Stores)
             {
@@ -8546,6 +8671,16 @@ namespace OutlookAI.Core.Services
                     advice.Add("Per-store index freshness is incomplete: the index did not answer quickly enough for "
                         + "every store. The global figure above is still accurate.");
                     break;
+                }
+
+                if (match.Kind == StoreIndexMatchKind.SecondView)
+                {
+                    // Not probed and never missing (decision 207 (b)): its mail is the kept entry's, whose row says
+                    // whether the index holds it.
+                    StoreStaleness viewRow = DescribeStoreMatch(match, null);
+                    perStore.Add(viewRow);
+                    secondViewRows.Add((viewRow, match.Store.SecondViewOf));
+                    continue;
                 }
 
                 // The hash did not decide a NameRule store, so it is found the way it always was.
@@ -8558,6 +8693,15 @@ namespace OutlookAI.Core.Services
                 }
 
                 StoreStaleness row = DescribeStoreMatch(match, byName);
+                StoreIndexCopies? copies = map.Copies.FirstOrDefault(c => ReferenceEquals(c.Store, match));
+                if (copies != null)
+                {
+                    // The other index stores of its name that nothing ties to it (decided 2026-11-18):
+                    // left out of unscoped searches when its own is tied by its hash, else read by them.
+                    row.StoreCopies = copies.Copies.Select(r => r.StoreSegment).ToList();
+                    row.StoreCopiesLeftOut = copies.LeftOut;
+                }
+
                 StoreScopeInfo? root = match.Kind == StoreIndexMatchKind.NameRule ? byName : match.Root;
                 if (root != null)
                 {
@@ -8593,9 +8737,39 @@ namespace OutlookAI.Core.Services
                 problems.Add(DescribeUnmatchableStores(unmatchable.Select(m => m.Store.DisplayName).ToList()));
             }
 
+            // A second view takes what the index holds from its kept entry's row.
+            foreach ((StoreStaleness viewRow, string? kept) in secondViewRows)
+            {
+                viewRow.InLocalIndex = perStore.FirstOrDefault(r => r.MatchedBy != "secondView"
+                    && string.Equals(r.Store, kept, StringComparison.Ordinal))?.InLocalIndex;
+            }
+
+            List<StoreIndexMatch> secondViews = map.Stores.Where(m => m.Kind == StoreIndexMatchKind.SecondView).ToList();
+            if (secondViews.Count > 0)
+            {
+                advice.Add(string.Join(" ", secondViews.Select(m =>
+                    "'" + m.Store.DisplayName + "' is " + DescribeSecondView(m.Store.SecondViewOf) + ".")));
+            }
+
+            // Copies of a store's name in the index (decided 2026-11-18), from the whole map, whatever the
+            // budget allowed above: a stale copy that searches leave out is said, one they read is a problem -
+            // their answers can carry mail moved or deleted since, and a search scoped to the store is refused.
+            if (map.CopiesLeftOut.Count > 0)
+            {
+                advice.Add(DescribeStoreCopiesLeftOut(map.CopiesLeftOut, forHealth: true));
+            }
+
+            if (map.CopiesSearched.Count > 0)
+            {
+                problems.Add(DescribeStoreCopiesSearched(map.CopiesSearched, forHealth: true));
+            }
+
             if (complete)
             {
-                List<string> missing = perStore.Where(r => r.InLocalIndex == false).Select(r => r.Store).ToList();
+                List<string> missing = perStore
+                    .Where(r => r.InLocalIndex == false && r.MatchedBy != "secondView")
+                    .Select(r => r.Store)
+                    .ToList();
                 if (missing.Count > 0)
                 {
                     problems.Add(DescribeStoresMissingFromIndex(missing));
@@ -8659,6 +8833,9 @@ namespace OutlookAI.Core.Services
                 case StoreIndexMatchKind.Delegate:
                     matchedBy = "delegateFolder";
                     break;
+                case StoreIndexMatchKind.SecondView:
+                    matchedBy = "secondView";
+                    break;
                 case StoreIndexMatchKind.NameRule:
                     matchedBy = root != null ? "displayName" : "none";
                     break;
@@ -8679,8 +8856,19 @@ namespace OutlookAI.Core.Services
                 IndexStore = match.Kind == StoreIndexMatchKind.Ambiguous
                     ? string.Join(", ", match.Contested.Select(r => r.StoreSegment))
                     : root?.StoreSegment,
-                MatchNote = match.Note,
+                MatchNote = match.Kind == StoreIndexMatchKind.SecondView ? DescribeSecondView(match.Store.SecondViewOf) : match.Note,
             };
+        }
+
+        /// <summary>
+        /// What outlook_health says of a second view of an indexed mailbox (decision 207 (b), 2026-11-18): not a
+        /// degradation - the mailbox's mail is in the index through its kept entry, and searches cover it once,
+        /// through that entry. Pure.
+        /// </summary>
+        internal static string DescribeSecondView(string? keptEntry)
+        {
+            return "a second view of an indexed mailbox: the same mailbox is the store '" + keptEntry + "', which holds its "
+                + "mail in the index, and list_folders, find_folder, every ID and every search cover it once, through that store";
         }
 
         /// <summary>
@@ -8842,12 +9030,23 @@ namespace OutlookAI.Core.Services
         {
             try
             {
-                return _gateway.Run(s => GetStoreDetails(s)).Select(d => d.DisplayName).ToList();
+                // A second view of an indexed mailbox (decision 207 (b)) is covered through its kept entry.
+                return WithoutSecondViews(_gateway.Run(s => GetStoreDetails(s))).Select(d => d.DisplayName).ToList();
             }
             catch (Exception ex) when (ex is not OutOfMemoryException)
             {
                 return null;
             }
+        }
+
+        /// <summary>
+        /// The profile's stores less every second view of an indexed mailbox (<see cref="StoreTwins"/>, decision 207
+        /// (b)): the stores a search, the index and outlook_health have to cover, each mailbox once. Pure.
+        /// </summary>
+        internal static IReadOnlyList<ComStoreDetail> WithoutSecondViews(IReadOnlyList<ComStoreDetail> stores)
+        {
+            int[] keptEntryOf = StoreTwins.KeptEntryOf(stores);
+            return stores.Where((d, i) => keptEntryOf[i] < 0).ToList();
         }
 
         /// <summary>
@@ -9036,7 +9235,11 @@ namespace OutlookAI.Core.Services
                 return null;
             }
 
-            return StoreIndexMatcher.Match(stores.Select(d => ToIndexIdentity(d, profile)).ToList(), roots);
+            // A second view of an indexed mailbox (decision 207 (b)) is matched as one: it claims nothing.
+            int[] keptEntryOf = StoreTwins.KeptEntryOf(stores);
+            return StoreIndexMatcher.Match(
+                stores.Select((d, i) => ToIndexIdentity(d, profile, keptEntryOf[i] >= 0 ? stores[keptEntryOf[i]].DisplayName : null)).ToList(),
+                roots);
         }
 
         /// <summary>
@@ -9058,7 +9261,7 @@ namespace OutlookAI.Core.Services
         /// Outlook keeps the account's copy in - and its offline-store path. The file path rides
         /// along because a <c>.pst</c> is what makes the hash authoritative.
         /// </summary>
-        internal static StoreIndexIdentity ToIndexIdentity(ComStoreDetail detail, string? profileName)
+        internal static StoreIndexIdentity ToIndexIdentity(ComStoreDetail detail, string? profileName, string? secondViewOf = null)
         {
             bool exchange = detail.ExchangeStoreType.HasValue && detail.ExchangeStoreType.Value != 3;
             string? profileSignature = exchange && detail.ExchangeProfileSectionHex != null
@@ -9078,7 +9281,8 @@ namespace OutlookAI.Core.Services
                 detail.FilePath,
                 detail.OwnName,
                 detail.StoreId,
-                StoreIdOf(detail));
+                StoreIdOf(detail),
+                secondViewOf);
         }
 
         /// <summary>What the store map decides for a store NAME (<see cref="DecideStoreName"/>).</summary>
@@ -9150,7 +9354,7 @@ namespace OutlookAI.Core.Services
                 // Several stores of this profile share the name, so it cannot say which is meant.
                 // Exchange stores alone keep the name rule (the open exception); any other store
                 // among them is refused rather than picked.
-                return named.All(m => m.Store.InExchangeException || m.Kind == StoreIndexMatchKind.Delegate)
+                return named.All(m => m.Store.InExchangeException || m.Kind == StoreIndexMatchKind.Delegate || m.Kind == StoreIndexMatchKind.SecondView)
                     ? (StoreNameDecision.NameRule, null, null)
                     : (StoreNameDecision.Refused, null, DescribeSharedStoreName(displayName, named));
             }

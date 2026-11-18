@@ -486,6 +486,7 @@ public sealed class AtomicityClaimsTests
     [InlineData(ComErrorTokens.DraftNotStarted)]
     [InlineData(ComErrorTokens.DraftsFolderUnavailable)]
     [InlineData(ComErrorTokens.DiscardNotStarted)]
+    [InlineData(ComErrorTokens.SaveFolderRefused)]
     public void TheDraftTokens_RoundTrip_AndNeverMatchEachOtherOrTheRetryToken(string token)
     {
         string written = ComErrorTokens.With(token, "COMException 0x80004005");
@@ -494,7 +495,7 @@ public sealed class AtomicityClaimsTests
         Assert.Equal("COMException 0x80004005", detail);
         Assert.True(ComErrorTokens.TryRead(token, token, out string bare));
         Assert.Equal("unknown", bare);
-        foreach (string other in new[] { ComErrorTokens.DraftNotStarted, ComErrorTokens.DraftsFolderUnavailable, ComErrorTokens.DiscardNotStarted, ComErrorTokens.ItemNotFound })
+        foreach (string other in new[] { ComErrorTokens.DraftNotStarted, ComErrorTokens.DraftsFolderUnavailable, ComErrorTokens.DiscardNotStarted, ComErrorTokens.SaveFolderRefused, ComErrorTokens.ItemNotFound })
         {
             if (other != token)
             {
@@ -570,18 +571,21 @@ public sealed class AtomicityClaimsTests
     [Fact]
     public void AFailedAttachmentSave_NamesThePathAPartialFileWouldBeAt()
     {
+        // The folder is a name inside the download folder (Q198 (a)): it is checked on the disk,
+        // read-only, and never made - the session here is a stand-in that writes nothing.
+        string attempted = Path.Combine(AttachmentFileWriter.DownloadFolder, "offers", "offer.pdf");
         RecordingSession session = new RecordingSession
         {
             AttachmentRefusal = "IOException: IOException",
-            AttemptedPath = @"C:\scratch\offer.pdf",
+            AttemptedPath = attempted,
         };
         using MailService service = new MailService(new DirectGateway(session.AsSession));
 
         OperationOutcomeException failure = Assert.Throws<OperationOutcomeException>(
-            () => service.SaveAttachment(ItemId, 1, @"C:\scratch"));
+            () => service.SaveAttachment(ItemId, 1, "offers"));
 
         Assert.Equal(MutationOutcome.Unknown, failure.Outcome);
-        Assert.Contains(@"C:\scratch\offer.pdf", failure.Message, StringComparison.Ordinal);
+        Assert.Contains(attempted, failure.Message, StringComparison.Ordinal);
         Assert.Contains("PARTIAL OR COMPLETE FILE MAY EXIST", failure.Message, StringComparison.Ordinal);
     }
 
@@ -592,10 +596,77 @@ public sealed class AtomicityClaimsTests
         using MailService service = new MailService(new DirectGateway(session.AsSession));
 
         OperationOutcomeException failure = Assert.Throws<OperationOutcomeException>(
-            () => service.SaveAttachment(ItemId, 1, @"C:\scratch"));
+            () => service.SaveAttachment(ItemId, 1, "offers"));
 
         Assert.Equal(MutationOutcome.Unchanged, failure.Outcome);
         Assert.Contains("Nothing was written to disk", failure.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AFolderOutsideTheDownloadFolder_IsRefusedBeforeOutlookIsAsked()
+    {
+        // Q198 (a): the server decides it, on the disk and before the COM host is asked anything -
+        // so the refusal cannot have opened an item, fanned out to another store or written a byte.
+        RecordingSession session = new RecordingSession();
+        using MailService service = new MailService(new DirectGateway(session.AsSession));
+
+        foreach (string outside in new[]
+        {
+            Path.GetTempPath(),
+            Environment.GetFolderPath(Environment.SpecialFolder.Startup, Environment.SpecialFolderOption.DoNotVerify),
+            Path.Combine(AttachmentFileWriter.DownloadFolder, "..", "..", ".."),
+            @"\\server\share\inbox",
+            @"\\?\" + AttachmentFileWriter.DownloadFolder,
+            "sub:stream",
+        })
+        {
+            AttachmentFolderRefusedException refused = Assert.Throws<AttachmentFolderRefusedException>(
+                () => service.SaveAttachment(ItemId, 1, outside));
+            Assert.Contains("Nothing was written", refused.Message, StringComparison.Ordinal);
+            Assert.Contains("copy it with your own file tools", refused.Message, StringComparison.Ordinal);
+        }
+
+        Assert.Equal(0, session.AttachmentCalls);
+    }
+
+    [Fact]
+    public async Task AFolderRefusedInTheComHost_ReachesTheWireAsUnchanged()
+    {
+        // The other place a refusal comes from: the COM host, which checks the folder again before
+        // it opens the item, and the writer, which checks it before it makes or writes anything.
+        RecordingSession session = new RecordingSession
+        {
+            AttachmentRefusal = ComErrorTokens.With(
+                ComErrorTokens.SaveFolderRefused, "target_dir 'x' is outside OutlookAI's download folder. Nothing was written."),
+        };
+        using MailService service = new MailService(new DirectGateway(session.AsSession));
+
+        ModelContextProtocol.Protocol.CallToolResult result = await OutlookTools.GuardAsync(
+            CancellationToken.None, () => service.SaveAttachment(ItemId, 1));
+
+        using JsonDocument parsed = JsonDocument.Parse(ErrorJson(result));
+        JsonElement error = parsed.RootElement.GetProperty("error");
+        Assert.Equal("SaveFolderRefused", error.GetProperty("type").GetString());
+        Assert.Equal("unchanged", error.GetProperty("outcome").GetString());
+        Assert.Contains("outside OutlookAI's download folder", error.GetProperty("message").GetString(), StringComparison.Ordinal);
+        Assert.Contains("copy it with your own file tools", error.GetProperty("advice").GetString(), StringComparison.Ordinal);
+        Assert.Equal(1, session.AttachmentCalls);
+    }
+
+    [Fact]
+    public async Task AFolderRefusedByTheServer_ReachesTheWireAsUnchanged()
+    {
+        RecordingSession session = new RecordingSession();
+        using MailService service = new MailService(new DirectGateway(session.AsSession));
+
+        ModelContextProtocol.Protocol.CallToolResult result = await OutlookTools.GuardAsync(
+            CancellationToken.None, () => service.SaveAttachment(ItemId, 1, Path.GetTempPath()));
+
+        using JsonDocument parsed = JsonDocument.Parse(ErrorJson(result));
+        JsonElement error = parsed.RootElement.GetProperty("error");
+        Assert.Equal("SaveFolderRefused", error.GetProperty("type").GetString());
+        Assert.Equal("unchanged", error.GetProperty("outcome").GetString());
+        Assert.Equal(0, session.AttachmentCalls);
     }
 
     [Fact]
@@ -926,6 +997,8 @@ public sealed class AtomicityClaimsTests
 
         internal string? AttemptedPath { get; set; }
 
+        internal int AttachmentCalls { get; private set; }
+
         internal string? DisplayRefusal { get; set; }
 
         internal string? NavigationRefusal { get; set; }
@@ -996,6 +1069,8 @@ public sealed class AtomicityClaimsTests
                     return new ComMoveItemResult(ItemId, ItemId, "Work", "Inbox", "Archive", Array.Empty<string>());
 
                 case nameof(IOutlookSession.TrySaveAttachment):
+                    AttachmentCalls++;
+
                     // A VALUE-TYPE out parameter has to be filled explicitly: DispatchProxy
                     // hands the args array to Invoke with null in every out slot, so leaving
                     // sizeBytes alone unboxes null into a long and the proxy throws.

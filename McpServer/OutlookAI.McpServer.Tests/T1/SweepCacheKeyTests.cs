@@ -47,16 +47,14 @@ namespace OutlookAI.McpServer.Tests.T1;
 [Trait("TimeZone", "Machine")]
 public sealed class SweepCacheKeyTests
 {
-    private const string Sid = "{S-1-5-21-1111111111-2222222222-3333333333-1001}";
+    private const string IndexedStore = AliceMailbox.Store;
 
-    private const string IndexedStore = "alice@example.com";
-
-    private const string IndexedPrefix = "mapi16://" + Sid + "/" + IndexedStore + "($deadbeef)";
+    private const string IndexedPrefix = AliceMailbox.StorePrefix;
 
     /// <summary>A data file the index catalog has never heard of - the fallback window's own case.</summary>
     private const string PstStore = "Archive Old.pst";
 
-    private static readonly DateTime Frontier = new(2026, 8, 18, 9, 30, 0, DateTimeKind.Utc);
+    private static readonly DateTime Frontier = AliceMailbox.Frontier;
 
     /// <summary><c>MailService.SweepSafetyMargin</c>, which is private and subtracted from every window.</summary>
     private static readonly TimeSpan SafetyMargin = TimeSpan.FromMinutes(10);
