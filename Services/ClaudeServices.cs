@@ -404,8 +404,34 @@ namespace OutlookAI.Services
         private static StringBuilder _warmStdout;
         private static StringBuilder _warmStderr;
         private static volatile string _lastPrerequisiteError;
+
+        /// <summary>
+        /// True while <see cref="_lastPrerequisiteError"/> says the CLI was not found - the one
+        /// prerequisite that can come right without Outlook restarting: see
+        /// <see cref="CurrentPrerequisiteError"/>.
+        /// </summary>
+        private static volatile bool _cliWasMissing;
         private static int _warmingUp;            // single-flight guard for WarmUpCore (0/1)
         private static volatile bool _shutdown;   // set at Shutdown; stops a late warm-up orphaning a process
+
+        /// <summary>
+        /// The error that stops a request before it starts, or null. A CLI that was missing and is
+        /// there now - installed while Outlook ran - clears it, and the request goes ahead: until
+        /// the code-sharing refactor's stage S4 the pane kept saying Claude Code was not installed
+        /// until Outlook was restarted.
+        /// </summary>
+        private static string CurrentPrerequisiteError()
+        {
+            string error = _lastPrerequisiteError;
+            if (error != null && _cliWasMissing && File.Exists(ClaudePath))
+            {
+                _cliWasMissing = false;
+                _lastPrerequisiteError = null;
+                return null;
+            }
+
+            return error;
+        }
 
         /// <summary>
         /// Pre-warms a Claude CLI process so it's ready when the user clicks an action.
@@ -463,6 +489,7 @@ namespace OutlookAI.Services
                     process.WaitForExit(); // flush async output handlers
                     var stderr = stderrBuilder.ToString();
                     _lastPrerequisiteError = DiagnoseError(stderr, process.ExitCode);
+                    _cliWasMissing = false;
                     process.Dispose();
                     return;
                 }
@@ -508,7 +535,7 @@ namespace OutlookAI.Services
             string draftText, string signatureText, string threadText,
             string selectedText = null)
         {
-            var prereqError = _lastPrerequisiteError;
+            var prereqError = CurrentPrerequisiteError();
             if (prereqError != null)
                 throw new Exception(prereqError);
 
@@ -547,7 +574,7 @@ namespace OutlookAI.Services
             IReadOnlyList<SignatureInfo> signatures,
             string draftText, string threadText, string recipientsText)
         {
-            var prereqError = _lastPrerequisiteError;
+            var prereqError = CurrentPrerequisiteError();
             if (prereqError != null)
                 throw new Exception(prereqError);
 
@@ -821,6 +848,7 @@ namespace OutlookAI.Services
                     var stderr = stderrBuilder.ToString();
                     var error = DiagnoseError(stderr, process.ExitCode);
                     _lastPrerequisiteError = IsPrerequisiteError(stderr) ? error : null;
+                    _cliWasMissing = false;
                     // Pre-warm for next attempt
                     WarmUp();
                     throw new Exception(error);
@@ -835,6 +863,7 @@ namespace OutlookAI.Services
 
                 // A successful run is positive proof prerequisites are OK; clear any stale gate.
                 _lastPrerequisiteError = null;
+                _cliWasMissing = false;
 
                 // Pre-warm the next process in the background
                 WarmUp();
@@ -892,6 +921,7 @@ namespace OutlookAI.Services
             {
                 _lastPrerequisiteError =
                     "Claude Code CLI was not found at " + ClaudePath + ".\n\n" + InstallInstructions;
+                _cliWasMissing = true;
                 throw new Exception(_lastPrerequisiteError);
             }
         }

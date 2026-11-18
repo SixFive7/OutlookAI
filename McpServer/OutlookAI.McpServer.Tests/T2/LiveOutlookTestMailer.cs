@@ -2,6 +2,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using Microsoft.CSharp.RuntimeBinder;
+using OutlookAI.Core.AddIn;
 using OutlookAI.Core.Com;
 
 namespace OutlookAI.McpServer.Tests.T2;
@@ -3668,6 +3669,210 @@ public static class LiveOutlookTestMailer
         });
     }
 
+    /// <summary>
+    /// What a tagged draft's OPEN compose window holds now (Q168 (b), the task pane tests): the window's
+    /// handle, the draft and signature regions as <see cref="ComposeDocument"/> reads them - the code the
+    /// add-in and the server share - the paragraphs of the draft region, and the pictures in the signature
+    /// region and how many of them are still links to a file (D47). Null when no open window shows it.
+    /// Read only: nothing is saved, closed or changed.
+    /// </summary>
+    public static OpenDraftReading? ReadOpenDraft(string storeDisplayName, string entryIdHex, string uniqueMarker)
+    {
+        RequireStrongMarker(uniqueMarker);
+        return RunSta<OpenDraftReading?>(() => WithOpenDraft(storeDisplayName, entryIdHex, uniqueMarker, (inspector, document) =>
+        {
+            IntPtr window = IntPtr.Zero;
+            if (inspector is ComposeSurface.IOleWindow ole && ole.GetWindow(out IntPtr handle) == 0)
+            {
+                window = handle;
+            }
+
+            int draftEnd = ComposeDocument.FindDraftEnd(document);
+            int paragraphs = 0;
+            object? range = null;
+            object? paragraphList = null;
+            try
+            {
+                range = ((dynamic)document).Range(0, draftEnd);
+                paragraphList = ((dynamic)range!).Paragraphs;
+                paragraphs = (int)((dynamic)paragraphList!).Count;
+            }
+            finally
+            {
+                Release(paragraphList);
+                Release(range);
+            }
+
+            (int pictures, int linked) = CountSignaturePictures(document);
+            return new OpenDraftReading(
+                window,
+                ComposeDocument.ReadDraftText(document),
+                ComposeDocument.ReadSignatureText(document),
+                paragraphs,
+                pictures,
+                linked);
+        }));
+    }
+
+    /// <summary>
+    /// Closes a tagged draft's open compose window WITHOUT saving (olDiscard): what is stored stays as it
+    /// was saved, and the window's unsaved changes go. False when no open window shows the draft.
+    /// </summary>
+    public static bool CloseOpenDraftDiscarding(string storeDisplayName, string entryIdHex, string uniqueMarker)
+    {
+        RequireStrongMarker(uniqueMarker);
+        return RunSta(() => WithOpenDraft<bool?>(storeDisplayName, entryIdHex, uniqueMarker, (inspector, document) =>
+        {
+            ((dynamic)inspector).Close(1); // olDiscard
+            return true;
+        }) ?? false);
+    }
+
+    private static void RequireStrongMarker(string uniqueMarker)
+    {
+        if (string.IsNullOrWhiteSpace(uniqueMarker) || uniqueMarker.Length < 12)
+        {
+            throw new ArgumentException("Marker too weak for a safe item filter (S3).", nameof(uniqueMarker));
+        }
+    }
+
+    /// <summary>
+    /// Runs <paramref name="work"/> on the open compose window that shows the draft with entry id
+    /// <paramref name="entryIdHex"/> in <paramref name="storeDisplayName"/>, after checking the draft's subject
+    /// carries both the test tag and this run's marker (S3); default when no open window shows it.
+    /// </summary>
+    private static T? WithOpenDraft<T>(string storeDisplayName, string entryIdHex, string uniqueMarker, Func<object, object, T> work)
+    {
+        dynamic app = CreateOutlookApplication();
+        dynamic? ns = null;
+        dynamic? stores = null;
+        dynamic? store = null;
+        object? inspectors = null;
+        try
+        {
+            ns = app.GetNamespace("MAPI");
+            stores = ns.Stores;
+            store = FindStore(stores, storeDisplayName)
+                ?? throw new InvalidOperationException("Store not found for the open draft.");
+            string storeId = (string)store.StoreID;
+            inspectors = app.Inspectors;
+            int count = (int)((dynamic)inspectors!).Count;
+            for (int i = 1; i <= count; i++)
+            {
+                object? inspector = null;
+                object? item = null;
+                object? parent = null;
+                object? itemStore = null;
+                object? document = null;
+                try
+                {
+                    inspector = ((dynamic)inspectors!)[i];
+                    item = ((dynamic)inspector!).CurrentItem;
+                    string? id = TryRead(() => (string?)((dynamic)item!).EntryID);
+                    if (!string.Equals(id, entryIdHex, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    parent = ((dynamic)item!).Parent;
+                    itemStore = ((dynamic)parent!).Store;
+                    if (!string.Equals((string)((dynamic)itemStore!).StoreID, storeId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    string? subject = (string?)((dynamic)item!).Subject;
+                    if (subject == null || !subject.Contains(SubjectTag, StringComparison.Ordinal)
+                        || !subject.Contains(uniqueMarker, StringComparison.OrdinalIgnoreCase))
+                    {
+                        throw new InvalidOperationException(
+                            "Refusing to read the open draft: its subject does not carry both the test tag and this run's marker (S3).");
+                    }
+
+                    document = ((dynamic)inspector!).WordEditor;
+                    return work(inspector!, document!);
+                }
+                finally
+                {
+                    Release(document);
+                    Release(itemStore);
+                    Release(parent);
+                    Release(item);
+                    Release(inspector);
+                }
+            }
+
+            return default;
+        }
+        finally
+        {
+            Release(inspectors);
+            Release(store);
+            Release(stores);
+            Release(ns);
+            Release(app);
+        }
+    }
+
+    private static (int Pictures, int Linked) CountSignaturePictures(object document)
+    {
+        object? bookmarks = null;
+        object? bookmark = null;
+        object? range = null;
+        object? shapes = null;
+        try
+        {
+            bookmarks = ((dynamic)document).Bookmarks;
+            ((dynamic)bookmarks!).ShowHidden = true;
+            if (!(bool)((dynamic)bookmarks!).Exists(ComposeDocument.SignatureBookmark))
+            {
+                return (0, 0);
+            }
+
+            bookmark = ((dynamic)bookmarks!).Item(ComposeDocument.SignatureBookmark);
+            range = ((dynamic)bookmark!).Range;
+            shapes = ((dynamic)range!).InlineShapes;
+            int count = (int)((dynamic)shapes!).Count;
+            int linked = 0;
+            for (int i = 1; i <= count; i++)
+            {
+                object? shape = null;
+                object? link = null;
+                try
+                {
+                    shape = ((dynamic)shapes!)[i];
+                    try
+                    {
+                        link = ((dynamic)shape!).LinkFormat;
+                    }
+                    catch (Exception ex) when (ex is COMException or RuntimeBinderException)
+                    {
+                        link = null;
+                    }
+
+                    if (link != null)
+                    {
+                        linked++;
+                    }
+                }
+                finally
+                {
+                    Release(link);
+                    Release(shape);
+                }
+            }
+
+            return (count, linked);
+        }
+        finally
+        {
+            Release(shapes);
+            Release(range);
+            Release(bookmark);
+            Release(bookmarks);
+        }
+    }
+
     private static string? TryRead(Func<string?> read)
     {
         try
@@ -3784,3 +3989,7 @@ public sealed record FolderListing(
 /// </summary>
 public sealed record TestFolderChange(
     string EntryIdBefore, string? EntryIdOnSameObject, string? EntryIdAfter, string? Name, string? Error);
+
+/// <summary>What a tagged draft's open compose window holds: see <see cref="LiveOutlookTestMailer.ReadOpenDraft"/>.</summary>
+public sealed record OpenDraftReading(
+    IntPtr Window, string DraftText, string SignatureText, int DraftParagraphs, int SignaturePictures, int SignaturePicturesLinked);

@@ -249,6 +249,21 @@ its mailbox tests on, and change nothing you install.
   check fails, the reason is written out in full here rather than hidden behind a link. Both
   indicators now take their wording from one place, so they cannot disagree.
 
+- ✅ **A live test drives the task pane on a test machine, with a stand-in for the Claude Code CLI.**
+  Decided by the maintainer on 2026-11-18 (Q168 (b)): nothing tested the pane, so the code-sharing
+  refactor's stage S4 could not show that it still worked. T2 `LivePaneTests` has the MCP server open
+  a tagged draft with a test signature in a compose window, types an instruction into the pane and
+  clicks "Edit current draft" with the Win32 messages typing and clicking send, and reads the open
+  window back, read only. The pane's requests go to `ClaudeCliStandIn`, which the test compiles with
+  the .NET Framework's own C# compiler to where the add-in runs Claude Code, answers the body and a
+  signature name the test chose, and keeps every prompt for the test to read. It goes only onto a
+  test machine - the live opt-in and a profile that is not Production come first - never over a real
+  CLI, and is removed when the test ends, so the product needs no automation entry point. The test
+  checks that the pane still writes one paragraph a line, that its AI's signature choice (Q162 (b))
+  follows the body and replaces the agent's signature, and that the chosen signature's picture is
+  embedded (D47). `LiveOutlookTestMailer` gained the read of an open draft and the close that
+  discards it, both refusing a draft without this run's tag.
+
 - ✅ **The compose measurement also runs the product's own drafting, Outlook's typed text, and cold starts.**
   As the maintainer decided on 2026-11-18, the Q149 suite stays (Q210 (a)) and gains seven cells.
   P1 runs the product's drafts in an Outlook with no window, three starts of ten drafts each,
@@ -1786,6 +1801,13 @@ its mailbox tests on, and change nothing you install.
   sweep fragment, the definitions the sweep matches with, instead of the incident tool's copy.
 
 ### Fixed
+
+- 🐛 **The task pane finds a Claude Code installed while Outlook runs, without a restart.**
+  The pane remembered that Claude Code was missing when Outlook started, and every request then
+  failed with "not found" until Outlook was restarted, however soon Claude Code was installed. When
+  that is the error it remembers, it now looks for the program again before each request, and goes
+  ahead once it is there. Found while building the live pane test (Q168 (b)), whose stand-in for the
+  CLI arrives after the test machine's Outlook has started.
 
 - 🐛 **OutlookAI's hidden window is no longer left behind, keeping Outlook running (Q118 (a)).**
   The hidden window that keeps an Outlook with no window running while agents draft was closed only
