@@ -1178,47 +1178,6 @@ function Resolve-Dotnet {
     throw 'REFUSING TO BUILD THE RELEASE: dotnet.exe was not found (PATH, Program Files\dotnet). The release publishes the MCP server with the .NET 10 SDK.'
 }
 
-# Start a tool with its output going STRAIGHT TO FILES - never through this process's pipe - and
-# a deadline. A build that spawns children can otherwise hold a pipe open after it has finished,
-# and the declared timeout then never fires. .Handle is read before waiting because
-# Start-Process -PassThru otherwise loses the exit code (measured, Install-DotnetSdk.ps1).
-function Invoke-Logged {
-    param(
-        [Parameter(Mandatory = $true)] [string] $FilePath,
-        [Parameter(Mandatory = $true)] [string[]] $ArgumentList,
-        [Parameter(Mandatory = $true)] [string] $LogStem,
-        [int] $TimeoutMinutes = 20,
-        [string] $WorkingDirectory
-    )
-    $out = "$LogStem.out.txt"
-    $err = "$LogStem.err.txt"
-    foreach ($f in @($out, $err)) { if (Test-Path -LiteralPath $f) { Remove-Item -LiteralPath $f -Force } }
-    $startArgs = @{
-        FilePath               = $FilePath
-        ArgumentList           = ($ArgumentList -join ' ')
-        RedirectStandardOutput = $out
-        RedirectStandardError  = $err
-        NoNewWindow            = $true
-        PassThru               = $true
-    }
-    if ($WorkingDirectory) { $startArgs['WorkingDirectory'] = $WorkingDirectory }
-    $p = Start-Process @startArgs
-    $null = $p.Handle
-    $exited = $p.WaitForExit($TimeoutMinutes * 60 * 1000)
-    if ($exited) { $p.WaitForExit() }
-    if (-not $exited) {
-        try { $p.Kill() } catch { }
-        return [pscustomobject]@{ ExitCode = -1; TimedOut = $true; Out = $out; Err = $err }
-    }
-    return [pscustomobject]@{ ExitCode = $p.ExitCode; TimedOut = $false; Out = $out; Err = $err }
-}
-
-function Show-LogTail([string] $Path, [int] $Lines = 30) {
-    if ($Path -and (Test-Path -LiteralPath $Path)) {
-        foreach ($l in (Get-Content -LiteralPath $Path -Tail $Lines)) { Write-Host "      | $l" }
-    }
-}
-
 function Format-RegistryData($Value, [Microsoft.Win32.RegistryValueKind] $Kind) {
     if ($null -eq $Value) { return '<null>' }
     switch ($Kind) {

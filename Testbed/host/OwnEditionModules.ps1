@@ -22,8 +22,9 @@
     running edition's own copy by path, from $PSHOME, is right in every one of those cases: where
     that copy is already loaded, the import changes nothing.
 
-    Tools/Switch-AddInBuild.ps1 found the Security half first (Q81) and imports that module the
-    same way, inline, because it lives outside Testbed/. Nothing here prints or reads anything.
+    Tools/Switch-AddInBuild.ps1 found the Security half first (Q81). The Tools/ scripts dot-source
+    this file as well (Q154), as '..\Testbed\host\OwnEditionModules.ps1', so that the import has
+    one copy. Nothing here prints or reads anything.
 
     Dot-source it AFTER $ErrorActionPreference = 'Stop', so a module that will not load stops the
     script here, by name, instead of at a cmdlet much later:
