@@ -1087,7 +1087,7 @@ its mailbox tests on, and change nothing you install.
   sweep and the scan as well: `AliceMailbox` holds it once, and `ThreadWalks` the conversation walks
   three thread suites each built. The live tier went the same way. Its test tag is spelled once,
   in `LiveOutlookTestMailer.TagText`, which the bracketed subject tag and the test-folder prefix
-  are made of, and the mailer's ten inline ordinal tag checks, and four more elsewhere, now ask one
+  are made of, and the mailer's twelve inline ordinal tag checks, and four more elsewhere, now ask one
   ordinal predicate, `CarriesSubjectTag`; the reading filters that leave test items out of a
   search, a census or a ground truth ask `MentionsSubjectTag`, which ignores letter case as each of
   them did. A test's tagged subject is built once (`TaggedSubject`). `LiveDraftChecks` holds the

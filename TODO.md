@@ -1688,7 +1688,8 @@
   T07 (repository paths), T08 (readers of compiled code and source text; ComposeOnReopenedDraftTests and
   ReadOnlyFolderLookupTests keep member cutters with declaration rules of their own), T09, T10 to
   T12 (the live tier's helpers, audit lines and tool-surface readers, with the test tags and the
-  mailer's tag checks; streams adding new inline tag checks fold theirs when they land) and T05
+  mailer's tag checks, the two the drafting stream added since among them; a stream adding another
+  inline tag check folds it when it lands) and T05
   (the sweep and scan suites' one-mailbox profile, `AliceMailbox`, and the thread suites' walks,
   `ThreadWalks`; six more suites - the thread, unindexed-store and folder-walk ones - still spell
   that mailbox's SID, prefix and frontier under names of their own, beside stores of their own).
