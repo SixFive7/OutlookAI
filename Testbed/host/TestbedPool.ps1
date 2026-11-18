@@ -336,11 +336,15 @@ function Read-TestbedLiveRecords {
 # This run's turn in the queue: the tickets ahead of its own are read, those of runs that have ended -
 # stopped while they waited - deleted, and Select-TestbedQueueTurn says which of $Candidates it may
 # not try yet. A ticket of its own that has gone is written again under its name, so the run keeps
-# its place. Files only.
+# its place; a write that cannot be made now - the old file still pending delete, which Windows
+# PowerShell 5.1 answered with "Access is denied" in 5 of 3,000 turns over a queue whose files came
+# and went (2026-11-18) - is tried again on the next turn, and never stops this one. No other run
+# deletes a ticket whose run lives (Read-TestbedLiveRecords), so only a person can take it away. Files
+# only.
 function Get-TestbedQueueTurn {
     param([object] $Ticket, [string] $Run, [string[]] $Candidates)
     $dir = Get-TestbedQueueDirectory
-    if (-not (Test-Path -LiteralPath $Ticket.Path)) { [System.IO.File]::WriteAllText($Ticket.Path, $Ticket.Json, (New-Object System.Text.UTF8Encoding($false))) }
+    try { if (-not [System.IO.File]::Exists($Ticket.Path)) { [System.IO.File]::WriteAllText($Ticket.Path, $Ticket.Json, (New-Object System.Text.UTF8Encoding($false))) } } catch { }
     $live = @(Read-TestbedLiveRecords -Paths @(Get-TestbedStateFiles $dir) -Until $Ticket.Name | ForEach-Object { [pscustomobject]@{ Name = $_.Name; Run = [string]$_.Record.run; Candidates = @($_.Record.candidates) } })
     $live += [pscustomobject]@{ Name = $Ticket.Name; Run = $Run; Candidates = @($Candidates) }
     return (Select-TestbedQueueTurn -Tickets $live -Mine $Ticket.Name -Candidates $Candidates)
