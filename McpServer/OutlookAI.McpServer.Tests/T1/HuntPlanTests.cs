@@ -62,14 +62,28 @@ public sealed class HuntPlanTests
         Assert.Equal(shows ? "S5-hunt-NoFormPage-shown" : "S5-hunt-NoFormPage", plan.Cell);
     }
 
+    [Fact]
+    public void ATypedWindowBeforeEachDraft_IsAskedForByTyped()
+    {
+        HuntPlan? plan = HuntPlan.Parse("ProductLoop", "10", "typed", out string? why);
+
+        Assert.NotNull(plan);
+        Assert.Null(why);
+        Assert.True(plan!.ShowsEach);
+        Assert.True(plan.TypesEach);
+        Assert.Equal("S5-hunt-ProductLoop-typed", plan.Cell);
+        Assert.False(HuntPlan.Parse("ProductLoop", "10", "1", out _)!.TypesEach);
+    }
+
     [Theory]
     [InlineData("2")]
     [InlineData("yes")]
     [InlineData("true")]
+    [InlineData("Typed")]
     public void AnythingElse_IsNoPlan(string showEach)
     {
         Assert.Null(HuntPlan.Parse("ProductLoop", "10", showEach, out string? why));
-        Assert.Contains("must be 1 or 0", why, StringComparison.Ordinal);
+        Assert.Contains("must be 1, typed or 0", why, StringComparison.Ordinal);
     }
 
     [Theory]

@@ -38,6 +38,8 @@ public sealed class HuntPlan
     /// <summary>
     /// The variable that, set to 1, has every draft come after a compose window shown and closed: a reply or forward the
     /// object model made, opened in an inspector the product's own way (parked, activated, hidden), closed discarding.
+    /// Set to "typed", the window is displayed on screen and typed into at Outlook's insertion point, as the typed-text
+    /// tests do (<c>Display</c>, Word's <c>Selection.TypeText</c>), then closed discarding.
     /// </summary>
     public const string ShowEachVariable = "OUTLOOKAI_HUNT_SHOW_EACH";
 
@@ -53,8 +55,9 @@ public sealed class HuntPlan
     /// <summary>How many failed drafts in a row end a leg whose Outlook is still running.</summary>
     public const int MostFailuresInARow = 5;
 
-    private HuntPlan(string variant, HuntMaker maker, bool windowless, bool showsCalendar, int legMinutes, bool showsEach)
+    private HuntPlan(string variant, HuntMaker maker, bool windowless, bool showsCalendar, int legMinutes, bool showsEach, bool typesEach = false)
     {
+        TypesEach = typesEach;
         Variant = variant;
         Maker = maker;
         Windowless = windowless;
@@ -88,8 +91,11 @@ public sealed class HuntPlan
     /// </summary>
     public bool ShowsEach { get; }
 
+    /// <summary>Whether the window shown before each draft is displayed on screen and typed into, rather than promoted.</summary>
+    public bool TypesEach { get; }
+
     /// <summary>The cell of the variant's attempt lines - one a draft.</summary>
-    public string Cell => "S5-hunt-" + Variant + (ShowsEach ? "-shown" : string.Empty);
+    public string Cell => "S5-hunt-" + Variant + (TypesEach ? "-typed" : ShowsEach ? "-shown" : string.Empty);
 
     /// <summary>
     /// The plan the two variables name; null with the reason when they name none - unset outside a hunting run, so
@@ -117,6 +123,7 @@ public sealed class HuntPlan
         }
 
         bool shows;
+        bool types = false;
         switch (showEach)
         {
             case null:
@@ -127,23 +134,27 @@ public sealed class HuntPlan
             case "1":
                 shows = true;
                 break;
+            case "typed":
+                shows = true;
+                types = true;
+                break;
             default:
-                why = ShowEachVariable + " must be 1 or 0, not '" + showEach + "'";
+                why = ShowEachVariable + " must be 1, typed or 0, not '" + showEach + "'";
                 return null;
         }
 
         switch (variant)
         {
             case "ProductLoop":
-                return new HuntPlan(variant, HuntMaker.Product, windowless: false, showsCalendar: false, minutes, shows);
+                return new HuntPlan(variant, HuntMaker.Product, windowless: false, showsCalendar: false, minutes, shows, types);
             case "OtherFolder":
-                return new HuntPlan(variant, HuntMaker.Product, windowless: false, showsCalendar: true, minutes, shows);
+                return new HuntPlan(variant, HuntMaker.Product, windowless: false, showsCalendar: true, minutes, shows, types);
             case "NoWindow":
-                return new HuntPlan(variant, HuntMaker.Product, windowless: true, showsCalendar: false, minutes, shows);
+                return new HuntPlan(variant, HuntMaker.Product, windowless: true, showsCalendar: false, minutes, shows, types);
             case "NoFormPage":
-                return new HuntPlan(variant, HuntMaker.NoFormPage, windowless: false, showsCalendar: false, minutes, shows);
+                return new HuntPlan(variant, HuntMaker.NoFormPage, windowless: false, showsCalendar: false, minutes, shows, types);
             case "BareCreators":
-                return new HuntPlan(variant, HuntMaker.Bare, windowless: false, showsCalendar: false, minutes, shows);
+                return new HuntPlan(variant, HuntMaker.Bare, windowless: false, showsCalendar: false, minutes, shows, types);
             case CalendarStep:
                 return new HuntPlan(variant, HuntMaker.None, windowless: false, showsCalendar: true, minutes, showsEach: false);
             default:

@@ -134,7 +134,8 @@ public sealed class LiveHuntDerivedDraftTests
             .Set("embedding", commandLine == null ? null : commandLine.Contains("Embedding", StringComparison.OrdinalIgnoreCase))
             .Set("legMinutes", plan.LegMinutes)
             .Set("maker", plan.Maker.ToString())
-            .Set("showsEach", plan.ShowsEach);
+            .Set("showsEach", plan.ShowsEach)
+            .Set("typesEach", plan.TypesEach);
         if (plan.ShowsCalendar)
         {
             start.Set("moved", MoveMainWindowToTheCalendar(client));
@@ -166,7 +167,7 @@ public sealed class LiveHuntDerivedDraftTests
             {
                 if (plan.ShowsEach)
                 {
-                    ShowAndClose(drafts, client, sourceEntryId, storeId, forward, i, attempt);
+                    ShowAndClose(drafts, client, sourceEntryId, storeId, forward, i, attempt, plan.TypesEach);
                 }
 
                 entryId = plan.Maker switch
@@ -312,7 +313,7 @@ public sealed class LiveHuntDerivedDraftTests
     /// then closed discarding and deleted. Activating it is what OutlookAI's own add-in puts its task pane on; closing it
     /// is what the add-in takes the pane off at.
     /// </summary>
-    private void ShowAndClose(Q149Run drafts, Q149OutlookClient client, string sourceEntryId, string storeId, bool forward, int i, Q149Attempt attempt)
+    private void ShowAndClose(Q149Run drafts, Q149OutlookClient client, string sourceEntryId, string storeId, bool forward, int i, Q149Attempt attempt, bool typed)
     {
         Stopwatch shown = Stopwatch.StartNew();
         (string entryId, _) = Q149Drafts.CreateDerivedWithoutInspector(drafts, client, sourceEntryId, storeId, forward, "hunt-shown-" + i.ToString(CultureInfo.InvariantCulture));
@@ -327,6 +328,22 @@ public sealed class LiveHuntDerivedDraftTests
                 {
                     item = ns.GetItemFromID(entryId, storeId);
                     Q149Drafts.RequireOwnUnsentDraft(drafts, item);
+                    if (typed)
+                    {
+                        // As the typed-text tests do: the compose window displayed, typed into at Outlook's insertion point.
+                        item.Display(false);
+                        inspector = (object)item.GetInspector;
+                        Q149EditorRead read = Q149Editor.ReadEditor(inspector, 10_000, 250);
+                        document = read.Document;
+                        if (document == null)
+                        {
+                            return "no editor in the displayed compose window";
+                        }
+
+                        TypeAtTheInsertionPoint(document, "Hunt typed " + i.ToString(CultureInfo.InvariantCulture) + " " + Run.Marker);
+                        return null;
+                    }
+
                     inspector = (object)item.GetInspector;
                     document = ComposeSurface.PromoteForWordEditor(inspector, out string? promoteError);
                     return document == null ? (promoteError ?? "NoWordEditor") : null;
@@ -361,6 +378,29 @@ public sealed class LiveHuntDerivedDraftTests
             {
                 attempt.Set("shownDeleteFailure", Q149Com.Failure(ex));
             }
+        }
+    }
+
+    /// <summary>Two lines typed through Word's own typing at the insertion point Outlook gave the displayed window.</summary>
+    private static void TypeAtTheInsertionPoint(object document, string text)
+    {
+        dynamic? windows = null;
+        dynamic? window = null;
+        dynamic? selection = null;
+        try
+        {
+            windows = ((dynamic)document).Windows;
+            window = windows.Item(1);
+            selection = window.Selection;
+            selection.TypeText(text);
+            selection.TypeParagraph();
+            selection.TypeText("Typed line two");
+        }
+        finally
+        {
+            Q149Com.Release(selection);
+            Q149Com.Release(window);
+            Q149Com.Release(windows);
         }
     }
 

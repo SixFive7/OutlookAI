@@ -306,7 +306,8 @@ its mailbox tests on, and change nothing you install.
   makes nothing in any other run. With `-HuntShowEach` every draft of a loop comes after a compose
   window shown and closed: a reply or forward made through the object model, promoted the product's
   own way and closed discarding, which is what the typed-text tests do before each of the product's
-  drafts. Every hunting run also records Office's build and the hunted
+  drafts, and with `-HuntTypeEach` that window is displayed on screen and typed into as those tests
+  do. Every hunting run also records Office's build and the hunted
   module's file, and the summary shows both. `-HuntWithoutAddIn` turns OutlookAI's own add-in off
   for the run, LoadBehavior 0 before Outlook starts, and the restore after the run brings the
   checkpoint's value back. Every Outlook guest's checkpoint holds the add-in installed and loading,

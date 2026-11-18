@@ -5592,8 +5592,9 @@ Only the hunt's suite script sets the variables that name a variant, its leg min
 before each draft (`T2/HuntPlan.cs`), so the loop writes a NOT RUN line and makes nothing in any other run. With
 `-HuntShowEach`, every draft of the loop comes after a compose window shown and closed: a reply or forward the object
 model makes and saves, opened in an inspector and promoted the product's own way - parked off screen, activated,
-hidden, as the typed-text tests read every draft - then closed discarding and deleted. Without it a loop shows no
-window at all. Every hunting run
+hidden, as the typed-text tests read every draft - then closed discarding and deleted; with `-HuntTypeEach` as well,
+that window is displayed on screen and two lines are typed at Outlook's insertion point through Word's own typing, as
+the typed-text tests do, before it is closed discarding. Without either a loop shows no window at all. Every hunting run
 also writes Office's Click-to-Run build, channel and update setting and the hunted module's file - its
 path, size, time and SHA-256 - to its console as `HUNT-OFFICE` lines, which the summary reads back.
 
