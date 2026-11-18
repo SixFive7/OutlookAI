@@ -1,4 +1,4 @@
-using OutlookAI.Services;
+using OutlookAI.Core.AddIn;
 
 namespace OutlookAI.McpServer.Tests;
 

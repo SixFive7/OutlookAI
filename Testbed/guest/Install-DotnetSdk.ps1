@@ -343,6 +343,10 @@ $VerdictSdkOnly   = 'SDK-ONLY'
 $VerdictTestReady = 'TEST-READY'
 $VerdictBroken    = 'BROKEN'
 
+# travels-alone: Testbed/README.md steps B4 and 8b copy this script to a fresh machine on its own.
+# It puts the SDK there before anything else is staged, so it keeps its own copy of Say, one of the
+# helpers the scripts share, which Tools/Checks/check-powershell-51.ps1 check 4 holds identical to
+# the one in ScriptHelpers.ps1 (Q154, Q166 (b), decision 215 (a)).
 function Say([string] $m) {
     $line = "[{0:HH:mm:ss}] {1}" -f (Get-Date), $m
     Write-Host $line

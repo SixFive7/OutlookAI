@@ -130,7 +130,7 @@ Root: HKCU; Subkey: "Software\Microsoft\Office\Outlook\Addins\OutlookAI"; ValueT
 ; for the exemption is that the value NAME (the add-in id) is present in this list; the DWORD
 ; data is only a flag. Cover Outlook 2013 / 2016+ / future.
 ;
-; THE SET OF VERSIONS HERE MUST MATCH Services\OfficeVersions.cs (OfficeVersions.Supported),
+; THE SET OF VERSIONS HERE MUST MATCH McpServer\OutlookAI.Core\AddIn\OfficeVersions.cs (OfficeVersions.Supported),
 ; which is the add-in's one list of the Office majors it knows about - the theme probe and the
 ; Outlook tuning both work from it. The order does not matter here (all three are written); the
 ; SET does, and Tools/Checks/check-pinned-constants.ps1 compares the two rather than leaving

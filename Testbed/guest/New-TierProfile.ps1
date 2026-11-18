@@ -826,23 +826,21 @@ function Get-ForcePstPathState {
 }
 
 $script:Failures = @()
-$script:Lines    = @()
+$ReportLines = New-Object System.Collections.Generic.List[string]
 
-function Say {
-    param([string] $Text)
-    $script:Lines += $Text
-    Write-Host $Text
-}
+# Write-ReportLine prints a line and keeps it in $ReportLines; it is one of the helpers the scripts share,
+# dot-sourced from ScriptHelpers.ps1, which travels with the guest scripts (Q154, Q166 (b), decision 215 (a)).
+. (Join-Path $PSScriptRoot 'ScriptHelpers.ps1')
 
 function Pass {
     param([string] $What, [string] $Detail)
-    Say ("  OK   {0}{1}" -f $What, $(if ($Detail) { " - $Detail" } else { '' }))
+    Write-ReportLine ("  OK   {0}{1}" -f $What, $(if ($Detail) { " - $Detail" } else { '' }))
 }
 
 function Fail {
     param([string] $What, [string] $Why)
     $script:Failures += "$What : $Why"
-    Say ("  FAIL {0} - {1}" -f $What, $Why)
+    Write-ReportLine ("  FAIL {0} - {1}" -f $What, $Why)
 }
 
 function Save-Log {
@@ -854,7 +852,7 @@ function Save-Log {
     if ($dir -and -not (Test-Path -LiteralPath $dir)) {
         New-Item -ItemType Directory -Path $dir -Force | Out-Null
     }
-    Set-Content -LiteralPath $LogPath -Value $script:Lines -Encoding UTF8
+    Set-Content -LiteralPath $LogPath -Value $ReportLines -Encoding UTF8
     Write-Host ''
     Write-Host "Log: $LogPath"
 }
@@ -1043,8 +1041,8 @@ function Get-StoredPasswordState {
     nothing. Outlook must be CLOSED for -Execute: it holds the account settings while it runs.
 #>
 function Invoke-StoreSinkPassword {
-    Say '== Store a POP3 password on every account that polls the sink =='
-    Say ''
+    Write-ReportLine '== Store a POP3 password on every account that polls the sink =='
+    Write-ReportLine ''
     if ($Execute) {
         $running = @(Get-Process -Name 'OUTLOOK' -ErrorAction SilentlyContinue)
         if ($running.Count -gt 0) {
@@ -1068,7 +1066,7 @@ function Invoke-StoreSinkPassword {
         $entry = $entries | Where-Object { $_.Key -eq $a.Key } | Select-Object -First 1
         $before = Get-StoredPasswordState -Value $entry.Password
         if (-not $Execute) {
-            Say ("  would store a POP3 password on '{0}' (POP3 user '{1}') - stored now: {2}" -f $a.Email, $a.Pop3User, $before)
+            Write-ReportLine ("  would store a POP3 password on '{0}' (POP3 user '{1}') - stored now: {2}" -f $a.Email, $a.Pop3User, $before)
             continue
         }
         $plain = Get-SinkPasswordPlainBytes -Password $StoredPop3Value -Terminated $Pop3PasswordTerminated
@@ -1083,10 +1081,10 @@ function Invoke-StoreSinkPassword {
             Fail "a POP3 password is stored for '$($a.Email)'" "It was written and reads back as '$after'."
         }
     }
-    Say ''
-    Say 'THE REGISTRY IS NOT THE PROOF. Start Outlook on the tier profile with the sink at -LogLevel debug:'
-    Say "C:\OutlookAI-Sink\inbucket.log must show 'read USER <user>' and 'read PASS $StoredPop3Value' for each"
-    Say 'account above, and no "Internet Email" logon dialog may appear in session 1.'
+    Write-ReportLine ''
+    Write-ReportLine 'THE REGISTRY IS NOT THE PROOF. Start Outlook on the tier profile with the sink at -LogLevel debug:'
+    Write-ReportLine "C:\OutlookAI-Sink\inbucket.log must show 'read USER <user>' and 'read PASS $StoredPop3Value' for each"
+    Write-ReportLine 'account above, and no "Internet Email" logon dialog may appear in session 1.'
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -1095,12 +1093,12 @@ function Invoke-StoreSinkPassword {
 # ---------------------------------------------------------------------------------------------
 
 function Invoke-Verify {
-    Say '== Verify: did Outlook honour the .prf? =='
-    Say ''
+    Write-ReportLine '== Verify: did Outlook honour the .prf? =='
+    Write-ReportLine ''
 
     $profiles = Get-ProfileNames
-    Say ("Profiles present: " + $(if ($profiles.Count -gt 0) { $profiles -join ', ' } else { '<none>' }))
-    Say ''
+    Write-ReportLine ("Profiles present: " + $(if ($profiles.Count -gt 0) { $profiles -join ', ' } else { '<none>' }))
+    Write-ReportLine ''
 
     if ($profiles -contains $ProfileName) {
         Pass 'the tier profile exists' $ProfileName
@@ -1143,7 +1141,7 @@ function Invoke-Verify {
         Pass 'a POP3 port property exists' 'read its value in the dump below'
     }
     elseif ($Pop3Port -eq 110) {
-        Say "  WARN a POP3 port property exists - none stored, and -Pop3Port is the default 110: measured on the working tier profile, Outlook stores no port (POP3 or SMTP) at its default. Only a NON-default port that is missing here would mean section 5's port did not land."
+        Write-ReportLine "  WARN a POP3 port property exists - none stored, and -Pop3Port is the default 110: measured on the working tier profile, Outlook stores no port (POP3 or SMTP) at its default. Only a NON-default port that is missing here would mean section 5's port did not land."
     }
     else {
         Fail 'a POP3 port property exists' "No port value under the account, and -Pop3Port is $Pop3Port, not the default 110. Section 5's port did not land - read the dump before concluding more than that."
@@ -1159,7 +1157,7 @@ function Invoke-Verify {
     else {
         Fail 'ForcePSTPath names the work directory' ("It reads '{0}' ({1}); -Execute writes REG_EXPAND_SZ '{2}'. Outlook mints the tier's delivery store wherever this points, so the rename step and this check would look in the wrong place." -f $forceState.Current, $forceState.Kind, $WorkDir)
     }
-    foreach ($policy in @($forceState.Policies)) { Say "  WARN a POLICY ForcePSTPath is set: '$policy' - policy outranks the value above." }
+    foreach ($policy in @($forceState.Policies)) { Write-ReportLine "  WARN a POLICY ForcePSTPath is set: '$policy' - policy outranks the value above." }
 
     if ($dump.HasDeliveryStore) {
         Pass 'the account has a delivery store' ("{0} byte(s)" -f $dump.DeliveryStoreBytes)
@@ -1175,8 +1173,8 @@ function Invoke-Verify {
     # Documents\Outlook Files - exactly where a corpus profile made FIRST keeps its /PIM store -
     # while never looking in ForcePSTPath, where the import mints. Resolve-TierPstLayout decides.
     $profilePsts = Get-ProfilePstPath -Profile $ProfileName
-    Say ("  delivery store file (from its EntryID): {0}" -f $(if ($dump.DeliveryStorePath) { $dump.DeliveryStorePath } else { '<no readable path>' }))
-    Say ("  PST files the tier profile references : {0}" -f $(if ($profilePsts.Count) { $profilePsts -join ', ' } else { '<none read>' }))
+    Write-ReportLine ("  delivery store file (from its EntryID): {0}" -f $(if ($dump.DeliveryStorePath) { $dump.DeliveryStorePath } else { '<no readable path>' }))
+    Write-ReportLine ("  PST files the tier profile references : {0}" -f $(if ($profilePsts.Count) { $profilePsts -join ', ' } else { '<none read>' }))
     $layout = Resolve-TierPstLayout -ProfilePstPaths $profilePsts -DeliveryStorePath $dump.DeliveryStorePath -WorkDir $WorkDir
     switch ($layout.Decision) {
         'Pass' {
@@ -1184,7 +1182,7 @@ function Invoke-Verify {
             else { Fail 'the one PST is the store Outlook minted under ForcePSTPath' "$($layout.Message) - and there is no such file on disk. Outlook creates a minted store at the first start that opens the profile; has it opened the tier profile yet?" }
         }
         'Fail' { Fail 'the one PST is the store Outlook minted under ForcePSTPath' $layout.Message }
-        default { Say ("  WARN the one PST is the store Outlook minted under ForcePSTPath - not shown: {0}" -f $layout.Message) }
+        default { Write-ReportLine ("  WARN the one PST is the store Outlook minted under ForcePSTPath - not shown: {0}" -f $layout.Message) }
     }
 
     # -- the stored POP3 password (2026-09-24): without one Outlook prompts before it connects -----
@@ -1213,7 +1211,7 @@ function Invoke-Verify {
     }
     $clearance = Resolve-ImportPrfClearance -ImportPrfValue $importNow -PrfProfileName $prfProfileName `
         -ProfileName $ProfileName -ProfileExists ($profiles -contains $ProfileName) -FirstRunPresent $firstRunPresent
-    Say ("  ImportPRF now: {0}; First-Run back: {1}; decision: {2}" -f $(if ([string]::IsNullOrEmpty($importNow)) { '<not set>' } else { "'$importNow'" }), $firstRunPresent, $clearance.Decision)
+    Write-ReportLine ("  ImportPRF now: {0}; First-Run back: {1}; decision: {2}" -f $(if ([string]::IsNullOrEmpty($importNow)) { '<not set>' } else { "'$importNow'" }), $firstRunPresent, $clearance.Decision)
 
     switch ($clearance.Decision) {
         'NotSet' { Pass 'ImportPRF is no longer set' 'no Outlook start can re-import the tier profile' }
@@ -1228,12 +1226,12 @@ function Invoke-Verify {
             }
         }
         'KeepPending' { Fail 'ImportPRF is no longer set' $clearance.Message }
-        default { Say ("  WARN ImportPRF is no longer set - {0}" -f $clearance.Message) }
+        default { Write-ReportLine ("  WARN ImportPRF is no longer set - {0}" -f $clearance.Message) }
     }
 
-    Say ''
-    Say '-- account value dump (this is the evidence; read it before trusting any line above) --'
-    if ($dump.Text) { Say $dump.Text } else { Say '<empty>' }
+    Write-ReportLine ''
+    Write-ReportLine '-- account value dump (this is the evidence; read it before trusting any line above) --'
+    if ($dump.Text) { Write-ReportLine $dump.Text } else { Write-ReportLine '<empty>' }
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -1285,47 +1283,47 @@ function Get-RenderedPrf {
 
 function Show-NextSteps {
     $minted = Join-Path $WorkDir 'Outlook.pst'
-    Say 'NEXT - none of this is done by this script:'
-    Say '  1. Start Outlook once, IN SESSION 1 (Register-InteractiveTask.ps1), and let it finish starting.'
-    Say '     It imports the .prf, creates the profile, and mints the delivery store under ForcePSTPath.'
-    Say '     Expect the POP3 password dialog on screen; it does not block COM.'
-    Say "  2. .\Rename-OutlookStore.ps1 -StoreFilePath '$minted' -DisplayName '$StoreDisplayName' -Execute"
-    Say "     (Outlook names the store it mints 'Outlook Data File'; the hub has to be named as the address.)"
-    Say '  3. Quit Outlook gracefully (Testbed/README.md step 4d), then .\New-TierProfile.ps1 -StoreSinkPassword -Execute'
-    Say '     (with no stored password Outlook prompts at every start and never connects to the sink).'
-    Say '  4. .\New-TierProfile.ps1 -Verify'
-    Say 'This script does not start Outlook: importing is a startup-time action, and owning'
-    Say "Outlook's lifetime from a setup script is how a guest ends up with a zombie OUTLOOK.EXE."
+    Write-ReportLine 'NEXT - none of this is done by this script:'
+    Write-ReportLine '  1. Start Outlook once, IN SESSION 1 (Register-InteractiveTask.ps1), and let it finish starting.'
+    Write-ReportLine '     It imports the .prf, creates the profile, and mints the delivery store under ForcePSTPath.'
+    Write-ReportLine '     Expect the POP3 password dialog on screen; it does not block COM.'
+    Write-ReportLine "  2. .\Rename-OutlookStore.ps1 -StoreFilePath '$minted' -DisplayName '$StoreDisplayName' -Execute"
+    Write-ReportLine "     (Outlook names the store it mints 'Outlook Data File'; the hub has to be named as the address.)"
+    Write-ReportLine '  3. Quit Outlook gracefully (Testbed/README.md step 4d), then .\New-TierProfile.ps1 -StoreSinkPassword -Execute'
+    Write-ReportLine '     (with no stored password Outlook prompts at every start and never connects to the sink).'
+    Write-ReportLine '  4. .\New-TierProfile.ps1 -Verify'
+    Write-ReportLine 'This script does not start Outlook: importing is a startup-time action, and owning'
+    Write-ReportLine "Outlook's lifetime from a setup script is how a guest ends up with a zombie OUTLOOK.EXE."
 }
 
 function Show-Plan {
-    Say '== Plan (nothing below has been done) =='
-    Say ''
-    Say "  profile name        : $ProfileName"
-    Say "  email address       : $EmailAddress"
-    Say "  hub store name      : $StoreDisplayName  (set AFTER the import, by Rename-OutlookStore.ps1)"
-    Say "  POP3                : $SinkHost`:$Pop3Port  (no SSL, no SPA, no stored password)"
-    Say "  SMTP                : $SinkHost`:$SmtpPort  (no SSL, no auth)"
-    Say "  PRF template        : $TemplatePath"
-    Say "  PRF written to      : $prfPath"
-    Say "  delivery store      : minted by Outlook under ForcePSTPath, expected $(Join-Path $WorkDir 'Outlook.pst')"
-    Say ''
-    Say '  Registry it would write:'
-    Say "    $outlookKey"
-    Say "      ForcePSTPath REG_EXPAND_SZ = $WorkDir   (per-user: every PST Outlook mints by default lands here afterwards)"
-    Say "    $setupKey"
-    Say "      ImportPRF    REG_SZ        = $prfPath"
-    Say '      First-Run    DELETED       (ImportPRF is ignored while it exists)'
-    Say '      FirstRun     DELETED       (same)'
-    Say ''
-    Say '  It writes nothing else, and it does NOT start Outlook.'
-    Say ''
+    Write-ReportLine '== Plan (nothing below has been done) =='
+    Write-ReportLine ''
+    Write-ReportLine "  profile name        : $ProfileName"
+    Write-ReportLine "  email address       : $EmailAddress"
+    Write-ReportLine "  hub store name      : $StoreDisplayName  (set AFTER the import, by Rename-OutlookStore.ps1)"
+    Write-ReportLine "  POP3                : $SinkHost`:$Pop3Port  (no SSL, no SPA, no stored password)"
+    Write-ReportLine "  SMTP                : $SinkHost`:$SmtpPort  (no SSL, no auth)"
+    Write-ReportLine "  PRF template        : $TemplatePath"
+    Write-ReportLine "  PRF written to      : $prfPath"
+    Write-ReportLine "  delivery store      : minted by Outlook under ForcePSTPath, expected $(Join-Path $WorkDir 'Outlook.pst')"
+    Write-ReportLine ''
+    Write-ReportLine '  Registry it would write:'
+    Write-ReportLine "    $outlookKey"
+    Write-ReportLine "      ForcePSTPath REG_EXPAND_SZ = $WorkDir   (per-user: every PST Outlook mints by default lands here afterwards)"
+    Write-ReportLine "    $setupKey"
+    Write-ReportLine "      ImportPRF    REG_SZ        = $prfPath"
+    Write-ReportLine '      First-Run    DELETED       (ImportPRF is ignored while it exists)'
+    Write-ReportLine '      FirstRun     DELETED       (same)'
+    Write-ReportLine ''
+    Write-ReportLine '  It writes nothing else, and it does NOT start Outlook.'
+    Write-ReportLine ''
     Show-NextSteps
 }
 
 function Invoke-Execute {
-    Say '== Execute =='
-    Say ''
+    Write-ReportLine '== Execute =='
+    Write-ReportLine ''
 
     # -- preflight: assert the starting state rather than assuming it -------------------------
 
@@ -1347,14 +1345,14 @@ function Invoke-Execute {
             "Re-run with -Force to import over it - the template's OverwriteProfile=Yes + BackupProfile=No are " +
             "what should make that idempotent, and -Verify will tell you whether they did.")
     }
-    Say ("Profiles before: " + $(if ($existing.Count -gt 0) { $existing -join ', ' } else { '<none>' }))
+    Write-ReportLine ("Profiles before: " + $(if ($existing.Count -gt 0) { $existing -join ', ' } else { '<none>' }))
 
     # ForcePSTPath is decided BEFORE anything is written: a policy that would send the mint
     # elsewhere is a refusal, not a surprise at the rename step.
     $forceState = Get-ForcePstPathState
     $forcePlan = Resolve-ForcePstPathPlan -Current $forceState.Current -CurrentKind $forceState.Kind -Wanted $WorkDir -PolicyValues $forceState.Policies
     if ($forcePlan.Decision -like 'Refuse*') { throw $forcePlan.Message }
-    Say "ForcePSTPath: $($forcePlan.Message)"
+    Write-ReportLine "ForcePSTPath: $($forcePlan.Message)"
 
     # -- render and write the .prf ------------------------------------------------------------
 
@@ -1366,18 +1364,18 @@ function Invoke-Execute {
     # must already exist - Outlook creates the .pst, not the folder.
     if (-not (Test-Path -LiteralPath $WorkDir)) {
         New-Item -ItemType Directory -Path $WorkDir -Force | Out-Null
-        Say "Created $WorkDir"
+        Write-ReportLine "Created $WorkDir"
     }
     else {
-        Say "$WorkDir already exists"
+        Write-ReportLine "$WorkDir already exists"
         $already = @(Get-ChildItem -LiteralPath $WorkDir -Filter '*.pst' -File -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
         if ($already.Count -gt 0) {
-            Say ("  WARN it already holds: {0}. If one is called Outlook.pst, the store Outlook mints now may get another name - read the path -Verify reports before renaming." -f ($already -join ', '))
+            Write-ReportLine ("  WARN it already holds: {0}. If one is called Outlook.pst, the store Outlook mints now may get another name - read the path -Verify reports before renaming." -f ($already -join ', '))
         }
     }
 
     [System.IO.File]::WriteAllText($prfPath, $prfText, (New-Object System.Text.ASCIIEncoding))
-    Say "Wrote $prfPath ($($prfText.Length) chars, ASCII, CRLF)"
+    Write-ReportLine "Wrote $prfPath ($($prfText.Length) chars, ASCII, CRLF)"
 
     $readBack = [System.IO.File]::ReadAllText($prfPath)
     if ($readBack -ne $prfText) {
@@ -1407,21 +1405,21 @@ function Invoke-Execute {
 
     if (-not (Test-Path -LiteralPath $setupKey)) {
         New-Item -Path $setupKey -Force | Out-Null
-        Say "Created $setupKey"
+        Write-ReportLine "Created $setupKey"
     }
 
     New-ItemProperty -LiteralPath $setupKey -Name 'ImportPRF' -Value $prfPath -PropertyType String -Force | Out-Null
-    Say "Set ImportPRF = $prfPath"
+    Write-ReportLine "Set ImportPRF = $prfPath"
 
     foreach ($name in @('First-Run', 'FirstRun')) {
         $present = $null
         try { $present = Get-ItemProperty -LiteralPath $setupKey -Name $name -ErrorAction Stop } catch { $present = $null }
         if ($null -ne $present) {
             Remove-ItemProperty -LiteralPath $setupKey -Name $name -Force
-            Say "Deleted $name"
+            Write-ReportLine "Deleted $name"
         }
         else {
-            Say "$name already absent"
+            Write-ReportLine "$name already absent"
         }
     }
 
@@ -1445,7 +1443,7 @@ function Invoke-Execute {
         }
     }
 
-    Say ''
+    Write-ReportLine ''
     Show-NextSteps
 }
 
@@ -1453,8 +1451,8 @@ function Invoke-Execute {
 # Entry point.
 # ---------------------------------------------------------------------------------------------
 
-Say "New-TierProfile.ps1 - $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
-Say ''
+Write-ReportLine "New-TierProfile.ps1 - $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+Write-ReportLine ''
 
 if ($Verify -and $Execute) {
     throw 'Pass -Execute or -Verify, not both: verifying in the same run as writing would assert against a profile Outlook has not read yet, and would pass for the wrong reason.'
@@ -1472,20 +1470,20 @@ elseif ($Execute) {
 }
 else {
     Show-Plan
-    Say ''
-    Say 'Dry run. Nothing written. Re-run with -Execute.'
+    Write-ReportLine ''
+    Write-ReportLine 'Dry run. Nothing written. Re-run with -Execute.'
 }
 
-Say ''
+Write-ReportLine ''
 if ($script:Failures.Count -gt 0) {
-    Say ("{0} check(s) FAILED:" -f $script:Failures.Count)
-    foreach ($f in $script:Failures) { Say "  - $f" }
+    Write-ReportLine ("{0} check(s) FAILED:" -f $script:Failures.Count)
+    foreach ($f in $script:Failures) { Write-ReportLine "  - $f" }
     Save-Log
     exit 1
 }
 
 if ($Verify -or $Execute) {
-    Say 'All checks passed.'
+    Write-ReportLine 'All checks passed.'
 }
 Save-Log
 exit 0

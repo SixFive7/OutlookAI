@@ -2,7 +2,7 @@ using System;
 
 using Microsoft.Win32;
 
-namespace OutlookAI.Services
+namespace OutlookAI.Core.AddIn
 {
     /// <summary>
     /// WHICH OFFICE MAJOR VERSIONS THIS PRODUCT KNOWS ABOUT, IN ONE PLACE.
@@ -22,31 +22,18 @@ namespace OutlookAI.Services
     /// The MCP server had the SAME defect, read-side: its Outlook Search key, that key's Policies
     /// mirror and the whole profile registry (accounts, signature defaults) were hardcoded to
     /// 16.0, so a 15.0 or 17.0 machine got an empty answer that looked exactly like a broken
-    /// install. It shares this file rather than reimplementing it, which is what makes the two
-    /// halves probe the SAME versions in the SAME order by construction:
-    ///  - the add-in (<c>OutlookAI.csproj</c>) compiles this file directly;
-    ///  - <c>OutlookAI.Core</c> LINKS it (see <c>OutlookAI.Core.csproj</c>) and re-exports what it
-    ///    needs through <c>OutlookProfileRegistry</c>'s public surface.
+    /// install. Both use this one class, which is what makes the two halves probe the SAME versions
+    /// in the SAME order by construction: it is OutlookAI.Core's, in the add-in namespace the add-in
+    /// may use (Q163 (a), Q164 (a)), and the add-in references Core's net48 build (Q167 (a)).
+    /// <c>OutlookProfileRegistry</c> re-exports what the server's callers need.
     /// </para>
     ///
     /// <para>
-    /// FRAMEWORK-NEUTRAL, and the intersection is narrow - the same one
-    /// <c>Services\AddInServerContract.cs</c> documents: this compiles as net48 (the add-in, C# 15
-    /// since 2026-11-18 - C# 7.3, the default for .NET Framework, before - nullable off) and as
-    /// net48 AND net11 inside Core, nullable-enabled with warnings as errors. So no <c>string?</c>,
-    /// no <c>return null</c> from a string member (which is why detection reports "nothing found"
-    /// as a <c>bool</c> plus an <c>out</c> that is always assigned), and no language feature .NET
-    /// Framework 4.8 cannot run (<c>Properties\LanguageFeatureStandIns.cs</c>).
-    /// </para>
-    ///
-    /// <para>
-    /// INTERNAL, and it has to stay internal. A PUBLIC type in a linked file compiled into two
-    /// assemblies that can see each other is CS0436, an error here (<c>TreatWarningsAsErrors</c>).
-    /// Since Q86 (2026-10-03) Core opens its internals to the test assembly, so Core's copy IS
-    /// visible there - which is why the test project must never link this file itself; the tests
-    /// still reach the list through <c>OutlookProfileRegistry</c> and <c>HealthReporting</c>. For
-    /// the same reason this file is NOT compiled into <c>OutlookAI.McpServer</c>: that project
-    /// opens its internals to the test assembly as well, so a copy there would collide with Core's.
+    /// Detection reports "nothing found" as a <c>bool</c> plus an <c>out</c> that is always
+    /// assigned rather than a null string: the file was written to compile as C# 7.3 inside the
+    /// add-in and nullable-enabled inside Core, before stage S3 of the code-sharing refactor moved
+    /// it here. The add-in compiles as C# 15 on .NET Framework 4.8 since Q172 (2026-11-18), so nothing
+    /// here may need the modern runtime to call.
     /// </para>
     ///
     /// <para>
@@ -55,14 +42,14 @@ namespace OutlookAI.Services
     /// and cannot read a C# constant.
     /// </para>
     /// </summary>
-    internal static class OfficeVersions
+    public static class OfficeVersions
     {
         /// <summary>
         /// Office major versions this product supports, NEWEST FIRST. The order is the probe
         /// order: the first one actually present on the machine wins, so a machine with both
         /// 2013 and 2016 installed is treated as the newer of the two.
         /// </summary>
-        internal static readonly string[] Supported = { "16.0", "17.0", "15.0" };
+        public static readonly string[] Supported = { "16.0", "17.0", "15.0" };
 
         /// <summary>
         /// The version used when nothing can be detected. Current Outlook, so a machine whose
@@ -72,14 +59,14 @@ namespace OutlookAI.Services
         /// from the outside - use <see cref="TryDetectOutlookVersion(out string)"/>, whose bool
         /// says which of the two happened.
         /// </summary>
-        internal const string Fallback = "16.0";
+        public const string Fallback = "16.0";
 
         /// <summary>
         /// HKCU path of Outlook's own key for one Office major. One spelling of that hive root,
         /// shared by the probe below and by every path the server builds from the detected
         /// version, so the two cannot drift into reading different hives.
         /// </summary>
-        internal static string OutlookKeyPath(string version)
+        public static string OutlookKeyPath(string version)
         {
             return @"Software\Microsoft\Office\" + version + @"\Outlook";
         }
@@ -102,7 +89,7 @@ namespace OutlookAI.Services
         /// the phantom is real and so was the bug.
         /// </para>
         /// </summary>
-        internal static string CommonKeyPath(string version)
+        public static string CommonKeyPath(string version)
         {
             return @"Software\Microsoft\Office\" + version + @"\Common";
         }
@@ -117,7 +104,7 @@ namespace OutlookAI.Services
         /// tuned. Two hand-built copies of this prefix is the same drift
         /// <see cref="OutlookKeyPath"/> exists to prevent, one hive over.
         /// </summary>
-        internal static string PolicyOutlookKeyPath(string version)
+        public static string PolicyOutlookKeyPath(string version)
         {
             return @"Software\Policies\Microsoft\Office\" + version + @"\Outlook";
         }
@@ -130,7 +117,7 @@ namespace OutlookAI.Services
         /// value the organization's cloud policy sets the user's. Read by the add-in only, for the
         /// Cached Mode values (Q145 (a)); nothing in this product writes here.
         /// </summary>
-        internal static string CloudPolicyOutlookKeyPath(string version)
+        public static string CloudPolicyOutlookKeyPath(string version)
         {
             return @"Software\Policies\Microsoft\Cloud\Office\" + version + @"\Outlook";
         }
@@ -141,7 +128,7 @@ namespace OutlookAI.Services
         /// user-hive value non-authoritative, so a typo in one of them does not fail, it silently
         /// reports the other hive's answer.
         /// </summary>
-        internal const string SearchSubKeyName = "Search";
+        public const string SearchSubKeyName = "Search";
 
         /// <summary>
         /// HKCU path of Outlook's Search key for one Office major - the key carrying
@@ -156,7 +143,7 @@ namespace OutlookAI.Services
         /// both halves still compiling and the health report still answering.
         /// </para>
         /// </summary>
-        internal static string OutlookSearchKeyPath(string version)
+        public static string OutlookSearchKeyPath(string version)
         {
             return OutlookKeyPath(version) + @"\" + SearchSubKeyName;
         }
@@ -166,7 +153,7 @@ namespace OutlookAI.Services
         /// user hive when its value exists (ADMX-managed). Read by the server only: the add-in
         /// sets a user preference, not search policy, and that asymmetry is deliberate.
         /// </summary>
-        internal static string PolicyOutlookSearchKeyPath(string version)
+        public static string PolicyOutlookSearchKeyPath(string version)
         {
             return PolicyOutlookKeyPath(version) + @"\" + SearchSubKeyName;
         }
@@ -176,7 +163,7 @@ namespace OutlookAI.Services
         /// none is detected. Convenience over <see cref="TryDetectOutlookVersion(out string)"/>
         /// for the callers that only need a hive to write into.
         /// </summary>
-        internal static string DetectOutlookVersion()
+        public static string DetectOutlookVersion()
         {
             string version;
             TryDetectOutlookVersion(out version);
@@ -196,7 +183,7 @@ namespace OutlookAI.Services
         /// server has no Outlook object model at all when Outlook is closed), and Outlook writes
         /// this key as soon as it has a profile.
         /// </summary>
-        internal static bool TryDetectOutlookVersion(out string version)
+        public static bool TryDetectOutlookVersion(out string version)
         {
             return TryDetectOutlookVersion(HasOutlookKey, out version);
         }
@@ -214,7 +201,7 @@ namespace OutlookAI.Services
         /// every machine this product is installed on, INCLUDING the 2013 and 17.0 machines the
         /// detection exists for.
         /// </summary>
-        internal const string InstallerFootprintSubKeyName = "Resiliency";
+        public const string InstallerFootprintSubKeyName = "Resiliency";
 
         /// <summary>
         /// Whether an <c>...\Office\&lt;major&gt;\Outlook</c> key is a real Outlook hive rather
@@ -228,7 +215,7 @@ namespace OutlookAI.Services
         /// machine does not have.
         /// </para>
         /// </summary>
-        internal static bool IsOutlookHive(string[] valueNames, string[] subKeyNames)
+        public static bool IsOutlookHive(string[] valueNames, string[] subKeyNames)
         {
             if (valueNames != null && valueNames.Length > 0)
             {
@@ -260,7 +247,7 @@ namespace OutlookAI.Services
         /// 17.0 and nothing-found paths are not otherwise reachable without a second Outlook.
         /// A predicate that throws counts as "not present" and the probe carries on.
         /// </summary>
-        internal static bool TryDetectOutlookVersion(Func<string, bool> outlookKeyExists, out string version)
+        public static bool TryDetectOutlookVersion(Func<string, bool> outlookKeyExists, out string version)
         {
             if (outlookKeyExists == null)
             {
@@ -301,7 +288,7 @@ namespace OutlookAI.Services
         /// second live predicate that could drift from this one.
         /// </para>
         /// </summary>
-        internal static bool HasOutlookKey(string keyPath)
+        public static bool HasOutlookKey(string keyPath)
         {
             using (var key = Registry.CurrentUser.OpenSubKey(keyPath))
             {

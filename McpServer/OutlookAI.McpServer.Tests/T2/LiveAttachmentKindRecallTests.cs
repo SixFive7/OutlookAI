@@ -346,7 +346,7 @@ public sealed class LiveAttachmentKindRecallTests
         string hub = _fixture.Settings.TestHubStoreDisplayName;
         string marker = "atk" + LiveRunMarker.Current + Guid.NewGuid().ToString("N")[..6];
         string token = "zqattach" + Guid.NewGuid().ToString("N")[..10];
-        string subject = LiveOutlookTestMailer.SubjectTag + " " + marker + " attachment-kind recall";
+        string subject = LiveOutlookTestMailer.TaggedSubject(marker, "attachment-kind recall");
         string directory = Path.Combine(Path.GetTempPath(), "OutlookAI-McpTest-" + marker);
         Directory.CreateDirectory(directory);
 

@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 
-namespace OutlookAI.Services
+namespace OutlookAI.Core.AddIn
 {
     /// <summary>
     /// OUTLOOK'S CACHED MODE SETTINGS THAT OUTLOOKAI KEEPS APPLIED (D25): WHERE EACH ONE IS READ FROM,
@@ -69,25 +69,25 @@ namespace OutlookAI.Services
     /// </para>
     ///
     /// <para>
-    /// FRAMEWORK-NEUTRAL and INTERNAL, under the rules every linked file here follows: the add-in
-    /// compiles it (net48, C# 15) and the test project LINKS it (net11, nullable-enabled with
-    /// warnings as errors), so no nullable annotations, no null returned or assigned, and
-    /// no language feature .NET Framework 4.8 cannot run (Properties\LanguageFeatureStandIns.cs). It reads and writes through <see cref="ITuningStore"/>, never the registry.
+    /// Logic only the add-in runs, in OutlookAI.Core's add-in namespace so that the T1 suite pins the
+    /// one compiled copy the add-in loads (Q163 (a)). It reads and writes through
+    /// <see cref="ITuningStore"/>, never the registry; the add-in compiles as C# 15 on .NET Framework
+    /// 4.8 (C# 7.3 until Q172, 2026-11-18), so nothing here may need the modern runtime to call.
     /// </para>
     /// </summary>
-    internal static class CachedModeSettings
+    public static class CachedModeSettings
     {
         /// <summary>The subkey under Outlook's key, in all three roots.</summary>
-        internal const string SubKeyName = "Cached Mode";
+        public const string SubKeyName = "Cached Mode";
 
-        internal const string SyncWindowSetting = "SyncWindowSetting";
-        internal const string SyncWindowSettingDays = "SyncWindowSettingDays";
-        internal const string DownloadSharedFolders = "DownloadSharedFolders";
-        internal const string CacheOthersMail = "CacheOthersMail";
-        internal const string DisableSyncSliderForSharedMailbox = "DisableSyncSliderForSharedMailbox";
+        public const string SyncWindowSetting = "SyncWindowSetting";
+        public const string SyncWindowSettingDays = "SyncWindowSettingDays";
+        public const string DownloadSharedFolders = "DownloadSharedFolders";
+        public const string CacheOthersMail = "CacheOthersMail";
+        public const string DisableSyncSliderForSharedMailbox = "DisableSyncSliderForSharedMailbox";
 
         /// <summary>The id prefix of the catalog's five entries; the rest of each id is the value name.</summary>
-        internal const string EntryIdPrefix = "caching.user.";
+        public const string EntryIdPrefix = "caching.user.";
 
         /// <summary>
         /// The id prefix under which 3.0.0.319 to 3.1.0.325, and the Q128 builds after them, kept the
@@ -95,20 +95,20 @@ namespace OutlookAI.Services
         /// <c>Tuning\Applied\caching.policy.&lt;name&gt;</c>. Nothing writes these any more; the Applied
         /// ones are how a policy value an earlier OutlookAI wrote is told from an organization's.
         /// </summary>
-        internal const string EarlierPolicyEntryIdPrefix = "caching.policy.";
+        public const string EarlierPolicyEntryIdPrefix = "caching.policy.";
 
         /// <summary>The setting key of the offline period, the one setting written as two values.</summary>
-        internal const string OfflinePeriodKey = "OfflinePeriod";
+        public const string OfflinePeriodKey = "OfflinePeriod";
 
         // ===== The states the dialog shows, one per setting =====
 
-        internal const string StateSetByOrganization = "Set by your organization";
-        internal const string StateSetByEarlierOutlookAI = "Set by an earlier OutlookAI";
-        internal const string StateNotManaged = "Not managed";
-        internal const string StateNotOffered = "Not a value OutlookAI writes";
-        internal const string StateInEffect = "In effect";
-        internal const string StateRefused = "Windows refused the change";
-        internal const string StateNotApplied = "Not applied yet";
+        public const string StateSetByOrganization = "Set by your organization";
+        public const string StateSetByEarlierOutlookAI = "Set by an earlier OutlookAI";
+        public const string StateNotManaged = "Not managed";
+        public const string StateNotOffered = "Not a value OutlookAI writes";
+        public const string StateInEffect = "In effect";
+        public const string StateRefused = "Windows refused the change";
+        public const string StateNotApplied = "Not applied yet";
 
         /// <summary>
         /// How an EXISTING account's offline period is changed, in Outlook's own words - KB 2733062's
@@ -116,22 +116,22 @@ namespace OutlookAI.Services
         /// keep offline setting to Download email for the past". Q145 (a): until OutlookAI can write
         /// an account's own period (<see cref="IAccountOfflinePeriods"/>), it tells the user how.
         /// </summary>
-        internal const string ExistingAccountPeriodSteps =
+        public const string ExistingAccountPeriodSteps =
             "An account you already have keeps its own offline period: the one above applies to accounts "
             + "you add later. To keep all of an existing account's mail offline, where OutlookAI can search "
             + "it: in Outlook, choose File > Account Settings > Account Settings, double-click the account on "
             + "the Email tab, drag \"Download email for the past\" (\"Mail to keep offline\" in older "
             + "versions) to All, choose Next, and restart Outlook.";
 
-        internal const string ExistingAccountPeriodSetByOrganization =
+        public const string ExistingAccountPeriodSetByOrganization =
             "Your organization sets how much mail Outlook keeps offline, for every account, so Outlook's "
             + "Account Settings shows that setting greyed out.";
 
-        internal const string ExistingAccountPeriodSetByEarlierOutlookAI =
+        public const string ExistingAccountPeriodSetByEarlierOutlookAI =
             "An earlier OutlookAI set how much mail Outlook keeps offline as a policy, for every account, "
             + "so Outlook's Account Settings shows that setting greyed out. OutlookAI leaves it in place.";
 
-        // ===== The eleven offline periods (Q143) live in Services\OfflinePeriods.cs, which Core links too. =====
+        // ===== The eleven offline periods (Q143) live in OfflinePeriods.cs beside this file. =====
 
         private static readonly SwitchChoice[] OnOff = { new SwitchChoice(1, "On"), new SwitchChoice(0, "Off") };
 
@@ -158,7 +158,7 @@ namespace OutlookAI.Services
         };
 
         /// <summary>The five value names, in catalog order.</summary>
-        internal static IReadOnlyList<string> ValueNames
+        public static IReadOnlyList<string> ValueNames
         {
             get
             {
@@ -167,13 +167,13 @@ namespace OutlookAI.Services
         }
 
         /// <summary>The settings the dialog lists, one row each, in this order.</summary>
-        internal static IReadOnlyList<CachedModeSetting> AllSettings
+        public static IReadOnlyList<CachedModeSetting> AllSettings
         {
             get { return Array.AsReadOnly(Settings); }
         }
 
         /// <summary>The eleven periods, shortest first, All last (<see cref="OfflinePeriods"/>).</summary>
-        internal static IReadOnlyList<OfflinePeriod> AllPeriods
+        public static IReadOnlyList<OfflinePeriod> AllPeriods
         {
             get
             {
@@ -185,31 +185,31 @@ namespace OutlookAI.Services
         }
 
         /// <summary>On, then Off: the values a switch offers.</summary>
-        internal static IReadOnlyList<SwitchChoice> SwitchChoices
+        public static IReadOnlyList<SwitchChoice> SwitchChoices
         {
             get { return Array.AsReadOnly(OnOff); }
         }
 
         /// <summary>The position of (months, days) among the eleven periods, or -1 for a pair Outlook does not document.</summary>
-        internal static int IndexOfPeriod(int months, int days)
+        public static int IndexOfPeriod(int months, int days)
         {
             return OfflinePeriods.IndexOf(months, days);
         }
 
         /// <summary>True for exactly the eleven (months, days) pairs Microsoft documents (Q143).</summary>
-        internal static bool IsOfferedPeriod(int months, int days)
+        public static bool IsOfferedPeriod(int months, int days)
         {
             return OfflinePeriods.IsOffered(months, days);
         }
 
         /// <summary>True for 1 and 0, the two values a switch offers.</summary>
-        internal static bool IsOfferedSwitch(int value)
+        public static bool IsOfferedSwitch(int value)
         {
             return value == 1 || value == 0;
         }
 
         /// <summary>The setting with this key, spelled exactly; throws for any other key.</summary>
-        internal static CachedModeSetting Setting(string key)
+        public static CachedModeSetting Setting(string key)
         {
             foreach (CachedModeSetting s in Settings)
             {
@@ -220,7 +220,7 @@ namespace OutlookAI.Services
         }
 
         /// <summary>The labels a setting's list shows, in order: the eleven periods, or On and Off.</summary>
-        internal static List<string> ChoiceLabels(CachedModeSetting setting)
+        public static List<string> ChoiceLabels(CachedModeSetting setting)
         {
             var labels = new List<string>();
             if (setting.IsPeriod)
@@ -241,7 +241,7 @@ namespace OutlookAI.Services
         /// the one switch. Empty for an index the setting does not offer - the one way a caller can
         /// ask for anything else, and refused.
         /// </summary>
-        internal static List<KeyValuePair<string, int>> DesiredFor(CachedModeSetting setting, int choiceIndex)
+        public static List<KeyValuePair<string, int>> DesiredFor(CachedModeSetting setting, int choiceIndex)
         {
             var values = new List<KeyValuePair<string, int>>();
             if (setting.IsPeriod)
@@ -261,19 +261,19 @@ namespace OutlookAI.Services
         // ===== Where they live =====
 
         /// <summary>The user's own Cached Mode key - the one OutlookAI writes.</summary>
-        internal static string UserKeyPath(string officeVersion)
+        public static string UserKeyPath(string officeVersion)
         {
             return OfficeVersions.OutlookKeyPath(officeVersion) + @"\" + SubKeyName;
         }
 
         /// <summary>Group Policy's Cached Mode key: read, never written.</summary>
-        internal static string GroupPolicyKeyPath(string officeVersion)
+        public static string GroupPolicyKeyPath(string officeVersion)
         {
             return OfficeVersions.PolicyOutlookKeyPath(officeVersion) + @"\" + SubKeyName;
         }
 
         /// <summary>Microsoft 365 Cloud Policy's Cached Mode key: read, never written. It outranks Group Policy.</summary>
-        internal static string CloudPolicyKeyPath(string officeVersion)
+        public static string CloudPolicyKeyPath(string officeVersion)
         {
             return OfficeVersions.CloudPolicyOutlookKeyPath(officeVersion) + @"\" + SubKeyName;
         }
@@ -286,7 +286,7 @@ namespace OutlookAI.Services
         /// a policy sets either half - and written only while its desired number is one offered.
         /// Shipped defaults: All, and the three switches On.
         /// </summary>
-        internal static List<TuningEntry> CatalogEntries(string officeVersion)
+        public static List<TuningEntry> CatalogEntries(string officeVersion)
         {
             string userKey = UserKeyPath(officeVersion);
             string[] policyKeys = { CloudPolicyKeyPath(officeVersion), GroupPolicyKeyPath(officeVersion) };
@@ -310,7 +310,7 @@ namespace OutlookAI.Services
         }
 
         /// <summary>True when the two desired halves of the period, read together, are one of the eleven.</summary>
-        internal static bool IsDesiredPeriodOffered(ITuningStore store)
+        public static bool IsDesiredPeriodOffered(ITuningStore store)
         {
             return IsOfferedPeriod(DesiredOf(store, EntryIdPrefix + SyncWindowSetting, OfflinePeriods.All.Months),
                                    DesiredOf(store, EntryIdPrefix + SyncWindowSettingDays, OfflinePeriods.All.Days));
@@ -326,7 +326,7 @@ namespace OutlookAI.Services
         // ===== Who sets each value =====
 
         /// <summary>One value as the three keys hold it, and what an earlier OutlookAI recorded applying.</summary>
-        internal static CachedModeValueReading Read(ITuningStore store, string officeVersion, string valueName)
+        public static CachedModeValueReading Read(ITuningStore store, string officeVersion, string valueName)
         {
             return new CachedModeValueReading(
                 valueName,
@@ -341,7 +341,7 @@ namespace OutlookAI.Services
         /// group (and the master switch) is on; <paramref name="refusedIds"/> the entry ids Windows
         /// refused the last reconcile (Tuning\NeedsAdministrator).
         /// </summary>
-        internal static List<CachedModeSettingState> ReadStates(ITuningStore store, string officeVersion, bool managed, ICollection<string> refusedIds)
+        public static List<CachedModeSettingState> ReadStates(ITuningStore store, string officeVersion, bool managed, ICollection<string> refusedIds)
         {
             var states = new List<CachedModeSettingState>();
             foreach (CachedModeSetting setting in Settings)
@@ -401,7 +401,7 @@ namespace OutlookAI.Services
         /// because a policy holds whether OutlookAI manages the value or not; then whether OutlookAI's
         /// desired value is one it writes; then whether it is in effect.
         /// </summary>
-        internal static string DescribeState(CachedModeSource source, bool managed, bool desiredOffered, bool userMatchesDesired, bool refused)
+        public static string DescribeState(CachedModeSource source, bool managed, bool desiredOffered, bool userMatchesDesired, bool refused)
         {
             if (source == CachedModeSource.CloudPolicy || source == CachedModeSource.GroupPolicy)
                 return StateSetByOrganization;
@@ -419,7 +419,7 @@ namespace OutlookAI.Services
         }
 
         /// <summary>What the dialog says under the settings about an account that already exists.</summary>
-        internal static string ExistingAccountAdvice(CachedModeSource periodSource)
+        public static string ExistingAccountAdvice(CachedModeSource periodSource)
         {
             switch (periodSource)
             {
@@ -439,7 +439,7 @@ namespace OutlookAI.Services
         /// with no days value beside it reads as months alone, as Outlook reads it (KB 3115009: a
         /// missing days value is 0) and as Outlook 2013's template writes it.
         /// </summary>
-        internal static string DescribePeriod(int? months, int? days)
+        public static string DescribePeriod(int? months, int? days)
         {
             if (!months.HasValue && !days.HasValue)
                 return "(not set)";
@@ -453,7 +453,7 @@ namespace OutlookAI.Services
         }
 
         /// <summary>A switch in words: On, Off, "(not set)", or the bare number, flagged.</summary>
-        internal static string DescribeSwitch(int? value)
+        public static string DescribeSwitch(int? value)
         {
             if (!value.HasValue)
                 return "(not set)";
@@ -472,17 +472,17 @@ namespace OutlookAI.Services
     }
 
     /// <summary>One value a switch offers: 1 or 0, and its name.</summary>
-    internal sealed class SwitchChoice
+    public sealed class SwitchChoice
     {
-        internal SwitchChoice(int value, string label)
+        public SwitchChoice(int value, string label)
         {
             Value = value;
             Label = label;
         }
 
-        internal int Value { get; }
+        public int Value { get; }
 
-        internal string Label { get; }
+        public string Label { get; }
 
         public override string ToString()
         {
@@ -491,9 +491,9 @@ namespace OutlookAI.Services
     }
 
     /// <summary>One row of the dialog: a switch, or the offline period's pair.</summary>
-    internal sealed class CachedModeSetting
+    public sealed class CachedModeSetting
     {
-        internal CachedModeSetting(string key, string caption, string detail, string[] valueNames)
+        public CachedModeSetting(string key, string caption, string detail, string[] valueNames)
         {
             Key = key;
             Caption = caption;
@@ -502,17 +502,17 @@ namespace OutlookAI.Services
         }
 
         /// <summary><see cref="CachedModeSettings.OfflinePeriodKey"/>, or the switch's value name.</summary>
-        internal string Key { get; }
+        public string Key { get; }
 
-        internal string Caption { get; }
+        public string Caption { get; }
 
         /// <summary>What it does, and which value(s) it is - the row's tooltip.</summary>
-        internal string Detail { get; }
+        public string Detail { get; }
 
         /// <summary>The Outlook value or values it is written as.</summary>
-        internal IReadOnlyList<string> ValueNames { get; }
+        public IReadOnlyList<string> ValueNames { get; }
 
-        internal bool IsPeriod
+        public bool IsPeriod
         {
             get { return ValueNames.Count == 2; }
         }
@@ -522,7 +522,7 @@ namespace OutlookAI.Services
     /// Who sets a value, weakest first: a pair's source is the stronger of its halves', and the
     /// numbers order them. Outlook reads the strongest one present.
     /// </summary>
-    internal enum CachedModeSource
+    public enum CachedModeSource
     {
         /// <summary>Nothing sets it: Outlook's own default applies.</summary>
         NotSet = 0,
@@ -541,9 +541,9 @@ namespace OutlookAI.Services
     }
 
     /// <summary>One value in the three keys Outlook reads it from, and the earlier OutlookAI's record of it.</summary>
-    internal sealed class CachedModeValueReading
+    public sealed class CachedModeValueReading
     {
-        internal CachedModeValueReading(string valueName, int? cloudPolicy, int? groupPolicy, int? user, int? earlierOutlookAIApplied)
+        public CachedModeValueReading(string valueName, int? cloudPolicy, int? groupPolicy, int? user, int? earlierOutlookAIApplied)
         {
             ValueName = valueName;
             CloudPolicy = cloudPolicy;
@@ -552,31 +552,31 @@ namespace OutlookAI.Services
             EarlierOutlookAIApplied = earlierOutlookAIApplied;
         }
 
-        internal string ValueName { get; }
+        public string ValueName { get; }
 
-        internal int? CloudPolicy { get; }
+        public int? CloudPolicy { get; }
 
-        internal int? GroupPolicy { get; }
+        public int? GroupPolicy { get; }
 
-        internal int? User { get; }
+        public int? User { get; }
 
         /// <summary>Tuning\Applied\caching.policy.&lt;name&gt;: what an earlier OutlookAI applied, if it recorded one.</summary>
-        internal int? EarlierOutlookAIApplied { get; }
+        public int? EarlierOutlookAIApplied { get; }
 
         /// <summary>What Outlook uses: Cloud Policy, else Group Policy, else the user's own setting.</summary>
-        internal int? Effective
+        public int? Effective
         {
             get { return CloudPolicy.HasValue ? CloudPolicy : (GroupPolicy.HasValue ? GroupPolicy : User); }
         }
 
         /// <summary>The Group Policy value is the one an earlier OutlookAI recorded applying - whether or not Cloud Policy outranks it.</summary>
-        internal bool GroupPolicyIsEarlierOutlookAI
+        public bool GroupPolicyIsEarlierOutlookAI
         {
             get { return GroupPolicy.HasValue && EarlierOutlookAIApplied.HasValue && GroupPolicy.Value == EarlierOutlookAIApplied.Value; }
         }
 
         /// <summary>Who sets what Outlook uses.</summary>
-        internal CachedModeSource Source
+        public CachedModeSource Source
         {
             get
             {
@@ -592,9 +592,9 @@ namespace OutlookAI.Services
     }
 
     /// <summary>One row of the dialog, read.</summary>
-    internal sealed class CachedModeSettingState
+    public sealed class CachedModeSettingState
     {
-        internal CachedModeSettingState(CachedModeSetting setting, CachedModeSource source, string inEffect, int desiredIndex, bool managed, string state)
+        public CachedModeSettingState(CachedModeSetting setting, CachedModeSource source, string inEffect, int desiredIndex, bool managed, string state)
         {
             Setting = setting;
             Source = source;
@@ -604,30 +604,30 @@ namespace OutlookAI.Services
             State = state;
         }
 
-        internal CachedModeSetting Setting { get; }
+        public CachedModeSetting Setting { get; }
 
         /// <summary>Who sets what Outlook uses.</summary>
-        internal CachedModeSource Source { get; }
+        public CachedModeSource Source { get; }
 
         /// <summary>What Outlook uses, in words.</summary>
-        internal string InEffect { get; }
+        public string InEffect { get; }
 
         /// <summary>OutlookAI's desired value, as a position in the setting's list; -1 when it is not one the list offers.</summary>
-        internal int DesiredIndex { get; }
+        public int DesiredIndex { get; }
 
         /// <summary>The caching group and the master switch are on.</summary>
-        internal bool Managed { get; }
+        public bool Managed { get; }
 
-        internal string State { get; }
+        public string State { get; }
 
         /// <summary>A policy - the organization's, or an earlier OutlookAI's - sets it: shown, never changed here.</summary>
-        internal bool SetByPolicy
+        public bool SetByPolicy
         {
             get { return Source >= CachedModeSource.EarlierOutlookAI; }
         }
 
         /// <summary>The user may pick another value: OutlookAI manages it and no policy sets it.</summary>
-        internal bool Editable
+        public bool Editable
         {
             get { return Managed && !SetByPolicy; }
         }

@@ -184,29 +184,12 @@
     </Compile>
     <Compile Include="Properties\LanguageFeatureStandIns.cs" />
 
-    <!-- The values the add-in and the .NET 11 mail server must agree about. This is the one
-         copy: McpServer\OutlookAI.Core\OutlookAI.Core.csproj LINKS this same file, and so does
-         the test project. See the file's own header for why it is constants only and internal. -->
-    <Compile Include="Services\AddInServerContract.cs" />
-    <Compile Include="Services\AccountOfflinePeriods.cs" />
-    <Compile Include="Services\CachedModeSettings.cs" />
     <Compile Include="Services\ClaudeServices.cs" />
-    <Compile Include="Services\EarlierPolicyRemoval.cs" />
-    <Compile Include="Services\McpConfigEditor.cs" />
-    <Compile Include="Services\McpRegistrationDecision.cs" />
     <Compile Include="Services\McpRegistrationService.cs" />
     <Compile Include="Services\ModelCatalog.cs" />
-    <Compile Include="Services\OfficeVersions.cs" />
-    <Compile Include="Services\OfflinePeriods.cs" />
     <Compile Include="Services\OutlookTuningService.cs" />
-    <Compile Include="Services\PromptDefaults.cs" />
-    <Compile Include="Services\PromptLint.cs" />
-    <Compile Include="Services\PromptStore.cs" />
-    <Compile Include="Services\SignatureFolderLocation.cs" />
     <Compile Include="Services\SignatureStore.cs" />
     <Compile Include="Services\ThemeService.cs" />
-    <Compile Include="Services\TuningReconciler.cs" />
-    <Compile Include="Services\UpdatePollSchedule.cs" />
     <Compile Include="Services\UpdateService.cs" />
     <Compile Include="TaskPane\AITaskPane.cs">
       <SubType>UserControl</SubType>
@@ -391,7 +374,7 @@ else
   </PropertyGroup>
   <!-- This section defines VSTO properties that describe the host-changeable project properties.
 
-       The two 16.0 literals below are NOT the hardcoded-hive defect that Services\OfficeVersions.cs
+       The two 16.0 literals below are NOT the hardcoded-hive defect that OfficeVersions (OutlookAI.Core)
        exists to fix, and they are deliberately left alone. They are design-time only: OfficeVersion
        selects the VSTO project flavour and DebugInfoExeName tells F5 which OUTLOOK.EXE to launch on
        the DEVELOPER's machine. Nothing here is compiled into the add-in or read at run time, and

@@ -3,7 +3,7 @@ using System.IO;
 
 using Microsoft.Win32;
 
-namespace OutlookAI.Services
+namespace OutlookAI.Core.AddIn
 {
     /// <summary>
     /// WHERE OUTLOOK KEEPS THE SIGNATURE FILES, IN ONE PLACE.
@@ -23,27 +23,25 @@ namespace OutlookAI.Services
     /// cached folder would keep writing to the old one.
     /// </para>
     /// <para>
-    /// FRAMEWORK-NEUTRAL and INTERNAL, under the rules <c>OfficeVersions.cs</c> documents: the add-in
-    /// compiles this file directly (net48, C# 15, nullable off) and <c>OutlookAI.Core</c> links it
-    /// (net48 and net11, nullable on, warnings as errors). So no nullable annotations, no
-    /// <c>return null</c> from a string member, and no language feature .NET Framework 4.8 cannot
-    /// run. Core re-exports it
-    /// through <c>SignatureFolder</c>; the test project must never link it.
+    /// One rule for both: OutlookAI.Core's, in the add-in namespace (Q163 (a)), which the add-in's
+    /// task pane uses and Core re-exports through <c>SignatureFolder</c>. The add-in compiles as
+    /// C# 15 on .NET Framework 4.8 (C# 7.3 until Q172), so nothing here may need the modern runtime
+    /// to call.
     /// </para>
     /// </summary>
-    internal static class SignatureFolderLocation
+    public static class SignatureFolderLocation
     {
         /// <summary>The subkey of Office's <c>Common</c> key that carries the folder value.</summary>
-        internal const string GeneralSubKeyName = "General";
+        public const string GeneralSubKeyName = "General";
 
         /// <summary>The value naming the folder, relative to <c>%APPDATA%\Microsoft</c>.</summary>
-        internal const string ValueName = "Signatures";
+        public const string ValueName = "Signatures";
 
         /// <summary>The folder name when no value is recorded - what an English Outlook creates.</summary>
-        internal const string DefaultFolderName = "Signatures";
+        public const string DefaultFolderName = "Signatures";
 
         /// <summary>HKCU path of the key holding <see cref="ValueName"/> for one Office major.</summary>
-        internal static string GeneralKeyPath(string officeVersion)
+        public static string GeneralKeyPath(string officeVersion)
         {
             return OfficeVersions.CommonKeyPath(officeVersion) + @"\" + GeneralSubKeyName;
         }
@@ -54,7 +52,7 @@ namespace OutlookAI.Services
         /// them; an absolute value stands as it is. Pure, so every shape is assertable without a
         /// registry. <paramref name="fromRecordedValue"/> says which of the two it was.
         /// </summary>
-        internal static string Resolve(string appDataRoaming, string recordedValue, out bool fromRecordedValue)
+        public static string Resolve(string appDataRoaming, string recordedValue, out bool fromRecordedValue)
         {
             string microsoftDirectory = Path.Combine(appDataRoaming ?? string.Empty, "Microsoft");
             string value = recordedValue == null ? string.Empty : recordedValue.Trim().Trim('\0').Trim();
@@ -86,7 +84,7 @@ namespace OutlookAI.Services
         /// <paramref name="value"/> empty, when the key or the value is absent, blank or unreadable -
         /// a REG_EXPAND_SZ value comes back expanded, as Outlook would use it.
         /// </summary>
-        internal static bool TryReadRecordedValue(string officeVersion, out string value)
+        public static bool TryReadRecordedValue(string officeVersion, out string value)
         {
             value = string.Empty;
             try
@@ -123,7 +121,7 @@ namespace OutlookAI.Services
         }
 
         /// <summary>The folder Outlook uses for this Office major, resolved now.</summary>
-        internal static string CurrentFolder(string officeVersion, out bool fromRecordedValue)
+        public static string CurrentFolder(string officeVersion, out bool fromRecordedValue)
         {
             string recorded;
             TryReadRecordedValue(officeVersion, out recorded);

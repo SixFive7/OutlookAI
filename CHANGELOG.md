@@ -234,6 +234,50 @@ its mailbox tests on, and change nothing you install.
   check fails, the reason is written out in full here rather than hidden behind a link. Both
   indicators now take their wording from one place, so they cannot disagree.
 
+- ✅ **The compose measurement also runs the product's own drafting, Outlook's typed text, and cold starts.**
+  As the maintainer decided on 2026-11-18, the Q149 suite stays (Q210 (a)) and gains seven cells.
+  P1 runs the product's drafts in an Outlook with no window, three starts of ten drafts each,
+  recording each draft's route, every window shown and every change of foreground, then ends the
+  session and watches Outlook end. P2 has two sessions draft in one such Outlook and checks that the
+  first to leave keeps the hidden window and the last closes it; P3 drafts in an Outlook a program
+  started in which a window was then shown, where nothing may be activated. In these a small window
+  of the test's own holds the foreground before each draft, standing in for the program a person
+  types in, and each draft records how long the foreground was elsewhere and where it went. P4 and
+  P5 repeat P1 and P3 while that window types a character no draft holds, 25 times a second, and
+  count the keys that did not reach it and those found in the stored drafts. Q211 opens drafts in
+  Outlook's own compose window, types into it through Word, and reads the style and spacing of the
+  typed paragraphs beside the product's drafts of the same text (Q211 (b)). Every cold start in these
+  runs is logged for Q180 (b): the time until Outlook answered, Windows' verdict on it every 100 ms,
+  and any hang. They run like the rest of the suite, alone. Run on 2026-11-18, they found typed text
+  in Word's "Normal" style with no space before or after, as in the product's drafts without a
+  signature, while with a signature the product's text takes the signature's "Normal (Web)", 5 pt
+  before and after; 22 cold starts answered in 2.3 to 4.1 s and none hung
+  (`Docs/research/q149-draft-text`, stage 4).
+
+- ✅ **A tested one-off took the confirmed test leftover out of the bystander mailbox's Sent Items.**
+  The maintainer confirmed it by its EntryID on 2026-11-18 (Q138): an item the live tests left in that
+  mailbox's Sent Items in July, when they still ran on his own computer. It is the only write that
+  mailbox ever gets. A new live test, which no machine's filter selects and which runs only when named,
+  finds the item by its EntryID and its exact subject, both required, moves it to the mailbox's Deleted
+  Items, checks the copy the move hands back, deletes it there, and reads both folders again. The
+  EntryID is pinned by its SHA-256, so the repository holds no identifier of the real mailbox. The count
+  tripwire, which censuses that mailbox item by item around the run, accepts exactly that departure: a
+  tagged item, by EntryID, from a folder it identified item by item, once. Any other change there still
+  fails the run. Two runs on 2026-11-18 found two things. A folder table on a cached Exchange store
+  gives a short-term id, so the first run matched nothing and changed nothing; the item's own long-term
+  id is read now. The second run moved the item to Deleted Items, but the delete there did not purge it,
+  so the tripwire failed that run on the one departure, as it should. The item waits in the bystander's
+  Deleted Items, under a new EntryID, for the maintainer's decision.
+
+- ✅ **A live run records the guest's clock and time zone around every call it makes into the guest.**
+  In two measurement runs on a frozen-clock test machine, the machine's clock jumped about two hours
+  forward during the suite, and waits of 9,000 and 7,200 seconds ran out after 35 to 40 minutes of real
+  time. Nobody knows why yet. Each call into the guest now reads the guest's UTC time and time zone as
+  its first and last step, and the runner sets the two readings beside its own clock in
+  `guest-clock.log`. A call over which the two clocks ran more than 60 seconds apart, or the time zone
+  changed, is a warning in `run.log`, `summary.txt` and `summary.json`; the run's verdict does not
+  change.
+
 - ✅ **A probe on the Exchange test machine measures what the folder-ID fixes of November rest on.**
   `Testbed/guest/Measure-FolderIdResolution.ps1` reads, changing nothing, what three of the fixes
   needed. Reading the top folder of the mailbox Exchange automapped online takes 2 to 3 ms, as it does
@@ -378,9 +422,16 @@ its mailbox tests on, and change nothing you install.
   opens Outlook's Signatures dialog and closes it with Cancel, and looks for the hidden folder roaming
   signatures live in: on 2026-11-17 Office LTSC 2024 16.0.17932.21000 showed the classic dialog with no
   sign of roaming, and a signature made the test account's default in Outlook on the web had no copy
-  in Outlook an hour later or after a restart, so that Outlook does not roam signatures (Q147 R3). The
-  hidden folder could not be seen on the server even while that signature existed, so the probe's
-  server-side reading proves nothing.
+  in Outlook an hour later or after a restart (Q147 R3). That was with the testbed's policies that
+  switch Office's connected experiences off, and Office past its activation grace. On 2026-11-18, with
+  those four policy values removed and the grace re-armed (Q194 (b)), the same kind of signature
+  arrived about three minutes after it was saved: a `<name> (<address>)` copy in the signature folder,
+  set as the test account's default for new mail, still there after an hour and a restart. With the
+  policies back and the grace kept, it did not come, and Outlook's Options no longer offered "Store my
+  Outlook settings in the cloud" at all. So this Outlook roams signatures unless connected experiences
+  are switched off, and Outlook's own copies show it, as OutlookAI's evidence rule expects. The probe also reads now whether "Store my Outlook settings in
+  the cloud" is on: it was. The hidden folder could not be seen on the server even while either
+  signature existed, so the probe's server-side reading proves nothing.
   `Measure-OfflineWindow.ps1` moves the test account's "Download email for the past" slider through its
   eleven positions and reads the profile after each: the months are property 0x6649 and the days
   0x665A, always written as a pair, and LTSC 2024 offers 3 and 5 years; a pair written into the profile
@@ -794,6 +845,49 @@ its mailbox tests on, and change nothing you install.
   for the whole machine, and uninstalling removes its copy. If setup could not put the runtime in
   place, OutlookAI Settings says so and what to do.
 
+- 🔧 **A draft puts a window on screen at most once per Outlook start, and never while Outlook is open.**
+  OutlookAI writes every draft in a compose window it does not show. In an Outlook with no window of
+  its own, Word lends that window its editor only after a compose window has been activated in the
+  process, and the activation put the window on screen at the top left for 130 to 650 ms: for every
+  draft, 50 of 50 measured on Office LTSC 2024 (Q149). As the maintainer decided (Q208 B), only the
+  first draft after each Outlook start activates its window now, and every later one reads its
+  editor straight away, which Q149 measured to work after one activation in 120 of 120 drafts. While
+  Outlook has a window open, no draft activates anything at all (40 of 40). An edit read that way is
+  kept by adding Outlook's Message form page before the editor is read and saving as the window
+  closes, which kept all 100 measured edits and changed no message's class or form. The activation is
+  recorded per Outlook process for every OutlookAI session of the user, and decided under a shared
+  lock, so agents drafting at the same moment make one between them. Measured on the change itself,
+  170 drafts in 22 starts of Outlook: the first draft of each of the 18 starts with no window showed
+  its window, for 81 to 410 ms, no other draft showed one, every edit was kept, and a person typing in
+  another program throughout 30 of the drafts lost none of 1,090 keys. Windows announced Outlook's
+  windows as the foreground during most drafts, but never made one the foreground window.
+
+- 🔧 **Connecting to Outlook adds no hidden window; the first draft that needs one does (Q175 (b)).**
+  A session that found Outlook with no window used to add a hidden Outlook window of its own, the
+  lifetime pin, as it connected. The pin is what keeps an Outlook with no window running when a
+  draft's compose window closes (without it, 40 of 40 such closes ended Outlook), so it is now made
+  by the first draft that needs it and shared by every session. A session that only searches and
+  reads makes none; an Outlook it started then ends by itself some minutes after the last program
+  lets go of it, as before pins existed.
+
+- 🔧 **The add-in changes only its own entry in `~/.claude.json`, and leaves every other server alone.**
+  When it registers its mail server for all of your projects, the add-in read Claude Code's
+  settings file with .NET's `JavaScriptSerializer` and wrote the whole `mcpServers` section back, so
+  every other server's entry came back reformatted each time. It now writes its `outlookai` entry
+  into the file as it stands, the way it has always written a project's `.mcp.json`, and every other
+  byte stays as it was; the new text is checked before it replaces the file, as before. An entry the
+  add-in wrote keeps the keys added to it since, such as `env`, and loses those only a remote server
+  has; an entry anyone else wrote is replaced whole, as before. Ours is written as
+  `{ "type": "stdio", "command": "...", "args": [], "env": {} }`. Two kinds of file it used to
+  rewrite are left untouched now, and the registration reports an error that says so: one whose
+  `mcpServers` is `null`, and one that is not well-formed JSON although `JavaScriptSerializer` read
+  it - single quotes, unquoted names, leading zeros or a line break inside a string, none of which
+  Claude Code can read either. The code is OutlookAI.Core's since the add-in began to use it (Q154),
+  and T1 `McpUserConfigTests` pins it. Measured on a test machine on 2026-11-18, over a settings file
+  holding a server laid out by hand and our entry as an earlier version wrote it: the earlier add-in
+  wrote the whole `mcpServers` section back on one line and unescaped the hand-written server's `é`,
+  and this one changed its own entry and nothing else (runbook section 2.3).
+
 - 🔧 **`read` prints a mail's folder as every other tool does: its names joined by `/`.**
   It printed Outlook's own folder path, with the store's name in front, backslashes between the
   names and Outlook's codes for `%`, `/` and `\` inside them, while `list_folders`, `find_folder`,
@@ -905,15 +999,19 @@ its mailbox tests on, and change nothing you install.
   breaks the live-tier payload's offline feed check.
 
 - 📝 **The README's section on Outlook's lifetime and tray icon describes the lifetime pin.**
-  It was written before pins existed. It now says a session that finds Outlook with no window holds a
-  hidden one while it is connected, that the session which started Outlook closes it on the way out
-  and Outlook ends at once, and that a pin left behind keeps Outlook running past Application.Quit()
-  and past closing a window opened over it, while File > Exit ends it. The 10-12 minute exit is now
-  given as what it was: one measurement, on Office LTSC 2021, before pins. What Exit Now does with a
-  pin present is said to be unmeasured, where the old text claimed it disconnects and exits at once.
+  It was written before pins existed. It now says that the first draft written in an Outlook with no
+  window adds one hidden window, which every agent session shares and connecting never adds; that the
+  last session to end closes it, whichever made it, and Outlook then ends at once; that your exit, by
+  File > Exit or by closing the last window you opened, makes the sessions close it; and that a
+  session whose process was killed leaves its hidden window to the others or to the next session,
+  with File > Exit ending Outlook meanwhile and `outlook_health` naming it. The 10-12 minute exit is
+  now given as what it was: one measurement, on Office LTSC 2021, before pins. What Exit Now does with
+  a pin present is said to be unmeasured, where the old text claimed it disconnects and exits at once.
   And where it said every draft is written in a compose window nobody sees, it now says what Q149
-  measured on Office LTSC 2024: with no Outlook window open, that window shows at the top left of the
-  screen for 130 to 650 ms and has the foreground while it is there.
+  measured on Office LTSC 2024 and what changed with it: with no Outlook window open, the first draft
+  after each start of Outlook shows its compose window near the top left of the screen for 80 to 650
+  ms, which on the test machines took neither the foreground nor a key from a person typing in
+  another program, and no later draft shows anything.
 
 - ♻️ **The scripts share one copy of the helpers they restated, in Testbed/guest/ScriptHelpers.ps1 (Q166).**
   Seventeen scripts each declared the same `Invoke-NativeCommand`, the wrapper every program call
@@ -936,7 +1034,15 @@ its mailbox tests on, and change nothing you install.
   two). The build-VM runner, which reaches the VM on its own, keeps its own run of a program,
   which quotes its arguments and stops the whole process tree, as `Invoke-LoggedStep`. And three
   `Tools/` scripts that restated the import of the running edition's own Security and Utility
-  modules now dot-source `Testbed/host/OwnEditionModules.ps1`, as the host scripts do.
+  modules now dot-source `Testbed/host/OwnEditionModules.ps1`, as the host scripts do. The
+  progress line `Say` had 27 copies in 12 bodies: the 18 that print the time and the message, and
+  append the line to the script's log where it keeps one, are one function now, in the shared
+  file, and the SDK installer, which reaches a fresh machine on its own, keeps an identical copy
+  the check holds to it. Five scripts that collect their lines into a report and print them
+  without the time now share `Write-ReportLine`. The mail sink's installer, whose log starts only
+  once its guards have passed, calls its own `Write-SinkLog`, and the build-VM runner, which
+  reaches the VM on its own and appends to its log in a way the host can read while it grows, its
+  own `Write-RunLog`.
 
 - 📝 **If Office's own grace reset fails, the Exchange test machine may get Microsoft 365 Apps (Q206).**
   The maintainer's decision Q206, 2026-11-18, now in AGENTS.md beside the machine's internet
@@ -974,8 +1080,34 @@ its mailbox tests on, and change nothing you install.
   the same one-mailbox profile - its SID, store, index prefix and frontier - and three of them its
   mail, its sweep, an exhaustive search of its Inbox and a session that answers the store list, the
   sweep and the scan as well: `AliceMailbox` holds it once, and `ThreadWalks` the conversation walks
-  three thread suites each built. No test changed what it checks: the build machine ran the same
-  tests, by name, before and after each step.
+  three thread suites each built. The live tier went the same way. Its test tag is spelled once,
+  in `LiveOutlookTestMailer.TagText`, which the bracketed subject tag and the test-folder prefix
+  are made of, and the mailer's ten inline ordinal tag checks, and four more elsewhere, now ask one
+  ordinal predicate, `CarriesSubjectTag`; the reading filters that leave test items out of a
+  search, a census or a ground truth ask `MentionsSubjectTag`, which ignores letter case as each of
+  them did. A test's tagged subject is built once (`TaggedSubject`). `LiveDraftChecks` holds the
+  draft suites' reads of a draft and of where its body sits, which seven suites restated in up to
+  four copies each; `LiveDraftCleanup` deletes their drafts and proves none is left; the folder
+  suites' clean-up and zero-artifact proof are methods of the fixture they share; the two
+  post-suite sweeps run one proof, `LiveArtifactSweep.ProveNoTaggedArtifactRemains`; `AuditLines`
+  reads the audit lines six suites counted, each still naming which log; the stdio suites read the
+  tool surface through `ToolShapes`; the corpus helpers live in `HubCorpus`, scratch files go
+  through `ScratchFiles`, a store's id through `LiveIds`, an index scope through `LiveIndexScopes`
+  and the registry through `RawRegistryValues`; and four fixtures read the test project's folder
+  through `RepoPaths`. No test changed what it checks: the build machine ran the same tests, by
+  name, before and after each step, and the 164 live test methods are the same 164.
+
+- ✅ **The draft tests read where Word lays out a reply's text, and check no draft became a form.**
+  The reply, reply-all and forward tests now read Word's own layout of each draft and fail when its
+  first paragraph has a top border or its text or signature is not above the quoted header block
+  (Q209 (a)), with and without a signature. They also read every new draft's, reply's and forward's
+  message class and form-definition properties, because a draft is now committed through Outlook's
+  Message form page and then saved again, and a one-off form would be sent as an attachment. The
+  pin test checks that connecting makes no hidden window and that a session is listed while it is
+  connected and gone once it ends; the disconnect test expects the close of Outlook's only window to
+  end it, with no pin to hold it. `T1/OutlookSessionRegistryTests` pins every rule of the session
+  list and its file, `T1/QuoteSlotRulesTests` where the text goes, and the source checks that
+  connecting makes no pin and that a draft gets its editor only through the decided route.
 
 - ✅ **A live run that starts Outlook closes Office's activation wizard and records it.**
   Past Office's 30-day activation grace, which the Exchange test machine's real clock has crossed,
@@ -986,9 +1118,8 @@ its mailbox tests on, and change nothing you install.
   was closed. On that machine the runner also starts Outlook no sooner than 240 seconds after a boot:
   started 38 and 79 seconds after one, Outlook put its programmatic-access prompt in front of the
   first address read although the antivirus read up to date, and started 2 and 8 minutes after one it
-  did not. Past the grace Outlook there also created no item through its object model on 2026-11-17,
-  so until the maintainer settles how it gets that back (decision 206, TODO.md) the runner gives the
-  machine only the tests that write nothing.
+  did not. Past the grace Outlook there also created no item through its object model, from 2026-11-17
+  until the grace was re-armed on 2026-11-18.
 
 - ✅ **The Exchange test machine leaves out the signature tests until signature roaming is measured.**
   A signature or a default signature set on the test account could be carried into the mailbox by an
@@ -1222,11 +1353,37 @@ its mailbox tests on, and change nothing you install.
   network clears the backoff and checks shortly after, and "Check for updates" always runs straight
   away.
 
+- ♻️ **The fourteen files the add-in shared by linking are OutlookAI.Core's, in one namespace (Q163).**
+  The MCP server, Core and the test project compiled fourteen of the add-in's source files as
+  linked copies: the registry contract between the add-in and the server, the Office versions, the
+  signature folder rule, the offline periods, the MCP configuration surgery and the decision when to
+  act on it, the prompt store, its defaults and its checks, the update schedule, the tuning
+  reconcile, and the Cached Mode settings with the seam for an account's offline period and the
+  removal of what an earlier version wrote as policy. They are OutlookAI.Core's own now, public in
+  `OutlookAI.Core.AddIn` (`McpServer/OutlookAI.Core/AddIn/`); the add-in uses them from the
+  `OutlookAI.Core.dll` installed beside it, and nothing is linked into Core any more (Q163 (a)).
+  `outlook_health` reads `~/.claude.json`, expands `${VAR}` references and compares paths with the
+  add-in's `McpConfigEditor` where it had copies of all three, so `EnvironmentExpansionParityTests`,
+  which held the two expansions equal, is gone; `ComposeSurface` takes its park coordinates from
+  `McpRegistrationDecision`, so `ParkCoordinateMirrorTests` is gone too. The add-in's registry root
+  is one constant, `AddInServerContract.AppKeyPath`, which the tuning, registration and prompt keys
+  are built from. The add-in's own reader of `~/.claude.json`, built on `JavaScriptSerializer` where
+  no test could load it, is gone as well: whether the file may be touched, what the `outlookai`
+  entry is and the rewrite are `McpConfigEditor`'s, and T1 `McpUserConfigTests` pins them. Check 15
+  holds the namespace to its rule with fourteen files in it, and the guest installer's 41 pinned
+  lines, the payload's two contract files and checks 4, 12 and 13 follow the files.
+  `Tools/Switch-AddInBuild.ps1 -BuildOnly` built the stage's three code commits and both merges with
+  master, and left the host unchanged. On `OutlookAI-Unindexed`, in four passes alternating with the
+  build from before the add-in referenced Core, every start reached `ADDIN-READY`, and the load times
+  Outlook recorded differed more between two passes of one build than between the builds: 3.9 and
+  4.6 s for the first start after an install and 0.8 to 1.7 s after it, against 4.2 and 5.9 s and 0.7
+  to 1.4 s (runbook section 2.3).
+
 - ♻️ **The add-in references OutlookAI.Core and may use one namespace of it (Q164, Q167).**
   Until now the add-in kept its own copies of logic the MCP server has in Core, because it did not
-  reference Core (v3's "Phase-6 no-coupling choice"). Q154 (b) ended that, and this is the
-  refactor's first stage, plumbing only: the add-in uses none of Core yet, so nothing it does
-  changes. `OutlookAI.csproj` references Core's net48 build (Q167 (a)) and keeps two of the scripted
+  reference Core (v3's "Phase-6 no-coupling choice"). Q154 (b) ended that, and this was the
+  refactor's first stage, plumbing only, which changed nothing the add-in does.
+  `OutlookAI.csproj` references Core's net48 build (Q167 (a)) and keeps two of the scripted
   builds' global properties out of Core's build: `PrepareForRunDependsOn` names a VSTO target Core
   does not have, and `DefineConstants` would replace Core's own `NETFRAMEWORK` symbol. Both add-in
   build scripts, `Testbed/host/Publish-AddInPayload.ps1` and `Tools/Switch-AddInBuild.ps1`, restore
@@ -1602,6 +1759,40 @@ its mailbox tests on, and change nothing you install.
   sweep fragment, the definitions the sweep matches with, instead of the incident tool's copy.
 
 ### Fixed
+
+- 🐛 **OutlookAI's hidden window is no longer left behind, keeping Outlook running (Q118 (a)).**
+  The hidden window that keeps an Outlook with no window running while agents draft was closed only
+  by the session that had started Outlook. So it was left behind by a session that connected while
+  another was starting Outlook, or whose process was killed, and a window left behind kept Outlook
+  running past Application.Quit() and past closing a window opened over it (measured 2026-10-03);
+  and a starter that ended first closed it under the others. Every session now joins a list kept in a
+  file under the OutlookAI folder and changed only under a shared lock: Outlook has one such window,
+  recorded by its window handle and shared by every session; the last session to end closes it,
+  whoever made it; a session that hears Outlook quit closes it, so your exit wins for every session;
+  and a session whose process died is dropped by the next one, which takes its window over. Only a
+  recorded window that is still hidden is ever closed. `outlook_health` lists the sessions attached
+  to Outlook, whether OutlookAI started it, the hidden window and who made it, and what will end
+  Outlook, and calls a window that no session holds any more a problem, with File > Exit as the way
+  out.
+
+- 🐛 **A reply's or forward's text and signature sit above the quoted message, not under its line.**
+  `Reply()` and `Forward()` leave two empty paragraphs above the quoted message's header block for
+  the new text, and the block's first paragraph carries the separator line as its top border.
+  OutlookAI put the signature, and then the text, at the start of that bordered paragraph, so Word
+  laid them out under the line, inside the header block: all 12 replies and forwards Q149 measured on
+  2026-11-17, the first paragraph in Times New Roman. As decided (Q209 (a)), the text and the
+  signature now go into the empty paragraphs above the block, and the last of them stays as the blank
+  line before it; with text right above the block, an empty paragraph is split off it first. A
+  revision of such a draft replaces only what is above the block. Nothing is written into the quoted
+  message any more, so the marker that bounds it no longer swallows the new text either.
+
+- 🐛 **The health report says when Claude Code's `~/.claude.json` cannot be read whole.**
+  `outlook_health` called the MCP registration `absent` when the file was there but read back
+  empty, which can happen in the moment Claude Code rewrites it. A file cut off part-way, or with
+  more after its closing brace, could be called `absent` too, or have its command read out of the
+  part before the break and be reported `ok` or `drifted`. Both are `unreadable` now: the server
+  reads the file with the add-in's code, by the rule the add-in applies before it writes there, and
+  only a file that is not there at all is `absent`. T1 `McpRegistrationHealthTests` pins the rule.
 
 - 🐛 **A move names a folder whose name holds `/`, `\` or `%` the way list_folders does.**
   `move_mail` and `archive_mail` printed the folders an item left and went to as Outlook writes them,
@@ -2360,6 +2551,20 @@ its mailbox tests on, and change nothing you install.
   run it is running. In another session's runs that night, a guest restored that way stayed out of
   PowerShell Direct's reach for six minutes, where one saved first and then restored answered in
   seconds. The build-VM runner and the live-tier runner now save a running or paused machine first.
+
+- ✅ **The Exchange test machine makes drafts and mail again, so its write tests run there again.**
+  Its Office LTSC 2024 was never activated, and past its 30-day grace Outlook there refused to create
+  any item through its object model: on 2026-11-17, 41 of 87 tests failed at their first draft or mail
+  while every test that only reads passed, and the runner was narrowed to the tests that write nothing.
+  On 2026-11-18, as the maintainer decided (206 (a)), the grace was reset once with Office's own
+  `OSPPREARM.EXE`: the licence went from notifications to 30 days of grace, and its re-arms left from
+  three to two. A draft test then made and removed its draft at the first try, Outlook started without
+  Office's activation wizard, and the runner gives the machine its whole read-and-write selection again.
+  Its first whole run made every item it tried to: 95 of 106 tests passed, the sweeps left nothing
+  tagged in the test account, the count tripwire found the bystander mailbox unchanged, and none of
+  the 11 failures was Office's. The machine rests on a new checkpoint holding the re-armed grace. The
+  grace runs out again on 2026-12-18; a run after that is narrowed to the tests that write nothing with
+  `-FilterSuffix '&Writes=Nothing'` until it is re-armed.
 
 - ✅ **The index-refile measurement no longer fails when Outlook lists a moved folder late.**
   The live test that times how fast the index follows a folder rename and move reads the folder's

@@ -315,9 +315,47 @@ from a cold boot, a client terminated with `TerminateProcess` while holding `App
 changed nothing. Windows does tear a dead client's references down. What the same run showed
 surviving is the **pin `Explorer` itself** (`explorers=1` against the live Outlook
 afterwards). What a pin left behind costs, and when one is left at all, was measured with the
-product on 2026-10-03 - next section. So the orderly exit buys a `Close()` on the pin (for the
-session that started Outlook) and an `Unadvise` of the event sink — the one reference only we can
-retract, and the one nobody has managed to test.
+product on 2026-10-03 - next section. So the orderly exit buys the session's leave of the session
+registry - and with it a `Close()` on the pin when it is the last session out (next section) - and an
+`Unadvise` of the event sink — the one reference only we can retract, and the one nobody has managed to
+test.
+
+### One pin, shared, closed by the last session out (Q118 (a), Q175 (b), Q208 B; 2026-11-18)
+
+What the measurement below found left behind is now prevented by a **per-user session registry**:
+`%LOCALAPPDATA%\OutlookAI\outlook-sessions.txt`, read and rewritten only under the named mutex
+`Local\OutlookAI.OutlookSessions` (`OutlookSessionRegistry`; its rules, pure and pinned by
+`T1/OutlookSessionRegistryTests`, are `SessionRegistryRules`).
+
+- **Every COM session joins it** when it connects - an OUTLOOK.EXE identified by its id and start time,
+  the session by its process, a sequence number and whether its connect started that Outlook - and
+  **leaves it** in `Dispose`. A session whose process is gone is pruned by the next change anyone makes.
+- **No pin at connect** (Q175 (b)). The pin is made by the first compose that needs one
+  (`EnsureComposeSurfacePin`, from new_draft, the reply and forward tools and update_draft), under the
+  lock, only when Outlook has no Explorer, and **recorded by its window handle**. A recorded pin whose
+  window still exists hidden in that Outlook stands for every session: sessions that draft at once make
+  one.
+- **The last session out closes it**, whoever made it and whoever started Outlook - through its own
+  reference, or found among `Application.Explorers` by its window - and only while that window is
+  hidden: a pin a person made visible (S6) is their window now, and is left alone. While another session
+  is attached the pin stays: a dead session's pin is adopted, never closed under the living, and a
+  session that started Outlook no longer ends it under the others when it leaves first.
+- **A session that hears Outlook's Quit closes it** whatever else is attached, so the user's exit wins
+  for every session.
+- **The show-me path recognises a pin of any process** by its recorded window (`IsRecordedPin`), which
+  the per-process `ComposeSurface.IsPin` could not (S6 below).
+- **The promotion is recorded per Outlook process** (Q208 B): the first draft in a window-less Outlook
+  activates its compose window - the one moment one can show - and every later draft, from any session,
+  reads its editor directly.
+- **`outlook_health` lists the sessions** attached to the running Outlook, the pin and who made it,
+  whether OutlookAI started Outlook, and what will end it - read from the file, never through Outlook.
+
+What it does not cover: a pin whose every session was killed, with no OutlookAI session after it, stays
+until the next session starts and later leaves - `outlook_health` names it as a problem, and File > Exit
+ends Outlook meanwhile; and Outlook's own "Exit Now" on the tray icon with a pin present is still
+unmeasured. The cross-process "Outlook is exiting" mark the 2026-10-11 research proposed, so a new
+server's first call waits for an exiting Outlook instead of starting another, belongs with when and how
+Outlook is started (Q175's other half) and is not here.
 
 ### Pins left behind, measured (Q118, 2026-10-03)
 

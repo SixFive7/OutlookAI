@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace OutlookAI.Services
+namespace OutlookAI.Core.AddIn
 {
     /// <summary>
     /// WHEN OUTLOOK MAY CHANGE THE USER-SCOPE MCP REGISTRATION BY ITSELF, AND WHEN IT HAS TO
@@ -39,12 +39,11 @@ namespace OutlookAI.Services
     ///
     /// <para>
     /// Pure by construction — no registry, no filesystem, no Outlook, no COM, no UI — so the
-    /// T1 suite pins the shipped code rather than a re-implementation (the file is LINKED into
-    /// the test project, exactly like <see cref="McpConfigEditor"/>). Framework-neutral for the
-    /// same reason: it compiles into the net48 add-in and into the .NET 11 test host. Public
-    /// for that reason too, and only that one — the theory signatures that walk the matrix have
-    /// to be able to name these types, the same bargain <c>ComposeSurface</c> makes; nothing
-    /// outside the add-in consumes any of it, and the assembly is <c>ComVisible(false)</c>.
+    /// T1 suite pins the shipped code rather than a re-implementation: OutlookAI.Core's, in the
+    /// add-in namespace, like <see cref="McpConfigEditor"/> (Q163 (a)). It was public before that
+    /// move, and for one reason — the theory signatures that walk the matrix have
+    /// to be able to name these types, the same bargain <c>ComposeSurface</c> makes. Outside the
+    /// add-in only <c>ComposeSurface</c> uses it, for the park coordinates below.
     /// </para>
     /// </summary>
     public static class McpRegistrationDecision
@@ -227,17 +226,12 @@ namespace OutlookAI.Services
         // ===== Is anyone actually there to be asked? =====
 
         /// <summary>
-        /// Where <c>ComposeSurface</c> parks a window it must keep off a human's screen.
-        /// Mirrored (not referenced) because the add-in is net48 and cannot reference the
-        /// .NET 11 server assembly; the two constants must stay in step.
-        ///
-        /// <para>
-        /// That is no longer only a comment. The T1 suite is the one compilation that can see
-        /// both numbers - it references the server assembly and compiles this file as a linked
-        /// source - and <c>ParkCoordinateMirrorTests</c> asserts they are equal. If they drift,
-        /// the MCP registration question is either put to a headless Outlook nobody can see, or
-        /// never asked at all.
-        /// </para>
+        /// Where Core's <c>ComposeSurface</c> parks a window it must keep off a human's screen. Its
+        /// own ParkX and ParkY are these two constants, so the corner the server parks in and the
+        /// corner the add-in recognises cannot drift apart. Until stage S3 of the code-sharing
+        /// refactor they were two copies of -32000, held equal by a T1 test, because the add-in
+        /// could not reference Core; had they drifted, the MCP registration question would have
+        /// been put to a headless Outlook nobody can see, or never asked at all.
         /// </summary>
         public const int ParkX = -32000;
 

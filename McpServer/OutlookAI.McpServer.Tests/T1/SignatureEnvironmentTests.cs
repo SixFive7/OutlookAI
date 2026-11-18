@@ -1,6 +1,6 @@
 using OutlookAI.Core.Services;
 using Xunit;
-using SignatureFolderLocation = global::OutlookAI.Services.SignatureFolderLocation;
+using SignatureFolderLocation = global::OutlookAI.Core.AddIn.SignatureFolderLocation;
 
 namespace OutlookAI.McpServer.Tests.T1;
 

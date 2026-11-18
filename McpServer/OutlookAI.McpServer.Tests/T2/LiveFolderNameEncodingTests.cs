@@ -250,8 +250,8 @@ public sealed class LiveFolderNameEncodingTests
             {
                 foreach (IReadOnlyDictionary<string, object?> row in client.ExecuteRows(sql, 200, StatementTimeoutSeconds))
                 {
-                    string? url = Text(row, "System.ItemUrl");
-                    string? subject = Text(row, "System.Subject");
+                    string? url = IndexRows.Text(row, "System.ItemUrl");
+                    string? subject = IndexRows.Text(row, "System.Subject");
                     if (url == null || subject == null || url.IndexOf(marker, StringComparison.Ordinal) < 0)
                     {
                         continue;
@@ -264,8 +264,8 @@ public sealed class LiveFolderNameEncodingTests
                     }
 
                     c.ItemUrl = url;
-                    c.ItemFolderPathDisplay = Text(row, "System.ItemFolderPathDisplay");
-                    c.ItemPathDisplay = Text(row, "System.ItemPathDisplay");
+                    c.ItemFolderPathDisplay = IndexRows.Text(row, "System.ItemFolderPathDisplay");
+                    c.ItemPathDisplay = IndexRows.Text(row, "System.ItemPathDisplay");
                     c.IndexedAfter = waited.Elapsed;
                     if (hubPrefix == null && MapiItemUrl.TryParse(url, out MapiItemUrl? parsed) && parsed != null)
                     {
@@ -323,7 +323,7 @@ public sealed class LiveFolderNameEncodingTests
         {
             foreach (IReadOnlyDictionary<string, object?> row in client.ExecuteRows(sql, 100, StatementTimeoutSeconds))
             {
-                string? url = Text(row, "System.ItemUrl");
+                string? url = IndexRows.Text(row, "System.ItemUrl");
                 if (url == null)
                 {
                     continue;
@@ -331,9 +331,9 @@ public sealed class LiveFolderNameEncodingTests
 
                 urls.Add(url);
                 _output.WriteLine(
-                    "row under '" + directoryUrl + "': url=" + url + " | name=" + Text(row, "System.ItemNameDisplay")
-                    + " | folderPathDisplay=" + Text(row, "System.ItemFolderPathDisplay")
-                    + " | pathDisplay=" + Text(row, "System.ItemPathDisplay"));
+                    "row under '" + directoryUrl + "': url=" + url + " | name=" + IndexRows.Text(row, "System.ItemNameDisplay")
+                    + " | folderPathDisplay=" + IndexRows.Text(row, "System.ItemFolderPathDisplay")
+                    + " | pathDisplay=" + IndexRows.Text(row, "System.ItemPathDisplay"));
             }
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
@@ -549,55 +549,9 @@ public sealed class LiveFolderNameEncodingTests
 
     // ------------------------------------------------------------------ cleanup (as LiveFolderScopeTests)
 
-    private void CleanUp(List<string> entryIds)
-    {
-        foreach (string entryId in entryIds.Distinct(StringComparer.OrdinalIgnoreCase))
-        {
-            try
-            {
-                LiveOutlookTestMailer.DeleteItemByEntryId(Hub, entryId, Marker);
-            }
-            catch (Exception)
-            {
-                // The stable-zero sweep below is the authority.
-            }
-        }
+    private void CleanUp(List<string> entryIds) => _fixture.CleanUpHub(entryIds);
 
-        LiveOutlookTestMailer.DeleteTestFolders(Hub);
-        LiveOutlookTestMailer.DeleteTaggedArtifactsUntilStableZero(
-            Hub, Marker, folderIds: LiveOutlookTestMailer.HubSweepFolderIdsWithArchive);
-    }
-
-    private void AssertHubClean()
-    {
-        LiveOutlookTestMailer.DeleteTaggedArtifactsUntilStableZero(
-            Hub, Marker, folderIds: LiveOutlookTestMailer.HubSweepFolderIdsWithArchive);
-
-        int remaining = LiveOutlookTestMailer.CountTaggedArtifactsAfterPurgingStragglers(
-            Hub, Marker, LiveOutlookTestMailer.HubSweepFolderIdsWithArchive, out int stragglersPurged);
-        if (stragglersPurged > 0)
-        {
-            _output.WriteLine($"cleanup[{Hub}]: {stragglersPurged} late-materialized artifact(s) purged (documented lag)");
-        }
-
-        Assert.Equal(0, remaining);
-
-        int liveTestFolders = LiveOutlookTestMailer.CountLiveTestFolders(Hub, out int wedgedEmpty);
-        if (wedgedEmpty > 0)
-        {
-            _output.WriteLine(
-                $"cleanup[{Hub}]: {wedgedEmpty} empty test folder(s) wedged in Deleted Items until Outlook restarts "
-                + "(documented same-session limitation, no items involved)");
-        }
-
-        Assert.Equal(0, liveTestFolders);
-        _output.WriteLine(_fixture.VerifyHubReconciled());
-    }
-
-    private static string? Text(IReadOnlyDictionary<string, object?> row, string column)
-    {
-        return row.TryGetValue(column, out object? value) && value is string s ? s : null;
-    }
+    private void AssertHubClean() => _fixture.AssertHubClean(_output.WriteLine);
 
     /// <summary>One product search: whether the item came back, as what, and how read located it.</summary>
     private sealed record ProductProbe(

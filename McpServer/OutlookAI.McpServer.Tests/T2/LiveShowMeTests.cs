@@ -240,22 +240,6 @@ public sealed class LiveShowMeTests
         }
     }
 
-    private ComInspectorInfo? PollForInspector(string entryId, bool present, TimeSpan timeout)
-    {
-        LiveWaitBudget wait = LiveWaitBudget.Of(timeout);
-        ComInspectorInfo? last = null;
-        while (wait.HasTimeLeft)
-        {
-            last = _fixture.VerifySession.GetOpenInspectors()
-                .FirstOrDefault(i => i.EntryId != null && string.Equals(i.EntryId, entryId, StringComparison.OrdinalIgnoreCase));
-            if ((last != null) == present)
-            {
-                return last;
-            }
-
-            Thread.Sleep(500);
-        }
-
-        return last;
-    }
+    private ComInspectorInfo? PollForInspector(string entryId, bool present, TimeSpan timeout) =>
+        LiveDraftChecks.PollForInspector(_fixture.VerifySession, entryId, present, timeout);
 }

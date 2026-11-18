@@ -90,10 +90,10 @@ public sealed class LiveCompletenessOracleTests
         string hubStoreId,
         IndexStalenessReport staleness)
     {
-        Regex word = WordRegex(term);
+        Regex word = HubCorpus.WordRegex(term);
 
         var expected = new HashSet<string>(
-            corpus.Where(i => word.IsMatch(TextOf(i))).Select(i => i.EntryId.ToUpperInvariant()),
+            corpus.Where(i => word.IsMatch(HubCorpus.TextOf(i))).Select(i => i.EntryId.ToUpperInvariant()),
             StringComparer.OrdinalIgnoreCase);
 
         IndexSearchResult result = _fixture.Service.Search(new IndexQuery
@@ -152,7 +152,7 @@ public sealed class LiveCompletenessOracleTests
             ComWalkedItem? walked = corpus.FirstOrDefault(i => string.Equals(i.EntryId, id, StringComparison.OrdinalIgnoreCase));
             if (walked != null)
             {
-                Assert.False(word.IsMatch(TextOf(walked)),
+                Assert.False(word.IsMatch(HubCorpus.TextOf(walked)),
                     $"term '{term}': located item {id} IS a plain-text corpus match but was not in the expected set - oracle bug");
                 deepContentExtras++;
                 _output.WriteLine($"  locatedOnly {id} is a walked item whose plain subject+body lack the term - "
@@ -184,8 +184,7 @@ public sealed class LiveCompletenessOracleTests
         // an index integrity problem, not leftovers.
         foreach (IndexHit residue in locateFailures)
         {
-            bool tagged = residue.Subject != null
-                && residue.Subject.IndexOf("[OutlookAI-McpTest]", StringComparison.OrdinalIgnoreCase) >= 0;
+            bool tagged = LiveOutlookTestMailer.MentionsSubjectTag(residue.Subject);
             _output.WriteLine($"  residual row: received={residue.DateReceivedUtc:O} taggedArtifact={tagged} "
                 + $"error={HitLocator.Locate(_fixture.Session, residue, TimeToleranceSeconds).Error}");
         }
@@ -213,7 +212,7 @@ public sealed class LiveCompletenessOracleTests
         var matchCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var tokenRegex = new Regex("[A-Za-z]{4,}", RegexOptions.CultureInvariant);
 
-        var texts = corpus.Select(TextOf).ToList();
+        var texts = corpus.Select(HubCorpus.TextOf).ToList();
         var tokens = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (string text in texts)
         {
@@ -225,12 +224,12 @@ public sealed class LiveCompletenessOracleTests
 
         foreach (string token in tokens)
         {
-            if (!AllOccurrencesAreCleanWords(texts, token))
+            if (!HubCorpus.AllOccurrencesAreCleanWords(texts, token))
             {
                 continue;
             }
 
-            Regex word = WordRegex(token);
+            Regex word = HubCorpus.WordRegex(token);
             int count = texts.Count(t => word.IsMatch(t));
             if (count >= 1)
             {
@@ -274,46 +273,6 @@ public sealed class LiveCompletenessOracleTests
         }
 
         return picked;
-    }
-
-    private static bool AllOccurrencesAreCleanWords(List<string> texts, string token)
-    {
-        foreach (string text in texts)
-        {
-            int start = 0;
-            while (true)
-            {
-                int idx = text.IndexOf(token, start, StringComparison.OrdinalIgnoreCase);
-                if (idx < 0)
-                {
-                    break;
-                }
-
-                bool beforeOk = idx == 0 || !char.IsLetterOrDigit(text[idx - 1]);
-                int end = idx + token.Length;
-                bool afterOk = end >= text.Length || !char.IsLetterOrDigit(text[end]);
-                if (!beforeOk || !afterOk)
-                {
-                    return false;
-                }
-
-                start = idx + 1;
-            }
-        }
-
-        return true;
-    }
-
-    private static Regex WordRegex(string term)
-    {
-        return new Regex(
-            "(?<![A-Za-z0-9])" + Regex.Escape(term) + "(?![A-Za-z0-9])",
-            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-    }
-
-    private static string TextOf(ComWalkedItem item)
-    {
-        return (item.Subject ?? string.Empty) + "\n" + (item.Body ?? string.Empty);
     }
 
     /// <summary>

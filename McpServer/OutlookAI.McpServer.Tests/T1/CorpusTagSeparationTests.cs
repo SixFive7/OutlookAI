@@ -49,10 +49,9 @@ public sealed class CorpusTagSeparationTests
 
     /// <summary>
     /// The bracket-free text the live sweep matches on, as a LITERAL rather than as
-    /// <c>LiveArtifactSweep.TagText</c>. The sweep's own call sites
-    /// (<c>LiveDraftTests</c> / <c>LiveSendTests</c> <c>ArtifactSweep_AllThreeAccounts_ZeroTaggedRemain</c>,
-    /// via <c>LiveOutlookTestMailer.CountTaggedArtifacts</c>) pass this string spelled out, so
-    /// pinning the constant instead would leave the real matcher unguarded.
+    /// <c>LiveOutlookTestMailer.TagText</c>, the tag's one spelling (Q154), which the sweep counts
+    /// with: pinned as written here, a change to the constant that let the corpus in fails this file
+    /// instead of moving the pin along with it.
     /// </summary>
     private const string SweepMatchText = "OutlookAI-McpTest";
 
@@ -62,7 +61,7 @@ public sealed class CorpusTagSeparationTests
     /// <see cref="LiveOutlookTestMailer"/> spells it.
     /// </summary>
     private static bool IsSweptAsArtifact(string? subject)
-        => subject != null && subject.Contains(LiveOutlookTestMailer.SubjectTag, StringComparison.Ordinal);
+        => LiveOutlookTestMailer.CarriesSubjectTag(subject);
 
     private static CorpusPlan Plan(string corpusId = CorpusId)
         => new(new CorpusPlanOptions(corpusId, 4242, Anchor));

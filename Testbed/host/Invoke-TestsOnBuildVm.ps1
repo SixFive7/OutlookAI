@@ -1221,8 +1221,6 @@ $historyPath = Join-Path $lockDir 'runs.log'
 $vm = $null
 $checkpoint = $null
 
-function Say([string] $m) { Write-Host ("[{0:HH:mm:ss}] {1}" -f (Get-Date), $m) }
-
 # The pool member this run or janitor holds from here on: its name, and its lock and owner file.
 function Use-PoolVm([string] $Name) {
     $script:BuildVmName = $Name

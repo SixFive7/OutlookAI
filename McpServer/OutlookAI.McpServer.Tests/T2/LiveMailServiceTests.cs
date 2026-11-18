@@ -2,6 +2,7 @@ using System.Diagnostics;
 using OutlookAI.Core.Services;
 using Xunit;
 using Xunit.Abstractions;
+using OutlookAI.McpServer.Tests.T1;
 
 namespace OutlookAI.McpServer.Tests.T2;
 
@@ -358,7 +359,7 @@ public sealed class LiveMailServiceTests
         }
         finally
         {
-            TryDelete(saved.SavedPath);
+            ScratchFiles.TryDeleteFile(saved.SavedPath);
         }
     }
 
@@ -538,22 +539,5 @@ public sealed class LiveMailServiceTests
         Assert.NotEmpty(status.Advice!);
         _output.WriteLine($"provider={status.Index.Provider} outlookRunning={status.Outlook.Running} "
             + $"ageMin={status.Index.AgeMinutes:F1} perStore={status.Index.PerStore.Count}");
-    }
-
-    private static void TryDelete(string path)
-    {
-        try
-        {
-            if (File.Exists(path))
-            {
-                File.Delete(path);
-            }
-        }
-        catch (IOException)
-        {
-        }
-        catch (UnauthorizedAccessException)
-        {
-        }
     }
 }

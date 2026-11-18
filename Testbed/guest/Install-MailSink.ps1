@@ -745,7 +745,7 @@ function Format-Invariant {
 # LOGGING AND GUARDS.
 # =============================================================================================
 
-function Say {
+function Write-SinkLog {
     param([string] $Text)
     Write-Host $Text
     if (-not $script:LogReady) { return }
@@ -756,18 +756,18 @@ function Pass {
     param([string] $What, [string] $Detail)
     $suffix = ''
     if ($Detail) { $suffix = " - $Detail" }
-    Say ("  OK   {0}{1}" -f $What, $suffix)
+    Write-SinkLog ("  OK   {0}{1}" -f $What, $suffix)
 }
 
 function Fail {
     param([string] $What, [string] $Why)
     $script:Failures += "$What : $Why"
-    Say ("  FAIL {0} - {1}" -f $What, $Why)
+    Write-SinkLog ("  FAIL {0} - {1}" -f $What, $Why)
 }
 
 function Note {
     param([string] $Text)
-    Say ("  NOTE $Text")
+    Write-SinkLog ("  NOTE $Text")
 }
 
 function Open-Log {
@@ -776,8 +776,8 @@ function Open-Log {
     $script:LogReady = $true
     $given = @()
     foreach ($k in $ScriptBoundParameters.Keys) { $given += ('-' + $k) }
-    Say ''
-    Say (Format-Invariant 'Install-MailSink.ps1 - {0:yyyy-MM-dd HH:mm:ss} - {1} on {2} as {3}' @((Get-Date), ($given -join ' '), $env:COMPUTERNAME, $env:USERNAME))
+    Write-SinkLog ''
+    Write-SinkLog (Format-Invariant 'Install-MailSink.ps1 - {0:yyyy-MM-dd HH:mm:ss} - {1} on {2} as {3}' @((Get-Date), ($given -join ' '), $env:COMPUTERNAME, $env:USERNAME))
 }
 
 function Assert-TestbedGuestLocal {
@@ -1228,8 +1228,8 @@ function New-ProbeMarker {
 
 function Test-LoginShapes {
     param([string] $Mailbox)
-    Say ''
-    Say "POP3 logins with no stored password - mailbox '$Mailbox':"
+    Write-SinkLog ''
+    Write-SinkLog "POP3 logins with no stored password - mailbox '$Mailbox':"
     foreach ($shape in @('Empty', 'None', 'NonEmpty')) {
         $label = @{ Empty = "'PASS ' (an empty argument)"; None = "'PASS' (no argument at all)"; NonEmpty = "'PASS <any value>'" }[$shape]
         $session = $null
@@ -1249,8 +1249,8 @@ function Test-LoginShapes {
 
 function Invoke-RoundTripProof {
     param([string] $Address, [string] $Mailbox, [string[]] $ProbeMailboxes)
-    Say ''
-    Say "Round trip: SMTP ${SinkHost}:$SmtpPort -> mailbox '$Mailbox' -> POP3 ${SinkHost}:$Pop3Port."
+    Write-SinkLog ''
+    Write-SinkLog "Round trip: SMTP ${SinkHost}:$SmtpPort -> mailbox '$Mailbox' -> POP3 ${SinkHost}:$Pop3Port."
 
     $message = New-ProbeMessage -Address $Address -Marker (New-ProbeMarker) -DateUtc ((Get-Date).ToUniversalTime())
     $started = Get-Date
@@ -1276,7 +1276,7 @@ function Invoke-RoundTripProof {
         $capa = Invoke-Pop3Command -Socket $session.Socket -Command 'CAPA' -AllowError
         if ($capa.Ok) {
             $caps = @(Read-Pop3MultiLine -Socket $session.Socket)
-            Say "  ...  CAPA advertises: $($caps -join ', ')"
+            Write-SinkLog "  ...  CAPA advertises: $($caps -join ', ')"
             if (@($caps | Where-Object { $_ -match '^STLS\b' }).Count -gt 0) {
                 Fail 'CAPA offers no STLS' 'The tier profile sets POP3UseSSL=0; a sink that offers STLS is one Outlook may try to negotiate with.'
             }
@@ -1337,8 +1337,8 @@ function Invoke-RoundTripProof {
 
 function Invoke-IsolationProof {
     param([string] $Address, [string] $Mailbox, [string] $OtherMailbox, [string[]] $ProbeMailboxes)
-    Say ''
-    Say "Isolation: mail for '$Mailbox' must be invisible to '$OtherMailbox'."
+    Write-SinkLog ''
+    Write-SinkLog "Isolation: mail for '$Mailbox' must be invisible to '$OtherMailbox'."
     try {
         [void](Submit-ProbeMessage -Address $Address -Message (New-ProbeMessage -Address $Address -Marker (New-ProbeMarker) -DateUtc ((Get-Date).ToUniversalTime())))
         $mine = Get-MailboxCount -Mailbox $Mailbox
@@ -1364,8 +1364,8 @@ function Invoke-IsolationProof {
 #>
 function Invoke-OrdinalStabilityProof {
     param([string] $Address, [string] $Mailbox, [string[]] $ProbeMailboxes)
-    Say ''
-    Say 'Ordinal stability: two messages, DELE 1 - does the survivor keep its number?'
+    Write-SinkLog ''
+    Write-SinkLog 'Ordinal stability: two messages, DELE 1 - does the survivor keep its number?'
     $session = $null
     try {
         foreach ($i in 1..2) {
@@ -1426,8 +1426,8 @@ function Invoke-OrdinalStabilityProof {
 # rather than lost.
 function Invoke-AbortSemanticsProof {
     param([string] $Address, [string] $Mailbox, [string[]] $ProbeMailboxes)
-    Say ''
-    Say 'Abort semantics: DELE, then drop the connection without QUIT.'
+    Write-SinkLog ''
+    Write-SinkLog 'Abort semantics: DELE, then drop the connection without QUIT.'
     try {
         [void](Submit-ProbeMessage -Address $Address -Message (New-ProbeMessage -Address $Address -Marker (New-ProbeMarker) -DateUtc ((Get-Date).ToUniversalTime())))
         $session = Open-Pop3Session -Mailbox $Mailbox
@@ -1449,8 +1449,8 @@ function Invoke-AbortSemanticsProof {
 # Read-only. Mail waiting in an account's mailbox is mail Outlook has not collected yet; outside
 # a run that is an earlier run's undelivered residue. It is reported and NEVER deleted here.
 function Show-AccountMailboxes {
-    Say ''
-    Say 'Account mailboxes (read-only - opened, counted, closed; never emptied):'
+    Write-SinkLog ''
+    Write-SinkLog 'Account mailboxes (read-only - opened, counted, closed; never emptied):'
     foreach ($address in @($AccountAddress)) {
         if (-not $address) { continue }
         try {
@@ -1458,18 +1458,18 @@ function Show-AccountMailboxes {
             $count = Get-MailboxCount -Mailbox $box
             $tail = 'nothing waiting'
             if ($count -gt 0) { $tail = "$count message(s) waiting for Outlook - if no run is in progress, that is an earlier run's undelivered mail" }
-            Say ("  ...  {0,-24} mailbox '{1}': {2}" -f $address, $box, $tail)
+            Write-SinkLog ("  ...  {0,-24} mailbox '{1}': {2}" -f $address, $box, $tail)
         }
         catch { Note "could not read the mailbox for ${address}: $($_.Exception.Message)" }
     }
-    Say '       An account''s POP3 user name must be exactly its mailbox name above - lowercase, no'
-    Say '       domain, no +tag. The sink uses the USER verbatim as the mailbox to open.'
+    Write-SinkLog '       An account''s POP3 user name must be exactly its mailbox name above - lowercase, no'
+    Write-SinkLog '       domain, no +tag. The sink uses the USER verbatim as the mailbox to open.'
 }
 
 function Invoke-RestartProof {
     param($Layout, [string] $Address, [string] $Mailbox, [string[]] $ProbeMailboxes)
-    Say ''
-    Say "Restart through the scheduled task '$TaskName'."
+    Write-SinkLog ''
+    Write-SinkLog "Restart through the scheduled task '$TaskName'."
     if (Test-OutlookRunning) {
         Note 'SKIPPED: Outlook is running, and restarting the sink under a polling Outlook is the nondeterminism this avoids. Close Outlook and re-run -Verify to prove the restart.'
         return
@@ -1516,44 +1516,44 @@ function Show-Plan {
     $pin = '<REQUIRED: -ExpectedSha256, recorded in Testbed/MEDIA.md>'
     if ($ExpectedSha256) { $pin = $ExpectedSha256 }
 
-    Say 'PLAN. Dry run: nothing has been read, written or started.'
-    Say ''
-    Say "  package           : $PackagePath"
-    Say "  pinned sha256     : $pin"
-    Say "  install root      : $root   (payload one folder down, as the release zip lays it out)"
-    Say "  launcher          : $(Join-Path $root $LauncherName)"
-    Say "  scheduled task    : $TaskName   SYSTEM, at startup, no time limit, runs the launcher via cmd.exe"
-    Say "  submission        : ${SinkHost}:$SmtpPort   SMTP, no TLS; AUTH optional and never checked"
-    Say "  retrieval         : ${SinkHost}:$Pop3Port   POP3, no TLS; any password, including none"
-    Say "  web UI            : ${SinkHost}:$WebPort   cannot be switched off, so loopback only"
-    Say "  sink log          : $(Join-Path $root $SinkLogName)   (level $LogLevel)"
-    Say "  this script's log : $LogPath"
-    Say ''
-    Say '  Mailboxes. A message for NAME@anything is filed under mailbox "name"; POP3 USER name reads it.'
+    Write-SinkLog 'PLAN. Dry run: nothing has been read, written or started.'
+    Write-SinkLog ''
+    Write-SinkLog "  package           : $PackagePath"
+    Write-SinkLog "  pinned sha256     : $pin"
+    Write-SinkLog "  install root      : $root   (payload one folder down, as the release zip lays it out)"
+    Write-SinkLog "  launcher          : $(Join-Path $root $LauncherName)"
+    Write-SinkLog "  scheduled task    : $TaskName   SYSTEM, at startup, no time limit, runs the launcher via cmd.exe"
+    Write-SinkLog "  submission        : ${SinkHost}:$SmtpPort   SMTP, no TLS; AUTH optional and never checked"
+    Write-SinkLog "  retrieval         : ${SinkHost}:$Pop3Port   POP3, no TLS; any password, including none"
+    Write-SinkLog "  web UI            : ${SinkHost}:$WebPort   cannot be switched off, so loopback only"
+    Write-SinkLog "  sink log          : $(Join-Path $root $SinkLogName)   (level $LogLevel)"
+    Write-SinkLog "  this script's log : $LogPath"
+    Write-SinkLog ''
+    Write-SinkLog '  Mailboxes. A message for NAME@anything is filed under mailbox "name"; POP3 USER name reads it.'
     foreach ($a in @($AccountAddress)) {
         $box = '<unusable address>'
         try { $box = Get-InbucketMailboxName -Address $a } catch { }
-        Say ("    account  {0,-32} -> '{1}'   read-only here, never emptied" -f $a, $box)
+        Write-SinkLog ("    account  {0,-32} -> '{1}'   read-only here, never emptied" -f $a, $box)
     }
     $isolation = Get-IsolationAddress -Address $ProbeAddress
     foreach ($a in @($ProbeAddress, $isolation)) {
         $box = '<unusable address>'
         try { $box = Get-InbucketMailboxName -Address $a } catch { }
-        Say ("    probe    {0,-32} -> '{1}'   the only mailboxes -Verify deletes from" -f $a, $box)
+        Write-SinkLog ("    probe    {0,-32} -> '{1}'   the only mailboxes -Verify deletes from" -f $a, $box)
     }
     $problem = Get-ProbeMailboxProblem -Probe $ProbeAddress -Accounts $AccountAddress
-    if ($problem) { Say "    REFUSED: $problem" }
-    Say ''
-    Say '  Environment the launcher sets, and why:'
+    if ($problem) { Write-SinkLog "    REFUSED: $problem" }
+    Write-SinkLog ''
+    Write-SinkLog '  Environment the launcher sets, and why:'
     foreach ($e in $environment) {
-        Say ("    {0}={1}" -f $e.Name, $e.Value)
-        Say ("        {0}" -f $e.Why)
+        Write-SinkLog ("    {0}={1}" -f $e.Name, $e.Value)
+        Write-SinkLog ("        {0}" -f $e.Why)
     }
-    Say ''
-    Say '  Three places must agree on the ports, or the tier fails in a way nothing diagnoses:'
-    Say "    - the live-test settings mailSink block   (submitPort $SmtpPort, retrievePort $Pop3Port)"
-    Say "    - the tier profile's POP3Port / SMTPPort  (Testbed/guest/New-TierProfile.ps1)"
-    Say '    - this script'
+    Write-SinkLog ''
+    Write-SinkLog '  Three places must agree on the ports, or the tier fails in a way nothing diagnoses:'
+    Write-SinkLog "    - the live-test settings mailSink block   (submitPort $SmtpPort, retrievePort $Pop3Port)"
+    Write-SinkLog "    - the tier profile's POP3Port / SMTPPort  (Testbed/guest/New-TierProfile.ps1)"
+    Write-SinkLog '    - this script'
 }
 
 function Invoke-Execute {
@@ -1561,7 +1561,7 @@ function Invoke-Execute {
     Assert-Elevated
     Assert-OutlookNotRunning
     Open-Log
-    Say '== Execute =='
+    Write-SinkLog '== Execute =='
 
     $rootProblem = Get-InstallRootProblem -Path $InstallRoot
     if ($rootProblem) { throw "REFUSING: -InstallRoot '$InstallRoot' is unusable - $rootProblem." }
@@ -1585,7 +1585,7 @@ function Invoke-Execute {
     if (-not $appFolder) { throw "REFUSING: $ExeName is at the root of the package, not in a versioned folder. That is not the release zip this script and Testbed/MEDIA.md describe." }
     Pass 'the package holds one inbucket.exe, one folder deep' "$appFolder ($($entries.Count) entries)"
     $version = Get-VersionFromFolderName -FolderName $appFolder
-    if ($version) { Say "  version from the package layout: $version" }
+    if ($version) { Write-SinkLog "  version from the package layout: $version" }
 
     $root = $InstallRoot.TrimEnd('\')
     $appDir = Join-Path $root $appFolder
@@ -1615,18 +1615,18 @@ function Invoke-Execute {
 
     # -- stop whatever is there ---------------------------------------------------------------
     if ($null -ne (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) -or $running.Count -gt 0) {
-        Say "  an earlier install is present; stopping it to reconfigure in place"
+        Write-SinkLog "  an earlier install is present; stopping it to reconfigure in place"
         if (-not (Stop-Sink)) { throw "The existing sink did not stop within $ListenerWaitSeconds s." }
     }
 
     # -- unpack ------------------------------------------------------------------------------
-    if (-not (Test-Path -LiteralPath $root)) { New-Item -ItemType Directory -Path $root -Force | Out-Null; Say "  created $root" }
+    if (-not (Test-Path -LiteralPath $root)) { New-Item -ItemType Directory -Path $root -Force | Out-Null; Write-SinkLog "  created $root" }
     if ($Force -or -not (Test-Path -LiteralPath $exe)) {
         Expand-Archive -LiteralPath $PackagePath -DestinationPath $root -Force
         Get-ChildItem -LiteralPath $appDir -Recurse -File | Unblock-File
-        Say "  unpacked into $appDir"
+        Write-SinkLog "  unpacked into $appDir"
     }
-    else { Say "  $exe is already present; leaving the payload alone (-Force replaces it)" }
+    else { Write-SinkLog "  $exe is already present; leaving the payload alone (-Force replaces it)" }
     if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw "REFUSING: $exe is not there after unpacking." }
     Pass 'the payload is in place' ("$exe, sha256 " + (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash)
 
@@ -1634,7 +1634,7 @@ function Invoke-Execute {
     if (Test-Path -LiteralPath $lua) { throw "REFUSING: $lua exists. Inbucket runs a Lua script of that name from its working directory on every message, and nothing in this testbed puts one there." }
 
     $store = Join-Path $root $StoreDirName
-    if (-not (Test-Path -LiteralPath $store)) { New-Item -ItemType Directory -Path $store -Force | Out-Null; Say "  created $store" }
+    if (-not (Test-Path -LiteralPath $store)) { New-Item -ItemType Directory -Path $store -Force | Out-Null; Write-SinkLog "  created $store" }
 
     # -- the launcher ------------------------------------------------------------------------
     $layout = Get-SinkLayout
@@ -1672,8 +1672,8 @@ function Invoke-Verify {
         Assert-Elevated
         Open-Log
     }
-    Say ''
-    Say '== Verify =='
+    Write-SinkLog ''
+    Write-SinkLog '== Verify =='
 
     $probeProblem = Get-ProbeMailboxProblem -Probe $ProbeAddress -Accounts $AccountAddress
     if ($probeProblem) { throw "REFUSING: $probeProblem" }
@@ -1686,7 +1686,7 @@ function Invoke-Verify {
     $layout = Get-SinkLayout
     $snapshot = Get-TaskSnapshot
     if ($layout.ExeCount -eq 0 -and -not $snapshot.Exists) {
-        Say "  no $ExeName under $($layout.Root) and no task '$TaskName'."
+        Write-SinkLog "  no $ExeName under $($layout.Root) and no task '$TaskName'."
         return $VerdictAbsent
     }
     if ($layout.ExeCount -ne 1) {
@@ -1758,8 +1758,8 @@ function Invoke-Verify {
     catch { Note "the firewall rules could not be read ($($_.Exception.Message)); a rule for the sink would not be reported." }
 
     # -- the protocol proofs ------------------------------------------------------------------
-    Say ''
-    Say "Probe mailboxes: '$probeBox' and '$isolationBox' - the only mailboxes this script empties."
+    Write-SinkLog ''
+    Write-SinkLog "Probe mailboxes: '$probeBox' and '$isolationBox' - the only mailboxes this script empties."
     foreach ($box in $probeBoxes) {
         try {
             $residue = Clear-ProbeMailbox -Mailbox $box -ProbeMailboxes $probeBoxes
@@ -1785,7 +1785,7 @@ function Invoke-Uninstall {
     Assert-Elevated
     Assert-OutlookNotRunning
     Open-Log
-    Say '== Uninstall =='
+    Write-SinkLog '== Uninstall =='
 
     $rootProblem = Get-InstallRootProblem -Path $InstallRoot
     if ($rootProblem) { throw "REFUSING: -InstallRoot '$InstallRoot' is unusable - $rootProblem." }
@@ -1799,15 +1799,15 @@ function Invoke-Uninstall {
     [void](Stop-Sink)
     if ($null -ne (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue)) {
         Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
-        Say "  unregistered task $TaskName"
+        Write-SinkLog "  unregistered task $TaskName"
     }
-    else { Say "  task $TaskName already absent" }
+    else { Write-SinkLog "  task $TaskName already absent" }
 
     if (Test-Path -LiteralPath $layout.Root) {
         Remove-Item -LiteralPath $layout.Root -Recurse -Force
-        Say "  removed $($layout.Root)"
+        Write-SinkLog "  removed $($layout.Root)"
     }
-    else { Say "  $($layout.Root) already absent" }
+    else { Write-SinkLog "  $($layout.Root) already absent" }
 
     if ($null -ne (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue)) { Fail 'the task is gone' "'$TaskName' still exists." }
     else { Pass 'the task is gone' $TaskName }
@@ -2057,10 +2057,10 @@ if ($Uninstall -and $Verify) { throw 'Pass -Uninstall or -Verify, not both.' }
 $verdict = $null
 if ($Uninstall) {
     if (-not $Execute) {
-        Say 'PLAN: stop the sink, unregister its task, delete the install root. Dry run: nothing done.'
-        Say "  task         : $TaskName"
-        Say "  install root : $InstallRoot"
-        Say 'Re-run with -Uninstall -Execute.'
+        Write-SinkLog 'PLAN: stop the sink, unregister its task, delete the install root. Dry run: nothing done.'
+        Write-SinkLog "  task         : $TaskName"
+        Write-SinkLog "  install root : $InstallRoot"
+        Write-SinkLog 'Re-run with -Uninstall -Execute.'
         exit 0
     }
     Invoke-Uninstall
@@ -2073,22 +2073,22 @@ elseif ($Execute) {
 }
 else {
     Show-Plan
-    Say ''
-    Say 'Dry run. Re-run with -ExpectedSha256 <hash from Testbed/MEDIA.md> -Execute.'
+    Write-SinkLog ''
+    Write-SinkLog 'Dry run. Re-run with -ExpectedSha256 <hash from Testbed/MEDIA.md> -Execute.'
     exit 0
 }
 
-Say ''
+Write-SinkLog ''
 if ($script:Failures.Count -gt 0) {
-    Say ("{0} check(s) FAILED:" -f $script:Failures.Count)
-    foreach ($f in $script:Failures) { Say "  - $f" }
+    Write-SinkLog ("{0} check(s) FAILED:" -f $script:Failures.Count)
+    foreach ($f in $script:Failures) { Write-SinkLog "  - $f" }
 }
 if ($verdict) {
-    Say "VERDICT: $verdict"
+    Write-SinkLog "VERDICT: $verdict"
     switch ($verdict) {
-        $VerdictReady  { Say '  The sink answers SMTP and POP3 on loopback and hands back exactly what it was given. Whether Outlook logs in to it without a stored password is a separate question - Docs/live-tier-on-the-vm.md section 2.7.' }
-        $VerdictAbsent { Say '  Nothing is installed. Run with -ExpectedSha256 <hash> -Execute.' }
-        $VerdictBroken { Say "  Something that should work does not. The FAIL lines say which; the sink's own log is $(Join-Path $InstallRoot.TrimEnd('\') $SinkLogName)." }
+        $VerdictReady  { Write-SinkLog '  The sink answers SMTP and POP3 on loopback and hands back exactly what it was given. Whether Outlook logs in to it without a stored password is a separate question - Docs/live-tier-on-the-vm.md section 2.7.' }
+        $VerdictAbsent { Write-SinkLog '  Nothing is installed. Run with -ExpectedSha256 <hash> -Execute.' }
+        $VerdictBroken { Write-SinkLog "  Something that should work does not. The FAIL lines say which; the sink's own log is $(Join-Path $InstallRoot.TrimEnd('\') $SinkLogName)." }
     }
 }
 if ($script:LogReady) { Write-Host ''; Write-Host "Log: $LogPath" }

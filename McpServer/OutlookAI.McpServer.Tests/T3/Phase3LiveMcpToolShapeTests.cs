@@ -71,7 +71,7 @@ public sealed class Phase3LiveMcpToolShapeTests
         foreach (JsonElement hit in hits.EnumerateArray())
         {
             string? subject = hit.TryGetProperty("subject", out JsonElement subjectProp) ? subjectProp.GetString() : null;
-            if (subject == null || subject.IndexOf("[OutlookAI-McpTest]", StringComparison.OrdinalIgnoreCase) < 0)
+            if (!LiveOutlookTestMailer.MentionsSubjectTag(subject))
             {
                 hitId = hit.GetProperty("id").GetString();
                 break;

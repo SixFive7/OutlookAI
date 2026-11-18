@@ -176,8 +176,6 @@ New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $env:MSBUILDDISABLENODEREUSE = '1'
 $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
 $env:DOTNET_NOLOGO = '1'
-
-function Say([string] $m) { Write-Host ("[{0:HH:mm:ss}] {1}" -f (Get-Date), $m) }
 function SizeMb([string] $path) { return [math]::Round((Get-Item -LiteralPath $path).Length / 1MB, 1) }
 
 # Every program call goes through Invoke-NativeCommand, so that Windows PowerShell 5.1 cannot end

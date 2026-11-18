@@ -668,6 +668,13 @@ code. So "no functional loss" is measured for the read path and *inferred* for t
 from Microsoft's wording. If a write path did degrade past grace, this measurement would not have
 seen it.
 
+**Corrected 2026-11-18: on the Exchange VM the write path DID stop past grace, and a re-arm brought
+it back.** Past its grace that guest's Outlook created no item through its object model - `Items.Add`
+answered E_ABORT (0x80004004) and `CreateItem` "The operation failed." - while every read worked; one
+re-arm with Office's own `OSPPREARM.EXE` and an Outlook restart later, a draft was made at once and a
+whole write run made every item it tried to (section below, and `Docs/live-tier-on-the-vm.md` section
+4.4a). So "no functional loss" holds for the reads measured here and is wrong for creating items.
+
 **THE COLD START WAS THE ACTUAL RISK, AND IT HAS NOW BEEN MEASURED. IT DOES NOT HAPPEN.**
 
 The concern was a modal activation prompt appearing when Outlook is **started** on a past-grace
@@ -730,6 +737,15 @@ puts it out of reach of a probe.
   Settings and the Signatures dialog still open.
 - The two Outlook guests do not meet the wizard: their clocks are frozen at 2026-10-03, 18 days after
   their Office was installed, inside the grace.
+- **Past grace Outlook creates no item, and a re-arm fixes it (decision 206 (a), measured 2026-11-18).**
+  Read before: `LicenseStatus` 5, `LicenseStatusReason` 0xC004F056, `GracePeriodRemaining` 0,
+  `RemainingAppReArmCount` and `RemainingSkuReArmCount` 3. Over PowerShell Direct, elevated,
+  `C:\Program Files\Microsoft Office\Office16\OSPPREARM.EXE` with no argument: exit 0, "Microsoft Office
+  rearm successful." Read after: `LicenseStatus` 2 (out-of-box grace), `LicenseStatusReason` 0x4004F00C,
+  `GracePeriodRemaining` 43,200 minutes - 30 days, to about 02:56 on 2026-12-18 - and both re-arm counts
+  2. Outlook restarted gracefully (`Testbed/host/Restart-Guest.ps1 -Execute`), started again without the
+  Activation Wizard, and made a draft at the first try. The re-arm is in checkpoint
+  `CP-09-OFFICE-REARMED`; a checkpoint restored from before it brings the expired grace back.
 
 ### Reading the licence state — the query, and why it is shaped this way
 

@@ -66,13 +66,13 @@
     Testbed/guest/Install-OutlookAIAddIn.ps1.
 
     WHY A BUILD AND NOT A RELEASED INSTALLER. The tests should exercise the code being tested. The
-    add-in and the mail server agree about those registry values through ONE file compiled into
-    both (Services/AddInServerContract.cs), and the suite on the guest is built from a named commit
-    by Testbed/host/Publish-LiveTierPayload.ps1. A released installer would pair that suite with
-    whatever add-in shipped last, and a contract change made since would go untested - or pass for
-    the wrong reason. So the add-in comes from a commit too, the same way the suite does: a
-    `git archive` of it, never the working tree. The manifest this script writes records which
-    commit, and the guest script compares it with the suite's.
+    add-in and the mail server agree about those registry values through ONE file, Core's
+    AddIn/AddInServerContract.cs, which both use (Q163 (a)), and the suite on the guest is built
+    from a named commit by Testbed/host/Publish-LiveTierPayload.ps1. A released installer would
+    pair that suite with whatever add-in shipped last, and a contract change made since would go
+    untested - or pass for the wrong reason. So the add-in comes from a commit too, the same way
+    the suite does: a `git archive` of it, never the working tree. The manifest this script writes
+    records which commit, and the guest script compares it with the suite's.
 
     WHAT IT PRODUCES, in -OutDir:
 
@@ -357,16 +357,16 @@ $WatchedCertStores = @('My', 'TrustedPublisher', 'Root', 'CA', 'TrustedPeople', 
 # maintainer's own Outlook load an add-in, and the build is the only thing here that could touch it.
 $AddinRegistrationKey = 'Software\Microsoft\Office\Outlook\Addins\OutlookAI'
 
-# The files through which the add-in and the mail server agree (both are compiled into both). The
-# manifest carries their hashes; Testbed/guest/Install-OutlookAIAddIn.ps1 holds the same list.
-$ContractFiles = @('Services/AddInServerContract.cs', 'Services/OfficeVersions.cs')
+# The files through which the add-in and the mail server agree: OutlookAI.Core's, in its add-in
+# namespace, which both use since the code-sharing refactor's stage S3 - the add-in from the Core.dll
+# beside it, built from the same commit. The manifest carries their hashes;
+# Testbed/guest/Install-OutlookAIAddIn.ps1 holds the same list.
+$ContractFiles = @('McpServer/OutlookAI.Core/AddIn/AddInServerContract.cs', 'McpServer/OutlookAI.Core/AddIn/OfficeVersions.cs')
 
 # What the guest script expects, repeated in the instructions this prints.
 $GuestAddInRoot = 'C:\OutlookAI-Q5\addin'
 $GuestMediaRoot = 'C:\OutlookAI-Q5\media'
 $ManifestFileName = 'addin-payload.json'
-
-function Say([string] $m) { Write-Host ("[{0:HH:mm:ss}] {1}" -f (Get-Date), $m) }
 
 # Every program call goes through Invoke-NativeCommand, so that Windows PowerShell 5.1 cannot end
 # the script on a program's first stderr line (Q78). It is one of the helpers the scripts share,
@@ -992,15 +992,15 @@ AwQ=</Modulus><Exponent>AQAB</Exponent></RSAKeyValue></KeyValue></KeyInfo></Sign
         addin       = [pscustomobject]@{ 'OutlookAI.dll' = ('B' * 64); 'OutlookAI.vsto' = ('C' * 64); 'OutlookAI.dll.manifest' = ('D' * 64) }
         signing     = [pscustomobject]@{ publicKeyXml = '<RSAKeyValue><Modulus>AA==</Modulus><Exponent>AQAB</Exponent></RSAKeyValue>' }
         vstoRuntime = [pscustomobject]@{ sha256 = $VstoRuntimeSha256 }
-        contract    = [pscustomobject]@{ 'Services/AddInServerContract.cs' = ('E' * 64); 'Services/OfficeVersions.cs' = ('F' * 64) }
+        contract    = [pscustomobject]@{ 'McpServer/OutlookAI.Core/AddIn/AddInServerContract.cs' = ('E' * 64); 'McpServer/OutlookAI.Core/AddIn/OfficeVersions.cs' = ('F' * 64) }
     }
     Test-Case 'a complete manifest has no problems' 0 (Test-PayloadManifestShape $okManifest).Count
     $bad = $okManifest.PSObject.Copy()
     $bad.commit = 'HEAD'
     Test-Case 'a symbolic ref is not a commit' $true ((Test-PayloadManifestShape $bad) -join ' ').Contains('commit:')
     $bad = $okManifest.PSObject.Copy()
-    $bad.contract = [pscustomobject]@{ 'Services/AddInServerContract.cs' = ('E' * 64) }
-    Test-Case 'a manifest without every contract hash is refused' $true ((Test-PayloadManifestShape $bad) -join ' ').Contains('contract.Services/OfficeVersions.cs')
+    $bad.contract = [pscustomobject]@{ 'McpServer/OutlookAI.Core/AddIn/AddInServerContract.cs' = ('E' * 64) }
+    Test-Case 'a manifest without every contract hash is refused' $true ((Test-PayloadManifestShape $bad) -join ' ').Contains('contract.McpServer/OutlookAI.Core/AddIn/OfficeVersions.cs')
 
     Write-Host ''
     Write-Host '== the release build (-ReleaseSigningThumbprint) =='

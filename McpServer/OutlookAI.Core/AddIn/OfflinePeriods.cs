@@ -1,4 +1,4 @@
-namespace OutlookAI.Services
+namespace OutlookAI.Core.AddIn
 {
     /// <summary>
     /// THE ELEVEN OFFLINE PERIODS - Q143, decided by the maintainer: Outlook's "Download email for
@@ -11,24 +11,17 @@ namespace OutlookAI.Services
     /// Outlook as these same eleven pairs, and 36 and 60 survive a restart as "3 years" and "5 years".
     ///
     /// <para>
-    /// ONE TABLE FOR BOTH TREES (Q154: no duplicated code). The add-in compiles this file: its
-    /// <c>CachedModeSettings</c> writes the user's own period for new accounts from it.
-    /// <c>OutlookAI.Core</c> LINKS it: its <c>AccountOfflinePeriodWriter</c> writes an existing
-    /// account's own pair from it. The test project links neither copy of its own - it reaches Core's
-    /// through InternalsVisibleTo, as with <c>OfficeVersions</c>.
-    /// </para>
-    ///
-    /// <para>
-    /// FRAMEWORK-NEUTRAL and INTERNAL, under the rules <c>Services\OfficeVersions.cs</c> documents:
-    /// net48 (the add-in, C# 15) and net48 AND net11 inside Core, nullable-enabled with warnings as
-    /// errors - so no nullable annotations, nothing returned or assigned as null, no language feature
-    /// .NET Framework 4.8 cannot run. Internal, so the copies in the two assemblies the test assembly can see never collide.
+    /// ONE TABLE FOR BOTH (Q154: no duplicated code). <see cref="CachedModeSettings"/> writes the
+    /// user's own period for new accounts from it, and Core's <c>AccountOfflinePeriodWriter</c>
+    /// writes an existing account's own pair from it. OutlookAI.Core's, in the add-in namespace
+    /// (Q163 (a)); the add-in compiles as C# 15 on .NET Framework 4.8 (C# 7.3 until Q172), so nothing
+    /// here may need the modern runtime to use.
     /// </para>
     /// </summary>
-    internal static class OfflinePeriods
+    public static class OfflinePeriods
     {
         /// <summary>All mail: (0, 0). The shipped default, and what OutlookAI's search needs (D25).</summary>
-        internal static readonly OfflinePeriod All = new OfflinePeriod(0, 0, "All");
+        public static readonly OfflinePeriod All = new OfflinePeriod(0, 0, "All");
 
         // In the slider's order, shortest first: the administrative template's eleven items.
         private static readonly OfflinePeriod[] Periods =
@@ -47,19 +40,19 @@ namespace OutlookAI.Services
         };
 
         /// <summary>How many there are: eleven.</summary>
-        internal static int Count
+        public static int Count
         {
             get { return Periods.Length; }
         }
 
         /// <summary>The period at a position in the slider's order, 0 to 10. Throws outside it.</summary>
-        internal static OfflinePeriod At(int index)
+        public static OfflinePeriod At(int index)
         {
             return Periods[index];
         }
 
         /// <summary>The position of (months, days) in the slider's order, or -1 for a pair Microsoft does not document.</summary>
-        internal static int IndexOf(int months, int days)
+        public static int IndexOf(int months, int days)
         {
             for (int i = 0; i < Periods.Length; i++)
             {
@@ -70,16 +63,16 @@ namespace OutlookAI.Services
         }
 
         /// <summary>True for exactly the eleven (months, days) pairs, and for nothing else.</summary>
-        internal static bool IsOffered(int months, int days)
+        public static bool IsOffered(int months, int days)
         {
             return IndexOf(months, days) >= 0;
         }
     }
 
     /// <summary>One of the eleven offline periods: what Outlook calls it, and the pair it is written as.</summary>
-    internal sealed class OfflinePeriod
+    public sealed class OfflinePeriod
     {
-        internal OfflinePeriod(int months, int days, string label)
+        public OfflinePeriod(int months, int days, string label)
         {
             Months = months;
             Days = days;
@@ -87,12 +80,12 @@ namespace OutlookAI.Services
         }
 
         /// <summary><c>SyncWindowSetting</c> / profile property 0x6649: 0 for the three day periods and for All.</summary>
-        internal int Months { get; }
+        public int Months { get; }
 
         /// <summary><c>SyncWindowSettingDays</c> / profile property 0x665A: 3, 7 or 14 with months 0; 0 for every other period.</summary>
-        internal int Days { get; }
+        public int Days { get; }
 
-        internal string Label { get; }
+        public string Label { get; }
 
         public override string ToString()
         {

@@ -1,53 +1,37 @@
-namespace OutlookAI.Services
+namespace OutlookAI.Core.AddIn
 {
     /// <summary>
-    /// THE ADD-IN / MAIL SERVER CONTRACT: the values that must be identical on both sides of a
-    /// boundary no compiler crosses.
+    /// THE ADD-IN / MAIL SERVER CONTRACT: the values the add-in writes and the mail server reads.
     ///
-    /// The net48 VSTO add-in cannot reference the .NET 11 mail server, and the server
-    /// deliberately takes no add-in dependency, so everything they agree about is DATA: two HKCU
-    /// keys the add-in writes and <c>outlook_health</c> reads, plus the Claude Code
-    /// configuration file one of them repairs and the other reports on. Every value below used
+    /// Everything the two agree about is DATA: two HKCU keys the add-in writes and
+    /// <c>outlook_health</c> reads, plus the Claude Code configuration file one of them repairs and
+    /// the other reports on. Every value below used
     /// to be spelled out once per side, with a comment on the server saying it "mirrors" the
     /// add-in. A comment is not a mechanism - the audit in <c>Docs/magic-numbers.md</c> found one
     /// of those comments that had already become false - and this particular drift is silent:
     /// both halves go on working, they simply stop describing the same machine, so the health
     /// report says "tuning: not managed" about a machine the add-in has been tuning for months.
     ///
-    /// One definition, compiled into both trees instead of compared across them:
-    ///  - the add-in (<c>OutlookAI.csproj</c>) compiles this file directly;
-    ///  - <c>OutlookAI.Core</c> LINKS it, which is how <c>HealthReporting</c> reads exactly what
-    ///    the add-in wrote;
-    ///  - the test project does NOT link it, although it links <see cref="McpConfigEditor"/>,
-    ///    which uses the Claude Code names below: since Q86 (2026-10-03) Core opens its internals
-    ///    to the test assembly, so McpConfigEditor binds to Core's copy there.
+    /// One definition, in OutlookAI.Core's add-in namespace (Q163 (a), Q164 (a)): the add-in
+    /// references Core's net48 build and takes these constants from here (Q167 (a)), and
+    /// <c>HealthReporting</c> reads exactly what the add-in wrote. Until the code-sharing refactor's
+    /// stage S3 the add-in compiled this file and Core linked it, internal in both.
     ///
     /// <para>
-    /// FRAMEWORK-NEUTRAL, and the intersection is narrow: this compiles as net48 (the add-in),
-    /// as net48 AND net11 (Core's dual target) and as net11 (the test host), the last two
-    /// nullable-enabled with warnings as errors. So no <c>string?</c>, no <c>return null</c> from
-    /// a string member, no language feature .NET Framework 4.8 cannot run (the add-in is C# 15
-    /// since 2026-11-18, and C# 7.3 before it), and an event would need an initialiser.
-    /// Holding nothing but constants is the cheapest way to stay inside that intersection, and
-    /// it is all this file is for: no probes, no registry access, no logic, nothing to test.
-    /// </para>
-    ///
-    /// <para>
-    /// INTERNAL, and it has to stay internal. A type in a linked file compiled into two
-    /// assemblies that can see each other is CS0436, which is an error here
-    /// (<c>TreatWarningsAsErrors</c>) - that is why the test project stopped linking
-    /// <c>PromptStore.cs</c>. Internal keeps Core's copy out of sight of everything except the
-    /// one assembly Core opens itself to, the test assembly - which is precisely why that
-    /// assembly must not link this file as well (it used to, while Core granted no
-    /// <c>InternalsVisibleTo</c>; the grant arrived with the audit-log redirect, Q86). Whatever the
-    /// server has to expose stays exposed by <c>HealthReporting</c>'s own public constants, which
-    /// are initialised from here. For the same reason this file is NOT compiled into
-    /// <c>OutlookAI.McpServer</c>: that project opens its internals to the test assembly too, so a
-    /// copy there WOULD collide with Core's.
+    /// Constants only: no probes, no registry access, no logic, nothing to test. The add-in compiles
+    /// as C# 15 on .NET Framework 4.8 (C# 7.3 until Q172, 2026-11-18), so nothing here may need the
+    /// modern runtime to use.
     /// </para>
     /// </summary>
-    internal static class AddInServerContract
+    public static class AddInServerContract
     {
+        /// <summary>
+        /// The add-in's own key, under HKEY_CURRENT_USER: every key below is under it, and the
+        /// add-in keeps its own settings in it (the installer's InstallDir, the chosen model). One
+        /// spelling, where it used to be typed into four classes (Q154).
+        /// </summary>
+        public const string AppKeyPath = @"Software\OutlookAI";
+
         // ===== HKCU\Software\OutlookAI\Tuning =====
         // Written by OutlookTuningService (desired state, group toggles, reconcile bookkeeping);
         // read by HealthReporting.ReadTuningState for the tuning block of outlook_health.
@@ -57,7 +41,7 @@ namespace OutlookAI.Services
         /// write. (Since Q145 (a) every Outlook value it manages is the user's own setting too; one
         /// Windows refuses anyway is listed in <see cref="TuningNeedsAdministratorValueName"/>.)
         /// </summary>
-        internal const string TuningKeyPath = @"Software\OutlookAI\Tuning";
+        public const string TuningKeyPath = AppKeyPath + @"\Tuning";
 
         /// <summary>
         /// DWORD, written once when the add-in first seeds the toggles. Its ABSENCE is
@@ -65,18 +49,18 @@ namespace OutlookAI.Services
         /// "the add-in has never run its tuning service on this machine", which health reports
         /// as unmanaged rather than as disabled.
         /// </summary>
-        internal const string TuningInitializedValueName = "Initialized";
+        public const string TuningInitializedValueName = "Initialized";
 
         /// <summary>DWORD master switch for the whole tuning feature.</summary>
-        internal const string TuningEnabledValueName = "Enabled";
+        public const string TuningEnabledValueName = "Enabled";
 
         /// <summary>DWORD per-group toggles, one per group id in OutlookTuningService's catalog.</summary>
-        internal const string TuningSearchEnabledValueName = "SearchEnabled";
-        internal const string TuningCachingEnabledValueName = "CachingEnabled";
-        internal const string TuningOstEnabledValueName = "OstEnabled";
+        public const string TuningSearchEnabledValueName = "SearchEnabled";
+        public const string TuningCachingEnabledValueName = "CachingEnabled";
+        public const string TuningOstEnabledValueName = "OstEnabled";
 
         /// <summary>DWORD: a write has landed that only takes effect on the NEXT Outlook start.</summary>
-        internal const string TuningRestartNeededValueName = "RestartNeeded";
+        public const string TuningRestartNeededValueName = "RestartNeeded";
 
         /// <summary>
         /// String: ';'-joined entry ids the last reconcile left alone because a policy sets their
@@ -84,7 +68,7 @@ namespace OutlookAI.Services
         /// OutlookAI wrote (Q145 (a)). Until then: the ids it backed off from because a policy
         /// reverted a value it had applied.
         /// </summary>
-        internal const string TuningPolicyConflictsValueName = "PolicyConflicts";
+        public const string TuningPolicyConflictsValueName = "PolicyConflicts";
 
         /// <summary>
         /// String: ';'-joined entry ids whose write the last reconcile was REFUSED for lack of rights,
@@ -93,10 +77,10 @@ namespace OutlookAI.Services
         /// Q145 (a) the add-in writes only the user's own settings, so it is normally empty. Empty
         /// when there are none. <c>outlook_health</c> reports it as <c>tuning.needsAdministrator</c>.
         /// </summary>
-        internal const string TuningNeedsAdministratorValueName = "NeedsAdministrator";
+        public const string TuningNeedsAdministratorValueName = "NeedsAdministrator";
 
         /// <summary>String: ISO 8601 ("o") timestamp of the last reconcile.</summary>
-        internal const string TuningLastReconcileUtcValueName = "LastReconcileUtc";
+        public const string TuningLastReconcileUtcValueName = "LastReconcileUtc";
 
         // ===== HKCU\Software\Microsoft\Office\<major>\Outlook\Search =====
         // OUTLOOK'S OWN key, not one of ours, and the only entry here that is not: the add-in's
@@ -104,8 +88,8 @@ namespace OutlookAI.Services
         // outlook_health's tuning.uiSearchBackend - which show_search_results then uses to decide
         // whether to tell an agent that the user's Outlook search box is looking somewhere other
         // than the corpus the agent searched. The KEY PATH is version-dependent and is therefore
-        // built by Services\OfficeVersions.cs (OutlookSearchKeyPath), which both trees also
-        // compile; only the VALUE NAME is a constant, and it lives here with the rest of them.
+        // built by OfficeVersions.OutlookSearchKeyPath, beside this file; only the VALUE NAME is a
+        // constant, and it lives here with the rest of them.
 
         /// <summary>
         /// DWORD under the Outlook Search key: nonzero points Outlook's own search box at the
@@ -121,7 +105,7 @@ namespace OutlookAI.Services
         /// one against the name <c>McpServer/README.md</c> publishes to users.
         /// </para>
         /// </summary>
-        internal const string DisableServerAssistedSearchValueName = "DisableServerAssistedSearch";
+        public const string DisableServerAssistedSearchValueName = "DisableServerAssistedSearch";
 
         // ===== HKCU\Software\OutlookAI\Mcp =====
         // Written by McpRegistrationService on every reconcile; read by
@@ -129,32 +113,32 @@ namespace OutlookAI.Services
         // instead of guessing. This key IS the contract - see McpServer/README.md.
 
         /// <summary>The MCP registration key, under HKEY_CURRENT_USER.</summary>
-        internal const string McpKeyPath = @"Software\OutlookAI\Mcp";
+        public const string McpKeyPath = AppKeyPath + @"\Mcp";
 
         /// <summary>String: one of McpRegistrationService's status codes.</summary>
-        internal const string McpStatusValueName = "Status";
+        public const string McpStatusValueName = "Status";
 
         /// <summary>String: the human-readable detail behind that status (shown in Settings).</summary>
-        internal const string McpDetailValueName = "Detail";
+        public const string McpDetailValueName = "Detail";
 
         /// <summary>String: the command currently registered in the Claude Code configuration.</summary>
-        internal const string McpCommandValueName = "Command";
+        public const string McpCommandValueName = "Command";
 
         /// <summary>String: the installed server path the reconcile resolved, when it found one.</summary>
-        internal const string McpResolvedServerPathValueName = "ResolvedServerPath";
+        public const string McpResolvedServerPathValueName = "ResolvedServerPath";
 
         /// <summary>DWORD: whether that reconcile had to rewrite the registration.</summary>
-        internal const string McpHealedValueName = "Healed";
+        public const string McpHealedValueName = "Healed";
 
         /// <summary>String: ISO 8601 ("o") timestamp of the last reconcile.</summary>
-        internal const string McpLastReconcileUtcValueName = "LastReconcileUtc";
+        public const string McpLastReconcileUtcValueName = "LastReconcileUtc";
 
         /// <summary>
         /// Tri-state DWORD opt-in for user-scope registration: 1 on, 0 off, ABSENT never decided.
         /// The absent state is what separates "the user does not want this" from "the user has
         /// not been asked yet", and only the first may be acted on.
         /// </summary>
-        internal const string McpGlobalRegistrationValueName = "GlobalRegistrationEnabled";
+        public const string McpGlobalRegistrationValueName = "GlobalRegistrationEnabled";
 
         // ===== Claude Code's configuration =====
         // The add-in writes this file (McpConfigEditor's splice discipline); the server only ever
@@ -166,15 +150,15 @@ namespace OutlookAI.Services
         /// <c>Environment.SpecialFolder.UserProfile</c>, so the whole path is the same on both
         /// sides once this name is.
         /// </summary>
-        internal const string ClaudeConfigFileName = ".claude.json";
+        public const string ClaudeConfigFileName = ".claude.json";
 
         /// <summary>The top-level object holding the servers, in both the user- and project-scope shapes.</summary>
-        internal const string ServersProperty = "mcpServers";
+        public const string ServersProperty = "mcpServers";
 
         /// <summary>Our member under <see cref="ServersProperty"/>. Renaming it deregisters the server on every machine.</summary>
-        internal const string ServerName = "outlookai";
+        public const string ServerName = "outlookai";
 
         /// <summary>The stdio server's executable, the one member of our entry both sides read.</summary>
-        internal const string CommandProperty = "command";
+        public const string CommandProperty = "command";
     }
 }
