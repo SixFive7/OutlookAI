@@ -1908,58 +1908,33 @@
   `T2/LiveSearchInTests` throw NullReference when the settings carry no `subjectOnlyProbe` instead of
   refusing with the remedy.
 
-- [ ] **Stop D49's lifetime pins being left behind, once Q149's measurement has said whether pins
-  stay (Q118 (a), approved 2026-10-11, on hold for Q149).** Approved: a per-user list of live
-  sessions and the pins they made, by owner PID and pin window handle; the last session out closes
-  the pin; the pins of dead sessions are closed; `outlook_health` lists the sessions; and a
-  machine-wide lock, so sessions that start Outlook at once make one pin. The window handles also let
-  the show-me path recognise a pin (S6, below). On hold for the maintainer's choice between keeping
-  Word with pins made only while drafting - then build (a) for those pins - and writing drafts as HTML
-  with no compose window and no pins - then this item goes (`QUESTIONS.md` decision log, 2026-10-11
-  and 2026-11-17). Q149 (d) measured on 2026-11-17 that pins stay for as long as drafts go through
-  Word: without one, the compose window's close ended a window-less Outlook in 40 of 40 drafts on
-  Office LTSC 2024 (`Docs/research/q149-draft-text`). **Measured** 2026-10-03 on
-  `OAI-UNINDEXED` (`McpServer/Docs/com-host.md`, "Pins left behind, measured"): a session pins only
-  when it finds no Explorer, so against a user's open Outlook no
-  pin is ever made (11 sessions, 0 pins). A pin is LEFT when its maker did not start Outlook - sessions
-  that connect while Outlook is starting or running window-less all pin, and none of them closes its
-  own (2 at once left 1, 3 at once left 3) - or when the maker's COM host is killed. A pin left keeps a
-  window-less OUTLOOK.EXE up: `Application.Quit()` did not end it (3 of 3), nor did the user's close of
-  the window they had opened over it (2 of 2); File > Exit did. **S6 is true in one state:** after
-  that close, `ActiveExplorer()` returns the hidden pin, the show-me path's `Activate()` makes it
-  visible, and the user's close of it ends Outlook - harmless there, because the close raised Quit
-  and dropped every attached session, so the pin had no live owner. **What the research of
-  2026-10-11 found (a) also needs** (`.work\research-2026-10-11\q118-tray\report.md` of the
-  maintainer's checkout, gitignored): record who started this OUTLOOK.EXE once per process, not per
-  session, because a starter that leaves first ends Outlook under the others today; close only pins
-  recorded by window handle, never a visible window or another program's hidden Explorer; while
-  another session lives, adopt a dead session's pin rather than close it, since closing the only
-  Explorer ends Outlook under everyone; let any session that hears Quit close the shared pin, so the
-  user's exit wins for every session; mark "Outlook is exiting" across processes, so a new server's
-  first call waits for that process to end instead of starting another; and have `outlook_health`
-  also say who started Outlook and what will end it. Never measured: the tray icon in any of these
-  states, and what its Exit Now does to a pinned Outlook.
+- [ ] **What the session registry of Q118 (a) leaves open (built 2026-11-18, `McpServer/Docs/com-host.md`,
+  "One pin, shared, closed by the last session out").** Every session joins a per-user list, Outlook
+  has one pin shared by every session, the last session out or one that hears Quit closes it, and a
+  dead session's pin is adopted. Three things are not covered. (1) **A pin whose every session was
+  killed, with no OutlookAI session after it**, stays until the next session starts and later leaves:
+  a COM host killed by its deadline is replaced only on its server's next call, and a server that
+  ends before one leaves the dead host's pin in Outlook. `outlook_health` names it as a problem and
+  File > Exit ends Outlook meanwhile. Options: the server, as it ends, starts a short COM host only to
+  leave the registry when it holds a pin no live session owns; or posts WM_CLOSE to the recorded pin
+  window, which needs no COM but has never been measured on a hidden Explorer; or nothing more. (2)
+  **The cross-process "Outlook is exiting" mark** the 2026-10-11 research proposed, so a new server's
+  first call waits for an exiting Outlook instead of starting another
+  (`.work\research-2026-10-11\q118-tray\report.md` of the maintainer's checkout): it is about when
+  Outlook is started, which is Q175's other half. (3) **Never measured**: the tray icon's Exit Now
+  with a pin present.
 
-- [ ] **Put a reply's or forward's text above the quoted original's header block, not inside it.**
-  Measured on 2026-11-17 by Q149 (`Docs/research/q149-draft-text`, "Found on the way"): all 12
-  replies and forwards the product wrote with a signature, on both Office LTSC 2024 test guests, had
-  the body and the signature under the line that heads the quoted original. Word lays out their first
-  eleven paragraphs with that block's top border, and the first of them in Times New Roman. A reply
-  made with no inspector - every reply since the re-opened-draft compose (`c4595b1`) - has no
-  `_MailAutoSig`, so `ApplySignatureToDocument` places the signature at the start of `_MailOriginal`,
-  which sits inside the header block's bordered `div`, and `InsertBodyAboveSignature` then writes the
-  body above the signature, inside the same block. A reply without a signature was not measured. Cell
-  C4 of `T2/LiveQ149HtmlOnlyParityTests` shows it: today's reply against one laid out as `Reply()`
-  leaves it.
-
-- [ ] **Stop the compose window showing on screen in an Outlook with no window.** Measured on
-  2026-11-17 by Q149 (`Docs/research/q149-draft-text`, cells L1 and L1c): in 50 of 50 drafts on the
-  two Office LTSC 2024 test guests, the editor promotion showed the compose window at (25,25),
-  768 x 519, for 130-646 ms, and gave Outlook the foreground. `ComposeSurface.PromoteForWordEditor`
-  parks the window off-screen before `Activate()`, and `Activate()` puts it back where Outlook keeps
-  it; the sweep after it hides it again. With an Outlook window open it stays off-screen (40 of 40).
-  How to fix it depends on Q149's decision: writing drafts as HTML shows nothing, and one promotion
-  per Outlook process (cells W6 and W7) would show it once per process instead of once per draft.
+- [ ] **The first draft after each start of an Outlook with no window still shows its compose window.**
+  Q208 B (2026-11-18) promotes a compose window once per Outlook process instead of once per draft:
+  the first draft in a window-less Outlook activates its window, which on Office LTSC 2024 shows at
+  Outlook's own place, (25,25) 768 x 519, for 130-646 ms and takes the foreground (Q149 cells L1 and
+  L1c, 50 of 50); every later draft in that process, from any session, reads its editor directly and
+  shows nothing. `ComposeSurface.PromoteForWordEditor` parks the window off-screen before
+  `Activate()`, and `Activate()` puts it back where Outlook keeps it. Untried ways to keep that one
+  moment off the screen: set `Inspector.Left` and `Top` through the object model before `Activate()`
+  (Outlook may place the window where its own properties say rather than where Windows was told), or
+  `Inspector.WindowState` minimized; each needs a Q149-style cell measuring the window shown and the
+  editor had.
 
 - [ ] **Let the count tripwire's census read a table date by its column spelling too.**
   `CensusTableRow.ReadUtc` still calls the one-argument `ComDateValue.FromTableValue`, which takes every
