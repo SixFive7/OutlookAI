@@ -2167,8 +2167,11 @@ its mailbox tests on, and change nothing you install.
   `OSPPREARM.EXE`: the licence went from notifications to 30 days of grace, and its re-arms left from
   three to two. A draft test then made and removed its draft at the first try, Outlook started without
   Office's activation wizard, and the runner gives the machine its whole read-and-write selection again.
-  The grace runs out again on 2026-12-18; a run after that is narrowed to the tests that write nothing
-  with `-FilterSuffix '&Writes=Nothing'` until it is re-armed.
+  Its first whole run made every item it tried to: 95 of 106 tests passed, the sweeps left nothing
+  tagged in the test account, the count tripwire found the bystander mailbox unchanged, and none of
+  the 11 failures was Office's. The machine rests on a new checkpoint holding the re-armed grace. The
+  grace runs out again on 2026-12-18; a run after that is narrowed to the tests that write nothing with
+  `-FilterSuffix '&Writes=Nothing'` until it is re-armed.
 
 - ✅ **The index-refile measurement no longer fails when Outlook lists a moved folder late.**
   The live test that times how fast the index follows a folder rename and move reads the folder's

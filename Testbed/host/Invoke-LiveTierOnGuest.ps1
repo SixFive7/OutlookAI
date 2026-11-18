@@ -191,7 +191,7 @@ $Guests = [ordered]@{
     'OutlookAI-Unindexed' = [ordered]@{ ComputerName = 'OAI-UNINDEXED'; Indexed = $false; Checkpoint = 'CP-16B-FROZEN-CLOCK'; Exchange = $false }
     # The Exchange VM (2026-10-08): never frozen, never cloned; its resting checkpoint is the newest
     # testbed.json's exchangeVm.checkpoints records, and -SelfTest holds the two equal.
-    'OutlookAI-Exchange'  = [ordered]@{ ComputerName = 'OAI-EXCHANGE'; Indexed = $true; Checkpoint = 'CP-08-ADDIN-READY'; Exchange = $true }
+    'OutlookAI-Exchange'  = [ordered]@{ ComputerName = 'OAI-EXCHANGE'; Indexed = $true; Checkpoint = 'CP-09-OFFICE-REARMED'; Exchange = $true }
 }
 # AND THEIR CLONES (2026-11-17): TestbedPool.ps1's indexed and unindexed pools. A clone is its
 # source copied at the source's frozen checkpoint - New-TestbedClone.ps1 - and rests on a checkpoint
@@ -664,7 +664,7 @@ function Invoke-SelfTest {
     Check 'the crash search takes the guest''s clock read before the suite' $true $own.Contains("`$since = Get-CrashEventsSince -GuestRunStartUtc `$guestRunStartUtc")
     Check 'the frozen branch calls the guard with -Verify' $true $own.Contains("'Set-GuestClockFrozen.ps1') -VMName `$facts.Name -Verify")
     $x = Get-GuestFacts 'OutlookAI-Exchange'
-    Check 'the Exchange VM is one, never frozen, resting on its newest checkpoint' 'OAI-EXCHANGE|True|True|CP-08-ADDIN-READY' @($x.ComputerName, $x.Indexed, $x.Exchange, $x.Checkpoint)
+    Check 'the Exchange VM is one, never frozen, resting on its newest checkpoint' 'OAI-EXCHANGE|True|True|CP-09-OFFICE-REARMED' @($x.ComputerName, $x.Indexed, $x.Exchange, $x.Checkpoint)
     Check 'the PST guests are not' 'False|False' @((Get-GuestFacts 'OutlookAI-Indexed').Exchange, (Get-GuestFacts 'OutlookAI-Unindexed').Exchange)
     Check 'the build VM is refused' $true ($null -eq (Get-GuestFacts 'OutlookAI-Build'))
     Check 'the retired test VM is refused' $true ($null -eq (Get-GuestFacts 'OutlookAI-TestVM'))

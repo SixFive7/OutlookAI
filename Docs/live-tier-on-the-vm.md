@@ -3920,6 +3920,8 @@ in `.work\guest-live-runs\<run>\` of the branch's worktree).
 | 2 | `8a66b74`, the addresses read at run time | carried forward | 1 (`LiveDraftTests.NewDraft_Hub_LandsInHubDrafts_...`) | 0 | 1 | 20 s | already running, no dialog open |
 | 5 | `40c64f8`, `Writes=Nothing` only (decision 206) | `CP-08-ADDIN-READY`, both .ost files set aside, the search index rebuilt | 25 | 23 | 2 | 49 s | started by the run; the activation wizard closed once |
 | 6 | `d5f3d34`, master `9550802` (folders and stores by ID) merged, `Writes=Nothing` only | carried forward | 28 | 23 | 5 | 1 m 15 s | already running |
+| 7 | `c85becc`, the write filter narrowed to `LiveDraftTests.NewDraft_Hub_LandsInHubDrafts` (decision 206 (a)) | carried forward: Office re-armed, Windows restarted | 1 | 1 | 0 | 19 s | started by the run; no activation wizard |
+| 8 | `1488047`, master `14907d3` merged - the write filter again | carried forward | 106 | 95 | 11 | 19 m 44 s | already running |
 
 Both runs left no tagged item behind (run 1 swept every store to zero; run 2 created nothing), the
 count tripwire found no change outside the test account, Outlook did not crash, and the mailbox
@@ -3939,7 +3941,8 @@ from the credential files at render time (Q189 (b)), checked against the guest's
   frozen guests stay inside theirs (Q130) - this VM cannot, because Microsoft 365 needs the real time.
   So the expired grace is the most likely cause; it is not proven, because no item was created by hand
   to try it (AGENTS.md, Mailbox Safety rule 1). Microsoft documents notifications, not lost functions,
-  for an unactivated volume edition. Until it is settled the VM's write tests cannot pass (TODO.md).
+  for an unactivated volume edition. Proven on 2026-11-18 by decision 206 (a), below: after one re-arm
+  the same draft test made its draft, and a whole write run made every item it tried to.
 - **No index scope for the test account (6).** After the day's set-asides the catalog held more than
   one root under each mailbox's name - the run's sample found three for the real mailbox - and the
   scope finder, which never guesses between two roots of one name (`T2/LiveIndexScopes.cs`), found
@@ -3989,6 +3992,49 @@ added three tests that write nothing (`T2/LiveExchangeFolderIdTests.cs`). What t
 
 None of this is mended on the branch: the first two are the folders-by-ID code's to settle, and depend
 on what the maintainer decides about the automapped entry; this section records them.
+
+**Decision 206 (a): Office's grace re-armed, and the write run again (2026-11-18).** The maintainer's
+order: re-arm the grace once with Office's own tool, which also proves the cause; Microsoft 365 Apps
+with the test account's licence only if that did not bring item creation back; a volume key from him
+if neither did. Every step under a lease, the bystander's settings untouched:
+
+1. Read over PowerShell Direct with the licence query of `Testbed/MEDIA.md`: `LicenseStatus` 5
+   (notifications), `LicenseStatusReason` 0xC004F056, `GracePeriodRemaining` 0, SKU
+   `Office24ProPlus2024VL_KMS_Client_AE`, `RemainingAppReArmCount` and `RemainingSkuReArmCount` 3.
+2. 02:55 local: `C:\Program Files\Microsoft Office\Office16\OSPPREARM.EXE`, no argument, elevated: exit
+   0, "Microsoft Office rearm successful." Read again: `LicenseStatus` 2 (out-of-box grace), reason
+   0x4004F00C, 43,200 minutes - 30 days, to about 02:56 on 2026-12-18 - and **two re-arms left** of each
+   count. Windows' own re-arm count is not touched by it.
+3. Outlook quit gracefully and Windows restarted (`host/Restart-Guest.ps1 -Execute`, 43 s).
+4. Run 7, one draft test: the runner started Outlook, with no activation wizard to close, and the draft
+   landed in the test account's Drafts and was deleted - the cause proven, against the E_ABORT of runs 1
+   and 2.
+5. Run 8, the whole write selection, which the runner types again since this commit: 106 tests, 95
+   passed, and none failed to make an item - no E_ABORT and no "The operation failed." anywhere in its
+   output. The proofs: the test account held no tagged item and no test folder before; the two sweeps
+   deleted 12 and 4 of the run's own items and left it at zero; the bystander was counted and not swept,
+   one tagged item before and after (the Q138 leftover, below); the count tripwire censused the bystander
+   item by item - 25 folders, 19 identified, 5 items - with 0 failures and 0 notes; Outlook did not
+   crash.
+6. Checkpoint `CP-09-OFFICE-REARMED`, taken with the VM saved after run 8: the newest, and the one the
+   runner rests on.
+
+Run 8's eleven failures, none of them Office's: five tests met the test account's mailbox twice - its
+cached store and the entry automapped through the bystander's Full Access - and found two folders or
+stores where they assert one (`ListFolders_TestHub_FullTree_...`, `FindFolder_FindsTheInboxByItsName_...`,
+`MoveChain_TestFolderRoundTrip_...`, `GotoFolder_HubFolder_...`, `AFolderId_IsFoundMadeAndMovedInto_...`);
+three found an Exchange folder ID no folder has answered instead of refused
+(`AFolderIdNoFolderHas_IsRefused_...`, `ASearchScopedToAnExchangeFolderId_...`,
+`FolderScopedSweep_AnUnknownFolderId_...`) - both run 6's findings, for the folder-ID stream;
+`Health_OnThisMachine_...` read `degraded` for the automapped entry's missing index and
+`Thread_IndexPath_AndComFallback` met `NoSubjectTimeMatch`, as in runs 5 and 6; and
+`LiveDisconnectRecoveryTests.OutlookExit_...` closed the one Explorer window the run's Outlook had been
+started with and then met an `ObjectDisposedException` in `TryCloseInvisibleExplorers` - not analysed
+further here.
+
+**The grace runs out again about 02:56 on 2026-12-18** (TODO.md). Past it every write test fails at its
+first item again; until a re-arm, a run narrows itself with `-FilterSuffix '&Writes=Nothing'`. A re-arm
+is the steps above; what follows the last of the two left is the maintainer's to decide.
 
 ### 4.5 The frozen guest clocks - both Outlook guests, 2026-10-03 (Q130 (a) and (b))
 

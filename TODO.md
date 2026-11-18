@@ -1870,7 +1870,8 @@
   left (decision 206 (a), 2026-11-18).** Its Office LTSC 2024 volume edition is never activated, and past
   the 30-day grace Outlook there creates no item through its object model, so every write test fails at
   its first draft (runbook §4.4a). On 2026-11-18 one re-arm with `OSPPREARM.EXE` gave it 30 days, to about
-  02:56 on 2026-12-18, and took the count from three to two. Before then: lease the VM, run
+  02:56 on 2026-12-18, and took the count from three to two; checkpoint `CP-09-OFFICE-REARMED` holds
+  that state, and a restore of an older checkpoint brings the expired grace back. Before then: lease the VM, run
   `OSPPREARM.EXE` over PowerShell Direct, restart Outlook with
   `host/Restart-Guest.ps1 -Execute` (Testbed/README.md §4e), record the new count, and take a checkpoint.
   What follows the last re-arm is still the maintainer's to decide: 206 (b), Microsoft 365 Apps activated
