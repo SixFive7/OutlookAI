@@ -179,7 +179,7 @@ namespace OutlookAI.Core.Services
     /// </list>
     /// Policy (Q156): no signature at all while signatures are disabled. Under a forced default one message may
     /// still have another signature or none, because Outlook's own compose window allows both: its Signature button
-    /// stays open (measured 2026-11-18, Q200 (a), <c>Docs/live-tier-on-the-vm.md</c> section 4.10).
+    /// stays open (measured 2026-11-18, Q200 (a), <c>Docs/live-tier-on-the-vm.md</c> section 4.11).
     /// Delegate and shared mailboxes (Q160): no account default applies, so none goes in unless named.
     /// </summary>
     public static class SignatureSelector
