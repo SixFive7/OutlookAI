@@ -1,6 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
-using OutlookAI.Services;
+using OutlookAI.Core.AddIn;
 
 namespace OutlookAI.McpServer.Tools;
 

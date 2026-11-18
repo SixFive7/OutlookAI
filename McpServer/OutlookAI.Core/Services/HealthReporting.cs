@@ -7,13 +7,14 @@ using Microsoft.Win32;
 
 // The one definition of everything the add-in and this server have to agree about: the HKCU keys
 // the add-in writes and this file reads, and the Claude Code configuration both of them look at.
-// Services\AddInServerContract.cs is LINKED into this project (see OutlookAI.Core.csproj), so
-// these are not copies of the add-in's constants - they are the add-in's constants.
-using Contract = global::OutlookAI.Services.AddInServerContract;
+// Core's AddIn\AddInServerContract.cs, which the add-in takes them from too (Q163 (a), Q167 (a)),
+// so these are not copies of the add-in's constants - they are the add-in's constants.
+using Contract = global::OutlookAI.Core.AddIn.AddInServerContract;
 // And the Office majors, plus the hive paths built from whichever one this machine has.
-// Services\OfficeVersions.cs is LINKED here too, so the Outlook Search key this file reads is
+// Core's AddIn\OfficeVersions.cs is the add-in's too, so the Outlook Search key this file reads is
 // built by the same expression the add-in writes it with - see OutlookSearchUserKeyPath below.
-using OfficeVersions = global::OutlookAI.Services.OfficeVersions;
+using OfficeVersions = global::OutlookAI.Core.AddIn.OfficeVersions;
+using AddInServerContract = global::OutlookAI.Core.AddIn.AddInServerContract;
 
 namespace OutlookAI.Core.Services
 {
@@ -28,19 +29,15 @@ namespace OutlookAI.Core.Services
     {
         /// <summary>
         /// Registry path of the add-in's tuning state. NOT a copy of the add-in's constant - the
-        /// same one: <c>Services\AddInServerContract.cs</c> is compiled into this assembly as well
-        /// as into the add-in, so there is nothing here to keep in step. This member stays public
-        /// only because the contract type is internal (CS0436 - see that file's header) and
-        /// callers outside Core name this one.
+        /// same one, <see cref="AddInServerContract.TuningKeyPath"/>, which the add-in writes with,
+        /// so there is nothing here to keep in step.
         /// </summary>
         public const string TuningKeyPath = Contract.TuningKeyPath;
 
         /// <summary>
         /// The value name this file reads out of both Search keys below - NOT a copy of the
-        /// add-in's: <c>Services\AddInServerContract.cs</c> is compiled into this assembly as
-        /// well as into the add-in, so the name the tuning service writes and the name read back
-        /// here are one constant. Public only because the contract type is internal (CS0436 - see
-        /// that file's header) and the T2 live test that flips the value names this one.
+        /// add-in's: it is <see cref="AddInServerContract.DisableServerAssistedSearchValueName"/>,
+        /// so the name the tuning service writes and the name read back here are one constant.
         /// </summary>
         public const string DisableServerAssistedSearchValueName =
             Contract.DisableServerAssistedSearchValueName;
@@ -408,8 +405,8 @@ namespace OutlookAI.Core.Services
 
         /// <summary>
         /// Registry path of the add-in's registration state - the same constant the add-in's
-        /// <c>McpRegistrationService</c> writes with, from the linked contract file, not a mirror
-        /// of it. Public for the same reason as <see cref="TuningKeyPath"/>.
+        /// <c>McpRegistrationService</c> writes with, <see cref="AddInServerContract.McpKeyPath"/>,
+        /// not a mirror of it.
         /// </summary>
         public const string McpRegistrationKeyPath = Contract.McpKeyPath;
 

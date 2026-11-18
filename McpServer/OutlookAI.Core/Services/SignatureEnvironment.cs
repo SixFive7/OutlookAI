@@ -4,8 +4,8 @@ using System.Globalization;
 using System.Linq;
 using Microsoft.Win32;
 
-using OfficeVersions = global::OutlookAI.Services.OfficeVersions;
-using SignatureFolderLocation = global::OutlookAI.Services.SignatureFolderLocation;
+using OfficeVersions = global::OutlookAI.Core.AddIn.OfficeVersions;
+using SignatureFolderLocation = global::OutlookAI.Core.AddIn.SignatureFolderLocation;
 
 namespace OutlookAI.Core.Services
 {

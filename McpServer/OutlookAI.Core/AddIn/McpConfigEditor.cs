@@ -4,15 +4,14 @@ using System.Globalization;
 using System.IO;
 using System.Text;
 
-namespace OutlookAI.Services
+namespace OutlookAI.Core.AddIn
 {
     /// <summary>
-    /// Pure text surgery on Claude Code's MCP configuration files, split out of
-    /// <see cref="McpRegistrationService"/> so the paranoid parts can be pinned by the T1
-    /// unit suite (McpServer/OutlookAI.McpServer.Tests/T1/McpConfigEditorTests.cs LINKS
-    /// this very file, so the tests exercise the code that ships). Nothing here touches
-    /// the filesystem, the registry, Outlook or COM: every entry point takes text and
-    /// returns text.
+    /// Pure text surgery on Claude Code's MCP configuration files, split out of the add-in's
+    /// <c>McpRegistrationService</c> so the paranoid parts can be pinned by the T1 unit suite
+    /// (T1 McpConfigEditorTests), which exercises the one compiled copy the add-in loads: this
+    /// file is OutlookAI.Core's, in the add-in namespace (Q163 (a)). Nothing here touches the
+    /// filesystem, the registry, Outlook or COM: every entry point takes text and returns text.
     ///
     /// Two files, one shape:
     ///  - <c>~/.claude.json</c> — user scope, applies to every project of this user;
@@ -31,7 +30,7 @@ namespace OutlookAI.Services
     /// no <c>System.Text.Json</c> (absent on net48), so the same source compiles into the
     /// net48 add-in and into the .NET 10 test host.
     /// </summary>
-    internal static class McpConfigEditor
+    public static class McpConfigEditor
     {
         /// <summary>
         /// Server name under <c>mcpServers</c>, in both scopes. From
@@ -40,13 +39,13 @@ namespace OutlookAI.Services
         /// so the write side and the read side share the one definition instead of each spelling
         /// it out.
         /// </summary>
-        internal const string ServerName = AddInServerContract.ServerName;
+        public const string ServerName = AddInServerContract.ServerName;
 
         /// <summary>The top-level container both file shapes share; read by the server too.</summary>
-        internal const string ServersProperty = AddInServerContract.ServersProperty;
+        public const string ServersProperty = AddInServerContract.ServersProperty;
 
         /// <summary>Project-scope file name, at the root of the project folder.</summary>
-        internal const string ProjectConfigFileName = ".mcp.json";
+        public const string ProjectConfigFileName = ".mcp.json";
 
         /// <summary>
         /// The portable spelling of the installed server. Claude Code expands
@@ -56,7 +55,7 @@ namespace OutlookAI.Services
         /// resolved absolute path survives. Forward slashes on purpose: they need no JSON
         /// escaping, and Windows accepts them.
         /// </summary>
-        internal const string PortableInstalledCommand =
+        public const string PortableInstalledCommand =
             "${LOCALAPPDATA}/OutlookAI/Setup/McpServer/OutlookAI.McpServer.exe";
 
         /// <summary>Nesting limit for the validator, so a hostile/broken file cannot blow the stack.</summary>
@@ -71,7 +70,7 @@ namespace OutlookAI.Services
         /// is the safe reading for a path we are about to compare against a real file.
         /// <paramref name="lookup"/> returns "" for a variable that is not set.
         /// </summary>
-        internal static string ExpandEnvironmentReferences(string value, Func<string, string> lookup)
+        public static string ExpandEnvironmentReferences(string value, Func<string, string> lookup)
         {
             if (string.IsNullOrEmpty(value) || value.IndexOf("${", StringComparison.Ordinal) < 0)
                 return value ?? "";
@@ -128,13 +127,13 @@ namespace OutlookAI.Services
         }
 
         /// <summary>Whether a value carries a <c>${...}</c> reference for Claude Code to expand.</summary>
-        internal static bool ContainsEnvironmentReference(string value)
+        public static bool ContainsEnvironmentReference(string value)
         {
             return !string.IsNullOrEmpty(value) && value.IndexOf("${", StringComparison.Ordinal) >= 0;
         }
 
         /// <summary>The process environment as an expansion lookup ("" for anything unset).</summary>
-        internal static Func<string, string> ProcessEnvironmentLookup()
+        public static Func<string, string> ProcessEnvironmentLookup()
         {
             return name =>
             {
@@ -154,7 +153,7 @@ namespace OutlookAI.Services
         /// a developer build, or an install into a non-default directory, must still be
         /// registered correctly rather than aspirationally.
         /// </summary>
-        internal static string PreferredCommand(string resolvedServerPath, Func<string, string> lookup)
+        public static string PreferredCommand(string resolvedServerPath, Func<string, string> lookup)
         {
             if (string.IsNullOrEmpty(resolvedServerPath))
                 return "";
@@ -164,7 +163,7 @@ namespace OutlookAI.Services
         }
 
         /// <summary>Whether two paths name the same file, tolerating case and separator differences.</summary>
-        internal static bool SamePath(string a, string b)
+        public static bool SamePath(string a, string b)
         {
             if (string.IsNullOrEmpty(a) || string.IsNullOrEmpty(b))
                 return false;
@@ -185,7 +184,7 @@ namespace OutlookAI.Services
         }
 
         // The opt-in toggle, and every "may Outlook change this by itself?" question, live in
-        // McpRegistrationDecision — also pure, also linked into the T1 suite. This file stays
+        // McpRegistrationDecision — also pure, also pinned by the T1 suite. This file stays
         // what its name says: text in, text out.
 
         // ===== Reading: the one state "empty" must not be read as "nothing configured" =====
@@ -205,7 +204,7 @@ namespace OutlookAI.Services
         /// So: only a file that is genuinely ABSENT may take a create-new path. A file that
         /// exists and reads empty is unreadable, and unreadable means untouched.
         /// </summary>
-        internal static bool ExistsButReadsEmpty(bool fileExists, string raw)
+        public static bool ExistsButReadsEmpty(bool fileExists, string raw)
         {
             return fileExists && (raw == null || raw.Trim().Length == 0);
         }
@@ -213,7 +212,7 @@ namespace OutlookAI.Services
         // ===== Rendering =====
 
         /// <summary>The stdio entry as one line — used when splicing into a file we did not format.</summary>
-        internal static string RenderEntryInline(string command)
+        public static string RenderEntryInline(string command)
         {
             return "{ \"type\": \"stdio\", \"command\": \"" + EscapeJsonString(command ?? "")
                    + "\", \"args\": [], \"env\": {} }";
@@ -223,7 +222,7 @@ namespace OutlookAI.Services
         /// A whole new project <c>.mcp.json</c>. Pretty-printed with LF endings because this
         /// file is normally committed and read in diffs.
         /// </summary>
-        internal static string RenderNewProjectDocument(string command)
+        public static string RenderNewProjectDocument(string command)
         {
             return "{\n"
                  + "  \"" + ServersProperty + "\": {\n"
@@ -238,7 +237,7 @@ namespace OutlookAI.Services
         }
 
         /// <summary>JSON string-body escaping (the surrounding quotes are the caller's).</summary>
-        internal static string EscapeJsonString(string s)
+        public static string EscapeJsonString(string s)
         {
             if (s == null)
                 return "";
@@ -280,7 +279,7 @@ namespace OutlookAI.Services
         /// one naming something else is replaced wholesale, because it is our entry and the
         /// button's promise is that afterwards it says exactly this.
         /// </summary>
-        internal static bool TryBuildProjectConfig(
+        public static bool TryBuildProjectConfig(
             string raw, bool fileExists, string command, out string updated, out string error)
         {
             updated = "";
@@ -387,7 +386,7 @@ namespace OutlookAI.Services
         /// belonged to it — whitespace is the sole unrelated byte this touches, and only so
         /// the file is not left with a dangling blank line.
         /// </summary>
-        internal static bool TryBuildConfigWithoutServer(string raw, out string updated, out bool changed, out string error)
+        public static bool TryBuildConfigWithoutServer(string raw, out string updated, out bool changed, out string error)
         {
             updated = raw ?? "";
             changed = false;
@@ -523,9 +522,9 @@ namespace OutlookAI.Services
         /// NOT compared: a splice inserts our member at the front of a block, so the order
         /// legitimately differs from the file we started with.
         ///
-        /// Internal rather than private so the T1 suite can pin it directly.
+        /// Not private, so the T1 suite can pin it directly.
         /// </summary>
-        internal static bool SameMultiset(List<string> expected, List<string> actual)
+        public static bool SameMultiset(List<string> expected, List<string> actual)
         {
             if (expected == null || actual == null)
                 return ReferenceEquals(expected, actual);
@@ -546,7 +545,7 @@ namespace OutlookAI.Services
         // ===== Readers =====
 
         /// <summary><c>mcpServers.outlookai.command</c>, or false when there is no such string.</summary>
-        internal static bool TryReadServerCommand(string json, out string command)
+        public static bool TryReadServerCommand(string json, out string command)
         {
             command = "";
             if (string.IsNullOrEmpty(json))
@@ -575,7 +574,7 @@ namespace OutlookAI.Services
         }
 
         /// <summary>Names under <c>mcpServers</c> (empty when absent or not an object).</summary>
-        internal static List<string> ListServerNames(string json)
+        public static List<string> ListServerNames(string json)
         {
             var names = new List<string>();
             if (string.IsNullOrEmpty(json))
@@ -591,7 +590,7 @@ namespace OutlookAI.Services
         }
 
         /// <summary>Top-level property names (empty when the text is not a JSON object).</summary>
-        internal static List<string> ListTopLevelKeys(string json)
+        public static List<string> ListTopLevelKeys(string json)
         {
             var names = new List<string>();
             if (string.IsNullOrEmpty(json))
@@ -622,7 +621,7 @@ namespace OutlookAI.Services
         /// Members are walked one at a time and each value is skipped whole, so a same-named
         /// key nested deeper can never be mistaken for a direct member.
         /// </summary>
-        internal static bool TryFindMemberSpan(
+        public static bool TryFindMemberSpan(
             string json, int objectStart, string name,
             out int memberStart, out int valueStart, out int valueEnd)
         {
@@ -654,7 +653,7 @@ namespace OutlookAI.Services
         /// <c>mcpServers</c> block inside a <c>projects</c> entry of <c>~/.claude.json</c>
         /// must never be mistaken for it.
         /// </summary>
-        internal static bool TryFindTopLevelValueSpan(string json, string key, out int valueStart, out int valueEnd)
+        public static bool TryFindTopLevelValueSpan(string json, string key, out int valueStart, out int valueEnd)
         {
             valueStart = -1;
             valueEnd = -1;
@@ -711,7 +710,7 @@ namespace OutlookAI.Services
         }
 
         /// <summary>True when the object beginning at <paramref name="objectStart"/> has no members.</summary>
-        internal static bool IsEmptyObject(string json, int objectStart)
+        public static bool IsEmptyObject(string json, int objectStart)
         {
             int i = SkipWhitespace(json, objectStart + 1);
             return i < json.Length && json[i] == '}';
@@ -734,7 +733,7 @@ namespace OutlookAI.Services
         }
 
         /// <summary>True when anything other than the closing brace follows <paramref name="brace"/>.</summary>
-        internal static bool HasAnyContentAfterBrace(string raw, int brace)
+        public static bool HasAnyContentAfterBrace(string raw, int brace)
         {
             for (int i = brace + 1; i < raw.Length; i++)
             {
@@ -877,7 +876,7 @@ namespace OutlookAI.Services
         /// close enough" is how a user loses the rest of their configuration. The lenient
         /// scanners above then run only on text that got through here.
         /// </summary>
-        internal static bool TryValidateJsonObject(string text, out string error)
+        public static bool TryValidateJsonObject(string text, out string error)
         {
             error = "";
             if (string.IsNullOrEmpty(text))

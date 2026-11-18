@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Microsoft.Win32;
+using OutlookAI.Core.AddIn;
 
 namespace OutlookAI.Services
 {

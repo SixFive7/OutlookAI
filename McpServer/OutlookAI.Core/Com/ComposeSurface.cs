@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
+using OutlookAI.Core.AddIn;
 
 namespace OutlookAI.Core.Com
 {
@@ -81,11 +82,14 @@ namespace OutlookAI.Core.Com
 
         private static readonly object PinLock = new object();
 
-        /// <summary>Where a parked window is moved. Far outside any real virtual screen.</summary>
-        public const int ParkX = -32000;
+        /// <summary>
+        /// Where a parked window is moved, far outside any real virtual screen: the corner the
+        /// add-in's <see cref="McpRegistrationDecision"/> recognises as nobody's, defined there once.
+        /// </summary>
+        public const int ParkX = McpRegistrationDecision.ParkX;
 
-        /// <summary>Where a parked window is moved.</summary>
-        public const int ParkY = -32000;
+        /// <summary>Where a parked window is moved; see <see cref="ParkX"/>.</summary>
+        public const int ParkY = McpRegistrationDecision.ParkY;
 
         /// <summary>
         /// One top-level window, reduced to what the selection rules need. A record so the

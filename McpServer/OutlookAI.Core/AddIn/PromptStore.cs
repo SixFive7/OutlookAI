@@ -4,7 +4,7 @@ using System.Collections.ObjectModel;
 using System.Diagnostics;
 using Microsoft.Win32;
 
-namespace OutlookAI.Services
+namespace OutlookAI.Core.AddIn
 {
     /// <summary>
     /// The key/value operations <see cref="PromptStore"/> needs, and nothing else. Exists so the
@@ -24,7 +24,7 @@ namespace OutlookAI.Services
     ///  - WRITES may throw. The store catches and reports the failure to the caller, so
     ///    "your prompts were saved" is never said about a write that did not happen.
     /// </summary>
-    internal interface IPromptRegistry
+    public interface IPromptRegistry
     {
         /// <summary>
         /// Reads a string value. False when the value is absent or not a string, which is what
@@ -59,7 +59,7 @@ namespace OutlookAI.Services
     /// that fails arrives here too, so a caller that reports <see cref="Succeeded"/> honestly
     /// cannot claim a save that did not land.
     /// </summary>
-    internal sealed class PromptValidationResult
+    public sealed class PromptValidationResult
     {
         private static readonly PromptValidationResult _ok =
             new PromptValidationResult(new List<string>());
@@ -71,7 +71,7 @@ namespace OutlookAI.Services
             _errors = new ReadOnlyCollection<string>(new List<string>(errors));
         }
 
-        internal static PromptValidationResult Ok()
+        public static PromptValidationResult Ok()
         {
             return _ok;
         }
@@ -80,7 +80,7 @@ namespace OutlookAI.Services
         /// A failure carrying at least one message. Called with nothing to say, it still fails
         /// (with a generic message) rather than quietly reporting success.
         /// </summary>
-        internal static PromptValidationResult Failed(params string[] errors)
+        public static PromptValidationResult Failed(params string[] errors)
         {
             var list = new List<string>();
             if (errors != null)
@@ -97,19 +97,19 @@ namespace OutlookAI.Services
         }
 
         /// <summary>True when nothing was rejected and everything asked for was written.</summary>
-        internal bool Succeeded
+        public bool Succeeded
         {
             get { return _errors.Count == 0; }
         }
 
         /// <summary>Messages fit to show a user. Empty when <see cref="Succeeded"/>.</summary>
-        internal IList<string> Errors
+        public IList<string> Errors
         {
             get { return _errors; }
         }
 
         /// <summary>All messages on separate lines; empty string when there are none.</summary>
-        internal string Message
+        public string Message
         {
             get { return string.Join(Environment.NewLine, _errors); }
         }
@@ -138,7 +138,7 @@ namespace OutlookAI.Services
     ///  - Registry value names are case-insensitive, so button names are compared that way and
     ///    a save that would collide is rejected instead of silently merging two buttons.
     /// </summary>
-    internal sealed class PromptStoreCore
+    public sealed class PromptStoreCore
     {
         private readonly IPromptRegistry _registry;
         private readonly object _gate = new object();
@@ -147,9 +147,9 @@ namespace OutlookAI.Services
         /// Raised after a write that landed. Initialised to a no-op so raising it never needs a
         /// null check, and so a subscriber that unhooks itself cannot leave it null.
         /// </summary>
-        internal event EventHandler Changed = delegate { };
+        public event EventHandler Changed = delegate { };
 
-        internal PromptStoreCore(IPromptRegistry registry)
+        public PromptStoreCore(IPromptRegistry registry)
         {
             if (registry == null)
                 throw new ArgumentNullException(nameof(registry));
@@ -169,7 +169,7 @@ namespace OutlookAI.Services
         /// override nor a shipped prompt is a stale order entry, not a button, and is skipped -
         /// showing a button whose instruction is empty would send the model a blank action.
         /// </summary>
-        internal IList<PromptButton> GetButtons()
+        public IList<PromptButton> GetButtons()
         {
             try
             {
@@ -221,7 +221,7 @@ namespace OutlookAI.Services
         /// Checks a button set without writing anything, so the settings dialog can report a
         /// bad name while the user is still typing it.
         /// </summary>
-        internal PromptValidationResult ValidateButtons(IEnumerable<PromptButton> buttons)
+        public PromptValidationResult ValidateButtons(IEnumerable<PromptButton> buttons)
         {
             List<PromptButton> list;
             return Validate(buttons, out list);
@@ -235,7 +235,7 @@ namespace OutlookAI.Services
         /// one name cannot half-apply the dialog. An empty set is legal and means the user
         /// removed every button.
         /// </summary>
-        internal PromptValidationResult SaveButtons(IEnumerable<PromptButton> buttons)
+        public PromptValidationResult SaveButtons(IEnumerable<PromptButton> buttons)
         {
             List<PromptButton> list;
             PromptValidationResult validation = Validate(buttons, out list);
@@ -297,7 +297,7 @@ namespace OutlookAI.Services
         /// button order alone; a custom button has no shipped text to fall back to, so its
         /// prompt is deleted and the name becomes a stale order entry until the user saves again.
         /// </summary>
-        internal bool ResetButtonPrompt(string name)
+        public bool ResetButtonPrompt(string name)
         {
             if (string.IsNullOrEmpty(name))
                 return false;
@@ -311,7 +311,7 @@ namespace OutlookAI.Services
         /// Back to the six shipped buttons: the order and every prompt override go, which also
         /// removes any custom button. Sections are untouched.
         /// </summary>
-        internal bool RestoreDefaultButtons()
+        public bool RestoreDefaultButtons()
         {
             return Write(delegate
             {
@@ -329,7 +329,7 @@ namespace OutlookAI.Services
         /// built-in name with a stored prompt that differs. Reads storage, so it answers for the
         /// saved state rather than for whatever the dialog currently shows.
         /// </summary>
-        internal bool IsButtonCustomized(string name)
+        public bool IsButtonCustomized(string name)
         {
             if (string.IsNullOrEmpty(name) || name.Trim().Length == 0)
                 return false;
@@ -361,7 +361,7 @@ namespace OutlookAI.Services
         /// who clears a section means to remove it, and only a genuinely absent value falls
         /// back to the default. Never throws.
         /// </summary>
-        internal string GetSection(PromptSection section)
+        public string GetSection(PromptSection section)
         {
             try
             {
@@ -381,7 +381,7 @@ namespace OutlookAI.Services
         /// instead of writing a copy of it, so returning a section to its original wording
         /// really does hand it back to the code default.
         /// </summary>
-        internal bool SetSection(PromptSection section, string text)
+        public bool SetSection(PromptSection section, string text)
         {
             string value = text == null ? string.Empty : text;
             if (PromptDefaults.SameText(value, PromptDefaults.GetSection(section)))
@@ -394,7 +394,7 @@ namespace OutlookAI.Services
         }
 
         /// <summary>Drops a section override, restoring the shipped text.</summary>
-        internal bool ResetSection(PromptSection section)
+        public bool ResetSection(PromptSection section)
         {
             return Write(delegate
             {
@@ -403,7 +403,7 @@ namespace OutlookAI.Services
         }
 
         /// <summary>Whether a section has a stored override whose text differs from the shipped one.</summary>
-        internal bool IsSectionCustomized(PromptSection section)
+        public bool IsSectionCustomized(PromptSection section)
         {
             try
             {
@@ -573,7 +573,7 @@ namespace OutlookAI.Services
     /// <c>OutlookTuningService</c>'s registry helpers: current user only, no elevation, and a
     /// read that cannot be satisfied returns false rather than throwing.
     /// </summary>
-    internal sealed class HkcuPromptRegistry : IPromptRegistry
+    public sealed class HkcuPromptRegistry : IPromptRegistry
     {
         public bool TryReadString(string subKey, string valueName, out string value)
         {
@@ -711,25 +711,25 @@ namespace OutlookAI.Services
     /// change only when a human clicks Save, and a stale prompt would be far more confusing
     /// than the microseconds are worth.
     /// </summary>
-    internal static class PromptStore
+    public static class PromptStore
     {
         /// <summary>Root key, under HKCU.</summary>
-        internal const string KeyPath = @"Software\OutlookAI\Prompts";
+        public const string KeyPath = @"Software\OutlookAI\Prompts";
 
         /// <summary>Ordered button names, one per line. Absent means the shipped six.</summary>
-        internal const string ButtonsValueName = "Buttons";
+        public const string ButtonsValueName = "Buttons";
 
         /// <summary>Subkey of prompt overrides, one value per button name.</summary>
-        internal const string ButtonPromptsSubKey = "ButtonPrompts";
+        public const string ButtonPromptsSubKey = "ButtonPrompts";
 
         /// <summary>Subkey of section overrides, one value per <see cref="PromptSection"/>.</summary>
-        internal const string SectionsSubKey = "Sections";
+        public const string SectionsSubKey = "Sections";
 
         /// <summary>Layout version value name.</summary>
-        internal const string SchemaVersionValueName = "SchemaVersion";
+        public const string SchemaVersionValueName = "SchemaVersion";
 
         /// <summary>Current layout version.</summary>
-        internal const int SchemaVersion = 1;
+        public const int SchemaVersion = 1;
 
         /// <summary>
         /// Raised after any write that landed, so a pane showing buttons can rebuild them.
@@ -737,66 +737,66 @@ namespace OutlookAI.Services
         /// are stale the moment the settings dialog saves. Initialised to a no-op, so raising it
         /// needs no null check.
         /// </summary>
-        internal static event EventHandler Changed = delegate { };
+        public static event EventHandler Changed = delegate { };
 
         private static readonly PromptStoreCore _core = CreateCore();
 
         /// <summary>The buttons to show, in order. Never throws; never empty unless the user emptied it.</summary>
-        internal static IList<PromptButton> GetButtons()
+        public static IList<PromptButton> GetButtons()
         {
             return _core.GetButtons();
         }
 
         /// <summary>Checks a button set without writing anything.</summary>
-        internal static PromptValidationResult ValidateButtons(IEnumerable<PromptButton> buttons)
+        public static PromptValidationResult ValidateButtons(IEnumerable<PromptButton> buttons)
         {
             return _core.ValidateButtons(buttons);
         }
 
         /// <summary>Stores the button set: order, the prompts that differ, and a prune of the rest.</summary>
-        internal static PromptValidationResult SaveButtons(IEnumerable<PromptButton> buttons)
+        public static PromptValidationResult SaveButtons(IEnumerable<PromptButton> buttons)
         {
             return _core.SaveButtons(buttons);
         }
 
         /// <summary>Drops one button's prompt override.</summary>
-        internal static bool ResetButtonPrompt(string name)
+        public static bool ResetButtonPrompt(string name)
         {
             return _core.ResetButtonPrompt(name);
         }
 
         /// <summary>Back to the six shipped buttons, dropping every override and custom button.</summary>
-        internal static bool RestoreDefaultButtons()
+        public static bool RestoreDefaultButtons()
         {
             return _core.RestoreDefaultButtons();
         }
 
         /// <summary>Whether the saved state of this button differs from what OutlookAI ships.</summary>
-        internal static bool IsButtonCustomized(string name)
+        public static bool IsButtonCustomized(string name)
         {
             return _core.IsButtonCustomized(name);
         }
 
         /// <summary>The text to use for a section: the override if stored, otherwise the shipped text.</summary>
-        internal static string GetSection(PromptSection section)
+        public static string GetSection(PromptSection section)
         {
             return _core.GetSection(section);
         }
 
         /// <summary>Stores an edited section; text equal to the shipped default deletes the override.</summary>
-        internal static bool SetSection(PromptSection section, string text)
+        public static bool SetSection(PromptSection section, string text)
         {
             return _core.SetSection(section, text);
         }
 
         /// <summary>Drops a section override, restoring the shipped text.</summary>
-        internal static bool ResetSection(PromptSection section)
+        public static bool ResetSection(PromptSection section)
         {
             return _core.ResetSection(section);
         }
 
         /// <summary>Whether a section has a stored override that differs from the shipped text.</summary>
-        internal static bool IsSectionCustomized(PromptSection section)
+        public static bool IsSectionCustomized(PromptSection section)
         {
             return _core.IsSectionCustomized(section);
         }

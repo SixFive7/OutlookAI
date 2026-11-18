@@ -1,12 +1,12 @@
 using System.Security;
 
-using OutlookAI.Services;
+using OutlookAI.Core.AddIn;
 
 namespace OutlookAI.McpServer.Tests.T1;
 
 /// <summary>
-/// A registry in a dictionary, for the add-in's tuning logic (<c>Services\TuningReconciler.cs</c>,
-/// <c>Services\CachedModeSettings.cs</c>, <c>Services\EarlierPolicyRemoval.cs</c>, all LINKED). A write
+/// A registry in a dictionary, for the add-in's tuning logic (<c>TuningReconciler</c>,
+/// <c>CachedModeSettings</c>, <c>EarlierPolicyRemoval</c>, all in Core's <c>AddIn\</c>). A write
 /// or a delete under a denied prefix throws what .NET throws for a key the token may not write;
 /// reads never throw, like the add-in's own store.
 /// </summary>

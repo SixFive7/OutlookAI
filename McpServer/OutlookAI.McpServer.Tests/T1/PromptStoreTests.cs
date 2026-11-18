@@ -1,11 +1,11 @@
-using OutlookAI.Services;
+using OutlookAI.Core.AddIn;
 using Xunit;
 
 namespace OutlookAI.McpServer.Tests.T1;
 
 /// <summary>
-/// The user-editable prompt store (<c>Services/PromptStore.cs</c> + <c>PromptDefaults.cs</c>,
-/// LINKED into this test project - see the tests csproj), exercised against a fabricated
+/// The user-editable prompt store (Core's <c>AddIn/PromptStore.cs</c> + <c>PromptDefaults.cs</c>,
+/// the copy the add-in and the server load), exercised against a fabricated
 /// backing store so the rules are pinned without touching the developer's own HKCU.
 ///
 /// One rule is worth more than the rest: <b>a default is never written to disk</b>. Absent has

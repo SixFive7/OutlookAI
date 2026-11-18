@@ -15,6 +15,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Web.Script.Serialization;
+using OutlookAI.Core.AddIn;
 
 namespace OutlookAI.Services
 {

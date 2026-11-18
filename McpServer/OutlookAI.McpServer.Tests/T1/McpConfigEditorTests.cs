@@ -1,11 +1,11 @@
-using OutlookAI.Services;
+using OutlookAI.Core.AddIn;
 using Xunit;
 
 namespace OutlookAI.McpServer.Tests.T1;
 
 /// <summary>
-/// The add-in's MCP configuration surgery (<c>Services/McpConfigEditor.cs</c>, LINKED into
-/// this test project — see the tests csproj). It edits two files the add-in does not own:
+/// The add-in's MCP configuration surgery (Core's <c>AddIn/McpConfigEditor.cs</c>, the copy the
+/// add-in loads). It edits two files the add-in does not own:
 /// Claude Code's <c>~/.claude.json</c> and a project's <c>.mcp.json</c>. A bad splice there
 /// silently destroys settings the user cannot get back, so every branch that decides to
 /// write — and every branch that decides to refuse — is pinned here.

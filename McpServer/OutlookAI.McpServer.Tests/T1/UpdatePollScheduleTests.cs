@@ -1,6 +1,6 @@
 using System;
 
-using OutlookAI.Services;
+using OutlookAI.Core.AddIn;
 using Xunit;
 
 namespace OutlookAI.McpServer.Tests.T1;
@@ -12,10 +12,10 @@ namespace OutlookAI.McpServer.Tests.T1;
 /// <para>
 /// WHY THIS IS TESTABLE AT ALL. <c>UpdateService</c> is an <c>HttpClient</c>, a
 /// <c>System.Threading.Timer</c> and Outlook's process lifetime, none of which this host has,
-/// and it is net48/VSTO so it cannot be referenced from here. The schedule was split into
-/// <c>Services\UpdatePollSchedule.cs</c> precisely so the one part with a right answer could
-/// be pinned; that file is LINKED into this project (see the csproj), so what runs below is
-/// the code the add-in ships and not a re-implementation of it.
+/// and it is the add-in's, net48/VSTO, which no test can load. The schedule was split into
+/// <c>UpdatePollSchedule</c> precisely so the one part with a right answer could be pinned; it is
+/// Core's, in <c>AddIn\</c>, so what runs below is the code the add-in ships and not a
+/// re-implementation of it.
 /// </para>
 ///
 /// <para>

@@ -1,7 +1,7 @@
 using System.Collections.Generic;
 
 using OutlookAI.Core.Services;
-using OutlookAI.Services;
+using OutlookAI.Core.AddIn;
 using Xunit;
 
 namespace OutlookAI.McpServer.Tests.T1;

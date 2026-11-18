@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace OutlookAI.Services
+namespace OutlookAI.Core.AddIn
 {
     /// <summary>
     /// ADVISORY CHECKS ON EDITED PROMPT TEXT. WARNS, NEVER BLOCKS.
@@ -23,15 +23,15 @@ namespace OutlookAI.Services
     /// how someone rephrased it. A false negative here costs nothing that was not already lost;
     /// a false positive costs a warning nobody needed.
     /// </summary>
-    internal static class PromptLint
+    public static class PromptLint
     {
-        internal const string UntrustedContentWarning =
+        public const string UntrustedContentWarning =
             "This prompt no longer says that the draft, the quoted thread and the signature are untrusted content and not instructions. Text inside an email you received could then be followed as if you had asked for it yourself.";
 
-        internal const string PlainTextOnlyWarning =
+        public const string PlainTextOnlyWarning =
             "This prompt no longer asks for only the draft text back. Anything else the model says, such as an explanation of its changes, gets written into your email along with the draft.";
 
-        internal const string NoMarkupWarning =
+        public const string NoMarkupWarning =
             "This prompt no longer rules out code fences, HTML and markdown. Outlook receives the reply as plain text, so those end up in the email as literal characters instead of formatting.";
 
         /// <summary>
@@ -39,7 +39,7 @@ namespace OutlookAI.Services
         /// which is also the answer for every section that carries no such contract.
         /// Never throws, and never rejects anything.
         /// </summary>
-        internal static IList<string> Warn(PromptSection section, string text)
+        public static IList<string> Warn(PromptSection section, string text)
         {
             var warnings = new List<string>();
             string candidate = text == null ? string.Empty : text;
@@ -68,7 +68,7 @@ namespace OutlookAI.Services
         }
 
         /// <summary>Whether any section is worth checking at all, for a UI deciding where to put a warning label.</summary>
-        internal static bool IsChecked(PromptSection section)
+        public static bool IsChecked(PromptSection section)
         {
             return section == PromptSection.Preamble || section == PromptSection.SignatureSelection;
         }

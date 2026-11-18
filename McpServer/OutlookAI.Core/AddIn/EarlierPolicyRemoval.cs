@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace OutlookAI.Services
+namespace OutlookAI.Core.AddIn
 {
     /// <summary>
     /// ===================================================================================
@@ -43,14 +43,13 @@ namespace OutlookAI.Services
     /// </para>
     ///
     /// <para>
-    /// FRAMEWORK-NEUTRAL and INTERNAL, like <see cref="CachedModeSettings"/>, which the test project
-    /// links beside it.
+    /// In OutlookAI.Core's add-in namespace, like <see cref="CachedModeSettings"/> beside it (Q163 (a)).
     /// </para>
     /// </summary>
-    internal static class EarlierPolicyRemoval
+    public static class EarlierPolicyRemoval
     {
         /// <summary>The values an earlier OutlookAI wrote as Group Policy and that still hold its number, in catalog order.</summary>
-        internal static List<string> Plan(ITuningStore store, string officeVersion)
+        public static List<string> Plan(ITuningStore store, string officeVersion)
         {
             var names = new List<string>();
             foreach (string name in CachedModeSettings.ValueNames)
@@ -65,7 +64,7 @@ namespace OutlookAI.Services
         /// Removes what <see cref="Plan"/> names - after every account's own period is All, when the
         /// period is among them - or refuses before changing anything. Never throws.
         /// </summary>
-        internal static EarlierPolicyRemovalResult Remove(ITuningStore store, string officeVersion, IAccountOfflinePeriods accounts)
+        public static EarlierPolicyRemovalResult Remove(ITuningStore store, string officeVersion, IAccountOfflinePeriods accounts)
         {
             var result = new EarlierPolicyRemovalResult();
             try
@@ -159,7 +158,7 @@ namespace OutlookAI.Services
     }
 
     /// <summary>What one <see cref="EarlierPolicyRemoval.Remove"/> did.</summary>
-    internal sealed class EarlierPolicyRemovalResult
+    public sealed class EarlierPolicyRemovalResult
     {
         /// <summary>Why nothing was removed; empty when the removal ran.</summary>
         public string Refusal { get; internal set; } = string.Empty;
