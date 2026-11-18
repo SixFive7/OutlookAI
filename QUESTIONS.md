@@ -369,10 +369,11 @@ spelling".** See the decision log below.
 
 ## Decision log
 
-### 2026-11-18 - the maintainer's answers to Q138, Q163 to Q182 and Q194 to Q213
+### 2026-11-18 - the maintainer's answers to Q138, Q163 to Q182 and Q194 to Q214
 
 **What this is.** Forty-two questions went to the maintainer on 2026-11-18, and he sent 41 one-line
-answers the same day. The questions as asked, each with its primer, context, directions and
+answers the same day; a forty-third, Q214, raised by his answer to Q173, was asked and answered that
+day too. The questions as asked, each with its primer, context, directions and
 recommendation, are in `.work\open-questions-2026-11-18.md` of his checkout, which is gitignored, so
 not in a clone; what the decisions rest on is restated here, with placeholders where the questions
 named real mailboxes. Words in quotes are his, verbatim, spelling included. Where he answered
@@ -454,7 +455,7 @@ refactor goes; `TODO.md` holds it.
   (beware that .net 11 just released)"*. Until the follow-ups are answered, no project's framework
   or language version changes.
 
-#### The licence and CodeQL - Q173, Q197 to Q199
+#### The licence and CodeQL - Q173, Q214, Q197 to Q199
 
 **Primer.** On 2026-10-01 the maintainer decided to move OutlookAI to the FSL-based licence BrowserAI
 carries; it is an open `TODO.md` item. On 2026-10-03 (Q125) he allowed CodeQL in the release
@@ -475,7 +476,13 @@ untrusted input.
   CodeQL leaves the release checks. In its place a build rule keeps the risky calls - file writes,
   the search query, program starts - inside a few vetted wrapper classes that check their input; the
   .NET security analysers on every build and the vulnerable-package check stay. Stream S builds it,
-  and the rules it changes in `AGENTS.md` change with it. It supersedes Q197 and Q199.
+  and the rules it changes in `AGENTS.md` change with it. It supersedes Q197 and Q199, and raised
+  Q214.
+- **Q214 - from when the FSL licence applies.** A new question, raised by Q173 (b) and answered the
+  same day. Every release so far went out under MIT, and what was published under MIT stays MIT for
+  whoever has it. Directions: (a) from the commit that changes the licence; (b) from the next
+  release; (c) from a fixed date. *"214 a"*. **Decided: (a)**: everything after the licence commit,
+  the next release included, is under the FSL, and the release notes say so. Stream S builds it.
 - **Q197 - should CodeQL follow an AI's input past the tools themselves. Superseded by Q173 (b).**
   CodeQL loses track of an AI's arguments in two places, so what happens to them after those is not
   scanned: where the work crosses into the separate process that talks to Outlook, through a channel
