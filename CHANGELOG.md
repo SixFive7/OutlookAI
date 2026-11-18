@@ -2148,9 +2148,15 @@ its mailbox tests on, and change nothing you install.
   pending delete - whatever -ErrorAction says. On a scratch queue whose tickets came and went, it threw
   in 183 of 600 turns under PowerShell 7.7 and in 150 of 600 under 5.1. The queue, the gate's waiting
   records, its pause switch and leaving the queue now list file names alone, count a file they cannot
-  read as gone, and delete through one helper that never throws: the same 600 turns threw in none. The
-  self-tests pin a ticket deleted between the list and the read, one ticket deleted twice, and a queue
-  whose tickets come and go while 100 turns read it.
+  read as gone, and delete through one helper that never throws: the same 600 turns threw in none. A
+  run whose own ticket has gone writes it again, and a write that cannot be made at that moment - the
+  old file still pending delete, which Windows PowerShell 5.1 answered with "Access is denied" in 5 of
+  3,000 turns - waits for the next turn instead of stopping the run. The self-tests pin a ticket
+  deleted between the list and the read, one ticket deleted twice, a run's own ticket that cannot be
+  written again, and a queue whose tickets come and go while 100 turns read it, as other runs join,
+  leave and delete the tickets of runs that ended. That churn used to delete the run's own ticket too,
+  which no run does, and it failed 1 build-VM run in 100. It now prints the exception of any turn that
+  throws, and it threw in none of 1,000 turns under either PowerShell.
 
 - ✅ **The disconnect test no longer fails when Outlook quits just before its pin is released.**
   Closing Outlook's last window can make it quit, so the test releases the lifetime pin only on a
