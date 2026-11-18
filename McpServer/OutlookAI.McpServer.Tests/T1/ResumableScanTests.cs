@@ -884,7 +884,7 @@ public sealed class ScanRowKeyTests
 {
     private static readonly byte[] LongTerm = Enumerable.Range(0, 70).Select(i => (byte)(i * 3)).ToArray();
 
-    private static string Hex(byte[] bytes) => string.Concat(bytes.Select(b => b.ToString("X2", System.Globalization.CultureInfo.InvariantCulture)));
+    private static string Hex(byte[] bytes) => Convert.ToHexString(bytes);
 
     [Fact]
     public void ARowIsKeyedOnItsLongTermId_AsOutlooksTableHandsItOver()

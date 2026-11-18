@@ -198,6 +198,24 @@ public sealed class McpConfigEditorTests
             updated);
     }
 
+    [Theory]
+    [InlineData(@"x\u0041y", "xAy")]
+    [InlineData(@"x\u00e9y", "x\u00e9y")]
+    [InlineData(@"x\u 41 y", "xu 41 y")]
+    [InlineData(@"x\u004Gy", "xu004Gy")]
+    [InlineData(@"x\u00", "xu00")]
+    public void AUnicodeEscape_ReadsOnlyAsFourHexDigits(string escaped, string read)
+    {
+        // A JSON \u escape is four hex digits and nothing else - what TryValidateJsonObject holds a file to.
+        // The reader used .NET's hex number parsing until the code-sharing refactor's S5a, which let a space
+        // through, so "\u 41 " read as "A". Anything else keeps the reader's old fallback: the u, then the
+        // rest as it stands.
+        string json = "{\"mcpServers\": {\"outlookai\": {\"command\": \"" + escaped + "\"}}}";
+
+        Assert.True(McpConfigEditor.TryReadServerCommand(json, out string command));
+        Assert.Equal(read, command);
+    }
+
     [Fact]
     public void ACreatedFileReadsBackAsWhatWasAskedFor()
     {

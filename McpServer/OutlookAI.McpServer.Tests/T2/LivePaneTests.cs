@@ -282,10 +282,10 @@ public sealed class LivePaneTests
         public static IntPtr Find(IntPtr window, string classPrefix, string? text)
         {
             IntPtr found = IntPtr.Zero;
-            _ = EnumChildWindows(window, (child, _) =>
+            _ = TestWin32.EnumChildWindows(window, (child, _) =>
             {
                 StringBuilder name = new StringBuilder(256);
-                _ = GetClassNameW(child, name, name.Capacity);
+                _ = NativeWindows.GetClassNameW(child, name, name.Capacity);
                 if (!name.ToString().StartsWith(classPrefix, StringComparison.Ordinal))
                 {
                     return true;
@@ -306,10 +306,10 @@ public sealed class LivePaneTests
         public static string ReadStatus(IntPtr window)
         {
             List<string> labels = new List<string>();
-            _ = EnumChildWindows(window, (child, _) =>
+            _ = TestWin32.EnumChildWindows(window, (child, _) =>
             {
                 StringBuilder name = new StringBuilder(256);
-                _ = GetClassNameW(child, name, name.Capacity);
+                _ = NativeWindows.GetClassNameW(child, name, name.Capacity);
                 if (name.ToString().StartsWith("WindowsForms10.STATIC", StringComparison.Ordinal))
                 {
                     labels.Add(ReadText(child));
@@ -326,11 +326,11 @@ public sealed class LivePaneTests
         public static string Describe(IntPtr control)
         {
             StringBuilder name = new StringBuilder(256);
-            _ = GetClassNameW(control, name, name.Capacity);
-            return $"0x{control.ToInt64():X} {name} \"{ReadText(control)}\" enabled={IsWindowEnabled(control)} visible={IsWindowVisible(control)}";
+            _ = NativeWindows.GetClassNameW(control, name, name.Capacity);
+            return $"0x{control.ToInt64():X} {name} \"{ReadText(control)}\" enabled={IsWindowEnabled(control)} visible={NativeWindows.IsWindowVisible(control)}";
         }
 
-        public static void Click(IntPtr button) => _ = PostMessageW(button, BmClick, IntPtr.Zero, IntPtr.Zero);
+        public static void Click(IntPtr button) => _ = TestWin32.PostMessageW(button, BmClick, IntPtr.Zero, IntPtr.Zero);
 
         /// <summary>
         /// Moves the pointer to the screen's bottom-left corner - Windows clamps the point to the screen - over the
@@ -341,36 +341,16 @@ public sealed class LivePaneTests
         private static string ReadText(IntPtr window)
         {
             StringBuilder text = new StringBuilder(512);
-            _ = GetWindowTextW(window, text, text.Capacity);
+            _ = TestWin32.GetWindowTextW(window, text, text.Capacity);
             return text.ToString();
         }
-
-        private delegate bool EnumChildProc(IntPtr hWnd, IntPtr lParam);
-
-        [DllImport("user32.dll")]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        private static extern bool EnumChildWindows(IntPtr parent, EnumChildProc callback, IntPtr lParam);
-
-        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-        private static extern int GetClassNameW(IntPtr hWnd, StringBuilder className, int maxCount);
-
-        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-        private static extern int GetWindowTextW(IntPtr hWnd, StringBuilder text, int maxCount);
 
         [DllImport("user32.dll", CharSet = CharSet.Unicode)]
         private static extern IntPtr SendMessageW(IntPtr hWnd, uint msg, IntPtr wParam, string lParam);
 
         [DllImport("user32.dll")]
         [return: MarshalAs(UnmanagedType.Bool)]
-        private static extern bool PostMessageW(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
-
-        [DllImport("user32.dll")]
-        [return: MarshalAs(UnmanagedType.Bool)]
         private static extern bool IsWindowEnabled(IntPtr hWnd);
-
-        [DllImport("user32.dll")]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        private static extern bool IsWindowVisible(IntPtr hWnd);
 
         [DllImport("user32.dll")]
         [return: MarshalAs(UnmanagedType.Bool)]

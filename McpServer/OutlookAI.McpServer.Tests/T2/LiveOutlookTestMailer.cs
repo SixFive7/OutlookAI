@@ -3344,7 +3344,7 @@ public static class LiveOutlookTestMailer
             return null;
         }
 
-        return window.GetWindow(out IntPtr hwnd) == 0 && hwnd != IntPtr.Zero ? PinNativeMethods.IsWindowVisible(hwnd) : null;
+        return window.GetWindow(out IntPtr hwnd) == 0 && hwnd != IntPtr.Zero ? NativeWindows.IsWindowVisible(hwnd) : null;
     }
 
     /// <summary>The OLE window interface every Outlook Explorer implements; the one way from it to its HWND.</summary>
@@ -3358,13 +3358,6 @@ public static class LiveOutlookTestMailer
 
         [PreserveSig]
         int ContextSensitiveHelp([MarshalAs(UnmanagedType.Bool)] bool fEnterMode);
-    }
-
-    private static class PinNativeMethods
-    {
-        [DllImport("user32.dll")]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        internal static extern bool IsWindowVisible(IntPtr hWnd);
     }
 
     /// <summary>
