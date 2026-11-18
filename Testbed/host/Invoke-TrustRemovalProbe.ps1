@@ -65,8 +65,8 @@
     The pure decisions against synthetic inputs. No Hyper-V, no lease, no guest.
 
 .EXAMPLE
-    pwsh -File Testbed/host/Invoke-TrustRemovalProbe.ps1 -VMName OutlookAI-Unindexed2 -Scenario RootStorePrompt -Execute
-    pwsh -File Testbed/host/Invoke-TrustRemovalProbe.ps1 -VMName OutlookAI-Unindexed2 -Scenario InstallerCleanup -InstallerPath .work\addin\stage\OutlookAI-v99.99.99.0.exe -Execute
+    pwsh -File Testbed/host/Invoke-TrustRemovalProbe.ps1 -VMName OutlookAI-Unindexed3 -Scenario RootStorePrompt -Execute
+    pwsh -File Testbed/host/Invoke-TrustRemovalProbe.ps1 -VMName OutlookAI-Unindexed3 -Scenario InstallerCleanup -InstallerPath .work\addin\stage\OutlookAI-v99.99.99.0.exe -Execute
 #>
 [CmdletBinding()]
 param(
@@ -168,11 +168,11 @@ function Invoke-SelfTest {
     Check 'the build VM is refused' ((Get-VmRefusal 'OutlookAI-Build') -ne '')
     Check 'the Exchange VM is refused' ((Get-VmRefusal 'OutlookAI-Exchange') -ne '')
     Check 'an Outlook guest is accepted' ((Get-VmRefusal 'OutlookAI-Unindexed') -eq '')
-    Check 'a clone is accepted' ((Get-VmRefusal 'OutlookAI-Unindexed2') -eq '')
+    Check 'a clone is accepted' ((Get-VmRefusal 'OutlookAI-Unindexed3') -eq '')
 
     $testbed = [pscustomobject]@{ frozenClocks = [pscustomobject]@{ 'OutlookAI-Unindexed' = [pscustomobject]@{ checkpoint = 'CP-X-FROZEN' } } }
     Check 'a guest rests on its frozen checkpoint' ((Get-RestingCheckpoint 'OutlookAI-Unindexed' $testbed) -eq 'CP-X-FROZEN')
-    Check 'a clone rests on its source''s, by the same name' ((Get-RestingCheckpoint 'OutlookAI-Unindexed2' $testbed) -eq 'CP-X-FROZEN')
+    Check 'a clone rests on its source''s, by the same name' ((Get-RestingCheckpoint 'OutlookAI-Unindexed3' $testbed) -eq 'CP-X-FROZEN')
     Check 'a guest with no frozen record has none' ((Get-RestingCheckpoint 'OutlookAI-Indexed' $testbed) -eq '')
     $repoJson = Join-Path (Split-Path -Parent $PSScriptRoot) 'testbed.json'
     if (Test-Path -LiteralPath $repoJson) {

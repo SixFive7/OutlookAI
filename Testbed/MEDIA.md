@@ -270,8 +270,8 @@ the indexed guest's frontier margin leaves 6 minutes 49 seconds. On `OutlookAI-B
 morning's load, the 10.0.404 installer took 7 minutes 5 seconds - an upgrade, removing 10.0.401's
 packages first - and the 11.0.100 one 3 minutes 2 seconds. So the new frozen checkpoints hold 10.0.401
 beside 11.0.100 and build .NET 11 branches only: there a .NET 10 branch, built by SDK 11, would ask for
-the 10.0.15 packs and fail its restore offline. The live runner therefore moves to them in the commit
-that moves the code to .NET 11, and until then restores the frozen checkpoints a .NET 10 branch needs.
+the 10.0.15 packs and fail its restore offline. So the live runner moved to them in the commit that
+moved the code to .NET 11, and a branch still on .NET 10 keeps the runner that restores the old ones.
 
 ### Until 2026-11-18: SDK 10.0.401, and why
 

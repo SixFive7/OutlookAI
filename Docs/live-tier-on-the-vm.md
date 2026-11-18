@@ -4806,9 +4806,11 @@ and as `10.0.12 x64` by SDK 10.0.401, each pinned. **What the new instants leave
 longest run a frozen record allows (its instant plus 90 minutes), the indexed hub's newest dated item
 (17:25:22Z) is 113.2 minutes old, under the 115-minute frontier margin - 1.8 minutes to spare, where the
 old instant left 6.8 - and the unindexed hub's about 109 minutes. `testbed.json`'s
-`frozenClocks._dotnet11Next` records both; they become the guests' `frozenClocks` records, and
-`T1/FrozenGuestClockTests` proves them, in the commit that moves the code to .NET 11, which also makes
-the clones again from them (section 4.7: a frozen guest's clone cannot make its own).
+`frozenClocks._dotnet11Next` recorded both until the commit that moved the code to .NET 11 made them
+the guests' `frozenClocks` records - where `T1/FrozenGuestClockTests` proves them - and the live
+runner's resting checkpoints; the clones were made again from them then (section 4.7: a frozen guest's
+clone cannot make its own). `CP-22C-FROZEN-CLOCK` and `CP-16B-FROZEN-CLOCK` stay on the two sources for
+the branches whose runner still names them.
 
 **`OutlookAI-Exchange`: `CP-10-SDK11`.** Its runs carry its state forward, so the SDKs belong in a
 checkpoint a run can restore. Under a lease, and by the coordinator's direction of 05:43: the first

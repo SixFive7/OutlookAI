@@ -735,7 +735,7 @@ function Invoke-SelfTest {
     Check 'and every clone it lists is a build VM' 0 @($BuildVmPool | Where-Object { -not (Test-IsBuildVmName $_) }).Count
     Check 'OutlookAI-Indexed is not' $false (Test-IsBuildVmName 'OutlookAI-Indexed')
     Check 'OutlookAI-Unindexed is not' $false (Test-IsBuildVmName 'OutlookAI-Unindexed')
-    Check 'nor an Outlook guest''s clone' $false (Test-IsBuildVmName 'OutlookAI-Indexed2')
+    Check 'nor an Outlook guest''s clone' $false (Test-IsBuildVmName 'OutlookAI-Indexed3')
     Check 'nor the Exchange VM' $false (Test-IsBuildVmName 'OutlookAI-Exchange')
     Check 'a clone the pool does not list is not' $false (Test-IsBuildVmName 'OutlookAI-Build9')
     Check 'nor a name that merely starts the same way' $false (Test-IsBuildVmName 'OutlookAI-Builder')

@@ -880,8 +880,8 @@ its mailbox tests on, and change nothing you install.
   add-in cannot run on modern .NET, and compiles as C# 15 instead of the C# 7.3 a .NET Framework
   project gets by default; `Properties/LanguageFeatureStandIns.cs` declares, as source, the few
   types records, init accessors, required members and argument-expression guards look up by name,
-  and a feature that needs the modern runtime the compiler refuses there. Nothing a user sees
-  changes until the mail server carries its own .NET 11 runtime.
+  and a feature that needs the modern runtime the compiler refuses there. What a user sees of it is
+  the runtime setup now brings for the mail server.
 
 - ✅ **The test machines carry the .NET 11 SDK beside .NET 10, on new checkpoints (Q172).**
   OutlookAI is moving to .NET 11 (Q172), and nothing on .NET 11 can be tested until the test
@@ -895,13 +895,14 @@ its mailbox tests on, and change nothing you install.
   Exchange test machine has both SDKs too, in a new checkpoint, `CP-10-SDK11`, made on the one with
   Office re-armed. The two Outlook test machines have new frozen-clock checkpoints with
   SDK 11 beside 10.0.401 (10.0.404's install took 7 minutes, more than the indexed machine's clock
-  margin allows); the live runner moves to them in the change that moves the code to .NET 11,
-  because there a .NET 10 branch would lack those packs. Every old checkpoint stays for the
-  branches whose runners still name it. `Install-DotnetSdk.ps1` installs SDK 11 by default, builds
+  margin allows); the live runner restores them since the code moved to .NET 11, because there a
+  .NET 10 branch would lack those packs, and the clones of those two machines are new copies of
+  them, `OutlookAI-Indexed3` and `OutlookAI-Unindexed3`. Every old checkpoint, and the clones that
+  copy the old ones, stay for the branches whose runners still name them. `Install-DotnetSdk.ps1` installs SDK 11 by default, builds
   its probe for the major it is asked about and pins that SDK there, and installs without verifying
   for a frozen machine, where every second before the checkpoint moves its clock. The live runner
-  names the SDK each machine's install step must find, still .NET 10's until the code moves, and a
-  relative output folder no longer breaks the live-tier payload's offline feed check.
+  names the SDK each machine's install step must find, and a relative output folder no longer
+  breaks the live-tier payload's offline feed check.
 
 - 📝 **The README's section on Outlook's lifetime and tray icon describes the lifetime pin.**
   It was written before pins existed. It now says a session that finds Outlook with no window holds a

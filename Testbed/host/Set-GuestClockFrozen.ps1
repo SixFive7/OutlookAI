@@ -294,10 +294,10 @@ function Invoke-SelfTest {
     Check 'the build VM never: its runner needs the host clock' ([string](Get-NeverFrozenReason 'OutlookAI-Build')).Contains('within 2 s') $true
     Check 'the Exchange VM never: Microsoft 365 sign-in needs real time' ([string](Get-NeverFrozenReason 'OutlookAI-Exchange')).Contains('real time') $true
     Check 'the retired guest is not an Outlook test guest' ([string](Get-NeverFrozenReason 'OutlookAI-TestVM')).Contains('not one of the two') $true
-    Check 'a clone of an Outlook guest may be verified' (Get-NeverFrozenReason 'OutlookAI-Indexed2') ''
-    Check 'against its source''s record' (Get-FrozenRecordName 'OutlookAI-Unindexed2') 'OutlookAI-Unindexed'
+    Check 'a clone of an Outlook guest may be verified' (Get-NeverFrozenReason 'OutlookAI-Indexed3') ''
+    Check 'against its source''s record' (Get-FrozenRecordName 'OutlookAI-Unindexed3') 'OutlookAI-Unindexed'
     Check 'and a source against its own' (Get-FrozenRecordName 'OutlookAI-Indexed') 'OutlookAI-Indexed'
-    Check 'but never frozen on its own: it would part from that record' ([string](Get-NeverFrozenReason 'OutlookAI-Indexed2' -Making)).Contains('clone it again') $true
+    Check 'but never frozen on its own: it would part from that record' ([string](Get-NeverFrozenReason 'OutlookAI-Indexed3' -Making)).Contains('clone it again') $true
     Check 'a source may be frozen' (Get-NeverFrozenReason 'OutlookAI-Unindexed' -Making) ''
     Check 'a build VM''s clone is no Outlook guest' ([string](Get-NeverFrozenReason 'OutlookAI-Build2')).Contains('not one of the two') $true
 

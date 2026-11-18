@@ -56,11 +56,15 @@
         operations a call (stream W, 2026-11-18).
 #>
 
-# The pools, the source first: the member every run tried first before there were clones.
+# The pools, the source first: the member every run tried first before there were clones. The
+# Outlook guests' clones are OutlookAI-Indexed3 and OutlookAI-Unindexed3 since the move to .NET 11
+# (Q172, 2026-11-18): copies of the frozen checkpoints that hold the .NET 11 SDK, which a clone
+# cannot make for itself. OutlookAI-Indexed2 and OutlookAI-Unindexed2, copies of the ones before,
+# stay on the host for the branches whose runners still name them, and go with them (TODO.md).
 $TestbedPools = [ordered]@{
     build     = @('OutlookAI-Build', 'OutlookAI-Build2', 'OutlookAI-Build3')
-    indexed   = @('OutlookAI-Indexed', 'OutlookAI-Indexed2')
-    unindexed = @('OutlookAI-Unindexed', 'OutlookAI-Unindexed2')
+    indexed   = @('OutlookAI-Indexed', 'OutlookAI-Indexed3')
+    unindexed = @('OutlookAI-Unindexed', 'OutlookAI-Unindexed3')
 }
 
 # What a pool member must leave free for the maintainer: see the banner.

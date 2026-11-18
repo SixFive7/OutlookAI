@@ -292,9 +292,11 @@ pwsh -File Testbed/host/Invoke-LiveTierOnGuest.ps1 -VMName OutlookAI-Indexed [<c
 pwsh -File Testbed/host/Invoke-LiveTierOnGuest.ps1 -Kind Indexed [<commit-or-branch>]   # whichever indexed guest is free
 ```
 
-Each Outlook guest has a clone since 2026-11-17 - `OutlookAI-Indexed2`, `OutlookAI-Unindexed2`, copies
-of their source at its frozen checkpoint (`Testbed/host/TestbedPool.ps1`) - and `-Kind` takes
-whichever guest of that kind is free. `-VMName` names one guest, a clone included.
+Each Outlook guest has a clone - `OutlookAI-Indexed3`, `OutlookAI-Unindexed3` since the move to .NET 11
+(Q172, 2026-11-18), copies of their source at its frozen checkpoint (`Testbed/host/TestbedPool.ps1`) -
+and `-Kind` takes whichever guest of that kind is free. `-VMName` names one guest, a clone included.
+`OutlookAI-Indexed2` and `OutlookAI-Unindexed2`, the clones from before, serve only the branches not
+yet on .NET 11.
 
 It tests a commit, like the build-VM runner, and enforces the rest itself: the lease (it waits,
 and never takes over one somebody else holds), the checkpoint, the graceful restart, step 9a,
