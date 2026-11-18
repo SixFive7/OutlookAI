@@ -1414,7 +1414,7 @@ else { throw 'REFUSING TO BUILD: vswhere found no VSTO build targets (OfficeTool
 # release build on a machine without them was never refused.
 # -SelfTest pins the shape from this file's own syntax tree.
 $dotnet = $null
-if ($Release) {
+if ($Release -or $WithServer) {
     $dotnet = Resolve-Dotnet
     Say "  dotnet   $dotnet"
 }
