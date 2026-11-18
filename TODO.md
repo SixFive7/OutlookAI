@@ -103,15 +103,18 @@
   names, so they fold under names of their own or into one harness.
   S6 folded the server's own repetition, the survey's S01 to S14, but for four shapes it left: the
   two draft results' shared fields (S04, S11), which a base class would move to one block of the
-  JSON every draft tool returns; the parameter lists the draft tools and the COM host's two invoke
-  methods each declare (S12, S13); and the corpus tool's thirteen STA operations, which each open
-  the corpus store and release it the same way (S14) - COM code only a corpus build, scan and
-  teardown on a test machine exercise, which S5b's proof has and S6's had not. S10 had gone already
-  with the incident commands (Q170 (a)). What remains, one stage at a time: of S4's A12 the scaffold
-  the pane's three AI actions each repeat around the compose document. In parallel: the rest of the
-  shared test code (S5a) - the live tier's own Win32 window declarations among it, which can use
-  Core's `NativeWindows` now - the PowerShell helpers (S7), and the rules restated in C# and
-  PowerShell as shared C# source (Q171).
+  JSON every draft tool returns - question 233 to the maintainer; the parameter lists the draft
+  tools and the COM host's two invoke methods each declare (S12, S13); and the corpus tool's
+  thirteen STA operations, which each open the corpus store and release it the same way (S14) -
+  COM code only a corpus build, scan and teardown on a test machine exercise, so it folds in S5b,
+  whose proof has them. S10 had gone already with the incident commands (Q170 (a)). What remains,
+  one stage at a time: the dozen writers of bytes as hex that the survey did not list - in
+  `OutlookIds`, `EntryIdCodec`, `SpecialFolders`, `IndexRowMapper`, `SendContentHash` and more - into
+  Core's `Hex`, each keeping the case its callers read; then the rest of the shared test code
+  (S5a) - the live tier's own Win32 window declarations among it, which can use Core's
+  `NativeWindows` now. In parallel: the PowerShell helpers (S7), and the rules restated in C# and
+  PowerShell as shared C# source (Q171), the updater's 26 lines that `Tools/Publish-Release.ps1`
+  restates among them.
   S7 also takes the two MCP stdio clients left beside `Testbed/guest/McpStdioClient.ps1`:
   `Invoke-GuestMeasure.ps1`'s, kept as found, and `Measure-PinWindows.ps1`'s C# session class.
 

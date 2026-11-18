@@ -763,97 +763,63 @@ namespace OutlookAI.TaskPane
         /// </summary>
         private async Task ProcessSelectSignature()
         {
-            if (_isProcessing) return;
-            _isProcessing = true;
-            object preAsyncDoc = null;
-            try
-            {
-                SetUIEnabled(false);
-
-                var signatures = ListSignatures();
-                if (signatures.Count == 0)
+            IReadOnlyList<SignatureInfo> signatures = null;
+            string draftText = null;
+            string threadText = null;
+            await RunDocumentActionAsync(
+                "SelectSignature",
+                ready: () =>
                 {
+                    signatures = ListSignatures();
+                    if (signatures.Count > 0)
+                        return true;
                     RefreshSignatureAvailability();
                     ShowStatus("No signatures are installed in Outlook.", true);
-                    return;
-                }
-
-                string draftText;
-                string threadText;
-
-                object doc = null;
-                try
+                    return false;
+                },
+                read: doc =>
                 {
-                    doc = GetWordDocument();
-                    if (doc == null)
-                    {
-                        ShowStatus("Could not access email editor.", true);
-                        return;
-                    }
-
-                    DebugLog("SelectSignature BEFORE read", doc);
-
                     draftText = ComposeDocument.ReadDraftText(doc);
                     threadText = ComposeDocument.ReadThreadText(doc);
-                    preAsyncDoc = doc;
-                    doc = null;
-                }
-                finally
+                    return true;
+                },
+                ask: async () =>
                 {
-                    ThisAddIn.ReleaseCom(doc);
-                }
+                    string recipientsText = GetRecipientSummary();
 
-                string recipientsText = GetRecipientSummary();
-
-                SignatureInfo chosen;
-                if (signatures.Count == 1)
-                {
-                    // One signature installed: the choice is trivial - no AI call.
-                    chosen = signatures[0];
-                }
-                else
-                {
-                    ShowStatus("Selecting the best signature...", false);
-                    string answer = await ClaudeService.SelectSignatureAsync(
-                        signatures, draftText, threadText, recipientsText);
-                    chosen = SignatureAutoChoice.FindNamed(signatures, answer);
-                    if (chosen == null)
+                    SignatureInfo chosen;
+                    if (signatures.Count == 1)
                     {
-                        string shown = answer ?? "";
-                        shown = Excerpt(shown, AnswerExcerptChars);
-                        InvokeOnUI(() => ShowStatus("AI answered \"" + shown + "\", which matches no installed signature.", true));
-                        return;
+                        // One signature installed: the choice is trivial - no AI call.
+                        chosen = signatures[0];
                     }
-                }
-
-                var capturedDoc = preAsyncDoc;
-                InvokeOnUI(() =>
-                {
-                    if (_disposed) return;
-                    if (ApplySignatureToDocument(capturedDoc, chosen.PreferredFilePath))
+                    else
                     {
+                        ShowStatus("Selecting the best signature...", false);
+                        string answer = await ClaudeService.SelectSignatureAsync(
+                            signatures, draftText, threadText, recipientsText);
+                        chosen = SignatureAutoChoice.FindNamed(signatures, answer);
+                        if (chosen == null)
+                        {
+                            string shown = answer ?? "";
+                            shown = Excerpt(shown, AnswerExcerptChars);
+                            InvokeOnUI(() => ShowStatus("AI answered \"" + shown + "\", which matches no installed signature.", true));
+                            return null;
+                        }
+                    }
+
+                    return doc =>
+                    {
+                        if (!ApplySignatureToDocument(doc, chosen.PreferredFilePath))
+                            return false;
+
                         // Asked for by the user, but chosen by the AI: a later automatic choice
                         // may still change it, as it may change the one Outlook put in.
-                        RememberSignature(capturedDoc, chosen.Name);
+                        RememberSignature(doc, chosen.Name);
                         ShowStatus("Applied signature \"" + chosen.Name + "\".", false);
-                    }
+                        return true;
+                    };
                 });
-            }
-            catch (Exception ex)
-            {
-                InvokeOnUI(() =>
-                {
-                    string msg = ex.InnerException != null ? ex.InnerException.Message : ex.Message;
-                    ShowStatus(msg, true);
-                });
-            }
-            finally
-            {
-                ThisAddIn.ReleaseCom(preAsyncDoc);
-                _isProcessing = false;
-                if (!_disposed && !IsDisposed)
-                    SetUIEnabled(true);
-            }
         }
 
         /// <summary>
@@ -1247,71 +1213,53 @@ namespace OutlookAI.TaskPane
         /// </summary>
         private async Task ProcessAction(string actionLabel, string selectedText = null)
         {
-            bool bodyWritten = false;
-            if (_isProcessing) return;
-            _isProcessing = true;
-            object preAsyncDoc = null;
-            // Consume the one-shot "fresh draft" signal exactly once per invocation, up
-            // front, so an early return or read error can't leave it set and then silently
-            // blank the draft on the next unrelated action.
-            bool freshDraft = _freshDraft;
-            _freshDraft = false;
-            try
-            {
-                SetUIEnabled(false);
-                ShowStatus("Processing...", false);
-                string draftText;
-                string signatureText;
-                string threadText;
-
-                object doc = null;
-                try
+            bool freshDraft = false;
+            string draftText = null;
+            string signatureText = null;
+            string threadText = null;
+            bool bodyWritten = await RunDocumentActionAsync(
+                "ProcessAction(" + actionLabel + ")",
+                ready: () =>
                 {
-                    doc = GetWordDocument();
-                    if (doc == null)
-                    {
-                        ShowStatus("Could not access email editor.", true);
-                        return;
-                    }
-
-                    DebugLog($"ProcessAction({actionLabel}) BEFORE read", doc);
-
+                    // Consume the one-shot "fresh draft" signal exactly once per invocation, up
+                    // front, so an early return or read error can't leave it set and then silently
+                    // blank the draft on the next unrelated action.
+                    freshDraft = _freshDraft;
+                    _freshDraft = false;
+                    ShowStatus("Processing...", false);
+                    return true;
+                },
+                read: doc =>
+                {
                     // Read signature/thread fresh on every action. Caching them across
                     // the pane lifetime sent stale context to the AI when Outlook reused
                     // an inspector window for a different mail item.
                     signatureText = ComposeDocument.ReadSignatureText(doc);
                     threadText = ComposeDocument.ReadThreadText(doc);
-
                     draftText = ComposeDocument.ReadDraftText(doc);
-                    preAsyncDoc = doc;
-                    doc = null;
-                }
-                finally
+                    return true;
+                },
+                ask: async () =>
                 {
-                    ThisAddIn.ReleaseCom(doc);
-                }
-
-                if (freshDraft)
-                {
-                    draftText = "";
-                }
-
-                DebugLog("Sending to Claude", extra:
-                    $"draftText ({draftText.Length} chars), sigText ({signatureText.Length} chars), threadText ({threadText.Length} chars)");
-
-                string result = await ClaudeService.ProcessEmailAsync(
-                    actionLabel, _editHistory,
-                    draftText, signatureText, threadText, selectedText);
-
-                DebugLog("Claude returned", extra: $"result ({result.Length} chars): {Excerpt(result, DebugTextExcerptChars)}");
-
-                var capturedDoc = preAsyncDoc;
-                InvokeOnUI(() =>
-                {
-                    if (_disposed) return;
-                    if (WriteDraftToDocument(result, capturedDoc))
+                    if (freshDraft)
                     {
-                        bodyWritten = true;
+                        draftText = "";
+                    }
+
+                    DebugLog("Sending to Claude", extra:
+                        $"draftText ({draftText.Length} chars), sigText ({signatureText.Length} chars), threadText ({threadText.Length} chars)");
+
+                    string result = await ClaudeService.ProcessEmailAsync(
+                        actionLabel, _editHistory,
+                        draftText, signatureText, threadText, selectedText);
+
+                    DebugLog("Claude returned", extra: $"result ({result.Length} chars): {Excerpt(result, DebugTextExcerptChars)}");
+
+                    return doc =>
+                    {
+                        if (!WriteDraftToDocument(result, doc))
+                            return false;
+
                         _editHistory.Add(new EditTurn
                         {
                             Label = actionLabel,
@@ -1325,7 +1273,69 @@ namespace OutlookAI.TaskPane
                         // once per session per distinct warning.
                         string modelNotice = ClaudeService.TakeModelNotice();
                         ShowStatus(modelNotice == null ? "Done!" : "Done - " + modelNotice, false);
+                        return true;
+                    };
+                });
+
+            if (bodyWritten)
+                await ChooseSignatureAutomaticallyAsync("the AI wrote the body");
+        }
+
+        /// <summary>
+        /// The scaffold the pane's AI actions - the three edits and "Select the best signature" - run
+        /// in, each of which wrote it out for itself until the code-sharing refactor's A12: one action
+        /// at a time, a click while one runs doing nothing, and the pane's controls off while it runs;
+        /// <paramref name="ready"/> first, before the compose document is asked for; the document read
+        /// by <paramref name="read"/> on the UI thread before the request goes out, and held across it,
+        /// so the answer goes into the document that was read; <paramref name="ask"/>'s answer applied
+        /// to that document on the UI thread unless the pane has gone; a failure shown in the status
+        /// line; and, whatever happened, the document released and the controls back on. Any step
+        /// stops the action by returning false or null, having said why. True when the answer was
+        /// applied.
+        /// </summary>
+        private async Task<bool> RunDocumentActionAsync(
+            string name, Func<bool> ready, Func<object, bool> read, Func<Task<Func<object, bool>>> ask)
+        {
+            if (_isProcessing) return false;
+            _isProcessing = true;
+            object preAsyncDoc = null;
+            bool applied = false;
+            try
+            {
+                SetUIEnabled(false);
+                if (!ready())
+                    return false;
+
+                object doc = null;
+                try
+                {
+                    doc = GetWordDocument();
+                    if (doc == null)
+                    {
+                        ShowStatus("Could not access email editor.", true);
+                        return false;
                     }
+
+                    DebugLog(name + " BEFORE read", doc);
+                    if (!read(doc))
+                        return false;
+                    preAsyncDoc = doc;
+                    doc = null;
+                }
+                finally
+                {
+                    ThisAddIn.ReleaseCom(doc);
+                }
+
+                Func<object, bool> apply = await ask();
+                if (apply == null)
+                    return false;
+
+                var capturedDoc = preAsyncDoc;
+                InvokeOnUI(() =>
+                {
+                    if (_disposed) return;
+                    applied = apply(capturedDoc);
                 });
             }
             catch (Exception ex)
@@ -1347,8 +1357,7 @@ namespace OutlookAI.TaskPane
                     SetUIEnabled(true);
             }
 
-            if (bodyWritten)
-                await ChooseSignatureAutomaticallyAsync("the AI wrote the body");
+            return applied;
         }
 
         // === Word Object Model helpers ===

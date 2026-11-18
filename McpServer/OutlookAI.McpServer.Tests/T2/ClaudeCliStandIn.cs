@@ -148,6 +148,13 @@ internal sealed class ClaudeCliStandIn : IDisposable
         }
     }
 
+    /// <summary>
+    /// What the stand-in answers a signature request with from now on. It reads the answer as each request
+    /// comes, so a stand-in process the add-in already holds waiting on stdin answers it too.
+    /// </summary>
+    public void AnswerSignaturesWith(string signatureName) =>
+        File.WriteAllText(Path.Combine(_directory, SignatureAnswerFileName), signatureName, new UTF8Encoding(false));
+
     /// <summary>Every prompt the stand-in was sent, oldest first.</summary>
     public IReadOnlyList<string> Prompts()
     {
