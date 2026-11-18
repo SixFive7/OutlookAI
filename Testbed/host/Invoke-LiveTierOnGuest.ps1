@@ -157,6 +157,10 @@
     that measures what Outlook then inserts. A frozen start of an Outlook guest only; refused on the
     Exchange VM, with -GreenCheckpoint and with -Filter.
 
+.PARAMETER SignatureValueKind
+    With -SignatureSettings: how its two registry values are written - ExpandString (REG_EXPAND_SZ, the
+    default; what Outlook was reported to honour) or String (REG_SZ).
+
 .PARAMETER SelfTest
     Checks the pure parts - the guest table, the filter, the lease decision, the TRX and console
     readers, the verdict table, summary.json's shape - and the constants against the files they
@@ -183,6 +187,7 @@ param(
     [Parameter(ParameterSetName = 'Run')] [switch] $SkipHubReset,
     [Parameter(ParameterSetName = 'Run')] [switch] $ProveCrashDumps,
     [Parameter(ParameterSetName = 'Run')] [ValidateSet('GroupPolicy', 'Preference')] [string] $SignatureSettings,
+    [Parameter(ParameterSetName = 'Run')] [ValidateSet('ExpandString', 'String')] [string] $SignatureValueKind = 'ExpandString',
     [Parameter(ParameterSetName = 'Run')] [string] $ResultsRoot,
     [Parameter(ParameterSetName = 'Run')] [string] $CredentialRepoRoot,
     [Parameter(ParameterSetName = 'Run')] [string] $SdkInstallerPath,
@@ -713,6 +718,7 @@ function Invoke-SelfTest {
     Check 'and knows the scenarios this takes' $true $stepCs.Contains('Scenarios { get; } = new[] { GroupPolicy, Preference }')
     $settingsScript = [System.IO.File]::ReadAllText((Join-Path $repo "Testbed\guest\$SignatureSettingsScript"))
     Check 'the guest script takes the same scenarios' $true ($settingsScript.Contains("[ValidateSet('GroupPolicy', 'Preference')] [string] `$Scenario") -and $runner.Contains("[ValidateSet('GroupPolicy', 'Preference')] [string] `$SignatureSettings"))
+    Check 'and the same value kinds, with the same default' $true ($settingsScript.Contains("[ValidateSet('ExpandString', 'String')] [string] `$ValueKind = 'ExpandString'") -and $runner.Contains("[ValidateSet('ExpandString', 'String')] [string] `$SignatureValueKind = 'ExpandString'") -and $runner.Contains("-Scenario `$SignatureSettings -ValueKind `$SignatureValueKind -Execute"))
     # The LAST of each: the run's own code comes after this self-test, which names both.
     $stepAt = $own.LastIndexOf("Invoke-Guest 'signature-settings'")
     $frozenStartAt = $own.LastIndexOf("-Profile '`$TierProfileName'; ")
@@ -1064,7 +1070,7 @@ $checkpointActions = [ordered]@{ start = $Checkpoint; resting = $RestingCheckpoi
 $crashDumpState = [ordered]@{ armed = $false; proven = $null; guestFolder = $GuestDumpDir; fetched = $false; files = @() }
 # The -SignatureSettings step, when asked for: the scenario, and whether the guest script said SET.
 $signatureSettingsState = $null
-if ($SignatureSettings) { $signatureSettingsState = [ordered]@{ scenario = $SignatureSettings; set = $false; log = 'guest\signature-settings.log' } }
+if ($SignatureSettings) { $signatureSettingsState = [ordered]@{ scenario = $SignatureSettings; valueKind = $SignatureValueKind; set = $false; log = 'guest\signature-settings.log' } }
 # Set when this run starts Outlook itself: what the start met, Office's activation wizard included.
 $outlookStart = $null
 $indexRoots = $null
@@ -1361,10 +1367,10 @@ Copy-Item -LiteralPath '$GuestPayloadDir\live-test-settings.json' -Destination '
             if ($SignatureSettings) {
                 # Q200 (a), Q201: the setting, its test signatures and the hub's own defaults, made elevated while
                 # Outlook is closed - Outlook reads them when it starts, just below. The restore at REST undoes them.
-                $o = Invoke-Guest 'signature-settings' "& '$GuestRoot\$SignatureSettingsScript' -Scenario $SignatureSettings -Execute; `"SIGNATURE-SETTINGS-EXIT `$LASTEXITCODE`"" 900 -Session0
+                $o = Invoke-Guest 'signature-settings' "& '$GuestRoot\$SignatureSettingsScript' -Scenario $SignatureSettings -ValueKind $SignatureValueKind -Execute; `"SIGNATURE-SETTINGS-EXIT `$LASTEXITCODE`"" 900 -Session0
                 $signatureSettingsState['set'] = ($o -match 'VERDICT: SET' -and $o -match 'SIGNATURE-SETTINGS-EXIT 0')
                 if (-not $signatureSettingsState['set']) { throw "the signature setting $SignatureSettings was not made before Outlook started - guest\signature-settings.log" }
-                Say "signature  $SignatureSettings made before Outlook starts: the setting, its test signatures and the hub's own defaults (guest\signature-settings.log)"
+                Say "signature  $SignatureSettings made before Outlook starts, its values $($SignatureValueKind): the setting, its test signatures and the hub's own defaults (guest\signature-settings.log)"
             }
             # The state step 9a hands the suite over in, without its rebuild: Outlook running NOT elevated on
             # the tier profile, its window up. The frozen checkpoint holds Outlook closed so STAGE could swap.
@@ -1565,7 +1571,7 @@ if ($dumpList.Count -gt 0) {
 elseif ($crashDumpState['armed']) { $dumpText += ', none written' }
 $lines.Add("outlook    crashes during the run: $crashText; crash dumps: $dumpText")
 $lines.Add((Format-OutlookStartLine $outlookStart))
-if ($null -ne $signatureSettingsState) { $lines.Add("signature  $($signatureSettingsState['scenario']) made before Outlook started: $(if ($signatureSettingsState['set']) { 'SET' } else { 'NOT SET' }) ($($signatureSettingsState['log']))") }
+if ($null -ne $signatureSettingsState) { $lines.Add("signature  $($signatureSettingsState['scenario']), values $($signatureSettingsState['valueKind']), made before Outlook started: $(if ($signatureSettingsState['set']) { 'SET' } else { 'NOT SET' }) ($($signatureSettingsState['log']))") }
 if ($indexRoots) { $lines.Add("index      $indexRoots") }
 $endLine = "guest end  rested on $($checkpointActions['restedOn']); settings staged=$($checkpointActions['settingsStaged']); saved=$($checkpointActions['saved'])"
 if ($checkpointActions['green']) { $endLine += "; green checkpoint $($checkpointActions['green'])" }

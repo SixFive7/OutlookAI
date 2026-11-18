@@ -3279,6 +3279,13 @@ public static class LiveOutlookTestMailer
     public const string SignatureMenuControl = "SignatureInsertMenu";
 
     /// <summary>
+    /// How often the editor of a compose window is asked for, a second apart, before the reading gives up. The first
+    /// compose window of an Outlook session answered NoWordEditor (0x80004005) while Word was still loading, on the
+    /// first -SignatureSettings run (2026-11-18), where the second and third, moments later, answered at once.
+    /// </summary>
+    internal const int EditorAttempts = 10;
+
+    /// <summary>
     /// What Outlook ITSELF puts in a new mail, a reply or a forward (Q200 (a), Q201): the compose item made the way
     /// Outlook's own New Email, Reply and Forward make one - an item added to the store's Drafts with the account
     /// <paramref name="accountSmtpAddress"/> sending, or <c>Reply()</c> / <c>Forward()</c> on a mail of this run - and an
@@ -3372,10 +3379,23 @@ public static class LiveOutlookTestMailer
                 // HERE Outlook inserts the default signature its settings name: in the inspector of the object a
                 // creator returned, and only there (runbook 4.6, item 6).
                 inspector = item.GetInspector;
-                document = ComposeSurface.PromoteForWordEditor(inspector!, out string? promoteError);
+                string? promoteError = null;
+                int editorAttempts = 0;
+                while (document == null && editorAttempts < EditorAttempts)
+                {
+                    if (editorAttempts > 0)
+                    {
+                        PumpedStaRunner.PumpedWait(1000);
+                    }
+
+                    editorAttempts++;
+                    document = ComposeSurface.PromoteForWordEditor(inspector!, out promoteError);
+                }
+
                 if (document == null)
                 {
-                    return OutlookOwnSignatureReading.Failed(kind, sendingAccount, "no editor: " + (promoteError ?? "unknown"));
+                    return OutlookOwnSignatureReading.Failed(
+                        kind, sendingAccount, "no editor after " + editorAttempts + " attempt(s): " + (promoteError ?? "unknown"));
                 }
 
                 bookmarks = ((dynamic)document).Bookmarks;
@@ -3396,7 +3416,7 @@ public static class LiveOutlookTestMailer
                 (bool? visible, string? visibleError) = TryMso(() => (bool)((dynamic)commandBars!).GetVisibleMso(SignatureMenuControl));
                 return new OutlookOwnSignatureReading(
                     kind, sendingAccount, regionFound, regionText, documentText, enabled, visible, enabledError ?? visibleError,
-                    ReadSignatureEngineOf(document), null);
+                    ReadSignatureEngineOf(document), null, editorAttempts);
             }
             catch (Exception ex) when (ex is COMException or RuntimeBinderException or InvalidCastException)
             {
@@ -3543,7 +3563,8 @@ public sealed record OutlookOwnSignatureReading(
     bool? SignatureMenuVisible,
     string? SignatureMenuError,
     OutlookSignatureEngineView Engine,
-    string? Error)
+    string? Error,
+    int EditorAttempts = 0)
 {
     /// <summary>A reading that could not be taken, and why.</summary>
     public static OutlookOwnSignatureReading Failed(OutlookComposeKind kind, string? sendingAccount, string error)

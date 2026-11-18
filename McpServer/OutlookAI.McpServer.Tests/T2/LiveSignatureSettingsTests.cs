@@ -283,6 +283,13 @@ public sealed class LiveSignatureSettingsTests
 
         string Role(string inserted) => roles.TryGetValue(inserted, out string? role) ? "'" + inserted + "' (" + role + ")" : inserted;
 
+        // How the step wrote the two values - Outlook treats an expandable string and a plain one differently (one of
+        // the things this measures).
+        string settingKey = SignaturePolicy.KeyPath(source, OutlookProfileRegistry.OfficeVersion);
+        string valueKinds = RegistryValueKinds(settingKey, SignaturePolicy.NewSignatureValueName, SignaturePolicy.ReplySignatureValueName);
+        _output.WriteLine($"MEASURED {scenario}: HKCU\\{settingKey} holds {valueKinds}; the hub's own defaults are new '{ownNew}', "
+            + $"reply '{ownReply ?? "-"}'");
+
         // A mail of this run, for the reply and the forward.
         string seedSubject = _fixture.TaggedSubject("signature-step-seed");
         DateTime sentUtc = LiveOutlookTestMailer.SendSelfMail(Hub, seedSubject, "Seed for the signature setting measurement " + Marker, attachmentPath: null);
@@ -304,7 +311,8 @@ public sealed class LiveSignatureSettingsTests
                 signatureMenu[kind] = reading.SignatureMenuEnabled;
                 IReadOnlyList<string> listed = reading.Engine.Entries;
                 _output.WriteLine($"MEASURED {scenario} {kind}: Outlook inserted {Role(inserted)}; its signature region "
-                    + $"{(reading.SignatureRegionFound ? "is there" : "is not there")}; sends from {(ProfileAccountEntries.AddressEquals(reading.SendingAccount, Hub) ? "the hub" : reading.SendingAccount == null ? "(unread)" : "another account")}; "
+                    + $"{(reading.SignatureRegionFound ? "is there" : "is not there")}; editor after {reading.EditorAttempts} attempt(s); "
+                    + $"sends from {(ProfileAccountEntries.AddressEquals(reading.SendingAccount, Hub) ? "the hub" : reading.SendingAccount == null ? "(unread)" : "another account")}; "
                     + $"Signature button enabled={Show(reading.SignatureMenuEnabled)} visible={Show(reading.SignatureMenuVisible)}"
                     + (reading.SignatureMenuError == null ? string.Empty : " (" + reading.SignatureMenuError + ")")
                     + $"; Word's engine new='{ShowName(reading.Engine.NewMessageSignature)}' reply='{ShowName(reading.Engine.ReplyMessageSignature)}', "
@@ -331,7 +339,9 @@ public sealed class LiveSignatureSettingsTests
             drafts.Add(forwardDraft.EntryId);
             outlookAiInserted[OutlookComposeKind.Forward] = InsertedByOutlookAI(forwardDraft, candidates);
 
-            string anotherNew = candidates.First(c => !string.Equals(c, outlookInserted[OutlookComposeKind.New], StringComparison.Ordinal));
+            // Another signature than the one the new mail got, by Outlook's reckoning and by OutlookAI's.
+            string anotherNew = candidates.First(c => !string.Equals(c, outlookInserted[OutlookComposeKind.New], StringComparison.Ordinal)
+                && !string.Equals(c, outlookAiInserted[OutlookComposeKind.New], StringComparison.Ordinal));
             (bool namedAllowed, string namedWhy) = TryDraft(drafts, () => Service.NewDraft(
                 LiveStoreWriteGuard.Writable(Hub, StoreWriteKind.Draft, "new_draft"), Hub, cc: null,
                 _fixture.TaggedSubject("signature-step-named"), "Signature step named " + Marker, display: false, signature: anotherNew));
@@ -469,6 +479,27 @@ public sealed class LiveSignatureSettingsTests
     }
 
     private static string Show(bool? value) => value == null ? "(unread)" : value.Value ? "true" : "false";
+
+    /// <summary>"NewSignature REG_EXPAND_SZ, ReplySignature REG_EXPAND_SZ" - each value's kind as it stands, or absent.</summary>
+    private static string RegistryValueKinds(string keyPath, params string[] valueNames)
+    {
+        using RegistryKey? key = Registry.CurrentUser.OpenSubKey(keyPath, writable: false);
+        return string.Join(", ", valueNames.Select(name =>
+        {
+            if (key == null || key.GetValue(name, null, RegistryValueOptions.DoNotExpandEnvironmentNames) == null)
+            {
+                return name + " absent";
+            }
+
+            return name + " " + (key.GetValueKind(name) switch
+            {
+                RegistryValueKind.String => "REG_SZ",
+                RegistryValueKind.ExpandString => "REG_EXPAND_SZ",
+                RegistryValueKind.Binary => "REG_BINARY",
+                RegistryValueKind kind => kind.ToString(),
+            });
+        }));
+    }
 
     /// <summary>A signature name as a log may show it: a test signature's whole, any other as what it is.</summary>
     private static string ShowName(string? name)

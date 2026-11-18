@@ -29,6 +29,11 @@
                    deployed default against the account's own; a reply or a forward shows what the deployed one does
                    for an account that has none.
 
+    THE VALUES' KIND (-ValueKind). ExpandString, REG_EXPAND_SZ, by default: what signature vendors tell
+    administrators to write and what Outlook was reported to honour where a plain string stopped working (Microsoft
+    Q&A, 2023-2024). String, REG_SZ, measures the other: on 2026-11-18 Outlook LTSC 2024 ignored REG_SZ policy values
+    for a reply and a forward of an account with its own reply default.
+
     WHAT -Execute DOES, in this order:
       1. Refuses - nothing written - unless the session is 'vmadmin' on a computer named OAI-..., the guest is not
          the Exchange VM (OAI-EXCHANGE carries its state from run to run, so nothing would undo this), the session
@@ -59,6 +64,9 @@
 .PARAMETER OutlookProfile
     The profile the hub account is in: the tier profile the live tier runs on.
 
+.PARAMETER ValueKind
+    ExpandString (REG_EXPAND_SZ, the default) or String (REG_SZ): how the two registry values are written.
+
 .PARAMETER OfficeVersion
     The Office major whose keys are written: 16.0, the Outlook guests' Office LTSC 2024. The script refuses when
     Outlook keeps nothing under it.
@@ -72,6 +80,7 @@
 [CmdletBinding()]
 param(
     [ValidateSet('GroupPolicy', 'Preference')] [string] $Scenario,
+    [ValidateSet('ExpandString', 'String')] [string] $ValueKind = 'ExpandString',
     [switch]   $Execute,
     [switch]   $Verify,
     [switch]   $SelfTest,
@@ -100,7 +109,8 @@ $ExchangeComputerName = 'OAI-EXCHANGE'
 # What a scenario sets: the registry key (under HKCU) and its two values, the hub's own defaults, and every test
 # signature named, in the order they are made.
 function Get-SignatureSettingsPlan {
-    param([string] $Scenario, [string] $OfficeVersion)
+    param([string] $Scenario, [string] $OfficeVersion, [string] $ValueKind = 'ExpandString')
+    if ($ValueKind -cne 'ExpandString' -and $ValueKind -cne 'String') { throw "'$ValueKind' is no value kind: ExpandString or String." }
     if ($Scenario -eq 'GroupPolicy') {
         $settingNew = $TestPrefix + 'Q200-Forced-New'
         $settingReply = $TestPrefix + 'Q200-Forced-Reply'
@@ -124,6 +134,7 @@ function Get-SignatureSettingsPlan {
         Scenario     = $Scenario
         Source       = $token
         Key          = $key
+        ValueKind    = $ValueKind
         SettingNew   = $settingNew
         SettingReply = $settingReply
         OwnNew       = $ownNew
@@ -157,14 +168,17 @@ function Get-StepRefusal {
 }
 
 # SET when every part of the plan is in place, else NOT-SET and what is not. $Observed: Values (registry value name
-# -> its data, or $null), Policy (list_signatures' policy: newMessage, newMessageFrom, replyForward,
-# replyForwardFrom), Own (the account's row: newMessage, replyForward), Signatures (the names list_signatures lists).
+# -> its data, or $null), Kinds (registry value name -> its kind, or $null), Policy (list_signatures' policy:
+# newMessage, newMessageFrom, replyForward, replyForwardFrom), Own (the account's row: newMessage, replyForward),
+# Signatures (the names list_signatures lists).
 function Get-SettingsVerdict {
     param([object] $Plan, [hashtable] $Observed)
     $missing = New-Object System.Collections.Generic.List[string]
     foreach ($pair in @(@('NewSignature', $Plan.SettingNew), @('ReplySignature', $Plan.SettingReply))) {
         $data = $Observed.Values[$pair[0]]
         if ([string]$data -cne $pair[1]) { $missing.Add("HKCU\$($Plan.Key)\$($pair[0]) is '$data', not '$($pair[1])'") }
+        $kind = [string]$Observed.Kinds[$pair[0]]
+        if ($null -ne $data -and $kind -cne $Plan.ValueKind) { $missing.Add("HKCU\$($Plan.Key)\$($pair[0]) is a $kind value, not $($Plan.ValueKind)") }
     }
     $policy = $Observed.Policy
     if ($null -eq $policy) { $missing.Add('list_signatures reported no policy or deployed default') }
@@ -217,6 +231,9 @@ function Invoke-SelfTest {
         }
     }
     Check 'the Office major is the one asked for' 'Software\Policies\Microsoft\Office\17.0\Common\MailSettings' (Get-SignatureSettingsPlan 'GroupPolicy' '17.0').Key
+    Check 'the values are expandable strings unless asked otherwise' 'ExpandString|String' @($g.ValueKind, (Get-SignatureSettingsPlan 'Preference' '16.0' 'String').ValueKind)
+    $threw = $false; try { [void](Get-SignatureSettingsPlan 'GroupPolicy' '16.0' 'Binary') } catch { $threw = $true }
+    Check 'an unknown value kind is refused' $true $threw
     $threw = $false; try { [void](Get-SignatureSettingsPlan 'CloudPolicy' '16.0') } catch { $threw = $true }
     Check 'an unknown scenario is refused' $true $threw
     Check 'a signature''s HTML holds its own name' $true ((Get-SignatureHtml 'OutlookAI-McpTest-X').Contains('<p>OutlookAI-McpTest-X</p>'))
@@ -245,6 +262,7 @@ function Invoke-SelfTest {
 
     $set = @{
         Values     = @{ NewSignature = $g.SettingNew; ReplySignature = $g.SettingReply }
+        Kinds      = @{ NewSignature = 'ExpandString'; ReplySignature = 'ExpandString' }
         Policy     = [pscustomobject]@{ newMessage = $g.SettingNew; newMessageFrom = 'groupPolicy'; replyForward = $g.SettingReply; replyForwardFrom = 'groupPolicy' }
         Own        = [pscustomobject]@{ newMessage = $g.OwnNew; replyForward = $g.OwnReply }
         Signatures = @($g.Signatures) + @('Identity')
@@ -255,6 +273,11 @@ function Invoke-SelfTest {
     foreach ($k in $set.Keys) { $wrongSource[$k] = $set[$k] }
     $wrongSource['Policy'] = [pscustomobject]@{ newMessage = $g.SettingNew; newMessageFrom = 'preference'; replyForward = $g.SettingReply; replyForwardFrom = 'groupPolicy' }
     Check 'a default read from the wrong source is NOT-SET' 'NOT-SET' (Get-SettingsVerdict $g $wrongSource).Verdict
+    $wrongKind = @{}
+    foreach ($k in $set.Keys) { $wrongKind[$k] = $set[$k] }
+    $wrongKind['Kinds'] = @{ NewSignature = 'String'; ReplySignature = 'ExpandString' }
+    $v = Get-SettingsVerdict $g $wrongKind
+    Check 'a value of the other kind is NOT-SET, and named' $true ($v.Verdict -eq 'NOT-SET' -and (@($v.Missing)[0]).Contains('a String value, not ExpandString'))
     $noReply = @{}
     foreach ($k in $set.Keys) { $noReply[$k] = $set[$k] }
     $noReply['Values'] = @{ NewSignature = $g.SettingNew; ReplySignature = $null }
@@ -266,6 +289,7 @@ function Invoke-SelfTest {
     Check 'a signature not listed is NOT-SET' 3 @((Get-SettingsVerdict $g $noSignature).Missing).Count
     $pSet = @{
         Values     = @{ NewSignature = $p.SettingNew; ReplySignature = $p.SettingReply }
+        Kinds      = @{ NewSignature = 'ExpandString'; ReplySignature = 'ExpandString' }
         Policy     = [pscustomobject]@{ newMessage = $p.SettingNew; newMessageFrom = 'preference'; replyForward = $p.SettingReply; replyForwardFrom = 'preference' }
         Own        = [pscustomobject]@{ newMessage = $p.OwnNew; replyForward = $null }
         Signatures = @($p.Signatures)
@@ -273,7 +297,7 @@ function Invoke-SelfTest {
     Check 'the deployed setting with no own reply default is SET' 'SET' (Get-SettingsVerdict $p $pSet).Verdict
     $pSet['Own'] = [pscustomobject]@{ newMessage = $p.OwnNew; replyForward = 'Identity' }
     Check 'an own reply default the plan did not set is NOT-SET' 'NOT-SET' (Get-SettingsVerdict $p $pSet).Verdict
-    Check 'no policy at all is NOT-SET' 'NOT-SET' (Get-SettingsVerdict $g @{ Values = @{}; Policy = $null; Own = $null; Signatures = @() }).Verdict
+    Check 'no policy at all is NOT-SET' 'NOT-SET' (Get-SettingsVerdict $g @{ Values = @{}; Kinds = @{}; Policy = $null; Own = $null; Signatures = @() }).Verdict
 
     # The stdio client's pure parts (McpStdioClient.ps1).
     Check 'a request carries its id and params' '{"jsonrpc":"2.0","method":"tools/call","id":7,"params":{"name":"list_signatures"}}' (ConvertTo-McpMessage -Method 'tools/call' -Params ([ordered]@{ name = 'list_signatures' }) -Id 7)
@@ -310,8 +334,8 @@ if (-not $PSBoundParameters.ContainsKey('Account')) {
     if (-not $path) { $path = $StagedSettingsPath }
     $Account = Get-StagedSettingsValue $path 'testHubStoreDisplayName'
 }
-$plan = Get-SignatureSettingsPlan $Scenario $OfficeVersion
-Write-Host "scenario  : $($plan.Scenario) - HKCU\$($plan.Key): NewSignature='$($plan.SettingNew)', ReplySignature='$($plan.SettingReply)'"
+$plan = Get-SignatureSettingsPlan $Scenario $OfficeVersion $ValueKind
+Write-Host "scenario  : $($plan.Scenario) - HKCU\$($plan.Key): NewSignature='$($plan.SettingNew)', ReplySignature='$($plan.SettingReply)', as $($plan.ValueKind)"
 Write-Host "own       : $Account in profile '$OutlookProfile': new mail '$($plan.OwnNew)', replies and forwards '$(if ($plan.OwnReply) { $plan.OwnReply } else { '(none)' })'"
 Write-Host "signatures: $($plan.Signatures -join ', ')"
 
@@ -320,15 +344,20 @@ if (-not $Execute -and -not $Verify) {
     exit 0
 }
 
-# The registry values of the plan as they stand: name -> data, or $null.
+# The registry values of the plan as they stand: Values (name -> data, unexpanded, or $null) and Kinds (name -> kind,
+# or $null).
 function Read-PlanValues {
     $values = @{ NewSignature = $null; ReplySignature = $null }
+    $kinds = @{ NewSignature = $null; ReplySignature = $null }
     $path = "HKCU:\$($plan.Key)"
     if (Test-Path -LiteralPath $path) {
         $item = Get-Item -LiteralPath $path
-        foreach ($name in @('NewSignature', 'ReplySignature')) { $values[$name] = $item.GetValue($name, $null) }
+        foreach ($name in @('NewSignature', 'ReplySignature')) {
+            $values[$name] = $item.GetValue($name, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+            if ($null -ne $values[$name]) { $kinds[$name] = [string]$item.GetValueKind($name) }
+        }
     }
-    return $values
+    return @{ Values = $values; Kinds = $kinds }
 }
 
 # What list_signatures says the setting is: the policy view, the account's row in the profile, the names listed.
@@ -370,7 +399,7 @@ try {
 
     if ($Execute) {
         $principal = New-Object System.Security.Principal.WindowsPrincipal([System.Security.Principal.WindowsIdentity]::GetCurrent())
-        $values = Read-PlanValues
+        $values = (Read-PlanValues).Values
         $observed = @{
             User              = $env:USERNAME
             Computer          = $env:COMPUTERNAME
@@ -396,13 +425,14 @@ try {
         }
         $path = "HKCU:\$($plan.Key)"
         if (-not (Test-Path -LiteralPath $path)) { New-Item -Path $path -Force | Out-Null }
-        New-ItemProperty -LiteralPath $path -Name 'NewSignature' -PropertyType String -Value $plan.SettingNew -Force | Out-Null
-        New-ItemProperty -LiteralPath $path -Name 'ReplySignature' -PropertyType String -Value $plan.SettingReply -Force | Out-Null
-        Write-Host "written   : HKCU\$($plan.Key) NewSignature, ReplySignature"
+        New-ItemProperty -LiteralPath $path -Name 'NewSignature' -PropertyType $plan.ValueKind -Value $plan.SettingNew -Force | Out-Null
+        New-ItemProperty -LiteralPath $path -Name 'ReplySignature' -PropertyType $plan.ValueKind -Value $plan.SettingReply -Force | Out-Null
+        Write-Host "written   : HKCU\$($plan.Key) NewSignature, ReplySignature, as $($plan.ValueKind)"
     }
 
     $after = Read-ListedState $session
-    $code = Show-Verdict (Get-SettingsVerdict $plan @{ Values = (Read-PlanValues); Policy = $after.Policy; Own = $after.Own; Signatures = $after.Signatures })
+    $now = Read-PlanValues
+    $code = Show-Verdict (Get-SettingsVerdict $plan @{ Values = $now.Values; Kinds = $now.Kinds; Policy = $after.Policy; Own = $after.Own; Signatures = $after.Signatures })
 }
 finally {
     [void](Stop-McpStdioServer -Session $session)
