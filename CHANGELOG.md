@@ -944,7 +944,9 @@ its mailbox tests on, and change nothing you install.
   for the whole machine, and uninstalling removes its copy. If setup could not put the runtime in
   place, OutlookAI Settings says so and what to do. On a test machine whose only .NET is 10, a fresh
   install and a silent update from v3.1.0.325 each left a mail server that answered on its own
-  runtime, with no administrator rights and nothing installed for the whole machine.
+  runtime, with no administrator rights and nothing installed for the whole machine. Uninstalled
+  there as Settings runs it, both of the uninstaller's phases ran, its own runtime went, and the
+  machine-wide .NET stayed as it was.
 
 - 🔧 **OutlookAI opens no mailbox in a newly started Outlook until it has settled (Q175).**
   Settled means at least 20 seconds old, the OutlookAI add-in finished starting inside it, and its
