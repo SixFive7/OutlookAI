@@ -156,12 +156,12 @@ public sealed class LiveSaveAttachmentFolderTests
     {
         // A name reaches an attachment through the file it is added from: Outlook will not rename an
         // attachment through PropertyAccessor - PR_ATTACH_LONG_FILENAME "does not support this
-        // operation", measured on the unindexed guest 2026-11-18. So the names here are names a file
-        // can have. Any program can give a file a direction control, a leading space or a name too
-        // long for the folder; only a \\?\ path can give it a device's name, or trailing dots and
-        // spaces, which Windows otherwise reads as the device or drops - and whether Outlook attaches
-        // from a \\?\ path is measured here too. Path separators and ':' no file can have: those
-        // names are T1's (AttachmentFileWriterDiskTests), with every other one.
+        // operation", measured on the unindexed guest 2026-11-18. So the names here are names any
+        // program can give a file: a direction control, a leading space, and a name too long for the
+        // folder. A device's name and trailing dots and spaces only a \\?\ path can give a file, and
+        // asking Outlook to attach CON.txt from one crashed OUTLOOK.EXE (an access violation, the same
+        // day, same guest) - so those, path separators and ':' are T1's alone
+        // (AttachmentFileWriterDiskTests), with every other name.
         string sources = Path.Combine(Path.GetTempPath(), Tag + "-names");
 
         // As long as Outlook can still read the file it is added from - its path under 250
@@ -174,7 +174,6 @@ public sealed class LiveSaveAttachmentFolderTests
             " q198-" + Marker + "-2 leading space.txt",
             longPrefix + new string('n', filler) + ".txt",
         };
-        string[] verbatimNames = { "CON.txt", "q198-" + Marker + "-5.txt. . ." };
         string ours = Path.Combine(AttachmentFileWriter.DownloadFolder, Tag);
         List<string> saved = new();
         List<string> drafts = new();
@@ -183,32 +182,10 @@ public sealed class LiveSaveAttachmentFolderTests
         {
             string folder = AttachmentFileWriter.CheckFolder(Tag + @"\names");
 
-            IReadOnlyList<string> plainContents = WriteSources(sources, plainNames, 1, verbatim: false, out IReadOnlyList<string> plainPaths);
+            IReadOnlyList<string> contents = WriteSources(sources, plainNames, out IReadOnlyList<string> paths);
             drafts.Add(LiveOutlookTestMailer.SaveTaggedDraftWithAttachments(
-                Hub, _fixture.TaggedSubject("q198 save names"), "save_attachment name probe " + Marker, plainPaths));
-            SaveEachAndCheck(drafts[0], plainNames, plainContents, folder, saved);
-
-            IReadOnlyList<string> verbatimContents = WriteSources(
-                sources, verbatimNames, plainNames.Length + 1, verbatim: true, out IReadOnlyList<string> verbatimPaths);
-            string? verbatimDraft = null;
-            try
-            {
-                verbatimDraft = LiveOutlookTestMailer.SaveTaggedDraftWithAttachments(
-                    Hub, _fixture.TaggedSubject("q198 save device names"), "save_attachment name probe " + Marker, verbatimPaths);
-            }
-            catch (InvalidOperationException ex)
-            {
-                // Said out loud, so a pass is never read as more: the device-name and trailing-dot
-                // cases then rest on T1 alone.
-                _output.WriteLine("NOT EXERCISED: Outlook would not attach a file from a \\\\?\\ path ("
-                    + (ex.InnerException ?? ex).Message + ").");
-            }
-
-            if (verbatimDraft != null)
-            {
-                drafts.Add(verbatimDraft);
-                SaveEachAndCheck(verbatimDraft, verbatimNames, verbatimContents, folder, saved);
-            }
+                Hub, _fixture.TaggedSubject("q198 save names"), "save_attachment name probe " + Marker, paths));
+            SaveEachAndCheck(drafts[0], plainNames, contents, folder, saved);
 
             Assert.Equal(saved.Count, Directory.EnumerateFiles(folder).Count());
             Assert.DoesNotContain(
@@ -223,11 +200,6 @@ public sealed class LiveSaveAttachmentFolderTests
             }
 
             ScratchFiles.TryDeleteTree(ours);
-            foreach (string name in verbatimNames)
-            {
-                ScratchFiles.TryDeleteFile(@"\\?\" + Path.Combine(sources, name));
-            }
-
             ScratchFiles.TryDeleteTree(sources);
             foreach (string draft in drafts)
             {
@@ -240,18 +212,16 @@ public sealed class LiveSaveAttachmentFolderTests
 
     /// <summary>
     /// Writes one source file per name, each with content of its own, and returns the contents; the
-    /// paths come back in <paramref name="paths"/> - as \\?\ paths when <paramref name="verbatim"/>,
-    /// which is the only way a file can be called CON.txt or end in a dot.
+    /// paths come back in <paramref name="paths"/>.
     /// </summary>
-    private IReadOnlyList<string> WriteSources(
-        string folder, IReadOnlyList<string> names, int firstNumber, bool verbatim, out IReadOnlyList<string> paths)
+    private IReadOnlyList<string> WriteSources(string folder, IReadOnlyList<string> names, out IReadOnlyList<string> paths)
     {
         List<string> contents = new();
         List<string> written = new();
         for (int i = 0; i < names.Count; i++)
         {
-            string path = (verbatim ? @"\\?\" : string.Empty) + Path.Combine(folder, names[i]);
-            string content = "OutlookAI save_attachment name probe " + (firstNumber + i).ToString(CultureInfo.InvariantCulture) + " " + Marker;
+            string path = Path.Combine(folder, names[i]);
+            string content = "OutlookAI save_attachment name probe " + (i + 1).ToString(CultureInfo.InvariantCulture) + " " + Marker;
             File.WriteAllText(path, content);
             written.Add(path);
             contents.Add(content);
