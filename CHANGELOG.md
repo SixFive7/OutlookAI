@@ -234,6 +234,15 @@ its mailbox tests on, and change nothing you install.
   check fails, the reason is written out in full here rather than hidden behind a link. Both
   indicators now take their wording from one place, so they cannot disagree.
 
+- ✅ **A live run records the guest's clock and time zone around every call it makes into the guest.**
+  In two measurement runs on a frozen-clock test machine, the machine's clock jumped about two hours
+  forward during the suite, and waits of 9,000 and 7,200 seconds ran out after 35 to 40 minutes of real
+  time. Nobody knows why yet. Each call into the guest now reads the guest's UTC time and time zone as
+  its first and last step, and the runner sets the two readings beside its own clock in
+  `guest-clock.log`. A call over which the two clocks ran more than 60 seconds apart, or the time zone
+  changed, is a warning in `run.log`, `summary.txt` and `summary.json`; the run's verdict does not
+  change.
+
 - ✅ **A probe on the Exchange test machine measures what the folder-ID fixes of November rest on.**
   `Testbed/guest/Measure-FolderIdResolution.ps1` reads, changing nothing, what three of the fixes
   needed. Reading the top folder of the mailbox Exchange automapped online takes 2 to 3 ms, as it does
