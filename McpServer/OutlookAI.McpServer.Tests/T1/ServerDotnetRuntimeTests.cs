@@ -29,9 +29,11 @@ public sealed class ServerDotnetRuntimeTests : IDisposable
         Assert.Equal("11.0.0", ServerDotnetRuntime.Version);
         Assert.Equal("11", ServerDotnetRuntime.Major);
         Assert.Equal("dotnet", ServerDotnetRuntime.FolderName);
-        Assert.Equal(
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "OutlookAI", "dotnet"),
-            ServerDotnetRuntime.DefaultRoot());
+        // Its tail only: a test that looks %LOCALAPPDATA% up itself names the real profile folder,
+        // which AuditLogIsolationTests' ratchet keeps out of test code.
+        string root = ServerDotnetRuntime.DefaultRoot();
+        Assert.True(Path.IsPathRooted(root), root);
+        Assert.EndsWith(Path.DirectorySeparatorChar + Path.Combine("OutlookAI", "dotnet"), root, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
