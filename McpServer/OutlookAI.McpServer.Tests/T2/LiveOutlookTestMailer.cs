@@ -3246,6 +3246,55 @@ public static class LiveOutlookTestMailer
     }
 
     /// <summary>
+    /// A draft of this run's message class and the form-definition properties it carries (READ-ONLY, tag and marker
+    /// checked first, S3). Every compose since Q208 B (2026-11-18) that reads its editor without activating commits
+    /// through the inspector's "Message" form page and <c>Close(olSave)</c>; a form page could make the item a one-off
+    /// form, which is sent as a TNEF attachment. Q149's B3 and W7 found none (100 of 100), on drafts saved by the close
+    /// alone; the product's new drafts, replies and forwards are saved once more after it, which this reads.
+    /// </summary>
+    public static (string MessageClass, IReadOnlyList<string> FormPropertiesPresent) ReadFormFacts(string storeDisplayName, string entryIdHex, string uniqueMarker)
+    {
+        if (string.IsNullOrWhiteSpace(uniqueMarker) || uniqueMarker.Length < 12)
+        {
+            throw new ArgumentException("Marker too weak for a safe item filter (S3).", nameof(uniqueMarker));
+        }
+
+        return RunSta<(string, IReadOnlyList<string>)>(() =>
+        {
+            dynamic app = CreateOutlookApplication();
+            dynamic? ns = null;
+            dynamic? stores = null;
+            dynamic? store = null;
+            dynamic? item = null;
+            try
+            {
+                ns = app.GetNamespace("MAPI");
+                stores = ns.Stores;
+                store = FindStore(stores, storeDisplayName)
+                    ?? throw new InvalidOperationException("Store not found for the form read.");
+                item = ns.GetItemFromID(entryIdHex, (string)store.StoreID);
+                string? subject = (string?)item.Subject;
+                if (subject == null || !subject.Contains(SubjectTag, StringComparison.Ordinal)
+                    || !subject.Contains(uniqueMarker, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException(
+                        "Refusing to read the item: its subject does not carry both the test tag and this run's marker (S3).");
+                }
+
+                return ((string?)item.MessageClass ?? string.Empty, LiveComposeProbe.FormPropertiesPresent((object)item));
+            }
+            finally
+            {
+                Release(item);
+                Release(store);
+                Release(stores);
+                Release(ns);
+                Release(app);
+            }
+        });
+    }
+
+    /// <summary>
     /// How Word lays out a draft of this run, paragraph by paragraph (<see cref="Q149Editor.ReadLook"/>): text,
     /// top border, style, font, spacing. The instrument of Q209 (a)'s check that a reply's or forward's own text sits
     /// above the quoted header block (<see cref="QuotedDraftLayout"/>).

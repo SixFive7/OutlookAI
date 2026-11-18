@@ -179,7 +179,9 @@ public sealed class Q149ComposeMeasurementTests
         List<Type> classes = typeof(Q149Cells).Assembly.GetTypes()
             .Where(t => t.Namespace == "OutlookAI.McpServer.Tests.T2" && t.Name.StartsWith("LiveQ149", StringComparison.Ordinal) && t.Name.EndsWith("Tests", StringComparison.Ordinal))
             .ToList();
-        Assert.Equal(3, classes.Count);
+
+        // Windowless, Commit, HtmlOnlyParity, and TypedText (Q211 (b), 2026-11-18).
+        Assert.Equal(4, classes.Count);
 
         foreach (Type type in classes)
         {
@@ -207,11 +209,15 @@ public sealed class Q149ComposeMeasurementTests
         List<string> cells = typeof(Q149Cells).GetFields(BindingFlags.Public | BindingFlags.Static)
             .Where(f => f.IsLiteral && f.FieldType == typeof(string))
             .Select(f => (string)f.GetRawConstantValue()!)
-            .Where(v => v.StartsWith("S1-", StringComparison.Ordinal) || v.StartsWith("S2-", StringComparison.Ordinal) || v.StartsWith("S3-", StringComparison.Ordinal))
+            .Where(v => v.StartsWith("S1-", StringComparison.Ordinal) || v.StartsWith("S2-", StringComparison.Ordinal)
+                || v.StartsWith("S3-", StringComparison.Ordinal) || v.StartsWith("S4-", StringComparison.Ordinal))
             .ToList();
 
         Assert.Equal(cells.Count, cells.Distinct(StringComparer.Ordinal).Count());
         Assert.Contains(Q149Cells.W7, cells);
+        Assert.Contains(Q149Cells.P1, cells);
+        Assert.Contains(Q149Cells.Q211, cells);
+        Assert.Contains(Q149Cells.Q180, cells);
         foreach (string cell in cells)
         {
             foreach (string suffix in new[] { "-commit", "-process", "-product" })
@@ -219,6 +225,42 @@ public sealed class Q149ComposeMeasurementTests
                 Assert.DoesNotContain(cell + suffix, cells);
             }
         }
+    }
+
+    // ------------------------------------------------------------------ Q180 (b): a cold start's verdicts
+
+    [Fact]
+    public void ColdStartVerdicts_CollapseToTheirChanges_AndCountTheHungOnes()
+    {
+        (IReadOnlyList<object[]> changes, int hung, long longest, long? responsive) = Q180Verdicts.Summarize(new[]
+        {
+            (0L, "NotRunning"),
+            (100L, "Starting"),
+            (200L, "Starting"),
+            (300L, "Hung"),
+            (400L, "Hung"),
+            (500L, "Hung"),
+            (600L, "Responsive"),
+            (700L, "Hung"),
+            (800L, "Responsive"),
+        });
+
+        Assert.Equal(new[] { "NotRunning", "Starting", "Hung", "Responsive", "Hung", "Responsive" }, changes.Select(c => (string)c[1]).ToArray());
+        Assert.Equal(new long[] { 0, 100, 300, 600, 700, 800 }, changes.Select(c => (long)c[0]).ToArray());
+        Assert.Equal(4, hung);
+        Assert.Equal(200, longest);
+        Assert.Equal(600, responsive);
+    }
+
+    [Fact]
+    public void ColdStartVerdicts_OfAStartThatNeverAnswered_SayItNeverWasResponsive()
+    {
+        (IReadOnlyList<object[]> changes, int hung, long longest, long? responsive) = Q180Verdicts.Summarize(new[] { (0L, "Starting"), (100L, "Starting") });
+        Assert.Single(changes);
+        Assert.Equal(0, hung);
+        Assert.Equal(0, longest);
+        Assert.Null(responsive);
+        Assert.Empty(Q180Verdicts.Summarize(Array.Empty<(long, string)>()).Changes);
     }
 
     // ------------------------------------------------------------------ the attempt line

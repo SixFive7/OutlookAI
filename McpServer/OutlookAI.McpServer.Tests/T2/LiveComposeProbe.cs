@@ -70,6 +70,41 @@ public static class LiveComposeProbe
         ("PidLidScriptStream", "http://schemas.microsoft.com/mapi/id/{00062008-0000-0000-C000-000000000046}/85410102"),
     };
 
+    /// <summary>
+    /// Which of <see cref="FormProperties"/> an item carries - none on an ordinary draft. The form-page commit (B3) adds
+    /// Outlook's "Message" page to the inspector's form, which could turn an item into a one-off form; these are the
+    /// properties such an item gains.
+    /// </summary>
+    internal static IReadOnlyList<string> FormPropertiesPresent(object item)
+    {
+        List<string> present = new();
+        dynamic accessor = ((dynamic)item).PropertyAccessor;
+        try
+        {
+            foreach ((string name, string tag) in FormProperties)
+            {
+                try
+                {
+                    object? value = accessor.GetProperty(tag);
+                    if (value != null)
+                    {
+                        present.Add(name);
+                    }
+                }
+                catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+                {
+                    // Absent: the property is not there to read.
+                }
+            }
+        }
+        finally
+        {
+            Q149Com.Release((object)accessor);
+        }
+
+        return present;
+    }
+
     /// <summary>Runs <paramref name="work"/> on its own thread and gives up after <paramref name="budget"/>, naming the step.</summary>
     internal static T Bounded<T>(string step, TimeSpan budget, Func<T> work)
     {
@@ -291,8 +326,18 @@ public static class LiveComposeProbe
     /// </summary>
     internal static void EnsureWindowedOutlook(LiveTestSettings settings, Action<string> log)
     {
+        EnsureWindowedOutlook(settings, log, coldStart: null);
+    }
+
+    /// <summary>
+    /// <see cref="EnsureWindowedOutlook(LiveTestSettings, Action{string})"/>, telling <paramref name="coldStart"/> - when
+    /// given - when OUTLOOK.EXE was started, when its window showed and when its object model first answered (Q180 (b)).
+    /// </summary>
+    internal static void EnsureWindowedOutlook(LiveTestSettings settings, Action<string> log, Q180ColdStartWatch? coldStart)
+    {
         if (OutlookProcessCount() > 0 && LiveDisconnectRecoveryTests.WindowProbe.VisibleOutlookWindows().Count > 0)
         {
+            coldStart?.Milestone("alreadyWindowed");
             return;
         }
 
@@ -307,6 +352,7 @@ public static class LiveComposeProbe
             start.ArgumentList.Add(profile!);
         }
 
+        coldStart?.Milestone("startRequested");
         using (Process? started = Process.Start(start))
         {
             log("start: OUTLOOK.EXE started with its window (pid " + (started?.Id.ToString(CultureInfo.InvariantCulture) ?? "?") + ")");
@@ -315,16 +361,20 @@ public static class LiveComposeProbe
         LiveWaitBudget wait = LiveWaitBudget.Of(TimeSpan.FromMinutes(3));
         while (wait.HasTimeLeft && LiveDisconnectRecoveryTests.WindowProbe.VisibleOutlookWindows().Count == 0)
         {
-            Thread.Sleep(500);
+            Thread.Sleep(coldStart == null ? 500 : 100);
         }
 
         if (LiveDisconnectRecoveryTests.WindowProbe.VisibleOutlookWindows().Count == 0)
         {
+            coldStart?.Hang("no window within 3 minutes");
             throw new InvalidOperationException("Q149: OUTLOOK.EXE started but showed no window within 3 minutes.");
         }
 
+        coldStart?.Milestone("windowShown");
+
         // The window is up before the stores are; one store read through a short-lived client proves the object model answers.
         _ = ReadSafetyCounts();
+        coldStart?.Ready();
         Thread.Sleep(3000);
     }
 
@@ -408,6 +458,157 @@ public static class LiveComposeProbe
         }
 
         return IntPtr.Zero;
+    }
+}
+
+/// <summary>
+/// Q180 (b), decided 2026-11-18: one cold start of Outlook, logged - the time until it is ready, every liveness verdict
+/// Windows gives on the way (<see cref="OutlookLiveness"/>, sampled every 100 ms from the start request until two
+/// seconds after ready), the milestones the caller reports, and any hang: a step that did not return within its
+/// budget, or verdicts of "not responding". Written as one <see cref="Q149Cells.Q180"/> attempt line by
+/// <see cref="Finish"/>. It only watches: nothing here touches COM or Outlook's windows.
+/// </summary>
+internal sealed class Q180ColdStartWatch : IDisposable
+{
+    private const int SampleMs = 100;
+    private const int AfterReadyMs = 2000;
+
+    private readonly Stopwatch _clock = Stopwatch.StartNew();
+    private readonly object _gate = new();
+    private readonly List<(long Ms, string Verdict)> _samples = new();
+    private readonly List<string> _details = new();
+    private readonly SortedDictionary<string, long> _milestones = new(StringComparer.Ordinal);
+    private readonly List<string> _hangs = new();
+    private readonly Thread _sampler;
+    private readonly string _kind;
+    private readonly string _during;
+    private readonly int _iteration;
+    private volatile bool _stop;
+    private long _readyMs = -1;
+    private long _processSeenMs = -1;
+    private bool _finished;
+
+    /// <param name="kind">"com" for a start through Outlook.Application, "windowed" for OUTLOOK.EXE started with its window.</param>
+    /// <param name="during">The cell whose start this is.</param>
+    /// <param name="iteration">Which of its starts.</param>
+    public Q180ColdStartWatch(string kind, string during, int iteration)
+    {
+        _kind = kind;
+        _during = during;
+        _iteration = iteration;
+        _sampler = new Thread(Sample) { IsBackground = true, Name = "Q180.ColdStartWatch" };
+        _sampler.Start();
+    }
+
+    /// <summary>Milliseconds since the start was requested.</summary>
+    public long ElapsedMs => _clock.ElapsedMilliseconds;
+
+    /// <summary>Records a named moment of the start (the first one of each name counts).</summary>
+    public void Milestone(string name)
+    {
+        lock (_gate)
+        {
+            if (!_milestones.ContainsKey(name))
+            {
+                _milestones[name] = _clock.ElapsedMilliseconds;
+            }
+        }
+    }
+
+    /// <summary>Outlook answers: the object model gave its first answer. Sampling goes on for two seconds more.</summary>
+    public void Ready()
+    {
+        Interlocked.CompareExchange(ref _readyMs, _clock.ElapsedMilliseconds, -1);
+        Milestone("ready");
+    }
+
+    /// <summary>Records a hang: a step of the start that did not return within its budget.</summary>
+    public void Hang(string step)
+    {
+        lock (_gate)
+        {
+            _hangs.Add(step + " at " + _clock.ElapsedMilliseconds.ToString(CultureInfo.InvariantCulture) + " ms");
+        }
+    }
+
+    /// <summary>Stops sampling (after the grace past ready) and writes the line. Safe to call once; later calls do nothing.</summary>
+    public void Finish(Q149Run run)
+    {
+        ArgumentNullException.ThrowIfNull(run);
+        if (_finished)
+        {
+            return;
+        }
+
+        _finished = true;
+        long ready = Interlocked.Read(ref _readyMs);
+        if (ready >= 0)
+        {
+            long wait = ready + AfterReadyMs - _clock.ElapsedMilliseconds;
+            if (wait > 0)
+            {
+                Thread.Sleep((int)Math.Min(wait, AfterReadyMs));
+            }
+        }
+
+        _stop = true;
+        _sampler.Join(TimeSpan.FromSeconds(5));
+        Q149Attempt attempt = new(Q149Cells.Q180, _iteration);
+        lock (_gate)
+        {
+            (IReadOnlyList<object[]> changes, int hungSamples, long longestHungMs, long? firstResponsive) = Q180Verdicts.Summarize(_samples);
+            attempt.Set("kind", _kind)
+                .Set("during", _during)
+                .Set("readyMs", ready < 0 ? null : ready)
+                .Set("processSeenMs", Interlocked.Read(ref _processSeenMs) < 0 ? null : Interlocked.Read(ref _processSeenMs))
+                .Set("firstResponsiveMs", firstResponsive)
+                .Set("verdicts", changes.ToArray())
+                .Set("verdictDetails", _details.Distinct(StringComparer.Ordinal).Take(12).ToArray())
+                .Set("samples", _samples.Count)
+                .Set("hungSamples", hungSamples)
+                .Set("longestHungMs", longestHungMs)
+                .Set("milestones", new SortedDictionary<string, long>(_milestones, StringComparer.Ordinal))
+                .Set("hangs", _hangs.Count == 0 ? null : _hangs.ToArray())
+                .Set("hung", _hangs.Count > 0 || hungSamples > 0);
+        }
+
+        run.Write(attempt);
+    }
+
+    public void Dispose()
+    {
+        _stop = true;
+        _sampler.Join(TimeSpan.FromSeconds(5));
+    }
+
+    private void Sample()
+    {
+        while (!_stop)
+        {
+            long now = _clock.ElapsedMilliseconds;
+            long ready = Interlocked.Read(ref _readyMs);
+            if (ready >= 0 && now > ready + AfterReadyMs)
+            {
+                return;
+            }
+
+            OutlookLivenessState state = OutlookLiveness.Probe(out string detail);
+            if (state != OutlookLivenessState.NotRunning)
+            {
+                Interlocked.CompareExchange(ref _processSeenMs, now, -1);
+            }
+
+            lock (_gate)
+            {
+                _samples.Add((now, state.ToString()));
+                if (_details.Count < 64 && (_details.Count == 0 || !string.Equals(_details[_details.Count - 1], state + ": " + detail, StringComparison.Ordinal)))
+                {
+                    _details.Add(state + ": " + detail);
+                }
+            }
+
+            Thread.Sleep(SampleMs);
+        }
     }
 }
 

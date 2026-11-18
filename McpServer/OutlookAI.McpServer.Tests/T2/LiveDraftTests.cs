@@ -394,6 +394,12 @@ public sealed class LiveDraftTests
         QuotedDraftLayout.AssertTextAboveTheHeaderBlock(
             LiveOutlookTestMailer.ReadDraftLook(Hub, outcome.EntryId, Marker), agentText, signatureText: null, expectedKind, _output.WriteLine);
 
+        // Q208 B: the compose committed through the inspector's form page and the draft was saved again after it - still
+        // an ordinary message, with no one-off form in it.
+        (string messageClass, IReadOnlyList<string> formProperties) = LiveOutlookTestMailer.ReadFormFacts(Hub, outcome.EntryId, Marker);
+        Assert.Equal("IPM.Note", messageClass, ignoreCase: true);
+        Assert.True(formProperties.Count == 0, expectedKind + ": the draft carries form-definition properties: " + string.Join(", ", formProperties));
+
         _output.WriteLine(
             $"{expectedKind}: conversationIndexExtends=true (len {seedInfo.ConversationIndex!.Length} -> {reopened.ConversationIndex!.Length}) "
             + $"inHubDrafts=true agentAboveQuote=true signatureInjected={outcome.SignatureInjected}");
