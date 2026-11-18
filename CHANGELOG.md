@@ -234,6 +234,18 @@ its mailbox tests on, and change nothing you install.
   check fails, the reason is written out in full here rather than hidden behind a link. Both
   indicators now take their wording from one place, so they cannot disagree.
 
+- ✅ **The compose measurement also runs the product's own drafting, Outlook's typed text, and cold starts.**
+  As the maintainer decided on 2026-11-18, the Q149 suite stays (Q210 (a)) and gains five cells.
+  P1 runs the product's drafts in an Outlook with no window, three starts of ten drafts each,
+  recording each draft's route, every window shown and every change of foreground, then ends the
+  session and watches Outlook end. P2 has two sessions draft in one such Outlook and checks that the
+  first to leave keeps the hidden window and the last closes it; P3 drafts in an Outlook a program
+  started in which a window was then shown, where nothing may be activated. Q211 opens drafts in
+  Outlook's own compose window, types into it through Word, and reads the style and spacing of the
+  typed paragraphs beside the product's drafts of the same text (Q211 (b)). Every cold start in these
+  runs is logged for Q180 (b): the time until Outlook answered, Windows' verdict on it every 100 ms,
+  and any hang. They run like the rest of the suite, alone.
+
 - ✅ **A test-machine probe measures how Windows and the installer remove trust in the leaked key.**
   `Testbed/host/Invoke-TrustRemovalProbe.ps1` runs `Testbed/guest/Measure-TrustRemoval.ps1` on an
   Outlook test machine under its lease, from its frozen checkpoint, and puts the checkpoint back
@@ -768,6 +780,27 @@ its mailbox tests on, and change nothing you install.
 
 ### Changed
 
+- 🔧 **A draft puts a window on screen at most once per Outlook start, and never while Outlook is open.**
+  OutlookAI writes every draft in a compose window it does not show. In an Outlook with no window of
+  its own, Word lends that window its editor only after a compose window has been activated in the
+  process, and the activation put the window on screen at the top left for 130 to 650 ms and gave
+  Outlook the foreground: for every draft, 50 of 50 measured on Office LTSC 2024 (Q149). As the
+  maintainer decided (Q208 B), only the first draft after each Outlook start activates its window now,
+  and every later one reads its editor straight away, which Q149 measured to work after one
+  activation in 120 of 120 drafts. While Outlook has a window open, no draft activates anything at all
+  (40 of 40). An edit read that way is kept by adding Outlook's Message form page before the editor is
+  read and saving as the window closes, which kept all 100 measured edits and changed no message's
+  class or form. The activation is recorded per Outlook process for every OutlookAI session of the
+  user, and decided under a shared lock, so agents drafting at the same moment make one between them.
+
+- 🔧 **Connecting to Outlook adds no hidden window; the first draft that needs one does (Q175 (b)).**
+  A session that found Outlook with no window used to add a hidden Outlook window of its own, the
+  lifetime pin, as it connected. The pin is what keeps an Outlook with no window running when a
+  draft's compose window closes (without it, 40 of 40 such closes ended Outlook), so it is now made
+  by the first draft that needs it and shared by every session. A session that only searches and
+  reads makes none; an Outlook it started then ends by itself some minutes after the last program
+  lets go of it, as before pins existed.
+
 - 💥 **Every tool addresses folders and stores by ID; names and paths are for display only (Q131-Q135).**
   Decided by the maintainer on 2026-10-11, after research found a folder's own Outlook ID unique
   and stable: it survives renames, moves within the mail file, deletion into Deleted Items and
@@ -846,6 +879,18 @@ its mailbox tests on, and change nothing you install.
   as by an Outlook that does not answer), `DeadGateway`, `RecordingGateway`, `RepoPaths`, moved
   there, and `ExampleLiveSettings`. No test changed what it checks: the build machine ran 4,167
   tests before and after.
+
+- ✅ **The draft tests read where Word lays out a reply's text, and check no draft became a form.**
+  The reply, reply-all and forward tests now read Word's own layout of each draft and fail when its
+  first paragraph has a top border or its text or signature is not above the quoted header block
+  (Q209 (a)), with and without a signature. They also read every new draft's, reply's and forward's
+  message class and form-definition properties, because a draft is now committed through Outlook's
+  Message form page and then saved again, and a one-off form would be sent as an attachment. The
+  pin test checks that connecting makes no hidden window and that a session is listed while it is
+  connected and gone once it ends; the disconnect test expects the close of Outlook's only window to
+  end it, with no pin to hold it. `T1/OutlookSessionRegistryTests` pins every rule of the session
+  list and its file, `T1/QuoteSlotRulesTests` where the text goes, and the source checks that
+  connecting makes no pin and that a draft gets its editor only through the decided route.
 
 - ✅ **A live run that starts Outlook closes Office's activation wizard and records it.**
   Past Office's 30-day activation grace, which the Exchange test machine's real clock has crossed,
@@ -1446,6 +1491,32 @@ its mailbox tests on, and change nothing you install.
   sweep fragment, the definitions the sweep matches with, instead of the incident tool's copy.
 
 ### Fixed
+
+- 🐛 **OutlookAI's hidden window is no longer left behind, keeping Outlook running (Q118 (a)).**
+  The hidden window that keeps an Outlook with no window running while agents draft was closed only
+  by the session that had started Outlook. So it was left behind by a session that connected while
+  another was starting Outlook, or whose process was killed, and a window left behind kept Outlook
+  running past Application.Quit() and past closing a window opened over it (measured 2026-10-03);
+  and a starter that ended first closed it under the others. Every session now joins a list kept in a
+  file under the OutlookAI folder and changed only under a shared lock: Outlook has one such window,
+  recorded by its window handle and shared by every session; the last session to end closes it,
+  whoever made it; a session that hears Outlook quit closes it, so your exit wins for every session;
+  and a session whose process died is dropped by the next one, which takes its window over. Only a
+  recorded window that is still hidden is ever closed. `outlook_health` lists the sessions attached
+  to Outlook, whether OutlookAI started it, the hidden window and who made it, and what will end
+  Outlook, and calls a window that no session holds any more a problem, with File > Exit as the way
+  out.
+
+- 🐛 **A reply's or forward's text and signature sit above the quoted message, not under its line.**
+  `Reply()` and `Forward()` leave two empty paragraphs above the quoted message's header block for
+  the new text, and the block's first paragraph carries the separator line as its top border.
+  OutlookAI put the signature, and then the text, at the start of that bordered paragraph, so Word
+  laid them out under the line, inside the header block: all 12 replies and forwards Q149 measured on
+  2026-11-17, the first paragraph in Times New Roman. As decided (Q209 (a)), the text and the
+  signature now go into the empty paragraphs above the block, and the last of them stays as the blank
+  line before it; with text right above the block, an empty paragraph is split off it first. A
+  revision of such a draft replaces only what is above the block. Nothing is written into the quoted
+  message any more, so the marker that bounds it no longer swallows the new text either.
 
 - 🐛 **A move names a folder whose name holds `/`, `\` or `%` the way list_folders does.**
   `move_mail` and `archive_mail` printed the folders an item left and went to as Outlook writes them,
