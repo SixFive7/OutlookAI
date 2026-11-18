@@ -124,8 +124,10 @@
   two thread suites' three pairs of parallel tests assert through `ThreadWalks`, keeping their
   names. S5a is complete. In parallel: the PowerShell helpers (S7), the two `Get-ShortHash`
   functions of the guest's measurement scripts among them, and the rules restated in C# and
-  PowerShell as shared C# source (Q171), the updater's 26 lines that `Tools/Publish-Release.ps1`
-  restates among them.
+  PowerShell as shared C# source (Q171). The updater's signature check is shared: Core's
+  `InstallerSignature`, which the add-in calls and `Tools/Publish-Release.ps1` compiles with
+  Add-Type. Left of Q171: the file-identity calls `Testbed/host/New-LiveTestSettings.ps1` declares
+  beside the audit log's in Core (the survey's X05).
   S7 also takes the two MCP stdio clients left beside `Testbed/guest/McpStdioClient.ps1`:
   `Invoke-GuestMeasure.ps1`'s, kept as found, and `Measure-PinWindows.ps1`'s C# session class.
 

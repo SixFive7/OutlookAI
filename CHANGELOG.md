@@ -1183,6 +1183,23 @@ its mailbox tests on, and change nothing you install.
   would overwrite the change or copy it into the mailbox, and says to use Outlook instead. Roaming on
   Microsoft 365 Apps itself is not tested: the test machines run perpetual Office only.
 
+- ♻️ **A release checks the installer's signature with the updater's own code (Q171).**
+  Before an installed copy's updater runs an installer it has downloaded, WinVerifyTrust has to
+  answer 0 or CERT_E_UNTRUSTEDROOT - the answer a valid signature by the self-signed release
+  certificate gets - and the signer has to be the pinned certificate. `Tools/Publish-Release.ps1`
+  makes the same check of the installer it has just signed, and did so with a C# copy of the call
+  and the rule restated in PowerShell; its copy lacked the updater's fail-closed answer for a call
+  that throws. The check is now `InstallerSignature`, in OutlookAI.Core's add-in part: the add-in
+  calls it, and the release script compiles the same file with Add-Type, as the maintainer decided
+  on 2026-11-18 (Q171 (c)). The file is therefore C# 5, the language Windows PowerShell 5.1's
+  Add-Type compiles, and names nothing else of Core. Its call loads wintrust.dll from System32 only,
+  which Core and the add-in already required of every call they make and nothing required of what
+  Add-Type compiles. A refusal names what the update line would show, as in "every installed copy
+  would refuse this installer: Installer was not signed by the expected OutlookAI certificate."
+  Nothing outside Outlook ran the updater's check before; the new T1 `InstallerSignatureTests` pin
+  the rule against WinVerifyTrust answers written out by hand, and run the call on a file with no
+  signature, a missing file and the .NET runtime's own core library, which Microsoft signs.
+
 - ♻️ **A failed COM call is described in one place, where nine catch blocks wrote out its text (Q154).**
   The COM session and the mail service named a failed call as "COMException 0x" and its HRESULT in
   eight digits in nine catch blocks, each writing out the text of the shared
