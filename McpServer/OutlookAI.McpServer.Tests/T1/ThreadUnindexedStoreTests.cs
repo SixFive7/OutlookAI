@@ -287,53 +287,21 @@ public sealed class ThreadUnindexedStoreTests
 
     /// <summary>
     /// A session that answers the profile's store list and one conversation walk, and refuses
-    /// everything else. A <see cref="DispatchProxy"/> so a member added to the contract needs
-    /// no change here. Not sealed: DispatchProxy derives from its TProxy at runtime.
+    /// everything else, scripted on the shared <see cref="StandInSession"/>.
     /// </summary>
-    private class WalkSession : DispatchProxy
+    private static class WalkSession
     {
-        private IReadOnlyList<ComStoreDetail> _stores = Array.Empty<ComStoreDetail>();
-        private string _walkedStore = IndexedStore;
+        internal static IOutlookSession Create(IReadOnlyList<ComStoreDetail> stores, string walkedStore) =>
+            StandInSession.Create(
+                stores,
+                script: standIn => standIn.Answering(nameof(IOutlookSession.TryGetConversationItems), _ => Members(walkedStore)));
 
-        internal static IOutlookSession Create(IReadOnlyList<ComStoreDetail> stores, string walkedStore)
-        {
-            object proxy = Create<IOutlookSession, WalkSession>()
-                ?? throw new InvalidOperationException("DispatchProxy.Create returned null.");
-            ((WalkSession)proxy)._stores = stores;
-            ((WalkSession)proxy)._walkedStore = walkedStore;
-            return (IOutlookSession)proxy;
-        }
-
-        /// <inheritdoc />
-        protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
-        {
-            switch (targetMethod?.Name)
-            {
-                case nameof(IOutlookSession.GetProfileName):
-                    return "T1 stand-in profile";
-
-                case nameof(IOutlookSession.GetStoreDetails):
-                    return TestFolders.WithRoots(_stores);
-
-                case nameof(IOutlookSession.TryDescribeFolder):
-                    return TestFolders.Describe(args);
-
-                case nameof(IOutlookSession.TryGetConversationItems):
-                    return Members();
-
-                default:
-                    throw new NotSupportedException(
-                        "The stand-in session was asked for " + (targetMethod?.Name ?? "an unnamed member")
-                        + ", which this test does not model.");
-            }
-        }
-
-        private IReadOnlyList<ComMailBrief> Members()
+        private static IReadOnlyList<ComMailBrief> Members(string walkedStore)
         {
             return Enumerable.Range(1, 3)
                 .Select(i => new ComMailBrief(
                     entryId: "MEMBER" + i,
-                    storeDisplayName: _walkedStore,
+                    storeDisplayName: walkedStore,
                     storeId: "store-walked",
                     folderName: "Inbox",
                     folderKind: "inbox",
