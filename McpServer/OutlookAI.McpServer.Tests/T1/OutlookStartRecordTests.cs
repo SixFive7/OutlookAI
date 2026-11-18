@@ -310,9 +310,22 @@ public sealed class OutlookStartRecordTests
         dying.Join();
         Assert.NotNull(leftBehind);
 
-        using OutlookStartLock? next = OutlookStartLock.TryAcquire(name);
-        Assert.NotNull(next);
-        Assert.True(next!.PreviousHolderDied);
+        // Join can return before Windows has finished ending the thread and handed its mutex on: the build VM
+        // once found it still held (run 20261118-074845-8c22cfb37725). So the next connection looks again, as
+        // the guard does while it waits (OutlookStartGuard.Enter), for up to five seconds.
+        OutlookStartLock? next = OutlookStartLock.TryAcquire(name);
+        for (int look = 0; next == null && look < 500; look++)
+        {
+            Thread.Sleep(10);
+            next = OutlookStartLock.TryAcquire(name);
+        }
+
+        using (next)
+        {
+            Assert.NotNull(next);
+            Assert.True(next!.PreviousHolderDied);
+        }
+
         GC.KeepAlive(leftBehind);
     }
 
