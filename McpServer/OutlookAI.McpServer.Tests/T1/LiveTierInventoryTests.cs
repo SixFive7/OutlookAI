@@ -458,6 +458,25 @@ public sealed class LiveTierInventoryTests
     }
 
     [Fact]
+    public void TheConfirmedLeftoverRemoval_IsOneTest_ThatNoDerivedFilterSelects()
+    {
+        // Q138: the one write a bystander ever gets runs only when named. One method declares the capability;
+        // the PST guests leave out CachedExchange, which it also needs; the read-only Exchange filter takes only
+        // Writes=Nothing, which it does not carry; and the Exchange VM's write filter, and its narrowing past
+        // Office's grace, leave the capability out by name.
+        MethodInfo test = Assert.Single(LiveTestMethods(), m => TraitValues(m, "Requires").Contains(LiveRunFilters.ConfirmedLeftover));
+        Assert.Equal(typeof(LiveConfirmedLeftoverTests), test.DeclaringType);
+        Assert.Contains(LiveRunFilters.CachedExchange, TraitValues(test, "Requires"));
+        Assert.DoesNotContain(LiveRunFilters.WritesNothing, TraitValues(test, LiveRunFilters.WritesTrait));
+
+        Assert.Contains("Requires!=" + LiveRunFilters.CachedExchange, LiveRunFilters.Guest, StringComparison.Ordinal);
+        Assert.Contains("Requires!=" + LiveRunFilters.CachedExchange, LiveRunFilters.GuestUnindexed, StringComparison.Ordinal);
+        Assert.Contains(LiveRunFilters.WritesTrait + "=" + LiveRunFilters.WritesNothing, LiveRunFilters.ExchangeGuest, StringComparison.Ordinal);
+        Assert.Contains("Requires!=" + LiveRunFilters.ConfirmedLeftover, LiveRunFilters.ExchangeTestAccount, StringComparison.Ordinal);
+        Assert.Contains("Requires!=" + LiveRunFilters.ConfirmedLeftover, LiveRunFilters.ExchangeTestAccountWritesNothing, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void TheExchangeVmsInterimFilter_IsTheWriteFilterWithWritesNothing()
     {
         // Decision 206 (2026-11-17): while Office on the Exchange VM is past its grace and creates no item, a run

@@ -1,4 +1,3 @@
-using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using OutlookAI.McpServer.Tests.T2;
@@ -10,8 +9,8 @@ namespace OutlookAI.McpServer.Tests.T1;
 /// Pins the one write a bystander ever gets (Q138): the confirmed leftover's pin and selection - its EntryID AND
 /// its subject, both exactly - the gate that allows it only on the Exchange VM's test-account profile and only in
 /// its one bystander, the check of the copy a move hands back, the count tripwire accepting that one tagged
-/// departure and no other, the sweep's pre-run count coming down by it, and the one-off test that no derived
-/// filter selects. Nothing here touches an Outlook: the EntryIDs are made up.
+/// departure and no other, and the sweep's pre-run count coming down by it. That no derived filter selects the
+/// one-off test is <c>LiveTierInventoryTests</c>' to pin. Nothing here touches an Outlook: the EntryIDs are made up.
 /// </summary>
 public sealed class ConfirmedLeftoverTests
 {
@@ -263,40 +262,5 @@ public sealed class ConfirmedLeftoverTests
 
         ArtifactSweepPolicy.Run(plan, _ => 0, _ => Assert.Fail("nothing to purge"), _ => { }, adjusted);
         Assert.Throws<InvalidOperationException>(() => ArtifactSweepPolicy.Run(plan, store => store == Bystander ? 1 : 0, _ => { }, _ => { }, adjusted));
-    }
-
-    // ---- the one-off test, and the filters ----
-
-    [Fact]
-    public void TheOneOffRemoval_IsOneTest_ThatNoDerivedFilterSelects()
-    {
-        List<MethodInfo> carriers = typeof(LiveCollections).Assembly.GetTypes()
-            .Where(t => t.IsClass && !t.IsAbstract)
-            .SelectMany(t => t.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly))
-            .Where(m => m.GetCustomAttributes(typeof(FactAttribute), inherit: true).Length > 0)
-            .Where(m => Traits(m, "Requires").Contains(LiveRunFilters.ConfirmedLeftover))
-            .ToList();
-        MethodInfo test = Assert.Single(carriers);
-        Assert.Equal(typeof(LiveConfirmedLeftoverTests), test.DeclaringType);
-        Assert.Contains("Live", Traits(test, "Category"));
-        Assert.Contains(LiveRunFilters.CachedExchange, Traits(test, "Requires"));
-        Assert.DoesNotContain(LiveRunFilters.WritesNothing, Traits(test, LiveRunFilters.WritesTrait));
-
-        // The PST guests leave out CachedExchange; the read-only Exchange filter takes only Writes=Nothing; the
-        // Exchange VM's write filter, and its narrowing, leave the capability out by name.
-        Assert.Contains("Requires!=" + LiveRunFilters.CachedExchange, LiveRunFilters.Guest, StringComparison.Ordinal);
-        Assert.Contains("Requires!=" + LiveRunFilters.CachedExchange, LiveRunFilters.GuestUnindexed, StringComparison.Ordinal);
-        Assert.Contains(LiveRunFilters.WritesTrait + "=" + LiveRunFilters.WritesNothing, LiveRunFilters.ExchangeGuest, StringComparison.Ordinal);
-        Assert.Contains("Requires!=" + LiveRunFilters.ConfirmedLeftover, LiveRunFilters.ExchangeTestAccount, StringComparison.Ordinal);
-        Assert.Contains("Requires!=" + LiveRunFilters.ConfirmedLeftover, LiveRunFilters.ExchangeTestAccountWritesNothing, StringComparison.Ordinal);
-    }
-
-    private static List<string> Traits(MethodInfo method, string name)
-    {
-        return method.GetCustomAttributesData().Concat(method.DeclaringType!.GetCustomAttributesData())
-            .Where(a => a.AttributeType == typeof(TraitAttribute) && a.ConstructorArguments.Count == 2)
-            .Where(a => string.Equals(a.ConstructorArguments[0].Value as string, name, StringComparison.Ordinal))
-            .Select(a => (string)a.ConstructorArguments[1].Value!)
-            .ToList();
     }
 }
