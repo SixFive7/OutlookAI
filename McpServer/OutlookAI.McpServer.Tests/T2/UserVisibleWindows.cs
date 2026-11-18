@@ -10,12 +10,12 @@ using OutlookAI.Core.Com;
 namespace OutlookAI.McpServer.Tests.T2;
 
 /// <summary>
-/// What <see cref="ComposeSurface.CountUserVisibleWindows"/> counted, window by window, so that a test whose
-/// count went up names the windows that did it: each one's class (rctrl_renwnd32 is Outlook's own - an
-/// Explorer or an Inspector, a compose window among them), its title with anything but the window's kind
-/// reduced to the test tag and a hash - never a subject - its process, its rectangle, whether DWM cloaks it
-/// or it is minimised, and when it was read. The windows come from
-/// <see cref="ComposeSurface.UserVisibleWindowHandles"/>, the count's own filter; the description says when
+/// What <see cref="ComposeSurface.CountUserVisibleWindows"/> counted, window by window, so that a test names
+/// the windows it found on screen as it started and those it left: each one's class (rctrl_renwnd32 is
+/// Outlook's own - an Explorer or an Inspector, a compose window among them), its title with anything but
+/// the window's kind reduced to the test tag and a hash - never a subject - its process, its rectangle,
+/// whether DWM cloaks it or it is minimised, and when it was read. The windows come from
+/// <see cref="ComposeSurface.UserVisibleWindowHandles"/>, the count's own filter; each listing says when
 /// the count taken a moment before and the list disagree.
 /// </summary>
 internal static class UserVisibleWindows
@@ -45,6 +45,31 @@ internal static class UserVisibleWindows
         }
 
         return windows;
+    }
+
+    /// <summary>
+    /// The windows at one moment, one line each, with the count taken just before them: what a test found
+    /// on screen as it started. Windows an earlier test left can already be showing then, and a test whose
+    /// count goes from 3 to 3 passes without naming them. Starts with a line break, as
+    /// <see cref="Describe"/> does.
+    /// </summary>
+    internal static string List(string moment, IReadOnlyList<Window> windows, int counted)
+    {
+        StringBuilder text = new StringBuilder();
+        text.Append(CultureInfo.InvariantCulture, $"{Environment.NewLine}user-visible windows {moment}: {windows.Count} listed ({counted} counted)");
+        if (windows.Count != counted)
+        {
+            text.Append($"{Environment.NewLine}  NOTE: the count and the list taken just after it disagree - a window came or went between them, or the two filters have drifted apart");
+        }
+
+        foreach (Window w in windows)
+        {
+            text.Append(Environment.NewLine);
+            text.Append("  ");
+            text.Append(Format(w));
+        }
+
+        return text.ToString();
     }
 
     /// <summary>

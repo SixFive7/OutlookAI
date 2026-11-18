@@ -1095,16 +1095,18 @@ its mailbox tests on, and change nothing you install.
   ms, which on the test machines took neither the foreground nor a key from a person typing in
   another program, and no later draft shows anything.
 
-- ✅ **A compose test that finds more windows on screen names each one in its failure.**
+- ✅ **A compose test names each window it finds on screen, at its start and in its failure.**
   `LiveHeadlessComposeParityTests` failed twice on 2026-11-18 with "user-visible windows 1 -> 3" and
-  nothing else: it counted the windows, so nobody could say what the two new ones were. Both of its
-  tests now also list the counted windows before and after composing, through
-  `ComposeSurface.UserVisibleWindowHandles`, a read-only list made with the count's own filter, and
-  when the count goes up the failure and the test output name each window: its class
-  (`rctrl_renwnd32` is Outlook's own, a compose window among them), its title with everything but
-  the window's kind reduced to the test tag and a hash, its process, its rectangle, whether it is
-  cloaked or minimised, when it was read, and whether it is new. The count and the list are set side
-  by side, so a drift between their filters shows. What the tests assert is unchanged.
+  nothing else: it counted the windows, so nobody could say what the two new ones were. And some runs
+  found the two already showing when the tests began, counted 3 -> 3 and passed. Both of its tests
+  now list the counted windows in their output as they start, and again after composing, through
+  `ComposeSurface.UserVisibleWindowHandles`, a read-only list made with the count's own filter; when
+  the count goes up, the failure names them too, as does the first test's check that a window-less
+  Outlook starts with none. Each window is given by its class (`rctrl_renwnd32` is Outlook's own, a
+  compose window among them), its title with everything but the window's kind reduced to the test
+  tag and a hash, its process, its rectangle, whether it is cloaked or minimised, when it was read,
+  and whether it is new. The count and the list are set side by side, so a drift between their
+  filters shows. What the tests assert is unchanged.
 
 - ✅ **The test machines carry the .NET 11 SDK beside .NET 10, on new checkpoints (Q172).**
   OutlookAI is moving to .NET 11 (Q172), and nothing on .NET 11 can be tested until the test
