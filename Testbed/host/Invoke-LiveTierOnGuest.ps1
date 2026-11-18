@@ -9,6 +9,10 @@
     The guest counterpart of Invoke-TestsOnBuildVm.ps1, written 2026-10-03 after the first guest
     runs were driven by hand from scratch scripts, hundreds of calls a run. One run is:
 
+      0. GATE    - waits, holding nothing, while the testbed's pause switch is on or the host's
+                   processors were 70 % busy or more over the last 30 seconds (Q195 (e),
+                   Testbed/host/TestbedLoad.ps1): the build below is the run's first load on this
+                   host. It says what it waits for, and since when, once a minute.
       1. BUILD   - the commit, never the working tree: a detached `git worktree` of it, from which
                    Publish-GuestPayload.ps1 builds the server and the tools and
                    Publish-LiveTierPayload.ps1 takes the suite's source (`git archive`) and the
@@ -20,7 +24,10 @@
                    guests are shared between agents, and the idle-saver saves any running guest that
                    holds no live lease. It waits asking Hyper-V nothing (2026-11-18): a ticket in the
                    testbed's queue, first come first served, the lease files to tell a free guest,
-                   and a sleep until a lease or a ticket changes or 30 s pass (TestbedPool.ps1).
+                   and a sleep until a lease, a ticket or the gate's switch changes or 30 s pass
+                   (TestbedPool.ps1). Every turn of that wait looks at the gate again before it
+                   tries a guest, and the lease is taken only under the gate's claim, the VMs other
+                   runs took in the last two minutes counted at their size (TestbedLoad.ps1).
       3. STAGE   - restores the start checkpoint, copies the payloads, the settings and the commit's
                    Testbed/guest scripts in, swaps the server, tools, source and feed, and proves the
                    suite TEST-READY (Install-DotnetSdk.ps1 -Execute, then -Verify).
@@ -170,6 +177,10 @@
     With -SignatureSettings: how its two registry values are written - ExpandString (REG_EXPAND_SZ, the
     default; what Outlook was reported to honour) or String (REG_SZ).
 
+.PARAMETER LeaseWaitMinutes
+    How long the run waits at the gate before its build, and again how long it waits for a guest -
+    for leases others hold and for the gate - before it gives up as INFRA, not tested. Default 240.
+
 .PARAMETER SelfTest
     Checks the pure parts - the guest table, the filter, the lease decision, the TRX and console
     readers, the verdict table, summary.json's shape - and the constants against the files they
@@ -227,6 +238,8 @@ $Guests = [ordered]@{
 # of the same name, with the source's computer name, stores and settings, so its facts are its
 # source's: the same opt-in, the same filter, the same rendered settings, the same frozen record.
 . (Join-Path $PSScriptRoot 'TestbedPool.ps1')
+# THE GATE (Q195 (e)): the pause switch and the load limit, before the build and before a guest is taken.
+. (Join-Path $PSScriptRoot 'TestbedLoad.ps1')
 # Hyper-V's Time Synchronization integration service, by component id (Set-GuestClockFrozen.ps1).
 $TimeSyncComponentId = '2497F4DE-E9FA-4204-80E4-4B75C46419C0'
 # The profile the suite runs on, which a frozen start opens NOT elevated before the suite, as step 9a
@@ -925,18 +938,24 @@ function Invoke-SelfTest {
     Check 'a live lease of another run is theirs' 'theirs' (Get-LeaseDecision ([pscustomobject]@{ expiresUnix = $now + 60; reason = 'Invoke-LiveTierOnGuest r2' }) 'r1' $now)
     Check 'a live lease of another agent is theirs' 'theirs' (Get-LeaseDecision ([pscustomobject]@{ expiresUnix = $now + 60; reason = 'agent accec8f1: folder-path tests' }) 'r1' $now)
 
-    Write-Host '== a run that waits asks Hyper-V nothing (2026-11-18, TestbedPool.ps1) =='
+    Write-Host '== the gate (Q195 (e), TestbedLoad.ps1) and the queue (2026-11-18, TestbedPool.ps1): before the build, and on every turn of the lease wait, asking Hyper-V nothing =='
     # Looked for in the run's code only - after this function, whose own lines name the same text.
     $selfTestAst = @([System.Management.Automation.Language.Parser]::ParseFile($PSCommandPath, [ref] $null, [ref] $null).FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Invoke-SelfTest' }, $false))
     $runCode = ''
     if ($selfTestAst.Count -eq 1) { $runCode = $runner.Substring($selfTestAst[0].Extent.EndOffset) }
     Check 'the run''s code is found after this self-test' $true ($runCode.Length -gt 1000)
     $at = @{}
-    foreach ($mark in @('$ticket = Join-TestbedQueue -Run $runId', '$ahead = Get-TestbedQueueTurn', '$held = Get-TestbedLease -VMName $guest.Name', '$refusals[$guest.Name] = Get-GuestRunRefusal $guest', '$startupBytes[$guest.Name] = [long](Get-VM -Name $guest.Name).MemoryStartup', '$holder = Request-GuestLease $guest.Name 60', '[void](Wait-TestbedChange)', 'finally { Exit-TestbedQueue $ticket }')) { $at[$mark] = $runCode.IndexOf($mark) }
+    foreach ($mark in @('$gate = Wait-TestbedGate -Run $runId', "& (Join-Path `$PSScriptRoot 'Publish-GuestPayload.ps1')", '$look = Test-TestbedGate', 'if ($gated) { $why += $look.Why }', '$ticket = Join-TestbedQueue -Run $runId', '$ahead = Get-TestbedQueueTurn', '$held = Get-TestbedLease -VMName $guest.Name', '$refusals[$guest.Name] = Get-GuestRunRefusal $guest', '$startupBytes[$guest.Name] = [long](Get-VM -Name $guest.Name).MemoryStartup', '$start = Enter-TestbedStart -Look $look -Run $runId', 'if (-not $start.Go) { $gated = $true', '$holder = Request-GuestLease $guest.Name 60', 'Register-TestbedStart -Start $start', 'finally { Exit-TestbedStart $start }', '[void](Wait-TestbedChange)', 'finally { Exit-TestbedQueue $ticket; if ($null -ne $waitingSince) { Remove-TestbedWaiting } }', '# ---- STAGE.')) { $at[$mark] = $runCode.IndexOf($mark) }
+    Check 'the gate is passed before the build - the run''s first load on this host' $true ($at['$gate = Wait-TestbedGate -Run $runId'] -gt 0 -and $at['$gate = Wait-TestbedGate -Run $runId'] -lt $at["& (Join-Path `$PSScriptRoot 'Publish-GuestPayload.ps1')"])
+    Check 'every turn of the lease wait looks at it again before it tries a guest' $true ($at['$look = Test-TestbedGate'] -gt $at["& (Join-Path `$PSScriptRoot 'Publish-GuestPayload.ps1')"] -and $at['if ($gated) { $why += $look.Why }'] -gt $at['$look = Test-TestbedGate'] -and $at['if ($gated) { $why += $look.Why }'] -lt $at['$holder = Request-GuestLease $guest.Name 60'])
+    Check 'the lease is taken only once the start is decided under the gate''s claim' $true ($at['$start = Enter-TestbedStart -Look $look -Run $runId'] -gt $at['$look = Test-TestbedGate'] -and $at['$start = Enter-TestbedStart -Look $look -Run $runId'] -lt $at['$holder = Request-GuestLease $guest.Name 60'] -and $at['if (-not $start.Go) { $gated = $true'] -lt $at['$holder = Request-GuestLease $guest.Name 60'])
+    Check 'its start is written once the lease is its, and the claim let go on every path' $true ($at['Register-TestbedStart -Start $start'] -gt $at['$holder = Request-GuestLease $guest.Name 60'] -and $at['finally { Exit-TestbedStart $start }'] -gt $at['Register-TestbedStart -Start $start'])
+    Check 'and the guest is touched only after all of it' $true ($at['finally { Exit-TestbedQueue $ticket; if ($null -ne $waitingSince) { Remove-TestbedWaiting } }'] -gt $at['finally { Exit-TestbedStart $start }'] -and $at['# ---- STAGE.'] -gt $at['finally { Exit-TestbedQueue $ticket; if ($null -ne $waitingSince) { Remove-TestbedWaiting } }'])
+    Check 'the gate comes before the turn''s place in the queue, so a turn it holds back keeps the ticket and tries no guest' $true ($at['$look = Test-TestbedGate'] -lt $at['$ahead = Get-TestbedQueueTurn'] -and $at['$ahead = Get-TestbedQueueTurn'] -lt $at['$held = Get-TestbedLease -VMName $guest.Name'])
     Check 'a run waiting for a guest holds a ticket and reads its turn on every pass' $true ($at['$ticket = Join-TestbedQueue -Run $runId'] -gt 0 -and $at['$ahead = Get-TestbedQueueTurn'] -gt $at['$ticket = Join-TestbedQueue -Run $runId'])
     Check 'whether a guest is free is its lease file, read before Hyper-V is asked anything about it' $true ($at['$held = Get-TestbedLease -VMName $guest.Name'] -gt $at['$ahead = Get-TestbedQueueTurn'] -and $at['$held = Get-TestbedLease -VMName $guest.Name'] -lt $at['$refusals[$guest.Name] = Get-GuestRunRefusal $guest'] -and $at['$refusals[$guest.Name] = Get-GuestRunRefusal $guest'] -lt $at['$startupBytes[$guest.Name] = [long](Get-VM -Name $guest.Name).MemoryStartup'])
     Check 'and what does not change in a run - its checkpoints, its startup memory - is asked once a run' $true ($runCode.Contains('if (-not $refusals.ContainsKey($guest.Name))') -and $runCode.Contains('if (-not $startupBytes.ContainsKey($guest.Name))'))
-    Check 'between passes it sleeps on the testbed''s files, and leaves the queue on every path' $true ($at['[void](Wait-TestbedChange)'] -gt $at['$holder = Request-GuestLease $guest.Name 60'] -and $at['finally { Exit-TestbedQueue $ticket }'] -gt $at['[void](Wait-TestbedChange)'])
+    Check 'between passes it sleeps on the testbed''s files, and leaves the queue on every path' $true ($at['[void](Wait-TestbedChange)'] -gt $at['$holder = Request-GuestLease $guest.Name 60'] -and $at['finally { Exit-TestbedQueue $ticket; if ($null -ne $waitingSince) { Remove-TestbedWaiting } }'] -gt $at['[void](Wait-TestbedChange)'])
     Check 'the heartbeat is one narrow query on the guest''s id, every 2 s' $true ($runCode.Contains('while (-not (Test-TestbedHeartbeat (Get-GuestVmId $facts.Name)))') -and $runCode.Contains('Start-Sleep -Seconds $TestbedHeartbeatSeconds') -and -not $runCode.Contains("Get-VMIntegrationService -VMName `$facts.Name -Name 'Heartbeat'"))
     Check 'the run''s guest calls share one PowerShell Direct session, opened by the guest''s id' $true ($runCode.Contains('New-PSSession -VMId (Get-GuestVmId $facts.Name)') -and -not $runCode.Contains('Invoke-Command -VMName') -and ([regex]::Matches($runCode, 'Invoke-Command -Session ')).Count -eq 2 -and $runCode.Contains('$out = Invoke-Command -Session $session -ScriptBlock'))
     Check 'and each guest call starts as a session of its own did: no exit code from the call before, the folder it started in' $true ($runCode.Contains('$global:LASTEXITCODE = $null') -and $runCode.Contains('Set-Location -LiteralPath $global:OutlookAIGuestStart') -and $runCode.IndexOf('$global:LASTEXITCODE = $null') -lt $runCode.IndexOf('"RUN-REGISTER-EXIT: $LASTEXITCODE"'))
@@ -1069,8 +1088,11 @@ STACK      the faulting thread
     $hl = @(Get-DumpHeadline $sample 2)
     Check 'the headline: the exception, where, how - and the top frames, no more than asked' 'access violation|wwlib.dll+0x7BA1A|READING|00  wwlib.dll+0x7BA1A|01  combase.dll!CoTaskMemFree+0x10|5' @($hl[0].Substring(11, 16), $hl[1].Substring(23, 17), $hl[2].Substring(0, 7), $hl[3].Substring(0, 21), $hl[4], $hl.Count)
     Check 'a report with no exception has no headline' 0 @(Get-DumpHeadline 'DUMP x').Count
-    $fetchAt = $own.IndexOf('if ($suiteStarted) { Save-CrashDumps }')
-    Check 'the dumps are fetched before the guest rests - the restore wipes them' $true ($fetchAt -gt 0 -and $fetchAt -lt $own.IndexOf('Restore-Guest $restOn'))
+    # Searched in the run's code alone: in the whole file the first of each text is in this check itself,
+    # and there they stood in the right order whatever the run did - a check that could not fail
+    # (found 2026-11-18).
+    $fetchAt = $runCode.IndexOf('if ($suiteStarted) { Save-CrashDumps }')
+    Check 'the dumps are fetched before the guest rests - the restore wipes them' $true ($fetchAt -gt 0 -and $fetchAt -lt $runCode.IndexOf('Restore-Guest $restOn'))
 
     Write-Host '== the guest''s clock around every guest call (stream K, 2026-11-18) =='
     $sample = "noise`r`nGUEST-CLOCK-BEFORE 2026-10-03T19:46:53.1234567Z W. Europe Standard Time`r`nSDK-EXECUTE-EXIT 0`r`nGUEST-CLOCK-AFTER 2026-10-03T19:47:53.6234567Z W. Europe Standard Time  `r`n"
@@ -1464,6 +1486,15 @@ function Get-TaskExit([string] $Text) {
 }
 
 try {
+    # ---- GATE (Q195 (e), TestbedLoad.ps1): the pause switch and the host's load, before the build puts
+    # this run's first load on the host. Waits holding nothing; a run the gate never lets through is INFRA.
+    $t0 = Get-Date
+    Say "gate: the pause switch, then the host's load over the last $TestbedLoadWindowSeconds s (Testbed/host/TestbedLoad.ps1)"
+    $gate = Wait-TestbedGate -Run $runId -What "Invoke-LiveTierOnGuest run $runId, before its build" -TimeoutMinutes $LeaseWaitMinutes -Say { param($line) Say $line }
+    if (-not $gate.Go) { $stage = 'INFRA'; $stageWhy = "the gate did not open in $LeaseWaitMinutes minutes - $($gate.Why)"; throw $stageWhy }
+    $timings['gate'] = Format-Seconds ((Get-Date) - $t0).TotalSeconds
+    Say "gate: $(Format-TestbedGateOpen -Look $gate.Look -PendingPercent $gate.Pending.Percent -PendingCount $gate.Pending.Count) ($($timings['gate']))"
+
     # ---- BUILD: the commit's tree, its payloads and the guest's settings. The guest is untouched.
     $t0 = Get-Date
     try {
@@ -1491,49 +1522,87 @@ try {
     # A run that waits asks Hyper-V nothing (2026-11-18, TestbedPool.ps1's banner): it holds a ticket
     # in the testbed's queue and tries only the guests no earlier ticket wants; whether a guest is
     # free is its lease file; Hyper-V is asked about a guest only once its lease is free - and the facts
-    # that do not change in a run, its checkpoints and its startup memory, once a run. Between turns
-    # it sleeps until a lease, a lock's owner file or a ticket changes, or 30 s pass.
+    # that do not change in a run, its checkpoints and its startup memory, once a run. Every turn looks
+    # at the gate first, before its place in the queue, and a lease is taken only under the gate's
+    # claim, the VMs other runs took lately counted; a run told to wait lets the claim go
+    # (TestbedLoad.ps1). Between turns it sleeps until a lease, a lock's owner file, a ticket or the
+    # gate's switch changes, or 30 s pass.
     $t0 = Get-Date
     $deadline = (Get-Date).AddMinutes($LeaseWaitMinutes)
     $candidates = @($facts.Name)
     if ($Kind) { $candidates = @(Get-KindMembers $Kind) }
     $lastSaid = ''
+    $lastSaidAt = [DateTime]::MinValue
+    $waitingSince = $null
     $takenGuest = $null
     $refusals = @{}
     $startupBytes = @{}
+    $look = $null
+    $leaseStart = $null
+    # The gate's readings from before the build are dropped: the first look here starts after it, so
+    # the build - this run's own load - is never what holds the run back.
+    $TestbedLoadReadings.Clear()
     $ticket = Join-TestbedQueue -Run $runId -What "Invoke-LiveTierOnGuest run $runId, $kindText" -Candidates $candidates
     try {
         while ($null -eq $takenGuest) {
             $why = @()
-            $ahead = Get-TestbedQueueTurn -Ticket $ticket -Run $runId -Candidates $candidates
-            for ($i = 0; $i -lt $candidates.Count; $i++) {
-                $guest = Get-GuestFacts $candidates[$i]
-                if ($ahead.ContainsKey($guest.Name)) { $why += "$($guest.Name) is wanted first by run $($ahead[$guest.Name]), queued before this one"; continue }
-                $held = Get-TestbedLease -VMName $guest.Name
-                if ((Get-LeaseDecision $held $runId ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())) -eq 'theirs') { $why += "$($guest.Name) is leased until $($held.expiresUtc) - $($held.reason)"; continue }
-                if ($Kind) {
-                    if (-not $refusals.ContainsKey($guest.Name)) { $refusals[$guest.Name] = Get-GuestRunRefusal $guest }
-                    if ($refusals[$guest.Name]) { $why += $refusals[$guest.Name]; continue }
-                    if ($i -gt 0) {
-                        if (-not $startupBytes.ContainsKey($guest.Name)) { $startupBytes[$guest.Name] = [long](Get-VM -Name $guest.Name).MemoryStartup }
-                        $need = $startupBytes[$guest.Name]
-                        $available = Get-HostAvailableBytes
-                        if (-not (Test-HostHasRoom -NeedBytes $need -AvailableBytes $available)) { $why += ("{0} waits for memory: the host has {1:N1} GB available, under its {2:N0} GB and the {3:N0} GB kept free" -f $guest.Name, ($available / 1GB), ($need / 1GB), ($TestbedHostReserveBytes / 1GB)); continue }
+            $look = Test-TestbedGate
+            $gated = -not $look.Go
+            if ($gated) { $why += $look.Why }
+            else {
+                $ahead = Get-TestbedQueueTurn -Ticket $ticket -Run $runId -Candidates $candidates
+                for ($i = 0; $i -lt $candidates.Count; $i++) {
+                    $guest = Get-GuestFacts $candidates[$i]
+                    if ($ahead.ContainsKey($guest.Name)) { $why += "$($guest.Name) is wanted first by run $($ahead[$guest.Name]), queued before this one"; continue }
+                    $held = Get-TestbedLease -VMName $guest.Name
+                    if ((Get-LeaseDecision $held $runId ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())) -eq 'theirs') { $why += "$($guest.Name) is leased until $($held.expiresUtc) - $($held.reason)"; continue }
+                    if ($Kind) {
+                        if (-not $refusals.ContainsKey($guest.Name)) { $refusals[$guest.Name] = Get-GuestRunRefusal $guest }
+                        if ($refusals[$guest.Name]) { $why += $refusals[$guest.Name]; continue }
+                        if ($i -gt 0) {
+                            if (-not $startupBytes.ContainsKey($guest.Name)) { $startupBytes[$guest.Name] = [long](Get-VM -Name $guest.Name).MemoryStartup }
+                            $need = $startupBytes[$guest.Name]
+                            $available = Get-HostAvailableBytes
+                            if (-not (Test-HostHasRoom -NeedBytes $need -AvailableBytes $available)) { $why += ("{0} waits for memory: the host has {1:N1} GB available, under its {2:N0} GB and the {3:N0} GB kept free" -f $guest.Name, ($available / 1GB), ($need / 1GB), ($TestbedHostReserveBytes / 1GB)); continue }
+                        }
                     }
+                    $start = Enter-TestbedStart -Look $look -Run $runId
+                    if (-not $start.Go) { $gated = $true; $why = @($start.Why); break }
+                    try {
+                        $holder = Request-GuestLease $guest.Name 60
+                        if ($null -eq $holder) {
+                            # Its virtual processors, which the gate counts for the runs after this one: one
+                            # Get-VM a run, with the lease had - none while it waited.
+                            $cpu = 0
+                            try { $cpu = [int](Get-VM -Name $guest.Name -ErrorAction Stop).ProcessorCount } catch { }
+                            Register-TestbedStart -Start $start -Run $runId -VmName $guest.Name -VmProcessors $cpu
+                            $leaseStart = $start
+                            $takenGuest = $guest
+                        }
+                    }
+                    finally { Exit-TestbedStart $start }
+                    if ($null -ne $takenGuest) { break }
+                    $why += "$($guest.Name) is leased until $($holder.expiresUtc) - $($holder.reason)"
                 }
-                $holder = Request-GuestLease $guest.Name 60
-                if ($null -eq $holder) { $takenGuest = $guest; break }
-                $why += "$($guest.Name) is leased until $($holder.expiresUtc) - $($holder.reason)"
             }
             if ($null -eq $takenGuest) {
                 $text = $why -join '; '
-                if ($text -ne $lastSaid) { Say "waiting: $text"; $lastSaid = $text }
+                if ($null -eq $waitingSince) { $waitingSince = Get-Date }
+                # Said when what it waits for changes - while the gate holds it back, at most once a
+                # minute, since its figures move on every turn.
+                if ($text -ne $lastSaid -and (-not $gated -or ((Get-Date) - $lastSaidAt).TotalSeconds -ge 60)) {
+                    Say (Format-TestbedWaitLine -Since $waitingSince -Why $text -First ($lastSaidAt -eq [DateTime]::MinValue))
+                    Set-TestbedWaiting -What "Invoke-LiveTierOnGuest run $runId, for a guest" -Why $text -Since $waitingSince
+                    $lastSaid = $text
+                    $lastSaidAt = Get-Date
+                }
                 if ((Get-Date) -ge $deadline) { $stage = 'INFRA'; $stageWhy = "no guest came free in $LeaseWaitMinutes minutes - $text"; throw $stageWhy }
                 [void](Wait-TestbedChange)
             }
         }
     }
-    finally { Exit-TestbedQueue $ticket }
+    finally { Exit-TestbedQueue $ticket; if ($null -ne $waitingSince) { Remove-TestbedWaiting } }
+    Say "gate: $(Format-TestbedGateOpen -Look $look -PendingPercent $leaseStart.PendingPercent -PendingCount $leaseStart.PendingCount)"
     if ($Kind) {
         Use-Guest $takenGuest
         $checkpointActions['start'] = $Checkpoint

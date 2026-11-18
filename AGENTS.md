@@ -266,9 +266,11 @@ pwsh -File Testbed/host/Invoke-TestsOnBuildVm.ps1 -SkipSuite -SelfTestInclude 'T
   and `OutlookAI-Build3` - copies of one machine, `Testbed/host/TestbedPool.ps1` - and a run takes
   whichever is free; callers queue only while all are busy - first come first served, in a queue of
   files, asking Hyper-V nothing while they wait (2026-11-18). `-VMName` pins one. Run it in the
-  background or with a timeout of 20 minutes or more. Never use a VM by hand while runs may happen;
-  to hold runs off one, take a lease on it with `Testbed/host/Set-TestbedLease.ps1 -VMName <vm>` and
-  release it after.
+  background or with a timeout of 20 minutes or more - and in the background while the host is busy:
+  a run also waits while the testbed is paused or the host's processors are 70 % busy or more, up
+  to its `-QueueTimeoutMinutes` (the section on test VMs below). Never use a VM by hand while runs
+  may happen; to hold runs off one, take a lease on it with
+  `Testbed/host/Set-TestbedLease.ps1 -VMName <vm>` and release it after.
 - **It runs in UTC** (Q126 (a), decided by the maintainer 2026-10-03), not in this workstation's
   W. Europe: with GitHub's UTC runner gone, it is where a zone-dependent test fails. A failure
   there that W. Europe would not show is a time-zone bug until shown otherwise - fix it with a T1
@@ -300,7 +302,8 @@ and never takes over one somebody else holds), the checkpoint, the graceful rest
 `-RunLevel Limited` with the per-run opt-in, and on every path the resting checkpoint, the
 guest saved and the lease released. Exit 0 pass, 1 a test or a safety proof failed, 2 the commit did
 not build or stage, 3 not tested, 4 refused; `summary.txt` in `.work\guest-live-runs\<run>\` says
-why. Run it in the background or with a timeout of an hour or more.
+why. Run it in the background or with a timeout of an hour or more; like a build run, it waits while
+the testbed is paused or the host is busy, up to its `-LeaseWaitMinutes`.
 
 **What stays on this workstation - this, and nothing else:**
 
@@ -349,6 +352,21 @@ I will forget and lose performance the coming months."*
   CREATION (`Start-Process -WindowStyle Hidden`, `-NoNewWindow`, `CREATE_NO_WINDOW`, or `SW_HIDE`
   in the startup info, as the build-VM runner's janitor does) - never `powershell.exe
   -WindowStyle Hidden`, which hides a console window only after it has already taken focus.
+
+**A new run starts only while the host has room for it, and never while the testbed is paused.**
+Decided by the maintainer 2026-11-18 (Q195 (e)), after every VM running at once held the host's 32
+processors at 82 to 100 % busy and slowed his own work. Both runners and `New-TestbedClone.ps1 -Execute`
+wait - holding no VM's lock or lease, and saying what they wait for and since when - while the host's
+processors were 70 % busy or more over the last 30 seconds, the VMs other runs took in the last two
+minutes counted at their size, and while the pause switch is on. The switch is his, for when he needs
+the PC - for gaming, say. Runs already going finish; nothing new starts until it is off:
+
+    pwsh -File Testbed/host/Set-TestbedPause.ps1 -On -Reason 'gaming'
+    pwsh -File Testbed/host/Set-TestbedPause.ps1 -Off
+    pwsh -File Testbed/host/Set-TestbedPause.ps1          # is it on; the load; what waits and runs
+
+An agent turns the switch on or off only when he asks for that in the current message. It pauses no
+VM: a VM is saved, never paused, as above. `Testbed/README.md` section 5b has the rest.
 
 ## The Outlook test guests' clocks are frozen (Q130)
 
