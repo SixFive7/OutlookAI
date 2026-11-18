@@ -1,4 +1,3 @@
-using System.Reflection;
 using OutlookAI.McpServer.Tests.T2;
 using Xunit;
 
@@ -380,10 +379,7 @@ public sealed class CensusReadingStrengthTests
 
     private static string LiveSource(string fileName)
     {
-        string dir = typeof(LiveTestSettings).Assembly
-                .GetCustomAttributes<AssemblyMetadataAttribute>()
-                .FirstOrDefault(a => a.Key == "TestProjectDir")?.Value
-            ?? throw new InvalidOperationException("AssemblyMetadata 'TestProjectDir' is missing.");
+        string dir = RepoPaths.TestProjectDir();
         string path = Path.Combine(dir, "T2", fileName);
         Assert.True(File.Exists(path), "live census source is missing: " + path);
         return File.ReadAllText(path);

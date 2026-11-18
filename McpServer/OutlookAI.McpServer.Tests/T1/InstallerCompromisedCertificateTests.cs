@@ -22,7 +22,7 @@ public sealed class InstallerCompromisedCertificateTests
 {
     private const string Thumbprint = "E205060633DD7062D4F90033130542948A69D068";
 
-    private static string Installer() => File.ReadAllText(Path.Combine(CachedModeSettingsTests.RepoRoot(), "Installer.iss"));
+    private static string Installer() => File.ReadAllText(Path.Combine(RepoPaths.RepoRoot(), "Installer.iss"));
 
     private static string Define(string iss, string name)
     {
@@ -138,7 +138,7 @@ public sealed class InstallerCompromisedCertificateTests
     [Fact]
     public void NoReleaseIsSignedWithIt_AndTheUpdaterAcceptsNothingSignedWithIt()
     {
-        string root = CachedModeSettingsTests.RepoRoot();
+        string root = RepoPaths.RepoRoot();
 
         Assert.DoesNotContain(Thumbprint, File.ReadAllText(Path.Combine(root, "OutlookAI.csproj")), StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain(Thumbprint, File.ReadAllText(Path.Combine(root, "Services", "UpdateService.cs")), StringComparison.OrdinalIgnoreCase);
@@ -147,7 +147,7 @@ public sealed class InstallerCompromisedCertificateTests
     [Fact]
     public void TheRepositoryHoldsNoCopyOfIt()
     {
-        string root = CachedModeSettingsTests.RepoRoot();
+        string root = RepoPaths.RepoRoot();
         var excluded = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "bin", "obj", ".git", ".work", ".claude", ".vs", "node_modules", "TestResults" };
         var certificateFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { ".cer", ".crt", ".der" };
         var bundleOrKeyFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { ".pfx", ".p12", ".p7b", ".p7c", ".sst", ".spc", ".pvk" };
