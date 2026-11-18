@@ -131,6 +131,13 @@ public sealed class ReadOnlyLiveTestTests
 
         MethodBase save = typeof(OutlookAI.Core.Com.OutlookSessionRegistry).GetMethod("TrySave", Everything)!;
         Assert.Empty(WritePathAnalyzer.WalkProduct(new[] { (save, "control") }).Findings);
+
+        // The reviewed call covers the registry's save alone: the file replace it shares with the signatures is a write
+        // on every other path.
+        MethodBase replace = typeof(OutlookAI.Core.Services.SignatureManager).GetMethod("WriteFileSafely", Everything)!;
+        Assert.Contains(
+            WritePathAnalyzer.WalkProduct(new[] { (replace, "control") }).Findings,
+            f => f.Reason.Contains("writes the file system (File.Replace)", StringComparison.Ordinal));
     }
 
     [Theory]

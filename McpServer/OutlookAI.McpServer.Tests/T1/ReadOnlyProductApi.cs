@@ -151,8 +151,9 @@ internal static class ReadOnlyProductApi
 
     /// <summary>
     /// What the in-product walk may meet and still call a read - each a reviewed case, keyed by the
-    /// source member the call sits in and the late-bound member it calls, or the <c>System.IO</c> call it
-    /// makes (<c>File.Replace</c>).
+    /// source member the call sits in and the late-bound member it calls, the <c>System.IO</c> call it
+    /// makes (<c>File.Replace</c>), or the product member it calls (<c>SignatureManager.WriteFileSafely</c>),
+    /// which the walk then does not follow from that member alone.
     /// </summary>
     internal static readonly IReadOnlyDictionary<string, string> InProductExemptions = new Dictionary<string, string>(StringComparer.Ordinal)
     {
@@ -168,15 +169,10 @@ internal static class ReadOnlyProductApi
             "closes the lifetime pin another OutlookAI session made, found among Outlook's Explorers by the window handle the "
             + "session registry recorded, and only while that window is hidden (Q118 (a)): a window OutlookAI owns, never an "
             + "item, a folder or a window a person can see",
-        ["OutlookAI.Core.Com.OutlookSessionRegistry.TrySave|File.WriteAllText"] =
-            "writes OutlookAI's own session registry, %LOCALAPPDATA%\\OutlookAI\\outlook-sessions.txt (Q118 (a)): which OutlookAI "
-            + "sessions are attached to Outlook and the pin they share - never the mailbox, the profile or the user's files",
-        ["OutlookAI.Core.Com.OutlookSessionRegistry.TrySave|File.Replace"] =
-            "puts the session registry's new text in place of its old in one step (Q118 (a)); OutlookAI's own file",
-        ["OutlookAI.Core.Com.OutlookSessionRegistry.TrySave|File.Move"] =
-            "puts the session registry's first text in place (Q118 (a)); OutlookAI's own file",
-        ["OutlookAI.Core.Com.OutlookSessionRegistry.TrySave|File.Delete"] =
-            "deletes the session registry's own temporary file after a failed save (Q118 (a)); OutlookAI's own file",
+        ["OutlookAI.Core.Com.OutlookSessionRegistry.TrySave|SignatureManager.WriteFileSafely"] =
+            "writes OutlookAI's own session registry, %LOCALAPPDATA%\\OutlookAI\\outlook-sessions.txt (Q118 (a)), through Core's "
+            + "one file replace: which OutlookAI sessions are attached to Outlook and the pin they share - never the mailbox, "
+            + "the profile or the user's files. A signature write through the same member is still a finding on every other path",
     };
 
     /// <summary>

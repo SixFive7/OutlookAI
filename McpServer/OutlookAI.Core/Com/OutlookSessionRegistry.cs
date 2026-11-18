@@ -948,39 +948,20 @@ namespace OutlookAI.Core.Com
             return null;
         }
 
+        /// <summary>
+        /// Saves <paramref name="state"/> whole, through Core's one file replace (<c>SignatureManager.WriteFileSafely</c>):
+        /// written beside the file and swapped in, so a reader never sees half of it. Only ever under the lock, so its
+        /// one temporary name is never written by two sessions at once. False when the file system refused.
+        /// </summary>
         private bool TrySave(SessionRegistryState state)
         {
-            string? directory = Path.GetDirectoryName(_path);
-            string temporary = _path + "." + ProcessStamp.Current().Pid.ToString(CultureInfo.InvariantCulture) + ".tmp";
             try
             {
-                if (!string.IsNullOrEmpty(directory))
-                {
-                    _ = Directory.CreateDirectory(directory);
-                }
-
-                File.WriteAllText(temporary, SessionRegistryRules.Format(state), new UTF8Encoding(false));
-                if (File.Exists(_path))
-                {
-                    File.Replace(temporary, _path, null);
-                }
-                else
-                {
-                    File.Move(temporary, _path);
-                }
-
+                Services.SignatureManager.WriteFileSafely(_path, new UTF8Encoding(false).GetBytes(SessionRegistryRules.Format(state)));
                 return true;
             }
-            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException || ex is PlatformNotSupportedException)
             {
-                try
-                {
-                    File.Delete(temporary);
-                }
-                catch (Exception cleanup) when (cleanup is IOException || cleanup is UnauthorizedAccessException)
-                {
-                }
-
                 return false;
             }
         }

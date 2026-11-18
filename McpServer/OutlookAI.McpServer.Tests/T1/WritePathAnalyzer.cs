@@ -265,6 +265,15 @@ internal static class WritePathAnalyzer
                 string name = target.DeclaringType?.Assembly.GetName().Name ?? string.Empty;
                 if (ProductAssemblies.Contains(name))
                 {
+                    // A reviewed call into a product member that writes, keyed by the caller and the callee
+                    // ("...TrySave|SignatureManager.WriteFileSafely"): not followed from that caller, and followed - its
+                    // writes findings - from every other.
+                    if (ReadOnlyProductApi.InProductExemptions.ContainsKey(
+                        ReadOnlyProductApi.SourceKeyOf(method) + "|" + target.DeclaringType!.Name + "." + target.Name))
+                    {
+                        continue;
+                    }
+
                     Enqueue(target, method);
                     foreach (MethodBase implementation in ProductImplementationsOf(target))
                     {
