@@ -75,11 +75,11 @@ public sealed class IndexHonestyTests
     public void AStoreOutlookHasAndTheIndexDoesNot_IsNamed()
     {
         IReadOnlyList<string> missing = MailService.StoresMissingFromIndex(
-            new[] { "jori@huisman.io", "Archive 2019.pst" },
-            new[] { "jori@huisman.io" },
-            store => store == "Archive 2019.pst" ? false : true);
+            new[] { "maintainer@personal.invalid", "Archive Old.pst" },
+            new[] { "maintainer@personal.invalid" },
+            store => store == "Archive Old.pst" ? false : true);
 
-        Assert.Equal(new[] { "Archive 2019.pst" }, missing);
+        Assert.Equal(new[] { "Archive Old.pst" }, missing);
     }
 
     [Fact]
@@ -88,7 +88,7 @@ public sealed class IndexHonestyTests
         // The budget ran out, or the index stopped answering. "Not established" must never
         // become "not indexed": this report drives a problem and a degraded status.
         Assert.Empty(MailService.StoresMissingFromIndex(
-            new[] { "Archive 2019.pst" }, Array.Empty<string>(), _ => null));
+            new[] { "Archive Old.pst" }, Array.Empty<string>(), _ => null));
     }
 
     [Fact]
@@ -109,8 +109,8 @@ public sealed class IndexHonestyTests
     {
         List<string> probed = new();
         IReadOnlyList<string> missing = MailService.StoresMissingFromIndex(
-            new[] { "JORI@HUISMAN.IO", "Archive.pst", "archive.pst" },
-            new[] { "jori@huisman.io" },
+            new[] { "MAINTAINER@PERSONAL.INVALID", "Archive.pst", "archive.pst" },
+            new[] { "maintainer@personal.invalid" },
             store =>
             {
                 probed.Add(store);
@@ -125,7 +125,7 @@ public sealed class IndexHonestyTests
     public void NoComStoreList_MakesNoClaimAtAll()
     {
         // Outlook was not running or did not answer: half a list would invent missing stores.
-        Assert.Empty(MailService.StoresMissingFromIndex(null, new[] { "jori@huisman.io" }, _ => false));
+        Assert.Empty(MailService.StoresMissingFromIndex(null, new[] { "maintainer@personal.invalid" }, _ => false));
         Assert.Empty(MailService.StoresMissingFromIndex(Array.Empty<string>(), null, _ => false));
     }
 }

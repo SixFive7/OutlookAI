@@ -646,7 +646,7 @@ function Invoke-SelfTest {
 
     Write-Host ''
     Write-Host '== step 1: the licence condition =='
-    $mit = "MIT License`n`nCopyright (c) 2026 Jori Huisman`n"
+    $mit = "MIT License`n`nCopyright (c) 2026 Alex Example`n"
     Test-Case 'MIT on github.com over https holds' $true ($null -eq (Get-LicenceProblem $mit 'https://github.com/SixFive7/OutlookAI.git'))
     Test-Case 'MIT on github.com over ssh holds' $true ($null -eq (Get-LicenceProblem $mit 'git@github.com:SixFive7/OutlookAI.git'))
     Test-Case 'no LICENSE is refused' $true ([string](Get-LicenceProblem '' 'https://github.com/SixFive7/OutlookAI.git')).Contains('no LICENSE')

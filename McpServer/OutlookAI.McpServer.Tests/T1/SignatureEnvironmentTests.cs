@@ -233,7 +233,7 @@ public sealed class SignatureEnvironmentTests
 
     [Theory]
     [InlineData("Work (jan@example.com)", "jan@example.com")]
-    [InlineData("Werk kort (j.modaal@example.nl)", "j.modaal@example.nl")]
+    [InlineData("Werk kort (j.modaal@example.com)", "j.modaal@example.com")]
     [InlineData("Work", null)]
     [InlineData("Work (short)", null)]
     [InlineData("Work (jan@example.com", null)]
@@ -292,10 +292,10 @@ public sealed class SignatureEnvironmentTests
     [Fact]
     public void Classify_TellsTheAccountKinds()
     {
-        Assert.Equal(MailAccountKind.Pop3, ProfileAccountEntries.Classify("k", FakeProfileAccountRegistry.Pop3("a@b.nl")).AccountKind);
-        Assert.Equal(MailAccountKind.Imap, ProfileAccountEntries.Classify("k", FakeProfileAccountRegistry.Imap("a@b.nl")).AccountKind);
-        Assert.Equal(MailAccountKind.Exchange, ProfileAccountEntries.Classify("k", FakeProfileAccountRegistry.Exchange("a@b.nl")).AccountKind);
-        Assert.Null(ProfileAccountEntries.Classify("k", FakeProfileAccountRegistry.DataFile("a@b.nl")).AccountKind);
+        Assert.Equal(MailAccountKind.Pop3, ProfileAccountEntries.Classify("k", FakeProfileAccountRegistry.Pop3("a@b.example")).AccountKind);
+        Assert.Equal(MailAccountKind.Imap, ProfileAccountEntries.Classify("k", FakeProfileAccountRegistry.Imap("a@b.example")).AccountKind);
+        Assert.Equal(MailAccountKind.Exchange, ProfileAccountEntries.Classify("k", FakeProfileAccountRegistry.Exchange("a@b.example")).AccountKind);
+        Assert.Null(ProfileAccountEntries.Classify("k", FakeProfileAccountRegistry.DataFile("a@b.example")).AccountKind);
     }
 
     private sealed class ThrowingAccounts : IProfileAccountRegistry

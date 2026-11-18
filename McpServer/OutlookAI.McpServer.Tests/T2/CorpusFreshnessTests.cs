@@ -566,7 +566,7 @@ public class CorpusFreshnessTests
         string legacy = CorpusPlan.LegacySubjectTag + CorpusPlan.CorpusTagOpen + "vm1#0000042] renewal invoice";
         Assert.False(CorpusSafety.MayRewrite("ID-1", legacy, allowlist, "vm1", 42));
         Assert.False(CorpusSafety.MayRewrite(
-            "ID-1", RemediationRules.SubjectTag + " r7-draft-seed", allowlist, "vm1", 42));
+            "ID-1", LiveOutlookTestMailer.SubjectTag + " r7-draft-seed", allowlist, "vm1", 42));
     }
 
     // ------------------------------------------------------------------ live settings block

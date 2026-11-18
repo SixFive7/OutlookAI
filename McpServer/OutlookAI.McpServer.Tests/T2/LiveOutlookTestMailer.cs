@@ -106,7 +106,7 @@ public static class LiveOutlookTestMailer
 
     /// <summary>
     /// Sends a mail from <paramref name="smtpAddress"/> to itself (refuses to run when
-    /// that account is not in the profile - the D20 grant is telefonie-to-telefonie
+    /// that account is not in the profile - the D20 grant is hub-to-hub
     /// only). Returns the UTC send timestamp.
     /// </summary>
     public static DateTime SendSelfMail(string smtpAddress, string subject, string body, string? attachmentPath)
