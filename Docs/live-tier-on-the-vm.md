@@ -5550,6 +5550,24 @@ above. So five crashes: every one in `mso40uiwin32client.dll` or below it, every
 a reply or a forward in an Outlook with its window, at its first call (`Forward()`) or after its save, with a
 signature or without; none in a new draft, which the same tests make as often.
 
+**The third catch, on an unindexed guest** - run `20261118-160758-unindexed-547718b16c6f` on `OutlookAI-Unindexed3`
+(`CP-18B-FROZEN-CLOCK`), in round 4. Its first-chance access violation is at `mso40uiwin32client.dll+0x11D8C7`, the
+offset of U's and R1's crashes, and it is the first catch's instruction, `lock inc dword ptr [rbx+8]` with `rbx`
+0x40000, in the function before it (`+0x11D74C`): two places that increment one reference count through one bad
+pointer. The incoming COM call under it reads `wFlags` 3 and one argument, the string "Message" - the product's
+`ModifiedFormPages.Add("Message")` on its reopened reply, after the save ("a draft may have been saved"), the step the
+editor route of Q208 B takes in an Outlook with its window. Beneath it: Word (`WWLIB.DLL`), Office's
+`mso98win32client.dll` and `mso.dll`, and `mso40uiwin32client` destroying a window (`NtUserDestroyWindow`), whose
+kernel callback re-entered `mso40uiwin32client`'s own window procedure; that walked its tree of UI elements ten levels
+deep to the bad one. Like the first catch it left the callback as `0xC000041D`, and WER wrote its dump.
+
+**What the five have in common.** The fault is in Office: one bad pointer, 0x40000, among `mso40uiwin32client`'s UI
+elements, met wherever Word makes that UI lay out a window, tear one down or compose it (the `dcomp.dll` crash).
+Every crash came while the product was making a reply or a forward in an Outlook with its window, and the call in
+flight differed: the creator itself (`Forward()`, before anything was saved) in one, the form page
+(`ModifiedFormPages.Add("Message")`, and Forms 2.0 on the main thread in the `dcomp.dll` one) in two, after the save.
+The new drafts the same tests make, as many and by the same route, never crashed.
+
 What OutlookAI does about it, if anything, is the maintainer's decision.
 
 
