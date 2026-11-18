@@ -111,7 +111,9 @@
     is more moving parts for no gain.
 
     WHICH VERSION, AND WHY IT IS PINNED. .NET 11, x64, since 2026-11-18 (Q172; .NET 10 before
-    it). Every project in McpServer/ targets `net11.0-windows`; OutlookAI.Core additionally
+    it), when OutlookAI moved to .NET 11. The projects in McpServer/ target `net11.0-windows` from
+    the commit that moved the code, and `net10.0-windows` before it, which SDK 11 builds with a
+    .NET 10 SDK's packs beside it (Testbed/MEDIA.md); OutlookAI.Core additionally
     targets `net48`, which needs no separate install because it builds against the
     `Microsoft.NETFramework.ReferenceAssemblies` package (in the staged feed). There is NO
     global.json anywhere in the repository, so nothing pins a feature band, and a guest builds
