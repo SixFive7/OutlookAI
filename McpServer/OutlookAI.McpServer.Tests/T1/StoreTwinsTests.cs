@@ -1,4 +1,7 @@
+using System.Text.Json;
+
 using OutlookAI.Core.Com;
+using OutlookAI.Core.IndexSearch;
 using OutlookAI.Core.Mapi;
 using OutlookAI.Core.Services;
 
@@ -122,6 +125,56 @@ public sealed class StoreTwinsTests
 
         ArgumentException refused = Assert.Throws<ArgumentException>(() => MailService.PickStore(stores, parts!, "store_id"));
         Assert.Contains("answer to the ID", refused.Message, StringComparison.Ordinal);
+    }
+
+    // ============================================================ decision 207 (b): a second view, not a degradation
+
+    [Fact]
+    public void ASecondView_ClaimsNothingInTheIndex_AndIsNeverAStoreToCover()
+    {
+        // The kept entry is tied by its hash; the second view claims nothing, whatever its kind would be.
+        StoreHash.TryDecodeHex("0A0B0C0D", out byte[] signature);
+        StoreScopeInfo root = StoreScopeInfo.FromStorePrefix(
+            "mapi16://{S-1-5-21-1-2-3-1000}/account@example.invalid($" + StoreHash.Compute(signature).ToString("x", System.Globalization.CultureInfo.InvariantCulture) + ")")!;
+        StoreIndexIdentity kept = new("account@example.invalid", 4, StoreHash.Candidates("00112233", true, false, "0A0B0C0D", null, null));
+        StoreIndexIdentity view = new("Account Display Name", 1, StoreHash.Candidates("00112233", true, false, "0A0B0C0D", null, null),
+            secondViewOf: "account@example.invalid");
+
+        StoreIndexMap map = StoreIndexMatcher.Match(new[] { kept, view }, new[] { root });
+
+        Assert.Equal(StoreIndexMatchKind.StoreHash, map.Stores[0].Kind);
+        Assert.Equal(StoreIndexMatchKind.SecondView, map.Stores[1].Kind);
+        Assert.Null(map.Stores[1].Root);
+        Assert.Empty(map.Unclaimed);
+
+        // outlook_health's row: a second view of an indexed mailbox, named, not a store the index lacks.
+        StoreStaleness row = MailService.DescribeStoreMatch(map.Stores[1], null);
+        Assert.Equal("secondView", row.MatchedBy);
+        Assert.StartsWith("a second view of an indexed mailbox: the same mailbox is the store 'account@example.invalid'", row.MatchNote, StringComparison.Ordinal);
+        Assert.Null(row.IndexStore);
+    }
+
+    [Fact]
+    public void TheStoresToCover_AreEachMailboxOnce()
+    {
+        IReadOnlyList<ComStoreDetail> stores = new[] { Primary(), OnlineEntry(), CachedEntry() };
+        Assert.Equal(new[] { "Primary", "account@example.invalid" }, MailService.WithoutSecondViews(stores).Select(d => d.DisplayName));
+
+        // An online store with no cached twin is a store of its own - covered, and its own 28-character ID.
+        ComStoreDetail alone = new("Shared Online", "0000000038A1BB1005E5101AA1BB08002B2A56C2" + new string('E', 40), 1, false,
+            rootFolderEntryId: ExchangeRoot("C3C3C3C3C3C3C3C3C3C3C3C3C3C3C3C3"));
+        IReadOnlyList<ComStoreDetail> withAlone = new[] { Primary(), alone };
+        Assert.Equal(2, MailService.WithoutSecondViews(withAlone).Count);
+        Assert.Equal(28, MailService.StoreIdOf(alone)!.Length);
+        Assert.NotEqual(MailService.StoreIdOf(Primary()), MailService.StoreIdOf(alone));
+    }
+
+    [Fact]
+    public void ListAccountsNamesTheMailboxASecondViewShows_UnderItsWireName()
+    {
+        string json = JsonSerializer.Serialize(new StoreView { DisplayName = "v", SecondViewOf = "account@example.invalid" },
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.Contains("\"secondViewOf\":\"account@example.invalid\"", json, StringComparison.Ordinal);
     }
 
     [Fact]

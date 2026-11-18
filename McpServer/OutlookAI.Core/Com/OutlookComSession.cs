@@ -2413,6 +2413,11 @@ namespace OutlookAI.Core.Com
                 try
                 {
                     int count = stores.Count;
+
+                    // A second view of an indexed mailbox - the online entry Exchange automaps beside the
+                    // mailbox's own cached store - is the same mail: the search covers the mailbox once, through
+                    // the kept entry, and never sweeps it live a second time (decision 207 (b), StoreTwins).
+                    int[] keptEntryOf = StoreTwins.KeptEntryOf(ReadStoreEntries(stores, count));
                     for (int i = 1; i <= count; i++)
                     {
                         // Stop at a STORE boundary as well as at a folder one: on a profile
@@ -2421,6 +2426,11 @@ namespace OutlookAI.Core.Com
                         if (tally.CheckSweepDeadline())
                         {
                             break;
+                        }
+
+                        if (keptEntryOf[i - 1] >= 0)
+                        {
+                            continue;
                         }
 
                         dynamic store = stores[i];

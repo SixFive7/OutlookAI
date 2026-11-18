@@ -205,6 +205,14 @@ public sealed class LiveMailServiceTests
         Assert.True(full != null, "no mail with a >=120-char body found in the sampled hits");
         string reference = full!.Body.Substring(0, 100);
 
+        // read prints its folder as list_folders does (decided 2026-11-18): the names from the top of the store
+        // down, joined by '/', never Outlook's FolderPath with the store's name, backslashes and escapes.
+        FolderView? listed = LiveIds.Folders(Service, full.Store!)
+            .FirstOrDefault(f => string.Equals(f.FolderId, full.FolderId, StringComparison.Ordinal));
+        Assert.True(listed != null, "list_folders shows no folder with the read mail's folderId");
+        Assert.Equal(listed!.Path, full.Folder);
+        _output.WriteLine("read's folder is the path list_folders gives for its folderId (" + full.Folder!.Count(c => c == '/') + " separator(s))");
+
         // Window 1 (offset 0): first 50 chars, more flagged, offset omitted.
         ReadOutcome window1 = Service.Read(full.EntryId, maxBodyChars: 50);
         Assert.Equal(reference.Substring(0, 50), window1.Body);

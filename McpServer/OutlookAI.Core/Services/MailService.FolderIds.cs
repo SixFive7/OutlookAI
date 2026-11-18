@@ -42,8 +42,9 @@ namespace OutlookAI.Core.Services
 
         /// <summary>
         /// A store's ID as every tool shows it: <c>S</c> and the provider UID its root folder's id carries,
-        /// or - for a store whose root folder was not read (an Exchange store Outlook does not cache) -
-        /// <c>T</c> and its own entry id (<see cref="OutlookIds.StoreIdOf"/>). Null when neither reads.
+        /// or - for a store whose root folder would not read - <c>T</c> and its own entry id
+        /// (<see cref="OutlookIds.StoreIdOf"/>). Null when neither reads. Two entries of one mailbox share it
+        /// (<see cref="StoreTwins"/>), and it resolves to the kept one (<see cref="PickStore"/>).
         /// </summary>
         public static string? StoreIdOf(ComStoreDetail detail)
         {
@@ -84,9 +85,10 @@ namespace OutlookAI.Core.Services
         }
 
         /// <summary>
-        /// The store a store ID names, among <paramref name="stores"/> - or the refusal that says why
-        /// none can be picked: no store answers to it, or several do (a mailbox seen through two
-        /// stores shares one provider UID). Pure.
+        /// The store a store ID names, among <paramref name="stores"/> - the kept entry when the stores that
+        /// answer to it are entries of ONE mailbox (<see cref="StoreTwins"/>, decided 2026-11-18) - or the
+        /// refusal that says why none can be picked: no store answers to it, or stores of different
+        /// mailboxes do. Pure.
         /// </summary>
         public static ComStoreDetail PickStore(IReadOnlyList<ComStoreDetail> stores, StoreIdParts parts, string parameterName)
         {
@@ -122,8 +124,8 @@ namespace OutlookAI.Core.Services
             throw new ArgumentException(
                 matches.Count.ToString(CultureInfo.InvariantCulture) + " stores of this Outlook profile answer to the ID '"
                 + parts.Id + "': " + string.Join(", ", matches.Select(m => "'" + m.DisplayName + "'"))
-                + " - one mailbox seen through two stores carries one identity, so the ID cannot say which is meant and "
-                + "nothing is picked at random. Address a folder of it by its folderId instead (find_folder, list_folders).",
+                + " - stores that are not one mailbox in two entries, so the ID cannot say which is meant and nothing is "
+                + "picked at random. Address a folder of one by its folderId instead (find_folder, list_folders).",
                 parameterName);
         }
 

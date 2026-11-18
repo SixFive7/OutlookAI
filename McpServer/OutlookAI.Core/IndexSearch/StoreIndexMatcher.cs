@@ -62,6 +62,15 @@ namespace OutlookAI.Core.IndexSearch
         NameAndHash = 4,
 
         /// <summary>
+        /// A SECOND VIEW of an indexed mailbox (decision 207 (b), 2026-11-18): another store entry of a
+        /// mailbox the profile also holds as the entry that is kept and indexed - the online entry Exchange
+        /// automaps beside the mailbox's own cached store (<see cref="StoreIndexIdentity.SecondViewOf"/>,
+        /// <c>OutlookAI.Core.Com.StoreTwins</c>). It claims nothing in the index: its mail is the kept
+        /// entry's, and searches cover it once, through that entry. Not a degradation.
+        /// </summary>
+        SecondView = 6,
+
+        /// <summary>
         /// REFUSED (Q113 (a)). The index store carrying this store's name and hash is claimed by
         /// another Outlook store too - two stores share both name and hash - or more than one index
         /// store carries them, so the index itself cannot tell this store's mail from another's.
@@ -84,8 +93,10 @@ namespace OutlookAI.Core.IndexSearch
             string? filePath = null,
             string? ownName = null,
             string? storeEntryId = null,
-            string? storeId = null)
+            string? storeId = null,
+            string? secondViewOf = null)
         {
+            SecondViewOf = string.IsNullOrEmpty(secondViewOf) ? null : secondViewOf;
             StoreEntryId = storeEntryId;
             StoreId = storeId;
             DisplayName = displayName ?? throw new ArgumentNullException(nameof(displayName));
@@ -128,6 +139,12 @@ namespace OutlookAI.Core.IndexSearch
 
         /// <summary>The store's ID as the tools show it (<see cref="OutlookAI.Core.Mapi.OutlookIds.StoreIdOf"/>); null when it has none.</summary>
         public string? StoreId { get; }
+
+        /// <summary>
+        /// The display name of the entry this store is a second view of (<see cref="StoreIndexMatchKind.SecondView"/>):
+        /// the kept, indexed entry of the same mailbox. Null for every store that is its mailbox's own entry.
+        /// </summary>
+        public string? SecondViewOf { get; }
 
         /// <summary>
         /// THE ONE OPEN EXCEPTION (Q113 (b)), in one place so it is easy to remove: true for every
@@ -405,7 +422,8 @@ namespace OutlookAI.Core.IndexSearch
             var claims = new List<(int Store, int Root, StoreHashInput Input)>();
             for (int s = 0; s < stores.Count; s++)
             {
-                if (stores[s].ExchangeStoreType == 1)
+                // A second view of an indexed mailbox claims nothing either: its mail is the kept entry's.
+                if (stores[s].ExchangeStoreType == 1 || stores[s].SecondViewOf != null)
                 {
                     continue;
                 }
@@ -494,7 +512,11 @@ namespace OutlookAI.Core.IndexSearch
                 }
 
                 StoreIndexIdentity store = stores[s];
-                if (store.ExchangeStoreType == 1)
+                if (store.SecondViewOf != null)
+                {
+                    results[s] = new StoreIndexMatch(store, null, StoreIndexMatchKind.SecondView, null, null);
+                }
+                else if (store.ExchangeStoreType == 1)
                 {
                     results[s] = new StoreIndexMatch(store, null, StoreIndexMatchKind.Delegate, null, null);
                 }

@@ -1934,6 +1934,15 @@ namespace OutlookAI.Core.Services
         /// <summary>True for server-only stores (e.g. Online Archives) - invisible to local search (D22/D25).</summary>
         public bool OnlineOnly { get; set; }
 
+        /// <summary>
+        /// The display name of the store this one is a second view of (decision 207 (b), 2026-11-18): the same mailbox
+        /// is in the profile twice - its own cached store and the online entry Exchange automaps for an account with
+        /// Full Access to it - and that store is the one kept and indexed. Both show the mailbox's one storeId, which
+        /// resolves to that store, and list_folders, find_folder and search cover the mailbox once, through it. Null
+        /// for a store that is its mailbox's own entry.
+        /// </summary>
+        public string? SecondViewOf { get; set; }
+
         /// <summary>False when the local index cannot see this store; search cannot cover it.</summary>
         public bool LocallySearchable { get; set; }
 
