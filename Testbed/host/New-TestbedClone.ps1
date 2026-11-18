@@ -62,6 +62,13 @@
     the drive has that for every clone and the export, plus 60 GB. Memory: none while a clone rests
     saved. The runners start one only when the host has its startup memory plus 16 GB to spare.
 
+    THE GATE FIRST (Q195 (e), decided by the maintainer 2026-11-18; Testbed/host/TestbedLoad.ps1). A
+    clone's export and imports load the host like a run, so -Execute starts them only when a run could
+    start: the testbed's pause switch off (Set-TestbedPause.ps1) and the host's processors under 70 %
+    busy over the last 30 seconds, the VMs runs took in the last two minutes counted. It waits for that
+    before it takes anything, says what for and since when once a minute, and gives up after
+    -LeaseWaitMinutes with nothing changed.
+
     WHAT IT HOLDS WHILE IT EXPORTS - once, however many clones. The source's lease - it waits for a
     live one somebody else holds and never takes one over - and, for the build VM, the runner's lock
     too, so that no run restores the checkpoint while it is read. It waits for both at the head of
@@ -93,7 +100,8 @@
     default VM folder (E:\Hyper-V\Export here).
 
 .PARAMETER LeaseWaitMinutes
-    How long to wait for the source's lease or the build runner's lock. Default 120.
+    How long to wait for the gate (THE GATE FIRST), and then for the source's lease or the build
+    runner's lock. Default 120.
 
 .PARAMETER SelfTest
     The refusals, the paths, the checkpoint each source is cloned from, read from the committed
@@ -118,6 +126,8 @@ param(
 $ErrorActionPreference = 'Stop'
 
 . (Join-Path $PSScriptRoot 'TestbedPool.ps1')
+# THE GATE (Q195 (e)): the pause switch and the load limit, before the source is taken.
+. (Join-Path $PSScriptRoot 'TestbedLoad.ps1')
 
 $ExchangeVmName = 'OutlookAI-Exchange'
 $TimeSyncComponentId = '2497F4DE-E9FA-4204-80E4-4B75C46419C0'
@@ -249,10 +259,14 @@ function Invoke-SelfTest {
     Check 'it deletes nothing but its own export' '' (@($removes | Where-Object { $_ -notmatch '^Remove-Item -LiteralPath \$exportDir ' }) -join ' ; ')
     $renames = @($commands | Where-Object { $_.GetCommandName() -eq 'Rename-VM' } | ForEach-Object { $_.Extent.Text })
     Check 'it renames only the VM in an import''s report, before it is registered' '1|1' ("{0}|{1}" -f @($renames | Where-Object { $_ -match '^Rename-VM -VM \$report\.VM ' }).Count, $renames.Count)
-    # Its waits (2026-11-18), looked for in the code after this function, whose own lines name the same text.
+    # The gate (Q195 (e)) and the waits (2026-11-18), looked for in the code after this function, whose own
+    # lines name the same text.
     $selfTestAst = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Invoke-SelfTest' }, $false))
     $runCode = ''
     if ($selfTestAst.Count -eq 1) { $runCode = [System.IO.File]::ReadAllText($PSCommandPath).Substring($selfTestAst[0].Extent.EndOffset) }
+    $gateAt = $runCode.IndexOf('$gate = Wait-TestbedGate -Run $leaseReason')
+    Check 'the gate is waited for before the source is taken - the runner''s lock and the lease' $true ($gateAt -gt 0 -and $gateAt -lt $runCode.IndexOf('[System.IO.File]::Open($lockPath') -and $gateAt -lt $runCode.IndexOf('Enter-TestbedLeaseClaim -VMName $Source'))
+    Check 'and one that does not open ends the run with nothing changed' $true ($runCode.IndexOf('if (-not $gate.Go) {') -gt $gateAt -and $runCode.IndexOf('if (-not $gate.Go) {') -lt $runCode.IndexOf('Export-VMSnapshot'))
     $queuedAt = $runCode.IndexOf('$ticket = Join-TestbedQueue -Run $leaseReason')
     Check 'it waits for its source at the head of the queue, from before it asks for the lock or the lease' $true ($queuedAt -gt 0 -and $runCode.Contains('-Candidates @($Source) -Ahead') -and $queuedAt -lt $runCode.IndexOf('[System.IO.File]::Open($lockPath') -and $queuedAt -lt $runCode.IndexOf('Enter-TestbedLeaseClaim -VMName $Source'))
     Check 'it sleeps on the testbed''s files, never polls, and leaves the queue on every path' $true (([regex]::Matches($runCode, [regex]::Escape('[void](Wait-TestbedChange)'))).Count -eq 2 -and -not $runCode.Contains('Start-Sleep') -and $runCode.Contains('Exit-TestbedQueue $ticket'))
@@ -330,6 +344,7 @@ foreach ($plan in $plans) { Say "  $($plan.Name)  $($plan.Paths.VmDir) ; $($plan
 if ($freeBytes -lt $needBytes) { Stop-Refused ("{0} has {1:N1} GB free, under the {2:N1} GB this needs." -f $drive.Name, ($freeBytes / 1GB), ($needBytes / 1GB)) }
 if (-not $Execute) {
     Say 'DRY RUN. Nothing was changed. With -Execute this would:'
+    Say "  0. wait, holding nothing, for the testbed's gate: the pause switch off and the host's processors under $(Format-Percent $TestbedLoadLimitPercent) busy over the last $TestbedLoadWindowSeconds s (TestbedLoad.ps1)"
     Say "  1. take $Source's lease$(if ($pool -eq 'build') { ' and the build runner''s lock' }) (waiting, never taking one over), export '$checkpointName' once, let both go"
     Say '  2. for each clone: import the export as a copy with a new id, renamed before it is registered, into its folders'
     Say '  3. set AutomaticStartAction Nothing, AutomaticStopAction Save, automatic checkpoints off, Standard checkpoints'
@@ -339,6 +354,11 @@ if (-not $Execute) {
 }
 
 $leaseReason = "$LeaseReasonPrefix $($names -join ',')"
+# ---- 0. the gate (THE GATE FIRST): waits holding nothing, before the source is taken.
+Say "gate: the pause switch, then the host's load over the last $TestbedLoadWindowSeconds s (Testbed/host/TestbedLoad.ps1)"
+$gate = Wait-TestbedGate -Run $leaseReason -What "New-TestbedClone.ps1 -Source $Source -Name $($names -join ',')" -TimeoutMinutes $LeaseWaitMinutes -Say { param($line) Say $line }
+if (-not $gate.Go) { Say "FAILED: the gate did not open in $LeaseWaitMinutes minutes - $($gate.Why). Nothing was changed."; exit 1 }
+Say "gate: $(Format-TestbedGateOpen -Look $gate.Look -PendingPercent $gate.Pending.Percent -PendingCount $gate.Pending.Count)"
 $lock = $null
 $leaseTaken = $false
 $exportDone = $false

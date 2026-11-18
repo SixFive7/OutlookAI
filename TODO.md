@@ -1834,6 +1834,18 @@
   every test whose product call converts in the machine's zone, `MailService.ToUtc` (122 tests)
   among them, the Q95 kind. Recommended: (1) now, and (3) for each function as it is next changed.
 
+- [ ] **Take the testbed's last Hyper-V polling out of the scripts the runners call (stream W,
+  2026-11-18).** The runners' own waits read files since the polling cut (`Docs/live-tier-on-the-vm.md`
+  section 4.10), but four pieces still ask Hyper-V the old way: `Testbed/host/Restart-Guest.ps1` and
+  `Testbed/host/Set-GuestClockFrozen.ps1` wait for a guest's heartbeat with `Get-VMIntegrationService`,
+  23 WMI operations a look, where `Test-TestbedHeartbeat` in `Testbed/host/TestbedPool.ps1` asks with
+  one; `Testbed/host/Copy-ToGuest.ps1` and `Testbed/host/Copy-FromGuest.ps1` open a PowerShell Direct
+  session of their own, by the VM's name, for every call, where the live runner now keeps one, by id;
+  and stream W's cheaper sources of a VM's state - the Host Compute Service's enumeration and the
+  hypervisor's partition counters, under a millisecond a read in its measurements
+  (`.work\w-vm-state\` of the main checkout) - are used nowhere. Left for later by the coordinator on
+  2026-11-18, once the polling cut had landed.
+
 - [ ] **Remove the testbed's .NET 10 checkpoints once every branch is on .NET 11 (Q172).**
   `CP-03-SDK-TEST-READY-UTC` on the three build VMs, and `CP-22C-FROZEN-CLOCK` and
   `CP-16B-FROZEN-CLOCK` on the Outlook guests, stay only for branches whose runners still name them
@@ -1842,19 +1854,6 @@
   `.work/media/dotnet-sdk-10.0.401-win-x64.exe` only while a checkpoint still needs it - recording it
   in section 4.12. `OutlookAI-Exchange`'s older checkpoints are its rebuild points and stay.
 
-- [ ] **Decide whether the VM pools keep CPU free for the maintainer, as they keep memory free
-  (2026-11-17).** The pools (`Testbed/host/TestbedPool.ps1`) start a member other than the first only
-  while the host has its memory and 16 GB more available, and nothing looks at CPU. From 17:20 to 17:40
-  that day three build runs and four Outlook guests ran at once: the host's 32 logical processors read
-  82 to 100 % busy for the whole minute sampled, each build run took 17 to 19 minutes instead of 9 to
-  10, and one timing-sensitive test (`T1.AuditLogStressTests`, eight writers checked for time order)
-  failed on both build clones and passed alone minutes later (`Docs/live-tier-on-the-vm.md` section
-  4.7). Directions: (1) leave it - the most runs at once, a busy PC while they overlap; (2) a CPU gate
-  beside the memory one: a member other than the first starts only while the host's CPU, sampled over
-  a few seconds, is under a threshold, else the run waits; (3) cap each testbed VM with Hyper-V
-  (`Set-VMProcessor -Maximum`), so no VM can take all of its virtual processors' share; (4) fewer or
-  smaller clones - one build clone, or clones with 2 virtual processors. Recommended: (2), at 75 %:
-  it keeps every run the pools allow today when the PC is quiet, and stops adding load when it is not.
 
 
 - [ ] **Waiting for the shared test mailbox (Q109).** The maintainer requested a free shared
