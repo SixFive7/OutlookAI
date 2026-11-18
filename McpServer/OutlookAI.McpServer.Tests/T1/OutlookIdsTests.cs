@@ -1,3 +1,4 @@
+using OutlookAI.Core.Com;
 using OutlookAI.Core.Mapi;
 using Xunit;
 
@@ -183,6 +184,34 @@ public sealed class OutlookIdsTests
         Assert.True(OutlookIds.TryDecodeStoreId(storeId, "store_id", out StoreIdParts? parts, out _));
         Assert.Equal("0000000038A1BB1005E5101AA1BB08002B2A56C2", parts!.StoreEntryIdHex);
         Assert.Null(OutlookIds.StoreIdOf(null, "not hex"));
+    }
+
+    /// <summary>
+    /// Every store's top folder is read for its S ID (decided 2026-11-18, option (b)) - but for an Exchange store
+    /// Outlook does not cache while Outlook says it is offline or disconnected, whose top folder is a server
+    /// round trip with no server to answer it: that store keeps its T ID until Outlook is connected again.
+    /// <c>ExchangeStoreType</c> 1 is an online entry, 3 not Exchange; <c>ExchangeConnectionMode</c> 100 to 400 is
+    /// offline or disconnected, 500 to 800 connected.
+    /// </summary>
+    [Theory]
+    [InlineData(1, false, 700, true)]
+    [InlineData(1, false, 800, true)]
+    [InlineData(1, false, 500, true)]
+    [InlineData(1, false, null, true)]
+    [InlineData(1, false, 400, false)]
+    [InlineData(1, false, 300, false)]
+    [InlineData(1, false, 200, false)]
+    [InlineData(1, false, 100, false)]
+    [InlineData(0, false, 300, false)]
+    [InlineData(1, null, 200, false)]
+    [InlineData(4, true, 200, true)]
+    [InlineData(0, true, 400, true)]
+    [InlineData(3, null, 200, true)]
+    [InlineData(null, null, 200, true)]
+    public void AnExchangeStoreOutlookDoesNotCache_IsNotAskedForItsTopFolder_WhileOutlookSaysItIsOffline(
+        int? exchangeStoreType, bool? isCachedExchange, int? connectionMode, bool readsTopFolder)
+    {
+        Assert.Equal(readsTopFolder, OutlookComSession.ReadsTopFolder(exchangeStoreType, isCachedExchange, connectionMode));
     }
 
     [Fact]

@@ -661,12 +661,6 @@ function New-RunSummary {
     }
 }
 
-function Format-Seconds {
-    param([double] $Seconds)
-    if ($Seconds -lt 60) { return ('{0:N0} s' -f $Seconds) }
-    return ('{0} m {1:00} s' -f [int][Math]::Floor($Seconds / 60), [int]($Seconds % 60))
-}
-
 # summary.txt's lines for the zone pass (Q144): what it ran and how it came out, and the zone a new
 # process read in it and after it - the evidence that it ran where it says, and that the self-tests
 # after it ran in the VM's own zone again.
@@ -825,6 +819,7 @@ Expected: 1</Message></ErrorInfo></Output></UnitTestResult>
     Check 'and one whose guest died with no word at all, TRX green, is INFRA too' 'INFRA' (Get-HostVerdict -GuestVerdict '' -InfraError '' -Trx $green -SuiteRequested $true -SelfTestsRun 0 -SelfTestsFailed 0).Verdict
     Check 'PASS alone exits 0' 'PASS' (@($ExitCodes.Keys | Where-Object { $ExitCodes[$_] -eq 0 }) -join ',')
     Check 'durations read as minutes and seconds' '4 m 05 s' (Format-Seconds 245)
+    Check 'a duration never reads 60 seconds' '59 s|1 m 59 s' ((Format-Seconds 59.6), (Format-Seconds 119.6) -join '|')
     Check 'an include list arriving as one comma-joined string is split' 'Testbed/host/a.ps1 | Testbed/guest/*' (Split-IncludeList @('Testbed/host/a.ps1,Testbed/guest/*'))
     Check 'a real list is kept, spaces and empties dropped' 'x | y | z' (Split-IncludeList @('x', ' y ,', 'z'))
     Check 'no list stays no list' 0 @(Split-IncludeList @()).Count

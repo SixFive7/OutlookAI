@@ -240,7 +240,7 @@ public sealed class FolderIdToolTests
     // ------------------------------------------------------------------ the store an ID names
 
     [Fact]
-    public void PickStore_FindsTheOneStore_RefusesNoneAndSeveral()
+    public void PickStore_FindsTheOneStore_RefusesNone_AndResolvesOneMailboxSeenTwiceThroughItsKeptEntry()
     {
         ComStoreDetail work = TestFolders.WithRoot(new ComStoreDetail("Work", "store-work", 0, true));
         ComStoreDetail home = TestFolders.WithRoot(new ComStoreDetail("Home", "store-home", 3, null));
@@ -252,10 +252,12 @@ public sealed class FolderIdToolTests
         Assert.Contains("No store in this Outlook profile has the ID", none.Message, StringComparison.Ordinal);
         Assert.Contains("'Home' (" + TestFolders.StoreId("Home") + ")", none.Message, StringComparison.Ordinal);
 
+        // One mailbox seen through two stores answers to one ID, and is resolved through its kept entry - the
+        // account's own store, not the delegate entry beside it - never refused (decided 2026-11-18). Two
+        // different mailboxes answering one ID are still refused: T1/StoreTwinsTests.
         ComStoreDetail twin = new ComStoreDetail("Work (shared)", "store-twin", 1, true, rootFolderEntryId: work.RootFolderEntryId);
-        ArgumentException several = Assert.Throws<ArgumentException>(() => MailService.PickStore(new[] { work, twin }, parts!, "store_id"));
-        Assert.Contains("2 stores", several.Message, StringComparison.Ordinal);
-        Assert.Contains("folderId", several.Message, StringComparison.Ordinal);
+        Assert.Same(work, MailService.PickStore(new[] { twin, work }, parts!, "store_id"));
+        Assert.Same(work, MailService.PickStore(new[] { work, twin }, parts!, "store_id"));
     }
 
     // ------------------------------------------------------------------ create_folder's rules

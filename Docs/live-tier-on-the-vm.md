@@ -4715,6 +4715,56 @@ anywhere; the computer's stores; an install run with administrator rights on pur
 build. Nothing here loaded an add-in through an entry: that the runtime trusts an entry's key without
 the certificate is the IL above and section 4.5's measurement.
 
+### 4.9 Folder IDs on the Exchange VM: the store entries, an ID no folder has, the index's newest rows - `OutlookAI-Exchange`, 2026-11-18 (stream K)
+
+**Why this section exists.** Folders and stores addressed by ID (Q131-Q136) left four follow-ups open, and
+run 6 of section 4.4a found three more on this VM. Three of them needed facts only this VM's Outlook has.
+`Testbed/guest/Measure-FolderIdResolution.ps1` read them, READ-ONLY - property reads, `GetRootFolder`,
+`GetFolderFromID` and `Restrict`, and a `SELECT` against the index - in session 1 at `-RunLevel Limited`,
+attached to the Outlook already running there (pid unchanged since run 6), from a scratch copy in
+`C:\OutlookAI-StreamK` that a host-side driver removed again with its scheduled task. Five runs, each under
+its own lease, the VM resumed from and saved back to the state run 6 left, nothing restored, nothing written
+in either mailbox. Names, StoreIDs, UIDs, entry ids and subjects were compared through short hashes and never
+printed. Outlook: 16.0.17932, one Explorer open, `ExchangeConnectionMode` 700 (cached, connected).
+
+**The three store entries.** Store 1, the real mailbox (`ExchangeStoreType` 0, cached); store 2, the test
+account's own store (4, cached); store 3, the online entry Exchange automapped for the test account through
+the real mailbox's Full Access (1, not cached). **Stores 2 and 3 carry one `StoreID`, byte for byte, and top
+folders with one provider UID** - so every ID made from the mailbox's identity names both: the T ID store 3
+had and the S ID store 2 had alike.
+
+**Reading a top folder** (`Store.GetRootFolder()` and its `EntryID`, each pass on a store object fetched
+afresh, as `GetStoreDetails` does): store 3's first read 2.3-2.8 ms and later reads 2.2-3.0 ms; stores 1 and
+2 2.1-3.5 ms after a first read of up to 49 ms (the probe process's own first call). This Outlook has a
+window, and its folder pane holds every store's top folder open, so these are warm reads; a cold read in a
+headless Outlook, and a read while the server is unreachable, were not measured.
+
+**Opening a folder ID.** Each store's top-folder id opened with `GetFolderFromID` alone and beside every
+store's `StoreID`, twelve ways: store 3's id opened IN STORE 2 every time, whatever `StoreID` was passed; the
+others in their own store. **An id no folder has** - a top-folder id with its six counter bytes set to `FF`,
+as `T2/LiveIds.UnknownFolderIdIn` builds it - opened too, in every form, in the cached entry (store 1's in
+store 1, stores 2's and 3's in store 2): the asked-for id, an empty name, `DefaultItemType` 0, no items, no
+parent with an entry id, and `MAPI_E_NOT_FOUND` for `PR_PARENT_ENTRYID`, `PR_RECORD_KEY`, `PR_FOLDER_TYPE`,
+`PR_SUBFOLDERS` and `PR_CONTENT_COUNT`, every one of which a real top folder carries. Three seconds after the
+VM resumed, before Outlook had reconnected, the same ids were REFUSED instead - `MAPI_E_NETWORK_ERROR` after
+26 s with the id alone, at once with a `StoreID` - so the stand-in comes from the server's side of cached
+mode. Described, the stand-in read as the top of the store, which is why run 6's search scoped to it answered
+for the whole mailbox.
+
+**The test account's newest index rows** (the hub's one index root after the runner's rebuild, newest received
+first, rows with a conversation id, as `LiveMailServiceTests.Thread_IndexPath_AndComFallback` picks its seed):
+all twenty were `IPM.Appointment` rows in `Calendar/United Kingdom holidays`, `System.Kind`
+`calendar|communication`. An appointment has no `ReceivedTime`; its `CreationTime` was 0.0-1.8 s from the
+row's `System.Message.DateReceived`, and each subject came back two to five times - one holiday a year -
+the occurrences created tenths of a second apart. So the locator, which matched on `ReceivedTime`, found
+none of them, and a match on creation time within its five seconds needs the nearest, not the first.
+
+**What was built on it** (`QUESTIONS.md` decision log, 2026-11-18): every store's top folder is read and every
+store has the 28-character S ID; one mailbox in two entries is listed and resolved once, through its cached
+entry, and `outlook_health` calls the online one a second view (decision 207 (b)); a folder without a record
+key is no folder; and the locator matches an item without a `ReceivedTime` on its `CreationTime`, nearest
+first.
+
 ## 5. Which tests are in which bucket, and how to find out
 
 The classification is **two traits on the test itself**, not a list in a document that can drift -

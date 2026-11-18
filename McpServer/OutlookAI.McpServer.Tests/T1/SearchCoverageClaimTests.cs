@@ -8,6 +8,8 @@ using OutlookAI.Core.Services;
 
 using Xunit;
 
+using static OutlookAI.McpServer.Tests.AliceMailbox;
+
 namespace OutlookAI.McpServer.Tests.T1;
 
 /// <summary>
@@ -44,21 +46,8 @@ namespace OutlookAI.McpServer.Tests.T1;
 /// </summary>
 public sealed class SearchCoverageClaimTests
 {
-    private const string Sid = "{S-1-5-21-1111111111-2222222222-3333333333-1001}";
-
-    private const string Store = "alice@example.com";
-
-    private const string StorePrefix = "mapi16://" + Sid + "/" + Store + "($deadbeef)";
-
     /// <summary>A folder Outlook has and the index cannot address (renamed, or localized).</summary>
     private const string UnindexedFolder = "Archief";
-
-    private static readonly DateTime Frontier = new(2026, 8, 18, 9, 30, 0, DateTimeKind.Utc);
-
-    private static readonly ComStoreDetail[] ProfileStores =
-    {
-        new ComStoreDetail(Store, "store-alice", 0, true),
-    };
 
     // ================================================================== H2
 
@@ -440,20 +429,6 @@ public sealed class SearchCoverageClaimTests
         };
     }
 
-    private static SearchRequest ExhaustiveRequest(string? from)
-    {
-        return new SearchRequest
-        {
-            Query = "test",
-            StoreId = TestFolders.StoreId(Store),
-            FolderId = TestFolders.FolderId(Store, "Inbox"),
-            Exhaustive = true,
-            From = from,
-            Top = 25,
-            SnippetChars = 0,
-        };
-    }
-
     /// <summary>
     /// The sweep with its coverage codes filled in, exactly as <c>Search</c> does before it
     /// asks for prose. The codes ARE the input to the sentences - that pairing is the whole
@@ -477,40 +452,9 @@ public sealed class SearchCoverageClaimTests
         };
     }
 
-    private static MailService Service(
-        CoverageIndexClient index,
-        Func<string?, ComSweepResult> sweep,
-        Func<string?, ComExhaustiveResult>? scan = null)
-    {
-        return new MailService(
-            new DirectGateway(StandInSession.Create(ProfileStores, sweep, scan)), null, index);
-    }
-
     private static CoverageIndexClient Index(bool folderResolves = true, bool storeResolves = true)
     {
         return new CoverageIndexClient(folderResolves, storeResolves);
-    }
-
-    /// <summary>A sweep that reaches the store and finds one mail.</summary>
-    private static ComSweepResult Sweep(string? onlyStore)
-    {
-        return new ComSweepResult(
-            new[] { Mail("AA1") },
-            foldersSwept: 4,
-            foldersSkipped: 0,
-            sweptFolders: new[] { Store + "/Inbox" },
-            perStore: new[] { new ComStoreSweepCounters(Store, 4, 0, 0, 0) });
-    }
-
-    /// <summary>A sweep that ran, covered its scope and found no arrival at all.</summary>
-    private static ComSweepResult EmptySweep(string? onlyStore)
-    {
-        return new ComSweepResult(
-            Array.Empty<ComMailBrief>(),
-            foldersSwept: 4,
-            foldersSkipped: 0,
-            sweptFolders: new[] { Store + "/Inbox" },
-            perStore: new[] { new ComStoreSweepCounters(Store, 4, 0, 0, 0) });
     }
 
     /// <summary>A sweep whose per-folder cap fired, with or without a usable sort.</summary>
@@ -542,24 +486,6 @@ public sealed class SearchCoverageClaimTests
             instantSearchEnabled: true, truncated: truncated, timedOut: false);
     }
 
-    private static ComMailBrief Mail(string entryId, string sender = "bob@example.com")
-    {
-        return new ComMailBrief(
-            entryId: entryId,
-            storeDisplayName: Store,
-            storeId: "store-alice",
-            folderName: "Inbox",
-            folderKind: "inbox",
-            subject: "a test mail",
-            senderName: "Bob",
-            senderAddress: sender,
-            receivedTime: Frontier,
-            isRead: true,
-            hasAttachments: false,
-            sizeBytes: 2048,
-            body: "test body");
-    }
-
     /// <summary>
     /// The index of the one store, whose reachability probe answers the folder probe and the store
     /// probe separately: telling the two apart is the whole point of the fixture.
@@ -570,7 +496,7 @@ public sealed class SearchCoverageClaimTests
         private readonly bool _storeResolves;
 
         internal CoverageIndexClient(bool folderResolves, bool storeResolves)
-            : base(new[] { StorePrefix }, SearchCoverageClaimTests.Frontier, everyScope: true)
+            : base(new[] { StorePrefix }, AliceMailbox.Frontier, everyScope: true)
         {
             _folderResolves = folderResolves;
             _storeResolves = storeResolves;
@@ -582,62 +508,6 @@ public sealed class SearchCoverageClaimTests
             bool folderProbe = sql.Contains(StorePrefix + "/0/", StringComparison.OrdinalIgnoreCase)
                 || sql.Contains("ItemFolderPathDisplay", StringComparison.Ordinal);
             return folderProbe ? _folderResolves : _storeResolves;
-        }
-    }
-
-    /// <summary>
-    /// A session that answers the profile's store list, the freshness sweep and the
-    /// exhaustive scan, and refuses everything else. A <see cref="DispatchProxy"/> rather
-    /// than a stub per member, so a method added to the contract needs no change here. Not
-    /// sealed: DispatchProxy derives from its TProxy at runtime and refuses a sealed one.
-    /// </summary>
-    private class StandInSession : DispatchProxy
-    {
-        private IReadOnlyList<ComStoreDetail> _stores = Array.Empty<ComStoreDetail>();
-        private Func<string?, ComSweepResult> _sweep = _ => throw new NotSupportedException();
-        private Func<string?, ComExhaustiveResult>? _scan;
-
-        internal static IOutlookSession Create(
-            IReadOnlyList<ComStoreDetail> stores,
-            Func<string?, ComSweepResult> sweep,
-            Func<string?, ComExhaustiveResult>? scan)
-        {
-            object proxy = Create<IOutlookSession, StandInSession>()
-                ?? throw new InvalidOperationException("DispatchProxy.Create returned null.");
-            ((StandInSession)proxy)._stores = stores;
-            ((StandInSession)proxy)._sweep = sweep;
-            ((StandInSession)proxy)._scan = scan;
-            return (IOutlookSession)proxy;
-        }
-
-        /// <inheritdoc />
-        protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
-        {
-            switch (targetMethod?.Name)
-            {
-                case nameof(IOutlookSession.GetProfileName):
-                    return "T1 stand-in profile";
-
-                case nameof(IOutlookSession.GetStoreDetails):
-                    return TestFolders.WithRoots(_stores);
-
-                case nameof(IOutlookSession.TryDescribeFolder):
-                    return TestFolders.Describe(args);
-
-                // Argument 3 is onlyStoreDisplayName; see IOutlookSession.SweepFoldersNewerThan.
-                case nameof(IOutlookSession.SweepFoldersNewerThan):
-                    return _sweep(args?[3] as string);
-
-                // Argument 0 is storeDisplayName; see IOutlookSession.ExhaustiveScan.
-                case nameof(IOutlookSession.ExhaustiveScan):
-                    return _scan != null
-                        ? _scan(args?[0] as string)
-                        : throw new NotSupportedException("This fixture has no exhaustive scan.");
-
-                default:
-                    throw new NotSupportedException(
-                        "The stand-in session does not implement " + (targetMethod?.Name ?? "?") + ".");
-            }
         }
     }
 }

@@ -55,6 +55,30 @@ public sealed class LiveExchangeFolderIdTests
     [Fact]
     [Trait("Requires", "CachedExchange")]
     [Trait("Writes", "Nothing")]
+    public void EveryStoreOfTheProfile_HasThe28CharacterStoreId_AnExchangeStoreOutlookDoesNotCacheToo()
+    {
+        // Option (b) of the uncached Exchange store's ID (2026-11-18): every store's top folder is read, so every
+        // store gets S and the provider UID, 28 characters - the online entry Exchange automapped included, which
+        // used to get T and its whole StoreID. That entry is the test account's mailbox seen twice, so its ID is the
+        // account's own; the mailbox is listed and resolved once, through the cached entry.
+        IReadOnlyList<StoreView> stores = Service.ListAccounts().Stores;
+        Assert.NotEmpty(stores);
+        foreach (StoreView store in stores)
+        {
+            string id = store.StoreId ?? throw new InvalidOperationException("list_accounts shows no storeId for a store.");
+            Assert.True(id.Length == 28 && id[0] == 'S', "a store has the ID '" + id + "', not 28 characters of kind S.");
+        }
+
+        string hubId = LiveIds.StoreId(Service, Hub);
+        int sharing = stores.Count(s => s.StoreId == hubId);
+        Assert.Single(Service.ListFolders(hubId).Stores);
+        _output.WriteLine("list_accounts: " + stores.Count + " store(s), every ID 28 characters of kind S; the test account's ID is shown by "
+            + sharing + " of them, and list_folders for it walks one store");
+    }
+
+    [Fact]
+    [Trait("Requires", "CachedExchange")]
+    [Trait("Writes", "Nothing")]
     public void FindFolder_FindsTheInboxByItsName_UnderTheIdListFoldersGives()
     {
         string listed = LiveIds.FolderId(Service, Hub, "Inbox");
