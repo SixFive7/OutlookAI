@@ -1021,14 +1021,15 @@ function Get-FirstRunPreflight {
 # =============================================================================================
 function Get-ContractChecks {
     return @(
-        @{ File = 'McpServer\OutlookAI.Core\AddIn\AddInServerContract.cs'; Needle = 'public const string TuningKeyPath = @"Software\OutlookAI\Tuning";'; Why = "the tests read HKCU\$TuningKey" }
+        @{ File = 'McpServer\OutlookAI.Core\AddIn\AddInServerContract.cs'; Needle = 'public const string AppKeyPath = @"Software\OutlookAI";'; Why = "the add-in's own key, which the two below are under" }
+        @{ File = 'McpServer\OutlookAI.Core\AddIn\AddInServerContract.cs'; Needle = 'public const string TuningKeyPath = AppKeyPath + @"\Tuning";'; Why = "the tests read HKCU\$TuningKey" }
         @{ File = 'McpServer\OutlookAI.Core\AddIn\AddInServerContract.cs'; Needle = 'public const string TuningInitializedValueName = "Initialized";'; Why = 'Initialized -> tuning.managed' }
         @{ File = 'McpServer\OutlookAI.Core\AddIn\AddInServerContract.cs'; Needle = 'public const string TuningEnabledValueName = "Enabled";'; Why = 'Enabled -> tuning.enabled' }
         @{ File = 'McpServer\OutlookAI.Core\AddIn\AddInServerContract.cs'; Needle = 'public const string TuningLastReconcileUtcValueName = "LastReconcileUtc";'; Why = 'LastReconcileUtc -> tuning.lastReconcileUtc' }
         @{ File = 'McpServer\OutlookAI.Core\AddIn\AddInServerContract.cs'; Needle = 'public const string TuningPolicyConflictsValueName = "PolicyConflicts";'; Why = 'PolicyConflicts is reported' }
         @{ File = 'McpServer\OutlookAI.Core\AddIn\AddInServerContract.cs'; Needle = 'public const string TuningNeedsAdministratorValueName = "NeedsAdministrator";'; Why = 'NeedsAdministrator is reported (Q128)' }
         @{ File = 'McpServer\OutlookAI.Core\Services\HealthReporting.cs'; Needle = 'string? needsAdministrator = readValue(Contract.TuningNeedsAdministratorValueName) as string;'; Why = 'and read as a string, as here' }
-        @{ File = 'McpServer\OutlookAI.Core\AddIn\AddInServerContract.cs'; Needle = 'public const string McpKeyPath = @"Software\OutlookAI\Mcp";'; Why = 'the registration status is read here' }
+        @{ File = 'McpServer\OutlookAI.Core\AddIn\AddInServerContract.cs'; Needle = 'public const string McpKeyPath = AppKeyPath + @"\Mcp";'; Why = 'the registration status is read here' }
         @{ File = 'McpServer\OutlookAI.Core\AddIn\AddInServerContract.cs'; Needle = 'public const string McpStatusValueName = "Status";'; Why = 'awaiting_choice is read from Status' }
         @{ File = 'McpServer\OutlookAI.Core\AddIn\AddInServerContract.cs'; Needle = 'public const string McpLastReconcileUtcValueName = "LastReconcileUtc";'; Why = 'the add-in''s second startup marker, Mcp\LastReconcileUtc' }
         @{ File = 'Services\McpRegistrationService.cs'; Needle = 'snap.LastReconcileUtc = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture);'; Why = 'written at every reconcile, failed or not, as a round-trip UTC time' }

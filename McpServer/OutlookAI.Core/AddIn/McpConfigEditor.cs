@@ -68,14 +68,22 @@ namespace OutlookAI.Core.AddIn
         /// for <c>command</c>/<c>args</c>/<c>env</c>. Anything else — a bare <c>$</c>, an
         /// unterminated <c>${</c> — is literal text and is copied through untouched, which
         /// is the safe reading for a path we are about to compare against a real file.
-        /// <paramref name="lookup"/> returns "" for a variable that is not set.
+        /// <paramref name="lookup"/> returns null or "" for a variable that is not set; without one
+        /// the process environment is read (<see cref="ProcessEnvironmentLookup"/>).
+        ///
+        /// <para>
+        /// The one rule for both sides: the add-in registers the portable command with it, and
+        /// <c>outlook_health</c> reads the registration back with it. Until stage S3 of the
+        /// code-sharing refactor the server had a copy of its own, held to this one by a T1 parity
+        /// test (Q154).
+        /// </para>
         /// </summary>
-        public static string ExpandEnvironmentReferences(string value, Func<string, string> lookup)
+        public static string ExpandEnvironmentReferences(string? value, Func<string, string?>? lookup = null)
         {
-            if (string.IsNullOrEmpty(value) || value.IndexOf("${", StringComparison.Ordinal) < 0)
+            if (value == null || value.Length == 0 || value.IndexOf("${", StringComparison.Ordinal) < 0)
                 return value ?? "";
             if (lookup == null)
-                return value;
+                lookup = ProcessEnvironmentLookup();
 
             var sb = new StringBuilder(value.Length);
             int i = 0;
@@ -117,7 +125,7 @@ namespace OutlookAI.Core.AddIn
 
                 string resolved = "";
                 try { resolved = lookup(name) ?? ""; }
-                catch (Exception ex) { System.Diagnostics.Debug.WriteLine("env lookup: " + ex.Message); }
+                catch (Exception ex) when (!(ex is OutOfMemoryException)) { System.Diagnostics.Debug.WriteLine("env lookup: " + ex.Message); }
 
                 sb.Append(resolved.Length > 0 ? resolved : fallback);
                 i = close + 1;
@@ -130,6 +138,18 @@ namespace OutlookAI.Core.AddIn
         public static bool ContainsEnvironmentReference(string value)
         {
             return !string.IsNullOrEmpty(value) && value.IndexOf("${", StringComparison.Ordinal) >= 0;
+        }
+
+        /// <summary>
+        /// Claude Code's user-scope configuration file, <c>~/.claude.json</c>: the one place its
+        /// path is built, for the add-in, which repairs the file, and <c>outlook_health</c>, which
+        /// reports on it. It reads where the user's profile folder is and touches no file.
+        /// </summary>
+        public static string UserConfigPath()
+        {
+            return Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                AddInServerContract.ClaudeConfigFileName);
         }
 
         /// <summary>The process environment as an expansion lookup ("" for anything unset).</summary>

@@ -91,6 +91,36 @@ public sealed class McpConfigEditorTests
     }
 
     [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    public void ExpandingNothingYieldsNothing(string? value)
+    {
+        Assert.Equal("", McpConfigEditor.ExpandEnvironmentReferences(value, Env()));
+    }
+
+    [Fact]
+    public void ALookupThatAnswersNullCountsAsUnset()
+    {
+        Assert.Equal("fallback/x", McpConfigEditor.ExpandEnvironmentReferences("${GONE:-fallback}/x", name => null));
+    }
+
+    [Fact]
+    public void WithoutALookupTheProcessEnvironmentIsRead()
+    {
+        // The form outlook_health uses: HealthReporting.DescribeMcpRegistration expands the
+        // registered command against the process it runs in.
+        Environment.SetEnvironmentVariable("OUTLOOKAI_TEST_ROOT", "here");
+        try
+        {
+            Assert.Equal("here/x", McpConfigEditor.ExpandEnvironmentReferences("${OUTLOOKAI_TEST_ROOT}/x"));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("OUTLOOKAI_TEST_ROOT", null);
+        }
+    }
+
+    [Theory]
     [InlineData("${LOCALAPPDATA}/x", true)]
     [InlineData(@"C:\x\y.exe", false)]
     [InlineData("", false)]

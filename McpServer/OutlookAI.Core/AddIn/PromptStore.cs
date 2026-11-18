@@ -714,7 +714,7 @@ namespace OutlookAI.Core.AddIn
     public static class PromptStore
     {
         /// <summary>Root key, under HKCU.</summary>
-        public const string KeyPath = @"Software\OutlookAI\Prompts";
+        public const string KeyPath = AddInServerContract.AppKeyPath + @"\Prompts";
 
         /// <summary>Ordered button names, one per line. Absent means the shipped six.</summary>
         public const string ButtonsValueName = "Buttons";

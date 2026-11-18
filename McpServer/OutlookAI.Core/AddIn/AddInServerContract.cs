@@ -24,6 +24,13 @@ namespace OutlookAI.Core.AddIn
     /// </summary>
     public static class AddInServerContract
     {
+        /// <summary>
+        /// The add-in's own key, under HKEY_CURRENT_USER: every key below is under it, and the
+        /// add-in keeps its own settings in it (the installer's InstallDir, the chosen model). One
+        /// spelling, where it used to be typed into four classes (Q154).
+        /// </summary>
+        public const string AppKeyPath = @"Software\OutlookAI";
+
         // ===== HKCU\Software\OutlookAI\Tuning =====
         // Written by OutlookTuningService (desired state, group toggles, reconcile bookkeeping);
         // read by HealthReporting.ReadTuningState for the tuning block of outlook_health.
@@ -33,7 +40,7 @@ namespace OutlookAI.Core.AddIn
         /// write. (Since Q145 (a) every Outlook value it manages is the user's own setting too; one
         /// Windows refuses anyway is listed in <see cref="TuningNeedsAdministratorValueName"/>.)
         /// </summary>
-        public const string TuningKeyPath = @"Software\OutlookAI\Tuning";
+        public const string TuningKeyPath = AppKeyPath + @"\Tuning";
 
         /// <summary>
         /// DWORD, written once when the add-in first seeds the toggles. Its ABSENCE is
@@ -105,7 +112,7 @@ namespace OutlookAI.Core.AddIn
         // instead of guessing. This key IS the contract - see McpServer/README.md.
 
         /// <summary>The MCP registration key, under HKEY_CURRENT_USER.</summary>
-        public const string McpKeyPath = @"Software\OutlookAI\Mcp";
+        public const string McpKeyPath = AppKeyPath + @"\Mcp";
 
         /// <summary>String: one of McpRegistrationService's status codes.</summary>
         public const string McpStatusValueName = "Status";

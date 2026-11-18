@@ -68,7 +68,7 @@ namespace OutlookAI.Services
         /// </summary>
         internal const string McpKeyPath = AddInServerContract.McpKeyPath;
         internal const string InstallDirValueName = "InstallDir";
-        internal const string AppKeyPath = @"Software\OutlookAI";
+        internal const string AppKeyPath = AddInServerContract.AppKeyPath;
 
         /// <summary>Server name under <c>mcpServers</c>; matches what Phase 2 registered.</summary>
         internal const string ServerName = McpConfigEditor.ServerName;
@@ -263,7 +263,7 @@ namespace OutlookAI.Services
             {
                 lock (_gate)
                 {
-                    string configPath = ClaudeConfigPath();
+                    string configPath = McpConfigEditor.UserConfigPath();
                     bool configExists = File.Exists(configPath);
                     string raw = configExists ? ReadSharedSettled(configPath) : "";
 
@@ -410,7 +410,7 @@ namespace OutlookAI.Services
 
         private static RegistrationSnapshot ReconcileCore(bool intentJustDeclared)
         {
-            string configPath = ClaudeConfigPath();
+            string configPath = McpConfigEditor.UserConfigPath();
             string serverPath = ResolveInstalledServerPath();
 
             var snap = new RegistrationSnapshot
@@ -765,19 +765,6 @@ namespace OutlookAI.Services
         }
 
         // ===== Paths and probes =====
-
-        /// <summary>
-        /// The user-scope configuration file. The file name comes from
-        /// <see cref="AddInServerContract"/> because the MCP server reads the very same file to
-        /// report whether the registration names it - see
-        /// <c>HealthReporting.TryReadRegisteredCommand</c>, which resolves it the same way.
-        /// </summary>
-        internal static string ClaudeConfigPath()
-        {
-            return Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                AddInServerContract.ClaudeConfigFileName);
-        }
 
         /// <summary>
         /// Claude Code is present if it has written its config file, or if its CLI is where
