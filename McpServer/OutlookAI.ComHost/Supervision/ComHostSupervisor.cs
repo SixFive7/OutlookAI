@@ -523,8 +523,13 @@ namespace OutlookAI.ComHost.Supervision
                         // The policy's call, so T1 pins it: past its deadline a request is reclaimed whether
                         // or not its caller is still waiting (Q179 (b)); a host already gone is answered by
                         // the connection-lost path instead.
+                        // Its delay IS the deadline, so it is at the deadline whatever a timer's resolution
+                        // made the stopwatch read a millisecond early.
                         InFlightVerdict inFlight = ComHostPolicy.DecideInFlight(new InFlightInput(
-                            pending.ElapsedMilliseconds, pending.DeadlineMilliseconds, IsChildAlive(generation), pending.CallerCancelled));
+                            Math.Max(pending.ElapsedMilliseconds, pending.DeadlineMilliseconds),
+                            pending.DeadlineMilliseconds,
+                            IsChildAlive(generation),
+                            pending.CallerCancelled));
                         if (inFlight != InFlightVerdict.TimeoutKillChild)
                         {
                             return;
@@ -959,6 +964,27 @@ namespace OutlookAI.ComHost.Supervision
         /// </summary>
         private const int ShutdownExitGraceMilliseconds = 2000;
 
+        /// <summary>Whether the child of <paramref name="generation"/> is still the current one and running.</summary>
+        private bool IsChildAlive(int generation)
+        {
+            lock (_stateLock)
+            {
+                if (_generation != generation || _child == null)
+                {
+                    return false;
+                }
+
+                try
+                {
+                    return !_child.HasExited;
+                }
+                catch (Exception ex) when (ex is InvalidOperationException || ex is System.ComponentModel.Win32Exception)
+                {
+                    return false;
+                }
+            }
+        }
+
         /// <summary>
         /// Terminates the child that missed its deadline.
         /// <para>
@@ -997,27 +1023,6 @@ namespace OutlookAI.ComHost.Supervision
         /// child is not reading the pipe and a stop frame is structurally undeliverable.
         /// </para>
         /// </summary>
-        /// <summary>Whether the child of <paramref name="generation"/> is still the current one and running.</summary>
-        private bool IsChildAlive(int generation)
-        {
-            lock (_stateLock)
-            {
-                if (_generation != generation || _child == null)
-                {
-                    return false;
-                }
-
-                try
-                {
-                    return !_child.HasExited;
-                }
-                catch (InvalidOperationException)
-                {
-                    return false;
-                }
-            }
-        }
-
         private void KillChild(string why, int generation)
         {
             Process? child;
