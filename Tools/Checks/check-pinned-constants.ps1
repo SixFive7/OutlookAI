@@ -15,7 +15,9 @@
     closed only while nobody types the literal again, and re-typing it compiles - so "this exists
     exactly once, here" is as much a cross-file invariant as "these two agree". #14 is that shape
     for a build rule: the guard in OutlookAI.csproj that keeps a command-line build from
-    registering the add-in, which no compilation can see and whose deletion breaks nothing.
+    registering the add-in, which no compilation can see and whose deletion breaks nothing. #15 is
+    a boundary of the same kind: the one part of OutlookAI.Core the add-in may use, and what that
+    part may not do inside Outlook's process (Q164).
 
     It is deliberately text-based. It cannot compile the add-in (net48/VSTO) and it cannot run
     Inno Setup, so it reads the sources and compares what it finds. Every check therefore also
@@ -647,6 +649,177 @@ if ($null -ne $projText) {
         Fail $q81 "$($q81Problems -join ' | ') The guard is the only thing between a plain msbuild of the add-in and the maintainer's own Outlook loading that build; see the comment above its UsingTasks in OutlookAI.csproj."
     } else {
         Pass $q81 "two stand-ins ahead of the VSTO import, RegisterFormRegions untouched, both chains stripped after it"
+    }
+}
+
+# ---------------------------------------------------------------------------------------------
+# 15. The add-in reaches OutlookAI.Core through ONE namespace, and nothing in that namespace runs
+#     Outlook's COM session, a COM apartment thread or the search index (Q164 (a), decided by the
+#     maintainer 2026-11-18).
+#     Since Q167 (a) the add-in references Core's net48 build (OutlookAI.csproj). Core also holds
+#     what must never run inside Outlook's own process - the COM session that attaches to Outlook
+#     and registers a message filter, the STA runner, the index search over OLE DB, the MAPI
+#     probes - where a hang or a crash takes Outlook down with it. So the add-in may use one part of
+#     Core, the namespace OutlookAI.Core.AddIn in McpServer/OutlookAI.Core/AddIn/, and that part
+#     uses nothing else of Core. No compiler holds either half - the rest of Core is public, because
+#     the server uses it - so the rule is text, as #12 to #14 are:
+#       (a) every reference to OutlookAI.Core in what the add-in compiles (OutlookAI.csproj's Compile
+#           items) names OutlookAI.Core.AddIn: a using directive, an alias, a qualified or global::
+#           name, and a type or assembly name in a string, which is how reflection would get round
+#           the rule. And no Core.X written relative to the add-in's own OutlookAI namespace;
+#       (b) every file of Core - linked ones included - that declares the namespace lies in that
+#           folder, and every file in the folder declares it or a namespace inside it; and no file
+#           of Core declares OutlookAI.Core itself, whose types a file in the folder could name
+#           without writing a namespace at all;
+#       (c) the folder's files name no other namespace of Core, whole or relative to their own (Com.X,
+#           Services.X), and none of the calls that attach to Outlook, start a COM apartment thread,
+#           register a COM message filter, open a MAPI session or open the index.
+#     Comments are taken out first: they are not code. Strings stay in for (a) and for (c)'s calls -
+#     "Outlook.Application" and "Search.CollatorDSO" live in strings - and come out for the names
+#     only code can carry, Core.X and (c)'s relative namespaces.
+# ---------------------------------------------------------------------------------------------
+$script:Checks++
+$q164 = 'the add-in reaches OutlookAI.Core only through OutlookAI.Core.AddIn, which stays out of Outlook''s COM session, COM threads and the index (Q164)'
+$facadeNamespace = 'OutlookAI.Core.AddIn'
+$coreDirRel = 'McpServer/OutlookAI.Core'
+$facadeDirRel = 'McpServer/OutlookAI.Core/AddIn'
+# One pass over a C# text for its comments and its string and character literals; the leftmost match
+# wins, so a // inside a string stays in the string. A comment becomes a space, a literal stays or
+# becomes "", and every line break stays, so a line number still points into the source.
+$csCommentsAndLiterals = New-Object System.Text.RegularExpressions.Regex('(?<comment>//[^\n]*|/\*[\s\S]*?\*/)|(?<literal>"{3,}[\s\S]*?"{3,}|@\$?"(?:[^"]|"")*"|\$@"(?:[^"]|"")*"|\$?"(?:[^"\\\n]|\\.)*"|''(?:[^''\\\n]|\\.)+'')')
+function Get-CSharpCode([string] $Text, [switch] $KeepStrings) {
+    $sb = New-Object System.Text.StringBuilder
+    $at = 0
+    foreach ($m in $csCommentsAndLiterals.Matches($Text)) {
+        [void]$sb.Append($Text, $at, $m.Index - $at)
+        $breaks = [string]::new([char]10, ($m.Value.Split([char]10).Count - 1))
+        if ($m.Groups['comment'].Success) { [void]$sb.Append(' ' + $breaks) }
+        elseif ($KeepStrings) { [void]$sb.Append($m.Value) }
+        else { [void]$sb.Append('""' + $breaks) }
+        $at = $m.Index + $m.Length
+    }
+    [void]$sb.Append($Text, $at, $Text.Length - $at)
+    return $sb.ToString()
+}
+# Every match of a pattern as "file:line: text".
+function Find-CodeMatches([string] $Code, [string] $Pattern, [string] $Rel, [switch] $IgnoreCase) {
+    $options = [System.Text.RegularExpressions.RegexOptions]::None
+    if ($IgnoreCase) { $options = [System.Text.RegularExpressions.RegexOptions]::IgnoreCase }
+    $out = @()
+    foreach ($m in [regex]::Matches($Code, $Pattern, $options)) {
+        $line = $Code.Substring(0, $m.Index).Split([char]10).Count
+        $out += ('{0}:{1}: {2}' -f $Rel, $line, ($m.Value -replace '\s+', ''))
+    }
+    return $out
+}
+# OutlookAI.Core named anywhere, unless .AddIn follows it.
+$namesCoreButNotFacade = '(?<![\w.])OutlookAI\s*\.\s*Core\b(?!\s*\.\s*AddIn\b)'
+# Core.X written relative to an enclosing OutlookAI namespace.
+$namesCoreRelatively = '(?<![\w.])Core\s*\.\s*(?!AddIn\b)[A-Za-z_]\w*'
+# What a file in the facade must not call or name, and what each one does.
+$inProcessForbidden = [ordered]@{
+    'GetActiveObject'         = 'attaches to a running Outlook'
+    'GetTypeFromProgID'       = 'creates or attaches to a COM server by name'
+    'GetTypeFromCLSID'        = 'creates or attaches to a COM server by class id'
+    'Outlook\.Application'    = 'names Outlook''s own COM class'
+    'CoRegisterMessageFilter' = 'registers a COM message filter'
+    'IMessageFilter'          = 'is a COM message filter'
+    'ApartmentState'          = 'starts a COM apartment thread'
+    'CoInitialize'            = 'joins a thread to a COM apartment'
+    'OleDb'                   = 'is the search index''s OLE DB provider'
+    'CollatorDSO'             = 'is the Windows Search provider'
+    'SystemIndex'             = 'is the Windows Search catalog'
+    'MAPIInitialize'          = 'starts Extended MAPI'
+    'MAPILogon'               = 'opens a MAPI session'
+    'OutlookComSession'       = 'is Core''s COM session'
+    'ComStaRunner'            = 'is Core''s STA runner'
+}
+$q164Problems = @()
+$addinProjText = Read-Source 'OutlookAI.csproj'
+$coreProjText = Read-Source "$coreDirRel/OutlookAI.Core.csproj"
+if ($null -ne $addinProjText -and $null -ne $coreProjText) {
+    $addinProj = New-Object System.Xml.XmlDocument
+    $addinProj.LoadXml($addinProjText)
+    $msb = New-Object System.Xml.XmlNamespaceManager($addinProj.NameTable)
+    $msb.AddNamespace('m', 'http://schemas.microsoft.com/developer/msbuild/2003')
+    $addinFiles = @($addinProj.SelectNodes('//m:Compile', $msb) | ForEach-Object { $_.GetAttribute('Include').Replace('\', '/') })
+
+    # Core's files: every .cs under its folder but its build output, and every file it links.
+    $rootLength = $RepoRoot.TrimEnd('\', '/').Length + 1
+    $coreDir = Join-Path $RepoRoot $coreDirRel
+    $coreFiles = @(Get-ChildItem -LiteralPath $coreDir -Filter '*.cs' -File -Recurse -ErrorAction SilentlyContinue |
+            ForEach-Object { $_.FullName.Substring($rootLength).Replace('\', '/') } |
+            Where-Object { -not (($_.Substring($coreDirRel.Length + 1) -split '/') | Where-Object { $_ -eq 'bin' -or $_ -eq 'obj' }) })
+    $coreProj = New-Object System.Xml.XmlDocument
+    $coreProj.LoadXml($coreProjText)
+    foreach ($c in @($coreProj.SelectNodes('//Compile[@Include]'))) {
+        $linked = [System.IO.Path]::GetFullPath((Join-Path $coreDir $c.GetAttribute('Include')))
+        $coreFiles += $linked.Substring($rootLength).Replace('\', '/')
+    }
+
+    # The scans must have found what they read, or this check proves nothing.
+    foreach ($known in @('ThisAddIn.cs', 'TaskPane/AITaskPane.cs')) {
+        if ($addinFiles -notcontains $known) { $q164Problems += "OutlookAI.csproj compiles no $known - the add-in's file list changed shape and part (a) no longer proves anything." }
+    }
+    if ($coreFiles -notcontains "$coreDirRel/Com/OutlookComSession.cs") { $q164Problems += "no $coreDirRel/Com/OutlookComSession.cs among Core's files - the scan of Core changed shape and parts (b) and (c) no longer prove anything." }
+
+    # (a) The add-in's own sources.
+    foreach ($rel in $addinFiles) {
+        $text = Read-Source $rel
+        if ($null -eq $text) { continue }
+        $hits = @(Find-CodeMatches -Code (Get-CSharpCode $text -KeepStrings) -Pattern $namesCoreButNotFacade -Rel $rel) +
+            @(Find-CodeMatches -Code (Get-CSharpCode $text) -Pattern $namesCoreRelatively -Rel $rel)
+        foreach ($h in $hits) { if ($h) { $q164Problems += "(a) the add-in names Core outside $facadeNamespace - $h" } }
+    }
+
+    # (b) Where the namespace is declared, and that the root namespace is not.
+    $siblings = @()
+    $facadeFiles = @()
+    foreach ($rel in $coreFiles) {
+        $text = Read-Source $rel
+        if ($null -eq $text) { continue }
+        $code = Get-CSharpCode $text
+        $inFacadeDir = $rel.StartsWith($facadeDirRel + '/', [System.StringComparison]::OrdinalIgnoreCase)
+        if ($inFacadeDir) { $facadeFiles += $rel }
+        $declared = @([regex]::Matches($code, '(?m)^\s*namespace\s+([A-Za-z_][\w.]*)\s*[;{]') | ForEach-Object { $_.Groups[1].Value })
+        foreach ($n in $declared) {
+            $inFacade = ($n -ceq $facadeNamespace -or $n.StartsWith($facadeNamespace + '.', [System.StringComparison]::Ordinal))
+            if ($inFacade -and -not $inFacadeDir) { $q164Problems += "(b) $rel declares $n outside $facadeDirRel/ - the add-in could use it, and part (c) would never read it." }
+            if ($inFacadeDir -and -not $inFacade) { $q164Problems += "(b) $rel lies in $facadeDirRel/ but declares $n, not $facadeNamespace." }
+            if ($n -ceq 'OutlookAI.Core') { $q164Problems += "(b) $rel declares the root namespace OutlookAI.Core, whose types a file in $facadeDirRel/ could use by name alone." }
+            if (-not $inFacade -and $n.StartsWith('OutlookAI.Core.', [System.StringComparison]::Ordinal)) { $siblings += $n.Split('.')[2] }
+        }
+        if ($inFacadeDir -and $declared.Count -eq 0) { $q164Problems += "(b) $rel lies in $facadeDirRel/ but declares no namespace." }
+    }
+    $siblings = @($siblings | Sort-Object -Unique)
+    foreach ($known in @('Com', 'IndexSearch')) {
+        if ($siblings -notcontains $known) { $q164Problems += "no file of Core declares OutlookAI.Core.$known - the namespace scan changed shape and part (c) no longer proves anything." }
+    }
+
+    # (c) What the facade's files may not name or call.
+    $namesSiblingRelatively = '(?<![\w.])(?:' + (($siblings | ForEach-Object { [regex]::Escape($_) }) -join '|') + ')\s*\.\s*[A-Za-z_]\w*'
+    foreach ($rel in $facadeFiles) {
+        $text = Read-Source $rel
+        if ($null -eq $text) { continue }
+        $withStrings = Get-CSharpCode $text -KeepStrings
+        $codeOnly = Get-CSharpCode $text
+        $hits = @(Find-CodeMatches -Code $withStrings -Pattern $namesCoreButNotFacade -Rel $rel) +
+            @(Find-CodeMatches -Code $codeOnly -Pattern $namesCoreRelatively -Rel $rel) +
+            @(Find-CodeMatches -Code $codeOnly -Pattern $namesSiblingRelatively -Rel $rel)
+        foreach ($h in $hits) { if ($h) { $q164Problems += "(c) the facade names Core outside itself - $h" } }
+        foreach ($token in $inProcessForbidden.Keys) {
+            foreach ($h in @(Find-CodeMatches -Code $withStrings -Pattern ('\b' + $token) -Rel $rel -IgnoreCase)) {
+                if ($h) { $q164Problems += "(c) $h $($inProcessForbidden[$token]), which must never run inside Outlook's process" }
+            }
+        }
+    }
+
+    if ($q164Problems.Count -gt 0) {
+        Fail $q164 "$(@($q164Problems | Sort-Object -Unique) -join ' | ') The add-in runs inside Outlook's process, where a hang or a crash in Core's COM, MAPI or index code takes Outlook down; see the comment above Core's ProjectReference in OutlookAI.csproj."
+    } elseif ($facadeFiles.Count -eq 0) {
+        Pass $q164 "the add-in's $($addinFiles.Count) files name no part of Core, and $facadeDirRel/ holds no file yet"
+    } else {
+        Pass $q164 "the add-in's $($addinFiles.Count) files name Core only as $facadeNamespace; its $($facadeFiles.Count) file(s) name no other part of Core ($($siblings -join ', ')) and call nothing that attaches to Outlook, starts a COM thread or opens the index"
     }
 }
 

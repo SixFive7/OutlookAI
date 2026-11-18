@@ -1080,6 +1080,24 @@ its mailbox tests on, and change nothing you install.
   network clears the backoff and checks shortly after, and "Check for updates" always runs straight
   away.
 
+- ♻️ **The add-in references OutlookAI.Core and may use one namespace of it (Q164, Q167).**
+  Until now the add-in kept its own copies of logic the MCP server has in Core, because it did not
+  reference Core (v3's "Phase-6 no-coupling choice"). Q154 (b) ended that, and this is the
+  refactor's first stage, plumbing only: the add-in uses none of Core yet, so nothing it does
+  changes. `OutlookAI.csproj` references Core's net48 build (Q167 (a)) and keeps two of the scripted
+  builds' global properties out of Core's build: `PrepareForRunDependsOn` names a VSTO target Core
+  does not have, and `DefineConstants` would replace Core's own `NETFRAMEWORK` symbol. Both add-in
+  build scripts, `Testbed/host/Publish-AddInPayload.ps1` and `Tools/Switch-AddInBuild.ps1`, restore
+  Core's packages first with MSBuild's `/restore`; guard 1's evaluation still runs no target and
+  restores nothing, and their self-tests check both. `OutlookAI.slnx` holds Core, so F5 in Visual
+  Studio builds it. The installer carries `OutlookAI.Core.dll`, `System.Data.OleDb.dll` and
+  `System.Reflection.DispatchProxy.dll` beside `OutlookAI.dll`, each listed and hashed in the signed
+  add-in manifest, and a release stamps its version into that copy of Core as well. The add-in may
+  use only the namespace `OutlookAI.Core.AddIn`, and nothing in it may attach to Outlook, start a
+  COM apartment thread, open a MAPI session or open the search index (Q164 (a)), because the add-in
+  runs inside Outlook's own process. `Tools/Checks/check-pinned-constants.ps1` check 15 holds that
+  rule, and T1 `AddInCoreReferenceTests` the shape of the reference.
+
 - 📝 **The documents and the TODO list name no real person, address or machine any more (Q189).**
   They quoted the maintainer's computer name, his user name in paths under his profile, his
   personal and business addresses, the item counts of his mailboxes, a colleague's first name, and,

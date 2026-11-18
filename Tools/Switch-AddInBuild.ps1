@@ -73,7 +73,9 @@
              registry keys and certificate stores snapshotted before and after. Any trace of the
              build on the host is a failure, and a changed add-in registration is put back first.
              These guards do not rely on the commit's own OutlookAI.csproj, so a commit from
-             before Q81 builds just as safely.
+             before Q81 builds just as safely. The build restores first (/restore): the add-in
+             references OutlookAI.Core (Q167 (a)), whose packages the restore brings, and the
+             flattened output carries OutlookAI.Core.dll and its two package assemblies.
           2. Copies the flattened publish output into a NEW folder,
              %LOCALAPPDATA%\OutlookAI\DevBuilds\<yyyyMMdd-HHmmss>-<commit>, which no build ever
              writes into.
@@ -1146,6 +1148,8 @@ function Get-MSBuildArgumentList {
     $list = @(
         $projectArg,
         '/t:Publish',
+        # OutlookAI.Core's packages (Q167 (a)), restored in an evaluation of their own first.
+        '/restore',
         # The release build's "Build and Publish" (the release workflow's, now
         # Publish-AddInPayload.ps1's for Tools/Publish-Release.ps1), property for property.
         (Format-MSBuildProperty 'Configuration' 'Release'),
@@ -1171,6 +1175,16 @@ function Get-MSBuildArgumentList {
     if ($flp -match '\s') { $flp = '"' + $flp + '"' }
     $list += "/flp:$flp"
     return $list
+}
+
+# Guard 1's evaluation: the build's own global properties, evaluated only - no target, no restore,
+# no file log. -getProperty with no target runs nothing; /restore would run the Restore target.
+function Get-MSBuildEvaluationArgumentList {
+    param([Parameter(Mandatory = $true)] [string[]] $BuildArguments)
+    $kept = @($BuildArguments | Where-Object {
+            -not $_.StartsWith('/t:') -and $_ -ne '/restore' -and -not $_.StartsWith('/flp:') -and $_ -ne '/v:minimal'
+        })
+    return @($kept + '-getProperty:PrepareForRunDependsOn')
 }
 
 function Test-EvaluatedPrepareForRun {
@@ -1584,7 +1598,7 @@ function Invoke-GuardedBuild {
         Say "  signing  throwaway Cert:\CurrentUser\My\$thumb"
         $msbuildArgs = Get-MSBuildArgumentList -ProjectPath $project -Thumbprint $thumb -StandInTargets $standIn -FileLog $log
 
-        $evalArgs = @($msbuildArgs | Where-Object { $_ -ne '/t:Publish' -and -not $_.StartsWith('/flp:') -and $_ -ne '/v:minimal' }) + '-getProperty:PrepareForRunDependsOn'
+        $evalArgs = Get-MSBuildEvaluationArgumentList -BuildArguments $msbuildArgs
         $eval = Invoke-Logged -FilePath $msbuild -ArgumentList $evalArgs -LogStem (Join-Path $BuildDir 'msbuild-evaluate') -TimeoutMinutes 5 -WorkingDirectory $sourceDir
         $evaluated = ''
         if (Test-Path -LiteralPath $eval.Out) { $evaluated = Get-Content -LiteralPath $eval.Out -Raw }
@@ -1792,6 +1806,10 @@ function Invoke-SelfTest {
     Test-Case 'the IDE''s registering behaviour is pinned off' $true ($a1 -contains '/p:BuildingInsideVisualStudio=false')
     Test-Case 'the dev version is stamped' $true ($a1 -contains "/p:ApplicationVersion=$DevVersion")
     Test-Case 'nothing names the registration target' $false (($a1 -join ' ').Contains('RegisterOfficeAddin'))
+    Test-Case 'the build restores OutlookAI.Core''s packages first (Q167)' $true ($a1 -contains '/restore')
+    $e1 = @(Get-MSBuildEvaluationArgumentList -BuildArguments $a1)
+    Test-Case 'guard 1''s evaluation runs no target, restores nothing and writes no file log' 0 @($e1 | Where-Object { $_.StartsWith('/t:') -or $_ -eq '/restore' -or $_.StartsWith('/flp:') }).Count
+    Test-Case 'it asks for the chain, with the build''s own global properties' $true (($e1[$e1.Count - 1] -eq '-getProperty:PrepareForRunDependsOn') -and ($e1 -contains '/p:PrepareForRunDependsOn="CopyFilesToOutputDirectory;VisualStudioForApplicationsBuild"') -and ($e1 -contains '/p:BuildingInsideVisualStudio=false'))
     Test-Case 'an evaluated chain without registration is accepted' 0 @(Test-EvaluatedPrepareForRun "CopyFilesToOutputDirectory;`r`n VisualStudioForApplicationsBuild;").Count
     Test-Case 'a chain still carrying RegisterOfficeAddin is refused' $true ((Test-EvaluatedPrepareForRun 'CopyFilesToOutputDirectory;VisualStudioForApplicationsBuild;RegisterOfficeAddin') -join ' ').Contains('did not take')
     $vsfab = 'Done building target "VisualStudioForApplicationsBuild" in project "OutlookAI.csproj".'

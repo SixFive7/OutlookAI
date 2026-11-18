@@ -24,9 +24,10 @@
 
     WHAT IT CHECKS. Every *.csproj under McpServer\ - the server, the COM host and Core that ship,
     and the test and tool projects that run on the test VMs against real mailboxes, as the review
-    it replaces read every manifest. The add-in and its helper are not in it because they have no
-    package to check: both are old-style projects whose references are the .NET Framework's and
-    Office's own. `dotnet list package` restores a project before it lists it, so nothing needs
+    it replaces read every manifest. The add-in is not in it because it has no package of its own: an
+    old-style project whose references are the .NET Framework's, Office's, and OutlookAI.Core's
+    (Q167 (a)) - and the two packages it ships beside itself are Core's, checked here as Core's.
+    `dotnet list package` restores a project before it lists it, so nothing needs
     building first; the advisories come from nuget.org, which serves the GitHub Advisory Database.
 
     A RUN THAT COULD NOT ASK IS NOT A PASS. The command exits 0 when it finds a vulnerable package -
