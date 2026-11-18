@@ -78,7 +78,8 @@
              flattened output carries OutlookAI.Core.dll and System.Reflection.DispatchProxy.dll.
           2. Copies the flattened publish output into a NEW folder,
              %LOCALAPPDATA%\OutlookAI\DevBuilds\<yyyyMMdd-HHmmss>-<commit>, which no build ever
-             writes into.
+             writes into - the name the build's own folder under -WorkRoot got, with -2, -3 ... when
+             a build of the same commit took it in the same second (New-RunDirectory).
           3. Records the registration it is about to replace in dev-build.json in that folder.
           4. Trusts it: one VSTO inclusion entry, the one the trust prompt itself would write -
              HKCU\Software\Microsoft\VSTO\Security\Inclusion\<new guid> with Url = the manifest's
@@ -627,6 +628,8 @@ function Get-LoadBehaviorMeaning {
     return 'unusual value'
 }
 
+# The name a build's folder and its dev build's folder start from: unique per second and commit only, so
+# both are claimed with New-RunDirectory, which adds -2, -3 ... to a taken name.
 function New-DevBuildFolderName {
     param([string] $CommitSha, [DateTime] $When)
     return ('{0:yyyyMMdd-HHmmss}-{1}' -f $When, $CommitSha.Substring(0, 12))
@@ -918,7 +921,9 @@ function Install-DevBuild {
     }
 
     $vsto = Join-Path $folder $ManifestFileName
-    New-Item -ItemType Directory -Force -Path $folder | Out-Null
+    # Claimed, not made: a folder another run made since the check above refuses this one
+    # (New-RunDirectory with no second name to try), where New-Item -Force would have copied into it.
+    [void](New-RunDirectory -Parent $DevRoot -RunId $FolderName -MaxTries 1)
     try {
         Copy-Item -Path (Join-Path $PublishDir '*') -Destination $folder -Recurse -Force
         $copied = Get-ManifestSigningKeyXml -ManifestXml ([System.IO.File]::ReadAllText($vsto))
@@ -1505,15 +1510,19 @@ function Resolve-Commit {
 # Build one commit with all three guards into $BuildDir. Returns the flattened publish folder
 # and the signing key; throws on anything else.
 function Invoke-GuardedBuild {
-    param($CommitInfo, [string] $BuildDir)
+    param($CommitInfo, [string] $WorkRoot, [string] $FolderName)
     $msbuild = Resolve-MSBuild
     $vstoTargets = @(Find-InstalledVstoTargets)
     if ($vstoTargets.Count -eq 0) { throw 'REFUSING TO BUILD: no VSTO build targets (OfficeTools\Microsoft.VisualStudio.Tools.Office.targets) in any Visual Studio with the Office workload.' }
     $msbuildVersion = (@(Invoke-NativeCommand { & $msbuild -version -nologo 2>$null }) | Select-Object -Last 1)
     Say "  MSBuild  $msbuild ($msbuildVersion)"
     Say "  VSTO     $($vstoTargets[0])"
-    if (Test-Path -LiteralPath $BuildDir) { throw "REFUSING: $BuildDir already exists." }
-    New-Item -ItemType Directory -Force -Path $BuildDir | Out-Null
+    # The build's own folder, claimed once the refusals above have passed: a build of the same commit
+    # started in the same second gets -2, -3 ... (New-RunDirectory, shared from ScriptHelpers.ps1) where
+    # it used to be handed the first one's folder, and the dev build's DevBuilds folder takes that name.
+    $claimed = New-RunDirectory -Parent $WorkRoot -RunId $FolderName
+    $BuildDir = $claimed.Path
+    Say "  folder   $BuildDir"
     $sourceZip = Join-Path $BuildDir 'source.zip'
     $sourceDir = Join-Path $BuildDir 'source'
     $standIn = Join-Path $BuildDir 'NoHostWrite.targets'
@@ -1628,6 +1637,7 @@ function Invoke-GuardedBuild {
     }
     return [pscustomobject]@{
         PublishDir = $publish; SigningKeyXml = $signingKeyXml; MSBuild = $msbuild; MSBuildVersion = [string]$msbuildVersion
+        FolderName = $claimed.RunId; BuildDir = $BuildDir
         HostProof = [ordered]@{ linesCompared = @($after).Count; footprints = 0; registrationUnchanged = $true; identical = $allDiff.Same }
     }
 }
@@ -1709,6 +1719,16 @@ function Invoke-SelfTest {
     Test-Case 'the signing key is read out of a manifest' $k1 (Get-ManifestSigningKeyXml -ManifestXml (& $fakeManifest $k1))
     Test-Throws 'an unsigned manifest is refused' { Get-ManifestSigningKeyXml -ManifestXml '<a/>' } 'not signed'
     Test-Case 'a folder name carries the time and twelve hex of the commit' '20260927-153000-0123456789ab' (New-DevBuildFolderName -CommitSha '0123456789abcdef0123456789abcdef01234567' -When (New-Object DateTime(2026, 9, 27, 15, 30, 0)))
+    $selfAst = [System.Management.Automation.Language.Parser]::ParseFile($PSCommandPath, [ref]$null, [ref]$null)
+    $guardedBody = @($selfAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Invoke-GuardedBuild' }, $true))[0].Body.Extent.Text
+    $installBody = @($selfAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Install-DevBuild' }, $true))[0].Body.Extent.Text
+    $claimAt = $guardedBody.IndexOf('$claimed = New-RunDirectory -Parent $WorkRoot -RunId $FolderName')
+    Test-Case 'the build claims its folder with New-RunDirectory once its refusals have passed, never with New-Item -Force' 'True|True|False' ('{0}|{1}|{2}' -f ($claimAt -gt 0), ($claimAt -gt $guardedBody.IndexOf('REFUSING TO BUILD: no VSTO build targets')), $guardedBody.Contains('New-Item -ItemType Directory -Force -Path $BuildDir'))
+    Test-Case 'and says which folder it got, and gives back its name' 'True|True' ('{0}|{1}' -f $guardedBody.Contains('Say "  folder   $BuildDir"'), $guardedBody.Contains('FolderName = $claimed.RunId'))
+    Test-Case 'the dev build''s folder is claimed too, with no second name to try, never with New-Item -Force' 'True|False' ('{0}|{1}' -f $installBody.Contains('New-RunDirectory -Parent $DevRoot -RunId $FolderName -MaxTries 1'), $installBody.Contains('New-Item -ItemType Directory -Force -Path $folder'))
+    $mainCode = [System.IO.File]::ReadAllText($PSCommandPath)
+    $mainCode = $mainCode.Substring($mainCode.LastIndexOf('if ($SelfTest) { exit (Invoke-SelfTest) }'))
+    Test-Case 'and it takes the name the build claimed, not the one the build started from' 'True|True' ('{0}|{1}' -f $mainCode.Contains('Invoke-GuardedBuild -CommitInfo $commitInfo -WorkRoot $WorkRoot -FolderName $folderName'), $mainCode.Contains('-DevRoot $DevBuildsRoot -FolderName $built.FolderName'))
     Test-Case 'LoadBehavior 2 is read as a failed load' $true ((Get-LoadBehaviorMeaning 2).Contains('fails'))
     Test-Case 'a hard-disable blob naming the add-in is found' $true (Test-DisabledItemsMention @(, ([System.Text.Encoding]::Unicode.GetBytes('file:///C:/x/OutlookAI.vsto|vstolocal'))))
 
@@ -2045,7 +2065,7 @@ if (-not $BuildOnly -and -not $Execute) {
 }
 
 Say "== Building $($commitInfo.Sha) with the host guards =="
-$built = Invoke-GuardedBuild -CommitInfo $commitInfo -BuildDir $buildDir
+$built = Invoke-GuardedBuild -CommitInfo $commitInfo -WorkRoot $WorkRoot -FolderName $folderName
 if ($BuildOnly) {
     Say ''
     Say "BUILT. $($built.PublishDir)"
@@ -2054,9 +2074,9 @@ if ($BuildOnly) {
 }
 
 Say ''
-Say "== Putting $folderName on this machine's Outlook =="
+Say "== Putting $($built.FolderName) on this machine's Outlook =="
 $prov = [pscustomobject]@{ Commit = $commitInfo.Sha; Ref = $commitInfo.Ref; Subject = $commitInfo.Subject; BuiltUtc = [DateTime]::UtcNow.ToString('o'); HostProof = $built.HostProof }
-$installed = Install-DevBuild -Layout $layout -Spec $spec -PublishDir $built.PublishDir -SigningKeyXml $built.SigningKeyXml -DevRoot $DevBuildsRoot -FolderName $folderName -Provenance $prov -ExpectedDllVersion $DevVersion
+$installed = Install-DevBuild -Layout $layout -Spec $spec -PublishDir $built.PublishDir -SigningKeyXml $built.SigningKeyXml -DevRoot $DevBuildsRoot -FolderName $built.FolderName -Provenance $prov -ExpectedDllVersion $DevVersion
 Say "  copied      $($installed.Folder)"
 Say "  record      $($installed.Record)"
 Say "  trust       HKCU\$InclusionKeyRel\$($installed.TrustEntry)"
