@@ -274,6 +274,13 @@ its mailbox tests on, and change nothing you install.
   cost and must have settled on every condition. On the Exchange test machine, whose Outlook syncs
   real mailboxes as it starts, a cold start only has to have waited until Outlook was 20 seconds old.
 
+- 📝 **The Outlook hang of 2026-11-15 is written up: its timeline, its cause and what was measured.**
+  `Docs/research/outlook-start-hang-2026-11-15.md` keeps what the investigation item in `TODO.md`
+  held, now that the item is gone: what happened minute by minute, the deadlock between OutlookAI's
+  connection and the Teams Meeting add-in as far as it was established, what was ruled out, which of
+  Q175 to Q182 answers which part of it, and what the settle wait costs on the test machines. It
+  names no person, mailbox or machine; the full report stays outside the repository.
+
 - 📝 **The README says what to do when Outlook does not open or an agent says it is not responding.**
   A troubleshooting entry explains the Outlook without a window that hangs, gives the Task Manager
   steps and what ending Outlook can cost, and asks for the start log in a report. The section on
@@ -843,12 +850,14 @@ its mailbox tests on, and change nothing you install.
   look. The add-in writes a start-up stamp, `HKCU\Software\OutlookAI\AddIn`, at the end of its
   start; an older add-in is recognised by its tuning reconcile. A folder search of an Exchange
   mailbox that starts Outlook (Q212 (a)) goes through the same wait. Decided by the maintainer on
-  2026-11-18. Measured in three runs on the unindexed test machine, which has no add-in that could
-  deadlock: the disconnect test's six cold starts waited 18.0 to 18.6 s for Outlook to settle, the
-  20 s age being the last condition met, and connected in 21.7 to 22.2 s, where a cold start took
-  about 4 s before; a connection to an Outlook already minutes old waited under 40 ms. In an Outlook
-  opened with its window, as a user opens it, the add-in had started 6.2 s, 14.2 s and 27.9 s in, so
-  such an Outlook can settle later than one OutlookAI starts.
+  2026-11-18. Measured on the two Outlook test machines, which have no add-in that could deadlock:
+  the disconnect test's eight cold starts, six on the unindexed machine and two on the indexed one,
+  waited 18.0 to 18.6 s for Outlook to settle, the 20 s age being the last condition met, and
+  connected in 21.2 to 22.2 s, where a cold start took about 4 s before; a connection to an Outlook
+  already minutes old waited under 40 ms. In an Outlook opened with its window, as a user opens it,
+  the add-in had started 6.2 s, 14.2 s and 27.9 s in on the unindexed machine and 171 s in on the
+  indexed one, on a day its Outlook started slowly, so such an Outlook can settle later than one
+  OutlookAI starts; the two-minute limit ends the wait regardless.
 
 - 🔧 **`read` prints a mail's folder as every other tool does: its names joined by `/`.**
   It printed Outlook's own folder path, with the store's name in front, backslashes between the
