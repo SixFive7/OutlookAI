@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text;
+using OutlookAI.Core.AddIn;
 
 namespace OutlookAI.Core.Com
 {
@@ -415,7 +416,7 @@ namespace OutlookAI.Core.Com
                 case null:
                     return DesignatedEntryId.None;
                 case byte[] bytes:
-                    return bytes.Length < 4 ? DesignatedEntryId.None : DesignatedEntryId.Of(ToHex(bytes));
+                    return bytes.Length < 4 ? DesignatedEntryId.None : DesignatedEntryId.Of(Hex.Upper(bytes));
                 case string text:
                     string? hex = ArchiveFolderResolution.TryReadEntryIdHex(text);
                     return hex == null ? DesignatedEntryId.Unrecognised : DesignatedEntryId.Of(hex);
@@ -462,7 +463,7 @@ namespace OutlookAI.Core.Com
                 case null:
                     return DesignatedEntryId.None;
                 case byte[] bytes:
-                    return bytes.Length < 4 ? DesignatedEntryId.None : DesignatedEntryId.Of(ToHex(bytes));
+                    return bytes.Length < 4 ? DesignatedEntryId.None : DesignatedEntryId.Of(Hex.Upper(bytes));
                 default:
                     return DesignatedEntryId.Unrecognised;
             }
@@ -532,7 +533,7 @@ namespace OutlookAI.Core.Com
 
                             byte[] entryId = new byte[elementSize];
                             Array.Copy(blob, element + 4, entryId, 0, elementSize);
-                            return DesignatedEntryId.Of(ToHex(entryId));
+                            return DesignatedEntryId.Of(Hex.Upper(entryId));
                         }
 
                         element += 4 + elementSize;
@@ -929,17 +930,6 @@ namespace OutlookAI.Core.Com
             return opened == PropertyReadStatus.Failed
                 ? OutlookComSession.DefaultFolderResolution.Unreadable
                 : OutlookComSession.DefaultFolderResolution.Absent;
-        }
-
-        internal static string ToHex(byte[] bytes)
-        {
-            StringBuilder sb = new StringBuilder(bytes.Length * 2);
-            foreach (byte b in bytes)
-            {
-                sb.Append(b.ToString("X2", CultureInfo.InvariantCulture));
-            }
-
-            return sb.ToString();
         }
     }
 

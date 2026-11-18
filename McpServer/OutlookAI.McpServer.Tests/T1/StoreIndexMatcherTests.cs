@@ -292,7 +292,7 @@ public sealed class StoreIndexMatcherTests
 
         // Control: the same store with its signature hash in the index - tied by the hash ALONE,
         // under a name that is not its own: the exception does not ask for the name.
-        StoreHash.TryDecodeHex("0A0B0C0D", out byte[] signature);
+        OutlookAI.Core.AddIn.Hex.TryDecode("0A0B0C0D", out byte[] signature);
         StoreScopeInfo own = IndexRoot("someone else's label", StoreHash.Compute(signature));
         map = StoreIndexMatcher.Match(new[] { exchange }, new[] { byName, own });
         Assert.Equal(StoreIndexMatchKind.StoreHash, map.Stores[0].Kind);
@@ -304,7 +304,7 @@ public sealed class StoreIndexMatcherTests
     public void AnExchangeStoreWhoseProfileSignatureHashIsInTheIndex_IsFoundByIt()
     {
         const string signature = "8899AABBCCDDEEFF0011223344556677";
-        StoreHash.TryDecodeHex(signature, out byte[] sig);
+        OutlookAI.Core.AddIn.Hex.TryDecode(signature, out byte[] sig);
         StoreScopeInfo root = IndexRoot("alice@example.com", StoreHash.Compute(sig));
         var exchange = new StoreIndexIdentity("alice@example.com", 0,
             StoreHash.Candidates("00112233", true, false, null, signature, @"C:\Users\a\alice.ost"));
@@ -319,7 +319,7 @@ public sealed class StoreIndexMatcherTests
     {
         // D57, kept for the exception: a hash on two index stores is refused and the store takes
         // the name rule, with the reason in the note.
-        StoreHash.TryDecodeHex("0A0B0C0D", out byte[] signature);
+        OutlookAI.Core.AddIn.Hex.TryDecode("0A0B0C0D", out byte[] signature);
         uint hash = StoreHash.Compute(signature);
         var exchange = new StoreIndexIdentity("alice@example.com", 0,
             StoreHash.Candidates("00112233", true, false, "0A0B0C0D", null, null));

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Microsoft.CSharp.RuntimeBinder;
+using OutlookAI.Core.AddIn;
 using OutlookAI.Core.Com;
 
 namespace OutlookAI.RemediationTools;
@@ -1198,7 +1199,7 @@ public static class ComCorpusMailbox
                 object? raw = TryRead<object>(() => (object)accessor!.GetProperty(PrConversationIndex));
                 if (raw is byte[] bytes)
                 {
-                    indexHex = Convert.ToHexString(bytes);
+                    indexHex = Hex.Upper(bytes);
                 }
             }
 

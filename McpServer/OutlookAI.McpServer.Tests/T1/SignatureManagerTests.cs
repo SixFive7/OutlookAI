@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text;
 using OutlookAI.Core.Com;
 using OutlookAI.Core.Services;
@@ -106,7 +107,7 @@ public sealed class SignatureManagerTests : IDisposable
         Assert.Contains(@"\pngblip", rtf, StringComparison.Ordinal);
         Assert.Contains(@"\picwgoal600", rtf, StringComparison.Ordinal); // 40 px at 15 twips a pixel
         Assert.Single(SignatureRtf.FindPictures(rtf));
-        Assert.Equal(SignatureRtf.Sha256Hex(logo), SignatureRtf.FindPictures(rtf)[0].Sha256);
+        Assert.Equal(Convert.ToHexString(SHA256.HashData(logo)), SignatureRtf.FindPictures(rtf)[0].Sha256);
     }
 
     [Fact]
@@ -481,7 +482,7 @@ public sealed class SignatureManagerTests : IDisposable
         Assert.Contains(pictureGroup, after, StringComparison.Ordinal);
         IReadOnlyList<RtfPicture> pictures = SignatureRtf.FindPictures(after);
         Assert.Equal(2, pictures.Count);
-        Assert.Equal(SignatureRtf.Sha256Hex(fresh), pictures[1].Sha256);
+        Assert.Equal(Convert.ToHexString(SHA256.HashData(fresh)), pictures[1].Sha256);
         Assert.Equal(240, pictures[1].WidthTwips);
 
         ArgumentException unknown = Assert.Throws<ArgumentException>(() => Manage(new ManageSignatureRequest

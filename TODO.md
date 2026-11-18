@@ -107,12 +107,12 @@
   tools and the COM host's two invoke methods each declare (S12, S13); and the corpus tool's
   thirteen STA operations, which each open the corpus store and release it the same way (S14) -
   COM code only a corpus build, scan and teardown on a test machine exercise, so it folds in S5b,
-  whose proof has them. S10 had gone already with the incident commands (Q170 (a)). What remains,
-  one stage at a time: the dozen writers of bytes as hex that the survey did not list - in
-  `OutlookIds`, `EntryIdCodec`, `SpecialFolders`, `IndexRowMapper`, `SendContentHash` and more - into
-  Core's `Hex`, each keeping the case its callers read; then the rest of the shared test code
-  (S5a) - the live tier's own Win32 window declarations among it, which can use Core's
-  `NativeWindows` now. In parallel: the PowerShell helpers (S7), and the rules restated in C# and
+  whose proof has them. S10 had gone already with the incident commands (Q170 (a)). The hex stage
+  put every writer and reader of hexadecimal in the product into Core's `Hex`. What remains, one
+  stage at a time: the rest of the shared test code (S5a) - the live tier's own Win32 window
+  declarations among it, which can use Core's `NativeWindows` now, and the four hex writers the
+  tests keep beside .NET's own. In parallel: the PowerShell helpers (S7), the two `Get-ShortHash`
+  functions of the guest's measurement scripts among them, and the rules restated in C# and
   PowerShell as shared C# source (Q171), the updater's 26 lines that `Tools/Publish-Release.ps1`
   restates among them.
   S7 also takes the two MCP stdio clients left beside `Testbed/guest/McpStdioClient.ps1`:

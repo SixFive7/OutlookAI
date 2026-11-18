@@ -365,18 +365,7 @@ namespace OutlookAI.Core.Com
             // A real folder EntryID is dozens of bytes; anything shorter than 4 is a
             // marker/filler (live-probed: the Inbox slot list ends with a 4-byte
             // non-EntryID trailer), not an id.
-            if (bytes.Length < 4)
-            {
-                return null;
-            }
-
-            StringBuilder sb = new StringBuilder(bytes.Length * 2);
-            foreach (byte b in bytes)
-            {
-                sb.Append(b.ToString("X2", System.Globalization.CultureInfo.InvariantCulture));
-            }
-
-            return sb.ToString();
+            return bytes.Length < 4 ? null : Hex.Upper(bytes);
         }
     }
 

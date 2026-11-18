@@ -1,4 +1,5 @@
 using System.Text;
+using OutlookAI.Core.AddIn;
 using OutlookAI.Core.Mapi;
 using Xunit;
 
@@ -54,11 +55,11 @@ public sealed class StoreHashTests
     [Fact]
     public void TheHashIsOverOutlooksOwnStoreId_ForAUnicodeAndAnAnsiPst()
     {
-        Assert.True(StoreHash.TryDecodeHex(TierStoreId, out byte[] tier));
+        Assert.True(Hex.TryDecode(TierStoreId, out byte[] tier));
         Assert.Equal(UnicodePstStoreEntryId(@"C:\OutlookAI-Tier\Outlook.pst"), tier);
         Assert.Equal(0x93F42B43u, StoreHash.Compute(tier));
 
-        Assert.True(StoreHash.TryDecodeHex(AnsiStoreId, out byte[] ansi));
+        Assert.True(Hex.TryDecode(AnsiStoreId, out byte[] ansi));
         Assert.Equal(84, ansi.Length);
         Assert.Equal(0x54556EE0u, StoreHash.Compute(ansi));
     }
@@ -118,17 +119,6 @@ public sealed class StoreHashTests
     }
 
     [Fact]
-    public void HexThatDoesNotDecode_YieldsNoBytes()
-    {
-        Assert.False(StoreHash.TryDecodeHex("store-pst", out byte[] none));
-        Assert.Empty(none);
-        Assert.False(StoreHash.TryDecodeHex("ABC", out _));
-        Assert.False(StoreHash.TryDecodeHex(null, out _));
-        Assert.True(StoreHash.TryDecodeHex("00ff7F", out byte[] three));
-        Assert.Equal(new byte[] { 0x00, 0xFF, 0x7F }, three);
-    }
-
-    [Fact]
     public void ANonExchangeStore_HasOneCandidate_ItsEntryId()
     {
         IReadOnlyList<StoreHashCandidate> candidates = StoreHash.Candidates(
@@ -149,7 +139,7 @@ public sealed class StoreHashTests
         Assert.Equal(
             new[] { StoreHashInput.EntryId, StoreHashInput.ProfileMappingSignature, StoreHashInput.MappingSignature, StoreHashInput.EntryIdAndPath },
             candidates.Select(c => c.Input));
-        StoreHash.TryDecodeHex(signature, out byte[] sig);
+        Hex.TryDecode(signature, out byte[] sig);
         Assert.Equal(StoreHash.Compute(sig), candidates[1].Hash);
         Assert.Equal(candidates[1].Hash, candidates[2].Hash);
 

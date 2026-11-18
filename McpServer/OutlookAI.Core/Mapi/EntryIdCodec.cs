@@ -1,5 +1,6 @@
 using System;
 using System.Text;
+using OutlookAI.Core.AddIn;
 
 namespace OutlookAI.Core.Mapi
 {
@@ -92,8 +93,8 @@ namespace OutlookAI.Core.Mapi
             }
 
             byte rawFirstByte = bytes[0];
-            string storeUidHex = ToHex(bytes, 4, 16);
-            string nidHex = ToHex(bytes, 20, 4);
+            string storeUidHex = Hex.Upper(bytes, 4, 16);
+            string nidHex = Hex.Upper(bytes, 20, 4);
             int nidLowFiveBits = bytes[20] & 0x1F;
 
             // Rebuild the flag bytes as 00 00 00 00: OST/PST EntryIDs carry zero flags,
@@ -111,17 +112,6 @@ namespace OutlookAI.Core.Mapi
         public static bool TryDecodeAttachmentId(string? encodedAttachmentId, out byte[] bytes)
         {
             return TryDecodeEncodedBytes(encodedAttachmentId, out bytes);
-        }
-
-        private static string ToHex(byte[] bytes, int offset, int count)
-        {
-            StringBuilder sb = new StringBuilder(count * 2);
-            for (int i = offset; i < offset + count; i++)
-            {
-                sb.Append(bytes[i].ToString("X2", System.Globalization.CultureInfo.InvariantCulture));
-            }
-
-            return sb.ToString();
         }
     }
 

@@ -38,18 +38,9 @@ namespace OutlookAI.Core.Services
         {
             if (string.IsNullOrEmpty(outlookRootKeyPath) || string.IsNullOrEmpty(profileName)
                 || profileName!.IndexOf('\\') >= 0 || profileName.IndexOf('/') >= 0
-                || sectionUidHex == null || sectionUidHex.Length != 32)
+                || sectionUidHex == null || sectionUidHex.Length != 32 || !Hex.IsAllDigits(sectionUidHex))
             {
                 return null;
-            }
-
-            foreach (char c in sectionUidHex)
-            {
-                bool hex = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
-                if (!hex)
-                {
-                    return null;
-                }
             }
 
             return outlookRootKeyPath + "\\" + OutlookProfileRegistry.ProfilesSubKeyName + "\\" + profileName
@@ -78,13 +69,7 @@ namespace OutlookAI.Core.Services
                         return null;
                     }
 
-                    var hex = new StringBuilder(bytes.Length * 2);
-                    foreach (byte b in bytes)
-                    {
-                        hex.Append(b.ToString("X2", CultureInfo.InvariantCulture));
-                    }
-
-                    return hex.ToString();
+                    return Hex.Upper(bytes);
                 }
             }
             catch (Exception ex) when (ex is System.Security.SecurityException || ex is UnauthorizedAccessException

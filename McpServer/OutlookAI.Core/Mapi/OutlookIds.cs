@@ -186,7 +186,7 @@ namespace OutlookAI.Core.Mapi
         /// </summary>
         public static string? FolderIdFromEntryId(string? entryIdHex)
         {
-            return StoreHash.TryDecodeHex(entryIdHex, out byte[] bytes) && bytes.Length > 0 && bytes.Length <= MaxEntryIdBytes
+            return Hex.TryDecode(entryIdHex, out byte[] bytes) && bytes.Length > 0 && bytes.Length <= MaxEntryIdBytes
                 ? FolderIdFromEntryId(bytes)
                 : null;
         }
@@ -234,7 +234,7 @@ namespace OutlookAI.Core.Mapi
                 return byUid;
             }
 
-            return StoreHash.TryDecodeHex(storeEntryIdHex, out byte[] bytes) && bytes.Length > 0 && bytes.Length <= MaxEntryIdBytes
+            return Hex.TryDecode(storeEntryIdHex, out byte[] bytes) && bytes.Length > 0 && bytes.Length <= MaxEntryIdBytes
                 ? Compose(RawStoreKind, bytes)
                 : null;
         }
@@ -242,7 +242,7 @@ namespace OutlookAI.Core.Mapi
         /// <summary>The store ID for a provider UID given as 32 hex digits.</summary>
         public static string StoreIdFromProviderUid(string providerUidHex)
         {
-            if (!StoreHash.TryDecodeHex(providerUidHex, out byte[] uid) || uid.Length != ProviderUidLength)
+            if (!Hex.TryDecode(providerUidHex, out byte[] uid) || uid.Length != ProviderUidLength)
             {
                 throw new ArgumentException("A provider UID is 16 bytes of hex.", nameof(providerUidHex));
             }
@@ -256,7 +256,7 @@ namespace OutlookAI.Core.Mapi
         /// </summary>
         public static string? ProviderUidHexOf(string? entryIdHex)
         {
-            if (!StoreHash.TryDecodeHex(entryIdHex, out byte[] bytes) || bytes.Length < 4 + ProviderUidLength)
+            if (!Hex.TryDecode(entryIdHex, out byte[] bytes) || bytes.Length < 4 + ProviderUidLength)
             {
                 return null;
             }
@@ -267,7 +267,7 @@ namespace OutlookAI.Core.Mapi
                 allZero &= bytes[i] == 0;
             }
 
-            return allZero ? null : ToHex(bytes, 4, ProviderUidLength);
+            return allZero ? null : Hex.Upper(bytes, 4, ProviderUidLength);
         }
 
         /// <summary>
@@ -341,7 +341,7 @@ namespace OutlookAI.Core.Mapi
                 return false;
             }
 
-            entryIdHex = ToHex(entryId, 0, entryId.Length);
+            entryIdHex = Hex.Upper(entryId);
             problem = null;
             return true;
         }
@@ -362,11 +362,11 @@ namespace OutlookAI.Core.Mapi
             byte[]? payload = DecodePayload(values);
             if (payload != null && canonical[0] == StoreUidKind && canonical.Length == StoreUidIdLength && payload.Length == ProviderUidLength)
             {
-                parts = new StoreIdParts(canonical, ToHex(payload, 0, payload.Length), null);
+                parts = new StoreIdParts(canonical, Hex.Upper(payload), null);
             }
             else if (payload != null && canonical[0] == RawStoreKind && payload.Length >= MinRawEntryIdBytes && payload.Length <= MaxEntryIdBytes)
             {
-                parts = new StoreIdParts(canonical, null, ToHex(payload, 0, payload.Length));
+                parts = new StoreIdParts(canonical, null, Hex.Upper(payload));
             }
 
             if (parts == null)
@@ -726,17 +726,6 @@ namespace OutlookAI.Core.Mapi
             byte[] slice = new byte[count];
             Array.Copy(source, offset, slice, 0, count);
             return slice;
-        }
-
-        private static string ToHex(byte[] bytes, int offset, int count)
-        {
-            StringBuilder sb = new StringBuilder(count * 2);
-            for (int i = offset; i < offset + count; i++)
-            {
-                sb.Append(bytes[i].ToString("X2", CultureInfo.InvariantCulture));
-            }
-
-            return sb.ToString();
         }
     }
 }

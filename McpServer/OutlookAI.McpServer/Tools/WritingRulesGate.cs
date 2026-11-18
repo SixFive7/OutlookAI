@@ -169,6 +169,6 @@ public sealed class WritingRulesGate
     /// </summary>
     private static string HashOf(string rules)
     {
-        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(PromptDefaults.Normalize(rules))));
+        return Hex.Sha256Upper(Encoding.UTF8.GetBytes(PromptDefaults.Normalize(rules)));
     }
 }
