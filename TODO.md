@@ -1689,7 +1689,8 @@
   check-powershell-51 check 4: P01's `Invoke-NativeCommand` for 13 of its 17 copies, P09's
   `Format-Seconds`, the build-VM runner's copy of which rounded 119.6 s to "1 m 60 s", P02's
   `Invoke-Logged`, `Show-LogTail` and `Format-Argument`, P12's `Test-IsElevated`, and P03's `Say` for
-  the 18 copies that print the time and append to the script's log, beside `Write-ReportLine` for
+  the 18 copies that print the time and append to the script's log (the SDK installer, which travels
+  alone, keeps an identical copy), beside `Write-ReportLine` for
   the five scripts that collect a report (the mail sink's installer and the build-VM runner keep
   their different ones as `Write-SinkLog` and `Write-RunLog`); P11's module
   import is `Testbed/host/OwnEditionModules.ps1`, which the `Tools/` scripts dot-source too.

@@ -302,9 +302,24 @@ $VerdictSdkOnly   = 'SDK-ONLY'
 $VerdictTestReady = 'TEST-READY'
 $VerdictBroken    = 'BROKEN'
 
-# Say is one of the helpers the scripts share, dot-sourced from ScriptHelpers.ps1, which travels with the
-# guest scripts (Q154, Q166 (b), decision 215 (a)) and says why. It appends to $LogPath when there is one.
-. (Join-Path $PSScriptRoot 'ScriptHelpers.ps1')
+# travels-alone: Testbed/README.md steps B4 and 8b copy this script to a fresh machine on its own.
+# It puts the SDK there before anything else is staged, so it keeps its own copy of Say, one of the
+# helpers the scripts share, which Tools/Checks/check-powershell-51.ps1 check 4 holds identical to
+# the one in ScriptHelpers.ps1 (Q154, Q166 (b), decision 215 (a)).
+function Say([string] $m) {
+    $line = "[{0:HH:mm:ss}] {1}" -f (Get-Date), $m
+    Write-Host $line
+    if ($LogPath) {
+        try {
+            $dir = Split-Path -Parent $LogPath
+            if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+            Add-Content -LiteralPath $LogPath -Value $line -Encoding UTF8
+        }
+        catch {
+            # A log that cannot be written must not stop the work it was recording.
+        }
+    }
+}
 
 # ---------------------------------------------------------------------------------------------
 # THE GUARD. FIRST CALL IN EVERY PATH, -Verify included - a verification builds a Release tree
