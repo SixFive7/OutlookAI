@@ -282,7 +282,7 @@ public sealed class UnindexedStoreScopeTests
 
     private static MailService Service(StubIndexClient index)
     {
-        return new MailService(new DirectGateway(ProfileSession.Create(ProfileStores, Sweep)), null, index);
+        return new MailService(new DirectGateway(StandInSession.Create(ProfileStores, Sweep)), null, index);
     }
 
     /// <summary>The measured machine: one profile, nothing of it in the index.</summary>
@@ -349,43 +349,5 @@ public sealed class UnindexedStoreScopeTests
             foldersSkipped: 0,
             sweptFolders: new[] { store + "/Inbox", store + "/Sent Items", store + "/Deleted Items", store + "/Junk Email" },
             perStore: new[] { new ComStoreSweepCounters(store, foldersSwept: 4, foldersSkipped: 0, foldersFailed: 0, foldersAbsent: 0) });
-    }
-
-    /// <summary>
-    /// A session that answers the profile's store list and the freshness sweep, and refuses
-    /// everything else. A <see cref="DispatchProxy"/> rather than 26 stubs, so a method added
-    /// to the contract needs no change here. Not sealed: DispatchProxy derives from its
-    /// TProxy at runtime and refuses a sealed one.
-    /// </summary>
-    private class ProfileSession : DispatchProxy
-    {
-        private IReadOnlyList<ComStoreDetail> _stores = Array.Empty<ComStoreDetail>();
-        private Func<string?, ComSweepResult> _sweep = _ => throw new NotSupportedException();
-
-        internal static IOutlookSession Create(
-            IReadOnlyList<ComStoreDetail> stores, Func<string?, ComSweepResult> sweep)
-        {
-            object proxy = Create<IOutlookSession, ProfileSession>()
-                ?? throw new InvalidOperationException("DispatchProxy.Create returned null.");
-            ((ProfileSession)proxy)._stores = stores;
-            ((ProfileSession)proxy)._sweep = sweep;
-            return (IOutlookSession)proxy;
-        }
-
-        /// <inheritdoc />
-        protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
-        {
-            return targetMethod?.Name switch
-            {
-                nameof(IOutlookSession.GetProfileName) => "T1 stand-in profile",
-                nameof(IOutlookSession.GetStoreDetails) => TestFolders.WithRoots(_stores),
-                nameof(IOutlookSession.TryDescribeFolder) => TestFolders.Describe(args),
-                // Argument 3 is onlyStoreDisplayName; see IOutlookSession.SweepFoldersNewerThan.
-                nameof(IOutlookSession.SweepFoldersNewerThan) => _sweep(args?[3] as string),
-                _ => throw new NotSupportedException(
-                    "The stand-in session was asked for " + (targetMethod?.Name ?? "an unnamed member")
-                    + ", which this test does not model."),
-            };
-        }
     }
 }

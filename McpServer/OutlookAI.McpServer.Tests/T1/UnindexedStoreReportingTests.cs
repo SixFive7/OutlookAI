@@ -199,8 +199,8 @@ public sealed class UnindexedStoreReportingTests
         // A scoped search already knows: its frontier probe is scoped to the one store in
         // scope, so a null there IS the answer. Asking Outlook for a profile-wide list would
         // be a round trip that cannot change anything.
-        ProfileSession.Reset();
-        using MailService service = Service(OnlyAliceIndexed());
+        using MailService service = new MailService(
+            new DirectGateway(StandInSession.Create(ProfileStores, Sweep, null, out StandInSession session)), null, OnlyAliceIndexed());
 
         SearchOutcome outcome = service.Search(new SearchRequest
         {
@@ -216,7 +216,7 @@ public sealed class UnindexedStoreReportingTests
 
         // One read only: the store-scope resolution that A4 added - which is also where the store's ID
         // is looked up since Q133. Not a second one for a list this path cannot use.
-        Assert.Equal(1, ProfileSession.StoreListReads);
+        Assert.Equal(1, session.StoreListReads);
     }
 
     // =================================================== the path that already worked
@@ -261,7 +261,7 @@ public sealed class UnindexedStoreReportingTests
     private static MailService Service(StubIndexClient index, Func<string?, ComSweepResult>? sweep = null)
     {
         return new MailService(
-            new DirectGateway(ProfileSession.Create(ProfileStores, sweep ?? Sweep)), null, index);
+            new DirectGateway(StandInSession.Create(ProfileStores, sweep ?? Sweep)), null, index);
     }
 
     /// <summary>The mixed profile: the Exchange store indexed, the data file not.</summary>
@@ -315,63 +315,5 @@ public sealed class UnindexedStoreReportingTests
     private static ComSweepResult FailingSweep(string? onlyStore)
     {
         throw new TimeoutException("The freshness sweep exceeded its 30s budget.");
-    }
-
-    /// <summary>
-    /// A session that answers the profile's store list and the freshness sweep, and refuses
-    /// everything else. A <see cref="DispatchProxy"/> rather than a stub per member, so a
-    /// method added to the contract needs no change here. Counts store-list reads, because
-    /// "does this path ask Outlook at all" is one of the things pinned above. Not sealed:
-    /// DispatchProxy derives from its TProxy at runtime and refuses a sealed one.
-    /// </summary>
-    private class ProfileSession : DispatchProxy
-    {
-        private static int _storeListReads;
-
-        private IReadOnlyList<ComStoreDetail> _stores = Array.Empty<ComStoreDetail>();
-        private Func<string?, ComSweepResult> _sweep = _ => throw new NotSupportedException();
-
-        internal static int StoreListReads => _storeListReads;
-
-        internal static void Reset()
-        {
-            _storeListReads = 0;
-        }
-
-        internal static IOutlookSession Create(
-            IReadOnlyList<ComStoreDetail> stores, Func<string?, ComSweepResult> sweep)
-        {
-            object proxy = Create<IOutlookSession, ProfileSession>()
-                ?? throw new InvalidOperationException("DispatchProxy.Create returned null.");
-            ((ProfileSession)proxy)._stores = stores;
-            ((ProfileSession)proxy)._sweep = sweep;
-            return (IOutlookSession)proxy;
-        }
-
-        /// <inheritdoc />
-        protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
-        {
-            switch (targetMethod?.Name)
-            {
-                case nameof(IOutlookSession.GetProfileName):
-                    return "T1 stand-in profile";
-
-                case nameof(IOutlookSession.GetStoreDetails):
-                    System.Threading.Interlocked.Increment(ref _storeListReads);
-                    return TestFolders.WithRoots(_stores);
-
-                case nameof(IOutlookSession.TryDescribeFolder):
-                    return TestFolders.Describe(args);
-
-                // Argument 3 is onlyStoreDisplayName; see IOutlookSession.SweepFoldersNewerThan.
-                case nameof(IOutlookSession.SweepFoldersNewerThan):
-                    return _sweep(args?[3] as string);
-
-                default:
-                    throw new NotSupportedException(
-                        "The stand-in session was asked for " + (targetMethod?.Name ?? "an unnamed member")
-                        + ", which this test does not model.");
-            }
-        }
     }
 }

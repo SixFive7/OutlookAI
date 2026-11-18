@@ -165,12 +165,8 @@ namespace OutlookAI.Core.AddIn
                     number = number.Substring(1);
                 }
 
-                if (int.TryParse(
-                        number,
-                        isHex ? System.Globalization.NumberStyles.HexNumber : System.Globalization.NumberStyles.Integer,
-                        System.Globalization.CultureInfo.InvariantCulture,
-                        out int codePoint)
-                    && codePoint > 0 && codePoint <= 0x10FFFF
+                int codePoint = CodePointOf(number, isHex);
+                if (codePoint > 0 && codePoint <= 0x10FFFF
                     && (codePoint < 0xD800 || codePoint > 0xDFFF))
                 {
                     return char.ConvertFromUtf32(codePoint);
@@ -178,6 +174,39 @@ namespace OutlookAI.Core.AddIn
             }
 
             return null;
+        }
+
+        /// <summary>
+        /// The number a numeric character reference's digits spell - hexadecimal after <c>&amp;#x</c>, read
+        /// through <see cref="Hex.DigitValue"/>, and decimal after <c>&amp;#</c> - or -1 unless every
+        /// character is a digit, or once the number passes the last code point. HTML allows no space and no
+        /// sign there; .NET's number parsing, which read them until the code-sharing refactor's S5a, let a
+        /// space through either side of the digits and a sign before decimal ones, so "&amp;# 65;" read as A.
+        /// </summary>
+        private static int CodePointOf(string digits, bool hex)
+        {
+            if (digits.Length == 0)
+            {
+                return -1;
+            }
+
+            int value = 0;
+            foreach (char c in digits)
+            {
+                int digit = hex ? Hex.DigitValue(c) : (c >= '0' && c <= '9' ? c - '0' : -1);
+                if (digit < 0)
+                {
+                    return -1;
+                }
+
+                value = (value * (hex ? 16 : 10)) + digit;
+                if (value > 0x10FFFF)
+                {
+                    return -1;
+                }
+            }
+
+            return value;
         }
     }
 }
