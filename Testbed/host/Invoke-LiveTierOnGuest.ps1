@@ -45,7 +45,9 @@
       6. FETCH   - the TRX file, the console capture and VSTest's logs, the guest's Application log
                    entries for an OUTLOOK.EXE crash during the run, and every crash dump Windows Error
                    Reporting wrote (dumps\<guest>\) - armed in STAGE by guest\Set-OutlookCrashDumps.ps1,
-                   full dumps of OUTLOOK.EXE and WINWORD.EXE, since 2026-10-04.
+                   full dumps of OUTLOOK.EXE and WINWORD.EXE, since 2026-10-04 - and, since 2026-11-18,
+                   WER's own report of each such crash: its event 1001 and the files of its report
+                   folder (wer\<guest>\), which say which way a crash went that left no dump.
       7. REST    - optionally a checkpoint of a GREEN run (-GreenCheckpoint), then the resting
                    checkpoint restored, the settings staged on it, the guest SAVED and the lease
                    released - on every path, failures included, once the guest was touched.
@@ -376,6 +378,18 @@ function Merge-CrashCount {
     $outlook = @($Dumps | Where-Object { $_ -and ([string]$_.Program) -ieq 'OUTLOOK.EXE' }).Count
     if ($Events -lt 0 -and $outlook -eq 0) { return -1 }
     return [Math]::Max($Events, $outlook)
+}
+
+# The files of WER's own reports of an OUTLOOK.EXE crash that the guest copied beside the dumps -
+# "WERFILE <bytes> <file name>" lines among whatever else the call printed - as objects; each name is the
+# report folder's, a dot, and the file's. Kept since 2026-11-18: two crashes in mso40uiwin32client.dll that
+# day left an Application Error event and no LocalDumps dump, and only WER's report of a crash says which
+# way it went (runbook section 4.15).
+function ConvertFrom-WerListing {
+    param([string] $Text)
+    foreach ($m in [regex]::Matches([string]$Text, '(?m)^WERFILE (\d+) (\S.*?)\s*$')) {
+        [pscustomobject]@{ Name = $m.Groups[2].Value; Bytes = [long]$m.Groups[1].Value }
+    }
 }
 
 # What PREPARE does, by whether the start checkpoint is frozen (its time sync off, Q130 (a)). A frozen
@@ -1055,6 +1069,15 @@ function Invoke-SelfTest {
     Check 'unreadable events with an Outlook dump are that dump' 1 (Merge-CrashCount -1 $d)
     Check 'unreadable events and no dump stay unreadable' -1 (Merge-CrashCount -1 @())
     Check 'a Word dump alone is no Outlook crash' 0 (Merge-CrashCount 0 @($d[1]))
+    $w = @(ConvertFrom-WerListing "WERFAULT-LEFT 0`r`nDUMP 9 OUTLOOK.EXE.1.dmp`r`nWERFILE 31548 AppCrash_OUTLOOK.EXE_ab12_cd34_5e6f.Report.wer  `r`nWER-REPORTS 1`r`nnoise WERFILE 1 x.wer`r`n")
+    Check 'WER''s report files are read line by line, name and size, and nothing else is' '1|AppCrash_OUTLOOK.EXE_ab12_cd34_5e6f.Report.wer|31548' @($w.Count, $w[0].Name, $w[0].Bytes)
+    Check 'a WER file is no dump, and a dump no WER file' '1|1' @(@(ConvertFrom-DumpListing "DUMP 9 OUTLOOK.EXE.1.dmp`r`nWERFILE 3 a.Report.wer").Count, @(ConvertFrom-WerListing "DUMP 9 OUTLOOK.EXE.1.dmp`r`nWERFILE 3 a.Report.wer").Count)
+    $saverAt = $runCode.IndexOf('function Save-CrashDumps {')
+    $werReadAt = $runCode.IndexOf('$script:werFound = @(ConvertFrom-WerListing $o)', [Math]::Max(0, $saverAt))
+    $noDumpAt = $runCode.IndexOf('if ($script:dumpsFound.Count -eq 0) { return }', [Math]::Max(0, $saverAt))
+    Check 'WER''s reports of an Outlook crash are kept even when no dump was written' $true ($saverAt -gt 0 -and $saverAt -lt $werReadAt -and $werReadAt -lt $noDumpAt)
+    $stores = @('ProgramData\Microsoft\Windows\WER\ReportQueue', 'ProgramData\Microsoft\Windows\WER\ReportArchive', 'AppData\Local\Microsoft\Windows\WER\ReportQueue', 'AppData\Local\Microsoft\Windows\WER\ReportArchive')
+    Check 'and every WER store is searched, the machine''s and each user''s' 4 @($stores | Where-Object { $at = $runCode.IndexOf($_, [Math]::Max(0, $saverAt)); $at -gt $saverAt -and $at -lt $werReadAt }).Count
     $dumpScript = [System.IO.File]::ReadAllText((Join-Path $repo "Testbed\guest\$CrashDumpScript"))
     Check 'the guest script''s default folder is the one fetched' $true $dumpScript.Contains("[string]   `$DumpFolder = '$GuestDumpDir'")
     Check 'every run arms the dumps, with this checkout''s script' $true ($own.Contains("& '`$GuestRoot\`$CrashDumpScript' -Execute -DumpFolder '`$GuestDumpDir'") -and $own.Contains('Join-Path $PSScriptRoot "..\guest\$CrashDumpScript"'))
@@ -1287,7 +1310,7 @@ Say "  results   $runDir"
 
 $timings = [ordered]@{}
 $checkpointActions = [ordered]@{ start = $Checkpoint; resting = $RestingCheckpoint; green = $null; restedOn = $null; settingsStaged = $false; saved = $false }
-$crashDumpState = [ordered]@{ armed = $false; proven = $null; guestFolder = $GuestDumpDir; fetched = $false; files = @() }
+$crashDumpState = [ordered]@{ armed = $false; proven = $null; guestFolder = $GuestDumpDir; fetched = $false; files = @(); werReports = -1; werFiles = @() }
 # The -SignatureSettings step, when asked for: the scenario, and whether the guest script said SET.
 $signatureSettingsState = $null
 if ($SignatureSettings) { $signatureSettingsState = [ordered]@{ scenario = $SignatureSettings; valueKind = $SignatureValueKind; set = $false; log = 'guest\signature-settings.log' } }
@@ -1295,6 +1318,7 @@ if ($SignatureSettings) { $signatureSettingsState = [ordered]@{ scenario = $Sign
 $outlookStart = $null
 $indexRoots = $null
 $script:dumpsFound = @()
+$script:werFound = @()
 $suiteStarted = $false
 $stage = ''
 $stageWhy = ''
@@ -1409,9 +1433,46 @@ function Save-CrashDumps {
     if ($crashDumpState['fetched']) { return }
     $crashDumpState['fetched'] = $true
     try {
+        # WER's own reports of an OUTLOOK.EXE crash written during the run - the machine's and each user's
+        # queue and archive - copied beside the dumps with their report folder's name, each file listed as
+        # WERFILE (ConvertFrom-WerListing). On the test guests WER keeps only Report.wer in such a folder
+        # (measured 2026-11-18: telemetry is Required, so no dump goes with a report); a dump found there is
+        # copied too.
+        $werSince = Get-CrashEventsSince -GuestRunStartUtc $guestRunStartUtc -HostRunStartUtc $runStartUtc
+        $werStage = @"
+`$cut = ([datetime]'$werSince').ToUniversalTime()
+`$stage = '$GuestDumpDir\wer'
+New-Item -ItemType Directory -Force -Path `$stage | Out-Null
+`$roots = @('C:\ProgramData\Microsoft\Windows\WER\ReportQueue', 'C:\ProgramData\Microsoft\Windows\WER\ReportArchive')
+foreach (`$u in @(Get-ChildItem -LiteralPath 'C:\Users' -Directory -ErrorAction SilentlyContinue)) { `$roots += (Join-Path `$u.FullName 'AppData\Local\Microsoft\Windows\WER\ReportQueue'); `$roots += (Join-Path `$u.FullName 'AppData\Local\Microsoft\Windows\WER\ReportArchive') }
+foreach (`$r in `$roots) {
+    foreach (`$d in @(Get-ChildItem -LiteralPath `$r -Directory -ErrorAction SilentlyContinue | Where-Object { `$_.LastWriteTimeUtc -ge `$cut })) {
+        `$report = Join-Path `$d.FullName 'Report.wer'
+        if (-not (`$d.Name -match 'OUTLOOK\.EXE' -or ((Test-Path -LiteralPath `$report) -and (Select-String -LiteralPath `$report -Pattern 'OUTLOOK\.EXE' -Encoding Unicode -Quiet)))) { continue }
+        foreach (`$f in @(Get-ChildItem -LiteralPath `$d.FullName -File -ErrorAction SilentlyContinue | Where-Object { @('.wer', '.mdmp', '.hdmp', '.dmp') -contains `$_.Extension.ToLowerInvariant() })) {
+            `$n = `$d.Name + '.' + `$f.Name
+            Copy-Item -LiteralPath `$f.FullName -Destination (Join-Path `$stage `$n) -Force
+            'WERFILE ' + `$f.Length + ' ' + `$n
+        }
+    }
+}
+"@
         $list = "`$deadline = (Get-Date).AddSeconds(300); while ((Get-Date) -lt `$deadline -and @(Get-Process -Name WerFault -ErrorAction SilentlyContinue).Count -gt 0) { Start-Sleep -Seconds 3 }; `"WERFAULT-LEFT `$(@(Get-Process -Name WerFault -ErrorAction SilentlyContinue).Count)`"; Get-ChildItem -LiteralPath '$GuestDumpDir' -Filter '*.dmp' -File -ErrorAction SilentlyContinue | ForEach-Object { 'DUMP ' + `$_.Length + ' ' + `$_.Name }"
-        $o = Invoke-Guest 'crash-dumps-list' $list 600 -Session0
+        $o = Invoke-Guest 'crash-dumps-list' ($list + "`r`n" + $werStage) 600 -Session0
         $script:dumpsFound = @(ConvertFrom-DumpListing $o)
+        $script:werFound = @(ConvertFrom-WerListing $o)
+        if ($script:werFound.Count -gt 0) {
+            $werDest = Join-Path $runDir 'wer'
+            # ps51-native-stderr-ok: a PowerShell script, not a program - every program it starts goes through its own Invoke-NativeCommand, under 'Continue' inside a try
+            & (Join-Path $PSScriptRoot 'Copy-FromGuest.ps1') -VMName $facts.Name -RepoRoot $CredentialRepoRoot -GuestPath "$GuestDumpDir\wer" -Include '*.wer', '*.mdmp', '*.hdmp', '*.dmp' -Destination $werDest -Force *>> (Join-Path $runDir 'fetch.log')
+            $werFiles = @()
+            foreach ($w in $script:werFound) {
+                $local = Join-Path (Join-Path $werDest $facts.Name) $w.Name
+                $werFiles += [ordered]@{ name = $w.Name; bytes = $w.Bytes; fetched = ((Test-Path -LiteralPath $local) -and ((Get-Item -LiteralPath $local).Length -eq $w.Bytes)); path = $local }
+            }
+            $crashDumpState['werFiles'] = $werFiles
+            Say "WER's own reports of OUTLOOK.EXE: $($werFiles.Count) file(s) on the guest, $(@($werFiles | Where-Object { $_['fetched'] }).Count) fetched to wer\$($facts.Name)\"
+        }
         if ($script:dumpsFound.Count -eq 0) { return }
         $dest = Join-Path $runDir 'dumps'
         # ps51-native-stderr-ok: a PowerShell script, not a program - every program it starts goes through its own Invoke-NativeCommand, under 'Continue' inside a try
@@ -1785,9 +1846,14 @@ exit `$LASTEXITCODE
     $consoleFile = Get-ChildItem -LiteralPath $resultsDir -Filter 'console.txt' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($consoleFile) { $consoleFacts = Read-ConsoleFacts ([System.IO.File]::ReadAllText($consoleFile.FullName)) }
     $since = Get-CrashEventsSince -GuestRunStartUtc $guestRunStartUtc -HostRunStartUtc $runStartUtc
-    $o = Invoke-Guest 'crash-events' "`$s = ([datetime]'$since').ToLocalTime(); `$e = @(Get-WinEvent -FilterHashtable @{ LogName = 'Application'; StartTime = `$s; Id = 1000 } -ErrorAction SilentlyContinue | Where-Object { `$_.Message -match 'OUTLOOK\.EXE' }); `"CRASHES `$(`$e.Count)`"; `$e | ForEach-Object { `$_.TimeCreated.ToString('o') + ' ' + ((`$_.Message -split [char]10 | Select-Object -First 4) -join ' | ') }" 300 -Session0
+    # Event 1001 too, whole: WER's report of each crash - its kind and where it filed it - which is how a crash
+    # that left an Application Error event and no dump can be told apart (2026-11-18, runbook section 4.15).
+    # WER-REPORTS counts the reports the events name: WER logs 1001 more than once for one report.
+    $o = Invoke-Guest 'crash-events' "`$s = ([datetime]'$since').ToLocalTime(); `$e = @(Get-WinEvent -FilterHashtable @{ LogName = 'Application'; StartTime = `$s; Id = 1000 } -ErrorAction SilentlyContinue | Where-Object { `$_.Message -match 'OUTLOOK\.EXE' }); `"CRASHES `$(`$e.Count)`"; `$e | ForEach-Object { `$_.TimeCreated.ToString('o') + ' ' + ((`$_.Message -split [char]10 | Select-Object -First 4) -join ' | ') }; `$w = @(Get-WinEvent -FilterHashtable @{ LogName = 'Application'; StartTime = `$s; Id = 1001 } -ErrorAction SilentlyContinue | Where-Object { `$_.Message -match 'OUTLOOK\.EXE' }); `$ids = @(`$w | ForEach-Object { if (`$_.Message -match 'Report Id: ([0-9a-fA-F-]+)') { `$Matches[1] } } | Sort-Object -Unique); `"WER-REPORTS `$(`$ids.Count)`"; `$w | ForEach-Object { 'WER-REPORT ' + `$_.TimeCreated.ToString('o') + ' ' + ((`$_.Message -split [char]10 | ForEach-Object { `$_.Trim() } | Where-Object { `$_ }) -join ' | ') }" 300 -Session0
     $cm = [regex]::Match($o, 'CRASHES (\d+)')
     if ($cm.Success) { $crashes = [int]$cm.Groups[1].Value }
+    $wm = [regex]::Match($o, 'WER-REPORTS (\d+)')
+    if ($wm.Success) { $crashDumpState['werReports'] = [int]$wm.Groups[1].Value }
     Save-CrashDumps
     $crashes = Merge-CrashCount $crashes $script:dumpsFound
     if ($facts.Exchange) {
@@ -1923,7 +1989,13 @@ if ($dumpList.Count -gt 0) {
     $dumpText += ", $(@($dumpList | Where-Object { $_['fetched'] }).Count) of $($dumpList.Count) fetched: " + (($dumpList | ForEach-Object { "dumps\$($facts.Name)\$($_['name']) ($([math]::Round($_['bytes'] / 1MB)) MB)" }) -join ', ')
 }
 elseif ($crashDumpState['armed']) { $dumpText += ', none written' }
-$lines.Add("outlook    crashes during the run: $crashText; crash dumps: $dumpText")
+$werText = ''
+$werList = @($crashDumpState['werFiles'])
+if ([int]$crashDumpState['werReports'] -gt 0 -or $werList.Count -gt 0) {
+    $werText = "; WER's own reports: $([Math]::Max(0, [int]$crashDumpState['werReports'])) (guest\crash-events.log)"
+    if ($werList.Count -gt 0) { $werText += ", $(@($werList | Where-Object { $_['fetched'] }).Count) of $($werList.Count) file(s) fetched to wer\$($facts.Name)\" }
+}
+$lines.Add("outlook    crashes during the run: $crashText; crash dumps: $dumpText$werText")
 $lines.Add((Format-OutlookStartLine $outlookStart))
 if ($null -ne $signatureSettingsState) { $lines.Add("signature  $($signatureSettingsState['scenario']), values $($signatureSettingsState['valueKind']), made before Outlook started: $(if ($signatureSettingsState['set']) { 'SET' } else { 'NOT SET' }) ($($signatureSettingsState['log']))") }
 if ($indexRoots) { $lines.Add("index      $indexRoots") }

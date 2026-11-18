@@ -280,6 +280,20 @@ its mailbox tests on, and change nothing you install.
   check fails, the reason is written out in full here rather than hidden behind a link. Both
   indicators now take their wording from one place, so they cannot disagree.
 
+- ✅ **A live run keeps Windows' own report of every Outlook crash beside its dumps.**
+  Two Outlook crashes on 2026-11-18, both in `mso40uiwin32client.dll` while a draft was written,
+  left an Application Error event and no dump, though the run had armed Windows Error Reporting's
+  local dumps. On a test machine the arming checked out: the keys hold what
+  `Set-OutlookCrashDumps.ps1` writes, the folder takes a dump from Outlook's own account, and
+  programs crashed by hand or reporting through `ReportFault` left a full dump with the same event.
+  A program that files its crash through WER's own calls leaves no local dump, but no Application
+  Error event either, and WER keeps no dump with any report on these machines. So both crashes took
+  Windows' own crash path and lost the dump somewhere in it, and what WER recorded about them went
+  with the restore. A run now also keeps each crash's event 1001, which names WER's report and where
+  it filed it, in `guest\crash-events.log`, and copies that report's files from the machine's and
+  each user's WER queue and archive into `wer\<guest>\`; the summary counts both. Whether the next
+  such crash leaves a dump is not settled by this (runbook section 4.15).
+
 - ✅ **A live test drives the task pane on a test machine, with a stand-in for the Claude Code CLI.**
   Decided by the maintainer on 2026-11-18 (Q168 (b)): nothing tested the pane, so the code-sharing
   refactor's stage S4 could not show that it still worked. T2 `LivePaneTests` has the MCP server open
