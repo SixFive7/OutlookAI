@@ -372,6 +372,50 @@ function Invoke-SelfTest {
     Check 'a tool''s refusal throws, naming the tool' $true $threw
     $threw = $false; try { [void](Get-McpToolResult ('{"jsonrpc":"2.0","id":3,"error":{"code":-32602,"message":"bad"}}' | ConvertFrom-Json) 'list_signatures') } catch { $threw = $_.Exception.Message.Contains('list_signatures failed') }
     Check 'a JSON-RPC error throws' $true $threw
+    Check 'an error answer to the request is its reply too' '-32601' ([string](Get-McpReplyFor '{"jsonrpc":"2.0","id":3,"error":{"code":-32601}}' 3).error.code)
+    Check 'a line that carries the id but neither a result nor an error is no reply' $true ($null -eq (Get-McpReplyFor '{"jsonrpc":"2.0","id":7,"method":"sampling/createMessage","params":{}}' 7))
+
+    # The client against a stand-in server: a Windows PowerShell that answers each request on a line of its own,
+    # after a notification that carries the request's id in its params, and takes 4 s over one called 'slow'. For
+    # what no pure check can show: the reads, a silence, the read a silence leaves waiting, and the end (Q154, S7).
+    $standIn = Join-Path ([System.IO.Path]::GetTempPath()) ('oai-mcp-standin-' + [guid]::NewGuid().ToString('N') + '.ps1')
+    $standInText = @'
+$reader = [Console]::In
+[Console]::Error.WriteLine('stand-in: started')
+while ($null -ne ($line = $reader.ReadLine())) {
+    $m = $line | ConvertFrom-Json
+    if (-not ($m.PSObject.Properties.Name -contains 'id')) { continue }
+    if ($m.method -eq 'slow') { Start-Sleep -Seconds 4 }
+    [Console]::Out.WriteLine('{"jsonrpc":"2.0","method":"notifications/message","params":{"id":' + $m.id + '}}')
+    [Console]::Out.WriteLine('{"jsonrpc":"2.0","id":' + $m.id + ',"result":{"method":"' + $m.method + '"}}')
+    [Console]::Out.Flush()
+}
+[Console]::Error.WriteLine('stand-in: input closed')
+'@
+    [System.IO.File]::WriteAllText($standIn, $standInText)
+    $standInShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $s = $null
+    try {
+        $s = Start-McpStdioServer -ServerExe $standInShell -ArgumentList ('-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $standIn + '"') -TimeoutSeconds 30
+        Check 'the client starts a server and initializes it: request 1, then the initialized notification' 2 $s.NextId
+        Check 'a request is answered by its own reply, past a notification that carries its id' 'tools/list' ([string](Invoke-McpRequest -Session $s -Method 'tools/list').result.method)
+        $slowId = Send-McpRequest -Session $s -Method 'slow'
+        Check 'a request sent now is numbered next, for a reply read later' 3 $slowId
+        Check 'a reply that has not come within its time is $null with -NullWhenNone' $true ($null -eq (Read-McpReply -Session $s -Id $slowId -TimeoutSeconds 1 -NullWhenNone))
+        Check 'and the read still waiting is kept for the next call' $true ($null -ne $s.PendingRead)
+        Check 'which takes it up: the late reply is skipped and the next request''s found' 'ping' ([string](Invoke-McpRequest -Session $s -Method 'ping').result.method)
+        Check 'and the line a reply came in is kept as the server wrote it' $true ([string]$s.LastReplyLine).Contains('"method":"ping"')
+        $threw = ''
+        try { [void](Read-McpReply -Session $s -Id 999 -TimeoutSeconds 1) } catch { $threw = $_.Exception.Message }
+        Check 'without -NullWhenNone a silence throws, naming the request' $true ($threw.Contains('request 999'))
+        $stderr = Stop-McpStdioServer -Session $s -WaitMilliseconds 15000
+        Check 'closing its input ends the server, and what it wrote to standard error comes back to the end' 'True|True' ('{0}|{1}' -f $s.Process.HasExited, $stderr.Contains('stand-in: input closed'))
+        $s = $null
+    }
+    finally {
+        if ($null -ne $s) { [void](Stop-McpStdioServer -Session $s -WaitMilliseconds 5000 -KillIfStillRunning) }
+        Remove-Item -LiteralPath $standIn -Force -ErrorAction SilentlyContinue
+    }
 
     if ($script:stFailures.Count -gt 0) {
         foreach ($f in $script:stFailures) { Write-Host "FAIL: $f" }

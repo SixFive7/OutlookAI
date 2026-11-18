@@ -1423,7 +1423,15 @@ its mailbox tests on, and change nothing you install.
   two copies and an older one in `Build-Corpus.ps1`, which now reads the shared one's choice) and
   what `-Verify` does about ImportPRF (`Resolve-ImportPrfClearance`, two copies) are one copy too,
   and so is the one helper of the self-tests with a single form, `ConvertTo-SelfTestText`, which four
-  of them compared values by.
+  of them compared values by. So is the MCP server's stdio client: `Invoke-GuestMeasure.ps1`, kept as
+  found until then, and `Measure-PinWindows.ps1`, whose sessions were a C# class of its own, both use
+  `Testbed/guest/McpStdioClient.ps1`. It took on what the second did that it did not: a read still
+  waiting when a reply's time runs out is kept for the next one, where the next read used to throw; a
+  server starts without the initialize for a caller that times it; a request goes out now and its
+  reply is read later; a silence can give back nothing instead of throwing; a reply must carry a
+  result or an error; and the end of the server's standard error is waited for. A server that cannot
+  be initialized is stopped, and the error says what it wrote. `Set-SignatureSettings.ps1`'s
+  self-test now talks to a stand-in server through it as well as checking its pure parts.
 
 - 📝 **If Office's own grace reset fails, the Exchange test machine may get Microsoft 365 Apps (Q206).**
   The maintainer's decision Q206, 2026-11-18, now in AGENTS.md beside the machine's internet
