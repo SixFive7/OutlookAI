@@ -196,8 +196,8 @@ public sealed class LivePopulationCoverageTests
         // The two delegate tests moved out of LiveFolderScopeTests into their own class on
         // 2026-10-03 (Q74 B1) - its collection fixture writes, and they run only on the read-only
         // workstation. The guard moved with them, and the old file keeps no copy of the read.
-        string folderScope = LiveSource("LiveDelegateFolderScopeTests.cs");
-        Assert.Equal(0, Occurrences(LiveSource("LiveFolderScopeTests.cs"), "ExpectedDelegateStoreDisplayNames"));
+        string folderScope = SourceText.LiveSource("LiveDelegateFolderScopeTests.cs");
+        Assert.Equal(0, Occurrences(SourceText.LiveSource("LiveFolderScopeTests.cs"), "ExpectedDelegateStoreDisplayNames"));
 
         // Exactly one read of the settings list in the whole file: the guard's own. Two would mean
         // the two delegate tests could answer the same question differently again, which is how
@@ -205,7 +205,7 @@ public sealed class LivePopulationCoverageTests
         Assert.Equal(1, Occurrences(folderScope, "ExpectedDelegateStoreDisplayNames"));
         Assert.Equal(2, Occurrences(folderScope, "DelegateStores(\""));
 
-        string signatures = LiveSource("LiveSignatureTests.cs");
+        string signatures = SourceText.LiveSource("LiveSignatureTests.cs");
         Assert.Contains("LivePopulationCoverage.Require(", signatures, StringComparison.Ordinal);
 
         // The exact line that was vacuous. Asserting over the raw nullable list is what an empty
@@ -236,13 +236,5 @@ public sealed class LivePopulationCoverageTests
         }
 
         return count;
-    }
-
-    private static string LiveSource(string fileName)
-    {
-        string dir = RepoPaths.TestProjectDir();
-        string path = Path.Combine(dir, "T2", fileName);
-        Assert.True(File.Exists(path), "live test source is missing: " + path);
-        return File.ReadAllText(path);
     }
 }
