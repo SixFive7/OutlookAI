@@ -1490,17 +1490,18 @@ its mailbox tests on, and change nothing you install.
   fixture they share, the move/archive suite's and its stdio test's since too; the two post-suite
   sweeps run one proof, `LiveArtifactSweep.ProveNoTaggedArtifactRemains`; `AuditLines` reads the
   audit lines six suites counted, each still naming which log; the stdio suites read the tool
-  surface through `ToolShapes`; the corpus helpers live in `HubCorpus`, scratch files go through
-  `ScratchFiles`, a store's id through `LiveIds`, an index scope through `LiveIndexScopes` and the
-  registry through `RawRegistryValues`; and four fixtures read the test project's folder through
-  `RepoPaths`. The live tests make the window calls the product makes too through Core's
-  `NativeWindows`, where six of their files declared their own - 24 declarations, with two copies of
-  its `RECT`, five of its callback and four of its constants - and `TestWin32` declares the calls
-  only tests make: the screen capture's, and those two or three test files each declared, a
-  foreground window, a child walk, a window's text and a posted message among them. Two test helpers
-  that wrote bytes as hex by hand use .NET's own writer. No test changed what it checks: the build
-  machine ran the same tests, by name, before and after each step, and the 164 live test methods are
-  the same 164.
+  surface through `ToolShapes` and write and read the wire through one `McpWire`, which the stdio
+  client and the conformance test each wrote out; the corpus helpers live in `HubCorpus`, scratch
+  files go through `ScratchFiles`, a store's id through `LiveIds`, an index scope through
+  `LiveIndexScopes` and the registry through `RawRegistryValues`; and four fixtures read the test
+  project's folder through `RepoPaths`. The live tests make the window calls the product makes too
+  through Core's `NativeWindows`, where six of their files declared their own - 24 declarations,
+  with two copies of its `RECT`, five of its callback and four of its constants - and `TestWin32`
+  declares the calls only tests make: the screen capture's, and those two or three test files each
+  declared, a foreground window, a child walk, a window's text and a posted message among them. Two
+  test helpers that wrote bytes as hex by hand use .NET's own writer. No test changed what it
+  checks: the build machine ran the same tests, by name, before and after each step, and the 164
+  live test methods are the same 164.
 
 - ✅ **The draft tests read where Word lays out a reply's text, and check no draft became a form.**
   The reply, reply-all and forward tests now read Word's own layout of each draft and fail when its
