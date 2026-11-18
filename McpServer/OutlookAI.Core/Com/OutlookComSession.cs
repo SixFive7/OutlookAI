@@ -10115,13 +10115,6 @@ namespace OutlookAI.Core.Com
             }
         }
 
-        /// <summary>
-        /// Adds the received-date column to a table, trying each accepted spelling in turn,
-        /// and returns its position or -1. Separate from the sort BECAUSE the sweep's version
-        /// of this pair shares one <c>catch</c> and therefore cannot say which of the two
-        /// failed - which is precisely the fact needed to explain why its sort has never
-        /// applied.
-        /// </summary>
         /// <summary>PR_LONGTERM_ENTRYID_FROM_TABLE, by its MAPI tag, as a table column.</summary>
         private const string LongTermEntryIdSchema = "http://schemas.microsoft.com/mapi/proptag/0x66700102";
 
@@ -10200,6 +10193,13 @@ namespace OutlookAI.Core.Com
             return TableIdText(longTermValue) ?? tableEntryId;
         }
 
+        /// <summary>
+        /// Adds the received-date column to a table, trying each accepted spelling in turn,
+        /// and returns its position or -1. Separate from the sort BECAUSE the sweep's version
+        /// of this pair shares one <c>catch</c> and therefore cannot say which of the two
+        /// failed - which is precisely the fact needed to explain why its sort has never
+        /// applied.
+        /// </summary>
         private int TryAddDateColumn(dynamic table, out string? property)
         {
             property = null;
