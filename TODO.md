@@ -1680,11 +1680,11 @@
   inventory.tsv (one row a group), members.tsv (every copy's file and lines) and the detectors' raw
   output - which is gitignored, so not in a clone. How far, and in what order, was decided on
   2026-11-18 as Q163 to Q171. Folded so far, each with its CHANGELOG entry: the test suite's
-  stand-ins for Outlook's connection and its repository paths, in
-  `McpServer/OutlookAI.McpServer.Tests/Support/` - the survey's T01, T04 and T07, but for four
-  live-tier fixtures in `T2/` that still read the test project's folder themselves, and T09's
-  reader of the committed example settings. What remains, one stage at a time: S3, the linked files
-  and the shared logic (L01-L07, A06, A07, A10) into Core, the logic only the add-in runs into
+  stand-ins for Outlook's connection and for the search index, and its repository paths, in
+  `McpServer/OutlookAI.McpServer.Tests/Support/` - the survey's T01, T02, T04 and T07, but for four
+  live-tier fixtures in `T2/` that still read the test project's folder themselves, and T09's reader
+  of the committed example settings. What remains, one stage at a time: S3, the linked files and the
+  shared logic (L01-L07, A06, A07, A10) into Core, the logic only the add-in runs into
   `OutlookAI.Core.AddIn` (Q163 (a)); S4, the signature and draft code (A01-A05, A08, A09, A12) with
   Q162's checkbox, Core winning where the copies drifted apart and the pane's visible differences
   measured on a test machine first (Q165 (c)), and the pane driven on a test machine (Q168 (b)); S6,

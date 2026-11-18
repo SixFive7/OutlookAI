@@ -130,12 +130,12 @@ public sealed class LiveIndexScopesTests
             Statements.Add(sql);
             if (sql.Contains("DIRECTORY=", StringComparison.Ordinal))
             {
-                return Rows(_roots);
+                return IndexRows.Urls(_roots);
             }
 
             if (sql.Contains("System.Kind='email'", StringComparison.Ordinal) && !sql.Contains("CONTAINS", StringComparison.OrdinalIgnoreCase))
             {
-                return Rows(_sample);
+                return IndexRows.Urls(_sample);
             }
 
             const string scopeMarker = "WHERE SCOPE='";
@@ -143,16 +143,10 @@ public sealed class LiveIndexScopesTests
             if (sql.StartsWith("SELECT TOP 1 ", StringComparison.Ordinal) && at >= 0)
             {
                 string scope = sql.Substring(at + scopeMarker.Length).TrimEnd('\'');
-                return _withContent.Contains(scope) ? Rows(new[] { Item(scope) }) : Rows(Array.Empty<string>());
+                return _withContent.Contains(scope) ? IndexRows.Urls(Item(scope)) : IndexRows.Urls();
             }
 
-            return Rows(Array.Empty<string>());
+            return IndexRows.Urls();
         }
-
-        private static IReadOnlyList<IReadOnlyDictionary<string, object?>> Rows(IEnumerable<string> urls) =>
-            urls.Select(u => (IReadOnlyDictionary<string, object?>)new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-            {
-                ["System.ItemUrl"] = u,
-            }).ToList();
     }
 }
