@@ -21,13 +21,13 @@
 
     THE SCENARIOS (-Scenario), each a plan Get-SignatureSettingsPlan returns:
       GroupPolicy  Q200. HKCU\Software\Policies\Microsoft\Office\<major>\Common\MailSettings: NewSignature and
-                   ReplySignature, REG_SZ as Group Policy writes them, naming two test signatures; and the hub
-                   account's own defaults, for new mail and for replies and forwards, naming two others - so a draft
-                   says which won.
+                   ReplySignature, naming two test signatures.
       Preference   Q201. HKCU\Software\Microsoft\Office\<major>\Common\MailSettings: the same two values, there not a
-                   policy but a deployed setting; and the hub's own default for NEW MAIL ONLY. The new mail ranks the
-                   deployed default against the account's own; a reply or a forward shows what the deployed one does
-                   for an account that has none.
+                   policy but a deployed setting.
+    In both the hub account gets its own default for NEW MAIL ONLY, a third test signature: the new mail ranks the
+    setting against the account's own, and a reply or a forward shows what the setting does for an account that has
+    none of its own. (The first runs, 2026-11-18, gave the hub its own reply default under the policy as well: Outlook
+    put that in, not the policy's.)
 
     THE VALUES' KIND (-ValueKind). ExpandString, REG_EXPAND_SZ, by default: what signature vendors tell
     administrators to write and what Outlook was reported to honour where a plain string stopped working (Microsoft
@@ -115,7 +115,7 @@ function Get-SignatureSettingsPlan {
         $settingNew = $TestPrefix + 'Q200-Forced-New'
         $settingReply = $TestPrefix + 'Q200-Forced-Reply'
         $ownNew = $TestPrefix + 'Q200-Own-New'
-        $ownReply = $TestPrefix + 'Q200-Own-Reply'
+        $ownReply = $null
         $key = "Software\Policies\Microsoft\Office\$OfficeVersion\Common\MailSettings"
         $token = 'groupPolicy'
     }
@@ -217,8 +217,8 @@ function Invoke-SelfTest {
     $g = Get-SignatureSettingsPlan 'GroupPolicy' '16.0'
     Check 'the policy is Group Policy''s MailSettings key' 'Software\Policies\Microsoft\Office\16.0\Common\MailSettings' $g.Key
     Check 'and list_signatures names its source groupPolicy' 'groupPolicy' $g.Source
-    Check 'it forces a new-mail and a reply default, and the hub has its own of both' 'OutlookAI-McpTest-Q200-Forced-New|OutlookAI-McpTest-Q200-Forced-Reply|OutlookAI-McpTest-Q200-Own-New|OutlookAI-McpTest-Q200-Own-Reply' $g.Signatures
-    Check 'the own defaults are the last two' 'OutlookAI-McpTest-Q200-Own-New|OutlookAI-McpTest-Q200-Own-Reply' @($g.OwnNew, $g.OwnReply)
+    Check 'it names a new-mail and a reply default, and the hub has its own new-mail default' 'OutlookAI-McpTest-Q200-Forced-New|OutlookAI-McpTest-Q200-Forced-Reply|OutlookAI-McpTest-Q200-Own-New' $g.Signatures
+    Check 'and no reply default of its own' 'OutlookAI-McpTest-Q200-Own-New|True' @($g.OwnNew, ($null -eq $g.OwnReply))
     $p = Get-SignatureSettingsPlan 'Preference' '16.0'
     Check 'the deployed default is in Outlook''s own MailSettings, not a policy' 'Software\Microsoft\Office\16.0\Common\MailSettings' $p.Key
     Check 'and list_signatures names its source preference' 'preference' $p.Source
@@ -264,7 +264,7 @@ function Invoke-SelfTest {
         Values     = @{ NewSignature = $g.SettingNew; ReplySignature = $g.SettingReply }
         Kinds      = @{ NewSignature = 'ExpandString'; ReplySignature = 'ExpandString' }
         Policy     = [pscustomobject]@{ newMessage = $g.SettingNew; newMessageFrom = 'groupPolicy'; replyForward = $g.SettingReply; replyForwardFrom = 'groupPolicy' }
-        Own        = [pscustomobject]@{ newMessage = $g.OwnNew; replyForward = $g.OwnReply }
+        Own        = [pscustomobject]@{ newMessage = $g.OwnNew; replyForward = $null }
         Signatures = @($g.Signatures) + @('Identity')
     }
     $v = Get-SettingsVerdict $g $set
@@ -286,7 +286,7 @@ function Invoke-SelfTest {
     $noSignature = @{}
     foreach ($k in $set.Keys) { $noSignature[$k] = $set[$k] }
     $noSignature['Signatures'] = @($g.SettingNew)
-    Check 'a signature not listed is NOT-SET' 3 @((Get-SettingsVerdict $g $noSignature).Missing).Count
+    Check 'a signature not listed is NOT-SET' 2 @((Get-SettingsVerdict $g $noSignature).Missing).Count
     $pSet = @{
         Values     = @{ NewSignature = $p.SettingNew; ReplySignature = $p.SettingReply }
         Kinds      = @{ NewSignature = 'ExpandString'; ReplySignature = 'ExpandString' }
@@ -295,6 +295,10 @@ function Invoke-SelfTest {
         Signatures = @($p.Signatures)
     }
     Check 'the deployed setting with no own reply default is SET' 'SET' (Get-SettingsVerdict $p $pSet).Verdict
+    $gOwnReply = @{}
+    foreach ($k in $set.Keys) { $gOwnReply[$k] = $set[$k] }
+    $gOwnReply['Own'] = [pscustomobject]@{ newMessage = $g.OwnNew; replyForward = 'Identity' }
+    Check 'under the policy too, an own reply default the plan did not set is NOT-SET' 'NOT-SET' (Get-SettingsVerdict $g $gOwnReply).Verdict
     $pSet['Own'] = [pscustomobject]@{ newMessage = $p.OwnNew; replyForward = 'Identity' }
     Check 'an own reply default the plan did not set is NOT-SET' 'NOT-SET' (Get-SettingsVerdict $p $pSet).Verdict
     Check 'no policy at all is NOT-SET' 'NOT-SET' (Get-SettingsVerdict $g @{ Values = @{}; Kinds = @{}; Policy = $null; Own = $null; Signatures = @() }).Verdict

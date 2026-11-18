@@ -216,12 +216,11 @@ public sealed class LiveSignatureSettingsTests
     /// and a forward of the hub, whether its compose window leaves one message's signature to the user (its Signature
     /// button), and that OutlookAI inserts the same and allows the same.
     /// <list type="bullet">
-    /// <item><b>GroupPolicy</b> (Q200): Group Policy forces a default for new mail and one for replies and forwards,
-    /// and the hub account has its own default for each.</item>
-    /// <item><b>Preference</b> (Q201): Outlook's general mail settings name a default for each, and the hub account
-    /// has its own for new mail only - so the new mail ranks the two, and the reply and the forward show what a
-    /// deployed default does for an account that has none of its own.</item>
+    /// <item><b>GroupPolicy</b> (Q200): Group Policy names a default for new mail and one for replies and forwards.</item>
+    /// <item><b>Preference</b> (Q201): Outlook's general mail settings name the same two, not as a policy.</item>
     /// </list>
+    /// In both the hub account has its own default for new mail only - so the new mail ranks the setting against the
+    /// account's own, and the reply and the forward show what the setting does for an account that has none.
     /// Outlook's side is read from compose windows opened on the objects Outlook's own commands make - the kind that
     /// crashed Outlook on 2026-10-04 (runbook 4.6), which is why the runner arms full crash dumps. MEASURED lines first,
     /// then the contract. A run without the step proves nothing.
@@ -261,8 +260,7 @@ public sealed class LiveSignatureSettingsTests
         string settingReply = RequireTestSignature(policy.ReplyForward, "the setting's reply and forward default");
         string ownNew = RequireTestSignature(hubRow.NewMessage, "the hub account's own new-mail default");
         string? ownReply = hubRow.ReplyForward == null ? null : RequireTestSignature(hubRow.ReplyForward, "the hub account's own reply default");
-        Assert.True((ownReply != null) == (source == SignaturePolicySource.GroupPolicy),
-            "the step gives the hub its own reply default under the policy, and none under the deployed setting");
+        Assert.True(ownReply == null, "the step gives the hub its own new-mail default only");
 
         Dictionary<string, string> roles = new(StringComparer.Ordinal)
         {
