@@ -375,13 +375,14 @@ spelling".** See the decision log below.
 answers the same day. The questions as asked, each with its primer, context, directions and
 recommendation, are in `.work\open-questions-2026-11-18.md` of his checkout, which is gitignored, so
 not in a clone; what the decisions rest on is restated here, with placeholders where the questions
-named real mailboxes. Words in quotes are his, verbatim, spelling included. Where he
-answered "rec", the recommendation he had been given was taken, and it is spelled out. Four of the
-42 are not decided:
-- **Q172 and Q173** drew questions back from him; a follow-up to each went to him the same day and
-  is open.
-- **Q197**'s line arrived as *"ec"*, most likely "197 rec" with its start lost. It is recorded as
-  awaiting his confirmation.
+named real mailboxes. Words in quotes are his, verbatim, spelling included. Where he answered
+"rec", the recommendation he had been given was taken, and it is spelled out. Five of the 42 did
+not end in a plain decision:
+- **Q172** drew a question back from him and is open: two follow-ups went to him the same day, the
+  second on how the server gets its .NET runtime.
+- **Q173** drew a question back too; after a follow-up he answered *"173 b"*, which drops CodeQL.
+- **Q197 and Q199**, which concern CodeQL alone, are superseded by Q173 (b). Q197's line, which
+  arrived as *"ec"*, needs no confirming now.
 - **Q183** asked for an action of his, not a decision, and still waits for it.
 
 One decision was taken on his behalf the same day, under his answer to Q131 and Q132; it is
@@ -437,20 +438,21 @@ refactor goes; `TODO.md` holds it.
   drifted: its purge skips the Sync Issues folders the safety rules require. The recommendation
   rested on his confirming that the incident is closed. *"170 rec"*. **Decided: the recommendation,
   (a)**, with that confirmation: the four commands and their code are deleted, and the corpus
-  tooling stays.
+  tooling stays. The personal-data clean-up carried it out the same day (`CHANGELOG.md`, Removed).
 - **Q171 - copies across languages.** PowerShell restates rules the C# holds - account
   classification, the test tags, the updater's signature check - and the installer and some
   documents repeat constants that an existing check keeps equal. *"171 rec"*. **Decided: the
   recommendation**: (c), C# source files both sides compile, as one file already is, for the Windows
   interop code and the signature check; (a), checked copies, for the installer, the documents and
   the build files.
-- **Q172 - the add-in's C# version. Open: a follow-up went to him on 2026-11-18.** The add-in
-  targets .NET Framework 4.8 and compiles as C# 7.3 by default; the server's projects are on .NET 10,
-  and Core is built for both. Core's public code works with 7.3. Directions: (a) keep 7.3 during the
-  refactor and revisit after, recommended; (b) the latest version; (c) a newer pinned version with
-  null checks on. His answer reaches past the add-in: *"172 move everything to the latest possible
-  .net or .net core version (beware that .net 11 just released)"*. Until the follow-up is answered,
-  no project's framework or language version changes.
+- **Q172 - the add-in's C# version. Open: two follow-ups went to him on 2026-11-18, the second on
+  how the server gets its .NET runtime.** The add-in targets .NET Framework 4.8 and compiles as
+  C# 7.3 by default; the server's projects are on .NET 10, and Core is built for both. Core's
+  public code works with 7.3. Directions: (a) keep 7.3 during the refactor and revisit after,
+  recommended; (b) the latest version; (c) a newer pinned version with null checks on. His answer
+  reaches past the add-in: *"172 move everything to the latest possible .net or .net core version
+  (beware that .net 11 just released)"*. Until the follow-ups are answered, no project's framework
+  or language version changes.
 
 #### The licence and CodeQL - Q173, Q197 to Q199
 
@@ -461,27 +463,29 @@ which FSL is not: `Tools/Invoke-CodeQL.ps1` refuses unless `LICENSE` is MIT (`AG
 Dependencies, the third exception). Since Q146 the scan treats every MCP tool's arguments as
 untrusted input.
 
-- **Q173 - the licence change rules out CodeQL. Open: a follow-up went to him on 2026-11-18.**
-  Directions: (a) stay on MIT and keep CodeQL; (b) move to FSL and drop CodeQL from the release
-  checks, keeping the .NET security analysers on every build and the vulnerable-package check -
-  recommended, if FSL still stands; (c) move to FSL and find a free scanner whose licence allows it,
-  which needs research and an exception to the Dependencies rule; (d) decide when the move actually
-  happens. His answer: *"173 what does CodeQL bring us? I'd rather not let something steer my
-  license but I have no clue what it's loss will cost us. Why was it added?"* Why it was added is in
-  this log's Q125 record (2026-10-04); what it has found, in the Q146 record (2026-10-11) and under
-  Q197 and Q198 below. Until he decides, the licence stays MIT and CodeQL stays in the release
-  checks. Q197 and Q199 matter only while it does.
-- **Q197 - should CodeQL follow an AI's input past the tools themselves. Awaiting his
-  confirmation.** CodeQL loses track of an AI's arguments in two places, so what happens to them
-  after those is not scanned: where the work crosses into the separate process that talks to
-  Outlook, through a channel CodeQL cannot follow, and at list arguments such as item IDs and
-  attachments. Directions: (a) one CodeQL model entry per operation of that process, 27 today,
-  counted by the census that already guards the tools; (b) a small custom CodeQL library, which also
-  covers the list arguments; (c) leave it, with the gaps written down. Recommended: (a), after Q198 -
-  a trial run with those entries found 3 new results, all in `save_attachment`, which would block
-  every release until Q198 was decided. His line arrived as *"ec"*, most likely "197 rec" with its
-  start lost, so it is not recorded as decided until he confirms it; until then the scan stays as it
-  is. It also depends on Q173.
+- **Q173 - the licence change rules out CodeQL.** Directions: (a) stay on MIT and keep CodeQL; (b)
+  move to FSL and drop CodeQL from the release checks, keeping the .NET security analysers on every
+  build and the vulnerable-package check - recommended, if FSL still stands; (c) move to FSL and find
+  a free scanner whose licence allows it, which needs research and an exception to the Dependencies
+  rule; (d) decide when the move actually happens. His first answer was a question back: *"173 what
+  does CodeQL bring us? I'd rather not let something steer my license but I have no clue what it's
+  loss will cost us. Why was it added?"* Why it was added is in this log's Q125 record (2026-10-04);
+  what it found, in the Q146 record (2026-10-11) and under Q198 below. A follow-up went to him the
+  same day, and he answered: *"173 b"*. **Decided: (b)**: OutlookAI moves to the FSL licence, and
+  CodeQL leaves the release checks. In its place a build rule keeps the risky calls - file writes,
+  the search query, program starts - inside a few vetted wrapper classes that check their input; the
+  .NET security analysers on every build and the vulnerable-package check stay. Stream S builds it,
+  and the rules it changes in `AGENTS.md` change with it. It supersedes Q197 and Q199.
+- **Q197 - should CodeQL follow an AI's input past the tools themselves. Superseded by Q173 (b).**
+  CodeQL loses track of an AI's arguments in two places, so what happens to them after those is not
+  scanned: where the work crosses into the separate process that talks to Outlook, through a channel
+  CodeQL cannot follow, and at list arguments such as item IDs and attachments. Directions: (a) one
+  CodeQL model entry per operation of that process, 27 today, counted by the census that already
+  guards the tools; (b) a small custom CodeQL library, which also covers the list arguments; (c)
+  leave it, with the gaps written down. Recommended: (a), after Q198 - a trial run with those
+  entries found 3 new results, all in `save_attachment`, which would block every release until Q198
+  was decided. His line arrived as *"ec"*, most likely "197 rec" with its start lost. With CodeQL
+  leaving the release checks there is nothing left to decide, and the line needs no confirming.
 - **Q198 - where `save_attachment` may save files.** It saves an attachment into any folder the AI
   names. The sender chooses the file and its name, and the AI, which reads the sender's mail, chooses
   the folder, so a malicious mail could talk an AI into saving its attachment into the Startup
@@ -489,14 +493,15 @@ untrusted input.
   types stops that save is not measured. *"198 rec"*. **Decided: the recommendation, (a)**: only
   OutlookAI's own download folder, `%LOCALAPPDATA%\OutlookAI\scratch\attachments`, and folders under
   it. An AI can still copy the file elsewhere with its own tools, under their own permission rules.
-- **Q199 - how strictly an accepted CodeQL finding is matched.** A release passes CodeQL only when
-  every finding is fixed or accepted with a written reason in `Tools/codeql-accepted.json`, and an
-  acceptance matches on the rule, the file and the line - so a new source of untrusted input reaching
-  the same line is accepted silently, its reason never re-checked. The accepted search-query finding
-  already covers 7 sources. *"199 c"*. **Decided: (c)**, over the recommended (b), which would have
-  recorded only how many sources a finding lists: each acceptance records every source's exact
-  location, which the script has to compute, so a finding with a source that is not recorded is no
-  longer accepted.
+  It stands without CodeQL, whose scan found the hole.
+- **Q199 - how strictly an accepted CodeQL finding is matched. Superseded by Q173 (b).** A release
+  passes CodeQL only when every finding is fixed or accepted with a written reason in
+  `Tools/codeql-accepted.json`, and an acceptance matches on the rule, the file and the line - so a
+  new source of untrusted input reaching the same line is accepted silently, its reason never
+  re-checked. The accepted search-query finding already covers 7 sources. *"199 c"*: each acceptance
+  would have recorded every source's exact location, computed by the script, over the recommended
+  (b), which records only how many sources a finding lists. The acceptance file goes with CodeQL, so
+  nothing of it is built.
 
 #### How drafts are written - Q208 to Q211
 
@@ -730,8 +735,8 @@ building it raised these six (this log, "Q147 carried out", 2026-11-17).
   parties' values the same way. *"196 c"*. **Decided: the recommendation, (c)**: no fingerprint is
   committed; the build-VM runner copies the private list from his workstation into each run - the VM
   has no internet and is reset after every run. Nothing guessable is published, and the build VM
-  keeps checking every commit. The rule this brings to `AGENTS.md` comes with the branch that builds
-  it.
+  keeps checking every commit. The personal-data clean-up built it, with its rule in `AGENTS.md`
+  (Personal data); the next entry records it too.
 - **Q213 - silent updates and the leaked certificate in a user's Trusted Root store.** Windows makes
   the user confirm every removal from their own Trusted Root store, with No as the default answer.
   The installer explains and asks on an interactive install or uninstall; auto-updates run silently
@@ -748,7 +753,8 @@ building it raised these six (this log, "Q147 carried out", 2026-11-17).
   only**, as built: no release-notes line, and no question from the add-in. A machine that only
   auto-updates keeps trusting the leaked root until an interactive install or uninstall.
 - **Q183 - the GitHub Support request to purge the old commits that hold the leaked signing key.**
-  Not a decision: he had chosen (a), "send it for me", and the request text is ready
+  Not a decision: he chose (a), "send it for me", on 2026-11-17 (the next entry), and the request
+  text is ready
   (`.work/github-support-request-2026-11-17.md` of his checkout). What is left needs him: when he
   says "open it", an agent opens GitHub Support's sign-in page in a browser, he signs in, the
   two-factor step included, and the agent fills in the request, sends it, closes the browser and
