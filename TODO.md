@@ -1819,18 +1819,6 @@
   every test whose product call converts in the machine's zone, `MailService.ToUtc` (122 tests)
   among them, the Q95 kind. Recommended: (1) now, and (3) for each function as it is next changed.
 
-- [ ] **Decide whether the draft tools refuse an attachment path Outlook cannot take (found
-  2026-11-18, by save_attachment's live tests).** On the unindexed test guest, `Attachments.Add` on a
-  file called `CON.txt`, given as a `\\?\` path, crashed OUTLOOK.EXE with an access violation inside
-  the call (live run 20261118-050200). The draft tools' `attachments` take any rooted path the server
-  can read (`DraftAttachments.Validate`), and such a path passes every check there, so an agent could
-  crash the user's Outlook through `new_draft`, `reply_draft`, `forward_draft` or `update_draft`. Not
-  measured: whether every `\\?\` path crashes it, or only one that names a device. Directions: (1)
-  refuse `\\?\` and `\\.\` paths, and file names Windows reads as a device, in
-  `DraftAttachments.Validate`, saying why - cheap, and nothing an agent needs; (2) measure first which
-  paths crash it and refuse exactly those - narrower, at the cost of a guest run that crashes Outlook
-  on purpose; (3) leave it: an agent needs its own file tools to make such a file. Recommended: (1).
-
 - [ ] **Decide whether the VM pools keep CPU free for the maintainer, as they keep memory free
   (2026-11-17).** The pools (`Testbed/host/TestbedPool.ps1`) start a member other than the first only
   while the host has its memory and 16 GB more available, and nothing looks at CPU. From 17:20 to 17:40
