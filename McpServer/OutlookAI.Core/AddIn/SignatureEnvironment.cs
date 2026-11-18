@@ -119,7 +119,8 @@ namespace OutlookAI.Core.AddIn
 
         /// <summary>
         /// A deployed preference (<c>HKCU\Software\Microsoft\Office\&lt;major&gt;\Common\MailSettings</c>) - not a
-        /// policy: Outlook applies it as the default for every account, and nothing locks it.
+        /// policy, but Outlook's own Signatures dialog treats it as one: it shuts the default choice under it and rewrites
+        /// every account's own defaults to it as it opens (measured 2026-11-18, <see cref="SignaturePolicy.TakesDefault"/>).
         /// </summary>
         Preference,
     }
@@ -130,13 +131,19 @@ namespace OutlookAI.Core.AddIn
     /// <list type="bullet">
     /// <item><c>DisableSignatures</c> (DWORD 1, the Group Policy "Do not allow signatures for e-mail
     /// messages") - no signature at all.</item>
-    /// <item><c>NewSignature</c> / <c>ReplySignature</c> (REG_SZ, a signature name) - the default for
-    /// new mail and for replies and forwards, for EVERY account. From a policy source it is FORCED:
-    /// "all accounts in the profile use the signatures you defined and they can't be changed"
-    /// (MVP, technet). From the preference key it is a deployed default.</item>
+    /// <item><c>NewSignature</c> / <c>ReplySignature</c> (a string, a signature name) - a default an administrator
+    /// names for new mail and for replies and forwards, from a policy source or from the preference key, where it is a
+    /// deployed default. Under either OutlookAI changes no account's default and deletes no signature it names (Q156),
+    /// as Outlook's own Signatures dialog does not (<see cref="TakesDefault"/>).</item>
     /// </list>
-    /// Precedence: Cloud Policy over Group Policy (documented, ms-cloudpol) over the preference, and
-    /// all of them over the per-account values (the research's model, until MEASURE G2 says more).
+    /// Precedence among them: Cloud Policy over Group Policy (documented, ms-cloudpol) over the preference. But they
+    /// do not decide which signature a draft gets. MEASURED 2026-11-18 on Office LTSC 2024 (Q200 (a), Q201;
+    /// <c>Docs/live-tier-on-the-vm.md</c> section 4.14), with the values set before Outlook started: Outlook put an
+    /// account's own default in a new mail, a reply and a forward, not theirs - as REG_SZ and as REG_EXPAND_SZ - put
+    /// nothing in a new mail, a reply or a forward of an account with no default of its own for it, under the policy and
+    /// under the deployed setting alike, and kept its Signature button open (<see cref="EffectiveDefault"/>). Outlook's
+    /// Signatures dialog, opened under either, rewrites every account's own defaults to the setting's: from then on the
+    /// account's own is the setting's, and OutlookAI, reading the account's own, follows.
     /// </summary>
     public sealed class SignaturePolicy
     {
@@ -204,6 +211,37 @@ namespace OutlookAI.Core.AddIn
 
         /// <summary>True when that default is forced by policy.</summary>
         public bool ForcedFor(bool replyOrForward) => replyOrForward ? ReplyForwardForced : NewMessageForced;
+
+        /// <summary>
+        /// The default a draft of an account gets for one scope, given the account's own (null for none, or for no
+        /// account): the account's own, whatever a policy or deployed setting names - what Outlook does (measured
+        /// 2026-11-18, Q200 (a), Q201; see the class). The ONE rule the draft tools (<see cref="SignatureSelector"/>),
+        /// list_signatures and manage_signature share (Q154), so a later Outlook that uses these values changes one place.
+        /// </summary>
+        public string? EffectiveDefault(bool replyOrForward, string? accountsOwn) => accountsOwn;
+
+        /// <summary>
+        /// True when an administrator's setting - a policy or a deployed default - names that scope's default, so
+        /// manage_signature refuses to change the account's own (Q156), as Outlook's own Signatures dialog does. MEASURED
+        /// 2026-11-18 (Q156 (d), <c>Docs/live-tier-on-the-vm.md</c> section 4.14): under Group Policy and under the deployed
+        /// setting alike that dialog shuts its New messages and Replies/forwards boxes - and its signature list and its New
+        /// button - and rewrites every account's own defaults to the setting's as it opens; with no setting it leaves them
+        /// open and changes nothing. Until then a deployed default left the account's own to change (Q201).
+        /// </summary>
+        public bool TakesDefault(bool replyOrForward) => DefaultFor(replyOrForward) != null;
+
+        /// <summary>
+        /// True when an administrator's setting names <paramref name="name"/> as that scope's default, so manage_signature
+        /// refuses to delete it (Q156): Outlook's own Signatures dialog lets no signature be selected, let alone deleted,
+        /// under such a setting, and deleting it would leave the setting naming a signature that is not there. Ignoring
+        /// case, as signature names are file names. The one rule the refusal and the live tier's contract with that dialog
+        /// share.
+        /// </summary>
+        public bool LocksSignatureFor(bool replyOrForward, string name) =>
+            DefaultFor(replyOrForward) != null && string.Equals(DefaultFor(replyOrForward), name, StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>True when a setting names <paramref name="name"/> as either scope's default (<see cref="LocksSignatureFor"/>).</summary>
+        public bool LocksSignature(string name) => LocksSignatureFor(false, name) || LocksSignatureFor(true, name);
 
         /// <summary>The source in words, for answers and refusals.</summary>
         public static string Describe(SignaturePolicySource? source)
@@ -413,10 +451,15 @@ namespace OutlookAI.Core.AddIn
     /// <para>
     /// <b>Generic on purpose (2026-11-17).</b> Office LTSC 2024 showed no sign of roaming on the
     /// Exchange test machine - Outlook's classic Signatures dialog, no account selector, no copies
-    /// (stream A's R1) - but that is not proof, so a perpetual Office is OFF only until Outlook's own
-    /// copies say otherwise: <see cref="WithEvidence"/> turns it EVIDENT for exactly the Exchange
-    /// accounts that have them. Microsoft 365 Apps is POSSIBLE on Microsoft's word alone. Switched
-    /// off, or an Office too old for the feature, stays off whatever files lie about.
+    /// (stream A's R1) - but that was the testbed's four connected-experience policy values, not the
+    /// Office version: with them removed, the same Office had a signature made in Outlook on the web
+    /// within about three minutes, as a <c>&lt;name&gt; (&lt;address&gt;)</c> copy, and made it the
+    /// account's default for new mail; with them in place nothing came (stream E2's R3 run 2,
+    /// 2026-11-18, decision 194 (b)). So a perpetual Office is OFF only until Outlook's own copies say
+    /// otherwise: <see cref="WithEvidence"/> turns it EVIDENT for exactly the Exchange accounts that
+    /// have them, which told it both ways in that run. Microsoft 365 Apps is POSSIBLE on Microsoft's
+    /// word alone. Switched off, or an Office too old for the feature, stays off whatever files lie
+    /// about.
     /// </para>
     /// </summary>
     public sealed class SignatureRoaming
@@ -562,7 +605,8 @@ namespace OutlookAI.Core.AddIn
                     ? "the Office build could not be read"
                     : "Office " + (build.ProductReleaseIds ?? "(product unknown)") + " " + build.Version + " is not Microsoft 365 Apps")
                 + ", so the signature files on this machine are authoritative - unless Outlook keeps roaming copies here (signatures "
-                + "named 'Name (address)' after an Exchange account), which would show that it roams after all",
+                + "named 'Name (address)' after an Exchange account): a perpetual Office roams too where policy allows it, and its "
+                + "copies show it",
                 null, build, evidenceDecides: true);
         }
 

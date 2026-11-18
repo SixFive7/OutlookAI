@@ -171,7 +171,7 @@ public sealed class SignatureManagerTests : IDisposable
         DateTime fixedUtc = new DateTime(2026, 7, 25, 3, 4, 5, 678, DateTimeKind.Utc);
 
         ManageSignatureOutcome outcome = Manage(
-            new ManageSignatureRequest { Action = "update", Name = "Shaped", BodyText = "new" },
+            new ManageSignatureRequest { Action = "update", Name = "Shaped", BodyHtml = "<p>new</p>", BodyText = "new" },
             utcNow: () => fixedUtc);
 
         Assert.Equal(Path.Combine(_folder.BackupRoot, "20260725T030405678Z-Shaped"), outcome.BackupPath);
@@ -179,35 +179,131 @@ public sealed class SignatureManagerTests : IDisposable
     }
 
     [Fact]
-    public void Update_BacksUpThePreviousFileSet_ByteIdentical_AndTouchesOnlyTheRenditionGiven()
+    public void Update_SendingEveryRendition_BacksUpThePreviousFileSet_ByteIdentical_AndKeepsThePictures()
     {
         // The Q159 defect: update used to delete the picture folder and rebuild the .rtf from plain text.
         byte[] resourceBytes = { 1, 2, 3, 4, 5 };
         SeedSignature("Rich", withResources: true, resourceBytes);
         File.WriteAllText(Path.Combine(Dir, "Rich.rtf"), @"{\rtf1\ansi Old {\b rich} text}");
         byte[] htmBefore = File.ReadAllBytes(Path.Combine(Dir, "Rich.htm"));
-        byte[] rtfBefore = File.ReadAllBytes(Path.Combine(Dir, "Rich.rtf"));
 
         ManageSignatureOutcome outcome = Manage(new ManageSignatureRequest
         {
             Action = "update",
             Name = "Rich",
+            BodyHtml = "<html><body><p>Replaced <b>html</b></p><p><img src=\"Rich_files/img.png\"></p></body></html>",
+            BodyRtf = @"{\rtf1\ansi Replaced {\b rtf}}",
             BodyText = "Replaced content",
         });
 
         Assert.NotNull(outcome.BackupPath);
         Assert.Equal(htmBefore, File.ReadAllBytes(Path.Combine(outcome.BackupPath!, "Rich.htm")));
         Assert.Equal("old text", File.ReadAllText(Path.Combine(outcome.BackupPath!, "Rich.txt")));
+        Assert.Equal(@"{\rtf1\ansi Old {\b rich} text}", File.ReadAllText(Path.Combine(outcome.BackupPath!, "Rich.rtf")));
         Assert.Equal(resourceBytes, File.ReadAllBytes(Path.Combine(outcome.BackupPath!, "Rich_files", "img.png")));
 
-        Assert.Equal(new[] { "text" }, outcome.FormatsWritten);
-        Assert.Contains("Only the text rendition changed: the html and rtf renditions still read as before", outcome.Advice,
-            StringComparison.Ordinal);
-        Assert.Contains("send body_html or body_rtf edited", outcome.Advice, StringComparison.Ordinal);
+        // Each rendition is the one sent - none derived from another - and the pictures stay.
+        Assert.Equal(new[] { "html", "rtf", "text" }, outcome.FormatsWritten);
+        Assert.Null(outcome.Advice);
         Assert.Equal("Replaced content", File.ReadAllText(Path.Combine(Dir, "Rich.txt")));
-        Assert.Equal(htmBefore, File.ReadAllBytes(Path.Combine(Dir, "Rich.htm")));
-        Assert.Equal(rtfBefore, File.ReadAllBytes(Path.Combine(Dir, "Rich.rtf")));
+        Assert.Contains("Replaced <b>html</b>", File.ReadAllText(Path.Combine(Dir, "Rich.htm")), StringComparison.Ordinal);
+        Assert.Equal(@"{\rtf1\ansi Replaced {\b rtf}}", File.ReadAllText(Path.Combine(Dir, "Rich.rtf")));
         Assert.Equal(resourceBytes, File.ReadAllBytes(Path.Combine(Dir, "Rich_files", "img.png")));
+    }
+
+    [Theory]
+    [InlineData(true, false, false, "body_rtf and body_text")]
+    [InlineData(false, true, false, "body_html and body_text")]
+    [InlineData(false, false, true, "body_html and body_rtf")]
+    [InlineData(true, true, false, "body_text")]
+    [InlineData(true, false, true, "body_rtf")]
+    [InlineData(false, true, true, "body_html")]
+    public void Update_ThatLeavesOutAFormatTheSignatureHas_IsRefused_NamingIt_NothingWritten(
+        bool sendHtml, bool sendRtf, bool sendText, string missing)
+    {
+        // Q205 (d): an update sends every format the signature has - nothing is converted from one to another.
+        SeedSignature("Three", withResources: false);
+        File.WriteAllText(Path.Combine(Dir, "Three.rtf"), @"{\rtf1\ansi old rtf}");
+        Dictionary<string, byte[]> before = Snapshot("Three");
+
+        ArgumentException refusal = Assert.Throws<ArgumentException>(() => Manage(new ManageSignatureRequest
+        {
+            Action = "update",
+            Name = "Three",
+            BodyHtml = sendHtml ? "<p>new</p>" : null,
+            BodyRtf = sendRtf ? @"{\rtf1\ansi new}" : null,
+            BodyText = sendText ? "new" : null,
+        }));
+
+        Assert.Contains("'Three' has an HTML, an RTF and a plain-text rendition", refusal.Message, StringComparison.Ordinal);
+        Assert.Contains("Missing: " + missing + ".", refusal.Message, StringComparison.Ordinal);
+        Assert.Contains("list_signatures(name)", refusal.Message, StringComparison.Ordinal);
+        Assert.Contains("Nothing was written", refusal.Message, StringComparison.Ordinal);
+        Assert.Equal(before.Keys.OrderBy(k => k), Snapshot("Three").Keys.OrderBy(k => k));
+        Assert.All(before, file => Assert.Equal(file.Value, File.ReadAllBytes(file.Key)));
+        Assert.False(Directory.Exists(_folder.BackupRoot), "a refusal comes before the backup");
+    }
+
+    [Fact]
+    public void Update_OfASignatureWithFewerFormats_NeedsOnlyThoseItHas_AndMayAddOne()
+    {
+        // Every format the signature HAS: one with no RTF needs no body_rtf - and may be given one, which adds it.
+        SeedSignature("Two", withResources: false);
+
+        ArgumentException refusal = Assert.Throws<ArgumentException>(() => Manage(new ManageSignatureRequest
+        {
+            Action = "update",
+            Name = "Two",
+            BodyRtf = @"{\rtf1\ansi only rtf}",
+        }));
+        Assert.Contains("'Two' has an HTML and a plain-text rendition", refusal.Message, StringComparison.Ordinal);
+        Assert.Contains("Missing: body_html and body_text.", refusal.Message, StringComparison.Ordinal);
+
+        ManageSignatureOutcome both = Manage(new ManageSignatureRequest
+        {
+            Action = "update",
+            Name = "Two",
+            BodyHtml = "<p>new html</p>",
+            BodyText = "new text",
+        });
+        Assert.Equal(new[] { "html", "text" }, both.FormatsWritten);
+        Assert.False(File.Exists(Path.Combine(Dir, "Two.rtf")), "nothing is derived: no RTF appears unasked");
+
+        ManageSignatureOutcome added = Manage(new ManageSignatureRequest
+        {
+            Action = "update",
+            Name = "Two",
+            BodyHtml = "<p>newer html</p>",
+            BodyRtf = @"{\rtf1\ansi newer rtf}",
+            BodyText = "newer text",
+        });
+        Assert.Equal(new[] { "html", "rtf", "text" }, added.FormatsWritten);
+        Assert.Equal(@"{\rtf1\ansi newer rtf}", File.ReadAllText(Path.Combine(Dir, "Two.rtf")));
+    }
+
+    [Fact]
+    public void Update_ThatSendsNoRendition_IsNotAskedForTheOthers()
+    {
+        // replace edits every rendition that has the text, and pictures touch only the picture folder: neither
+        // sends a rendition whole, so neither needs the others.
+        SeedSignature("Edits", withResources: true);
+        File.WriteAllText(Path.Combine(Dir, "Edits.rtf"), @"{\rtf1\ansi old text}");
+
+        ManageSignatureOutcome replaced = Manage(new ManageSignatureRequest
+        {
+            Action = "update",
+            Name = "Edits",
+            Replace = new[] { new SignatureTextEdit { Find = "old", Replace = "new" } },
+        });
+        Assert.Equal(new[] { "html", "rtf", "text" }, replaced.FormatsWritten);
+
+        ManageSignatureOutcome pictures = Manage(new ManageSignatureRequest
+        {
+            Action = "update",
+            Name = "Edits",
+            Pictures = new[] { new SignaturePictureChange { File = "extra.png", Path = _folder.Outside("extra.png", TestPictures.Png(2, 2)) } },
+        });
+        Assert.Equal(new[] { "extra.png" }, pictures.PicturesAdded);
     }
 
     [Fact]
@@ -377,6 +473,7 @@ public sealed class SignatureManagerTests : IDisposable
             Action = "update",
             Name = "Tokens",
             BodyRtf = elided.Replace("Old line", "New line") .Replace("[[picture:1]]", "[[picture:1]][[picture-file:" + _folder.Outside("fresh.png", fresh) + "|16x8]]"),
+            BodyText = "New line",
         });
 
         string after = File.ReadAllText(Path.Combine(Dir, "Tokens.rtf"));
@@ -392,6 +489,7 @@ public sealed class SignatureManagerTests : IDisposable
             Action = "update",
             Name = "Tokens",
             BodyRtf = @"{\rtf1 [[picture:9]]}",
+            BodyText = "New line",
         }));
         Assert.Contains("[[picture:9]]", unknown.Message, StringComparison.Ordinal);
     }
@@ -620,10 +718,11 @@ public sealed class SignatureManagerTests : IDisposable
     }
 
     [Theory]
-    [InlineData(SignaturePolicySource.GroupPolicy, "cannot be changed")]
-    [InlineData(SignaturePolicySource.Preference, "would do nothing")]
-    public void Policy_ADefaultSetForEveryAccount_RefusesADefaultChange(SignaturePolicySource source, string why)
+    [InlineData(SignaturePolicySource.GroupPolicy)]
+    [InlineData(SignaturePolicySource.CloudPolicy)]
+    public void Policy_ADefaultAPolicyNames_RefusesADefaultChange(SignaturePolicySource source)
     {
+        // Q156: under a policy's default OutlookAI changes no account's default.
         SeedSignature("S", withResources: false);
         FakeDefaultsStore store = new FakeDefaultsStore().Account(Profile, "k", "jan@example.com");
 
@@ -631,21 +730,56 @@ public sealed class SignatureManagerTests : IDisposable
             SetDefault("S", Profile, "jan@example.com"), store, settings: new FakeSignatureSettings().Policy(source, newMessage: "Corporate")));
 
         Assert.Equal("default_set_by_policy", refusal.Reason);
-        Assert.Contains(why, refusal.Message, StringComparison.Ordinal);
+        Assert.Contains("does not change an account's default while such a setting names one", refusal.Message, StringComparison.Ordinal);
+        Assert.Contains("'Corporate'", refusal.Message, StringComparison.Ordinal);
         Assert.Empty(store.Writes);
+
+        // The scope the policy leaves alone is the account's to change.
+        Manage(SetDefault("S", Profile, "jan@example.com", "reply"), store, settings: new FakeSignatureSettings().Policy(source, newMessage: "Corporate"));
+        Assert.Equal(new[] { ("k", SignatureManager.ReplyForwardSignatureValueName, "S") }, store.Writes);
     }
 
     [Fact]
-    public void Policy_TheForcedSignature_CannotBeDeleted()
+    public void Policy_ADeployedDefault_RefusesADefaultChangeToo_AsOutlooksOwnDialogDoes()
+    {
+        // Q156 (d), measured 2026-11-18: under a default deployed in Outlook's Common\MailSettings, Outlook's own
+        // Signatures dialog shuts its default choice as under a policy, so OutlookAI changes no account's default there.
+        SeedSignature("S", withResources: false);
+        FakeDefaultsStore store = new FakeDefaultsStore().Account(Profile, "k", "jan@example.com");
+        FakeSignatureSettings deployed = new FakeSignatureSettings().Policy(SignaturePolicySource.Preference, newMessage: "Deployed");
+
+        SignatureRefusedException refusal = Assert.Throws<SignatureRefusedException>(() => Manage(
+            SetDefault("S", Profile, "jan@example.com", "both"), store, settings: deployed));
+
+        Assert.Equal("default_set_by_policy", refusal.Reason);
+        Assert.Contains("a deployed Outlook setting (Common\\MailSettings) names the default signature for new messages", refusal.Message,
+            StringComparison.Ordinal);
+        Assert.Empty(store.Writes);
+
+        // The scope the setting leaves alone is the account's to change.
+        Manage(SetDefault("S", Profile, "jan@example.com", "reply"), store, settings: deployed);
+        Assert.Equal(new[] { ("k", SignatureManager.ReplyForwardSignatureValueName, "S") }, store.Writes);
+    }
+
+    [Theory]
+    [InlineData(SignaturePolicySource.GroupPolicy)]
+    [InlineData(SignaturePolicySource.Preference)]
+    public void Policy_TheSignatureASettingNames_CannotBeDeleted(SignaturePolicySource source)
     {
         SeedSignature("Corporate", withResources: false);
 
         SignatureRefusedException refusal = Assert.Throws<SignatureRefusedException>(() => Manage(
             new ManageSignatureRequest { Action = "delete", Name = "corporate" },
-            settings: new FakeSignatureSettings().Policy(SignaturePolicySource.GroupPolicy, reply: "Corporate")));
+            settings: new FakeSignatureSettings().Policy(source, reply: "Corporate")));
 
         Assert.Equal("signature_forced_by_policy", refusal.Reason);
+        Assert.Contains("deleting it would leave the setting naming a signature that is not there", refusal.Message, StringComparison.Ordinal);
         Assert.True(File.Exists(Path.Combine(Dir, "Corporate.htm")));
+
+        // Any other signature may still go.
+        SeedSignature("Personal", withResources: false);
+        Manage(new ManageSignatureRequest { Action = "delete", Name = "Personal" }, settings: new FakeSignatureSettings().Policy(source, reply: "Corporate"));
+        Assert.False(File.Exists(Path.Combine(Dir, "Personal.htm")));
     }
 
     // ------------------------------------------------------------------ roaming (Q152)
@@ -668,7 +802,7 @@ public sealed class SignatureManagerTests : IDisposable
         }
 
         // With roaming switched off the same file is just a local signature.
-        Manage(new ManageSignatureRequest { Action = "update", Name = "Work (jan@example.com)", BodyText = "edited" },
+        Manage(new ManageSignatureRequest { Action = "update", Name = "Work (jan@example.com)", BodyHtml = "<p>edited</p>", BodyText = "edited" },
             settings: new FakeSignatureSettings().Microsoft365().RoamingSwitchedOff());
         Assert.Equal("edited", File.ReadAllText(Path.Combine(Dir, "Work (jan@example.com).txt")));
     }

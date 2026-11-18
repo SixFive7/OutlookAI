@@ -98,6 +98,37 @@ public sealed class SignatureAutoChoiceTests
             SignatureAutoChoice.Plan(true, Candidates(disabled: true, forced: true), false, true));
     }
 
+    // ===== An administrator's setting, read through the rule the server's drafts use =====
+
+    [Theory]
+    [InlineData(SignaturePolicySource.CloudPolicy)]
+    [InlineData(SignaturePolicySource.GroupPolicy)]
+    [InlineData(SignaturePolicySource.Preference)] // a deployed default: Outlook's own dialog treats it as a policy (Q156 (d))
+    public void ASettingNamingADefault_LeavesItAlone_PolicyOrDeployed(SignaturePolicySource source) =>
+        AssertLeft(SignatureAutoChoiceOutcome.DefaultsForced,
+            SignatureAutoChoice.Plan(true, CandidatesRead(new FakeSignatureSettings().Policy(source, newMessage: "Kind regards")), true, false));
+
+    [Fact]
+    public void WithNoSetting_TheSameSignaturesAreAChoice() =>
+        Assert.Equal(SignatureAutoChoiceOutcome.Choose,
+            SignatureAutoChoice.Plan(true, CandidatesRead(new FakeSignatureSettings()), true, false).Outcome);
+
+    /// <summary>Two signatures on disk and one POP3 account, read by <see cref="SignatureSelector.Candidates"/>.</summary>
+    private static SignatureCandidates CandidatesRead(FakeSignatureSettings settings)
+    {
+        const string address = "jane@example.com";
+        using TempSignatureFolder folder = new TempSignatureFolder();
+        foreach (string name in new[] { "Kind regards", "Vriendelijke groeten" })
+        {
+            folder.Write(name + ".htm", "<html><body><p>" + name + "</p></body></html>", System.Text.Encoding.ASCII);
+        }
+
+        FakeProfileAccountRegistry accounts = new FakeProfileAccountRegistry()
+            .Add("Outlook", 1, FakeProfileAccountRegistry.Pop3(address, newSignature: "Kind regards"));
+        SignatureEnvironment environment = SignatureEnvironment.Read(settings, accounts, "16.0", folder.Root, folder.Directory);
+        return SignatureSelector.Candidates(environment, new SignatureSendingAccount(address, null), "Outlook");
+    }
+
     private static void AssertLeft(SignatureAutoChoiceOutcome expected, SignatureAutoChoicePlan plan)
     {
         Assert.Equal(expected, plan.Outcome);

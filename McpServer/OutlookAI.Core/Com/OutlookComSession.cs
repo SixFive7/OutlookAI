@@ -7748,7 +7748,7 @@ namespace OutlookAI.Core.Com
         /// (identity is load-bearing); inner COM errors are unwrapped so the standard
         /// IsComCallFailure handling applies.
         /// </summary>
-        private static void SetSendUsingAccount(object mailObject, object accountObject)
+        internal static void SetSendUsingAccount(object mailObject, object accountObject)
         {
             try
             {

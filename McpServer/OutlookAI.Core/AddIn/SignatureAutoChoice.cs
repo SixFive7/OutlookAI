@@ -15,7 +15,11 @@ namespace OutlookAI.Core.AddIn
         /// <summary>Policy disables signatures: nothing may be inserted.</summary>
         SignaturesDisabled,
 
-        /// <summary>Policy forces a default, which an automatic pick must leave alone (Q156).</summary>
+        /// <summary>
+        /// A policy or a deployed setting names a default (<see cref="SignatureCandidates.DefaultsForced"/>; Q156,
+        /// Q156 (d)): the AI makes no choice of its own then. A person may still pick another signature for one
+        /// message, as Outlook allows (Q200 (a)).
+        /// </summary>
         DefaultsForced,
 
         /// <summary>A person put the draft's signature there, or changed it: it is theirs (Q162 (b)).</summary>
