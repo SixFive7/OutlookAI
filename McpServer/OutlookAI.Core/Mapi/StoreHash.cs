@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using OutlookAI.Core.AddIn;
 
 namespace OutlookAI.Core.Mapi
 {
@@ -94,36 +95,6 @@ namespace OutlookAI.Core.Mapi
         }
 
         /// <summary>
-        /// Decodes an even-length hex string (a <c>Store.StoreID</c>, a binary property read as
-        /// hex) into bytes. False - and no bytes - for anything else, so a store whose id would
-        /// not read is simply not matched by hash rather than matched on garbage.
-        /// </summary>
-        public static bool TryDecodeHex(string? hex, out byte[] bytes)
-        {
-            bytes = Array.Empty<byte>();
-            if (string.IsNullOrEmpty(hex) || (hex!.Length % 2) != 0)
-            {
-                return false;
-            }
-
-            byte[] result = new byte[hex.Length / 2];
-            for (int i = 0; i < result.Length; i++)
-            {
-                int hi = HexValue(hex[i * 2]);
-                int lo = HexValue(hex[(i * 2) + 1]);
-                if (hi < 0 || lo < 0)
-                {
-                    return false;
-                }
-
-                result[i] = (byte)((hi << 4) | lo);
-            }
-
-            bytes = result;
-            return true;
-        }
-
-        /// <summary>
         /// Every hash Microsoft's <c>ComputeStoreHash</c> can produce for one store, each named by
         /// its input, so the index's own <c>($hash)</c> decides which one Outlook used rather than
         /// this code guessing the store's type:
@@ -149,7 +120,7 @@ namespace OutlookAI.Core.Mapi
             string? offlineStorePath)
         {
             var list = new List<StoreHashCandidate>(4);
-            bool haveEntryId = TryDecodeHex(storeIdHex, out byte[] entryId);
+            bool haveEntryId = Hex.TryDecode(storeIdHex, out byte[] entryId);
             if (haveEntryId)
             {
                 list.Add(new StoreHashCandidate(StoreHashInput.EntryId, Compute(entryId)));
@@ -160,12 +131,12 @@ namespace OutlookAI.Core.Mapi
                 return list;
             }
 
-            if (TryDecodeHex(profileMappingSignatureHex, out byte[] profileSignature))
+            if (Hex.TryDecode(profileMappingSignatureHex, out byte[] profileSignature))
             {
                 list.Add(new StoreHashCandidate(StoreHashInput.ProfileMappingSignature, Compute(profileSignature, publicStore)));
             }
 
-            if (TryDecodeHex(mappingSignatureHex, out byte[] signature))
+            if (Hex.TryDecode(mappingSignatureHex, out byte[] signature))
             {
                 list.Add(new StoreHashCandidate(StoreHashInput.MappingSignature, Compute(signature, publicStore)));
             }
@@ -176,26 +147,6 @@ namespace OutlookAI.Core.Mapi
             }
 
             return list;
-        }
-
-        private static int HexValue(char c)
-        {
-            if (c >= '0' && c <= '9')
-            {
-                return c - '0';
-            }
-
-            if (c >= 'a' && c <= 'f')
-            {
-                return c - 'a' + 10;
-            }
-
-            if (c >= 'A' && c <= 'F')
-            {
-                return c - 'A' + 10;
-            }
-
-            return -1;
         }
     }
 

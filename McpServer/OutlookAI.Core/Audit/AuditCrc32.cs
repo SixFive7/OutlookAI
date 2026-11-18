@@ -1,4 +1,5 @@
 using System;
+using OutlookAI.Core.AddIn;
 
 namespace OutlookAI.Core.Audit
 {
@@ -42,18 +43,7 @@ namespace OutlookAI.Core.Audit
         }
 
         /// <summary>Eight lowercase hex digits, the form a line carries.</summary>
-        internal static string ToHex(uint crc)
-        {
-            char[] hex = new char[8];
-            for (int i = 7; i >= 0; i--)
-            {
-                int nibble = (int)(crc & 0xF);
-                hex[i] = (char)(nibble < 10 ? '0' + nibble : 'a' + (nibble - 10));
-                crc >>= 4;
-            }
-
-            return new string(hex);
-        }
+        internal static string ToHex(uint crc) => Hex.Lower(crc, 8);
 
         /// <summary>Parses exactly eight lowercase hex digits; anything else is not a value the writer wrote.</summary>
         internal static bool TryParseHex(string text, out uint crc)
@@ -66,21 +56,12 @@ namespace OutlookAI.Core.Audit
 
             foreach (char c in text)
             {
-                int nibble;
-                if (c >= '0' && c <= '9')
-                {
-                    nibble = c - '0';
-                }
-                else if (c >= 'a' && c <= 'f')
-                {
-                    nibble = c - 'a' + 10;
-                }
-                else
+                if (!Hex.IsLowerDigit(c))
                 {
                     return false;
                 }
 
-                crc = (crc << 4) | (uint)nibble;
+                crc = (crc << 4) | (uint)Hex.DigitValue(c);
             }
 
             return true;

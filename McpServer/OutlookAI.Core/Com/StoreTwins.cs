@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 
+using OutlookAI.Core.AddIn;
 using OutlookAI.Core.Mapi;
 
 namespace OutlookAI.Core.Com
@@ -134,8 +135,8 @@ namespace OutlookAI.Core.Com
 
             return !string.IsNullOrEmpty(a.StoreId)
                 && !string.IsNullOrEmpty(b.StoreId)
-                && StoreHash.TryDecodeHex(a.StoreId, out byte[] idA)
-                && StoreHash.TryDecodeHex(b.StoreId, out byte[] idB)
+                && Hex.TryDecode(a.StoreId, out byte[] idA)
+                && Hex.TryDecode(b.StoreId, out byte[] idB)
                 && BytesEqual(idA, idB);
         }
 

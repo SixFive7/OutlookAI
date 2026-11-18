@@ -78,18 +78,7 @@ namespace OutlookAI.Core.Com
             canonical.Append("htmldigest=").Append((bodyHtmlDigest ?? string.Empty).Trim().ToLowerInvariant()).Append('\n');
             canonical.Append("body=").Append(NormalizeBody(bodyText));
 
-            byte[] bytes = Encoding.UTF8.GetBytes(canonical.ToString());
-            using (SHA256 sha = SHA256.Create())
-            {
-                byte[] hash = sha.ComputeHash(bytes);
-                StringBuilder hex = new StringBuilder(hash.Length * 2);
-                foreach (byte b in hash)
-                {
-                    hex.Append(b.ToString("x2", System.Globalization.CultureInfo.InvariantCulture));
-                }
-
-                return hex.ToString();
-            }
+            return Hex.Sha256Lower(Encoding.UTF8.GetBytes(canonical.ToString()));
         }
 
         /// <summary>
@@ -105,17 +94,7 @@ namespace OutlookAI.Core.Com
                 return null;
             }
 
-            using (SHA256 sha = SHA256.Create())
-            {
-                byte[] hash = sha.ComputeHash(Encoding.UTF8.GetBytes(html!));
-                StringBuilder hex = new StringBuilder(hash.Length * 2);
-                foreach (byte b in hash)
-                {
-                    hex.Append(b.ToString("x2", System.Globalization.CultureInfo.InvariantCulture));
-                }
-
-                return hex.ToString();
-            }
+            return Hex.Sha256Lower(Encoding.UTF8.GetBytes(html!));
         }
 
         /// <summary>

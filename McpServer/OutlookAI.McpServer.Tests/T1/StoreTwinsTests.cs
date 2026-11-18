@@ -1,5 +1,6 @@
 using System.Text.Json;
 
+using OutlookAI.Core.AddIn;
 using OutlookAI.Core.Com;
 using OutlookAI.Core.IndexSearch;
 using OutlookAI.Core.Mapi;
@@ -133,7 +134,7 @@ public sealed class StoreTwinsTests
     public void ASecondView_ClaimsNothingInTheIndex_AndIsNeverAStoreToCover()
     {
         // The kept entry is tied by its hash; the second view claims nothing, whatever its kind would be.
-        StoreHash.TryDecodeHex("0A0B0C0D", out byte[] signature);
+        Hex.TryDecode("0A0B0C0D", out byte[] signature);
         StoreScopeInfo root = StoreScopeInfo.FromStorePrefix(
             "mapi16://{S-1-5-21-1-2-3-1000}/account@example.invalid($" + StoreHash.Compute(signature).ToString("x", System.Globalization.CultureInfo.InvariantCulture) + ")")!;
         StoreIndexIdentity kept = new("account@example.invalid", 4, StoreHash.Candidates("00112233", true, false, "0A0B0C0D", null, null));

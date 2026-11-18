@@ -5,6 +5,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading;
 using Microsoft.Win32.SafeHandles;
+using OutlookAI.Core.AddIn;
 
 namespace OutlookAI.Core.Audit
 {
@@ -178,12 +179,12 @@ namespace OutlookAI.Core.Audit
         {
             if (GetFileInformationByHandleEx(handle, FileIdInfoClass, out FileIdInfo id, Marshal.SizeOf(typeof(FileIdInfo))))
             {
-                return "v" + Hex(id.VolumeSerialNumber, 16) + "-" + Hex(id.FileIdHigh, 16) + Hex(id.FileIdLow, 16);
+                return "v" + Hex.Lower(id.VolumeSerialNumber, 16) + "-" + Hex.Lower(id.FileIdHigh, 16) + Hex.Lower(id.FileIdLow, 16);
             }
 
             if (GetFileInformationByHandle(handle, out ByHandleFileInformation info))
             {
-                return "v" + Hex(info.VolumeSerialNumber, 8) + "-" + Hex(info.FileIndexHigh, 8) + Hex(info.FileIndexLow, 8);
+                return "v" + Hex.Lower(info.VolumeSerialNumber, 8) + "-" + Hex.Lower(info.FileIndexHigh, 8) + Hex.Lower(info.FileIndexLow, 8);
             }
 
             return null;
@@ -218,11 +219,6 @@ namespace OutlookAI.Core.Audit
             }
 
             return full.StartsWith(@"\\", StringComparison.Ordinal) ? @"\\?\UNC\" + full.Substring(2) : @"\\?\" + full;
-        }
-
-        private static string Hex(ulong value, int digits)
-        {
-            return value.ToString("x" + digits.ToString(CultureInfo.InvariantCulture), CultureInfo.InvariantCulture);
         }
 
         [StructLayout(LayoutKind.Sequential)]

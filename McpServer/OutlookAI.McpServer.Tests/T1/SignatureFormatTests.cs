@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text;
 using OutlookAI.Core.Services;
 using OutlookAI.Core.AddIn;
@@ -103,7 +104,7 @@ public sealed class SignatureFormatTests
         RtfPicture picture = Assert.Single(SignatureRtf.FindPictures(rtf));
         Assert.Equal("png", picture.Kind);
         Assert.Equal(png.Length, picture.ByteCount);
-        Assert.Equal(SignatureRtf.Sha256Hex(png), picture.Sha256);
+        Assert.Equal(Convert.ToHexString(SHA256.HashData(png)), picture.Sha256);
         Assert.Equal(1200, picture.WidthTwips);
         Assert.True(picture.HasFallback);
 

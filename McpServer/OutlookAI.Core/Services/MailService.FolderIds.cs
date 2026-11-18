@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
 
+using OutlookAI.Core.AddIn;
 using OutlookAI.Core.Com;
 using OutlookAI.Core.IndexSearch;
 using OutlookAI.Core.Mapi;
@@ -78,8 +79,8 @@ namespace OutlookAI.Core.Services
                     OutlookIds.ProviderUidHexOf(detail.RootFolderEntryId), parts.ProviderUidHex, StringComparison.OrdinalIgnoreCase);
             }
 
-            return StoreHash.TryDecodeHex(detail.StoreId, out byte[] own)
-                && StoreHash.TryDecodeHex(parts.StoreEntryIdHex, out byte[] asked)
+            return Hex.TryDecode(detail.StoreId, out byte[] own)
+                && Hex.TryDecode(parts.StoreEntryIdHex, out byte[] asked)
                 && own.Length == asked.Length
                 && own.SequenceEqual(asked);
         }
@@ -397,7 +398,7 @@ namespace OutlookAI.Core.Services
             folderFoundVia = null;
             string folderId = request.FolderId!;
             string entryIdHex = DecodeFolderIdOrThrow(folderId, "folder_id");
-            StoreHash.TryDecodeHex(entryIdHex, out byte[] bytes);
+            Hex.TryDecode(entryIdHex, out byte[] bytes);
             FolderIdLayout layout = OutlookIds.Classify(bytes);
             string? folderUid = OutlookIds.ProviderUidHexOf(entryIdHex);
             CheckFolderInRequestedStore(request.StoreId, folderUid, folderId);

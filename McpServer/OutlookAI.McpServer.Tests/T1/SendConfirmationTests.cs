@@ -248,6 +248,22 @@ public sealed class SendConfirmationTests
         Assert.Equal(64, h.Length);
     }
 
+    [Fact]
+    public void Hash_IsLowercaseHex_PinnedForOneDraft()
+    {
+        // Pinned to values computed outside OutlookAI, not to the product's own code, so that folding its hex
+        // writers together (the code-sharing refactor, Q154) cannot change their case unseen. The first is the
+        // SHA-256 of the canonical text Compute builds for this draft - "subject=Quarterly figures\n",
+        // "rcpt=to:a@example.com\n", "onbehalf=\n", "htmldigest=\n", "body=Line one\nLine two" - and the
+        // second the SHA-256 of "<p>x</p>", both in lowercase hex.
+        Assert.Equal(
+            "ef02ca891e50c51174c6ca860e88b1b208feb79265202613a991b2eff4ea686c",
+            SendContentHash.Compute("Quarterly figures", new[] { To("A@Example.com") }, "Line one\r\nLine two", null, null, null));
+        Assert.Equal(
+            "31d8e07ec305ac4e2515d1f0b1c8c603b3858044eb7d97807d6d0970838cb0be",
+            SendContentHash.DigestHtml("<p>x</p>"));
+    }
+
     // --------------------------------------------- D46/C3: the attachment + HTML interlock
 
     private static ComAttachmentInfo Att(int index, string name, long size) => new(index, name, size);
