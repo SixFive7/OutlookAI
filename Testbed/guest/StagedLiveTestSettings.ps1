@@ -11,8 +11,8 @@
     needs the hub, a bystander or the indexed stores reads them from that file rather than naming them.
 
     One copy for every such script (AGENTS.md, Shared code, Q154): Reset-OutlookOfflineStore.ps1 and the
-    three Exchange VM probes, Measure-ExchangeIndexIds.ps1, Measure-OfflineWindow.ps1 and
-    Measure-SignatureRoaming.ps1. Reset-OutlookOfflineStore.ps1's -SelfTest holds these functions; the
+    four Exchange VM probes, Measure-ExchangeIndexIds.ps1, Measure-OfflineWindow.ps1,
+    Measure-SignatureRoaming.ps1 and Measure-FolderIdResolution.ps1. Reset-OutlookOfflineStore.ps1's -SelfTest holds these functions; the
     live runner copies every file of Testbed/guest to the guest, this one included.
 #>
 
