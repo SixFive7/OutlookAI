@@ -888,21 +888,9 @@ public static class LiveOutlookTestMailer
     /// on Outlook actually flushing the Outbox (which a headless instance may not do -
     /// soak fix 15). Drafts are indexed exactly like received mail.
     /// </para>
-    /// <para>
-    /// <paramref name="attachmentFileNames"/>, when given, holds one entry per path: the file name
-    /// that attachment carries instead of its file's own (<c>PR_ATTACH_LONG_FILENAME</c> and
-    /// <c>PR_DISPLAY_NAME</c>, set before the draft is saved), or null to keep the file's. It is how a
-    /// test gets the names a sender can put on an attachment and no file on disk can have - a path,
-    /// a <c>:</c>, a device name (Q198 (a), <c>T2.LiveSaveAttachmentFolderTests</c>). It changes only
-    /// attachments of the draft this call makes.
-    /// </para>
     /// </summary>
     public static string SaveTaggedDraftWithAttachments(
-        string storeDisplayName,
-        string subject,
-        string body,
-        IReadOnlyList<string> attachmentPaths,
-        IReadOnlyList<string?>? attachmentFileNames = null)
+        string storeDisplayName, string subject, string body, IReadOnlyList<string> attachmentPaths)
     {
         LiveStoreWriteGuard.Assert(storeDisplayName, StoreWriteKind.Draft, nameof(SaveTaggedDraftWithAttachments));
         if (!subject.Contains(SubjectTag, StringComparison.Ordinal))
@@ -911,11 +899,6 @@ public static class LiveOutlookTestMailer
         }
 
         RefuseUnmarkedSubject(subject, nameof(SaveTaggedDraftWithAttachments));
-        string? namesRefusal = RefuseAttachmentFileNames(attachmentPaths, attachmentFileNames);
-        if (namesRefusal != null)
-        {
-            throw new ArgumentException(namesRefusal, nameof(attachmentFileNames));
-        }
 
         return RunSta(() =>
         {
@@ -944,21 +927,10 @@ public static class LiveOutlookTestMailer
                 dynamic attachments = mail.Attachments;
                 try
                 {
-                    for (int i = 0; i < attachmentPaths.Count; i++)
+                    foreach (string path in attachmentPaths)
                     {
-                        object? added = attachments.Add(attachmentPaths[i]);
-                        try
-                        {
-                            string? name = attachmentFileNames?[i];
-                            if (name != null)
-                            {
-                                NameAttachment(added!, name);
-                            }
-                        }
-                        finally
-                        {
-                            Release(added);
-                        }
+                        object? added = attachments.Add(path);
+                        Release(added);
                     }
                 }
                 finally
@@ -980,50 +952,6 @@ public static class LiveOutlookTestMailer
                 Release(app);
             }
         });
-    }
-
-    /// <summary>
-    /// The refusal for <see cref="SaveTaggedDraftWithAttachments"/>'s file names, or null: one entry
-    /// per attachment, and every name that is given is not blank. Pure, so T1 pins it.
-    /// </summary>
-    internal static string? RefuseAttachmentFileNames(IReadOnlyList<string>? attachmentPaths, IReadOnlyList<string?>? attachmentFileNames)
-    {
-        if (attachmentFileNames == null)
-        {
-            return null;
-        }
-
-        int paths = attachmentPaths?.Count ?? 0;
-        if (attachmentFileNames.Count != paths)
-        {
-            return "attachmentFileNames holds " + attachmentFileNames.Count.ToString(CultureInfo.InvariantCulture)
-                + " names for " + paths.ToString(CultureInfo.InvariantCulture) + " attachments - one per attachment, null to keep the file's own.";
-        }
-
-        return attachmentFileNames.Any(n => n != null && n.Trim().Length == 0)
-            ? "attachmentFileNames holds a blank name - give a name, or null to keep the file's own."
-            : null;
-    }
-
-    /// <summary>
-    /// Gives an attachment of a draft this helper is making the file name a sender chose: the long file
-    /// name Outlook's <c>Attachment.FileName</c> reads, and the display name.
-    /// </summary>
-    private static void NameAttachment(object attachment, string name)
-    {
-        const string LongFileName = "http://schemas.microsoft.com/mapi/proptag/0x3707001F"; // PR_ATTACH_LONG_FILENAME_W
-        const string DisplayName = "http://schemas.microsoft.com/mapi/proptag/0x3001001F";  // PR_DISPLAY_NAME_W
-        object? accessor = null;
-        try
-        {
-            accessor = ((dynamic)attachment).PropertyAccessor;
-            ((dynamic)accessor!).SetProperty(LongFileName, name);
-            ((dynamic)accessor!).SetProperty(DisplayName, name);
-        }
-        finally
-        {
-            Release(accessor);
-        }
     }
 
     /// <summary>
