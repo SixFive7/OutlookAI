@@ -9,9 +9,10 @@
 
     WHY AN SDK IMPORT AND NOT A PACKAGE. The analysers are part of the .NET SDK
     (<sdk>\Sdks\Microsoft.NET.Sdk\analyzers), which is where an SDK-style project takes them from.
-    The add-in's project is not SDK-style, and both build scripts (Testbed\host\Publish-AddInPayload.ps1
-    and Tools\Switch-AddInBuild.ps1) run MSBuild with no restore step, so a PackageReference would
-    never resolve - and a package is a download this needs no more than the Dependencies rule wants it. The import at the bottom
+    The add-in's project is not SDK-style and has no package of its own - the restore both build
+    scripts (Testbed\host\Publish-AddInPayload.ps1 and Tools\Switch-AddInBuild.ps1) run is for
+    OutlookAI.Core, which the add-in references (Q167 (a)) - and an analyser package would be a
+    download this needs no more than the Dependencies rule wants it. The import at the bottom
     asks Visual Studio's MSBuild to resolve Microsoft.NET.Sdk - the SDK the MCP server builds with,
     found the same way - and imports that SDK's own analyser targets, so these projects run the
     SDK's analysers from the SDK's own rule-set files. Measured 2026-10-04: Visual Studio 18.10.3

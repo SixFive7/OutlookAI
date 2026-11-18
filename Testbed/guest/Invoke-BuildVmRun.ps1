@@ -606,7 +606,7 @@ function Stop-ProcessTree([int] $RootId) {
     return $ids.Count
 }
 
-function Invoke-Logged {
+function Invoke-LoggedStep {
     param(
         [Parameter(Mandatory = $true)] [string]   $FilePath,
         [Parameter(Mandatory = $true)] [string[]] $Arguments,
@@ -846,7 +846,7 @@ if (-not $request['skipSuite']) {
 "@
 
     Say "restore: $TestProject, offline feed $OfflineFeed only"
-    $restore = Invoke-Logged -FilePath $dotnetExe -Arguments @('restore', $projectFull, '--configfile', $OfflineConfig) -LogName 'restore' -TimeoutSeconds ($request['restoreTimeoutMinutes'] * 60) -WorkingDirectory $SourceRoot
+    $restore = Invoke-LoggedStep -FilePath $dotnetExe -Arguments @('restore', $projectFull, '--configfile', $OfflineConfig) -LogName 'restore' -TimeoutSeconds ($request['restoreTimeoutMinutes'] * 60) -WorkingDirectory $SourceRoot
     $restoreText = Get-LogText $restore
     $record['phases']['restore'] = [ordered]@{ seconds = $restore.Seconds; exitCode = $restore.ExitCode; timedOut = $restore.TimedOut }
     if ($restore.ExitCode -eq 0 -and -not $restore.TimedOut) {
@@ -869,7 +869,7 @@ if (-not $request['skipSuite']) {
 
     if ($restoreState -eq 'ok') {
         Say "build: $($request['configuration']), no restore"
-        $build = Invoke-Logged -FilePath $dotnetExe -Arguments @('build', $projectFull, '-c', $request['configuration'], '--no-restore', '-nodeReuse:false') -LogName 'build' -TimeoutSeconds ($request['buildTimeoutMinutes'] * 60) -WorkingDirectory $SourceRoot
+        $build = Invoke-LoggedStep -FilePath $dotnetExe -Arguments @('build', $projectFull, '-c', $request['configuration'], '--no-restore', '-nodeReuse:false') -LogName 'build' -TimeoutSeconds ($request['buildTimeoutMinutes'] * 60) -WorkingDirectory $SourceRoot
         $record['phases']['build'] = [ordered]@{ seconds = $build.Seconds; exitCode = $build.ExitCode; timedOut = $build.TimedOut }
         if ($build.ExitCode -eq 0 -and -not $build.TimedOut) {
             $buildState = 'ok'
@@ -888,7 +888,7 @@ if (-not $request['skipSuite']) {
         New-Item -ItemType Directory -Force -Path $trxDir | Out-Null
         Say "test: --filter $filter"
         $testArgs = Get-TestArguments -Project $projectFull -Configuration $request['configuration'] -Filter $filter -TrxName 'suite.trx' -TrxDir $trxDir -HangTimeoutMinutes $request['hangTimeoutMinutes']
-        $test = Invoke-Logged -FilePath $dotnetExe -Arguments $testArgs -LogName 'test' -TimeoutSeconds ($request['testTimeoutMinutes'] * 60) -WorkingDirectory $SourceRoot
+        $test = Invoke-LoggedStep -FilePath $dotnetExe -Arguments $testArgs -LogName 'test' -TimeoutSeconds ($request['testTimeoutMinutes'] * 60) -WorkingDirectory $SourceRoot
         $trx = Join-Path $trxDir 'suite.trx'
         $testText = Get-LogText $test
         $summaryLine = Get-TestSummaryLine $testText
@@ -931,7 +931,7 @@ else {
 # The zone a process started NOW sees - what the next test host will see, which this process's own,
 # cached zone need not be - read through .NET's TimeZoneInfo.Local, as the test host reads it.
 function Get-ZoneOfANewProcess([string] $LogName) {
-    $probe = Invoke-Logged -FilePath (Join-Path $PSHOME 'powershell.exe') -Arguments @('-NoProfile', '-NonInteractive', '-Command', '[System.TimeZoneInfo]::Local.Id') -LogName $LogName -TimeoutSeconds 60
+    $probe = Invoke-LoggedStep -FilePath (Join-Path $PSHOME 'powershell.exe') -Arguments @('-NoProfile', '-NonInteractive', '-Command', '[System.TimeZoneInfo]::Local.Id') -LogName $LogName -TimeoutSeconds 60
     if ($probe.TimedOut -or $probe.ExitCode -ne 0) { throw "a new process could not say its zone (exit $($probe.ExitCode), timed out: $($probe.TimedOut))" }
     return ([System.IO.File]::ReadAllText($probe.Out)).Trim()
 }
@@ -964,7 +964,7 @@ if ($request['zonePassTimeZone'] -and ($suiteState -eq 'passed' -or $suiteState 
         if (-not $switchError) {
             Say "zone pass: a new process reads '$readBack'; test --filter $zoneFilter"
             $zoneArgs = Get-TestArguments -Project $projectFull -Configuration $request['configuration'] -Filter $zoneFilter -TrxName 'zone.trx' -TrxDir $trxDir -HangTimeoutMinutes $request['hangTimeoutMinutes']
-            $zoneTest = Invoke-Logged -FilePath $dotnetExe -Arguments $zoneArgs -LogName 'zone-test' -TimeoutSeconds ($request['testTimeoutMinutes'] * 60) -WorkingDirectory $SourceRoot
+            $zoneTest = Invoke-LoggedStep -FilePath $dotnetExe -Arguments $zoneArgs -LogName 'zone-test' -TimeoutSeconds ($request['testTimeoutMinutes'] * 60) -WorkingDirectory $SourceRoot
             $zoneText = Get-LogText $zoneTest
         }
     }
@@ -1054,7 +1054,7 @@ if (-not $request['skipSelfTests'] -and $restoreState -ne 'missing') {
             continue
         }
         $logName = 'selftests\' + ($c.Relative -replace '[\\/:]', '_')
-        $r = Invoke-Logged -FilePath (Join-Path $PSHOME 'powershell.exe') -Arguments @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $c.Full, '-SelfTest') -LogName $logName -TimeoutSeconds $request['selfTestTimeoutSeconds'] -WorkingDirectory $SourceRoot
+        $r = Invoke-LoggedStep -FilePath (Join-Path $PSHOME 'powershell.exe') -Arguments @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $c.Full, '-SelfTest') -LogName $logName -TimeoutSeconds $request['selfTestTimeoutSeconds'] -WorkingDirectory $SourceRoot
         $ok = ($r.ExitCode -eq 0 -and -not $r.TimedOut)
         if (-not $ok) { $selfTestsFailed++ }
         $lastLine = ''

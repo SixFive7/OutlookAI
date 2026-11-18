@@ -239,7 +239,7 @@ It also stands down and reports instead of guessing: when Claude Code is not ins
 
 **Updates and running server processes.** Claude Code spawns one server process per agent session, so several are typically running when an update lands. The installer stops the instances running from the install directory before it replaces any file — matched by executable path, so a build running from a source tree is left alone. A session whose server was stopped simply spawns a fresh one on its next mail call; nothing is persisted in the server process, so nothing is lost.
 
-**Developer setup (secondary path)** — building the server from source and pointing Claude Code at the build output still works and is what contributors do. It needs the .NET 10 SDK:
+**Developer setup (secondary path)** — building the server from source and pointing Claude Code at the build output still works and is what contributors do. It needs the .NET 11 SDK:
 
 ```
 dotnet build McpServer/OutlookAI.McpServer/OutlookAI.McpServer.csproj -c Release
@@ -371,11 +371,11 @@ The installer registers the add-in directly via the Windows registry and install
 - Visual Studio 2022
 - Office/SharePoint development workload
 - .NET desktop development workload
-- .NET 11 SDK (for the mail server only)
+- .NET 11 SDK (for the mail server, and for `OutlookAI.Core`, which the add-in references)
 
 **Steps:**
 1. Clone this repository
-2. Open `OutlookAI.csproj` in Visual Studio
+2. Open `OutlookAI.slnx` in Visual Studio - the add-in and `OutlookAI.Core`, which it references
 3. Restore NuGet packages
 4. Build > Rebuild Solution
 
