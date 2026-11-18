@@ -60,10 +60,10 @@ its mailbox tests on, and change nothing you install.
   one an agent wrote, keeps its signature until the AI rewrites its body. It changes a signature
   Outlook or the AI put in; it adds none to a mail that has none, chooses none while a policy or a
   deployed setting names a default, and never replaces one a person chose or changed, which it
-  checks again after the AI answered. Nothing happens as a mail is sent, and nothing in a compose window nobody sees, such as the one an
-  agent's draft is written in: asking for its editor could put it on screen, which the first test run
-  with this add-in caught. The choice uses the rule the MCP server's drafts use for the account's
-  signatures (`SignatureSelector.Candidates`) and the prompt of "Select the best signature"; when it
+  checks again after the AI answered. Nothing happens as a mail is sent, and nothing in a compose
+  window nobody sees, such as one an agent's draft is written in. The choice uses the rule the MCP
+  server's drafts use for the account's signatures (`SignatureSelector.Candidates`) and the prompt
+  of "Select the best signature"; when it
   asks the AI at all is `SignatureAutoChoice`, in OutlookAI.Core, which T1 `SignatureAutoChoiceTests`
   pins. A reply or forward costs one more request to Claude Code as it opens.
 
@@ -301,9 +301,12 @@ its mailbox tests on, and change nothing you install.
   does. On `OutlookAI-Unindexed` on 2026-11-18, with the add-in of `8cf5431`, the pane wrote the
   stand-in's four lines as 4 paragraphs, its AI replaced the agent's signature with the one the
   stand-in named, and that signature's picture was embedded, 0 of 1 left a link (runbook section
-  2.3). Run beside the headless tests, it caught the pane putting an agent's hidden compose window
-  on screen; once that was fixed, it passed on an indexed and an unindexed guest, with all 49 tests
-  of that selection.
+  2.3). Beside it, the headless tests that count Outlook's windows found two more at their end than
+  at their start in two of eleven runs, both on an indexed guest. Named, they were a tooltip and its
+  shadow, there from the moment the pane test closed its compose window. A tooltip comes up at the
+  pointer, which nobody moves on a test machine, so the pane test now moves the pointer to the
+  screen's bottom-left corner before its compose window comes up and after it closes, and those
+  tests name every window they count.
 
 - ✅ **A live run can set a signature policy before Outlook starts, and measure what Outlook inserts.**
   Outlook reads an administrator's signature policy, a default deployed in its general mail settings

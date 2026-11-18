@@ -76,6 +76,12 @@ public sealed class LivePaneTests
         string body = "Stand-in draft, first line " + Marker + "\nStand-in draft, second line.\n\nStand-in draft, a paragraph of its own.";
         using ClaudeCliStandIn standIn = ClaudeCliStandIn.Install(signatureAnswer: aisChoice.Name, bodyAnswer: body);
 
+        // The test machine's pointer rests at the screen's centre, where this test's compose window comes up. Hovered
+        // there, a tooltip and its shadow came up and stayed after the window closed, and the headless tests that run
+        // after this one counted them as windows composing put on screen (2026-11-18, 1 -> 3 twice on OutlookAI-Indexed;
+        // named at 71c5d61: tooltips_class32 and SysShadow on Outlook's thread). So the pointer goes to the screen's
+        // bottom-left corner, on the taskbar, first, and again once the window has closed.
+        PaneControls.ParkPointer();
         string subject = _fixture.TaggedSubject("pane");
         DraftOutcome draft = Service.NewDraft(
             LiveStoreWriteGuard.Writable(Hub, StoreWriteKind.Draft, "new_draft"), Hub, cc: null, subject,
@@ -153,6 +159,7 @@ public sealed class LivePaneTests
             LiveOutlookTestMailer.CloseOpenDraftDiscarding(Hub, draft.EntryId, Marker);
             TryDeleteArtifact(draft.EntryId);
             LiveOutlookTestMailer.DeleteTaggedArtifactsUntilStableZero(Hub, Marker);
+            PaneControls.ParkPointer();
             // What this test leaves on screen, for the headless tests that count Outlook's windows after it.
             _output.WriteLine("on screen after: " + LiveHeadlessComposeParityTests.OutlookWindowsOnScreen());
         }
@@ -266,6 +273,12 @@ public sealed class LivePaneTests
 
         public static void Click(IntPtr button) => _ = PostMessageW(button, BmClick, IntPtr.Zero, IntPtr.Zero);
 
+        /// <summary>
+        /// Moves the pointer to the screen's bottom-left corner - Windows clamps the point to the screen - over the
+        /// taskbar, where no Outlook window is: nothing of Outlook's is hovered, so none of its tooltips comes up.
+        /// </summary>
+        public static void ParkPointer() => _ = SetCursorPos(0, short.MaxValue);
+
         private static string ReadText(IntPtr window)
         {
             StringBuilder text = new StringBuilder(512);
@@ -299,5 +312,9 @@ public sealed class LivePaneTests
         [DllImport("user32.dll")]
         [return: MarshalAs(UnmanagedType.Bool)]
         private static extern bool IsWindowVisible(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool SetCursorPos(int x, int y);
     }
 }

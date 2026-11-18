@@ -776,18 +776,25 @@ first two pane runs that day failed before this one: their add-in was the checkp
 add-in's new re-check of the CLI are for. Not measured here: the recipients' SMTP addresses, which only an
 Exchange recipient's X.500 one would change, and no PST guest has one.
 
-**The same test beside the headless ones, once the pane left a hidden compose window alone - 2026-11-18, runs
-`20261118-110304-unindexed-2973eb72c9e1` (`OutlookAI-Unindexed2`, from `CP-16B-FROZEN-CLOCK`) and
-`20261118-110304-indexed-2973eb72c9e1` (`OutlookAI-Indexed`, from `CP-22C-FROZEN-CLOCK`).** Both with
-`-WithAddIn` and the draft, signature, headless and pane tests: 49 of 49 passed on each, and on each the
-stand-in got two requests, the body's and the signature choice's. The first run with the tested add-in in
-place, at `6ba7b08` on `OutlookAI-Indexed2`, had failed `LiveHeadlessComposeParityTests`: the windows a person
-could see went from 1 to 3 while the MCP server composed a draft without showing it. That draft's compose
-window has a pane too, and the pane's look at the signature Outlook put in asked for the window's Word editor,
-which can put the window on screen. `48c7d6e` asked the inspector through `IOleWindow` whether its window was
-visible, and with that the choice after the body was never made - one request to the stand-in, on
-`OutlookAI-Indexed` and `OutlookAI-Unindexed` both; `2973eb7` asks the pane's own window, which is visible
-only when every window around it is.
+**The same test beside the headless ones - 2026-11-18, eleven runs with `-WithAddIn` and the draft, signature,
+headless and pane tests, from `6ba7b08` to `71c5d61`.** Every pane test from `2973eb7` on passed with two
+requests to the stand-in, the body's and the signature choice's - for example `20261118-110304-unindexed-2973eb72c9e1`
+(`OutlookAI-Unindexed2`, from `CP-16B-FROZEN-CLOCK`) and `20261118-110304-indexed-2973eb72c9e1` (`OutlookAI-Indexed`,
+from `CP-22C-FROZEN-CLOCK`), 49 of 49 each, and after the merge of .NET 11 `20261118-120100-unindexed-71c5d612ac23`
+(`OutlookAI-Unindexed`, from `CP-18B-FROZEN-CLOCK`) and `20261118-120100-indexed-71c5d612ac23` (`OutlookAI-Indexed3`,
+from `CP-24C-FROZEN-CLOCK`), 51 of 51 each. At `48c7d6e` the choice after the body was never made - one request,
+on `OutlookAI-Indexed` and `OutlookAI-Unindexed` both - because the pane asked the inspector through `IOleWindow`
+whether its window was visible; `2973eb7` asks the pane's own window. Twice, at `6ba7b08` on `OutlookAI-Indexed2`
+and at `8635669` on `OutlookAI-Indexed`, `LiveHeadlessComposeParityTests` counted Outlook's visible windows going
+from 1 to 3 while the MCP server composed a draft without showing it, and failed. It was not the draft. At
+`71c5d61` the tests named what they counted: a `tooltips_class32` window, 94 by 18 pixels at 500,402, and its
+`SysShadow`, on Outlook's own thread, there as soon as the pane test had closed its compose window and still
+there at both headless tests, which counted 3 before and after - as most of the passing runs before had. A
+tooltip comes up at the pointer, which nobody moves on a test machine; when this one came up during a headless
+test rather than before it, the test failed. The pane test now moves the pointer to the screen's bottom-left
+corner, on the taskbar, before its compose window comes up and after it closes. The guard `48c7d6e` and
+`2973eb7` added stays - the pane leaves the Word editor of a compose window nobody sees alone - but it was not
+what the failing count was about.
 
 **Checkpoint `CP-03-OUTLOOKAI-INSTALLED` once `-Phase FirstRun` prints `ADDIN-READY`.** `CP-05-ADDIN-TRUSTED`
 is no longer a separate manual step - the trust entry is part of the scripted install - and the name
