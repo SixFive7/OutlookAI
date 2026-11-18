@@ -1,4 +1,3 @@
-using System.Reflection;
 using System.Xml.Linq;
 
 using OutlookAI.Services;
@@ -474,17 +473,17 @@ public sealed class CachedModeSettingsTests
     [Fact]
     public void TheSolution_HoldsTheAddInAlone_AndTheElevatedHelperIsGone()
     {
-        XDocument solution = XDocument.Load(Path.Combine(RepoRoot(), "OutlookAI.slnx"));
+        XDocument solution = XDocument.Load(Path.Combine(RepoPaths.RepoRoot(), "OutlookAI.slnx"));
 
         Assert.Equal(new[] { "OutlookAI.csproj" }, solution.Descendants("Project").Select(p => (string?)p.Attribute("Path")));
         // The project file, not the folder: a checkout that built the helper before keeps its bin and obj.
-        Assert.False(File.Exists(Path.Combine(RepoRoot(), "PolicyWriter", "OutlookAI.PolicyWriter.csproj")), "PolicyWriter/ was the elevated helper");
+        Assert.False(File.Exists(Path.Combine(RepoPaths.RepoRoot(), "PolicyWriter", "OutlookAI.PolicyWriter.csproj")), "PolicyWriter/ was the elevated helper");
     }
 
     [Fact]
     public void TheAddInBuildsNoOtherProject_AndShipsNoProgramBesideItself()
     {
-        XDocument addIn = XDocument.Load(Path.Combine(RepoRoot(), "OutlookAI.csproj"));
+        XDocument addIn = XDocument.Load(Path.Combine(RepoPaths.RepoRoot(), "OutlookAI.csproj"));
         XNamespace ns = addIn.Root!.Name.Namespace;
 
         Assert.Empty(addIn.Descendants(ns + "ProjectReference"));
@@ -495,7 +494,7 @@ public sealed class CachedModeSettingsTests
     [Fact]
     public void NoAddInSource_AsksWindowsForElevation()
     {
-        string root = RepoRoot();
+        string root = RepoPaths.RepoRoot();
         var sources = Directory.GetFiles(root, "*.cs", SearchOption.TopDirectoryOnly)
             .Concat(Directory.GetFiles(Path.Combine(root, "Services"), "*.cs", SearchOption.AllDirectories))
             .Concat(Directory.GetFiles(Path.Combine(root, "TaskPane"), "*.cs", SearchOption.AllDirectories))
@@ -518,7 +517,7 @@ public sealed class CachedModeSettingsTests
         // Every path built under a policy root is handed to a read: CachedModeSettings builds the
         // two policy keys only for the catalog's PolicyKeyPaths and for Read, and the one delete
         // there is the removal nothing calls (EarlierPolicyRemoval).
-        string source = File.ReadAllText(Path.Combine(RepoRoot(), "Services", "OutlookTuningService.cs"));
+        string source = File.ReadAllText(Path.Combine(RepoPaths.RepoRoot(), "Services", "OutlookTuningService.cs"));
 
         Assert.DoesNotContain("PolicyOutlookKeyPath", source, StringComparison.Ordinal);
         Assert.DoesNotContain(@"Software\Policies", source, StringComparison.Ordinal);
@@ -545,15 +544,5 @@ public sealed class CachedModeSettingsTests
                 store.Set(UserKey, name, value);
                 break;
         }
-    }
-
-    internal static string RepoRoot()
-    {
-        string testProjectDir =
-            typeof(CachedModeSettingsTests).Assembly
-                .GetCustomAttributes<AssemblyMetadataAttribute>()
-                .FirstOrDefault(a => a.Key == "TestProjectDir")?.Value
-            ?? throw new InvalidOperationException("AssemblyMetadata 'TestProjectDir' is missing.");
-        return Path.GetFullPath(Path.Combine(testProjectDir, "..", ".."));
     }
 }

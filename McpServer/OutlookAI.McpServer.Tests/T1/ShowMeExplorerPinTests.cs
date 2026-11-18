@@ -1,4 +1,3 @@
-using System.Reflection;
 using OutlookAI.Core.Com;
 using Xunit;
 
@@ -187,7 +186,7 @@ public sealed class ShowMeExplorerPinTests
     public void TheShowMePath_AddsItsExplorerOnlyThroughTheGuard_AndNavigatesARerouteBack()
     {
         string source = File.ReadAllText(Path.GetFullPath(Path.Combine(
-            TestProjectDir(), "..", "OutlookAI.Core", "Com", "OutlookComSession.cs")));
+            RepoPaths.TestProjectDir(), "..", "OutlookAI.Core", "Com", "OutlookComSession.cs")));
         int start = source.IndexOf("private object? EnsureVisibleExplorer(", StringComparison.Ordinal);
         Assert.True(start >= 0, "EnsureVisibleExplorer not found - this test has stopped proving anything");
         int end = source.IndexOf("\n        /// <summary>", start, StringComparison.Ordinal);
@@ -197,14 +196,6 @@ public sealed class ShowMeExplorerPinTests
         Assert.DoesNotContain(".Add(folderToShow", body, StringComparison.Ordinal);
         Assert.Contains("if (rerouted)", body, StringComparison.Ordinal);
         Assert.Contains(".CurrentFolder = target", body, StringComparison.Ordinal);
-    }
-
-    private static string TestProjectDir()
-    {
-        return typeof(ShowMeExplorerPinTests).Assembly
-                .GetCustomAttributes<AssemblyMetadataAttribute>()
-                .FirstOrDefault(a => a.Key == "TestProjectDir")?.Value
-            ?? throw new InvalidOperationException("AssemblyMetadata 'TestProjectDir' is missing.");
     }
 
     // ------------------------------------------------------------------ fakes (public: the product binds them dynamically)

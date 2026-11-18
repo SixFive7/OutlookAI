@@ -1,4 +1,3 @@
-using System.Reflection;
 using System.Text.Json.Nodes;
 using OutlookAI.Core.Services;
 using OutlookAI.McpServer.Tests.T2;
@@ -199,18 +198,6 @@ public sealed class FrozenGuestClockTests
     private static JsonObject LiveSettings(string guest) => Testbed()["liveTestSettings"]![guest]!.AsObject();
 
     private static JsonObject Testbed()
-        => JsonNode.Parse(File.ReadAllText(Path.Combine(RepoRoot(), "Testbed", "testbed.json")))!.AsObject();
-
-    private static string RepoRoot()
-    {
-        string testProjectDir =
-            typeof(LiveTestSettings).Assembly
-                .GetCustomAttributes<AssemblyMetadataAttribute>()
-                .FirstOrDefault(a => a.Key == "TestProjectDir")?.Value
-            ?? throw new InvalidOperationException("AssemblyMetadata 'TestProjectDir' is missing.");
-
-        // <repo>/McpServer/OutlookAI.McpServer.Tests/ -> <repo>
-        return Path.GetFullPath(Path.Combine(testProjectDir, "..", ".."));
-    }
+        => JsonNode.Parse(File.ReadAllText(Path.Combine(RepoPaths.RepoRoot(), "Testbed", "testbed.json")))!.AsObject();
 
 }

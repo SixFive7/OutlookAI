@@ -272,42 +272,4 @@ public sealed class UnresolvedRecipientReportingTests
             throw ex.InnerException;
         }
     }
-
-    /// <summary>
-    /// An Outlook that is not there. The mappers touch COM for one thing only - the
-    /// best-effort attachment re-read, which is wrapped in a catch-all precisely so
-    /// reporting can never cost a caller their draft - so this exercises that path too.
-    /// </summary>
-    private sealed class DeadGateway : IComGateway
-    {
-        public event Action? OutlookGone
-        {
-            add { }
-            remove { }
-        }
-
-        public bool IsConnected => false;
-
-        public bool? QuitSinkActive => null;
-
-        public bool ProbeConnected() => false;
-
-        public T Run<T>(Func<IOutlookSession, T> operation) => throw Gone();
-
-        public T Run<T>(Func<IOutlookSession, T> operation, ComSessionRecovery recovery) => throw Gone();
-
-        public T Run<T>(Func<IOutlookSession, T> operation, int budgetMilliseconds, bool allowConnectFloor = false)
-            => throw Gone();
-
-        public ComHostDiagnostics GetDiagnostics() => new ComHostDiagnostics("in-process", "down");
-
-        public void Dispose()
-        {
-        }
-
-        private static OutlookUnavailableException Gone()
-        {
-            return new OutlookUnavailableException("Outlook is not running.");
-        }
-    }
 }
