@@ -20,8 +20,10 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// the one test that stops and starts Outlook, which prints its connection trace.
 /// </para>
 /// <para>
-/// Reads only: a connection, the profile's name, health. Nothing in a mailbox is opened by name, written or
-/// read, and the start log it prints holds no mail content by construction.
+/// The test itself reads only: a connection, the profile's name, health; the start log it prints holds no
+/// mail content by construction. It does not carry <c>Writes=Nothing</c>, because its collection's fixture
+/// sweeps the run's tagged artifacts when it ends - a write - and that trait speaks for the fixture too
+/// (<c>T1/ReadOnlyLiveTestTests</c>).
 /// </para>
 /// </summary>
 [Collection(LiveCollections.Lifecycle)]
@@ -39,7 +41,6 @@ public sealed class LiveOutlookStartTests
 
     [Fact]
     [Trait("Requires", "OutlookInstance")]
-    [Trait("Writes", "Nothing")]
     public void AConnection_WaitsForOutlookToSettle_AndLeavesTheRecordAndTheLogBehind()
     {
         // Outlook up the way every lifecycle test gets it: through the fixture's own session.
