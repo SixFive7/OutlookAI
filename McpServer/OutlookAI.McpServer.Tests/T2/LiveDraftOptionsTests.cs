@@ -2,6 +2,7 @@ using OutlookAI.Core.Com;
 using OutlookAI.Core.Services;
 using Xunit;
 using Xunit.Abstractions;
+using static OutlookAI.McpServer.Tests.T2.LiveDraftChecks;
 
 namespace OutlookAI.McpServer.Tests.T2;
 
@@ -383,69 +384,14 @@ public sealed class LiveDraftOptionsTests
             signature: signature);
     }
 
-    /// <summary>
-    /// The A1 contract on the RAW HTML: agent body first, then the signature region
-    /// anchor, then the signature's own content - and the body is NOT inside the
-    /// signature bookmark (the exact shape of the reported defect).
-    /// </summary>
-    private void AssertBodyAboveIntactSignature(string html, string bodyMarker, string signatureMarker, string label)
-    {
-        int bodyAt = RequireIndexOf(html, bodyMarker, "agent body");
-        int anchorAt = RequireIndexOf(html, "_MailAutoSig", "signature region");
-        int signatureAt = RequireIndexOf(html, signatureMarker, "signature content");
+    private void AssertBodyAboveIntactSignature(string html, string bodyMarker, string signatureMarker, string label) =>
+        LiveDraftChecks.AssertBodyAboveIntactSignature(html, bodyMarker, signatureMarker, label, _output.WriteLine);
 
-        Assert.True(bodyAt < anchorAt, $"{label}: agent body must precede the signature region (body@{bodyAt} sig@{anchorAt})");
-        Assert.True(bodyAt < signatureAt, $"{label}: agent body must precede the signature content");
+    private string RequireHtmlBody(string entryId, string store) =>
+        LiveDraftChecks.RequireHtmlBody(_fixture.VerifySession, entryId, _fixture.GetStoreId(store));
 
-        // The signature keeps its own HTML: the image resource of the test signature
-        // survives as a real <img> element rather than being flattened to text.
-        Assert.Contains("<img", html, StringComparison.OrdinalIgnoreCase);
-        AssertBodyInsideWordSection(html, bodyAt);
-        _output.WriteLine($"A1[{label}]: bodyAt={bodyAt} signatureAnchorAt={anchorAt} signatureContentAt={signatureAt} imgPreserved=true");
-    }
-
-    /// <summary>
-    /// The body must live INSIDE Outlook's own document container, not be spliced in
-    /// straight after &lt;body&gt; (which is what the retired HTMLBody string surgery did
-    /// and why the agent text did not inherit the message style).
-    /// </summary>
-    private static void AssertBodyInsideWordSection(string html, int bodyAt)
-    {
-        int section = html.IndexOf("WordSection1", StringComparison.OrdinalIgnoreCase);
-        Assert.True(section >= 0, "Outlook's WordSection container must be present");
-        Assert.True(bodyAt > section, $"agent body must sit INSIDE WordSection1 (section@{section} body@{bodyAt})");
-    }
-
-    private static int RequireIndexOf(string html, string needle, string what)
-    {
-        int at = html.IndexOf(needle, StringComparison.Ordinal);
-        Assert.True(at >= 0, what + " must be present in the draft HTML");
-        return at;
-    }
-
-    private string RequireHtmlBody(string entryId, string store)
-    {
-        string? html = _fixture.VerifySession.TryGetHtmlBody(entryId, _fixture.GetStoreId(store), out string? error);
-        Assert.True(!string.IsNullOrEmpty(html), $"draft HTML unavailable: {error ?? "empty"}");
-        return html!;
-    }
-
-    /// <summary>
-    /// Zero-artifact proof tolerant of the documented self-send lag: a straggler is
-    /// purged once more (S3-legal - tag AND this run's marker) and only what survives
-    /// that fails. See LiveOutlookTestMailer.CountTaggedArtifactsAfterPurgingStragglers.
-    /// </summary>
-    private void AssertNoTaggedArtifactsRemain(string store, int[]? folderIds)
-    {
-        int remaining = LiveOutlookTestMailer.CountTaggedArtifactsAfterPurgingStragglers(
-            store, Marker, folderIds, out int stragglers);
-        if (stragglers > 0)
-        {
-            _output.WriteLine($"cleanup[{store}]: {stragglers} late-materialized artifact(s) purged (documented lag)");
-        }
-
-        Assert.Equal(0, remaining);
-    }
+    private void AssertNoTaggedArtifactsRemain(string store, int[]? folderIds) =>
+        LiveDraftCleanup.AssertNoTaggedArtifactsRemain(store, Marker, _output, folderIds);
 
     private ComMailBrief WaitForInboxArrival(string seedSubject, DateTime sentUtc)
     {
@@ -487,12 +433,8 @@ public sealed class LiveDraftOptionsTests
         return detail?.ExchangeStoreType is not int type || OutlookAI.Core.Com.SpecialFolders.IsExchangeStore(type);
     }
 
-    private ComDraftInfo RequireMailInfo(string entryId, string? storeId)
-    {
-        ComDraftInfo? info = _fixture.VerifySession.TryGetMailInfo(entryId, storeId, out string? error);
-        Assert.True(info != null, $"mail info unavailable: {error}");
-        return info!;
-    }
+    private ComDraftInfo RequireMailInfo(string entryId, string? storeId) =>
+        LiveDraftChecks.RequireMailInfo(_fixture.VerifySession, entryId, storeId);
 
     /// <summary>
     /// The 22-byte header of a ConversationIndex as hex (reserved byte, FILETIME bytes, GUID), or
@@ -521,20 +463,5 @@ public sealed class LiveDraftOptionsTests
         return string.Equals(index.Substring(12, 32), id, StringComparison.OrdinalIgnoreCase) ? "yes" : "no";
     }
 
-    private void CleanupDraft(string store, string entryId)
-    {
-        for (int attempt = 0; attempt < 3; attempt++)
-        {
-            try
-            {
-                LiveOutlookTestMailer.DeleteItemByEntryId(store, entryId, Marker);
-                LiveOutlookTestMailer.DeleteTaggedArtifacts(store, Marker);
-                return;
-            }
-            catch (Exception) when (attempt < 2)
-            {
-                Thread.Sleep(1000);
-            }
-        }
-    }
+    private void CleanupDraft(string store, string entryId) => LiveDraftCleanup.DeleteDraft(store, Marker, entryId);
 }

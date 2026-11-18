@@ -213,8 +213,7 @@ public static class CensusTableRow
         }
 
         string? subject = values[columns.Subject] as string;
-        bool tagged = subject != null
-            && subject.IndexOf(LiveOutlookTestMailer.SubjectTag, StringComparison.OrdinalIgnoreCase) >= 0;
+        bool tagged = LiveOutlookTestMailer.MentionsSubjectTag(subject);
 
         return new CensusItem(id, Fingerprint(Value(values, columns.Received), Value(values, columns.Size)), tagged);
     }

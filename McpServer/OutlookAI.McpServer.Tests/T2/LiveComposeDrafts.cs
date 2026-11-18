@@ -38,7 +38,7 @@ public sealed class Q149Run
 
     public string TaggedSubject(string label)
     {
-        return LiveOutlookTestMailer.SubjectTag + " " + Marker + " q149 " + label;
+        return LiveOutlookTestMailer.TaggedSubject(Marker, "q149 " + label);
     }
 
     /// <summary>Records an EntryID as one this run created, so it may later be changed or deleted.</summary>

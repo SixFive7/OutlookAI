@@ -1685,10 +1685,10 @@
   2026-11-18 as Q163 to Q171.
   Folded so far, each with its CHANGELOG entry, into `McpServer/OutlookAI.McpServer.Tests/Support/`:
   the survey's T01, T02 and T04 (the stand-ins for Outlook's connection and for the search index),
-  T07 (repository paths; four live-tier fixtures in `T2/` still read the test project's folder
-  themselves), T08 (readers of compiled code and source text; ComposeOnReopenedDraftTests and
-  ReadOnlyFolderLookupTests keep member cutters with declaration rules of their own), T09 (but
-  for the registry helpers of the live tier's `T2/` files, which wait for the live step) and T05
+  T07 (repository paths), T08 (readers of compiled code and source text; ComposeOnReopenedDraftTests and
+  ReadOnlyFolderLookupTests keep member cutters with declaration rules of their own), T09, T10 to
+  T12 (the live tier's helpers, audit lines and tool-surface readers, with the test tags and the
+  mailer's tag checks; streams adding new inline tag checks fold theirs when they land) and T05
   (the sweep and scan suites' one-mailbox profile, `AliceMailbox`, and the thread suites' walks,
   `ThreadWalks`; six more suites - the thread, unindexed-store and folder-walk ones - still spell
   that mailbox's SID, prefix and frontier under names of their own, beside stores of their own).

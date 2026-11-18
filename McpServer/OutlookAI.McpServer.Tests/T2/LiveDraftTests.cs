@@ -317,37 +317,9 @@ public sealed class LiveDraftTests
     [Trait("Requires", "Transport")]
     public void ArtifactSweep_AllThreeAccounts_ZeroTaggedRemain()
     {
-        // S3 post-suite proof (also run explicitly after the full suite): NO item
-        // tagged [OutlookAI-McpTest] - from this or any earlier run - remains in
-        // Drafts/Inbox/Sent/Deleted or the SYNC ISSUES subtree (Sync Issues,
-        // Conflicts, Local Failures, Server Failures - widened in soak fix 15 after a
-        // tagged item was found stranded in the hub's Local Failures folder, where
-        // nothing had ever swept) of ANY of the three accounts. Self-send copies of
-        // earlier collections can MATERIALIZE with lag (Phase-2/Phase-4 documented
-        // race; worst on a store mid-resync), outliving their test's stable-zero
-        // window - such stragglers are purged here first (S3-legal: tag-matched), then
-        // stable zero is asserted. Counts only in output (S4).
-        //
-        // WHICH stores are visited, and which of them may be purged, is ArtifactSweepPolicy's
-        // decision and not this loop's. It walks the COUNT TRIPWIRE'S OWN watched set - the
-        // primaries, the delegate/shared mailboxes and the declared bystanders - so the two
-        // guards cover one set rather than two overlapping ones. Everything the allowlist
-        // refuses a delete on is COUNTED and left alone, and a non-zero count in one of those
-        // FAILS the run rather than being tidied away: nothing else would report it, because
-        // the count tripwire fires on a decrease and an artifact arriving is an increase.
-        //
-        // The tag text stays spelled out here on purpose: it is what CountTaggedArtifacts
-        // matches, and T1/CorpusTagSeparationTests pins the corpus apart from this literal.
-        //
-        // On the Exchange VM's test account (2026-10-08) the purge takes the tag AND a recorded run's marker
-        // only, and a store nothing may write to may keep the tagged items it held before the run
-        // (LiveArtifactSweep, LiveArtifactBaseline).
-        ArtifactSweepPolicy.Run(
-            _fixture.Settings,
-            store => LiveArtifactSweep.CountTagged(_fixture.Settings, store),
-            store => LiveArtifactSweep.PurgeUntilStableZero(_fixture.Settings, store),
-            _output.WriteLine,
-            LiveArtifactBaseline.Current);
+        // S3 post-suite proof (also run explicitly after the full suite), shared with LiveSendTests:
+        // LiveArtifactSweep says what it covers and why.
+        LiveArtifactSweep.ProveNoTaggedArtifactRemains(_fixture.Settings, _output.WriteLine);
     }
 
     // ------------------------------------------------------------------ helpers
@@ -440,12 +412,8 @@ public sealed class LiveDraftTests
         }
     }
 
-    private ComDraftInfo RequireMailInfo(string entryId, string? storeId)
-    {
-        ComDraftInfo? info = _fixture.VerifySession.TryGetMailInfo(entryId, storeId, out string? error);
-        Assert.True(info != null, $"mail info unavailable: {error}");
-        return info!;
-    }
+    private ComDraftInfo RequireMailInfo(string entryId, string? storeId) =>
+        LiveDraftChecks.RequireMailInfo(_fixture.VerifySession, entryId, storeId);
 
     private void AssertGone(string entryId, string? storeId)
     {
@@ -453,40 +421,8 @@ public sealed class LiveDraftTests
         Assert.True(info == null, "deleted item must no longer open by EntryID");
     }
 
-    /// <summary>Delete-with-retries in finally (Phase-2/3 cleanup discipline).</summary>
-    private void CleanupDraft(string store, string entryId)
-    {
-        for (int attempt = 0; attempt < 3; attempt++)
-        {
-            try
-            {
-                LiveOutlookTestMailer.DeleteItemByEntryId(store, entryId, Marker);
-                LiveOutlookTestMailer.DeleteTaggedArtifacts(store, Marker);
-                return;
-            }
-            catch (Exception) when (attempt < 2)
-            {
-                Thread.Sleep(1000);
-            }
-        }
-    }
+    private void CleanupDraft(string store, string entryId) => LiveDraftCleanup.DeleteDraft(store, Marker, entryId);
 
-    private ComInspectorInfo? PollForInspector(string entryId, bool present, TimeSpan timeout)
-    {
-        LiveWaitBudget wait = LiveWaitBudget.Of(timeout);
-        ComInspectorInfo? last = null;
-        while (wait.HasTimeLeft)
-        {
-            last = _fixture.VerifySession.GetOpenInspectors()
-                .FirstOrDefault(i => i.EntryId != null && string.Equals(i.EntryId, entryId, StringComparison.OrdinalIgnoreCase));
-            if ((last != null) == present)
-            {
-                return last;
-            }
-
-            Thread.Sleep(500);
-        }
-
-        return last;
-    }
+    private ComInspectorInfo? PollForInspector(string entryId, bool present, TimeSpan timeout) =>
+        LiveDraftChecks.PollForInspector(_fixture.VerifySession, entryId, present, timeout);
 }

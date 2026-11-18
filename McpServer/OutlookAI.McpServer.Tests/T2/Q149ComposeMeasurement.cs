@@ -510,7 +510,7 @@ public static class Q149ProbeGuards
             return "the item has no subject, so it cannot be this run's test item";
         }
 
-        if (!subject!.Contains(LiveOutlookTestMailer.SubjectTag, StringComparison.Ordinal))
+        if (!LiveOutlookTestMailer.CarriesSubjectTag(subject))
         {
             return "the subject does not carry the test tag " + LiveOutlookTestMailer.SubjectTag;
         }

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Xunit;
+using static OutlookAI.McpServer.Tests.T3.ToolShapes;
 
 namespace OutlookAI.McpServer.Tests.T3;
 
@@ -70,19 +71,5 @@ public sealed class AuditLogCiToolShapeTests
 
         // A read-only tool does not teach the mutation outcome field (AtomicityClaimsTests' rule).
         Assert.DoesNotContain("ON FAILURE, the error carries outcome", description, StringComparison.Ordinal);
-    }
-
-    private static async Task<JsonElement> GetToolAsync(McpStdioClient client, string name)
-    {
-        JsonElement list = await client.RoundTripAsync("tools/list", new { });
-        foreach (JsonElement tool in list.GetProperty("result").GetProperty("tools").EnumerateArray())
-        {
-            if (tool.GetProperty("name").GetString() == name)
-            {
-                return tool.Clone();
-            }
-        }
-
-        throw new InvalidOperationException($"tool '{name}' is not advertised");
     }
 }

@@ -2,6 +2,8 @@ using OutlookAI.Core.Com;
 using OutlookAI.Core.Services;
 using Xunit;
 using Xunit.Abstractions;
+using OutlookAI.McpServer.Tests.T1;
+using static OutlookAI.McpServer.Tests.T2.LiveDraftChecks;
 
 namespace OutlookAI.McpServer.Tests.T2;
 
@@ -528,7 +530,7 @@ public sealed class LiveUpdateDiscardTests
                 CleanupDraft(draft.EntryId);
             }
 
-            TryDeleteDirectory(directory);
+            ScratchFiles.TryDeleteTree(directory);
         }
 
         AssertNoTaggedArtifactsRemain();
@@ -576,7 +578,7 @@ public sealed class LiveUpdateDiscardTests
                 CleanupDraft(draft.EntryId);
             }
 
-            TryDeleteDirectory(directory);
+            ScratchFiles.TryDeleteTree(directory);
         }
 
         AssertNoTaggedArtifactsRemain();
@@ -623,7 +625,7 @@ public sealed class LiveUpdateDiscardTests
                 CleanupDraft(draft.EntryId);
             }
 
-            TryDeleteDirectory(directory);
+            ScratchFiles.TryDeleteTree(directory);
         }
 
         AssertNoTaggedArtifactsRemain();
@@ -715,20 +717,6 @@ public sealed class LiveUpdateDiscardTests
         return path;
     }
 
-    private static void TryDeleteDirectory(string directory)
-    {
-        try
-        {
-            Directory.Delete(directory, recursive: true);
-        }
-        catch (IOException)
-        {
-        }
-        catch (UnauthorizedAccessException)
-        {
-        }
-    }
-
     /// <summary>
     /// Asserts the body carries exactly one inline image and that it is EMBEDDED, and
     /// returns its cid: reference so before/after can be compared for identity (D47).
@@ -748,65 +736,18 @@ public sealed class LiveUpdateDiscardTests
         return OutlookAI.Core.Text.HtmlBodyComposer.CountInlineImages(html);
     }
 
-    private static int RequireIndexOf(string html, string needle, string what)
-    {
-        int at = html.IndexOf(needle, StringComparison.Ordinal);
-        Assert.True(at >= 0, what + " must be present in the draft HTML");
-        return at;
-    }
+    private string RequireHtmlBody(string entryId) =>
+        LiveDraftChecks.RequireHtmlBody(_fixture.VerifySession, entryId, _fixture.GetStoreId(Hub));
 
-    private static void AssertBodyInsideWordSection(string html, int bodyAt)
-    {
-        int section = html.IndexOf("WordSection1", StringComparison.OrdinalIgnoreCase);
-        Assert.True(section >= 0, "Outlook's WordSection container must be present");
-        Assert.True(bodyAt > section, $"body must sit INSIDE WordSection1 (section@{section} body@{bodyAt})");
-    }
-
-    private string RequireHtmlBody(string entryId)
-    {
-        string? html = _fixture.VerifySession.TryGetHtmlBody(entryId, _fixture.GetStoreId(Hub), out string? error);
-        Assert.True(!string.IsNullOrEmpty(html), $"draft HTML unavailable: {error ?? "empty"}");
-        return html!;
-    }
-
-    private ComDraftInfo RequireMailInfo(string entryId)
-    {
-        ComDraftInfo? info = _fixture.VerifySession.TryGetMailInfo(entryId, _fixture.GetStoreId(Hub), out string? error);
-        Assert.True(info != null, $"item unavailable: {error ?? "unknown"}");
-        return info!;
-    }
+    private ComDraftInfo RequireMailInfo(string entryId) =>
+        LiveDraftChecks.RequireMailInfo(_fixture.VerifySession, entryId, _fixture.GetStoreId(Hub));
 
     private ComMailBrief WaitForInboxArrival(string subject, DateTime sentUtc)
     {
         return LiveInboxArrival.WaitFor(_fixture.VerifySession, Hub, subject, sentUtc);
     }
 
-    private void CleanupDraft(string entryId)
-    {
-        for (int attempt = 0; attempt < 3; attempt++)
-        {
-            try
-            {
-                LiveOutlookTestMailer.DeleteItemByEntryId(Hub, entryId, Marker);
-                LiveOutlookTestMailer.DeleteTaggedArtifacts(Hub, Marker);
-                return;
-            }
-            catch (Exception) when (attempt < 2)
-            {
-                Thread.Sleep(1000);
-            }
-        }
-    }
+    private void CleanupDraft(string entryId) => LiveDraftCleanup.DeleteDraft(Hub, Marker, entryId);
 
-    private void AssertNoTaggedArtifactsRemain()
-    {
-        int remaining = LiveOutlookTestMailer.CountTaggedArtifactsAfterPurgingStragglers(
-            Hub, Marker, folderIds: null, out int stragglers);
-        if (stragglers > 0)
-        {
-            _output.WriteLine($"cleanup[{Hub}]: {stragglers} late-materialized artifact(s) purged (documented lag)");
-        }
-
-        Assert.Equal(0, remaining);
-    }
+    private void AssertNoTaggedArtifactsRemain() => LiveDraftCleanup.AssertNoTaggedArtifactsRemain(Hub, Marker, _output);
 }
