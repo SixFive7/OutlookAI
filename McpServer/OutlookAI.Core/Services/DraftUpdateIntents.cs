@@ -5,6 +5,7 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 
+using OutlookAI.Core.AddIn;
 using OutlookAI.Core.Com;
 
 namespace OutlookAI.Core.Services
@@ -187,19 +188,7 @@ namespace OutlookAI.Core.Services
             AppendList(canonical, "remove", removeNames);
             canonical.Append("display=").Append(display ? "1" : "0").Append('\n');
 
-            byte[] hash;
-            using (SHA256 sha = SHA256.Create())
-            {
-                hash = sha.ComputeHash(Encoding.UTF8.GetBytes(canonical.ToString()));
-            }
-
-            StringBuilder hex = new StringBuilder(hash.Length * 2);
-            foreach (byte b in hash)
-            {
-                _ = hex.Append(b.ToString("x2", CultureInfo.InvariantCulture));
-            }
-
-            return hex.ToString();
+            return Hex.Sha256Lower(Encoding.UTF8.GetBytes(canonical.ToString()));
         }
 
         /// <summary>

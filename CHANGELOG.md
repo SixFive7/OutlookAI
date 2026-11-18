@@ -1183,6 +1183,27 @@ its mailbox tests on, and change nothing you install.
   would overwrite the change or copy it into the mailbox, and says to use Outlook instead. Roaming on
   Microsoft 365 Apps itself is not tested: the test machines run perpetual Office only.
 
+- ♻️ **Bytes are written as hex and read back in one place, and no id or hash changes case (Q154).**
+  The code-sharing refactor's hex stage. Nine writers of bytes as hexadecimal, six of a SHA-256,
+  two of a number and three readers each had their own copy - in the entry and store ids, the index
+  search's rows, the special and archive folders, the profile's sections, the COM session's tables
+  and properties, the send confirmation, the update_draft intents, the page tokens, the audit log,
+  a signature's RTF pictures and the private runtime's download check - and they all use Core's
+  `Hex` now, as do the server's and the corpus tool's calls of .NET's own writer. Each caller names
+  the case it writes, the one it wrote before: uppercase for every id, as Outlook writes an entry
+  id, and lowercase for the hashes and tokens that were. Five of those outputs were pinned first, to
+  values computed outside OutlookAI, and held before the fold and after it: the send confirmation's
+  hash, the update_draft intent key, a page token, the audit log's writer mutex and the picture
+  SHA-256 list_signatures reports. The reader of a conversation index, which .NET's hex number
+  parsing let take a space inside a byte, refuses one now, as the store id's reader did: all three
+  of its sources are Outlook's own `ConversationIndex` property, which Outlook writes as two digits
+  a byte with nothing between them. Three checks of hexadecimal digits that stage S6 had missed -
+  in a profile section's registry key, a resumable search's token and the audit log's reading of a
+  CRC - use `Hex` too, and the COM session reads a binary value that comes as an array of
+  single bytes in one place, where it had two copies. What stays is .NET's own formatting and
+  parsing of a number in a message or an escape, such as an HRESULT, a character's code or a store
+  hash's digits.
+
 - ♻️ **The mail server keeps one copy of what it had written two to five times over (Q154).**
   The code-sharing refactor's stage S6 folds the server's own repetition that the survey of
   2026-11-17 found, its groups S01 to S14. The index search and the exhaustive scan check a

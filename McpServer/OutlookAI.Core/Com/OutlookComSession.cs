@@ -4784,7 +4784,7 @@ namespace OutlookAI.Core.Com
 
                         // Order matters: index first (it carries the GUID the desktop
                         // groups by), topic second (the fallback grouping key).
-                        byte[]? indexBytes = HexToBytes(childIndex);
+                        byte[]? indexBytes = Hex.TryDecode(childIndex, out byte[] childIndexBytes) ? childIndexBytes : null;
                         bool indexRestored = indexBytes != null
                             && TrySetPropertyBinary(draft, ConversationIndexDasl, indexBytes);
                         bool topicRestored = !string.IsNullOrEmpty(sourceTopic)
@@ -6640,7 +6640,7 @@ namespace OutlookAI.Core.Com
                         draft.Subject = subject;
                         changed.Add("subject");
 
-                        byte[]? indexBytes = HexToBytes(currentIndex);
+                        byte[]? indexBytes = Hex.TryDecode(currentIndex, out byte[] currentIndexBytes) ? currentIndexBytes : null;
                         if (indexBytes != null || !string.IsNullOrEmpty(currentTopic))
                         {
                             bool indexRestored = indexBytes != null
@@ -8094,34 +8094,6 @@ namespace OutlookAI.Core.Com
             }
         }
 
-        /// <summary>Hex string (as the object model reports ConversationIndex) to bytes; null when unusable.</summary>
-        private static byte[]? HexToBytes(string? hex)
-        {
-            if (string.IsNullOrEmpty(hex) || (hex!.Length % 2) != 0)
-            {
-                return null;
-            }
-
-            byte[] bytes = new byte[hex.Length / 2];
-            for (int i = 0; i < bytes.Length; i++)
-            {
-                // Substring, not AsSpan: the span overload of byte.TryParse does not exist
-                // on net48, and Core's net48 target is a CI gate (R10 / D18 v2).
-                if (!byte.TryParse(
-                        hex.Substring(i * 2, 2),
-                        System.Globalization.NumberStyles.HexNumber,
-                        CultureInfo.InvariantCulture,
-                        out byte parsed))
-                {
-                    return null;
-                }
-
-                bytes[i] = parsed;
-            }
-
-            return bytes;
-        }
-
         /// <summary>
         /// STA-side: when the saved item's parent folder differs from
         /// <paramref name="targetFolder"/>, moves it there (EntryIDs CHANGE on move -
@@ -9491,28 +9463,44 @@ namespace OutlookAI.Core.Com
         /// </summary>
         internal static string? TableIdText(object? value)
         {
-            switch (value)
+            if (value is string text)
             {
-                case byte[] bytes when bytes.Length > 0:
-                    return SpecialFolders.ToHex(bytes);
-                case object[] cells when cells.Length > 0:
-                    byte[] copied = new byte[cells.Length];
-                    for (int i = 0; i < cells.Length; i++)
-                    {
-                        if (cells[i] is not byte b)
-                        {
-                            return null;
-                        }
-
-                        copied[i] = b;
-                    }
-
-                    return SpecialFolders.ToHex(copied);
-                case string text when text.Length > 0:
-                    return text;
-                default:
-                    return null;
+                return text.Length > 0 ? text : null;
             }
+
+            byte[]? bytes = BinaryValue(value);
+            return bytes == null || bytes.Length == 0 ? null : Hex.Upper(bytes);
+        }
+
+        /// <summary>
+        /// A binary value's bytes: a byte array, or the array of single bytes Outlook's table and its
+        /// property accessor can hand back instead, an object[] (measured on the Exchange guest,
+        /// 2026-11-18). Null for anything else, an array holding anything but bytes included. Pure.
+        /// </summary>
+        private static byte[]? BinaryValue(object? value)
+        {
+            if (value is byte[] bytes)
+            {
+                return bytes;
+            }
+
+            if (!(value is object[] cells))
+            {
+                return null;
+            }
+
+            byte[] copied = new byte[cells.Length];
+            for (int i = 0; i < cells.Length; i++)
+            {
+                if (!(cells[i] is byte b))
+                {
+                    return null;
+                }
+
+                copied[i] = b;
+            }
+
+            return copied;
         }
 
         /// <summary>
@@ -11112,7 +11100,8 @@ namespace OutlookAI.Core.Com
 
         /// <summary>
         /// A PT_BINARY property as upper-case hex, or null when it is absent or would not read.
-        /// The object model hands binary values back as a byte array; anything else is absent.
+        /// The object model hands binary values back as a byte array, or as an array of single
+        /// bytes (<see cref="BinaryValue"/>); anything else is absent.
         /// </summary>
         private static string? TryGetPropertyBinaryHex(dynamic comObject, string schemaName)
         {
@@ -11121,35 +11110,8 @@ namespace OutlookAI.Core.Com
             {
                 accessor = comObject.PropertyAccessor;
                 object? value = ((dynamic)accessor!).GetProperty(schemaName);
-                byte[]? bytes = value as byte[];
-                if (bytes == null && value is object[] boxed)
-                {
-                    byte[] copy = new byte[boxed.Length];
-                    for (int i = 0; i < boxed.Length; i++)
-                    {
-                        if (!(boxed[i] is byte b))
-                        {
-                            return null;
-                        }
-
-                        copy[i] = b;
-                    }
-
-                    bytes = copy;
-                }
-
-                if (bytes == null || bytes.Length == 0)
-                {
-                    return null;
-                }
-
-                var hex = new StringBuilder(bytes.Length * 2);
-                foreach (byte b in bytes)
-                {
-                    hex.Append(b.ToString("X2", CultureInfo.InvariantCulture));
-                }
-
-                return hex.ToString();
+                byte[]? bytes = BinaryValue(value);
+                return bytes == null || bytes.Length == 0 ? null : Hex.Upper(bytes);
             }
             catch (Exception ex) when (IsComCallFailure(ex))
             {

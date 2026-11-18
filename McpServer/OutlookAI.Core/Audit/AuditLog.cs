@@ -495,11 +495,7 @@ namespace OutlookAI.Core.Audit
         internal static string WriterMutexName(string path)
         {
             string full = Path.GetFullPath(path).ToUpperInvariant();
-            using (SHA256 sha = SHA256.Create())
-            {
-                byte[] hash = sha.ComputeHash(Encoding.UTF8.GetBytes(full));
-                return @"Global\OutlookAI.AuditLog." + BitConverter.ToString(hash).Replace("-", string.Empty);
-            }
+            return @"Global\OutlookAI.AuditLog." + Hex.Sha256Upper(Encoding.UTF8.GetBytes(full));
         }
 
         /// <summary>

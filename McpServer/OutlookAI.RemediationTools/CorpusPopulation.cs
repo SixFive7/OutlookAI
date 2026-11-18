@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using OutlookAI.Core.AddIn;
 
 namespace OutlookAI.RemediationTools;
 
@@ -260,7 +261,7 @@ public sealed class CorpusItemEnrichment : IEquatable<CorpusItemEnrichment>
     public byte[]? ConversationIndex => _conversationIndex == null ? null : (byte[])_conversationIndex.Clone();
 
     /// <summary>The conversation index as upper-case hex, or null.</summary>
-    public string? ConversationIndexHex => _conversationIndex == null ? null : Convert.ToHexString(_conversationIndex);
+    public string? ConversationIndexHex => _conversationIndex == null ? null : Hex.Upper(_conversationIndex);
 
     /// <summary>
     /// A canonical text rendering, used for equality and for the population digest a T1 test
@@ -279,7 +280,7 @@ public sealed class CorpusItemEnrichment : IEquatable<CorpusItemEnrichment>
         foreach (CorpusAttachment a in Attachments)
         {
             sb.Append("|att=").Append(a.FileName).Append(':').Append(a.Kind).Append(':')
-                .Append(Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(a.Content)));
+                .Append(Hex.Sha256Upper(a.Content));
         }
 
         if (ThreadKey != null)

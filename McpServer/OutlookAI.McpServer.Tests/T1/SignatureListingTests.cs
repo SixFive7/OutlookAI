@@ -157,7 +157,12 @@ public sealed class SignatureListingTests : IDisposable
         Assert.Equal(1, rtfPicture.Number);
         Assert.Equal("png", rtfPicture.Kind);
         Assert.Equal(120, rtfPicture.Width);
-        Assert.Equal(SignatureRtf.Sha256Hex(embedded), rtfPicture.Sha256);
+
+        // The picture's SHA-256 is list_signatures output, so its case may not move: pinned to a value computed
+        // outside OutlookAI from TestPictures.Png(2, 2, 6)'s 67 bytes, not to the product's own code, so that
+        // folding its hex writers together (the code-sharing refactor, Q154) cannot change it unseen.
+        Assert.Equal(67, embedded.Length);
+        Assert.Equal("72CDFD84D652948BDB15C6C5DE3E49FBB069D6ECF67B57BA5A02988E83F7B725", rtfPicture.Sha256);
     }
 
     [Fact]

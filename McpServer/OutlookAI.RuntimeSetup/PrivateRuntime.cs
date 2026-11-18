@@ -447,11 +447,7 @@ namespace OutlookAI.RuntimeSetup
             using (SHA512 sha = SHA512.Create())
             using (FileStream stream = File.OpenRead(path))
             {
-                byte[] hash = sha.ComputeHash(stream);
-                var text = new StringBuilder(hash.Length * 2);
-                foreach (byte b in hash)
-                    text.Append(b.ToString("x2", CultureInfo.InvariantCulture));
-                return text.ToString();
+                return Hex.Lower(sha.ComputeHash(stream));
             }
         }
     }

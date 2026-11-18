@@ -192,6 +192,19 @@ public sealed class AuditLogTests
     }
 
     [Fact]
+    public void TheWriterLock_IsPinned_ItsHashInUppercase()
+    {
+        // Every writer of one log - the add-in's Outlook and an agent's server - has to name the same mutex,
+        // and Windows compares a mutex's name case-sensitively. Pinned to a value computed outside OutlookAI,
+        // not to the product's own code, so that folding its hex writers together (the code-sharing refactor,
+        // Q154) cannot change it unseen: the SHA-256 of the UTF-8 of "C:\OUTLOOKAI-PIN\AUDIT.LOG", in
+        // uppercase hex.
+        Assert.Equal(
+            @"Global\OutlookAI.AuditLog.14A58B512BC7A86ABF48EECC1DC5EE1D9A573B47FFEEA9E382EC9E5031EE92CF",
+            AuditLog.WriterMutexName(@"C:\OutlookAI-pin\audit.log"));
+    }
+
+    [Fact]
     public void TheWriterLock_IsOnePerLogFile_WhateverTheSpelling()
     {
         string temp = Path.GetTempPath();

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
 
+using OutlookAI.Core.AddIn;
 using OutlookAI.Core.Mapi;
 
 namespace OutlookAI.Core.IndexSearch
@@ -81,13 +82,7 @@ namespace OutlookAI.Core.IndexSearch
 
             if (value is byte[] bytes)
             {
-                StringBuilder sb = new StringBuilder(bytes.Length * 2);
-                foreach (byte b in bytes)
-                {
-                    sb.Append(b.ToString("X2", CultureInfo.InvariantCulture));
-                }
-
-                return sb.ToString();
+                return Hex.Upper(bytes);
             }
 
             if (value is Array array)

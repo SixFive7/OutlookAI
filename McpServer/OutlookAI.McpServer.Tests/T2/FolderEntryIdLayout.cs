@@ -114,7 +114,7 @@ public sealed class FolderEntryIdLayout
     /// </summary>
     public static FolderEntryIdLayout? Parse(string? entryIdHex)
     {
-        if (!StoreHash.TryDecodeHex(entryIdHex, out byte[] bytes) || bytes.Length == 0)
+        if (!OutlookAI.Core.AddIn.Hex.TryDecode(entryIdHex, out byte[] bytes) || bytes.Length == 0)
         {
             return null;
         }
@@ -191,8 +191,8 @@ public sealed class FolderEntryIdLayout
     /// <summary>Two hex entry ids as the same bytes - case does not matter, length does.</summary>
     public static bool SameBytes(string? a, string? b)
     {
-        return StoreHash.TryDecodeHex(a, out byte[] x)
-            && StoreHash.TryDecodeHex(b, out byte[] y)
+        return OutlookAI.Core.AddIn.Hex.TryDecode(a, out byte[] x)
+            && OutlookAI.Core.AddIn.Hex.TryDecode(b, out byte[] y)
             && x.AsSpan().SequenceEqual(y);
     }
 

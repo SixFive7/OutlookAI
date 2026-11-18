@@ -172,7 +172,7 @@ namespace OutlookAI.Core.AddIn
                     data.Length,
                     ControlParameter(rtf, pict, pictEnd, "picwgoal"),
                     ControlParameter(rtf, pict, pictEnd, "pichgoal"),
-                    Sha256Hex(data),
+                    Hex.Sha256Upper(data),
                     hasFallback));
                 index = end + 1;
             }
@@ -276,10 +276,12 @@ namespace OutlookAI.Core.AddIn
                 .Append(@"\picwgoal").Append((width * 15).ToString(CultureInfo.InvariantCulture))
                 .Append(@"\pichgoal").Append((height * 15).ToString(CultureInfo.InvariantCulture))
                 .Append('\\').Append(blip).Append("\r\n");
-            for (int i = 0; i < image.Length; i++)
+            // Sixty-four bytes a line, in lowercase hex, and a line break after every full line.
+            for (int i = 0; i < image.Length; i += 64)
             {
-                group.Append(image[i].ToString("x2", CultureInfo.InvariantCulture));
-                if ((i + 1) % 64 == 0)
+                int count = Math.Min(64, image.Length - i);
+                group.Append(Hex.Lower(image, i, count));
+                if (count == 64)
                 {
                     group.Append("\r\n");
                 }
@@ -1134,7 +1136,7 @@ namespace OutlookAI.Core.AddIn
 
                 if (depth == 1)
                 {
-                    int value = HexValue(c);
+                    int value = Hex.DigitValue(c);
                     if (value >= 0)
                     {
                         if (nibble < 0)
@@ -1153,26 +1155,6 @@ namespace OutlookAI.Core.AddIn
             }
 
             return bytes.ToArray();
-        }
-
-        private static int HexValue(char c)
-        {
-            if (c >= '0' && c <= '9')
-            {
-                return c - '0';
-            }
-
-            if (c >= 'a' && c <= 'f')
-            {
-                return c - 'a' + 10;
-            }
-
-            if (c >= 'A' && c <= 'F')
-            {
-                return c - 'A' + 10;
-            }
-
-            return -1;
         }
 
         private static string PictureKind(string rtf, int pictStart, int pictEnd)
@@ -1218,20 +1200,6 @@ namespace OutlookAI.Core.AddIn
         private static string ToHimetric(int pixels)
         {
             return ((int)Math.Round(pixels * 2540.0 / 96.0)).ToString(CultureInfo.InvariantCulture);
-        }
-
-        /// <summary>SHA-256 of bytes, upper-case hex.</summary>
-        public static string Sha256Hex(byte[] data)
-        {
-            using SHA256 sha = SHA256.Create();
-            byte[] hash = sha.ComputeHash(data ?? Array.Empty<byte>());
-            StringBuilder hex = new StringBuilder(hash.Length * 2);
-            foreach (byte b in hash)
-            {
-                hex.Append(b.ToString("X2", CultureInfo.InvariantCulture));
-            }
-
-            return hex.ToString();
         }
 
         // ------------------------------------------------------------------ HTML to RTF (create only)

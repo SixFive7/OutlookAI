@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
+using OutlookAI.Core.AddIn;
 
 namespace OutlookAI.Core.Services
 {
@@ -137,17 +138,7 @@ namespace OutlookAI.Core.Services
         /// <summary>The first eight hex digits of the SHA-256 of <paramref name="text"/>'s UTF-8.</summary>
         internal static string ShortHash(string text)
         {
-            using (SHA256 sha = SHA256.Create())
-            {
-                byte[] hash = sha.ComputeHash(Encoding.UTF8.GetBytes(text ?? string.Empty));
-                StringBuilder hex = new StringBuilder(8);
-                for (int i = 0; i < 4; i++)
-                {
-                    hex.Append(hash[i].ToString("x2", CultureInfo.InvariantCulture));
-                }
-
-                return hex.ToString();
-            }
+            return Hex.Sha256Lower(Encoding.UTF8.GetBytes(text ?? string.Empty)).Substring(0, 8);
         }
 
         private static string Checksum(string payload)

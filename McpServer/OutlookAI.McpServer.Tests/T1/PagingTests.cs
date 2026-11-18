@@ -141,4 +141,19 @@ public sealed class PagingTests
         payload = payload.PadRight(payload.Length + ((4 - (payload.Length % 4)) % 4), '=');
         Assert.DoesNotContain(Secret, Encoding.UTF8.GetString(Convert.FromBase64String(payload)), StringComparison.OrdinalIgnoreCase);
     }
+
+    [Fact]
+    public void AToken_IsPinned_ItsTwoShortHashesInLowercase()
+    {
+        // A token is tool output, so the case of the two short hashes in it - the fingerprint's hash of each
+        // value, and the checksum - may not move. Pinned to values computed outside OutlookAI, not to the
+        // product's own code, so that folding its hex writers together (the code-sharing refactor, Q154)
+        // cannot move it unseen: ShortHash("invoice") is the first eight hex digits of SHA-256("invoice"),
+        // and the token is "pg1.", the base64url of the payload "audit_log" U+001E "query=1|52d6e3de\n"
+        // "limit=0\n" U+001E "7" U+001F "x", a full stop, and the first eight of SHA-256("pg1|" + payload).
+        Assert.Equal("52d6e3de", Paging.ShortHash("invoice"));
+        Assert.Equal(
+            "pg1.YXVkaXRfbG9nHnF1ZXJ5PTF8NTJkNmUzZGUKbGltaXQ9MAoeNx94.d2b39c98",
+            Paging.IssueToken("audit_log", "query=1|invoice\nlimit=0\n", new[] { "7", "x" }));
+    }
 }

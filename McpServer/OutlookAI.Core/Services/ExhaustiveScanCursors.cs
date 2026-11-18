@@ -445,9 +445,7 @@ namespace OutlookAI.Core.Services
 
             for (int i = TokenPrefix.Length; i < token.Length; i++)
             {
-                char c = token[i];
-                bool hex = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
-                if (!hex)
+                if (!Hex.IsLowerDigit(token[i]))
                 {
                     return false;
                 }
