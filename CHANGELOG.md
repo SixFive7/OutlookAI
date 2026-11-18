@@ -1160,21 +1160,29 @@ its mailbox tests on, and change nothing you install.
   one place. The Inspector and Outbox counts come first, and an Outlook that ends by itself while
   they are read ends the stop: in the Q149 smoke on 2026-11-18 a cell's stop met the Outlook the
   cell before had just let go of, and the product's start guard reported it as an Outlook that
-  exited while it started. A person's windows are closed only after three minutes without input. The
-  rungs go in order: WM_CLOSE to Outlook's windows, its hidden Explorers closed, then
-  `Application.Quit()`, and Outlook is never killed. One rung is new, for a window-less Outlook that
-  a client still holds, which `Application.Quit()` would only park: one Explorer shown through the
-  product's goto surface and closed the way a user closes it, as the disconnect test ends Outlook.
-  It counts only this Windows session's Outlook, by the product's own rule. A start opens Outlook
-  with its window through the shell, as the guest runner does, so the Outlook inherits no handle of
-  the test host: one the test host started itself held a live run's output pipe open for 50 minutes
-  after its suite had finished (Exchange VM, 2026-11-18). The measurement stops and starts Outlook
-  through it. The disconnect test keeps its own scenario, which is what it tests, and takes from it
-  its window probe, its Outbox refusal, its user-protection meanings and its one test for a session
-  that died under a call, the `ObjectDisposedException` it met on the Exchange test machine among
-  them (runbook section 4.4a, run 8). `T1/LiveOutlookRestartTests` pins the order of the rungs, that
-  test for a dead session, that the stop's catches test a step's own failure and not the wrapper a
-  bounded step passes it on in, and that nothing in it kills Outlook.
+  exited while it started. An Outlook that ends by itself while the stop first waits for it gets the
+  same five seconds before the next start as one a rung ended, where it used to get none: in that
+  smoke a start less than a second after such an exit was followed by a crash in
+  `mso40uiwin32client.dll`, though whether the one caused the other is not known. A step the stop
+  and the compose measurement bound in time throws its own failure, as a direct call would.
+  `Task.Wait` handed it on inside an `AggregateException`, which no catch around such a step looks
+  for, so the stop's catches never matched, and a compose that threw failed the whole Q149 test
+  instead of being recorded as its cell's result. A person's windows are closed only after three
+  minutes without input. The rungs go in order: WM_CLOSE to Outlook's windows, its hidden Explorers
+  closed, then `Application.Quit()`, and Outlook is never killed. One rung is new, for a window-less
+  Outlook that a client still holds, which `Application.Quit()` would only park: one Explorer shown
+  through the product's goto surface and closed the way a user closes it, as the disconnect test
+  ends Outlook. It counts only this Windows session's Outlook, by the product's own rule. A start
+  opens Outlook with its window through the shell, as the guest runner does, so the Outlook inherits
+  no handle of the test host: one the test host started itself held a live run's output pipe open
+  for 50 minutes after its suite had finished (Exchange VM, 2026-11-18). The measurement stops and
+  starts Outlook through it. The disconnect test keeps its own scenario, which is what it tests, and
+  takes from it its window probe, its Outbox refusal, its user-protection meanings and its one test
+  for a session that died under a call, the `ObjectDisposedException` it met on the Exchange test
+  machine among them (runbook section 4.4a, run 8). `T1/LiveOutlookRestartTests` pins the order of
+  the rungs, that test for a dead session, that a bounded step throws its own failure and not a
+  wrapper, that an Outlook that ended by itself is settled before the stop returns, and that nothing
+  in it kills Outlook.
 
 - ✅ **The testbed can build an installer that carries the mail server, to test the installed product.**
   `Testbed/host/Publish-AddInPayload.ps1 -WithServer` publishes the mail server and
