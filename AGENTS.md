@@ -216,7 +216,7 @@ run either script's `-SelfTest` here.
 
 ## MCP Server (`McpServer/`)
 
-- `McpServer/` holds the MCP server projects (`OutlookAI.Core`, `OutlookAI.McpServer`, `OutlookAI.McpServer.Tests`). Build them with `dotnet build` **by explicit csproj path** — never via `OutlookAI.slnx`, which only contains the VSTO add-in (MSBuild-only).
+- `McpServer/` holds the MCP server projects (`OutlookAI.Core`, `OutlookAI.McpServer`, `OutlookAI.McpServer.Tests`). Build them with `dotnet build` **by explicit csproj path** — never via `OutlookAI.slnx`, which holds the VSTO add-in (MSBuild-only) and `OutlookAI.Core`, which the add-in references, so that F5 in Visual Studio builds both (Q167 (a)).
 - The non-live suite (`dotnet test --filter "Category!=Live"`) runs only on the build VM - next section. Tests marked `Category=Live` need Outlook and a mailbox: they run on the test VMs - the ones that need Exchange on the Exchange VM, `OutlookAI-Exchange` - and never on this workstation (Q116 (a), Mailbox Safety below).
 - Developer documentation: `McpServer/README.md`.
 
@@ -228,8 +228,16 @@ possible. And as a rule no code duplicated."* So share code instead of copying i
 something, look for it, and use what is there. Logic that both the add-in and the MCP server use
 belongs in `McpServer/OutlookAI.Core`, which the add-in references through its net48 build, behind
 a small interface - this ends the "Phase-6 no-coupling choice" that kept the add-in apart from
-Core. The copies that exist today are folded together by the refactor in `TODO.md`, and the
-questions from Q163 on decide how.
+Core. The copies that exist today are folded together by the refactor in `TODO.md`, in the stages
+and the ways Q163 to Q171 decided on 2026-11-18.
+
+**The add-in may use one part of Core, the namespace `OutlookAI.Core.AddIn`**
+(`McpServer/OutlookAI.Core/AddIn/`; Q164 (a)). Logic only the add-in runs moves there too (Q163 (a)),
+and nothing in it attaches to Outlook, starts a COM apartment thread, opens a MAPI session or opens
+the search index: the add-in runs inside Outlook's own process, where a hang or a crash in that code
+takes Outlook down. The rest of Core is public, because the server uses it, so no compiler holds the
+rule; `Tools/Checks/check-pinned-constants.ps1`, check 15, does. Code that part needs from elsewhere
+in Core moves into it, so it names no other part of Core.
 
 ## Tests run on the build VM, never on this workstation (Q94, Q102)
 
@@ -256,7 +264,8 @@ pwsh -File Testbed/host/Invoke-TestsOnBuildVm.ps1 -SkipSuite -SelfTestInclude 'T
   `vm\trx\zone.trx` and every log.
 - **One run per VM, and the build VM is a pool** (2026-11-17): `OutlookAI-Build`, `OutlookAI-Build2`
   and `OutlookAI-Build3` - copies of one machine, `Testbed/host/TestbedPool.ps1` - and a run takes
-  whichever is free; callers queue only while all are busy. `-VMName` pins one. Run it in the
+  whichever is free; callers queue only while all are busy - first come first served, in a queue of
+  files, asking Hyper-V nothing while they wait (2026-11-18). `-VMName` pins one. Run it in the
   background or with a timeout of 20 minutes or more. Never use a VM by hand while runs may happen;
   to hold runs off one, take a lease on it with `Testbed/host/Set-TestbedLease.ps1 -VMName <vm>` and
   release it after.
@@ -467,7 +476,8 @@ whichever build folder had been built last.
 2. **Agents build the add-in only through `Testbed/host/Publish-AddInPayload.ps1` or
    `Tools/Switch-AddInBuild.ps1`** (`-BuildOnly` when a build is all you need). A release builds
    through the first: `Tools/Publish-Release.ps1` calls it with `-ReleaseSigningThumbprint`. Both build a commit
-   from a `git archive`, stand in the VSTO tasks that write the registry, and prove the host
+   from a `git archive`, restore the packages of `OutlookAI.Core`, which the add-in references
+   (Q167 (a)), stand in the VSTO tasks that write the registry, and prove the host
    unchanged afterwards. `OutlookAI.csproj` no longer registers anything when built outside Visual
    Studio, but a commit from before that change still does — so no plain `msbuild` of the add-in,
    and never `BuildingInsideVisualStudio=true` on a command line, which turns registration back on.

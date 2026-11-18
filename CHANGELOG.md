@@ -887,7 +887,7 @@ its mailbox tests on, and change nothing you install.
   names the SDK each machine's install step must find, still .NET 10's until the code moves, and a
   relative output folder no longer breaks the live-tier payload's offline feed check.
 
-- ♻️ **The scripts share one copy of their program-call wrapper, in Testbed/guest/ScriptHelpers.ps1 (Q166).**
+- ♻️ **The scripts share one copy of the helpers they restated, in Testbed/guest/ScriptHelpers.ps1 (Q166).**
   Seventeen scripts each declared the same `Invoke-NativeCommand`, the wrapper every program call
   goes through so that Windows PowerShell 5.1 cannot end a script on the first line a program writes
   to stderr. Thirteen of them now dot-source it from `Testbed/guest/ScriptHelpers.ps1`, where
@@ -901,7 +901,14 @@ its mailbox tests on, and change nothing you install.
   wrapper counts as one through a copy always did, and its new check 4 fails a copy of a shared
   helper anywhere but in a script marked `# travels-alone:`, and there a copy that differs from the
   shared one. Six cases that break those rules were run against it here, and it failed each.
-  `Testbed/README.md` names the file, and its step 4a stages it with the other guest scripts.
+  `Testbed/README.md` names the file, and its step 4a stages it with the other guest scripts. The
+  build and release scripts' own helpers went the same way: the run of a program into log files
+  under a deadline (`Invoke-Logged`, five copies), the tail of such a log (`Show-LogTail`, four),
+  the quoting of one argument (`Format-Argument`, two) and the elevation test (`Test-IsElevated`,
+  two). The build-VM runner, which reaches the VM on its own, keeps its own run of a program,
+  which quotes its arguments and stops the whole process tree, as `Invoke-LoggedStep`. And three
+  `Tools/` scripts that restated the import of the running edition's own Security and Utility
+  modules now dot-source `Testbed/host/OwnEditionModules.ps1`, as the host scripts do.
 
 - 📝 **If Office's own grace reset fails, the Exchange test machine may get Microsoft 365 Apps (Q206).**
   The maintainer's decision Q206, 2026-11-18, now in AGENTS.md beside the machine's internet
@@ -1186,6 +1193,32 @@ its mailbox tests on, and change nothing you install.
   machine that can reach the server. Recovery is immediate rather than delayed: reconnecting to a
   network clears the backoff and checks shortly after, and "Check for updates" always runs straight
   away.
+
+- ♻️ **The add-in references OutlookAI.Core and may use one namespace of it (Q164, Q167).**
+  Until now the add-in kept its own copies of logic the MCP server has in Core, because it did not
+  reference Core (v3's "Phase-6 no-coupling choice"). Q154 (b) ended that, and this is the
+  refactor's first stage, plumbing only: the add-in uses none of Core yet, so nothing it does
+  changes. `OutlookAI.csproj` references Core's net48 build (Q167 (a)) and keeps two of the scripted
+  builds' global properties out of Core's build: `PrepareForRunDependsOn` names a VSTO target Core
+  does not have, and `DefineConstants` would replace Core's own `NETFRAMEWORK` symbol. Both add-in
+  build scripts, `Testbed/host/Publish-AddInPayload.ps1` and `Tools/Switch-AddInBuild.ps1`, restore
+  Core's packages first with MSBuild's `/restore`; guard 1's evaluation still runs no target and
+  restores nothing, and their self-tests check both. `OutlookAI.slnx` holds Core, so F5 in Visual
+  Studio builds it. The installer carries `OutlookAI.Core.dll` and
+  `System.Reflection.DispatchProxy.dll` beside `OutlookAI.dll`, both listed and hashed in the signed
+  add-in manifest, and a release stamps its version into that copy of Core as well. Core's
+  `System.Data.OleDb` package adds nothing there: on .NET Framework its assembly only forwards to
+  the framework's own `System.Data`, which Core's net48 build references instead. The add-in may
+  use only the namespace `OutlookAI.Core.AddIn`, and nothing in it may attach to Outlook, start a
+  COM apartment thread, open a MAPI session or open the search index (Q164 (a)), because the add-in
+  runs inside Outlook's own process. `Tools/Checks/check-pinned-constants.ps1` check 15 holds that
+  rule, and T1 `AddInCoreReferenceTests` the shape of the reference. Measured 2026-11-18: both build
+  scripts built the add-in and left the host unchanged over 318 lines, the installer grew from
+  43,159,206 to 43,435,319 bytes, and a commit from before the reference still builds, its restore
+  finding nothing to do. On `OutlookAI-Unindexed` the build installed from `CP-08` and reached
+  `ADDIN-READY` three times in a row, as master's did; Outlook recorded its loads at 2.11 and 2.13 s
+  against master's 1.75 and 1.72 s, on a host running three build VMs, which two samples do not settle
+  (runbook section 2.3, the last record).
 
 - 📝 **The documents and the TODO list name no real person, address or machine any more (Q189).**
   They quoted the maintainer's computer name, his user name in paths under his profile, his
@@ -2267,6 +2300,31 @@ its mailbox tests on, and change nothing you install.
   next - the cost was the accumulating hidden window, not a broken Outlook. This also cannot help
   when the assistant kills the helper outright, which is what happens when Outlook has genuinely
   stopped responding and when a session ends abruptly.
+
+- ✅ **Test runs that wait for a test machine no longer ask Hyper-V every few seconds.**
+  Every queued run asked Hyper-V about every machine it could use every 5 seconds, through the WMI
+  calls `Get-VM` makes, and read the host's free memory through WMI as well. On the night of
+  2026-11-18, with eighteen runners alive and at most eight of them running, the maintainer's PC
+  lagged, and a trace of 15 seconds counted 32 WMI calls a second, 91 % of them Hyper-V's. A run that
+  waits now takes a ticket in a queue of files and tries only the machines no earlier run wants, first
+  come first served, where a newer run could take a machine before an older one. It tells a free
+  machine from its lock and lease files and the host's memory from Windows' `GlobalMemoryStatusEx`,
+  asks Hyper-V once, before it waits, which of its machines exist, and sleeps until a lock, a lease or
+  a ticket changes, or 30 seconds pass. A running run reads its machine's state and heartbeat with one
+  narrow query each, by the machine's id, instead of `Get-VM` and `Get-VMIntegrationService` (4 and 23
+  WMI calls), and asks its machine how far it got every 15 seconds instead of every 3. A live run makes
+  all its own calls into the guest over one PowerShell Direct session instead of one each, and the
+  idle-saver reads the leases first and asks Hyper-V about the rest in one query. Measured on the same
+  host that morning, a run waiting the old way cost about 0.43 of a logical processor: 0.34 in
+  WmiPrvSE, nearly all of it the memory read, and 0.08 in vmms and the WMI service, which answer
+  Hyper-V's calls. A run waiting the new way costs nothing measurable, and a trace of 15 seconds found
+  no WMI call from it, where each of four queued runs on the old runner made 30 to 34.
+
+- ✅ **A test machine that is running is saved before a checkpoint is restored over it.**
+  Both runners restored a checkpoint over a test machine in whatever state it was, and at the end of a
+  run it is running. In another session's runs that night, a guest restored that way stayed out of
+  PowerShell Direct's reach for six minutes, where one saved first and then restored answered in
+  seconds. The build-VM runner and the live-tier runner now save a running or paused machine first.
 
 - ✅ **The index-refile measurement no longer fails when Outlook lists a moved folder late.**
   The live test that times how fast the index follows a folder rename and move reads the folder's

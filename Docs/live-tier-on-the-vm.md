@@ -687,8 +687,33 @@ Group Policy only to show a value an organization sets - or one an earlier Outlo
 by `Tuning\Applied` (Q151 (a)) - and leaves such a value alone. So the reconcile above lists nothing in
 `Tuning\NeedsAdministrator`, and the walk is 11 values, not 13. An existing account's own offline period
 lives in its Outlook profile, which OutlookAI does not write yet: the settings dialog says how to set it
-in Account Settings (`Services/CachedModeSettings.cs`, `Services/AccountOfflinePeriods.cs`). Not yet run
-on a guest. The record above stays as what was measured then.
+in Account Settings (`Services/CachedModeSettings.cs`, `Services/AccountOfflinePeriods.cs`). Run on a
+guest on 2026-11-18 (the next record). The record above stays as what was measured then.
+
+**The add-in with OutlookAI.Core beside it (Q167 (a), the code-sharing refactor's first stage), against
+the build before it - `OutlookAI-Unindexed`, from `CP-08`, 2026-11-18.** Two payloads, built on the host
+by `Testbed/host/Publish-AddInPayload.ps1`: `56ac6fe`, whose add-in references Core, and `14907d3`,
+master just before it, which is also the first guest run of the Q145 build. Guard 3 `UNCHANGED` over
+318 host lines for both; the older commit's restore found nothing to do. For each, from a script under
+the guest's lease: `CP-08-MAIL-SINK` applied over the saved guest (time synchronisation off), the
+payload, its commit's `Source.zip` and guest scripts and the pinned `vstor_redist.exe` staged,
+`-Phase Install` from the default task, `-Phase FirstRun` three times at `-RunLevel Limited`, and
+Outlook's own `...\16.0\Outlook\AddInLoadTimes\OutlookAI` read once the last Outlook had exited. Then
+`CP-16B-FROZEN-CLOCK` restored, the guest saved and the lease released. The host ran three build VMs and
+the Exchange VM throughout, so every time here is a busy host's.
+
+| Payload | Install | FirstRun, three times | `{app}` | Load times Outlook recorded |
+| --- | --- | --- | --- | --- |
+| `14907d3` | `INSTALLED-NEVER-RAN`, 2, 85 s and 134 s in two passes | `ADDIN-READY`, 0, each time: COM start 41.3 s cold, then 3.7 s and 3.2 s; tuning walk 11 of the 11, nothing listed as needing an administrator | `OutlookAI.dll` and the two VSTO utility assemblies | 1,750 and 1,719 ms (and 1,890 in a first pass that read the value with the last Outlook still running) |
+| `56ac6fe` | `INSTALLED-NEVER-RAN`, 2, 146 s | `ADDIN-READY`, 0, each time: COM start 19.6 s cold, then 3.8 s and 3.9 s; the same walk | the same, and `OutlookAI.Core.dll` (1,014,272 bytes) and `System.Reflection.DispatchProxy.dll` (35,712) | 2,109 and 2,125 ms |
+
+The add-in loads with Core's assemblies beside it and reaches `ADDIN-READY` as before. Its recorded load
+times are 0.38 s longer, on one pass each in one order; the add-in uses none of Core yet, so the CLR does
+not load `OutlookAI.Core.dll`, and the warm COM starts are the same. Whether the difference is the busy
+host or the VSTO runtime handling two more listed assemblies is not settled by two samples; the stage
+that first calls Core at startup measures it again. (A first attempt applied `CP-08` over the guest while
+it still ran: it came back running but unreachable over PowerShell Direct for six minutes, and the
+script now saves a running guest before applying a checkpoint.)
 
 **Checkpoint `CP-03-OUTLOOKAI-INSTALLED` once `-Phase FirstRun` prints `ADDIN-READY`.** `CP-05-ADDIN-TRUSTED`
 is no longer a separate manual step - the trust entry is part of the scripted install - and the name
@@ -4631,7 +4656,83 @@ entry, and `outlook_health` calls the online one a second view (decision 207 (b)
 key is no folder; and the locator matches an item without a `ReceivedTime` on its `CreationTime`, nearest
 first.
 
-### 4.10 The .NET 11 SDK beside .NET 10 - the build pool, both Outlook guests and the Exchange VM, 2026-11-18 (Q172)
+### 4.10 Waiting runs that ask Hyper-V nothing - every testbed VM, 2026-11-18
+
+**Why this section exists.** At about 04:10 on 2026-11-18 the maintainer's PC lagged. Another session
+traced it: a 15-second WMI-Activity trace counted 492 WMI operations, 32 a second, 91 % of them in
+`root\virtualization\v2` - `Msvm_SummaryInformation` enumerations and `Msvm_VirtualSystemSettingData`
+reads and associations, which is what `Get-VM` produces - and 26 reads of `Win32_OperatingSystem`, all
+from runner processes: eighteen alive, at most eight of them running. A queued build run asked `Get-VM`
+about every pool member every 5 s, and the host's free memory of `Win32_OperatingSystem`; a live run
+given `-Kind` asked `Get-VM` and `Get-VMSnapshot` about every guest of its kind every 30 s; a running
+build run asked `Get-VMIntegrationService` for its heartbeat every second and its guest how far it got
+every 3 s, and a live run its heartbeat every 3 s; and a live run opened a PowerShell Direct session of
+its own, by the guest's name, for every guest call - nine in a run of one test class that morning.
+
+Stream W measured where Hyper-V's share goes (`.work\w-vm-state\` of the main checkout): its WMI
+provider runs inside vmms.exe, so those calls cost vmms and the WMI service - about 0.2 to 0.6 of a
+logical processor between them that night. `Get-VM` costs 4 WMI operations, its startup memory 12,
+`Get-VMIntegrationService` 23 and `Get-VMSnapshot` 41, and the enumeration of `Msvm_SummaryInformation`
+every Hyper-V cmdlet starts with cost vmms 0.8 s of processor time when asked for everything. Stream W
+put most of WmiPrvSE's 3.4 to 3.8 processors that night on other programs listing processes; the
+runners' share of WmiPrvSE was their memory read, measured below.
+
+**What changed** (`Testbed/host/TestbedPool.ps1`'s banner says how). A run that waits holds a ticket
+in `%SystemDrive%\OutlookAI-Testbed\queue\` and tries only the VMs no earlier ticket wants, first come
+first served - another session's run had lost the race for a build VM to newer runs for over an hour.
+It tells a free VM from its lock and lease files and the host's memory from kernel32's
+`GlobalMemoryStatusEx`, asks Hyper-V what it must - which of its VMs exist, their ids, their startup
+memory - once, before it waits, and sleeps on a FileSystemWatcher until a lock's owner file, a lease or
+a ticket changes, or 30 s pass. A run that runs reads its VM's state and heartbeat with one narrow CIM
+query each, by the VM's id, on one DCOM session kept for the process (`Msvm_ComputerSystem.EnabledState`,
+`Msvm_HeartbeatComponent.OperationalStatus`), the heartbeat every 2 s while the VM comes up; it asks
+its guest how far it got every 15 s; and a live run makes its own guest calls over one PowerShell
+Direct session, opened by the guest's id, each call starting as a session of its own did - with no
+exit code left by the call before it. A VM that runs is saved before a checkpoint is restored over it:
+in another session's runs a restore over a running guest left it out of PowerShell Direct's reach for
+six minutes. The janitor waits on its run's process handle instead of looking every 10 s, the clone
+maker waits at the head of the queue instead of asking for the build VM's lock every quarter second,
+and the idle-saver reads the leases first and asks Hyper-V about the unleased VMs in one narrow query.
+
+**Measured: the WMI operations.** WMI-Activity traces of 15 s, by the 04:09 session's method (`logman`
+with the `Microsoft-Windows-WMI-Activity` provider, `tracerpt`, operations counted per client
+process), run as a member of Performance Log Users; raw data in `.work\q-wmi\` of the worktree
+`stream-q-testbed-load-limit`:
+
+| When | What was waiting | WMI operations | WmiPrvSE |
+| --- | --- | --- | --- |
+| 04:09, the other session | eighteen runners, at most eight running | 492 in 15.5 s, 32 a second, 91 % in `root\virtualization\v2`; 26 reads of `Win32_OperatingSystem` | about 5 cores |
+| 05:05, before this change | four queued build runs and a live run of agents' branches, on runners from before it | 155 in 14.5 s, 11 a second, 85 % in `root\virtualization\v2`: 28 to 35 from each queued build runner - about 2 a second each - and 18 from the live run | 3.9 cores |
+| 05:29, after the first cut of it, beside runs on runners from before it | this branch's runners: a build run queued behind another of them, the build run ahead of it running its suite, and a live run staging its guest; and four queued build runs of agents' branches on runners from before the change | 139 in 15.7 s, 9 a second: none from this branch's queued run and none from its running build run; 4 from its live run - one VM looked up by name as it started the guest; and 30 to 34 from each of the four older queued runners, 124 in all | 3.2 cores |
+
+**Measured: what a waiting run costs the host.** Paired 60-second windows between 06:06 and 06:29,
+three rounds each, of the processors busy in vmms.exe, the WMI service's svchost and every WmiPrvSE
+(the `Process V2` counters, by process id), with three waiters started as background jobs or none
+(`.work\q-wmi\cost-waiters.ps1` and `cost-split.ps1`). An old waiter did what a queued build run did
+every 5 s before this change - `Get-VM` for each of the three build VMs, the startup memory of two of
+them, and `Win32_OperatingSystem` for each of those two; a new one a turn of this change on a scratch
+queue and scratch locks, then `Wait-TestbedChange`. The means of three rounds, in logical processors:
+
+| Three waiters | vmms | WMI service | WmiPrvSE |
+| --- | --- | --- | --- |
+| none, the first run | 0.07 | 0.27 | 3.06 |
+| the old way | 0.14 | 0.45 | 4.09 |
+| the new way | 0.06 | 0.27 | 3.08 |
+| none, the second run | 0.06 | 0.33 | 3.41 |
+| the old way's `Get-VM` calls alone | 0.14 | 0.39 | 3.44 |
+| the old way's `Win32_OperatingSystem` reads alone | 0.05 | 0.40 | 4.30 |
+
+So a queued build run on a runner from before this cost the host about 0.43 of a logical processor:
+0.34 in WmiPrvSE, 0.06 in the WMI service and 0.02 in vmms. Nearly all the WmiPrvSE share was its
+memory read - a `Win32_OperatingSystem` read took 1.2 to 1.7 s, and the reads alone cost WmiPrvSE 0.3
+of a processor a waiter - and the `Get-VM` calls cost vmms and the WMI service about 0.04 a waiter. A
+run that waits the new way costs nothing these counters tell from no run at all.
+
+So WmiPrvSE moves too, by what the runners' memory reads cost it, and no further: the rest of its
+load is other programs'. At the rate measured here, the 26 reads of the 04:09 trace come to about two
+of its five processors - an estimate, as the cost of a read depends on what else the host is doing.
+
+### 4.11 The .NET 11 SDK beside .NET 10 - the build pool, both Outlook guests and the Exchange VM, 2026-11-18 (Q172)
 
 **Why this section exists.** The maintainer moved OutlookAI to .NET 11 on 2026-11-18 (Q172). Nothing
 on .NET 11 can be tested before the checkpoints a runner restores carry the .NET 11 SDK, and while

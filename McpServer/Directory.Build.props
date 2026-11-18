@@ -2,11 +2,12 @@
   <!--
     Shared build settings for all v3 McpServer projects (see v3.MD sections 0.4/0.5).
     Scoped to McpServer/ only - the VSTO add-in at the repo root is old-style MSBuild
-    and is not affected by this file.
+    and is not affected by this file. OutlookAI.Core keeps these settings when the add-in's
+    build builds it, through the add-in's reference to it (Q167 (a)).
 
     Build these projects by explicit csproj path (dotnet build McpServer/...), never
-    via OutlookAI.slnx: the solution only contains the VSTO project, which cannot be
-    built with `dotnet build`.
+    via OutlookAI.slnx: the solution holds the VSTO project, which cannot be built with
+    `dotnet build`, and OutlookAI.Core, which the add-in references.
   -->
   <PropertyGroup>
     <!--

@@ -1661,11 +1661,15 @@
 - [ ] **Fold every duplicated piece of code into one copy, and let the add-in use OutlookAI.Core
   (Q154, decided 2026-11-17).** The maintainer: *"Q154 b - refactor everything to bring this pattern
   everywhere relevant. I want as much code shared as possible. And as a rule no code duplicated."*
-  (`AGENTS.md`, Shared code; `QUESTIONS.md` decision log, 2026-10-11 and 2026-11-17). First the
-  add-in references Core's net48 build behind a small interface, which ends the "Phase-6 no-coupling
-  choice" (the gitignored v3.MD, lines 64, 79-80, 144, 184 and 264, and the comment at the top of the
-  add-in's signature catalog). Q162's signature choice is built on that reference, and Q145's writer
-  of an account's offline period goes into Core for the same reason. Then the copies go. A read-only
+  (`AGENTS.md`, Shared code; `QUESTIONS.md` decision log, 2026-10-11 and 2026-11-17). The add-in
+  references Core's net48 build since stage S1 (Q167 (a)), which ended the "Phase-6 no-coupling
+  choice" (the gitignored v3.MD, lines 64, 79-80, 144, 184 and 264): both add-in build scripts
+  restore Core's packages, the solution holds Core so that F5 builds it, and the add-in may use one
+  part of Core, the namespace `OutlookAI.Core.AddIn`, which nothing in it may use to attach to
+  Outlook, start a COM apartment thread or open the index (Q164 (a); `check-pinned-constants.ps1`
+  check 15). It uses none of Core yet. Q162's signature choice is built on that reference, and Q145's
+  writer of an account's offline period moves into that namespace for the same reason. Then the
+  copies go. A read-only
   survey of master 9f4646d, made 2026-11-17, found 73 groups: the add-in against Core (A01-A12, the
   signature catalog and the signature and draft-region bookmark code among them), the add-in's
   linked source files (L01-L13), the server's own repetition (S01-S14), test doubles and helpers
@@ -1674,8 +1678,8 @@
   its copies, how they diverged, a target home, its blockers and a stage of the survey's refactor
   plan. It is in `.work\dup-survey-2026-11\` of the maintainer's checkout - README.txt,
   inventory.tsv (one row a group), members.tsv (every copy's file and lines) and the detectors' raw
-  output - which is gitignored, so not in a clone. How far, and in what order, is asked as Q163
-  onwards, not answered yet.
+  output - which is gitignored, so not in a clone. How far, and in what order, was decided on
+  2026-11-18 as Q163 to Q171.
   Folded so far, each with its CHANGELOG entry, into `McpServer/OutlookAI.McpServer.Tests/Support/`:
   the survey's T01, T02 and T04 (the stand-ins for Outlook's connection and for the search index),
   T07 (repository paths; four live-tier fixtures in `T2/` still read the test project's folder
@@ -1686,10 +1690,19 @@
   `ThreadWalks`; six more suites - the thread, unindexed-store and folder-walk ones - still spell
   that mailbox's SID, prefix and frontier under names of their own, beside stores of their own).
   PowerShell, into `Testbed/guest/ScriptHelpers.ps1` (decision 215 (a)), held there by
-  check-powershell-51 check 4: P01's `Invoke-NativeCommand` for 13 of its 17 copies, and P09's
-  `Format-Seconds`, the build-VM runner's copy of which rounded 119.6 s to "1 m 60 s".
+  check-powershell-51 check 4: P01's `Invoke-NativeCommand` for 13 of its 17 copies, P09's
+  `Format-Seconds`, the build-VM runner's copy of which rounded 119.6 s to "1 m 60 s", P02's
+  `Invoke-Logged`, `Show-LogTail` and `Format-Argument`, and P12's `Test-IsElevated`; P11's module
+  import is `Testbed/host/OwnEditionModules.ps1`, which the `Tools/` scripts dot-source too.
   Invoke-LiveTierOnGuest.ps1 and Invoke-TrustRemovalProbe.ps1 fold with the rest of S7d,
   Build-Corpus.ps1 and Reset-HubPopulation.ps1 with S7c, and the check lists them until they do.
+  What remains, one stage at a time: S3, the linked files and the shared logic (L01-L07, A06, A07,
+  A10) into Core, the logic only the add-in runs into `OutlookAI.Core.AddIn` (Q163 (a)); S4, the
+  signature and draft code (A01-A05, A08, A09, A12) with Q162's checkbox, Core winning where the
+  copies drifted apart and the pane's visible differences measured on a test machine first
+  (Q165 (c)), and the pane driven on a test machine (Q168 (b)); S6, the server's own repetition
+  (S01-S14). In parallel: the rest of the shared test code (S5a), the PowerShell helpers (S7), and
+  the rules restated in C# and PowerShell as shared C# source (Q171).
 
 - [ ] **Let the add-in's AI choose the signature by itself, once the add-in uses OutlookAI.Core (Q158
   and Q162, decided 2026-11-17).** Signatures are managed through the MCP server only; the add-in
@@ -1757,8 +1770,9 @@
   0x665A (days) in the account's own Exchange provider section, Outlook's eleven slider positions
   are the eleven pairs of Q143, and a pair written with Outlook closed or while it runs is honoured
   at its next start. The writer is built, in Core: `AccountOfflinePeriodWriter`, with T1
-  `AccountOfflinePeriodWriterTests`. What waits: the add-in referencing Core, which is the
-  code-sharing refactor's first stage and waits on Q163 to Q172. Then implement
+  `AccountOfflinePeriodWriterTests`. The add-in references Core since the code-sharing refactor's
+  first stage (Q167 (a)), but may call only Core's namespace `OutlookAI.Core.AddIn` (Q164 (a)), so
+  what waits is moving the writer, and the profile reader it uses, into it. Then implement
   `IAccountOfflinePeriods` (`Services/AccountOfflinePeriods.cs`, which says what it must do), set it
   in `OutlookTuningService.AccountPeriods`, and tell the user the new period takes effect when
   Outlook next starts. The dialog and the removal below both use it. Not measured: whether a running
@@ -1808,10 +1822,10 @@
 - [ ] **Remove the testbed's .NET 10 checkpoints once every branch is on .NET 11 (Q172).**
   `CP-03-SDK-TEST-READY-UTC` on the three build VMs, and `CP-22C-FROZEN-CLOCK` and
   `CP-16B-FROZEN-CLOCK` on the Outlook guests, stay only for branches whose runners still name them
-  (Docs/live-tier-on-the-vm.md section 4.10). Once no branch does: remove them (`Remove-VMSnapshot`;
+  (Docs/live-tier-on-the-vm.md section 4.11). Once no branch does: remove them (`Remove-VMSnapshot`;
   Hyper-V merges their disks), take them out of `Testbed/testbed.json`, and keep
   `.work/media/dotnet-sdk-10.0.401-win-x64.exe` only while a checkpoint still needs it - recording it
-  in section 4.10. `OutlookAI-Exchange`'s older checkpoints are its rebuild points and stay.
+  in section 4.11. `OutlookAI-Exchange`'s older checkpoints are its rebuild points and stay.
 
 - [ ] **Decide whether the draft tools refuse an attachment path Outlook cannot take (found
   2026-11-18, by save_attachment's live tests).** On the unindexed test guest, `Attachments.Add` on a
