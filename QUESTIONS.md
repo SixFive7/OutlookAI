@@ -373,18 +373,17 @@ spelling".** See the decision log below.
 
 **What this is.** Forty-two questions went to the maintainer on 2026-11-18, and he sent 41 one-line
 answers the same day; a forty-third, Q214, raised by his answer to Q173, was asked and answered that
-day too. The questions as asked, each with its primer, context, directions and
-recommendation, are in `.work\open-questions-2026-11-18.md` of his checkout, which is gitignored, so
-not in a clone; what the decisions rest on is restated here, with placeholders where the questions
-named real mailboxes. Words in quotes are his, verbatim, spelling included. Where he answered
-"rec", the recommendation he had been given was taken, and it is spelled out. Five of the 42 did
-not end in a plain decision:
-- **Q172** drew a question back from him and is open: two follow-ups went to him the same day, the
-  second on how the server gets its .NET runtime.
-- **Q173** drew a question back too; after a follow-up he answered *"173 b"*, which drops CodeQL.
+day too. The questions as asked, each with its primer, context, directions and recommendation, are
+in `.work\open-questions-2026-11-18.md` of his checkout, which is gitignored, so not in a clone;
+what the decisions rest on is restated here, with placeholders where the questions named real
+mailboxes. Words in quotes are his, verbatim, spelling included. Where he answered "rec", the
+recommendation he had been given was taken, and it is spelled out. Five of the 42 did not end in a
+plain one-line decision:
+- **Q172 and Q173** drew questions back from him, and were decided the same day after follow-ups;
+  the exchanges are quoted below.
 - **Q197 and Q199**, which concern CodeQL alone, are superseded by Q173 (b). Q197's line, which
   arrived as *"ec"*, needs no confirming now.
-- **Q183** asked for an action of his, not a decision, and still waits for it.
+- **Q183** asked for an action of his, not a decision; it was done the same day.
 
 One decision was taken on his behalf the same day, under his answer to Q131 and Q132; it is
 recorded with Q207.
@@ -446,14 +445,27 @@ refactor goes; `TODO.md` holds it.
   recommendation**: (c), C# source files both sides compile, as one file already is, for the Windows
   interop code and the signature check; (a), checked copies, for the installer, the documents and
   the build files.
-- **Q172 - the add-in's C# version. Open: two follow-ups went to him on 2026-11-18, the second on
-  how the server gets its .NET runtime.** The add-in targets .NET Framework 4.8 and compiles as
-  C# 7.3 by default; the server's projects are on .NET 10, and Core is built for both. Core's
-  public code works with 7.3. Directions: (a) keep 7.3 during the refactor and revisit after,
-  recommended; (b) the latest version; (c) a newer pinned version with null checks on. His answer
-  reaches past the add-in: *"172 move everything to the latest possible .net or .net core version
-  (beware that .net 11 just released)"*. Until the follow-ups are answered, no project's framework
-  or language version changes.
+- **Q172 - the add-in's C# version, and then every project's .NET.** The add-in targets .NET
+  Framework 4.8 and compiles as C# 7.3 by default; the server's projects are on .NET 10, and Core
+  is built for both. Core's public code works with 7.3. Directions: (a) keep 7.3 during the
+  refactor and revisit after, recommended; (b) the latest version; (c) a newer pinned version with
+  null checks on. His answer reached past the add-in: *"172 move everything to the latest possible
+  .net or .net core version (beware that .net 11 just released)"*. A follow-up went to him, and he
+  asked back: *"172 I tought we had a aot bianry with the framework (or at least parts of it)
+  included so that we would not have to install a framework on the machines?"* The answer was no:
+  the server has been framework-dependent since 2026-08-08, because of the updater's 50 MB download
+  cap, which a self-contained server would pass (`McpServer/README.md`). *"172 why is there a 50 MB
+  limit? That is silly. Double check this."* It is an arbitrary sanity limit from the bug-fix batch
+  of 2026-06-01 (0021ca1), compiled into every installed copy (`Services/UpdateService.cs`). A
+  second follow-up went to him, and he answered: *"172 can we go for option c but instead of
+  shipping it along and breaking our stupid file size limit we have the installer download it on
+  demand?"* **Decided**, all on 2026-11-18: everything that can moves to .NET 11 and C# 15, and the
+  VSTO add-in, which cannot run on modern .NET, stays on .NET Framework 4.8 but compiles as C# 15;
+  the shipped MCP server runs on .NET 11 with a private copy of the runtime, which the installer
+  downloads on demand - Microsoft's official runtime package, checked against its published hash -
+  and unpacks into OutlookAI's own per-user folder, so it needs no administrator rights and a silent
+  update does it too; and the installer itself stays under the 50 MB cap, which is unchanged.
+  Stream U builds it.
 
 #### The licence and CodeQL - Q173, Q214, Q197 to Q199
 
@@ -760,12 +772,9 @@ building it raised these six (this log, "Q147 carried out", 2026-11-17).
   only**, as built: no release-notes line, and no question from the add-in. A machine that only
   auto-updates keeps trusting the leaked root until an interactive install or uninstall.
 - **Q183 - the GitHub Support request to purge the old commits that hold the leaked signing key.**
-  Not a decision: he chose (a), "send it for me", on 2026-11-17 (the next entry), and the request
-  text is ready
-  (`.work/github-support-request-2026-11-17.md` of his checkout). What is left needs him: when he
-  says "open it", an agent opens GitHub Support's sign-in page in a browser, he signs in, the
-  two-factor step included, and the agent fills in the request, sends it, closes the browser and
-  deletes its saved login. Not done yet.
+  Not a decision but an action: he chose (a), "send it for me", on 2026-11-17 (the next entry), and
+  the request went to GitHub Support on 2026-11-18 as ticket #5020876, signed in as the repository
+  owner. A second request follows the personal-data history rewrite.
 
 #### The test VMs - Q195
 
@@ -980,7 +989,7 @@ The research behind several answers is in `.work\research-2026-10-11\` (q118-tra
 q147-signatures, q149-pins, q149-wordeditor) and the duplicated-code survey in
 `.work\dup-survey-2026-11\`, both in the maintainer's checkout. `.work` is gitignored, so neither is
 in a clone; what the decisions rest on is restated here. The survey's questions, Q163 to Q172, were
-answered on 2026-11-18, all but Q172 (the 2026-11-18 entry).
+answered on 2026-11-18 (the 2026-11-18 entry).
 
 #### Folders and stores by id - Q131 to Q136, 2026-10-11
 
@@ -1161,8 +1170,8 @@ signature", over the add-in's own copy of the server's signature catalog. Resear
   net48 build behind a small interface, superseding the no-coupling choice - and, as a standing rule
   now in `AGENTS.md` (Shared code), no code is duplicated. A survey of master 9f4646d found 73 groups
   of duplicated code (`.work\dup-survey-2026-11\`: README.txt, inventory.tsv, members.tsv); its
-  follow-up questions, Q163 to Q172, were answered on 2026-11-18, all but Q172 (the 2026-11-18
-  entry). `TODO.md` holds the refactor.
+  follow-up questions, Q163 to Q172, were answered on 2026-11-18 (the 2026-11-18 entry).
+  `TODO.md` holds the refactor.
 - **Q155 - which Outlook profile, 2026-11-17.** Outlook uses the profile it runs on, which is not
   the default one after `/profile` or the profile picker; OutlookAI read only the default profile,
   and with none recorded it merged every profile into one list. *"Q155 c - Always be explicit. A
