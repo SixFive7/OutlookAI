@@ -397,6 +397,41 @@ its mailbox tests on, and change nothing you install.
   a resting copy holds disk and no memory. The idle-saver watches every copy. The Exchange test
   machine is never copied: it holds a real Microsoft 365 sign-in.
 
+- ✅ **A fifth guard fails a release or a build-VM run that finds personal data in the repository.**
+  An audit of 2026-11-17 found a third party's shared mailbox, a delegate's name, a colleague's first
+  name and the maintainer's own user name, computer name and mailbox details in this public
+  repository, most of them written there by agents. `Tools/Checks/check-personal-data.ps1` looks
+  for them in every tracked file: the known values from a private list kept only in the maintainer's
+  checkout - nothing about them is committed, not even a hash, which a dictionary would turn back
+  into a short word (Q196) - and, by shape, an e-mail address outside the reserved domains, a profile
+  path with a real-looking user name, a private key, a key or certificate file, a Windows default
+  computer name, and the names of the machine it runs on. A finding names the file, the line and the
+  rule, never the value. The release runs it under both PowerShells and refuses to pass without the
+  private list. Its self-test runs on the build VM, which gets a copy of the list for each run: it
+  goes straight from the checkout to the VM, is never fetched back, and is reverted with the VM, and
+  a run that finds no list says so on its summary's first line. A baseline in
+  `Tools/Checks/personal-data.json` lets HEAD keep, per file, the occurrences it still has and not
+  one more. `.gitignore` now also keeps out `*.p12`, `*.snk`, `*.pem` and `*.key` beside `*.pfx`,
+  and the guard fails if those rules go (Q190).
+
+- ✅ **Git hooks refuse a commit, a commit message or a push that would publish personal data.**
+  `Tools/Install-GitHooks.ps1 -Execute` puts pre-commit, commit-msg and pre-push hooks into the main
+  repository's `.git/hooks`, which every worktree shares, with a copy of the guard for them to run,
+  so a worktree on an older branch is checked as well. They read the private list of real values in
+  the maintainer's checkout, from any worktree. A commit fails only when it adds an
+  occurrence to a file, so an edit next to a value HEAD still holds goes through. Tried in a scratch
+  repository on 2026-11-17: a value in a file, in a commit message and in a pushed commit was
+  refused, from the main checkout and from a linked worktree, and a clean commit and push went
+  through (Q190).
+
+- 📝 **AGENTS.md says to write placeholders, never personal data, in everything committed.**
+  That covers every tracked file, commit message, TODO item and release note: `<user>`,
+  `<computer>`, an address under a reserved domain, or "the Exchange VM's mailbox". The real values
+  are kept only in the maintainer's checkout, in `.work/personal-data/identifiers.json`. AGENTS.md
+  also holds the one-off exception for `git filter-repo`, the tool of the coming history rewrite
+  (Q187), and QUESTIONS.md records the maintainer's answers of 2026-11-17 on personal data in the
+  public history, Q183 to Q193.
+
 - ✅ **The Outlook test machines keep a full crash dump whenever Outlook crashes in a live run.**
   The one-call runner switches Windows Error Reporting's own crash dumps on at every run, on the
   frozen checkpoints as they are, brings every dump back with the run's results, and reads each one
@@ -1044,6 +1079,31 @@ its mailbox tests on, and change nothing you install.
   network clears the backoff and checks shortly after, and "Check for updates" always runs straight
   away.
 
+- 📝 **The documents and the TODO list name no real person, address or machine any more (Q189).**
+  They quoted the maintainer's computer name, his user name in paths under his profile, his
+  personal and business addresses, the item counts of his mailboxes, a colleague's first name, and,
+  in AGENTS.md, the Exchange VM's real mailbox. They now say "the maintainer's workstation",
+  `C:\Users\<user>\`, addresses under reserved domains, rounded counts, "a colleague" and "the
+  Exchange VM's mailbox". The Exchange VM's runbook section, `Testbed/README.md` and
+  `Testbed/testbed.json` call its real mailbox `bystander@exchange-vm.invalid`, the name its live
+  tests use for it. `Testbed/MEDIA.md` and the runbook call the Office configuration the workstation
+  was built from `Workstation.xml`.
+
+- ✅ **Tests use placeholder stores, names and addresses instead of real ones (Q189).**
+  Twelve tests named their example stores after the maintainer's own Outlook profile: his address,
+  his name and a real archive's file name. They now use `maintainer@personal.invalid`, `Alex
+  Example` and `Archive Old.pst`, which test the same things - case, spaces and dots in a store
+  name. Eight more used a third party's shared mailbox as the store in audit-log lines, a delegate's
+  first and full name as store names, the maintainer's name in a signature and his surname as a
+  sender to search for, and toy addresses at real domains, as two newer signature tests did too.
+  They now use `shared-mailbox@exchange-org.invalid`, `Ann` and `Ann van Example`, `Alex Example`,
+  `example` and addresses under `example.com` and `b.example`. Five live-test comments say "the hub" where they named the shared mailbox, and
+  one no longer gives the item counts of a real mailbox. The testbed scripts' self-tests refuse a
+  made-up workstation, `devuser` on `DEV-PC`, instead of the maintainer's own user and computer
+  names, and the CodeQL script's licence fixture names `Alex Example`. The baseline of
+  `Tools/Checks/check-personal-data.ps1` comes down with every such change, and is empty once the
+  tests and the testbed need no real value at all.
+
 - ✅ **The Outlook test machines run every test at a frozen time, so their test mail never ages (Q130).**
   Each machine rests on a checkpoint taken with Hyper-V's time synchronisation off, so every run
   starts at the same instant just after its test data's date: `CP-20C-FROZEN-CLOCK` on the indexed
@@ -1363,6 +1423,14 @@ its mailbox tests on, and change nothing you install.
   Items. The `store` and `folder` arguments of `search`, `thread`, `list_folders`, `goto_folder` and
   `show_search_results` are gone too, replaced by `store_id` and `folder_id`. A call that still
   passes one is refused, naming what replaced it.
+
+- 🗑️ **The operator console keeps its corpus commands and loses the July 2026 incident ones (Q170).**
+  The maintainer closed that incident, so `OutlookAI.RemediationTools` no longer has `audit`,
+  `refile`, `purge` and `dedupe`, nor the decision rules, mailbox helper and MCP client only they
+  used, nor their T1 test. What the test machines use stays: the corpus and fixture-population
+  commands, their COM session and their STA runner, all of which still build. The corpus tests
+  that proved the corpus tag apart from the artifact tag now read the live tier's own tag and
+  sweep fragment, the definitions the sweep matches with, instead of the incident tool's copy.
 
 ### Fixed
 

@@ -87,6 +87,14 @@
     rarely long; with eight agents queueing it was (the maintainer, 2026-11-17: "try to parallelize
     as much as possible"), at 27.5 GB of disk a clone (measured) and, only while it runs, 6 GB of memory.
 
+    THE PRIVATE LIST OF PERSONAL DATA (Q196 (c), 2026-11-18). Tools/Checks/check-personal-data.ps1
+    knows the identifiers it guards only from .work\personal-data\identifiers.json - nothing about
+    them is committed - so each run that runs self-tests copies that file into the VM: from this
+    checkout's .work, else from the main checkout's. It goes straight from there to the VM, beside
+    the run and outside its results, so it is never fetched back, and the revert after the run takes
+    it with everything else. A run that finds no list says so in its log, its summary's headline and
+    summary.json: the known identifiers were NOT checked.
+
     CREDENTIALS only through Testbed/host/Get-GuestCredential.ps1, from the main checkout - found
     with `git rev-parse --git-common-dir`, so this runs from any worktree - or -CredentialRepoRoot.
     Never printed, never written.
@@ -241,6 +249,11 @@ $BuildVmTimeZone = 'UTC'
 $GuestRunRoot = 'C:\OutlookAI-Q5\run'
 $GuestFeedRoot = 'C:\OutlookAI-Q5\nuget-offline'
 $GuestScriptName = 'Invoke-BuildVmRun.ps1'
+# The private list of personal data (Q196 (c)): where the guard reads it in a checkout, and where a run
+# stages it in the VM - beside the run, outside its results. Invoke-BuildVmRun.ps1 moves it into the
+# source tree's .work for the self-tests; -SelfTest holds the two scripts to the same name.
+$PrivateListRelative = '.work\personal-data\identifiers.json'
+$GuestPrivateListRelative = 'personal-data\identifiers.json'
 $LeaseReasonPrefix = 'Invoke-TestsOnBuildVm'
 $MaxClockSkewSeconds = 2
 
@@ -564,6 +577,41 @@ function Split-IncludeList {
 # - or counting it under Windows PowerShell 5.1, which gives a lone object no Count - broke on the
 # commonest failing run there is. The verdict fields are Get-HostVerdict's; the figures are the
 # TRX file's and run.json's, the two things that verdict is decided from.
+# The private list a run stages: this checkout's, else the main checkout's; $null when neither has one.
+function Find-PrivateList([string] $Checkout, [string] $MainCheckout) {
+    foreach ($root in @($Checkout, $MainCheckout)) {
+        if (-not $root) { continue }
+        $candidate = Join-Path $root $PrivateListRelative
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate }
+    }
+    return $null
+}
+
+# What a run says about the personal-data check: State for summary.json, Line for summary.txt, and
+# Headline for the first line when the known identifiers were NOT checked - never a quiet pass.
+function Get-PersonalDataState([bool] $SelfTestsSkipped, [string] $StagedFrom, [object] $GuestPlaced, [string[]] $LookedIn) {
+    if ($SelfTestsSkipped) { return [pscustomobject]@{ State = 'self-tests skipped'; Line = $null; Headline = $null } }
+    if (-not $StagedFrom) {
+        return [pscustomobject]@{
+            State    = 'not checked: no private list'
+            Line     = "personal   NOT CHECKED: no private list at $($LookedIn -join ' or ') - check-personal-data's self-test held the tree to the generic shapes only, and the known identifiers were not checked"
+            Headline = 'personal-data identifiers NOT checked (no private list)'
+        }
+    }
+    if ([string]$GuestPlaced -ne 'placed') {
+        return [pscustomobject]@{
+            State    = 'not checked: staged, not placed'
+            Line     = "personal   NOT CHECKED: the private list was staged but the VM did not put it in the source tree ('$GuestPlaced') - the known identifiers were not checked"
+            Headline = 'personal-data identifiers NOT checked (the list did not reach the tree)'
+        }
+    }
+    return [pscustomobject]@{
+        State    = 'checked'
+        Line     = 'personal   the known identifiers were checked against the private list, staged for this run only - never fetched back, and reverted with the VM'
+        Headline = $null
+    }
+}
+
 function New-RunSummary {
     param(
         [string]   $RunId,
@@ -583,7 +631,8 @@ function New-RunSummary {
         [string]   $Vm,             # the pool member the run took; '' when it took none
         [bool]     $ZonePassRequested = $false,
         [object]   $ZonePass = $null,      # run.json's zonePass record, or $null
-        [object]   $ZoneTrx = $null        # ConvertFrom-TrxText's result for the zone pass, or $null
+        [object]   $ZoneTrx = $null,       # ConvertFrom-TrxText's result for the zone pass, or $null
+        [string]   $PersonalData = ''      # Get-PersonalDataState's State; '' when not known
     )
     $failed = @()
     $skipped = @()
@@ -627,6 +676,7 @@ function New-RunSummary {
         timings        = $Timings
         guestPhases    = $GuestPhases
         results        = $Results
+        personalData   = $(if ($PersonalData) { $PersonalData } else { $null })
     }
 }
 
@@ -868,6 +918,34 @@ Expected: 1</Message></ErrorInfo></Output></UnitTestResult>
     $list = New-Object System.Collections.Generic.List[string]
     Add-FailedTests -Lines $list -Title 'FAILED TESTS' -Failed @() -TrxFile 'vm\trx\suite.trx'
     Check 'and adds nothing when none failed' 0 $list.Count
+
+    Write-Host ''
+    Write-Host '== the private list of personal data (Q196 (c)): staged when found, and a run without it says so =='
+    $pdRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('oai-buildvm-pd-' + [guid]::NewGuid().ToString('N'))
+    try {
+        $checkoutDir = Join-Path $pdRoot 'worktree'
+        $mainDir = Join-Path $pdRoot 'main'
+        New-Item -ItemType Directory -Force -Path (Join-Path $mainDir '.work\personal-data') | Out-Null
+        New-Item -ItemType Directory -Force -Path $checkoutDir | Out-Null
+        Check 'neither checkout has one: none' $true ($null -eq (Find-PrivateList $checkoutDir $mainDir))
+        [System.IO.File]::WriteAllText((Join-Path $mainDir $PrivateListRelative), '{}')
+        Check 'an agent''s worktree finds the main checkout''s' (Join-Path $mainDir $PrivateListRelative) (Find-PrivateList $checkoutDir $mainDir)
+        New-Item -ItemType Directory -Force -Path (Join-Path $checkoutDir '.work\personal-data') | Out-Null
+        [System.IO.File]::WriteAllText((Join-Path $checkoutDir $PrivateListRelative), '{}')
+        Check 'and its own first, when it has one' (Join-Path $checkoutDir $PrivateListRelative) (Find-PrivateList $checkoutDir $mainDir)
+    }
+    finally { if (Test-Path -LiteralPath $pdRoot) { Remove-Item -LiteralPath $pdRoot -Recurse -Force } }
+    $none = Get-PersonalDataState $false '' $null @('C:\a\.work\personal-data\identifiers.json')
+    Check 'no list: not checked, in summary.json' 'not checked: no private list' $none.State
+    Check 'and on the summary''s first line' $true ([string]$none.Headline).Contains('NOT checked')
+    Check 'and in its own line, naming where it looked' $true ($none.Line.StartsWith('personal   NOT CHECKED') -and $none.Line.Contains('C:\a\.work'))
+    Check 'staged but not placed: not checked either' 'not checked: staged, not placed' (Get-PersonalDataState $false 'C:\a\x.json' 'absent' @()).State
+    $ok = Get-PersonalDataState $false 'C:\a\x.json' 'placed' @()
+    Check 'staged and placed: checked, nothing on the first line' 'checked |' "$($ok.State) |$($ok.Headline)"
+    Check 'self-tests skipped: nothing to say' 'self-tests skipped' (Get-PersonalDataState $true '' $null @()).State
+    Check 'the guest stages it where this stages it' $true ([System.IO.File]::ReadAllText((Join-Path $PSScriptRoot "..\guest\$GuestScriptName")).Contains("'$GuestPrivateListRelative'"))
+    $j = New-RunSummary -RunId 'x' -Verdict ([pscustomobject]@{ Verdict = 'PASS'; Why = '' }) -Revision ([ordered]@{}) -Filter '' -Trx $null -SelfTests @() -SelfTestSkips @() -GuestVerdict 'PASS' -HostError '' -BuildErrors @() -PackagesStaged $false -Timings ([ordered]@{}) -GuestPhases ([ordered]@{}) -Results 'C:\x' -Vm 'OutlookAI-Build' -PersonalData $none.State
+    Check 'summary.json carries the state' 'not checked: no private list' $j.personalData
 
     Write-Host ''
     Write-Host '== the guest log is read with sharing, and a locked one is Busy, never an error =='
@@ -1297,6 +1375,12 @@ if (-not $CredentialRepoRoot) {
 $credentialFile = Join-Path $CredentialRepoRoot 'McpServer\OutlookAI.McpServer.Tests\live-fixtures\vm-credentials.json'
 if (-not (Test-Path -LiteralPath $credentialFile)) { Stop-Refused "no guest credential at $credentialFile. It lives in the main checkout only (gitignored); pass -CredentialRepoRoot if that is somewhere else." }
 
+# The private list of personal data, for check-personal-data's self-test (Q196 (c)). Only its path is
+# kept here: the file goes from where it lies straight to the VM, and nothing on this host copies it.
+$privateListLookedIn = @((Join-Path $repo $PrivateListRelative), (Join-Path $CredentialRepoRoot $PrivateListRelative)) | Select-Object -Unique
+$privateList = $null
+if (-not $SkipSelfTests) { $privateList = Find-PrivateList $repo $CredentialRepoRoot }
+
 if (-not $ResultsRoot) { $ResultsRoot = Join-Path $repo '.work\build-vm-runs' }
 $runId = New-RunId -When $tStart -Sha $sha
 $runDir = Join-Path $ResultsRoot $runId
@@ -1316,6 +1400,10 @@ $SelfTestInclude = @(Split-IncludeList $SelfTestInclude)
 if ($SkipSelfTests) { Say '  selftests skipped (-SkipSelfTests)' }
 elseif (@($SelfTestInclude).Count -gt 0) { Say "  selftests only $(@($SelfTestInclude) -join ', ')" }
 else { Say '  selftests every script under Testbed\ and Tools\ that has -SelfTest' }
+if (-not $SkipSelfTests) {
+    if ($privateList) { Say "  personal  the private list is staged for check-personal-data's self-test (from $(Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $privateList))))" }
+    else { Say "  personal  NO private list at $($privateListLookedIn -join ' or ') - the known identifiers will NOT be checked" }
+}
 Say "  results   $runDir"
 
 $t0 = Get-Date
@@ -1531,10 +1619,12 @@ try {
         param($root)
         if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
         New-Item -ItemType Directory -Force -Path $root | Out-Null
+        New-Item -ItemType Directory -Force -Path (Join-Path $root 'personal-data') | Out-Null
     }
     Copy-Item -LiteralPath $archive -Destination (Join-Path $GuestRunRoot 'Source.zip') -ToSession $session
     Copy-Item -LiteralPath (Join-Path (Split-Path -Parent $PSScriptRoot) (Join-Path 'guest' $GuestScriptName)) -Destination (Join-Path $GuestRunRoot $GuestScriptName) -ToSession $session
     Copy-Item -LiteralPath $requestPath -Destination (Join-Path $GuestRunRoot 'request.json') -ToSession $session
+    if ($privateList) { Copy-Item -LiteralPath $privateList -Destination (Join-Path $GuestRunRoot $GuestPrivateListRelative) -ToSession $session }
     Measure-Phase 'stage' $t0
 
     # Run - and once more if the feed lacked a package this revision needs.
@@ -1705,8 +1795,12 @@ if ($null -ne $guestRecord -and $null -ne $guestRecord.phases) {
 }
 
 $lines = New-Object System.Collections.Generic.List[string]
+$guestPlaced = $null
+if ($null -ne $guestRecord) { $guestPlaced = $guestRecord.privateList }
+$personalData = Get-PersonalDataState ([bool]$SkipSelfTests) ([string]$privateList) $guestPlaced @($privateListLookedIn)
 $headline = "== $runId - $($hostVerdict.Verdict) (exit $exitCode)"
 if ($hostVerdict.Why) { $headline += " - $($hostVerdict.Why)" }
+if ($personalData.Headline) { $headline += " - $($personalData.Headline)" }
 $lines.Add($headline + ' ==')
 $lines.Add("revision   $($sha.Substring(0, 12)) - $subject")
 $lines.Add("           $Ref in $repo$(if ($dirtyCount -gt 0) { " ($dirtyCount uncommitted change(s) NOT included)" })")
@@ -1724,6 +1818,7 @@ foreach ($l in @(Format-ZonePassLines -Requested $zonePassRequested -ZonePass $z
 if ($SkipSelfTests) { $lines.Add('self-tests skipped') }
 elseif ($null -eq $guestRecord) { $lines.Add('self-tests not known - no run.json came back') }
 else { $lines.Add(("self-tests {0} run: {1} passed, {2} failed; {3} skipped by reason" -f $selfTests.Count, ($selfTests.Count - $selfTestsFailed), $selfTestsFailed, $selfTestSkips.Count)) }
+if ($personalData.Line) { $lines.Add($personalData.Line) }
 if ($null -ne $guestRecord -and $null -ne $guestRecord.machine) {
     $m = $guestRecord.machine
     $lines.Add(("machine    {0} ({1}), {2} / {3}, {4}, {5} CPU, {6} GB, session {7}, Outlook.Application registered: {8}" -f $m.computerName, $m.os, $m.culture, $m.uiCulture, $m.timeZone, $m.logicalProcessors, $m.memoryGB, $m.sessionId, $m.outlookInstalled))
@@ -1782,7 +1877,7 @@ $lines.Add('           summary.txt and summary.json here; vm\run.log, vm\trx\sui
 Set-Content -LiteralPath (Join-Path $runDir 'summary.txt') -Value $lines -Encoding UTF8
 $summaryFilter = $filterShown
 if ($SkipSuite) { $summaryFilter = '' }
-$summary = New-RunSummary -RunId $runId -Verdict $hostVerdict -Revision ([ordered]@{ ref = $Ref; sha = $sha; subject = $subject; repo = $repo; uncommittedLeftOut = $dirtyCount }) -Filter $summaryFilter -Trx $trx -SelfTests $selfTests -SelfTestSkips $selfTestSkips -GuestVerdict $guestVerdict -HostError $infraError -BuildErrors $buildErrors -PackagesStaged $packagesStaged -Timings $timings -GuestPhases $guestPhases -Results $runDir -Vm $BuildVmName -ZonePassRequested $zonePassRequested -ZonePass $zonePass -ZoneTrx $zoneTrx
+$summary = New-RunSummary -RunId $runId -Verdict $hostVerdict -Revision ([ordered]@{ ref = $Ref; sha = $sha; subject = $subject; repo = $repo; uncommittedLeftOut = $dirtyCount }) -Filter $summaryFilter -Trx $trx -SelfTests $selfTests -SelfTestSkips $selfTestSkips -GuestVerdict $guestVerdict -HostError $infraError -BuildErrors $buildErrors -PackagesStaged $packagesStaged -Timings $timings -GuestPhases $guestPhases -Results $runDir -Vm $BuildVmName -ZonePassRequested $zonePassRequested -ZonePass $zonePass -ZoneTrx $zoneTrx -PersonalData $personalData.State
 ($summary | ConvertTo-Json -Depth 6) | Set-Content -LiteralPath (Join-Path $runDir 'summary.json') -Encoding UTF8
 Write-History ("end    $runId  $($hostVerdict.Verdict)  $(Format-Seconds $timings['total'])  $BuildVmName")
 

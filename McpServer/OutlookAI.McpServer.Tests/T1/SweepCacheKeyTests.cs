@@ -54,7 +54,7 @@ public sealed class SweepCacheKeyTests
     private const string IndexedPrefix = "mapi16://" + Sid + "/" + IndexedStore + "($deadbeef)";
 
     /// <summary>A data file the index catalog has never heard of - the fallback window's own case.</summary>
-    private const string PstStore = "Archive 2019.pst";
+    private const string PstStore = "Archive Old.pst";
 
     private static readonly DateTime Frontier = new(2026, 8, 18, 9, 30, 0, DateTimeKind.Utc);
 

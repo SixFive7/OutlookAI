@@ -365,7 +365,7 @@ public sealed class StoreIndexMatcherTests
     public void ADelegateStore_IsNeverAStoreOfItsOwn()
     {
         StoreIndexIdentity host = PstStore("host", @"C:\h.pst");
-        var delegated = new StoreIndexIdentity("Jan", 1, StoreHash.Candidates(Hex(Pst(@"C:\h.pst")), true, false, null, null, null));
+        var delegated = new StoreIndexIdentity("Ann", 1, StoreHash.Candidates(Hex(Pst(@"C:\h.pst")), true, false, null, null, null));
         StoreScopeInfo root = IndexRootOf("host", @"C:\h.pst");
 
         StoreIndexMap map = StoreIndexMatcher.Match(new[] { host, delegated }, new[] { root });

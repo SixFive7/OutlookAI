@@ -357,7 +357,7 @@ namespace OutlookAIRelease
 # The guards, and the two read-only comparisons D7 (c) runs here.
 $GuardDirectory = 'Tools\Checks'
 $GuardPattern = 'check-*.ps1'
-$ExpectedGuardCount = 4
+$ExpectedGuardCount = 5
 $PinnedConstantsGuard = 'check-pinned-constants.ps1'
 $D7Comparisons = @('Testbed\host\Publish-AddInPayload.ps1', 'Tools\Switch-AddInBuild.ps1')
 $D7Switch = 'CompareInstalledTargets'

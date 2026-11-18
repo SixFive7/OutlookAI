@@ -172,7 +172,7 @@ public sealed class ThreadFreshnessTests
         capped.MemberCapReached = true;
 
         ThreadLiveInfo unindexed = Walked(store: "alice@example.com");
-        unindexed.StoresWithoutIndex = new[] { "Archive 2019.pst" };
+        unindexed.StoresWithoutIndex = new[] { "Archive Old.pst" };
 
         ThreadLiveInfo unqueried = Walked(store: "alice@example.com");
         unqueried.StoresNotQueried = new[] { "bob@example.com" };

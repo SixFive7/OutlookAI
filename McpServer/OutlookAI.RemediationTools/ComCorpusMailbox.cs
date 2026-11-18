@@ -15,7 +15,8 @@ namespace OutlookAI.RemediationTools;
 /// delete, release.
 /// <para>
 /// The COM patterns are the project's proven ones, taken from
-/// <c>LiveOutlookTestMailer</c> by way of <see cref="ComMailbox"/>: a dedicated STA thread,
+/// <c>LiveOutlookTestMailer</c> (and the incident tooling's mailbox helper, deleted on 2026-11-18):
+/// a dedicated STA thread,
 /// explicit <see cref="Marshal.ReleaseComObject"/> on every reference, a
 /// <c>GetTable</c> LIKE prefilter with an ordinal re-check for anything selective, and
 /// EntryID-addressed writes. One difference from both, forced by the workload: a build of
@@ -86,7 +87,7 @@ public static class ComCorpusMailbox
     /// this scan did not look at. <c>corpus-reindex</c> - the recovery path for a lost
     /// manifest - would have reported ZERO items with 40 000 in the store, and the
     /// post-teardown "remaining" count would have said 0 for the same reason. It is the
-    /// same lesson <see cref="ComMailbox.SweepFolderIds"/> already records about the Outbox:
+    /// same lesson the live tier's artifact sweep records about the Outbox:
     /// a folder nothing sweeps is a folder items can be stranded in indefinitely.
     /// </para>
     /// </summary>

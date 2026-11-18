@@ -1,5 +1,6 @@
 using System.Globalization;
 using OutlookAI.Core.Com;
+using OutlookAI.McpServer.Tests.T2;
 using OutlookAI.RemediationTools;
 using Xunit;
 
@@ -142,7 +143,7 @@ public class CorpusGeneratorTests
         // owns the full invariant, in both directions and on the bracket-free fragments the
         // sweep actually matches; this is the one-line version, here because this is the file
         // anyone editing the generator's tags is already reading.
-        Assert.NotEqual(RemediationRules.SubjectTag, CorpusPlan.SubjectTag);
+        Assert.NotEqual(LiveOutlookTestMailer.SubjectTag, CorpusPlan.SubjectTag);
     }
 
     // ----------------------------------------------------------- size distribution

@@ -1,0 +1,12 @@
+{
+  "about": [
+    "The baseline of Tools/Checks/check-personal-data.ps1 (Q190 (a)): per file and rule, how many occurrences of",
+    "personal data HEAD may still hold - more fails, fewer is reported so the ceiling comes down. It names files and",
+    "rule ids only. The identifiers themselves, and anything derived from them, live only in the maintainer's",
+    "checkout, in .work/personal-data/identifiers.json (Q196 (c)); the guard refuses this file if it carries any.",
+    "One entry per line."
+  ],
+  "baseline": [
+    { "path": "Docs/live-tier-on-the-vm.md", "rule": "email", "count": 1 }
+  ]
+}
