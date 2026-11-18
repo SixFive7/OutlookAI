@@ -1102,7 +1102,7 @@ public sealed class LiveQ149WindowlessComposeTests
         // The program a person types in, standing in: brought to the foreground before the draft, checked after it. In P4
         // and P5 the person types in it from just before the draft until the draft returns.
         bool holderHadForeground = _holder != null && _holder.TakeForeground();
-        double idleSecondsBefore = LiveDisconnectRecoveryTests.WindowProbe.UserIdleSeconds();
+        double idleSecondsBefore = WindowProbe.UserIdleSeconds();
         if (_typing && _holder != null)
         {
             _holder.StartTyping(TypingIntervalMs);
