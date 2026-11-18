@@ -105,8 +105,8 @@ its mailbox tests on, and change nothing you install.
   The draft tools take signature "none" for no signature, and update_draft takes it to remove the
   draft's signature. Left out, a draft gets the sending account's default; a named signature must be
   one the sending account can use. The answer names the signature, where it came from (asked for, the
-  account's default, a policy's default, or none), the reason in one sentence and the profile, and
-  suggests the account's own default when the draft got something else. A reply from a shared or
+  account's default, or none), the reason in one sentence and the profile, and suggests the
+  account's own default when the draft got something else. A reply from a shared or
   delegate mailbox gets no default, as before, and now says so. The tool descriptions and the
   server's instructions spell all of this out.
 
