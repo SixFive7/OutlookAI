@@ -9,6 +9,8 @@ using OutlookAI.Core.Services;
 
 using Xunit;
 
+using static OutlookAI.McpServer.Tests.ThreadWalks;
+
 namespace OutlookAI.McpServer.Tests.T1;
 
 /// <summary>
@@ -262,17 +264,6 @@ public sealed class ThreadUnindexedStoreTests
 
     // ================================================================== fixtures
 
-    private static ThreadLiveInfo Walked(string? anchorStore)
-    {
-        return new ThreadLiveInfo
-        {
-            Performed = true,
-            MembersWalked = 3,
-            MembersAdded = 3,
-            AnchorStore = anchorStore,
-        };
-    }
-
     private static readonly ComStoreDetail[] MixedProfile =
     {
         new(IndexedStore, "store-alice", 0, true),
@@ -288,88 +279,11 @@ public sealed class ThreadUnindexedStoreTests
             new DirectGateway(WalkSession.Create(profileStores ?? MixedProfile, walkedStore)), null, index);
     }
 
-    private static StubIndexClient OnlyAliceIndexed() => new(new[] { IndexedPrefix });
+    private static StubIndexClient OnlyAliceIndexed() => new(new[] { IndexedPrefix }, Frontier);
 
-    private static StubIndexClient EverythingIndexed() => new(new[] { IndexedPrefix, PstPrefix });
+    private static StubIndexClient EverythingIndexed() => new(new[] { IndexedPrefix, PstPrefix }, Frontier);
 
-    private static StubIndexClient NothingIndexed() => new(Array.Empty<string>());
-
-    /// <summary>
-    /// A Windows Search stand-in that knows a chosen SET of store prefixes and nothing else,
-    /// answering the probe statements by shape. Copied in spirit from
-    /// <c>UnindexedStoreReportingTests</c>: this file is about what the answer SAYS.
-    /// </summary>
-    private sealed class StubIndexClient : IIndexClient
-    {
-        private const string DiscoveryTail = " System.ItemUrl FROM SystemIndex WHERE System.Kind='email'";
-
-        private readonly IReadOnlyList<string> _knownPrefixes;
-
-        internal StubIndexClient(IReadOnlyList<string> knownPrefixes)
-        {
-            _knownPrefixes = knownPrefixes;
-        }
-
-        public IndexProviderKind Provider => IndexProviderKind.OleDb;
-
-        public IReadOnlyList<IReadOnlyDictionary<string, object?>> ExecuteRows(
-            string sql, int maxRows, int? commandTimeoutSeconds = null)
-        {
-            if (sql.EndsWith(DiscoveryTail, StringComparison.Ordinal))
-            {
-                return _knownPrefixes
-                    .Select(p => (IReadOnlyDictionary<string, object?>)new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-                    {
-                        ["System.ItemUrl"] = p + "/0/Inbox/sampled-item",
-                    })
-                    .ToList();
-            }
-
-            if (sql.Contains("System.Message.DateReceived FROM SystemIndex", StringComparison.Ordinal))
-            {
-                return Known(sql)
-                    ? Rows(new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-                    {
-                        ["System.Message.DateReceived"] = Frontier,
-                    })
-                    : Array.Empty<IReadOnlyDictionary<string, object?>>();
-            }
-
-            if (sql.StartsWith("SELECT TOP 1 System.ItemUrl FROM SystemIndex WHERE", StringComparison.Ordinal))
-            {
-                return Known(sql)
-                    ? Rows(new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-                    {
-                        ["System.ItemUrl"] = _knownPrefixes[0] + "/0/Inbox/probed-item",
-                    })
-                    : Array.Empty<IReadOnlyDictionary<string, object?>>();
-            }
-
-            return Array.Empty<IReadOnlyDictionary<string, object?>>();
-        }
-
-        private static IReadOnlyList<IReadOnlyDictionary<string, object?>> Rows(IReadOnlyDictionary<string, object?> row)
-        {
-            return new[] { row };
-        }
-
-        private bool Known(string sql)
-        {
-            int start = sql.IndexOf("SCOPE='", StringComparison.Ordinal);
-            if (start < 0)
-            {
-                return _knownPrefixes.Count > 0;
-            }
-
-            start += "SCOPE='".Length;
-            int end = sql.IndexOf('\'', start);
-            string scope = end < 0 ? sql.Substring(start) : sql.Substring(start, end - start);
-
-            return _knownPrefixes.Any(p =>
-                string.Equals(scope, p, StringComparison.OrdinalIgnoreCase)
-                || scope.StartsWith(p + "/0/", StringComparison.OrdinalIgnoreCase));
-        }
-    }
+    private static StubIndexClient NothingIndexed() => new(Array.Empty<string>(), Frontier);
 
     /// <summary>
     /// A session that answers the profile's store list and one conversation walk, and refuses

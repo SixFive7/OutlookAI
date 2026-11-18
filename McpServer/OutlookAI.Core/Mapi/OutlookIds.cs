@@ -79,8 +79,10 @@ namespace OutlookAI.Core.Mapi
     /// <item><term><c>S</c></term><description>a store: the 16-byte provider UID every entry id in
     /// it carries (bytes 4..19 of its root folder's id) - 28 characters. So a folder ID names its
     /// store as well, with no lookup: <see cref="StoreIdOfEntryId"/>.</description></item>
-    /// <item><term><c>T</c></term><description>a store whose root folder id carries no provider UID:
-    /// its own entry id (<c>Store.StoreID</c>), every byte kept.</description></item>
+    /// <item><term><c>T</c></term><description>a store whose root folder id carries no provider UID, or
+    /// whose root folder would not read: its own entry id (<c>Store.StoreID</c>), every byte kept. Every
+    /// store's root is read since 2026-11-18, an uncached Exchange store's too, so this is the
+    /// fallback, not a kind of store.</description></item>
     /// </list>
     /// <para>
     /// <b>The check character</b> is the polynomial check over GF(32) (generator <c>x</c>, modulus

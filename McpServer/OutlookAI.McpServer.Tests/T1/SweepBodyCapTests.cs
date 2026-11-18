@@ -41,15 +41,13 @@ namespace OutlookAI.McpServer.Tests.T1;
 /// </summary>
 public sealed class SweepBodyCapTests
 {
-    private const string Sid = "{S-1-5-21-1111111111-2222222222-3333333333-1001}";
-
-    private const string Store = "alice@example.com";
+    private const string Store = AliceMailbox.Store;
 
     private const string OtherStore = "Archive Old.pst";
 
-    private const string StorePrefix = "mapi16://" + Sid + "/" + Store + "($deadbeef)";
+    private const string StorePrefix = AliceMailbox.StorePrefix;
 
-    private static readonly DateTime Frontier = new(2026, 8, 18, 9, 30, 0, DateTimeKind.Utc);
+    private static readonly DateTime Frontier = AliceMailbox.Frontier;
 
     private static readonly ComStoreDetail[] ProfileStores =
     {
@@ -392,6 +390,39 @@ public sealed class SweepBodyCapTests
         Assert.False(read.BodyTruncated);
     }
 
+    // ============================================================ read's folder (2026-11-18)
+
+    [Fact]
+    [Trait("TimeZone", "Machine")]
+    public void ReadPrintsItsFolder_AsTheOtherToolsDo_NamesJoinedBySlash_WithoutTheStoreOrOutlooksEscapes()
+    {
+        // Decided 2026-11-18 (option (a)): read printed Outlook's own FolderPath - the store's name, backslashes and
+        // Outlook's escapes - where every other tool prints the folder's names joined by '/'. The store and its
+        // storeId are beside it already.
+        const string Whole = "the needle";
+        using MailService service = Service(
+            _ => SweepOf(Mail("AA1", body: Whole)),
+            entryId => Detail(entryId, Whole, "\\\\" + Store + "\\Inbox\\Projects\\a%2Fb 50%25"));
+
+        HitSummary hit = Assert.Single(service.Search(Request("needle")).Hits);
+        ReadOutcome read = service.Read(hit.Id!);
+
+        Assert.Equal("Inbox/Projects/a/b 50%", read.Folder);
+        Assert.Equal(Store, read.Store);
+    }
+
+    [Theory]
+    [InlineData("\\\\alice@example.com\\Inbox", "alice@example.com", "Inbox")]
+    [InlineData("\\\\alice@example.com", "alice@example.com", "")]
+    [InlineData("\\\\Outlook Data File\\Inbox\\Sub", "Outlook Data Fil", "Inbox/Sub")]
+    public void ReadsFolder_IsTheStoreRelativePath(string outlookFolderPath, string store, string expected)
+    {
+        // The third: an ANSI PST's display name is one character short of its root's (measured, Q92/Q99) - the
+        // first segment is dropped all the same.
+        Assert.Equal(expected, MailService.DescribeReadFolder(outlookFolderPath, store));
+        Assert.Null(MailService.DescribeReadFolder(null, store));
+    }
+
     // ===================================================================== fixtures
 
     private static SearchRequest Request(
@@ -461,12 +492,12 @@ public sealed class SweepBodyCapTests
             bodyTruncated: cut ? true : (bool?)null);
     }
 
-    private static ComItemDetail Detail(string entryId, string body)
+    private static ComItemDetail Detail(string entryId, string body, string? folderPath = null)
     {
         return new ComItemDetail(
             entryId: entryId,
             storeDisplayName: Store,
-            folderPath: "\\\\" + Store + "\\Inbox",
+            folderPath: folderPath ?? "\\\\" + Store + "\\Inbox",
             itemClass: 43,
             subject: "a test mail",
             senderName: "Bob",
@@ -490,57 +521,7 @@ public sealed class SweepBodyCapTests
         Func<string, ComItemDetail>? read = null)
     {
         return new MailService(
-            new DirectGateway(StandInSession.Create(ProfileStores, sweep, read)), null, new StubIndexClient());
-    }
-
-    /// <summary>
-    /// A Windows Search stand-in that knows one store and answers the probe statements by
-    /// shape, returning no SEARCH rows at all - so the index tier contributes nothing and the
-    /// question is what the freshness tier then reports about itself.
-    /// </summary>
-    private sealed class StubIndexClient : IIndexClient
-    {
-        private const string DiscoveryTail = " System.ItemUrl FROM SystemIndex WHERE System.Kind='email'";
-
-        public IndexProviderKind Provider => IndexProviderKind.OleDb;
-
-        public IReadOnlyList<IReadOnlyDictionary<string, object?>> ExecuteRows(
-            string sql, int maxRows, int? commandTimeoutSeconds = null)
-        {
-            if (sql.EndsWith(DiscoveryTail, StringComparison.Ordinal))
-            {
-                return Rows(StorePrefix + "/0/Inbox/sampled-item");
-            }
-
-            if (sql.Contains("System.Message.DateReceived FROM SystemIndex", StringComparison.Ordinal))
-            {
-                return new[]
-                {
-                    (IReadOnlyDictionary<string, object?>)new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-                    {
-                        ["System.Message.DateReceived"] = Frontier,
-                    },
-                };
-            }
-
-            if (sql.StartsWith("SELECT TOP 1 System.ItemUrl FROM SystemIndex WHERE", StringComparison.Ordinal))
-            {
-                return Rows(StorePrefix + "/0/Inbox/probed-item");
-            }
-
-            return Array.Empty<IReadOnlyDictionary<string, object?>>();
-        }
-
-        private static IReadOnlyList<IReadOnlyDictionary<string, object?>> Rows(string itemUrl)
-        {
-            return new[]
-            {
-                (IReadOnlyDictionary<string, object?>)new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-                {
-                    ["System.ItemUrl"] = itemUrl,
-                },
-            };
-        }
+            new DirectGateway(StandInSession.Create(ProfileStores, sweep, read)), null, new StubIndexClient(new[] { StorePrefix }, Frontier, everyScope: true));
     }
 
     /// <summary>

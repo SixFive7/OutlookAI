@@ -10,6 +10,8 @@ using OutlookAI.Core.Services;
 
 using Xunit;
 
+using static OutlookAI.McpServer.Tests.AliceMailbox;
+
 namespace OutlookAI.McpServer.Tests.T1;
 
 /// <summary>
@@ -41,16 +43,6 @@ namespace OutlookAI.McpServer.Tests.T1;
 /// </summary>
 public sealed class ScanDepthAndSweepScopeTests
 {
-    private const string Sid = "{S-1-5-21-1111111111-2222222222-3333333333-1001}";
-
-    private const string Store = "alice@example.com";
-
-    private const string StorePrefix = "mapi16://" + Sid + "/" + Store + "($deadbeef)";
-
-    private static readonly DateTime Frontier = new(2026, 8, 18, 9, 30, 0, DateTimeKind.Utc);
-
-    private static readonly ComStoreDetail[] ProfileStores = { new(Store, "store-alice", 0, true) };
-
     // ==================================================================== F4: the classifiers
 
     [Fact]
@@ -269,28 +261,6 @@ public sealed class ScanDepthAndSweepScopeTests
             .ToList();
     }
 
-    private static SearchRequest ExhaustiveRequest()
-    {
-        return new SearchRequest
-        {
-            Query = "test",
-            StoreId = TestFolders.StoreId(Store),
-
-            // An exhaustive scan refuses to run unbounded, so the request carries the bound
-            // its own validation demands.
-            FolderId = TestFolders.FolderId(Store, "Inbox"),
-            Exhaustive = true,
-            Top = 25,
-            SnippetChars = 0,
-        };
-    }
-
-    private static MailService Service(Func<string?, ComExhaustiveResult>? scan = null)
-    {
-        return new MailService(
-            new DirectGateway(StandInSession.Create(ProfileStores, Sweep, scan)), null, new StubIndexClient());
-    }
-
     /// <summary>A scan whose walk refused a subtree for being too deep.</summary>
     private static ComExhaustiveResult DeepScan(string? store) => Scan(store, depthLimitReached: true);
 
@@ -309,128 +279,5 @@ public sealed class ScanDepthAndSweepScopeTests
             rowsDropped: 0,
             rowsUnreadable: 0,
             depthLimitReached: depthLimitReached);
-    }
-
-    private static ComSweepResult Sweep(string? onlyStore)
-    {
-        return new ComSweepResult(
-            new[] { Mail("AA1") },
-            foldersSwept: 4,
-            foldersSkipped: 0,
-            sweptFolders: new[] { Store + "/Inbox" },
-            perStore: new[] { new ComStoreSweepCounters(Store, 4, 0, 0, 0) });
-    }
-
-    private static ComMailBrief Mail(string entryId)
-    {
-        return new ComMailBrief(
-            entryId: entryId,
-            storeDisplayName: Store,
-            storeId: "store-alice",
-            folderName: "Inbox",
-            folderKind: "inbox",
-            subject: "a test mail",
-            senderName: "Bob",
-            senderAddress: "bob@example.com",
-            receivedTime: Frontier,
-            isRead: true,
-            hasAttachments: false,
-            sizeBytes: 2048,
-            body: "test body");
-    }
-
-    /// <summary>An index that knows this one store and holds no search rows.</summary>
-    private sealed class StubIndexClient : IIndexClient
-    {
-        private const string DiscoveryTail = " System.ItemUrl FROM SystemIndex WHERE System.Kind='email'";
-
-        public IndexProviderKind Provider => IndexProviderKind.OleDb;
-
-        public IReadOnlyList<IReadOnlyDictionary<string, object?>> ExecuteRows(
-            string sql, int maxRows, int? commandTimeoutSeconds = null)
-        {
-            if (sql.EndsWith(DiscoveryTail, StringComparison.Ordinal))
-            {
-                return Rows(new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-                {
-                    ["System.ItemUrl"] = StorePrefix + "/0/Inbox/sampled-item",
-                });
-            }
-
-            if (sql.Contains("System.Message.DateReceived FROM SystemIndex", StringComparison.Ordinal))
-            {
-                return Rows(new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-                {
-                    ["System.Message.DateReceived"] = Frontier,
-                });
-            }
-
-            if (sql.StartsWith("SELECT TOP 1 System.ItemUrl FROM SystemIndex WHERE", StringComparison.Ordinal))
-            {
-                return Rows(new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-                {
-                    ["System.ItemUrl"] = StorePrefix + "/0/Inbox/probed-item",
-                });
-            }
-
-            return Array.Empty<IReadOnlyDictionary<string, object?>>();
-        }
-
-        private static IReadOnlyList<IReadOnlyDictionary<string, object?>> Rows(
-            IReadOnlyDictionary<string, object?> row)
-        {
-            return new[] { row };
-        }
-    }
-
-    /// <summary>Answers the store list, the sweep and the scan; refuses everything else.</summary>
-    private class StandInSession : DispatchProxy
-    {
-        private IReadOnlyList<ComStoreDetail> _stores = Array.Empty<ComStoreDetail>();
-        private Func<string?, ComSweepResult> _sweep = _ => throw new NotSupportedException();
-        private Func<string?, ComExhaustiveResult>? _scan;
-
-        internal static IOutlookSession Create(
-            IReadOnlyList<ComStoreDetail> stores,
-            Func<string?, ComSweepResult> sweep,
-            Func<string?, ComExhaustiveResult>? scan)
-        {
-            object proxy = Create<IOutlookSession, StandInSession>()
-                ?? throw new InvalidOperationException("DispatchProxy.Create returned null.");
-            ((StandInSession)proxy)._stores = stores;
-            ((StandInSession)proxy)._sweep = sweep;
-            ((StandInSession)proxy)._scan = scan;
-            return (IOutlookSession)proxy;
-        }
-
-        /// <inheritdoc />
-        protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
-        {
-            switch (targetMethod?.Name)
-            {
-                case nameof(IOutlookSession.GetProfileName):
-                    return "T1 stand-in profile";
-
-                case nameof(IOutlookSession.GetStoreDetails):
-                    return TestFolders.WithRoots(_stores);
-
-                case nameof(IOutlookSession.TryDescribeFolder):
-                    return TestFolders.Describe(args);
-
-                // Argument 3 is onlyStoreDisplayName; see IOutlookSession.SweepFoldersNewerThan.
-                case nameof(IOutlookSession.SweepFoldersNewerThan):
-                    return _sweep(args?[3] as string);
-
-                // Argument 0 is storeDisplayName; see IOutlookSession.ExhaustiveScan.
-                case nameof(IOutlookSession.ExhaustiveScan):
-                    return _scan != null
-                        ? _scan(args?[0] as string)
-                        : throw new NotSupportedException("This fixture has no exhaustive scan.");
-
-                default:
-                    throw new NotSupportedException(
-                        "The stand-in session does not implement " + (targetMethod?.Name ?? "?") + ".");
-            }
-        }
     }
 }

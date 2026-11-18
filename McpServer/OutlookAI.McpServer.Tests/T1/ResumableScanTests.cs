@@ -34,11 +34,9 @@ namespace OutlookAI.McpServer.Tests.T1;
 /// </summary>
 public sealed class ResumableScanTests
 {
-    private const string Store = "alice@example.com";
+    private const string Store = AliceMailbox.Store;
     private const string StorePrefix = "file:C:/store/alice";
     private static readonly DateTime Frontier = new DateTime(2026, 8, 1, 12, 0, 0, DateTimeKind.Utc);
-
-    private static readonly ComStoreDetail[] ProfileStores = { new(Store, "store-alice", 0, true) };
 
     // ===================================================================== the token itself
 
@@ -773,38 +771,13 @@ public sealed class ResumableScanTests
             stopReason: ComScanStopReasons.Complete);
     }
 
-    private static ComMailBrief Mail(string entryId)
-    {
-        return new ComMailBrief(
-            entryId: entryId,
-            storeDisplayName: Store,
-            storeId: "store-alice",
-            folderName: "Inbox",
-            folderKind: "inbox",
-            subject: "a test mail",
-            senderName: "Bob",
-            senderAddress: "bob@example.com",
-            receivedTime: Frontier,
-            isRead: true,
-            hasAttachments: false,
-            sizeBytes: 2048,
-            body: "test body");
-    }
-
-    private static ComSweepResult Sweep(string? onlyStore)
-    {
-        return new ComSweepResult(
-            Array.Empty<ComMailBrief>(),
-            foldersSwept: 4,
-            foldersSkipped: 0,
-            sweptFolders: new[] { Store + "/Inbox" },
-            perStore: new[] { new ComStoreSweepCounters(Store, 4, 0, 0, 0) });
-    }
+    /// <summary>The profile's mail, arrived at this suite's own frontier.</summary>
+    private static ComMailBrief Mail(string entryId) => AliceMailbox.Mail(entryId, received: Frontier);
 
     private static MailService Service(ScriptedSession scripted)
     {
         return new MailService(
-            new DirectGateway(scripted.Build(ProfileStores, Sweep)), null, new StubIndexClient());
+            new DirectGateway(scripted.Build(AliceMailbox.ProfileStores, AliceMailbox.EmptySweep)), null, new StubIndexClient(new[] { StorePrefix }, Frontier, everyScope: true));
     }
 
     /// <summary>
@@ -845,50 +818,6 @@ public sealed class ResumableScanTests
             return _results.Count > 0
                 ? _results.Dequeue()
                 : throw new InvalidOperationException("The script ran out of scan results.");
-        }
-    }
-
-    /// <summary>An index that knows this one store and holds no search rows.</summary>
-    private sealed class StubIndexClient : IIndexClient
-    {
-        private const string DiscoveryTail = " System.ItemUrl FROM SystemIndex WHERE System.Kind='email'";
-
-        public IndexProviderKind Provider => IndexProviderKind.OleDb;
-
-        public IReadOnlyList<IReadOnlyDictionary<string, object?>> ExecuteRows(
-            string sql, int maxRows, int? commandTimeoutSeconds = null)
-        {
-            if (sql.EndsWith(DiscoveryTail, StringComparison.Ordinal))
-            {
-                return Rows(new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-                {
-                    ["System.ItemUrl"] = StorePrefix + "/0/Inbox/sampled-item",
-                });
-            }
-
-            if (sql.Contains("System.Message.DateReceived FROM SystemIndex", StringComparison.Ordinal))
-            {
-                return Rows(new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-                {
-                    ["System.Message.DateReceived"] = Frontier,
-                });
-            }
-
-            if (sql.StartsWith("SELECT TOP 1 System.ItemUrl FROM SystemIndex WHERE", StringComparison.Ordinal))
-            {
-                return Rows(new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-                {
-                    ["System.ItemUrl"] = StorePrefix + "/0/Inbox/probed-item",
-                });
-            }
-
-            return Array.Empty<IReadOnlyDictionary<string, object?>>();
-        }
-
-        private static IReadOnlyList<IReadOnlyDictionary<string, object?>> Rows(
-            IReadOnlyDictionary<string, object?> row)
-        {
-            return new[] { row };
         }
     }
 
