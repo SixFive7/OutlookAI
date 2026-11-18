@@ -21,24 +21,13 @@
     { "id": "pd12", "kind": "the account SID of the maintainer's computer", "sha256": "f7980d5985b4c714599071677c22075684e5c70a5c2434b76a34519e26497ca3", "allowedIn": [] }
   ],
   "baseline": [
-    { "path": "Docs/live-tier-on-the-vm.md", "rule": "email", "count": 4 },
-    { "path": "Docs/live-tier-on-the-vm.md", "rule": "pd01", "count": 3 },
-    { "path": "Docs/live-tier-on-the-vm.md", "rule": "pd02", "count": 6 },
-    { "path": "Docs/live-tier-on-the-vm.md", "rule": "pd08", "count": 1 },
+    { "path": "Docs/live-tier-on-the-vm.md", "rule": "email", "count": 1 },
     { "path": "McpServer/OutlookAI.McpServer.Tests/T1/ComHostProtocolTests.cs", "rule": "pd10", "count": 2 },
     { "path": "McpServer/OutlookAI.McpServer.Tests/T1/RemediationRulesTests.cs", "rule": "pd02", "count": 2 },
     { "path": "McpServer/OutlookAI.McpServer.Tests/T1/SweepScopeAndWindowTests.cs", "rule": "pd10", "count": 1 },
     { "path": "McpServer/OutlookAI.RemediationTools/McpMoveClient.cs", "rule": "pd02", "count": 1 },
     { "path": "McpServer/OutlookAI.RemediationTools/Program.cs", "rule": "pd02", "count": 1 },
     { "path": "McpServer/OutlookAI.RemediationTools/RemediationRules.cs", "rule": "pd02", "count": 5 },
-    { "path": "McpServer/OutlookAI.RemediationTools/RemediationRules.cs", "rule": "pd06", "count": 2 },
-    { "path": "Testbed/README.md", "rule": "email", "count": 2 },
-    { "path": "Testbed/README.md", "rule": "pd01", "count": 2 },
-    { "path": "Testbed/README.md", "rule": "pd02", "count": 2 },
-    { "path": "Testbed/README.md", "rule": "pd08", "count": 1 },
-    { "path": "Testbed/testbed.json", "rule": "email", "count": 7 },
-    { "path": "Testbed/testbed.json", "rule": "pd01", "count": 7 },
-    { "path": "Testbed/testbed.json", "rule": "pd02", "count": 7 },
-    { "path": "Testbed/testbed.json", "rule": "pd08", "count": 1 }
+    { "path": "McpServer/OutlookAI.RemediationTools/RemediationRules.cs", "rule": "pd06", "count": 2 }
   ]
 }

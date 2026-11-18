@@ -1081,8 +1081,10 @@ its mailbox tests on, and change nothing you install.
   personal and business addresses, the item counts of his mailboxes, a colleague's first name, and,
   in AGENTS.md, the Exchange VM's real mailbox. They now say "the maintainer's workstation",
   `C:\Users\<user>\`, addresses under reserved domains, rounded counts, "a colleague" and "the
-  Exchange VM's mailbox". `Testbed/MEDIA.md` calls the Office configuration the workstation was
-  built from `Workstation.xml`.
+  Exchange VM's mailbox". The Exchange VM's runbook section, `Testbed/README.md` and
+  `Testbed/testbed.json` call its real mailbox `bystander@exchange-vm.invalid`, the name its live
+  tests use for it. `Testbed/MEDIA.md` and the runbook call the Office configuration the workstation
+  was built from `Workstation.xml`.
 
 - ✅ **Tests use placeholder stores, names and addresses instead of real ones (Q189).**
   Twelve tests named their example stores after the maintainer's own Outlook profile: his address,
