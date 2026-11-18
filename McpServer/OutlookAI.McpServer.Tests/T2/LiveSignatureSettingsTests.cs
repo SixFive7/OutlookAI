@@ -366,7 +366,7 @@ public sealed class LiveSignatureSettingsTests
                 _fixture.TaggedSubject("signature-step-named"), "Signature step named " + Marker, display: false, signature: anotherNew));
             (bool noneAllowed, string noneWhy) = TryDraft(drafts, () => Service.NewDraft(
                 LiveStoreWriteGuard.Writable(Hub, StoreWriteKind.Draft, "new_draft"), Hub, cc: null,
-                _fixture.TaggedSubject("signature-step-none"), "Signature step none " + Marker, display: false, signature: SignatureManager.NoSignatureKeyword));
+                _fixture.TaggedSubject("signature-step-none"), "Signature step none " + Marker, display: false, signature: SignatureRequest.NoSignatureKeyword));
             foreach (OutlookComposeKind kind in outlookAiInserted.Keys)
             {
                 _output.WriteLine($"MEASURED {scenario} {kind}: OutlookAI inserts {Role(outlookAiInserted[kind])}");
