@@ -80,8 +80,11 @@ public sealed class LiveSignatureSettingsStepTests
                 { "name": "OutlookAI-McpTest-Q200-Own-Reply", "selected": true, "deleteEnabled": true, "error": null }
               ],
               "otherSignatureItems": 1,
+              "settledAfterSeconds": 1.5,
               "folderUnchanged": true,
               "folderChanges": [],
+              "defaultsUnchanged": true,
+              "defaultsChanges": [],
               "controls": [ { "type": "Button", "name": "Cancel", "enabled": true, "value": null } ],
               "errors": []
             }
@@ -97,8 +100,11 @@ public sealed class LiveSignatureSettingsStepTests
         Assert.Equal(true, reading.Delete!.Enabled);
         Assert.Equal(new[] { false, true }, reading.Signatures.Select(s => s.DeleteEnabled!.Value));
         Assert.Equal(1, reading.OtherSignatureItems);
+        Assert.Equal(1.5, reading.SettledAfterSeconds);
         Assert.Equal(true, reading.FolderUnchanged);
         Assert.Empty(reading.FolderChanges);
+        Assert.Equal(true, reading.DefaultsUnchanged);
+        Assert.Empty(reading.DefaultsChanges);
         Assert.Equal("Cancel", Assert.Single(reading.Controls).Name);
         Assert.Empty(reading.Errors);
     }
@@ -113,6 +119,9 @@ public sealed class LiveSignatureSettingsStepTests
               "dialogFound": false,
               "signatures": { "name": "OutlookAI-McpTest-X", "selected": false, "deleteEnabled": null, "error": "no pattern" },
               "folderChanges": "changed OutlookAI-McpTest-X.htm",
+              "settledAfterSeconds": null,
+              "defaultsUnchanged": false,
+              "defaultsChanges": "changed OutlookAI-Tier\\00000003\\Reply-Forward Signature",
               "errors": "the dialog did not open"
             }
             """;
@@ -126,6 +135,9 @@ public sealed class LiveSignatureSettingsStepTests
         Assert.Null(entry.DeleteEnabled);
         Assert.Equal("no pattern", entry.Error);
         Assert.Equal("changed OutlookAI-McpTest-X.htm", Assert.Single(reading.FolderChanges));
+        Assert.Null(reading.SettledAfterSeconds);
+        Assert.Equal(false, reading.DefaultsUnchanged);
+        Assert.Equal(@"changed OutlookAI-Tier\00000003\Reply-Forward Signature", Assert.Single(reading.DefaultsChanges));
         Assert.Equal("the dialog did not open", Assert.Single(reading.Errors));
         Assert.Empty(reading.Controls);
     }

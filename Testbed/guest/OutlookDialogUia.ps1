@@ -100,10 +100,13 @@ function Invoke-Button($Button) {
 }
 
 # Closes a dialog as Cancel does - the one way a probe ever closes anything: its own Cancel button, or,
-# where UI Automation shows none (the Signatures dialog, class bosa_sdm_Mso96, measured 2026-11-17),
-# WM_CLOSE to that one window, which a dialog treats as Cancel. Says how in the caller's report when it
-# keeps one (Write-ReportLine and $ReportLines, ScriptHelpers.ps1), else on the host; returns whether the
-# window is gone.
+# where UI Automation shows none (the Signatures dialog, class bosa_sdm_Mso96, measured 2026-11-17), the
+# Escape key, posted to that one window. WM_CLOSE only when Escape left it open, as a modal dialog left
+# open would hold Outlook: on the Outlook guests on 2026-11-18, after a Signatures dialog was closed by
+# WM_CLOSE, the hub account's own signature defaults were no longer the ones made before it opened, in
+# three runs of three (Measure-SignatureDialog.ps1) - so WM_CLOSE is not taken for Cancel there.
+# Says how in the caller's report when it keeps one (Write-ReportLine and $ReportLines, ScriptHelpers.ps1),
+# else on the host; returns whether the window is gone.
 function Close-WithCancel($Window, [string] $What) {
     $cancel = Find-Named $Window ([System.Windows.Automation.ControlType]::Button) 'Cancel'
     if ($cancel) { Invoke-Button $cancel; Start-Sleep -Seconds 2; return $true }
@@ -111,10 +114,18 @@ function Close-WithCancel($Window, [string] $What) {
         Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class OaiProbeWin { [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l); [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr h); }'
     }
     $handle = [IntPtr]$Window.Current.NativeWindowHandle
-    [void][OaiProbeWin]::PostMessage($handle, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)
+    # WM_KEYDOWN and WM_KEYUP of VK_ESCAPE: the key a dialog takes as Cancel.
+    [void][OaiProbeWin]::PostMessage($handle, 0x0100, [IntPtr]0x1B, [IntPtr]0x00010001)
+    [void][OaiProbeWin]::PostMessage($handle, 0x0101, [IntPtr]0x1B, [IntPtr]([long]0xC0010001))
     Start-Sleep -Seconds 3
+    $how = 'Escape'
+    if ([OaiProbeWin]::IsWindow($handle)) {
+        $how = 'Escape left it open; WM_CLOSE'
+        [void][OaiProbeWin]::PostMessage($handle, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)
+        Start-Sleep -Seconds 3
+    }
     $closed = -not [OaiProbeWin]::IsWindow($handle)
-    $message = "  {0}: no Cancel button through UI Automation; WM_CLOSE to the dialog's own window - closed {1}" -f $What, $closed
+    $message = "  {0}: no Cancel button through UI Automation; {1} to the dialog's own window - closed {2}" -f $What, $how, $closed
     if ((Get-Command -Name Write-ReportLine -CommandType Function -ErrorAction SilentlyContinue) -and (Get-Variable -Name ReportLines -ErrorAction SilentlyContinue)) { Write-ReportLine $message } else { Write-Host $message }
     return $closed
 }

@@ -459,8 +459,11 @@ public sealed class LiveSignatureSettingsTests
 
         // MEASURED: the dialog as Outlook showed it under the setting.
         _output.WriteLine($"MEASURED {scenario} Signatures dialog: found={dialog.DialogFound} class={dialog.DialogClass ?? "-"} "
-            + $"closed={dialog.Closed}; signature folder unchanged={Show(dialog.FolderUnchanged)}"
-            + (dialog.FolderChanges.Count == 0 ? string.Empty : " (" + string.Join(", ", dialog.FolderChanges) + ")"));
+            + $"settled after {(dialog.SettledAfterSeconds == null ? "- (read as it was)" : dialog.SettledAfterSeconds + " s")}; closed={dialog.Closed}; "
+            + $"signature folder unchanged={Show(dialog.FolderUnchanged)}"
+            + (dialog.FolderChanges.Count == 0 ? string.Empty : " (" + string.Join(", ", dialog.FolderChanges) + ")")
+            + $"; signature defaults unchanged={Show(dialog.DefaultsUnchanged)}"
+            + (dialog.DefaultsChanges.Count == 0 ? string.Empty : " (" + string.Join(", ", dialog.DefaultsChanges) + ")"));
         _output.WriteLine($"MEASURED {scenario} Signatures dialog: E-mail account {Box(dialog.Account)}; New messages {Box(dialog.NewMessages)}; "
             + $"Replies/forwards {Box(dialog.RepliesForwards)}; Delete button enabled={Show(dialog.Delete?.Enabled)}");
         foreach (SignatureDialogEntry entry in dialog.Signatures)
@@ -480,6 +483,7 @@ public sealed class LiveSignatureSettingsTests
         Assert.True(dialog.Errors.Count == 0, "the dialog probe failed: " + string.Join("; ", dialog.Errors));
         Assert.True(dialog.DialogFound && dialog.Closed, "the Signatures dialog was not both found and closed");
         Assert.True(dialog.FolderUnchanged == true, "the Signatures dialog changed the signature folder: " + string.Join(", ", dialog.FolderChanges));
+        Assert.True(dialog.DefaultsUnchanged == true, "the Signatures dialog changed signature defaults: " + string.Join(", ", dialog.DefaultsChanges));
         Assert.True(dialog.NewMessages?.Enabled != null && dialog.RepliesForwards?.Enabled != null, "the dialog's default boxes could not be read");
 
         // THE CONTRACT: OutlookAI refuses what Outlook's own dialog will not let a user do, and allows what it does.

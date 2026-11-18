@@ -15,9 +15,14 @@
     It opens the dialog by Outlook's own command - ExecuteMso('SignaturesStationeryDialog'), from a
     helper process (OutlookDialogUia.ps1) - reads it through UI Automation, selects each test signature
     (OutlookAI-McpTest-) in its list in turn to read whether Delete is enabled for it, and closes the
-    dialog as Cancel does. It presses nothing but Cancel, changes no box and types nothing, so the
-    dialog keeps nothing. The signature folder's files are hashed before and after; a change is
-    reported and fails the reading.
+    dialog as Cancel does - Escape, posted to it (OutlookDialogUia.ps1). It presses nothing but Cancel,
+    changes no box and types nothing, so the dialog keeps nothing; and it reads the dialog only once
+    the dialog has settled - its signature list enabled or holding signatures - or after -SettleSeconds,
+    saying which. The signature folder's files, every profile's per-account signature defaults and the
+    two MailSettings keys are read before and after; a change is reported and fails the reading. (On
+    2026-11-18 the first readings closed the dialog with WM_CLOSE, and afterwards the hub account's own
+    defaults were no longer the ones the step made, in three runs of three - read by the live test that
+    followed, which these readings now do themselves.)
 
     The reading is a JSON file, -OutPath, which the live test
     LiveSignatureSettingsTests.SetBeforeOutlookStarted_TheSignaturesDialog_... reads through
@@ -34,6 +39,10 @@
 .PARAMETER DialogWaitSeconds
     How long the dialog may take to open.
 
+.PARAMETER SettleSeconds
+    How long the opened dialog may take to settle - its signature list enabled or holding a signature -
+    before it is read as it is.
+
 .PARAMETER SelfTest
     Pure: the choices made from a reading, and the read-only proof over this file's and
     OutlookDialogUia.ps1's syntax trees. No Outlook, any machine.
@@ -42,6 +51,7 @@
 param(
     [string]   $OutPath = 'C:\OutlookAI-Q5\measure\signature-dialog.json',
     [int]      $DialogWaitSeconds = 30,
+    [int]      $SettleSeconds = 20,
     [string[]] $ExpectedUser = @('vmadmin'),
     [string]   $ExpectedComputerNamePrefix = 'OAI-',
     [switch]   $SelfTest
@@ -92,14 +102,22 @@ function Get-FolderChanges([hashtable] $Before, [hashtable] $After) {
     return @($changes)
 }
 
-# The exit code a reading earns: 4 refused; 1 when the dialog was not read, not closed, the folder changed,
-# or a step failed; 0 otherwise.
+# The exit code a reading earns: 4 refused; 1 when the dialog was not read, not closed, the folder or the
+# signature defaults changed, or a step failed; 0 otherwise.
 function Get-DialogExitCode($Reading) {
     if ($Reading.refused) { return 4 }
     if (-not $Reading.dialogFound -or -not $Reading.closed) { return 1 }
-    if ($Reading.folderUnchanged -ne $true) { return 1 }
+    if ($Reading.folderUnchanged -ne $true -or $Reading.defaultsUnchanged -ne $true) { return 1 }
     if (@($Reading.errors).Count -gt 0) { return 1 }
     return 0
+}
+
+# A registry value as text that compares: a string as it is, bytes - Outlook's per-account defaults are
+# UTF-16 with a NUL - as hex, anything else as its string.
+function ConvertTo-ValueText($Value) {
+    if ($null -eq $Value) { return $null }
+    if ($Value -is [byte[]]) { return ([System.BitConverter]::ToString($Value)) }
+    return [string]$Value
 }
 
 # What may never happen in this file or OutlookDialogUia.ps1, read off their syntax trees so this text
@@ -170,13 +188,16 @@ function Invoke-SelfTest {
     Check 'an unchanged folder has no changes' 0 @(Get-FolderChanges @{ 'a.htm' = '1'; 'a_files\i.png' = '2' } @{ 'a.htm' = '1'; 'a_files\i.png' = '2' }).Count
     Check 'every change is named, sorted' 'removed a.htm|changed b.txt|added c.rtf' (Get-FolderChanges @{ 'a.htm' = '1'; 'b.txt' = '2' } @{ 'b.txt' = '3'; 'c.rtf' = '4' })
 
-    $good = [pscustomobject]@{ refused = $null; dialogFound = $true; closed = $true; folderUnchanged = $true; errors = @() }
+    $good = [pscustomobject]@{ refused = $null; dialogFound = $true; closed = $true; folderUnchanged = $true; defaultsUnchanged = $true; errors = @() }
     Check 'a reading that is complete is exit 0' 0 (Get-DialogExitCode $good)
-    Check 'a refusal is exit 4' 4 (Get-DialogExitCode ([pscustomobject]@{ refused = 'no Outlook'; dialogFound = $false; closed = $false; folderUnchanged = $null; errors = @() }))
-    Check 'a dialog not found is exit 1' 1 (Get-DialogExitCode ([pscustomobject]@{ refused = $null; dialogFound = $false; closed = $false; folderUnchanged = $true; errors = @() }))
-    Check 'a dialog left open is exit 1' 1 (Get-DialogExitCode ([pscustomobject]@{ refused = $null; dialogFound = $true; closed = $false; folderUnchanged = $true; errors = @() }))
-    Check 'a changed folder is exit 1' 1 (Get-DialogExitCode ([pscustomobject]@{ refused = $null; dialogFound = $true; closed = $true; folderUnchanged = $false; errors = @() }))
-    Check 'a step that failed is exit 1' 1 (Get-DialogExitCode ([pscustomobject]@{ refused = $null; dialogFound = $true; closed = $true; folderUnchanged = $true; errors = @('x') }))
+    Check 'a refusal is exit 4' 4 (Get-DialogExitCode ([pscustomobject]@{ refused = 'no Outlook'; dialogFound = $false; closed = $false; folderUnchanged = $null; defaultsUnchanged = $null; errors = @() }))
+    Check 'a dialog not found is exit 1' 1 (Get-DialogExitCode ([pscustomobject]@{ refused = $null; dialogFound = $false; closed = $false; folderUnchanged = $true; defaultsUnchanged = $true; errors = @() }))
+    Check 'a dialog left open is exit 1' 1 (Get-DialogExitCode ([pscustomobject]@{ refused = $null; dialogFound = $true; closed = $false; folderUnchanged = $true; defaultsUnchanged = $true; errors = @() }))
+    Check 'a changed folder is exit 1' 1 (Get-DialogExitCode ([pscustomobject]@{ refused = $null; dialogFound = $true; closed = $true; folderUnchanged = $false; defaultsUnchanged = $true; errors = @() }))
+    Check 'changed defaults are exit 1' 1 (Get-DialogExitCode ([pscustomobject]@{ refused = $null; dialogFound = $true; closed = $true; folderUnchanged = $true; defaultsUnchanged = $false; errors = @() }))
+    Check 'a step that failed is exit 1' 1 (Get-DialogExitCode ([pscustomobject]@{ refused = $null; dialogFound = $true; closed = $true; folderUnchanged = $true; defaultsUnchanged = $true; errors = @('x') }))
+    Check 'a default written as UTF-16 bytes compares as hex' '41-00-00-00' (ConvertTo-ValueText ([byte[]](0x41, 0, 0, 0)))
+    Check 'a string default as it is, none as none' 'Own|True' @((ConvertTo-ValueText 'Own'), ($null -eq (ConvertTo-ValueText $null)))
 
     $shared = Join-Path $PSScriptRoot 'OutlookDialogUia.ps1'
     $violations = @(Get-ReadOnlyViolations @($PSCommandPath, $shared))
@@ -237,6 +258,50 @@ function Select-SignatureInList($Item) {
     return [bool]$Item.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Current.IsSelected
 }
 
+# Every profile's per-account signature defaults ('New Signature', 'Reply-Forward Signature' under each
+# profile's 9375CFF0413111d3B88A00104B2A6676 entries) and the MailSettings keys' NewSignature and
+# ReplySignature, as name -> text. Read-only.
+function Get-SignatureDefaultValues {
+    $values = @{}
+    $profiles = 'HKCU:\Software\Microsoft\Office\16.0\Outlook\Profiles'
+    foreach ($profile in @(Get-ChildItem -LiteralPath $profiles -ErrorAction SilentlyContinue)) {
+        $accounts = Join-Path $profile.PSPath '9375CFF0413111d3B88A00104B2A6676'
+        foreach ($entry in @(Get-ChildItem -LiteralPath $accounts -ErrorAction SilentlyContinue)) {
+            foreach ($name in 'New Signature', 'Reply-Forward Signature') {
+                $text = ConvertTo-ValueText ($entry.GetValue($name, $null))
+                if ($null -ne $text) { $values["$($profile.PSChildName)\$($entry.PSChildName)\$name"] = $text }
+            }
+        }
+    }
+    foreach ($key in 'HKCU:\Software\Microsoft\Office\16.0\Common\MailSettings', 'HKCU:\Software\Policies\Microsoft\Office\16.0\Common\MailSettings') {
+        $item = Get-Item -LiteralPath $key -ErrorAction SilentlyContinue
+        if (-not $item) { continue }
+        foreach ($name in 'NewSignature', 'ReplySignature') {
+            $text = ConvertTo-ValueText ($item.GetValue($name, $null))
+            if ($null -ne $text) { $values["$key\$name"] = $text }
+        }
+    }
+    return $values
+}
+
+# Waits until the dialog has settled - its signature list enabled, or holding a signature - for at most
+# $Seconds; returns the seconds it took, or $null when it did not.
+function Wait-DialogSettled($Dialog, [int] $Seconds) {
+    $started = Get-Date
+    while (((Get-Date) - $started).TotalSeconds -lt $Seconds) {
+        $list = Find-Named $Dialog ([System.Windows.Automation.ControlType]::List) 'Select signature to edit'
+        if ($list) {
+            $enabled = $false
+            try { $enabled = [bool]$list.Current.IsEnabled } catch { }
+            $items = $null
+            try { $items = $list.FindFirst([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition) } catch { }
+            if ($enabled -or $items) { return [Math]::Round(((Get-Date) - $started).TotalSeconds, 1) }
+        }
+        Start-Sleep -Milliseconds 500
+    }
+    return $null
+}
+
 function Get-FolderHashes {
     $signatures = Get-SignatureFiles
     $hashes = @{}
@@ -267,8 +332,11 @@ $reading = [ordered]@{
     delete             = $null
     signatures         = @()
     otherSignatureItems = 0
+    settledAfterSeconds = $null
     folderUnchanged    = $null
     folderChanges      = @()
+    defaultsUnchanged  = $null
+    defaultsChanges    = @()
     controls           = @()
     errors             = @()
 }
@@ -297,12 +365,14 @@ if ($reading['refused']) {
 
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
 $before = Get-FolderHashes
+$defaultsBefore = Get-SignatureDefaultValues
 $process = Start-SignaturesDialog
 $dialog = Find-TopWindow $DialogName $DialogWaitSeconds
 if ($dialog) {
     $reading['dialogFound'] = $true
     try {
         $reading['dialogClass'] = [string]$dialog.Current.ClassName
+        $reading['settledAfterSeconds'] = Wait-DialogSettled $dialog $SettleSeconds
         $records = @(Get-UiaTree $dialog | ForEach-Object { ConvertTo-ControlRecord $_ })
         $named = @($records | Where-Object { $_.Name })
         $reading['controls'] = @($named | ForEach-Object { ConvertTo-Plain $_ })
@@ -324,7 +394,9 @@ if ($dialog) {
             catch { $entry['error'] = $_.Exception.Message }
             $perSignature.Add($entry)
         }
-        $reading['signatures'] = @($perSignature)
+        # ToArray, not @(): Windows PowerShell 5.1 refuses @() of an empty List[object] as a dictionary's value
+        # ("Argument types do not match", the first readings of 2026-11-18).
+        $reading['signatures'] = $perSignature.ToArray()
         if (-not $reading['newMessages']) { $errors.Add('no New messages box was found') }
         if (-not $reading['repliesForwards']) { $errors.Add('no Replies/forwards box was found') }
         if (-not $delete) { $errors.Add('no Delete button was found') }
@@ -340,10 +412,14 @@ $after = Get-FolderHashes
 $changes = @(Get-FolderChanges $before $after)
 $reading['folderUnchanged'] = ($changes.Count -eq 0)
 $reading['folderChanges'] = $changes
-$reading['errors'] = @($errors)
+$defaultChanges = @(Get-FolderChanges $defaultsBefore (Get-SignatureDefaultValues))
+$reading['defaultsUnchanged'] = ($defaultChanges.Count -eq 0)
+$reading['defaultsChanges'] = $defaultChanges
+$reading['errors'] = $errors.ToArray()
 Write-Reading $reading
 
-Write-Host ("SIGNATURE-DIALOG found={0} class={1} closed={2} folderUnchanged={3}" -f $reading['dialogFound'], $reading['dialogClass'], $reading['closed'], $reading['folderUnchanged'])
+Write-Host ("SIGNATURE-DIALOG found={0} class={1} settled after {2} s closed={3} folderUnchanged={4} defaultsUnchanged={5}" -f $reading['dialogFound'], $reading['dialogClass'], $reading['settledAfterSeconds'], $reading['closed'], $reading['folderUnchanged'], $reading['defaultsUnchanged'])
+foreach ($c in $defaultChanges) { Write-Host "  DEFAULTS CHANGED: $c" }
 foreach ($box in @('account', 'newMessages', 'repliesForwards', 'delete')) {
     $r = $reading[$box]
     if ($r) { Write-Host ("  {0}: '{1}' {2} enabled={3} value='{4}'" -f $box, $r.name, $r.type, $r.enabled, $r.value) } else { Write-Host "  ${box}: not found" }

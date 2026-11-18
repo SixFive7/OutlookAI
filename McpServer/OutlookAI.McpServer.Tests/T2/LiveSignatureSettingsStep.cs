@@ -92,8 +92,11 @@ public static class LiveSignatureSettingsStep
                 .Select(e => new SignatureDialogEntry(Text(e, "name") ?? string.Empty, Flag(e, "selected") == true, Flag(e, "deleteEnabled"), Text(e, "error")))
                 .ToList(),
             OtherSignatureItems: root.TryGetProperty("otherSignatureItems", out JsonElement other) && other.ValueKind == JsonValueKind.Number ? other.GetInt32() : 0,
+            SettledAfterSeconds: root.TryGetProperty("settledAfterSeconds", out JsonElement settled) && settled.ValueKind == JsonValueKind.Number ? settled.GetDouble() : null,
             FolderUnchanged: Flag(root, "folderUnchanged"),
             FolderChanges: Items(root, "folderChanges").Select(e => e.ToString()).ToList(),
+            DefaultsUnchanged: Flag(root, "defaultsUnchanged"),
+            DefaultsChanges: Items(root, "defaultsChanges").Select(e => e.ToString()).ToList(),
             Controls: Items(root, "controls").Select(ControlOf).ToList(),
             Errors: Items(root, "errors").Select(e => e.ToString()).ToList());
     }
@@ -216,7 +219,10 @@ public sealed record SignatureDialogReading(
     SignatureDialogControl? Delete,
     IReadOnlyList<SignatureDialogEntry> Signatures,
     int OtherSignatureItems,
+    double? SettledAfterSeconds,
     bool? FolderUnchanged,
     IReadOnlyList<string> FolderChanges,
+    bool? DefaultsUnchanged,
+    IReadOnlyList<string> DefaultsChanges,
     IReadOnlyList<SignatureDialogControl> Controls,
     IReadOnlyList<string> Errors);
