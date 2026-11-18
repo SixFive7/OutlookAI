@@ -4666,6 +4666,82 @@ entry, and `outlook_health` calls the online one a second view (decision 207 (b)
 key is no folder; and the locator matches an item without a `ReceivedTime` on its `CreationTime`, nearest
 first.
 
+### 4.10 Waiting runs that ask Hyper-V nothing - every testbed VM, 2026-11-18
+
+**Why this section exists.** At about 04:10 on 2026-11-18 the maintainer's PC lagged. Another session
+traced it: a 15-second WMI-Activity trace counted 492 WMI operations, 32 a second, 91 % of them in
+`root\virtualization\v2` - `Msvm_SummaryInformation` enumerations and `Msvm_VirtualSystemSettingData`
+reads and associations, which is what `Get-VM` produces - and 26 reads of `Win32_OperatingSystem`, all
+from runner processes: eighteen alive, at most eight of them running. A queued build run asked `Get-VM`
+about every pool member every 5 s, and the host's free memory of `Win32_OperatingSystem`; a live run
+given `-Kind` asked `Get-VM` and `Get-VMSnapshot` about every guest of its kind every 30 s; a running
+build run asked `Get-VMIntegrationService` for its heartbeat every second and its guest how far it got
+every 3 s, and a live run its heartbeat every 3 s; and a live run opened a PowerShell Direct session of
+its own, by the guest's name, for every guest call - nine in a run of one test class that morning.
+
+Stream W measured where Hyper-V's share goes (`.work\w-vm-state\` of the main checkout): its WMI
+provider runs inside vmms.exe, so those calls cost vmms and the WMI service - about 0.2 to 0.6 of a
+logical processor between them that night. `Get-VM` costs 4 WMI operations, its startup memory 12,
+`Get-VMIntegrationService` 23 and `Get-VMSnapshot` 41, and the enumeration of `Msvm_SummaryInformation`
+every Hyper-V cmdlet starts with cost vmms 0.8 s of processor time when asked for everything. Stream W
+put most of WmiPrvSE's 3.4 to 3.8 processors that night on other programs listing processes; the
+runners' share of WmiPrvSE was their memory read, measured below.
+
+**What changed** (`Testbed/host/TestbedPool.ps1`'s banner says how). A run that waits holds a ticket
+in `%SystemDrive%\OutlookAI-Testbed\queue\` and tries only the VMs no earlier ticket wants, first come
+first served - another session's run had lost the race for a build VM to newer runs for over an hour.
+It tells a free VM from its lock and lease files and the host's memory from kernel32's
+`GlobalMemoryStatusEx`, asks Hyper-V what it must - which of its VMs exist, their ids, their startup
+memory - once, before it waits, and sleeps on a FileSystemWatcher until a lock's owner file, a lease or
+a ticket changes, or 30 s pass. A run that runs reads its VM's state and heartbeat with one narrow CIM
+query each, by the VM's id, on one DCOM session kept for the process (`Msvm_ComputerSystem.EnabledState`,
+`Msvm_HeartbeatComponent.OperationalStatus`), the heartbeat every 2 s while the VM comes up; it asks
+its guest how far it got every 15 s; and a live run makes its own guest calls over one PowerShell
+Direct session, opened by the guest's id, each call starting as a session of its own did - with no
+exit code left by the call before it. A VM that runs is saved before a checkpoint is restored over it:
+in another session's runs a restore over a running guest left it out of PowerShell Direct's reach for
+six minutes. The janitor waits on its run's process handle instead of looking every 10 s, the clone
+maker waits at the head of the queue instead of asking for the build VM's lock every quarter second,
+and the idle-saver reads the leases first and asks Hyper-V about the unleased VMs in one narrow query.
+
+**Measured: the WMI operations.** WMI-Activity traces of 15 s, by the 04:09 session's method (`logman`
+with the `Microsoft-Windows-WMI-Activity` provider, `tracerpt`, operations counted per client
+process), run as a member of Performance Log Users; raw data in `.work\q-wmi\` of the worktree
+`stream-q-testbed-load-limit`:
+
+| When | What was waiting | WMI operations | WmiPrvSE |
+| --- | --- | --- | --- |
+| 04:09, the other session | eighteen runners, at most eight running | 492 in 15.5 s, 32 a second, 91 % in `root\virtualization\v2`; 26 reads of `Win32_OperatingSystem` | about 5 cores |
+| 05:05, before this change | four queued build runs and a live run of agents' branches, on runners from before it | 155 in 14.5 s, 11 a second, 85 % in `root\virtualization\v2`: 28 to 35 from each queued build runner - about 2 a second each - and 18 from the live run | 3.9 cores |
+| 05:29, after the first cut of it, beside runs on runners from before it | this branch's runners: a build run queued behind another of them, the build run ahead of it running its suite, and a live run staging its guest; and four queued build runs of agents' branches on runners from before the change | 139 in 15.7 s, 9 a second: none from this branch's queued run and none from its running build run; 4 from its live run - one VM looked up by name as it started the guest; and 30 to 34 from each of the four older queued runners, 124 in all | 3.2 cores |
+
+**Measured: what a waiting run costs the host.** Paired 60-second windows between 06:06 and 06:29,
+three rounds each, of the processors busy in vmms.exe, the WMI service's svchost and every WmiPrvSE
+(the `Process V2` counters, by process id), with three waiters started as background jobs or none
+(`.work\q-wmi\cost-waiters.ps1` and `cost-split.ps1`). An old waiter did what a queued build run did
+every 5 s before this change - `Get-VM` for each of the three build VMs, the startup memory of two of
+them, and `Win32_OperatingSystem` for each of those two; a new one a turn of this change on a scratch
+queue and scratch locks, then `Wait-TestbedChange`. The means of three rounds, in logical processors:
+
+| Three waiters | vmms | WMI service | WmiPrvSE |
+| --- | --- | --- | --- |
+| none, the first run | 0.07 | 0.27 | 3.06 |
+| the old way | 0.14 | 0.45 | 4.09 |
+| the new way | 0.06 | 0.27 | 3.08 |
+| none, the second run | 0.06 | 0.33 | 3.41 |
+| the old way's `Get-VM` calls alone | 0.14 | 0.39 | 3.44 |
+| the old way's `Win32_OperatingSystem` reads alone | 0.05 | 0.40 | 4.30 |
+
+So a queued build run on a runner from before this cost the host about 0.43 of a logical processor:
+0.34 in WmiPrvSE, 0.06 in the WMI service and 0.02 in vmms. Nearly all the WmiPrvSE share was its
+memory read - a `Win32_OperatingSystem` read took 1.2 to 1.7 s, and the reads alone cost WmiPrvSE 0.3
+of a processor a waiter - and the `Get-VM` calls cost vmms and the WMI service about 0.04 a waiter. A
+run that waits the new way costs nothing these counters tell from no run at all.
+
+So WmiPrvSE moves too, by what the runners' memory reads cost it, and no further: the rest of its
+load is other programs'. At the rate measured here, the 26 reads of the 04:09 trace come to about two
+of its five processors - an estimate, as the cost of a read depends on what else the host is doing.
+
 ## 5. Which tests are in which bucket, and how to find out
 
 The classification is **two traits on the test itself**, not a list in a document that can drift -
