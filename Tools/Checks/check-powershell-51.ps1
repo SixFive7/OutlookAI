@@ -62,6 +62,24 @@
        only ever gives a script block (a [scriptblock] parameter, or $x = { ... }). Any other
        variable or expression it runs is taken for a program.
 
+    DOT-SOURCED FILES ARE FOLLOWED (Q166 (b), decision 215 (a)). A helper defined in a file the
+       script dot-sources, in either form this repository writes -
+           . (Join-Path $PSScriptRoot '<path>')        . "$PSScriptRoot\<path>"
+       - counts for check 3 as one of the script's own functions, one dot-source deep and then the
+       files that file dot-sources: a script block handed to the shared Invoke-NativeCommand of
+       Testbed/guest/ScriptHelpers.ps1 runs under its 'Continue', as one handed to a copy in the
+       same file always did.
+
+    4. A SHARED HELPER RESTATED. The helpers the scripts share have one copy, in
+       Testbed/guest/ScriptHelpers.ps1, and a script that uses one dot-sources that file. A script
+       that must reach a machine on its own - on the answer volume, or copied to a VM as a single
+       file - keeps its own copy, says so on a line of its own,
+           # travels-alone: <how it reaches the machine>
+       and its copy must be the shared text exactly. Any other copy fails, and so does a copy in a
+       script that dot-sources the shared file as well. Copies not folded yet are listed below,
+       each with the step that folds it; they are reported, and an entry for a script that no
+       longer restates anything fails, so the list only shrinks.
+
     AND A SCRIPT THAT DOES NOT PARSE FAILS. Under 5.1 that is what PowerShell 7-only syntax - a
     ternary, ??, && or || between pipelines - looks like, which is one reason the release runs this
     script under both shells.
@@ -72,9 +90,10 @@
     every call shape - check 3). Under Testbed/ and Tools/ check 3 therefore assumes that host
     and holds every program call to the helper; a script anywhere else is judged by its own
     redirections only, so one of those run from a job or behind *>&1 is not protected by this
-    check. A program started by a helper defined in ANOTHER file is not a call it can see. Nor
-    does it read a script that is dot-sourced into one that sets 'Stop' as if it set 'Stop'
-    itself.
+    check. A program started by a helper defined in another file is a call it can see only when the
+    script dot-sources that file in one of the two forms above; a path built any other way is not
+    followed. Nor does it read a script that is dot-sourced into one that sets 'Stop' as if it set
+    'Stop' itself.
 
 .PARAMETER RepoRoot
     Repository root. Defaults to two levels above this script.
@@ -105,36 +124,10 @@ function Pass([string] $invariant, [string] $detail) {
     Write-Host "  OK   $invariant - $detail"
 }
 
-# A NATIVE PROGRAM WHOSE STDERR IS REDIRECTED RUNS THROUGH HERE (Q78). Under
-# $ErrorActionPreference = 'Stop', Windows PowerShell 5.1 turns the first line a native program
-# writes to a redirected stderr - 2>$null, 2>&1 and *> alike - into a terminating
-# NativeCommandError, so one warning or progress line ends the script before its exit code can be
-# read. PowerShell 7 does not. Measured on the host 2026-09-24. So, here and only here:
-#   * 'Continue' holds in THIS function's scope. The caller's 'Stop' is never changed, so there is
-#     nothing to restore and nothing else is relaxed.
-#   * The try is load-bearing. Without one, 'Continue' also demotes a terminating error inside the
-#     block - the program not being found at all - to a printed message, and the caller goes on to
-#     read a stale $LASTEXITCODE. Inside a try it stops the caller exactly as it always did.
-#     Measured in both shells.
-#   * Stderr lines come back as plain strings in both shells, never as ErrorRecords: 5.1 renders
-#     those with a position block around every line, and an empty one as an exception type name.
-#   * The exit code is left in $LASTEXITCODE, and the caller checks it.
-# Restated in each script that needs it, as this repository restates its shared rules.
-# Tools/Checks/check-powershell-51.ps1 fails the build on a redirected native call that does
-# not go through a function like this one.
-function Invoke-NativeCommand {
-    param([Parameter(Mandatory = $true)] [scriptblock] $NativeCommand)
-
-    $ErrorActionPreference = 'Continue'
-    try {
-        & $NativeCommand | ForEach-Object {
-            if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.Exception.Message } else { $_ }
-        }
-    }
-    catch {
-        throw
-    }
-}
+# Every program call goes through Invoke-NativeCommand, so that Windows PowerShell 5.1 cannot end
+# the script on a program's first stderr line (Q78). It is one of the helpers the scripts share,
+# dot-sourced from Testbed/guest/ScriptHelpers.ps1 (Q166 (b), decision 215 (a)), which says why.
+. (Join-Path $PSScriptRoot '..\..\Testbed\guest\ScriptHelpers.ps1')
 
 # ---------------------------------------------------------------------------------------------
 # The syntax tree, in terms this script needs.
@@ -294,6 +287,99 @@ function Test-HasMarker($command, [string[]] $lines) {
     return $false
 }
 
+# Every file parsed once, by full path: a helper file several scripts dot-source is read once.
+$script:ParsedFiles = @{}
+
+function Get-ParsedFile([string] $Path) {
+    if (-not $script:ParsedFiles.ContainsKey($Path)) {
+        $parseTokens = $null
+        $parseErrors = $null
+        $script:ParsedFiles[$Path] = [System.Management.Automation.Language.Parser]::ParseFile($Path, [ref] $parseTokens, [ref] $parseErrors)
+    }
+    return $script:ParsedFiles[$Path]
+}
+
+# The relative path a dot-source names, in the two forms this repository writes; $null for any other.
+#   . (Join-Path $PSScriptRoot '<path>')        . "$PSScriptRoot\<path>"
+function Get-DotSourceRelativePath($command) {
+    if ($command.CommandElements.Count -ne 1) { return $null }
+    $target = $command.CommandElements[0]
+    if ($target -is [System.Management.Automation.Language.ParenExpressionAst]) {
+        $pipeline = $target.Pipeline
+        if ($pipeline -is [System.Management.Automation.Language.PipelineAst] -and $pipeline.PipelineElements.Count -eq 1) {
+            $join = $pipeline.PipelineElements[0]
+            if ($join -is [System.Management.Automation.Language.CommandAst] -and $join.GetCommandName() -eq 'Join-Path' -and
+                $join.CommandElements.Count -eq 3 -and
+                $join.CommandElements[1] -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                $join.CommandElements[1].VariablePath.UserPath -eq 'PSScriptRoot' -and
+                $join.CommandElements[2] -is [System.Management.Automation.Language.StringConstantExpressionAst]) {
+                return $join.CommandElements[2].Value
+            }
+        }
+    }
+    elseif ($target -is [System.Management.Automation.Language.ExpandableStringExpressionAst]) {
+        if ($target.Value -match '^\$PSScriptRoot[\\/](.+)$') { return $Matches[1] }
+    }
+    return $null
+}
+
+# The files a script dot-sources, as full paths, and the files those dot-source in turn.
+function Get-DotSourcedFiles($ast, [string] $ScriptPath, $Seen) {
+    if ($null -eq $Seen) { $Seen = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase) }
+    $found = New-Object System.Collections.ArrayList
+    $dotted = $ast.FindAll({
+            param($n)
+            $n -is [System.Management.Automation.Language.CommandAst] -and
+            $n.InvocationOperator -eq [System.Management.Automation.Language.TokenKind]::Dot
+        }, $true)
+    foreach ($command in $dotted) {
+        $relative = Get-DotSourceRelativePath $command
+        if (-not $relative) { continue }
+        $target = [System.IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $ScriptPath) $relative))
+        if (-not (Test-Path -LiteralPath $target -PathType Leaf) -or -not $Seen.Add($target)) { continue }
+        $null = $found.Add($target)
+        foreach ($inner in (Get-DotSourcedFiles (Get-ParsedFile $target) $target $Seen)) { $null = $found.Add($inner) }
+    }
+    return [string[]] $found.ToArray()
+}
+
+# Every assignment to $ErrorActionPreference in $ast, with the scope it governs and what it sets.
+function Get-PreferenceAssignments($ast) {
+    foreach ($a in $ast.FindAll({
+                param($n)
+                $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+                $n.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                $n.Left.VariablePath.UserPath -match '^(?:(?:global|script|local|private):)?ErrorActionPreference$'
+            }, $true)) {
+        $value = ''
+        if ($a.Right.Extent.Text -match '^\s*[''"]?(Stop|Continue|SilentlyContinue|Ignore|Inquire)[''"]?\s*$') { $value = $Matches[1] }
+        elseif ($a.Right.Extent.Text -match '::\s*(Stop|Continue|SilentlyContinue|Ignore|Inquire)\s*$') { $value = $Matches[1] }
+        # global: and private: do not reach the script block a helper runs, so neither relaxes.
+        $scoped = $a.Left.VariablePath.UserPath -match '^(?:global|private):'
+        [pscustomobject]@{
+            Ast     = $a
+            Scope   = (Get-EnclosingScriptBlock $a)
+            IsStop  = ($value -eq 'Stop')
+            Relaxes = (($value -eq 'Continue' -or $value -eq 'SilentlyContinue') -and -not $scoped)
+        }
+    }
+}
+
+# The shared helper files (check 4, Q166 (b), decision 215 (a)): the one copy of each function in them.
+$script:SharedHelperFiles = @('Testbed/guest/ScriptHelpers.ps1')
+
+# Copies not folded yet, each with what folds it. Reported, and only ever shortened: an entry for a
+# script that no longer restates a shared function fails.
+$script:RestatedUntilFolded = [ordered]@{
+    'Testbed/host/Invoke-LiveTierOnGuest.ps1'   = 'a runner, folded with the runner helpers (S7d) and proven by a live run'
+    'Testbed/host/Invoke-TrustRemovalProbe.ps1' = 'a runner, folded with the runner helpers (S7d) and proven by a real run'
+    'Testbed/guest/Build-Corpus.ps1'            = 'a guest script, folded with the guest helpers (S7c) and proven by its -Verify under a lease'
+    'Testbed/guest/Reset-HubPopulation.ps1'     = 'a guest script, folded with the guest helpers (S7c) and proven by its -Verify under a lease'
+}
+
+# The line a script that reaches a machine on its own carries, with how.
+$script:TravelsAloneMarker = '^\s*#\s*travels-alone:\s*\S.{9,}'
+
 # The scripts that run behind a redirection or in a remoting host (check 3): there a program call
 # needs no redirection of its own to die, so every one is held to the rule.
 $script:NoRedirectionNeededRoots = @('Testbed/', 'Tools/')
@@ -383,6 +469,7 @@ $noRedirectionNeededFiles = 0
 $unredirectedProgramCalls = 0
 $acceptedBy = @{}
 $marked = 0
+$scriptFacts = [ordered]@{}
 
 foreach ($relative in $scripts) {
     $full = Join-Path $RepoRoot $relative
@@ -423,6 +510,8 @@ foreach ($relative in $scripts) {
     }
     $parsed++
     $lines = @(Get-Content -LiteralPath $full)
+    $dotSourced = @(Get-DotSourcedFiles $ast ([System.IO.Path]::GetFullPath($full)) $null)
+    $scriptFacts[$relative] = [pscustomobject]@{ Ast = $ast; Lines = $lines; DotSourced = $dotSourced }
 
     # --- 1. the param() block ----------------------------------------------------------------
     if ($null -ne $ast.ParamBlock) {
@@ -439,31 +528,18 @@ foreach ($relative in $scripts) {
 
     # --- 3. redirected stderr under 'Stop' ---------------------------------------------------
     $functions = @{}
-    foreach ($f in $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)) {
-        $key = $f.Name.ToLowerInvariant()
-        if (-not $functions.ContainsKey($key)) { $functions[$key] = New-Object System.Collections.ArrayList }
-        $null = $functions[$key].Add($f)
+    # The script's own functions, then those of the files it dot-sources (see DOT-SOURCED FILES).
+    foreach ($definingAst in @($ast) + @($dotSourced | ForEach-Object { Get-ParsedFile $_ })) {
+        foreach ($f in $definingAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)) {
+            $key = $f.Name.ToLowerInvariant()
+            if (-not $functions.ContainsKey($key)) { $functions[$key] = New-Object System.Collections.ArrayList }
+            $null = $functions[$key].Add($f)
+        }
     }
-    $assignments = @(
-        foreach ($a in $ast.FindAll({
-                    param($n)
-                    $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and
-                    $n.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
-                    $n.Left.VariablePath.UserPath -match '^(?:(?:global|script|local|private):)?ErrorActionPreference$'
-                }, $true)) {
-            $value = ''
-            if ($a.Right.Extent.Text -match '^\s*[''"]?(Stop|Continue|SilentlyContinue|Ignore|Inquire)[''"]?\s*$') { $value = $Matches[1] }
-            elseif ($a.Right.Extent.Text -match '::\s*(Stop|Continue|SilentlyContinue|Ignore|Inquire)\s*$') { $value = $Matches[1] }
-            # global: and private: do not reach the script block a helper runs, so neither relaxes.
-            $scoped = $a.Left.VariablePath.UserPath -match '^(?:global|private):'
-            [pscustomobject]@{
-                Ast     = $a
-                Scope   = (Get-EnclosingScriptBlock $a)
-                IsStop  = ($value -eq 'Stop')
-                Relaxes = (($value -eq 'Continue' -or $value -eq 'SilentlyContinue') -and -not $scoped)
-            }
-        })
+    $assignments = @(Get-PreferenceAssignments $ast)
     if (@($assignments | Where-Object { $_.IsStop }).Count -eq 0) { continue }
+    # A dot-sourced file's 'Continue' governs its own functions; it never makes the script set 'Stop'.
+    foreach ($helperFile in $dotSourced) { $assignments += @(Get-PreferenceAssignments (Get-ParsedFile $helperFile)) }
     $stopFiles++
     $noRedirectionNeeded = Test-NoRedirectionNeeded $relative
     if ($noRedirectionNeeded) { $noRedirectionNeededFiles++ }
@@ -561,6 +637,76 @@ else {
     $howText = ''
     if ($how.Count -gt 0) { $howText = ': ' + ($how -join ', ') }
     Pass "no native program's stderr redirected under 'Stop'" "$redirectedCalls redirected native call(s) in $stopFiles script(s) that set 'Stop', and $unredirectedProgramCalls unredirected program call(s) in the $noRedirectionNeededFiles of them under Testbed/ or Tools/$howText"
+}
+
+# ---------------------------------------------------------------------------------------------
+# 4. A shared helper restated.
+# ---------------------------------------------------------------------------------------------
+$restateProblems = @()
+$sharedDefinitions = @{}
+foreach ($shared in $script:SharedHelperFiles) {
+    $sharedFull = [System.IO.Path]::GetFullPath((Join-Path $RepoRoot $shared))
+    if (-not (Test-Path -LiteralPath $sharedFull -PathType Leaf)) {
+        $restateProblems += "$shared - the shared helper file is missing"
+        continue
+    }
+    foreach ($f in (Get-ParsedFile $sharedFull).FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $false)) {
+        $sharedDefinitions[$f.Name.ToLowerInvariant()] = [pscustomobject]@{
+            File = $shared
+            Full = $sharedFull
+            Text = ($f.Extent.Text -replace "`r`n", "`n")
+        }
+    }
+}
+$identicalCopies = 0
+$pendingFolds = @()
+foreach ($relative in $scriptFacts.Keys) {
+    if ($script:SharedHelperFiles -contains $relative.Replace('\', '/')) { continue }
+    $facts = $scriptFacts[$relative]
+    $travelsAlone = @($facts.Lines | Where-Object { $_ -match $script:TravelsAloneMarker }).Count -gt 0
+    $pending = $script:RestatedUntilFolded.Contains($relative.Replace('\', '/'))
+    $restates = 0
+    foreach ($f in $facts.Ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $false)) {
+        $key = $f.Name.ToLowerInvariant()
+        if (-not $sharedDefinitions.ContainsKey($key)) { continue }
+        $restates++
+        $definition = $sharedDefinitions[$key]
+        $where = "${relative}:$($f.Extent.StartLineNumber)"
+        if ($facts.DotSourced -contains $definition.Full) {
+            $restateProblems += "$where - defines $($f.Name) and also dot-sources $($definition.File), which defines it. Delete the copy."
+        }
+        elseif ($pending) {
+            continue
+        }
+        elseif (-not $travelsAlone) {
+            $restateProblems += "$where - restates $($f.Name) from $($definition.File). Dot-source that file instead; or, if this script reaches a machine on its own, say how on a line '# travels-alone: <how>' and keep the copy identical."
+        }
+        elseif (($f.Extent.Text -replace "`r`n", "`n") -ne $definition.Text) {
+            $restateProblems += "$where - its copy of $($f.Name) differs from $($definition.File). A script that travels alone keeps the shared text exactly; change the shared file, then copy it here."
+        }
+        else {
+            $identicalCopies++
+        }
+    }
+    if ($pending) {
+        if ($restates -eq 0) {
+            $restateProblems += "$relative - is on the list of copies not folded yet, but restates no shared helper any more. Take it off the list in this script."
+        }
+        else {
+            $pendingFolds += "$relative ($($script:RestatedUntilFolded[$relative.Replace('\', '/')]))"
+        }
+    }
+}
+
+$script:Checks++
+if ($restateProblems.Count -gt 0) {
+    Fail 'no shared helper restated outside a script that travels alone' (($restateProblems -join "`n    ") +
+        "`n    The helpers the scripts share have one copy (Q154, Q166 (b)): Testbed/guest/ScriptHelpers.ps1, dot-sourced.")
+}
+else {
+    $pendingText = ''
+    if ($pendingFolds.Count -gt 0) { $pendingText = "; not folded yet: " + ($pendingFolds -join ', ') }
+    Pass 'no shared helper restated outside a script that travels alone' "$($sharedDefinitions.Count) shared function(s) in $($script:SharedHelperFiles.Count) file(s), $identicalCopies identical copy(ies) in scripts that travel alone$pendingText"
 }
 
 Write-Host ''
