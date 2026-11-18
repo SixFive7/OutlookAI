@@ -68,8 +68,40 @@ public enum LiveMachineProfile
     /// Rendered by <c>Testbed/host/New-LiveTestSettings.ps1</c> for the VM <c>Testbed/testbed.json</c>'s
     /// <c>exchangeVm</c> block names, and for no other.
     /// </para>
+    /// <para>
+    /// Since 2026-10-08 the Exchange VM's settings declare <see cref="ExchangeTestAccount"/> instead; this
+    /// value stays the read-only answer for a settings file written before then, so that no file of that
+    /// shape - whose hub is the real mailbox - can ever gain a write.
+    /// </para>
     /// </summary>
     ExchangeGuest = 2,
+
+    /// <summary>
+    /// The Exchange test VM with a DEDICATED TEST ACCOUNT as its hub (2026-10-08): the maintainer's test
+    /// account, "the account you can use extensively for tests", added to the VM's one Outlook profile
+    /// beside the real mailbox. Neither address is in the repository: the settings file the testbed renders
+    /// names both at run time (Q189), and <see cref="LiveMailboxIdentity"/> checks them against the guest's
+    /// Outlook before every baseline. The Phase 2
+    /// write-safety design (<c>Docs/live-tier-on-the-vm.md</c> section 4.4) built for that account:
+    /// <list type="bullet">
+    /// <item><b>The hub may be written, and nothing else</b>: every other store the settings name is a
+    /// declared bystander (<see cref="LiveTestSettings.Validate"/> refuses a file where one is not), so
+    /// <see cref="StoreWriteAllowlist"/> grants the hub alone - no identity draft anywhere.</item>
+    /// <item><b>Mail goes only to the hub itself</b>: the recipient allowlist is armed
+    /// (<see cref="LiveWriteAccess.ArmsRecipientAllowlist"/>) in the test helpers, in the in-process
+    /// service (<see cref="LiveMailServices"/>) and in the test-side MCP client
+    /// (<see cref="StdioWritePosture.WritableHubOnly"/>). The VM has internet.</item>
+    /// <item><b>Every item a run makes carries the tag and the run's marker</b>, which the host recorded
+    /// (<see cref="LiveRunMarker"/>); the sweep deletes by both, and the next run sweeps an aborted
+    /// run's leftovers by the markers the host recorded - never by a subject pattern.</item>
+    /// <item>The real mailbox stays watched by the count tripwire, item by item, like any bystander:
+    /// a departure fails the run, an arrival is noted.</item>
+    /// </list>
+    /// Re-censuses as <see cref="ExchangeGuest"/> gets them, and never a re-run. Rendered by
+    /// <c>Testbed/host/New-LiveTestSettings.ps1</c> for the Exchange VM only, with the hub its record marks
+    /// as the test account.
+    /// </summary>
+    ExchangeTestAccount = 3,
 }
 
 /// <summary>
@@ -377,6 +409,11 @@ public sealed class LiveTestSettings
                 + "machine whose hub holds no generated population.");
         }
 
+        if (settings.MachineProfile == LiveMachineProfile.ExchangeTestAccount)
+        {
+            ValidateExchangeTestAccount(settings);
+        }
+
         if (settings.MachineProfile != LiveMachineProfile.Production)
         {
             return;
@@ -397,6 +434,62 @@ public sealed class LiveTestSettings
                 + "subjectTerm, senderFragment) required by the D40/SF-6 recall regression. Required on a "
                 + "Production profile; set machineProfile to 'Portable' on a test machine that has no such "
                 + "population.");
+        }
+    }
+
+    /// <summary>
+    /// What a settings file declaring <see cref="LiveMachineProfile.ExchangeTestAccount"/> must also say,
+    /// so that "one Exchange mailbox writable, the other read-only" holds by the file's own shape:
+    /// <list type="bullet">
+    /// <item>the hub is named by an ADDRESS - an Exchange account's store carries its SMTP address as its
+    /// name, and the recipient allowlist addresses mail to it and to nothing else;</item>
+    /// <item>the hub is not a bystander, and EVERY other store the file names is one - a store left out of
+    /// <c>bystanderStoreDisplayNames</c> would fall into the identity grant's tier, and the real mailbox
+    /// would be one omission away from a draft;</item>
+    /// <item>no corpus and no mail sink: a corpus is never built in a real mailbox, and mail here goes out
+    /// through Exchange, to the hub.</item>
+    /// </list>
+    /// </summary>
+    private static void ValidateExchangeTestAccount(LiveTestSettings settings)
+    {
+        string hub = settings.TestHubStoreDisplayName;
+        if (!hub.Contains('@', StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Live-test settings declare machineProfile 'ExchangeTestAccount' with the hub '" + hub + "', which is not "
+                + "an address. The hub of the Exchange VM is its test account's mailbox, whose store Outlook names by its "
+                + "SMTP address - and the recipient allowlist addresses mail to that address and no other.");
+        }
+
+        if (settings.BystanderStoreDisplayNames.Any(b => string.Equals(b, hub, StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new InvalidOperationException(
+                "Live-test settings declare machineProfile 'ExchangeTestAccount' and name the hub '" + hub + "' a bystander. "
+                + "The hub is the one store the run may write; a bystander is one it never writes.");
+        }
+
+        foreach (string store in settings.ExpectedStoreDisplayNames)
+        {
+            if (string.Equals(store, hub, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (!settings.BystanderStoreDisplayNames.Any(b => string.Equals(b, store, StringComparison.OrdinalIgnoreCase)))
+            {
+                throw new InvalidOperationException(
+                    "Live-test settings declare machineProfile 'ExchangeTestAccount' and name '" + store + "' in "
+                    + "'expectedStoreDisplayNames' without declaring it in 'bystanderStoreDisplayNames'. On the Exchange VM "
+                    + "every store but the test account is real mail, read-only for every test: declare it a bystander.");
+            }
+        }
+
+        if (settings.Corpus != null || settings.MailSink != null)
+        {
+            throw new InvalidOperationException(
+                "Live-test settings declare machineProfile 'ExchangeTestAccount' with a 'corpus' or a 'mailSink' block. "
+                + "Neither belongs on the Exchange VM: no corpus is built in a real mailbox, and its mail goes through "
+                + "Exchange to the test account itself.");
         }
     }
 
@@ -550,7 +643,11 @@ public sealed class LiveTestSettings
     public string Describe()
     {
         return "machineProfile=" + MachineProfile
-            + ", writes=" + (RefusesEveryWrite ? "NONE (read-only machine)" : "hub allowlist")
+            + ", writes=" + (RefusesEveryWrite
+                ? "NONE (read-only machine)"
+                : LiveWriteAccess.ArmsRecipientAllowlist(MachineProfile)
+                    ? "hub only, recipients the hub only, run marker " + LiveRunMarker.Current
+                    : "hub allowlist")
             + ", stores=" + ExpectedStoreDisplayNames.Count
             + ", indexed=" + (IndexedStoreDisplayNames == null
                 ? "as-watched(" + ExpectedStoreDisplayNames.Count + ")"

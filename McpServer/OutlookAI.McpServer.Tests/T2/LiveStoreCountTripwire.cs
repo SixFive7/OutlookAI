@@ -173,6 +173,14 @@ public static class LiveStoreCountTripwire
                 return;
             }
 
+            // The Exchange VM's test account (2026-10-08): a run there writes in a real mailbox no checkpoint
+            // restores, so it must carry the run marker the host recorded; its hub must hold no tagged item of
+            // an unrecorded run; and what the read-only stores already held is noted, so that the sweep judges
+            // what THIS run did. All of it reads; every other machine returns at once.
+            LiveRunMarker.RequireRecordedOnExchange(settings);
+            LiveArtifactSweep.CheckHubBeforeTheRun(settings, line => Console.WriteLine(line));
+            LiveArtifactBaseline.Capture(settings, line => Console.WriteLine(line));
+
             _hub = ExemptHub(settings);
             _lazyHierarchyStores = settings.ExpectedDelegateStoreDisplayNames.ToList();
 
@@ -209,6 +217,13 @@ public static class LiveStoreCountTripwire
             try
             {
                 LiveMailSink.EnsureOutboxDrained(_keepAlive!, settings);
+
+                // The Exchange VM (2026-11-17): the test mailbox by IDENTITY before the census counts anything.
+                // Its profile holds that mailbox twice - its own cached store and an online entry automapped
+                // through the bystander's Full Access - and this refuses the tier unless the hub's name is the
+                // test account's own store, no watched store or bystander is the same mailbox under another entry,
+                // and no two watched stores are one mailbox. Every other machine returns at once.
+                LiveMailboxIdentity.Require(settings, WatchedStores(settings), line => Console.WriteLine(line));
             }
             catch
             {

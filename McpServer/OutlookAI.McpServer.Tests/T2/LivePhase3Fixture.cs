@@ -26,7 +26,7 @@ public sealed class LivePhase3Fixture : IDisposable
         // Fail-closed per-store count tripwire: no census, no live tier. Cheap after
         // the first fixture (one process-wide baseline).
         LiveStoreCountTripwire.EnsureBaseline(Settings);
-        Service = MailService.CreateDefault();
+        Service = LiveMailServices.CreateDefault();
         _verifySession = new Lazy<OutlookComSession>(
             () => OutlookComSession.Connect(allowStartingOutlook: true),
             LazyThreadSafetyMode.ExecutionAndPublication);

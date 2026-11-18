@@ -75,6 +75,12 @@ public sealed class McpStdioClient : IAsyncDisposable
     /// <see cref="StoreWriteAllowlist"/> cannot see it.
     /// </summary>
     private readonly StdioWritePosture _writePosture;
+
+    /// <summary>
+    /// The Exchange VM's test-account gate (<see cref="StdioWritePosture.WritableHubOnly"/>): who a write may
+    /// address and which items it may touch. Null under every other posture.
+    /// </summary>
+    private readonly StdioHubOnlyGate? _hubGate;
     private int _nextId;
     private JsonElement _initializeResult;
 
@@ -83,13 +89,15 @@ public sealed class McpStdioClient : IAsyncDisposable
         CancellationTokenSource cts,
         Task<string> stderrTask,
         bool outlookReachingToolsAllowed,
-        StdioWritePosture writePosture)
+        StdioWritePosture writePosture,
+        StdioHubOnlyGate? hubGate)
     {
         _server = server;
         _cts = cts;
         _stderrTask = stderrTask;
         _outlookReachingToolsAllowed = outlookReachingToolsAllowed;
         _writePosture = writePosture;
+        _hubGate = hubGate;
     }
 
     /// <summary>
@@ -97,14 +105,15 @@ public sealed class McpStdioClient : IAsyncDisposable
     /// wire under a posture of its choosing. It cannot reach anything: a call that passes both
     /// gates fails at the transport, because there is no process behind it.
     /// </summary>
-    internal static McpStdioClient Unstarted(StdioWritePosture writePosture, bool outlookReachingToolsAllowed)
+    internal static McpStdioClient Unstarted(StdioWritePosture writePosture, bool outlookReachingToolsAllowed, StdioHubOnlyGate? hubGate = null)
     {
         return new McpStdioClient(
             new Process(),
             new CancellationTokenSource(TimeSpan.FromSeconds(10)),
             Task.FromResult(string.Empty),
             outlookReachingToolsAllowed,
-            writePosture);
+            writePosture,
+            hubGate);
     }
 
     /// <summary>The posture this client was started under. For T1 and for a run's own output.</summary>
@@ -184,12 +193,18 @@ public sealed class McpStdioClient : IAsyncDisposable
         Process server = Process.Start(psi)
             ?? throw new InvalidOperationException("Failed to start the server process.");
         Task<string> stderrTask = server.StandardError.ReadToEndAsync(cts.Token);
+        // The hub-only posture is only ever decided where the item check is armed; if it somehow is not,
+        // the client has no gate and refuses every write (RefuseBeforeSending).
+        StdioHubOnlyGate? hubGate = writePosture == StdioWritePosture.WritableHubOnly && LiveRunItemCheck.Current is { } check
+            ? new StdioHubOnlyGate(check)
+            : null;
         var client = new McpStdioClient(
             server,
             cts,
             stderrTask,
             string.Equals(outlookReachingTools, OutlookReachingToolsAllowed, StringComparison.Ordinal),
-            writePosture);
+            writePosture,
+            hubGate);
 
         JsonElement init = await client.RoundTripAsync("initialize", new
         {
@@ -282,6 +297,12 @@ public sealed class McpStdioClient : IAsyncDisposable
                 throw new InvalidOperationException($"JSON-RPC error response for '{method}' (id {id}): {error.GetRawText()}");
             }
 
+            // What a result named, for the hub-only gate to judge a later write by.
+            if (_hubGate != null && string.Equals(method, "tools/call", StringComparison.Ordinal))
+            {
+                ObserveForHubGate(root);
+            }
+
             return root;
         }
     }
@@ -349,11 +370,18 @@ public sealed class McpStdioClient : IAsyncDisposable
     /// </summary>
     public async Task PrimeWritingRulesGateAsync()
     {
+        // On the Exchange VM's test account the hub-only gate judges even this call, which the server
+        // rejects before any Outlook work: there it names the hub and carries the tag and the run's marker
+        // (2026-10-08), so the gate lets it through to be rejected.
+        string address = _hubGate?.Hub ?? "nobody@example.invalid";
+        string subject = _hubGate == null
+            ? "writing-rules gate priming"
+            : LiveOutlookTestMailer.SubjectTag + " " + LiveRunMarker.Current + " writing-rules gate priming";
         await CallToolWithIsErrorAsync("new_draft", new
         {
-            account = "nobody@example.invalid",
-            to = "nobody@example.invalid",
-            subject = "writing-rules gate priming",
+            account = address,
+            to = address,
+            subject,
             body = "priming",
             body_html = "<p>priming</p>",
             display = false,
@@ -426,6 +454,18 @@ public sealed class McpStdioClient : IAsyncDisposable
             throw new InvalidOperationException(writeRefusal);
         }
 
+        // On the Exchange VM's test account: whom the write addresses and which items it touches.
+        if (_writePosture == StdioWritePosture.WritableHubOnly)
+        {
+            string? hubRefusal = _hubGate == null
+                ? StdioHubOnlyGate.Refused + ": this client has no hub-only gate, so on this machine it sends no tool that is not read-only."
+                : _hubGate.RefusalFor(tool, ArgumentsOf(parameters));
+            if (hubRefusal != null && (_hubGate != null || McpToolWriteClassification.Classify(tool) != McpToolEffect.ReadOnly))
+            {
+                throw new InvalidOperationException(hubRefusal);
+            }
+        }
+
         // Then the test's own declaration of mailbox contact.
         RefuseUndeclaredOutlookContact(tool);
 
@@ -434,6 +474,48 @@ public sealed class McpStdioClient : IAsyncDisposable
         if (parameters is not null)
         {
             RefuseUndeclaredAuditLogContact(parameters);
+        }
+    }
+
+    /// <summary>The <c>arguments</c> object of a <c>tools/call</c>'s parameters, or an undefined element.</summary>
+    private static JsonElement ArgumentsOf(object? parameters)
+    {
+        if (parameters == null)
+        {
+            return default;
+        }
+
+        JsonElement envelope = JsonSerializer.SerializeToElement(parameters);
+        return envelope.ValueKind == JsonValueKind.Object && envelope.TryGetProperty("arguments", out JsonElement arguments)
+            ? arguments.Clone()
+            : default;
+    }
+
+    /// <summary>Hands the JSON text of a tool result to the hub-only gate. Never throws.</summary>
+    private void ObserveForHubGate(JsonElement response)
+    {
+        try
+        {
+            if (!response.TryGetProperty("result", out JsonElement result)
+                || !result.TryGetProperty("content", out JsonElement content)
+                || content.ValueKind != JsonValueKind.Array)
+            {
+                return;
+            }
+
+            foreach (JsonElement block in content.EnumerateArray())
+            {
+                if (block.TryGetProperty("type", out JsonElement type) && type.GetString() == "text"
+                    && block.TryGetProperty("text", out JsonElement text) && text.ValueKind == JsonValueKind.String)
+                {
+                    using JsonDocument doc = JsonDocument.Parse(text.GetString()!);
+                    _hubGate!.Observe(doc.RootElement);
+                }
+            }
+        }
+        catch (JsonException)
+        {
+            // A result that is not JSON names no hit.
         }
     }
 
@@ -596,6 +678,7 @@ public sealed class McpStdioClient : IAsyncDisposable
         }
         finally
         {
+            _hubGate?.Dispose();
             _server.Dispose();
             _cts.Dispose();
         }

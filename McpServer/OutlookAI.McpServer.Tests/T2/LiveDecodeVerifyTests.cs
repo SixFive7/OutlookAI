@@ -49,6 +49,7 @@ public sealed class LiveDecodeVerifyTests
     [Trait("Requires", "SearchIndex")]
     [Trait("Requires", "MultipleStores")]
     [Trait("Writes", "Nothing")]
+    [Trait("Requires", "GeneratedPopulation")]
     public void HitMapping_25SampledHits_AllOpenAndMatch_AtLeast24ViaPrimaryPath()
     {
         List<IndexHit> samples = SampleHitsAcrossStores();
@@ -164,17 +165,29 @@ public sealed class LiveDecodeVerifyTests
         // Pins the Phase-1 platform finding so a future behavior change is noticed:
         // the 24-byte decoded id is NOT openable on cached Exchange stores. The CACHED EXCHANGE
         // half of the check (Q74 C1) - on a PST the same id opens, and the PST half below says so.
-        ComStoreDetail store = FirstIndexedStoreOf(DecodedIdStoreFormat.CachedExchange);
         Assert.Equal(
             DecodedIdOutcome.RejectedAsAnInvalidEntryId,
             ShortDecodedIdExpectation.ExpectedOutcome(DecodedIdStoreFormat.CachedExchange));
 
-        IndexHit? hit = _fixture.Service.Search(new IndexQuery
+        // The first cached-Exchange indexed store that HOLDS indexed mail (2026-10-08: on the Exchange VM the
+        // first one is the test account, empty between runs; the read-only bystander beside it holds mail,
+        // and this check only reads).
+        _ = FirstIndexedStoreOf(DecodedIdStoreFormat.CachedExchange);
+        IndexHit? hit = null;
+        foreach (ComStoreDetail candidate in IndexedStoresOf(DecodedIdStoreFormat.CachedExchange))
         {
-            Scope = _fixture.GetScope(store.DisplayName).StorePrefix,
-            Kinds = KindFilter.MailKindOnly,
-            Top = 1,
-        }).Hits.FirstOrDefault();
+            hit = _fixture.Service.Search(new IndexQuery
+            {
+                Scope = _fixture.GetScope(candidate.DisplayName).StorePrefix,
+                Kinds = KindFilter.MailKindOnly,
+                Top = 1,
+            }).Hits.FirstOrDefault();
+            if (hit != null)
+            {
+                break;
+            }
+        }
+
         Assert.NotNull(hit);
         Assert.NotNull(hit!.EntryIdHex);
 
@@ -189,6 +202,7 @@ public sealed class LiveDecodeVerifyTests
     [Fact]
     [Trait("Requires", "SearchIndex")]
     [Trait("Writes", "Nothing")]
+    [Trait("Requires", "PstStore")]
     public void ShortDecodedId_OpensAsTheItemItself_OnAPstStore()
     {
         // The PST half (Q74 C3), the one a test guest can pass. INFERRED, NOT YET RUN: on a PST the
@@ -231,6 +245,21 @@ public sealed class LiveDecodeVerifyTests
     /// what this half needs - a machine without such a store cannot prove this half anything, and the
     /// Requires trait is what keeps the test off it.
     /// </summary>
+    private IEnumerable<ComStoreDetail> IndexedStoresOf(DecodedIdStoreFormat format)
+    {
+        IReadOnlyList<ComStoreDetail> details = _fixture.Session.GetStoreDetails();
+        foreach (string name in Indexed)
+        {
+            ComStoreDetail? detail = details.FirstOrDefault(d =>
+                string.Equals(d.DisplayName, name, StringComparison.OrdinalIgnoreCase));
+            if (detail != null
+                && ShortDecodedIdExpectation.FormatOf(detail.ExchangeStoreType, detail.IsCachedExchange) == format)
+            {
+                yield return detail;
+            }
+        }
+    }
+
     private ComStoreDetail FirstIndexedStoreOf(DecodedIdStoreFormat format)
     {
         IReadOnlyList<ComStoreDetail> details = _fixture.Session.GetStoreDetails();
@@ -255,6 +284,7 @@ public sealed class LiveDecodeVerifyTests
     [Trait("Requires", "SearchIndex")]
     [Trait("Requires", "MultipleStores")]
     [Trait("Writes", "Nothing")]
+    [Trait("Requires", "GeneratedPopulation")]
     public void AttachmentHit_ParentMapping_OpensParentWithMatchingAttachment()
     {
         // Real attachment-content entries (kind=document under a mapi store scope).

@@ -39,6 +39,7 @@ public sealed class LiveSweepCacheTests
     [Fact]
     [Trait("Requires", "SearchIndex")]
     [Trait("Writes", "Nothing")]
+    [Trait("Requires", "GeneratedPopulation")]
     public void RapidSearches_PayOneSweep_SecondServedFromCache()
     {
         MailService service = _fixture.Service;

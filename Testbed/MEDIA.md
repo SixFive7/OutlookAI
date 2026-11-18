@@ -648,6 +648,35 @@ cold start hang should check the profile before blaming the licence. And the **w
 (`CreateItem`/`Save`/`Move`/`Delete`/`Send`) is still unmeasured, because mailbox-safety rule 1
 puts it out of reach of a probe.
 
+### The Exchange VM past grace: a start WITH A WINDOW meets the Activation Wizard
+
+**Measured 2026-11-17 on `OutlookAI-Exchange`**, whose Office was installed on 2026-10-03
+(`CP-02-OFFICE-INSTALLED`) and whose clock is real, never frozen - so its 30-day grace ran out around
+2026-11-02, and the VM went unused until then. `LicenseStatus` 5, `GracePeriodRemaining` 0,
+`LicenseStatusReason` 0xC004F056, SKU `Office24ProPlus2024VL_KMS_Client_AE`, build 16.0.17932.21000
+(`Testbed/guest/Measure-SignatureRoaming.ps1 -Step R0`).
+
+- **Every start of Outlook with a window** - `OUTLOOK.EXE /profile Outlook`, as
+  `Testbed/guest/Start-OutlookUnelevated.ps1` starts it - raised a modal **"Microsoft Office Activation
+  Wizard"** (class `NUIDialog`: "This copy of Microsoft Office is not activated", Change Product Key,
+  Close) **before** the Explorer window, and the Explorer did not open until the wizard was closed: one
+  start sat 277 s until it was clicked away by hand. Its title bar then reads "(Product Activation
+  Failed)". Measured four times that day, every time.
+- **A COM start did not** (`OUTLOOK.EXE -Embedding`): the add-in's first run started Outlook over COM
+  and its check for a window left on screen passed - the 2026-09-15 result above, on this guest too.
+- **What the testbed does about it, since 2026-11-17:** `Start-OutlookUnelevated.ps1` closes the
+  wizard with its own Close button (WM_CLOSE to that window if the button cannot be pressed), never
+  anything else on it, prints an `ACTIVATION-WIZARD-DISMISSED` line for each and
+  `ACTIVATION-WIZARD-DISMISSALS <n>`, and fails the start if the wizard stays up;
+  `Testbed/host/Invoke-LiveTierOnGuest.ps1` records the count in `summary.txt` ("outlook    started
+  by this run ... Office's activation wizard dismissed 1 time(s)") and `summary.json`
+  (`outlookStart`). Measured: dismissed 4 to 8 s after the start, Explorer up 3 s later.
+- **Also seen past grace, cause not established:** File > Options is disabled -
+  `GetEnabledMso('ApplicationOptionsDialog')` reads False and the File tab shows Options greyed. Account
+  Settings and the Signatures dialog still open.
+- The two Outlook guests do not meet the wizard: their clocks are frozen at 2026-10-03, 18 days after
+  their Office was installed, inside the grace.
+
 ### Reading the licence state — the query, and why it is shaped this way
 
 Measured 2026-09-15. Written down rather than left to be re-derived, because it is non-obvious in

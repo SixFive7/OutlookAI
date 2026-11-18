@@ -436,7 +436,7 @@ from-scratch rebuild replaces the guests (see `Testbed/README.md` section 1b).
 | Test | Declares | Asserts | Reads |
 | --- | --- | --- | --- |
 | `T3/Phase7LiveMcpToolShapeTests.Health_OverStdio_OnThisMachine_HasOutlookVersionAndTuning` | `AddInRegistry` | `tuning.managed` is true | `Initialized`, a nonzero **REG_DWORD** |
-| `T2/LiveHealthTests.Health_OnThisMachine_ReportsOkWithFullDetail` | `SearchIndex`, `MultipleStores` - **not** `AddInRegistry`, which it needs | `Tuning.Managed`, `Tuning.Enabled`, `Tuning.LastReconcileUtc` not null | `Initialized` and `Enabled` as nonzero **REG_DWORD**s, `LastReconcileUtc` as a **REG_SZ** |
+| `T2/LiveHealthTests.Health_OnThisMachine_ReportsOkWithFullDetail` | `SearchIndex`, `MultipleStores` and, since 2026-10-08, `AddInRegistry`, which it needs | `Tuning.Managed`, `Tuning.Enabled`, `Tuning.LastReconcileUtc` not null | `Initialized` and `Enabled` as nonzero **REG_DWORD**s, `LastReconcileUtc` as a **REG_SZ** |
 
 **The type matters as much as the value**: `HealthReporting`'s `AsBool` accepts a boxed `int` and
 nothing else, so a REG_QWORD 1 reads as not-managed. The third test that declares `AddInRegistry`,
@@ -3749,7 +3749,8 @@ read-only count; nothing this VM ran created it - the census identifies the same
 after every run. It is test data, so under the maintainer's rule (Q129 (a)) it must go; on this
 read-only machine nothing removes it, and nothing will by hand.
 
-**Phase 2 - PROPOSED 2026-10-03, NOT APPROVED.** What writing in this real mailbox would rest on, each
+**Phase 2 - PROPOSED 2026-10-03; BUILT 2026-10-08 for the test account (section 4.4a), never for this
+mailbox, which has been a read-only bystander since.** What writing in this real mailbox would rest on, each
 part in code. Nothing below is built; the maintainer decides first.
 
 1. **The rule (Q129 (a))**: tests create, change and delete only their own tagged items, and remove
@@ -3796,6 +3797,198 @@ account has that store, `SendUsingAccount` is left to Outlook, and whether the d
 shared mailbox's Drafts is exactly what the first run there must read. `move_mail` and `archive_mail`
 move items wherever they are, so a population built in the shared mailbox can stay there.
 `manage_signature` writes no mailbox at all.
+
+### 4.4a The test account - `OutlookAI-Exchange`, 2026-10-08 and 2026-11-17 (Phase 2 built for it, Q137)
+
+**Why this section exists.** On 2026-10-08 the maintainer added a dedicated Microsoft 365 account, the
+test account, in his words *"the account you can use extensively for tests. Add it to ... the test
+VMs."* This section records how it joined the Exchange VM,
+what the Phase 2 write-safety design of section 4.4 became once it was built for that account, what the
+write runs found, and the session of 2026-11-17 after the VM had stood saved for 40 days.
+`Testbed/README.md` sections 1d (E12 to E14) and 4e are the procedure.
+
+**Only the Exchange VM.** The account is NOT added to `OutlookAI-Indexed` or `OutlookAI-Unindexed`, by
+decision: they are offline by design (AGENTS.md, Dependencies; Q111 is the Exchange VM's alone) and run
+on frozen clocks (Q130 (a)), and a Microsoft 365 sign-in needs the internet and the real time - a token
+checked against a clock frozen days back fails, and a mailbox that syncs would age the frozen data.
+
+**The roles (Q137, settled by the maintainer 2026-10-11).** The test account is the writable hub;
+the Exchange VM's mailbox is a read-only bystander, watched by the count tripwire and written by
+nothing -
+with one exception the maintainer decided on 2026-11-17 (Q138 (c)): its one leftover tagged item from
+the workstation years, in Sent Items, goes by a one-off tested helper once he has confirmed its id.
+
+**The addresses come in at run time (Q189, 2026-11-17).** Neither mailbox's address is in this
+repository. `Testbed/testbed.json` names each account by a placeholder under the reserved `.invalid`
+domain - `hub@exchange-vm.invalid`, `bystander@exchange-vm.invalid` - beside its role and its
+`credentialFile`; the address is that gitignored credential file's
+`account` field, read on the host at run time, with nothing decrypted for it:
+`Testbed/host/New-LiveTestSettings.ps1` puts it into the VM's rendered live-test settings, and
+`Testbed/host/Invoke-ExchangeSignIn.ps1` signs in by role (`-Account hub`). Probes on the guest take the
+hub from the staged settings file. The guest's Outlook is the cross-check: before every baseline
+`T2/LiveMailboxIdentity.cs` refuses the tier unless an account signed in there carries the name the
+settings give the hub and delivers to that store, and every watched store is there exactly once.
+
+**The design as built (2026-10-08).** Profile `ExchangeTestAccount`: in-process writes only to the hub
+(`StoreWriteAllowlist`, no identity grant); every address a test hands to Outlook, in-process
+(`LiveRecipientGuard`) or through the MCP server (`T3/StdioHubOnlyGate`), is the test account's own,
+its plus addresses, or an unresolvable name carrying the run marker; every item a run makes carries the
+tag and the run marker, which the host records in a ledger before the suite starts
+(`C:\OutlookAI-Testbed\exchange-runs\ledger.jsonl`); a reply, send, move, archive, discard or open
+touches only the run's own tagged items in the hub; the sweep deletes by recorded marker and tag, from
+Drafts, Inbox, Sent Items, Outbox, Deleted Items, Junk Email and the Sync Issues subtree, test folders
+deepest first, and never by a subject pattern; an aborted run's items go with the next run, whose
+ledger hands it the marker. Populations are not kept: a test seeds what it needs and the sweep removes
+it - a permanent tagged population would read as a leftover to every zero-artifact proof.
+
+**The automapped second entry (measured 2026-10-08 and 2026-11-17).** Exchange maps the test mailbox
+into the profile a second time, as an online entry named by the test account's display name
+(`ExchangeStoreType` 1) under the real mailbox's account, through that mailbox's Full Access. Its
+`PR_STORE_RECORD_KEY` and the mailbox DN in its StoreID equal the test account's own cached store's and
+differ from the real mailbox's. At the coordinator's
+direction, while the maintainer decides between keeping it (for the delegate-store tests) and having
+automapping switched off: the two entries are one test mailbox, writes are allowlisted by the test
+account's identity, nothing is ever written through the online entry, and the tripwire never counts
+one mailbox as two stores. `T2/LiveMailboxIdentity.cs` proves that before every baseline and refuses
+the tier otherwise.
+
+**2026-11-17, after 40 days saved.**
+
+| What | Found | Done |
+| --- | --- | --- |
+| PowerShell Direct | "The credential is invalid": `vmadmin`'s password had expired on 2026-11-14 (42-day default; the answer file never set "never expires") | set never to expire from the console; the build VM's own fix went to the VM-pool stream |
+| The .ost files | older than the server: run 3 of 2026-10-08 had restored `CP-06` after two write runs | set aside (`guest/Reset-OutlookOfflineStore.ps1`), rebuilt from the server; checkpoint `CP-07-TEST-ACCOUNT-READY` |
+| Windows Search | keeps the set-aside .ost's roots beside the new ones: two roots per store, the same folder paths | recorded for the folder-id stream (Q132) |
+| Office | 30-day activation grace past; every windowed start raised the Activation Wizard before the Explorer | `guest/Start-OutlookUnelevated.ps1` closes it and the runner records it (`Testbed/MEDIA.md`) |
+| Object Model Guard | prompted when Outlook started 38 s and 79 s after a boot, not 2 and 8 min after | the runner starts Outlook here no sooner than 240 s after a boot |
+| The add-in (Q140 (b)) | `ADDIN-READY`, 8 of 13 tuning values, the five Cached Mode policy values left to an administrator | checkpoint `CP-08-ADDIN-READY`; `AddInRegistry` no longer left out |
+
+**The measurements of 2026-11-17** (each through a committed probe with a self-test, the test account
+only):
+
+- **Q147 R0-R2** (`guest/Measure-SignatureRoaming.ps1`): Office LTSC 2024 ProPlus2024Volume x64
+  16.0.17932.21000, channel `Production::LTSC2024`, updates off; licence status 5. No signature setting
+  set anywhere, no signature folder. R1: the classic Signatures and Stationery dialog - no account
+  selector, no "Signatures on this device"; File > Options is disabled here, so "Store my Outlook
+  settings in the cloud" could not be read; the testbed's own policies turn Office's connected
+  experiences off (`disconnectedstate` 2), which may bear on any cloud feature. R2: no
+  `ApplicationDataRoot` in the test mailbox, neither in the offline copy nor on the server (read through
+  the online entry).
+- **Q132** (`guest/Measure-ExchangeIndexIds.ps1`): DOES NOT WORK for a cached Exchange store. Every
+  folder's own index row carries the .ost's node id in `System.ProviderItemID`; the 46-byte folder id
+  holds no such number, the record key is the long-term id, and the node ids change when the .ost is
+  rebuilt (16 of 21 folders differed between the old and the new root).
+- **Q145** (`guest/Measure-OfflineWindow.ps1`): the months are property 0x6649 and
+  the days 0x665A (PT_LONG, value names `00036649` and `0003665a`), in the account's own Exchange provider
+  section of the profile - the one that holds the account's address - always written as a pair. The
+  slider has positions 1 to 11, labelled exactly as Microsoft's eleven windows: 3 days (0, 3), 1 week
+  (0, 7), 2 weeks (0, 14), 1 month (1, 0), 3 months, 6 months, 1 year (12, the starting value), 2 years,
+  3 years (36), 5 years (60), All (0, 0). 36 and 60 set in the UI read back as 3 and 5 years after an
+  Outlook restart. 0x6649 = 0 written with Outlook closed read back as All. The pair (3, 0) written while
+  Outlook RAN - the add-in's own case - was not overwritten when Outlook quit, and the next start showed
+  3 months; whether a running session applies it before a restart was not measured. The test account
+  only; the real mailbox's 0x6649 stayed 12 throughout; the VM went back to its checkpoint afterwards.
+
+- **Q147 R3** (2026-11-17, under Q161 (c); Q194 still open, so option (a): the testbed's
+  connected-experience policies left as they are). The test account signed in to Outlook on the web in
+  an InPrivate Edge window through `host/Invoke-ExchangeSignIn.ps1 -Mode OwaSignIn` (no code asked for;
+  "Stay signed in?" No), and at 18:09 the signature `OutlookAI-McpTest-Roam1117` - one marker line and a
+  24x24 image - was created there and made the default for new messages, replies keeping none. Outlook
+  on the web showed its one-time "Your privacy matters" notice first. Read with
+  `guest/Measure-SignatureRoaming.ps1` at +1 min, +15 min, +1 h and after a graceful Outlook restart
+  (whose start closed the activation wizard once): every reading the same as R0 - no signature folder or
+  file, no default for any account or in MailSettings, and the classic dialog with no account selector,
+  no "Signatures on this device" and no "(address)" copy. **LTSC 2024 16.0.17932.21000 brought the cloud
+  signature down neither within an hour nor across a restart.** That is what OutlookAI's evidence rule
+  assumes for perpetual Office: roaming only where Outlook's own copies show it. R2 did not see the
+  signature on the server either, while it existed: the object model's folder list does not reach where
+  Outlook on the web keeps it, so R2 says nothing about the server side, and the morning's R2 is no
+  evidence of an empty mailbox. Then the signature was deleted in Outlook on the web (after a reload the
+  page showed "No signature yet" and no default for new mail or replies), R0 to R2 read as before, the
+  test account signed out (`-Mode OwaSignOut`, 19:21, every InPrivate window closed), and the VM went
+  back to `CP-08-ADDIN-READY` with the next live run. The draft check of the plan was not run: with no
+  local copy and no default in the profile, Outlook had nothing to put in a draft. What stays open is
+  the confound: whether "Store my Outlook settings in the cloud" or the connected-experience policies
+  kept the copy away could not be read, because Options is disabled past the activation grace (Q194).
+
+**The live runs of 2026-11-17** (`host/Invoke-LiveTierOnGuest.ps1 -VMName OutlookAI-Exchange`; results
+in `.work\guest-live-runs\<run>\` of the branch's worktree).
+
+| Run | Revision | From | Total | Passed | Failed | Suite | Outlook |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | `6b84aab`, master `3ae6eae` merged | `CP-08-ADDIN-READY`, both .ost files set aside | 87 | 35 | 52 | 4 m 59 s | started by the run; the activation wizard closed once |
+| 2 | `8a66b74`, the addresses read at run time | carried forward | 1 (`LiveDraftTests.NewDraft_Hub_LandsInHubDrafts_...`) | 0 | 1 | 20 s | already running, no dialog open |
+| 5 | `40c64f8`, `Writes=Nothing` only (decision 206) | `CP-08-ADDIN-READY`, both .ost files set aside, the search index rebuilt | 25 | 23 | 2 | 49 s | started by the run; the activation wizard closed once |
+| 6 | `d5f3d34`, master `9550802` (folders and stores by ID) merged, `Writes=Nothing` only | carried forward | 28 | 23 | 5 | 1 m 15 s | already running |
+
+Both runs left no tagged item behind (run 1 swept every store to zero; run 2 created nothing), the
+count tripwire found no change outside the test account, Outlook did not crash, and the mailbox
+identity check passed - in run 2 on settings whose two addresses `New-LiveTestSettings.ps1` had read
+from the credential files at render time (Q189 (b)), checked against the guest's own Outlook (Q189 (d)).
+
+**Why 52 failed, by cause:**
+
+- **Outlook creates no item through its object model any more (41 tests, and most likely a 42nd).** 30
+  failed at `MailService.NewDraft`, `COMException 0x80004004` (E_ABORT) before anything was saved, and
+  11 at the test helper's `Application.CreateItem`, "The operation failed."; `Phase5LiveMcpToolShapeTests`'
+  `KeyNotFoundException` follows from a draft that was never made. Every test that only reads passed.
+  Run 2, one draft test with Outlook already running and no dialog open, failed the same way. Office
+  here reports `---NOTIFICATIONS---` and error `0xC004F056`: it was never activated (no KMS host is
+  reachable) and its grace ran out about 25 days after the install of 2026-10-03 (`Testbed/MEDIA.md`).
+  On 2026-10-08, inside that grace, the same tests created and removed their items on this VM, and the
+  frozen guests stay inside theirs (Q130) - this VM cannot, because Microsoft 365 needs the real time.
+  So the expired grace is the most likely cause; it is not proven, because no item was created by hand
+  to try it (AGENTS.md, Mailbox Safety rule 1). Microsoft documents notifications, not lost functions,
+  for an unactivated volume edition. Until it is settled the VM's write tests cannot pass (TODO.md).
+- **No index scope for the test account (6).** After the day's set-asides the catalog held more than
+  one root under each mailbox's name - the run's sample found three for the real mailbox - and the
+  scope finder, which never guesses between two roots of one name (`T2/LiveIndexScopes.cs`), found
+  none for the test account. A run carried forward keeps those roots too. Since then the runner has
+  Windows Search rebuild its catalog after a set-aside and waits for exactly one root, with rows, per
+  indexed store (`guest/Reset-OutlookOfflineStore.ps1 -ResetSearchIndex`, `-WaitForIndexRoots`).
+- **`LiveHealthTests.Health_OnThisMachine_ReportsOkWithFullDetail` (1):** `outlook_health` says `degraded`
+  because the automapped online entry has no index - true of that entry, and part of the automapping
+  question in TODO.md rather than a defect.
+- **Three more**, not analysed past their messages: `LiveFolderScopeTests.UnresolvedFolderPath_...` and
+  `LiveMailServiceTests.Thread_IndexPath_AndComFallback` read index state the failed seeds left behind;
+  `LiveDisconnectRecoveryTests.OutlookExit_..._GatewayReattaches` quit Outlook, whose next start at
+  19:45 left the Activation Wizard open with no Outlook window, found there at 19:49.
+
+**Run 5: the selection while decision 206 is open.** Runs 3 and 4 (`1c35f6a`, `cafbba7`) tried a
+first form of the index step, which recorded the roots before the set-aside and waited for a new one
+per store: run 3 stopped before its tests, because Windows Search refused queries 20 s after the boot
+(`0x80041820`), and run 4 found the new roots at once and still failed the same six scope tests - the
+old roots stayed beside them. Run 5, with the catalog rebuilt from nothing, passed all six, and 23 of
+the 25 tests that write nothing. Its two failures: `LiveHealthTests.Health_OnThisMachine_ReportsOkWithFullDetail`,
+the automapped entry (a question to the maintainer), and
+`LiveMailServiceTests.Thread_IndexPath_AndComFallback`: the thread's one index member could not be
+opened by subject and time by either route (`NoSubjectTimeMatch`), on a catalog rebuilt minutes before,
+so not a stale row - a question for the product's open-by-index path, not analysed further here. Five
+tests proved nothing for want of data on this machine: an index frontier younger than its UTC offset,
+an indexed mail with an attachment in the first indexed store, and a resume token from an exhaustive
+scan of the empty hub.
+
+**Run 6: folders and stores by ID on a real Exchange mailbox (2026-11-18).** Master's change to folder
+and store IDs (Q131-Q136) had reached Exchange through T1 and the Q132 measurement only, so the branch
+added three tests that write nothing (`T2/LiveExchangeFolderIdTests.cs`). What they and the rest found:
+
+- **The 66-character IDs hold.** `list_folders` for the test account's `storeId` gave 74 folders, every
+  ID 66 characters of kind X, each reading back to a 46-byte entry id.
+- **One `storeId` names two stores.** The test account's mailbox is in the profile twice - its cached
+  store and the online entry Exchange automapped (section 4.4a) - and `list_folders` for the cached
+  store's `storeId` answered with both: `LiveMailServiceTests.ListFolders_TestHub_FullTree_...` found two
+  stores where it asserts one, which is also why there were 74 folders. `find_folder` for `Inbox` in
+  that store offered two exact matches, so `FindFolder_FindsTheInboxByItsName_...` could not name one.
+- **An Exchange folder ID no folder has was not refused.** A search scoped to the Inbox's ID answered,
+  but one scoped to the root's ID with its six counter bytes set to `FF` - built by
+  `LiveIds.UnknownFolderIdIn`, the helper master's own refusal test uses - answered too, where Q131-Q136
+  say it must be refused as no folder's. Whether the second store entry is what answers it was not
+  established.
+- `LiveHealthTests.Health_...` (the automapped entry again) and
+  `LiveMailServiceTests.Thread_IndexPath_AndComFallback` failed as in run 5.
+
+None of this is mended on the branch: the first two are the folders-by-ID code's to settle, and depend
+on what the maintainer decides about the automapped entry; this section records them.
 
 ### 4.5 The frozen guest clocks - both Outlook guests, 2026-10-03 (Q130 (a) and (b))
 
@@ -4406,11 +4599,11 @@ user's screen - declared **per method**, with that one value, and absence meanin
 is not the retired third axis come back: that one restated `Requires` by hand and could only drift,
 while this one cannot be derived from `Requires` at all, and it is not trusted either -
 `T1/ReadOnlyLiveTestTests` walks the compiled code of every carrier, its fixtures included, and
-fails the build on any way it can reach a write. It exists for one machine: the Exchange test VM
-(section 4.4) runs only live tests that need an Exchange profile AND carry `Writes=Nothing` until the
-maintainer approves its Phase 2 write-safety design, and every test needing Exchange must carry it.
-Until Q116 (a), 2026-10-03, the machine was the maintainer's workstation, which runs no live test
-now. The run is `Testbed/README.md` section 4e; its filter, derived in
+fails the build on any way it can reach a write. It existed for one machine: the Exchange test VM
+(section 4.4) ran only live tests that need an Exchange profile AND carry `Writes=Nothing`, and every
+test needing Exchange had to carry it. Until Q116 (a), 2026-10-03, the machine was the maintainer's
+workstation, which runs no live test now. That read-only run is still `Testbed/README.md` section 4e,
+for a settings file declaring `ExchangeGuest`; its filter, derived in
 `McpServer/OutlookAI.McpServer.Tests/T2/LiveRunFilters.cs` and pinned there and here, is:
 
 `Category=Live&Writes=Nothing&Requires=CachedExchange&Requires!=DelegateStore`
@@ -4418,6 +4611,17 @@ now. The run is `Testbed/README.md` section 4e; its filter, derived in
 - the cached-Exchange carriers, and none that needs a delegate store until the shared test mailbox
 exists (Q109). Fifty-four live tests carried the trait on the morning of 2026-10-03; seven of them
 needed Exchange, and those seven were the workstation run.
+
+**Since 2026-10-08 the Exchange VM writes - in its dedicated test account (section 4.4a).** Its run
+selects every live test it has the capabilities for, read and write:
+
+`Category=Live&Requires!=LocalSignatures&Requires!=DelegateStore&Requires!=GeneratedPopulation&Requires!=IdentityAccount&Requires!=ProbePopulation&Requires!=PstStore`
+
+and only a test that needs a delegate store must still carry `Writes=Nothing`
+(`EveryDelegateStoreTest_DeclaresWritesNothing`): a delegate or shared mailbox is read-only for every
+test, on every machine. Until decision 206 (2026-11-17) the runner narrows it to the tests that write
+nothing, `Category=Live&Requires!=LocalSignatures&Requires!=DelegateStore&Requires!=GeneratedPopulation&Requires!=IdentityAccount&Requires!=ProbePopulation&Requires!=PstStore&Writes=Nothing`, because the VM's Office creates no item since its activation grace ran out
+(section 4.4a).
 
 **The three buckets, all computed:**
 
@@ -4427,14 +4631,16 @@ needed Exchange, and those seven were the workstation run.
 | VM | `--filter "Category=Live&Requires!=DelegateStore&Requires!=CachedExchange"` | 121 |
 | Exchange-only (the Exchange VM, section 4.4; the workstation before Q116 (a)) | `--filter "Category=Live&(Requires=DelegateStore\|Requires=CachedExchange)"` | 7 on the morning of 2026-10-03; 9 once section 4.4 added two |
 
-**The vocabulary, all twelve values.** Ten of them this VM can be given; two it cannot - both are an
-Exchange profile.
+**The vocabulary, all fifteen values.** Thirteen of them this VM can be given; two it cannot - both are
+an Exchange profile. And three of the thirteen - `GeneratedPopulation` and `PstStore`, named 2026-10-08, and
+`LocalSignatures`, named 2026-11-17 - are what the Exchange VM, in turn, does not have (section 4.4a).
 
 | Capability | What the machine must have |
 | --- | --- |
 | `OutlookInstance` | an Outlook to attach to, and nothing more specific. The floor: a live test that needs nothing else says this rather than saying nothing |
 | `InteractiveDesktop` | a real desktop session - Outlook windows and screenshots cannot be driven from session 0. Declared only by tests that PUT SOMETHING ON SCREEN |
 | `AddInRegistry` | the add-in installed and run once, so its tuning values exist |
+| `LocalSignatures` | signatures written on the machine stay on it: no Outlook there carries a signature, or an account's default one, into a mailbox. Declared by every test that writes a signature or sets or reads an account's default. The PST guests have it; the Exchange VM lacks it until it is measured whether its Office LTSC 2024 roams signatures (Q147 R1, decided by the maintainer 2026-11-17) |
 | `SearchIndex` | a populated Windows Search index - Corpus A |
 | `MailAccount` | a mail account rather than a bare PST - the dummy account |
 | `Transport` | mail that actually goes out and comes back - the local sink |
@@ -4442,10 +4648,12 @@ Exchange profile.
 | `IdentityAccount` | a second mail account the write allowlist grants an identity draft in - a non-hub primary left OUT of `bystanderStoreDisplayNames`. **The three-store floor in section 1.3 does not have one** and the tests naming it then prove nothing and say so; **section 2.8b builds one**, which is how a machine stops needing that announcement. Both states are real: 1.3 is the minimum that runs, 2.8b is what a complete guest has |
 | `SmallHubStore` | a hub small enough that a paging assertion means something |
 | `ProbePopulation` | the hand-curated population named in the settings file |
+| `GeneratedPopulation` | the guests' GENERATED test data - the hub population and the corpus: nested folders that hold mail, attachments of every kind, mail over 100 KB, many senders, enough recent mail to sample. Named 2026-10-08, when the Exchange VM's empty test account met the thirteen tests that had silently assumed it |
+| `PstStore` | a mailbox in a local .pst data file, whose ids and index names are a data file's - the PST halves of the decode, store-map and folder-id checks |
 | **`DelegateStore`** | **a delegate/shared mailbox. One of the two capabilities no test machine can be given** |
 | **`CachedExchange`** | **a cached Exchange mailbox, whose entry ids are Exchange's 70-byte form. The other one (Q74 C1, 2026-10-03)** |
 
-`Tools/Checks/check-pinned-constants.ps1` fails the build if any of those twelve names stops
+`Tools/Checks/check-pinned-constants.ps1` fails the build if any of those fifteen names stops
 appearing in this file, so the table above is load-bearing text and not decoration.
 
 **Why `DelegateStore` and `CachedExchange` are the only production-only capabilities.** A delegate/shared mailbox is
