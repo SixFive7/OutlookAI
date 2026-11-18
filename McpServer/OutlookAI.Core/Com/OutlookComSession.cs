@@ -8115,48 +8115,7 @@ namespace OutlookAI.Core.Com
             folderEntryId ??= fallbackFolderEntryId;
             sendUsingSmtp ??= fallbackSendUsingSmtp; // Only passed when the caller PINNED the identity.
 
-            List<ComRecipientInfo> recipients = new List<ComRecipientInfo>();
-            object? recipientsObject = null;
-            try
-            {
-                recipientsObject = item.Recipients;
-                dynamic collection = (dynamic)recipientsObject!;
-                int count = collection.Count;
-                for (int i = 1; i <= count; i++)
-                {
-                    object? recipient = null;
-                    try
-                    {
-                        recipient = collection[i];
-                        dynamic r = (dynamic)recipient!;
-                        int type = 1;
-                        try
-                        {
-                            type = (int)r.Type;
-                        }
-                        catch (Exception ex) when (IsComCallFailure(ex))
-                        {
-                        }
-
-                        string kind = type == 2 ? "cc" : type == 3 ? "bcc" : "to";
-                        string? name = TryGetString(() => (string?)r.Name);
-                        string? address = TryGetPropertyString(r, "http://schemas.microsoft.com/mapi/proptag/0x39FE001F")
-                            ?? TryGetString(() => (string?)r.Address);
-                        recipients.Add(new ComRecipientInfo(kind, name, address));
-                    }
-                    finally
-                    {
-                        Release(recipient);
-                    }
-                }
-            }
-            catch (Exception ex) when (IsComCallFailure(ex))
-            {
-            }
-            finally
-            {
-                Release(recipientsObject);
-            }
+            List<ComRecipientInfo> recipients = MailRecipients.Read((object)item);
 
             return new ComDraftInfo(
                 entryId,
@@ -10256,51 +10215,7 @@ namespace OutlookAI.Core.Com
             string? htmlBody = includeHtml ? (TryGetString(() => (string?)item.HTMLBody) ?? string.Empty) : null;
 
             // Recipients with SMTP resolution (PR_SMTP_ADDRESS via PropertyAccessor).
-            List<ComRecipientInfo> recipients = new List<ComRecipientInfo>();
-            object? recipientsObject = null;
-            try
-            {
-                recipientsObject = item.Recipients;
-                dynamic recipientCollection = (dynamic)recipientsObject!;
-                int recipientCount = recipientCollection.Count;
-                for (int i = 1; i <= recipientCount; i++)
-                {
-                    object? recipient = null;
-                    try
-                    {
-                        recipient = recipientCollection[i];
-                        dynamic r = (dynamic)recipient!;
-                        int type = 1;
-                        try
-                        {
-                            type = (int)r.Type;
-                        }
-                        catch (COMException)
-                        {
-                        }
-
-                        string kind = type == 2 ? "cc" : type == 3 ? "bcc" : "to";
-                        string? name = TryGetString(() => (string?)r.Name);
-                        string? address = TryGetPropertyString(r, "http://schemas.microsoft.com/mapi/proptag/0x39FE001F")
-                            ?? TryGetString(() => (string?)r.Address);
-                        recipients.Add(new ComRecipientInfo(kind, name, address));
-                    }
-                    finally
-                    {
-                        Release(recipient);
-                    }
-                }
-            }
-            catch (COMException)
-            {
-            }
-            catch (Microsoft.CSharp.RuntimeBinder.RuntimeBinderException)
-            {
-            }
-            finally
-            {
-                Release(recipientsObject);
-            }
+            List<ComRecipientInfo> recipients = MailRecipients.Read((object)item);
 
             // Attachments.
             List<ComAttachmentInfo> attachmentInfos = new List<ComAttachmentInfo>();

@@ -1,29 +1,9 @@
 using System;
 using System.Collections.Generic;
+using OutlookAI.Core.AddIn;
 
 namespace OutlookAI.Core.Com
 {
-    /// <summary>One recipient of a mail item (COM-free data).</summary>
-    public sealed class ComRecipientInfo
-    {
-        /// <summary>Creates a recipient snapshot.</summary>
-        public ComRecipientInfo(string kind, string? name, string? address)
-        {
-            Kind = kind;
-            Name = name;
-            Address = address;
-        }
-
-        /// <summary>"to", "cc" or "bcc".</summary>
-        public string Kind { get; }
-
-        /// <summary>Display name.</summary>
-        public string? Name { get; }
-
-        /// <summary>SMTP address when resolvable, otherwise the raw provider address.</summary>
-        public string? Address { get; }
-    }
-
     /// <summary>One attachment of a mail item (COM-free data).</summary>
     public sealed class ComAttachmentInfo
     {

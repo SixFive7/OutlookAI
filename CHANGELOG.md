@@ -1203,11 +1203,14 @@ its mailbox tests on, and change nothing you install.
   compose document - the draft, the signature region Outlook marks `_MailAutoSig` and the quoted
   original it marks `_MailOriginal` - which the server had ported from the pane and fixed since, now
   `ComposeDocument`, with a choice between the server's soft line breaks and the pane's paragraphs;
-  and the release of a COM reference and the test for a failed COM call, now `ComObjects`, to which
-  `OutlookComSession`'s members of those names forward. The server and the tests use all of it from
+  the release of a COM reference, the test for a failed COM call and a COM object's identity, now
+  `ComObjects`, to which `OutlookComSession`'s members of those names forward; the reading of a mail's
+  recipients with the SMTP address where Outlook knows one, now `MailRecipients`, which also replaces
+  the server's two copies of that loop; and the Win32 window calls, now `NativeWindows`, which three
+  files declared for themselves, each a different subset. The server and the tests use all of it from
   there, unchanged, and T1 `ComChildObjectReleaseTests` reads `ComposeDocument` for a discarded
   `Bookmarks.Add` as it read `OutlookComSession`. Nothing in the namespace attaches to Outlook,
-  starts a COM thread or opens the search index, and check 15 holds that for all 25 of its files.
+  starts a COM thread or opens the search index, and check 15 holds that for all 27 of its files.
   The word the draft tools read as "no signature" and the refusal a signature request can end in
   move with the rule, out of `SignatureManager`, which stays where it is: it writes signature files,
   and only the server does.

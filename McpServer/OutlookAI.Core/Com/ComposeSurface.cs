@@ -123,54 +123,35 @@ namespace OutlookAI.Core.Com
                 return false;
             }
 
-            IntPtr p = IntPtr.Zero;
-            try
-            {
-                p = Marshal.GetIUnknownForObject(explorer);
-                lock (PinLock)
-                {
-                    return PinPointers.Contains(p);
-                }
-            }
-            catch (Exception)
+            IntPtr p = ComObjects.IdentityOf(explorer);
+            if (p == IntPtr.Zero)
             {
                 return false;
             }
-            finally
+
+            lock (PinLock)
             {
-                if (p != IntPtr.Zero)
-                {
-                    _ = Marshal.Release(p);
-                }
+                return PinPointers.Contains(p);
             }
         }
 
         private static void RememberPin(object explorer, bool remember)
         {
-            IntPtr p = IntPtr.Zero;
-            try
+            IntPtr p = ComObjects.IdentityOf(explorer);
+            if (p == IntPtr.Zero)
             {
-                p = Marshal.GetIUnknownForObject(explorer);
-                lock (PinLock)
+                return;
+            }
+
+            lock (PinLock)
+            {
+                if (remember)
                 {
-                    if (remember)
-                    {
-                        _ = PinPointers.Add(p);
-                    }
-                    else
-                    {
-                        _ = PinPointers.Remove(p);
-                    }
+                    _ = PinPointers.Add(p);
                 }
-            }
-            catch (Exception)
-            {
-            }
-            finally
-            {
-                if (p != IntPtr.Zero)
+                else
                 {
-                    _ = Marshal.Release(p);
+                    _ = PinPointers.Remove(p);
                 }
             }
         }
@@ -344,7 +325,7 @@ namespace OutlookAI.Core.Com
                 foreach (IntPtr h in SelectWindowsToHide(before, after))
                 {
                     Park(h);
-                    _ = NativeMethods.ShowWindow(h, NativeMethods.SW_HIDE);
+                    _ = NativeWindows.ShowWindow(h, NativeWindows.SW_HIDE);
                 }
             }
             catch (Exception)
@@ -513,13 +494,13 @@ namespace OutlookAI.Core.Com
                 return windows;
             }
 
-            _ = NativeMethods.EnumWindows(
+            _ = NativeWindows.EnumWindows(
                 (h, l) =>
                 {
-                    _ = NativeMethods.GetWindowThreadProcessId(h, out uint pid);
+                    _ = NativeWindows.GetWindowThreadProcessId(h, out uint pid);
                     if (pids.Contains((int)pid))
                     {
-                        windows.Add(new WindowState(h, NativeMethods.IsWindowVisible(h)));
+                        windows.Add(new WindowState(h, NativeWindows.IsWindowVisible(h)));
                     }
 
                     return true;
@@ -540,7 +521,7 @@ namespace OutlookAI.Core.Com
                     continue;
                 }
 
-                if (!NativeMethods.GetWindowRect(w.Handle, out NativeMethods.RECT r))
+                if (!NativeWindows.GetWindowRect(w.Handle, out NativeWindows.RECT r))
                 {
                     continue;
                 }
@@ -563,56 +544,14 @@ namespace OutlookAI.Core.Com
 
         private static void Park(IntPtr handle)
         {
-            _ = NativeMethods.SetWindowPos(
+            _ = NativeWindows.SetWindowPos(
                 handle,
                 IntPtr.Zero,
                 ParkX,
                 ParkY,
                 0,
                 0,
-                NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOZORDER | NativeMethods.SWP_NOACTIVATE);
-        }
-
-        private static class NativeMethods
-        {
-            internal const uint SWP_NOSIZE = 0x0001;
-            internal const uint SWP_NOZORDER = 0x0004;
-            internal const uint SWP_NOACTIVATE = 0x0010;
-            internal const int SW_HIDE = 0;
-
-            internal delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
-
-            [StructLayout(LayoutKind.Sequential)]
-            internal struct RECT
-            {
-                public int Left;
-                public int Top;
-                public int Right;
-                public int Bottom;
-            }
-
-            [DllImport("user32.dll")]
-            [return: MarshalAs(UnmanagedType.Bool)]
-            internal static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
-
-            [DllImport("user32.dll")]
-            internal static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
-
-            [DllImport("user32.dll")]
-            [return: MarshalAs(UnmanagedType.Bool)]
-            internal static extern bool IsWindowVisible(IntPtr hWnd);
-
-            [DllImport("user32.dll")]
-            [return: MarshalAs(UnmanagedType.Bool)]
-            internal static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
-
-            [DllImport("user32.dll")]
-            [return: MarshalAs(UnmanagedType.Bool)]
-            internal static extern bool SetWindowPos(IntPtr hWnd, IntPtr insertAfter, int x, int y, int cx, int cy, uint flags);
-
-            [DllImport("user32.dll")]
-            [return: MarshalAs(UnmanagedType.Bool)]
-            internal static extern bool ShowWindow(IntPtr hWnd, int cmdShow);
+                NativeWindows.SWP_NOSIZE | NativeWindows.SWP_NOZORDER | NativeWindows.SWP_NOACTIVATE);
         }
     }
 }

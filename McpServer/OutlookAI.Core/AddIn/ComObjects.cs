@@ -44,6 +44,56 @@ namespace OutlookAI.Core.AddIn
                 || ex is Microsoft.CSharp.RuntimeBinder.RuntimeBinderException;
         }
 
+        /// <summary>
+        /// The pointer that identifies a COM object: its IUnknown. Two references to one object - two
+        /// runtime callable wrappers, or one object reached through two interfaces - give the same pointer,
+        /// which makes it the only sound COM identity test. The pointer is released before it is returned:
+        /// it is a value to compare, never one to call through, and it identifies the object only while a
+        /// reference keeps the object alive. Zero for null and when the object cannot give one.
+        /// </summary>
+        public static IntPtr IdentityOf(object? comObject)
+        {
+            if (comObject == null)
+            {
+                return IntPtr.Zero;
+            }
+
+            IntPtr p = IntPtr.Zero;
+            try
+            {
+                p = Marshal.GetIUnknownForObject(comObject);
+                return p;
+            }
+            catch (Exception)
+            {
+                return IntPtr.Zero;
+            }
+            finally
+            {
+                if (p != IntPtr.Zero)
+                {
+                    _ = Marshal.Release(p);
+                }
+            }
+        }
+
+        /// <summary>Whether two references are to one COM object, by <see cref="IdentityOf"/>.</summary>
+        public static bool SameObject(object? a, object? b)
+        {
+            if (ReferenceEquals(a, b))
+            {
+                return true;
+            }
+
+            if (a == null || b == null)
+            {
+                return false;
+            }
+
+            IntPtr identity = IdentityOf(a);
+            return identity != IntPtr.Zero && identity == IdentityOf(b);
+        }
+
         /// <summary>A failed call in a few words: the HRESULT of a COMException, the exception's type otherwise.</summary>
         public static string DescribeFailure(Exception ex)
         {

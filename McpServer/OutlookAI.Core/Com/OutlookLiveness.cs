@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
+using OutlookAI.Core.AddIn;
 
 namespace OutlookAI.Core.Com
 {
@@ -96,26 +97,26 @@ namespace OutlookAI.Core.Com
             int hung = 0;
             try
             {
-                NativeMethods.EnumWindows(
+                NativeWindows.EnumWindows(
                     (handle, unusedLParam) =>
                     {
                         // Not `_` for the lParam: the discards below would then assign to it.
                         uint owner;
-                        _ = NativeMethods.GetWindowThreadProcessId(handle, out owner);
+                        _ = NativeWindows.GetWindowThreadProcessId(handle, out owner);
                         if (!pids.Contains((int)owner))
                         {
                             return true;
                         }
 
                         StringBuilder className = new StringBuilder(64);
-                        _ = NativeMethods.GetClassNameW(handle, className, className.Capacity);
+                        _ = NativeWindows.GetClassNameW(handle, className, className.Capacity);
                         string name = className.ToString();
                         for (int i = 0; i < UiWindowClasses.Length; i++)
                         {
                             if (string.Equals(name, UiWindowClasses[i], StringComparison.Ordinal))
                             {
                                 candidates++;
-                                if (NativeMethods.IsHungAppWindow(handle))
+                                if (NativeWindows.IsHungAppWindow(handle))
                                 {
                                     hung++;
                                 }
@@ -163,30 +164,6 @@ namespace OutlookAI.Core.Com
                 default:
                     return "unknown";
             }
-        }
-
-        private static class NativeMethods
-        {
-            internal delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
-
-            [DllImport("user32.dll")]
-            [return: MarshalAs(UnmanagedType.Bool)]
-            internal static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
-
-            [DllImport("user32.dll")]
-            internal static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
-
-            [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-            internal static extern int GetClassNameW(IntPtr hWnd, StringBuilder className, int maxCount);
-
-            /// <summary>
-            /// Windows' own judgement: true when the window's thread has stopped servicing
-            /// its message queue. This is the same signal Explorer uses to grey out a
-            /// window and offer to close it.
-            /// </summary>
-            [DllImport("user32.dll")]
-            [return: MarshalAs(UnmanagedType.Bool)]
-            internal static extern bool IsHungAppWindow(IntPtr hWnd);
         }
     }
 }
