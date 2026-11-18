@@ -515,11 +515,11 @@ Set-Location '$GuestRoot\src'
 Start-Sleep -Seconds 5
 `$legs = @()
 $legLines
-`$deadline = (Get-Date).AddMinutes($Minutes)
+`$clock = [System.Diagnostics.Stopwatch]::StartNew()
 `$exit = 0
 `$built = `$false
 `$done = 0
-while (`$done -lt $Rounds -and (Get-Date) -lt `$deadline) {
+while (`$done -lt $Rounds -and `$clock.Elapsed.TotalMinutes -lt $Minutes) {
     `$round = `$done + 1
     foreach (`$p in @(Get-Process -Name OUTLOOK -ErrorAction SilentlyContinue)) { `$clr = 'unread'; try { `$clr = [string](@(`$p.Modules | Where-Object { `$_.ModuleName -eq 'clr.dll' }).Count -gt 0) } catch { }; Add-Content -LiteralPath '$GuestRunDir\console.txt' -Value ('HUNT-OUTLOOK round {0} pid {1} clr {2}' -f `$round, `$p.Id, `$clr) }
     foreach (`$leg in `$legs) {
@@ -1322,7 +1322,7 @@ STACK      the faulting thread
     Check 'the hunt''s suite script parses' 0 @($err).Count
     Check 'it starts the debugger through the shell, hidden, with the module, its stop file and its log' $true ($hunt.Contains("Start-Process -FilePath 'powershell.exe'") -and $hunt.Contains('-WindowStyle Hidden') -and $hunt.Contains("'-Module', 'mso40uiwin32client.dll'") -and $hunt.Contains("`$stop = 'C:\r\first-chance.stop'") -and $hunt.Contains("'-Log', 'C:\r\first-chance.log'"))
     Check 'every leg runs in a dotnet test of its own, its TRX file named for the round and leg' $true ($hunt.Contains("`$legs += ,@('typed', 'F&A')") -and $hunt.Contains("`$legs += ,@('drafts', 'F&(B|C)')") -and $hunt.Contains("'trx;LogFileName=live-r{0:D2}-{1}.trx' -f `$round, `$leg[0]"))
-    Check 'the rounds stop at the cap, the minutes or the first dump, and the debugger is stopped after' $true ($hunt.Contains('while ($done -lt 20 -and (Get-Date) -lt $deadline)') -and $hunt.Contains("Get-ChildItem -LiteralPath 'C:\d' -Filter '*chance.dmp'") -and $hunt.IndexOf('New-Item -ItemType File -Force -Path $stop') -gt $hunt.IndexOf('while ('))
+    Check 'the rounds stop at the cap, the minutes or the first dump, and the debugger is stopped after' $true ($hunt.Contains('while ($done -lt 20 -and $clock.Elapsed.TotalMinutes -lt 60)') -and $hunt.Contains("Get-ChildItem -LiteralPath 'C:\d' -Filter '*chance.dmp'") -and $hunt.IndexOf('New-Item -ItemType File -Force -Path $stop') -gt $hunt.IndexOf('while ('))
     $ordinaryAt = $runCode.IndexOf('$liveScript = @"')
     $ordinaryEnd = $runCode.IndexOf('"@', [Math]::Max(0, $ordinaryAt))
     Check 'an ordinary run''s suite script starts no debugger' $true ($ordinaryAt -gt 0 -and $ordinaryEnd -gt $ordinaryAt -and -not $runCode.Substring($ordinaryAt, $ordinaryEnd - $ordinaryAt).Contains('FirstChance'))
@@ -1345,6 +1345,7 @@ STACK      the faulting thread
     Check 'a variant''s suite script parses' 0 @($err).Count
     Check 'it names the variant and its leg minutes to the test before anything runs' $true ($loopHunt.StartsWith("`$env:OUTLOOKAI_HUNT_VARIANT = 'NoFormPage'`r`n`$env:OUTLOOKAI_HUNT_LEG_MINUTES = '12'`r`n`$env:OUTLOOKAI_HUNT_SHOW_EACH = '0'`r`n") -and $loopHunt.Contains("`$legs += ,@('loop', 'F&L')"))
     $shownHunt = Get-HuntSuiteScript -OptIn 'OAI-INDEXED' -GuestRunDir 'C:\r' -GuestRoot 'C:\g' -Filters ([ordered]@{ loop = 'F&L' }) -Rounds 20 -Minutes 60 -Module 'mso40uiwin32client.dll' -DumpDir 'C:\d' -ScriptName $FirstChanceScript -Variant 'ProductLoop' -LegMinutes 10 -ShowEach $true
+    Check 'the hunt''s minutes are counted on a stopwatch, not the guest''s clock, which can jump (2026-11-18)' $true ($hunt.Contains('$clock = [System.Diagnostics.Stopwatch]::StartNew()') -and -not $hunt.Contains('(Get-Date)'))
     Check 'and -HuntShowEach tells it to show a window before each draft' $true ($shownHunt.Contains("`$env:OUTLOOKAI_HUNT_SHOW_EACH = '1'`r`n"))
     Check '-HuntShowEach is a loop''s, in a hunting run' 'hunt|loop|' "$(if ((Get-HuntRefusal $false $false '' '' '' $false 20 60 120 'ProductLoop' 10 $false $false $true) -match 'give -HuntFirstChance') { 'hunt' })|$(if ((Get-HuntRefusal $true $false '' '' '' $false 20 60 120 'Legs' 10 $false $false $true) -match 'other than Legs') { 'loop' })|$(Get-HuntRefusal $true $false '' '' '' $false 20 60 120 'ProductLoop' 10 $false $false $true)"
     Check 'and Legs names none - its tests are not the loop''s' $false ($hunt.Contains('OUTLOOKAI_HUNT_VARIANT'))

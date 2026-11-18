@@ -250,19 +250,23 @@ public static class OutlookFirstChance
         int session = Process.GetCurrentProcess().SessionId;
         Dictionary<int, Debuggee> debuggees = new Dictionary<int, Debuggee>();
         HashSet<int> refused = new HashSet<int>();
-        DateTime deadline = DateTime.UtcNow.AddMinutes(maxMinutes);
-        DateTime nextLook = DateTime.MinValue;
+        // The time limit and the look interval on a monotonic clock: a frozen test guest's clock can jump to the real
+        // date in the middle of a hunt - 46 days on two unindexed guests on 2026-11-18 - and a deadline on it ended the
+        // watch there.
+        Stopwatch watched = Stopwatch.StartNew();
+        TimeSpan limit = TimeSpan.FromMinutes(maxMinutes);
+        TimeSpan nextLook = TimeSpan.Zero;
         IntPtr debugEvent = Marshal.AllocHGlobal(256);
         Say("watching session " + session + " for OUTLOOK.EXE; hunting first-chance access violations in " + module + "; dumps to " + folder);
         try
         {
             while (true)
             {
-                if (DateTime.UtcNow >= nextLook)
+                if (watched.Elapsed >= nextLook)
                 {
-                    nextLook = DateTime.UtcNow.AddMilliseconds(250);
+                    nextLook = watched.Elapsed + TimeSpan.FromMilliseconds(250);
                     if (stopFile.Length > 0 && File.Exists(stopFile)) { Say("stop file seen"); break; }
-                    if (DateTime.UtcNow >= deadline) { Say("time limit of " + maxMinutes + " minute(s) reached"); break; }
+                    if (watched.Elapsed >= limit) { Say("time limit of " + maxMinutes + " minute(s) reached"); break; }
                     foreach (Process p in Process.GetProcessesByName("OUTLOOK"))
                     {
                         using (p)

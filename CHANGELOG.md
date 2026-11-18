@@ -310,7 +310,10 @@ its mailbox tests on, and change nothing you install.
   for the run, LoadBehavior 0 before Outlook starts, and the restore after the run brings the
   checkpoint's value back. Every Outlook guest's checkpoint holds the add-in installed and loading,
   and inside Outlook it hooks every inspector and puts its task pane on each one that is activated.
-  Each round says whether Outlook holds the .NET runtime the add-in needs.
+  Each round says whether Outlook holds the .NET runtime the add-in needs. The hunt's minutes and the
+  debugger's time limit are counted on a stopwatch: two unindexed guests' frozen clocks jumped 46
+  days to the real date in the middle of a hunt, and a deadline on the guest's clock ended both the
+  rounds and the debugger's watch there.
 
 - ✅ **A live run keeps Windows' own report of every Outlook crash beside its dumps.**
   Two Outlook crashes on 2026-11-18, both in `mso40uiwin32client.dll` while a draft was written,
