@@ -1675,16 +1675,18 @@
   plan. It is in `.work\dup-survey-2026-11\` of the maintainer's checkout - README.txt,
   inventory.tsv (one row a group), members.tsv (every copy's file and lines) and the detectors' raw
   output - which is gitignored, so not in a clone. How far, and in what order, is asked as Q163
-  onwards, not answered yet. Since the survey, `Testbed/host/Invoke-TrustRemovalProbe.ps1` (Q193)
-  restates five helpers of `Testbed/host/Invoke-LiveTierOnGuest.ps1`: `Get-LeaseDecision`,
-  `Invoke-NativeCommand`, `Say` and `Stop-Refused` word for word, and `Get-TaskExit` but for the
-  marker it reads (`PROBE-TASK-EXIT` where the runner reads `RUN-REGISTER-EXIT`); decision 166 says
-  how they are folded.
-  Folded so far, each with its CHANGELOG entry: the test suite's stand-ins for Outlook's connection
-  and for the search index, and its repository paths, in
-  `McpServer/OutlookAI.McpServer.Tests/Support/` - the survey's T01, T02, T04 and T07, but for four
-  live-tier fixtures in `T2/` that still read the test project's folder themselves, and T09's reader
-  of the committed example settings.
+  onwards, not answered yet.
+  Folded so far, each with its CHANGELOG entry, into `McpServer/OutlookAI.McpServer.Tests/Support/`:
+  the survey's T01, T02 and T04 (the stand-ins for Outlook's connection and for the search index),
+  T07 (repository paths; four live-tier fixtures in `T2/` still read the test project's folder
+  themselves), T08 (readers of compiled code and source text; ComposeOnReopenedDraftTests and
+  ReadOnlyFolderLookupTests keep member cutters with declaration rules of their own) and T09 (but
+  for the registry helpers of the live tier's `T2/` files, which wait for the live step).
+  PowerShell, into `Testbed/guest/ScriptHelpers.ps1` (decision 215 (a)), held there by
+  check-powershell-51 check 4: P01's `Invoke-NativeCommand` for 13 of its 17 copies, and P09's
+  `Format-Seconds`, the build-VM runner's copy of which rounded 119.6 s to "1 m 60 s".
+  Invoke-LiveTierOnGuest.ps1 and Invoke-TrustRemovalProbe.ps1 fold with the rest of S7d,
+  Build-Corpus.ps1 and Reset-HubPopulation.ps1 with S7c, and the check lists them until they do.
 
 - [ ] **Let the add-in's AI choose the signature by itself, once the add-in uses OutlookAI.Core (Q158
   and Q162, decided 2026-11-17).** Signatures are managed through the MCP server only; the add-in

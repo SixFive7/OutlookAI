@@ -179,10 +179,7 @@ public sealed class ReadOnlyLiveTestTests
             .Where(t => t.IsClass && !t.IsAbstract)
             .SelectMany(t => t.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly))
             .Where(m => m.GetCustomAttributes(typeof(FactAttribute), inherit: true).Length > 0)
-            .Where(m => m.GetCustomAttributesData().Any(a => a.AttributeType == typeof(TraitAttribute)
-                && a.ConstructorArguments.Count == 2
-                && string.Equals(a.ConstructorArguments[0].Value as string, LiveRunFilters.WritesTrait, StringComparison.Ordinal)
-                && string.Equals(a.ConstructorArguments[1].Value as string, LiveRunFilters.WritesNothing, StringComparison.Ordinal)))
+            .Where(m => Traits.Has(m.GetCustomAttributesData(), LiveRunFilters.WritesTrait, LiveRunFilters.WritesNothing))
             .OrderBy(m => m.DeclaringType!.FullName + "." + m.Name, StringComparer.Ordinal);
     }
 

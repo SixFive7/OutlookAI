@@ -371,24 +371,10 @@ $CodeQLTimeoutMinutes = 120
 
 function Say([string] $m) { Write-Host ("[{0:HH:mm:ss}] {1}" -f (Get-Date), $m) }
 
-# Every native call goes through this: under Windows PowerShell 5.1 with 'Stop', the first line a
-# program writes to stderr ends the script when anything redirects it, and this script is as
-# likely to run from a job or behind a redirection as from a console (Tools/Checks/
-# check-powershell-51.ps1, check 3). 'Continue' holds only in here; the try keeps "program not
-# found" terminating; callers judge the call by $LASTEXITCODE. Restated, as in the other scripts.
-function Invoke-NativeCommand {
-    param([Parameter(Mandatory = $true)] [scriptblock] $NativeCommand)
-
-    $ErrorActionPreference = 'Continue'
-    try {
-        & $NativeCommand | ForEach-Object {
-            if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.Exception.Message } else { $_ }
-        }
-    }
-    catch {
-        throw
-    }
-}
+# Every program call goes through Invoke-NativeCommand, so that Windows PowerShell 5.1 cannot end
+# the script on a program's first stderr line (Q78). It is one of the helpers the scripts share,
+# dot-sourced from Testbed/guest/ScriptHelpers.ps1 (Q166 (b), decision 215 (a)), which says why.
+. (Join-Path $PSScriptRoot '..\Testbed\guest\ScriptHelpers.ps1')
 
 # Start a program with its output going STRAIGHT TO FILES, never through this process's pipe, and a
 # deadline: a build that leaves children behind can hold a pipe open after it has finished, and a
