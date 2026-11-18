@@ -48,7 +48,7 @@ public sealed class LivePopulationCoverageTests
         List<string> lines = new();
 
         IReadOnlyList<string> found = LivePopulationCoverage.Require(
-            Settings(LiveMachineProfile.Portable), Array.Empty<string>(),
+            HubOnlyLiveSettings.For(LiveMachineProfile.Portable), Array.Empty<string>(),
             Population, WhatWouldNotRun, Remedy, lines.Add);
 
         // Empty, and NOT a failure - this machine was never meant to run this test.
@@ -71,7 +71,7 @@ public sealed class LivePopulationCoverageTests
 
         InvalidOperationException refusal = Assert.Throws<InvalidOperationException>(
             () => LivePopulationCoverage.Require(
-                Settings(LiveMachineProfile.Production), Array.Empty<string>(),
+                HubOnlyLiveSettings.For(LiveMachineProfile.Production), Array.Empty<string>(),
                 Population, WhatWouldNotRun, Remedy, lines.Add));
 
         Assert.Contains(Population, refusal.Message, StringComparison.Ordinal);
@@ -92,7 +92,7 @@ public sealed class LivePopulationCoverageTests
         List<string> lines = new();
 
         IReadOnlyList<string> found = LivePopulationCoverage.Require(
-            Settings(profile), stores, Population, WhatWouldNotRun, Remedy, lines.Add);
+            HubOnlyLiveSettings.For(profile), stores, Population, WhatWouldNotRun, Remedy, lines.Add);
 
         Assert.Equal(stores, found);
 
@@ -112,7 +112,7 @@ public sealed class LivePopulationCoverageTests
         List<string> lines = new();
 
         IReadOnlyList<string> found = LivePopulationCoverage.Require<string>(
-            Settings(LiveMachineProfile.Portable), null,
+            HubOnlyLiveSettings.For(LiveMachineProfile.Portable), null,
             Population, WhatWouldNotRun, Remedy, lines.Add);
 
         Assert.Empty(found);
@@ -179,7 +179,7 @@ public sealed class LivePopulationCoverageTests
         Assert.Throws<ArgumentNullException>(() => LivePopulationCoverage.Require(
             null!, Array.Empty<string>(), Population, WhatWouldNotRun, Remedy, _ => { }));
         Assert.Throws<ArgumentNullException>(() => LivePopulationCoverage.Require(
-            Settings(LiveMachineProfile.Portable), Array.Empty<string>(),
+            HubOnlyLiveSettings.For(LiveMachineProfile.Portable), Array.Empty<string>(),
             Population, WhatWouldNotRun, Remedy, null!));
     }
 
@@ -214,16 +214,6 @@ public sealed class LivePopulationCoverageTests
     }
 
     // ------------------------------------------------------------------ helpers
-
-    private static LiveTestSettings Settings(LiveMachineProfile profile)
-    {
-        return new LiveTestSettings
-        {
-            MachineProfile = profile,
-            TestHubStoreDisplayName = "hub@example.test",
-            ExpectedStoreDisplayNames = new List<string> { "hub@example.test" },
-        };
-    }
 
     private static int Occurrences(string haystack, string needle)
     {

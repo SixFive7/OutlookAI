@@ -852,9 +852,12 @@ its mailbox tests on, and change nothing you install.
   source carried private copies of the same reading helpers - a walk over a method's instructions,
   the Category=Live trait, a collection attribute's argument, a live test's source file and the body
   of one member in it - and now share `IlReader`, moved there from `T1/`, `Traits` and `SourceText`;
-  three of them read the instructions byte by byte, and now walk the opcodes as the others did. No
-  test changed what it checks: the build machine ran the same tests, by name, before and after each
-  step.
+  three of them read the instructions byte by byte, and now walk the opcodes as the others did.
+  Smaller copies went the same way: the in-memory prompt registry (`FakePromptRegistry`, which also
+  replaces the narrower one `PromptLintTests` kept), the setter of a stand-in's out parameter
+  (`ProxyArgs`), settings naming only the hub (`HubOnlyLiveSettings`) and a PST store's EntryID
+  (`TestFolders.PstStoreEntryId`). No test changed what it checks: the build machine ran the same
+  tests, by name, before and after each step.
 
 - ✅ **A live run that starts Outlook closes Office's activation wizard and records it.**
   Past Office's 30-day activation grace, which the Exchange test machine's real clock has crossed,
