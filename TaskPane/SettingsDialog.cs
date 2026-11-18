@@ -1858,11 +1858,7 @@ namespace OutlookAI.TaskPane
         /// </summary>
         private void OnUpdateStateChanged(object sender, EventArgs e)
         {
-            if (_disposedCustom || IsDisposed || !IsHandleCreated)
-                return;
-            try { BeginInvoke((Action)RefreshVersionLineAndRelayout); }
-            catch (ObjectDisposedException) { }
-            catch (InvalidOperationException) { }
+            UiThread.Post(this, _disposedCustom, RefreshVersionLineAndRelayout);
         }
 
         /// <summary>
@@ -2035,11 +2031,7 @@ namespace OutlookAI.TaskPane
         {
             // ThemeService raises this from SystemEvents and from its own registry watcher, so
             // it can arrive on a thread that has no business touching controls.
-            if (_disposedCustom || IsDisposed || !IsHandleCreated)
-                return;
-            try { BeginInvoke((Action)ApplyTheme); }
-            catch (ObjectDisposedException) { }
-            catch (InvalidOperationException) { }
+            UiThread.Post(this, _disposedCustom, ApplyTheme);
         }
 
         private void ApplyTheme()

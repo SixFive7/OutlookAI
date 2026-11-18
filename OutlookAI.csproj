@@ -188,6 +188,7 @@
       <DependentUpon>AITaskPane.cs</DependentUpon>
     </Compile>
     <Compile Include="TaskPane\McpRegistrationPrompt.cs" />
+    <Compile Include="TaskPane\UiThread.cs" />
     <Compile Include="TaskPane\SettingsDialog.cs">
       <SubType>Form</SubType>
     </Compile>

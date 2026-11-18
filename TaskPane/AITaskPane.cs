@@ -156,11 +156,7 @@ namespace OutlookAI.TaskPane
         /// </summary>
         private void OnUpdateStateChanged(object sender, EventArgs e)
         {
-            if (_disposed || this.IsDisposed || !this.IsHandleCreated)
-                return;
-            try { this.BeginInvoke((Action)UpdateVersionLabel); }
-            catch (ObjectDisposedException) { }
-            catch (InvalidOperationException) { }
+            UiThread.Post(this, _disposed, UpdateVersionLabel);
         }
 
         // The wording moved into UpdateService so this indicator and the one in OutlookAI
@@ -678,11 +674,7 @@ namespace OutlookAI.TaskPane
         /// </summary>
         private void OnPromptsChanged(object sender, EventArgs e)
         {
-            if (_disposed || this.IsDisposed || !this.IsHandleCreated)
-                return;
-            try { this.BeginInvoke((Action)RebuildQuickActions); }
-            catch (ObjectDisposedException) { }
-            catch (InvalidOperationException) { }
+            UiThread.Post(this, _disposed, RebuildQuickActions);
         }
 
         // === Button click handlers ===
@@ -1496,11 +1488,7 @@ namespace OutlookAI.TaskPane
         {
             // ThemeService may raise this on a non-UI (SystemEvents) thread. Fire-and-forget
             // marshal via BeginInvoke so a busy UI thread can't stall the SystemEvents thread.
-            if (_disposed || this.IsDisposed || !this.IsHandleCreated)
-                return;
-            try { this.BeginInvoke((Action)ApplyTheme); }
-            catch (ObjectDisposedException) { }
-            catch (InvalidOperationException) { }
+            UiThread.Post(this, _disposed, ApplyTheme);
         }
 
         private void ApplyTheme()

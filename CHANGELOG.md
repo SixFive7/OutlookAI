@@ -1388,7 +1388,8 @@ its mailbox tests on, and change nothing you install.
   `Bookmarks.Add` as it read `OutlookComSession`. The add-in uses it in the place of its own copies:
   `SignatureStore` is gone, the task pane reads and writes a draft through `ComposeDocument`, reads
   recipients through `MailRecipients` and releases through `ComObjects`, and the MCP registration
-  prompt finds Outlook's windows through `NativeWindows`. Nothing in the namespace attaches to
+  prompt finds Outlook's windows through `NativeWindows`. Inside the add-in, the five handlers that
+  each handed an event from another thread to their window share `UiThread.Post`. Nothing in the namespace attaches to
   Outlook, starts a COM thread or opens the search index, and check 15 holds that for all 29 of its
   files.
   The word the draft tools read as "no signature" and the refusal a signature request can end in
