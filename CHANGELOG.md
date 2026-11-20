@@ -1227,6 +1227,23 @@ its mailbox tests on, and change nothing you install.
   would overwrite the change or copy it into the mailbox, and says to use Outlook instead. Roaming on
   Microsoft 365 Apps itself is not tested: the test machines run perpetual Office only.
 
+- 📦 **The add-in's two builds share one set of guards, so each does what only one of them did.**
+  `Testbed/host/Publish-AddInPayload.ps1`, which builds every release and the test machines' add-in,
+  and `Tools/Switch-AddInBuild.ps1`, which builds a dev build for the maintainer's own Outlook, are
+  the two scripts that may build the add-in (Q81), and each restated the build's three guards and the
+  helpers around them: 21 functions, 6 of them alike and 15 drifted apart. They are one copy now, in
+  `Testbed/host/AddInBuild.ps1`, with the values the guards rest on, and
+  `Tools/Checks/check-powershell-51.ps1` check 4 holds them to it (Q154). Where the copies had
+  drifted, each build now does what only one did. The release's build pins Visual Studio's
+  registering behaviour off (`BuildingInsideVisualStudio=false`), as the dev build always had, so
+  a value in the environment cannot let `OutlookAI.csproj` register a build. And the dev build's
+  comparison of its stand-ins with Visual Studio's own VSTO targets (`-CompareInstalledTargets`, D7
+  (c)) also checks that the targets still call each writing task and still put
+  `RegisterOfficeAddin` and `VisualStudioForApplicationsBuild` on PrepareForRun, as the release's
+  did: eight checks where it made three. Each script keeps its own stand-ins' sentinel, throwaway
+  certificate and messages, and the dev build's self-test feeds the comparison the release's
+  synthetic targets.
+
 - ✅ **The guest scripts' copies of the test tag, prefix and account classes are held to the C# (Q171).**
   Five guest scripts spell out values the C# holds, because they run on the test guests with no
   assembly of this repository loaded. `Install-MailSink.ps1` writes the live tier's subject tag

@@ -146,6 +146,8 @@
   last piece, the add-in's registration key, stays a value each of the three scripts writes beside
   `Installer.iss`'s, and the guest's installer and `Tools/Switch-AddInBuild.ps1` read it out of
   `Installer.iss` in their self-tests; the survey's X items take values like it.
+  The add-in build's guards and helpers are one copy, `Testbed/host/AddInBuild.ps1`, for the two
+  scripts that may build the add-in (the survey's P07).
 
 - [ ] **Remove the Cached Mode policy values OutlookAI 3.0.0.319 to 3.1.0.325 wrote, when the
   maintainer says so (Q151 (a), decided 2026-11-17).** Those versions wrote the five values as

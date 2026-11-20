@@ -236,49 +236,15 @@ $DevVersion       = '99.99.99.0'
 $ThrowawaySubject = 'CN=OutlookAI DevBuild'
 $StandInSentinel  = 'DEVBUILD-NO-HOST-WRITE'
 
-# The chain the VSTO targets give PrepareForRun, minus RegisterOfficeAddin - guard 1, as in
-# Testbed/host/Publish-AddInPayload.ps1.
-$PrepareForRunChain = @('CopyFilesToOutputDirectory', 'VisualStudioForApplicationsBuild')
-
-# The three VSTO build tasks that write the build machine's registry, and every parameter the
-# targets pass each of them - guard 2. An inline stand-in must declare all of them or MSBuild
-# refuses the call (MSB4064); -SelfTest checks the list against the installed targets.
-$StandInTasks = [ordered]@{
-    'SetOffice2007AddInRegistration' = @{
-        Parameters = @('Url', 'AddInName', 'OfficeApplication', 'FriendlyName', 'Description', 'LoadBehavior', 'Unregister', 'SolutionID', 'IsDocument')
-        Output     = $null
-        Scheduled  = $false
-    }
-    'SetInclusionListEntry' = @{
-        Parameters = @('DeploymentManifestFullPath', 'CertificateThumbprint', 'Unregister')
-        Output     = $null
-        Scheduled  = $true
-    }
-    'RegisterFormRegions' = @{
-        Parameters = @('AddInName', 'AssemblyName', 'OfficeApplication', 'Unregister')
-        Output     = 'FormRegionNamesAndMessageClasses'
-        Scheduled  = $true
-    }
-}
-
-# Guard 3's view of the host: HKCU keys and CurrentUser certificate stores.
-$WatchedRegistry = @(
-    'Software\Microsoft\Office\Outlook\Addins',
-    'Software\Microsoft\VSTO',
-    'Software\Microsoft\Office\Outlook\FormRegions',
-    'Software\Microsoft\Office\15.0\Outlook\FormRegions',
-    'Software\Microsoft\Office\16.0\Outlook\FormRegions',
-    'Software\Microsoft\Office\17.0\Outlook\FormRegions',
-    'Software\OutlookAI'
-)
-$WatchedCertStores = @('My', 'TrustedPublisher', 'Root', 'CA', 'TrustedPeople', 'Disallowed')
-
 $script:SelfTestActive = $false
 
 # Every program call goes through Invoke-NativeCommand, so that Windows PowerShell 5.1 cannot end
 # the script on a program's first stderr line (Q78). It is one of the helpers the scripts share,
 # dot-sourced from Testbed/guest/ScriptHelpers.ps1 (Q166 (b), decision 215 (a)), which says why.
 . (Join-Path $PSScriptRoot '..\Testbed\guest\ScriptHelpers.ps1')
+# The add-in build's three guards and their helpers, and the values they rest on, in one copy for this
+# script and Testbed/host/Publish-AddInPayload.ps1, the two that may build the add-in (Q81 rule 2; Q154, P07).
+. (Join-Path $PSScriptRoot '..\Testbed\host\AddInBuild.ps1')
 
 # =============================================================================================
 # THE REGISTRY, THROUGH ONE DOOR. Every path is relative to HKCU. The self-test points a layout at
@@ -964,206 +930,13 @@ function Write-RestorePlan {
 }
 
 # =============================================================================================
-# THE BUILD - Testbed/host/Publish-AddInPayload.ps1's mechanism, restated. Guard 1: RegisterOfficeAddin
+# THE BUILD - Testbed/host/Publish-AddInPayload.ps1's mechanism, through the guards both scripts share from
+# Testbed/host/AddInBuild.ps1 (Q154, P07). Guard 1: RegisterOfficeAddin
 # off PrepareForRun by a GLOBAL property. Guard 2: the three registry-writing tasks replaced by
 # Override="true" stand-ins that only log. Guard 3: the host snapshotted before and after, any
 # trace a failure, a changed registration put back. None of them depends on the commit's own
 # OutlookAI.csproj.
 # =============================================================================================
-
-function Get-PrepareForRunOverride { return ($PrepareForRunChain -join ';') }
-
-function Get-NoHostWriteTargets {
-    $blocks = @()
-    foreach ($name in $StandInTasks.Keys) {
-        $spec = $StandInTasks[$name]
-        $params = @()
-        foreach ($p in $spec.Parameters) { $params += "      <$p ParameterType=`"System.String`" />" }
-        if ($spec.Output) { $params += "      <$($spec.Output) ParameterType=`"Microsoft.Build.Framework.ITaskItem[]`" Output=`"true`" />" }
-        $blocks += @"
-  <UsingTask TaskName="$name" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="`$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll" Override="true">
-    <ParameterGroup>
-$($params -join "`r`n")
-    </ParameterGroup>
-    <Task>
-      <Code Type="Fragment" Language="cs"><![CDATA[
-Log.LogMessage(MessageImportance.High, "$StandInSentinel`: $name did not run on the build host; nothing was written.");
-]]></Code>
-    </Task>
-  </UsingTask>
-"@
-    }
-    return @"
-<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
-  <!--
-    WRITTEN BY Tools/Switch-AddInBuild.ps1 FOR ONE BUILD. NOT PART OF THE REPOSITORY.
-    Stand-ins for the three VSTO build tasks that write the build machine's registry; they only
-    say they did not run. Imported in place of the machine's own CustomBeforeMicrosoftCommonTargets
-    hook, so it imports that hook itself - a machine that has one keeps it.
-  -->
-  <Import Project="`$(MSBuildExtensionsPath)\v`$(MSBuildToolsVersion)\Custom.Before.Microsoft.Common.targets" Condition="Exists('`$(MSBuildExtensionsPath)\v`$(MSBuildToolsVersion)\Custom.Before.Microsoft.Common.targets')" />
-$($blocks -join "`r`n")
-</Project>
-"@
-}
-
-# A scalar takes %3B for a semicolon; a target LIST needs a real semicolon inside double quotes,
-# because a list is split before it is unescaped (MSB4057 otherwise - measured by the testbed script).
-function Format-MSBuildProperty {
-    param([string] $Name, [string] $Value, [switch] $List)
-    if ($List) { return "/p:$Name=`"$Value`"" }
-    $v = $Value.Replace(';', '%3B')
-    if ($v -match '\s') { return "/p:$Name=`"$v`"" }
-    return "/p:$Name=$v"
-}
-
-function Get-MSBuildArgumentList {
-    param(
-        [Parameter(Mandatory = $true)] [string] $ProjectPath,
-        [Parameter(Mandatory = $true)] [string] $Thumbprint,
-        [Parameter(Mandatory = $true)] [string] $StandInTargets,
-        [Parameter(Mandatory = $true)] [string] $FileLog
-    )
-    $projectArg = $ProjectPath
-    if ($projectArg -match '\s') { $projectArg = '"' + $projectArg + '"' }
-    $list = @(
-        $projectArg,
-        '/t:Publish',
-        # OutlookAI.Core's packages (Q167 (a)), restored in an evaluation of their own first.
-        '/restore',
-        # The release build's "Build and Publish" (the release workflow's, now
-        # Publish-AddInPayload.ps1's for Tools/Publish-Release.ps1), property for property.
-        (Format-MSBuildProperty 'Configuration' 'Release'),
-        (Format-MSBuildProperty 'ApplicationVersion' $DevVersion),
-        (Format-MSBuildProperty 'PublishDir' 'publish\'),
-        (Format-MSBuildProperty 'BootstrapperEnabled' 'true'),
-        (Format-MSBuildProperty 'IsWebBootstrapper' 'false'),
-        (Format-MSBuildProperty 'DefineConstants' 'VSTO40;TRACE'),
-        # The throwaway key instead of the release secret.
-        (Format-MSBuildProperty 'ManifestCertificateThumbprint' $Thumbprint),
-        # Guards 1 and 2, and never the IDE's registering behaviour, whatever the environment says.
-        (Format-MSBuildProperty 'PrepareForRunDependsOn' (Get-PrepareForRunOverride) -List),
-        (Format-MSBuildProperty 'CustomBeforeMicrosoftCommonTargets' $StandInTargets),
-        (Format-MSBuildProperty 'BuildingInsideVisualStudio' 'false'),
-        # Nothing may outlive the build and hold a handle.
-        (Format-MSBuildProperty 'UseSharedCompilation' 'false'),
-        '/nodeReuse:false',
-        '/m:1',
-        '/nologo',
-        '/v:minimal'
-    )
-    $flp = "LogFile=$FileLog;Verbosity=detailed;Encoding=UTF-8"
-    if ($flp -match '\s') { $flp = '"' + $flp + '"' }
-    $list += "/flp:$flp"
-    return $list
-}
-
-# Guard 1's evaluation: the build's own global properties, evaluated only - no target, no restore,
-# no file log. -getProperty with no target runs nothing; /restore would run the Restore target.
-function Get-MSBuildEvaluationArgumentList {
-    param([Parameter(Mandatory = $true)] [string[]] $BuildArguments)
-    $kept = @($BuildArguments | Where-Object {
-            -not $_.StartsWith('/t:') -and $_ -ne '/restore' -and -not $_.StartsWith('/flp:') -and $_ -ne '/v:minimal'
-        })
-    return @($kept + '-getProperty:PrepareForRunDependsOn')
-}
-
-function Test-EvaluatedPrepareForRun {
-    param([string] $EvaluatedValue)
-    $v = ''
-    if ($EvaluatedValue) { $v = ($EvaluatedValue -replace '\s', '') }
-    $parts = @($v.Split(';') | Where-Object { $_ })
-    $problems = @()
-    if ($parts -contains 'RegisterOfficeAddin') { $problems += 'RegisterOfficeAddin is still on PrepareForRun - guard 1 did not take.' }
-    if (-not ($parts -contains 'VisualStudioForApplicationsBuild')) { $problems += 'VisualStudioForApplicationsBuild is missing - the build would produce no signed manifests.' }
-    if (-not ($parts -contains 'CopyFilesToOutputDirectory')) { $problems += 'CopyFilesToOutputDirectory is missing - the build would produce no output.' }
-    return $problems
-}
-
-function Test-StandInSentinels {
-    param([string] $LogText)
-    $problems = @()
-    $notes = @()
-    if (-not $LogText) { $LogText = '' }
-    $lower = $LogText.ToLowerInvariant()
-    if (-not $lower.Contains('done building target "visualstudioforapplicationsbuild"')) {
-        $problems += 'VisualStudioForApplicationsBuild never finished, so no signed manifests were made - or the log is not detailed enough to say.'
-    }
-    if ($lower.Contains('target "registerofficeaddin"')) { $problems += 'the RegisterOfficeAddin TARGET appears in the build log: guard 1 did not hold.' }
-    foreach ($name in $StandInTasks.Keys) {
-        $seen = $LogText.Contains("$StandInSentinel`: $name did not run")
-        if ($StandInTasks[$name].Scheduled -and -not $seen) { $problems += "the $name stand-in never logged: either the real task ran, or the build stopped before it; guard 3 decides which." }
-        if (-not $StandInTasks[$name].Scheduled -and $seen) { $notes += "the $name stand-in RAN, so RegisterOfficeAddin was still scheduled: guard 1 did not hold and guard 2 caught it." }
-    }
-    return [pscustomobject]@{ Ok = ($problems.Count -eq 0); Problems = $problems; Notes = $notes }
-}
-
-function Find-FormRegionDeclarations {
-    param([string[]] $SourceTexts)
-    $hits = @()
-    foreach ($text in $SourceTexts) {
-        if (-not $text) { continue }
-        foreach ($needle in @('[FormRegionMessageClass', '[FormRegionName', 'FormRegionFactory', 'IFormRegionFactory')) {
-            if ($text.Contains($needle)) { $hits += $needle }
-        }
-    }
-    return @($hits | Sort-Object -Unique)
-}
-
-function Format-RegistryData($Value, [Microsoft.Win32.RegistryValueKind] $Kind) {
-    if ($null -eq $Value) { return '<null>' }
-    if ($Kind -eq [Microsoft.Win32.RegistryValueKind]::Binary) { return (($Value | ForEach-Object { '{0:X2}' -f $_ }) -join '') }
-    if ($Kind -eq [Microsoft.Win32.RegistryValueKind]::MultiString) { return ($Value -join '|') }
-    return [string]$Value
-}
-
-# Read-only. Every value under every given key, one line each.
-function Get-RegistryLines {
-    param([string[]] $Keys)
-    $lines = @()
-    foreach ($rel in $Keys) {
-        $root = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($rel, $false)
-        if ($null -eq $root) { continue }
-        $stack = New-Object System.Collections.Stack
-        $stack.Push(@($rel, $root))
-        while ($stack.Count -gt 0) {
-            $pair = $stack.Pop()
-            $path = $pair[0]
-            $key = $pair[1]
-            try {
-                $lines += ('HKCU\' + $path + '|<key>')
-                foreach ($name in $key.GetValueNames()) {
-                    $kind = $key.GetValueKind($name)
-                    $data = $key.GetValue($name, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
-                    $lines += ('HKCU\' + $path + '|' + $name + '=' + $kind + ':' + (Format-RegistryData $data $kind))
-                }
-                foreach ($sub in $key.GetSubKeyNames()) {
-                    $child = $key.OpenSubKey($sub, $false)
-                    if ($null -ne $child) { $stack.Push(@(($path + '\' + $sub), $child)) }
-                }
-            }
-            finally { $key.Close() }
-        }
-    }
-    return @($lines | Sort-Object)
-}
-
-function Get-CertLines {
-    param([string[]] $Stores)
-    $lines = @()
-    foreach ($s in $Stores) {
-        $store = New-Object System.Security.Cryptography.X509Certificates.X509Store($s, [System.Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser)
-        try {
-            $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadOnly)
-            foreach ($c in $store.Certificates) { $lines += ('CERT\' + $s + '\' + $c.Thumbprint) }
-        }
-        catch { $lines += ('CERT\' + $s + '|unreadable:' + $_.Exception.Message) }
-        finally { $store.Close() }
-    }
-    return @($lines | Sort-Object)
-}
-
-function Get-HostSnapshot { return @((Get-RegistryLines -Keys $WatchedRegistry) + (Get-CertLines -Stores $WatchedCertStores)) }
 
 function Compare-Lines {
     param([string[]] $Before, [string[]] $After)
@@ -1174,42 +947,6 @@ function Compare-Lines {
     $added = @(); foreach ($l in $a.Keys) { if (-not $b.ContainsKey($l)) { $added += $l } }
     $removed = @(); foreach ($l in $b.Keys) { if (-not $a.ContainsKey($l)) { $removed += $l } }
     return [pscustomobject]@{ Added = @($added | Sort-Object); Removed = @($removed | Sort-Object); Same = ($added.Count -eq 0 -and $removed.Count -eq 0) }
-}
-
-function Find-BuildFootprint {
-    param([string[]] $Lines, [string] $BuildDirectory, [string] $Thumbprint, [string] $ModulusBase64)
-    $needles = @()
-    if ($BuildDirectory) {
-        $d = $BuildDirectory.TrimEnd('\', '/')
-        $needles += $d.ToLowerInvariant()
-        $needles += $d.Replace('\', '/').ToLowerInvariant()
-    }
-    if ($Thumbprint) { $needles += $Thumbprint.ToLowerInvariant() }
-    if ($ModulusBase64) {
-        $m = ($ModulusBase64 -replace '\s', '')
-        if ($m.Length -gt 48) { $m = $m.Substring(0, 48) }
-        $needles += $m.ToLowerInvariant()
-    }
-    $hits = @()
-    foreach ($line in @($Lines)) {
-        if ($null -eq $line) { continue }
-        $low = $line.ToLowerInvariant()
-        foreach ($n in $needles) { if ($n -and $low.Contains($n)) { $hits += $line; break } }
-    }
-    return @($hits)
-}
-
-function Select-KeyLines {
-    param([string[]] $Lines, [string] $KeyPath)
-    $prefix = ('HKCU\' + $KeyPath + '\').ToLowerInvariant()
-    $exact = ('HKCU\' + $KeyPath + '|').ToLowerInvariant()
-    $out = @()
-    foreach ($l in @($Lines)) {
-        if ($null -eq $l) { continue }
-        $low = $l.ToLowerInvariant()
-        if ($low.StartsWith($prefix) -or $low.StartsWith($exact)) { $out += $l }
-    }
-    return @($out)
 }
 
 # Only ever called when guard 3 found the registration changed: puts back exactly the key's own
@@ -1258,138 +995,6 @@ function Remove-BuildTrustFootprints {
     return $removed
 }
 
-function Remove-ThrowawayCertificate {
-    param([Parameter(Mandatory = $true)] [string] $Thumbprint)
-    $my = "Cert:\CurrentUser\My\$Thumbprint"
-    if (Test-Path -LiteralPath $my) { Remove-Item -LiteralPath $my -DeleteKey -ErrorAction SilentlyContinue }
-    # NOT ONLY My: New-SelfSignedCertificate also puts a copy into CurrentUser\CA (measured by
-    # Testbed/host/Publish-AddInPayload.ps1). Only a certificate with BOTH this build's thumbprint
-    # and this script's subject is removed, so nothing of the maintainer's can match.
-    foreach ($s in $WatchedCertStores) {
-        $store = New-Object System.Security.Cryptography.X509Certificates.X509Store($s, [System.Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser)
-        try {
-            $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
-            foreach ($c in @($store.Certificates | Where-Object { $_.Thumbprint -eq $Thumbprint -and $_.Subject -eq $ThrowawaySubject })) {
-                $store.Remove($c)
-                Say "  removed the copy New-SelfSignedCertificate left in Cert:\CurrentUser\$s"
-            }
-        }
-        catch { Say "  !! could not open Cert:\CurrentUser\$s to clean it: $($_.Exception.Message)" }
-        finally { $store.Close() }
-    }
-    $left = @($WatchedCertStores | Where-Object { Test-Path -LiteralPath "Cert:\CurrentUser\$_\$Thumbprint" })
-    if ($left.Count -gt 0) { Say "  !! the throwaway certificate is STILL in: $($left -join ', ') - guard 3 will refuse. Remove it by thumbprint $Thumbprint." }
-    else { Say '  throwaway certificate deleted from every CurrentUser store, private key included' }
-}
-
-# D7 (c): the stand-ins against the text of one VSTO targets file - every parameter the targets pass
-# a writing task must be declared by its stand-in, or MSBuild refuses the call (MSB4064). One result
-# per task: What, Expected, Actual. Pure, so the self-test feeds it synthetic targets anywhere.
-function Compare-StandInsWithTargets {
-    param([Parameter(Mandatory = $true)] [string] $TargetsText)
-    $vsto = [xml]$TargetsText
-    $results = @()
-    foreach ($name in $StandInTasks.Keys) {
-        $used = @()
-        foreach ($node in $vsto.GetElementsByTagName($name)) { foreach ($attr in $node.Attributes) { if ($attr.Name -ne 'Condition') { $used += $attr.Name } } }
-        $missing = @($used | Sort-Object -Unique | Where-Object { $StandInTasks[$name].Parameters -notcontains $_ })
-        $results += [pscustomobject]@{ What = "$name - the installed targets pass nothing the stand-ins lack"; Expected = ''; Actual = ($missing -join ',') }
-    }
-    return $results
-}
-
-# -CompareInstalledTargets: the comparison against EVERY installed VSTO targets file, as a verdict.
-# 0 when each passes; 1 when one fails or when there is none to compare with (D7 (c)).
-function Invoke-InstalledTargetsComparison {
-    Write-Host "Tools/Switch-AddInBuild.ps1 -CompareInstalledTargets under PowerShell $($PSVersionTable.PSVersion) ($($PSVersionTable.PSEdition))"
-    $paths = @(Find-InstalledVstoTargets)
-    if ($paths.Count -eq 0) {
-        Write-Host '  FAIL no Visual Studio with the Office workload on this machine, so the stand-ins were compared with nothing.'
-        return 1
-    }
-    $checks = 0
-    $failures = 0
-    foreach ($p in $paths) {
-        Write-Host "  == $p"
-        foreach ($r in @(Compare-StandInsWithTargets -TargetsText (Get-Content -LiteralPath $p -Raw))) {
-            $checks++
-            if ([string]$r.Expected -ceq [string]$r.Actual) { Write-Host "  OK   $($r.What)" }
-            else {
-                $failures++
-                Write-Host "  FAIL $($r.What) - expected [$($r.Expected)], got [$($r.Actual)]"
-            }
-        }
-    }
-    Write-Host "$checks assertion(s) across $($paths.Count) targets file(s), $failures failure(s)."
-    if ($failures -gt 0) { return 1 }
-    return 0
-}
-
-function Find-InstalledVstoTargets {
-    $found = @()
-    $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
-    if (-not (Test-Path -LiteralPath $vswhere)) { return $found }
-    $roots = @(Invoke-NativeCommand { & $vswhere -all -products * -requires Microsoft.VisualStudio.Workload.Office -property installationPath 2>$null })
-    foreach ($root in $roots) {
-        if (-not $root) { continue }
-        $dir = Join-Path $root 'MSBuild\Microsoft\VisualStudio'
-        if (-not (Test-Path -LiteralPath $dir)) { continue }
-        $found += @(Get-ChildItem -LiteralPath $dir -Directory -ErrorAction SilentlyContinue |
-                ForEach-Object { Join-Path $_.FullName 'OfficeTools\Microsoft.VisualStudio.Tools.Office.targets' } |
-                Where-Object { Test-Path -LiteralPath $_ })
-    }
-    return $found
-}
-
-function Resolve-MSBuild {
-    if ($MSBuildPath) {
-        if (-not (Test-Path -LiteralPath $MSBuildPath)) { throw "-MSBuildPath does not exist: $MSBuildPath" }
-        return $MSBuildPath
-    }
-    $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
-    if (-not (Test-Path -LiteralPath $vswhere)) { throw 'REFUSING TO BUILD: vswhere.exe is not on this machine, so there is no Visual Studio to build with. Or pass -MSBuildPath.' }
-    $roots = @(Invoke-NativeCommand { & $vswhere -latest -products * -requires Microsoft.VisualStudio.Workload.Office -property installationPath 2>$null })
-    if ($roots.Count -eq 0 -or -not $roots[0]) { throw 'REFUSING TO BUILD: no Visual Studio here has the Office/SharePoint development workload, so there are no VSTO build targets. Or pass -MSBuildPath.' }
-    $candidate = Join-Path $roots[0] 'MSBuild\Current\Bin\amd64\MSBuild.exe'
-    if (-not (Test-Path -LiteralPath $candidate)) { $candidate = Join-Path $roots[0] 'MSBuild\Current\Bin\MSBuild.exe' }
-    if (-not (Test-Path -LiteralPath $candidate)) { throw "Visual Studio at $($roots[0]) has no MSBuild.exe under MSBuild\Current\Bin." }
-    return $candidate
-}
-
-function Test-IsUnderGitWorkTreeButNotWork {
-    param([string] $Path, [string] $WorkTreeRoot)
-    if (-not $WorkTreeRoot) { return $false }
-    $p = $Path.TrimEnd('\') + '\'
-    $root = $WorkTreeRoot.TrimEnd('\') + '\'
-    if (-not $p.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase)) { return $false }
-    return (-not $p.StartsWith($root + '.work\', [System.StringComparison]::OrdinalIgnoreCase))
-}
-
-# MSBuild's command line cuts a switch value into pieces at every ',' and ';' outside quotes, and
-# every path this script hands MSBuild - the project, the stand-in targets, the detailed log - lies
-# under -WorkRoot. Measured 2026-09-27 with this script's own Get-MSBuildArgumentList on MSBuild
-# 18.10, then with the script itself, -BuildOnly, under 5.1 started from 7 and under 7:
-#   * ','  /p:CustomBeforeMicrosoftCommonTargets=...\sw-A,B\...\NoHostWrite.targets stopped guard 1's
-#          evaluation on MSB1006 ("Property is not valid", switch "B\...\NoHostWrite.targets") -
-#          after the throwaway certificate was made and the source archived - and the run ended
-#          "The build did not produce a usable add-in", which it had never tried to build.
-#   * ';'  Format-MSBuildProperty's %3B keeps the stand-in path whole, so the guards held and the
-#          build succeeded - but /flp: has no such escape, and the detailed log went, with no error,
-#          to a file cut off at the ';'. Reading the log where it should have been, all three log
-#          checks FAILed a good build, two of them saying the real registry-writing tasks might have
-#          run.
-#   * The dry run printed both paths as where -Execute would build, and exited 0.
-# So a ',' or ';' is refused up front, dry run included, before anything is archived, signed or
-# built, rather than every argument having to get an escaping rule right - the refusal
-# Testbed/host/Publish-AddInPayload.ps1 has for its -OutDir. $null when the path is fine.
-function Get-MSBuildPathProblem {
-    param([string] $Path)
-    $separators = @(@(',', ';') | Where-Object { $Path.Contains($_) })
-    if ($separators.Count -eq 0) { return $null }
-    $named = ($separators | ForEach-Object { "'$_'" }) -join ' and '
-    return "-WorkRoot '$Path' contains $named, which MSBuild's command line reads as a separator - a ',' stops the build on MSB1006 ('Property is not valid'), a ';' sends the detailed log this script proves its guards from somewhere else. Every path this build hands MSBuild lies under -WorkRoot, which defaults to .work\switch-addin-build under the repository; choose one with no ',' or ';' in it"
-}
-
 function Resolve-Commit {
     param([string] $Ref)
     $sha = (@(Invoke-NativeCommand { & git -C $RepoRoot rev-parse --verify "$Ref^{commit}" 2>&1 }) | Out-String).Trim()
@@ -1431,7 +1036,7 @@ function Invoke-GuardedBuild {
         @(foreach ($d in @('Services', 'TaskPane')) { Get-ChildItem -LiteralPath (Join-Path $sourceDir $d) -Filter '*.cs' -File -ErrorAction SilentlyContinue | ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw } })
     $regions = Find-FormRegionDeclarations -SourceTexts $sources
     if ($regions.Count -gt 0) { throw "REFUSING TO BUILD: this commit declares an Outlook form region ($($regions -join ', ')); the RegisterFormRegions stand-in would drop it from the manifest." }
-    Set-Content -LiteralPath $standIn -Value (Get-NoHostWriteTargets) -Encoding UTF8
+    Set-Content -LiteralPath $standIn -Value (Get-NoHostWriteTargets -WrittenBy 'Tools/Switch-AddInBuild.ps1') -Encoding UTF8
     Say "  source   $($CommitInfo.Sha) - $($CommitInfo.Subject)"
 
     $before = Get-HostSnapshot
@@ -1446,7 +1051,7 @@ function Invoke-GuardedBuild {
             -CertStoreLocation 'Cert:\CurrentUser\My' -NotAfter (Get-Date).AddYears(10)
         $thumb = [string]$cert.Thumbprint
         Say "  signing  throwaway Cert:\CurrentUser\My\$thumb"
-        $msbuildArgs = Get-MSBuildArgumentList -ProjectPath $project -Thumbprint $thumb -StandInTargets $standIn -FileLog $log
+        $msbuildArgs = Get-MSBuildArgumentList -ProjectPath $project -Thumbprint $thumb -StandInTargets $standIn -ApplicationVersion $DevVersion -FileLog $log
 
         $evalArgs = Get-MSBuildEvaluationArgumentList -BuildArguments $msbuildArgs
         $eval = Invoke-Logged -FilePath $msbuild -ArgumentList $evalArgs -LogStem (Join-Path $BuildDir 'msbuild-evaluate') -TimeoutMinutes 5 -WorkingDirectory $sourceDir
@@ -1490,7 +1095,7 @@ function Invoke-GuardedBuild {
         $problems += "the build stopped: $($_.Exception.Message)"
     }
     finally {
-        if ($thumb) { Remove-ThrowawayCertificate -Thumbprint $thumb }
+        if ($thumb) { Remove-ThrowawayCertificate -Thumbprint $thumb -Subject $ThrowawaySubject }
     }
 
     $after = Get-HostSnapshot
@@ -1632,10 +1237,10 @@ function Invoke-SelfTest {
     Test-Case 'nothing registered is none' 'none' (Get-BuildClass -VstoPath $null -InstalledVsto 'C:\U\Setup\OutlookAI.vsto' -DevRoot 'C:\U\DevBuilds')
 
     Write-Host ''
-    Write-Host '== the build guards (Testbed/host/Publish-AddInPayload.ps1''s, restated) =='
+    Write-Host '== the build guards (Testbed/host/AddInBuild.ps1''s, which Testbed/host/Publish-AddInPayload.ps1 builds with too) =='
     Test-Case 'guard 1: the chain is the VSTO one minus registration' 'CopyFilesToOutputDirectory;VisualStudioForApplicationsBuild' (Get-PrepareForRunOverride)
     $doc = New-Object System.Xml.XmlDocument
-    $doc.LoadXml((Get-NoHostWriteTargets))
+    $doc.LoadXml((Get-NoHostWriteTargets -WrittenBy 'Tools/Switch-AddInBuild.ps1'))
     $ns = New-Object System.Xml.XmlNamespaceManager($doc.NameTable)
     $ns.AddNamespace('m', 'http://schemas.microsoft.com/developer/msbuild/2003')
     $tasks = @($doc.SelectNodes('//m:UsingTask', $ns))
@@ -1656,12 +1261,14 @@ function Invoke-SelfTest {
         Write-Host "       (read: $($installedTargets[0]))"
     }
     else { Write-Host '  SKIP the installed-targets comparison: no Visual Studio with the Office workload here.' }
-    $synthetic = '<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003"><Target Name="T"><SetInclusionListEntry DeploymentManifestFullPath="d" CertificateThumbprint="t" Condition="c" /><RegisterFormRegions AddInName="n" AssemblyName="a" /></Target></Project>'
+    # The payload builder's synthetic targets: the chain and every writing task's call, which the shared
+    # comparison checks (Testbed/host/AddInBuild.ps1, Q154 P07).
+    $synthetic = '<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003"><PropertyGroup><PrepareForRunDependsOn>CopyFilesToOutputDirectory;VisualStudioForApplicationsBuild;RegisterOfficeAddin;</PrepareForRunDependsOn></PropertyGroup><Target Name="RegisterOfficeAddin"><SetOffice2007AddInRegistration Url="u" AddInName="n" Condition="c" /></Target><Target Name="T"><SetInclusionListEntry DeploymentManifestFullPath="d" CertificateThumbprint="t" Condition="c" /><RegisterFormRegions AddInName="n" AssemblyName="a" /></Target></Project>'
     $r = @(Compare-StandInsWithTargets -TargetsText $synthetic)
     Test-Case 'D7 (c) on synthetic targets: covered parameters pass' 0 @($r | Where-Object { [string]$_.Expected -cne [string]$_.Actual }).Count
     $r = @(Compare-StandInsWithTargets -TargetsText $synthetic.Replace('AssemblyName="a"', 'AssemblyName="a" NewWriterSwitch="x"'))
-    Test-Case 'D7 (c) on synthetic targets: a parameter the stand-in lacks is named' 'NewWriterSwitch' (@($r | Where-Object { $_.What -eq 'RegisterFormRegions - the installed targets pass nothing the stand-ins lack' })[0].Actual)
-    $a1 = Get-MSBuildArgumentList -ProjectPath 'C:\b\source\OutlookAI.csproj' -Thumbprint 'ABCDEF' -StandInTargets 'C:\b\NoHostWrite.targets' -FileLog 'C:\b\msbuild.log'
+    Test-Case 'D7 (c) on synthetic targets: a parameter the stand-in lacks is named' 'NewWriterSwitch' (@($r | Where-Object { $_.What -eq 'RegisterFormRegions - the installed targets pass nothing the stand-in lacks' })[0].Actual)
+    $a1 = Get-MSBuildArgumentList -ProjectPath 'C:\b\source\OutlookAI.csproj' -Thumbprint 'ABCDEF' -StandInTargets 'C:\b\NoHostWrite.targets' -ApplicationVersion $DevVersion -FileLog 'C:\b\msbuild.log'
     Test-Case 'the chain is one quoted global property with a real semicolon' $true ($a1 -contains '/p:PrepareForRunDependsOn="CopyFilesToOutputDirectory;VisualStudioForApplicationsBuild"')
     Test-Case 'DefineConstants semicolons are escaped' $true ($a1 -contains '/p:DefineConstants=VSTO40%3BTRACE')
     Test-Case 'the IDE''s registering behaviour is pinned off' $true ($a1 -contains '/p:BuildingInsideVisualStudio=false')
@@ -1880,7 +1487,7 @@ if ($Execute -and ($Status -or $SelfTest -or $BuildOnly -or $CompareInstalledTar
 if ($RemoveBuildTrust -and -not $Restore) { throw '-RemoveBuildTrust applies only to -Restore.' }
 
 if ($SelfTest) { exit (Invoke-SelfTest) }
-if ($CompareInstalledTargets) { exit (Invoke-InstalledTargetsComparison) }
+if ($CompareInstalledTargets) { exit (Invoke-InstalledTargetsComparison -ScriptName 'Tools/Switch-AddInBuild.ps1') }
 
 if (Test-IsElevated) {
     throw 'REFUSING TO RUN ELEVATED. An elevated process can carry another account''s HKCU, and this script only ever changes the Outlook of the user running it. Run it from an ordinary, unelevated shell.'
@@ -1919,7 +1526,7 @@ if ($Restore) {
 
 # ---- Putting a dev build on, or -BuildOnly -----------------------------------------------------
 # First, and for the dry run too: a -WorkRoot MSBuild's command line would cut in pieces.
-$workRootProblem = Get-MSBuildPathProblem (Get-NormalPath $WorkRoot)
+$workRootProblem = Get-MSBuildPathProblem (Get-NormalPath $WorkRoot) -ParameterName '-WorkRoot' -Where ', which defaults to .work\switch-addin-build under the repository'
 if ($workRootProblem) { throw "REFUSING: $workRootProblem. Nothing was built, copied, trusted or registered." }
 $commitInfo = Resolve-Commit $Commit
 $dirty = @(Invoke-NativeCommand { & git -C $RepoRoot status --porcelain })
