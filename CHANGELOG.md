@@ -1536,7 +1536,14 @@ its mailbox tests on, and change nothing you install.
   reply is read later; a silence can give back nothing instead of throwing; a reply must carry a
   result or an error; and the end of the server's standard error is waited for. A server that cannot
   be initialized is stopped, and the error says what it wrote. `Set-SignatureSettings.ps1`'s
-  self-test now talks to a stand-in server through it as well as checking its pure parts.
+  self-test now talks to a stand-in server through it as well as checking its pure parts. The read
+  of whether another process's token is elevated, 1 or 0, or -1 when it cannot be read, was a class
+  of its own in four scripts, five times, and is `Get-ProcessElevation` in the shared file now.
+  `Register-InteractiveTask.ps1` dot-sources the file, which the trust-removal probe stages beside
+  it; the add-in installer's first-run job and `Restart-Guest.ps1`'s read of a guest's state run
+  where the file's functions are not, and are handed its text; and the unelevated Outlook start,
+  which travels alone, keeps a copy check 4 holds identical. `Restart-Guest.ps1`'s quit script keeps
+  its own for now, inside the class that holds its window calls.
 
 - 📝 **If Office's own grace reset fails, the Exchange test machine may get Microsoft 365 Apps (Q206).**
   The maintainer's decision Q206, 2026-11-18, now in AGENTS.md beside the machine's internet

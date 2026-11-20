@@ -132,6 +132,42 @@ function Test-IsElevated {
     return $p.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
+# Whether ANOTHER process's token is elevated, by its id: 1 elevated, 0 not, -1 when it cannot be read - no
+# such process, or no right to open it or its token. TokenElevation (20) of GetTokenInformation, through
+# OpenProcess with PROCESS_QUERY_LIMITED_INFORMATION (0x1000) and OpenProcessToken with TOKEN_QUERY (8); C# 5,
+# which Windows PowerShell 5.1's Add-Type compiles. Four scripts each compiled a class of their own for it
+# until 2026-11-20 (Q154, the survey's P10). A job, or a session on another machine, that cannot dot-source
+# this file is handed the function's own text and runs it: [scriptblock]::Create($text), then -ProcessId.
+function Get-ProcessElevation {
+    param([Parameter(Mandatory = $true)] [int] $ProcessId)
+    if (-not ('OaiProcessToken' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class OaiProcessToken {
+    [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr OpenProcess(uint access, bool inherit, int pid);
+    [DllImport("advapi32.dll", SetLastError = true)] static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
+    [DllImport("advapi32.dll", SetLastError = true)] static extern bool GetTokenInformation(IntPtr token, int infoClass, out int info, int length, out int returned);
+    [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
+    public static int Elevation(int pid) {
+        IntPtr process = OpenProcess(0x1000, false, pid);
+        if (process == IntPtr.Zero) return -1;
+        try {
+            IntPtr token;
+            if (!OpenProcessToken(process, 0x0008, out token)) return -1;
+            try {
+                int elevated; int returned;
+                if (!GetTokenInformation(token, 20, out elevated, 4, out returned)) return -1;
+                return elevated != 0 ? 1 : 0;
+            } finally { CloseHandle(token); }
+        } finally { CloseHandle(process); }
+    }
+}
+'@
+    }
+    return [OaiProcessToken]::Elevation($ProcessId)
+}
+
 # THE ELEVATION GUARD of a script whose work needs an administrator (Q154, P05): it returns in an
 # elevated session and otherwise throws a refusal that says so, then -Why - what the script writes, and
 # what an unelevated run would leave half done.

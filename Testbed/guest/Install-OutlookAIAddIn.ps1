@@ -1687,6 +1687,12 @@ AwQ=</Modulus><Exponent>AQAB</Exponent></RSAKeyValue></KeyValue></KeyInfo></Sign
     Test-Case 'the first-run phase does reach one - so the line above is not vacuous' $true ($firstHits.Count -gt 0)
     Test-Case 'the first-run phase reaches no installer and no registry, environment or file write' '' ($firstWrites -join '; ')
     Test-Case 'nor does the job it starts' '1|' ('{0}|{1}' -f $jobAssign.Count, ((@($jobAssign | ForEach-Object { Get-WritesIn $_.Right '$FirstRunJob' })) -join '; '))
+    # The job runs the token read it is handed as text, which the line above cannot see into: so the text
+    # itself, the shared Get-ProcessElevation, is held to the same rule, and the job to compiling none of its own.
+    Test-Case 'nor does the token read it is handed, the shared Get-ProcessElevation' '' ((Get-WritesIn ${function:Get-ProcessElevation}.Ast 'Get-ProcessElevation') -join '; ')
+    Test-Case 'and the job compiles no token reader of its own' 0 @($jobAssign | ForEach-Object { $_.Right.FindAll({ param($x) $x -is [System.Management.Automation.Language.CommandAst] -and $x.GetCommandName() -eq 'Add-Type' }, $true) }).Count
+    # ps51-native-stderr-ok: a script block made from Get-ProcessElevation's text, not a program
+    Test-Case 'the token read works where the job runs it: handed as text, it reads this process as 0 or 1' $true (@(0, 1) -contains (& ([scriptblock]::Create(${function:Get-ProcessElevation}.ToString())) -ProcessId $PID))
     Test-Case 'the install phase does reach them - so the line above is not vacuous' $true ($installWrites.Count -gt 0)
     Test-Case 'the install phase refuses a token that is not elevated before anything else' 'Assert-PhaseElevation -ForPhase $PhaseInstall' (Get-FirstCommandIn 'Invoke-InstallPhase')
     Test-Case 'the first-run phase refuses an elevated one before anything else' 'Assert-PhaseElevation -ForPhase $PhaseFirstRun' (Get-FirstCommandIn 'Invoke-FirstRunPhase')
@@ -2128,7 +2134,7 @@ function Invoke-FirstRunPhase {
     Say '== First run: Outlook started once, NOT elevated, headless, in a watchdogged child job =='
     $windowsBefore = Get-SessionWindows
     $startedUtc = [DateTime]::UtcNow
-    $job = Start-Job -ScriptBlock $FirstRunJob -ArgumentList $startedUtc.Ticks, $FirstRunTimeoutSeconds, $TuningKey, $McpKey, $AddinName
+    $job = Start-Job -ScriptBlock $FirstRunJob -ArgumentList $startedUtc.Ticks, $FirstRunTimeoutSeconds, $TuningKey, $McpKey, $AddinName, ${function:Get-ProcessElevation}.ToString()
     $done = Wait-Job -Job $job -Timeout ($FirstRunTimeoutSeconds + 120)
     $first = $null
     if ($done) {
@@ -2219,9 +2225,10 @@ if ($mode.Mode -eq 'DryRun') {
 # script's hang. Everything the job holds is released in its finally; it never quits Outlook.
 # The job inherits FirstRun's Limited token, and COM starts Outlook with it - which the job then
 # proves, reading the started OUTLOOK.EXE's token while it still holds a reference, so Outlook
-# cannot have closed by itself first. (The reading is Start-OutlookUnelevated.ps1's, restated.)
+# cannot have closed by itself first. The reading is Get-ProcessElevation, the one the scripts share from
+# ScriptHelpers.ps1 (Q154, P10): a job cannot see this script's functions, so it is handed the text.
 $FirstRunJob = {
-    param([long] $StartedTicks, [int] $TimeoutSeconds, [string] $TuningKey, [string] $McpKey, [string] $AddinName)
+    param([long] $StartedTicks, [int] $TimeoutSeconds, [string] $TuningKey, [string] $McpKey, [string] $AddinName, [string] $ElevationText)
     $ErrorActionPreference = 'Stop'
     $started = New-Object DateTime($StartedTicks, [DateTimeKind]::Utc)
     $r = [ordered]@{ ComSeconds = $null; MapiInit = $null; TuningAfterSeconds = $null; McpAfterSeconds = $null; Connect = $null; RestartNeeded = $null; AutomationAnswered = $false; Error = $null; OutlookElevation = @(); TokenError = $null }
@@ -2269,19 +2276,9 @@ $FirstRunJob = {
         }
         catch { $r.Error = 'COMAddIns: ' + $_.Exception.Message }
         try {
-            if (-not ('OaiFirstRunToken' -as [type])) {
-                Add-Type -TypeDefinition @'
-using System; using System.Runtime.InteropServices;
-public static class OaiFirstRunToken {
-    [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr OpenProcess(uint a, bool i, int p);
-    [DllImport("advapi32.dll", SetLastError = true)] static extern bool OpenProcessToken(IntPtr p, uint a, out IntPtr t);
-    [DllImport("advapi32.dll", SetLastError = true)] static extern bool GetTokenInformation(IntPtr t, int c, out int i, int l, out int r);
-    [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
-    public static int Elevation(int pid) { IntPtr p = OpenProcess(0x1000, false, pid); if (p == IntPtr.Zero) return -1; try { IntPtr t; if (!OpenProcessToken(p, 8, out t)) return -1; try { int e, r; if (!GetTokenInformation(t, 20, out e, 4, out r)) return -1; return e != 0 ? 1 : 0; } finally { CloseHandle(t); } } finally { CloseHandle(p); } }
-}
-'@
-            }
-            $r.OutlookElevation = @(Get-Process -Name 'OUTLOOK' -ErrorAction SilentlyContinue | ForEach-Object { '{0}={1}' -f $_.Id, [OaiFirstRunToken]::Elevation($_.Id) })
+            $getElevation = [scriptblock]::Create($ElevationText)
+            # ps51-native-stderr-ok: a script block made from Get-ProcessElevation's text, not a program
+            $r.OutlookElevation = @(Get-Process -Name 'OUTLOOK' -ErrorAction SilentlyContinue | ForEach-Object { '{0}={1}' -f $_.Id, (& $getElevation -ProcessId $_.Id) })
         }
         catch { $r.TokenError = $_.Exception.Message }
     }
