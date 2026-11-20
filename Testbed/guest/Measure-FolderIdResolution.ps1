@@ -93,20 +93,6 @@ function Get-ProviderUidHex([string] $EntryIdHex) {
     return $uid
 }
 
-# The first 12 hex digits of the SHA-256 of a value's upper-case spelling: enough to say equal or not,
-# not enough to say what the value is. $null for no value.
-function Get-ShortHash([string] $Value) {
-    if ([string]::IsNullOrEmpty($Value)) { return $null }
-    $sha = [Security.Cryptography.SHA256]::Create()
-    try {
-        $bytes = $sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($Value.ToUpperInvariant()))
-    }
-    finally {
-        $sha.Dispose()
-    }
-    return (($bytes[0..5] | ForEach-Object { $_.ToString('x2') }) -join '')
-}
-
 # For each position, the other positions whose value is the same (case-insensitive); '-' for none and
 # for a position with no value. Values: an array indexed like the stores, $null where nothing read.
 function Get-SharedWith([object[]] $Values) {
@@ -197,10 +183,24 @@ function Invoke-SelfTest {
     Check 'an id shorter than 20 bytes has none' ($null -eq (Get-ProviderUidHex ('00' * 19)))
     Check 'an all-zero UID is none' ($null -eq (Get-ProviderUidHex ('00' * 24)))
     Check 'a value that is not hex has none' ($null -eq (Get-ProviderUidHex ('ZZ' * 24)))
-    Check 'a short hash is 12 hex digits' ((Get-ShortHash 'abc') -match '^[0-9a-f]{12}$')
-    Check 'the hash ignores case' ((Get-ShortHash 'abc') -eq (Get-ShortHash 'ABC'))
-    Check 'different values hash apart' ((Get-ShortHash 'abc') -ne (Get-ShortHash 'abd'))
-    Check 'no value has no hash' ($null -eq (Get-ShortHash ''))
+    Check 'a short hash is 12 hex digits (Get-ShortHash, shared from ScriptHelpers.ps1)' ((Get-ShortHash 'abc' -IgnoreCase) -match '^[0-9a-f]{12}$')
+    Check 'the hash ignores case' ((Get-ShortHash 'abc' -IgnoreCase) -eq (Get-ShortHash 'ABC' -IgnoreCase))
+    Check 'different values hash apart' ((Get-ShortHash 'abc' -IgnoreCase) -ne (Get-ShortHash 'abd' -IgnoreCase))
+    Check 'it is the first 12 hex digits of the SHA-256 of the upper-case spelling, as this script''s own copy made it' ((Get-ShortHash 'abc' -IgnoreCase) -eq 'b5d4045c3f46')
+    # The attach the scripts share (Connect-RunningOutlook, ScriptHelpers.ps1). Its refusal is taken only where no
+    # Outlook runs in this session, as on the build VM: anywhere else it would attach.
+    if (-not (Test-OutlookInThisSession)) {
+        $attach = Connect-RunningOutlook
+        Check 'with no OUTLOOK.EXE in this session the attach refuses, attaches nothing and says why' ($null -eq $attach.App -and -not $attach.Running -and $null -eq $attach.Via -and ([string]$attach.Why).StartsWith('no OUTLOOK.EXE runs in this session'))
+        Check 'and starts no Outlook' (-not (Test-OutlookInThisSession))
+    }
+    else {
+        Write-Host '  NOTE  an OUTLOOK.EXE runs in this session, so the no-Outlook refusal is not taken here'
+    }
+    $attachText = [string]${function:Connect-RunningOutlook}
+    $factoryAt = $attachText.IndexOf('New-Object -ComObject Outlook.Application')
+    Check 'it asks this session''s processes, then the Running Object Table, before the class factory' ($factoryAt -gt 0 -and $attachText.IndexOf('Test-OutlookInThisSession') -ge 0 -and $attachText.IndexOf('Test-OutlookInThisSession') -lt $factoryAt -and $attachText.IndexOf('GetActiveObject') -lt $factoryAt)
+    Check 'no value has no hash' ($null -eq (Get-ShortHash '' -IgnoreCase))
     $shared = Get-SharedWith @('X', 'y', 'x', $null, 'Z')
     Check 'equal values name each other' (($shared[0] -eq '3') -and ($shared[2] -eq '1'))
     Check 'a value of its own shares with none' (($shared[1] -eq '-') -and ($shared[4] -eq '-'))
@@ -230,6 +230,7 @@ function Invoke-SelfTest {
     $members = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.InvokeMemberExpressionAst] }, $true) | Where-Object { -not ($_.Member.Extent.Text -eq 'Close' -and @('$rs', '$conn') -contains $_.Expression.Extent.Text) } | ForEach-Object { $_.Member.Extent.Text.Trim("'", '"') })
     $bad = @($members | Where-Object { $_ -match '^(Delete|Save|Move|Send|SetProperty|SetProperties|DeleteProperties|Remove|Copy|Close|Quit|Display|SaveAs|ExecuteMso|MoveTo|CopyTo)$' })
     Check ('no late-bound member that changes anything: ' + ($bad -join ', ')) ($bad.Count -eq 0)
+    Check 'it attaches only through the shared Connect-RunningOutlook: no GetActiveObject and no Outlook.Application of its own' (@($members | Where-Object { $_ -eq 'GetActiveObject' }).Count -eq 0 -and @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'New-Object' -and $n.Extent.Text.Contains('Outlook.Application') }, $true)).Count -eq 0 -and @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Connect-RunningOutlook' }, $true)).Count -ge 1)
     $commands = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true) | ForEach-Object { $_.GetCommandName() } | Where-Object { $_ -match '^(Set-(?!Content$)|New-Item|Remove-|Rename-|Move-|Add-Content|Out-File)' })
     # Its own result file is the one thing written: Set-Content once, and New-Item for its directory.
     $writers = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true) | ForEach-Object { $_.GetCommandName() } | Where-Object { $_ -in @('Set-Content', 'New-Item') })
@@ -241,6 +242,10 @@ function Invoke-SelfTest {
     if ($script:f -gt 0) { exit 1 }
     exit 0
 }
+
+# Get-ShortHash, by which it compares and prints ids and names, is one of the helpers the scripts share,
+# dot-sourced from ScriptHelpers.ps1 beside this script before the self-test that holds it (Q154, S7).
+. (Join-Path $PSScriptRoot 'ScriptHelpers.ps1')
 
 if ($SelfTest) { Invoke-SelfTest }
 
@@ -265,18 +270,21 @@ function Release($Object) {
 }
 function Ms([double] $Value) { return $Value.ToString('0.0', [Globalization.CultureInfo]::InvariantCulture) }
 
-if (-not (Get-Process -Name 'OUTLOOK' -ErrorAction SilentlyContinue)) {
-    Out-Line 'OUTLOOK-NOT-RUNNING: this probe attaches to a running Outlook and never starts one. Nothing measured.'
+# The Outlook running in this session, through the attach the scripts share (Connect-RunningOutlook, ScriptHelpers.ps1):
+# the Running Object Table first, the class factory once an OUTLOOK.EXE is seen in this session - never a new Outlook.
+# Through the table alone it could not attach to an Outlook that had not yet lost the focus (OutlookAI-Indexed3,
+# 2026-11-18: ATTACH-FAILED 0x800401E3).
+$attach = Connect-RunningOutlook
+if (-not $attach.Running) {
+    Out-Line 'OUTLOOK-NOT-RUNNING: this probe attaches to the Outlook running in its own session and never starts one. Nothing measured.'
     exit 3
 }
-
-try {
-    $outlook = [Runtime.InteropServices.Marshal]::GetActiveObject('Outlook.Application')
-}
-catch {
-    Out-Line ('ATTACH-FAILED ' + (Get-HResult $_) + ': Outlook runs, but not at this integrity level or not in this session. Nothing measured.')
+if ($null -eq $attach.App) {
+    Out-Line ('ATTACH-FAILED: ' + $attach.Why + '. Nothing measured.')
     exit 3
 }
+$outlook = $attach.App
+Out-Line ('attached through the ' + $(if ($attach.Via -eq 'RunningObjectTable') { 'Running Object Table' } else { 'class factory' }))
 
 $ns = $outlook.GetNamespace('MAPI')
 $explorers = -1
@@ -368,8 +376,8 @@ if ($Section -eq 'All' -or $Section -eq 'Roots') {
         $errorPart = ''
         if ($row.Error) { $errorPart = ' error=' + $row.Error }
         $text = 'STORE ' + $row.Index + ' exchangeStoreType=' + $e.Type + ' cached=' + $e.Cached +
-            ' storeIdHash=' + (Get-ShortHash $e.StoreId) + ' sameStoreIdAs=' + $storeIdShared[$k] +
-            ' rootUidHash=' + (Get-ShortHash (Get-ProviderUidHex $e.RootId)) + ' sameRootUidAs=' + $uidShared[$k] +
+            ' storeIdHash=' + (Get-ShortHash $e.StoreId -IgnoreCase) + ' sameStoreIdAs=' + $storeIdShared[$k] +
+            ' rootUidHash=' + (Get-ShortHash (Get-ProviderUidHex $e.RootId) -IgnoreCase) + ' sameRootUidAs=' + $uidShared[$k] +
             ' rootFirstMs=' + $firstText + ' rootLaterMs=' + (Format-Spread $row.Later) +
             ' alwaysReadPropsMs=' + (Format-Spread $row.Props) + $errorPart
         Out-Line $text
@@ -398,7 +406,7 @@ function Get-OpenLine([string] $Label, [string] $FolderIdHex, [string] $StoreIdH
         # When it opened ANOTHER folder than the one asked for: is that a store's top folder?
         $isTop = @($entries | Where-Object { $_.RootId -and $openedId -and $_.RootId.ToUpperInvariant() -eq $openedId.ToUpperInvariant() }).Count -gt 0
         $nameRead = 'ok'
-        try { $nameRead = 'ok (hash ' + (Get-ShortHash ([string]$folder.Name)) + ')' } catch { $nameRead = 'FAILS ' + (Get-HResult $_) }
+        try { $nameRead = 'ok (hash ' + (Get-ShortHash ([string]$folder.Name) -IgnoreCase) + ')' } catch { $nameRead = 'FAILS ' + (Get-HResult $_) }
         $typeRead = 'ok'
         try { $typeRead = 'ok (' + [int]$folder.DefaultItemType + ')' } catch { $typeRead = 'FAILS ' + (Get-HResult $_) }
         $countRead = 'ok'
@@ -491,7 +499,7 @@ if ($Section -eq 'All' -or $Section -eq 'IndexHits') {
                     $itemType = [string]$rs.Fields.Item('System.ItemType').Value
                     $isAttachment = $url.IndexOf('/at=', [StringComparison]::OrdinalIgnoreCase) -ge 0
                     $folderNames = Get-UrlFolderSegments $url $r
-                    $line = 'ROW ' + $n + ' kind=' + $kind + ' itemType=' + $itemType + ' attachmentRow=' + $isAttachment + ' folder=' + ($folderNames -join '/') + ' subjectHash=' + (Get-ShortHash $subject) + ' subjectEmpty=' + [string]::IsNullOrEmpty($subject)
+                    $line = 'ROW ' + $n + ' kind=' + $kind + ' itemType=' + $itemType + ' attachmentRow=' + $isAttachment + ' folder=' + ($folderNames -join '/') + ' subjectHash=' + (Get-ShortHash $subject -IgnoreCase) + ' subjectEmpty=' + [string]::IsNullOrEmpty($subject)
                     if (-not $isAttachment -and $subject) {
                         # The locator's walk (Folders[name]) and its subject probe (Items.Restrict on the subject).
                         $store = $null; $cur = $null; $all = $null; $restricted = $null
@@ -530,7 +538,7 @@ if ($Section -eq 'All' -or $Section -eq 'IndexHits') {
                     $rs.MoveNext()
                 }
                 $rs.Close()
-                Out-Line ('rows under root ' + (Get-ShortHash $r) + ': ' + $n)
+                Out-Line ('rows under root ' + (Get-ShortHash $r -IgnoreCase) + ': ' + $n)
             }
         }
         finally {

@@ -13,7 +13,11 @@
       * the one-folder scan's folder, hard-coded 'Inbox', is now -ScanFolder (2026-10-03, D101
         follow-up). A store with no Inbox of its own - Corpus A on OutlookAI-Indexed, whose mail
         sits in the corpus builder's stand-ins (OutlookAI-Corpus-Folder-6 for the Inbox) - has
-        nothing for 'Inbox' to name, and the scan then measures a refusal, not a folder.
+        nothing for 'Inbox' to name, and the scan then measures a refusal, not a folder;
+      * its stdio client, which is Testbed/guest/McpStdioClient.ps1 since 2026-11-18 (Q154), the
+        one the guest scripts share and the shape this script proved: the same requests under the
+        same ids, every line sent and read in -OutFile as before, and a server that has not exited
+        20 s after its input closed still killed.
 
     WHERE IT MEANS WHAT IT SAYS (2026-10-03, D101 follow-up). Its sweeps are UNSCOPED freshness
     sweeps, and a sweep reads each store's default folders from that store's INDEX FRONTIER
@@ -62,51 +66,15 @@ param(
 $ErrorActionPreference = 'Stop'
 Remove-Item $OutFile -Force -ErrorAction SilentlyContinue
 
-$psi = New-Object Diagnostics.ProcessStartInfo
-$psi.FileName = $ServerExe
-$psi.WorkingDirectory = Split-Path $ServerExe -Parent
-$psi.RedirectStandardInput = $true
-$psi.RedirectStandardOutput = $true
-$psi.RedirectStandardError = $true
-$psi.UseShellExecute = $false
-$psi.CreateNoWindow = $true
-$psi.StandardOutputEncoding = New-Object Text.UTF8Encoding($false)
+# The stdio client the guest scripts share (Testbed/guest/McpStdioClient.ps1, Q154): every line it sends and reads
+# is appended to -OutFile, as this script's own client did.
+. (Join-Path $PSScriptRoot 'McpStdioClient.ps1')
+$session = $null
 
-$proc = [Diagnostics.Process]::Start($psi)
-$stdin = New-Object IO.StreamWriter($proc.StandardInput.BaseStream, (New-Object Text.UTF8Encoding($false)))
-$stdin.AutoFlush = $true
-$stderrTask = $proc.StandardError.ReadToEndAsync()
-
-function Send-Rpc { param([string]$Method, $Params, $Id, [switch]$Notification)
-    $msg = [ordered]@{ jsonrpc = '2.0'; method = $Method }
-    if (-not $Notification) { $msg['id'] = $Id }
-    if ($null -ne $Params) { $msg['params'] = $Params }
-    $json = $msg | ConvertTo-Json -Depth 20 -Compress
-    Add-Content -Path $OutFile -Value ">>> $json"
-    $stdin.WriteLine($json)
-}
-function Read-Reply { param($ForId)
-    $deadline = (Get-Date).AddSeconds($ReplyTimeoutSeconds)
-    while ((Get-Date) -lt $deadline) {
-        if ($proc.HasExited -and $proc.StandardOutput.EndOfStream) { throw "server exited $($proc.ExitCode)" }
-        $remaining = [int]([Math]::Max(1000, ($deadline - (Get-Date)).TotalMilliseconds))
-        $task = $proc.StandardOutput.ReadLineAsync()
-        if (-not $task.Wait($remaining)) { throw "read timed out for id $ForId" }
-        $line = $task.Result
-        if ($null -eq $line) { throw "stdout closed before id $ForId" }
-        if ($line.Trim() -eq '') { continue }
-        Add-Content -Path $OutFile -Value "<<< $line"
-        $o = $null
-        try { $o = $line | ConvertFrom-Json } catch { continue }
-        if (($o.PSObject.Properties.Name -contains 'id') -and ("$($o.id)" -eq "$ForId")) { return $o }
-    }
-    throw "no reply to id $ForId"
-}
 function Call { param([int]$Id, [string]$Tool, $CallArgs, [string]$Label)
     Add-Content -Path $OutFile -Value "### CASE $Id : $Label"
     $sw = [Diagnostics.Stopwatch]::StartNew()
-    Send-Rpc -Method 'tools/call' -Id $Id -Params @{ name = $Tool; arguments = $CallArgs }
-    $r = Read-Reply -ForId $Id
+    $r = Invoke-McpRequest -Session $session -Method 'tools/call' -Id $Id -Params @{ name = $Tool; arguments = $CallArgs }
     $sw.Stop()
     Add-Content -Path $OutFile -Value "### WALL $Id : $($sw.ElapsedMilliseconds) ms"
     return $r
@@ -131,14 +99,12 @@ function NoteHealth { param($Reply, [string]$When)
 }
 
 try {
-    Send-Rpc -Method 'initialize' -Id 1 -Params @{ protocolVersion = '2025-06-18'; capabilities = @{}; clientInfo = @{ name = 'measure'; version = '1.0' } }
-    Read-Reply -ForId 1 | Out-Null
-    Send-Rpc -Method 'notifications/initialized' -Notification
+    # initialize as request 1, then the initialized notification.
+    $session = Start-McpStdioServer -ServerExe $ServerExe -ClientName 'measure' -TimeoutSeconds $ReplyTimeoutSeconds -Transcript $OutFile
 
     $wid = 100; $ok = $false; $until = (Get-Date).AddMinutes(5)
     while ((Get-Date) -lt $until) {
-        Send-Rpc -Method 'tools/call' -Id $wid -Params @{ name = 'outlook_health'; arguments = @{} }
-        $h = Read-Reply -ForId $wid
+        $h = Invoke-McpRequest -Session $session -Method 'tools/call' -Id $wid -Params @{ name = 'outlook_health'; arguments = @{} }
         try { if (($h.result.content[0].text | ConvertFrom-Json).outlook.comConnected) { $ok = $true } } catch { }
         if ($ok) { break }
         $wid++; Start-Sleep -Seconds 10
@@ -191,9 +157,7 @@ try {
 }
 catch { Add-Content -Path $OutFile -Value "### ERROR: $($_.Exception.Message)" }
 finally {
-    try { $stdin.Close() } catch { }
-    if (-not $proc.WaitForExit(20000)) { try { $proc.Kill() } catch { } }
-    $err = ''; try { $err = $stderrTask.Result } catch { }
+    $err = Stop-McpStdioServer -Session $session -WaitMilliseconds 20000 -KillIfStillRunning
     if ($err) { Add-Content -Path $OutFile -Value "### stderr:`r`n$err" }
     Add-Content -Path $OutFile -Value '### done'
 }
