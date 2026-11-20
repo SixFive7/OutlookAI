@@ -4458,6 +4458,57 @@ script does not set it, read from the script's syntax tree; its new `-SelfTest` 
 template and script. Not yet proved by an install: that takes a fresh unattended install from a volume built
 after this change.
 
+### 4.5b The throwaway data file every frozen checkpoint carries - both Outlook guests and their clones, found 2026-11-20
+
+**Why this section exists.** Since 2026-10-03 every frozen checkpoint of both Outlook guests, and every clone
+made from one, holds a store in the tier profile that nothing declares: `throwaway@vm.invalid`, the data
+file of Q96 (iv)'s created-folder proof. It was found on `OutlookAI-Unindexed3` on 2026-11-20, in
+`outlook_health`'s list of the stores the local index holds nothing for, and traced the same day through the
+run records (stream R2c). Taking it out means new frozen checkpoints, the maintainer's call under Q130:
+question 239.
+
+**Where it came from.** The guest script `Reset-ThrowawayStore.ps1` (step 9a-ii, Q96 (iv)) detached the last
+run's throwaway data file and attached a fresh `C:\OutlookAI-Tier\Throwaway\throwaway-<stamp>.pst` to the tier
+profile, renamed `throwaway@vm.invalid`, before each live run. `9614189` removed the script, with the proof it
+served, on 2026-10-03 at 18:19 local, when Q85's "must report" was dropped (section 8 item 25); nothing has
+detached a leftover since. Two checkpoints were taken while one was attached:
+
+| Guest | The attach | The checkpoint taken over it | Its log |
+| --- | --- | --- | --- |
+| `OutlookAI-Unindexed` | run 18 of section 4.1e, 2026-10-03 16:40:54 local: `throwaway-20261003T144058Z.pst`, `detach : none` | `CP-13B-LIVE-GREEN`, 16:49 local, right after that run | `.work\g2-live-green\logs\20261003-164054-run18-reset-throwaway.log` of the agent worktree `a634a99d` |
+| `OutlookAI-Indexed` | section 4.2e's P2, at `0e018bf`, a branch that did not have `9614189` yet, 19:31:20 local: `throwaway-20261003T173126Z.pst`, `detach : none` | `CP-18C-ALL-KINDS`, 19:42:43 local, after P2's live run and a restart | `.work\g1-d62\logs\20261003-193120-p2-reset-throwaway.log` of the agent worktree `a24876cb` |
+
+Neither section's record of its checkpoint names the store. `CP-17C-CORPUS-160K` has none: both of that
+afternoon's runs from it, `20261003-184107-indexed-e5bec941e298` and `20261003-195550-indexed-19e6021fb685`,
+logged `detach : none` before attaching their own, and each restored `CP-17C` at its end.
+
+**Carried since**, because the freezes (section 4.5), the password remake (4.5a) and the .NET 11 refreeze (4.12)
+each took the profile as it stood: `CP-14B`, `CP-16B` and `CP-18B-FROZEN-CLOCK` on `OutlookAI-Unindexed`,
+`CP-20C`, `CP-22C` and `CP-24C-FROZEN-CLOCK` on `OutlookAI-Indexed`, and the clones `OutlookAI-Unindexed2`
+(`CP-16B`), `OutlookAI-Unindexed3` (`CP-18B`), `OutlookAI-Indexed2` (`CP-22C`) and `OutlookAI-Indexed3`
+(`CP-24C`). `T2/LiveTableSortProbeTests` prints one `STORE` line for each store of the tier profile, and every
+run with that test shows this one - `STORE throwaway@vm.invalid - NOT PROBED (InvalidOperationException): Store
+'throwaway@vm.invalid' has no Inbox that can be opened without creating one` - from the first runs on `CP-18C`
+(`20261003-202603-indexed-dc1b5c5d51cd`) and `CP-14B` (`20261003-222830-unindexed-1b5da1e70f7e`) to
+2026-11-20 (`20261120-104630-indexed-2593d0bf07a8` on `OutlookAI-Indexed3`,
+`20261120-111254-unindexed-2593d0bf07a8`).
+
+**What it holds, and why no run has failed on it.** The file was made with Deleted Items alone - every reset's
+verify line reads `top-level folders [Deleted Items]` and `Drafts designation NotFound` - and no account
+delivers into it. Since `9614189` took out `throwawayStoreDisplayName` it is in no settings file, so neither
+the count tripwire nor the sweep watches it, as D68 of `Docs/overnight-review-2026-10-03.md` ruled for the
+throwaway from the start, and every run since has passed with it there. It shows in that probe's `NOT PROBED`
+line and in `outlook_health`'s list of stores the local index holds nothing for (on `OutlookAI-Unindexed3`,
+2026-11-20: the tier, identity, bystander and throwaway stores). `Testbed/testbed.json`'s "exactly three
+stores" are reads from before either attach (2026-09-24 and 2026-10-03 08:33) and stand as written.
+
+**The next refreeze detaches it**, through a small tested script rebuilt from the deleted script's detach
+step (`Reset-ThrowawayStore.ps1` as of `9614189^`); `TODO.md` holds the item. That is the
+recommendation put to the maintainer on 2026-11-20 as question 239: leave the store until a refreeze is needed
+anyway. One made for this alone moves each frozen instant by about five minutes, as section 4.12's did, and
+the indexed guest's hub has 1.8 minutes of its frontier margin to spare (section 4.12), so it would need a hub
+rebuild as well.
+
 ### 4.6 Crash dumps, and the compose crash they caught - both Outlook guests, 2026-10-04
 
 **Why this section exists.** OUTLOOK.EXE died now and then in the compose tests on both guests - `wwlib.dll`
