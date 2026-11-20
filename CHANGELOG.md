@@ -1537,6 +1537,16 @@ its mailbox tests on, and change nothing you install.
   result or an error; and the end of the server's standard error is waited for. A server that cannot
   be initialized is stopped, and the error says what it wrote. `Set-SignatureSettings.ps1`'s
   self-test now talks to a stand-in server through it as well as checking its pure parts.
+  The add-in's VSTO trust and payload helpers went the same way: the guest's installer,
+  `Tools/Switch-AddInBuild.ps1` and `Testbed/host/Publish-AddInPayload.ps1` each restated how the VSTO
+  runtime keys and compares a trust entry, the key a signed manifest carries, how two keys compare,
+  the trust entries, Outlook's hard-disable list and the payload manifest's text forms, twelve
+  functions in 24 copies, and call one copy in the shared file now. The manifest check the builder
+  and the installer each had is one function: the builder hands it the pinned VSTO runtime and the
+  contract files, and it then holds the manifest to both, as the builder's copy did; the installer
+  hands it neither, and it checks the rest, as the installer's did, which compares each contract
+  file with the suite's itself and reports a drift. The trust entries' reader takes its registry
+  key, where the installer's copy read the script's own.
 
 - 📝 **If Office's own grace reset fails, the Exchange test machine may get Microsoft 365 Apps (Q206).**
   The maintainer's decision Q206, 2026-11-18, now in AGENTS.md beside the machine's internet

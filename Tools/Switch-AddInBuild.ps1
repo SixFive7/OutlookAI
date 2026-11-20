@@ -475,11 +475,11 @@ function Get-DoNotDisableChanges {
 }
 
 # =============================================================================================
-# PATHS, URLS AND KEYS. Pure. The URL and key rules are restated from
-# Testbed/guest/Install-OutlookAIAddIn.ps1, which read them in the VSTO runtime's IL and proved
-# them on a guest: an entry's Url is Uri.ToString() of the manifest location - forward slashes,
-# file:///, spaces literal - entries are found by comparing Url AS A URI (case-insensitive on a
-# DOS path), and keys are compared as numbers, so the XML shape is free.
+# PATHS, URLS AND KEYS. Pure. The URL and key rules are Testbed/guest/Install-OutlookAIAddIn.ps1's,
+# which read them in the VSTO runtime's IL and proved them on a guest, and since 2026-11-20 one copy
+# that both scripts call from ScriptHelpers.ps1 (Q154, P08): an entry's Url is Uri.ToString() of the
+# manifest location - forward slashes, file:///, spaces literal - entries are found by comparing Url
+# AS A URI (case-insensitive on a DOS path), and keys are compared as numbers, so the XML shape is free.
 # =============================================================================================
 
 function ConvertFrom-ManifestValue {
@@ -493,26 +493,6 @@ function ConvertFrom-ManifestValue {
     $v = $v.Replace('/', '\')
     if ([regex]::IsMatch($v, '%[0-9A-Fa-f]{2}')) { $v = [System.Uri]::UnescapeDataString($v) }
     return $v
-}
-
-function ConvertTo-InclusionUrl {
-    param([string] $ManifestValue)
-    if (-not $ManifestValue) { return $null }
-    $v = $ManifestValue.Trim()
-    $bar = $v.IndexOf('|')
-    if ($bar -ge 0) { $v = $v.Substring(0, $bar) }
-    if ($v.StartsWith('file:///', [System.StringComparison]::OrdinalIgnoreCase)) { $v = $v.Substring(8) }
-    elseif ($v.StartsWith('file://', [System.StringComparison]::OrdinalIgnoreCase)) { $v = $v.Substring(7) }
-    $v = $v.Replace('\', '/')
-    return 'file:///' + $v
-}
-
-function Test-SameInclusionUrl {
-    param([string] $A, [string] $B)
-    $x = ConvertTo-InclusionUrl $A
-    $y = ConvertTo-InclusionUrl $B
-    if (-not $x -or -not $y) { return $false }
-    return [string]::Equals($x, $y, [System.StringComparison]::OrdinalIgnoreCase)
 }
 
 function Get-NormalPath {
@@ -535,83 +515,11 @@ function Test-PathUnder {
     return $p.StartsWith($r, [System.StringComparison]::OrdinalIgnoreCase)
 }
 
-function ConvertTo-RsaKeyValueXml {
-    param([Parameter(Mandatory = $true)] [string] $ModulusBase64, [Parameter(Mandatory = $true)] [string] $ExponentBase64)
-    $m = ($ModulusBase64 -replace '\s', '')
-    $e = ($ExponentBase64 -replace '\s', '')
-    return "<RSAKeyValue><Modulus>$m</Modulus><Exponent>$e</Exponent></RSAKeyValue>"
-}
-
-# The deployment manifest's signing key, from ds:RSAKeyValue, as the <RSAKeyValue> string the trust
-# store holds. Every occurrence must be the same key.
-function Get-ManifestSigningKeyXml {
-    param([Parameter(Mandatory = $true)] [string] $ManifestXml)
-    $doc = New-Object System.Xml.XmlDocument
-    $doc.LoadXml($ManifestXml)
-    $nodes = $doc.SelectNodes("//*[local-name()='RSAKeyValue']")
-    if ($null -eq $nodes -or $nodes.Count -eq 0) { throw 'The manifest carries no RSAKeyValue - it is not signed.' }
-    $keys = @()
-    foreach ($n in $nodes) {
-        $mod = $n.SelectSingleNode("*[local-name()='Modulus']")
-        $exp = $n.SelectSingleNode("*[local-name()='Exponent']")
-        if ($null -eq $mod -or $null -eq $exp) { throw 'An RSAKeyValue in the manifest has no Modulus or no Exponent.' }
-        $keys += (ConvertTo-RsaKeyValueXml -ModulusBase64 $mod.InnerText -ExponentBase64 $exp.InnerText)
-    }
-    $distinct = @($keys | Sort-Object -Unique)
-    if ($distinct.Count -ne 1) { throw "The manifest is signed with $($distinct.Count) different keys; expected one." }
-    return $distinct[0]
-}
-
-# A key as two hex numbers with leading zero bytes dropped: what the runtime's ExportCspBlob
-# comparison sees, without asking a crypto provider for anything.
-function ConvertFrom-RsaKeyXml {
-    param([string] $Xml)
-    if (-not $Xml) { throw 'empty key' }
-    $doc = New-Object System.Xml.XmlDocument
-    $doc.LoadXml($Xml)
-    $mod = $doc.SelectSingleNode("//*[local-name()='Modulus']")
-    $exp = $doc.SelectSingleNode("//*[local-name()='Exponent']")
-    if ($null -eq $mod -or $null -eq $exp) { throw 'not an RSAKeyValue: Modulus or Exponent missing' }
-    $out = @{}
-    foreach ($pair in @(@('Modulus', $mod.InnerText), @('Exponent', $exp.InnerText))) {
-        $bytes = [Convert]::FromBase64String(($pair[1] -replace '\s', ''))
-        $start = 0
-        while ($start -lt ($bytes.Length - 1) -and $bytes[$start] -eq 0) { $start++ }
-        $hex = New-Object System.Text.StringBuilder
-        for ($i = $start; $i -lt $bytes.Length; $i++) { [void]$hex.Append($bytes[$i].ToString('X2')) }
-        $out[$pair[0]] = $hex.ToString()
-    }
-    return $out
-}
-
-function Test-SameRsaKey {
-    param([string] $A, [string] $B)
-    try {
-        $x = ConvertFrom-RsaKeyXml $A
-        $y = ConvertFrom-RsaKeyXml $B
-        return ($x.Modulus -eq $y.Modulus -and $x.Exponent -eq $y.Exponent)
-    }
-    catch {
-        return $false
-    }
-}
-
 function Get-TextSha256 {
     param([string] $Text)
     $sha = [System.Security.Cryptography.SHA256]::Create()
     try { return ([System.BitConverter]::ToString($sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes([string]$Text)))).Replace('-', '') }
     finally { $sha.Dispose() }
-}
-
-# Outlook's hard-disable list holds UTF-16 blobs naming the add-in (restated from the guest script).
-function Test-DisabledItemsMention {
-    param([object[]] $Blobs)
-    foreach ($b in @($Blobs)) {
-        if ($null -eq $b) { continue }
-        $text = [System.Text.Encoding]::Unicode.GetString([byte[]]$b)
-        if ($text.ToLowerInvariant().Contains('outlookai')) { return $true }
-    }
-    return $false
 }
 
 function Get-LoadBehaviorMeaning {
@@ -638,23 +546,6 @@ function New-DevBuildFolderName {
 # =============================================================================================
 # READING THE MACHINE. Read-only.
 # =============================================================================================
-
-function Get-InclusionEntries {
-    param([string] $InclusionKey)
-    $entries = @()
-    $root = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($InclusionKey, $false)
-    if ($null -eq $root) { return $entries }
-    try {
-        foreach ($name in $root.GetSubKeyNames()) {
-            $k = $root.OpenSubKey($name, $false)
-            if ($null -eq $k) { continue }
-            try { $entries += [pscustomobject]@{ Name = $name; Url = [string]$k.GetValue('Url'); PublicKey = [string]$k.GetValue('PublicKey') } }
-            finally { $k.Close() }
-        }
-    }
-    finally { $root.Close() }
-    return $entries
-}
 
 function Get-InstalledRelease {
     param($Layout, $Spec)

@@ -387,14 +387,6 @@ function Test-IsTestbedGuestIdentity {
     return $false
 }
 
-function Test-FourPartVersion {
-    param([string] $Value)
-    if (-not $Value) { return $false }
-    if ($Value -notmatch '^\d{1,5}\.\d{1,5}\.\d{1,5}\.\d{1,5}$') { return $false }
-    foreach ($part in $Value.Split('.')) { if ([int]$part -gt 65535) { return $false } }
-    return $true
-}
-
 function Get-PrepareForRunOverride {
     return ($PrepareForRunChain -join ';')
 }
@@ -587,34 +579,6 @@ function Find-FormRegionDeclarations {
     return @($hits | Sort-Object -Unique)
 }
 
-function ConvertTo-RsaKeyValueXml {
-    param([Parameter(Mandatory = $true)] [string] $ModulusBase64, [Parameter(Mandatory = $true)] [string] $ExponentBase64)
-    $m = ($ModulusBase64 -replace '\s', '')
-    $e = ($ExponentBase64 -replace '\s', '')
-    return "<RSAKeyValue><Modulus>$m</Modulus><Exponent>$e</Exponent></RSAKeyValue>"
-}
-
-# The signing key a deployment manifest carries, from ds:KeyInfo/ds:KeyValue/ds:RSAKeyValue, as
-# the <RSAKeyValue> string the VSTO trust store holds. Every occurrence must be the same key.
-function Get-ManifestSigningKeyXml {
-    param([Parameter(Mandatory = $true)] [string] $ManifestXml)
-    $doc = New-Object System.Xml.XmlDocument
-    $doc.PreserveWhitespace = $false
-    $doc.LoadXml($ManifestXml)
-    $nodes = $doc.SelectNodes("//*[local-name()='RSAKeyValue']")
-    if ($null -eq $nodes -or $nodes.Count -eq 0) { throw 'The manifest carries no RSAKeyValue - it is not signed.' }
-    $keys = @()
-    foreach ($n in $nodes) {
-        $mod = $n.SelectSingleNode("*[local-name()='Modulus']")
-        $exp = $n.SelectSingleNode("*[local-name()='Exponent']")
-        if ($null -eq $mod -or $null -eq $exp) { throw 'An RSAKeyValue in the manifest has no Modulus or no Exponent.' }
-        $keys += (ConvertTo-RsaKeyValueXml -ModulusBase64 $mod.InnerText -ExponentBase64 $exp.InnerText)
-    }
-    $distinct = @($keys | Sort-Object -Unique)
-    if ($distinct.Count -ne 1) { throw "The manifest is signed with $($distinct.Count) different keys; expected one." }
-    return $distinct[0]
-}
-
 # Guard 3. A snapshot is a sorted list of lines; comparing two is set arithmetic.
 function Compare-HostSnapshot {
     param([string[]] $Before, [string[]] $After)
@@ -727,32 +691,6 @@ function Select-KeyLines {
         if ($low.StartsWith($prefix) -or $low.StartsWith($exact)) { $out += $l }
     }
     return @($out)
-}
-
-function Test-Sha256Text { param([string] $Value) return [bool]($Value -match '^[0-9A-F]{64}$') }
-function Test-CommitText { param([string] $Value) return [bool]($Value -match '^[0-9a-f]{40}$') }
-
-function Test-PayloadManifestShape {
-    param($Manifest)
-    $problems = @()
-    if ($null -eq $Manifest) { return @('no manifest at all') }
-    if (-not (Test-CommitText ([string]$Manifest.commit))) { $problems += 'commit: not a 40-character lower-case hex id' }
-    if (-not (Test-FourPartVersion ([string]$Manifest.version))) { $problems += 'version: not a four-part version' }
-    if ($null -eq $Manifest.installer -or -not $Manifest.installer.file) { $problems += 'installer.file: missing' }
-    elseif (-not (Test-Sha256Text ([string]$Manifest.installer.sha256))) { $problems += 'installer.sha256: not an upper-case SHA-256' }
-    foreach ($f in @('OutlookAI.dll', 'OutlookAI.vsto', 'OutlookAI.dll.manifest')) {
-        if ($null -eq $Manifest.addin -or -not (Test-Sha256Text ([string]$Manifest.addin.$f))) { $problems += "addin.${f}: not an upper-case SHA-256" }
-    }
-    if ($null -eq $Manifest.signing -or -not ([string]$Manifest.signing.publicKeyXml).StartsWith('<RSAKeyValue><Modulus>')) {
-        $problems += 'signing.publicKeyXml: not an <RSAKeyValue> string'
-    }
-    if ($null -eq $Manifest.vstoRuntime -or ([string]$Manifest.vstoRuntime.sha256) -ne $VstoRuntimeSha256) {
-        $problems += 'vstoRuntime.sha256: not the pinned redistributable'
-    }
-    foreach ($rel in $ContractFiles) {
-        if ($null -eq $Manifest.contract -or -not (Test-Sha256Text ([string]$Manifest.contract.$rel))) { $problems += "contract.${rel}: not an upper-case SHA-256" }
-    }
-    return $problems
 }
 
 function Test-IsUnderGitWorkTreeButNotWork {
@@ -994,13 +932,13 @@ AwQ=</Modulus><Exponent>AQAB</Exponent></RSAKeyValue></KeyValue></KeyInfo></Sign
         vstoRuntime = [pscustomobject]@{ sha256 = $VstoRuntimeSha256 }
         contract    = [pscustomobject]@{ 'McpServer/OutlookAI.Core/AddIn/AddInServerContract.cs' = ('E' * 64); 'McpServer/OutlookAI.Core/AddIn/OfficeVersions.cs' = ('F' * 64) }
     }
-    Test-Case 'a complete manifest has no problems' 0 (Test-PayloadManifestShape $okManifest).Count
+    Test-Case 'a complete manifest has no problems' 0 (Test-PayloadManifestShape $okManifest $VstoRuntimeSha256 $ContractFiles).Count
     $bad = $okManifest.PSObject.Copy()
     $bad.commit = 'HEAD'
-    Test-Case 'a symbolic ref is not a commit' $true ((Test-PayloadManifestShape $bad) -join ' ').Contains('commit:')
+    Test-Case 'a symbolic ref is not a commit' $true ((Test-PayloadManifestShape $bad $VstoRuntimeSha256 $ContractFiles) -join ' ').Contains('commit:')
     $bad = $okManifest.PSObject.Copy()
     $bad.contract = [pscustomobject]@{ 'McpServer/OutlookAI.Core/AddIn/AddInServerContract.cs' = ('E' * 64) }
-    Test-Case 'a manifest without every contract hash is refused' $true ((Test-PayloadManifestShape $bad) -join ' ').Contains('contract.McpServer/OutlookAI.Core/AddIn/OfficeVersions.cs')
+    Test-Case 'a manifest without every contract hash is refused' $true ((Test-PayloadManifestShape $bad $VstoRuntimeSha256 $ContractFiles) -join ' ').Contains('contract.McpServer/OutlookAI.Core/AddIn/OfficeVersions.cs')
 
     Write-Host ''
     Write-Host '== the release build (-ReleaseSigningThumbprint) =='
@@ -1753,7 +1691,7 @@ $manifest = [ordered]@{
 foreach ($rel in $ContractFiles) {
     $manifest.contract[$rel] = (Get-FileHash -LiteralPath (Join-Path $sourceDir ($rel.Replace('/', '\'))) -Algorithm SHA256).Hash
 }
-$shape = Test-PayloadManifestShape ([pscustomobject]($manifest | ConvertTo-Json -Depth 6 | ConvertFrom-Json))
+$shape = Test-PayloadManifestShape ([pscustomobject]($manifest | ConvertTo-Json -Depth 6 | ConvertFrom-Json)) $VstoRuntimeSha256 $ContractFiles
 if ($shape.Count -gt 0) { throw ('The manifest this script just built is malformed: ' + ($shape -join '; ')) }
 
 New-Item -ItemType Directory -Force -Path $stageDir | Out-Null

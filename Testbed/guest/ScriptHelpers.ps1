@@ -721,3 +721,169 @@ function Test-IsMailAccountEntry {
     if ($Clsid -eq '{ED475414-B0D6-11D2-8C3B-00104B2A6676}' -and @('MSUPST MS', 'MSPST MS', 'CONTAB', 'EMABLT', 'MSPST AB') -contains $ServiceName) { return $false }
     return $true
 }
+
+# ---------------------------------------------------------------------------------------------
+# THE ADD-IN'S VSTO TRUST AND ITS PAYLOAD (Q154, the survey's P08): what Testbed/guest/Install-OutlookAIAddIn.ps1,
+# Tools/Switch-AddInBuild.ps1 and Testbed/host/Publish-AddInPayload.ps1 each restated, two or three copies
+# apiece until 2026-11-20 - how the VSTO runtime keys and compares a trust entry, the key a signed manifest
+# carries, the trust entries themselves, Outlook's hard-disable list, and the payload manifest's shape.
+# ---------------------------------------------------------------------------------------------
+
+# The URL the VSTO runtime keys an inclusion entry by, from the registered Manifest value: the
+# `|vstolocal` suffix off, backslashes to forward slashes, file:/// in front - which is the
+# Uri.ToString() form the runtime itself writes. [MEASURED: the maintainer's workstation holds
+# `file:///C:/Users/.../OutlookAI/Setup/OutlookAI.vsto` for this installer's
+# `file:///{app}\OutlookAI.vsto|vstolocal`.] Spaces stay literal, as the runtime writes them.
+function ConvertTo-InclusionUrl {
+    param([string] $ManifestValue)
+    if (-not $ManifestValue) { return $null }
+    $v = $ManifestValue.Trim()
+    $bar = $v.IndexOf('|')
+    if ($bar -ge 0) { $v = $v.Substring(0, $bar) }
+    if ($v.StartsWith('file:///', [System.StringComparison]::OrdinalIgnoreCase)) { $v = $v.Substring(8) }
+    elseif ($v.StartsWith('file://', [System.StringComparison]::OrdinalIgnoreCase)) { $v = $v.Substring(7) }
+    $v = $v.Replace('\', '/')
+    return 'file:///' + $v
+}
+
+# The runtime compares entries AS URIs, and on a DOS path that comparison ignores case.
+function Test-SameInclusionUrl {
+    param([string] $A, [string] $B)
+    $x = ConvertTo-InclusionUrl $A
+    $y = ConvertTo-InclusionUrl $B
+    if (-not $x -or -not $y) { return $false }
+    return [string]::Equals($x, $y, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+# A key as the <RSAKeyValue> string a trust entry's PublicKey holds, from its two base64 numbers.
+function ConvertTo-RsaKeyValueXml {
+    param([Parameter(Mandatory = $true)] [string] $ModulusBase64, [Parameter(Mandatory = $true)] [string] $ExponentBase64)
+    $m = ($ModulusBase64 -replace '\s', '')
+    $e = ($ExponentBase64 -replace '\s', '')
+    return "<RSAKeyValue><Modulus>$m</Modulus><Exponent>$e</Exponent></RSAKeyValue>"
+}
+
+# The key a signed manifest (.vsto or .dll.manifest) is signed with: its ds:RSAKeyValue, every
+# occurrence the same key, as the <RSAKeyValue> string the trust store holds.
+function Get-ManifestSigningKeyXml {
+    param([Parameter(Mandatory = $true)] [string] $ManifestXml)
+    $doc = New-Object System.Xml.XmlDocument
+    $doc.LoadXml($ManifestXml)
+    $nodes = $doc.SelectNodes("//*[local-name()='RSAKeyValue']")
+    if ($null -eq $nodes -or $nodes.Count -eq 0) { throw 'The manifest carries no RSAKeyValue - it is not signed.' }
+    $keys = @()
+    foreach ($n in $nodes) {
+        $mod = $n.SelectSingleNode("*[local-name()='Modulus']")
+        $exp = $n.SelectSingleNode("*[local-name()='Exponent']")
+        if ($null -eq $mod -or $null -eq $exp) { throw 'An RSAKeyValue in the manifest has no Modulus or no Exponent.' }
+        $keys += (ConvertTo-RsaKeyValueXml -ModulusBase64 $mod.InnerText -ExponentBase64 $exp.InnerText)
+    }
+    $distinct = @($keys | Sort-Object -Unique)
+    if ($distinct.Count -ne 1) { throw "The manifest is signed with $($distinct.Count) different keys; expected one." }
+    return $distinct[0]
+}
+
+# A key as two hex strings with leading zero bytes dropped - the same two numbers the runtime's
+# ExportCspBlob comparison sees, without asking a crypto provider for them.
+function ConvertFrom-RsaKeyXml {
+    param([string] $Xml)
+    if (-not $Xml) { throw 'empty key' }
+    $doc = New-Object System.Xml.XmlDocument
+    $doc.LoadXml($Xml)
+    $mod = $doc.SelectSingleNode("//*[local-name()='Modulus']")
+    $exp = $doc.SelectSingleNode("//*[local-name()='Exponent']")
+    if ($null -eq $mod -or $null -eq $exp) { throw 'not an RSAKeyValue: Modulus or Exponent missing' }
+    $out = @{}
+    foreach ($pair in @(@('Modulus', $mod.InnerText), @('Exponent', $exp.InnerText))) {
+        $bytes = [Convert]::FromBase64String(($pair[1] -replace '\s', ''))
+        $start = 0
+        while ($start -lt ($bytes.Length - 1) -and $bytes[$start] -eq 0) { $start++ }
+        $hex = New-Object System.Text.StringBuilder
+        for ($i = $start; $i -lt $bytes.Length; $i++) { [void]$hex.Append($bytes[$i].ToString('X2')) }
+        $out[$pair[0]] = $hex.ToString()
+    }
+    return $out
+}
+
+# Whether two <RSAKeyValue> strings are the same key; a string that is not one is no key at all.
+function Test-SameRsaKey {
+    param([string] $A, [string] $B)
+    try {
+        $x = ConvertFrom-RsaKeyXml $A
+        $y = ConvertFrom-RsaKeyXml $B
+        return ($x.Modulus -eq $y.Modulus -and $x.Exponent -eq $y.Exponent)
+    }
+    catch {
+        return $false
+    }
+}
+
+# Every VSTO inclusion entry under HKCU\<InclusionKey> - its subkey name, Url and PublicKey -
+# read-only; none when the key is not there.
+function Get-InclusionEntries {
+    param([string] $InclusionKey)
+    $entries = @()
+    $root = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($InclusionKey, $false)
+    if ($null -eq $root) { return $entries }
+    try {
+        foreach ($name in $root.GetSubKeyNames()) {
+            $k = $root.OpenSubKey($name, $false)
+            if ($null -eq $k) { continue }
+            try { $entries += [pscustomobject]@{ Name = $name; Url = [string]$k.GetValue('Url'); PublicKey = [string]$k.GetValue('PublicKey') } }
+            finally { $k.Close() }
+        }
+    }
+    finally { $root.Close() }
+    return $entries
+}
+
+# Outlook's hard-disable list holds UTF-16 blobs naming the add-in's path or name.
+function Test-DisabledItemsMention {
+    param([object[]] $Blobs)
+    foreach ($b in @($Blobs)) {
+        if ($null -eq $b) { continue }
+        $text = [System.Text.Encoding]::Unicode.GetString([byte[]]$b)
+        if ($text.ToLowerInvariant().Contains('outlookai')) { return $true }
+    }
+    return $false
+}
+
+# The payload manifest's text forms: an upper-case SHA-256, a full lower-case commit id, and a
+# four-part version with every part 0 to 65535.
+function Test-Sha256Text { param([string] $Value) return [bool]($Value -match '^[0-9A-F]{64}$') }
+function Test-CommitText { param([string] $Value) return [bool]($Value -match '^[0-9a-f]{40}$') }
+function Test-FourPartVersion {
+    param([string] $Value)
+    if (-not $Value) { return $false }
+    if ($Value -notmatch '^\d{1,5}\.\d{1,5}\.\d{1,5}\.\d{1,5}$') { return $false }
+    foreach ($part in $Value.Split('.')) { if ([int]$part -gt 65535) { return $false } }
+    return $true
+}
+
+# What is wrong with an add-in payload manifest (addin-payload.json), as problems; none when it is whole.
+# Its writer, Publish-AddInPayload.ps1, also names the pinned VSTO redistributable's SHA-256 and the
+# contract files, and then the manifest must carry exactly that runtime and a hash for each. The guest's
+# installer names neither: it compares each contract file with the suite's itself, and reports a drift
+# as a finding rather than as a manifest it cannot read.
+function Test-PayloadManifestShape {
+    param($Manifest, [string] $VstoRuntimeSha256, [string[]] $ContractFiles)
+    $problems = @()
+    if ($null -eq $Manifest) { return @('no manifest at all') }
+    if (-not (Test-CommitText ([string]$Manifest.commit))) { $problems += 'commit: not a 40-character lower-case hex id' }
+    if (-not (Test-FourPartVersion ([string]$Manifest.version))) { $problems += 'version: not a four-part version' }
+    if ($null -eq $Manifest.installer -or -not $Manifest.installer.file) { $problems += 'installer.file: missing' }
+    elseif (-not (Test-Sha256Text ([string]$Manifest.installer.sha256))) { $problems += 'installer.sha256: not an upper-case SHA-256' }
+    foreach ($f in @('OutlookAI.dll', 'OutlookAI.vsto', 'OutlookAI.dll.manifest')) {
+        if ($null -eq $Manifest.addin -or -not (Test-Sha256Text ([string]$Manifest.addin.$f))) { $problems += "addin.${f}: not an upper-case SHA-256" }
+    }
+    if ($null -eq $Manifest.signing -or -not ([string]$Manifest.signing.publicKeyXml).StartsWith('<RSAKeyValue><Modulus>')) {
+        $problems += 'signing.publicKeyXml: not an <RSAKeyValue> string'
+    }
+    if ($VstoRuntimeSha256 -and ($null -eq $Manifest.vstoRuntime -or ([string]$Manifest.vstoRuntime.sha256) -ne $VstoRuntimeSha256)) {
+        $problems += 'vstoRuntime.sha256: not the pinned redistributable'
+    }
+    foreach ($rel in @($ContractFiles | Where-Object { $_ })) {
+        if ($null -eq $Manifest.contract -or -not (Test-Sha256Text ([string]$Manifest.contract.$rel))) { $problems += "contract.${rel}: not an upper-case SHA-256" }
+    }
+    return $problems
+}
