@@ -2474,6 +2474,14 @@ its mailbox tests on, and change nothing you install.
   Items - beside the mail, and none of them could be opened. On the test machine they were 21 of the
   first 100 results.
 
+- ✅ **The live pane test reads the draft only once the pane says which signature it chose.**
+  The pane puts a chosen signature into the draft, then embeds its pictures, and only then says
+  "The AI chose the signature" or "Applied signature". `T2/LivePaneTests` waited for the
+  signature's text alone, so a read could land between the two steps. Run
+  20261120-114454-unindexed-39e97e05fbb4 did: the AI's signature was in, its picture still a link,
+  the pane still at "Done!", and the check that the picture is embedded failed. Both of the test's
+  waits now also wait for the pane's own word, which comes after the embed.
+
 - ✅ **A lease on a test machine is never taken from a holder who still has it.**
   `Testbed/host/Set-TestbedLease.ps1` wrote over whatever lease was there, so a person who leased a
   machine a run was using took it from the run without a word, and a live-tier run then stopped at

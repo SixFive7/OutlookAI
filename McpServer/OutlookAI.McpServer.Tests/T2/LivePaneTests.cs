@@ -107,12 +107,17 @@ public sealed class LivePaneTests
             PaneControls.Click(edit);
 
             // What the pane says along the way is what tells a click that never landed from a request that failed.
+            // And its last word is the wait's end: the pane puts the chosen signature in, then embeds its
+            // pictures, and only then says which it chose - a draft that already holds the signature's text can
+            // still hold its picture as a link. Run 20261120-114454-unindexed-39e97e05fbb4 read it there: the AI's
+            // signature in, one picture linked, and the pane still at "Done!".
             List<string> statuses = new List<string>();
+            string chose = "The AI chose the signature \"" + aisChoice.Name + "\".";
             OpenDraftReading after;
             try
             {
                 after = WaitFor(
-                    "the stand-in's body and the AI's signature in the open window",
+                    "the stand-in's body and the AI's signature in the open window, and the pane's word that it chose",
                     () =>
                     {
                         string now = PaneControls.ReadStatus(opened.Window);
@@ -124,7 +129,8 @@ public sealed class LivePaneTests
                         return ReadOpenDraftWhileThePaneWrites(draft.EntryId);
                     },
                     r => r.DraftText.Contains("Stand-in draft, first line", StringComparison.Ordinal)
-                         && r.SignatureText.Contains(aisChoice.BodyMarker, StringComparison.Ordinal));
+                         && r.SignatureText.Contains(aisChoice.BodyMarker, StringComparison.Ordinal)
+                         && statuses[^1].EndsWith(chose, StringComparison.Ordinal));
             }
             catch (TimeoutException ex)
             {
@@ -168,10 +174,13 @@ public sealed class LivePaneTests
             OpenDraftReading reselected;
             try
             {
+                // The same end as above: the pane's word that it applied the signature, which follows the embed.
                 reselected = WaitFor(
-                    "the agent's signature, chosen again through Select the best signature",
+                    "the agent's signature, chosen again through Select the best signature, and the pane's word that it applied it",
                     () => ReadOpenDraftWhileThePaneWrites(draft.EntryId),
-                    r => r.SignatureText.Contains(agentsChoice.BodyMarker, StringComparison.Ordinal));
+                    r => r.SignatureText.Contains(agentsChoice.BodyMarker, StringComparison.Ordinal)
+                         && PaneControls.ReadStatus(opened.Window).Contains(
+                             "Applied signature \"" + agentsChoice.Name + "\"", StringComparison.Ordinal));
             }
             catch (TimeoutException ex)
             {
