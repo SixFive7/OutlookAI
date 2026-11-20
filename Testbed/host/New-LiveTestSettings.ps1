@@ -1732,43 +1732,11 @@ function Invoke-SelfTest {
     $repoFull = [System.IO.Path]::GetFullPath($RepoRoot).TrimEnd('\')
     $vm = 'OutlookAI-Synthetic'
 
-    $guestText = @'
-{
-  "_note": "comment keys are ignored at every level",
-  "machineProfile": "Portable",
-  "testHubStoreDisplayName": "hub@render.invalid",
-  "hubPopulationManifestPath": "C:\\OutlookAI-Q5\\corpus-hub-synthetic.jsonl",
-  "expectedStoreDisplayNames": [ "hub@render.invalid", "Synthetic Corpus", "bystander@render.invalid", "identity@render.invalid" ],
-  "indexedStoreDisplayNames": [ "hub@render.invalid", "bystander@render.invalid", "Synthetic Corpus" ],
-  "expectedDelegateStoreDisplayNames": [],
-  "bystanderStoreDisplayNames": [ "bystander@render.invalid", "Synthetic Corpus" ],
-  "probeTerm": "invoice",
-  "subjectOnlyProbe": {
-    "_note": "the hub population's notices folder",
-    "storeDisplayName": "hub@render.invalid",
-    "folderPath": "Inbox/OutlookAI-Corpus-Folder-Notices",
-    "subjectTerm": "bulletin",
-    "senderFragment": "noticebot"
-  },
-  "corpus": {
-    "_note": "ignored too",
-    "storeDisplayName": "Synthetic Corpus",
-    "manifestPath": "C:\\OutlookAI-Q5\\corpus-vm-synthetic.jsonl",
-    "corpusId": "vm-synthetic",
-    "seed": 4242,
-    "anchorUtc": "2026-08-01T00:00:00Z",
-    "itemCount": 1000,
-    "windowDays": [ 7, 30, 60 ]
-  },
-  "mailSink": {
-    "submitHost": "127.0.0.1",
-    "submitPort": 2525,
-    "retrieveHost": "127.0.0.1",
-    "retrievePort": 1110,
-    "connectTimeoutMs": 1500
-  }
-}
-'@
+    # The synthetic guest is a committed fixture, which T1 LiveTestSettingsTemplateTests renders the template with
+    # too: one copy of its values for both (the code-sharing survey's T16).
+    $guestPath = Join-Path $repoFull 'Testbed\live-test-settings.synthetic.json'
+    if (-not (Test-Path -LiteralPath $guestPath)) { throw "the synthetic guest's values are missing: $guestPath" }
+    $guestText = [System.IO.File]::ReadAllText($guestPath)
     $conventionText = '{ "assigned": [ { "corpusId": "vm-synthetic", "guest": "OutlookAI-Synthetic", "indexed": true, "seed": 4242, "anchor": "2026-08-01", "itemCount": 1000, "minimumItemCount": 1000 }, { "corpusId": "vm-other", "guest": "OutlookAI-Other", "indexed": false, "seed": null, "anchor": null, "itemCount": null }, { "corpusId": "vm-unknown", "guest": "OutlookAI-Unknown", "seed": null, "anchor": null, "itemCount": null } ], "populations": { "assigned": [ { "corpusId": "hub-synthetic", "guest": "OutlookAI-Synthetic", "population": "hub", "seed": 8181 }, { "corpusId": "bystander-synthetic", "guest": "OutlookAI-Synthetic", "population": "bystander", "seed": 8282 }, { "corpusId": "hub-other", "guest": "OutlookAI-Other", "population": "hub", "seed": 8181 }, { "corpusId": "hub-unknown", "guest": "OutlookAI-Unknown", "population": "hub", "seed": 8181 }, { "corpusId": "hub-twice-a", "guest": "OutlookAI-Twice", "population": "hub", "seed": 1 }, { "corpusId": "hub-twice-b", "guest": "OutlookAI-Twice", "population": "hub", "seed": 2 } ] } }'
     $convention = ConvertFrom-JsonText -Text $conventionText -What 'the synthetic convention'
     $assigned = $convention.assigned

@@ -1,0 +1,35 @@
+{
+  "_note": "A synthetic four-store indexed guest's values, in the shape of a guest's section of testbed.json's liveTestSettings: T1 LiveTestSettingsTemplateTests and New-LiveTestSettings.ps1's self-test both render the template with them. Synthetic names only. A key that begins with _ is a comment, ignored at every level.",
+  "machineProfile": "Portable",
+  "testHubStoreDisplayName": "hub@render.invalid",
+  "hubPopulationManifestPath": "C:\\OutlookAI-Q5\\corpus-hub-synthetic.jsonl",
+  "expectedStoreDisplayNames": [ "hub@render.invalid", "Synthetic Corpus", "bystander@render.invalid", "identity@render.invalid" ],
+  "indexedStoreDisplayNames": [ "hub@render.invalid", "bystander@render.invalid", "Synthetic Corpus" ],
+  "expectedDelegateStoreDisplayNames": [],
+  "bystanderStoreDisplayNames": [ "bystander@render.invalid", "Synthetic Corpus" ],
+  "probeTerm": "invoice",
+  "subjectOnlyProbe": {
+    "_note": "the hub population's notices folder",
+    "storeDisplayName": "hub@render.invalid",
+    "folderPath": "Inbox/OutlookAI-Corpus-Folder-Notices",
+    "subjectTerm": "bulletin",
+    "senderFragment": "noticebot"
+  },
+  "corpus": {
+    "_note": "ignored too",
+    "storeDisplayName": "Synthetic Corpus",
+    "manifestPath": "C:\\OutlookAI-Q5\\corpus-vm-synthetic.jsonl",
+    "corpusId": "vm-synthetic",
+    "seed": 4242,
+    "anchorUtc": "2026-08-01T00:00:00Z",
+    "itemCount": 1000,
+    "windowDays": [ 7, 30, 60 ]
+  },
+  "mailSink": {
+    "submitHost": "127.0.0.1",
+    "submitPort": 2525,
+    "retrieveHost": "127.0.0.1",
+    "retrievePort": 1110,
+    "connectTimeoutMs": 1500
+  }
+}

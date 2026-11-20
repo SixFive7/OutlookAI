@@ -7,8 +7,10 @@
 .DESCRIPTION
     RUN ON A TEST GUEST, in the interactive session, NOT elevated - through
     guest/Register-InteractiveTask.ps1 at -RunLevel Limited, staged beside it and beside
-    guest/OutlookMapiInterop.ps1 (Testbed/README.md section 4c says why the level matters: COM does
-    not attach across integrity levels, and a user's Outlook is not elevated):
+    guest/OutlookMapiInterop.ps1, guest/McpStdioClient.ps1, guest/ScriptHelpers.ps1 and Core's
+    NativeWindows.cs, whose window calls it compiles (Testbed/README.md section 4c says why the
+    level matters: COM does not attach across integrity levels, and a user's Outlook is not
+    elevated):
 
         .\Register-InteractiveTask.ps1 -RunLevel Limited -TimeoutSeconds 1800 -Script "& 'C:\OutlookAI-Q5\q118\Measure-PinWindows.ps1' -Scenario Visible"
 
@@ -121,6 +123,7 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
+using OutlookAI.Core.AddIn;
 
 [ComImport, Guid("00000114-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
 public interface IOaiPinOleWindow
@@ -137,15 +140,9 @@ public sealed class OaiPinWindow
 
 public static class OaiPinNative
 {
-    public delegate bool EnumProc(IntPtr h, IntPtr l);
-    [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
-    [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc cb, IntPtr l);
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr h, StringBuilder sb, int max);
+    // EnumWindows, GetWindowThreadProcessId, GetClassNameW, IsWindowVisible, IsIconic, GetWindowRect and RECT are
+    // Core's (NativeWindows.cs, compiled with this source - Q171 (c)); the window's title is this probe's alone.
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder sb, int max);
-    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
-    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
-    [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
-    [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
 
     public static List<OaiPinWindow> Snapshot(int[] pids)
     {
@@ -154,16 +151,16 @@ public static class OaiPinNative
         if (pids == null) { return list; }
         foreach (int p in pids) { set.Add((uint)p); }
         if (set.Count == 0) { return list; }
-        EnumWindows(delegate (IntPtr h, IntPtr l)
+        NativeWindows.EnumWindows(delegate (IntPtr h, IntPtr l)
         {
             uint pid;
-            GetWindowThreadProcessId(h, out pid);
+            NativeWindows.GetWindowThreadProcessId(h, out pid);
             if (!set.Contains(pid)) { return true; }
-            StringBuilder c = new StringBuilder(256); GetClassName(h, c, 256);
+            StringBuilder c = new StringBuilder(256); NativeWindows.GetClassNameW(h, c, 256);
             StringBuilder t = new StringBuilder(256); GetWindowText(h, t, 256);
-            RECT r; GetWindowRect(h, out r);
+            NativeWindows.RECT r; NativeWindows.GetWindowRect(h, out r);
             OaiPinWindow w = new OaiPinWindow();
-            w.Handle = h.ToInt64(); w.Class = c.ToString(); w.Visible = IsWindowVisible(h); w.Minimized = IsIconic(h);
+            w.Handle = h.ToInt64(); w.Class = c.ToString(); w.Visible = NativeWindows.IsWindowVisible(h); w.Minimized = NativeWindows.IsIconic(h);
             w.Title = t.ToString(); w.Left = r.Left; w.Top = r.Top; w.Right = r.Right; w.Bottom = r.Bottom;
             list.Add(w);
             return true;
@@ -250,7 +247,7 @@ public static class OaiPinCom
                     OaiPinExplorer x = new OaiPinExplorer();
                     x.Index = i;
                     x.Hwnd = Hwnd(e);
-                    x.Visible = x.Hwnd > 0 ? (OaiPinNative.IsWindowVisible(new IntPtr(x.Hwnd)) ? "visible" : "hidden") : "unknown";
+                    x.Visible = x.Hwnd > 0 ? (NativeWindows.IsWindowVisible(new IntPtr(x.Hwnd)) ? "visible" : "hidden") : "unknown";
                     try { x.Caption = (string)Get(e, "Caption"); } catch (Exception ex) { x.Caption = "<" + ex.GetType().Name + ">"; }
                     try { x.WindowState = (int)Get(e, "WindowState"); } catch (Exception) { x.WindowState = -1; }
                     x.Identity = Identity(e);
@@ -269,7 +266,7 @@ public static class OaiPinCom
                     long id = Identity(active);
                     foreach (OaiPinExplorer x in s.Explorers) { if (x.Identity == id) { s.ActiveIndex = x.Index; } }
                     s.ActiveHwnd = Hwnd(active);
-                    s.ActiveVisible = s.ActiveHwnd > 0 ? (OaiPinNative.IsWindowVisible(new IntPtr(s.ActiveHwnd)) ? "visible" : "hidden") : "unknown";
+                    s.ActiveVisible = s.ActiveHwnd > 0 ? (NativeWindows.IsWindowVisible(new IntPtr(s.ActiveHwnd)) ? "visible" : "hidden") : "unknown";
                 }
             }
             catch (Exception ex) { s.Active = "error " + ex.GetType().Name; }
@@ -372,14 +369,14 @@ public static class OaiPinCom
             active = Call(app, "ActiveExplorer", new object[0]);
             if (active == null) { return "ActiveExplorer() returned null; nothing shown"; }
             long hwnd = Hwnd(active);
-            string before = hwnd > 0 ? (OaiPinNative.IsWindowVisible(new IntPtr(hwnd)) ? "visible" : "hidden") : "unknown";
+            string before = hwnd > 0 ? (NativeWindows.IsWindowVisible(new IntPtr(hwnd)) ? "visible" : "hidden") : "unknown";
             int state = -1;
             try { state = (int)Get(active, "WindowState"); } catch (Exception) { }
             if (state == 1) { try { active.GetType().InvokeMember("WindowState", BindingFlags.SetProperty, null, active, new object[] { 2 }); } catch (Exception) { } }
             string activate = "Activate() returned";
             try { Call(active, "Activate", new object[0]); } catch (Exception ex) { activate = "Activate() threw " + ex.GetType().Name; }
             System.Threading.Thread.Sleep(1500);
-            string after = hwnd > 0 ? (OaiPinNative.IsWindowVisible(new IntPtr(hwnd)) ? "visible" : "hidden") : "unknown";
+            string after = hwnd > 0 ? (NativeWindows.IsWindowVisible(new IntPtr(hwnd)) ? "visible" : "hidden") : "unknown";
             return "ActiveExplorer() window was " + before + " (WindowState " + state + "); " + activate + "; window now " + after;
         }
         catch (Exception ex) { return "failed " + ex.GetType().Name + ": " + ex.Message; }
@@ -411,7 +408,7 @@ public static class OaiPinCom
 
 function Add-ProbeTypes {
     if (-not ('OaiPinCom' -as [type])) {
-        Add-Type -TypeDefinition $script:ProbeSource -Language CSharp
+        Add-Type -TypeDefinition ($script:ProbeSource + "`n" + (Get-NativeWindowsSource)) -Language CSharp
     }
 }
 
@@ -479,6 +476,10 @@ function Invoke-SelfTest {
     if ($script:f -gt 0) { exit 1 }
     exit 0
 }
+
+# Get-NativeWindowsSource is among the helpers the scripts share, dot-sourced from ScriptHelpers.ps1, which travels
+# with the guest scripts, Core's NativeWindows.cs beside it (Q154, Q171 (c)).
+. (Join-Path $PSScriptRoot 'ScriptHelpers.ps1')
 
 if ($SelfTest) { Invoke-SelfTest }
 

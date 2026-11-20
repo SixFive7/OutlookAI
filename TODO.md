@@ -77,8 +77,8 @@
   mailer's tag checks, the drafting stream's two checks and the signature stream's tagged subject,
   added since, among them; a stream adding another folds it when it lands) and T05
   (the sweep and scan suites' one-mailbox profile, `AliceMailbox`, and the thread suites' walks,
-  `ThreadWalks`; six more suites - the thread, unindexed-store and folder-walk ones - still spell
-  that mailbox's SID, prefix and frontier under names of their own, beside stores of their own).
+  `ThreadWalks`; the six thread, unindexed-store and folder-walk suites take that mailbox's SID,
+  prefix and frontier from it too, under the names they give them beside stores of their own).
   PowerShell, into `Testbed/guest/ScriptHelpers.ps1` (decision 215 (a)), held there by
   check-powershell-51 check 4: P01's `Invoke-NativeCommand` for all 17 of its copies, P09's
   `Format-Seconds`, the build-VM runner's copy of which rounded 119.6 s to "1 m 60 s", and the
@@ -101,13 +101,17 @@
   reason. Left: the self-test helpers (P04) but `ConvertTo-SelfTestText`, shared too. Check 4 reads
   nested functions now, and the helpers' seven `Test-Case` and thirteen `Check` shapes share their
   names, so they fold under names of their own or into one harness.
-  S6 folded the server's own repetition, the survey's S01 to S14, but for four shapes it left: the
+  S6 folded the server's own repetition, the survey's S01 to S14, but for four shapes it left. The
   two draft results' shared fields (S04, S11), which a base class would move to one block of the
-  JSON every draft tool returns - question 233 to the maintainer; the parameter lists the draft
-  tools and the COM host's two invoke methods each declare (S12, S13); and the corpus tool's
-  thirteen STA operations, which each opened the corpus store and released it the same way (S14),
-  are folded in S5b: one `WithOutlook`, and `WithCorpusStore` on it for the twelve that work in one
-  store. S10 had gone already with the incident commands (Q170 (a)). The hex stage
+  JSON every draft tool returns, wait on question 233 to the maintainer. The parameter lists the
+  four draft tools each declare (S12) stay as they are, as the survey's target says: the MCP SDK
+  reads each tool's parameters from its own method, so they cannot be one list, and every
+  description two of them share is already a constant - twelve, `ToHint` and `CcHint` among them;
+  the six written out in place are each one tool's own. The corpus tool's thirteen STA operations,
+  which each opened the corpus store and released it the same way (S14), are folded in S5b: one
+  `WithOutlook`, and `WithCorpusStore` on it for the twelve that work in one store. The COM host's
+  two invoke methods, which declared the same six parameters (S13), are one
+  `InvokeAsync`. S10 had gone already with the incident commands (Q170 (a)). The hex stage
   put the product's writers of bytes as hexadecimal, and its readers of them, into Core's `Hex`, and
   the nine catch blocks it found writing out the text of the shared `ComObjects.DescribeFailure`
   call it now. S5a has begun: the live tests' window calls are Core's `NativeWindows` and one
@@ -122,13 +126,20 @@
   the tool's assembly. T06 is done: the setups it counted
   are shared since T03 and T05 - no run of 15 identical lines is left between two T1 files - and the
   two thread suites' three pairs of parallel tests assert through `ThreadWalks`, keeping their
-  names. S5a is complete. In parallel: the PowerShell helpers (S7). Q171 is done: the updater's
-  signature check is Core's `InstallerSignature`, which the add-in calls and
+  names. T16 is done: the synthetic guest's values, which the settings template's tests and
+  `Testbed/host/New-LiveTestSettings.ps1`'s self-test each wrote out, are one fixture,
+  `Testbed/live-test-settings.synthetic.json`, held to the template's shape by
+  check-testbed-references check 8. S5a is complete. In parallel: the PowerShell helpers (S7).
+  Of Q171, the updater's signature check is Core's `InstallerSignature`, which the add-in calls and
   `Tools/Publish-Release.ps1` compiles with Add-Type; the Windows file calls, the survey's X05, are
-  Core's `Win32File`, which `Testbed/host/New-LiveTestSettings.ps1` compiles with Add-Type; and the
-  guest scripts' copies of the test tag, the signature prefix and the account classes are held to
-  the C# by T1 `ScriptConstantCopyTests`. `Connect-ExchangeAccount.ps1`'s `AccountType -eq 0`, Outlook's
-  value for an Exchange account, has no C# twin: nothing in C# reads an account's type.
+  Core's `Win32File`, which `Testbed/host/New-LiveTestSettings.ps1` compiles with Add-Type; the
+  window calls five testbed scripts declared, P10's window half, are Core's `NativeWindows`, which
+  they compile after their own C# and every route to a guest stages beside them
+  (check-pinned-constants #16); and the guest scripts' copies of the test tag, the signature prefix
+  and the account classes are held to the C# by T1 `ScriptConstantCopyTests`. That is all of Q171:
+  P10's token half has no C# twin - nothing in C# reads a process's token - and is the scripts'
+  one `Get-ProcessElevation`, below. `Connect-ExchangeAccount.ps1`'s `AccountType -eq 0`, Outlook's
+  value for an Exchange account, has no C# twin either: nothing in C# reads an account's type.
   The attach to an Outlook already running is one copy, `Connect-RunningOutlook` in the shared file,
   which `Measure-FolderIdResolution.ps1`, `Measure-SignatureRoaming.ps1`, `Reset-HubPopulation.ps1`
   and `OutlookDialogUia.ps1`'s helper use. The other attaches stay as they are for now (2026-11-20):
@@ -140,8 +151,8 @@
   `Rename-OutlookStore.ps1` and `Set-OutlookProgrammaticAccess.ps1`. `Restart-Guest.ps1`'s quit script
   attaches through the table alone by design, so that it never starts the Outlook it is there to quit.
   The read of another process's token elevation is one copy, `Get-ProcessElevation` in the shared file
-  (the survey's P10, its token half), but for the one in `Restart-Guest.ps1`'s quit script, a method of
-  `OaiRestartDialogs` beside its window calls: it folds when P10's window half moves those calls.
+  (the survey's P10, its token half); `Restart-Guest.ps1`'s quit script, which runs on the guest, is
+  handed its text in the preamble it runs after, since P10's window half moved its window calls.
   The add-in's VSTO trust and payload helpers are one copy in the shared file (the survey's P08). Its
   last piece, the add-in's registration key, stays a value each of the three scripts writes beside
   `Installer.iss`'s, and the guest's installer and `Tools/Switch-AddInBuild.ps1` read it out of

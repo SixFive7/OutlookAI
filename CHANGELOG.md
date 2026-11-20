@@ -280,6 +280,19 @@ its mailbox tests on, and change nothing you install.
   check fails, the reason is written out in full here rather than hidden behind a link. Both
   indicators now take their wording from one place, so they cannot disagree.
 
+- ✅ **The developer version, 99.99.99.0, is held to one value wherever it is written.**
+  Every build that is not a release carries it: the add-in through the two version attributes in
+  `Properties/AssemblyInfo.cs`, the mail server and its tools through
+  `McpServer/Directory.Build.props`. `Tools/Switch-AddInBuild.ps1` stamps it into a dev build's
+  manifests, and `Testbed/host/Publish-AddInPayload.ps1` builds at it by default and refuses it for
+  a release. The add-in's updater takes a major of 99 for a developer build and never updates one.
+  Nothing tied the six places together; the code-sharing survey counted three of them (X04).
+  Invariant 17 of `check-pinned-constants.ps1` fails when the six disagree, when their value is not
+  four parts, or when its major is not the one the updater takes for a developer build: had the
+  add-in's version moved alone, a developer build would have updated itself to the latest release in
+  the Outlook that ran it. It was broken four ways on the workstation - one place drifting, the
+  updater's major drifting, an attribute gone and a version cut to two parts - and failed each time.
+
 - ✅ **A hunting run puts a debugger on Outlook to catch the mso40uiwin32client.dll crash in a dump.**
   Two Outlook crashes in that module on 2026-11-18 left no dump, though Windows Error Reporting's
   local dumps were armed, and the evidence says the dump was lost inside WER.
@@ -1233,6 +1246,29 @@ its mailbox tests on, and change nothing you install.
   would overwrite the change or copy it into the mailbox, and says to use Outlook instead. Roaming on
   Microsoft 365 Apps itself is not tested: the test machines run perpetual Office only.
 
+- ♻️ **Five testbed scripts look at windows through Core's window calls (Q171).**
+  `Set-OutlookProgrammaticAccess.ps1`'s prompt watch, `Measure-TrustRemoval.ps1`,
+  `Measure-PinWindows.ps1`, `Start-OutlookUnelevated.ps1`'s starter and `Restart-Guest.ps1`'s quit
+  script each declared four to six of the window calls Core declares - EnumWindows,
+  GetWindowThreadProcessId, GetClassName, IsWindowVisible, IsWindow, IsIconic and GetWindowRect - in
+  C# of their own: 26 declarations, with five copies of the callback and two of the window
+  rectangle, P10 in the code-sharing survey. Core, the add-in and the tests have declared those
+  calls once, in `NativeWindows`, since the refactor's stage S4. Each script now compiles
+  `McpServer/OutlookAI.Core/AddIn/NativeWindows.cs` after its own C# in one Add-Type, as the release
+  script compiles `InstallerSignature.cs`, and keeps only the calls nobody else makes. The quit
+  script's read of Outlook's elevation from its token, which sat beside its window calls, is the
+  scripts' shared `Get-ProcessElevation` now, defined on the guest from its text in the quit
+  script's preamble. The file is C# 5 with its usings inside its namespace, so it
+  compiles after a script's own source in Windows PowerShell 5.1; its one part that is not, the way
+  from an Outlook window object to its window, moved to `NativeWindows.OleWindow.cs`, which only
+  Core compiles. A script reads the file beside itself on a guest, or from the checkout it runs in,
+  through `Get-NativeWindowsSource` in `Testbed/guest/ScriptHelpers.ps1`. The live runner, the
+  trust-removal probe's runner and step 4a of `Testbed/README.md` stage it with the guest scripts,
+  and `Restart-Guest.ps1` sends it to the guest inside the quit script. Invariant 16 of
+  `check-pinned-constants.ps1` fails when a script under `Testbed/` declares EnumWindows again, when
+  fewer than five compile the file, or when a route to a guest leaves it out. As the maintainer
+  decided on 2026-11-18 (Q171 (c)).
+
 - 📦 **The add-in's two builds share one set of guards, so each does what only one of them did.**
   `Testbed/host/Publish-AddInPayload.ps1`, which builds every release and the test machines' add-in,
   and `Tools/Switch-AddInBuild.ps1`, which builds a dev build for the maintainer's own Outlook, are
@@ -1347,17 +1383,19 @@ its mailbox tests on, and change nothing you install.
   message, and its date and placement probes pick their rung through one `CorpusProbeLadder`. The
   draft tools' descriptions that two or three tools wrote out word for word are constants, and the
   writing rules each tool checked before its call are one `WritingDraftAsync`. Left as they are,
-  with their reasons in the TODO list: the two draft results' shared fields and the tools' and the
-  COM host's parameter lists. The corpus tool's thirteen operations, which each opened Outlook, its
-  namespace and its stores and released them the same way, do it through one `WithOutlook` since
-  S5b, the twelve that work in one store through `WithCorpusStore` on it. The product's session, the
-  live tests' mailer, the compose drafts and the corpus tool start Outlook and find a store by its
-  name through one `OutlookAutomation`, and the mailer and the corpus tool release a COM object
-  through Core's `ComObjects.Release`, where each kept a copy. Since S6, Core declares each Win32
-  call once: the audit log's opening of its file and the attachment writer's of a folder or a file
-  were one declaration written twice, as were the session registry's and the start observer's
-  closing of a handle, and the audit log declared the current process's id beside the one the
-  add-in's window calls declare.
+  with their reasons in the TODO list: the two draft results' shared fields and the draft tools'
+  parameter lists. The COM host's supervisor, which declared the same six parameters for its gated
+  call and for its call past the gates, has one `InvokeAsync` since S13; its own warm-up and
+  liveness probe call it with `throughGates: false`. The corpus tool's thirteen operations, which
+  each opened Outlook, its namespace and its stores and released them the same way, do it through
+  one `WithOutlook` since S5b, the twelve that work in one store through `WithCorpusStore` on it.
+  The product's session, the live tests' mailer, the compose drafts and the corpus tool start
+  Outlook and find a store by its name through one `OutlookAutomation`, and the mailer and the
+  corpus tool release a COM object through Core's `ComObjects.Release`, where each kept a copy.
+  Since S6, Core declares each Win32 call once: the audit log's opening of its file and the
+  attachment writer's of a folder or a file were one declaration written twice, as were the session
+  registry's and the start observer's closing of a handle, and the audit log declared the current
+  process's id beside the one the add-in's window calls declare.
 
 - ♻️ **The live tests end and restart Outlook through one shared helper.**
   The compose measurement's stop in `LiveComposeProbe`, whose `Application.Quit()` from a client
@@ -1565,8 +1603,9 @@ its mailbox tests on, and change nothing you install.
   `Register-InteractiveTask.ps1` dot-sources the file, which the trust-removal probe stages beside
   it; the add-in installer's first-run job and `Restart-Guest.ps1`'s read of a guest's state run
   where the file's functions are not, and are handed its text; and the unelevated Outlook start,
-  which travels alone, keeps a copy check 4 holds identical. `Restart-Guest.ps1`'s quit script keeps
-  its own for now, inside the class that holds its window calls. The add-in's VSTO trust and
+  which travels alone, keeps a copy check 4 holds identical. `Restart-Guest.ps1`'s quit script kept
+  its own, inside the class that holds its window calls, until those calls became Core's: it is
+  handed the function's text too, in the preamble it runs after. The add-in's VSTO trust and
   payload helpers went the same way: the guest's installer,
   `Tools/Switch-AddInBuild.ps1` and `Testbed/host/Publish-AddInPayload.ps1` each restated how the VSTO
   runtime keys and compares a trust entry, the key a signed manifest carries, how two keys compare,
@@ -1601,9 +1640,14 @@ its mailbox tests on, and change nothing you install.
   reported as not connected while an operation still runs, and every operation refused as by an
   Outlook that does not answer), `DeadGateway`, `RecordingGateway`, `StubIndexClient`, which the
   three suites whose index answers in its own way derive from, `IndexRows`, `RepoPaths`, moved
-  there, and `ExampleLiveSettings`. `StoreIndexHashScopeTests` keeps its own index stand-in, which
-  answers different questions. Thirteen of the checks that read the suite's own compiled code or
-  source carried private copies of the same reading helpers - a walk over a method's instructions,
+  there, and `ExampleLiveSettings`. The settings template's tests and
+  `Testbed/host/New-LiveTestSettings.ps1`'s self-test each wrote out the same synthetic guest's
+  values, 36 lines of JSON; both read one committed fixture now,
+  `Testbed/live-test-settings.synthetic.json`, which check 8 of `check-testbed-references.ps1` holds
+  to the template's fields and to `.invalid` addresses. `StoreIndexHashScopeTests` keeps its own
+  index stand-in, which answers different questions. Thirteen of the checks that read the suite's
+  own compiled code or source carried private copies of the same reading helpers - a walk over a
+  method's instructions,
   the Category=Live trait, a collection attribute's argument, a live test's source file and the body
   of one member in it - and now share `IlReader`, moved there from `T1/`, `Traits` and `SourceText`;
   three of them read the instructions byte by byte, and now walk the opcodes as the others did.
@@ -1615,9 +1659,10 @@ its mailbox tests on, and change nothing you install.
   exhaustive scan spelled out the same one-mailbox profile - its SID, store, index prefix and
   frontier - and three of them its mail, its sweep, an exhaustive search of its Inbox and a session
   that answers the store list, the sweep and the scan as well: `AliceMailbox` holds it once, and
-  `ThreadWalks` the conversation walks three thread suites each built. Five more suites take that
-  SID, store, prefix and frontier from `AliceMailbox`, where they spelled them out, with the index
-  that holds the store alone and the one that holds none, which four and three of them each built,
+  `ThreadWalks` the conversation walks three thread suites each built. Six more suites take that
+  SID, store, prefix and frontier from `AliceMailbox`, where they spelled them out, five of them
+  with the index that holds the store alone and the one that holds none, which four and three of
+  them each built,
   and `ThreadWalks.Member` the thread member two of them wrote. The two thread suites' three pairs
   of parallel tests - a named store raises its list's code, the sentence names the stores, a capped
   list says how many more - keep their names and assert through `ThreadWalks`, each failure naming

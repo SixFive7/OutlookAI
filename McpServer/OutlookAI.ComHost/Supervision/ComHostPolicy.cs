@@ -229,7 +229,7 @@ namespace OutlookAI.ComHost.Supervision
         /// must always answer had the longest cold-host preamble in the product, twice over
         /// because health makes two gateway calls. An explicit budget is a deliberate
         /// statement of intent and already outranks the cold-start CONNECT floor two lines
-        /// away in <c>ComHostSupervisor.InvokeCoreAsync</c>; it now outranks this one on
+        /// away in <c>ComHostSupervisor.InvokeAsync</c>; it now outranks this one on
         /// exactly the same terms and with exactly the same opt-out
         /// (<c>allowConnectFloor</c>, which the freshness sweep uses to keep paying for a
         /// cold start).

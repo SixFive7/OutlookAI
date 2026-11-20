@@ -205,7 +205,7 @@ if (-not $CredentialRepoRoot) {
 }
 $sha = (@(Invoke-NativeCommand { & git -C $repo rev-parse HEAD 2>&1 }) | Out-String).Trim()
 if ($LASTEXITCODE -ne 0 -or $sha -notmatch '^[0-9a-f]{40}$') { Stop-Refused "git could not read HEAD in $repo - $sha" }
-$dirty = @(Invoke-NativeCommand { & git -C $repo status --porcelain -- 'Testbed/guest/Measure-TrustRemoval.ps1' 'Testbed/guest/Register-InteractiveTask.ps1' 'Testbed/guest/OutlookMapiInterop.ps1' 'Testbed/guest/ScriptHelpers.ps1' 'Installer.iss' 2>&1 } | Where-Object { $_ })
+$dirty = @(Invoke-NativeCommand { & git -C $repo status --porcelain -- 'Testbed/guest/Measure-TrustRemoval.ps1' 'Testbed/guest/Register-InteractiveTask.ps1' 'Testbed/guest/OutlookMapiInterop.ps1' 'Testbed/guest/ScriptHelpers.ps1' 'McpServer/OutlookAI.Core/AddIn/NativeWindows.cs' 'Installer.iss' 2>&1 } | Where-Object { $_ })
 
 $runId = New-RunId (Get-Date) $sha $Scenario
 $runsRoot = Join-Path $repo '.work\trust-removal-runs'
@@ -266,7 +266,8 @@ try {
         (Join-Path $repo 'Testbed\guest\Measure-TrustRemoval.ps1'),
         (Join-Path $repo 'Testbed\guest\Register-InteractiveTask.ps1'),
         (Join-Path $repo 'Testbed\guest\OutlookMapiInterop.ps1'),
-        (Join-Path $repo 'Testbed\guest\ScriptHelpers.ps1'))
+        (Join-Path $repo 'Testbed\guest\ScriptHelpers.ps1'),
+        (Join-Path $repo 'McpServer\OutlookAI.Core\AddIn\NativeWindows.cs'))
     if ($Scenario -eq 'InstallerCleanup') { $stage += @($InstallerPath, $installerIss) }
     foreach ($f in $stage) { Copy-Item -LiteralPath $f -Destination (Join-Path $GuestDir (Split-Path -Leaf $f)) -ToSession $session -Force }
     Say "staged $($stage.Count) file(s) in $GuestDir"
