@@ -294,6 +294,29 @@ its mailbox tests on, and change nothing you install.
   and the summary says how many rounds ran. Off by default, so no ordinary run has a debugger
   attached, and refused on the Exchange VM, with a filter or with a signature step; the runner's and
   the debugger's self-tests pin the switch, the module and every decision (runbook section 4.15).
+  `-HuntVariant` narrows the trigger down. Legs, the default, is the run above, and LegsOtherFolder
+  runs the same tests after a step that moves the main window to the Calendar. Every other variant
+  runs `T2/LiveHuntDerivedDraftTests` instead, which makes derived drafts in a loop for
+  `-HuntLegMinutes` (10 by default) or until Outlook ends, and writes one line per draft, so a run
+  counts the drafts before a crash. ProductLoop, the control, makes the product's replies and forwards
+  in the windowed Outlook. OtherFolder does the same with the main window on the Calendar, and
+  NoWindow in an Outlook that COM started with no window. NoFormPage follows the product's direct
+  route through the object model without the "Message" form page, and BareCreators calls Reply() or
+  Forward() and releases the result unsaved. Only the hunt's suite script names a variant, so the loop
+  makes nothing in any other run. With `-HuntShowEach` every draft of a loop comes after a compose
+  window shown and closed: a reply or forward made through the object model, promoted the product's
+  own way and closed discarding, which is what the typed-text tests do before each of the product's
+  drafts, and with `-HuntTypeEach` that window is displayed on screen and typed into as those tests
+  do. Every hunting run also records Office's build and the hunted
+  module's file, and the summary shows both. `-HuntWithoutAddIn` turns OutlookAI's own add-in off
+  for the run, LoadBehavior 0 before Outlook starts, and the restore after the run brings the
+  checkpoint's value back. Every Outlook guest's checkpoint holds the add-in installed and loading,
+  and inside Outlook it hooks every inspector and puts its task pane on each one that is activated.
+  Each round says whether Outlook holds the .NET runtime the add-in needs. A hunt with the add-in off
+  crashed the same way in round 18, so the crash does not need it. The hunt's minutes and the
+  debugger's time limit are counted on a stopwatch: two unindexed guests' frozen clocks jumped 46
+  days to the real date in the middle of a hunt, and a deadline on the guest's clock ended both the
+  rounds and the debugger's watch there.
 
 - ✅ **A live run keeps Windows' own report of every Outlook crash beside its dumps.**
   Two Outlook crashes on 2026-11-18, both in `mso40uiwin32client.dll` while a draft was written,
