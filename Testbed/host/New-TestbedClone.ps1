@@ -389,7 +389,8 @@ try {
             $lease = Get-TestbedLease -VMName $Source
             # A build run's own lease outlives its lock by moments, and the lock is ours now.
             $runs = ($pool -eq 'build' -and $null -ne $lease -and ([string]$lease.reason).StartsWith('Invoke-TestsOnBuildVm'))
-            if ($null -eq $lease -or $runs -or ([string]$lease.reason) -ceq $leaseReason) {
+            # 'free', 'ours' or 'gone' (Testbed/guest/ScriptHelpers.ps1): none, its own, or one whose process has ended.
+            if ($runs -or (Get-LeaseDecision $lease $leaseReason ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()) -IsAlive ${function:Test-TestbedTicketAlive}) -ne 'theirs') {
                 & (Join-Path $PSScriptRoot 'Set-TestbedLease.ps1') -VMName $Source -Minutes 90 -Reason $leaseReason | Out-Null
                 $leaseTaken = $true
             }
@@ -416,7 +417,7 @@ catch {
 finally {
     if ($leaseTaken) {
         $l = Get-TestbedLease -VMName $Source
-        if ($null -ne $l -and ([string]$l.reason) -ceq $leaseReason) { & (Join-Path $PSScriptRoot 'Set-TestbedLease.ps1') -VMName $Source -Release | Out-Null }
+        if ($null -ne $l -and ([string]$l.reason) -ceq $leaseReason) { & (Join-Path $PSScriptRoot 'Set-TestbedLease.ps1') -VMName $Source -Release -Reason $leaseReason | Out-Null }
     }
     if ($null -ne $lock) { $lock.Dispose() }
     Exit-TestbedQueue $ticket
