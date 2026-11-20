@@ -70,7 +70,7 @@ public sealed class LiveHuntDerivedDraftTests
             Environment.GetEnvironmentVariable(HuntPlan.VariantVariable),
             Environment.GetEnvironmentVariable(HuntPlan.LegMinutesVariable),
             Environment.GetEnvironmentVariable(HuntPlan.ShowEachVariable),
-            out string? why);
+            out string? why)?.WithPromoteAfter(Environment.GetEnvironmentVariable(HuntPlan.PromoteAfterVariable), out why);
         if (plan == null)
         {
             _output.WriteLine("NOT RUN: " + why + ".");
@@ -137,7 +137,8 @@ public sealed class LiveHuntDerivedDraftTests
             .Set("legMinutes", plan.LegMinutes)
             .Set("maker", plan.Maker.ToString())
             .Set("showsEach", plan.ShowsEach)
-            .Set("typesEach", plan.TypesEach);
+            .Set("typesEach", plan.TypesEach)
+            .Set("promotesAfter", plan.PromotesAfter);
         if (plan.ShowsCalendar)
         {
             start.Set("moved", MoveMainWindowToTheCalendar(client));
@@ -206,6 +207,22 @@ public sealed class LiveHuntDerivedDraftTests
             }
 
             attempt.Set("ms", one.ElapsedMilliseconds).Set("made", made).Set("atSecond", (long)leg.Elapsed.TotalSeconds);
+            if (entryId != null && plan.PromotesAfter)
+            {
+                // As the typed-text tests read every draft of the product's: re-opened, promoted, closed discarding.
+                try
+                {
+                    (_, string? promoted) = Q149Editor.ReadLookOf(drafts, client, entryId, storeId, readLayout: false);
+                    attempt.Set("promotedAfter", promoted == "layout not read (ablation)" ? "promoted" : promoted);
+                }
+                catch (Exception ex) when (ex is InvalidOperationException or TimeoutException || OutlookComSession.IsComCallFailure(ex) || LiveOutlookRestart.IsSessionGone(ex))
+                {
+                    attempt.Set("promoteAfterFailure", Q149Com.Failure(ex));
+                    failure ??= Describe(ex);
+                    going = going || HuntPlan.SaysOutlookIsGoing(failure) || LiveOutlookRestart.IsSessionGone(ex);
+                }
+            }
+
             if (entryId != null)
             {
                 Delete(entryId, attempt);

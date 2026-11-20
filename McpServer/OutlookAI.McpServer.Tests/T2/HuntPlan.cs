@@ -65,6 +65,13 @@ public sealed class HuntPlan
     /// </summary>
     public const string ShowEachVariable = "OUTLOOKAI_HUNT_SHOW_EACH";
 
+    /// <summary>
+    /// The variable that, set to 1, has each of the product's drafts re-opened by its EntryID, promoted the product's
+    /// own way (parked, activated, hidden) and closed discarding as soon as it is made - what the typed-text tests do
+    /// to read every draft of the product's, and what no loop did before.
+    /// </summary>
+    public const string PromoteAfterVariable = "OUTLOOKAI_HUNT_PROMOTE_AFTER";
+
     /// <summary>The variable the hunt's suite script names the typed-text tests' ablation in (<see cref="HuntAblation"/>). Unset in every other run.</summary>
     public const string AblateVariable = "OUTLOOKAI_HUNT_ABLATE";
 
@@ -129,6 +136,35 @@ public sealed class HuntPlan
     /// person writing in Outlook while an agent drafts replies and forwards.
     /// </summary>
     public bool KeepsAWindowOpen { get; }
+
+    /// <summary>Whether each of the product's drafts is re-opened, promoted and closed as soon as it is made (<see cref="PromoteAfterVariable"/>).</summary>
+    public bool PromotesAfter { get; private set; }
+
+    /// <summary>This plan with <see cref="PromotesAfter"/> as <paramref name="value"/> names it: "1" yes, unset or "0" no; null with the reason otherwise, or for a maker that is not the product's.</summary>
+    public HuntPlan? WithPromoteAfter(string? value, out string? why)
+    {
+        why = null;
+        switch (value)
+        {
+            case null:
+            case "":
+            case "0":
+                PromotesAfter = false;
+                return this;
+            case "1":
+                if (Maker != HuntMaker.Product)
+                {
+                    why = PromoteAfterVariable + " re-opens the product's drafts: " + Variant + " makes none";
+                    return null;
+                }
+
+                PromotesAfter = true;
+                return this;
+            default:
+                why = PromoteAfterVariable + " must be 1 or 0, not '" + value + "'";
+                return null;
+        }
+    }
 
     /// <summary>The cell of the variant's attempt lines - one a draft.</summary>
     public string Cell => "S5-hunt-" + Variant + (TypesEach ? "-typed" : ShowsEach ? "-shown" : string.Empty);

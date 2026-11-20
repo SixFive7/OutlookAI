@@ -71,6 +71,29 @@ public sealed class HuntPlanTests
         Assert.False(HuntPlan.Parse("ProductLoop", "10", null, out _)!.KeepsAWindowOpen);
     }
 
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData("", false)]
+    [InlineData("0", false)]
+    [InlineData("1", true)]
+    public void TheProductsDrafts_AreRePromotedAfterwards_WhenAskedByOne(string? value, bool promotes)
+    {
+        HuntPlan? plan = HuntPlan.Parse("ProductLoop", "10", "typed", out _)!.WithPromoteAfter(value, out string? why);
+
+        Assert.NotNull(plan);
+        Assert.Null(why);
+        Assert.Equal(promotes, plan!.PromotesAfter);
+    }
+
+    [Fact]
+    public void PromoteAfter_IsRefusedWhereTheProductMakesNothing_OrForAnythingButOneOrZero()
+    {
+        Assert.Null(HuntPlan.Parse("BareCreators", "10", null, out _)!.WithPromoteAfter("1", out string? bare));
+        Assert.Contains("makes none", bare, StringComparison.Ordinal);
+        Assert.Null(HuntPlan.Parse("ProductLoop", "10", null, out _)!.WithPromoteAfter("yes", out string? odd));
+        Assert.Contains("must be 1 or 0", odd, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void TheCalendarStep_MovesTheMainWindowAndMakesNothing()
     {
@@ -157,6 +180,7 @@ public sealed class HuntPlanTests
         Assert.Contains("$HuntLegMinutesVariable = '" + HuntPlan.LegMinutesVariable + "'", runner, StringComparison.Ordinal);
         Assert.Contains("$HuntShowEachVariable = '" + HuntPlan.ShowEachVariable + "'", runner, StringComparison.Ordinal);
         Assert.Contains("$HuntAblateVariable = '" + HuntPlan.AblateVariable + "'", runner, StringComparison.Ordinal);
+        Assert.Contains("$HuntPromoteAfterVariable = '" + HuntPlan.PromoteAfterVariable + "'", runner, StringComparison.Ordinal);
         Assert.Contains("FullyQualifiedName~" + typeof(LiveHuntDerivedDraftTests).FullName, runner, StringComparison.Ordinal);
     }
 

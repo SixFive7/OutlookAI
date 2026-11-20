@@ -226,6 +226,11 @@
     Selection.TypeText, as the typed-text tests do - before it is closed discarding. The promoted windows of
     -HuntShowEach never crashed (2026-11-18); the typed-text tests, which display and type, did.
 
+.PARAMETER HuntPromoteAfter
+    With a -HuntVariant whose loop makes the product's drafts: each draft, as soon as it is made, is re-opened by its
+    EntryID, promoted the product's own way (parked, activated, hidden) and closed discarding - what the typed-text
+    tests do to read every draft of the product's. With -HuntTypeEach it is their sequence in a loop.
+
 .PARAMETER HuntAblate
     With -HuntVariant Legs or LegsOtherFolder: the typed-text tests leave one of their steps out (the coordinator's
     direction of 2026-11-18, after the variants) - new: no new mail beside the reply and the forward; layout: Word's
@@ -300,6 +305,7 @@ param(
     [Parameter(ParameterSetName = 'Run')] [switch] $HuntWithoutAddIn,
     [Parameter(ParameterSetName = 'Run')] [ValidateSet('', 'new', 'layout', 'signature', 'source')] [string] $HuntAblate = '',
     [Parameter(ParameterSetName = 'Run')] [switch] $HuntTraceClr,
+    [Parameter(ParameterSetName = 'Run')] [switch] $HuntPromoteAfter,
     [Parameter(ParameterSetName = 'Run')] [switch] $HuntShowEach,
     [Parameter(ParameterSetName = 'Run')] [switch] $HuntTypeEach,
     [Parameter(ParameterSetName = 'Run')] [switch] $WithAddIn,
@@ -372,6 +378,7 @@ $HuntVariantVariable = 'OUTLOOKAI_HUNT_VARIANT'
 $HuntLegMinutesVariable = 'OUTLOOKAI_HUNT_LEG_MINUTES'
 $HuntShowEachVariable = 'OUTLOOKAI_HUNT_SHOW_EACH'
 $HuntAblateVariable = 'OUTLOOKAI_HUNT_ABLATE'
+$HuntPromoteAfterVariable = 'OUTLOOKAI_HUNT_PROMOTE_AFTER'
 # -HuntTraceClr: the ETW session's name on the guest (its rundown session's is the same with Rundown after it).
 $ClrTraceSession = 'OutlookAIHuntClr'
 $HuntLoopLeg = '&FullyQualifiedName~OutlookAI.McpServer.Tests.T2.LiveHuntDerivedDraftTests'
@@ -480,15 +487,17 @@ function Merge-CrashCount {
 # Outlook test guest only - never the Exchange VM, whose Outlook holds a real mailbox that a full dump would hold too -
 # and its rounds and minutes are bounded, inside the run's own time limit. Pure.
 function Get-HuntRefusal {
-    param([bool] $Hunt, [bool] $Exchange, [string] $Filter, [string] $FilterSuffix, [string] $SignatureSettings, [bool] $SignatureDialog, [int] $Rounds, [int] $Minutes, [int] $RunTimeoutMinutes, [string] $Variant = 'Legs', [int] $LegMinutes = 10, [bool] $WithoutAddIn = $false, [bool] $WithAddIn = $false, [bool] $ShowEach = $false, [bool] $TypeEach = $false, [string] $Ablate = '', [bool] $TraceClr = $false)
+    param([bool] $Hunt, [bool] $Exchange, [string] $Filter, [string] $FilterSuffix, [string] $SignatureSettings, [bool] $SignatureDialog, [int] $Rounds, [int] $Minutes, [int] $RunTimeoutMinutes, [string] $Variant = 'Legs', [int] $LegMinutes = 10, [bool] $WithoutAddIn = $false, [bool] $WithAddIn = $false, [bool] $ShowEach = $false, [bool] $TypeEach = $false, [string] $Ablate = '', [bool] $TraceClr = $false, [bool] $PromoteAfter = $false)
     if (-not $Hunt) {
         if ($Variant -and $Variant -ne 'Legs') { return "-HuntVariant $Variant is a hunting run's: give -HuntFirstChance with it." }
         if ($WithoutAddIn) { return "-HuntWithoutAddIn is a hunting run's: give -HuntFirstChance with it." }
         if ($ShowEach) { return "-HuntShowEach is a hunting run's: give -HuntFirstChance and a -HuntVariant with it." }
         if ($Ablate) { return "-HuntAblate is a hunting run's: give -HuntFirstChance with it." }
         if ($TraceClr) { return "-HuntTraceClr is a hunting run's: give -HuntFirstChance with it." }
+        if ($PromoteAfter) { return "-HuntPromoteAfter is a hunting run's: give -HuntFirstChance and a -HuntVariant with it." }
         return ''
     }
+    if ($PromoteAfter -and $Variant -notin @('ProductLoop', 'OtherFolder', 'NoWindow', 'PersonTyping')) { return "-HuntPromoteAfter re-opens the product's drafts: give a -HuntVariant whose loop makes them, not $Variant." }
     if ($Ablate -and (Test-HuntLoopVariant $Variant)) { return "-HuntAblate leaves a step out of the typed-text tests: give -HuntVariant Legs or LegsOtherFolder, not $Variant." }
     if ($TypeEach -and -not $ShowEach) { return '-HuntTypeEach types into the window -HuntShowEach shows: give both.' }
     if ($ShowEach -and -not (Test-HuntLoopVariant $Variant)) { return '-HuntShowEach shows a window before each draft of a loop: give a -HuntVariant other than Legs and LegsOtherFolder, whose typed-text tests show their own.' }
@@ -557,12 +566,13 @@ function Test-HuntLoopVariant {
 # file is named for its round and leg. The rounds end at -HuntRounds, at -HuntMinutes, or at the first dump the
 # debugger wrote. Pure.
 function Get-HuntSuiteScript {
-    param([string] $OptIn, [string] $GuestRunDir, [string] $GuestRoot, [System.Collections.IDictionary] $Filters, [int] $Rounds, [int] $Minutes, [string] $Module, [string] $DumpDir, [string] $ScriptName, [string] $Variant = 'Legs', [int] $LegMinutes = 10, [bool] $ShowEach = $false, [bool] $TypeEach = $false, [string] $Ablate = '')
+    param([string] $OptIn, [string] $GuestRunDir, [string] $GuestRoot, [System.Collections.IDictionary] $Filters, [int] $Rounds, [int] $Minutes, [string] $Module, [string] $DumpDir, [string] $ScriptName, [string] $Variant = 'Legs', [int] $LegMinutes = 10, [bool] $ShowEach = $false, [bool] $TypeEach = $false, [string] $Ablate = '', [bool] $PromoteAfter = $false)
     $legLines = (@($Filters.Keys) | ForEach-Object { "`$legs += ,@('$_', '$($Filters[$_])')" }) -join "`r`n"
     $variantLines = ''
     $testVariant = Get-HuntTestVariant $Variant
     if ($testVariant) { $variantLines = "`$env:$HuntVariantVariable = '$testVariant'`r`n`$env:$HuntLegMinutesVariable = '$LegMinutes'`r`n`$env:$HuntShowEachVariable = '$(if ($TypeEach) { 'typed' } else { [int]$ShowEach })'`r`n" }
     if ($Ablate) { $variantLines += "`$env:$HuntAblateVariable = '$Ablate'`r`n" }
+    if ($PromoteAfter) { $variantLines += "`$env:$HuntPromoteAfterVariable = '1'`r`n" }
     return @"
 $variantLines`$env:OUTLOOKAI_LIVE_OPT_IN = '$OptIn'
 `$env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'; `$env:DOTNET_NOLOGO = '1'; `$env:MSBUILDDISABLENODEREUSE = '1'
@@ -1417,6 +1427,8 @@ STACK      the faulting thread
     Check '-HuntTypeEach tells it to type into the window it shows, and needs -HuntShowEach' 'typed|both' "$(if ($typedHunt.Contains("`$env:OUTLOOKAI_HUNT_SHOW_EACH = 'typed'`r`n")) { 'typed' })|$(if ((Get-HuntRefusal $true $false '' '' '' $false 20 60 120 'ProductLoop' 10 $false $false $false $true) -match 'give both') { 'both' })"
     $ablateHunt = Get-HuntSuiteScript -OptIn 'OAI-INDEXED' -GuestRunDir 'C:\r' -GuestRoot 'C:\g' -Filters ([ordered]@{ typed = 'F&A'; drafts = 'F&(B|C)' }) -Rounds 20 -Minutes 60 -Module 'mso40uiwin32client.dll' -DumpDir 'C:\d' -ScriptName $FirstChanceScript -Variant 'Legs' -LegMinutes 10 -Ablate 'layout'
     Check '-HuntAblate names the step the typed-text tests leave out, on the legs only' 'layout|loop|hunt' "$(if ($ablateHunt.StartsWith("`$env:OUTLOOKAI_HUNT_ABLATE = 'layout'`r`n")) { 'layout' })|$(if ((Get-HuntRefusal $true $false '' '' '' $false 20 60 120 'ProductLoop' 10 $false $false $false $false 'layout') -match 'Legs or LegsOtherFolder') { 'loop' })|$(if ((Get-HuntRefusal $false $false '' '' '' $false 20 60 120 'Legs' 10 $false $false $false $false 'layout') -match 'give -HuntFirstChance') { 'hunt' })"
+    $promoteHunt = Get-HuntSuiteScript -OptIn 'OAI-INDEXED' -GuestRunDir 'C:\r' -GuestRoot 'C:\g' -Filters ([ordered]@{ loop = 'F&L' }) -Rounds 20 -Minutes 60 -Module 'mso40uiwin32client.dll' -DumpDir 'C:\d' -ScriptName $FirstChanceScript -Variant 'ProductLoop' -LegMinutes 10 -ShowEach $true -TypeEach $true -PromoteAfter $true
+    Check '-HuntPromoteAfter tells the loop to re-open and promote the product''s drafts, on a loop that makes them' 'promote|bare' "$(if ($promoteHunt.Contains("`$env:OUTLOOKAI_HUNT_PROMOTE_AFTER = '1'`r`n")) { 'promote' })|$(if ((Get-HuntRefusal $true $false '' '' '' $false 20 60 120 'BareCreators' 10 $false $false $false $false '' $false $true) -match 'makes them') { 'bare' })"
     $traceStart = Get-ClrTraceStartScript 'C:\r' 'S'
     $traceStop = Get-ClrTraceStopScript 'C:\r' 'S'
     $err1 = $null; $err2 = $null
@@ -1590,7 +1602,7 @@ if ($WithAddIn -and ($facts.Exchange -or (-not $Kind -and -not $startIsFrozen)))
 # again once taken.
 $stepRefusal = Get-SignatureSettingsRefusal $SignatureSettings ([bool]$facts.Exchange) ($startIsFrozen -or [bool]$Kind) $GreenCheckpoint $Filter ([bool]$SignatureDialog)
 if ($stepRefusal) { Stop-Refused $stepRefusal }
-$huntRefusal = Get-HuntRefusal ([bool]$HuntFirstChance) ([bool]$facts.Exchange) $Filter $FilterSuffix $SignatureSettings ([bool]$SignatureDialog) $HuntRounds $HuntMinutes $RunTimeoutMinutes $HuntVariant $HuntLegMinutes ([bool]$HuntWithoutAddIn) ([bool]$WithAddIn) ([bool]$HuntShowEach) ([bool]$HuntTypeEach) $HuntAblate ([bool]$HuntTraceClr)
+$huntRefusal = Get-HuntRefusal ([bool]$HuntFirstChance) ([bool]$facts.Exchange) $Filter $FilterSuffix $SignatureSettings ([bool]$SignatureDialog) $HuntRounds $HuntMinutes $RunTimeoutMinutes $HuntVariant $HuntLegMinutes ([bool]$HuntWithoutAddIn) ([bool]$WithAddIn) ([bool]$HuntShowEach) ([bool]$HuntTypeEach) $HuntAblate ([bool]$HuntTraceClr) ([bool]$HuntPromoteAfter)
 if ($huntRefusal) { Stop-Refused $huntRefusal }
 # A hunting run runs its own tests (Get-HuntSuiteScript): narrowed, and every leg's filter the guest's derived one with
 # the leg's suffix.
@@ -2185,7 +2197,7 @@ Copy-Item -LiteralPath '$GuestPayloadDir\live-test-settings.json' -Destination '
         Add-Content -LiteralPath $ledgerPath -Value (ConvertTo-LedgerLine $runMarker $runId 'started' $null $priorMarkers ([DateTime]::UtcNow)) -Encoding UTF8
     }
     if ($HuntFirstChance) {
-        $liveScript = Get-HuntSuiteScript -OptIn $facts.ComputerName -GuestRunDir $guestRunDir -GuestRoot $GuestRoot -Filters $huntFilters -Rounds $HuntRounds -Minutes $HuntMinutes -Module $HuntModule -DumpDir $GuestDumpDir -ScriptName $FirstChanceScript -Variant $HuntVariant -LegMinutes $HuntLegMinutes -ShowEach ([bool]$HuntShowEach) -TypeEach ([bool]$HuntTypeEach) -Ablate $HuntAblate
+        $liveScript = Get-HuntSuiteScript -OptIn $facts.ComputerName -GuestRunDir $guestRunDir -GuestRoot $GuestRoot -Filters $huntFilters -Rounds $HuntRounds -Minutes $HuntMinutes -Module $HuntModule -DumpDir $GuestDumpDir -ScriptName $FirstChanceScript -Variant $HuntVariant -LegMinutes $HuntLegMinutes -ShowEach ([bool]$HuntShowEach) -TypeEach ([bool]$HuntTypeEach) -Ablate $HuntAblate -PromoteAfter ([bool]$HuntPromoteAfter)
         Say "hunt: a debugger on every OUTLOOK.EXE, dumping the first first-chance access violation in $HuntModule; variant $HuntVariant, at most $HuntRounds round(s) of $(@($huntFilters.Keys) -join ' and ') in $HuntMinutes minute(s)$(if (Test-HuntLoopVariant $HuntVariant) { ", $HuntLegMinutes a leg" })"
     }
     else {
@@ -2398,7 +2410,7 @@ $lines.Add("outlook    crashes during the run: $crashText; crash dumps: $dumpTex
 if ($HuntFirstChance) {
     $roundsText = 'not read'
     if ($huntRoundsRun -ge 0) { $roundsText = [string]$huntRoundsRun }
-    $lines.Add("hunt       variant $HuntVariant$(if ($HuntTypeEach) { ', a window shown and typed into before each draft' } elseif ($HuntShowEach) { ', a window shown before each draft' })$(if ($HuntAblate) { ", the typed-text tests without their $HuntAblate step" })$(if ($huntClrTrace) { ", the .NET runtime's exceptions $huntClrTrace" }), OutlookAI's add-in $huntAddIn, $roundsText of at most $HuntRounds round(s) of $(@($huntFilters.Keys) -join ' and ') in $HuntMinutes min, a debugger on every OUTLOOK.EXE: $($huntDumps.Count) first- or second-chance dump(s) in $HuntModule's hunt (results\$($facts.Name)\first-chance.log)")
+    $lines.Add("hunt       variant $HuntVariant$(if ($HuntTypeEach) { ', a window shown and typed into before each draft' } elseif ($HuntShowEach) { ', a window shown before each draft' })$(if ($HuntPromoteAfter) { ", each of the product's drafts re-opened and promoted after" })$(if ($HuntAblate) { ", the typed-text tests without their $HuntAblate step" })$(if ($huntClrTrace) { ", the .NET runtime's exceptions $huntClrTrace" }), OutlookAI's add-in $huntAddIn, $roundsText of at most $HuntRounds round(s) of $(@($huntFilters.Keys) -join ' and ') in $HuntMinutes min, a debugger on every OUTLOOK.EXE: $($huntDumps.Count) first- or second-chance dump(s) in $HuntModule's hunt (results\$($facts.Name)\first-chance.log)")
     if ($null -ne $huntOffice) { $lines.Add("office     $($huntOffice['VersionToReport']) $($huntOffice['ProductReleaseIds']) $($huntOffice['Platform']), $($huntOffice['AudienceData']), updates enabled: $($huntOffice['UpdatesEnabled']); $($huntOffice['module'])") }
 }
 $lines.Add((Format-OutlookStartLine $outlookStart))
