@@ -17,6 +17,7 @@ public sealed class HuntPlanTests
     [InlineData("NoWindow", HuntMaker.Product, true, false)]
     [InlineData("NoFormPage", HuntMaker.NoFormPage, false, false)]
     [InlineData("BareCreators", HuntMaker.Bare, false, false)]
+    [InlineData("ColdStarts", HuntMaker.Product, true, false)]
     public void EveryVariant_VariesOneThingFromTheControl(string variant, HuntMaker maker, bool windowless, bool showsCalendar)
     {
         HuntPlan? plan = HuntPlan.Parse(variant, "10", out string? why);
@@ -139,6 +140,26 @@ public sealed class HuntPlanTests
         Assert.Contains("makes none", direct, StringComparison.Ordinal);
         Assert.Null(HuntPlan.Parse("ProductLoop", "10", null, out _)!.WithDisplay("on", out string? odd));
         Assert.Contains("must be 1 or 0", odd, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ColdStarts_MakesTheProductsDraftsInOutlooksItStartsWithNoWindow_AndNothingElse()
+    {
+        HuntPlan plan = HuntPlan.Parse("ColdStarts", "90", null, out string? why)!;
+
+        Assert.Null(why);
+        Assert.True(plan.ColdStarts);
+        Assert.True(plan.Windowless);
+        Assert.Equal(HuntMaker.Product, plan.Maker);
+        Assert.Equal(2, HuntPlan.DraftsPerColdStart);
+        Assert.Equal(100, HuntPlan.MostColdStarts);
+        Assert.False(HuntPlan.Parse("ProductLoop", "90", null, out _)!.ColdStarts);
+        Assert.Null(HuntPlan.Parse("ColdStarts", "90", "1", out string? shown));
+        Assert.Contains("no window", shown, StringComparison.Ordinal);
+        Assert.Null(HuntPlan.Parse("ColdStarts", "90", null, out _)!.WithPromoteAfter("1", out string? promote));
+        Assert.Contains("own promotion", promote, StringComparison.Ordinal);
+        Assert.Null(HuntPlan.Parse("ColdStarts", "90", null, out _)!.WithDisplay("1", out string? display));
+        Assert.Contains("no window", display, StringComparison.Ordinal);
     }
 
     [Fact]

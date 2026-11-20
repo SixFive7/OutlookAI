@@ -622,6 +622,8 @@ public sealed class LiveQ149WindowlessComposeTests
                             inspector = item.GetInspector;
                             if (d == 1)
                             {
+                                // PROMOTED ON PURPOSE: W6 and W7 measure the promotion itself, the product's one per process
+                                // in an Outlook with no window (Q208 B).
                                 document = ComposeSurface.PromoteForWordEditor((object)inspector, out string? error, out bool windowless);
                                 attempt.Set("promotionError", error).Set("windowlessAtPromotion", windowless);
                             }

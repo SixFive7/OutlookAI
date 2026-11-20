@@ -208,7 +208,10 @@
     one attempt line a draft: ProductLoop, the control - the product's reply_draft and forward_draft in the windowed
     Outlook; OtherFolder - the same with the main window on the Calendar; NoWindow - the same in an Outlook COM started,
     with no window; NoFormPage - the product's direct route made by the object model without the "Message" form page;
-    BareCreators - Reply() or Forward() and the result released unsaved.
+    BareCreators - Reply() or Forward() and the result released unsaved; PersonTyping - the product's drafts beside a
+    compose window a line is typed into before each; ColdStarts - Outlook ended gracefully and started with no window
+    again and again, the product's reply and forward in each: the one place the product promotes, its first draft in an
+    Outlook with no window (Q208 B), and the derived draft after it.
 
 .PARAMETER HuntLegMinutes
     With a -HuntVariant other than Legs: the minutes of one leg, one dotnet test of the loop (default 10, at most
@@ -310,7 +313,7 @@ param(
     [Parameter(ParameterSetName = 'Run')] [switch] $HuntFirstChance,
     [Parameter(ParameterSetName = 'Run')] [int] $HuntRounds = 20,
     [Parameter(ParameterSetName = 'Run')] [int] $HuntMinutes = 60,
-    [Parameter(ParameterSetName = 'Run')] [ValidateSet('Legs', 'LegsOtherFolder', 'ProductLoop', 'OtherFolder', 'NoWindow', 'NoFormPage', 'BareCreators', 'PersonTyping')] [string] $HuntVariant = 'Legs',
+    [Parameter(ParameterSetName = 'Run')] [ValidateSet('Legs', 'LegsOtherFolder', 'ProductLoop', 'OtherFolder', 'NoWindow', 'NoFormPage', 'BareCreators', 'PersonTyping', 'ColdStarts')] [string] $HuntVariant = 'Legs',
     [Parameter(ParameterSetName = 'Run')] [int] $HuntLegMinutes = 10,
     [Parameter(ParameterSetName = 'Run')] [switch] $HuntWithoutAddIn,
     [Parameter(ParameterSetName = 'Run')] [ValidateSet('', 'new', 'layout', 'signature', 'source')] [string] $HuntAblate = '',
@@ -518,6 +521,7 @@ function Get-HuntRefusal {
     if ($Ablate -and (Test-HuntLoopVariant $Variant)) { return "-HuntAblate leaves a step out of the typed-text tests: give -HuntVariant Legs or LegsOtherFolder, not $Variant." }
     if ($TypeEach -and -not $ShowEach) { return '-HuntTypeEach types into the window -HuntShowEach shows: give both.' }
     if ($ReleaseAfterClose -and -not $TypeEach) { return '-HuntReleaseAfterClose releases the Word document of the window -HuntTypeEach types into: give -HuntShowEach -HuntTypeEach with it.' }
+    if ($ShowEach -and $Variant -eq 'ColdStarts') { return '-HuntShowEach shows a window before each draft: ColdStarts makes its drafts in an Outlook with no window.' }
     if ($ShowEach -and -not (Test-HuntLoopVariant $Variant)) { return '-HuntShowEach shows a window before each draft of a loop: give a -HuntVariant other than Legs and LegsOtherFolder, whose typed-text tests show their own.' }
     if ($WithoutAddIn -and $WithAddIn) { return '-HuntWithoutAddIn turns the add-in off and -WithAddIn installs it: give one.' }
     if ($Exchange) { return '-HuntFirstChance attaches a debugger to Outlook and writes its whole memory to a dump: never on the Exchange VM, whose Outlook holds a real mailbox.' }
@@ -1478,6 +1482,7 @@ STACK      the faulting thread
     Check '-HuntReleaseAfterClose tells the loop to release the typed window''s document after its close, and needs -HuntTypeEach' 'late|typed|hunt' "$(if ($lateHunt.Contains("`$env:OUTLOOKAI_HUNT_RELEASE_AFTER_CLOSE = '1'`r`n")) { 'late' })|$(if ((Get-HuntRefusal $true $false '' '' '' $false 20 60 120 'ProductLoop' 10 $false $false $true $false '' $false $false $true) -match 'give -HuntShowEach -HuntTypeEach') { 'typed' })|$(if ((Get-HuntRefusal $false $false '' '' '' $false 20 60 120 'Legs' 10 $false $false $false $false '' $false $false $true) -match 'a hunting run') { 'hunt' })"
     $displayHunt = Get-HuntSuiteScript -OptIn 'OAI-INDEXED' -GuestRunDir 'C:\r' -GuestRoot 'C:\g' -Filters ([ordered]@{ loop = 'F&L' }) -Rounds 20 -Minutes 60 -Module 'mso40uiwin32client.dll' -DumpDir 'C:\d' -ScriptName $FirstChanceScript -Variant 'ProductLoop' -LegMinutes 10 -DisplayEach $true
     Check '-HuntDisplayEach tells the loop to display the product''s drafts and close them, on a loop that makes them' 'display|direct|hunt' "$(if ($displayHunt.Contains("`$env:OUTLOOKAI_HUNT_DISPLAY = '1'`r`n")) { 'display' })|$(if ((Get-HuntRefusal $true $false '' '' '' $false 20 60 120 'NoFormPage' 10 $false $false $false $false '' $false $false $false $true) -match 'makes them') { 'direct' })|$(if ((Get-HuntRefusal $false $false '' '' '' $false 20 60 120 'Legs' 10 $false $false $false $false '' $false $false $false $true) -match 'a hunting run') { 'hunt' })"
+    Check 'ColdStarts is a loop variant, refusing a window before each draft and the re-opening of its drafts' 'loop|shown|promote' "$(if (Test-HuntLoopVariant 'ColdStarts') { 'loop' })|$(if ((Get-HuntRefusal $true $false '' '' '' $false 20 60 120 'ColdStarts' 10 $false $false $true $false) -match 'no window') { 'shown' })|$(if ((Get-HuntRefusal $true $false '' '' '' $false 20 60 120 'ColdStarts' 10 $false $false $false $false '' $false $true) -match 'saves them') { 'promote' })"
     $traceStart = Get-ClrTraceStartScript 'C:\r' 'S'
     $traceStop = Get-ClrTraceStopScript 'C:\r' 'S'
     $err1 = $null; $err2 = $null
