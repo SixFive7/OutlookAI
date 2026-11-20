@@ -125,6 +125,16 @@
   names. S5a is complete. In parallel: the PowerShell helpers (S7) and the rules restated in C# and
   PowerShell as shared C# source (Q171), the updater's 26 lines that `Tools/Publish-Release.ps1`
   restates among them.
+  The attach to an Outlook already running is one copy, `Connect-RunningOutlook` in the shared file,
+  which `Measure-FolderIdResolution.ps1`, `Measure-SignatureRoaming.ps1`, `Reset-HubPopulation.ps1`
+  and `OutlookDialogUia.ps1`'s helper use. The other attaches stay as they are for now (2026-11-20):
+  through the Running Object Table alone in `Connect-ExchangeAccount.ps1` (three),
+  `Install-OutlookAIAddIn.ps1`, `Measure-ExchangeIndexIds.ps1` and `Measure-OfflineWindow.ps1`'s
+  dialog helper; and through the class factory, which starts an Outlook when none is running, in
+  `Add-IdentityAccount.ps1` (two), `Install-OutlookAIAddIn.ps1`, `Measure-SweepCost.ps1`,
+  `New-PopAccountPrf.ps1`, `OutlookMapiInterop.ps1`'s `Invoke-WithOutlookSession`,
+  `Rename-OutlookStore.ps1` and `Set-OutlookProgrammaticAccess.ps1`. `Restart-Guest.ps1`'s quit script
+  attaches through the table alone by design, so that it never starts the Outlook it is there to quit.
 
 - [ ] **Remove the Cached Mode policy values OutlookAI 3.0.0.319 to 3.1.0.325 wrote, when the
   maintainer says so (Q151 (a), decided 2026-11-17).** Those versions wrote the five values as
