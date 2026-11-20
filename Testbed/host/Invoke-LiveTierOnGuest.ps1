@@ -227,9 +227,9 @@
     -HuntShowEach never crashed (2026-11-18); the typed-text tests, which display and type, did.
 
 .PARAMETER HuntPromoteAfter
-    With a -HuntVariant whose loop makes the product's drafts: each draft, as soon as it is made, is re-opened by its
-    EntryID, promoted the product's own way (parked, activated, hidden) and closed discarding - what the typed-text
-    tests do to read every draft of the product's. With -HuntTypeEach it is their sequence in a loop.
+    With a -HuntVariant whose loop saves drafts - the product's, or NoFormPage's: each draft, as soon as it is made, is
+    re-opened by its EntryID, promoted the product's own way (parked, activated, hidden) and closed discarding - what
+    the typed-text tests do to read every draft of the product's. With -HuntTypeEach it is their sequence in a loop.
 
 .PARAMETER HuntReleaseAfterClose
     With -HuntTypeEach: the typed window's Word document is kept until the window is closed and released after it, as
@@ -514,7 +514,7 @@ function Get-HuntRefusal {
         return ''
     }
     if ($DisplayEach -and $Variant -notin @('ProductLoop', 'OtherFolder', 'NoWindow', 'PersonTyping')) { return "-HuntDisplayEach displays the product's drafts: give a -HuntVariant whose loop makes them, not $Variant." }
-    if ($PromoteAfter -and $Variant -notin @('ProductLoop', 'OtherFolder', 'NoWindow', 'PersonTyping')) { return "-HuntPromoteAfter re-opens the product's drafts: give a -HuntVariant whose loop makes them, not $Variant." }
+    if ($PromoteAfter -and $Variant -notin @('ProductLoop', 'OtherFolder', 'NoWindow', 'PersonTyping', 'NoFormPage')) { return "-HuntPromoteAfter re-opens the loop's drafts: give a -HuntVariant whose loop saves them, not $Variant." }
     if ($Ablate -and (Test-HuntLoopVariant $Variant)) { return "-HuntAblate leaves a step out of the typed-text tests: give -HuntVariant Legs or LegsOtherFolder, not $Variant." }
     if ($TypeEach -and -not $ShowEach) { return '-HuntTypeEach types into the window -HuntShowEach shows: give both.' }
     if ($ReleaseAfterClose -and -not $TypeEach) { return '-HuntReleaseAfterClose releases the Word document of the window -HuntTypeEach types into: give -HuntShowEach -HuntTypeEach with it.' }
@@ -1455,7 +1455,7 @@ STACK      the faulting thread
     $ablateHunt = Get-HuntSuiteScript -OptIn 'OAI-INDEXED' -GuestRunDir 'C:\r' -GuestRoot 'C:\g' -Filters ([ordered]@{ typed = 'F&A'; drafts = 'F&(B|C)' }) -Rounds 20 -Minutes 60 -Module 'mso40uiwin32client.dll' -DumpDir 'C:\d' -ScriptName $FirstChanceScript -Variant 'Legs' -LegMinutes 10 -Ablate 'layout'
     Check '-HuntAblate names the step the typed-text tests leave out, on the legs only' 'layout|loop|hunt' "$(if ($ablateHunt.StartsWith("`$env:OUTLOOKAI_HUNT_ABLATE = 'layout'`r`n")) { 'layout' })|$(if ((Get-HuntRefusal $true $false '' '' '' $false 20 60 120 'ProductLoop' 10 $false $false $false $false 'layout') -match 'Legs or LegsOtherFolder') { 'loop' })|$(if ((Get-HuntRefusal $false $false '' '' '' $false 20 60 120 'Legs' 10 $false $false $false $false 'layout') -match 'give -HuntFirstChance') { 'hunt' })"
     $promoteHunt = Get-HuntSuiteScript -OptIn 'OAI-INDEXED' -GuestRunDir 'C:\r' -GuestRoot 'C:\g' -Filters ([ordered]@{ loop = 'F&L' }) -Rounds 20 -Minutes 60 -Module 'mso40uiwin32client.dll' -DumpDir 'C:\d' -ScriptName $FirstChanceScript -Variant 'ProductLoop' -LegMinutes 10 -ShowEach $true -TypeEach $true -PromoteAfter $true
-    Check '-HuntPromoteAfter tells the loop to re-open and promote the product''s drafts, on a loop that makes them' 'promote|bare' "$(if ($promoteHunt.Contains("`$env:OUTLOOKAI_HUNT_PROMOTE_AFTER = '1'`r`n")) { 'promote' })|$(if ((Get-HuntRefusal $true $false '' '' '' $false 20 60 120 'BareCreators' 10 $false $false $false $false '' $false $true) -match 'makes them') { 'bare' })"
+    Check '-HuntPromoteAfter tells the loop to re-open and promote the product''s drafts, on a loop that makes them' 'promote|bare' "$(if ($promoteHunt.Contains("`$env:OUTLOOKAI_HUNT_PROMOTE_AFTER = '1'`r`n")) { 'promote' })|$(if ((Get-HuntRefusal $true $false '' '' '' $false 20 60 120 'BareCreators' 10 $false $false $false $false '' $false $true) -match 'saves them') { 'bare' })"
     $lateHunt = Get-HuntSuiteScript -OptIn 'OAI-INDEXED' -GuestRunDir 'C:\r' -GuestRoot 'C:\g' -Filters ([ordered]@{ loop = 'F&L' }) -Rounds 20 -Minutes 60 -Module 'mso40uiwin32client.dll' -DumpDir 'C:\d' -ScriptName $FirstChanceScript -Variant 'ProductLoop' -LegMinutes 10 -ShowEach $true -TypeEach $true -ReleaseAfterClose $true
     Check '-HuntReleaseAfterClose tells the loop to release the typed window''s document after its close, and needs -HuntTypeEach' 'late|typed|hunt' "$(if ($lateHunt.Contains("`$env:OUTLOOKAI_HUNT_RELEASE_AFTER_CLOSE = '1'`r`n")) { 'late' })|$(if ((Get-HuntRefusal $true $false '' '' '' $false 20 60 120 'ProductLoop' 10 $false $false $true $false '' $false $false $true) -match 'give -HuntShowEach -HuntTypeEach') { 'typed' })|$(if ((Get-HuntRefusal $false $false '' '' '' $false 20 60 120 'Legs' 10 $false $false $false $false '' $false $false $true) -match 'a hunting run') { 'hunt' })"
     $displayHunt = Get-HuntSuiteScript -OptIn 'OAI-INDEXED' -GuestRunDir 'C:\r' -GuestRoot 'C:\g' -Filters ([ordered]@{ loop = 'F&L' }) -Rounds 20 -Minutes 60 -Module 'mso40uiwin32client.dll' -DumpDir 'C:\d' -ScriptName $FirstChanceScript -Variant 'ProductLoop' -LegMinutes 10 -DisplayEach $true

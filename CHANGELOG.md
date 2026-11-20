@@ -312,9 +312,9 @@ its mailbox tests on, and change nothing you install.
   `-HuntAblate` the typed-text tests leave out one of their steps: the new mail beside the reply and
   the forward, reading Word's layout, the test signature, or a source mail of their own. With
   `-HuntTraceClr` the .NET runtime's own exception events are traced on the guest with Windows'
-  logman and tracerpt, and their XML is fetched. With `-HuntPromoteAfter` each of the product's
-  drafts is re-opened, promoted the product's own way and closed as soon as it is made, which is how
-  the typed-text tests read every draft of the product's. With `-HuntReleaseAfterClose` the typed
+  logman and tracerpt, and their XML is fetched. With `-HuntPromoteAfter` each draft a loop saves,
+  the product's or NoFormPage's, is re-opened, promoted the product's own way and closed as soon as it
+  is made, which is how the typed-text tests read every draft of the product's. With `-HuntReleaseAfterClose` the typed
   window keeps its Word document until the window is closed and lets go of it after, as the
   typed-text tests' window and the product's own compose do; the loop otherwise let go of it first.
   With `-HuntDisplayEach` the product makes each draft with display on, the draft tools' default, and

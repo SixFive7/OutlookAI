@@ -5595,8 +5595,9 @@ model makes and saves, opened in an inspector and promoted the product's own way
 hidden, as the typed-text tests read every draft - then closed discarding and deleted; with `-HuntTypeEach` as well,
 that window is displayed on screen and two lines are typed at Outlook's insertion point through Word's own typing, as
 the typed-text tests do, before it is closed discarding. Without either a loop shows no window at all.
-With `-HuntPromoteAfter` each of the product's drafts is re-opened by its EntryID as soon as it is made, promoted the
-product's own way and closed discarding, as the typed-text tests read every draft of theirs. With
+With `-HuntPromoteAfter` each draft a loop saves - the product's, or NoFormPage's - is re-opened by its EntryID as soon
+as it is made, promoted the product's own way and closed discarding, as the typed-text tests read every draft of
+theirs. With
 `-HuntReleaseAfterClose` the typed window keeps its Word document until the window is closed and releases it after,
 as the typed-text tests' window does (`TypeIntoTheComposeWindow`) and as the product's own compose does
 (`ReviseHeldDocument`); without it the loop releases the document first and closes the window after, as the

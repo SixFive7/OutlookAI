@@ -66,9 +66,9 @@ public sealed class HuntPlan
     public const string ShowEachVariable = "OUTLOOKAI_HUNT_SHOW_EACH";
 
     /// <summary>
-    /// The variable that, set to 1, has each of the product's drafts re-opened by its EntryID, promoted the product's
-    /// own way (parked, activated, hidden) and closed discarding as soon as it is made - what the typed-text tests do
-    /// to read every draft of the product's, and what no loop did before.
+    /// The variable that, set to 1, has each of the loop's drafts - the product's, or NoFormPage's - re-opened by its
+    /// EntryID, promoted the product's own way (parked, activated, hidden) and closed discarding as soon as it is made:
+    /// what the typed-text tests do to read every draft of the product's, and what no loop did before.
     /// </summary>
     public const string PromoteAfterVariable = "OUTLOOKAI_HUNT_PROMOTE_AFTER";
 
@@ -153,10 +153,10 @@ public sealed class HuntPlan
     /// </summary>
     public bool KeepsAWindowOpen { get; }
 
-    /// <summary>Whether each of the product's drafts is re-opened, promoted and closed as soon as it is made (<see cref="PromoteAfterVariable"/>).</summary>
+    /// <summary>Whether each of the loop's drafts - the product's, or NoFormPage's - is re-opened, promoted and closed as soon as it is made (<see cref="PromoteAfterVariable"/>).</summary>
     public bool PromotesAfter { get; private set; }
 
-    /// <summary>This plan with <see cref="PromotesAfter"/> as <paramref name="value"/> names it: "1" yes, unset or "0" no; null with the reason otherwise, or for a maker that is not the product's.</summary>
+    /// <summary>This plan with <see cref="PromotesAfter"/> as <paramref name="value"/> names it: "1" yes, unset or "0" no; null with the reason otherwise, or for a maker that saves no draft (BareCreators).</summary>
     public HuntPlan? WithPromoteAfter(string? value, out string? why)
     {
         why = null;
@@ -168,9 +168,9 @@ public sealed class HuntPlan
                 PromotesAfter = false;
                 return this;
             case "1":
-                if (Maker != HuntMaker.Product)
+                if (Maker is not (HuntMaker.Product or HuntMaker.NoFormPage))
                 {
-                    why = PromoteAfterVariable + " re-opens the product's drafts: " + Variant + " makes none";
+                    why = PromoteAfterVariable + " re-opens the loop's drafts: " + Variant + " makes none";
                     return null;
                 }
 

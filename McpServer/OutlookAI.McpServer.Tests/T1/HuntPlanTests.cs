@@ -86,8 +86,9 @@ public sealed class HuntPlanTests
     }
 
     [Fact]
-    public void PromoteAfter_IsRefusedWhereTheProductMakesNothing_OrForAnythingButOneOrZero()
+    public void PromoteAfter_IsRefusedWhereTheLoopSavesNothing_OrForAnythingButOneOrZero()
     {
+        Assert.True(HuntPlan.Parse("NoFormPage", "10", null, out _)!.WithPromoteAfter("1", out _)!.PromotesAfter);
         Assert.Null(HuntPlan.Parse("BareCreators", "10", null, out _)!.WithPromoteAfter("1", out string? bare));
         Assert.Contains("makes none", bare, StringComparison.Ordinal);
         Assert.Null(HuntPlan.Parse("ProductLoop", "10", null, out _)!.WithPromoteAfter("yes", out string? odd));
