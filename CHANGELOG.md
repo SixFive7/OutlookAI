@@ -307,8 +307,29 @@ its mailbox tests on, and change nothing you install.
   window shown and closed: a reply or forward made through the object model, promoted the product's
   own way and closed discarding, which is what the typed-text tests do before each of the product's
   drafts, and with `-HuntTypeEach` that window is displayed on screen and typed into as those tests
-  do. Every hunting run also records Office's build and the hunted
-  module's file, and the summary shows both. `-HuntWithoutAddIn` turns OutlookAI's own add-in off
+  do. PersonTyping keeps a compose window open on screen and types a line into it before each of
+  the product's drafts, five drafts a window, as a person writes while an agent drafts. With
+  `-HuntAblate` the typed-text tests leave out one of their steps: the new mail beside the reply and
+  the forward, reading Word's layout, the test signature, or a source mail of their own. With
+  `-HuntTraceClr` the .NET runtime's own exception events are traced on the guest with Windows'
+  logman and tracerpt, and their XML is fetched. With `-HuntPromoteAfter` each draft a loop saves,
+  the product's or NoFormPage's, is re-opened, promoted the product's own way and closed as soon as it
+  is made, which is how the typed-text tests read every draft of the product's. With `-HuntReleaseAfterClose` the typed
+  window keeps its Word document until the window is closed and lets go of it after, as the
+  typed-text tests' window and the product's own compose do; the loop otherwise let go of it first.
+  With `-HuntDisplayEach` the product makes each draft with display on, the draft tools' default, and
+  the loop closes the window the product opened, as the person it was opened for would.
+  Three of the ablations still crashed the same way, so the crash needs neither the new mails, nor
+  the layout read, nor the test signature. PersonTyping made 2,431 of the product's replies and
+  forwards beside a compose window a line was typed into before each, and Outlook did not crash.
+  A loop of the product's drafts, each after a typed window and each re-opened and promoted as soon as
+  it was made, crashed the same way in 2 and in 8 minutes; without the re-opening it made 802 and did
+  not crash, so the re-opening of the product's drafts is the step the crash needs. Re-opening and
+  promoting each of them with no window before it crashed Outlook on the 121st. The product's drafts
+  displayed as the draft tools display them by default, and closed, did not crash in 943.
+  Every hunting run also records Office's build and
+  the hunted module's file, and the summary shows both, and the summary counts the .NET exceptions
+  Outlook threw, from the debugger's log, so a return of the add-in's failing ribbon callback shows. `-HuntWithoutAddIn` turns OutlookAI's own add-in off
   for the run, LoadBehavior 0 before Outlook starts, and the restore after the run brings the
   checkpoint's value back. Every Outlook guest's checkpoint holds the add-in installed and loading,
   and inside Outlook it hooks every inspector and puts its task pane on each one that is activated.

@@ -32,6 +32,115 @@ public sealed class HuntPlanTests
         Assert.False(plan.ShowsEach);
     }
 
+    [Theory]
+    [InlineData(null, HuntAblation.None)]
+    [InlineData("", HuntAblation.None)]
+    [InlineData("new", HuntAblation.NewMail)]
+    [InlineData("layout", HuntAblation.Layout)]
+    [InlineData("signature", HuntAblation.Signature)]
+    [InlineData("source", HuntAblation.Source)]
+    public void TheTypedTextTests_LeaveOutTheStepTheHuntNames(string? value, HuntAblation expected)
+    {
+        Assert.Equal(expected, HuntPlan.ParseAblation(value, out string? why));
+        Assert.Null(why);
+    }
+
+    [Theory]
+    [InlineData("Layout")]
+    [InlineData("newmail")]
+    [InlineData("all")]
+    public void AnUnknownAblation_IsRefused(string value)
+    {
+        Assert.Null(HuntPlan.ParseAblation(value, out string? why));
+        Assert.Contains("must be new, layout, signature or source", why, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PersonTyping_KeepsAWindowOpenWhileTheProductDrafts()
+    {
+        HuntPlan? plan = HuntPlan.Parse("PersonTyping", "10", null, out string? why);
+
+        Assert.NotNull(plan);
+        Assert.Null(why);
+        Assert.Equal(HuntMaker.Product, plan!.Maker);
+        Assert.True(plan.KeepsAWindowOpen);
+        Assert.False(plan.ShowsEach);
+        Assert.False(plan.Windowless);
+        Assert.Equal("S5-hunt-PersonTyping", plan.Cell);
+        Assert.True(HuntPlan.DraftsPerOpenWindow > 1);
+        Assert.False(HuntPlan.Parse("ProductLoop", "10", null, out _)!.KeepsAWindowOpen);
+    }
+
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData("", false)]
+    [InlineData("0", false)]
+    [InlineData("1", true)]
+    public void TheProductsDrafts_AreRePromotedAfterwards_WhenAskedByOne(string? value, bool promotes)
+    {
+        HuntPlan? plan = HuntPlan.Parse("ProductLoop", "10", "typed", out _)!.WithPromoteAfter(value, out string? why);
+
+        Assert.NotNull(plan);
+        Assert.Null(why);
+        Assert.Equal(promotes, plan!.PromotesAfter);
+    }
+
+    [Fact]
+    public void PromoteAfter_IsRefusedWhereTheLoopSavesNothing_OrForAnythingButOneOrZero()
+    {
+        Assert.True(HuntPlan.Parse("NoFormPage", "10", null, out _)!.WithPromoteAfter("1", out _)!.PromotesAfter);
+        Assert.Null(HuntPlan.Parse("BareCreators", "10", null, out _)!.WithPromoteAfter("1", out string? bare));
+        Assert.Contains("makes none", bare, StringComparison.Ordinal);
+        Assert.Null(HuntPlan.Parse("ProductLoop", "10", null, out _)!.WithPromoteAfter("yes", out string? odd));
+        Assert.Contains("must be 1 or 0", odd, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData("", false)]
+    [InlineData("0", false)]
+    [InlineData("1", true)]
+    public void TheTypedWindowsDocument_IsReleasedAfterItsClose_WhenAskedByOne(string? value, bool late)
+    {
+        HuntPlan? plan = HuntPlan.Parse("ProductLoop", "10", "typed", out _)!.WithReleaseAfterClose(value, out string? why);
+
+        Assert.NotNull(plan);
+        Assert.Null(why);
+        Assert.Equal(late, plan!.ReleasesAfterClose);
+    }
+
+    [Fact]
+    public void ReleaseAfterClose_IsRefusedWhereNoWindowIsTypedInto_OrForAnythingButOneOrZero()
+    {
+        Assert.Null(HuntPlan.Parse("ProductLoop", "10", "1", out _)!.WithReleaseAfterClose("1", out string? shown));
+        Assert.Contains("types into none", shown, StringComparison.Ordinal);
+        Assert.Null(HuntPlan.Parse("ProductLoop", "10", "typed", out _)!.WithReleaseAfterClose("yes", out string? odd));
+        Assert.Contains("must be 1 or 0", odd, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData("", false)]
+    [InlineData("0", false)]
+    [InlineData("1", true)]
+    public void TheProductsDrafts_AreDisplayedAndClosed_WhenAskedByOne(string? value, bool displays)
+    {
+        HuntPlan? plan = HuntPlan.Parse("ProductLoop", "10", null, out _)!.WithDisplay(value, out string? why);
+
+        Assert.NotNull(plan);
+        Assert.Null(why);
+        Assert.Equal(displays, plan!.DisplaysEach);
+    }
+
+    [Fact]
+    public void Display_IsRefusedWhereTheProductMakesNothing_OrForAnythingButOneOrZero()
+    {
+        Assert.Null(HuntPlan.Parse("NoFormPage", "10", null, out _)!.WithDisplay("1", out string? direct));
+        Assert.Contains("makes none", direct, StringComparison.Ordinal);
+        Assert.Null(HuntPlan.Parse("ProductLoop", "10", null, out _)!.WithDisplay("on", out string? odd));
+        Assert.Contains("must be 1 or 0", odd, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void TheCalendarStep_MovesTheMainWindowAndMakesNothing()
     {
@@ -117,6 +226,10 @@ public sealed class HuntPlanTests
         Assert.Contains("$HuntVariantVariable = '" + HuntPlan.VariantVariable + "'", runner, StringComparison.Ordinal);
         Assert.Contains("$HuntLegMinutesVariable = '" + HuntPlan.LegMinutesVariable + "'", runner, StringComparison.Ordinal);
         Assert.Contains("$HuntShowEachVariable = '" + HuntPlan.ShowEachVariable + "'", runner, StringComparison.Ordinal);
+        Assert.Contains("$HuntAblateVariable = '" + HuntPlan.AblateVariable + "'", runner, StringComparison.Ordinal);
+        Assert.Contains("$HuntPromoteAfterVariable = '" + HuntPlan.PromoteAfterVariable + "'", runner, StringComparison.Ordinal);
+        Assert.Contains("$HuntReleaseAfterCloseVariable = '" + HuntPlan.ReleaseAfterCloseVariable + "'", runner, StringComparison.Ordinal);
+        Assert.Contains("$HuntDisplayVariable = '" + HuntPlan.DisplayVariable + "'", runner, StringComparison.Ordinal);
         Assert.Contains("FullyQualifiedName~" + typeof(LiveHuntDerivedDraftTests).FullName, runner, StringComparison.Ordinal);
     }
 

@@ -5646,9 +5646,21 @@ model makes and saves, opened in an inspector and promoted the product's own way
 hidden, as the typed-text tests read every draft - then closed discarding and deleted; with `-HuntTypeEach` as well,
 that window is displayed on screen and two lines are typed at Outlook's insertion point through Word's own typing, as
 the typed-text tests do, before it is closed discarding. Without either a loop shows no window at all.
+With `-HuntPromoteAfter` each draft a loop saves - the product's, or NoFormPage's - is re-opened by its EntryID as soon
+as it is made, promoted the product's own way and closed discarding, as the typed-text tests read every draft of
+theirs. With
+`-HuntReleaseAfterClose` the typed window keeps its Word document until the window is closed and releases it after,
+as the typed-text tests' window does (`TypeIntoTheComposeWindow`) and as the product's own compose does
+(`ReviseHeldDocument`); without it the loop releases the document first and closes the window after, as the
+product's promotion read does (`Q149Editor.ReadLookOf`). With `-HuntDisplayEach` the product makes each of its drafts
+with display on - the draft tools' default, which opens the draft in a compose window for the person to review - and
+the loop closes that window, discarding nothing the product saved, before the next draft.
 
 Every hunting run also writes Office's Click-to-Run build, channel and update setting and the hunted module's file -
-its path, size, time and SHA-256 - to its console as `HUNT-OFFICE` lines, which the summary reads back.
+its path, size, time and SHA-256 - to its console as `HUNT-OFFICE` lines, which the summary reads back. The
+summary's hunt line also counts the .NET exceptions every Outlook of the run threw, from the debugger's log
+(0xE0434352, `Get-HuntClrExceptionCount`): on these guests only OutlookAI's add-in runs .NET code inside Outlook, so
+a ribbon callback that fails again shows there.
 
 **OutlookAI's own add-in loads in every Outlook of these runs, and the crash does not need it.** Every Outlook
 guest's frozen checkpoint holds it installed and loading (`LoadBehavior` 3), and the first catch's dump has the .NET
@@ -5718,9 +5730,99 @@ forwards, Word's whole layout read from every window and from every one of the p
 promoted after it is made, the test signature on half of the product's drafts, and a new source mail for each test.
 That is where the next hunt would look.
 
+**What the add-in's .NET exceptions are.** Both loops ran again for ten minutes with `-HuntTraceClr`, on
+`OutlookAI-Indexed`: run `20261120-115913-indexed-3ca41927bf3c`, 445 promoted windows and 893 exceptions, and run
+`20261120-121932-indexed-3ca41927bf3c`, 410 displayed and typed windows and 1,641. Every one was half of a pair on
+Outlook's UI thread: a `RuntimeBinderException`, "'object' does not contain a definition for 'Visible'", thrown in
+the getPressed callback of the compose ribbon's AI Assistant toggle, `Ribbon.GetAIAssistantPressed`, and the
+`TargetInvocationException` that wraps it on its way back to Office, which no managed code catches. The add-in embeds
+its interop types, so `control.Context` is `dynamic` there, `pane` is too, and `pane.Visible` is bound at run time
+against VSTO's internal task-pane class, which the binder cannot see into. So on every compose window that has the
+pane the toggle's pressed state cannot be read, and each refresh of its ribbon throws the pair: once per promoted
+window, twice per displayed one, and never on a window without a pane. The crash does not need them: with the add-in
+off it came all the same. The callbacks are bound when the add-in compiles since e66c27a (merged to master as
+b5c724b); the frozen checkpoints still hold the build from before it.
+
 **NoWindow was not run.** Its question - does the crash need Outlook's main window - can only be asked of something
 that crashes: the loops never did, even windowed, and the tests that do crash display their compose windows by
 design, which a window-less Outlook cannot be asked to do without showing windows.
+
+**The ablations** (the coordinator's direction of 2026-11-18, evening): the crashing tests run with one of their steps
+left out, to find the one the crash needs. `-HuntAblate` names it to the typed-text tests
+(`HuntPlan.AblateVariable`, read by `T2/LiveQ149TypedTextTests.cs`):
+
+| `-HuntAblate` | What the typed-text tests leave out |
+| --- | --- |
+| `new` | the new mail: only the reply and the forward are typed and made |
+| `layout` | reading Word's layout: no paragraph is walked, in the typed window or in the product's drafts, which are still re-opened and promoted |
+| `signature` | the test signature: the product's second draft of each kind is made without one, and none is made |
+| `source` | a source mail of each test's own: the tests of a leg share the first one's |
+
+And `-HuntVariant PersonTyping` asks the users' question directly: does a person typing in a compose window while an
+agent drafts set it off? A compose window - a new mail or a reply, by turns - stays open on screen, a line is typed into
+it before each of the product's replies and forwards, and it is closed discarding after five of them
+(`HuntPlan.DraftsPerOpenWindow`).
+
+**Three ablations, three crashes.** Each ran the legs above on `OutlookAI-Indexed` (`CP-24C-FROZEN-CLOCK`) at
+3ca4192, the add-in loaded, and each crashed on the same fault: an access violation writing 0x40008, at
+`mso40uiwin32client.dll+0x11DA7E` in the first two and `+0x11D8C7` in the third, which left the kernel's callback as
+0xC000041D. Counted as in the table of crashes above, up to the call that crashed:
+
+| `-HuntAblate` | Run | Round | The product's, the object model's | The call that crashed |
+| --- | --- | --- | --- | --- |
+| `layout` | `20261120-093139-indexed-3ca41927bf3c` | 5 | 60, 25 | the product's reply, right after the test's own typed reply |
+| `new` | `20261120-105752-indexed-3ca41927bf3c` | 2 | 25, 12 | the product's forward, right after the test's own typed forward |
+| `signature` | `20261120-111457-indexed-3ca41927bf3c` | 18 | 258, 104 | the product's second forward, after its first was re-opened and promoted |
+
+So the crash needs neither the new mails' windows, nor Word's layout read, nor the test signature. The first two
+failed before Outlook was given anything to save (0x800706BE), the third where a draft may already have been saved
+(0x800706BA). With them,
+nine hunts of the crashing tests crashed eight times in 1,248 of the product's derived drafts: one in about 160.
+
+**A person typing while the product drafts did not set it off.** Run `20261120-100036-indexed-3ca41927bf3c`
+(`OutlookAI-Indexed`, three legs of 15 minutes) made 2,431 of the product's replies and forwards, each after a line
+typed into the compose window open on screen - 487 windows, new mails and replies by turns, each closed after five
+drafts - and Outlook did not crash.
+
+**Re-opening and promoting each of the product's drafts is the step the crash needs.** Six loops on
+`OutlookAI-Indexed` (`CP-24C-FROZEN-CLOCK`), the add-in loaded, each for up to two legs of ten minutes, ProductLoop
+unless the first column says otherwise. "A typed window" is `-HuntShowEach -HuntTypeEach`, and "late" adds
+`-HuntReleaseAfterClose`; "re-opened and promoted" is `-HuntPromoteAfter`, and "displayed" `-HuntDisplayEach`:
+
+| Run | Before each draft | After each draft | Made | The crash |
+| --- | --- | --- | --- | --- |
+| `20261120-124029-indexed-4cd48e4fc28d` | a typed window, late | re-opened and promoted | 46 | the 47th, a reply, 120 s in |
+| `20261120-125328-indexed-4cd48e4fc28d` | a typed window, late | - | 802 | none in 20 minutes |
+| `20261120-132244-indexed-4cd48e4fc28d` | a typed window | re-opened and promoted | 290 | the 291st, a reply, 483 s in |
+| `20261120-134124-indexed-4cd48e4fc28d` | - | re-opened and promoted | 120 | the 121st, a reply, 275 s in |
+| `20261120-135734-indexed-fd92a6656f99` | - | displayed, and closed | 943 | none in 20 minutes |
+| `20261120-142641-indexed-120fb2e003b9`, NoFormPage | - | re-opened and promoted | 1,825 | none in 20 minutes |
+
+The three crashes met the fault of every one before them - an access violation writing 0x40008, at
+`mso40uiwin32client.dll+0x11DA7E` in the first two and `+0x11D8C7` in the third, the kernel's callback left as
+0xC000041D - in the product's next reply. So the step is the one the typed-text tests take to read every draft of the
+product's (`Q149Editor.ReadLookOf`): re-opening it by its EntryID as soon as it is made and promoting its inspector
+the product's way, `ComposeSurface.PromoteForWordEditor` - the windows that would show parked off screen, the
+inspector activated, whatever became visible hidden with `ShowWindow` - then closing it. Without a typed window it
+crashed all the same, and with one, whether that window let go of its Word document before or after it closed did not
+decide it. The loops
+share one source mail among all their drafts and pass the product no signature, so the crash needs neither a source
+of each test's own nor a signature, and the source ablation was not run.
+
+Promoting is not displaying. The product's drafts displayed the way the draft tools display them by default -
+`Display()`, no window parked or hidden - and closed with `Close(olDiscard)` as the person would, did not crash in
+943, and Outlook found the window open on each one. Nor did the object model's plain replies and forwards, promoted the
+same way before each of the product's (1,704 above). Nor did NoFormPage's, re-opened and promoted after each: the
+object model's direct route without the "Message" form page, 1,825 of them. In that last loop the add-in threw 115
+.NET exceptions in all, where every other loop with a promoted window threw about two a window, so most of those
+windows were closed before Outlook refreshed their ribbon; whether the form page the product adds, or the window
+coming up whole, is what the crash needs is not settled by it.
+
+In a windowed Outlook the product promotes nothing: it composes through the direct route and displays with
+`Display()`. It promotes in an Outlook with no window, once a process, for that process's first draft (Q208 B), and
+that was not hunted: NoWindow was not run. So none of the ways the product is used on a person's Outlook that these
+hunts tried crashed it: the agent's drafts with display off (6,024) and on (943), and a person typing in a compose
+window while the agent drafted (2,431).
 
 **A frozen clock jumped in every hunt that ran past 35 minutes.** The guest's clock left its frozen instant for the
 real date in the middle of all seven: `OutlookAI-Unindexed` and `OutlookAI-Unindexed3` (both `CP-18B-FROZEN-CLOCK`)

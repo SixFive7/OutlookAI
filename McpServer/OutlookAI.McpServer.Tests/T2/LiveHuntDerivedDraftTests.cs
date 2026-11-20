@@ -24,10 +24,13 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// and edited and the inspector closed with olSave - the product's direct route - without the "Message" form page,
 /// which is what keeps such an edit (B3; without it, B2, the edit is not kept - nothing here needs it kept).</item>
 /// <item>BareCreators: Reply() or Forward() on the source, and what it returned released unsaved.</item>
+/// <item>PersonTyping: the product's drafts while a compose window stays open on screen - a new mail or a reply, by
+/// turns - with a line typed into it before each of them: a person writing in Outlook while an agent drafts.</item>
 /// </list>
 /// With <see cref="HuntPlan.ShowsEach"/> every draft comes after a compose window shown and closed - a reply or forward
 /// the object model made, promoted the product's own way and closed discarding - as the typed-text tests do before each
-/// of the product's drafts; the loops without it make no window at all.
+/// of the product's drafts; the loops without it make no window at all. With <see cref="HuntPlan.DisplaysEach"/> the
+/// product opens each of its drafts on screen, as the draft tools do by default, and the loop closes it as the person would.
 /// Gated twice: it runs only in a run that selects the compose collection alone (<see cref="Q149RunGate"/>), and only
 /// when the hunt's suite script named a variant (<see cref="HuntPlan.VariantVariable"/>); anywhere else it writes a
 /// NOT RUN line and makes nothing. Every draft is the hub's, carries the tag and this run's marker, and is deleted by
@@ -68,7 +71,9 @@ public sealed class LiveHuntDerivedDraftTests
             Environment.GetEnvironmentVariable(HuntPlan.VariantVariable),
             Environment.GetEnvironmentVariable(HuntPlan.LegMinutesVariable),
             Environment.GetEnvironmentVariable(HuntPlan.ShowEachVariable),
-            out string? why);
+            out string? why)?.WithPromoteAfter(Environment.GetEnvironmentVariable(HuntPlan.PromoteAfterVariable), out why)
+            ?.WithReleaseAfterClose(Environment.GetEnvironmentVariable(HuntPlan.ReleaseAfterCloseVariable), out why)
+            ?.WithDisplay(Environment.GetEnvironmentVariable(HuntPlan.DisplayVariable), out why);
         if (plan == null)
         {
             _output.WriteLine("NOT RUN: " + why + ".");
@@ -135,7 +140,10 @@ public sealed class LiveHuntDerivedDraftTests
             .Set("legMinutes", plan.LegMinutes)
             .Set("maker", plan.Maker.ToString())
             .Set("showsEach", plan.ShowsEach)
-            .Set("typesEach", plan.TypesEach);
+            .Set("typesEach", plan.TypesEach)
+            .Set("promotesAfter", plan.PromotesAfter)
+            .Set("releasesAfterClose", plan.ReleasesAfterClose)
+            .Set("displaysEach", plan.DisplaysEach);
         if (plan.ShowsCalendar)
         {
             start.Set("moved", MoveMainWindowToTheCalendar(client));
@@ -150,6 +158,8 @@ public sealed class LiveHuntDerivedDraftTests
         drafts.Allow(sourceEntryId);
         Stopwatch leg = Stopwatch.StartNew();
         TimeSpan budget = TimeSpan.FromMinutes(plan.LegMinutes);
+        PersonWindow? person = null;
+        int personWindows = 0;
         int made = 0;
         int failed = 0;
         int failedInARow = 0;
@@ -165,14 +175,26 @@ public sealed class LiveHuntDerivedDraftTests
             bool going = false;
             try
             {
+                if (plan.KeepsAWindowOpen)
+                {
+                    if (person == null)
+                    {
+                        personWindows++;
+                        person = PersonWindow.Open(this, drafts, client, sourceEntryId, storeId, newMail: personWindows % 2 == 1, personWindows);
+                    }
+
+                    attempt.Set("personWindow", personWindows).Set("personKind", person.Kind);
+                    person.Type(client, "Person line " + i.ToString(CultureInfo.InvariantCulture));
+                }
+
                 if (plan.ShowsEach)
                 {
-                    ShowAndClose(drafts, client, sourceEntryId, storeId, forward, i, attempt, plan.TypesEach);
+                    ShowAndClose(drafts, client, sourceEntryId, storeId, forward, i, attempt, plan.TypesEach, plan.ReleasesAfterClose);
                 }
 
                 entryId = plan.Maker switch
                 {
-                    HuntMaker.Product => ProductDraft(sourceEntryId, forward, i),
+                    HuntMaker.Product => ProductDraft(sourceEntryId, forward, i, plan.DisplaysEach),
                     HuntMaker.NoFormPage => DirectWithoutTheFormPage(drafts, client, sourceEntryId, storeId, forward, i, attempt),
                     _ => BareCreator(client, sourceEntryId, storeId, forward),
                 };
@@ -190,6 +212,37 @@ public sealed class LiveHuntDerivedDraftTests
             }
 
             attempt.Set("ms", one.ElapsedMilliseconds).Set("made", made).Set("atSecond", (long)leg.Elapsed.TotalSeconds);
+            if (entryId != null && plan.DisplaysEach)
+            {
+                // As the person the product opened it for: the compose window closed, discarding nothing the product saved.
+                try
+                {
+                    attempt.Set("displayedClosed", CloseDisplayed(client, entryId));
+                }
+                catch (Exception ex) when (ex is InvalidOperationException or TimeoutException || OutlookComSession.IsComCallFailure(ex) || LiveOutlookRestart.IsSessionGone(ex))
+                {
+                    attempt.Set("displayedCloseFailure", Q149Com.Failure(ex));
+                    failure ??= Describe(ex);
+                    going = going || HuntPlan.SaysOutlookIsGoing(failure) || LiveOutlookRestart.IsSessionGone(ex);
+                }
+            }
+
+            if (entryId != null && plan.PromotesAfter)
+            {
+                // As the typed-text tests read every draft of the product's: re-opened, promoted, closed discarding.
+                try
+                {
+                    (_, string? promoted) = Q149Editor.ReadLookOf(drafts, client, entryId, storeId, readLayout: false);
+                    attempt.Set("promotedAfter", promoted == "layout not read (ablation)" ? "promoted" : promoted);
+                }
+                catch (Exception ex) when (ex is InvalidOperationException or TimeoutException || OutlookComSession.IsComCallFailure(ex) || LiveOutlookRestart.IsSessionGone(ex))
+                {
+                    attempt.Set("promoteAfterFailure", Q149Com.Failure(ex));
+                    failure ??= Describe(ex);
+                    going = going || HuntPlan.SaysOutlookIsGoing(failure) || LiveOutlookRestart.IsSessionGone(ex);
+                }
+            }
+
             if (entryId != null)
             {
                 Delete(entryId, attempt);
@@ -197,11 +250,22 @@ public sealed class LiveHuntDerivedDraftTests
 
             alive = failure == null ? Alive(pid) : StaysAlive(pid, going ? GoingWait : FailureWait);
             attempt.Set("outlookAlive", alive).Set("visibleWindows", WindowProbe.VisibleOutlookWindows().Count);
+            if (person != null && alive && i % HuntPlan.DraftsPerOpenWindow == 0)
+            {
+                attempt.Set("personClosed", person.CloseAndDelete(client));
+                person = null;
+            }
+
             Run.Write(attempt);
             if (HuntPlan.StopsAfter(alive, failedInARow))
             {
                 break;
             }
+        }
+
+        if (person != null && alive)
+        {
+            person.CloseAndDelete(client);
         }
 
         Q149Attempt end = new(plan.Cell + "-summary", 0);
@@ -217,15 +281,61 @@ public sealed class LiveHuntDerivedDraftTests
         Assert.True(failedInARow < HuntPlan.MostFailuresInARow, "hunt: " + failedInARow.ToString(CultureInfo.InvariantCulture) + " drafts in a row failed with Outlook still running - the attempt lines say how");
     }
 
-    /// <summary>The product's own reply_draft or forward_draft of the source, display off.</summary>
-    private string ProductDraft(string sourceEntryId, bool forward, int i)
+    /// <summary>The product's own reply_draft or forward_draft of the source, display off - or on, the tools' default, with <paramref name="display"/>.</summary>
+    private string ProductDraft(string sourceEntryId, bool forward, int i, bool display = false)
     {
         LiveStoreWriteGuard.Assert(Run.Hub, StoreWriteKind.Draft, forward ? "hunt forward_draft" : "hunt reply_draft");
         string text = "Hunt " + (forward ? "forward " : "reply ") + i.ToString(CultureInfo.InvariantCulture) + " " + Run.Marker;
         DraftOutcome made = forward
-            ? _fixture.Service.ForwardDraft(sourceEntryId, text, to: Run.Hub, display: false, signature: null)
-            : _fixture.Service.ReplyDraft(sourceEntryId, text, replyAll: false, display: false, signature: null);
+            ? _fixture.Service.ForwardDraft(sourceEntryId, text, to: Run.Hub, display: display, signature: null)
+            : _fixture.Service.ReplyDraft(sourceEntryId, text, replyAll: false, display: display, signature: null);
         return made.EntryId;
+    }
+
+    /// <summary>
+    /// DisplaysEach: closes the compose window the product opened on <paramref name="entryId"/>, discarding nothing the
+    /// product saved, as the person it was opened for would. Says whether Outlook had one open on it.
+    /// </summary>
+    private static bool CloseDisplayed(Q149OutlookClient client, string entryId)
+    {
+        return client.Run((app, ns) =>
+        {
+            dynamic? inspectors = null;
+            try
+            {
+                inspectors = app.Inspectors;
+                for (int n = (int)inspectors.Count; n >= 1; n--)
+                {
+                    dynamic? inspector = null;
+                    dynamic? current = null;
+                    try
+                    {
+                        inspector = inspectors.Item(n);
+                        current = inspector.CurrentItem;
+                        if (string.Equals((string?)current.EntryID, entryId, StringComparison.Ordinal))
+                        {
+                            inspector.Close(LiveComposeProbe.OlDiscard);
+                            return true;
+                        }
+                    }
+                    catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+                    {
+                        // An inspector closing as it was read: not the one the product opened.
+                    }
+                    finally
+                    {
+                        Q149Com.Release(current);
+                        Q149Com.Release(inspector);
+                    }
+                }
+
+                return false;
+            }
+            finally
+            {
+                Q149Com.Release(inspectors);
+            }
+        });
     }
 
     /// <summary>
@@ -311,9 +421,11 @@ public sealed class LiveHuntDerivedDraftTests
     /// opened in an inspector and promoted the product's own way - parked off screen, activated, hidden
     /// (<see cref="ComposeSurface.PromoteForWordEditor(object, out string?)"/>), as the typed-text tests read every draft -
     /// then closed discarding and deleted. Activating it is what OutlookAI's own add-in puts its task pane on; closing it
-    /// is what the add-in takes the pane off at.
+    /// is what the add-in takes the pane off at. The window's Word document is released before the window is closed,
+    /// as <see cref="Q149Editor.ReadLookOf"/> releases it - or, with <paramref name="releaseAfterClose"/> on a typed
+    /// window, after it, as the typed-text tests release theirs (<see cref="HuntPlan.ReleasesAfterClose"/>).
     /// </summary>
-    private void ShowAndClose(Q149Run drafts, Q149OutlookClient client, string sourceEntryId, string storeId, bool forward, int i, Q149Attempt attempt, bool typed)
+    private void ShowAndClose(Q149Run drafts, Q149OutlookClient client, string sourceEntryId, string storeId, bool forward, int i, Q149Attempt attempt, bool typed, bool releaseAfterClose)
     {
         Stopwatch shown = Stopwatch.StartNew();
         (string entryId, _) = Q149Drafts.CreateDerivedWithoutInspector(drafts, client, sourceEntryId, storeId, forward, "hunt-shown-" + i.ToString(CultureInfo.InvariantCulture));
@@ -350,7 +462,11 @@ public sealed class LiveHuntDerivedDraftTests
                 }
                 finally
                 {
-                    Q149Com.Release(document);
+                    if (!releaseAfterClose)
+                    {
+                        Q149Com.Release(document);
+                    }
+
                     if (inspector != null)
                     {
                         try
@@ -360,6 +476,12 @@ public sealed class LiveHuntDerivedDraftTests
                         catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
                         {
                         }
+                    }
+
+                    if (releaseAfterClose)
+                    {
+                        // As the typed-text tests' TypeIntoTheComposeWindow: the document outlives the window it was typed in.
+                        Q149Com.Release(document);
                     }
 
                     Q149Com.Release(inspector);
@@ -401,6 +523,101 @@ public sealed class LiveHuntDerivedDraftTests
             Q149Com.Release(selection);
             Q149Com.Release(window);
             Q149Com.Release(windows);
+        }
+    }
+
+    /// <summary>
+    /// PersonTyping's open compose window: a new mail or a reply of this leg's, saved by the object model, re-opened by
+    /// its EntryID and displayed on screen, typed into before each of the product's drafts and closed discarding after
+    /// <see cref="HuntPlan.DraftsPerOpenWindow"/> of them. Its objects live on the probe client's STA, where they were made.
+    /// </summary>
+    private sealed class PersonWindow
+    {
+        private readonly LiveHuntDerivedDraftTests _test;
+        private readonly string _entryId;
+        private object? _item;
+        private object? _inspector;
+        private object? _document;
+
+        private PersonWindow(LiveHuntDerivedDraftTests test, string entryId, string kind)
+        {
+            _test = test;
+            _entryId = entryId;
+            Kind = kind;
+        }
+
+        public string Kind { get; }
+
+        public static PersonWindow Open(LiveHuntDerivedDraftTests test, Q149Run drafts, Q149OutlookClient client, string sourceEntryId, string storeId, bool newMail, int n)
+        {
+            string label = "hunt-person-" + n.ToString(CultureInfo.InvariantCulture);
+            string entryId = newMail
+                ? Q149Drafts.CreateTaggedDraft(drafts, client, label, htmlBody: null, addressToHub: true).EntryId
+                : Q149Drafts.CreateDerivedWithoutInspector(drafts, client, sourceEntryId, storeId, forward: false, label).EntryId;
+            PersonWindow window = new(test, entryId, newMail ? "new" : "reply");
+            client.Run<object?>((app, ns) =>
+            {
+                dynamic item = ns.GetItemFromID(entryId, storeId);
+                window._item = (object)item;
+                Q149Drafts.RequireOwnUnsentDraft(drafts, item);
+                item.Display(false);
+                window._inspector = (object)item.GetInspector;
+                Q149EditorRead read = Q149Editor.ReadEditor(window._inspector, 10_000, 250);
+                window._document = read.Document ?? throw new InvalidOperationException("hunt: no editor in the person's displayed compose window");
+                return null;
+            });
+            return window;
+        }
+
+        public void Type(Q149OutlookClient client, string line)
+        {
+            client.Run<object?>((app, ns) =>
+            {
+                TypeAtTheInsertionPoint(_document!, line + " " + _test.Run.Marker);
+                return null;
+            });
+        }
+
+        /// <summary>Closes the window discarding and deletes its draft through the tested helper. Says whether the delete applied.</summary>
+        public bool CloseAndDelete(Q149OutlookClient client)
+        {
+            try
+            {
+                client.Run<object?>((app, ns) =>
+                {
+                    try
+                    {
+                        ((dynamic)_inspector!).Close(LiveComposeProbe.OlDiscard);
+                    }
+                    catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+                    {
+                    }
+                    finally
+                    {
+                        Q149Com.Release(_document);
+                        Q149Com.Release(_inspector);
+                        Q149Com.Release(_item);
+                        _document = null;
+                        _inspector = null;
+                        _item = null;
+                    }
+
+                    return null;
+                });
+            }
+            catch (Exception ex) when (ex is TimeoutException or InvalidOperationException || OutlookComSession.IsComCallFailure(ex))
+            {
+                return false;
+            }
+
+            try
+            {
+                return LiveOutlookTestMailer.DeleteItemByEntryId(_test.Run.Hub, _entryId, _test.Run.Marker);
+            }
+            catch (Exception ex) when (ex is InvalidOperationException || OutlookComSession.IsComCallFailure(ex))
+            {
+                return false;
+            }
         }
     }
 
