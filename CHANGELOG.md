@@ -1206,6 +1206,19 @@ its mailbox tests on, and change nothing you install.
   would overwrite the change or copy it into the mailbox, and says to use Outlook instead. Roaming on
   Microsoft 365 Apps itself is not tested: the test machines run perpetual Office only.
 
+- ✅ **The guest scripts' copies of the test tag, prefix and account classes are held to the C# (Q171).**
+  Five guest scripts spell out values the C# holds, because they run on the test guests with no
+  assembly of this repository loaded. `Install-MailSink.ps1` writes the live tier's subject tag
+  `[OutlookAI-McpTest]`, `Measure-SignatureDialog.ps1` and `Measure-SignatureRoaming.ps1` the test
+  signatures' prefix `OutlookAI-McpTest-`, `Add-IdentityAccount.ps1` the POP3 account class, and
+  `ScriptHelpers.ps1`'s `Test-IsMailAccountEntry` the MAPI service class with the five data-file and
+  address-book service names. Nothing compared them. The new T1 `ScriptConstantCopyTests` reads
+  each declaration and holds it to `LiveOutlookTestMailer.SubjectTag`,
+  `SignatureCatalog.TestSignaturePrefix` and `ProfileAccountEntries`' classes and service names, and
+  changes no script: Q171's checked copies, settled for these on 2026-11-20.
+  `Connect-ExchangeAccount.ps1`'s `AccountType -eq 0` is not among them, because no C# here reads an
+  account's type, so it copies nothing.
+
 - ♻️ **Core and the testbed's settings script share one copy of their Windows file calls (Q171).**
   `Testbed/host/New-LiveTestSettings.ps1` makes sure the file it writes does not really land in a
   `live-fixtures` folder: it opens the folder for no access, asks Windows for its final path and
