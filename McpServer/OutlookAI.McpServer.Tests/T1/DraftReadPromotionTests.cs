@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Xunit;
 
 namespace OutlookAI.McpServer.Tests.T1;
@@ -118,11 +119,14 @@ public sealed class DraftReadPromotionTests
         return -1;
     }
 
-    /// <summary>The member's name: the word before the first parenthesis of its declaration line.</summary>
+    /// <summary>
+    /// The member's name: the first word its declaration line puts straight before a parenthesis - so not a tuple it
+    /// returns, whose parenthesis follows a space (<c>internal static (List&lt;WordParagraphLook&gt;? Look, string? Failure) ReadLookOf(</c>).
+    /// </summary>
     private static string MemberName(string declaration)
     {
-        string head = declaration[..declaration.IndexOf('(', StringComparison.Ordinal)].TrimEnd();
-        int space = head.LastIndexOf(' ');
-        return space < 0 ? head : head[(space + 1)..];
+        Match name = Regex.Match(declaration, @"\b([A-Za-z_]\w*)(?:<[^<>()]*>)?\(");
+        Assert.True(name.Success, "no member name in: " + declaration.Trim());
+        return name.Groups[1].Value;
     }
 }
