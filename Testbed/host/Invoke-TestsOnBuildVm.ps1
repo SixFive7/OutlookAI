@@ -852,6 +852,9 @@ function Invoke-SelfTest {
     $runOwner = '[ordered]@{ runId = $runId; pid = $PID; processStartUnix = ([DateTimeOffset](Get-Process -Id $PID).StartTime).ToUnixTimeSeconds(); ref = $Ref'
     Check 'a run''s owner file says when its process started, as a queue ticket does, and so does a janitor''s' $true ($mainCode.Contains($runOwner) -and $mainCode.Contains('[ordered]@{ runId = "janitor for $JanitorRunId"; pid = $PID; processStartUnix = ([DateTimeOffset](Get-Process -Id $PID).StartTime).ToUnixTimeSeconds();'))
     Check 'the gone line is written before the run writes its own owner file over the old one' $true ($mainCode.IndexOf('if ($goneLine) { Write-History $goneLine }') -gt 0 -and $mainCode.IndexOf('if ($goneLine) { Write-History $goneLine }') -lt $mainCode.IndexOf($runOwner))
+    $leaseDecisions = [regex]::Matches($mainCode, 'Get-LeaseDecision \$lease "\$LeaseReasonPrefix \$runId" \(\[DateTimeOffset\]::UtcNow\.ToUnixTimeSeconds\(\)\) -IsAlive \$\{function:Test-TestbedTicketAlive\}\) -eq ''theirs''').Count
+    Check 'a lease that is not a build run''s holds a member back only while its process lives, on a turn and under the claim alike' 2 $leaseDecisions
+    Check 'a run and the janitor release a lease with the reason it was taken with' $true ($mainCode.Contains('-VMName $BuildVmName -Release -Reason "$LeaseReasonPrefix $runId"') -and $mainCode.Contains('-VMName $BuildVmName -Release -Reason "$LeaseReasonPrefix $JanitorRunId"'))
     Check 'and the janitor says who holds a lock as a queued run does, in one place' $true ($mainCode.Contains('$who = Get-LockHolder $ownerPath') -and -not $mainCode.Contains('"run $($o.runId) (pid'))
 
     Write-Host ''
@@ -1486,7 +1489,7 @@ function Enter-PoolVm([string[]] $Candidates, [int] $TimeoutMinutes) {
                     if ($here -notcontains $name) { $why.Add("$name is not on this host"); continue }
                     if ($ahead.ContainsKey($name)) { $why.Add("$name is wanted first by run $($ahead[$name]), queued before this one"); continue }
                     $lease = Get-TestbedLease -VMName $name
-                    if ($null -ne $lease -and -not ([string]$lease.reason).StartsWith($LeaseReasonPrefix)) { $why.Add("$name is leased by hand until $($lease.expiresUtc) - '$($lease.reason)'"); continue }
+                    if ($null -ne $lease -and -not ([string]$lease.reason).StartsWith($LeaseReasonPrefix) -and (Get-LeaseDecision $lease "$LeaseReasonPrefix $runId" ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()) -IsAlive ${function:Test-TestbedTicketAlive}) -eq 'theirs') { $why.Add("$name is leased by hand until $($lease.expiresUtc) - '$($lease.reason)'"); continue }
                     if ($i -gt 0) {
                         # The reserve: the startup memory read before the wait, the host's memory now - no WMI.
                         if (-not $startupBytes.ContainsKey($name)) { $why.Add("$name is passed over: Hyper-V did not say its startup memory before the wait"); continue }
@@ -1510,7 +1513,7 @@ function Enter-PoolVm([string[]] $Candidates, [int] $TimeoutMinutes) {
                         $claim = Enter-TestbedLeaseClaim -VMName $name
                         try {
                             $lease = Get-TestbedLease -VMName $name
-                            if ($null -ne $lease -and -not ([string]$lease.reason).StartsWith($LeaseReasonPrefix)) { $byHand = $lease }
+                            if ($null -ne $lease -and -not ([string]$lease.reason).StartsWith($LeaseReasonPrefix) -and (Get-LeaseDecision $lease "$LeaseReasonPrefix $runId" ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()) -IsAlive ${function:Test-TestbedTicketAlive}) -eq 'theirs') { $byHand = $lease }
                             else {
                                 $leaseOutput = & (Join-Path $PSScriptRoot 'Set-TestbedLease.ps1') -VMName $name -Minutes ([Math]::Min(480, $RunTimeoutMinutes + 20)) -Reason "$LeaseReasonPrefix $runId"
                                 $script:leaseTaken = $true
@@ -1719,7 +1722,7 @@ if ($PSCmdlet.ParameterSetName -eq 'Janitor') {
         }
         $lease = Get-TestbedLease -VMName $BuildVmName
         if ($null -ne $lease -and ([string]$lease.reason) -eq "$LeaseReasonPrefix $JanitorRunId") {
-            & (Join-Path $PSScriptRoot 'Set-TestbedLease.ps1') -VMName $BuildVmName -Release | Out-Null
+            & (Join-Path $PSScriptRoot 'Set-TestbedLease.ps1') -VMName $BuildVmName -Release -Reason "$LeaseReasonPrefix $JanitorRunId" | Out-Null
             Write-JanitorLine 'released the dead run''s lease'
         }
         Write-History "janitor $JanitorRunId  its caller stopped part-way; the janitor put the VM back"
@@ -2170,7 +2173,7 @@ finally {
     if ($leaseTaken) {
         try {
             $current = Get-TestbedLease -VMName $BuildVmName
-            if ($null -ne $current -and ([string]$current.reason) -eq "$LeaseReasonPrefix $runId") { & (Join-Path $PSScriptRoot 'Set-TestbedLease.ps1') -VMName $BuildVmName -Release | Out-Null }
+            if ($null -ne $current -and ([string]$current.reason) -eq "$LeaseReasonPrefix $runId") { & (Join-Path $PSScriptRoot 'Set-TestbedLease.ps1') -VMName $BuildVmName -Release -Reason "$LeaseReasonPrefix $runId" | Out-Null }
         }
         catch { Say "lease: could not release it ($($_.Exception.Message)); it expires by itself" }
     }
