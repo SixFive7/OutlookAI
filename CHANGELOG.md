@@ -2452,6 +2452,15 @@ its mailbox tests on, and change nothing you install.
   Items - beside the mail, and none of them could be opened. On the test machine they were 21 of the
   first 100 results.
 
+- ✅ **The guests' sweep measurement names its store and folder by ID, as the server asks.**
+  `Testbed/guest/Invoke-GuestMeasure.ps1` still passed the store's display name and the one-folder
+  scan's folder name, which `list_folders` and `search` refuse since stores and folders became
+  addressed by ID, so its folder inventory and both exhaustive scans measured a refusal. It now
+  looks the store up through `list_accounts`, by its display name, and the folder through
+  `list_folders`, by its path in that store, and passes `store_id` and `folder_id`. A name that
+  matches no store or folder, or more than one, is written down, and the scans that need it are not
+  run.
+
 - ✅ **Two package checks started in the same second get an output folder each.**
   `Tools/Test-VulnerablePackages.ps1`, the release's check for NuGet packages with a known
   vulnerability, named its output folder for the second it started and made it with
