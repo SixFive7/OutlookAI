@@ -324,7 +324,9 @@ its mailbox tests on, and change nothing you install.
   forwards beside a compose window a line was typed into before each, and Outlook did not crash.
   A loop of the product's drafts, each after a typed window and each re-opened and promoted as soon as
   it was made, crashed the same way in 2 and in 8 minutes; without the re-opening it made 802 and did
-  not crash, so the re-opening of the product's drafts is the step the crash needs.
+  not crash, so the re-opening of the product's drafts is the step the crash needs. Re-opening and
+  promoting each of them with no window before it crashed Outlook on the 121st. The product's drafts
+  displayed as the draft tools display them by default, and closed, did not crash in 943.
   Every hunting run also records Office's build and
   the hunted module's file, and the summary shows both, and the summary counts the .NET exceptions
   Outlook threw, from the debugger's log, so a return of the add-in's failing ribbon callback shows. `-HuntWithoutAddIn` turns OutlookAI's own add-in off

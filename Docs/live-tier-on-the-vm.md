@@ -5784,23 +5784,45 @@ nine hunts of the crashing tests crashed eight times in 1,248 of the product's d
 typed into the compose window open on screen - 487 windows, new mails and replies by turns, each closed after five
 drafts - and Outlook did not crash.
 
-**A loop that re-opens each of the product's drafts after a typed window crashes in minutes.** Three runs at 4cd48e4
-on `OutlookAI-Indexed`, each ProductLoop with `-HuntShowEach -HuntTypeEach` and the add-in loaded, for up to two legs
-of ten minutes:
+**Re-opening and promoting each of the product's drafts is the step the crash needs.** Six loops on
+`OutlookAI-Indexed` (`CP-24C-FROZEN-CLOCK`), the add-in loaded, each for up to two legs of ten minutes, ProductLoop
+unless the first column says otherwise. "A typed window" is `-HuntShowEach -HuntTypeEach`, and "late" adds
+`-HuntReleaseAfterClose`; "re-opened and promoted" is `-HuntPromoteAfter`, and "displayed" `-HuntDisplayEach`:
 
-| Run | Each draft also | Made | The crash |
-| --- | --- | --- | --- |
-| `20261120-124029-indexed-4cd48e4fc28d` | `-HuntReleaseAfterClose -HuntPromoteAfter` | 46 | the 47th, a reply, 120 s in |
-| `20261120-125328-indexed-4cd48e4fc28d` | `-HuntReleaseAfterClose` | 802 | none in 20 minutes |
-| `20261120-132244-indexed-4cd48e4fc28d` | `-HuntPromoteAfter` | 290 | the 291st, a reply, 483 s in |
+| Run | Before each draft | After each draft | Made | The crash |
+| --- | --- | --- | --- | --- |
+| `20261120-124029-indexed-4cd48e4fc28d` | a typed window, late | re-opened and promoted | 46 | the 47th, a reply, 120 s in |
+| `20261120-125328-indexed-4cd48e4fc28d` | a typed window, late | - | 802 | none in 20 minutes |
+| `20261120-132244-indexed-4cd48e4fc28d` | a typed window | re-opened and promoted | 290 | the 291st, a reply, 483 s in |
+| `20261120-134124-indexed-4cd48e4fc28d` | - | re-opened and promoted | 120 | the 121st, a reply, 275 s in |
+| `20261120-135734-indexed-fd92a6656f99` | - | displayed, and closed | 943 | none in 20 minutes |
+| `20261120-142641-indexed-120fb2e003b9`, NoFormPage | - | re-opened and promoted | 1,825 | none in 20 minutes |
 
-Both crashes met the first catch's fault - an access violation writing 0x40008 at `mso40uiwin32client.dll+0x11DA7E`,
-the same stack, the kernel's callback left as 0xC000041D - in the product's reply, before Outlook was given anything to
-save (0x800706BE). So what the crashing tests do and the earlier loops did not is re-open each of the product's drafts
-as soon as it is made and promote it - its inspector parked off screen, activated and hidden - and close it. Whether
-the typed window lets go of its Word document before or after it closes does not decide it. The loops share one
-source mail among all their drafts and pass the product no signature, so the crash needs neither a source of each
-test's own nor a signature, and the source ablation was not run.
+The three crashes met the fault of every one before them - an access violation writing 0x40008, at
+`mso40uiwin32client.dll+0x11DA7E` in the first two and `+0x11D8C7` in the third, the kernel's callback left as
+0xC000041D - in the product's next reply. So the step is the one the typed-text tests take to read every draft of the
+product's (`Q149Editor.ReadLookOf`): re-opening it by its EntryID as soon as it is made and promoting its inspector
+the product's way, `ComposeSurface.PromoteForWordEditor` - the windows that would show parked off screen, the
+inspector activated, whatever became visible hidden with `ShowWindow` - then closing it. Without a typed window it
+crashed all the same, and with one, whether that window let go of its Word document before or after it closed did not
+decide it. The loops
+share one source mail among all their drafts and pass the product no signature, so the crash needs neither a source
+of each test's own nor a signature, and the source ablation was not run.
+
+Promoting is not displaying. The product's drafts displayed the way the draft tools display them by default -
+`Display()`, no window parked or hidden - and closed with `Close(olDiscard)` as the person would, did not crash in
+943, and Outlook found the window open on each one. Nor did the object model's plain replies and forwards, promoted the
+same way before each of the product's (1,704 above). Nor did NoFormPage's, re-opened and promoted after each: the
+object model's direct route without the "Message" form page, 1,825 of them. In that last loop the add-in threw 115
+.NET exceptions in all, where every other loop with a promoted window threw about two a window, so most of those
+windows were closed before Outlook refreshed their ribbon; whether the form page the product adds, or the window
+coming up whole, is what the crash needs is not settled by it.
+
+In a windowed Outlook the product promotes nothing: it composes through the direct route and displays with
+`Display()`. It promotes in an Outlook with no window, once a process, for that process's first draft (Q208 B), and
+that was not hunted: NoWindow was not run. So none of the ways the product is used on a person's Outlook that these
+hunts tried crashed it: the agent's drafts with display off (6,024) and on (943), and a person typing in a compose
+window while the agent drafted (2,431).
 
 **A frozen clock jumped in every hunt that ran past 35 minutes.** The guest's clock left its frozen instant for the
 real date in the middle of all seven: `OutlookAI-Unindexed` and `OutlookAI-Unindexed3` (both `CP-18B-FROZEN-CLOCK`)
