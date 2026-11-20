@@ -104,10 +104,11 @@
   S6 folded the server's own repetition, the survey's S01 to S14, but for four shapes it left: the
   two draft results' shared fields (S04, S11), which a base class would move to one block of the
   JSON every draft tool returns - question 233 to the maintainer; the parameter lists the draft
-  tools and the COM host's two invoke methods each declare (S12, S13); and the corpus tool's
+  tools each declare (S12); and the corpus tool's
   thirteen STA operations, which each opened the corpus store and released it the same way (S14),
   are folded in S5b: one `WithOutlook`, and `WithCorpusStore` on it for the twelve that work in one
-  store. S10 had gone already with the incident commands (Q170 (a)). The hex stage
+  store. The COM host's two invoke methods, which declared the same six parameters (S13), are one
+  `InvokeAsync`. S10 had gone already with the incident commands (Q170 (a)). The hex stage
   put the product's writers of bytes as hexadecimal, and its readers of them, into Core's `Hex`, and
   the nine catch blocks it found writing out the text of the shared `ComObjects.DescribeFailure`
   call it now. S5a has begun: the live tests' window calls are Core's `NativeWindows` and one

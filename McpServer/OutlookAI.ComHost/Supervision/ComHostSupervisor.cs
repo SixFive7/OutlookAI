@@ -126,46 +126,6 @@ namespace OutlookAI.ComHost.Supervision
         }
 
         /// <summary>
-        /// Invokes a contract operation on the child, bounded by its deadline.
-        /// </summary>
-        /// <exception cref="ComHostTimeoutException">The deadline expired; the child was killed.</exception>
-        /// <exception cref="ComHostUnavailableException">No child could be started.</exception>
-        internal async Task<ComHostInvocationResult> InvokeAsync(
-            string operation,
-            object? arguments,
-            ComHostOperationClass operationClass,
-            long? deadlineOverrideMilliseconds,
-            bool allowConnectFloor,
-            CancellationToken cancellationToken)
-        {
-            ObjectDisposedException.ThrowIf(_disposed, this);
-
-            GateOutlookLiveness();
-
-            BreakerVerdict verdict = ComHostPolicy.DecideBreaker(new BreakerInput(
-                Volatile.Read(ref _consecutiveTimeouts),
-                MillisecondsSince(Volatile.Read(ref _lastTimeoutTimestamp))));
-
-            if (verdict == BreakerVerdict.Open)
-            {
-                // Fail in microseconds rather than spending another full budget to
-                // rediscover what the last two requests established.
-                throw new ComHostUnresponsiveException(
-                    Volatile.Read(ref _consecutiveTimeouts), ComHostPolicy.UnresponsiveRetryAfterSeconds);
-            }
-
-            if (verdict == BreakerVerdict.HalfOpen && !await ProbeAliveAsync(cancellationToken).ConfigureAwait(false))
-            {
-                throw new ComHostUnresponsiveException(
-                    Volatile.Read(ref _consecutiveTimeouts), ComHostPolicy.UnresponsiveRetryAfterSeconds);
-            }
-
-            return await InvokeCoreAsync(
-                    operation, arguments, operationClass, deadlineOverrideMilliseconds, allowConnectFloor, cancellationToken)
-                .ConfigureAwait(false);
-        }
-
-        /// <summary>
         /// Consults Windows about Outlook before spending anything on COM.
         /// <para>
         /// Three things fall out of one free check. A hung Outlook is refused instantly
@@ -320,13 +280,14 @@ namespace OutlookAI.ComHost.Supervision
             {
                 try
                 {
-                    _ = await InvokeCoreAsync(
+                    _ = await InvokeAsync(
                             nameof(OutlookAI.Core.Com.IOutlookSession.GetProfileName),
                             null,
                             ComHostOperationClass.Connect,
                             null,
                             allowConnectFloor: false,
-                            CancellationToken.None)
+                            CancellationToken.None,
+                            throughGates: false)
                         .ConfigureAwait(false);
                 }
                 catch (Exception)
@@ -352,13 +313,14 @@ namespace OutlookAI.ComHost.Supervision
         {
             try
             {
-                _ = await InvokeCoreAsync(
+                _ = await InvokeAsync(
                         nameof(OutlookAI.Core.Com.IOutlookSession.GetProfileName),
                         null,
                         ComHostOperationClass.HealthProbe,
                         ComHostPolicy.HealthProbeDeadlineMilliseconds,
                         allowConnectFloor: false,
-                        cancellationToken)
+                        cancellationToken,
+                        throughGates: false)
                     .ConfigureAwait(false);
                 return true;
             }
@@ -372,14 +334,48 @@ namespace OutlookAI.ComHost.Supervision
             }
         }
 
-        private async Task<ComHostInvocationResult> InvokeCoreAsync(
+        /// <summary>
+        /// Invokes a contract operation on the child, bounded by its deadline - after the gates: the liveness
+        /// check, the breaker, and the half-open probe. The supervisor's own warm-up and that probe pass
+        /// <paramref name="throughGates"/> false: the gates call the probe, and the warm-up starts the child they
+        /// would only refuse to wait for. One parameter list for all three (the code-sharing refactor's S13, Q154):
+        /// the gated call and the call past the gates used to be two methods declaring the same six parameters.
+        /// </summary>
+        /// <exception cref="ComHostTimeoutException">The deadline expired; the child was killed.</exception>
+        /// <exception cref="ComHostUnavailableException">No child could be started.</exception>
+        internal async Task<ComHostInvocationResult> InvokeAsync(
             string operation,
             object? arguments,
             ComHostOperationClass operationClass,
             long? deadlineOverrideMilliseconds,
             bool allowConnectFloor,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            bool throughGates = true)
         {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+
+            if (throughGates)
+            {
+                GateOutlookLiveness();
+
+                BreakerVerdict verdict = ComHostPolicy.DecideBreaker(new BreakerInput(
+                    Volatile.Read(ref _consecutiveTimeouts),
+                    MillisecondsSince(Volatile.Read(ref _lastTimeoutTimestamp))));
+
+                if (verdict == BreakerVerdict.Open)
+                {
+                    // Fail in microseconds rather than spending another full budget to
+                    // rediscover what the last two requests established.
+                    throw new ComHostUnresponsiveException(
+                        Volatile.Read(ref _consecutiveTimeouts), ComHostPolicy.UnresponsiveRetryAfterSeconds);
+                }
+
+                if (verdict == BreakerVerdict.HalfOpen && !await ProbeAliveAsync(cancellationToken).ConfigureAwait(false))
+                {
+                    throw new ComHostUnresponsiveException(
+                        Volatile.Read(ref _consecutiveTimeouts), ComHostPolicy.UnresponsiveRetryAfterSeconds);
+                }
+            }
 
             long deadline = ComHostPolicy.DeadlineFor(operationClass, deadlineOverrideMilliseconds);
 

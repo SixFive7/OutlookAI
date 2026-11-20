@@ -1303,17 +1303,19 @@ its mailbox tests on, and change nothing you install.
   message, and its date and placement probes pick their rung through one `CorpusProbeLadder`. The
   draft tools' descriptions that two or three tools wrote out word for word are constants, and the
   writing rules each tool checked before its call are one `WritingDraftAsync`. Left as they are,
-  with their reasons in the TODO list: the two draft results' shared fields and the tools' and the
-  COM host's parameter lists. The corpus tool's thirteen operations, which each opened Outlook, its
-  namespace and its stores and released them the same way, do it through one `WithOutlook` since
-  S5b, the twelve that work in one store through `WithCorpusStore` on it. The product's session, the
-  live tests' mailer, the compose drafts and the corpus tool start Outlook and find a store by its
-  name through one `OutlookAutomation`, and the mailer and the corpus tool release a COM object
-  through Core's `ComObjects.Release`, where each kept a copy. Since S6, Core declares each Win32
-  call once: the audit log's opening of its file and the attachment writer's of a folder or a file
-  were one declaration written twice, as were the session registry's and the start observer's
-  closing of a handle, and the audit log declared the current process's id beside the one the
-  add-in's window calls declare.
+  with their reasons in the TODO list: the two draft results' shared fields and the draft tools'
+  parameter lists. The COM host's supervisor, which declared the same six parameters for its gated
+  call and for its call past the gates, has one `InvokeAsync` since S13; its own warm-up and
+  liveness probe call it with `throughGates: false`. The corpus tool's thirteen operations, which
+  each opened Outlook, its namespace and its stores and released them the same way, do it through
+  one `WithOutlook` since S5b, the twelve that work in one store through `WithCorpusStore` on it.
+  The product's session, the live tests' mailer, the compose drafts and the corpus tool start
+  Outlook and find a store by its name through one `OutlookAutomation`, and the mailer and the
+  corpus tool release a COM object through Core's `ComObjects.Release`, where each kept a copy.
+  Since S6, Core declares each Win32 call once: the audit log's opening of its file and the
+  attachment writer's of a folder or a file were one declaration written twice, as were the session
+  registry's and the start observer's closing of a handle, and the audit log declared the current
+  process's id beside the one the add-in's window calls declare.
 
 - ♻️ **The live tests end and restart Outlook through one shared helper.**
   The compose measurement's stop in `LiveComposeProbe`, whose `Application.Quit()` from a client
