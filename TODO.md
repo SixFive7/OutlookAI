@@ -127,7 +127,8 @@
   `Tools/Publish-Release.ps1` compiles with Add-Type; the Windows file calls, the survey's X05, are
   Core's `Win32File`, which `Testbed/host/New-LiveTestSettings.ps1` compiles with Add-Type; and the
   guest scripts' copies of the test tag, the signature prefix and the account classes are held to
-  the C# by T1 `ScriptConstantCopyTests`.
+  the C# by T1 `ScriptConstantCopyTests`. `Connect-ExchangeAccount.ps1`'s `AccountType -eq 0`, Outlook's
+  value for an Exchange account, has no C# twin: nothing in C# reads an account's type.
   The attach to an Outlook already running is one copy, `Connect-RunningOutlook` in the shared file,
   which `Measure-FolderIdResolution.ps1`, `Measure-SignatureRoaming.ps1`, `Reset-HubPopulation.ps1`
   and `OutlookDialogUia.ps1`'s helper use. The other attaches stay as they are for now (2026-11-20):
