@@ -17,9 +17,9 @@
       2. LEASE   Set-TestbedLease.ps1, taken in one step with reading it (Enter-TestbedLeaseClaim).
       3. RESTORE the guest's frozen checkpoint (testbed.json frozenClocks, its source's for a clone),
                  start it, wait for its heartbeat and for PowerShell Direct.
-      4. STAGE   C:\OutlookAI-Q5\trust-removal\: the probe, Register-InteractiveTask.ps1 and
-                 OutlookMapiInterop.ps1 from this checkout, and for InstallerCleanup the installer and
-                 the Installer.iss it was compiled from.
+      4. STAGE   C:\OutlookAI-Q5\trust-removal\: the probe, Register-InteractiveTask.ps1 and the two
+                 files it dot-sources, OutlookMapiInterop.ps1 and ScriptHelpers.ps1, from this checkout,
+                 and for InstallerCleanup the installer and the Installer.iss it was compiled from.
       5. RUN     the probe through Register-InteractiveTask.ps1 at -RunLevel (Limited unless
                  -RunLevel says Highest), with -Execute.
       6. FETCH   its JSON, logs and certificate into .work\trust-removal-runs\<run>\ of this checkout.
@@ -205,7 +205,7 @@ if (-not $CredentialRepoRoot) {
 }
 $sha = (@(Invoke-NativeCommand { & git -C $repo rev-parse HEAD 2>&1 }) | Out-String).Trim()
 if ($LASTEXITCODE -ne 0 -or $sha -notmatch '^[0-9a-f]{40}$') { Stop-Refused "git could not read HEAD in $repo - $sha" }
-$dirty = @(Invoke-NativeCommand { & git -C $repo status --porcelain -- 'Testbed/guest/Measure-TrustRemoval.ps1' 'Testbed/guest/Register-InteractiveTask.ps1' 'Testbed/guest/OutlookMapiInterop.ps1' 'Installer.iss' 2>&1 } | Where-Object { $_ })
+$dirty = @(Invoke-NativeCommand { & git -C $repo status --porcelain -- 'Testbed/guest/Measure-TrustRemoval.ps1' 'Testbed/guest/Register-InteractiveTask.ps1' 'Testbed/guest/OutlookMapiInterop.ps1' 'Testbed/guest/ScriptHelpers.ps1' 'Installer.iss' 2>&1 } | Where-Object { $_ })
 
 $runId = New-RunId (Get-Date) $sha $Scenario
 $runsRoot = Join-Path $repo '.work\trust-removal-runs'
@@ -265,7 +265,8 @@ try {
     $stage = @(
         (Join-Path $repo 'Testbed\guest\Measure-TrustRemoval.ps1'),
         (Join-Path $repo 'Testbed\guest\Register-InteractiveTask.ps1'),
-        (Join-Path $repo 'Testbed\guest\OutlookMapiInterop.ps1'))
+        (Join-Path $repo 'Testbed\guest\OutlookMapiInterop.ps1'),
+        (Join-Path $repo 'Testbed\guest\ScriptHelpers.ps1'))
     if ($Scenario -eq 'InstallerCleanup') { $stage += @($InstallerPath, $installerIss) }
     foreach ($f in $stage) { Copy-Item -LiteralPath $f -Destination (Join-Path $GuestDir (Split-Path -Leaf $f)) -ToSession $session -Force }
     Say "staged $($stage.Count) file(s) in $GuestDir"
