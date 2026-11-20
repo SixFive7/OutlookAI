@@ -360,31 +360,10 @@ internal static class Q149Drafts
 
     internal static dynamic? FindStore(dynamic ns, string displayName)
     {
-        dynamic stores = ns.Stores;
+        object stores = ns.Stores;
         try
         {
-            int count = stores.Count;
-            for (int i = 1; i <= count; i++)
-            {
-                dynamic store = stores[i];
-                string? name = null;
-                try
-                {
-                    name = (string?)store.DisplayName;
-                }
-                catch (COMException)
-                {
-                }
-
-                if (string.Equals(name, displayName, StringComparison.OrdinalIgnoreCase))
-                {
-                    return store;
-                }
-
-                Q149Com.Release(store);
-            }
-
-            return null;
+            return OutlookAutomation.FindStore(stores, displayName);
         }
         finally
         {
