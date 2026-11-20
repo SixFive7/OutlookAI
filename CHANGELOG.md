@@ -280,6 +280,19 @@ its mailbox tests on, and change nothing you install.
   check fails, the reason is written out in full here rather than hidden behind a link. Both
   indicators now take their wording from one place, so they cannot disagree.
 
+- ✅ **The developer version, 99.99.99.0, is held to one value wherever it is written.**
+  Every build that is not a release carries it: the add-in through the two version attributes in
+  `Properties/AssemblyInfo.cs`, the mail server and its tools through
+  `McpServer/Directory.Build.props`. `Tools/Switch-AddInBuild.ps1` stamps it into a dev build's
+  manifests, and `Testbed/host/Publish-AddInPayload.ps1` builds at it by default and refuses it for
+  a release. The add-in's updater takes a major of 99 for a developer build and never updates one.
+  Nothing tied the six places together; the code-sharing survey counted three of them (X04).
+  Invariant 17 of `check-pinned-constants.ps1` fails when the six disagree, when their value is not
+  four parts, or when its major is not the one the updater takes for a developer build: had the
+  add-in's version moved alone, a developer build would have updated itself to the latest release in
+  the Outlook that ran it. It was broken four ways on the workstation - one place drifting, the
+  updater's major drifting, an attribute gone and a version cut to two parts - and failed each time.
+
 - ✅ **A hunting run puts a debugger on Outlook to catch the mso40uiwin32client.dll crash in a dump.**
   Two Outlook crashes in that module on 2026-11-18 left no dump, though Windows Error Reporting's
   local dumps were armed, and the evidence says the dump was lost inside WER.

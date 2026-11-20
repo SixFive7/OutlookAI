@@ -972,6 +972,54 @@ if ($p10Problems.Count -gt 0) {
     Pass $q171p10 "$($compilers.Count) scripts compile it ($($compilers -join ', ')); no script declares EnumWindows itself; $($routes.Count) staging routes carry it"
 }
 
+# ---------------------------------------------------------------------------------------------
+# 17. The developer version is one value wherever it is written (the code-sharing survey's X04).
+#     Every build that is not a release carries 99.99.99.0: the add-in through
+#     Properties/AssemblyInfo.cs, the mail server and its tools through McpServer/Directory.Build.props.
+#     Tools/Switch-AddInBuild.ps1 stamps it into a dev build's manifests; Testbed/host/Publish-AddInPayload.ps1
+#     builds at it by default and refuses it for a release, whose version is its own. And the add-in's
+#     updater reads a major of 99 as a developer build, which it never updates
+#     (UpdateService.RunCheckAsync). Six places in C#, MSBuild and PowerShell, which no compiler reads
+#     together: were the add-in's to move alone, a developer build would update itself to the latest
+#     release in the Outlook that runs it, and the payload builder would no longer refuse a release
+#     built at the developer version.
+# ---------------------------------------------------------------------------------------------
+$script:Checks++
+$devVersionWhat = 'the developer version is one value wherever it is written (the survey''s X04)'
+$devVersionSites = [ordered]@{
+    'Properties/AssemblyInfo.cs AssemblyVersion'                = @('Properties/AssemblyInfo.cs', '\[assembly:\s*AssemblyVersion\("([^"]+)"\)\]')
+    'Properties/AssemblyInfo.cs AssemblyFileVersion'            = @('Properties/AssemblyInfo.cs', '\[assembly:\s*AssemblyFileVersion\("([^"]+)"\)\]')
+    'McpServer/Directory.Build.props Version'                   = @('McpServer/Directory.Build.props', '<Version>([^<]+)</Version>')
+    'Tools/Switch-AddInBuild.ps1 $DevVersion'                   = @('Tools/Switch-AddInBuild.ps1', '(?m)^\$DevVersion\s*=\s*''([^'']+)''')
+    'Testbed/host/Publish-AddInPayload.ps1 $DeveloperVersion'   = @('Testbed/host/Publish-AddInPayload.ps1', '(?m)^\$DeveloperVersion\s*=\s*''([^'']+)''')
+    'Testbed/host/Publish-AddInPayload.ps1 -Version''s default' = @('Testbed/host/Publish-AddInPayload.ps1', '\[string\]\s*\$Version\s*=\s*''([^'']+)''')
+}
+$devVersions = [ordered]@{}
+foreach ($site in $devVersionSites.Keys) {
+    $found = Get-Pinned $devVersionSites[$site][0] $devVersionSites[$site][1] "developer version ($site)"
+    if ($found) { $devVersions[$site] = $found }
+}
+$updaterMajor = Get-Pinned 'Services/UpdateService.cs' 'GetName\(\)\.Version\.Major\s*==\s*(\d+)' 'developer version (UpdateService.cs, the updater''s test for a developer build)'
+if ($devVersions.Count -eq $devVersionSites.Count -and $updaterMajor) {
+    $distinct = @($devVersions.Values | Sort-Object -Unique)
+    $shape = [regex]::Match([string]$distinct[0], '^(\d+)\.\d+\.\d+\.\d+$')
+    $devProblems = @()
+    if ($distinct.Count -ne 1) {
+        $devProblems += "the six places hold $($distinct.Count) values: " + (@($devVersions.Keys | ForEach-Object { "$_ = $($devVersions[$_])" }) -join '; ')
+    }
+    elseif (-not $shape.Success) {
+        $devProblems += "'$($distinct[0])' is not a four-part version, which every one of the six places needs"
+    }
+    elseif ([int]$shape.Groups[1].Value -ne [int]$updaterMajor) {
+        $devProblems += "the developer version is $($distinct[0]), but the add-in's updater takes a major of $updaterMajor for a developer build (Services/UpdateService.cs), so it would update a developer build to the latest release"
+    }
+    if ($devProblems.Count -gt 0) {
+        Fail $devVersionWhat "$($devProblems -join ' | '). Change the developer version in all six places and the updater's major with them."
+    } else {
+        Pass $devVersionWhat "$($distinct[0]) in all $($devVersions.Count) places, and the updater's developer major $updaterMajor"
+    }
+}
+
 Write-Host ""
 if ($script:Failures.Count -gt 0) {
     foreach ($f in $script:Failures) {
