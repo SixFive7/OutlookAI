@@ -17,7 +17,13 @@
       * its stdio client, which is Testbed/guest/McpStdioClient.ps1 since 2026-11-18 (Q154), the
         one the guest scripts share and the shape this script proved: the same requests under the
         same ids, every line sent and read in -OutFile as before, and a server that has not exited
-        20 s after its input closed still killed.
+        20 s after its input closed still killed;
+      * the store and the one-folder scan's folder are addressed by ID (2026-11-20). list_folders and
+        search refuse 'store', and search 'folder', since stores and folders became addressed by ID,
+        so the folder inventory and both scans measured a refusal. -Store is now looked up through
+        list_accounts, by display name, and -ScanFolder through list_folders, by its path in that
+        store; the calls pass store_id and folder_id, and a name that matches no store or folder, or
+        more than one, is written down and leaves the scans that need it unrun.
 
     WHERE IT MEANS WHAT IT SAYS (2026-10-03, D101 follow-up). Its sweeps are UNSCOPED freshness
     sweeps, and a sweep reads each store's default folders from that store's INDEX FRONTIER
@@ -112,13 +118,29 @@ try {
     Add-Content -Path $OutFile -Value "### COM connected: $ok"
     NoteHealth (Call -Id 9 -Tool 'outlook_health' -CallArgs @{} -Label 'baseline') 'start'
 
-    $fl = Call -Id 10 -Tool 'list_folders' -CallArgs @{ store = $Store } -Label 'folder inventory'
+    # Stores and folders are addressed by ID: list_folders and search refuse a name. The store is the one
+    # list_accounts calls -Store, and the one-folder scan's folder the one at -ScanFolder's path in it.
+    $storeId = $null
+    $acc = Call -Id 8 -Tool 'list_accounts' -CallArgs @{} -Label 'store inventory'
     try {
-        $d = $fl.result.content[0].text | ConvertFrom-Json
-        foreach ($f in ($d.stores[0].folders | Where-Object { $_.items -gt 0 })) {
-            Add-Content -Path $OutFile -Value ("### FOLDER : {0} items={1} unread={2}" -f $f.path, $f.items, $f.unread)
-        }
-    } catch { Add-Content -Path $OutFile -Value '### FOLDER : unreadable' }
+        $named = @((($acc.result.content[0].text | ConvertFrom-Json).stores) | Where-Object { $_.displayName -eq $Store })
+        if ($named.Count -eq 1) { $storeId = $named[0].storeId }
+        Add-Content -Path $OutFile -Value ("### STORE : '{0}' names {1} store(s)" -f $Store, $named.Count)
+    } catch { Add-Content -Path $OutFile -Value '### STORE : unreadable' }
+
+    $folderId = $null
+    if ($storeId) {
+        $fl = Call -Id 10 -Tool 'list_folders' -CallArgs @{ store_id = $storeId } -Label 'folder inventory'
+        try {
+            $d = $fl.result.content[0].text | ConvertFrom-Json
+            foreach ($f in ($d.stores[0].folders | Where-Object { $_.items -gt 0 })) {
+                Add-Content -Path $OutFile -Value ("### FOLDER : {0} items={1} unread={2}" -f $f.path, $f.items, $f.unread)
+            }
+            $scanFolders = @($d.stores[0].folders | Where-Object { $_.path -eq $ScanFolder })
+            if ($scanFolders.Count -eq 1) { $folderId = $scanFolders[0].folderId }
+            Add-Content -Path $OutFile -Value ("### SCAN FOLDER : '{0}' is {1} folder(s) of the store" -f $ScanFolder, $scanFolders.Count)
+        } catch { Add-Content -Path $OutFile -Value '### FOLDER : unreadable' }
+    }
 
     # The sweep. A term-bearing search, then a filter-only one, then a repeat to see the cache.
     # Waits between runs so the 10 s sweep cache cannot serve a stale answer as a fast one.
@@ -136,10 +158,14 @@ try {
     # An exhaustive search needs a bound: a folder, or a date. Both shapes are measured, because
     # they stress different things - one folder's rows against the whole store's folder walk.
     $scans = @(
-        @{ id = 40; label = "exhaustive, $ScanFolder only, no match"; args = @{ query = 'zzzznomatch'; store = $Store; folder = $ScanFolder; include_subfolders = $false; exhaustive = $true; top = 100 } },
-        @{ id = 41; label = 'exhaustive, whole store, 365-day window'; args = @{ query = 'zzzznomatch'; store = $Store; after = '2025-08-19'; exhaustive = $true; top = 100 } }
+        @{ id = 40; label = "exhaustive, $ScanFolder only, no match"; scope = $folderId; args = @{ query = 'zzzznomatch'; folder_id = $folderId; include_subfolders = $false; exhaustive = $true; top = 100 } },
+        @{ id = 41; label = 'exhaustive, whole store, 365-day window'; scope = $storeId; args = @{ query = 'zzzznomatch'; store_id = $storeId; after = '2025-08-19'; exhaustive = $true; top = 100 } }
     )
     foreach ($sc in $scans) {
+        if (-not $sc.scope) {
+            Add-Content -Path $OutFile -Value ("### SCAN {0} : not run - no one store or folder for its scope (STORE and SCAN FOLDER above)" -f $sc.id)
+            continue
+        }
         $r = Call -Id $sc.id -Tool 'search' -CallArgs $sc.args -Label $sc.label
         try {
             $d = $r.result.content[0].text | ConvertFrom-Json
