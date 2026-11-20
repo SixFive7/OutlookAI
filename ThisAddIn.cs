@@ -29,6 +29,9 @@ namespace OutlookAI
         private readonly List<Outlook.Explorer> _hookedExplorers = new List<Outlook.Explorer>();
         private Ribbon _ribbon;
 
+        /// <summary>The ribbon's callbacks, once Office has asked for them; the automation surface reads the toggle through them.</summary>
+        internal Ribbon RibbonCallbacks => _ribbon;
+
         internal Microsoft.Office.Core.IRibbonUI RibbonUI { get; set; }
 
         // Created on Outlook's main UI thread during startup; lets code that may run on a

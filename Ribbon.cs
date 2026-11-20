@@ -38,14 +38,21 @@ namespace OutlookAI
             }
         }
 
+        // control.Context is a VARIANT - the window the ribbon belongs to - and the add-in embeds its interop
+        // types, so it is typed dynamic. Handed on as it is, it makes the whole call bound at run time and its
+        // result dynamic too: GetAIAssistantPressed's pane.Visible then bound against VSTO's own pane class,
+        // which is internal, the binder fell back to object, which has no Visible, and the callback threw on
+        // every refresh of the ribbon of a window with the pane - so the toggle never showed the pane as open
+        // (stream K2's trace of OUTLOOK.EXE, 2026-11-20). Cast to object, both calls bind when this compiles;
+        // T1 RibbonCallbackBindingTests holds every use of the context to that.
         public void OnAIAssistantToggle(Office.IRibbonControl control, bool pressed)
         {
-            Globals.ThisAddIn.ToggleTaskPane(control.Context);
+            Globals.ThisAddIn.ToggleTaskPane((object)control.Context);
         }
 
         public bool GetAIAssistantPressed(Office.IRibbonControl control)
         {
-            var pane = Globals.ThisAddIn.FindPaneForWindow(control.Context);
+            CustomTaskPane pane = Globals.ThisAddIn.FindPaneForWindow((object)control.Context);
             return pane != null && pane.Visible;
         }
 
