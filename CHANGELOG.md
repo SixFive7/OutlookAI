@@ -312,6 +312,8 @@ its mailbox tests on, and change nothing you install.
   ends Outlook through the shared graceful stop and starts it with no window again and again, up to a
   hundred times a leg, and has the product make a reply and a forward in each: the one place the
   product promotes, its first draft in an Outlook with no window, and the derived draft after it.
+  Its first run made 100 starts and 200 drafts, the product promoting the first of each start, and
+  Outlook did not crash.
   With
   `-HuntAblate` the typed-text tests leave out one of their steps: the new mail beside the reply and
   the forward, reading Word's layout, the test signature, or a source mail of their own. With
