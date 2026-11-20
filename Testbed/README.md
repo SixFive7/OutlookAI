@@ -1645,7 +1645,16 @@ So anything that intends to use a VM takes a lease and renews it while it works:
 
     Testbed/host/Set-TestbedLease.ps1 -VMName OutlookAI-Indexed -Minutes 45 -Reason 'live tier'
     # ... work, renewing before it expires ...
-    Testbed/host/Set-TestbedLease.ps1 -VMName OutlookAI-Indexed -Release
+    Testbed/host/Set-TestbedLease.ps1 -VMName OutlookAI-Indexed -Release -Reason 'live tier'
+
+`Set-TestbedLease.ps1` never takes or releases a live lease that its holder still has (2026-11-20):
+it refuses, and says whose lease it is, who took it and until when. A lease is its taker's own by its
+`-Reason`, as a run's is, so renew and release one with the `-Reason` it was taken with. A lease that
+has expired, or whose process has ended - a run that was stopped, a host that restarted - is taken
+over or released by anyone, and the runners take it over too, so a restart holds no run off until the
+dead run's lease expires; a lease taken by hand, from a prompt rather than by a script, ends only when
+it expires or is released with its `-Reason`. Until that day the script wrote over or deleted any
+lease, and a live-tier run whose lease a person had taken stopped at its next renewal.
 
 A VM is saved only when it is one of the named testbed VMs, is Running, holds no live lease,
 and has been up past a grace period - so a VM someone has just started for work that has not
@@ -1653,7 +1662,7 @@ taken its lease yet is not immediately put back to sleep.
 
 | Script | What it does |
 | --- | --- |
-| `host/Set-TestbedLease.ps1` | Take, renew or release a lease. `-VMName` is mandatory (§4a). |
+| `host/Set-TestbedLease.ps1` | Take, renew or release a lease. `-VMName` is mandatory (§4a). Refuses to take or release a live lease whose holder still has it, and says whose it is and until when; `-SelfTest` holds that rule on a scratch directory, and checks every release a script makes gives its `-Reason`. |
 | `host/TestbedLeasePath.ps1` | Where leases live, and how one is read. Dot-sourced by both sides so they cannot disagree. |
 | `host/Invoke-TestbedIdleSave.ps1` | The saver. `-WhatIf` reports without changing anything. The one script here that keeps a VM-name default, because its `-VMName` is an allowlist rather than a target (§4a) - since 2026-11-17 every member of every pool in `host/TestbedPool.ps1` and `OutlookAI-Exchange`, so a clone is watched from the day it joins its pool. |
 | `host/Register-IdleSaveTask.ps1` | Registers it as the invoking user at ordinary privilege, every 15 minutes. Needs local `Hyper-V Administrators` membership, **not** elevation - `Save-VM` does not require it, and a standing elevated task would outlive the reason it was created. |

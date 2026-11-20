@@ -290,17 +290,43 @@ function ConvertFrom-TrxText {
     return [pscustomobject]@{ Counts = $counts; Declared = $declared; Failed = $failed; Skipped = $skipped }
 }
 
-# A test VM's lease, as Set-TestbedLease.ps1 writes it, judged for one run: 'free' when there is none,
-# it has expired or its expiry cannot be read (Testbed/host/TestbedLeasePath.ps1's rule); 'ours' when
-# its reason is exactly the run's own; 'theirs' otherwise, which a run never takes over.
+# A test VM's lease, as Set-TestbedLease.ps1 writes it, judged for one run or caller: 'free' when there
+# is none, it has expired or its expiry cannot be read (Testbed/host/TestbedLeasePath.ps1's rule); 'ours'
+# when its reason is exactly the caller's own; 'gone' when the process that took it has ended
+# (Get-LeaseHolderState), which may be taken over as a free one is (2026-11-20) - so a host that
+# restarts under a run no longer holds the runs after it off until the dead run's lease expires; and
+# 'theirs' otherwise, which is never taken over. $IsAlive answers for a holder's process, given as a
+# queue ticket is: the runners and Set-TestbedLease.ps1 pass Testbed/host/TestbedPool.ps1's
+# Test-TestbedTicketAlive, which asks for its id, started at the second the lease records. A caller
+# that gives none reads every holder as alive, as every caller did before 2026-11-20.
 function Get-LeaseDecision {
-    param([object] $Lease, [string] $Reason, [long] $NowUnix)
+    param([object] $Lease, [string] $Reason, [long] $NowUnix, [scriptblock] $IsAlive = $null, [string] $ComputerName = $env:COMPUTERNAME)
     if ($null -eq $Lease) { return 'free' }
     $expires = 0L
     try { $expires = [long]$Lease.expiresUnix } catch { return 'free' }
     if ($expires -le $NowUnix) { return 'free' }
     if (([string]$Lease.reason) -ceq $Reason) { return 'ours' }
+    if ((Get-LeaseHolderState -Lease $Lease -ComputerName $ComputerName -IsAlive $IsAlive) -eq 'gone') { return 'gone' }
     return 'theirs'
+}
+
+# Who holds a live lease, for Get-LeaseDecision and for Set-TestbedLease.ps1's words: 'byHand' - taken
+# from a prompt, not by a script, so no process lives as long as its holder and only its expiry or a
+# release with its reason ends it; 'noProcess' - it names none; 'elsewhere' - another computer's
+# process, which this one cannot ask about; 'alive' - its process runs, by $IsAlive, or there is no
+# $IsAlive to ask; 'gone' - that process has ended. A lease written before 2026-11-20 says neither how
+# it was taken nor when its process started, and is judged by its process id alone.
+function Get-LeaseHolderState {
+    param([object] $Lease, [string] $ComputerName, [scriptblock] $IsAlive)
+    if ($Lease.byHand -eq $true) { return 'byHand' }
+    $holderPid = 0
+    [void][int]::TryParse([string]$Lease.holderPid, [ref]$holderPid)
+    if ($holderPid -le 0) { return 'noProcess' }
+    $holderHost = [string]$Lease.holderHost
+    if ($holderHost -and -not [string]::Equals($holderHost, $ComputerName, [System.StringComparison]::OrdinalIgnoreCase)) { return 'elsewhere' }
+    if ($null -eq $IsAlive) { return 'alive' }
+    if (& $IsAlive ([pscustomobject]@{ pid = $holderPid; processStartUnix = $Lease.holderStartUnix })) { return 'alive' }
+    return 'gone'
 }
 
 # The exit code of work a runner ran on a guest through Register-InteractiveTask.ps1, from the line

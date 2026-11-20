@@ -105,9 +105,9 @@
   two draft results' shared fields (S04, S11), which a base class would move to one block of the
   JSON every draft tool returns - question 233 to the maintainer; the parameter lists the draft
   tools and the COM host's two invoke methods each declare (S12, S13); and the corpus tool's
-  thirteen STA operations, which each open the corpus store and release it the same way (S14) -
-  COM code only a corpus build, scan and teardown on a test machine exercise, so it folds in S5b,
-  whose proof has them. S10 had gone already with the incident commands (Q170 (a)). The hex stage
+  thirteen STA operations, which each opened the corpus store and released it the same way (S14),
+  are folded in S5b: one `WithOutlook`, and `WithCorpusStore` on it for the twelve that work in one
+  store. S10 had gone already with the incident commands (Q170 (a)). The hex stage
   put the product's writers of bytes as hexadecimal, and its readers of them, into Core's `Hex`, and
   the nine catch blocks it found writing out the text of the shared `ComObjects.DescribeFailure`
   call it now. S5a has begun: the live tests' window calls are Core's `NativeWindows` and one
@@ -261,6 +261,10 @@
   folders under `E:\Hyper-V`), take them out of `Testbed/testbed.json`, and keep
   `.work/media/dotnet-sdk-10.0.401-win-x64.exe` only while a checkpoint still needs it - recording it
   in section 4.12. `OutlookAI-Exchange`'s older checkpoints are its rebuild points and stay.
+
+- [ ] **At the next refreeze of the Outlook guests, detach `throwaway@vm.invalid` from the tier profile
+  (question 239)**, through a small tested script rebuilt from the detach step of the deleted guest
+  script `Reset-ThrowawayStore.ps1` (`9614189^`); `Docs/live-tier-on-the-vm.md` section 4.5b.
 
 
 

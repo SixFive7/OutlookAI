@@ -444,6 +444,30 @@ function Test-RunEnded {
     return $false
 }
 
+# Who holds a member's lock, from its owner file's record, $null when it could not be read - what a
+# queued run and a janitor say while they wait. A record whose process has ended names nobody
+# (2026-11-20): a host that restarts mid-run leaves the run's owner file behind, and the next run
+# writes its own only once it holds the lock, so until then the file names a run that is gone.
+function Format-LockHolder {
+    param([object] $Owner, [bool] $Alive)
+    if ($null -eq $Owner -or -not $Alive) { return 'another run' }
+    return "run $($Owner.runId) (pid $($Owner.pid), $($Owner.ref) in $($Owner.repo), started $($Owner.startedLocal))"
+}
+
+# The line runs.log gets when a run takes a member's lock and finds the owner file of a run before it
+# whose process has ended with no end line written - a host that restarted under it, which stopped
+# its janitor too - so that the run's start line has an answer. '' for anything else: a run that
+# still runs, one that ended, a janitor's record, this run's own. It is not an end line, so a janitor
+# that still watches the run reads runs.log as it did (Test-RunEnded) and puts the VM back.
+function Get-GoneRunLine {
+    param([object] $Owner, [bool] $Alive, [string] $History, [string] $RunId, [string] $VmName)
+    if ($null -eq $Owner -or $Alive) { return '' }
+    $id = [string]$Owner.runId
+    if (-not (Test-IsRunId $id) -or $id -ceq $RunId) { return '' }
+    if (Test-RunEnded -History $History -RunId $id) { return '' }
+    return "gone   $id  its process had ended with no end line; run $RunId found its owner file as it took $VmName"
+}
+
 # The host's verdict, from what came back. WHEREVER THE GUEST'S run.json AND THE TRX FILE CAME
 # BACK, THEY DECIDE: an error on this side - a log the host could not read for a moment, a poll that
 # failed, a fetch that had to retry - does not turn a run that was tested into "not tested". On
@@ -816,6 +840,22 @@ function Invoke-SelfTest {
     Check 'a run with its end line has ended' $true (Test-RunEnded -History $history -RunId '20261003-041915-ff55a603e9c2')
     Check 'a run with only its start line has not' $false (Test-RunEnded -History $history -RunId '20261003-043453-01058213466b')
     Check 'a run the log never mentions has not' $false (Test-RunEnded -History $history -RunId '20261003-050000-0123456789ab')
+    $owner = [pscustomobject]@{ runId = '20261118-203146-3ca41927bf3c'; pid = 4242; processStartUnix = 1795117906; ref = '3ca4192'; repo = 'C:\x'; vm = 'OutlookAI-Build'; startedLocal = '2026-11-18 20:32:20' }
+    Check 'a queued run names the run that holds the lock' 'run 20261118-203146-3ca41927bf3c (pid 4242, 3ca4192 in C:\x, started 2026-11-18 20:32:20)' (Format-LockHolder -Owner $owner -Alive $true)
+    Check 'but not one whose process has ended - an owner file a host that restarted left behind' 'another run' (Format-LockHolder -Owner $owner -Alive $false)
+    Check 'nor an owner file it could not read' 'another run' (Format-LockHolder -Owner $null -Alive $true)
+    $goneLine = Get-GoneRunLine -Owner $owner -Alive $false -History $history -RunId '20261120-093115-3ca41927bf3c' -VmName 'OutlookAI-Build'
+    Check 'the run that takes the lock after a run whose process ended with no end line writes it a gone line' 'gone   20261118-203146-3ca41927bf3c  its process had ended with no end line; run 20261120-093115-3ca41927bf3c found its owner file as it took OutlookAI-Build' $goneLine
+    Check 'which is no end line: a janitor still watching that run does its work' $false (Test-RunEnded -History ($history + "`r`n2026-11-20 09:32:42  " + $goneLine) -RunId '20261118-203146-3ca41927bf3c')
+    Check 'no gone line for a run whose process runs, nor one that wrote its end line' '|' ('{0}|{1}' -f (Get-GoneRunLine -Owner $owner -Alive $true -History $history -RunId 'r' -VmName 'OutlookAI-Build'), (Get-GoneRunLine -Owner ([pscustomobject]@{ runId = '20261003-041915-ff55a603e9c2'; pid = 4242 }) -Alive $false -History $history -RunId 'r' -VmName 'OutlookAI-Build'))
+    Check 'nor for a janitor''s record, nor the run''s own' '|' ('{0}|{1}' -f (Get-GoneRunLine -Owner ([pscustomobject]@{ runId = 'janitor for 20261118-203146-3ca41927bf3c'; pid = 4242 }) -Alive $false -History $history -RunId 'r' -VmName 'OutlookAI-Build'), (Get-GoneRunLine -Owner $owner -Alive $false -History $history -RunId '20261118-203146-3ca41927bf3c' -VmName 'OutlookAI-Build'))
+    $runOwner = '[ordered]@{ runId = $runId; pid = $PID; processStartUnix = ([DateTimeOffset](Get-Process -Id $PID).StartTime).ToUnixTimeSeconds(); ref = $Ref'
+    Check 'a run''s owner file says when its process started, as a queue ticket does, and so does a janitor''s' $true ($mainCode.Contains($runOwner) -and $mainCode.Contains('[ordered]@{ runId = "janitor for $JanitorRunId"; pid = $PID; processStartUnix = ([DateTimeOffset](Get-Process -Id $PID).StartTime).ToUnixTimeSeconds();'))
+    Check 'the gone line is written before the run writes its own owner file over the old one' $true ($mainCode.IndexOf('if ($goneLine) { Write-History $goneLine }') -gt 0 -and $mainCode.IndexOf('if ($goneLine) { Write-History $goneLine }') -lt $mainCode.IndexOf($runOwner))
+    $leaseDecisions = [regex]::Matches($mainCode, 'Get-LeaseDecision \$lease "\$LeaseReasonPrefix \$runId" \(\[DateTimeOffset\]::UtcNow\.ToUnixTimeSeconds\(\)\) -IsAlive \$\{function:Test-TestbedTicketAlive\}\) -eq ''theirs''').Count
+    Check 'a lease that is not a build run''s holds a member back only while its process lives, on a turn and under the claim alike' 2 $leaseDecisions
+    Check 'a run and the janitor release a lease with the reason it was taken with' $true ($mainCode.Contains('-VMName $BuildVmName -Release -Reason "$LeaseReasonPrefix $runId"') -and $mainCode.Contains('-VMName $BuildVmName -Release -Reason "$LeaseReasonPrefix $JanitorRunId"'))
+    Check 'and the janitor says who holds a lock as a queued run does, in one place' $true ($mainCode.Contains('$who = Get-LockHolder $ownerPath') -and -not $mainCode.Contains('"run $($o.runId) (pid'))
 
     Write-Host ''
     Write-Host '== the TRX reader =='
@@ -1379,13 +1419,15 @@ function Use-PoolVm([string] $Name) {
     $script:ownerPath = Join-Path $lockDir $names.Owner
 }
 
-# Who holds a member's lock, from its owner file - what a queued run says while it waits.
+# Who holds a member's lock, from its owner file - what a queued run and the janitor say while they
+# wait (Format-LockHolder): its process asked about as a queue ticket's is (TestbedPool.ps1's
+# Test-TestbedTicketAlive), so an owner file whose run has gone names nobody.
+function Read-LockOwner([string] $OwnerFile) {
+    try { return ([System.IO.File]::ReadAllText($OwnerFile) | ConvertFrom-Json) } catch { return $null }
+}
 function Get-LockHolder([string] $OwnerFile) {
-    try {
-        $o = [System.IO.File]::ReadAllText($OwnerFile) | ConvertFrom-Json
-        return "run $($o.runId) (pid $($o.pid), $($o.ref) in $($o.repo), started $($o.startedLocal))"
-    }
-    catch { return 'another run' }
+    $o = Read-LockOwner $OwnerFile
+    return (Format-LockHolder -Owner $o -Alive ($null -ne $o -and (Test-TestbedTicketAlive $o)))
 }
 
 # A RUN TAKES WHICHEVER BUILD VM IS FREE (2026-11-17), AND WAITS FOR ONE ASKING HYPER-V NOTHING
@@ -1447,7 +1489,7 @@ function Enter-PoolVm([string[]] $Candidates, [int] $TimeoutMinutes) {
                     if ($here -notcontains $name) { $why.Add("$name is not on this host"); continue }
                     if ($ahead.ContainsKey($name)) { $why.Add("$name is wanted first by run $($ahead[$name]), queued before this one"); continue }
                     $lease = Get-TestbedLease -VMName $name
-                    if ($null -ne $lease -and -not ([string]$lease.reason).StartsWith($LeaseReasonPrefix)) { $why.Add("$name is leased by hand until $($lease.expiresUtc) - '$($lease.reason)'"); continue }
+                    if ($null -ne $lease -and -not ([string]$lease.reason).StartsWith($LeaseReasonPrefix) -and (Get-LeaseDecision $lease "$LeaseReasonPrefix $runId" ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()) -IsAlive ${function:Test-TestbedTicketAlive}) -eq 'theirs') { $why.Add("$name is leased by hand until $($lease.expiresUtc) - '$($lease.reason)'"); continue }
                     if ($i -gt 0) {
                         # The reserve: the startup memory read before the wait, the host's memory now - no WMI.
                         if (-not $startupBytes.ContainsKey($name)) { $why.Add("$name is passed over: Hyper-V did not say its startup memory before the wait"); continue }
@@ -1471,7 +1513,7 @@ function Enter-PoolVm([string[]] $Candidates, [int] $TimeoutMinutes) {
                         $claim = Enter-TestbedLeaseClaim -VMName $name
                         try {
                             $lease = Get-TestbedLease -VMName $name
-                            if ($null -ne $lease -and -not ([string]$lease.reason).StartsWith($LeaseReasonPrefix)) { $byHand = $lease }
+                            if ($null -ne $lease -and -not ([string]$lease.reason).StartsWith($LeaseReasonPrefix) -and (Get-LeaseDecision $lease "$LeaseReasonPrefix $runId" ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()) -IsAlive ${function:Test-TestbedTicketAlive}) -eq 'theirs') { $byHand = $lease }
                             else {
                                 $leaseOutput = & (Join-Path $PSScriptRoot 'Set-TestbedLease.ps1') -VMName $name -Minutes ([Math]::Min(480, $RunTimeoutMinutes + 20)) -Reason "$LeaseReasonPrefix $runId"
                                 $script:leaseTaken = $true
@@ -1520,12 +1562,7 @@ function Enter-RunnerLock([int] $TimeoutMinutes) {
         catch [System.IO.IOException] {
             if ((Get-Date) -ge $deadline) { return $null }
             if (((Get-Date) - $lastSaid).TotalSeconds -ge 60) {
-                $who = 'another run'
-                try {
-                    $o = [System.IO.File]::ReadAllText($ownerPath) | ConvertFrom-Json
-                    $who = "run $($o.runId) (pid $($o.pid), $($o.ref) in $($o.repo), started $($o.startedLocal))"
-                }
-                catch { }
+                $who = Get-LockHolder $ownerPath
                 if (-not $queued) { Say "queued: the build VM is busy with $who" } else { Say "  still waiting for $who" }
                 $queued = $true
                 $lastSaid = Get-Date
@@ -1673,7 +1710,7 @@ if ($PSCmdlet.ParameterSetName -eq 'Janitor') {
     $janitorLock = Enter-RunnerLock -TimeoutMinutes 10
     if ($null -eq $janitorLock) { Write-JanitorLine 'another run held the VM for ten minutes; it restores the checkpoint itself'; exit 0 }
     try {
-        [ordered]@{ runId = "janitor for $JanitorRunId"; pid = $PID; ref = '-'; sha = '-'; repo = '-'; startedLocal = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss') } |
+        [ordered]@{ runId = "janitor for $JanitorRunId"; pid = $PID; processStartUnix = ([DateTimeOffset](Get-Process -Id $PID).StartTime).ToUnixTimeSeconds(); ref = '-'; sha = '-'; repo = '-'; startedLocal = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss') } |
             ConvertTo-Json | Set-Content -LiteralPath $ownerPath -Encoding UTF8
         $vm = Get-BuildVm
         $checkpoint = Get-BaseCheckpoint
@@ -1685,7 +1722,7 @@ if ($PSCmdlet.ParameterSetName -eq 'Janitor') {
         }
         $lease = Get-TestbedLease -VMName $BuildVmName
         if ($null -ne $lease -and ([string]$lease.reason) -eq "$LeaseReasonPrefix $JanitorRunId") {
-            & (Join-Path $PSScriptRoot 'Set-TestbedLease.ps1') -VMName $BuildVmName -Release | Out-Null
+            & (Join-Path $PSScriptRoot 'Set-TestbedLease.ps1') -VMName $BuildVmName -Release -Reason "$LeaseReasonPrefix $JanitorRunId" | Out-Null
             Write-JanitorLine 'released the dead run''s lease'
         }
         Write-History "janitor $JanitorRunId  its caller stopped part-way; the janitor put the VM back"
@@ -1805,7 +1842,16 @@ if ($null -eq $lock) {
     Say "INFRA: no build VM could be taken in $QueueTimeoutMinutes minute(s) - $($script:queueWhy). This run did not start; nothing on a VM was touched."
     exit $ExitCodes['INFRA']
 }
-[ordered]@{ runId = $runId; pid = $PID; ref = $Ref; sha = $sha; repo = $repo; vm = $BuildVmName; startedLocal = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss') } |
+# The owner file the run before this one left, when its process ended without removing it: runs.log
+# says so once (Get-GoneRunLine). Then this run's own, over it.
+$previousOwner = Read-LockOwner $ownerPath
+if ($null -ne $previousOwner) {
+    $history = ''
+    try { $history = [System.IO.File]::ReadAllText($historyPath) } catch { }
+    $goneLine = Get-GoneRunLine -Owner $previousOwner -Alive (Test-TestbedTicketAlive $previousOwner) -History $history -RunId $runId -VmName $BuildVmName
+    if ($goneLine) { Write-History $goneLine }
+}
+[ordered]@{ runId = $runId; pid = $PID; processStartUnix = ([DateTimeOffset](Get-Process -Id $PID).StartTime).ToUnixTimeSeconds(); ref = $Ref; sha = $sha; repo = $repo; vm = $BuildVmName; startedLocal = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss') } |
     ConvertTo-Json | Set-Content -LiteralPath $ownerPath -Encoding UTF8
 $gateText = Format-TestbedGateOpen -Look $script:gateLook
 if ($null -ne $script:gateStart) { $gateText = Format-TestbedGateOpen -Look $script:gateLook -PendingPercent $script:gateStart.PendingPercent -PendingCount $script:gateStart.PendingCount }
@@ -2127,7 +2173,7 @@ finally {
     if ($leaseTaken) {
         try {
             $current = Get-TestbedLease -VMName $BuildVmName
-            if ($null -ne $current -and ([string]$current.reason) -eq "$LeaseReasonPrefix $runId") { & (Join-Path $PSScriptRoot 'Set-TestbedLease.ps1') -VMName $BuildVmName -Release | Out-Null }
+            if ($null -ne $current -and ([string]$current.reason) -eq "$LeaseReasonPrefix $runId") { & (Join-Path $PSScriptRoot 'Set-TestbedLease.ps1') -VMName $BuildVmName -Release -Reason "$LeaseReasonPrefix $runId" | Out-Null }
         }
         catch { Say "lease: could not release it ($($_.Exception.Message)); it expires by itself" }
     }

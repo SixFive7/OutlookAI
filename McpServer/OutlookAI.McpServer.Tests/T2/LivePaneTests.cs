@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Text;
 using OutlookAI.Core.AddIn;
+using OutlookAI.Core.Com;
 using OutlookAI.Core.Services;
 using Xunit;
 using Xunit.Abstractions;
@@ -19,8 +20,12 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// What it measures, for Q165 (c): the pane still writes one paragraph a line (its layout, which Core's writer
 /// keeps for it); the AI's own signature choice (Q162 (b)) follows the body it wrote and replaces the signature
 /// the agent put in; the chosen signature's picture is embedded, where the pane used to leave a link to the
-/// signature's folder (D47); the signature request lists the signatures with Core's catalog; and "Select the
-/// best signature" puts in the signature its request was answered with (A12).
+/// signature's folder (D47); the signature request lists the signatures with Core's catalog; "Select the
+/// best signature" puts in the signature its request was answered with (A12); and the compose ribbon's AI
+/// Assistant toggle reads pressed while the pane shows and not pressed once the toggle has hidden it - its
+/// getPressed callback threw on every refresh of such a window's ribbon until stream K2's trace of
+/// OUTLOOK.EXE found it (2026-11-20), read through the add-in's automation object, which calls the callback
+/// as Office does.
 /// </para>
 /// </summary>
 [Collection(LiveCollections.Phase4)]
@@ -103,16 +108,22 @@ public sealed class LivePaneTests
             IntPtr edit = WaitForWindow("the pane's Edit current draft button", () => PaneControls.Find(opened.Window, "WindowsForms10.BUTTON", "Edit current draft"));
             _output.WriteLine($"pane: instruction box {PaneControls.Describe(prompt)}, button {PaneControls.Describe(edit)}, "
                 + $"status \"{PaneControls.ReadStatus(opened.Window)}\"");
+            Assert.True(ToggleReadsPressed(draft.EntryId), "the AI Assistant toggle must read pressed while the window's pane shows");
             PaneControls.SetText(prompt, "Rewrite this mail. " + Marker);
             PaneControls.Click(edit);
 
             // What the pane says along the way is what tells a click that never landed from a request that failed.
+            // And its last word is the wait's end: the pane puts the chosen signature in, then embeds its
+            // pictures, and only then says which it chose - a draft that already holds the signature's text can
+            // still hold its picture as a link. Run 20261120-114454-unindexed-39e97e05fbb4 read it there: the AI's
+            // signature in, one picture linked, and the pane still at "Done!".
             List<string> statuses = new List<string>();
+            string chose = "The AI chose the signature \"" + aisChoice.Name + "\".";
             OpenDraftReading after;
             try
             {
                 after = WaitFor(
-                    "the stand-in's body and the AI's signature in the open window",
+                    "the stand-in's body and the AI's signature in the open window, and the pane's word that it chose",
                     () =>
                     {
                         string now = PaneControls.ReadStatus(opened.Window);
@@ -124,7 +135,8 @@ public sealed class LivePaneTests
                         return ReadOpenDraftWhileThePaneWrites(draft.EntryId);
                     },
                     r => r.DraftText.Contains("Stand-in draft, first line", StringComparison.Ordinal)
-                         && r.SignatureText.Contains(aisChoice.BodyMarker, StringComparison.Ordinal));
+                         && r.SignatureText.Contains(aisChoice.BodyMarker, StringComparison.Ordinal)
+                         && statuses[^1].EndsWith(chose, StringComparison.Ordinal));
             }
             catch (TimeoutException ex)
             {
@@ -168,10 +180,13 @@ public sealed class LivePaneTests
             OpenDraftReading reselected;
             try
             {
+                // The same end as above: the pane's word that it applied the signature, which follows the embed.
                 reselected = WaitFor(
-                    "the agent's signature, chosen again through Select the best signature",
+                    "the agent's signature, chosen again through Select the best signature, and the pane's word that it applied it",
                     () => ReadOpenDraftWhileThePaneWrites(draft.EntryId),
-                    r => r.SignatureText.Contains(agentsChoice.BodyMarker, StringComparison.Ordinal));
+                    r => r.SignatureText.Contains(agentsChoice.BodyMarker, StringComparison.Ordinal)
+                         && PaneControls.ReadStatus(opened.Window).Contains(
+                             "Applied signature \"" + agentsChoice.Name + "\"", StringComparison.Ordinal));
             }
             catch (TimeoutException ex)
             {
@@ -188,6 +203,14 @@ public sealed class LivePaneTests
             Assert.Contains("Stand-in draft, first line", reselected.DraftText, StringComparison.Ordinal);
             Assert.Contains("Applied signature \"" + agentsChoice.Name + "\"", reselectStatus, StringComparison.Ordinal);
             Assert.True(standIn.Prompts().Count > promptsBefore, "the click must have asked the stand-in");
+
+            // The toggle pressed again hides the pane, and then reads not pressed.
+            PressToggle(draft.EntryId);
+            _ = WaitFor<bool?>(
+                "the AI Assistant toggle to read not pressed once it has hidden the pane",
+                () => ToggleReadsPressed(draft.EntryId) ? null : true,
+                hidden => hidden == true);
+            _output.WriteLine("the AI Assistant toggle: pressed while the pane showed, not pressed once it hid it");
         }
         finally
         {
@@ -201,6 +224,43 @@ public sealed class LivePaneTests
         }
 
         Assert.Equal(0, LiveOutlookTestMailer.CountTaggedArtifacts(Hub, Marker));
+    }
+
+    /// <summary>
+    /// The compose ribbon's AI Assistant toggle for the window showing <paramref name="entryId"/>, as its getPressed
+    /// callback answers: the add-in's <c>IsAIAssistantPressed</c>, which hands the callback the window as Office does.
+    /// </summary>
+    private static bool ToggleReadsPressed(string entryId) => WithAddInAutomation(automation => (bool)automation.IsAIAssistantPressed(entryId));
+
+    /// <summary>That window's toggle pressed, as a click presses it: the add-in's <c>ToggleAIAssistant</c>.</summary>
+    private static void PressToggle(string entryId) => WithAddInAutomation(automation =>
+    {
+        automation.ToggleAIAssistant(entryId);
+        return true;
+    });
+
+    /// <summary>The loaded add-in's automation object (COMAddIn.Object), handed to <paramref name="call"/>, every reference released after.</summary>
+    private static T WithAddInAutomation<T>(Func<dynamic, T> call)
+    {
+        object app = OutlookAutomation.CreateApplication();
+        object? addIns = null;
+        object? addIn = null;
+        object? automation = null;
+        try
+        {
+            addIns = ((dynamic)app).COMAddIns;
+            addIn = ((dynamic)addIns).Item("OutlookAI");
+            automation = ((dynamic)addIn).Object;
+            Assert.True(automation != null, "the OutlookAI add-in answers with no automation object (COMAddIn.Object): it is not connected");
+            return call(automation!);
+        }
+        finally
+        {
+            ComObjects.Release(automation);
+            ComObjects.Release(addIn);
+            ComObjects.Release(addIns);
+            ComObjects.Release(app);
+        }
     }
 
     /// <summary>The last read of the open draft that failed while the pane wrote it, for a timeout to name.</summary>
