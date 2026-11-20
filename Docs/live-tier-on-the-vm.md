@@ -5635,6 +5635,7 @@ windowed Outlook, its main window as Outlook opened it on the Inbox. Each other 
 | NoWindow | the windowed Outlook is ended once the source has arrived, and the drafts are made in one COM starts, with no window (the product promotes its first draft, and reads the rest directly) |
 | NoFormPage | the drafts are made through the object model the product's direct way - Reply() or Forward() saved, re-opened by EntryID, the editor read, a line put above the quote, `Close(olSave)` - without `ModifiedFormPages.Add("Message")` |
 | BareCreators | only `Reply()` or `Forward()` on the source, the result released unsaved: nothing is written |
+| ColdStarts | Outlook ended through the shared graceful stop (`LiveComposeProbe.StopOutlook`, rule 7) and started with no window by a COM client, up to `HuntPlan.MostColdStarts` (100) times a leg; in each the product's reply, which it promotes as that process's first draft (Q208 B), and then its forward, the derived draft after a promotion. Every start records the guest's time and says when its clock jumped |
 
 `-HuntVariant LegsOtherFolder` runs the legs above instead, each round after a step of the same test,
 `CalendarOnly`, that moves the main window to the Calendar and makes nothing.

@@ -106,8 +106,18 @@ public sealed class HuntPlan
     /// <summary>How many failed drafts in a row end a leg whose Outlook is still running.</summary>
     public const int MostFailuresInARow = 5;
 
-    private HuntPlan(string variant, HuntMaker maker, bool windowless, bool showsCalendar, int legMinutes, bool showsEach, bool typesEach = false, bool keepsAWindowOpen = false)
+    /// <summary>
+    /// ColdStarts: the product's drafts in each Outlook it starts - its first, which the product promotes in an Outlook
+    /// with no window (Q208 B), and the one after it, a derived draft after a promotion, where every loop's crash struck.
+    /// </summary>
+    public const int DraftsPerColdStart = 2;
+
+    /// <summary>ColdStarts: the most Outlook starts one leg makes - about a hundred, the coordinator's measure of the exposure (2026-11-20).</summary>
+    public const int MostColdStarts = 100;
+
+    private HuntPlan(string variant, HuntMaker maker, bool windowless, bool showsCalendar, int legMinutes, bool showsEach, bool typesEach = false, bool keepsAWindowOpen = false, bool coldStarts = false)
     {
+        ColdStarts = coldStarts;
         TypesEach = typesEach;
         KeepsAWindowOpen = keepsAWindowOpen;
         Variant = variant;
@@ -122,7 +132,7 @@ public sealed class HuntPlan
     /// The variants this test runs, in the order the runner lists them; the runner's <c>-HuntVariant</c> takes these and
     /// its own default, Legs - the tests the crashes struck in, which are not this test's.
     /// </summary>
-    public static IReadOnlyList<string> Variants { get; } = new[] { "ProductLoop", "OtherFolder", "NoWindow", "NoFormPage", "BareCreators", "PersonTyping" };
+    public static IReadOnlyList<string> Variants { get; } = new[] { "ProductLoop", "OtherFolder", "NoWindow", "NoFormPage", "BareCreators", "PersonTyping", "ColdStarts" };
 
     public string Variant { get; }
 
@@ -130,6 +140,13 @@ public sealed class HuntPlan
 
     /// <summary>Whether the drafts are made in an Outlook that COM started, with no window: the windowed one is ended first.</summary>
     public bool Windowless { get; }
+
+    /// <summary>
+    /// ColdStarts: the one place the product promotes (Q208 B) - an Outlook with no window, whose first draft it
+    /// promotes. Each cycle ends Outlook through the shared graceful stop, starts one with no window, and has the
+    /// product make <see cref="DraftsPerColdStart"/> drafts in it, up to <see cref="MostColdStarts"/> starts a leg.
+    /// </summary>
+    public bool ColdStarts { get; }
 
     /// <summary>Whether the main window is moved to the Calendar before the first draft, so no mail of the Inbox is on screen.</summary>
     public bool ShowsCalendar { get; }
@@ -171,6 +188,12 @@ public sealed class HuntPlan
                 if (Maker is not (HuntMaker.Product or HuntMaker.NoFormPage))
                 {
                     why = PromoteAfterVariable + " re-opens the loop's drafts: " + Variant + " makes none";
+                    return null;
+                }
+
+                if (ColdStarts)
+                {
+                    why = PromoteAfterVariable + " re-opens the loop's drafts: ColdStarts measures the product's own promotion, with nothing else around it";
                     return null;
                 }
 
@@ -229,6 +252,12 @@ public sealed class HuntPlan
                 if (Maker != HuntMaker.Product)
                 {
                     why = DisplayVariable + " displays the product's drafts: " + Variant + " makes none";
+                    return null;
+                }
+
+                if (ColdStarts)
+                {
+                    why = DisplayVariable + " displays the product's drafts: ColdStarts makes them in an Outlook with no window";
                     return null;
                 }
 
@@ -303,6 +332,14 @@ public sealed class HuntPlan
                 return new HuntPlan(variant, HuntMaker.Bare, windowless: false, showsCalendar: false, minutes, shows, types);
             case "PersonTyping":
                 return new HuntPlan(variant, HuntMaker.Product, windowless: false, showsCalendar: false, minutes, showsEach: false, typesEach: false, keepsAWindowOpen: true);
+            case "ColdStarts":
+                if (shows)
+                {
+                    why = "ColdStarts makes its drafts in an Outlook with no window: " + ShowEachVariable + " shows none there";
+                    return null;
+                }
+
+                return new HuntPlan(variant, HuntMaker.Product, windowless: true, showsCalendar: false, minutes, showsEach: false, coldStarts: true);
             case CalendarStep:
                 return new HuntPlan(variant, HuntMaker.None, windowless: false, showsCalendar: true, minutes, showsEach: false);
             default:

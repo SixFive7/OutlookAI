@@ -308,7 +308,11 @@ its mailbox tests on, and change nothing you install.
   own way and closed discarding, which is what the typed-text tests do before each of the product's
   drafts, and with `-HuntTypeEach` that window is displayed on screen and typed into as those tests
   do. PersonTyping keeps a compose window open on screen and types a line into it before each of
-  the product's drafts, five drafts a window, as a person writes while an agent drafts. With
+  the product's drafts, five drafts a window, as a person writes while an agent drafts. ColdStarts
+  ends Outlook through the shared graceful stop and starts it with no window again and again, up to a
+  hundred times a leg, and has the product make a reply and a forward in each: the one place the
+  product promotes, its first draft in an Outlook with no window, and the derived draft after it.
+  With
   `-HuntAblate` the typed-text tests leave out one of their steps: the new mail beside the reply and
   the forward, reading Word's layout, the test signature, or a source mail of their own. With
   `-HuntTraceClr` the .NET runtime's own exception events are traced on the guest with Windows'
