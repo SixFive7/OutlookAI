@@ -125,8 +125,10 @@
   names. S5a is complete. In parallel: the PowerShell helpers (S7) and the rules restated in C# and
   PowerShell as shared C# source (Q171). The updater's signature check is shared: Core's
   `InstallerSignature`, which the add-in calls and `Tools/Publish-Release.ps1` compiles with
-  Add-Type. Left of Q171: the file-identity calls `Testbed/host/New-LiveTestSettings.ps1` declares
-  beside the audit log's in Core (the survey's X05).
+  Add-Type. So are the Windows file calls, the survey's X05: Core's `Win32File`, which
+  `Testbed/host/New-LiveTestSettings.ps1` compiles with Add-Type. Left of Q171: the guest scripts'
+  copies of the test tag, the signature prefix and the account classes, held to the C# as checked
+  copies.
   The attach to an Outlook already running is one copy, `Connect-RunningOutlook` in the shared file,
   which `Measure-FolderIdResolution.ps1`, `Measure-SignatureRoaming.ps1`, `Reset-HubPopulation.ps1`
   and `OutlookDialogUia.ps1`'s helper use. The other attaches stay as they are for now (2026-11-20):

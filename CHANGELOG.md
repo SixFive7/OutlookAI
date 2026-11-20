@@ -1206,6 +1206,20 @@ its mailbox tests on, and change nothing you install.
   would overwrite the change or copy it into the mailbox, and says to use Outlook instead. Roaming on
   Microsoft 365 Apps itself is not tested: the test machines run perpetual Office only.
 
+- ♻️ **Core and the testbed's settings script share one copy of their Windows file calls (Q171).**
+  `Testbed/host/New-LiveTestSettings.ps1` makes sure the file it writes does not really land in a
+  `live-fixtures` folder: it opens the folder for no access, asks Windows for its final path and
+  counts a file's hard links. It declared those calls in C# of its own, and took the `\\?\` prefix
+  off the final path again in PowerShell. Core makes the same calls in three places: the attachment
+  writer's folder check, which reads a folder's final path and strips the prefix the same way, the
+  audit log's identity of its file, which reads the same file information, and `Kernel32`'s
+  `CreateFileW`. They are one public C# 5 file now, `McpServer/OutlookAI.Core/Interop/Win32File.cs`:
+  the open, the final path with its prefix strip, the file information and `CreateFileW`, each
+  loading kernel32.dll from System32 only. Core's three use it, and the script compiles it in the
+  same Add-Type as its probe class, which keeps only the 8.3 short name Core has no use for. As the
+  maintainer decided on 2026-11-18 (Q171 (c)). The add-in reaches none of it, since it names nothing
+  of Core outside `OutlookAI.Core.AddIn` (check-pinned-constants.ps1, check 15).
+
 - ♻️ **A release checks the installer's signature with the updater's own code (Q171).**
   Before an installed copy's updater runs an installer it has downloaded, WinVerifyTrust has to
   answer 0 or CERT_E_UNTRUSTEDROOT - the answer a valid signature by the self-signed release

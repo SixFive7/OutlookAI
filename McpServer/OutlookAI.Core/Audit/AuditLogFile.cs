@@ -68,7 +68,7 @@ namespace OutlookAI.Core.Audit
         /// <param name="win32Error">0, or why the open failed.</param>
         internal static bool TryOpenForAppend(string path, bool writeThrough, out SafeFileHandle? handle, out int win32Error)
         {
-            SafeFileHandle opened = Kernel32.CreateFileW(
+            SafeFileHandle opened = Win32File.CreateFileW(
                 Win32Path(path),
                 FileAppendData | FileReadData | FileReadAttributes | Synchronize,
                 FileShareRead | FileShareWrite,
@@ -183,7 +183,7 @@ namespace OutlookAI.Core.Audit
                 return "v" + Hex.Lower(id.VolumeSerialNumber, 16) + "-" + Hex.Lower(id.FileIdHigh, 16) + Hex.Lower(id.FileIdLow, 16);
             }
 
-            if (GetFileInformationByHandle(handle, out ByHandleFileInformation info))
+            if (Win32File.GetFileInformationByHandle(handle, out Win32File.ByHandleFileInformation info))
             {
                 return "v" + Hex.Lower(info.VolumeSerialNumber, 8) + "-" + Hex.Lower(info.FileIndexHigh, 8) + Hex.Lower(info.FileIndexLow, 8);
             }
@@ -230,24 +230,6 @@ namespace OutlookAI.Core.Audit
             public ulong FileIdHigh;
         }
 
-        [StructLayout(LayoutKind.Sequential)]
-        private struct ByHandleFileInformation
-        {
-            public uint FileAttributes;
-            public uint CreationTimeLow;
-            public uint CreationTimeHigh;
-            public uint LastAccessTimeLow;
-            public uint LastAccessTimeHigh;
-            public uint LastWriteTimeLow;
-            public uint LastWriteTimeHigh;
-            public uint VolumeSerialNumber;
-            public uint FileSizeHigh;
-            public uint FileSizeLow;
-            public uint NumberOfLinks;
-            public uint FileIndexHigh;
-            public uint FileIndexLow;
-        }
-
         [DllImport("kernel32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
         private static extern bool WriteFile(
@@ -266,10 +248,6 @@ namespace OutlookAI.Core.Audit
         [return: MarshalAs(UnmanagedType.Bool)]
         private static extern bool GetFileInformationByHandleEx(
             SafeFileHandle hFile, int fileInformationClass, out FileIdInfo lpFileInformation, int dwBufferSize);
-
-        [DllImport("kernel32.dll", SetLastError = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        private static extern bool GetFileInformationByHandle(SafeFileHandle hFile, out ByHandleFileInformation lpFileInformation);
 
         [DllImport("kernel32.dll")]
         private static extern void GetSystemTimePreciseAsFileTime(out long lpSystemTimeAsFileTime);

@@ -696,7 +696,8 @@ namespace OutlookAI.Core.Services
         /// The disk as Windows answers, through its own calls: <c>GetFileAttributesW</c>, which does not
         /// follow a link at the end of the path, so a link reads as what it is; and
         /// <c>GetFinalPathNameByHandle</c> on a handle opened for no access at all, which follows every
-        /// one. Declared here and nowhere else, so every file this class creates is created in it.
+        /// one - <see cref="Win32File"/>'s, which the testbed's settings script compiles too (Q171 (c)).
+        /// Every file this class creates is created here.
         /// </summary>
         private sealed class WindowsProbe : IFolderProbe
         {
@@ -710,10 +711,7 @@ namespace OutlookAI.Core.Services
             private const uint FileAttributeDirectory = 0x10;
             private const uint FileAttributeNormal = 0x80;
             private const uint GenericWrite = 0x40000000;
-            private const uint ShareAll = 0x00000007;
             private const uint CreateNew = 1;
-            private const uint OpenExisting = 3;
-            private const uint FileFlagBackupSemantics = 0x02000000;
             private const uint FileFlagOpenReparsePoint = 0x00200000;
 
             internal static readonly WindowsProbe Instance = new WindowsProbe();
@@ -736,28 +734,20 @@ namespace OutlookAI.Core.Services
             public string FinalPath(string directory)
             {
                 // Access 0: the handle answers questions about the folder and can do nothing else.
-                // Backup semantics is what lets CreateFileW open a folder at all.
-                using (SafeFileHandle handle = Kernel32.CreateFileW(directory, 0, ShareAll, IntPtr.Zero, OpenExisting, FileFlagBackupSemantics, IntPtr.Zero))
+                using (SafeFileHandle handle = Win32File.OpenForQuestions(directory))
                 {
                     if (handle.IsInvalid)
                     {
                         throw Failure(Marshal.GetLastWin32Error(), directory);
                     }
 
-                    char[] buffer = new char[512];
-                    uint length = GetFinalPathNameByHandleW(handle, buffer, (uint)buffer.Length, 0);
-                    if (length >= buffer.Length)
+                    string final = Win32File.FinalPath(handle, out int win32Error);
+                    if (final.Length == 0)
                     {
-                        buffer = new char[length + 1];
-                        length = GetFinalPathNameByHandleW(handle, buffer, (uint)buffer.Length, 0);
+                        throw Failure(win32Error, directory);
                     }
 
-                    if (length == 0 || length >= buffer.Length)
-                    {
-                        throw Failure(Marshal.GetLastWin32Error(), directory);
-                    }
-
-                    return WithoutWin32Prefix(new string(buffer, 0, (int)length));
+                    return final;
                 }
             }
 
@@ -766,8 +756,8 @@ namespace OutlookAI.Core.Services
             {
                 // CREATE_NEW fails when anything has the name; FILE_FLAG_OPEN_REPARSE_POINT makes a link
                 // of that name count as the name rather than lead the new file somewhere else.
-                using (SafeFileHandle handle = Kernel32.CreateFileW(
-                    path, GenericWrite, ShareAll, IntPtr.Zero, CreateNew, FileAttributeNormal | FileFlagOpenReparsePoint, IntPtr.Zero))
+                using (SafeFileHandle handle = Win32File.CreateFileW(
+                    path, GenericWrite, Win32File.ShareAll, IntPtr.Zero, CreateNew, FileAttributeNormal | FileFlagOpenReparsePoint, IntPtr.Zero))
                 {
                     return handle.IsInvalid ? Marshal.GetLastWin32Error() : 0;
                 }
@@ -794,33 +784,8 @@ namespace OutlookAI.Core.Services
                 }
             }
 
-            private static string WithoutWin32Prefix(string final)
-            {
-                string path = final;
-                if (path.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase))
-                {
-                    path = @"\\" + path.Substring(8);
-                }
-                else if (path.StartsWith(@"\\?\", StringComparison.Ordinal))
-                {
-                    path = path.Substring(4);
-                }
-
-                // A drive's root keeps its separator ("C:\"); every other folder loses a trailing one.
-                if (path.Length > 3 && path.EndsWith(@"\", StringComparison.Ordinal))
-                {
-                    path = path.TrimEnd(Separator);
-                }
-
-                return path;
-            }
-
             [DllImport("kernel32.dll", EntryPoint = "GetFileAttributesW", CharSet = CharSet.Unicode, SetLastError = true)]
             private static extern uint GetFileAttributesW(string lpFileName);
-
-            [DllImport("kernel32.dll", EntryPoint = "GetFinalPathNameByHandleW", CharSet = CharSet.Unicode, SetLastError = true)]
-            private static extern uint GetFinalPathNameByHandleW(
-                SafeFileHandle hFile, [Out] char[] lpszFilePath, uint cchFilePath, uint dwFlags);
         }
     }
 
