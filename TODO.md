@@ -139,6 +139,8 @@
   `New-PopAccountPrf.ps1`, `OutlookMapiInterop.ps1`'s `Invoke-WithOutlookSession`,
   `Rename-OutlookStore.ps1` and `Set-OutlookProgrammaticAccess.ps1`. `Restart-Guest.ps1`'s quit script
   attaches through the table alone by design, so that it never starts the Outlook it is there to quit.
+  The add-in build's guards and helpers are one copy, `Testbed/host/AddInBuild.ps1`, for the two
+  scripts that may build the add-in (the survey's P07).
 
 - [ ] **Remove the Cached Mode policy values OutlookAI 3.0.0.319 to 3.1.0.325 wrote, when the
   maintainer says so (Q151 (a), decided 2026-11-17).** Those versions wrote the five values as
