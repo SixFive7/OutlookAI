@@ -142,6 +142,10 @@
   The read of another process's token elevation is one copy, `Get-ProcessElevation` in the shared file
   (the survey's P10, its token half), but for the one in `Restart-Guest.ps1`'s quit script, a method of
   `OaiRestartDialogs` beside its window calls: it folds when P10's window half moves those calls.
+  The add-in's VSTO trust and payload helpers are one copy in the shared file (the survey's P08). Its
+  last piece, the add-in's registration key, stays a value each of the three scripts writes beside
+  `Installer.iss`'s, and the guest's installer and `Tools/Switch-AddInBuild.ps1` read it out of
+  `Installer.iss` in their self-tests; the survey's X items take values like it.
 
 - [ ] **Remove the Cached Mode policy values OutlookAI 3.0.0.319 to 3.1.0.325 wrote, when the
   maintainer says so (Q151 (a), decided 2026-11-17).** Those versions wrote the five values as
