@@ -148,25 +148,14 @@ if (-not $UserId) { $UserId = "$env:USERDOMAIN\$env:USERNAME" }
 # OUTLOOK AND THE WORK MUST SHARE A LEVEL. COM does not attach across integrity levels - the
 # product's own rule (ComGateway.cs, S8) - so a job at one level that drives an Outlook already
 # running at the other fails on every COM call. Said up front, as a WARNING and not a refusal,
-# because not every job touches Outlook. The token is read the way Start-OutlookUnelevated.ps1
-# reads it, restated here as this repository restates its shared helpers.
+# because not every job touches Outlook. The token is read by Get-ProcessElevation, the one the
+# scripts share from ScriptHelpers.ps1 (Q154, the survey's P10), staged beside this script.
+. (Join-Path $PSScriptRoot 'ScriptHelpers.ps1')
 $outlookNow = @(Get-Process -Name OUTLOOK -ErrorAction SilentlyContinue)
 if ($outlookNow.Count -gt 0) {
-    if (-not ('OaiInteractiveTaskToken' -as [type])) {
-        Add-Type -TypeDefinition @'
-using System; using System.Runtime.InteropServices;
-public static class OaiInteractiveTaskToken {
-    [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr OpenProcess(uint a, bool i, int p);
-    [DllImport("advapi32.dll", SetLastError = true)] static extern bool OpenProcessToken(IntPtr p, uint a, out IntPtr t);
-    [DllImport("advapi32.dll", SetLastError = true)] static extern bool GetTokenInformation(IntPtr t, int c, out int i, int l, out int r);
-    [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
-    public static int Elevation(int pid) { IntPtr p = OpenProcess(0x1000, false, pid); if (p == IntPtr.Zero) return -1; try { IntPtr t; if (!OpenProcessToken(p, 8, out t)) return -1; try { int e, r; if (!GetTokenInformation(t, 20, out e, 4, out r)) return -1; return e != 0 ? 1 : 0; } finally { CloseHandle(t); } } finally { CloseHandle(p); } }
-}
-'@
-    }
     $workElevated = ($RunLevel -eq 'Highest')
     foreach ($o in $outlookNow) {
-        $e = [OaiInteractiveTaskToken]::Elevation($o.Id)
+        $e = Get-ProcessElevation -ProcessId $o.Id
         if ($e -lt 0) {
             Write-Warning "OUTLOOK.EXE pid $($o.Id) is running and its token could not be read, so whether it is at this job's level (RunLevel $RunLevel) is unknown."
         }

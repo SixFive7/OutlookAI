@@ -514,93 +514,6 @@ function Compare-DottedVersion {
     return 0
 }
 
-# The URL the VSTO runtime keys an inclusion entry by, from the registered Manifest value: the
-# `|vstolocal` suffix off, backslashes to forward slashes, file:/// in front - which is the
-# Uri.ToString() form the runtime itself writes. [MEASURED: the maintainer's workstation holds
-# `file:///C:/Users/.../OutlookAI/Setup/OutlookAI.vsto` for this installer's
-# `file:///{app}\OutlookAI.vsto|vstolocal`.] Spaces stay literal, as the runtime writes them.
-function ConvertTo-InclusionUrl {
-    param([string] $ManifestValue)
-    if (-not $ManifestValue) { return $null }
-    $v = $ManifestValue.Trim()
-    $bar = $v.IndexOf('|')
-    if ($bar -ge 0) { $v = $v.Substring(0, $bar) }
-    if ($v.StartsWith('file:///', [System.StringComparison]::OrdinalIgnoreCase)) { $v = $v.Substring(8) }
-    elseif ($v.StartsWith('file://', [System.StringComparison]::OrdinalIgnoreCase)) { $v = $v.Substring(7) }
-    $v = $v.Replace('\', '/')
-    return 'file:///' + $v
-}
-
-# The runtime compares entries AS URIs, and on a DOS path that comparison ignores case.
-function Test-SameInclusionUrl {
-    param([string] $A, [string] $B)
-    $x = ConvertTo-InclusionUrl $A
-    $y = ConvertTo-InclusionUrl $B
-    if (-not $x -or -not $y) { return $false }
-    return [string]::Equals($x, $y, [System.StringComparison]::OrdinalIgnoreCase)
-}
-
-function ConvertTo-RsaKeyValueXml {
-    param([Parameter(Mandatory = $true)] [string] $ModulusBase64, [Parameter(Mandatory = $true)] [string] $ExponentBase64)
-    $m = ($ModulusBase64 -replace '\s', '')
-    $e = ($ExponentBase64 -replace '\s', '')
-    return "<RSAKeyValue><Modulus>$m</Modulus><Exponent>$e</Exponent></RSAKeyValue>"
-}
-
-# Same rule as Testbed/host/Publish-AddInPayload.ps1: the manifest's ds:RSAKeyValue, every
-# occurrence the same key, as the <RSAKeyValue> string the trust store holds.
-function Get-ManifestSigningKeyXml {
-    param([Parameter(Mandatory = $true)] [string] $ManifestXml)
-    $doc = New-Object System.Xml.XmlDocument
-    $doc.LoadXml($ManifestXml)
-    $nodes = $doc.SelectNodes("//*[local-name()='RSAKeyValue']")
-    if ($null -eq $nodes -or $nodes.Count -eq 0) { throw 'The manifest carries no RSAKeyValue - it is not signed.' }
-    $keys = @()
-    foreach ($n in $nodes) {
-        $mod = $n.SelectSingleNode("*[local-name()='Modulus']")
-        $exp = $n.SelectSingleNode("*[local-name()='Exponent']")
-        if ($null -eq $mod -or $null -eq $exp) { throw 'An RSAKeyValue in the manifest has no Modulus or no Exponent.' }
-        $keys += (ConvertTo-RsaKeyValueXml -ModulusBase64 $mod.InnerText -ExponentBase64 $exp.InnerText)
-    }
-    $distinct = @($keys | Sort-Object -Unique)
-    if ($distinct.Count -ne 1) { throw "The manifest is signed with $($distinct.Count) different keys; expected one." }
-    return $distinct[0]
-}
-
-# A key as two hex strings with leading zero bytes dropped - the same two numbers the runtime's
-# ExportCspBlob comparison sees, without asking a crypto provider for them.
-function ConvertFrom-RsaKeyXml {
-    param([string] $Xml)
-    if (-not $Xml) { throw 'empty key' }
-    $doc = New-Object System.Xml.XmlDocument
-    $doc.LoadXml($Xml)
-    $mod = $doc.SelectSingleNode("//*[local-name()='Modulus']")
-    $exp = $doc.SelectSingleNode("//*[local-name()='Exponent']")
-    if ($null -eq $mod -or $null -eq $exp) { throw 'not an RSAKeyValue: Modulus or Exponent missing' }
-    $out = @{}
-    foreach ($pair in @(@('Modulus', $mod.InnerText), @('Exponent', $exp.InnerText))) {
-        $bytes = [Convert]::FromBase64String(($pair[1] -replace '\s', ''))
-        $start = 0
-        while ($start -lt ($bytes.Length - 1) -and $bytes[$start] -eq 0) { $start++ }
-        $hex = New-Object System.Text.StringBuilder
-        for ($i = $start; $i -lt $bytes.Length; $i++) { [void]$hex.Append($bytes[$i].ToString('X2')) }
-        $out[$pair[0]] = $hex.ToString()
-    }
-    return $out
-}
-
-function Test-SameRsaKey {
-    param([string] $A, [string] $B)
-    try {
-        $x = ConvertFrom-RsaKeyXml $A
-        $y = ConvertFrom-RsaKeyXml $B
-        return ($x.Modulus -eq $y.Modulus -and $x.Exponent -eq $y.Exponent)
-    }
-    catch {
-        return $false
-    }
-}
-
 # ---- The mirror of HealthReporting.ReadTuningState. A value is @{ Kind = <RegistryValueKind>;
 # Data = <object> }; a missing value is simply not in the table; a missing KEY is $null.
 function ConvertTo-HealthBool {
@@ -715,17 +628,6 @@ function Get-RegistrationProblems {
     return $problems
 }
 
-# Outlook's hard-disable list holds UTF-16 blobs naming the add-in's path or name.
-function Test-DisabledItemsMention {
-    param([object[]] $Blobs)
-    foreach ($b in @($Blobs)) {
-        if ($null -eq $b) { continue }
-        $text = [System.Text.Encoding]::Unicode.GetString([byte[]]$b)
-        if ($text.ToLowerInvariant().Contains('outlookai')) { return $true }
-    }
-    return $false
-}
-
 # `git archive --format=zip <commit>` stores the commit id as the ZIP COMMENT, which lives at the
 # end of the file in the End Of Central Directory record (signature 50 4B 05 06; the comment length
 # is at offset 20 and the comment starts at offset 22).
@@ -740,25 +642,6 @@ function Get-ZipComment {
         }
     }
     return $null
-}
-
-function Test-Sha256Text { param([string] $Value) return [bool]($Value -match '^[0-9A-F]{64}$') }
-
-function Test-PayloadManifestShape {
-    param($Manifest)
-    $problems = @()
-    if ($null -eq $Manifest) { return @('no manifest at all') }
-    if (-not ([string]$Manifest.commit -match '^[0-9a-f]{40}$')) { $problems += 'commit: not a 40-character lower-case hex id' }
-    if (-not ([string]$Manifest.version -match '^\d{1,5}\.\d{1,5}\.\d{1,5}\.\d{1,5}$')) { $problems += 'version: not a four-part version' }
-    if ($null -eq $Manifest.installer -or -not $Manifest.installer.file) { $problems += 'installer.file: missing' }
-    elseif (-not (Test-Sha256Text ([string]$Manifest.installer.sha256))) { $problems += 'installer.sha256: not an upper-case SHA-256' }
-    foreach ($f in @('OutlookAI.dll', 'OutlookAI.vsto', 'OutlookAI.dll.manifest')) {
-        if ($null -eq $Manifest.addin -or -not (Test-Sha256Text ([string]$Manifest.addin.$f))) { $problems += "addin.${f}: not an upper-case SHA-256" }
-    }
-    if ($null -eq $Manifest.signing -or -not ([string]$Manifest.signing.publicKeyXml).StartsWith('<RSAKeyValue><Modulus>')) {
-        $problems += 'signing.publicKeyXml: not an <RSAKeyValue> string'
-    }
-    return $problems
 }
 
 # The exclusion state, before and after this run's Outlook start.
@@ -1116,22 +999,6 @@ function Get-InstallDir {
     $v = Get-HkcuValues $AppKey
     if ($v -and $v[$InstallDirValue]) { return [string]$v[$InstallDirValue].Data }
     return $null
-}
-
-function Get-InclusionEntries {
-    $entries = @()
-    $root = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($InclusionKey, $false)
-    if ($null -eq $root) { return $entries }
-    try {
-        foreach ($name in $root.GetSubKeyNames()) {
-            $k = $root.OpenSubKey($name, $false)
-            if ($null -eq $k) { continue }
-            try { $entries += [pscustomobject]@{ Name = $name; Url = [string]$k.GetValue('Url'); PublicKey = [string]$k.GetValue('PublicKey') } }
-            finally { $k.Close() }
-        }
-    }
-    finally { $root.Close() }
-    return $entries
 }
 
 function Get-CertificateKeyXml {
@@ -1687,6 +1554,12 @@ AwQ=</Modulus><Exponent>AQAB</Exponent></RSAKeyValue></KeyValue></KeyInfo></Sign
     Test-Case 'the first-run phase does reach one - so the line above is not vacuous' $true ($firstHits.Count -gt 0)
     Test-Case 'the first-run phase reaches no installer and no registry, environment or file write' '' ($firstWrites -join '; ')
     Test-Case 'nor does the job it starts' '1|' ('{0}|{1}' -f $jobAssign.Count, ((@($jobAssign | ForEach-Object { Get-WritesIn $_.Right '$FirstRunJob' })) -join '; '))
+    # The job runs the token read it is handed as text, which the line above cannot see into: so the text
+    # itself, the shared Get-ProcessElevation, is held to the same rule, and the job to compiling none of its own.
+    Test-Case 'nor does the token read it is handed, the shared Get-ProcessElevation' '' ((Get-WritesIn ${function:Get-ProcessElevation}.Ast 'Get-ProcessElevation') -join '; ')
+    Test-Case 'and the job compiles no token reader of its own' 0 @($jobAssign | ForEach-Object { $_.Right.FindAll({ param($x) $x -is [System.Management.Automation.Language.CommandAst] -and $x.GetCommandName() -eq 'Add-Type' }, $true) }).Count
+    # ps51-native-stderr-ok: a script block made from Get-ProcessElevation's text, not a program
+    Test-Case 'the token read works where the job runs it: handed as text, it reads this process as 0 or 1' $true (@(0, 1) -contains (& ([scriptblock]::Create(${function:Get-ProcessElevation}.ToString())) -ProcessId $PID))
     Test-Case 'the install phase does reach them - so the line above is not vacuous' $true ($installWrites.Count -gt 0)
     Test-Case 'the install phase refuses a token that is not elevated before anything else' 'Assert-PhaseElevation -ForPhase $PhaseInstall' (Get-FirstCommandIn 'Invoke-InstallPhase')
     Test-Case 'the first-run phase refuses an elevated one before anything else' 'Assert-PhaseElevation -ForPhase $PhaseFirstRun' (Get-FirstCommandIn 'Invoke-FirstRunPhase')
@@ -1800,7 +1673,7 @@ function Get-AddInFacts {
         $url = ConvertTo-InclusionUrl $manifestValue
         $key = Get-ManifestSigningKeyXml -ManifestXml ([System.IO.File]::ReadAllText($vsto))
         # Not $matches: that is PowerShell's automatic -match variable, and any -match in scope rewrites it.
-        $urlEntries = @(Get-InclusionEntries | Where-Object { Test-SameInclusionUrl $_.Url $url })
+        $urlEntries = @(Get-InclusionEntries $InclusionKey | Where-Object { Test-SameInclusionUrl $_.Url $url })
         $good = @($urlEntries | Where-Object { Test-SameRsaKey $_.PublicKey $key })
         Say "  trust         : $($urlEntries.Count) inclusion entr(y/ies) for $url, $($good.Count) with this build's key"
         if ($good.Count -eq 0) {
@@ -2128,7 +2001,7 @@ function Invoke-FirstRunPhase {
     Say '== First run: Outlook started once, NOT elevated, headless, in a watchdogged child job =='
     $windowsBefore = Get-SessionWindows
     $startedUtc = [DateTime]::UtcNow
-    $job = Start-Job -ScriptBlock $FirstRunJob -ArgumentList $startedUtc.Ticks, $FirstRunTimeoutSeconds, $TuningKey, $McpKey, $AddinName
+    $job = Start-Job -ScriptBlock $FirstRunJob -ArgumentList $startedUtc.Ticks, $FirstRunTimeoutSeconds, $TuningKey, $McpKey, $AddinName, ${function:Get-ProcessElevation}.ToString()
     $done = Wait-Job -Job $job -Timeout ($FirstRunTimeoutSeconds + 120)
     $first = $null
     if ($done) {
@@ -2219,9 +2092,10 @@ if ($mode.Mode -eq 'DryRun') {
 # script's hang. Everything the job holds is released in its finally; it never quits Outlook.
 # The job inherits FirstRun's Limited token, and COM starts Outlook with it - which the job then
 # proves, reading the started OUTLOOK.EXE's token while it still holds a reference, so Outlook
-# cannot have closed by itself first. (The reading is Start-OutlookUnelevated.ps1's, restated.)
+# cannot have closed by itself first. The reading is Get-ProcessElevation, the one the scripts share from
+# ScriptHelpers.ps1 (Q154, P10): a job cannot see this script's functions, so it is handed the text.
 $FirstRunJob = {
-    param([long] $StartedTicks, [int] $TimeoutSeconds, [string] $TuningKey, [string] $McpKey, [string] $AddinName)
+    param([long] $StartedTicks, [int] $TimeoutSeconds, [string] $TuningKey, [string] $McpKey, [string] $AddinName, [string] $ElevationText)
     $ErrorActionPreference = 'Stop'
     $started = New-Object DateTime($StartedTicks, [DateTimeKind]::Utc)
     $r = [ordered]@{ ComSeconds = $null; MapiInit = $null; TuningAfterSeconds = $null; McpAfterSeconds = $null; Connect = $null; RestartNeeded = $null; AutomationAnswered = $false; Error = $null; OutlookElevation = @(); TokenError = $null }
@@ -2269,19 +2143,9 @@ $FirstRunJob = {
         }
         catch { $r.Error = 'COMAddIns: ' + $_.Exception.Message }
         try {
-            if (-not ('OaiFirstRunToken' -as [type])) {
-                Add-Type -TypeDefinition @'
-using System; using System.Runtime.InteropServices;
-public static class OaiFirstRunToken {
-    [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr OpenProcess(uint a, bool i, int p);
-    [DllImport("advapi32.dll", SetLastError = true)] static extern bool OpenProcessToken(IntPtr p, uint a, out IntPtr t);
-    [DllImport("advapi32.dll", SetLastError = true)] static extern bool GetTokenInformation(IntPtr t, int c, out int i, int l, out int r);
-    [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
-    public static int Elevation(int pid) { IntPtr p = OpenProcess(0x1000, false, pid); if (p == IntPtr.Zero) return -1; try { IntPtr t; if (!OpenProcessToken(p, 8, out t)) return -1; try { int e, r; if (!GetTokenInformation(t, 20, out e, 4, out r)) return -1; return e != 0 ? 1 : 0; } finally { CloseHandle(t); } } finally { CloseHandle(p); } }
-}
-'@
-            }
-            $r.OutlookElevation = @(Get-Process -Name 'OUTLOOK' -ErrorAction SilentlyContinue | ForEach-Object { '{0}={1}' -f $_.Id, [OaiFirstRunToken]::Elevation($_.Id) })
+            $getElevation = [scriptblock]::Create($ElevationText)
+            # ps51-native-stderr-ok: a script block made from Get-ProcessElevation's text, not a program
+            $r.OutlookElevation = @(Get-Process -Name 'OUTLOOK' -ErrorAction SilentlyContinue | ForEach-Object { '{0}={1}' -f $_.Id, (& $getElevation -ProcessId $_.Id) })
         }
         catch { $r.TokenError = $_.Exception.Message }
     }
