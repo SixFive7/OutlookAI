@@ -17,11 +17,15 @@
     Nothing here is secret: a lease says a VM is in use, by which process, until when, and why.
 #>
 
+# Set by a -SelfTest to a scratch directory; empty, the leases are the machine's.
+$TestbedLeaseDirectoryOverride = ''
+
 function Get-TestbedLeaseDirectory {
     [CmdletBinding()]
     param()
 
-    $dir = Join-Path $env:SystemDrive 'OutlookAI-Testbed\leases'
+    $dir = [string]$TestbedLeaseDirectoryOverride
+    if (-not $dir) { $dir = Join-Path $env:SystemDrive 'OutlookAI-Testbed\leases' }
     if (-not (Test-Path -LiteralPath $dir)) {
         New-Item -ItemType Directory -Path $dir -Force | Out-Null
     }
@@ -67,14 +71,14 @@ function Enter-TestbedLeaseClaim {
         An exclusive hold on a VM's lease while a caller decides whether to take it. Dispose it as
         soon as the lease is written.
     .DESCRIPTION
-        Reading a lease and writing one are two steps, and Set-TestbedLease.ps1 writes over
-        whatever is there. Two callers that find the same VM free in the same moment would both
-        take it, and the one that wrote first would find out only when its next renewal read the
-        other's lease - after it had restored a checkpoint under the other's run. With pools
-        (TestbedPool.ps1, 2026-11-17) runs that ask for a kind of guest look for the same free VM,
-        so the read and the write are made one step here: a file beside the lease, opened with no
-        sharing, held from the read to the write. A person taking a lease by hand reads it first
-        and does not need this.
+        Reading a lease and writing one are two steps. Two callers that find the same VM free in
+        the same moment would both take it, and the one that wrote first would find out only when
+        its next renewal read the other's lease - after it had restored a checkpoint under the
+        other's run. With pools (TestbedPool.ps1, 2026-11-17) runs that ask for a kind of guest look
+        for the same free VM, so the read and the write are made one step here: a file beside the
+        lease, opened with no sharing, held from the read to the write. Set-TestbedLease.ps1 takes
+        it itself when a person runs it (2026-11-20), and a script that calls it holds it around
+        the call, as the runners do.
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory = $true)] [string] $VMName, [int] $TimeoutSeconds = 60)

@@ -304,13 +304,16 @@ function Exit-TestbedQueue {
     try { if ($null -ne $Ticket) { [void](Remove-TestbedStateFile ([string]$Ticket.Path)) } } catch { }
 }
 
-# Whether a record's run still lives - a ticket's, or a waiting record's: its process, started when
-# the record says - not another that took its id since.
+# Whether a record's run still lives - a ticket's, a waiting record's, or a lease's holder
+# (Set-TestbedLease.ps1): its process, started when the record says - not another that took its id
+# since. A record that does not say when its process started - a lease written before 2026-11-20 -
+# lives while a process of its id runs.
 function Test-TestbedTicketAlive {
     param([object] $Record)
     $p = $null
     try { $p = Get-Process -Id ([int]$Record.pid) -ErrorAction SilentlyContinue } catch { }
     if ($null -eq $p) { return $false }
+    if ($null -eq $Record.processStartUnix) { return $true }
     try { return (([DateTimeOffset]$p.StartTime).ToUnixTimeSeconds() -eq [long]$Record.processStartUnix) } catch { return $true }
 }
 

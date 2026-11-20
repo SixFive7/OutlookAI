@@ -2457,6 +2457,32 @@ its mailbox tests on, and change nothing you install.
   Items - beside the mail, and none of them could be opened. On the test machine they were 21 of the
   first 100 results.
 
+- ✅ **A lease on a test machine is never taken from a holder who still has it.**
+  `Testbed/host/Set-TestbedLease.ps1` wrote over whatever lease was there, so a person who leased a
+  machine a run was using took it from the run without a word, and a live-tier run then stopped at
+  its next renewal, which found the lease somebody else's; the load investigation of 2026-11-20
+  found it. The script now refuses, and says whose lease it is, which script and process took it and
+  until when. It still takes a lease that has expired, one with its own `-Reason`, which is how the
+  runners tell their own lease, and one whose process has ended - a stopped run, a host that
+  restarted - judged as the queue's tickets are, by the process id and the second it started. A
+  lease taken by hand, from a prompt, has no process that lasts as long as its holder, so only its
+  expiry or a release ends it; a lease written before this change is judged by its process alone. By
+  hand, the read and the write are one step under the lease's claim, as the runners' are. The new
+  `-SelfTest` holds each case on a scratch directory with two hidden helper processes, and on this
+  workstation a lease for a machine that does not exist was refused and taken over as above under
+  both PowerShells.
+
+- ✅ **A build-machine run cut off by a host restart gets a line in runs.log from the next run.**
+  The restart of 2026-11-18 at 20:34 stopped run `20261118-203146-3ca41927bf3c` and its janitor
+  together, and left its start line in `runs.log` with no end and its owner file naming a process
+  that was gone. A run that takes a build machine's lock now reads the owner file the run before it
+  left: when that run's process has ended and `runs.log` holds no end line for it, it writes a
+  `gone` line for it - not an end line, so a janitor still watching that run puts the machine back
+  as before. A queued run and a janitor waiting for a lock no longer name such a run as its holder,
+  and say "another run". Owner files record the second their process started, as queue tickets do,
+  so a process id Windows has given to another process since does not pass for the run. The build
+  runner's `-SelfTest` pins the line, the names, and the run's and the janitor's owner files.
+
 - ✅ **The guests' sweep measurement names its store and folder by ID, as the server asks.**
   `Testbed/guest/Invoke-GuestMeasure.ps1` still passed the store's display name and the one-folder
   scan's folder name, which `list_folders` and `search` refuse since stores and folders became
