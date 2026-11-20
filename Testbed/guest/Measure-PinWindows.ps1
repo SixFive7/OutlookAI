@@ -20,7 +20,8 @@
     Application.ActiveExplorer() hands back such a hidden Explorer, which the show-me path would then
     display as the user's window.
 
-    WHAT IT DOES. Drives the staged server (-ServerExe) over stdio exactly as an MCP client does -
+    WHAT IT DOES. Drives the staged server (-ServerExe) over stdio exactly as an MCP client does,
+    through the stdio client the guest scripts share (guest/McpStdioClient.ps1, staged beside it) -
     initialize, then list_folders, a read-only tool - and ends each session the normal way (stdin
     closed) or by killing ITS COM HOST ONLY. Around each step a separate child process - so nothing
     it attaches can outlive the reading - counts Application.Explorers and each one's window
@@ -86,8 +87,9 @@
     The staged OutlookAI.McpServer.exe. Its COM host sits beside it.
 
 .PARAMETER SelfTest
-    Pure: compiles the helper types, checks the JSON-RPC framing, the rule-7 decision and the
-    scenario table, and reads this file's syntax tree for the two Stop-Process targets. Any machine.
+    Pure: compiles the helper types, checks the rule-7 decision and the scenario table, and reads
+    this file's syntax tree for the two Stop-Process targets and for the MCP sessions going through
+    the shared stdio client, whose own checks are Set-SignatureSettings.ps1's. Any machine.
 
 .EXAMPLE
     .\Register-InteractiveTask.ps1 -RunLevel Limited -TimeoutSeconds 1800 -Script "& 'C:\OutlookAI-Q5\q118\Measure-PinWindows.ps1' -Scenario Control"
@@ -403,95 +405,8 @@ public static class OaiPinCom
     }
 }
 
-// One MCP stdio session against the real server, newline-delimited JSON-RPC as every client
-// speaks it. Writes raw UTF-8 bytes (no BOM) to the pipe and never touches the StreamWriter, so
-// nothing but the frames reaches the server.
-public sealed class OaiMcpSession
-{
-    readonly Process _p;
-    readonly Stream _in;
-    readonly Task<string> _stderr;
-    Task<string> _pendingRead;
-    int _id;
-    public string Name;
-
-    public OaiMcpSession(string exe, string name)
-    {
-        Name = name;
-        ProcessStartInfo psi = new ProcessStartInfo(exe);
-        psi.UseShellExecute = false;
-        psi.RedirectStandardInput = true;
-        psi.RedirectStandardOutput = true;
-        psi.RedirectStandardError = true;
-        psi.CreateNoWindow = true;
-        psi.WorkingDirectory = Path.GetDirectoryName(exe);
-        psi.StandardOutputEncoding = new UTF8Encoding(false);
-        psi.StandardErrorEncoding = new UTF8Encoding(false);
-        _p = Process.Start(psi);
-        _in = _p.StandardInput.BaseStream;
-        _stderr = _p.StandardError.ReadToEndAsync();
-    }
-
-    public int Pid { get { return _p.Id; } }
-    public bool HasExited { get { return _p.HasExited; } }
-    public int ExitCode { get { return _p.HasExited ? _p.ExitCode : -999; } }
-
-    void Write(string json)
-    {
-        byte[] b = new UTF8Encoding(false).GetBytes(json + "\n");
-        _in.Write(b, 0, b.Length);
-        _in.Flush();
-    }
-
-    public static string Frame(int id, string method, string paramsJson)
-    {
-        return "{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"method\":\"" + method + "\",\"params\":" + paramsJson + "}";
-    }
-
-    public static bool IsResponseTo(string line, int id)
-    {
-        if (line == null) { return false; }
-        string compact = line.Replace(" ", "");
-        bool idMatches = compact.Contains("\"id\":" + id + ",") || compact.Contains("\"id\":" + id + "}");
-        return idMatches && (compact.Contains("\"result\":") || compact.Contains("\"error\":"));
-    }
-
-    public int Send(string method, string paramsJson)
-    {
-        int id = ++_id;
-        Write(Frame(id, method, paramsJson));
-        return id;
-    }
-
-    public void Notify(string method) { Write("{\"jsonrpc\":\"2.0\",\"method\":\"" + method + "\"}"); }
-
-    public string Await(int id, int timeoutMs)
-    {
-        Stopwatch sw = Stopwatch.StartNew();
-        while (true)
-        {
-            int left = timeoutMs - (int)sw.ElapsedMilliseconds;
-            if (left <= 0) { return null; }
-            if (_pendingRead == null) { _pendingRead = _p.StandardOutput.ReadLineAsync(); }
-            if (!_pendingRead.Wait(left)) { return null; }
-            string line = _pendingRead.Result;
-            _pendingRead = null;
-            if (line == null) { return null; }
-            if (IsResponseTo(line, id)) { return line; }
-        }
-    }
-
-    // How a client ends a session normally: it closes stdin.
-    public void CloseInput() { try { _in.Close(); } catch (Exception) { } }
-    public bool WaitExit(int ms) { return _p.WaitForExit(ms); }
-
-    public string StderrTail(int max)
-    {
-        if (!_stderr.Wait(3000)) { return "<stderr still open>"; }
-        string s = _stderr.Result ?? "";
-        return s.Length <= max ? s : s.Substring(s.Length - max);
-    }
-}
+// The MCP sessions are the shared stdio client's (guest/McpStdioClient.ps1); this held a C# client of
+// its own until 2026-11-18.
 '@
 
 function Add-ProbeTypes {
@@ -520,15 +435,6 @@ function Invoke-SelfTest {
     Check 'the helper types compile under this PowerShell' $compiled
 
     if ($compiled) {
-        $frame = [OaiMcpSession]::Frame(10, 'tools/call', '{"name":"list_folders","arguments":{}}')
-        $parsed = $null
-        try { $parsed = $frame | ConvertFrom-Json } catch { }
-        Check 'a request frame is valid JSON' ($null -ne $parsed)
-        Check 'a request frame carries its id and method' ($parsed.id -eq 10 -and $parsed.method -eq 'tools/call' -and $parsed.params.name -eq 'list_folders')
-        Check 'the response matcher takes its own id' ([OaiMcpSession]::IsResponseTo('{"result":{},"id":1,"jsonrpc":"2.0"}', 1))
-        Check 'the response matcher does not take id 10 for id 1' (-not [OaiMcpSession]::IsResponseTo('{"result":{},"id":10,"jsonrpc":"2.0"}', 1))
-        Check 'the response matcher takes an error answer' ([OaiMcpSession]::IsResponseTo('{"jsonrpc":"2.0","id":3,"error":{"code":-32601}}', 3))
-        Check 'the response matcher ignores a notification' (-not [OaiMcpSession]::IsResponseTo('{"jsonrpc":"2.0","method":"notifications/message","params":{"id":1}}', 1))
         $w = [OaiPinNative]::Snapshot([int[]]@())
         Check 'a window snapshot of no process is empty' ($w.Count -eq 0)
     }
@@ -563,6 +469,8 @@ function Invoke-SelfTest {
             if ($q) { $q.Name } else { '<script>' }
         } | Sort-Object -Unique)
     Check 'Stop-Process is called only by Stop-ComHost and Invoke-ChildProbe' (($owners -join ',') -eq 'Invoke-ChildProbe,Stop-ComHost')
+    $own = [System.IO.File]::ReadAllText($PSCommandPath)
+    Check 'its MCP sessions are the shared stdio client''s, started by Start-Session and ended by Close-McpStdioInput, with no session class of its own' ($own.Contains(". (Join-Path `$PSScriptRoot 'McpStdioClient.ps1')") -and $own.Contains('$s = Start-McpStdioServer -ServerExe $ServerExe -NoInitialize') -and $own.Contains('Close-McpStdioInput -Session $s') -and -not $script:ProbeSource.Contains('class OaiMcp'))
     $text = Get-Content -LiteralPath $PSCommandPath -Raw
     Check 'nothing here calls taskkill' (-not ($text -match ('task' + 'kill\.exe|task' + 'kill /')))
 
@@ -576,6 +484,8 @@ if ($SelfTest) { Invoke-SelfTest }
 
 # THE GUARD, before anything that touches a process, a file or COM.
 . "$PSScriptRoot\OutlookMapiInterop.ps1"
+# The MCP sessions: the stdio client the guest scripts share (Q154), staged beside this script.
+. (Join-Path $PSScriptRoot 'McpStdioClient.ps1')
 Assert-TestbedGuest -ExpectedUser $ExpectedUser
 if ($env:COMPUTERNAME -notlike 'OAI-*' -or $env:COMPUTERNAME -eq 'OAI-BUILD') {
     throw "REFUSING TO RUN on '$env:COMPUTERNAME': this probe starts and ends Outlook, and runs only on an Outlook test guest (OAI-*, not the build VM)."
@@ -740,17 +650,32 @@ function Start-OutlookVisible([switch] $AllowRunning, [string] $Label = 'user') 
 }
 
 function Get-ComHostOf($Session) {
-    return @(Get-CimInstance Win32_Process -Filter "ParentProcessId = $($Session.Pid)" | Where-Object { $_.Name -eq 'OutlookAI.ComHost.exe' })
+    return @(Get-CimInstance Win32_Process -Filter "ParentProcessId = $($Session.Process.Id)" | Where-Object { $_.Name -eq 'OutlookAI.ComHost.exe' })
 }
 
+# A session of the shared stdio client (McpStdioClient.ps1), started without its initialize, which is timed and
+# reported here; the session carries its Name. Requests are numbered from 1, as every session's always were.
 function Start-Session([string] $Name) {
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
-    $s = New-Object OaiMcpSession($ServerExe, $Name)
-    $init = $s.Await($s.Send('initialize', '{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"OutlookAI.Q118Probe","version":"0.1"}}'), 60000)
+    $s = Start-McpStdioServer -ServerExe $ServerExe -NoInitialize
+    $s.Name = $Name
+    $init = Read-ReplyLine $s (Send-McpRequest -Session $s -Method 'initialize' -Params @{ protocolVersion = '2025-06-18'; capabilities = @{}; clientInfo = @{ name = 'OutlookAI.Q118Probe'; version = '0.1' } }) 60
     if ($null -eq $init) { Write-Event 'session' "$Name : initialize got NO answer in 60 s" $null; return $s }
-    $s.Notify('notifications/initialized')
-    Write-Event 'session' ("{0}: server pid {1} initialized in {2:N0} ms" -f $Name, $s.Pid, $sw.Elapsed.TotalMilliseconds) ([ordered]@{ name = $Name; pid = $s.Pid })
+    Send-McpMessage -Session $s -Method 'notifications/initialized' -Notification
+    Write-Event 'session' ("{0}: server pid {1} initialized in {2:N0} ms" -f $Name, $s.Process.Id, $sw.Elapsed.TotalMilliseconds) ([ordered]@{ name = $Name; pid = $s.Process.Id })
     return $s
+}
+
+# The reply to request $Id as the server wrote it, or $null when none came within $Seconds: the shared client's
+# Read-McpReply, which keeps a read still waiting for the next call, so a late reply is skipped rather than lost.
+function Read-ReplyLine($Session, $Id, [int] $Seconds) {
+    if ($null -eq (Read-McpReply -Session $Session -Id $Id -TimeoutSeconds $Seconds -NullWhenNone)) { return $null }
+    return $Session.LastReplyLine
+}
+
+# A list_folders request on one session, sent and not awaited: its id.
+function Send-ListFolders($Session) {
+    return (Send-McpRequest -Session $Session -Method 'tools/call' -Params @{ name = 'list_folders'; arguments = @{} })
 }
 
 # list_folders on each session at once: every request is sent before any answer is awaited.
@@ -758,15 +683,15 @@ function Start-Session([string] $Name) {
 # goes on starting Outlook) every 2 s for up to 90 s, as the answer's own retry guidance says.
 function Invoke-ListFolders([object[]] $Sessions, [switch] $UntilReady) {
     $sent = @()
-    foreach ($s in $Sessions) { $sent += [pscustomobject]@{ s = $s; id = $s.Send('tools/call', '{"name":"list_folders","arguments":{}}'); sw = [System.Diagnostics.Stopwatch]::StartNew() } }
+    foreach ($s in $Sessions) { $sent += [pscustomobject]@{ s = $s; id = (Send-ListFolders $s); sw = [System.Diagnostics.Stopwatch]::StartNew() } }
     foreach ($x in $sent) {
-        $resp = $x.s.Await($x.id, 180000)
+        $resp = Read-ReplyLine $x.s $x.id 180
         $tries = 1
         while ($UntilReady -and $resp -and $resp -match 'OutlookStarting' -and $x.sw.Elapsed.TotalSeconds -lt 90) {
             Write-Event 'tool' ("{0}: list_folders answered OutlookStarting at {1} ms (try {2}); retrying in 2 s" -f $x.s.Name, [Math]::Round($x.sw.Elapsed.TotalMilliseconds), $tries) $null
             Start-Sleep -Seconds 2
             $tries++
-            $resp = $x.s.Await($x.s.Send('tools/call', '{"name":"list_folders","arguments":{}}'), 180000)
+            $resp = Read-ReplyLine $x.s (Send-ListFolders $x.s) 180
         }
         $ms = [Math]::Round($x.sw.Elapsed.TotalMilliseconds)
         $comHost = Get-ComHostOf $x.s
@@ -780,17 +705,27 @@ function Invoke-ListFolders([object[]] $Sessions, [switch] $UntilReady) {
     }
 }
 
+# The last $Max characters a session's server wrote to standard error, as the C# session's StderrTail gave them:
+# '<stderr still open>' when the server has not let it go within 3 s.
+function Get-StderrTail($Session, [int] $Max) {
+    if (-not $Session.Stderr.Wait(3000)) { return '<stderr still open>' }
+    $text = [string]$Session.Stderr.Result
+    if ($text.Length -le $Max) { return $text }
+    return $text.Substring($text.Length - $Max)
+}
+
 # The normal end: stdin closed on every session at once, then each awaited.
 function Stop-SessionNormally([object[]] $Sessions) {
     $hosts = @{}
     foreach ($s in $Sessions) { $hosts[$s.Name] = @(Get-ComHostOf $s | ForEach-Object { $_.ProcessId }) }
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
-    foreach ($s in $Sessions) { $s.CloseInput() }
+    foreach ($s in $Sessions) { Close-McpStdioInput -Session $s }
     foreach ($s in $Sessions) {
-        $exited = $s.WaitExit(60000)
+        $exited = $s.Process.WaitForExit(60000)
         $ms = [Math]::Round($sw.Elapsed.TotalMilliseconds)
         $left = @($hosts[$s.Name] | Where-Object { Get-Process -Id $_ -ErrorAction SilentlyContinue })
-        Write-Event 'end' ("{0}: stdin closed; server {1} after {2} ms (exit code {3}); its COM host {4}" -f $s.Name, $(if ($exited) { 'exited' } else { 'STILL RUNNING' }), $ms, $s.ExitCode, $(if ($hosts[$s.Name].Count -eq 0) { 'was never seen' } elseif ($left.Count -eq 0) { 'gone' } else { 'STILL RUNNING' })) ([ordered]@{ name = $s.Name; exited = $exited; ms = $ms; exitCode = $s.ExitCode; stderrTail = $s.StderrTail(400) })
+        $code = $(if ($s.Process.HasExited) { $s.Process.ExitCode } else { -999 })
+        Write-Event 'end' ("{0}: stdin closed; server {1} after {2} ms (exit code {3}); its COM host {4}" -f $s.Name, $(if ($exited) { 'exited' } else { 'STILL RUNNING' }), $ms, $code, $(if ($hosts[$s.Name].Count -eq 0) { 'was never seen' } elseif ($left.Count -eq 0) { 'gone' } else { 'STILL RUNNING' })) ([ordered]@{ name = $s.Name; exited = $exited; ms = $ms; exitCode = $code; stderrTail = (Get-StderrTail $s 400) })
     }
 }
 

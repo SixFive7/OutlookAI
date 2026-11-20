@@ -1450,7 +1450,28 @@ its mailbox tests on, and change nothing you install.
   two copies and an older one in `Build-Corpus.ps1`, which now reads the shared one's choice) and
   what `-Verify` does about ImportPRF (`Resolve-ImportPrfClearance`, two copies) are one copy too,
   and so is the one helper of the self-tests with a single form, `ConvertTo-SelfTestText`, which four
-  of them compared values by.
+  of them compared values by. The measurements' short hash went the same way: the two scripts on the
+  Exchange machine that print a value they may not show as a SHA-256 prefix each had their own
+  `Get-ShortHash`, one of 12 digits that ignores case and one of 8 that keeps it, and both call the
+  shared one now, each saying which it needs, so every hash they print is the one they printed before.
+  The second's hash call is proven by its self-test alone, which pins the exact digits: that script
+  runs only on the Exchange machine. The attach to a running Outlook went the same way. Four scripts
+  attached each their own way - `Reset-HubPopulation.ps1` through the Running Object Table and then
+  the class factory, `OutlookDialogUia.ps1`'s dialog helper through the class factory once it had
+  seen Outlook run in its session, and `Measure-FolderIdResolution.ps1` and
+  `Measure-SignatureRoaming.ps1` through the table alone, which an Outlook that has not yet lost the
+  focus is not in: the first could not attach on a test machine where Outlook had just started. All
+  four use `Connect-RunningOutlook` now, which asks the table first and the class factory only once an
+  OUTLOOK.EXE runs in the caller's own session, so it never starts one, and says which way it went.
+  The MCP server's stdio client is one copy too: `Invoke-GuestMeasure.ps1`, kept as
+  found until then, and `Measure-PinWindows.ps1`, whose sessions were a C# class of its own, both use
+  `Testbed/guest/McpStdioClient.ps1`. It took on what the second did that it did not: a read still
+  waiting when a reply's time runs out is kept for the next one, where the next read used to throw; a
+  server starts without the initialize for a caller that times it; a request goes out now and its
+  reply is read later; a silence can give back nothing instead of throwing; a reply must carry a
+  result or an error; and the end of the server's standard error is waited for. A server that cannot
+  be initialized is stopped, and the error says what it wrote. `Set-SignatureSettings.ps1`'s
+  self-test now talks to a stand-in server through it as well as checking its pure parts.
 
 - 📝 **If Office's own grace reset fails, the Exchange test machine may get Microsoft 365 Apps (Q206).**
   The maintainer's decision Q206, 2026-11-18, now in AGENTS.md beside the machine's internet
