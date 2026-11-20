@@ -259,6 +259,10 @@
   `.work/media/dotnet-sdk-10.0.401-win-x64.exe` only while a checkpoint still needs it - recording it
   in section 4.12. `OutlookAI-Exchange`'s older checkpoints are its rebuild points and stay.
 
+- [ ] **At the next refreeze of the Outlook guests, detach `throwaway@vm.invalid` from the tier profile
+  (question 239)**, through a small tested script rebuilt from the detach step of the deleted guest
+  script `Reset-ThrowawayStore.ps1` (`9614189^`); `Docs/live-tier-on-the-vm.md` section 4.5b.
+
 
 
 - [ ] **Waiting for the shared test mailbox (Q109).** The maintainer requested a free shared
