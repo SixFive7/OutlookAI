@@ -237,64 +237,32 @@ $script:Invariant = [System.Globalization.CultureInfo]::InvariantCulture
 # =============================================================================================
 # WINDOWS' OWN ANSWER TO "WHERE IS THIS, REALLY". kernel32 only, compiled by Add-Type - which on
 # Windows PowerShell 5.1 is the .NET Framework's own csc.exe, so nothing is installed for it (the
-# repository's Dependencies rule). C# 5, because that is what that compiler speaks.
+# repository's Dependencies rule). C# 5, because that is what that compiler speaks. The open, the
+# final path and the file information are Core's own (Q171 (c)): Interop\Win32File.cs of this
+# script's own checkout, compiled in the same Add-Type as the probe below, which keeps only what
+# Core has no use for.
 # =============================================================================================
 
-if (-not ('OutlookAI.Testbed.LiveSettingsPathProbe' -as [type])) {
-    Add-Type -TypeDefinition @'
-using System;
-using System.IO;
-using System.Runtime.InteropServices;
-using System.Text;
-using Microsoft.Win32.SafeHandles;
-
+$script:Win32FileSource = Join-Path $PSScriptRoot '..\..\McpServer\OutlookAI.Core\Interop\Win32File.cs'
+$script:PathProbeSource = @'
 namespace OutlookAI.Testbed
 {
+    // Inside the namespace: this source follows Win32File.cs, and its usings, in one compilation.
+    using System;
+    using System.IO;
+    using System.Runtime.InteropServices;
+    using System.Text;
+    using Microsoft.Win32.SafeHandles;
+    using OutlookAI.Core.Interop;
+
     public static class LiveSettingsPathProbe
     {
-        private const uint ShareAll = 0x00000007;             // read | write | delete
-        private const uint OpenExisting = 3;
-        private const uint BackupSemantics = 0x02000000;      // needed to open a directory at all
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct FileInformation
-        {
-            public uint FileAttributes;
-            public uint CreationTimeLow;
-            public uint CreationTimeHigh;
-            public uint LastAccessTimeLow;
-            public uint LastAccessTimeHigh;
-            public uint LastWriteTimeLow;
-            public uint LastWriteTimeHigh;
-            public uint VolumeSerialNumber;
-            public uint FileSizeHigh;
-            public uint FileSizeLow;
-            public uint NumberOfLinks;
-            public uint FileIndexHigh;
-            public uint FileIndexLow;
-        }
-
-        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-        private static extern SafeFileHandle CreateFileW(
-            string fileName, uint desiredAccess, uint shareMode, IntPtr securityAttributes,
-            uint creationDisposition, uint flagsAndAttributes, IntPtr templateFile);
-
-        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-        private static extern uint GetFinalPathNameByHandleW(
-            SafeFileHandle file, StringBuilder filePath, uint filePathLength, uint flags);
-
-        [DllImport("kernel32.dll", SetLastError = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        private static extern bool GetFileInformationByHandle(SafeFileHandle file, out FileInformation information);
-
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         private static extern uint GetShortPathNameW(string longPath, StringBuilder shortPath, uint bufferLength);
 
-        // Desired access 0: the handle can answer questions about the object and do nothing else -
-        // no byte of it is read or written.
-        private static SafeFileHandle OpenForMetadata(string path)
+        private static SafeFileHandle Open(string path)
         {
-            SafeFileHandle handle = CreateFileW(path, 0, ShareAll, IntPtr.Zero, OpenExisting, BackupSemantics, IntPtr.Zero);
+            SafeFileHandle handle = Win32File.OpenForQuestions(path);
             if (handle.IsInvalid)
             {
                 int error = Marshal.GetLastWin32Error();
@@ -304,31 +272,27 @@ namespace OutlookAI.Testbed
             return handle;
         }
 
+        // Where the path really is, written as Win32File.WithoutWin32Prefix writes it.
         public static string FinalPath(string path)
         {
-            using (SafeFileHandle handle = OpenForMetadata(path))
+            using (SafeFileHandle handle = Open(path))
             {
-                StringBuilder buffer = new StringBuilder(512);
-                uint length = GetFinalPathNameByHandleW(handle, buffer, (uint)buffer.Capacity, 0);
-                if (length >= buffer.Capacity)
+                int error;
+                string final = Win32File.FinalPath(handle, out error);
+                if (final.Length == 0)
                 {
-                    buffer = new StringBuilder((int)length + 1);
-                    length = GetFinalPathNameByHandleW(handle, buffer, (uint)buffer.Capacity, 0);
+                    throw new IOException("Windows could not report the final path of '" + path + "' (Win32 error " + error + ").");
                 }
-                if (length == 0 || length >= buffer.Capacity)
-                {
-                    throw new IOException("Windows could not report the final path of '" + path + "' (Win32 error " + Marshal.GetLastWin32Error() + ").");
-                }
-                return buffer.ToString();
+                return final;
             }
         }
 
         public static uint LinkCount(string path)
         {
-            using (SafeFileHandle handle = OpenForMetadata(path))
+            using (SafeFileHandle handle = Open(path))
             {
-                FileInformation information;
-                if (!GetFileInformationByHandle(handle, out information))
+                Win32File.ByHandleFileInformation information;
+                if (!Win32File.GetFileInformationByHandle(handle, out information))
                 {
                     throw new IOException("Windows could not report the link count of '" + path + "' (Win32 error " + Marshal.GetLastWin32Error() + ").");
                 }
@@ -347,6 +311,8 @@ namespace OutlookAI.Testbed
     }
 }
 '@
+if (-not ('OutlookAI.Testbed.LiveSettingsPathProbe' -as [type])) {
+    Add-Type -TypeDefinition ([System.IO.File]::ReadAllText($script:Win32FileSource) + "`n" + $script:PathProbeSource)
 }
 
 # =============================================================================================
@@ -1446,9 +1412,8 @@ function Get-CanonicalPath {
     }
     if (-not $dir) { return $null }
 
+    # Without Windows' \\?\ prefix already: Win32File.FinalPath takes it off.
     $final = [OutlookAI.Testbed.LiveSettingsPathProbe]::FinalPath($dir)
-    if ($final.StartsWith('\\?\UNC\', [System.StringComparison]::OrdinalIgnoreCase)) { $final = '\\' + $final.Substring(8) }
-    elseif ($final.StartsWith('\\?\')) { $final = $final.Substring(4) }
 
     $result = $final
     foreach ($segment in $tail) { $result = [System.IO.Path]::Combine($result, $segment) }

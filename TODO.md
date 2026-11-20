@@ -122,11 +122,13 @@
   the tool's assembly. T06 is done: the setups it counted
   are shared since T03 and T05 - no run of 15 identical lines is left between two T1 files - and the
   two thread suites' three pairs of parallel tests assert through `ThreadWalks`, keeping their
-  names. S5a is complete. In parallel: the PowerShell helpers (S7) and the rules restated in C# and
-  PowerShell as shared C# source (Q171). The updater's signature check is shared: Core's
-  `InstallerSignature`, which the add-in calls and `Tools/Publish-Release.ps1` compiles with
-  Add-Type. Left of Q171: the file-identity calls `Testbed/host/New-LiveTestSettings.ps1` declares
-  beside the audit log's in Core (the survey's X05).
+  names. S5a is complete. In parallel: the PowerShell helpers (S7). Q171 is done: the updater's
+  signature check is Core's `InstallerSignature`, which the add-in calls and
+  `Tools/Publish-Release.ps1` compiles with Add-Type; the Windows file calls, the survey's X05, are
+  Core's `Win32File`, which `Testbed/host/New-LiveTestSettings.ps1` compiles with Add-Type; and the
+  guest scripts' copies of the test tag, the signature prefix and the account classes are held to
+  the C# by T1 `ScriptConstantCopyTests`. `Connect-ExchangeAccount.ps1`'s `AccountType -eq 0`, Outlook's
+  value for an Exchange account, has no C# twin: nothing in C# reads an account's type.
   The attach to an Outlook already running is one copy, `Connect-RunningOutlook` in the shared file,
   which `Measure-FolderIdResolution.ps1`, `Measure-SignatureRoaming.ps1`, `Reset-HubPopulation.ps1`
   and `OutlookDialogUia.ps1`'s helper use. The other attaches stay as they are for now (2026-11-20):

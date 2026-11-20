@@ -390,9 +390,10 @@ namespace OutlookAI.Core.AddIn
             ReplyForwardSignatureValueName,
         });
 
-        private static readonly string[] DataFileServiceNames = { "MSUPST MS", "MSPST MS" };
+        // Internal for T1 ScriptConstantCopyTests, which holds ScriptHelpers.ps1's copy of both to them (Q171).
+        internal static readonly string[] DataFileServiceNames = { "MSUPST MS", "MSPST MS" };
 
-        private static readonly string[] AddressBookServiceNames = { "CONTAB", "EMABLT", "MSPST AB" };
+        internal static readonly string[] AddressBookServiceNames = { "CONTAB", "EMABLT", "MSPST AB" };
 
         /// <summary>
         /// Classifies an entry by its class and wrapped service alone - see the type summary.
