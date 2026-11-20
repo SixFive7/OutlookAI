@@ -101,13 +101,16 @@
   reason. Left: the self-test helpers (P04) but `ConvertTo-SelfTestText`, shared too. Check 4 reads
   nested functions now, and the helpers' seven `Test-Case` and thirteen `Check` shapes share their
   names, so they fold under names of their own or into one harness.
-  S6 folded the server's own repetition, the survey's S01 to S14, but for four shapes it left: the
+  S6 folded the server's own repetition, the survey's S01 to S14, but for four shapes it left. The
   two draft results' shared fields (S04, S11), which a base class would move to one block of the
-  JSON every draft tool returns - question 233 to the maintainer; the parameter lists the draft
-  tools each declare (S12); and the corpus tool's
-  thirteen STA operations, which each opened the corpus store and released it the same way (S14),
-  are folded in S5b: one `WithOutlook`, and `WithCorpusStore` on it for the twelve that work in one
-  store. The COM host's two invoke methods, which declared the same six parameters (S13), are one
+  JSON every draft tool returns, wait on question 233 to the maintainer. The parameter lists the
+  four draft tools each declare (S12) stay as they are, as the survey's target says: the MCP SDK
+  reads each tool's parameters from its own method, so they cannot be one list, and every
+  description two of them share is already a constant - twelve, `ToHint` and `CcHint` among them;
+  the six written out in place are each one tool's own. The corpus tool's thirteen STA operations,
+  which each opened the corpus store and released it the same way (S14), are folded in S5b: one
+  `WithOutlook`, and `WithCorpusStore` on it for the twelve that work in one store. The COM host's
+  two invoke methods, which declared the same six parameters (S13), are one
   `InvokeAsync`. S10 had gone already with the incident commands (Q170 (a)). The hex stage
   put the product's writers of bytes as hexadecimal, and its readers of them, into Core's `Hex`, and
   the nine catch blocks it found writing out the text of the shared `ComObjects.DescribeFailure`
