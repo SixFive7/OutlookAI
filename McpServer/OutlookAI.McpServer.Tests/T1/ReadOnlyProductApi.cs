@@ -47,6 +47,10 @@ internal static class ReadOnlyProductApi
 
         // The non-creating special-folder resolver (Q84): reads a store's folder ids, never creates one.
         ["OutlookAI.Core.Com.SpecialFolders"] = "the Q84 non-creating resolver: reads a store's default-folder ids and never creates a folder",
+        // The shared COM plumbing the live helpers call since S5b (the survey's A05 and T14): starting or attaching to
+        // Outlook counts as a read (S7/D17), and releasing a COM reference changes no data.
+        ["OutlookAI.Core.Com.OutlookAutomation"] = "starts or attaches to Outlook and finds a store by its name; it changes no data",
+        ["OutlookAI.Core.AddIn.ComObjects"] = "releases a COM reference, compares two by identity and describes a failure; it changes no data",
         ["OutlookAI.Core.Com.ComSpecialFolderStore"] = "the resolver's view of one store: reads its type and its folder ids",
 
         // The Windows Search tier: SELECT statements against the system index, and the shapes around them.

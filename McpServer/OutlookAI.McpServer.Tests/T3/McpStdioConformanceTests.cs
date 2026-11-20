@@ -156,74 +156,21 @@ public sealed class McpStdioConformanceTests
         }
     }
 
-    private static async Task SendAsync(Process server, object message, CancellationToken ct)
-    {
-        string json = JsonSerializer.Serialize(message);
-        await server.StandardInput.WriteLineAsync(json.AsMemory(), ct);
-        await server.StandardInput.FlushAsync(ct);
-    }
+    private static Task SendAsync(Process server, object message, CancellationToken ct) =>
+        McpWire.SendAsync(server.StandardInput, message, ct);
 
     /// <summary>
-    /// Sends a JSON-RPC request and reads newline-delimited JSON messages from stdout until
-    /// the response with the matching id arrives. Server-initiated notifications in between
-    /// are legal per MCP and are skipped.
+    /// Sends a JSON-RPC request and reads the response with its id through the shared wire, which skips the
+    /// notifications MCP allows before it; every response is checked to carry jsonrpc 2.0.
     /// </summary>
     private static async Task<JsonElement> RoundTripAsync(
         Process server, int id, string method, object parameters, CancellationToken ct)
     {
         await SendAsync(server, new { jsonrpc = "2.0", id, method, @params = parameters }, ct);
-
-        while (true)
-        {
-            string? line = await server.StandardOutput.ReadLineAsync(ct);
-            if (line is null)
-            {
-                throw new InvalidOperationException($"Server closed stdout before answering '{method}' (id {id}).");
-            }
-
-            if (string.IsNullOrWhiteSpace(line))
-            {
-                continue;
-            }
-
-            JsonElement root;
-            using (JsonDocument doc = JsonDocument.Parse(line))
-            {
-                root = doc.RootElement.Clone();
-            }
-
-            if (!root.TryGetProperty("id", out JsonElement idProp)
-                || idProp.ValueKind != JsonValueKind.Number
-                || idProp.GetInt32() != id)
-            {
-                continue; // notification or unrelated message
-            }
-
-            Assert.Equal("2.0", root.GetProperty("jsonrpc").GetString());
-            if (root.TryGetProperty("error", out JsonElement error))
-            {
-                throw new InvalidOperationException(
-                    $"JSON-RPC error response for '{method}' (id {id}): {error.GetRawText()}");
-            }
-
-            return root;
-        }
+        return await McpWire.ReadResponseAsync(
+            server.StandardOutput, id, method, ct, checkEnvelope: root => Assert.Equal("2.0", root.GetProperty("jsonrpc").GetString()));
     }
 
-    private static async Task<string> DrainStderrAsync(Process server, Task<string> stderrTask)
-    {
-        try
-        {
-            if (!server.HasExited)
-            {
-                server.Kill(entireProcessTree: true);
-            }
-
-            return await stderrTask.WaitAsync(TimeSpan.FromSeconds(10));
-        }
-        catch (Exception drainEx)
-        {
-            return $"<stderr unavailable: {drainEx.GetType().Name}>";
-        }
-    }
+    private static Task<string> DrainStderrAsync(Process server, Task<string> stderrTask) =>
+        McpWire.DrainStderrAsync(server, stderrTask);
 }

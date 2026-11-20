@@ -576,10 +576,7 @@ namespace OutlookAI.Core.Com
             }
 
             guard.BeginStep(OutlookStartSteps.CreateApplication);
-            Type progIdType = Type.GetTypeFromProgID("Outlook.Application")
-                ?? throw new InvalidOperationException("Outlook.Application ProgID is not registered.");
-            session._application = Activator.CreateInstance(progIdType)
-                ?? throw new InvalidOperationException("Failed to create Outlook.Application.");
+            session._application = OutlookAutomation.CreateApplication();
 
             // Starting: Outlook now runs with no window, its add-ins loading and nothing opened yet. The hang
             // of 2026-11-15 began with the calls below arriving within its first second.
