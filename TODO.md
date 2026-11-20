@@ -139,6 +139,9 @@
   `New-PopAccountPrf.ps1`, `OutlookMapiInterop.ps1`'s `Invoke-WithOutlookSession`,
   `Rename-OutlookStore.ps1` and `Set-OutlookProgrammaticAccess.ps1`. `Restart-Guest.ps1`'s quit script
   attaches through the table alone by design, so that it never starts the Outlook it is there to quit.
+  The read of another process's token elevation is one copy, `Get-ProcessElevation` in the shared file
+  (the survey's P10, its token half), but for the one in `Restart-Guest.ps1`'s quit script, a method of
+  `OaiRestartDialogs` beside its window calls: it folds when P10's window half moves those calls.
 
 - [ ] **Remove the Cached Mode policy values OutlookAI 3.0.0.319 to 3.1.0.325 wrote, when the
   maintainer says so (Q151 (a), decided 2026-11-17).** Those versions wrote the five values as
