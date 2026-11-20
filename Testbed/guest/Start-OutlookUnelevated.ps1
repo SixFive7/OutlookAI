@@ -268,7 +268,7 @@ function Get-TaskDefinitionText {
 }
 
 # Whether a process's token is elevated: a copy of ScriptHelpers.ps1's, which check 4 of
-# Tools/Checks/check-powershell-51.ps1 holds identical - this script travels alone (below) - and here,
+# Tools/Checks/check-powershell-51.ps1 holds identical - this script travels alone (above) - and here,
 # above the -SelfTest dispatch, so that the self-test reads a real token with it.
 function Get-ProcessElevation {
     param([Parameter(Mandatory = $true)] [int] $ProcessId)

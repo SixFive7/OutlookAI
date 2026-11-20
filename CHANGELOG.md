@@ -1253,9 +1253,10 @@ its mailbox tests on, and change nothing you install.
   rectangle, P10 in the code-sharing survey. Core, the add-in and the tests have declared those
   calls once, in `NativeWindows`, since the refactor's stage S4. Each script now compiles
   `McpServer/OutlookAI.Core/AddIn/NativeWindows.cs` after its own C# in one Add-Type, as the release
-  script compiles `InstallerSignature.cs`, and keeps only the calls nobody else makes. The calls
-  that read a process's elevation from its token stay as they are: they are P10's other half, which
-  goes with the PowerShell helpers. The file is C# 5 with its usings inside its namespace, so it
+  script compiles `InstallerSignature.cs`, and keeps only the calls nobody else makes. The quit
+  script's read of Outlook's elevation from its token, which sat beside its window calls, is the
+  scripts' shared `Get-ProcessElevation` now, defined on the guest from its text in the quit
+  script's preamble. The file is C# 5 with its usings inside its namespace, so it
   compiles after a script's own source in Windows PowerShell 5.1; its one part that is not, the way
   from an Outlook window object to its window, moved to `NativeWindows.OleWindow.cs`, which only
   Core compiles. A script reads the file beside itself on a guest, or from the checkout it runs in,
@@ -1600,8 +1601,9 @@ its mailbox tests on, and change nothing you install.
   `Register-InteractiveTask.ps1` dot-sources the file, which the trust-removal probe stages beside
   it; the add-in installer's first-run job and `Restart-Guest.ps1`'s read of a guest's state run
   where the file's functions are not, and are handed its text; and the unelevated Outlook start,
-  which travels alone, keeps a copy check 4 holds identical. `Restart-Guest.ps1`'s quit script keeps
-  its own for now, inside the class that holds its window calls. The add-in's VSTO trust and
+  which travels alone, keeps a copy check 4 holds identical. `Restart-Guest.ps1`'s quit script kept
+  its own, inside the class that holds its window calls, until those calls became Core's: it is
+  handed the function's text too, in the preamble it runs after. The add-in's VSTO trust and
   payload helpers went the same way: the guest's installer,
   `Tools/Switch-AddInBuild.ps1` and `Testbed/host/Publish-AddInPayload.ps1` each restated how the VSTO
   runtime keys and compares a trust entry, the key a signed manifest carries, how two keys compare,

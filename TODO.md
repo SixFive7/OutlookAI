@@ -136,10 +136,10 @@
   window calls five testbed scripts declared, P10's window half, are Core's `NativeWindows`, which
   they compile after their own C# and every route to a guest stages beside them
   (check-pinned-constants #16); and the guest scripts' copies of the test tag, the signature prefix
-  and the account classes are held to the C# by T1 `ScriptConstantCopyTests`. Left of Q171: P10's
-  token half, the process-token `Elevation` check restated five times in four scripts, which goes
-  with the PowerShell helpers (S7e). `Connect-ExchangeAccount.ps1`'s `AccountType -eq 0`, Outlook's
-  value for an Exchange account, has no C# twin: nothing in C# reads an account's type.
+  and the account classes are held to the C# by T1 `ScriptConstantCopyTests`. That is all of Q171:
+  P10's token half has no C# twin - nothing in C# reads a process's token - and is the scripts'
+  one `Get-ProcessElevation`, below. `Connect-ExchangeAccount.ps1`'s `AccountType -eq 0`, Outlook's
+  value for an Exchange account, has no C# twin either: nothing in C# reads an account's type.
   The attach to an Outlook already running is one copy, `Connect-RunningOutlook` in the shared file,
   which `Measure-FolderIdResolution.ps1`, `Measure-SignatureRoaming.ps1`, `Reset-HubPopulation.ps1`
   and `OutlookDialogUia.ps1`'s helper use. The other attaches stay as they are for now (2026-11-20):
@@ -151,8 +151,8 @@
   `Rename-OutlookStore.ps1` and `Set-OutlookProgrammaticAccess.ps1`. `Restart-Guest.ps1`'s quit script
   attaches through the table alone by design, so that it never starts the Outlook it is there to quit.
   The read of another process's token elevation is one copy, `Get-ProcessElevation` in the shared file
-  (the survey's P10, its token half), but for the one in `Restart-Guest.ps1`'s quit script, a method of
-  `OaiRestartDialogs` beside its window calls: it folds when P10's window half moves those calls.
+  (the survey's P10, its token half); `Restart-Guest.ps1`'s quit script, which runs on the guest, is
+  handed its text in the preamble it runs after, since P10's window half moved its window calls.
   The add-in's VSTO trust and payload helpers are one copy in the shared file (the survey's P08). Its
   last piece, the add-in's registration key, stays a value each of the three scripts writes beside
   `Installer.iss`'s, and the guest's installer and `Tools/Switch-AddInBuild.ps1` read it out of

@@ -272,7 +272,8 @@ function Get-RefreezeTarget {
 
 # The quit script's dialog walk, compiled on the guest after Core's window calls (NativeWindows.cs, Q171 (c)): both
 # reach the guest as one value, $DialogsSource, ahead of the quit script (Get-QuitScriptPreamble). The self-test
-# compiles them here.
+# compiles them here. Outlook's elevation the quit script reads with the scripts' shared Get-ProcessElevation
+# (ScriptHelpers.ps1, Q154's P10), which the preamble defines on the guest from its text.
 $script:DialogsCSharp = @'
 using System; using System.Text; using System.Collections.Generic; using System.Runtime.InteropServices; using OutlookAI.Core.AddIn;
 public static class OaiRestartDialogs {
@@ -281,12 +282,6 @@ public static class OaiRestartDialogs {
     [DllImport("user32.dll")] static extern bool EnumChildWindows(IntPtr p, NativeWindows.EnumWindowsProc cb, IntPtr l);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder sb, int max);
     [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr h, uint msg, IntPtr w, IntPtr l);
-    [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr OpenProcess(uint a, bool i, int p);
-    [DllImport("advapi32.dll", SetLastError = true)] static extern bool OpenProcessToken(IntPtr p, uint a, out IntPtr t);
-    [DllImport("advapi32.dll", SetLastError = true)] static extern bool GetTokenInformation(IntPtr t, int c, out int i, int l, out int r);
-    [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
-    // 1 elevated, 0 not, -1 unreadable (TokenElevation = 20).
-    public static int Elevation(int pid) { IntPtr p = OpenProcess(0x1000, false, pid); if (p == IntPtr.Zero) return -1; try { IntPtr t; if (!OpenProcessToken(p, 8, out t)) return -1; try { int e, r; if (!GetTokenInformation(t, 20, out e, 4, out r)) return -1; return e != 0 ? 1 : 0; } finally { CloseHandle(t); } } finally { CloseHandle(p); } }
     // Visible dialogs of the process - classic ones (#32770) and Office's own NetUI dialogs (NUIDialog) -
     // as their titles. The NetUI kind since 2026-10-08: Outlook's start-up "Check out our new look" theme
     // dialog on the Exchange VM is one, it was missed, and Quit() parked behind it for half an hour. With
@@ -318,12 +313,14 @@ public static class OaiRestartDialogs {
 }
 '@
 
-# What the quit script's text is sent after: $CancelLogonPrompt, and $DialogsSource as base64, so no character of
-# the C# is read by the guest's PowerShell as anything but text.
+# What the quit script's text is sent after: $CancelLogonPrompt; $DialogsSource as base64, so no character of the
+# C# is read by the guest's PowerShell as anything but text; and Get-ProcessElevation, defined from the shared
+# function's own text, as Read-GuestState hands that text to the guest.
 function Get-QuitScriptPreamble([bool] $CancelLogon) {
     $dialogs = [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($script:DialogsCSharp + "`n" + (Get-NativeWindowsSource)))
     return ('$CancelLogonPrompt = $' + $CancelLogon.ToString().ToLowerInvariant() + "`n" +
-        "`$DialogsSource = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('$dialogs'))`n")
+        "`$DialogsSource = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('$dialogs'))`n" +
+        "function Get-ProcessElevation {" + ${function:Get-ProcessElevation}.ToString() + "}`n")
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -400,7 +397,7 @@ if ($null -eq $app) {
     # instance's class object - it would launch a second OUTLOOK.EXE at this task's level.
     $mine = 0
     if ((New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { $mine = 1 }
-    $theirs = [OaiRestartDialogs]::Elevation([int]$outlookPid)
+    $theirs = Get-ProcessElevation -ProcessId ([int]$outlookPid)
     if ($theirs -ne $mine) { Out-Line "Outlook's elevation reads $theirs and this task's is $mine - the class object would START a second Outlook here, so no fallback"; exit 10 }
     if (@(Get-Process -Name OUTLOOK -ErrorAction SilentlyContinue).Count -eq 0) { Out-Line 'OUTLOOK.EXE is not running - nothing to quit'; exit 15 }
     try { $app = [Activator]::CreateInstance([Type]::GetTypeFromProgID('Outlook.Application', $true)) }
@@ -579,6 +576,12 @@ function Invoke-SelfTest {
     $preamble = Get-QuitScriptPreamble $true
     [void][System.Management.Automation.Language.Parser]::ParseInput($preamble + $script:QuitScript, [ref] $null, [ref] $errors)
     Check 'and so does what is sent: the preamble, then the quit script' (@($errors).Count) 0
+    Check 'the dialog walk reads no token of its own' ($script:DialogsCSharp.Contains('OpenProcessToken') -or $script:QuitScript.Contains('[OaiRestartDialogs]::Elevation')) $false
+    Check 'the preamble defines the shared Get-ProcessElevation from its own text' ($preamble.Contains('function Get-ProcessElevation {' + ${function:Get-ProcessElevation}.ToString() + '}')) $true
+    # ps51-native-stderr-ok: a script block made from the preamble's text, not a program
+    $preambleElevation = & { . ([scriptblock]::Create($preamble)); Get-ProcessElevation -ProcessId $PID }
+    Check 'which, defined from the preamble, reads this process as 0 or 1' (@(0, 1) -contains $preambleElevation) $true
+    Check 'the quit script reads Outlook''s elevation with it' ($script:QuitScript.Contains('$theirs = Get-ProcessElevation -ProcessId ([int]$outlookPid)')) $true
     Check 'the preamble sets the logon switch and the dialog walk' ($preamble.StartsWith('$CancelLogonPrompt = $true') -and $preamble.Contains('$DialogsSource = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String(')) $true
     $compiled = $true
     try { if (-not ('OaiRestartDialogs' -as [type])) { Add-Type -TypeDefinition ($script:DialogsCSharp + "`n" + (Get-NativeWindowsSource)) } } catch { $compiled = $false; Write-Host "  compile error: $($_.Exception.Message)" }
