@@ -653,6 +653,24 @@ function Merge-TrxResults {
     return [pscustomobject]@{ Counts = $counts; Declared = $declared; Failed = $failed; Skipped = $skipped }
 }
 
+# The .NET exceptions every OUTLOOK.EXE of a hunting run threw, from the debugger's log: each process's last line
+# ("exceptions by code: ... 0xE0434352x<n>"), 0xE0434352 being how a .NET throw reaches a native debugger. On the
+# Outlook guests only OutlookAI's add-in runs .NET code inside Outlook, so it is the add-in's count: about two a compose
+# window with its pane, until its ribbon callback was fixed (b5c724b, runbook section 4.15). Null when the log holds no
+# process's last line. Pure.
+function Get-HuntClrExceptionCount {
+    param([AllowEmptyString()] [string] $LogText)
+    $total = 0
+    $seen = 0
+    foreach ($m in [regex]::Matches([string]$LogText, 'pid \d+: (?:exited with 0x[0-9A-Fa-f]+|detached); \d+ debug event\(s\); exceptions by code:(?<codes>[^\r\n]*)')) {
+        $seen++
+        $c = [regex]::Match($m.Groups['codes'].Value, '0xE0434352x(?<n>\d+)')
+        if ($c.Success) { $total += [int]$c.Groups['n'].Value }
+    }
+    if ($seen -eq 0) { return $null }
+    return $total
+}
+
 # Office's build as a hunting run's guest read it - the HUNT-OFFICE lines of its console: the Click-to-Run values
 # by name, and the hunted module's file under 'module'; null when there are none. Recorded since 2026-11-18, when the
 # question became whether a later build of the channel fixes the crash (runbook section 4.15). Pure.
@@ -1475,6 +1493,8 @@ STACK      the faulting thread
     $office = Read-HuntOffice "x`r`nHUNT-OFFICE VersionToReport = 16.0.17932.20996`r`nHUNT-OFFICE UpdatesEnabled = False`r`nHUNT-OFFICE module C:\m.dll, 5 bytes, written 2026-09-12T00:00:00.0000000Z, SHA-256 AB`r`n"
     Check 'the summary reads Office''s build back' '16.0.17932.20996|False|C:\m.dll, 5 bytes, written 2026-09-12T00:00:00.0000000Z, SHA-256 AB' "$($office['VersionToReport'])|$($office['UpdatesEnabled'])|$($office['module'])"
     Check 'and a console with no such line is no record' $true ($null -eq (Read-HuntOffice 'nothing here'))
+    $fcLog = "2026-10-03T17:51:48.931Z  pid 7248: attached`r`n2026-10-03T17:52:39.817Z  pid 7132: exited with 0x00000000; 90 debug event(s); exceptions by code: 0x80000003x1 0xE06D7363x2`r`n2026-10-03T18:03:14.298Z  pid 7248: detached; 12152 debug event(s); exceptions by code: 0x80000003x1 0xE06D7363x3 0xE0434352x893`r`n2026-10-03T18:03:14.298Z  watch ended`r`n"
+    Check 'the summary counts the .NET exceptions every Outlook threw, from the debugger''s log' '893|0|0|none' "$(Get-HuntClrExceptionCount $fcLog)|$(Get-HuntClrExceptionCount ($fcLog -replace ' 0xE0434352x893', ''))|$(Get-HuntClrExceptionCount 'pid 1: exited with 0x00000000; 9 debug event(s); exceptions by code: none')|$(if ($null -eq (Get-HuntClrExceptionCount 'watch ended')) { 'none' })"
     $addInSwitch = @($paramAst | Where-Object { $_.Name.VariablePath.UserPath -eq 'HuntWithoutAddIn' })
     Check 'the add-in stays as the checkpoint holds it unless -HuntWithoutAddIn is given' 'switch|True' "$($addInSwitch[0].StaticType.Name.ToLowerInvariant() -replace 'switchparameter','switch')|$($null -eq $addInSwitch[0].DefaultValue)"
     Check '-HuntWithoutAddIn is a hunting run''s, and not one that installs the add-in' 'hunt|both' "$(if ((Get-HuntRefusal $false $false '' '' '' $false 20 60 120 'Legs' 10 $true $false) -match 'give -HuntFirstChance') { 'hunt' })|$(if ((Get-HuntRefusal $true $false '' '' '' $false 20 60 120 'Legs' 10 $true $true) -match 'give one') { 'both' })"
@@ -1722,6 +1742,7 @@ $huntRoundsRun = -1
 $huntOffice = $null
 $huntAddIn = 'as the checkpoint holds it'
 $huntClrTrace = $null
+$huntClrExceptions = $null
 $suiteStarted = $false
 $stage = ''
 $stageWhy = ''
@@ -2285,6 +2306,10 @@ exit `$LASTEXITCODE
         if ($hr.Count -gt 0) { $huntRoundsRun = [int]$hr[$hr.Count - 1].Groups[1].Value }
         $huntOffice = Read-HuntOffice ([System.IO.File]::ReadAllText($consoleFile.FullName))
     }
+    if ($HuntFirstChance) {
+        $firstChanceLog = Get-ChildItem -LiteralPath $resultsDir -Filter 'first-chance.log' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($firstChanceLog) { $huntClrExceptions = Get-HuntClrExceptionCount ([System.IO.File]::ReadAllText($firstChanceLog.FullName)) }
+    }
     $since = Get-CrashEventsSince -GuestRunStartUtc $guestRunStartUtc -HostRunStartUtc $runStartUtc
     # Event 1001 too, whole: WER's report of each crash - its kind and where it filed it - which is how a crash
     # that left an Application Error event and no dump can be told apart (2026-11-18, runbook section 4.15).
@@ -2395,6 +2420,7 @@ $summary['signatureSettings'] = $signatureSettingsState
 $summary['indexRoots'] = $indexRoots
 $huntDumps = @(@($crashDumpState['files']) | Where-Object { [string]$_['name'] -match 'chance\.dmp$' } | ForEach-Object { [string]$_['name'] })
 if ($HuntFirstChance) { $summary['hunt'] = [ordered]@{ module = $HuntModule; variant = $HuntVariant; showEach = [bool]$HuntShowEach; typeEach = [bool]$HuntTypeEach; legMinutes = $(if (Test-HuntLoopVariant $HuntVariant) { $HuntLegMinutes } else { $null }); legs = $huntFilters; roundsAsked = $HuntRounds; minutes = $HuntMinutes; roundsRun = $huntRoundsRun; dumps = $huntDumps; office = $huntOffice; addIn = $huntAddIn; ablate = $(if ($HuntAblate) { $HuntAblate } else { $null }); clrTrace = $huntClrTrace; log = "results\$($facts.Name)\first-chance.log" } }
+if ($HuntFirstChance) { $summary['hunt']['clrExceptions'] = $huntClrExceptions }
 # ToArray(), never @(...): @() of a List[object] given to an [object[]] parameter fails with "Argument
 # types do not match" under Windows PowerShell 5.1 and PowerShell 7.7 alike (measured 2026-11-18).
 $summary['guestClock'] = New-GuestClockSummaryJson $guestClockRecords.ToArray()
@@ -2441,7 +2467,7 @@ $lines.Add("outlook    crashes during the run: $crashText; crash dumps: $dumpTex
 if ($HuntFirstChance) {
     $roundsText = 'not read'
     if ($huntRoundsRun -ge 0) { $roundsText = [string]$huntRoundsRun }
-    $lines.Add("hunt       variant $HuntVariant$(if ($HuntTypeEach) { ', a window shown and typed into before each draft' } elseif ($HuntShowEach) { ', a window shown before each draft' })$(if ($HuntReleaseAfterClose) { ', its Word document released after the window closed' })$(if ($HuntDisplayEach) { ", each of the product's drafts displayed, as the tools' default is, and closed" })$(if ($HuntPromoteAfter) { ", each of the product's drafts re-opened and promoted after" })$(if ($HuntAblate) { ", the typed-text tests without their $HuntAblate step" })$(if ($huntClrTrace) { ", the .NET runtime's exceptions $huntClrTrace" }), OutlookAI's add-in $huntAddIn, $roundsText of at most $HuntRounds round(s) of $(@($huntFilters.Keys) -join ' and ') in $HuntMinutes min, a debugger on every OUTLOOK.EXE: $($huntDumps.Count) first- or second-chance dump(s) in $HuntModule's hunt (results\$($facts.Name)\first-chance.log)")
+    $lines.Add("hunt       variant $HuntVariant$(if ($HuntTypeEach) { ', a window shown and typed into before each draft' } elseif ($HuntShowEach) { ', a window shown before each draft' })$(if ($HuntReleaseAfterClose) { ', its Word document released after the window closed' })$(if ($HuntDisplayEach) { ", each of the product's drafts displayed, as the tools' default is, and closed" })$(if ($HuntPromoteAfter) { ", each of the product's drafts re-opened and promoted after" })$(if ($HuntAblate) { ", the typed-text tests without their $HuntAblate step" })$(if ($huntClrTrace) { ", the .NET runtime's exceptions $huntClrTrace" }), OutlookAI's add-in $huntAddIn, $roundsText of at most $HuntRounds round(s) of $(@($huntFilters.Keys) -join ' and ') in $HuntMinutes min, a debugger on every OUTLOOK.EXE: $($huntDumps.Count) first- or second-chance dump(s) in $HuntModule's hunt (results\$($facts.Name)\first-chance.log); .NET exceptions thrown in Outlook, the add-in's: $(if ($null -eq $huntClrExceptions) { 'not read' } else { $huntClrExceptions })")
     if ($null -ne $huntOffice) { $lines.Add("office     $($huntOffice['VersionToReport']) $($huntOffice['ProductReleaseIds']) $($huntOffice['Platform']), $($huntOffice['AudienceData']), updates enabled: $($huntOffice['UpdatesEnabled']); $($huntOffice['module'])") }
 }
 $lines.Add((Format-OutlookStartLine $outlookStart))

@@ -326,7 +326,8 @@ its mailbox tests on, and change nothing you install.
   it was made, crashed the same way in 2 and in 8 minutes; without the re-opening it made 802 and did
   not crash, so the re-opening of the product's drafts is the step the crash needs.
   Every hunting run also records Office's build and
-  the hunted module's file, and the summary shows both. `-HuntWithoutAddIn` turns OutlookAI's own add-in off
+  the hunted module's file, and the summary shows both, and the summary counts the .NET exceptions
+  Outlook threw, from the debugger's log, so a return of the add-in's failing ribbon callback shows. `-HuntWithoutAddIn` turns OutlookAI's own add-in off
   for the run, LoadBehavior 0 before Outlook starts, and the restore after the run brings the
   checkpoint's value back. Every Outlook guest's checkpoint holds the add-in installed and loading,
   and inside Outlook it hooks every inspector and puts its task pane on each one that is activated.

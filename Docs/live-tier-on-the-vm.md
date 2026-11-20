@@ -5657,7 +5657,10 @@ with display on - the draft tools' default, which opens the draft in a compose w
 the loop closes that window, discarding nothing the product saved, before the next draft.
 
 Every hunting run also writes Office's Click-to-Run build, channel and update setting and the hunted module's file -
-its path, size, time and SHA-256 - to its console as `HUNT-OFFICE` lines, which the summary reads back.
+its path, size, time and SHA-256 - to its console as `HUNT-OFFICE` lines, which the summary reads back. The
+summary's hunt line also counts the .NET exceptions every Outlook of the run threw, from the debugger's log
+(0xE0434352, `Get-HuntClrExceptionCount`): on these guests only OutlookAI's add-in runs .NET code inside Outlook, so
+a ribbon callback that fails again shows there.
 
 **OutlookAI's own add-in loads in every Outlook of these runs, and the crash does not need it.** Every Outlook
 guest's frozen checkpoint holds it installed and loading (`LoadBehavior` 3), and the first catch's dump has the .NET
@@ -5737,7 +5740,8 @@ its interop types, so `control.Context` is `dynamic` there, `pane` is too, and `
 against VSTO's internal task-pane class, which the binder cannot see into. So on every compose window that has the
 pane the toggle's pressed state cannot be read, and each refresh of its ribbon throws the pair: once per promoted
 window, twice per displayed one, and never on a window without a pane. The crash does not need them: with the add-in
-off it came all the same.
+off it came all the same. The callbacks are bound when the add-in compiles since e66c27a (merged to master as
+b5c724b); the frozen checkpoints still hold the build from before it.
 
 **NoWindow was not run.** Its question - does the crash need Outlook's main window - can only be asked of something
 that crashes: the loops never did, even windowed, and the tests that do crash display their compose windows by
