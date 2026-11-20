@@ -2452,6 +2452,16 @@ its mailbox tests on, and change nothing you install.
   Items - beside the mail, and none of them could be opened. On the test machine they were 21 of the
   first 100 results.
 
+- ✅ **Two package checks started in the same second get an output folder each.**
+  `Tools/Test-VulnerablePackages.ps1`, the release's check for NuGet packages with a known
+  vulnerability, named its output folder for the second it started and made it with
+  `New-Item -Force`, which hands a second check started in that second the first one's folder and
+  logs: the bug the test runners' results folders had until 2026-11-18. A check that names no
+  `-OutDir` now claims its folder through `New-RunDirectory` in `Testbed/guest/ScriptHelpers.ps1`,
+  so a taken name gets a number on the end, 2 and up, until one is free; a release names its own
+  folder and is unchanged. The script's self-test claims one second twice and gets two folders, and
+  checks that the run takes its folder this way.
+
 - ✅ **The guest scripts that drive the MCP server start it again, with its COM host beside it.**
   Since the move to .NET 11 (19d9993) none of them could: `Set-AccountSignature.ps1`,
   `Set-SignatureSettings.ps1` (the live runner's `-SignatureSettings` step, whose tests printed

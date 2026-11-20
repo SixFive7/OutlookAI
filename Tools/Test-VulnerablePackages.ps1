@@ -45,7 +45,7 @@
 
 .PARAMETER OutDir
     Where the per-project output lands. Default .work\vulnerable-packages\<time> under the
-    repository root.
+    repository root, claimed so that a second check started in the same second gets <time>-2.
 
 .PARAMETER SelfTest
     Run the pure decisions against synthetic inputs and exit. No network, no dotnet.
@@ -131,6 +131,21 @@ function Format-VulnerablePackage {
 }
 
 # =============================================================================================
+# THE RUN'S FOLDER
+# =============================================================================================
+
+# Where a run writes when no -OutDir names a folder: .work\vulnerable-packages\<time> under the
+# repository, claimed through New-RunDirectory (Testbed/guest/ScriptHelpers.ps1), so that two checks
+# started in the same second get a folder each, <time> and then <time>-2. Until 2026-11-20 the folder was
+# named for the second and made with New-Item -Force, which hands a second check the first one's folder
+# and logs: the bug the test runners' results folders had until 2026-11-18. Returns the folder's path.
+function New-DefaultOutDir {
+    param([Parameter(Mandatory = $true)] [string] $Root, [Parameter(Mandatory = $true)] [DateTime] $When)
+    $runId = $When.ToString('yyyyMMdd-HHmmss', [System.Globalization.CultureInfo]::InvariantCulture)
+    return (New-RunDirectory -Parent (Join-Path $Root '.work\vulnerable-packages') -RunId $runId).Path
+}
+
+# =============================================================================================
 # SELF-TEST
 # =============================================================================================
 function Invoke-SelfTest {
@@ -182,6 +197,25 @@ function Invoke-SelfTest {
     Test-Case 'silence from a feed that publishes no advisories is not checked' $true ([string](Read-VulnerabilityReport -Json $offline -ExpectedSource $AdvisorySource).Problem).Contains('proves nothing')
 
     Write-Host ''
+    Write-Host '== the run''s folder is claimed, never shared (New-RunDirectory, shared from ScriptHelpers.ps1) =='
+    $scratch = Join-Path ([System.IO.Path]::GetTempPath()) ('vulnerable-packages-selftest-' + [guid]::NewGuid().ToString('N'))
+    try {
+        $when = New-Object DateTime 2026, 11, 20, 10, 15, 0
+        $first = New-DefaultOutDir -Root $scratch -When $when
+        $second = New-DefaultOutDir -Root $scratch -When $when
+        $parent = Join-Path $scratch '.work\vulnerable-packages'
+        Test-Case 'a run that names no folder gets .work\vulnerable-packages\<time>' '20261120-101500' (Split-Path -Leaf $first)
+        Test-Case 'a second run started in the same second gets a folder of its own, <time>-2' '20261120-101500-2' (Split-Path -Leaf $second)
+        $made = @(Get-ChildItem -LiteralPath $parent -Directory -Force | ForEach-Object { $_.Name } | Sort-Object)
+        Test-Case 'both are made, side by side, and no claim is left behind' '20261120-101500 | 20261120-101500-2' $made
+    }
+    finally { Remove-Item -LiteralPath $scratch -Recurse -Force -ErrorAction SilentlyContinue }
+    # The run's code only: what follows the -SelfTest dispatch, below this function.
+    $mainCode = [System.IO.File]::ReadAllText($PSCommandPath)
+    $mainCode = $mainCode.Substring($mainCode.LastIndexOf('if ($SelfTest) { exit (Invoke-SelfTest) }'))
+    Test-Case 'the run claims its folder with New-DefaultOutDir when -OutDir names none, and never names one by the second itself' $true ($mainCode.Contains('if (-not $OutDir) { $OutDir = New-DefaultOutDir -Root $RepoRoot -When (Get-Date) }') -and -not $mainCode.Contains('yyyyMMdd-HHmmss'))
+
+    Write-Host ''
     Write-Host '== the repository =='
     $projects = @(Get-ChildItem -LiteralPath (Join-Path $RepoRoot $ProjectRoot) -Filter '*.csproj' -Recurse -Depth 1 -File)
     Test-Case "there are projects under $ProjectRoot to check" $true ($projects.Count -gt 0)
@@ -204,7 +238,7 @@ function Invoke-SelfTest {
 if ($SelfTest) { exit (Invoke-SelfTest) }
 
 $RepoRoot = [System.IO.Path]::GetFullPath($RepoRoot)
-if (-not $OutDir) { $OutDir = Join-Path $RepoRoot ('.work\vulnerable-packages\' + (Get-Date).ToString('yyyyMMdd-HHmmss')) }
+if (-not $OutDir) { $OutDir = New-DefaultOutDir -Root $RepoRoot -When (Get-Date) }
 $OutDir = [System.IO.Path]::GetFullPath($OutDir)
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
