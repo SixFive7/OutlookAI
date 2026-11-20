@@ -1224,6 +1224,23 @@ its mailbox tests on, and change nothing you install.
   would overwrite the change or copy it into the mailbox, and says to use Outlook instead. Roaming on
   Microsoft 365 Apps itself is not tested: the test machines run perpetual Office only.
 
+- ♻️ **A release checks the installer's signature with the updater's own code (Q171).**
+  Before an installed copy's updater runs an installer it has downloaded, WinVerifyTrust has to
+  answer 0 or CERT_E_UNTRUSTEDROOT - the answer a valid signature by the self-signed release
+  certificate gets - and the signer has to be the pinned certificate. `Tools/Publish-Release.ps1`
+  makes the same check of the installer it has just signed, and did so with a C# copy of the call
+  and the rule restated in PowerShell; its copy lacked the updater's fail-closed answer for a call
+  that throws. The check is now `InstallerSignature`, in OutlookAI.Core's add-in part: the add-in
+  calls it, and the release script compiles the same file with Add-Type, as the maintainer decided
+  on 2026-11-18 (Q171 (c)). The file is therefore C# 5, the language Windows PowerShell 5.1's
+  Add-Type compiles, and names nothing else of Core. Its call loads wintrust.dll from System32 only,
+  which Core and the add-in already required of every call they make and nothing required of what
+  Add-Type compiles. A refusal names what the update line would show, as in "every installed copy
+  would refuse this installer: Installer was not signed by the expected OutlookAI certificate."
+  Nothing outside Outlook ran the updater's check before; the new T1 `InstallerSignatureTests` pin
+  the rule against WinVerifyTrust answers written out by hand, and run the call on a file with no
+  signature, a missing file and the .NET runtime's own core library, which Microsoft signs.
+
 - ♻️ **A failed COM call is described in one place, where nine catch blocks wrote out its text (Q154).**
   The COM session and the mail service named a failed call as "COMException 0x" and its HRESULT in
   eight digits in nine catch blocks, each writing out the text of the shared
@@ -2268,6 +2285,22 @@ its mailbox tests on, and change nothing you install.
 
 ### Fixed
 
+- 🐛 **The AI Assistant button on a compose window shows whether its pane is open.**
+  It never showed as pressed. Office asks the add-in whether to draw the button pressed each time it
+  refreshes a window's ribbon, and the add-in looked the window's pane up with the window as Office
+  names it, a value it types `dynamic`, which made the lookup run as Outlook ran. Its result was then
+  read through a class the VSTO runtime keeps to itself, which such a lookup cannot see into, and the
+  answer failed
+  instead: on every refresh of the ribbon of a compose window with the pane, about once for each
+  window a draft was shown in and twice for each one typed into, 446 and 820 times in two ten-minute
+  loops of stream K2's trace of Outlook on 2026-11-20. Every release since 2026-06-01 has had it, and
+  it is not what crashed Outlook on the test machines. The lookup is bound when the add-in is built
+  now, for the button's state and for its click, and nothing else in the add-in hands such a value
+  on. T1 `RibbonCallbackBindingTests` holds the source to it, and `T2/LivePaneTests` reads the button
+  pressed while the pane shows and not pressed once the button has hidden it, through two new calls
+  on the add-in's automation object, `IsAIAssistantPressed` and `ToggleAIAssistant`, which call the
+  ribbon's own code as Office does.
+
 - 🐛 **A `\u` escape or a numeric HTML entity with a space or a sign in it stays text.**
   The add-in's reader of the values in `~/.claude.json` parsed a `\u` escape's four characters with
   .NET's hex number parsing, which allows spaces around the digits, so `\u 41 ` read as `A`, though
@@ -2474,6 +2507,14 @@ its mailbox tests on, and change nothing you install.
   folder - Calendar, Quick Step Settings, the mailbox's top level, emptied folders in Deleted
   Items - beside the mail, and none of them could be opened. On the test machine they were 21 of the
   first 100 results.
+
+- ✅ **The live pane test reads the draft only once the pane says which signature it chose.**
+  The pane puts a chosen signature into the draft, then embeds its pictures, and only then says
+  "The AI chose the signature" or "Applied signature". `T2/LivePaneTests` waited for the
+  signature's text alone, so a read could land between the two steps. Run
+  20261120-114454-unindexed-39e97e05fbb4 did: the AI's signature was in, its picture still a link,
+  the pane still at "Done!", and the check that the picture is embedded failed. Both of the test's
+  waits now also wait for the pane's own word, which comes after the embed.
 
 - ✅ **A test machine's lease is never taken or released while its holder still has it.**
   `Testbed/host/Set-TestbedLease.ps1` wrote over whatever lease was there, and its `-Release`

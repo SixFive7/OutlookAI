@@ -123,8 +123,10 @@
   are shared since T03 and T05 - no run of 15 identical lines is left between two T1 files - and the
   two thread suites' three pairs of parallel tests assert through `ThreadWalks`, keeping their
   names. S5a is complete. In parallel: the PowerShell helpers (S7) and the rules restated in C# and
-  PowerShell as shared C# source (Q171), the updater's 26 lines that `Tools/Publish-Release.ps1`
-  restates among them.
+  PowerShell as shared C# source (Q171). The updater's signature check is shared: Core's
+  `InstallerSignature`, which the add-in calls and `Tools/Publish-Release.ps1` compiles with
+  Add-Type. Left of Q171: the file-identity calls `Testbed/host/New-LiveTestSettings.ps1` declares
+  beside the audit log's in Core (the survey's X05).
   The attach to an Outlook already running is one copy, `Connect-RunningOutlook` in the shared file,
   which `Measure-FolderIdResolution.ps1`, `Measure-SignatureRoaming.ps1`, `Reset-HubPopulation.ps1`
   and `OutlookDialogUia.ps1`'s helper use. The other attaches stay as they are for now (2026-11-20):
@@ -258,6 +260,10 @@
   folders under `E:\Hyper-V`), take them out of `Testbed/testbed.json`, and keep
   `.work/media/dotnet-sdk-10.0.401-win-x64.exe` only while a checkpoint still needs it - recording it
   in section 4.12. `OutlookAI-Exchange`'s older checkpoints are its rebuild points and stay.
+
+- [ ] **At the next refreeze of the Outlook guests, detach `throwaway@vm.invalid` from the tier profile
+  (question 239)**, through a small tested script rebuilt from the detach step of the deleted guest
+  script `Reset-ThrowawayStore.ps1` (`9614189^`); `Docs/live-tier-on-the-vm.md` section 4.5b.
 
 
 
