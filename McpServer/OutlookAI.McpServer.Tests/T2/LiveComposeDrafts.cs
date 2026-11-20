@@ -729,7 +729,7 @@ internal static class Q149Editor
     /// hand over the editor, reads how Word lays it out, and closes the inspector discarding - nothing is
     /// written. Null with the reason when the editor could not be had.
     /// </summary>
-    internal static (List<WordParagraphLook>? Look, string? Failure) ReadLookOf(Q149Run run, Q149OutlookClient client, string entryId, string storeId)
+    internal static (List<WordParagraphLook>? Look, string? Failure) ReadLookOf(Q149Run run, Q149OutlookClient client, string entryId, string storeId, bool readLayout = true)
     {
         return client.Run<(List<WordParagraphLook>?, string?)>((app, ns) =>
         {
@@ -747,7 +747,8 @@ internal static class Q149Editor
                     return (null, error ?? "NoWordEditor");
                 }
 
-                return (ReadLook(document), null);
+                // The hunt's layout ablation (HuntAblation.Layout): the item opened and promoted as ever, its paragraphs never walked.
+                return readLayout ? (ReadLook(document), null) : (null, "layout not read (ablation)");
             }
             catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
             {

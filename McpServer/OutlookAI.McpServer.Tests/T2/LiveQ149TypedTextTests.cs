@@ -85,13 +85,24 @@ public sealed class LiveQ149TypedTextTests
         TypedText(1);
     }
 
+    /// <summary>The hunt's shared source per run marker, for HuntAblation.Source: the tests of one leg share the first one's.</summary>
+    private static readonly Dictionary<string, string> SharedSources = new(StringComparer.Ordinal);
+
     private void TypedText(int rounds)
     {
+        // The hunt's ablations (HuntPlan.AblateVariable): unset in every run but a hunting one that names one.
+        HuntAblation? ablated = HuntPlan.ParseAblation(Environment.GetEnvironmentVariable(HuntPlan.AblateVariable), out string? ablationWhy);
+        Assert.True(ablated != null, ablationWhy);
+        HuntAblation ablation = ablated!.Value;
+        string[] kinds = ablation == HuntAblation.NewMail ? Kinds.Where(k => k != "new").ToArray() : Kinds;
+        bool readLayout = ablation != HuntAblation.Layout;
+
         // Q180 (b): a windowed start this class makes is a cold start too, and is logged; an Outlook with a window that
         // runs already - the runner's - is used as it is.
         _fixture.ReleaseService();
         _blocked = false;
         Q149Attempt setup = new(Q149Cells.Q211 + "-process", 1);
+        setup.Set("ablation", ablation == HuntAblation.None ? null : ablation.ToString());
         Q180ColdStartWatch start = new("windowed", Q149Cells.Q211, 1);
         try
         {
@@ -102,7 +113,7 @@ public sealed class LiveQ149TypedTextTests
             start.Finish(Run);
         }
 
-        using TestSignature signature = TestSignature.Create(Run.Marker);
+        using TestSignature? signature = ablation == HuntAblation.Signature ? null : TestSignature.Create(Run.Marker);
         Q149OutlookClient? client = null;
         List<string> rows = new();
         string? blocked = null;
@@ -110,15 +121,22 @@ public sealed class LiveQ149TypedTextTests
         {
             client = Step("connect a client", setup, () => Q149OutlookClient.Connect(new Stopwatch(), allowStart: false));
             string storeId = Step("read the hub's StoreID", setup, () => Q149Drafts.HubStoreId(Run, client));
-            string sourceEntryId = Step("seed the mail to reply to", setup, () => Q149Drafts.SeedSelfSentSource(Run, "q211-source", out _), TimeSpan.FromMinutes(4));
+            string sourceEntryId = ablation == HuntAblation.Source && SharedSources.TryGetValue(Run.Marker, out string? shared)
+                ? shared
+                : Step("seed the mail to reply to", setup, () => Q149Drafts.SeedSelfSentSource(Run, "q211-source", out _), TimeSpan.FromMinutes(4));
+            if (ablation == HuntAblation.Source)
+            {
+                SharedSources[Run.Marker] = sourceEntryId;
+            }
+
             for (int round = 1; round <= rounds; round++)
             {
-                for (int k = 0; k < Kinds.Length; k++)
+                for (int k = 0; k < kinds.Length; k++)
                 {
-                    string kind = Kinds[k];
-                    rows.Add(Typed(client, storeId, sourceEntryId, kind, (round * 10) + k));
-                    rows.Add(Product(client, storeId, sourceEntryId, kind, (round * 10) + k, signatureName: null));
-                    rows.Add(Product(client, storeId, sourceEntryId, kind, (round * 10) + k, signature.Name));
+                    string kind = kinds[k];
+                    rows.Add(Typed(client, storeId, sourceEntryId, kind, (round * 10) + k, readLayout));
+                    rows.Add(Product(client, storeId, sourceEntryId, kind, (round * 10) + k, signatureName: null, slot: 1, readLayout));
+                    rows.Add(Product(client, storeId, sourceEntryId, kind, (round * 10) + k, signature?.Name, slot: 2, readLayout));
                 }
             }
         }
@@ -142,7 +160,7 @@ public sealed class LiveQ149TypedTextTests
         _output.WriteLine(line);
         Console.WriteLine(line);
         Assert.True(blocked == null, blocked);
-        Assert.Equal(rounds * Kinds.Length * 3, rows.Count);
+        Assert.Equal(rounds * kinds.Length * 3, rows.Count);
     }
 
     /// <summary>
@@ -177,7 +195,7 @@ public sealed class LiveQ149TypedTextTests
     }
 
     /// <summary>Outlook's own compose window, typed into: the draft saved with no inspector, re-opened, displayed, typed, read, discarded, deleted.</summary>
-    private string Typed(Q149OutlookClient client, string storeId, string sourceEntryId, string kind, int iteration)
+    private string Typed(Q149OutlookClient client, string storeId, string sourceEntryId, string kind, int iteration, bool readLayout = true)
     {
         Q149Attempt attempt = new(Q149Cells.Q211, iteration);
         attempt.Set("kind", kind).Set("source", "outlook-typed");
@@ -201,7 +219,7 @@ public sealed class LiveQ149TypedTextTests
             (List<WordParagraphLook>? look, int caret, string? failure) = Step(
                 "type into the " + kind + " compose window",
                 attempt,
-                () => client.Run<(List<WordParagraphLook>?, int, string?)>((_, ns) => TypeIntoTheComposeWindow((object)ns, entryId, storeId, token)));
+                () => client.Run<(List<WordParagraphLook>?, int, string?)>((_, ns) => TypeIntoTheComposeWindow((object)ns, entryId, storeId, token, readLayout)));
             attempt.Set("caretAt", caret).Set("failure", failure);
             return Record(attempt, look, token, "outlook typed " + kind);
         }
@@ -217,10 +235,10 @@ public sealed class LiveQ149TypedTextTests
     }
 
     /// <summary>The product's draft of the same text - a text body, as an agent writes one - read the same way, then deleted.</summary>
-    private string Product(Q149OutlookClient client, string storeId, string sourceEntryId, string kind, int iteration, string? signatureName)
+    private string Product(Q149OutlookClient client, string storeId, string sourceEntryId, string kind, int iteration, string? signatureName, int slot, bool readLayout = true)
     {
         string source = signatureName == null ? "product-no-signature" : "product-signature";
-        Q149Attempt attempt = new(Q149Cells.Q211 + "-product", iteration * 10 + (signatureName == null ? 1 : 2));
+        Q149Attempt attempt = new(Q149Cells.Q211 + "-product", iteration * 10 + slot);
         attempt.Set("kind", kind).Set("source", source);
         string token = "Q211PRODUCT" + kind.ToUpperInvariant() + iteration.ToString(CultureInfo.InvariantCulture) + (signatureName == null ? "N" : "S") + Run.Marker;
         string text = "Typed line one " + token + "\nTyped line two\n\nTyped paragraph two";
@@ -249,7 +267,7 @@ public sealed class LiveQ149TypedTextTests
             (List<WordParagraphLook>? look, string? failure) = Step(
                 "read the product's " + kind + " draft",
                 attempt,
-                () => Q149Editor.ReadLookOf(Run, client, draft.EntryId, storeId));
+                () => Q149Editor.ReadLookOf(Run, client, draft.EntryId, storeId, readLayout));
             attempt.Set("failure", failure);
             return Record(attempt, look, token, source.Replace('-', ' ') + " " + kind);
         }
@@ -269,7 +287,7 @@ public sealed class LiveQ149TypedTextTests
     /// gave it, reads Word's layout, and closes the window discarding. Returns the layout, where the insertion point was,
     /// and the failure when the editor could not be had.
     /// </summary>
-    private (List<WordParagraphLook>? Look, int Caret, string? Failure) TypeIntoTheComposeWindow(object nameSpace, string entryId, string storeId, string token)
+    private (List<WordParagraphLook>? Look, int Caret, string? Failure) TypeIntoTheComposeWindow(object nameSpace, string entryId, string storeId, string token, bool readLayout = true)
     {
         dynamic ns = nameSpace;
         dynamic? item = null;
@@ -301,7 +319,7 @@ public sealed class LiveQ149TypedTextTests
             selection.TypeParagraph();
             selection.TypeParagraph();
             selection.TypeText("Typed paragraph two");
-            return (Q149Editor.ReadLook(document), caret, null);
+            return readLayout ? (Q149Editor.ReadLook(document), caret, null) : (null, caret, "layout not read (ablation)");
         }
         catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
         {

@@ -226,6 +226,34 @@
     Selection.TypeText, as the typed-text tests do - before it is closed discarding. The promoted windows of
     -HuntShowEach never crashed (2026-11-18); the typed-text tests, which display and type, did.
 
+.PARAMETER HuntPromoteAfter
+    With a -HuntVariant whose loop saves drafts - the product's, or NoFormPage's: each draft, as soon as it is made, is
+    re-opened by its EntryID, promoted the product's own way (parked, activated, hidden) and closed discarding - what
+    the typed-text tests do to read every draft of the product's. With -HuntTypeEach it is their sequence in a loop.
+
+.PARAMETER HuntReleaseAfterClose
+    With -HuntTypeEach: the typed window's Word document is kept until the window is closed and released after it, as
+    the typed-text tests release theirs and as the product's own compose does. Without it the loop releases the
+    document first and closes the window after, as the product's promotion read does.
+
+.PARAMETER HuntDisplayEach
+    With a -HuntVariant whose loop makes the product's drafts: each is made with display on - the draft tools' default,
+    which opens it in a compose window for the person to review - and the loop closes that window as the person would,
+    discarding nothing the product saved, before the next draft.
+
+.PARAMETER HuntAblate
+    With -HuntVariant Legs or LegsOtherFolder: the typed-text tests leave one of their steps out (the coordinator's
+    direction of 2026-11-18, after the variants) - new: no new mail beside the reply and the forward; layout: Word's
+    paragraphs never walked, in the typed window or in the product's drafts re-opened after; signature: the product's
+    second draft of each kind without the test signature, which is never made; source: the tests of a leg share one
+    source mail. T2.HuntPlan.ParseAblation reads it.
+
+.PARAMETER HuntTraceClr
+    With -HuntFirstChance: the .NET runtime's own exception events are traced on the guest for the suite - an ETW
+    session for Microsoft-Windows-DotNETRuntime's Exception keyword, started elevated before the suite, and at its end
+    the runtime's rundown, which names every method each .NET process has compiled - and tracerpt's XML of both is
+    fetched into results\<guest>\clr-events.xml. Windows' own logman and tracerpt; nothing is installed.
+
 .PARAMETER HuntWithoutAddIn
     With -HuntFirstChance: OutlookAI's own add-in, which every Outlook guest's frozen checkpoint holds installed and
     loading (LoadBehavior 3), is turned off for the run - LoadBehavior 0, written before Outlook starts, so no Outlook
@@ -282,9 +310,14 @@ param(
     [Parameter(ParameterSetName = 'Run')] [switch] $HuntFirstChance,
     [Parameter(ParameterSetName = 'Run')] [int] $HuntRounds = 20,
     [Parameter(ParameterSetName = 'Run')] [int] $HuntMinutes = 60,
-    [Parameter(ParameterSetName = 'Run')] [ValidateSet('Legs', 'LegsOtherFolder', 'ProductLoop', 'OtherFolder', 'NoWindow', 'NoFormPage', 'BareCreators')] [string] $HuntVariant = 'Legs',
+    [Parameter(ParameterSetName = 'Run')] [ValidateSet('Legs', 'LegsOtherFolder', 'ProductLoop', 'OtherFolder', 'NoWindow', 'NoFormPage', 'BareCreators', 'PersonTyping')] [string] $HuntVariant = 'Legs',
     [Parameter(ParameterSetName = 'Run')] [int] $HuntLegMinutes = 10,
     [Parameter(ParameterSetName = 'Run')] [switch] $HuntWithoutAddIn,
+    [Parameter(ParameterSetName = 'Run')] [ValidateSet('', 'new', 'layout', 'signature', 'source')] [string] $HuntAblate = '',
+    [Parameter(ParameterSetName = 'Run')] [switch] $HuntTraceClr,
+    [Parameter(ParameterSetName = 'Run')] [switch] $HuntPromoteAfter,
+    [Parameter(ParameterSetName = 'Run')] [switch] $HuntReleaseAfterClose,
+    [Parameter(ParameterSetName = 'Run')] [switch] $HuntDisplayEach,
     [Parameter(ParameterSetName = 'Run')] [switch] $HuntShowEach,
     [Parameter(ParameterSetName = 'Run')] [switch] $HuntTypeEach,
     [Parameter(ParameterSetName = 'Run')] [switch] $WithAddIn,
@@ -356,6 +389,12 @@ $HuntLegs = [ordered]@{
 $HuntVariantVariable = 'OUTLOOKAI_HUNT_VARIANT'
 $HuntLegMinutesVariable = 'OUTLOOKAI_HUNT_LEG_MINUTES'
 $HuntShowEachVariable = 'OUTLOOKAI_HUNT_SHOW_EACH'
+$HuntAblateVariable = 'OUTLOOKAI_HUNT_ABLATE'
+$HuntPromoteAfterVariable = 'OUTLOOKAI_HUNT_PROMOTE_AFTER'
+$HuntReleaseAfterCloseVariable = 'OUTLOOKAI_HUNT_RELEASE_AFTER_CLOSE'
+$HuntDisplayVariable = 'OUTLOOKAI_HUNT_DISPLAY'
+# -HuntTraceClr: the ETW session's name on the guest (its rundown session's is the same with Rundown after it).
+$ClrTraceSession = 'OutlookAIHuntClr'
 $HuntLoopLeg = '&FullyQualifiedName~OutlookAI.McpServer.Tests.T2.LiveHuntDerivedDraftTests'
 # -HuntWithoutAddIn: the key Install-OutlookAIAddIn.ps1 registers the add-in under, for the user Outlook runs as.
 $AddInRegistryKey = 'HKCU:\Software\Microsoft\Office\Outlook\Addins\OutlookAI'
@@ -462,14 +501,23 @@ function Merge-CrashCount {
 # Outlook test guest only - never the Exchange VM, whose Outlook holds a real mailbox that a full dump would hold too -
 # and its rounds and minutes are bounded, inside the run's own time limit. Pure.
 function Get-HuntRefusal {
-    param([bool] $Hunt, [bool] $Exchange, [string] $Filter, [string] $FilterSuffix, [string] $SignatureSettings, [bool] $SignatureDialog, [int] $Rounds, [int] $Minutes, [int] $RunTimeoutMinutes, [string] $Variant = 'Legs', [int] $LegMinutes = 10, [bool] $WithoutAddIn = $false, [bool] $WithAddIn = $false, [bool] $ShowEach = $false, [bool] $TypeEach = $false)
+    param([bool] $Hunt, [bool] $Exchange, [string] $Filter, [string] $FilterSuffix, [string] $SignatureSettings, [bool] $SignatureDialog, [int] $Rounds, [int] $Minutes, [int] $RunTimeoutMinutes, [string] $Variant = 'Legs', [int] $LegMinutes = 10, [bool] $WithoutAddIn = $false, [bool] $WithAddIn = $false, [bool] $ShowEach = $false, [bool] $TypeEach = $false, [string] $Ablate = '', [bool] $TraceClr = $false, [bool] $PromoteAfter = $false, [bool] $ReleaseAfterClose = $false, [bool] $DisplayEach = $false)
     if (-not $Hunt) {
         if ($Variant -and $Variant -ne 'Legs') { return "-HuntVariant $Variant is a hunting run's: give -HuntFirstChance with it." }
         if ($WithoutAddIn) { return "-HuntWithoutAddIn is a hunting run's: give -HuntFirstChance with it." }
         if ($ShowEach) { return "-HuntShowEach is a hunting run's: give -HuntFirstChance and a -HuntVariant with it." }
+        if ($Ablate) { return "-HuntAblate is a hunting run's: give -HuntFirstChance with it." }
+        if ($TraceClr) { return "-HuntTraceClr is a hunting run's: give -HuntFirstChance with it." }
+        if ($PromoteAfter) { return "-HuntPromoteAfter is a hunting run's: give -HuntFirstChance and a -HuntVariant with it." }
+        if ($ReleaseAfterClose) { return "-HuntReleaseAfterClose is a hunting run's: give -HuntFirstChance, a -HuntVariant and -HuntShowEach -HuntTypeEach with it." }
+        if ($DisplayEach) { return "-HuntDisplayEach is a hunting run's: give -HuntFirstChance and a -HuntVariant with it." }
         return ''
     }
+    if ($DisplayEach -and $Variant -notin @('ProductLoop', 'OtherFolder', 'NoWindow', 'PersonTyping')) { return "-HuntDisplayEach displays the product's drafts: give a -HuntVariant whose loop makes them, not $Variant." }
+    if ($PromoteAfter -and $Variant -notin @('ProductLoop', 'OtherFolder', 'NoWindow', 'PersonTyping', 'NoFormPage')) { return "-HuntPromoteAfter re-opens the loop's drafts: give a -HuntVariant whose loop saves them, not $Variant." }
+    if ($Ablate -and (Test-HuntLoopVariant $Variant)) { return "-HuntAblate leaves a step out of the typed-text tests: give -HuntVariant Legs or LegsOtherFolder, not $Variant." }
     if ($TypeEach -and -not $ShowEach) { return '-HuntTypeEach types into the window -HuntShowEach shows: give both.' }
+    if ($ReleaseAfterClose -and -not $TypeEach) { return '-HuntReleaseAfterClose releases the Word document of the window -HuntTypeEach types into: give -HuntShowEach -HuntTypeEach with it.' }
     if ($ShowEach -and -not (Test-HuntLoopVariant $Variant)) { return '-HuntShowEach shows a window before each draft of a loop: give a -HuntVariant other than Legs and LegsOtherFolder, whose typed-text tests show their own.' }
     if ($WithoutAddIn -and $WithAddIn) { return '-HuntWithoutAddIn turns the add-in off and -WithAddIn installs it: give one.' }
     if ($Exchange) { return '-HuntFirstChance attaches a debugger to Outlook and writes its whole memory to a dump: never on the Exchange VM, whose Outlook holds a real mailbox.' }
@@ -488,6 +536,20 @@ function Get-HuntRefusal {
 function Get-AddInOffScript {
     param([string] $Key)
     return "`$k = '$Key'; if (-not (Test-Path -LiteralPath `$k)) { 'ADDIN-OFF none: no key' } else { `$was = (Get-ItemProperty -LiteralPath `$k).LoadBehavior; Set-ItemProperty -LiteralPath `$k -Name LoadBehavior -Value 0 -Type DWord; 'ADDIN-OFF {0} (was {1})' -f (Get-ItemProperty -LiteralPath `$k).LoadBehavior, `$was }"
+}
+
+# -HuntTraceClr's guest tasks, elevated in session 0. The start: an ETW session for Microsoft-Windows-DotNETRuntime's
+# Exception keyword (0x8000) at Informational, writing clr.etl into the run's folder - "CLR-TRACE-START 0" when logman
+# started it. The stop: the runtime's rundown (Loader, JIT and EndRundown at Verbose: every compiled method, to name the
+# frames) for ten seconds, both sessions stopped, and tracerpt's XML of both - "CLR-TRACE-STOP <exit> <bytes>". Pure.
+function Get-ClrTraceStartScript {
+    param([string] $GuestRunDir, [string] $Session)
+    return "New-Item -ItemType Directory -Force -Path '$GuestRunDir' | Out-Null; & logman stop $Session -ets *> `$null; & logman start $Session -p 'Microsoft-Windows-DotNETRuntime' 0x8000 0x4 -o '$GuestRunDir\clr.etl' -ets; `"CLR-TRACE-START `$LASTEXITCODE`""
+}
+
+function Get-ClrTraceStopScript {
+    param([string] $GuestRunDir, [string] $Session)
+    return "& logman start ${Session}Rundown -p 'Microsoft-Windows-DotNETRuntimeRundown' 0x118 0x5 -o '$GuestRunDir\clr-rundown.etl' -ets; Start-Sleep -Seconds 10; & logman stop ${Session}Rundown -ets; & logman stop $Session -ets; & tracerpt '$GuestRunDir\clr.etl' '$GuestRunDir\clr-rundown.etl' -o '$GuestRunDir\clr-events.xml' -of XML -y *> `$null; `$x = `$LASTEXITCODE; `"CLR-TRACE-STOP `$x `$((Get-Item -LiteralPath '$GuestRunDir\clr-events.xml' -ErrorAction SilentlyContinue).Length)`""
 }
 
 # The legs of each round of a hunting run, by -HuntVariant: Legs, the tests the crashes struck in ($HuntLegs); any other
@@ -522,11 +584,15 @@ function Test-HuntLoopVariant {
 # file is named for its round and leg. The rounds end at -HuntRounds, at -HuntMinutes, or at the first dump the
 # debugger wrote. Pure.
 function Get-HuntSuiteScript {
-    param([string] $OptIn, [string] $GuestRunDir, [string] $GuestRoot, [System.Collections.IDictionary] $Filters, [int] $Rounds, [int] $Minutes, [string] $Module, [string] $DumpDir, [string] $ScriptName, [string] $Variant = 'Legs', [int] $LegMinutes = 10, [bool] $ShowEach = $false, [bool] $TypeEach = $false)
+    param([string] $OptIn, [string] $GuestRunDir, [string] $GuestRoot, [System.Collections.IDictionary] $Filters, [int] $Rounds, [int] $Minutes, [string] $Module, [string] $DumpDir, [string] $ScriptName, [string] $Variant = 'Legs', [int] $LegMinutes = 10, [bool] $ShowEach = $false, [bool] $TypeEach = $false, [string] $Ablate = '', [bool] $PromoteAfter = $false, [bool] $ReleaseAfterClose = $false, [bool] $DisplayEach = $false)
     $legLines = (@($Filters.Keys) | ForEach-Object { "`$legs += ,@('$_', '$($Filters[$_])')" }) -join "`r`n"
     $variantLines = ''
     $testVariant = Get-HuntTestVariant $Variant
     if ($testVariant) { $variantLines = "`$env:$HuntVariantVariable = '$testVariant'`r`n`$env:$HuntLegMinutesVariable = '$LegMinutes'`r`n`$env:$HuntShowEachVariable = '$(if ($TypeEach) { 'typed' } else { [int]$ShowEach })'`r`n" }
+    if ($Ablate) { $variantLines += "`$env:$HuntAblateVariable = '$Ablate'`r`n" }
+    if ($PromoteAfter) { $variantLines += "`$env:$HuntPromoteAfterVariable = '1'`r`n" }
+    if ($ReleaseAfterClose) { $variantLines += "`$env:$HuntReleaseAfterCloseVariable = '1'`r`n" }
+    if ($DisplayEach) { $variantLines += "`$env:$HuntDisplayVariable = '1'`r`n" }
     return @"
 $variantLines`$env:OUTLOOKAI_LIVE_OPT_IN = '$OptIn'
 `$env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'; `$env:DOTNET_NOLOGO = '1'; `$env:MSBUILDDISABLENODEREUSE = '1'
@@ -585,6 +651,24 @@ function Merge-TrxResults {
     }
     if (-not $allDeclared) { $declared = $null }
     return [pscustomobject]@{ Counts = $counts; Declared = $declared; Failed = $failed; Skipped = $skipped }
+}
+
+# The .NET exceptions every OUTLOOK.EXE of a hunting run threw, from the debugger's log: each process's last line
+# ("exceptions by code: ... 0xE0434352x<n>"), 0xE0434352 being how a .NET throw reaches a native debugger. On the
+# Outlook guests only OutlookAI's add-in runs .NET code inside Outlook, so it is the add-in's count: about two a compose
+# window with its pane, until its ribbon callback was fixed (b5c724b, runbook section 4.15). Null when the log holds no
+# process's last line. Pure.
+function Get-HuntClrExceptionCount {
+    param([AllowEmptyString()] [string] $LogText)
+    $total = 0
+    $seen = 0
+    foreach ($m in [regex]::Matches([string]$LogText, 'pid \d+: (?:exited with 0x[0-9A-Fa-f]+|detached); \d+ debug event\(s\); exceptions by code:(?<codes>[^\r\n]*)')) {
+        $seen++
+        $c = [regex]::Match($m.Groups['codes'].Value, '0xE0434352x(?<n>\d+)')
+        if ($c.Success) { $total += [int]$c.Groups['n'].Value }
+    }
+    if ($seen -eq 0) { return $null }
+    return $total
 }
 
 # Office's build as a hunting run's guest read it - the HUNT-OFFICE lines of its console: the Click-to-Run values
@@ -1386,6 +1470,22 @@ STACK      the faulting thread
     Check 'the hunt''s minutes are counted on a stopwatch, not the guest''s clock, which can jump (2026-11-18)' $true ($hunt.Contains('$clock = [System.Diagnostics.Stopwatch]::StartNew()') -and -not $hunt.Contains('(Get-Date)'))
     $typedHunt = Get-HuntSuiteScript -OptIn 'OAI-INDEXED' -GuestRunDir 'C:\r' -GuestRoot 'C:\g' -Filters ([ordered]@{ loop = 'F&L' }) -Rounds 20 -Minutes 60 -Module 'mso40uiwin32client.dll' -DumpDir 'C:\d' -ScriptName $FirstChanceScript -Variant 'ProductLoop' -LegMinutes 10 -ShowEach $true -TypeEach $true
     Check '-HuntTypeEach tells it to type into the window it shows, and needs -HuntShowEach' 'typed|both' "$(if ($typedHunt.Contains("`$env:OUTLOOKAI_HUNT_SHOW_EACH = 'typed'`r`n")) { 'typed' })|$(if ((Get-HuntRefusal $true $false '' '' '' $false 20 60 120 'ProductLoop' 10 $false $false $false $true) -match 'give both') { 'both' })"
+    $ablateHunt = Get-HuntSuiteScript -OptIn 'OAI-INDEXED' -GuestRunDir 'C:\r' -GuestRoot 'C:\g' -Filters ([ordered]@{ typed = 'F&A'; drafts = 'F&(B|C)' }) -Rounds 20 -Minutes 60 -Module 'mso40uiwin32client.dll' -DumpDir 'C:\d' -ScriptName $FirstChanceScript -Variant 'Legs' -LegMinutes 10 -Ablate 'layout'
+    Check '-HuntAblate names the step the typed-text tests leave out, on the legs only' 'layout|loop|hunt' "$(if ($ablateHunt.StartsWith("`$env:OUTLOOKAI_HUNT_ABLATE = 'layout'`r`n")) { 'layout' })|$(if ((Get-HuntRefusal $true $false '' '' '' $false 20 60 120 'ProductLoop' 10 $false $false $false $false 'layout') -match 'Legs or LegsOtherFolder') { 'loop' })|$(if ((Get-HuntRefusal $false $false '' '' '' $false 20 60 120 'Legs' 10 $false $false $false $false 'layout') -match 'give -HuntFirstChance') { 'hunt' })"
+    $promoteHunt = Get-HuntSuiteScript -OptIn 'OAI-INDEXED' -GuestRunDir 'C:\r' -GuestRoot 'C:\g' -Filters ([ordered]@{ loop = 'F&L' }) -Rounds 20 -Minutes 60 -Module 'mso40uiwin32client.dll' -DumpDir 'C:\d' -ScriptName $FirstChanceScript -Variant 'ProductLoop' -LegMinutes 10 -ShowEach $true -TypeEach $true -PromoteAfter $true
+    Check '-HuntPromoteAfter tells the loop to re-open and promote the product''s drafts, on a loop that makes them' 'promote|bare' "$(if ($promoteHunt.Contains("`$env:OUTLOOKAI_HUNT_PROMOTE_AFTER = '1'`r`n")) { 'promote' })|$(if ((Get-HuntRefusal $true $false '' '' '' $false 20 60 120 'BareCreators' 10 $false $false $false $false '' $false $true) -match 'saves them') { 'bare' })"
+    $lateHunt = Get-HuntSuiteScript -OptIn 'OAI-INDEXED' -GuestRunDir 'C:\r' -GuestRoot 'C:\g' -Filters ([ordered]@{ loop = 'F&L' }) -Rounds 20 -Minutes 60 -Module 'mso40uiwin32client.dll' -DumpDir 'C:\d' -ScriptName $FirstChanceScript -Variant 'ProductLoop' -LegMinutes 10 -ShowEach $true -TypeEach $true -ReleaseAfterClose $true
+    Check '-HuntReleaseAfterClose tells the loop to release the typed window''s document after its close, and needs -HuntTypeEach' 'late|typed|hunt' "$(if ($lateHunt.Contains("`$env:OUTLOOKAI_HUNT_RELEASE_AFTER_CLOSE = '1'`r`n")) { 'late' })|$(if ((Get-HuntRefusal $true $false '' '' '' $false 20 60 120 'ProductLoop' 10 $false $false $true $false '' $false $false $true) -match 'give -HuntShowEach -HuntTypeEach') { 'typed' })|$(if ((Get-HuntRefusal $false $false '' '' '' $false 20 60 120 'Legs' 10 $false $false $false $false '' $false $false $true) -match 'a hunting run') { 'hunt' })"
+    $displayHunt = Get-HuntSuiteScript -OptIn 'OAI-INDEXED' -GuestRunDir 'C:\r' -GuestRoot 'C:\g' -Filters ([ordered]@{ loop = 'F&L' }) -Rounds 20 -Minutes 60 -Module 'mso40uiwin32client.dll' -DumpDir 'C:\d' -ScriptName $FirstChanceScript -Variant 'ProductLoop' -LegMinutes 10 -DisplayEach $true
+    Check '-HuntDisplayEach tells the loop to display the product''s drafts and close them, on a loop that makes them' 'display|direct|hunt' "$(if ($displayHunt.Contains("`$env:OUTLOOKAI_HUNT_DISPLAY = '1'`r`n")) { 'display' })|$(if ((Get-HuntRefusal $true $false '' '' '' $false 20 60 120 'NoFormPage' 10 $false $false $false $false '' $false $false $false $true) -match 'makes them') { 'direct' })|$(if ((Get-HuntRefusal $false $false '' '' '' $false 20 60 120 'Legs' 10 $false $false $false $false '' $false $false $false $true) -match 'a hunting run') { 'hunt' })"
+    $traceStart = Get-ClrTraceStartScript 'C:\r' 'S'
+    $traceStop = Get-ClrTraceStopScript 'C:\r' 'S'
+    $err1 = $null; $err2 = $null
+    [void][System.Management.Automation.Language.Parser]::ParseInput($traceStart, [ref]$null, [ref]$err1)
+    [void][System.Management.Automation.Language.Parser]::ParseInput($traceStop, [ref]$null, [ref]$err2)
+    Check '-HuntTraceClr''s guest tasks parse, trace the runtime''s Exception keyword and its rundown, and make tracerpt''s XML' '0|0|True|True|True' "$(@($err1).Count)|$(@($err2).Count)|$($traceStart.Contains("logman start S -p 'Microsoft-Windows-DotNETRuntime' 0x8000 0x4 -o 'C:\r\clr.etl' -ets"))|$($traceStop.Contains("logman start SRundown -p 'Microsoft-Windows-DotNETRuntimeRundown' 0x118 0x5"))|$($traceStop.Contains("tracerpt 'C:\r\clr.etl' 'C:\r\clr-rundown.etl' -o 'C:\r\clr-events.xml' -of XML -y"))"
+    $traceAt = $runCode.IndexOf("Invoke-Guest 'clr-trace-start'")
+    Check 'the trace starts before the suite and stops after it, and its XML is fetched' $true ($traceAt -gt 0 -and $traceAt -lt $runCode.IndexOf("Invoke-Guest 'live'") -and $runCode.IndexOf("Invoke-Guest 'clr-trace-stop'") -gt $runCode.IndexOf("Invoke-Guest 'live'") -and $runCode.Contains("'first-chance.log', 'clr-events.xml'"))
     Check 'and -HuntShowEach tells it to show a window before each draft' $true ($shownHunt.Contains("`$env:OUTLOOKAI_HUNT_SHOW_EACH = '1'`r`n"))
     Check '-HuntShowEach is a loop''s, in a hunting run' 'hunt|loop|' "$(if ((Get-HuntRefusal $false $false '' '' '' $false 20 60 120 'ProductLoop' 10 $false $false $true) -match 'give -HuntFirstChance') { 'hunt' })|$(if ((Get-HuntRefusal $true $false '' '' '' $false 20 60 120 'Legs' 10 $false $false $true) -match 'other than Legs') { 'loop' })|$(Get-HuntRefusal $true $false '' '' '' $false 20 60 120 'ProductLoop' 10 $false $false $true)"
     Check 'and Legs names none - its tests are not the loop''s' $false ($hunt.Contains('OUTLOOKAI_HUNT_VARIANT'))
@@ -1393,6 +1493,8 @@ STACK      the faulting thread
     $office = Read-HuntOffice "x`r`nHUNT-OFFICE VersionToReport = 16.0.17932.20996`r`nHUNT-OFFICE UpdatesEnabled = False`r`nHUNT-OFFICE module C:\m.dll, 5 bytes, written 2026-09-12T00:00:00.0000000Z, SHA-256 AB`r`n"
     Check 'the summary reads Office''s build back' '16.0.17932.20996|False|C:\m.dll, 5 bytes, written 2026-09-12T00:00:00.0000000Z, SHA-256 AB' "$($office['VersionToReport'])|$($office['UpdatesEnabled'])|$($office['module'])"
     Check 'and a console with no such line is no record' $true ($null -eq (Read-HuntOffice 'nothing here'))
+    $fcLog = "2026-10-03T17:51:48.931Z  pid 7248: attached`r`n2026-10-03T17:52:39.817Z  pid 7132: exited with 0x00000000; 90 debug event(s); exceptions by code: 0x80000003x1 0xE06D7363x2`r`n2026-10-03T18:03:14.298Z  pid 7248: detached; 12152 debug event(s); exceptions by code: 0x80000003x1 0xE06D7363x3 0xE0434352x893`r`n2026-10-03T18:03:14.298Z  watch ended`r`n"
+    Check 'the summary counts the .NET exceptions every Outlook threw, from the debugger''s log' '893|0|0|none' "$(Get-HuntClrExceptionCount $fcLog)|$(Get-HuntClrExceptionCount ($fcLog -replace ' 0xE0434352x893', ''))|$(Get-HuntClrExceptionCount 'pid 1: exited with 0x00000000; 9 debug event(s); exceptions by code: none')|$(if ($null -eq (Get-HuntClrExceptionCount 'watch ended')) { 'none' })"
     $addInSwitch = @($paramAst | Where-Object { $_.Name.VariablePath.UserPath -eq 'HuntWithoutAddIn' })
     Check 'the add-in stays as the checkpoint holds it unless -HuntWithoutAddIn is given' 'switch|True' "$($addInSwitch[0].StaticType.Name.ToLowerInvariant() -replace 'switchparameter','switch')|$($null -eq $addInSwitch[0].DefaultValue)"
     Check '-HuntWithoutAddIn is a hunting run''s, and not one that installs the add-in' 'hunt|both' "$(if ((Get-HuntRefusal $false $false '' '' '' $false 20 60 120 'Legs' 10 $true $false) -match 'give -HuntFirstChance') { 'hunt' })|$(if ((Get-HuntRefusal $true $false '' '' '' $false 20 60 120 'Legs' 10 $true $true) -match 'give one') { 'both' })"
@@ -1551,7 +1653,7 @@ if ($WithAddIn -and ($facts.Exchange -or (-not $Kind -and -not $startIsFrozen)))
 # again once taken.
 $stepRefusal = Get-SignatureSettingsRefusal $SignatureSettings ([bool]$facts.Exchange) ($startIsFrozen -or [bool]$Kind) $GreenCheckpoint $Filter ([bool]$SignatureDialog)
 if ($stepRefusal) { Stop-Refused $stepRefusal }
-$huntRefusal = Get-HuntRefusal ([bool]$HuntFirstChance) ([bool]$facts.Exchange) $Filter $FilterSuffix $SignatureSettings ([bool]$SignatureDialog) $HuntRounds $HuntMinutes $RunTimeoutMinutes $HuntVariant $HuntLegMinutes ([bool]$HuntWithoutAddIn) ([bool]$WithAddIn) ([bool]$HuntShowEach) ([bool]$HuntTypeEach)
+$huntRefusal = Get-HuntRefusal ([bool]$HuntFirstChance) ([bool]$facts.Exchange) $Filter $FilterSuffix $SignatureSettings ([bool]$SignatureDialog) $HuntRounds $HuntMinutes $RunTimeoutMinutes $HuntVariant $HuntLegMinutes ([bool]$HuntWithoutAddIn) ([bool]$WithAddIn) ([bool]$HuntShowEach) ([bool]$HuntTypeEach) $HuntAblate ([bool]$HuntTraceClr) ([bool]$HuntPromoteAfter) ([bool]$HuntReleaseAfterClose) ([bool]$HuntDisplayEach)
 if ($huntRefusal) { Stop-Refused $huntRefusal }
 # A hunting run runs its own tests (Get-HuntSuiteScript): narrowed, and every leg's filter the guest's derived one with
 # the leg's suffix.
@@ -1639,6 +1741,8 @@ $script:werFound = @()
 $huntRoundsRun = -1
 $huntOffice = $null
 $huntAddIn = 'as the checkpoint holds it'
+$huntClrTrace = $null
+$huntClrExceptions = $null
 $suiteStarted = $false
 $stage = ''
 $stageWhy = ''
@@ -2145,7 +2249,7 @@ Copy-Item -LiteralPath '$GuestPayloadDir\live-test-settings.json' -Destination '
         Add-Content -LiteralPath $ledgerPath -Value (ConvertTo-LedgerLine $runMarker $runId 'started' $null $priorMarkers ([DateTime]::UtcNow)) -Encoding UTF8
     }
     if ($HuntFirstChance) {
-        $liveScript = Get-HuntSuiteScript -OptIn $facts.ComputerName -GuestRunDir $guestRunDir -GuestRoot $GuestRoot -Filters $huntFilters -Rounds $HuntRounds -Minutes $HuntMinutes -Module $HuntModule -DumpDir $GuestDumpDir -ScriptName $FirstChanceScript -Variant $HuntVariant -LegMinutes $HuntLegMinutes -ShowEach ([bool]$HuntShowEach) -TypeEach ([bool]$HuntTypeEach)
+        $liveScript = Get-HuntSuiteScript -OptIn $facts.ComputerName -GuestRunDir $guestRunDir -GuestRoot $GuestRoot -Filters $huntFilters -Rounds $HuntRounds -Minutes $HuntMinutes -Module $HuntModule -DumpDir $GuestDumpDir -ScriptName $FirstChanceScript -Variant $HuntVariant -LegMinutes $HuntLegMinutes -ShowEach ([bool]$HuntShowEach) -TypeEach ([bool]$HuntTypeEach) -Ablate $HuntAblate -PromoteAfter ([bool]$HuntPromoteAfter) -ReleaseAfterClose ([bool]$HuntReleaseAfterClose) -DisplayEach ([bool]$HuntDisplayEach)
         Say "hunt: a debugger on every OUTLOOK.EXE, dumping the first first-chance access violation in $HuntModule; variant $HuntVariant, at most $HuntRounds round(s) of $(@($huntFilters.Keys) -join ' and ') in $HuntMinutes minute(s)$(if (Test-HuntLoopVariant $HuntVariant) { ", $HuntLegMinutes a leg" })"
     }
     else {
@@ -2157,6 +2261,11 @@ $($dialogLines)Set-Location '$GuestRoot\src'
 & dotnet test McpServer\OutlookAI.McpServer.Tests\OutlookAI.McpServer.Tests.csproj -c Release --filter "$runFilter" --logger "trx;LogFileName=live.trx" --logger "console;verbosity=detailed" --results-directory '$guestRunDir' --diag '$guestRunDir\diag\vstest.log' *> '$guestRunDir\console.txt'
 exit `$LASTEXITCODE
 "@
+    }
+    if ($HuntFirstChance -and $HuntTraceClr) {
+        $o = Invoke-Guest 'clr-trace-start' (Get-ClrTraceStartScript $guestRunDir $ClrTraceSession) 120 -Session0
+        $huntClrTrace = $(if ($o -match 'CLR-TRACE-START 0') { 'traced' } else { 'not started - guest\clr-trace-start.log' })
+        Say "hunt: the .NET runtime's exception events $huntClrTrace"
     }
     $runStartUtc = [DateTime]::UtcNow
     # The GUEST's clock at the start, for the crash events below, which carry the guest's time: on a
@@ -2171,11 +2280,17 @@ exit `$LASTEXITCODE
     $suiteSeconds = ((Get-Date) - $t0).TotalSeconds
     $timings['suite'] = Format-Seconds $suiteSeconds
     Say "suite finished, exit $suiteExit ($($timings['suite']))"
+    if ($HuntFirstChance -and $HuntTraceClr -and $huntClrTrace -eq 'traced') {
+        $o = Invoke-Guest 'clr-trace-stop' (Get-ClrTraceStopScript $guestRunDir $ClrTraceSession) 900 -Session0
+        $cm = [regex]::Match($o, 'CLR-TRACE-STOP (-?\d+) (\d*)')
+        $huntClrTrace = $(if ($cm.Success -and $cm.Groups[2].Value) { "traced: clr-events.xml, $($cm.Groups[2].Value) bytes" } else { 'traced, but tracerpt made no XML - guest\clr-trace-stop.log' })
+        Say "hunt: the .NET runtime's exception events $huntClrTrace"
+    }
 
     # ---- FETCH: results, console, logs, crash events.
     $resultsDir = Join-Path $runDir 'results'
     # ps51-native-stderr-ok: a PowerShell script, not a program - every program it starts goes through its own Invoke-NativeCommand, under 'Continue' inside a try
-    & (Join-Path $PSScriptRoot 'Copy-FromGuest.ps1') -VMName $facts.Name -RepoRoot $CredentialRepoRoot -GuestPath $guestRunDir -Include '*.trx', 'console.txt', 'signature-dialog.*', 'first-chance.log' -Destination $resultsDir -Force *> (Join-Path $runDir 'fetch.log')
+    & (Join-Path $PSScriptRoot 'Copy-FromGuest.ps1') -VMName $facts.Name -RepoRoot $CredentialRepoRoot -GuestPath $guestRunDir -Include '*.trx', 'console.txt', 'signature-dialog.*', 'first-chance.log', 'clr-events.xml' -Destination $resultsDir -Force *> (Join-Path $runDir 'fetch.log')
     # ps51-native-stderr-ok: a PowerShell script, not a program - every program it starts goes through its own Invoke-NativeCommand, under 'Continue' inside a try
     & (Join-Path $PSScriptRoot 'Copy-FromGuest.ps1') -VMName $facts.Name -RepoRoot $CredentialRepoRoot -GuestPath "$guestRunDir\diag" -Include '*.log' -Destination (Join-Path $resultsDir 'diag') -Force *>> (Join-Path $runDir 'fetch.log')
     $trxFile = Get-ChildItem -LiteralPath $resultsDir -Filter '*.trx' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -2190,6 +2305,10 @@ exit `$LASTEXITCODE
         $hr = @([regex]::Matches([System.IO.File]::ReadAllText($consoleFile.FullName), '(?m)^HUNT-ROUNDS (\d+)'))
         if ($hr.Count -gt 0) { $huntRoundsRun = [int]$hr[$hr.Count - 1].Groups[1].Value }
         $huntOffice = Read-HuntOffice ([System.IO.File]::ReadAllText($consoleFile.FullName))
+    }
+    if ($HuntFirstChance) {
+        $firstChanceLog = Get-ChildItem -LiteralPath $resultsDir -Filter 'first-chance.log' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($firstChanceLog) { $huntClrExceptions = Get-HuntClrExceptionCount ([System.IO.File]::ReadAllText($firstChanceLog.FullName)) }
     }
     $since = Get-CrashEventsSince -GuestRunStartUtc $guestRunStartUtc -HostRunStartUtc $runStartUtc
     # Event 1001 too, whole: WER's report of each crash - its kind and where it filed it - which is how a crash
@@ -2300,7 +2419,8 @@ $summary['outlookStart'] = $outlookStart
 $summary['signatureSettings'] = $signatureSettingsState
 $summary['indexRoots'] = $indexRoots
 $huntDumps = @(@($crashDumpState['files']) | Where-Object { [string]$_['name'] -match 'chance\.dmp$' } | ForEach-Object { [string]$_['name'] })
-if ($HuntFirstChance) { $summary['hunt'] = [ordered]@{ module = $HuntModule; variant = $HuntVariant; showEach = [bool]$HuntShowEach; typeEach = [bool]$HuntTypeEach; legMinutes = $(if (Test-HuntLoopVariant $HuntVariant) { $HuntLegMinutes } else { $null }); legs = $huntFilters; roundsAsked = $HuntRounds; minutes = $HuntMinutes; roundsRun = $huntRoundsRun; dumps = $huntDumps; office = $huntOffice; addIn = $huntAddIn; log = "results\$($facts.Name)\first-chance.log" } }
+if ($HuntFirstChance) { $summary['hunt'] = [ordered]@{ module = $HuntModule; variant = $HuntVariant; showEach = [bool]$HuntShowEach; typeEach = [bool]$HuntTypeEach; legMinutes = $(if (Test-HuntLoopVariant $HuntVariant) { $HuntLegMinutes } else { $null }); legs = $huntFilters; roundsAsked = $HuntRounds; minutes = $HuntMinutes; roundsRun = $huntRoundsRun; dumps = $huntDumps; office = $huntOffice; addIn = $huntAddIn; ablate = $(if ($HuntAblate) { $HuntAblate } else { $null }); clrTrace = $huntClrTrace; log = "results\$($facts.Name)\first-chance.log" } }
+if ($HuntFirstChance) { $summary['hunt']['clrExceptions'] = $huntClrExceptions }
 # ToArray(), never @(...): @() of a List[object] given to an [object[]] parameter fails with "Argument
 # types do not match" under Windows PowerShell 5.1 and PowerShell 7.7 alike (measured 2026-11-18).
 $summary['guestClock'] = New-GuestClockSummaryJson $guestClockRecords.ToArray()
@@ -2347,7 +2467,7 @@ $lines.Add("outlook    crashes during the run: $crashText; crash dumps: $dumpTex
 if ($HuntFirstChance) {
     $roundsText = 'not read'
     if ($huntRoundsRun -ge 0) { $roundsText = [string]$huntRoundsRun }
-    $lines.Add("hunt       variant $HuntVariant$(if ($HuntTypeEach) { ', a window shown and typed into before each draft' } elseif ($HuntShowEach) { ', a window shown before each draft' }), OutlookAI's add-in $huntAddIn, $roundsText of at most $HuntRounds round(s) of $(@($huntFilters.Keys) -join ' and ') in $HuntMinutes min, a debugger on every OUTLOOK.EXE: $($huntDumps.Count) first- or second-chance dump(s) in $HuntModule's hunt (results\$($facts.Name)\first-chance.log)")
+    $lines.Add("hunt       variant $HuntVariant$(if ($HuntTypeEach) { ', a window shown and typed into before each draft' } elseif ($HuntShowEach) { ', a window shown before each draft' })$(if ($HuntReleaseAfterClose) { ', its Word document released after the window closed' })$(if ($HuntDisplayEach) { ", each of the product's drafts displayed, as the tools' default is, and closed" })$(if ($HuntPromoteAfter) { ", each of the product's drafts re-opened and promoted after" })$(if ($HuntAblate) { ", the typed-text tests without their $HuntAblate step" })$(if ($huntClrTrace) { ", the .NET runtime's exceptions $huntClrTrace" }), OutlookAI's add-in $huntAddIn, $roundsText of at most $HuntRounds round(s) of $(@($huntFilters.Keys) -join ' and ') in $HuntMinutes min, a debugger on every OUTLOOK.EXE: $($huntDumps.Count) first- or second-chance dump(s) in $HuntModule's hunt (results\$($facts.Name)\first-chance.log); .NET exceptions thrown in Outlook, the add-in's: $(if ($null -eq $huntClrExceptions) { 'not read' } else { $huntClrExceptions })")
     if ($null -ne $huntOffice) { $lines.Add("office     $($huntOffice['VersionToReport']) $($huntOffice['ProductReleaseIds']) $($huntOffice['Platform']), $($huntOffice['AudienceData']), updates enabled: $($huntOffice['UpdatesEnabled']); $($huntOffice['module'])") }
 }
 $lines.Add((Format-OutlookStartLine $outlookStart))

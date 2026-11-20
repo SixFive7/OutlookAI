@@ -2,6 +2,28 @@ using System.Globalization;
 
 namespace OutlookAI.McpServer.Tests.T2;
 
+/// <summary>
+/// The step of the typed-text tests a hunting run leaves out (the coordinator's direction of 2026-11-18, after the
+/// variants): every crash the hunt caught struck in those tests, and none in the loops, which do less.
+/// </summary>
+public enum HuntAblation
+{
+    /// <summary>Nothing left out: the tests as they are.</summary>
+    None,
+
+    /// <summary>No new mail: only the reply and the forward are typed and made, never the new mail beside them.</summary>
+    NewMail,
+
+    /// <summary>No layout read: Word's paragraphs are never walked, in the typed window or in the product's drafts re-opened after.</summary>
+    Layout,
+
+    /// <summary>No signature: the product's second draft of each kind is made without the test signature, which is never made.</summary>
+    Signature,
+
+    /// <summary>One source mail: the tests of a leg share the first one's, where each sends itself its own.</summary>
+    Source,
+}
+
 /// <summary>What makes a hunting variant's derived drafts (runbook section 4.15).</summary>
 public enum HuntMaker
 {
@@ -43,6 +65,35 @@ public sealed class HuntPlan
     /// </summary>
     public const string ShowEachVariable = "OUTLOOKAI_HUNT_SHOW_EACH";
 
+    /// <summary>
+    /// The variable that, set to 1, has each of the loop's drafts - the product's, or NoFormPage's - re-opened by its
+    /// EntryID, promoted the product's own way (parked, activated, hidden) and closed discarding as soon as it is made:
+    /// what the typed-text tests do to read every draft of the product's, and what no loop did before.
+    /// </summary>
+    public const string PromoteAfterVariable = "OUTLOOKAI_HUNT_PROMOTE_AFTER";
+
+    /// <summary>
+    /// The variable that, set to 1, has the window typed into before each draft (<see cref="ShowEachVariable"/> "typed")
+    /// keep its Word document until after it is closed, and release it then - as the typed-text tests release theirs
+    /// (<c>LiveQ149TypedTextTests.TypeIntoTheComposeWindow</c>), and as the product's own compose does
+    /// (<c>ReviseHeldDocument</c>). Unset, the loop releases the document first and closes the window after it, as the
+    /// product's promotion read does (<c>Q149Editor.ReadLookOf</c>).
+    /// </summary>
+    public const string ReleaseAfterCloseVariable = "OUTLOOKAI_HUNT_RELEASE_AFTER_CLOSE";
+
+    /// <summary>
+    /// The variable that, set to 1, has the product make each of its drafts with display on - the draft tools' default,
+    /// which opens the draft in a compose window for the person to review - and the loop close that window, discarding
+    /// nothing the product saved, as the person would, before the next draft.
+    /// </summary>
+    public const string DisplayVariable = "OUTLOOKAI_HUNT_DISPLAY";
+
+    /// <summary>The variable the hunt's suite script names the typed-text tests' ablation in (<see cref="HuntAblation"/>). Unset in every other run.</summary>
+    public const string AblateVariable = "OUTLOOKAI_HUNT_ABLATE";
+
+    /// <summary>PersonTyping: how many of the product's drafts are made while one compose window stays open and typed into.</summary>
+    public const int DraftsPerOpenWindow = 5;
+
     /// <summary>The longest leg: two hours, beyond any run's own time limit.</summary>
     public const int MostLegMinutes = 120;
 
@@ -55,9 +106,10 @@ public sealed class HuntPlan
     /// <summary>How many failed drafts in a row end a leg whose Outlook is still running.</summary>
     public const int MostFailuresInARow = 5;
 
-    private HuntPlan(string variant, HuntMaker maker, bool windowless, bool showsCalendar, int legMinutes, bool showsEach, bool typesEach = false)
+    private HuntPlan(string variant, HuntMaker maker, bool windowless, bool showsCalendar, int legMinutes, bool showsEach, bool typesEach = false, bool keepsAWindowOpen = false)
     {
         TypesEach = typesEach;
+        KeepsAWindowOpen = keepsAWindowOpen;
         Variant = variant;
         Maker = maker;
         Windowless = windowless;
@@ -70,7 +122,7 @@ public sealed class HuntPlan
     /// The variants this test runs, in the order the runner lists them; the runner's <c>-HuntVariant</c> takes these and
     /// its own default, Legs - the tests the crashes struck in, which are not this test's.
     /// </summary>
-    public static IReadOnlyList<string> Variants { get; } = new[] { "ProductLoop", "OtherFolder", "NoWindow", "NoFormPage", "BareCreators" };
+    public static IReadOnlyList<string> Variants { get; } = new[] { "ProductLoop", "OtherFolder", "NoWindow", "NoFormPage", "BareCreators", "PersonTyping" };
 
     public string Variant { get; }
 
@@ -93,6 +145,100 @@ public sealed class HuntPlan
 
     /// <summary>Whether the window shown before each draft is displayed on screen and typed into, rather than promoted.</summary>
     public bool TypesEach { get; }
+
+    /// <summary>
+    /// PersonTyping: a compose window stays open on screen - a new mail or a reply, by turns - and a line is typed into it
+    /// before each of the product's drafts, <see cref="DraftsPerOpenWindow"/> of them, before it is closed discarding: a
+    /// person writing in Outlook while an agent drafts replies and forwards.
+    /// </summary>
+    public bool KeepsAWindowOpen { get; }
+
+    /// <summary>Whether each of the loop's drafts - the product's, or NoFormPage's - is re-opened, promoted and closed as soon as it is made (<see cref="PromoteAfterVariable"/>).</summary>
+    public bool PromotesAfter { get; private set; }
+
+    /// <summary>This plan with <see cref="PromotesAfter"/> as <paramref name="value"/> names it: "1" yes, unset or "0" no; null with the reason otherwise, or for a maker that saves no draft (BareCreators).</summary>
+    public HuntPlan? WithPromoteAfter(string? value, out string? why)
+    {
+        why = null;
+        switch (value)
+        {
+            case null:
+            case "":
+            case "0":
+                PromotesAfter = false;
+                return this;
+            case "1":
+                if (Maker is not (HuntMaker.Product or HuntMaker.NoFormPage))
+                {
+                    why = PromoteAfterVariable + " re-opens the loop's drafts: " + Variant + " makes none";
+                    return null;
+                }
+
+                PromotesAfter = true;
+                return this;
+            default:
+                why = PromoteAfterVariable + " must be 1 or 0, not '" + value + "'";
+                return null;
+        }
+    }
+
+    /// <summary>Whether the typed window's Word document is released after the window is closed (<see cref="ReleaseAfterCloseVariable"/>).</summary>
+    public bool ReleasesAfterClose { get; private set; }
+
+    /// <summary>This plan with <see cref="ReleasesAfterClose"/> as <paramref name="value"/> names it: "1" yes, unset or "0" no; null with the reason otherwise, or for a plan that types into no window.</summary>
+    public HuntPlan? WithReleaseAfterClose(string? value, out string? why)
+    {
+        why = null;
+        switch (value)
+        {
+            case null:
+            case "":
+            case "0":
+                ReleasesAfterClose = false;
+                return this;
+            case "1":
+                if (!TypesEach)
+                {
+                    why = ReleaseAfterCloseVariable + " releases the Word document of the window typed into before each draft: " + Variant + " types into none";
+                    return null;
+                }
+
+                ReleasesAfterClose = true;
+                return this;
+            default:
+                why = ReleaseAfterCloseVariable + " must be 1 or 0, not '" + value + "'";
+                return null;
+        }
+    }
+
+    /// <summary>Whether each of the product's drafts is made with display on and its window closed after (<see cref="DisplayVariable"/>).</summary>
+    public bool DisplaysEach { get; private set; }
+
+    /// <summary>This plan with <see cref="DisplaysEach"/> as <paramref name="value"/> names it: "1" yes, unset or "0" no; null with the reason otherwise, or for a maker that is not the product's.</summary>
+    public HuntPlan? WithDisplay(string? value, out string? why)
+    {
+        why = null;
+        switch (value)
+        {
+            case null:
+            case "":
+            case "0":
+                DisplaysEach = false;
+                return this;
+            case "1":
+                if (Maker != HuntMaker.Product)
+                {
+                    why = DisplayVariable + " displays the product's drafts: " + Variant + " makes none";
+                    return null;
+                }
+
+                DisplaysEach = true;
+                return this;
+            default:
+                why = DisplayVariable + " must be 1 or 0, not '" + value + "'";
+                return null;
+        }
+    }
 
     /// <summary>The cell of the variant's attempt lines - one a draft.</summary>
     public string Cell => "S5-hunt-" + Variant + (TypesEach ? "-typed" : ShowsEach ? "-shown" : string.Empty);
@@ -155,6 +301,8 @@ public sealed class HuntPlan
                 return new HuntPlan(variant, HuntMaker.NoFormPage, windowless: false, showsCalendar: false, minutes, shows, types);
             case "BareCreators":
                 return new HuntPlan(variant, HuntMaker.Bare, windowless: false, showsCalendar: false, minutes, shows, types);
+            case "PersonTyping":
+                return new HuntPlan(variant, HuntMaker.Product, windowless: false, showsCalendar: false, minutes, showsEach: false, typesEach: false, keepsAWindowOpen: true);
             case CalendarStep:
                 return new HuntPlan(variant, HuntMaker.None, windowless: false, showsCalendar: true, minutes, showsEach: false);
             default:
@@ -185,6 +333,29 @@ public sealed class HuntPlan
         }
 
         return false;
+    }
+
+    /// <summary>The ablation <see cref="AblateVariable"/> names: unset or empty is none; null with the reason for anything unknown.</summary>
+    public static HuntAblation? ParseAblation(string? value, out string? why)
+    {
+        why = null;
+        switch (value)
+        {
+            case null:
+            case "":
+                return HuntAblation.None;
+            case "new":
+                return HuntAblation.NewMail;
+            case "layout":
+                return HuntAblation.Layout;
+            case "signature":
+                return HuntAblation.Signature;
+            case "source":
+                return HuntAblation.Source;
+            default:
+                why = AblateVariable + " must be new, layout, signature or source, not '" + value + "'";
+                return null;
+        }
     }
 
     /// <summary>Whether a leg stops after a draft: its Outlook ended, or <see cref="MostFailuresInARow"/> drafts in a row failed.</summary>
