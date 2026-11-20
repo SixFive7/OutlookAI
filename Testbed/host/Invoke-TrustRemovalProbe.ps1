@@ -163,6 +163,8 @@ function Invoke-SelfTest {
     # The run's code only: what follows the -SelfTest dispatch, below this function.
     $runCode = $own.Substring($own.LastIndexOf('if ($SelfTest) { Invoke-SelfTest }'))
     Check 'the probe asks with its run''s own reason' ($runCode.Contains('Get-LeaseDecision (Get-TestbedLease -VMName $VMName) "$LeaseReasonPrefix $runId"'))
+    Check 'a live lease whose process has ended is gone, and taken as a free one is' ((Get-LeaseDecision ([pscustomobject]@{ expiresUnix = 200; reason = 'Invoke-LiveTierOnGuest r'; holderPid = 4242; holderStartUnix = 50; holderHost = $env:COMPUTERNAME; byHand = $false }) $mine 100 -IsAlive { param($r) $false }) -eq 'gone')
+    Check 'the probe asks whether a holder''s process lives, as a queue ticket''s, and releases with its reason' ($runCode.Contains('[DateTimeOffset]::UtcNow.ToUnixTimeSeconds()) -IsAlive ${function:Test-TestbedTicketAlive}') -and $runCode.Contains('-VMName $VMName -Release -Reason "$LeaseReasonPrefix $runId"'))
     $claimAt = $runCode.IndexOf('$made = New-RunDirectory -Parent $runsRoot -RunId $runId')
     Check 'it claims its run directory with New-RunDirectory (ScriptHelpers.ps1) and goes by the name it gives, before its log is named after it, never with New-Item -Force' ($claimAt -gt 0 -and $runCode.IndexOf('$runId = $made.RunId') -gt $claimAt -and $claimAt -lt $runCode.IndexOf("`$script:LogPath = Join-Path `$runDir 'run.log'") -and -not $runCode.Contains('New-Item -ItemType Directory -Force -Path $runDir'))
 
@@ -235,7 +237,7 @@ $session = $null
 try {
     $claim = Enter-TestbedLeaseClaim -VMName $VMName
     try {
-        $decision = Get-LeaseDecision (Get-TestbedLease -VMName $VMName) "$LeaseReasonPrefix $runId" ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())
+        $decision = Get-LeaseDecision (Get-TestbedLease -VMName $VMName) "$LeaseReasonPrefix $runId" ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()) -IsAlive ${function:Test-TestbedTicketAlive}
         if ($decision -eq 'theirs') { throw "the lease on $VMName is held by somebody else - not touching the guest" }
         & (Join-Path $PSScriptRoot 'Set-TestbedLease.ps1') -VMName $VMName -Minutes 60 -Reason "$LeaseReasonPrefix $runId" | Out-Null
         $leased = $true
@@ -301,7 +303,7 @@ finally {
         }
         catch { Say "REST FAILED - restore $checkpoint on $VMName and save it by hand: $($_.Exception.Message)"; $verdict = 'INFRA' }
     }
-    if ($leased) { & (Join-Path $PSScriptRoot 'Set-TestbedLease.ps1') -VMName $VMName -Release | Out-Null; Say "released the lease on $VMName" }
+    if ($leased) { & (Join-Path $PSScriptRoot 'Set-TestbedLease.ps1') -VMName $VMName -Release -Reason "$LeaseReasonPrefix $runId" | Out-Null; Say "released the lease on $VMName" }
 }
 Say "VERDICT: $verdict$(if ($why) { " - $why" })"
 exit $ExitCodes[$verdict]

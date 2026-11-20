@@ -1152,6 +1152,13 @@ function Invoke-SelfTest {
     Check 'a live lease of another run is theirs' 'theirs' (Get-LeaseDecision ([pscustomobject]@{ expiresUnix = $now + 60; reason = 'Invoke-LiveTierOnGuest r2' }) $mine $now)
     Check 'a live lease of another agent is theirs' 'theirs' (Get-LeaseDecision ([pscustomobject]@{ expiresUnix = $now + 60; reason = 'agent accec8f1: folder-path tests' }) $mine $now)
     Check 'every lease decision of the run asks with the run''s own reason' 4 ([regex]::Matches($runner, 'Get-LeaseDecision [^\r\n]*"\$LeaseReasonPrefix \$runId"')).Count
+    $dead = [pscustomobject]@{ expiresUnix = $now + 60; reason = 'Invoke-LiveTierOnGuest r2'; holderPid = 4242; holderStartUnix = $now - 900; holderHost = $env:COMPUTERNAME; holderScript = 'Invoke-LiveTierOnGuest.ps1'; byHand = $false }
+    Check 'a live lease of another run whose process has ended is gone - taken as a free one is, so a host that restarted holds no run off' 'gone' (Get-LeaseDecision $dead $mine $now -IsAlive { param($r) $false })
+    Check 'while that process runs, it is theirs' 'theirs' (Get-LeaseDecision $dead $mine $now -IsAlive { param($r) $true })
+    Check 'a lease taken by hand is theirs although the process that wrote it has ended' 'theirs' (Get-LeaseDecision ([pscustomobject]@{ expiresUnix = $now + 60; reason = 'maintenance'; holderPid = 4242; holderHost = $env:COMPUTERNAME; byHand = $true }) $mine $now -IsAlive { param($r) $false })
+    Check 'and so is one another computer''s process holds' 'theirs' (Get-LeaseDecision ([pscustomobject]@{ expiresUnix = $now + 60; reason = 'x'; holderPid = 4242; holderHost = 'OAI-ELSEWHERE'; byHand = $false }) $mine $now -IsAlive { param($r) $false })
+    Check 'every lease decision of the run asks whether a holder''s process lives, as a queue ticket''s' 4 ([regex]::Matches($runner, 'Get-LeaseDecision [^\r\n]*-IsAlive \$\{function:Test-TestbedTicketAlive\}')).Count
+    Check 'and the run releases its lease with the reason it took it with' $true ($runner.Contains('''Set-TestbedLease.ps1'') -VMName $facts.Name -Release -Reason "$LeaseReasonPrefix $runId"'))
 
     Write-Host '== the gate (Q195 (e), TestbedLoad.ps1) and the queue (2026-11-18, TestbedPool.ps1): before the build, and on every turn of the lease wait, asking Hyper-V nothing =='
     # Looked for in the run's code only - after this function, whose own lines name the same text.
@@ -1646,7 +1653,7 @@ $guestRunDir = Join-Path $GuestRunsRoot $runId
 . (Join-Path $PSScriptRoot 'TestbedLeasePath.ps1')
 
 function Use-Lease([int] $Minutes) {
-    $decision = Get-LeaseDecision (Get-TestbedLease -VMName $facts.Name) "$LeaseReasonPrefix $runId" ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())
+    $decision = Get-LeaseDecision (Get-TestbedLease -VMName $facts.Name) "$LeaseReasonPrefix $runId" ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()) -IsAlive ${function:Test-TestbedTicketAlive}
     if ($decision -eq 'theirs') { throw "the lease on $($facts.Name) is held by someone else - not touching the guest" }
     & (Join-Path $PSScriptRoot 'Set-TestbedLease.ps1') -VMName $facts.Name -Minutes ([Math]::Min(480, [Math]::Max(30, $Minutes))) -Reason "$LeaseReasonPrefix $runId" | Out-Null
 }
@@ -1657,7 +1664,7 @@ function Request-GuestLease([string] $Name, [int] $Minutes) {
     $claim = Enter-TestbedLeaseClaim -VMName $Name
     try {
         $lease = Get-TestbedLease -VMName $Name
-        if ((Get-LeaseDecision $lease "$LeaseReasonPrefix $runId" ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())) -eq 'theirs') { return $lease }
+        if ((Get-LeaseDecision $lease "$LeaseReasonPrefix $runId" ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()) -IsAlive ${function:Test-TestbedTicketAlive}) -eq 'theirs') { return $lease }
         & (Join-Path $PSScriptRoot 'Set-TestbedLease.ps1') -VMName $Name -Minutes ([Math]::Min(480, [Math]::Max(30, $Minutes))) -Reason "$LeaseReasonPrefix $runId" | Out-Null
         return $null
     }
@@ -1890,7 +1897,7 @@ try {
                     $guest = Get-GuestFacts $candidates[$i]
                     if ($ahead.ContainsKey($guest.Name)) { $why += "$($guest.Name) is wanted first by run $($ahead[$guest.Name]), queued before this one"; continue }
                     $held = Get-TestbedLease -VMName $guest.Name
-                    if ((Get-LeaseDecision $held "$LeaseReasonPrefix $runId" ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())) -eq 'theirs') { $why += "$($guest.Name) is leased until $($held.expiresUtc) - $($held.reason)"; continue }
+                    if ((Get-LeaseDecision $held "$LeaseReasonPrefix $runId" ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()) -IsAlive ${function:Test-TestbedTicketAlive}) -eq 'theirs') { $why += "$($guest.Name) is leased until $($held.expiresUtc) - $($held.reason)"; continue }
                     if ($Kind) {
                         if (-not $refusals.ContainsKey($guest.Name)) { $refusals[$guest.Name] = Get-GuestRunRefusal $guest }
                         if ($refusals[$guest.Name]) { $why += $refusals[$guest.Name]; continue }
@@ -2261,8 +2268,8 @@ finally {
     }
     Close-GuestSession
     try {
-        if ((Get-LeaseDecision (Get-TestbedLease -VMName $facts.Name) "$LeaseReasonPrefix $runId" ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())) -eq 'ours') {
-            & (Join-Path $PSScriptRoot 'Set-TestbedLease.ps1') -VMName $facts.Name -Release | Out-Null
+        if ((Get-LeaseDecision (Get-TestbedLease -VMName $facts.Name) "$LeaseReasonPrefix $runId" ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()) -IsAlive ${function:Test-TestbedTicketAlive}) -eq 'ours') {
+            & (Join-Path $PSScriptRoot 'Set-TestbedLease.ps1') -VMName $facts.Name -Release -Reason "$LeaseReasonPrefix $runId" | Out-Null
             Say 'lease released'
         }
     }
