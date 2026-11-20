@@ -933,6 +933,12 @@ function Invoke-SelfTest {
     Test-Says 'and never kill Outlook' @($advice) 'NEVER taskkill OUTLOOK.EXE'
 
     Write-Host ''
+    Write-Host '== how it attaches to the Outlook it quits =='
+    $quitBody = @([System.Management.Automation.Language.Parser]::ParseFile($PSCommandPath, [ref]$null, [ref]$null).FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Close-HubOutlook' }, $true))[0].Body.Extent.Text
+    Test-Case 'through the attach the scripts share, Connect-RunningOutlook, and no attach of its own' 'True|False|False' ('{0}|{1}|{2}' -f $quitBody.Contains('$attach = Connect-RunningOutlook'), $quitBody.Contains('GetActiveObject('), $quitBody.Contains('New-Object -ComObject'))
+    Test-Case 'and it says which way it attached' 'True|True' ('{0}|{1}' -f $quitBody.Contains("Write-LogLine '  attached through the Running Object Table'"), $quitBody.Contains("Write-LogLine '  not in the Running Object Table - attached through the class factory'"))
+
+    Write-Host ''
     Write-Host "$($script:SelfTestChecks) assertion(s), $($script:SelfTestFailures.Count) failure(s)."
     Write-Host ''
     Write-Host 'NOT COVERED HERE. These need a guest, and nothing on this machine stands in for them:'
@@ -1169,10 +1175,11 @@ function Wait-OnlyStartedOutlook {
     leaves it running. Every reference but the Application is released BEFORE the Quit; the
     Application's own right after it.
 
-    It attaches through the Running Object Table first, as the build-out's quits of 2026-09-24 did
-    (each left in about 2 s): an Outlook started as a program is registered there, and attaching that
-    way starts nothing. Only when the ROT has no Outlook - or the shell has no GetActiveObject, which
-    PowerShell 7's .NET does not - does it attach through the class factory. The process list is read
+    It attaches through the attach the scripts share, Connect-RunningOutlook in ScriptHelpers.ps1: the
+    Running Object Table first, as the build-out's quits of 2026-09-24 did (each left in about 2 s) - an
+    Outlook started as a program is registered there, and attaching that way starts nothing - and only
+    when the ROT has no Outlook, or the shell has no GetActiveObject, which PowerShell 7's .NET does not,
+    the class factory, once an OUTLOOK.EXE is seen running in this session. The process list is read
     BEFORE either attach, so the pid check compares what was running, not what the attach started.
 #>
 function Close-HubOutlook {
@@ -1190,14 +1197,11 @@ function Close-HubOutlook {
     $outboxes = @()
     $runningBefore = Wait-OnlyStartedOutlook -StartedPid $StartedPid -Seconds 30
     try {
-        try {
-            $app = [System.Runtime.InteropServices.Marshal]::GetActiveObject('Outlook.Application')
-            Write-LogLine '  attached through the Running Object Table'
-        }
-        catch {
-            $app = New-Object -ComObject Outlook.Application
-            Write-LogLine '  not in the Running Object Table - attached through the class factory'
-        }
+        $attach = Connect-RunningOutlook
+        if ($null -eq $attach.App) { throw "could not attach to the Outlook this script started: $($attach.Why)" }
+        $app = $attach.App
+        if ($attach.Via -eq 'RunningObjectTable') { Write-LogLine '  attached through the Running Object Table' }
+        else { Write-LogLine '  not in the Running Object Table - attached through the class factory' }
         $ns = $app.GetNamespace('MAPI')
         try { $profileName = [string]$ns.CurrentProfileName } catch { $profileName = $null }
         try { $inspectors = $app.Inspectors; $inspectorCount = [int]$inspectors.Count } catch { $inspectorCount = $null }

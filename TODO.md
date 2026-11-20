@@ -122,14 +122,11 @@
   the tool's assembly. T06 is done: the setups it counted
   are shared since T03 and T05 - no run of 15 identical lines is left between two T1 files - and the
   two thread suites' three pairs of parallel tests assert through `ThreadWalks`, keeping their
-  names. S5a is complete. In parallel: the PowerShell helpers (S7), the two `Get-ShortHash`
-  functions of the guest's measurement scripts among them, and the rules restated in C# and
+  names. S5a is complete. In parallel: the PowerShell helpers (S7) and the rules restated in C# and
   PowerShell as shared C# source (Q171). The updater's signature check is shared: Core's
   `InstallerSignature`, which the add-in calls and `Tools/Publish-Release.ps1` compiles with
   Add-Type. Left of Q171: the file-identity calls `Testbed/host/New-LiveTestSettings.ps1` declares
   beside the audit log's in Core (the survey's X05).
-  S7 also takes the two MCP stdio clients left beside `Testbed/guest/McpStdioClient.ps1`:
-  `Invoke-GuestMeasure.ps1`'s, kept as found, and `Measure-PinWindows.ps1`'s C# session class.
 
 - [ ] **Remove the Cached Mode policy values OutlookAI 3.0.0.319 to 3.1.0.325 wrote, when the
   maintainer says so (Q151 (a), decided 2026-11-17).** Those versions wrote the five values as
