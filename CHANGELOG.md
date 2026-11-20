@@ -2498,20 +2498,26 @@ its mailbox tests on, and change nothing you install.
   the pane still at "Done!", and the check that the picture is embedded failed. Both of the test's
   waits now also wait for the pane's own word, which comes after the embed.
 
-- ✅ **A lease on a test machine is never taken from a holder who still has it.**
-  `Testbed/host/Set-TestbedLease.ps1` wrote over whatever lease was there, so a person who leased a
-  machine a run was using took it from the run without a word, and a live-tier run then stopped at
-  its next renewal, which found the lease somebody else's; the load investigation of 2026-11-20
-  found it. The script now refuses, and says whose lease it is, which script and process took it and
-  until when. It still takes a lease that has expired, one with its own `-Reason`, which is how the
-  runners tell their own lease, and one whose process has ended - a stopped run, a host that
-  restarted - judged as the queue's tickets are, by the process id and the second it started. A
+- ✅ **A test machine's lease is never taken or released while its holder still has it.**
+  `Testbed/host/Set-TestbedLease.ps1` wrote over whatever lease was there, and its `-Release`
+  deleted whatever lease was there, so a person who leased a machine a run was using took it from
+  the run without a word, and a live-tier run then stopped at its next renewal, which found the lease
+  somebody else's; the load investigation of 2026-11-20 found it. The script now refuses both, and
+  says whose lease it is, which script and process took it and until when. It still takes or
+  releases a lease that has expired, one with the caller's own `-Reason`, which is how the runners
+  tell their own lease, and one whose process has ended - a stopped run, a host that restarted -
+  judged as the queue's tickets are, by the process id and the second it started. Every script that
+  releases a lease now gives the `-Reason` it took it with. The runners judge a lease the same way,
+  through one function, `Get-LeaseDecision` in `Testbed/guest/ScriptHelpers.ps1`: a lease whose
+  process has ended no longer holds the live-tier runs, the build runs, the trust-removal probe or the
+  clone maker off until it expires, so a host restart leaves no run waiting out a dead run's lease. A
   lease taken by hand, from a prompt, has no process that lasts as long as its holder, so only its
-  expiry or a release ends it; a lease written before this change is judged by its process alone. By
-  hand, the read and the write are one step under the lease's claim, as the runners' are. The new
-  `-SelfTest` holds each case on a scratch directory with two hidden helper processes, and on this
-  workstation a lease for a machine that does not exist was refused and taken over as above under
-  both PowerShells.
+  expiry or a release with its `-Reason` ends it; a lease written before this change is judged by
+  its process alone. By hand, the read and the write are one step under the lease's claim, as the
+  runners' are. The script's `-SelfTest` holds each case on a scratch directory with two hidden helper
+  processes and checks that every release a script makes gives its `-Reason`; the runners' and the
+  probe's self-tests pin how they judge a dead holder's lease. On this workstation a lease for a
+  machine that does not exist was refused, taken over and released as above under both PowerShells.
 
 - ✅ **A build-machine run cut off by a host restart gets a line in runs.log from the next run.**
   The restart of 2026-11-18 at 20:34 stopped run `20261118-203146-3ca41927bf3c` and its janitor
