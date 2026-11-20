@@ -17,9 +17,9 @@
       2. LEASE   Set-TestbedLease.ps1, taken in one step with reading it (Enter-TestbedLeaseClaim).
       3. RESTORE the guest's frozen checkpoint (testbed.json frozenClocks, its source's for a clone),
                  start it, wait for its heartbeat and for PowerShell Direct.
-      4. STAGE   C:\OutlookAI-Q5\trust-removal\: the probe, Register-InteractiveTask.ps1 and
-                 OutlookMapiInterop.ps1 from this checkout, and for InstallerCleanup the installer and
-                 the Installer.iss it was compiled from.
+      4. STAGE   C:\OutlookAI-Q5\trust-removal\: the probe, Register-InteractiveTask.ps1 and the two
+                 files it dot-sources, OutlookMapiInterop.ps1 and ScriptHelpers.ps1, from this checkout,
+                 and for InstallerCleanup the installer and the Installer.iss it was compiled from.
       5. RUN     the probe through Register-InteractiveTask.ps1 at -RunLevel (Limited unless
                  -RunLevel says Highest), with -Execute.
       6. FETCH   its JSON, logs and certificate into .work\trust-removal-runs\<run>\ of this checkout.

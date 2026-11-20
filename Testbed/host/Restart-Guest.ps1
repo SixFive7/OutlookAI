@@ -550,6 +550,15 @@ function Invoke-SelfTest {
     Check 'run level: elevated Outlook -> Highest only' ((Get-QuitRunLevels -Elevation 1) -join ',') 'Highest'
     Check 'run level: non-elevated Outlook -> Limited only' ((Get-QuitRunLevels -Elevation 0) -join ',') 'Limited'
     Check 'run level: unknown elevation -> Highest then Limited' ((Get-QuitRunLevels -Elevation -1) -join ',') 'Highest,Limited'
+    # The guest state read hands the guest the shared token read as text (Q154, P10): no class of its own.
+    $selfAst = [System.Management.Automation.Language.Parser]::ParseFile($PSCommandPath, [ref] $null, [ref] $null)
+    $stateFn = @($selfAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Read-GuestState' }, $true))
+    $stateText = ''
+    if ($stateFn.Count -eq 1) { $stateText = $stateFn[0].Extent.Text }
+    Check 'the guest state read compiles no token reader of its own' ($stateFn.Count -eq 1 -and -not $stateText.Contains('Add-Type')) $true
+    Check 'and hands the guest the shared Get-ProcessElevation as text' ($stateText.Contains('${function:Get-ProcessElevation}.ToString()')) $true
+    # ps51-native-stderr-ok: a script block made from Get-ProcessElevation's text, not a program
+    Check 'which, run from that text, reads this process as 0 or 1' (@(0, 1) -contains (& ([scriptblock]::Create(${function:Get-ProcessElevation}.ToString())) -ProcessId $PID)) $true
 
     Check 'quit code 0 means Quit() was called' (Get-QuitMeaning 0) 'QUIT-CALLED'
     Check 'quit code 11 is a refusal for an open Inspector' (Get-QuitMeaning 11) 'REFUSED-INSPECTOR-OPEN'
@@ -642,38 +651,15 @@ function Invoke-InGuest([scriptblock] $Block, [object[]] $ArgumentList = @()) {
 
 function Read-GuestState {
     Invoke-InGuest -Block {
-        param($clientNames)
+        param($clientNames, $elevationText)
         $os = Get-CimInstance Win32_OperatingSystem
         $outlook = @(Get-Process -Name OUTLOOK -ErrorAction SilentlyContinue)
         $elevation = -2
         if ($outlook.Count -gt 0) {
-            if (-not ('OaiRestartTokenProbe' -as [type])) {
-                Add-Type -TypeDefinition @'
-using System;
-using System.Runtime.InteropServices;
-public static class OaiRestartTokenProbe {
-    [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr OpenProcess(uint access, bool inherit, int pid);
-    [DllImport("advapi32.dll", SetLastError = true)] static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
-    [DllImport("advapi32.dll", SetLastError = true)] static extern bool GetTokenInformation(IntPtr token, int infoClass, out int info, int length, out int returned);
-    [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
-    // 1 elevated, 0 not elevated, -1 could not be read. TokenElevation = 20.
-    public static int Elevation(int pid) {
-        IntPtr process = OpenProcess(0x1000, false, pid);
-        if (process == IntPtr.Zero) return -1;
-        try {
-            IntPtr token;
-            if (!OpenProcessToken(process, 0x0008, out token)) return -1;
-            try {
-                int elevated; int returned;
-                if (!GetTokenInformation(token, 20, out elevated, 4, out returned)) return -1;
-                return elevated != 0 ? 1 : 0;
-            } finally { CloseHandle(token); }
-        } finally { CloseHandle(process); }
-    }
-}
-'@
-            }
-            $elevation = [OaiRestartTokenProbe]::Elevation($outlook[0].Id)
+            # Get-ProcessElevation, the token read the scripts share from ScriptHelpers.ps1 (Q154, P10): this
+            # block runs on the guest, which does not have this script's functions, so it is handed the text.
+            # ps51-native-stderr-ok: a script block made from Get-ProcessElevation's text, not a program
+            $elevation = & ([scriptblock]::Create($elevationText)) -ProcessId $outlook[0].Id
         }
         $clients = @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $clientNames -contains $_.ProcessName } | ForEach-Object { "$($_.ProcessName)($($_.Id))" })
         [pscustomobject]@{
@@ -685,7 +671,7 @@ public static class OaiRestartTokenProbe {
             # ps51-native-stderr-ok: runs inside an Invoke-Command block on the guest, where the host's 'Stop' does not apply - the remote session's default is 'Continue' - and 2>&1 folds stderr into the output
             Sessions       = ((query session 2>&1) -join "`n")
         }
-    } -ArgumentList @(, $script:ComClientProcessNames)
+    } -ArgumentList @($script:ComClientProcessNames, ${function:Get-ProcessElevation}.ToString())
 }
 
 # Runs the quit script as a one-shot scheduled task in the interactive session at the given run

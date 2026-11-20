@@ -267,9 +267,47 @@ function Get-TaskDefinitionText {
     return "LogonType=Interactive RunLevel=Limited Hidden=True Action=powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File <job>\start.ps1"
 }
 
+# Whether a process's token is elevated: a copy of ScriptHelpers.ps1's, which check 4 of
+# Tools/Checks/check-powershell-51.ps1 holds identical - this script travels alone (below) - and here,
+# above the -SelfTest dispatch, so that the self-test reads a real token with it.
+function Get-ProcessElevation {
+    param([Parameter(Mandatory = $true)] [int] $ProcessId)
+    if (-not ('OaiProcessToken' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class OaiProcessToken {
+    [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr OpenProcess(uint access, bool inherit, int pid);
+    [DllImport("advapi32.dll", SetLastError = true)] static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
+    [DllImport("advapi32.dll", SetLastError = true)] static extern bool GetTokenInformation(IntPtr token, int infoClass, out int info, int length, out int returned);
+    [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
+    public static int Elevation(int pid) {
+        IntPtr process = OpenProcess(0x1000, false, pid);
+        if (process == IntPtr.Zero) return -1;
+        try {
+            IntPtr token;
+            if (!OpenProcessToken(process, 0x0008, out token)) return -1;
+            try {
+                int elevated; int returned;
+                if (!GetTokenInformation(token, 20, out elevated, 4, out returned)) return -1;
+                return elevated != 0 ? 1 : 0;
+            } finally { CloseHandle(token); }
+        } finally { CloseHandle(process); }
+    }
+}
+'@
+    }
+    return [OaiProcessToken]::Elevation($ProcessId)
+}
+
 function Invoke-SelfTest {
     function Check([string] $name, [bool] $ok) { if ($ok) { $script:p++; Write-Host "  PASS  $name" } else { $script:f++; Write-Host "  FAIL  $name" } }
     $script:p = 0; $script:f = 0
+    # The token read the verdict below rests on, against a real token: this process's own reads elevated
+    # or not, never "unreadable", and process 0, the idle process, which OpenProcess refuses, reads -1.
+    $own = Get-ProcessElevation -ProcessId $PID
+    Check "the token read: this process's own token reads 0 or 1 ($own), not -1" (@(0, 1) -contains $own)
+    Check 'and a process it cannot open reads -1, unreadable' ((Get-ProcessElevation -ProcessId 0) -eq -1)
     $text = New-StarterScript -Exe 'C:\Program Files\Microsoft Office\root\Office16\OUTLOOK.EXE' -ProfileName "Corp'o Profile" -Minutes 7 -ResultPath 'C:\x\result.txt'
     $errors = $null
     [void][System.Management.Automation.Language.Parser]::ParseInput($text, [ref] $null, [ref] $errors)
@@ -398,21 +436,9 @@ foreach ($l in $lines) { Write-Host "  $l" }
 try { Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false } catch { }
 
 # The one thing this script exists for: an Outlook that is NOT elevated. Read its token.
-if (-not ('OaiUnelevatedToken' -as [type])) {
-    Add-Type -TypeDefinition @'
-using System; using System.Runtime.InteropServices;
-public static class OaiUnelevatedToken {
-    [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr OpenProcess(uint a, bool i, int p);
-    [DllImport("advapi32.dll", SetLastError = true)] static extern bool OpenProcessToken(IntPtr p, uint a, out IntPtr t);
-    [DllImport("advapi32.dll", SetLastError = true)] static extern bool GetTokenInformation(IntPtr t, int c, out int i, int l, out int r);
-    [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
-    public static int Elevation(int pid) { IntPtr p = OpenProcess(0x1000, false, pid); if (p == IntPtr.Zero) return -1; try { IntPtr t; if (!OpenProcessToken(p, 8, out t)) return -1; try { int e, r; if (!GetTokenInformation(t, 20, out e, 4, out r)) return -1; return e != 0 ? 1 : 0; } finally { CloseHandle(t); } } finally { CloseHandle(p); } }
-}
-'@
-}
 $outlook = @(Get-Process -Name OUTLOOK -ErrorAction SilentlyContinue)
 if ($outlook.Count -eq 0) { Write-Host 'FAILED: OUTLOOK.EXE is not running after the start.'; exit 1 }
-$elevation = [OaiUnelevatedToken]::Elevation($outlook[0].Id)
+$elevation = Get-ProcessElevation -ProcessId $outlook[0].Id
 if ($elevation -ne 0) {
     Write-Host "FAILED: OUTLOOK.EXE pid $($outlook[0].Id) reads elevation=$elevation. An elevated Outlook does not feed the index; this start achieved nothing."
     exit 1
