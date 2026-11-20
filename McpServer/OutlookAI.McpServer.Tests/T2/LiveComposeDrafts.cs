@@ -579,6 +579,15 @@ internal static class Q149Editor
         }
     }
 
+    /// <summary>What a read that had no editor met, for a failure's text: its polls, its time and the last answer.</summary>
+    internal static string DescribeRead(Q149EditorRead read)
+    {
+        string last = read.Failure == null
+            ? "none"
+            : string.Join(", ", read.Failure.Select(f => f.Key + "=" + Convert.ToString(f.Value, CultureInfo.InvariantCulture)));
+        return read.Polls.ToString(CultureInfo.InvariantCulture) + " poll(s) in " + read.Ms.ToString(CultureInfo.InvariantCulture) + " ms, the last " + last;
+    }
+
     /// <summary>IsWordMail() and EditorType, each null when Outlook would not say.</summary>
     internal static (bool? IsWordMail, int? EditorType) DescribeInspector(object inspectorObject)
     {
@@ -725,11 +734,56 @@ internal static class Q149Editor
     }
 
     /// <summary>
-    /// Opens one of this run's items by EntryID in an inspector, has the product's own invisible promotion
-    /// hand over the editor, reads how Word lays it out, and closes the inspector discarding - nothing is
-    /// written. Null with the reason when the editor could not be had.
+    /// How often a direct read of the editor is tried within <see cref="ComposeSurface.DirectReadBudgetMilliseconds"/>,
+    /// as the product's own direct read tries it (<c>ComposeSurface.ReadEditorDirectly</c>).
+    /// </summary>
+    internal const int DirectReadIntervalMs = 250;
+
+    /// <summary>
+    /// Opens one of this run's items by EntryID in an inspector, reads its editor DIRECTLY - the inspector never
+    /// activated, no window parked or hidden, as the product's direct route reads one in a windowed Outlook - reads how
+    /// Word lays it out, and closes the inspector discarding: nothing is written. Null with the reason when the editor
+    /// could not be had, as an Outlook with no window refuses it.
+    /// <para>
+    /// Not promoted since 2026-11-20 (the coordinator's direction, runbook 4.15): re-opening the product's drafts and promoting their inspectors is the step the mso40uiwin32client.dll crash needs - a
+    /// loop of the product's drafts doing that and nothing else crashed Outlook on its 121st - and this reader did it
+    /// between the product's drafts in the typed-text tests. <see cref="ReadLookOfPromoted"/> keeps the promoted read
+    /// for the hunt that reproduces the crash. T1 <c>DraftReadPromotionTests</c> holds this reader to the direct read.
+    /// </para>
     /// </summary>
     internal static (List<WordParagraphLook>? Look, string? Failure) ReadLookOf(Q149Run run, Q149OutlookClient client, string entryId, string storeId, bool readLayout = true)
+    {
+        return ReadLookThrough(run, client, entryId, storeId, readLayout, inspector =>
+        {
+            Q149EditorRead read = ReadEditor(inspector, ComposeSurface.DirectReadBudgetMilliseconds, DirectReadIntervalMs);
+            return (read.Document, read.Ok ? null : "NoWordEditor, read directly with the inspector never activated: " + DescribeRead(read));
+        });
+    }
+
+    /// <summary>
+    /// <see cref="ReadLookOf"/> with the editor had through the product's promotion,
+    /// <see cref="ComposeSurface.PromoteForWordEditor(object, out string?)"/>: the windows that would show parked off
+    /// screen, the inspector activated, whatever became visible hidden.
+    /// <para>
+    /// PROMOTED ON PURPOSE, for the crash hunt's <c>-HuntPromoteAfter</c> alone (<c>LiveHuntDerivedDraftTests</c>):
+    /// re-opening the product's drafts and promoting their inspectors is the step the mso40uiwin32client.dll crash needs (runbook 4.15), and the hunt reproduces it with this.
+    /// </para>
+    /// </summary>
+    internal static (List<WordParagraphLook>? Look, string? Failure) ReadLookOfPromoted(Q149Run run, Q149OutlookClient client, string entryId, string storeId, bool readLayout = true)
+    {
+        return ReadLookThrough(run, client, entryId, storeId, readLayout, inspector =>
+        {
+            object? document = ComposeSurface.PromoteForWordEditor(inspector, out string? error);
+            return (document, document == null ? error ?? "NoWordEditor" : null);
+        });
+    }
+
+    /// <summary>
+    /// The two readers' one body: the item opened by EntryID and refused unless it is this run's, its inspector,
+    /// the editor <paramref name="editor"/> has from it, the layout, and the inspector closed discarding.
+    /// </summary>
+    private static (List<WordParagraphLook>? Look, string? Failure) ReadLookThrough(
+        Q149Run run, Q149OutlookClient client, string entryId, string storeId, bool readLayout, Func<object, (object? Document, string? Failure)> editor)
     {
         return client.Run<(List<WordParagraphLook>?, string?)>((app, ns) =>
         {
@@ -741,13 +795,13 @@ internal static class Q149Editor
                 item = ns.GetItemFromID(entryId, storeId);
                 Q149Drafts.Refuse(Q149ProbeGuards.RefuseSubject((string?)item.Subject, run.Marker));
                 inspector = item.GetInspector;
-                document = ComposeSurface.PromoteForWordEditor(inspector!, out string? error);
+                (document, string? error) = editor(inspector!);
                 if (document == null)
                 {
                     return (null, error ?? "NoWordEditor");
                 }
 
-                // The hunt's layout ablation (HuntAblation.Layout): the item opened and promoted as ever, its paragraphs never walked.
+                // The hunt's layout ablation (HuntAblation.Layout): the item opened as ever, its paragraphs never walked.
                 return readLayout ? (ReadLook(document), null) : (null, "layout not read (ablation)");
             }
             catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))

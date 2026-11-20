@@ -1255,13 +1255,7 @@ public sealed class ReadOnlyFolderLookupTests
         Assert.Equal(0, CountOccurrences(body, "capturedError = DescribeComFailure(ex);"));
     }
 
-    /// <summary>A member's lines with the whole-line comments taken out, so a sentence about a call is not read as the call.</summary>
-    private static string CodeOnly(string body)
-    {
-        return string.Join(
-            "\n",
-            body.Split('\n').Where(line => !line.TrimStart().StartsWith("//", StringComparison.Ordinal)));
-    }
+    private static string CodeOnly(string body) => SourceText.CodeOnly(body);
 
     private static int CountOccurrences(string text, string needle)
     {

@@ -308,7 +308,11 @@ its mailbox tests on, and change nothing you install.
   own way and closed discarding, which is what the typed-text tests do before each of the product's
   drafts, and with `-HuntTypeEach` that window is displayed on screen and typed into as those tests
   do. PersonTyping keeps a compose window open on screen and types a line into it before each of
-  the product's drafts, five drafts a window, as a person writes while an agent drafts. With
+  the product's drafts, five drafts a window, as a person writes while an agent drafts. ColdStarts
+  ends Outlook through the shared graceful stop and starts it with no window again and again, up to a
+  hundred times a leg, and has the product make a reply and a forward in each: the one place the
+  product promotes, its first draft in an Outlook with no window, and the derived draft after it.
+  With
   `-HuntAblate` the typed-text tests leave out one of their steps: the new mail beside the reply and
   the forward, reading Word's layout, the test signature, or a source mail of their own. With
   `-HuntTraceClr` the .NET runtime's own exception events are traced on the guest with Windows'
@@ -2571,6 +2575,21 @@ its mailbox tests on, and change nothing you install.
   folder - Calendar, Quick Step Settings, the mailbox's top level, emptied folders in Deleted
   Items - beside the mail, and none of them could be opened. On the test machine they were 21 of the
   first 100 results.
+
+- ✅ **The live tests read a draft's layout without promoting its window, the step Outlook's crash needs.**
+  Re-opening the product's drafts and promoting their inspectors - parked off screen, activated,
+  hidden - is the step the mso40uiwin32client.dll crash on the test machines needs: a loop doing that
+  and nothing else crashed Outlook on its 121st draft (runbook section 4.15), and the typed-text
+  tests, the reply and forward layout checks and the HTML parity tests did it between the product's
+  drafts. Their two readers, `Q149Editor.ReadLookOf` and `LiveOutlookTestMailer.ReadDraftLook`, now
+  read the editor directly, the inspector never activated, as the product's direct route reads one
+  in a windowed Outlook. The promotions that stay say why beside them: the readers of Outlook's own
+  signature engine, which were measured through promoted windows; the crash hunt's; the windowless
+  cells that measure the promotion itself; and one new test,
+  `LiveDraftTests.ReplyDraft_ReadThroughThePromotion_LooksAsItDoesReadDirectly`, which reads one of
+  the product's replies both ways and wants the same paragraphs, so the promotion stays exercised.
+  T1 `DraftReadPromotionTests` holds the two readers to the direct read and every other promotion in
+  the live tests to that list. Decided by the coordinator on 2026-11-20.
 
 - ✅ **The live pane test reads the draft only once the pane says which signature it chose.**
   The pane puts a chosen signature into the draft, then embeds its pictures, and only then says
