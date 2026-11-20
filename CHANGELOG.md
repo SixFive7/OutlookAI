@@ -2452,6 +2452,28 @@ its mailbox tests on, and change nothing you install.
   Items - beside the mail, and none of them could be opened. On the test machine they were 21 of the
   first 100 results.
 
+- ✅ **The guest scripts that drive the MCP server start it again, with its COM host beside it.**
+  Since the move to .NET 11 (19d9993) none of them could: `Set-AccountSignature.ps1`,
+  `Set-SignatureSettings.ps1` (the live runner's `-SignatureSettings` step, whose tests printed
+  PROVED NOTHING in every run since), `Invoke-GuestMeasure.ps1` and `Measure-PinWindows.ps1` each
+  found a server that exited at once, saying "The library 'hostpolicy.dll' required to execute the
+  application was not found in 'C:\Program Files\dotnet\'". `McpServer/Directory.Build.props` gives
+  the server's published apphost the search the installed product needs, its private runtime and
+  then the machine-wide one, and `Testbed/host/Publish-GuestPayload.ps1` publishes the guests' copy
+  self-contained, with its runtime beside it: under that search its apphost took the machine-wide
+  .NET, which cannot run a self-contained app. The props now set that search only when the server is
+  not published self-contained, so the guests' copy keeps the default search, which looks beside the
+  apphost first. A search property on the publish's command line does not do: measured on
+  2026-11-20, `-p:AppHostDotNetSearch=AppLocal` started the server and lost its COM host, and
+  `-p:AppHostRelativeDotNet` alone did the same. A property given there reaches the COM host's
+  project too, and the SDK leaves a referenced executable whose apphost has search options out of
+  the publish, so the guests' copy had no `OutlookAI.ComHost.exe` and `list_folders` on
+  OutlookAI-Unindexed3 answered that it was missing. `Tools/Checks/check-pinned-constants.ps1` holds
+  the condition and refuses either property on a script's command line. The installed product is
+  unchanged: published with `Testbed/host/Publish-AddInPayload.ps1`'s arguments, the server's
+  apphost still looks in the private runtime and then the machine-wide one, and
+  `OutlookAI.ComHost.exe` still ships beside it.
+
 - ✅ **Two test runs started in the same second get a results folder each.**
   A run's folder is named for the second it started, its commit and the kind of machine it ran on, and
   the live runner, the build-machine runner and the trust-removal probe each made it with

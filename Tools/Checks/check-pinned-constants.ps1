@@ -285,6 +285,13 @@ if ($addInStatuses -and $addInDocList) {
 #        AppHostDotNetSearch must look there first;
 #      * Installer.iss's [UninstallDelete] must delete that folder, in {localappdata}\OutlookAI;
 #      * and the manual download page both #5's copies name must be that major's.
+#    And that search is the INSTALLED server's alone (2026-11-20). The group that sets it must also say
+#    '$(SelfContained)' != 'true', so that a self-contained publish - the test guests' copy, from
+#    Testbed/host/Publish-GuestPayload.ps1, whose runtime sits beside it - keeps the default search:
+#    under the props' one its apphost took the machine-wide .NET, which cannot run it, and from 19d9993
+#    on no guest script could start the server. And no script may set AppHostDotNetSearch or
+#    AppHostRelativeDotNet with -p: on a command line: a global property reaches the COM host's project
+#    too, and the server's publish then leaves OutlookAI.ComHost.exe out (measured 2026-11-20).
 #    Each mismatch is silent where it happens: a server that falls back to a machine-wide runtime,
 #    or to none, a runtime the uninstaller leaves behind, a page for the wrong .NET.
 # ---------------------------------------------------------------------------------------------
@@ -322,10 +329,56 @@ if ($runtimeVersion -and $runtimeFolder -and $serverTfm -and $comHostTfm -and $r
     if ($csUrl -cne $page) {
         $problems += "the manual download page is '$csUrl', not '$page', the page of .NET $major."
     }
+    # The one group that sets the search: the server's, and never a self-contained publish's.
+    $propsText = Read-Source 'McpServer/Directory.Build.props'
+    $searchGroups = @()
+    if ($null -ne $propsText) {
+        try {
+            $propsXml = New-Object System.Xml.XmlDocument
+            $propsXml.LoadXml($propsText)
+            $searchGroups = @($propsXml.SelectNodes('/Project/PropertyGroup[AppHostDotNetSearch or AppHostRelativeDotNet]'))
+        } catch {
+            $problems += "McpServer/Directory.Build.props does not read as XML ($($_.Exception.Message)), so the condition on the apphost search cannot be checked."
+        }
+    }
+    $searchCondition = '^\s*''\$\(MSBuildProjectName\)''\s*==\s*''OutlookAI\.McpServer''\s+and\s+''\$\(SelfContained\)''\s*!=\s*''true''\s*$'
+    if ($searchGroups.Count -ne 1) {
+        $problems += "McpServer/Directory.Build.props sets the apphost search in $($searchGroups.Count) property groups: one must, the server's, holding both AppHostDotNetSearch and AppHostRelativeDotNet."
+    } else {
+        $searchGroup = $searchGroups[0]
+        if ($null -eq $searchGroup.SelectSingleNode('AppHostDotNetSearch') -or $null -eq $searchGroup.SelectSingleNode('AppHostRelativeDotNet')) {
+            $problems += 'McpServer/Directory.Build.props sets AppHostDotNetSearch and AppHostRelativeDotNet in different groups: one condition must cover both.'
+        }
+        $searchGroupCondition = $searchGroup.GetAttribute('Condition')
+        if ($searchGroupCondition -notmatch $searchCondition) {
+            $problems += 'the group that sets the apphost search has Condition="' + $searchGroupCondition + '", not "''$(MSBuildProjectName)'' == ''OutlookAI.McpServer'' and ''$(SelfContained)'' != ''true''": a self-contained publish - the guests'' copy, from Testbed/host/Publish-GuestPayload.ps1 - would take the machine-wide .NET, which cannot run it.'
+        }
+    }
+    # And no script sets either property on a command line, where it would reach the COM host's project.
+    # Every .ps1 but those under dot-directories (a git worktree under .claude, .work) and build output.
+    $scriptRoots = @(Get-ChildItem -LiteralPath $RepoRoot -Directory | Where-Object { $_.Name -notlike '.*' -and $_.Name -ne 'bin' -and $_.Name -ne 'obj' })
+    $scriptFiles = @(Get-ChildItem -LiteralPath $RepoRoot -Filter '*.ps1' -File) + @($scriptRoots | ForEach-Object { Get-ChildItem -LiteralPath $_.FullName -Filter '*.ps1' -File -Recurse -ErrorAction SilentlyContinue })
+    $scriptsRead = 0
+    foreach ($scriptFile in $scriptFiles) {
+        $relativeScript = $scriptFile.FullName.Substring($RepoRoot.Length).TrimStart('\', '/').Replace('\', '/')
+        if (@($relativeScript -split '/' | Where-Object { $_ -like '.*' -or $_ -eq 'bin' -or $_ -eq 'obj' }).Count -gt 0) { continue }
+        $scriptsRead++
+        $lineNumber = 0
+        foreach ($line in [System.IO.File]::ReadAllLines($scriptFile.FullName)) {
+            $lineNumber++
+            if ($line -match '^\s*#') { continue }
+            if ($line -match '(^|[\s''"(,])[-/]{1,2}p(roperty)?:\s*AppHost(DotNetSearch|RelativeDotNet)\b') {
+                $problems += "${relativeScript}:$lineNumber sets the apphost search on a command line: a global property reaches the COM host's project too, and the server's publish then leaves OutlookAI.ComHost.exe out. A self-contained publish needs none, since the props skip their search for it."
+            }
+        }
+    }
+    if ($scriptsRead -eq 0) {
+        $problems += "no .ps1 found under $RepoRoot to read for an apphost search set on a command line: that half of the check proves nothing."
+    }
     if ($problems.Count -gt 0) {
         Fail "private .NET runtime" ($problems -join ' ')
     } else {
-        Pass "private .NET runtime" "$runtimeVersion in {localappdata}\OutlookAI\$runtimeFolder, net$major.0, $dotnetSearch"
+        Pass "private .NET runtime" "$runtimeVersion in {localappdata}\OutlookAI\$runtimeFolder, net$major.0, $dotnetSearch for the installed server alone, not a self-contained publish; none of $scriptsRead scripts sets it on a command line"
     }
 }
 

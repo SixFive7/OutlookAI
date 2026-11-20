@@ -35,7 +35,7 @@
     <EnableNETAnalyzers>true</EnableNETAnalyzers>
     <AnalysisLevelSecurity>11.0-all</AnalysisLevelSecurity>
   </PropertyGroup>
-  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'OutlookAI.McpServer'">
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'OutlookAI.McpServer' and '$(SelfContained)' != 'true'">
     <!--
       THE RUNTIME THE INSTALLED SERVER STARTS ON (Q172, decided by the maintainer 2026-11-18). The SDK
       writes these into the PUBLISHED apphost only - a build's own keeps the default search, so a
@@ -52,6 +52,17 @@
       these options (measured the same day - its publish apphost is made only when it is published
       itself), so the COM host keeps the default search and the server starts it with DOTNET_ROOT
       naming the server's own runtime (ComHostSupervisor.OwnRuntimeVariables): one runtime for both.
+      NOT A SELF-CONTAINED PUBLISH'S, since 2026-11-20. Testbed/host/Publish-GuestPayload.ps1 publishes
+      the test guests' copy of the server with its own runtime beside it, and under this search that
+      apphost took the machine-wide .NET, which cannot run a self-contained app: from 19d9993 on, no
+      guest script could start the server. Skipped when SelfContained is true, the group leaves that
+      apphost the default search, which looks beside itself first. Not a -p:AppHostDotNetSearch on
+      that publish's command line instead, nor a -p:AppHostRelativeDotNet: a global property reaches
+      the COM host's project too, and the publish then leaves out the COM host's exe - measured
+      2026-11-20 for each of the two, the first when the guests' copy had no OutlookAI.ComHost.exe and
+      list_folders there answered that it was missing.
+      Tools/Checks/check-pinned-constants.ps1 holds this condition and refuses either property on a
+      script's command line.
     -->
     <AppHostDotNetSearch>AppRelative;Global</AppHostDotNetSearch>
     <AppHostRelativeDotNet>..\..\dotnet</AppHostRelativeDotNet>
