@@ -26,6 +26,8 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// <item>BareCreators: Reply() or Forward() on the source, and what it returned released unsaved.</item>
 /// <item>PersonTyping: the product's drafts while a compose window stays open on screen - a new mail or a reply, by
 /// turns - with a line typed into it before each of them: a person writing in Outlook while an agent drafts.</item>
+/// <item>ColdStarts: Outlook ended and started with no window again and again, the product's reply and forward in
+/// each - the one place the product promotes, its first draft in an Outlook with no window (Q208 B).</item>
 /// </list>
 /// With <see cref="HuntPlan.ShowsEach"/> every draft comes after a compose window shown and closed - a reply or forward
 /// the object model made, promoted the product's own way and closed discarding - as the typed-text tests do before each
@@ -99,6 +101,12 @@ public sealed class LiveHuntDerivedDraftTests
         }
 
         string sourceEntryId = Q149Drafts.SeedSelfSentSource(Run, "hunt-source", out _);
+        if (plan.ColdStarts)
+        {
+            HuntColdStarts(plan, sourceEntryId);
+            return;
+        }
+
         if (plan.Windowless)
         {
             _fixture.ReleaseService();
@@ -229,10 +237,11 @@ public sealed class LiveHuntDerivedDraftTests
 
             if (entryId != null && plan.PromotesAfter)
             {
-                // As the typed-text tests read every draft of the product's: re-opened, promoted, closed discarding.
+                // PROMOTED ON PURPOSE: re-opened, promoted, closed discarding, as the typed-text tests read every draft of
+                // the product's until 2026-11-20 - the step the crash needs, which this reproduces (runbook 4.15).
                 try
                 {
-                    (_, string? promoted) = Q149Editor.ReadLookOf(drafts, client, entryId, storeId, readLayout: false);
+                    (_, string? promoted) = Q149Editor.ReadLookOfPromoted(drafts, client, entryId, storeId, readLayout: false);
                     attempt.Set("promotedAfter", promoted == "layout not read (ablation)" ? "promoted" : promoted);
                 }
                 catch (Exception ex) when (ex is InvalidOperationException or TimeoutException || OutlookComSession.IsComCallFailure(ex) || LiveOutlookRestart.IsSessionGone(ex))
@@ -284,12 +293,151 @@ public sealed class LiveHuntDerivedDraftTests
     /// <summary>The product's own reply_draft or forward_draft of the source, display off - or on, the tools' default, with <paramref name="display"/>.</summary>
     private string ProductDraft(string sourceEntryId, bool forward, int i, bool display = false)
     {
+        return ProductDraftOutcome(sourceEntryId, forward, i, display).EntryId;
+    }
+
+    /// <summary><see cref="ProductDraft"/>'s whole outcome: whether the product promoted the draft's compose surface among it.</summary>
+    private DraftOutcome ProductDraftOutcome(string sourceEntryId, bool forward, int i, bool display = false)
+    {
         LiveStoreWriteGuard.Assert(Run.Hub, StoreWriteKind.Draft, forward ? "hunt forward_draft" : "hunt reply_draft");
         string text = "Hunt " + (forward ? "forward " : "reply ") + i.ToString(CultureInfo.InvariantCulture) + " " + Run.Marker;
-        DraftOutcome made = forward
+        return forward
             ? _fixture.Service.ForwardDraft(sourceEntryId, text, to: Run.Hub, display: display, signature: null)
             : _fixture.Service.ReplyDraft(sourceEntryId, text, replyAll: false, display: display, signature: null);
-        return made.EntryId;
+    }
+
+    /// <summary>
+    /// ColdStarts: the product's exposure where it promotes. Each cycle ends Outlook through the one graceful stop the
+    /// live tests share (<see cref="LiveComposeProbe.StopOutlook"/>, through <see cref="LiveOutlookRestart.Stop"/>:
+    /// rule 7, the open-Inspector and Outbox checks first and nothing killed), starts it with no window through a COM
+    /// client, as an agent's server does when Outlook is not running, and has the product make a reply - that process's
+    /// first draft, which the product promotes - and then a forward, through the direct route: the derived draft after
+    /// a promotion, where every loop's crash struck. One attempt line a start. It ends at a crash, at
+    /// <see cref="HuntPlan.MostColdStarts"/> starts, or at the leg's minutes.
+    /// <para>
+    /// No draft here depends on the date: each is a reply or a forward of the one mail the leg sent itself, deleted as
+    /// soon as it is made. The frozen guests' clocks jump to the real date about 54 minutes after their restore (Q240),
+    /// so every start records the guest's time, and a start whose clock moved more than a minute beyond its stopwatch
+    /// since the last says so, with both times.
+    /// </para>
+    /// </summary>
+    private void HuntColdStarts(HuntPlan plan, string sourceEntryId)
+    {
+        Stopwatch leg = Stopwatch.StartNew();
+        TimeSpan budget = TimeSpan.FromMinutes(plan.LegMinutes);
+        int starts = 0;
+        int made = 0;
+        int firstDrafts = 0;
+        int promotedFirsts = 0;
+        int failed = 0;
+        int failedInARow = 0;
+        int clockJumps = 0;
+        long firstJumpAtSecond = -1;
+        bool alive = true;
+        int lastPid = -1;
+        DateTime lastUtc = DateTime.UtcNow;
+        Stopwatch sinceLast = Stopwatch.StartNew();
+        while (starts < HuntPlan.MostColdStarts && leg.Elapsed < budget)
+        {
+            starts++;
+            Q149Attempt attempt = new(plan.Cell, starts);
+            DateTime nowUtc = DateTime.UtcNow;
+            double drift = (nowUtc - lastUtc).TotalSeconds - sinceLast.Elapsed.TotalSeconds;
+            attempt.Set("utc", nowUtc.ToString("o", CultureInfo.InvariantCulture)).Set("atSecond", (long)leg.Elapsed.TotalSeconds);
+            if (Math.Abs(drift) > 60)
+            {
+                clockJumps++;
+                firstJumpAtSecond = firstJumpAtSecond < 0 ? (long)leg.Elapsed.TotalSeconds : firstJumpAtSecond;
+                attempt.Set("clockJumpedSeconds", (long)drift).Set("clockFrom", lastUtc.ToString("o", CultureInfo.InvariantCulture));
+                Run.Log("hunt: the guest's clock jumped " + ((long)drift).ToString(CultureInfo.InvariantCulture) + " s between starts "
+                    + (starts - 1).ToString(CultureInfo.InvariantCulture) + " and " + starts.ToString(CultureInfo.InvariantCulture) + ", from "
+                    + lastUtc.ToString("o", CultureInfo.InvariantCulture) + " to " + nowUtc.ToString("o", CultureInfo.InvariantCulture));
+            }
+
+            lastUtc = nowUtc;
+            sinceLast.Restart();
+
+            // The product lets go first, so the stop finds no session of the suite holding Outlook up.
+            _fixture.ReleaseService();
+            LiveComposeProbe.StopOutlook(Run.Settings, Run.Log);
+            Stopwatch up = Stopwatch.StartNew();
+            Q149OutlookClient client = Q149OutlookClient.Connect(new Stopwatch(), allowStart: true);
+            string? failure = null;
+            bool going = false;
+            int pid = -1;
+            try
+            {
+                IReadOnlyList<int> pids = LiveOutlookRestart.OutlookProcessIds();
+                pid = pids.Count == 1 ? pids[0] : -1;
+                string? commandLine = pid > 0 ? Q149Native.TryReadCommandLine(pid) : null;
+                attempt.Set("pid", pid).Set("outlookProcesses", pids.Count).Set("newProcess", pid > 0 && pid != lastPid)
+                    .Set("embedding", commandLine == null ? null : commandLine.Contains("Embedding", StringComparison.OrdinalIgnoreCase))
+                    .Set("startMs", up.ElapsedMilliseconds).Set("visibleWindowsAtStart", WindowProbe.VisibleOutlookWindows().Count);
+                lastPid = pid;
+                for (int d = 1; d <= HuntPlan.DraftsPerColdStart; d++)
+                {
+                    bool forward = d % 2 == 0;
+                    string key = "draft" + d.ToString(CultureInfo.InvariantCulture);
+                    Stopwatch one = Stopwatch.StartNew();
+                    try
+                    {
+                        DraftOutcome outcome = ProductDraftOutcome(sourceEntryId, forward, (starts * 10) + d);
+                        made++;
+                        bool promoted = outcome.ComposeSurfacePromoted == true;
+                        firstDrafts += d == 1 ? 1 : 0;
+                        promotedFirsts += d == 1 && promoted ? 1 : 0;
+                        attempt.Set(key + "Kind", forward ? "forward" : "reply").Set(key + "Promoted", promoted).Set(key + "Placement", outcome.BodyPlacement)
+                            .Set(key + "Ms", one.ElapsedMilliseconds);
+                        Delete(outcome.EntryId, attempt);
+                    }
+                    catch (Exception ex) when (ex is InvalidOperationException or TimeoutException or AggregateException or ArgumentException or OutlookUnavailableException
+                        || OutlookComSession.IsComCallFailure(ex) || LiveOutlookRestart.IsSessionGone(ex))
+                    {
+                        failed++;
+                        failure = Describe(ex);
+                        going = HuntPlan.SaysOutlookIsGoing(failure) || LiveOutlookRestart.IsSessionGone(ex) || ex is OutlookUnavailableException;
+                        attempt.Set(key + "Failure", Q149Com.Failure(ex)).Set("failureSaysOutlookIsGoing", going);
+                        break;
+                    }
+                }
+
+                // Asked before anything lets go: a window-less Outlook ends by itself once its last client has.
+                alive = pid < 0 || (failure == null ? Alive(pid) : StaysAlive(pid, going ? GoingWait : FailureWait));
+                attempt.Set("outlookAlive", alive).Set("made", made).Set("visibleWindows", WindowProbe.VisibleOutlookWindows().Count);
+            }
+            finally
+            {
+                try
+                {
+                    client.Dispose();
+                }
+                catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex) || LiveOutlookRestart.IsSessionGone(ex))
+                {
+                    Run.Log("hunt: the probe client's release failed (" + ex.GetType().Name + ") - its Outlook had ended");
+                }
+
+                Run.Write(attempt);
+            }
+
+            failedInARow = failure == null ? 0 : failedInARow + 1;
+            if (HuntPlan.StopsAfter(alive, failedInARow))
+            {
+                break;
+            }
+        }
+
+        Q149Attempt end = new(plan.Cell + "-summary", 0);
+        end.Set("coldStarts", starts).Set("made", made).Set("firstDrafts", firstDrafts).Set("promotedFirsts", promotedFirsts).Set("failed", failed).Set("outlookEnded", !alive)
+            .Set("clockJumps", clockJumps).Set("firstClockJumpAtSecond", firstJumpAtSecond < 0 ? null : firstJumpAtSecond)
+            .Set("seconds", (long)leg.Elapsed.TotalSeconds);
+        Run.Write(end);
+        Assert.True(alive, "hunt: OUTLOOK.EXE " + lastPid.ToString(CultureInfo.InvariantCulture) + " ended in cold start " + starts.ToString(CultureInfo.InvariantCulture)
+            + ", after " + made.ToString(CultureInfo.InvariantCulture) + " of the product's drafts in all - the crash the hunt is for; its dumps are the run's");
+        Assert.True(failedInARow < HuntPlan.MostFailuresInARow, "hunt: " + failedInARow.ToString(CultureInfo.InvariantCulture) + " cold starts in a row failed with Outlook still running - the attempt lines say how");
+        Assert.True(
+            promotedFirsts == firstDrafts,
+            "hunt: the product promoted " + promotedFirsts.ToString(CultureInfo.InvariantCulture) + " of the " + firstDrafts.ToString(CultureInfo.InvariantCulture)
+                + " first drafts its cold starts made - an Outlook it did not promote in is not the exposure this measures; the attempt lines say which");
     }
 
     /// <summary>
@@ -456,6 +604,8 @@ public sealed class LiveHuntDerivedDraftTests
                         return null;
                     }
 
+                    // PROMOTED ON PURPOSE: -HuntShowEach shows a window the product's way before each draft, which is what the
+                    // hunt measures (runbook 4.15).
                     inspector = (object)item.GetInspector;
                     document = ComposeSurface.PromoteForWordEditor(inspector, out string? promoteError);
                     return document == null ? (promoteError ?? "NoWordEditor") : null;

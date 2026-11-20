@@ -3457,6 +3457,11 @@ public static class LiveOutlookTestMailer
                         "Refusing to open the item: its subject does not carry both the test tag and this run's marker (S3).");
                 }
 
+                // PROMOTED ON PURPOSE, kept so on 2026-11-20 when the layout readers stopped promoting (runbook 4.15): this
+                // reads what Outlook's own signature engine reports in a compose window, and it was measured through a
+                // promoted one (G1-G3); a never-activated inspector was not measured to report the same. Promoting a draft
+                // is the step the mso40uiwin32client.dll crash needs, so the promotions are the ones T1
+                // DraftReadPromotionTests lists.
                 inspector = item.GetInspector;
                 document = ComposeSurface.PromoteForWordEditor(inspector!, out string? promoteError);
                 if (document == null)
@@ -3646,6 +3651,10 @@ public static class LiveOutlookTestMailer
 
                 // HERE Outlook inserts the default signature its settings name: in the inspector of the object a
                 // creator returned, and only there (runbook 4.6, item 6).
+                // PROMOTED ON PURPOSE, kept so on 2026-11-20 when the layout readers stopped promoting (runbook 4.15):
+                // what this measures is what Outlook's own signature engine puts into that compose window, and it was
+                // measured with the window promoted; a never-activated inspector was not measured to show the same. T1
+                // DraftReadPromotionTests lists the promotions that stay.
                 inspector = item.GetInspector;
                 string? promoteError = null;
                 int editorAttempts = 0;
@@ -3792,12 +3801,50 @@ public static class LiveOutlookTestMailer
     /// above the quoted header block (<see cref="QuotedDraftLayout"/>).
     /// <para>
     /// READ-ONLY, the way <see cref="ReadSignatureEngine"/> is: the draft must carry the test tag and this run's
-    /// marker (S3), it is opened by EntryID - an inspector on a re-opened item - its editor had through the product's
-    /// promotion (off-screen in a windowed Outlook, B0: 40 of 40), and its inspector closed DISCARDING, so nothing is
-    /// saved. Throws when the editor cannot be had: a layout check that read nothing must not pass.
+    /// marker (S3), it is opened by EntryID - an inspector on a re-opened item - its editor READ DIRECTLY, the inspector
+    /// never activated, as the product's direct route reads one in a windowed Outlook, and its inspector closed
+    /// DISCARDING, so nothing is saved. Throws when the editor cannot be had - an Outlook with no window refuses it: a
+    /// layout check that read nothing must not pass.
+    /// </para>
+    /// <para>
+    /// Not promoted since 2026-11-20 (the coordinator's direction, runbook 4.15): re-opening the product's drafts and promoting their inspectors is the step the mso40uiwin32client.dll crash needs, and
+    /// this reader did it between the product's replies and forwards. <see cref="ReadDraftLookPromoted"/> keeps the
+    /// promoted read for the one test of it. T1 <c>DraftReadPromotionTests</c> holds this reader to the direct read.
     /// </para>
     /// </summary>
     public static IReadOnlyList<WordParagraphLook> ReadDraftLook(string storeDisplayName, string entryIdHex, string uniqueMarker)
+    {
+        return ReadDraftLookThrough(storeDisplayName, entryIdHex, uniqueMarker, inspector =>
+        {
+            Q149EditorRead read = Q149Editor.ReadEditor(inspector, ComposeSurface.DirectReadBudgetMilliseconds, Q149Editor.DirectReadIntervalMs);
+            return read.Document
+                ?? throw new InvalidOperationException("The draft's Word editor could not be had, read directly with its inspector never activated: " + Q149Editor.DescribeRead(read));
+        });
+    }
+
+    /// <summary>
+    /// <see cref="ReadDraftLook"/> with the editor had through the product's promotion,
+    /// <see cref="ComposeSurface.PromoteForWordEditor(object, out string?)"/> - parked off screen, activated, hidden
+    /// (B0: 40 of 40 in a windowed Outlook).
+    /// <para>
+    /// PROMOTED ON PURPOSE, for <c>LiveDraftTests</c>' one test of the promoted read: the product promotes the first
+    /// draft of every Outlook that has no window, and this keeps that route exercised where the readers no longer take
+    /// it. re-opening the product's drafts and promoting their inspectors is the step the mso40uiwin32client.dll crash needs (runbook 4.15), so a derived draft made after it in the same Outlook may meet
+    /// that crash.
+    /// </para>
+    /// </summary>
+    public static IReadOnlyList<WordParagraphLook> ReadDraftLookPromoted(string storeDisplayName, string entryIdHex, string uniqueMarker)
+    {
+        return ReadDraftLookThrough(storeDisplayName, entryIdHex, uniqueMarker, inspector =>
+            ComposeSurface.PromoteForWordEditor(inspector, out string? promoteError)
+                ?? throw new InvalidOperationException("The draft's Word editor could not be had through the promotion: " + (promoteError ?? "unknown")));
+    }
+
+    /// <summary>
+    /// The two readers' one body: the S3 refusal, the item re-opened by EntryID, its inspector, the editor
+    /// <paramref name="editor"/> has from it, the layout, and the inspector closed discarding.
+    /// </summary>
+    private static IReadOnlyList<WordParagraphLook> ReadDraftLookThrough(string storeDisplayName, string entryIdHex, string uniqueMarker, Func<object, object> editor)
     {
         if (string.IsNullOrWhiteSpace(uniqueMarker) || uniqueMarker.Length < 12)
         {
@@ -3829,8 +3876,7 @@ public static class LiveOutlookTestMailer
                 }
 
                 inspector = item.GetInspector;
-                document = ComposeSurface.PromoteForWordEditor(inspector!, out string? promoteError)
-                    ?? throw new InvalidOperationException("The draft's Word editor could not be had: " + (promoteError ?? "unknown"));
+                document = editor(inspector!);
                 return Q149Editor.ReadLook(document);
             }
             finally

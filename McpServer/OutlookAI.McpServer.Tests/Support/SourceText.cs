@@ -41,6 +41,12 @@ internal static class SourceText
         return string.Join("\n", BodyAfter(lines, declaration, braceIndent, where, declarationStart));
     }
 
+    /// <summary>A member's lines with the whole-line comments taken out, so a sentence about a call is not read as the call.</summary>
+    public static string CodeOnly(string body)
+    {
+        return string.Join("\n", body.Split('\n').Where(line => !line.TrimStart().StartsWith("//", StringComparison.Ordinal)));
+    }
+
     /// <summary>The lines between the first brace pair at <paramref name="braceIndent"/> after line <paramref name="declaration"/>.</summary>
     public static string[] BodyAfter(string[] lines, int declaration, string braceIndent, string where, string what)
     {
