@@ -60,16 +60,18 @@
     8. THE LIVE-TEST SETTINGS TEMPLATE HOLDS TOKENS ONLY, AND ITS FIELDS ARE THE EXAMPLE'S. A test
        guest's gitignored live-test-settings.json is RENDERED, by Testbed/host/New-LiveTestSettings.ps1,
        from Testbed/live-test-settings.template.json and that guest's section of Testbed/testbed.json.
-       Three committed files describe one shape - the documented example, the template, and the
-       per-guest values - and nothing else ties them together. So this requires the template's
-       field set to equal the example's (_-prefixed notes aside) and every value in it to be the
-       double-brace token spelling its own path, never a value; every guest section of testbed.json
-       to name exactly the template's fields; the renderer's guest destination to sit under the
-       same source root Testbed/host/Publish-LiveTierPayload.ps1 stages the suite into; every
-       address-shaped value in the example - fields, lists and notes alike - to end in the RFC 2606
-       .invalid domain, so the documented shape can never carry a real mailbox (Q79, 2026-09-24);
-       and no file called live-test-settings.json to be tracked anywhere, since the real one names
-       real stores.
+       Four committed files describe one shape - the documented example, the template, the
+       per-guest values, and the synthetic guest's values in Testbed/live-test-settings.synthetic.json
+       that T1/LiveTestSettingsTemplateTests and the renderer's self-test both render the template
+       with - and nothing else ties them together. So this requires the template's field set to
+       equal the example's (_-prefixed notes aside) and every value in it to be the double-brace
+       token spelling its own path, never a value; every guest section of testbed.json, and the
+       synthetic guest's values, to name exactly the template's fields; the renderer's guest
+       destination to sit under the same source root Testbed/host/Publish-LiveTierPayload.ps1 stages
+       the suite into; every address-shaped value in the example and in the synthetic values -
+       fields, lists and notes alike - to end in the RFC 2606 .invalid domain, so neither can ever
+       carry a real mailbox (Q79, 2026-09-24); and no file called live-test-settings.json to be
+       tracked anywhere, since the real one names real stores.
        It lives here rather than in a T1 test because every one of those files is under Testbed/,
        and this script needs no build: it runs before every release, and in seconds from any
        checkout. T1/LiveTestSettingsTemplateTests covers the other half: that the template still
@@ -692,8 +694,34 @@ if ($null -ne $exampleJson) {
     }
 }
 
-# The per-guest values must name exactly the template's fields. A block may be null (none on that
+# A guest's values must name exactly the template's fields: each guest's section of testbed.json, and
+# the synthetic guest's values the two renderers' tests share. A block may be null (none on that
 # guest) or a placeholder still waiting to be read off the guest - but never a different shape.
+$topLevel = @($templateLeaves | ForEach-Object { ($_.Path -split '\.')[0] } | Select-Object -Unique)
+$blocks = @($templateLeaves | Where-Object { $_.Path.Contains('.') } | ForEach-Object { ($_.Path -split '\.')[0] } | Select-Object -Unique)
+function Get-GuestShapeProblems($values, [string] $where) {
+    if (-not ($values -is [System.Management.Automation.PSCustomObject])) { return "$where is not an object." }
+    $problems = @()
+    $guestTop = @($values.PSObject.Properties | Where-Object { -not $_.Name.StartsWith('_') } | ForEach-Object { $_.Name })
+    foreach ($name in @($topLevel | Where-Object { $guestTop -cnotcontains $_ })) { $problems += "$where lacks '$name'." }
+    foreach ($name in @($guestTop | Where-Object { $topLevel -cnotcontains $_ })) { $problems += "$where has '$name', which the template does not." }
+
+    foreach ($block in $blocks) {
+        $value = ($values.PSObject.Properties | Where-Object { $_.Name -ceq $block }).Value
+        if ($null -eq $value) { continue }
+        if ($value -is [string] -and $value.StartsWith('<FILL')) { continue }
+        if (-not ($value -is [System.Management.Automation.PSCustomObject])) {
+            $problems += "$where.$block must be an object carrying every field, null, or a placeholder."
+            continue
+        }
+        $want = @($templateLeaves | Where-Object { $_.Path.StartsWith($block + '.') } | ForEach-Object { $_.Path.Substring($block.Length + 1) })
+        $have = @($value.PSObject.Properties | Where-Object { -not $_.Name.StartsWith('_') } | ForEach-Object { $_.Name })
+        foreach ($name in @($want | Where-Object { $have -cnotcontains $_ })) { $problems += "$where.$block lacks '$name'." }
+        foreach ($name in @($have | Where-Object { $want -cnotcontains $_ })) { $problems += "$where.$block has '$name', which the template does not." }
+    }
+    return $problems
+}
+
 $guestCount = 0
 if ($null -ne $testbedJson -and $templateLeaves.Count -gt 0) {
     $section = $testbedJson.PSObject.Properties | Where-Object { $_.Name -ceq 'liveTestSettings' }
@@ -701,37 +729,29 @@ if ($null -ne $testbedJson -and $templateLeaves.Count -gt 0) {
         $settingsProblems += "Testbed/testbed.json has no liveTestSettings object, so $rendererRelative has nothing to render from."
     }
     else {
-        $topLevel = @($templateLeaves | ForEach-Object { ($_.Path -split '\.')[0] } | Select-Object -Unique)
-        $blocks = @($templateLeaves | Where-Object { $_.Path.Contains('.') } | ForEach-Object { ($_.Path -split '\.')[0] } | Select-Object -Unique)
         foreach ($guest in $section.Value.PSObject.Properties) {
             if ($guest.Name.StartsWith('_')) { continue }
             $guestCount++
-            $where = "Testbed/testbed.json liveTestSettings.$($guest.Name)"
-            if (-not ($guest.Value -is [System.Management.Automation.PSCustomObject])) {
-                $settingsProblems += "$where is not an object."
-                continue
-            }
-            $guestTop = @($guest.Value.PSObject.Properties | Where-Object { -not $_.Name.StartsWith('_') } | ForEach-Object { $_.Name })
-            foreach ($name in @($topLevel | Where-Object { $guestTop -cnotcontains $_ })) { $settingsProblems += "$where lacks '$name'." }
-            foreach ($name in @($guestTop | Where-Object { $topLevel -cnotcontains $_ })) { $settingsProblems += "$where has '$name', which the template does not." }
-
-            foreach ($block in $blocks) {
-                $value = ($guest.Value.PSObject.Properties | Where-Object { $_.Name -ceq $block }).Value
-                if ($null -eq $value) { continue }
-                if ($value -is [string] -and $value.StartsWith('<FILL')) { continue }
-                if (-not ($value -is [System.Management.Automation.PSCustomObject])) {
-                    $settingsProblems += "$where.$block must be an object carrying every field, null, or a placeholder."
-                    continue
-                }
-                $want = @($templateLeaves | Where-Object { $_.Path.StartsWith($block + '.') } | ForEach-Object { $_.Path.Substring($block.Length + 1) })
-                $have = @($value.PSObject.Properties | Where-Object { -not $_.Name.StartsWith('_') } | ForEach-Object { $_.Name })
-                foreach ($name in @($want | Where-Object { $have -cnotcontains $_ })) { $settingsProblems += "$where.$block lacks '$name'." }
-                foreach ($name in @($have | Where-Object { $want -cnotcontains $_ })) { $settingsProblems += "$where.$block has '$name', which the template does not." }
-            }
+            $settingsProblems += @(Get-GuestShapeProblems $guest.Value "Testbed/testbed.json liveTestSettings.$($guest.Name)")
         }
         if ($guestCount -eq 0) {
             $settingsProblems += "Testbed/testbed.json liveTestSettings names no guest, so this part of the check proves nothing."
         }
+    }
+}
+
+# The synthetic guest's values (the code-sharing survey's T16): T1/LiveTestSettingsTemplateTests and the
+# renderer's self-test render the template with them, so they are a guest's shape, and synthetic - every
+# address in them under .invalid, checked here before either test runs.
+$syntheticRelative = 'Testbed/live-test-settings.synthetic.json'
+$syntheticJson = Read-SettingsJson $syntheticRelative
+$syntheticAddressCount = 0
+if ($null -ne $syntheticJson -and $templateLeaves.Count -gt 0) {
+    $settingsProblems += @(Get-GuestShapeProblems $syntheticJson $syntheticRelative)
+    $syntheticRaw = Get-Content -LiteralPath (Join-Path $RepoRoot $syntheticRelative) -Raw
+    $syntheticAddressCount = [regex]::Matches($syntheticRaw, '[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+').Count
+    foreach ($where in @(Get-AddressLeaks $syntheticJson '' | Select-Object -Unique)) {
+        $settingsProblems += "$syntheticRelative '$where' holds an address outside the RFC 2606 .invalid domain. The synthetic guest is committed to a public repository and must name no real mailbox - use one under .invalid (the value is not printed here)."
     }
 }
 
@@ -770,7 +790,7 @@ if ($settingsProblems.Count -gt 0) {
     Fail 'live-test settings template holds tokens only, with the example''s fields' (($settingsProblems | Sort-Object -Unique) -join "`n        ")
 }
 else {
-    Pass 'live-test settings template holds tokens only, with the example''s fields' "$($templateLeaves.Count) token(s) matching $exampleRelative, $guestCount guest section(s) in testbed.json of the same shape, the guest root agreeing with the stager, $exampleAddressCount address(es) in the example all under .invalid, no live-test-settings.json tracked"
+    Pass 'live-test settings template holds tokens only, with the example''s fields' "$($templateLeaves.Count) token(s) matching $exampleRelative, $guestCount guest section(s) in testbed.json and the synthetic guest of the same shape, the guest root agreeing with the stager, $exampleAddressCount address(es) in the example and $syntheticAddressCount in the synthetic guest all under .invalid, no live-test-settings.json tracked"
 }
 
 # ---------------------------------------------------------------------------------------------

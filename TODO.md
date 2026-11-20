@@ -123,8 +123,11 @@
   the tool's assembly. T06 is done: the setups it counted
   are shared since T03 and T05 - no run of 15 identical lines is left between two T1 files - and the
   two thread suites' three pairs of parallel tests assert through `ThreadWalks`, keeping their
-  names. S5a is complete. In parallel: the PowerShell helpers (S7). Of Q171, the updater's
-  signature check is Core's `InstallerSignature`, which the add-in calls and
+  names. T16 is done: the synthetic guest's values, which the settings template's tests and
+  `Testbed/host/New-LiveTestSettings.ps1`'s self-test each wrote out, are one fixture,
+  `Testbed/live-test-settings.synthetic.json`, held to the template's shape by
+  check-testbed-references check 8. S5a is complete. In parallel: the PowerShell helpers (S7).
+  Of Q171, the updater's signature check is Core's `InstallerSignature`, which the add-in calls and
   `Tools/Publish-Release.ps1` compiles with Add-Type; the Windows file calls, the survey's X05, are
   Core's `Win32File`, which `Testbed/host/New-LiveTestSettings.ps1` compiles with Add-Type; the
   window calls five testbed scripts declared, P10's window half, are Core's `NativeWindows`, which

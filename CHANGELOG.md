@@ -1585,9 +1585,14 @@ its mailbox tests on, and change nothing you install.
   reported as not connected while an operation still runs, and every operation refused as by an
   Outlook that does not answer), `DeadGateway`, `RecordingGateway`, `StubIndexClient`, which the
   three suites whose index answers in its own way derive from, `IndexRows`, `RepoPaths`, moved
-  there, and `ExampleLiveSettings`. `StoreIndexHashScopeTests` keeps its own index stand-in, which
-  answers different questions. Thirteen of the checks that read the suite's own compiled code or
-  source carried private copies of the same reading helpers - a walk over a method's instructions,
+  there, and `ExampleLiveSettings`. The settings template's tests and
+  `Testbed/host/New-LiveTestSettings.ps1`'s self-test each wrote out the same synthetic guest's
+  values, 36 lines of JSON; both read one committed fixture now,
+  `Testbed/live-test-settings.synthetic.json`, which check 8 of `check-testbed-references.ps1` holds
+  to the template's fields and to `.invalid` addresses. `StoreIndexHashScopeTests` keeps its own
+  index stand-in, which answers different questions. Thirteen of the checks that read the suite's
+  own compiled code or source carried private copies of the same reading helpers - a walk over a
+  method's instructions,
   the Category=Live trait, a collection attribute's argument, a live test's source file and the body
   of one member in it - and now share `IlReader`, moved there from `T1/`, `Traits` and `SourceText`;
   three of them read the instructions byte by byte, and now walk the opcodes as the others did.

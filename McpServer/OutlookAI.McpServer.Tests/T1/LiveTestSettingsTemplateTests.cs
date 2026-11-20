@@ -45,10 +45,10 @@ namespace OutlookAI.McpServer.Tests.T1;
 /// section 2.10 says why.
 /// </para>
 /// <para>
-/// Synthetic names only - RFC 2606 <c>.invalid</c> addresses and made-up store names. The one real
-/// input is the committed <c>Testbed/testbed.json</c>, whose guest sections name a test guest's
-/// synthetic stores and nothing else. No machine-local settings file is read, and nothing touches
-/// Outlook or a mailbox.
+/// Synthetic names only - RFC 2606 <c>.invalid</c> addresses and made-up store names. The inputs are
+/// committed: <c>Testbed/testbed.json</c>, whose guest sections name a test guest's synthetic stores
+/// and nothing else, and the synthetic guest's values in <c>Testbed/live-test-settings.synthetic.json</c>.
+/// No machine-local settings file is read, and nothing touches Outlook or a mailbox.
 /// </para>
 /// </summary>
 public sealed class LiveTestSettingsTemplateTests
@@ -89,47 +89,16 @@ public sealed class LiveTestSettingsTemplateTests
     /// What a guest's section of testbed.json holds, for a four-store INDEXED guest: hub, corpus,
     /// plain bystander, and an identity account left out of the bystander list on purpose
     /// (Docs/live-tier-on-the-vm.md section 2.8b) - and left out of the INDEXED list too, which is
-    /// what the watched/indexed split exists to be able to say.
+    /// what the watched/indexed split exists to be able to say. A committed fixture,
+    /// <c>Testbed/live-test-settings.synthetic.json</c>, which <c>Testbed/host/New-LiveTestSettings.ps1</c>'s
+    /// self-test renders the template with too: one copy of the values for both (the code-sharing
+    /// survey's T16). Read afresh for every caller, which may change what it gets.
     /// </summary>
     private static JsonObject SyntheticValues()
     {
-        return JsonNode.Parse(
-            """
-            {
-              "_note": "comment keys are not settings",
-              "machineProfile": "Portable",
-              "testHubStoreDisplayName": "hub@render.invalid",
-              "hubPopulationManifestPath": "C:\\OutlookAI-Q5\\corpus-hub-synthetic.jsonl",
-              "expectedStoreDisplayNames": [ "hub@render.invalid", "Synthetic Corpus", "bystander@render.invalid", "identity@render.invalid" ],
-              "indexedStoreDisplayNames": [ "hub@render.invalid", "bystander@render.invalid", "Synthetic Corpus" ],
-              "expectedDelegateStoreDisplayNames": [],
-              "bystanderStoreDisplayNames": [ "bystander@render.invalid", "Synthetic Corpus" ],
-              "probeTerm": "invoice",
-              "subjectOnlyProbe": {
-                "_note": "the hub population's notices folder",
-                "storeDisplayName": "hub@render.invalid",
-                "folderPath": "Inbox/OutlookAI-Corpus-Folder-Notices",
-                "subjectTerm": "bulletin",
-                "senderFragment": "noticebot"
-              },
-              "corpus": {
-                "storeDisplayName": "Synthetic Corpus",
-                "manifestPath": "C:\\OutlookAI-Q5\\corpus-vm-synthetic.jsonl",
-                "corpusId": "vm-synthetic",
-                "seed": 4242,
-                "anchorUtc": "2026-08-01T00:00:00Z",
-                "itemCount": 1000,
-                "windowDays": [ 7, 30, 60 ]
-              },
-              "mailSink": {
-                "submitHost": "127.0.0.1",
-                "submitPort": 2525,
-                "retrieveHost": "127.0.0.1",
-                "retrievePort": 1110,
-                "connectTimeoutMs": 1500
-              }
-            }
-            """)!.AsObject();
+        string path = Path.Combine(RepoPaths.RepoRoot(), "Testbed", "live-test-settings.synthetic.json");
+        Assert.True(File.Exists(path), "the synthetic guest's values are missing: " + path);
+        return JsonNode.Parse(File.ReadAllText(path))!.AsObject();
     }
 
     /// <summary>
