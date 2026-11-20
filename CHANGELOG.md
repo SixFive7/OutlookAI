@@ -2267,6 +2267,22 @@ its mailbox tests on, and change nothing you install.
 
 ### Fixed
 
+- 🐛 **The AI Assistant button on a compose window shows whether its pane is open.**
+  It never showed as pressed. Office asks the add-in whether to draw the button pressed each time it
+  refreshes a window's ribbon, and the add-in looked the window's pane up with the window as Office
+  names it, a value it types `dynamic`, which made the lookup run as Outlook ran. Its result was then
+  read through a class the VSTO runtime keeps to itself, which such a lookup cannot see into, and the
+  answer failed
+  instead: on every refresh of the ribbon of a compose window with the pane, about once for each
+  window a draft was shown in and twice for each one typed into, 446 and 820 times in two ten-minute
+  loops of stream K2's trace of Outlook on 2026-11-20. Every release since 2026-06-01 has had it, and
+  it is not what crashed Outlook on the test machines. The lookup is bound when the add-in is built
+  now, for the button's state and for its click, and nothing else in the add-in hands such a value
+  on. T1 `RibbonCallbackBindingTests` holds the source to it, and `T2/LivePaneTests` reads the button
+  pressed while the pane shows and not pressed once the button has hidden it, through two new calls
+  on the add-in's automation object, `IsAIAssistantPressed` and `ToggleAIAssistant`, which call the
+  ribbon's own code as Office does.
+
 - 🐛 **A `\u` escape or a numeric HTML entity with a space or a sign in it stays text.**
   The add-in's reader of the values in `~/.claude.json` parsed a `\u` escape's four characters with
   .NET's hex number parsing, which allows spaces around the digits, so `\u 41 ` read as `A`, though
