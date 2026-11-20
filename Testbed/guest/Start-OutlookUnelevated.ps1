@@ -93,6 +93,65 @@ $TaskName = 'OutlookAI-Unelevated'
 # 15 past its 30-day grace.
 $ActivationWizardTitle = 'Microsoft Office Activation Wizard'
 
+# The starter's window walks, compiled after Core's window calls (NativeWindows.cs) in the starter's one Add-Type
+# (Q171 (c)); the self-test compiles them too.
+$script:UnelevatedWinSource = @'
+using System; using System.Text; using System.Runtime.InteropServices; using OutlookAI.Core.AddIn;
+public static class OaiUnelevatedWin {
+    // EnumWindows, GetWindowThreadProcessId, GetClassNameW, IsWindowVisible and IsWindow are Core's
+    // (NativeWindows.cs, compiled after this source - Q171 (c)).
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder sb, int max);
+    [DllImport("user32.dll")] static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+    public static string Explorer(uint pid) {
+        string found = null;
+        NativeWindows.EnumWindows(delegate (IntPtr h, IntPtr l) {
+            uint p; NativeWindows.GetWindowThreadProcessId(h, out p);
+            if (p != pid || !NativeWindows.IsWindowVisible(h)) return true;
+            StringBuilder c = new StringBuilder(256); NativeWindows.GetClassNameW(h, c, 256);
+            if (c.ToString() != "rctrl_renwnd32") return true;
+            StringBuilder t = new StringBuilder(512); GetWindowText(h, t, 512);
+            found = t.ToString(); return false;
+        }, IntPtr.Zero);
+        return found;
+    }
+    public static string[] Visible(uint pid) {
+        System.Collections.Generic.List<string> found = new System.Collections.Generic.List<string>();
+        NativeWindows.EnumWindows(delegate (IntPtr h, IntPtr l) {
+            uint p; NativeWindows.GetWindowThreadProcessId(h, out p);
+            if (p != pid || !NativeWindows.IsWindowVisible(h)) return true;
+            StringBuilder c = new StringBuilder(256); NativeWindows.GetClassNameW(h, c, 256);
+            StringBuilder t = new StringBuilder(512); GetWindowText(h, t, 512);
+            found.Add("class " + c.ToString() + ", title '" + t.ToString() + "'");
+            return found.Count < 10;
+        }, IntPtr.Zero);
+        return found.ToArray();
+    }
+    public static IntPtr Titled(uint pid, string title) {
+        IntPtr found = IntPtr.Zero;
+        NativeWindows.EnumWindows(delegate (IntPtr h, IntPtr l) {
+            uint p; NativeWindows.GetWindowThreadProcessId(h, out p);
+            if (p != pid || !NativeWindows.IsWindowVisible(h)) return true;
+            StringBuilder t = new StringBuilder(512); GetWindowText(h, t, 512);
+            if (t.ToString() != title) return true;
+            found = h; return false;
+        }, IntPtr.Zero);
+        return found;
+    }
+    public static string ClassOf(IntPtr h) { StringBuilder c = new StringBuilder(256); NativeWindows.GetClassNameW(h, c, 256); return c.ToString(); }
+    public static bool Shown(IntPtr h) { return NativeWindows.IsWindow(h) && NativeWindows.IsWindowVisible(h); }
+    public static bool PostClose(IntPtr h) { return PostMessage(h, 0x0010, IntPtr.Zero, IntPtr.Zero); }
+}
+'@
+
+# travels-alone: it needs Core's NativeWindows.cs staged beside it, as Invoke-LiveTierOnGuest.ps1 stages it, wherever a run starts it from.
+# Get-NativeWindowsSource, a copy of ScriptHelpers.ps1's that Tools/Checks/check-powershell-51.ps1 check 4 holds identical.
+function Get-NativeWindowsSource {
+    foreach ($candidate in @((Join-Path $PSScriptRoot 'NativeWindows.cs'), (Join-Path $PSScriptRoot '..\..\McpServer\OutlookAI.Core\AddIn\NativeWindows.cs'))) {
+        if (Test-Path -LiteralPath $candidate) { return [System.IO.File]::ReadAllText($candidate) }
+    }
+    throw "NativeWindows.cs is neither beside $PSScriptRoot nor in this checkout's McpServer\OutlookAI.Core\AddIn: stage it with the guest scripts, as Invoke-LiveTierOnGuest.ps1 does."
+}
+
 # The script the task runs, in session 1, at RunLevel Limited: start Outlook on the profile, then
 # wait until its Explorer window (class rctrl_renwnd32) is visible. Office's activation wizard, if
 # it comes up, is closed by its own Close button - WM_CLOSE to that window alone if the button cannot
@@ -108,55 +167,7 @@ function New-StarterScript([string] $Exe, [string] $ProfileName, [int] $Minutes,
 try {
     if (-not ('OaiUnelevatedWin' -as [type])) {
         Add-Type -TypeDefinition @'
-using System; using System.Text; using System.Runtime.InteropServices;
-public static class OaiUnelevatedWin {
-    public delegate bool EnumProc(IntPtr h, IntPtr l);
-    [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc cb, IntPtr l);
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr h, StringBuilder sb, int max);
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder sb, int max);
-    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
-    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
-    [DllImport("user32.dll")] static extern bool IsWindow(IntPtr h);
-    [DllImport("user32.dll")] static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
-    public static string Explorer(uint pid) {
-        string found = null;
-        EnumWindows(delegate (IntPtr h, IntPtr l) {
-            uint p; GetWindowThreadProcessId(h, out p);
-            if (p != pid || !IsWindowVisible(h)) return true;
-            StringBuilder c = new StringBuilder(256); GetClassName(h, c, 256);
-            if (c.ToString() != "rctrl_renwnd32") return true;
-            StringBuilder t = new StringBuilder(512); GetWindowText(h, t, 512);
-            found = t.ToString(); return false;
-        }, IntPtr.Zero);
-        return found;
-    }
-    public static string[] Visible(uint pid) {
-        System.Collections.Generic.List<string> found = new System.Collections.Generic.List<string>();
-        EnumWindows(delegate (IntPtr h, IntPtr l) {
-            uint p; GetWindowThreadProcessId(h, out p);
-            if (p != pid || !IsWindowVisible(h)) return true;
-            StringBuilder c = new StringBuilder(256); GetClassName(h, c, 256);
-            StringBuilder t = new StringBuilder(512); GetWindowText(h, t, 512);
-            found.Add("class " + c.ToString() + ", title '" + t.ToString() + "'");
-            return found.Count < 10;
-        }, IntPtr.Zero);
-        return found.ToArray();
-    }
-    public static IntPtr Titled(uint pid, string title) {
-        IntPtr found = IntPtr.Zero;
-        EnumWindows(delegate (IntPtr h, IntPtr l) {
-            uint p; GetWindowThreadProcessId(h, out p);
-            if (p != pid || !IsWindowVisible(h)) return true;
-            StringBuilder t = new StringBuilder(512); GetWindowText(h, t, 512);
-            if (t.ToString() != title) return true;
-            found = h; return false;
-        }, IntPtr.Zero);
-        return found;
-    }
-    public static string ClassOf(IntPtr h) { StringBuilder c = new StringBuilder(256); GetClassName(h, c, 256); return c.ToString(); }
-    public static bool Shown(IntPtr h) { return IsWindow(h) && IsWindowVisible(h); }
-    public static bool PostClose(IntPtr h) { return PostMessage(h, 0x0010, IntPtr.Zero, IntPtr.Zero); }
-}
+$($script:UnelevatedWinSource + "`n" + (Get-NativeWindowsSource))
 '@
     }
     function Close-ActivationWizard([IntPtr] `$h, [System.Diagnostics.Stopwatch] `$clock) {
@@ -284,6 +295,10 @@ function Invoke-SelfTest {
     Check 'a guest up longer than the minimum does not wait' ((Get-UptimeWait 480 240) -eq 0)
     Check 'no minimum, no wait - the default, for every guest but the Exchange VM' ((Get-UptimeWait 5 0) -eq 0)
     Check 'the task definition is Interactive and LIMITED' ((Get-TaskDefinitionText) -match 'LogonType=Interactive RunLevel=Limited')
+    Check 'the starter carries Core''s window calls after its own' ($text.Contains('public static partial class NativeWindows') -and $text.IndexOf('public static class OaiUnelevatedWin') -lt $text.IndexOf('public static partial class NativeWindows'))
+    $compiled = $true
+    try { if (-not ('OaiUnelevatedWin' -as [type])) { Add-Type -TypeDefinition ($script:UnelevatedWinSource + "`n" + (Get-NativeWindowsSource)) } } catch { $compiled = $false; Write-Host "  compile error: $($_.Exception.Message)" }
+    Check 'and the two compile together in this shell' ($compiled -and [bool]('OaiUnelevatedWin' -as [type]))
     # Read off the PARSED file, so the text of this check cannot count as a use of what it forbids.
     $ast = [System.Management.Automation.Language.Parser]::ParseFile($PSCommandPath, [ref] $null, [ref] $null)
     $levels = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'New-ScheduledTaskPrincipal' }, $true) | ForEach-Object {
@@ -316,7 +331,6 @@ if ($SelfTest) { Invoke-SelfTest }
 
 if (-not $Profile) { throw '-Profile is mandatory: name the Outlook profile to open.' }
 
-# travels-alone: it needs nothing staged beside it, wherever a run or a step starts it from.
 # The guest guard: Test-GuestIdentity and Assert-TestbedGuestIdentity, copies of ScriptHelpers.ps1's that
 # Tools/Checks/check-powershell-51.ps1 check 4 holds identical, then what this script would have done elsewhere.
 function Test-GuestIdentity {

@@ -437,6 +437,8 @@ function Invoke-SelfTest {
     $quits = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and $n.Member.Extent.Text -eq 'Quit' }, $true))
     Check 'nothing here quits Outlook' 0 $quits.Count
 
+    Add-GuardWinType
+    Check 'the guard prompt''s window walk compiles with Core''s NativeWindows.cs, in this shell' 'OutlookAITestbed.GuardWin' ([string]('OutlookAITestbed.GuardWin' -as [type]))
     Write-Host ''
     Write-Host "$($script:StChecks) checks, $($script:StFailures.Count) failure(s)."
     Write-Host ''
@@ -450,6 +452,50 @@ function Invoke-SelfTest {
     Write-Host '  * that Deny through WM_COMMAND dismisses a real guard prompt, and -Execute -Revert.'
     if ($script:StFailures.Count -gt 0) { exit 1 }
     exit 0
+}
+
+# The guard prompt's window walk, compiled once with the window calls Core declares, which are Core's
+# (NativeWindows.cs, Get-NativeWindowsSource; Q171 (c)). Before the self-test, which compiles it under the
+# shell it runs in.
+$script:GuardWinSource = @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.Text;
+using OutlookAI.Core.AddIn;
+namespace OutlookAITestbed {
+  public class GuardDialog { public IntPtr Dialog; public IntPtr Deny; public int DenyId; public uint Pid; public string Text; }
+  public static class GuardWin {
+    [DllImport("user32.dll")] static extern bool EnumChildWindows(IntPtr p, NativeWindows.EnumWindowsProc cb, IntPtr l);
+    [DllImport("user32.dll")] static extern int GetDlgCtrlID(IntPtr h);
+    [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint msg, IntPtr w, IntPtr l);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr SendMessageTimeout(IntPtr h, uint msg, IntPtr w, StringBuilder l, uint flags, uint timeout, out IntPtr result);
+    static string Text(IntPtr h) { var sb = new StringBuilder(2048); IntPtr r; SendMessageTimeout(h, 0x000D, (IntPtr)2048, sb, 0x0002, 2000, out r); return sb.ToString(); }
+    static string Cls(IntPtr h) { var c = new StringBuilder(256); NativeWindows.GetClassNameW(h, c, 256); return c.ToString(); }
+    public static List<GuardDialog> Dialogs(uint[] pids) {
+      var found = new List<GuardDialog>();
+      var wanted = new HashSet<uint>(pids);
+      NativeWindows.EnumWindows(delegate (IntPtr h, IntPtr l) {
+        if (!NativeWindows.IsWindowVisible(h) || Cls(h) != "#32770") return true;
+        uint pid; NativeWindows.GetWindowThreadProcessId(h, out pid);
+        if (!wanted.Contains(pid)) return true;
+        var d = new GuardDialog { Dialog = h, Pid = pid, Text = "" };
+        EnumChildWindows(h, delegate (IntPtr k, IntPtr l2) {
+          string c = Cls(k); string t = Text(k);
+          if (c == "Button" && t.Replace("&", "") == "Deny") { d.Deny = k; d.DenyId = GetDlgCtrlID(k); }
+          if (c == "Static" && t.Length > d.Text.Length) d.Text = t;
+          return true;
+        }, IntPtr.Zero);
+        found.Add(d);
+        return true;
+      }, IntPtr.Zero);
+      return found;
+    }
+  }
+}
+'@
+function Add-GuardWinType {
+    if (-not ('OutlookAITestbed.GuardWin' -as [type])) { Add-Type -TypeDefinition ($script:GuardWinSource + "`n" + (Get-NativeWindowsSource)) }
 }
 
 # Say and Test-GuestIdentity are among the helpers the scripts share, dot-sourced from ScriptHelpers.ps1,
@@ -507,50 +553,7 @@ function Get-WscSummary {
 # Visible #32770 dialogs owned by OUTLOOK.EXE in THIS session that are guard prompts: handle, the
 # Deny button's handle and control id, and the message text.
 function Find-GuardPrompt {
-    if (-not ('OutlookAITestbed.GuardWin' -as [type])) {
-        Add-Type -TypeDefinition @'
-using System;
-using System.Collections.Generic;
-using System.Runtime.InteropServices;
-using System.Text;
-namespace OutlookAITestbed {
-  public class GuardDialog { public IntPtr Dialog; public IntPtr Deny; public int DenyId; public uint Pid; public string Text; }
-  public static class GuardWin {
-    delegate bool EnumProc(IntPtr h, IntPtr l);
-    [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc cb, IntPtr l);
-    [DllImport("user32.dll")] static extern bool EnumChildWindows(IntPtr p, EnumProc cb, IntPtr l);
-    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
-    [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr h);
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr h, StringBuilder s, int n);
-    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
-    [DllImport("user32.dll")] static extern int GetDlgCtrlID(IntPtr h);
-    [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint msg, IntPtr w, IntPtr l);
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr SendMessageTimeout(IntPtr h, uint msg, IntPtr w, StringBuilder l, uint flags, uint timeout, out IntPtr result);
-    static string Text(IntPtr h) { var sb = new StringBuilder(2048); IntPtr r; SendMessageTimeout(h, 0x000D, (IntPtr)2048, sb, 0x0002, 2000, out r); return sb.ToString(); }
-    static string Cls(IntPtr h) { var c = new StringBuilder(256); GetClassName(h, c, 256); return c.ToString(); }
-    public static List<GuardDialog> Dialogs(uint[] pids) {
-      var found = new List<GuardDialog>();
-      var wanted = new HashSet<uint>(pids);
-      EnumWindows(delegate (IntPtr h, IntPtr l) {
-        if (!IsWindowVisible(h) || Cls(h) != "#32770") return true;
-        uint pid; GetWindowThreadProcessId(h, out pid);
-        if (!wanted.Contains(pid)) return true;
-        var d = new GuardDialog { Dialog = h, Pid = pid, Text = "" };
-        EnumChildWindows(h, delegate (IntPtr k, IntPtr l2) {
-          string c = Cls(k); string t = Text(k);
-          if (c == "Button" && t.Replace("&", "") == "Deny") { d.Deny = k; d.DenyId = GetDlgCtrlID(k); }
-          if (c == "Static" && t.Length > d.Text.Length) d.Text = t;
-          return true;
-        }, IntPtr.Zero);
-        found.Add(d);
-        return true;
-      }, IntPtr.Zero);
-      return found;
-    }
-  }
-}
-'@
-    }
+    Add-GuardWinType
     $pids = [uint32[]]@(Get-Process -Name 'OUTLOOK' -ErrorAction SilentlyContinue | ForEach-Object { [uint32]$_.Id })
     if ($pids.Count -eq 0) { return @() }
     return @([OutlookAITestbed.GuardWin]::Dialogs($pids) | Where-Object { Test-IsGuardPromptText $_.Text })
@@ -565,8 +568,8 @@ function Deny-GuardPrompt {
     if ($Prompt.Deny -eq [IntPtr]::Zero) { return $false }
     [void][OutlookAITestbed.GuardWin]::PostMessage($Prompt.Dialog, 0x0111, [IntPtr]$Prompt.DenyId, $Prompt.Deny)
     $t0 = Get-Date
-    while (((Get-Date) - $t0).TotalSeconds -lt 20 -and [OutlookAITestbed.GuardWin]::IsWindow($Prompt.Dialog)) { Start-Sleep -Milliseconds 250 }
-    return (-not [OutlookAITestbed.GuardWin]::IsWindow($Prompt.Dialog))
+    while (((Get-Date) - $t0).TotalSeconds -lt 20 -and [OutlookAI.Core.AddIn.NativeWindows]::IsWindow($Prompt.Dialog)) { Start-Sleep -Milliseconds 250 }
+    return (-not [OutlookAI.Core.AddIn.NativeWindows]::IsWindow($Prompt.Dialog))
 }
 
 # =============================================================================================

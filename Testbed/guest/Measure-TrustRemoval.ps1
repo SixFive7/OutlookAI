@@ -151,6 +151,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Text;
+using OutlookAI.Core.AddIn;
 
 public static class OaiTrustNative
 {
@@ -167,27 +168,18 @@ public static class OaiTrustNative
     [StructLayout(LayoutKind.Sequential)]
     struct PROCESS_INFORMATION { public IntPtr hProcess; public IntPtr hThread; public int dwProcessId; public int dwThreadId; }
 
-    [StructLayout(LayoutKind.Sequential)]
-    struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
-
-    delegate bool EnumProc(IntPtr hwnd, IntPtr lParam);
-
     [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     static extern bool CreateProcessW(string app, StringBuilder cmd, IntPtr pa, IntPtr ta, bool inherit, int flags, IntPtr env, string dir, ref STARTUPINFO si, out PROCESS_INFORMATION pi);
     [DllImport("kernel32.dll", SetLastError = true)] static extern uint WaitForSingleObject(IntPtr h, uint ms);
     [DllImport("kernel32.dll", SetLastError = true)] static extern bool GetExitCodeProcess(IntPtr h, out uint code);
     [DllImport("kernel32.dll", SetLastError = true)] static extern bool TerminateProcess(IntPtr h, uint code);
     [DllImport("kernel32.dll", SetLastError = true)] static extern bool CloseHandle(IntPtr h);
-    [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc cb, IntPtr lParam);
-    [DllImport("user32.dll")] static extern bool EnumChildWindows(IntPtr parent, EnumProc cb, IntPtr lParam);
-    [DllImport("user32.dll")] static extern int GetWindowThreadProcessId(IntPtr hwnd, out int pid);
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassNameW(IntPtr hwnd, StringBuilder sb, int max);
-    [DllImport("user32.dll")] static extern bool IsWindow(IntPtr hwnd);
-    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hwnd);
+    // EnumWindows, GetWindowThreadProcessId, GetClassNameW, IsWindow, IsWindowVisible, GetWindowRect and RECT are
+    // Core's (NativeWindows.cs, compiled with this source - Q171 (c)).
+    [DllImport("user32.dll")] static extern bool EnumChildWindows(IntPtr parent, NativeWindows.EnumWindowsProc cb, IntPtr lParam);
     [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] static extern int GetDlgCtrlID(IntPtr hwnd);
     [DllImport("user32.dll")] static extern IntPtr GetWindow(IntPtr hwnd, uint cmd);
-    [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr hwnd, out RECT r);
     [DllImport("user32.dll")] static extern bool PostMessageW(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll", EntryPoint = "SendMessageTimeoutW")]
     static extern IntPtr SendLength(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam, uint flags, uint timeout, out IntPtr result);
@@ -242,9 +234,9 @@ public static class OaiTrustNative
 
     public static long Foreground() { return GetForegroundWindow().ToInt64(); }
 
-    public static bool Exists(long hwnd) { return IsWindow(new IntPtr(hwnd)); }
+    public static bool Exists(long hwnd) { return NativeWindows.IsWindow(new IntPtr(hwnd)); }
 
-    public static bool Visible(long hwnd) { return IsWindowVisible(new IntPtr(hwnd)); }
+    public static bool Visible(long hwnd) { return NativeWindows.IsWindowVisible(new IntPtr(hwnd)); }
 
     // The dialog's default button - the one Enter presses: DM_GETDEFID gives DC_HASDEFID in the high
     // word and the id in the low word. 0 when it has none or does not answer.
@@ -273,18 +265,18 @@ public static class OaiTrustNative
     {
         Win w = new Win();
         w.Hwnd = h.ToInt64();
-        int pid;
-        GetWindowThreadProcessId(h, out pid);
-        w.Pid = pid;
+        uint pid;
+        NativeWindows.GetWindowThreadProcessId(h, out pid);
+        w.Pid = (int)pid;
         StringBuilder cls = new StringBuilder(256);
-        GetClassNameW(h, cls, cls.Capacity);
+        NativeWindows.GetClassNameW(h, cls, cls.Capacity);
         w.Class = cls.ToString();
         w.Text = TextOf(h);
-        w.Visible = IsWindowVisible(h);
+        w.Visible = NativeWindows.IsWindowVisible(h);
         w.Owner = GetWindow(h, GW_OWNER).ToInt64();
         w.ControlId = GetDlgCtrlID(h);
-        RECT r;
-        if (GetWindowRect(h, out r)) { w.Left = r.Left; w.Top = r.Top; w.Right = r.Right; w.Bottom = r.Bottom; }
+        NativeWindows.RECT r;
+        if (NativeWindows.GetWindowRect(h, out r)) { w.Left = r.Left; w.Top = r.Top; w.Right = r.Right; w.Bottom = r.Bottom; }
         return w;
     }
 
@@ -292,7 +284,7 @@ public static class OaiTrustNative
     public static List<Win> TopLevel()
     {
         List<Win> list = new List<Win>();
-        EnumWindows(delegate (IntPtr h, IntPtr p) { list.Add(Describe(h)); return true; }, IntPtr.Zero);
+        NativeWindows.EnumWindows(delegate (IntPtr h, IntPtr p) { list.Add(Describe(h)); return true; }, IntPtr.Zero);
         return list;
     }
 
@@ -313,7 +305,7 @@ public static class OaiTrustNative
 '@
 
 function Add-NativeTypes {
-    if (-not ('OaiTrustNative' -as [type])) { Add-Type -TypeDefinition $script:NativeSource -Language CSharp }
+    if (-not ('OaiTrustNative' -as [type])) { Add-Type -TypeDefinition ($script:NativeSource + "`n" + (Get-NativeWindowsSource)) -Language CSharp }
 }
 
 # =================================================================================================
@@ -539,6 +531,10 @@ function Invoke-SelfTest {
     if ($script:f -gt 0) { exit 1 }
     exit 0
 }
+
+# Get-NativeWindowsSource is among the helpers the scripts share, dot-sourced from ScriptHelpers.ps1, which
+# Invoke-TrustRemovalProbe.ps1 stages beside this script with Core's NativeWindows.cs (Q154, Q171 (c)).
+. (Join-Path $PSScriptRoot 'ScriptHelpers.ps1')
 
 if ($SelfTest) { Invoke-SelfTest }
 

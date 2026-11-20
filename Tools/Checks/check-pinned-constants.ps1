@@ -17,7 +17,9 @@
     for a build rule: the guard in OutlookAI.csproj that keeps a command-line build from
     registering the add-in, which no compilation can see and whose deletion breaks nothing. #15 is
     a boundary of the same kind: the one part of OutlookAI.Core the add-in may use, and what that
-    part may not do inside Outlook's process (Q164).
+    part may not do inside Outlook's process (Q164). #16 is #12's shape for the testbed's window
+    calls: the scripts that look at windows compile Core's NativeWindows.cs instead of declaring
+    EnumWindows themselves, and every route that takes them to a guest takes that file too (Q171).
 
     It is deliberately text-based. It cannot compile the add-in (net48/VSTO) and it cannot run
     Inno Setup, so it reads the sources and compares what it finds. Every check therefore also
@@ -898,6 +900,76 @@ if ($null -ne $addinProjText -and $null -ne $coreProjText) {
     } else {
         Pass $q164 "the add-in's $($addinFiles.Count) files name Core only as $facadeNamespace; its $($facadeFiles.Count) file(s) name no other part of Core ($($siblings -join ', ')) and call nothing that attaches to Outlook, starts a COM thread or opens the index"
     }
+}
+
+# ---------------------------------------------------------------------------------------------
+# 16. The scripts that look at windows compile Core's window calls, and every route to a guest
+#     carries them (Q171 (c), the survey's P10).
+#     McpServer/OutlookAI.Core/AddIn/NativeWindows.cs declares EnumWindows, GetWindowThreadProcessId,
+#     IsWindowVisible, GetClassNameW and the rest once; a script compiles it after its own C# in one
+#     Add-Type, reading it with ScriptHelpers.ps1's Get-NativeWindowsSource - beside the script on a
+#     guest, where Core keeps it in a checkout. So:
+#       (a) NativeWindows.cs has no using directive outside its namespace, which would have to come
+#           first in a script's one compilation, and no $ or backtick, which a script that sends it
+#           as text would have to escape;
+#       (b) no script under Testbed/ declares EnumWindows itself in its C#;
+#       (c) every route that stages the guest scripts stages NativeWindows.cs with them: the live
+#           runner, the trust-removal probe's runner, and Testbed/README.md step 4a by hand; and a
+#           guest script that compiles it and travels alone says on its travels-alone line that
+#           NativeWindows.cs is staged beside it.
+# ---------------------------------------------------------------------------------------------
+$script:Checks++
+$q171p10 = 'the scripts that look at windows compile Core''s NativeWindows.cs, and every route to a guest stages it (Q171 (c))'
+$p10Problems = @()
+$nativeWindowsRel = 'McpServer/OutlookAI.Core/AddIn/NativeWindows.cs'
+$nativeWindowsText = Read-Source $nativeWindowsRel
+if ($null -eq $nativeWindowsText) {
+    $p10Problems += "$nativeWindowsRel is missing - the scripts that look at windows compile it."
+}
+else {
+    $nativeCode = Get-CSharpCode $nativeWindowsText
+    $firstNamespace = $nativeCode.IndexOf('namespace ')
+    if ($firstNamespace -lt 0 -or [regex]::IsMatch($nativeCode.Substring(0, $firstNamespace), '(?m)^\s*using\s')) {
+        $p10Problems += "(a) $nativeWindowsRel has a using directive outside its namespace: in a script's one compilation after the script's own source, it would not be first."
+    }
+    if ($nativeWindowsText.IndexOf('$') -ge 0 -or $nativeWindowsText.IndexOf('`') -ge 0) {
+        $p10Problems += "(a) $nativeWindowsRel holds a `$ or a backtick, which a script that sends it as text would have to escape."
+    }
+}
+$compilers = @()
+foreach ($file in @(Get-ChildItem -LiteralPath (Join-Path $RepoRoot 'Testbed') -Filter '*.ps1' -File -Recurse -ErrorAction SilentlyContinue)) {
+    $rel = $file.FullName.Substring((Resolve-Path -LiteralPath $RepoRoot).ProviderPath.TrimEnd('\', '/').Length + 1).Replace('\', '/')
+    $text = [System.IO.File]::ReadAllText($file.FullName)
+    if ([regex]::IsMatch($text, 'extern\s+bool\s+EnumWindows\s*\(')) {
+        $p10Problems += "(b) $rel declares EnumWindows in its own C#: compile Core's NativeWindows.cs after it instead (Get-NativeWindowsSource)."
+    }
+    if ($rel -ne 'Testbed/guest/ScriptHelpers.ps1' -and [regex]::IsMatch($text, '\(Get-NativeWindowsSource\)')) {
+        $compilers += $rel
+        $travelsAlone = [regex]::Match($text, '(?m)^\s*#\s*travels-alone:.*$')
+        if ($rel.StartsWith('Testbed/guest/') -and $travelsAlone.Success -and $travelsAlone.Value.IndexOf('NativeWindows.cs') -lt 0) {
+            $p10Problems += "(c) $rel compiles NativeWindows.cs and travels alone, but its travels-alone line does not say NativeWindows.cs is staged beside it."
+        }
+    }
+}
+$routes = [ordered]@{
+    'Testbed/host/Invoke-LiveTierOnGuest.ps1'   = "'McpServer\OutlookAI.Core\AddIn\NativeWindows.cs'"
+    'Testbed/host/Invoke-TrustRemovalProbe.ps1' = "'McpServer\OutlookAI.Core\AddIn\NativeWindows.cs'"
+    'Testbed/README.md'                         = '`McpServer/OutlookAI.Core/AddIn/NativeWindows.cs`'
+}
+foreach ($route in $routes.Keys) {
+    $text = Read-Source $route
+    if ($null -eq $text) { $p10Problems += "(c) $route is missing - it is one of the routes that stage the guest scripts."; continue }
+    if ($text.IndexOf($routes[$route]) -lt 0) {
+        $p10Problems += "(c) $route stages the guest scripts without NativeWindows.cs ($($routes[$route])), which the scripts that look at windows compile beside themselves."
+    }
+}
+if ($compilers.Count -lt 5) {
+    $p10Problems += "only $($compilers.Count) script(s) compile NativeWindows.cs ($($compilers -join ', ')), where five did on 2026-11-20 - the scan changed shape, or a script went back to declaring its own window calls."
+}
+if ($p10Problems.Count -gt 0) {
+    Fail $q171p10 "$($p10Problems -join ' | ')"
+} else {
+    Pass $q171p10 "$($compilers.Count) scripts compile it ($($compilers -join ', ')); no script declares EnumWindows itself; $($routes.Count) staging routes carry it"
 }
 
 Write-Host ""

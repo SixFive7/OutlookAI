@@ -401,6 +401,23 @@ function Connect-RunningOutlook {
     catch { return [pscustomobject]@{ App = $null; Via = $null; Running = $true; Why = "neither the Running Object Table ($rot) nor the class factory ($($_.Exception.Message)) gave the running Outlook" } }
 }
 
+# ---- Core's window calls, for the scripts that look at windows (Q171 (c), the survey's P10).
+
+# The text of OutlookAI.Core's NativeWindows.cs - EnumWindows, GetWindowThreadProcessId, IsWindowVisible,
+# GetClassNameW and the rest, C# 5 with its usings inside its namespace - for a script to compile after a C#
+# source of its own in one Add-Type, in place of declaring those calls itself. Staged beside the guest scripts
+# (Invoke-LiveTierOnGuest.ps1, Invoke-TrustRemovalProbe.ps1 and Testbed/README.md step 4a stage it with them);
+# in a checkout, where Core keeps it. check-pinned-constants.ps1 #16 holds every route to staging it. A process
+# compiles it once: a second Add-Type of another source that carries it fails with TYPE_ALREADY_EXISTS (measured
+# 2026-11-20 under 5.1 and 7), so each script compiles it guarded by its own type, and none runs in a process
+# another of them compiled it in.
+function Get-NativeWindowsSource {
+    foreach ($candidate in @((Join-Path $PSScriptRoot 'NativeWindows.cs'), (Join-Path $PSScriptRoot '..\..\McpServer\OutlookAI.Core\AddIn\NativeWindows.cs'))) {
+        if (Test-Path -LiteralPath $candidate) { return [System.IO.File]::ReadAllText($candidate) }
+    }
+    throw "NativeWindows.cs is neither beside $PSScriptRoot nor in this checkout's McpServer\OutlookAI.Core\AddIn: stage it with the guest scripts, as Invoke-LiveTierOnGuest.ps1 does."
+}
+
 # ---- The measurements' helpers (Q154, S7).
 
 # The first -Digits hex digits - 12 unless a caller says otherwise - of the SHA-256 of a value's UTF-8, or

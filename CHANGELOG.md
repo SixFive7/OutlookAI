@@ -1227,6 +1227,28 @@ its mailbox tests on, and change nothing you install.
   would overwrite the change or copy it into the mailbox, and says to use Outlook instead. Roaming on
   Microsoft 365 Apps itself is not tested: the test machines run perpetual Office only.
 
+- ♻️ **Five testbed scripts look at windows through Core's window calls (Q171).**
+  `Set-OutlookProgrammaticAccess.ps1`'s prompt watch, `Measure-TrustRemoval.ps1`,
+  `Measure-PinWindows.ps1`, `Start-OutlookUnelevated.ps1`'s starter and `Restart-Guest.ps1`'s quit
+  script each declared four to six of the window calls Core declares - EnumWindows,
+  GetWindowThreadProcessId, GetClassName, IsWindowVisible, IsWindow, IsIconic and GetWindowRect - in
+  C# of their own: 26 declarations, with five copies of the callback and two of the window
+  rectangle, P10 in the code-sharing survey. Core, the add-in and the tests have declared those
+  calls once, in `NativeWindows`, since the refactor's stage S4. Each script now compiles
+  `McpServer/OutlookAI.Core/AddIn/NativeWindows.cs` after its own C# in one Add-Type, as the release
+  script compiles `InstallerSignature.cs`, and keeps only the calls nobody else makes. The calls
+  that read a process's elevation from its token stay as they are: they are P10's other half, which
+  goes with the PowerShell helpers. The file is C# 5 with its usings inside its namespace, so it
+  compiles after a script's own source in Windows PowerShell 5.1; its one part that is not, the way
+  from an Outlook window object to its window, moved to `NativeWindows.OleWindow.cs`, which only
+  Core compiles. A script reads the file beside itself on a guest, or from the checkout it runs in,
+  through `Get-NativeWindowsSource` in `Testbed/guest/ScriptHelpers.ps1`. The live runner, the
+  trust-removal probe's runner and step 4a of `Testbed/README.md` stage it with the guest scripts,
+  and `Restart-Guest.ps1` sends it to the guest inside the quit script. Invariant 16 of
+  `check-pinned-constants.ps1` fails when a script under `Testbed/` declares EnumWindows again, when
+  fewer than five compile the file, or when a route to a guest leaves it out. As the maintainer
+  decided on 2026-11-18 (Q171 (c)).
+
 - ✅ **The guest scripts' copies of the test tag, prefix and account classes are held to the C# (Q171).**
   Five guest scripts spell out values the C# holds, because they run on the test guests with no
   assembly of this repository loaded. `Install-MailSink.ps1` writes the live tier's subject tag

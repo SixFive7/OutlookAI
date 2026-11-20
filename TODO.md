@@ -123,12 +123,16 @@
   the tool's assembly. T06 is done: the setups it counted
   are shared since T03 and T05 - no run of 15 identical lines is left between two T1 files - and the
   two thread suites' three pairs of parallel tests assert through `ThreadWalks`, keeping their
-  names. S5a is complete. In parallel: the PowerShell helpers (S7). Q171 is done: the updater's
+  names. S5a is complete. In parallel: the PowerShell helpers (S7). Of Q171, the updater's
   signature check is Core's `InstallerSignature`, which the add-in calls and
   `Tools/Publish-Release.ps1` compiles with Add-Type; the Windows file calls, the survey's X05, are
-  Core's `Win32File`, which `Testbed/host/New-LiveTestSettings.ps1` compiles with Add-Type; and the
-  guest scripts' copies of the test tag, the signature prefix and the account classes are held to
-  the C# by T1 `ScriptConstantCopyTests`. `Connect-ExchangeAccount.ps1`'s `AccountType -eq 0`, Outlook's
+  Core's `Win32File`, which `Testbed/host/New-LiveTestSettings.ps1` compiles with Add-Type; the
+  window calls five testbed scripts declared, P10's window half, are Core's `NativeWindows`, which
+  they compile after their own C# and every route to a guest stages beside them
+  (check-pinned-constants #16); and the guest scripts' copies of the test tag, the signature prefix
+  and the account classes are held to the C# by T1 `ScriptConstantCopyTests`. Left of Q171: P10's
+  token half, the process-token `Elevation` check restated five times in four scripts, which goes
+  with the PowerShell helpers (S7e). `Connect-ExchangeAccount.ps1`'s `AccountType -eq 0`, Outlook's
   value for an Exchange account, has no C# twin: nothing in C# reads an account's type.
   The attach to an Outlook already running is one copy, `Connect-RunningOutlook` in the shared file,
   which `Measure-FolderIdResolution.ps1`, `Measure-SignatureRoaming.ps1`, `Reset-HubPopulation.ps1`

@@ -2085,6 +2085,10 @@ try {
         # tested, so an older commit (a bisection) is dumped the same way.
         $guestScripts = @(Get-ChildItem -LiteralPath (Join-Path $tree 'Testbed\guest') -File | Where-Object { $_.Name -ne $CrashDumpScript -and $_.Name -ne $FirstChanceScript } | ForEach-Object { $_.FullName })
         $guestScripts += [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\guest\$CrashDumpScript"))
+        # And the commit's Core window calls, NativeWindows.cs, which the guest scripts that look at windows compile
+        # beside themselves (ScriptHelpers.ps1's Get-NativeWindowsSource; Q171 (c)).
+        $nativeWindows = Join-Path $tree 'McpServer\OutlookAI.Core\AddIn\NativeWindows.cs'
+        if (Test-Path -LiteralPath $nativeWindows) { $guestScripts += $nativeWindows }
         # The hunt's debugger, THIS checkout's too - and on the guest at all only in a hunting run.
         if ($HuntFirstChance) { $guestScripts += [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\guest\$FirstChanceScript")) }
         # ps51-native-stderr-ok: a PowerShell script, not a program - every program it starts goes through its own Invoke-NativeCommand, under 'Continue' inside a try

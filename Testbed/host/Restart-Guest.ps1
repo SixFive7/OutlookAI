@@ -270,6 +270,62 @@ function Get-RefreezeTarget {
     return $GuestBeforeUtc + ($HostNowUtc - $HostBeforeUtc)
 }
 
+# The quit script's dialog walk, compiled on the guest after Core's window calls (NativeWindows.cs, Q171 (c)): both
+# reach the guest as one value, $DialogsSource, ahead of the quit script (Get-QuitScriptPreamble). The self-test
+# compiles them here.
+$script:DialogsCSharp = @'
+using System; using System.Text; using System.Collections.Generic; using System.Runtime.InteropServices; using OutlookAI.Core.AddIn;
+public static class OaiRestartDialogs {
+    // EnumWindows, GetWindowThreadProcessId, GetClassNameW and IsWindowVisible are Core's (NativeWindows.cs,
+    // compiled after this source - Q171 (c)).
+    [DllImport("user32.dll")] static extern bool EnumChildWindows(IntPtr p, NativeWindows.EnumWindowsProc cb, IntPtr l);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder sb, int max);
+    [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr h, uint msg, IntPtr w, IntPtr l);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr OpenProcess(uint a, bool i, int p);
+    [DllImport("advapi32.dll", SetLastError = true)] static extern bool OpenProcessToken(IntPtr p, uint a, out IntPtr t);
+    [DllImport("advapi32.dll", SetLastError = true)] static extern bool GetTokenInformation(IntPtr t, int c, out int i, int l, out int r);
+    [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
+    // 1 elevated, 0 not, -1 unreadable (TokenElevation = 20).
+    public static int Elevation(int pid) { IntPtr p = OpenProcess(0x1000, false, pid); if (p == IntPtr.Zero) return -1; try { IntPtr t; if (!OpenProcessToken(p, 8, out t)) return -1; try { int e, r; if (!GetTokenInformation(t, 20, out e, 4, out r)) return -1; return e != 0 ? 1 : 0; } finally { CloseHandle(t); } } finally { CloseHandle(p); } }
+    // Visible dialogs of the process - classic ones (#32770) and Office's own NetUI dialogs (NUIDialog) -
+    // as their titles. The NetUI kind since 2026-10-08: Outlook's start-up "Check out our new look" theme
+    // dialog on the Exchange VM is one, it was missed, and Quit() parked behind it for half an hour. With
+    // cancelLogon, presses Cancel on each "Internet Email - " logon prompt and reports it as "CANCELLED: <title>".
+    public static List<string> Dialogs(uint pid, bool cancelLogon) {
+        List<string> found = new List<string>();
+        NativeWindows.EnumWindows(delegate (IntPtr h, IntPtr l) {
+            uint p; NativeWindows.GetWindowThreadProcessId(h, out p);
+            if (p != pid || !NativeWindows.IsWindowVisible(h)) return true;
+            StringBuilder c = new StringBuilder(256); NativeWindows.GetClassNameW(h, c, 256);
+            if (c.ToString() != "#32770" && c.ToString() != "NUIDialog") return true;
+            StringBuilder t = new StringBuilder(512); GetWindowText(h, t, 512);
+            string title = t.ToString();
+            if (cancelLogon && title.StartsWith("Internet Email - ")) {
+                IntPtr cancel = IntPtr.Zero;
+                EnumChildWindows(h, delegate (IntPtr ch, IntPtr l2) {
+                    StringBuilder cc = new StringBuilder(64); NativeWindows.GetClassNameW(ch, cc, 64);
+                    StringBuilder ct = new StringBuilder(64); GetWindowText(ch, ct, 64);
+                    if (cc.ToString() == "Button" && ct.ToString().Replace("&", "") == "Cancel") { cancel = ch; return false; }
+                    return true;
+                }, IntPtr.Zero);
+                if (cancel != IntPtr.Zero) { SendMessage(cancel, 0x00F5, IntPtr.Zero, IntPtr.Zero); found.Add("CANCELLED: " + title); return true; }
+            }
+            found.Add(title);
+            return true;
+        }, IntPtr.Zero);
+        return found;
+    }
+}
+'@
+
+# What the quit script's text is sent after: $CancelLogonPrompt, and $DialogsSource as base64, so no character of
+# the C# is read by the guest's PowerShell as anything but text.
+function Get-QuitScriptPreamble([bool] $CancelLogon) {
+    $dialogs = [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($script:DialogsCSharp + "`n" + (Get-NativeWindowsSource)))
+    return ('$CancelLogonPrompt = $' + $CancelLogon.ToString().ToLowerInvariant() + "`n" +
+        "`$DialogsSource = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('$dialogs'))`n")
+}
+
 # ---------------------------------------------------------------------------------------------
 # The session-1 quit script. Sent as text, written into a job directory in the guest, run by a
 # one-shot interactive scheduled task. Windows PowerShell 5.1. Exit codes: $script:QuitCodes.
@@ -288,55 +344,7 @@ if (@(Get-Process -Name OUTLOOK -ErrorAction SilentlyContinue).Count -eq 0) { Ou
 # of the tier profile raises at a start while it has no stored password (runbook 2.7: the sink is
 # there, but Outlook asks before it connects, until New-TierProfile.ps1 -StoreSinkPassword has run).
 # Cancelling it sends nothing and stores nothing. Security prompts are never answered from here.
-if (-not ('OaiRestartDialogs' -as [type])) {
-    Add-Type -TypeDefinition @"
-using System; using System.Text; using System.Collections.Generic; using System.Runtime.InteropServices;
-public static class OaiRestartDialogs {
-    public delegate bool EnumProc(IntPtr h, IntPtr l);
-    [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc cb, IntPtr l);
-    [DllImport("user32.dll")] static extern bool EnumChildWindows(IntPtr p, EnumProc cb, IntPtr l);
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr h, StringBuilder sb, int max);
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder sb, int max);
-    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
-    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
-    [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr h, uint msg, IntPtr w, IntPtr l);
-    [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr OpenProcess(uint a, bool i, int p);
-    [DllImport("advapi32.dll", SetLastError = true)] static extern bool OpenProcessToken(IntPtr p, uint a, out IntPtr t);
-    [DllImport("advapi32.dll", SetLastError = true)] static extern bool GetTokenInformation(IntPtr t, int c, out int i, int l, out int r);
-    [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
-    // 1 elevated, 0 not, -1 unreadable (TokenElevation = 20).
-    public static int Elevation(int pid) { IntPtr p = OpenProcess(0x1000, false, pid); if (p == IntPtr.Zero) return -1; try { IntPtr t; if (!OpenProcessToken(p, 8, out t)) return -1; try { int e, r; if (!GetTokenInformation(t, 20, out e, 4, out r)) return -1; return e != 0 ? 1 : 0; } finally { CloseHandle(t); } } finally { CloseHandle(p); } }
-    // Visible dialogs of the process - classic ones (#32770) and Office's own NetUI dialogs (NUIDialog) -
-    // as their titles. The NetUI kind since 2026-10-08: Outlook's start-up "Check out our new look" theme
-    // dialog on the Exchange VM is one, it was missed, and Quit() parked behind it for half an hour. With
-    // cancelLogon, presses Cancel on each "Internet Email - " logon prompt and reports it as "CANCELLED: <title>".
-    public static List<string> Dialogs(uint pid, bool cancelLogon) {
-        List<string> found = new List<string>();
-        EnumWindows(delegate (IntPtr h, IntPtr l) {
-            uint p; GetWindowThreadProcessId(h, out p);
-            if (p != pid || !IsWindowVisible(h)) return true;
-            StringBuilder c = new StringBuilder(256); GetClassName(h, c, 256);
-            if (c.ToString() != "#32770" && c.ToString() != "NUIDialog") return true;
-            StringBuilder t = new StringBuilder(512); GetWindowText(h, t, 512);
-            string title = t.ToString();
-            if (cancelLogon && title.StartsWith("Internet Email - ")) {
-                IntPtr cancel = IntPtr.Zero;
-                EnumChildWindows(h, delegate (IntPtr ch, IntPtr l2) {
-                    StringBuilder cc = new StringBuilder(64); GetClassName(ch, cc, 64);
-                    StringBuilder ct = new StringBuilder(64); GetWindowText(ch, ct, 64);
-                    if (cc.ToString() == "Button" && ct.ToString().Replace("&", "") == "Cancel") { cancel = ch; return false; }
-                    return true;
-                }, IntPtr.Zero);
-                if (cancel != IntPtr.Zero) { SendMessage(cancel, 0x00F5, IntPtr.Zero, IntPtr.Zero); found.Add("CANCELLED: " + title); return true; }
-            }
-            found.Add(title);
-            return true;
-        }, IntPtr.Zero);
-        return found;
-    }
-}
-"@
-}
+if (-not ('OaiRestartDialogs' -as [type])) { Add-Type -TypeDefinition $DialogsSource }
 $outlookPid = [uint32](@(Get-Process -Name OUTLOOK)[0].Id)
 # One logon prompt per POP3 account, and Outlook raises the next only once the previous one is
 # answered - measured 2026-09-24: cancelling 'Internet Email - tier' was followed within three
@@ -559,6 +567,13 @@ function Invoke-SelfTest {
     $errors = $null
     [void][System.Management.Automation.Language.Parser]::ParseInput($script:QuitScript, [ref] $null, [ref] $errors)
     Check 'the quit script parses' (@($errors).Count) 0
+    $preamble = Get-QuitScriptPreamble $true
+    [void][System.Management.Automation.Language.Parser]::ParseInput($preamble + $script:QuitScript, [ref] $null, [ref] $errors)
+    Check 'and so does what is sent: the preamble, then the quit script' (@($errors).Count) 0
+    Check 'the preamble sets the logon switch and the dialog walk' ($preamble.StartsWith('$CancelLogonPrompt = $true') -and $preamble.Contains('$DialogsSource = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String(')) $true
+    $compiled = $true
+    try { if (-not ('OaiRestartDialogs' -as [type])) { Add-Type -TypeDefinition ($script:DialogsCSharp + "`n" + (Get-NativeWindowsSource)) } } catch { $compiled = $false; Write-Host "  compile error: $($_.Exception.Message)" }
+    Check 'the dialog walk compiles with Core''s window calls in this shell' ($compiled -and [bool]('OaiRestartDialogs' -as [type])) $true
     Check 'the quit script attaches with GetActiveObject' ($script:QuitScript -match 'GetActiveObject\(''Outlook\.Application''\)') $true
     $rotAt = $script:QuitScript.IndexOf("GetActiveObject('Outlook.Application')")
     $classAt = $script:QuitScript.IndexOf('[Activator]::CreateInstance(')
@@ -715,7 +730,7 @@ finally { "`$code" | Out-File -FilePath '$exitFile' -Encoding utf8 }
         if ($code -ne -1) { try { Unregister-ScheduledTask -TaskName $taskName -Confirm:$false } catch { } }
         else { $text += "`n(no exit.txt after $timeoutSeconds s; task '$taskName' left to its own time limit)" }
         [pscustomobject]@{ Code = $code; Output = $text; JobDir = $jobDir }
-    } -ArgumentList @(('$CancelLogonPrompt = $' + ([bool]$CancelLogonPrompt).ToString().ToLowerInvariant() + "`n" + $script:QuitScript), $RunLevel, 300)
+    } -ArgumentList @(((Get-QuitScriptPreamble ([bool]$CancelLogonPrompt)) + $script:QuitScript), $RunLevel, 300)
 }
 
 # ---------------------------------------------------------------------------------------------

@@ -1,16 +1,22 @@
-using System;
-using System.Runtime.InteropServices;
-using System.Text;
-
+// C# 5, AND NOTHING ELSE OF CORE, WITH THE USINGS INSIDE THE NAMESPACE: the testbed's scripts that look at windows
+// compile this file with Add-Type after a source of their own, whose usings come first (Q171 (c), the survey's
+// P10), and Windows PowerShell 5.1's Add-Type is the .NET Framework's C# 5 compiler. NativeWindows.OleWindow.cs
+// holds the part only Core's code compiles. A script's process compiles it once: a second Add-Type of another
+// source that carries it fails, the type already existing.
 namespace OutlookAI.Core.AddIn
 {
+    using System;
+    using System.Runtime.InteropServices;
+    using System.Text;
+
     /// <summary>
     /// The Win32 window calls OutlookAI makes: finding a process's top-level windows, reading their
-    /// state and placing them. One set of declarations for Core and the add-in (the code-sharing
-    /// refactor's stage S4, survey group A09); until then each file that needed them declared its own,
-    /// each a different subset. Nothing here finds Outlook: a caller passes the window or the process.
+    /// state and placing them. One set of declarations for Core, the add-in and the testbed's scripts (the
+    /// code-sharing refactor's stage S4, survey group A09, and Q171 (c) for the scripts' P10); until then
+    /// each file that needed them declared its own, each a different subset. Nothing here finds Outlook: a
+    /// caller passes the window or the process.
     /// </summary>
-    public static class NativeWindows
+    public static partial class NativeWindows
     {
         /// <summary><c>SetWindowPos</c>: keep the window's size.</summary>
         public const uint SWP_NOSIZE = 0x0001;
@@ -102,45 +108,5 @@ namespace OutlookAI.Core.AddIn
         /// <summary>This process's id, as Windows numbers it.</summary>
         [DllImport("kernel32.dll")]
         public static extern uint GetCurrentProcessId();
-
-        /// <summary>
-        /// The window of an Outlook Explorer or Inspector, through <see cref="IOleWindow"/>; zero when Outlook will
-        /// not say. It reads the window only - nothing is shown, activated or created.
-        /// </summary>
-        public static IntPtr WindowOf(object? outlookWindowObject)
-        {
-            if (outlookWindowObject == null)
-            {
-                return IntPtr.Zero;
-            }
-
-            try
-            {
-                if (outlookWindowObject is IOleWindow window && window.GetWindow(out IntPtr handle) == 0)
-                {
-                    return handle;
-                }
-            }
-            catch (Exception ex) when (ex is InvalidCastException || ex is COMException || ex is InvalidComObjectException)
-            {
-            }
-
-            return IntPtr.Zero;
-        }
-
-        /// <summary>The OLE window interface every Outlook Explorer and Inspector implements: the one way from one to its window.</summary>
-        [ComImport]
-        [Guid("00000114-0000-0000-C000-000000000046")]
-        [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-        public interface IOleWindow
-        {
-            /// <summary>The window.</summary>
-            [PreserveSig]
-            int GetWindow(out IntPtr phwnd);
-
-            /// <summary>Context-sensitive help, never used here.</summary>
-            [PreserveSig]
-            int ContextSensitiveHelp([MarshalAs(UnmanagedType.Bool)] bool enterMode);
-        }
     }
 }
