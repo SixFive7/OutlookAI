@@ -5600,7 +5600,9 @@ product's own way and closed discarding, as the typed-text tests read every draf
 `-HuntReleaseAfterClose` the typed window keeps its Word document until the window is closed and releases it after,
 as the typed-text tests' window does (`TypeIntoTheComposeWindow`) and as the product's own compose does
 (`ReviseHeldDocument`); without it the loop releases the document first and closes the window after, as the
-product's promotion read does (`Q149Editor.ReadLookOf`).
+product's promotion read does (`Q149Editor.ReadLookOf`). With `-HuntDisplayEach` the product makes each of its drafts
+with display on - the draft tools' default, which opens the draft in a compose window for the person to review - and
+the loop closes that window, discarding nothing the product saved, before the next draft.
 
 Every hunting run also writes Office's Click-to-Run build, channel and update setting and the hunted module's file -
 its path, size, time and SHA-256 - to its console as `HUNT-OFFICE` lines, which the summary reads back.
@@ -5673,6 +5675,18 @@ forwards, Word's whole layout read from every window and from every one of the p
 promoted after it is made, the test signature on half of the product's drafts, and a new source mail for each test.
 That is where the next hunt would look.
 
+**What the add-in's .NET exceptions are.** Both loops ran again for ten minutes with `-HuntTraceClr`, on
+`OutlookAI-Indexed`: run `20261120-115913-indexed-3ca41927bf3c`, 445 promoted windows and 893 exceptions, and run
+`20261120-121932-indexed-3ca41927bf3c`, 410 displayed and typed windows and 1,641. Every one was half of a pair on
+Outlook's UI thread: a `RuntimeBinderException`, "'object' does not contain a definition for 'Visible'", thrown in
+the getPressed callback of the compose ribbon's AI Assistant toggle, `Ribbon.GetAIAssistantPressed`, and the
+`TargetInvocationException` that wraps it on its way back to Office, which no managed code catches. The add-in embeds
+its interop types, so `control.Context` is `dynamic` there, `pane` is too, and `pane.Visible` is bound at run time
+against VSTO's internal task-pane class, which the binder cannot see into. So on every compose window that has the
+pane the toggle's pressed state cannot be read, and each refresh of its ribbon throws the pair: once per promoted
+window, twice per displayed one, and never on a window without a pane. The crash does not need them: with the add-in
+off it came all the same.
+
 **NoWindow was not run.** Its question - does the crash need Outlook's main window - can only be asked of something
 that crashes: the loops never did, even windowed, and the tests that do crash display their compose windows by
 design, which a window-less Outlook cannot be asked to do without showing windows.
@@ -5713,6 +5727,24 @@ nine hunts of the crashing tests crashed eight times in 1,248 of the product's d
 (`OutlookAI-Indexed`, three legs of 15 minutes) made 2,431 of the product's replies and forwards, each after a line
 typed into the compose window open on screen - 487 windows, new mails and replies by turns, each closed after five
 drafts - and Outlook did not crash.
+
+**A loop that re-opens each of the product's drafts after a typed window crashes in minutes.** Three runs at 4cd48e4
+on `OutlookAI-Indexed`, each ProductLoop with `-HuntShowEach -HuntTypeEach` and the add-in loaded, for up to two legs
+of ten minutes:
+
+| Run | Each draft also | Made | The crash |
+| --- | --- | --- | --- |
+| `20261120-124029-indexed-4cd48e4fc28d` | `-HuntReleaseAfterClose -HuntPromoteAfter` | 46 | the 47th, a reply, 120 s in |
+| `20261120-125328-indexed-4cd48e4fc28d` | `-HuntReleaseAfterClose` | 802 | none in 20 minutes |
+| `20261120-132244-indexed-4cd48e4fc28d` | `-HuntPromoteAfter` | 290 | the 291st, a reply, 483 s in |
+
+Both crashes met the first catch's fault - an access violation writing 0x40008 at `mso40uiwin32client.dll+0x11DA7E`,
+the same stack, the kernel's callback left as 0xC000041D - in the product's reply, before Outlook was given anything to
+save (0x800706BE). So what the crashing tests do and the earlier loops did not is re-open each of the product's drafts
+as soon as it is made and promote it - its inspector parked off screen, activated and hidden - and close it. Whether
+the typed window lets go of its Word document before or after it closes does not decide it. The loops share one
+source mail among all their drafts and pass the product no signature, so the crash needs neither a source of each
+test's own nor a signature, and the source ablation was not run.
 
 **A frozen clock jumped in every hunt that ran past 35 minutes.** The guest's clock left its frozen instant for the
 real date in the middle of all seven: `OutlookAI-Unindexed` and `OutlookAI-Unindexed3` (both `CP-18B-FROZEN-CLOCK`)

@@ -317,9 +317,14 @@ its mailbox tests on, and change nothing you install.
   the typed-text tests read every draft of the product's. With `-HuntReleaseAfterClose` the typed
   window keeps its Word document until the window is closed and lets go of it after, as the
   typed-text tests' window and the product's own compose do; the loop otherwise let go of it first.
+  With `-HuntDisplayEach` the product makes each draft with display on, the draft tools' default, and
+  the loop closes the window the product opened, as the person it was opened for would.
   Three of the ablations still crashed the same way, so the crash needs neither the new mails, nor
   the layout read, nor the test signature. PersonTyping made 2,431 of the product's replies and
   forwards beside a compose window a line was typed into before each, and Outlook did not crash.
+  A loop of the product's drafts, each after a typed window and each re-opened and promoted as soon as
+  it was made, crashed the same way in 2 and in 8 minutes; without the re-opening it made 802 and did
+  not crash, so the re-opening of the product's drafts is the step the crash needs.
   Every hunting run also records Office's build and
   the hunted module's file, and the summary shows both. `-HuntWithoutAddIn` turns OutlookAI's own add-in off
   for the run, LoadBehavior 0 before Outlook starts, and the restore after the run brings the

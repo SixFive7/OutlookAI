@@ -81,6 +81,13 @@ public sealed class HuntPlan
     /// </summary>
     public const string ReleaseAfterCloseVariable = "OUTLOOKAI_HUNT_RELEASE_AFTER_CLOSE";
 
+    /// <summary>
+    /// The variable that, set to 1, has the product make each of its drafts with display on - the draft tools' default,
+    /// which opens the draft in a compose window for the person to review - and the loop close that window, discarding
+    /// nothing the product saved, as the person would, before the next draft.
+    /// </summary>
+    public const string DisplayVariable = "OUTLOOKAI_HUNT_DISPLAY";
+
     /// <summary>The variable the hunt's suite script names the typed-text tests' ablation in (<see cref="HuntAblation"/>). Unset in every other run.</summary>
     public const string AblateVariable = "OUTLOOKAI_HUNT_ABLATE";
 
@@ -200,6 +207,35 @@ public sealed class HuntPlan
                 return this;
             default:
                 why = ReleaseAfterCloseVariable + " must be 1 or 0, not '" + value + "'";
+                return null;
+        }
+    }
+
+    /// <summary>Whether each of the product's drafts is made with display on and its window closed after (<see cref="DisplayVariable"/>).</summary>
+    public bool DisplaysEach { get; private set; }
+
+    /// <summary>This plan with <see cref="DisplaysEach"/> as <paramref name="value"/> names it: "1" yes, unset or "0" no; null with the reason otherwise, or for a maker that is not the product's.</summary>
+    public HuntPlan? WithDisplay(string? value, out string? why)
+    {
+        why = null;
+        switch (value)
+        {
+            case null:
+            case "":
+            case "0":
+                DisplaysEach = false;
+                return this;
+            case "1":
+                if (Maker != HuntMaker.Product)
+                {
+                    why = DisplayVariable + " displays the product's drafts: " + Variant + " makes none";
+                    return null;
+                }
+
+                DisplaysEach = true;
+                return this;
+            default:
+                why = DisplayVariable + " must be 1 or 0, not '" + value + "'";
                 return null;
         }
     }
