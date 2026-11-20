@@ -7,9 +7,10 @@
 .DESCRIPTION
     RUN ON A TEST GUEST, in the interactive session, NOT elevated - through
     guest/Register-InteractiveTask.ps1 at -RunLevel Limited, staged beside it and beside
-    guest/OutlookMapiInterop.ps1, guest/ScriptHelpers.ps1 and Core's NativeWindows.cs, whose window
-    calls it compiles (Testbed/README.md section 4c says why the level matters: COM does not attach
-    across integrity levels, and a user's Outlook is not elevated):
+    guest/OutlookMapiInterop.ps1, guest/McpStdioClient.ps1, guest/ScriptHelpers.ps1 and Core's
+    NativeWindows.cs, whose window calls it compiles (Testbed/README.md section 4c says why the
+    level matters: COM does not attach across integrity levels, and a user's Outlook is not
+    elevated):
 
         .\Register-InteractiveTask.ps1 -RunLevel Limited -TimeoutSeconds 1800 -Script "& 'C:\OutlookAI-Q5\q118\Measure-PinWindows.ps1' -Scenario Visible"
 
