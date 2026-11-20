@@ -264,9 +264,13 @@ function Invoke-SelfTest {
     try {
         Write-Host ''
         Write-Host '== a holder''s process, alive or not (TestbedPool.ps1''s Test-TestbedTicketAlive) =='
+        # Each helper's handle is read at once (Testbed/guest/Install-DotnetSdk.ps1: a Process from
+        # Start-Process -PassThru whose handle was never read cannot be waited on once it has gone).
         $live = Start-Process -FilePath $shellPath -ArgumentList $helperArgs -WindowStyle Hidden -PassThru
+        [void]$live.Handle
         $liveStart = ([DateTimeOffset]$live.StartTime).ToUnixTimeSeconds()
         $gone = Start-Process -FilePath $shellPath -ArgumentList $helperArgs -WindowStyle Hidden -PassThru
+        [void]$gone.Handle
         $goneStart = ([DateTimeOffset]$gone.StartTime).ToUnixTimeSeconds()
         Stop-Process -Id $gone.Id -Force
         [void]$gone.WaitForExit(30000)
