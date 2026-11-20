@@ -283,48 +283,15 @@ public sealed class McpStdioClient : IAsyncDisposable
 
         int id = Interlocked.Increment(ref _nextId);
         await SendAsync(new { jsonrpc = "2.0", id, method, @params = parameters });
+        JsonElement root = await McpWire.ReadResponseAsync(_server.StandardOutput, id, method, _cts.Token, DrainStderrAsync);
 
-        while (true)
+        // What a result named, for the hub-only gate to judge a later write by.
+        if (_hubGate != null && string.Equals(method, "tools/call", StringComparison.Ordinal))
         {
-            string? line = await _server.StandardOutput.ReadLineAsync(_cts.Token);
-            if (line is null)
-            {
-                string stderr = await DrainStderrAsync();
-                throw new InvalidOperationException(
-                    $"Server closed stdout before answering '{method}' (id {id}).\n--- server stderr ---\n{stderr}");
-            }
-
-            if (string.IsNullOrWhiteSpace(line))
-            {
-                continue;
-            }
-
-            JsonElement root;
-            using (JsonDocument doc = JsonDocument.Parse(line))
-            {
-                root = doc.RootElement.Clone();
-            }
-
-            if (!root.TryGetProperty("id", out JsonElement idProp)
-                || idProp.ValueKind != JsonValueKind.Number
-                || idProp.GetInt32() != id)
-            {
-                continue; // notification or unrelated message
-            }
-
-            if (root.TryGetProperty("error", out JsonElement error))
-            {
-                throw new InvalidOperationException($"JSON-RPC error response for '{method}' (id {id}): {error.GetRawText()}");
-            }
-
-            // What a result named, for the hub-only gate to judge a later write by.
-            if (_hubGate != null && string.Equals(method, "tools/call", StringComparison.Ordinal))
-            {
-                ObserveForHubGate(root);
-            }
-
-            return root;
+            ObserveForHubGate(root);
         }
+
+        return root;
     }
 
     /// <summary>Lists tool names via tools/list.</summary>
@@ -435,22 +402,7 @@ public sealed class McpStdioClient : IAsyncDisposable
     }
 
     /// <summary>Kills the server (if still alive) and returns captured stderr.</summary>
-    public async Task<string> DrainStderrAsync()
-    {
-        try
-        {
-            if (!_server.HasExited)
-            {
-                _server.Kill(entireProcessTree: true);
-            }
-
-            return await _stderrTask.WaitAsync(TimeSpan.FromSeconds(10));
-        }
-        catch (Exception drainEx)
-        {
-            return $"<stderr unavailable: {drainEx.GetType().Name}>";
-        }
-    }
+    public Task<string> DrainStderrAsync() => McpWire.DrainStderrAsync(_server, _stderrTask);
 
     /// <summary>
     /// Both gates in front of the wire, in order, for one outgoing message. Only a
@@ -675,12 +627,7 @@ public sealed class McpStdioClient : IAsyncDisposable
         return id.Length > 1 && id[0] == 'h' && id.Skip(1).All(char.IsAsciiDigit);
     }
 
-    private async Task SendAsync(object message)
-    {
-        string json = JsonSerializer.Serialize(message);
-        await _server.StandardInput.WriteLineAsync(json.AsMemory(), _cts.Token);
-        await _server.StandardInput.FlushAsync(_cts.Token);
-    }
+    private Task SendAsync(object message) => McpWire.SendAsync(_server.StandardInput, message, _cts.Token);
 
     public async ValueTask DisposeAsync()
     {

@@ -1253,36 +1253,40 @@ its mailbox tests on, and change nothing you install.
 
 - ♻️ **The mail server keeps one copy of what it had written two to five times over (Q154).**
   The code-sharing refactor's stage S6 folds the server's own repetition that the survey of
-  2026-11-17 found, its groups S01 to S14. The index search and the exhaustive scan check a
-  search term through one rule, `SearchTermRules`, where each had a copy that differed only in
-  how it refused a bare `*`: both now say "Bare '*' is not a valid term." The index search renders
-  its dates with the exhaustive scan's `DaslDateLiteral`, the same format and the same rule for a
-  local time. Hexadecimal digits are checked in one place, `Hex`, in the add-in's part of
-  OutlookAI.Core, where the add-in's editor of `~/.claude.json` finds it too; the five copies
-  differed in what they made of an empty string, and each caller now says. The send
-  confirmations, the resumable searches and the update_draft intents make their random tokens
-  with `Hex.NewRandom` and list their expired entries with `ExpiringEntries`, where each had its
-  own copy of both. Everything that lives under `%LOCALAPPDATA%\OutlookAI` - the audit log, the
-  session registry, Outlook's start log, attachment downloads, signature backups, the add-in's
-  temporary HTML and the private .NET runtime - finds that folder through `SharedState.Root`,
-  where six places built it; the check that no test names the real audit log watches that name
-  too. The COM session opens an item by its EntryID in one place, `OpenItem`, where 21 work items
-  wrote out the two calls; checks a mail item through `OpenMailItem`; and reads where a moved item
-  is through `ReadMoveOrigin`, for both moves. move_mail and archive_mail walk their batch through
-  one `MoveBatch`, and the index store map decides a store found by name and one found by identity
-  through one `DecideStoreMatch`. The corpus tool's PNG writer takes its CRC-32 from the audit
-  log's `AuditCrc32` and its designated Calendar, Contacts and Tasks from the product's
-  `SpecialFolders.OpenDesignated`, where it kept copies of both; its build and re-index write one
-  manifest header, its two populations one conversation message, and its date and placement
-  probes pick their rung through one `CorpusProbeLadder`. The draft tools' descriptions that two
-  or three tools wrote out word for word are constants, and the writing rules each tool checked
-  before its call are one `WritingDraftAsync`. Left as they are, with their reasons in the TODO
-  list: the two draft results' shared fields, the tools' and the COM host's parameter lists, and
-  the corpus tool's thirteen operations that open the corpus store and release it the same way.
-  Since S6, Core declares each Win32 call once: the audit log's opening of its file and the
-  attachment writer's of a folder or a file were one declaration written twice, as were the session
-  registry's and the start observer's closing of a handle, and the audit log declared the current
-  process's id beside the one the add-in's window calls declare.
+  2026-11-17 found, its groups S01 to S14. The index search and the exhaustive scan check a search
+  term through one rule, `SearchTermRules`, where each had a copy that differed only in how it
+  refused a bare `*`: both now say "Bare '*' is not a valid term." The index search renders its
+  dates with the exhaustive scan's `DaslDateLiteral`, the same format and the same rule for a local
+  time. Hexadecimal digits are checked in one place, `Hex`, in the add-in's part of OutlookAI.Core,
+  where the add-in's editor of `~/.claude.json` finds it too; the five copies differed in what they
+  made of an empty string, and each caller now says. The send confirmations, the resumable searches
+  and the update_draft intents make their random tokens with `Hex.NewRandom` and list their expired
+  entries with `ExpiringEntries`, where each had its own copy of both. Everything that lives under
+  `%LOCALAPPDATA%\OutlookAI` - the audit log, the session registry, Outlook's start log, attachment
+  downloads, signature backups, the add-in's temporary HTML and the private .NET runtime - finds
+  that folder through `SharedState.Root`, where six places built it; the check that no test names
+  the real audit log watches that name too. The COM session opens an item by its EntryID in one
+  place, `OpenItem`, where 21 work items wrote out the two calls; checks a mail item through
+  `OpenMailItem`; and reads where a moved item is through `ReadMoveOrigin`, for both moves.
+  move_mail and archive_mail walk their batch through one `MoveBatch`, and the index store map
+  decides a store found by name and one found by identity through one `DecideStoreMatch`. The corpus
+  tool's PNG writer takes its CRC-32 from the audit log's `AuditCrc32` and its designated Calendar,
+  Contacts and Tasks from the product's `SpecialFolders.OpenDesignated`, where it kept copies of
+  both; its build and re-index write one manifest header, its two populations one conversation
+  message, and its date and placement probes pick their rung through one `CorpusProbeLadder`. The
+  draft tools' descriptions that two or three tools wrote out word for word are constants, and the
+  writing rules each tool checked before its call are one `WritingDraftAsync`. Left as they are,
+  with their reasons in the TODO list: the two draft results' shared fields and the tools' and the
+  COM host's parameter lists. The corpus tool's thirteen operations, which each opened Outlook, its
+  namespace and its stores and released them the same way, do it through one `WithOutlook` since
+  S5b, the twelve that work in one store through `WithCorpusStore` on it. The product's session, the
+  live tests' mailer, the compose drafts and the corpus tool start Outlook and find a store by its
+  name through one `OutlookAutomation`, and the mailer and the corpus tool release a COM object
+  through Core's `ComObjects.Release`, where each kept a copy. Since S6, Core declares each Win32
+  call once: the audit log's opening of its file and the attachment writer's of a folder or a file
+  were one declaration written twice, as were the session registry's and the start observer's
+  closing of a handle, and the audit log declared the current process's id beside the one the
+  add-in's window calls declare.
 
 - ♻️ **The live tests end and restart Outlook through one shared helper.**
   The compose measurement's stop in `LiveComposeProbe`, whose `Application.Quit()` from a client
@@ -1547,17 +1551,18 @@ its mailbox tests on, and change nothing you install.
   fixture they share, the move/archive suite's and its stdio test's since too; the two post-suite
   sweeps run one proof, `LiveArtifactSweep.ProveNoTaggedArtifactRemains`; `AuditLines` reads the
   audit lines six suites counted, each still naming which log; the stdio suites read the tool
-  surface through `ToolShapes`; the corpus helpers live in `HubCorpus`, scratch files go through
-  `ScratchFiles`, a store's id through `LiveIds`, an index scope through `LiveIndexScopes` and the
-  registry through `RawRegistryValues`; and four fixtures read the test project's folder through
-  `RepoPaths`. The live tests make the window calls the product makes too through Core's
-  `NativeWindows`, where six of their files declared their own - 24 declarations, with two copies of
-  its `RECT`, five of its callback and four of its constants - and `TestWin32` declares the calls
-  only tests make: the screen capture's, and those two or three test files each declared, a
-  foreground window, a child walk, a window's text and a posted message among them. Two test helpers
-  that wrote bytes as hex by hand use .NET's own writer. No test changed what it checks: the build
-  machine ran the same tests, by name, before and after each step, and the 164 live test methods are
-  the same 164.
+  surface through `ToolShapes` and write and read the wire through one `McpWire`, which the stdio
+  client and the conformance test each wrote out; the corpus helpers live in `HubCorpus`, scratch
+  files go through `ScratchFiles`, a store's id through `LiveIds`, an index scope through
+  `LiveIndexScopes` and the registry through `RawRegistryValues`; and four fixtures read the test
+  project's folder through `RepoPaths`. The live tests make the window calls the product makes too
+  through Core's `NativeWindows`, where six of their files declared their own - 24 declarations,
+  with two copies of its `RECT`, five of its callback and four of its constants - and `TestWin32`
+  declares the calls only tests make: the screen capture's, and those two or three test files each
+  declared, a foreground window, a child walk, a window's text and a posted message among them. Two
+  test helpers that wrote bytes as hex by hand use .NET's own writer. No test changed what it
+  checks: the build machine ran the same tests, by name, before and after each step, and the 164
+  live test methods are the same 164.
 
 - ✅ **The draft tests read where Word lays out a reply's text, and check no draft became a form.**
   The reply, reply-all and forward tests now read Word's own layout of each draft and fail when its
@@ -2468,6 +2473,32 @@ its mailbox tests on, and change nothing you install.
   folder - Calendar, Quick Step Settings, the mailbox's top level, emptied folders in Deleted
   Items - beside the mail, and none of them could be opened. On the test machine they were 21 of the
   first 100 results.
+
+- ✅ **A lease on a test machine is never taken from a holder who still has it.**
+  `Testbed/host/Set-TestbedLease.ps1` wrote over whatever lease was there, so a person who leased a
+  machine a run was using took it from the run without a word, and a live-tier run then stopped at
+  its next renewal, which found the lease somebody else's; the load investigation of 2026-11-20
+  found it. The script now refuses, and says whose lease it is, which script and process took it and
+  until when. It still takes a lease that has expired, one with its own `-Reason`, which is how the
+  runners tell their own lease, and one whose process has ended - a stopped run, a host that
+  restarted - judged as the queue's tickets are, by the process id and the second it started. A
+  lease taken by hand, from a prompt, has no process that lasts as long as its holder, so only its
+  expiry or a release ends it; a lease written before this change is judged by its process alone. By
+  hand, the read and the write are one step under the lease's claim, as the runners' are. The new
+  `-SelfTest` holds each case on a scratch directory with two hidden helper processes, and on this
+  workstation a lease for a machine that does not exist was refused and taken over as above under
+  both PowerShells.
+
+- ✅ **A build-machine run cut off by a host restart gets a line in runs.log from the next run.**
+  The restart of 2026-11-18 at 20:34 stopped run `20261118-203146-3ca41927bf3c` and its janitor
+  together, and left its start line in `runs.log` with no end and its owner file naming a process
+  that was gone. A run that takes a build machine's lock now reads the owner file the run before it
+  left: when that run's process has ended and `runs.log` holds no end line for it, it writes a
+  `gone` line for it - not an end line, so a janitor still watching that run puts the machine back
+  as before. A queued run and a janitor waiting for a lock no longer name such a run as its holder,
+  and say "another run". Owner files record the second their process started, as queue tickets do,
+  so a process id Windows has given to another process since does not pass for the run. The build
+  runner's `-SelfTest` pins the line, the names, and the run's and the janitor's owner files.
 
 - ✅ **The guests' sweep measurement names its store and folder by ID, as the server asks.**
   `Testbed/guest/Invoke-GuestMeasure.ps1` still passed the store's display name and the one-folder
