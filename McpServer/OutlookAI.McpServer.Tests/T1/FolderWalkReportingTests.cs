@@ -43,13 +43,14 @@ namespace OutlookAI.McpServer.Tests.T1;
 /// </summary>
 public sealed class FolderWalkReportingTests
 {
-    private const string Sid = "{S-1-5-21-1111111111-2222222222-3333333333-1001}";
-    private const string OwnerStore = "alice@example.com";
-    private const string OwnerPrefix = "mapi16://" + Sid + "/" + OwnerStore + "($deadbeef)";
+    // The owner's mailbox is the shared test mailbox's (Support/AliceMailbox, Q154), beside two stores of this suite's own.
+    private const string Sid = AliceMailbox.Sid;
+    private const string OwnerStore = AliceMailbox.Store;
+    private const string OwnerPrefix = AliceMailbox.StorePrefix;
     private const string DelegateStore = "Shared Mailbox";
     private const string NamedStore = "Store A";
 
-    private static readonly DateTime Frontier = new(2026, 8, 18, 9, 30, 0, DateTimeKind.Utc);
+    private static readonly DateTime Frontier = AliceMailbox.Frontier;
 
     /// <summary>The label the COM layer gives the second store of a profile when it will not name it.</summary>
     private static readonly string Unnamed = StoreNaming.LabelForUnnamedStore(2);

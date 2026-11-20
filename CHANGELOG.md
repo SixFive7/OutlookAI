@@ -1556,9 +1556,10 @@ its mailbox tests on, and change nothing you install.
   exhaustive scan spelled out the same one-mailbox profile - its SID, store, index prefix and
   frontier - and three of them its mail, its sweep, an exhaustive search of its Inbox and a session
   that answers the store list, the sweep and the scan as well: `AliceMailbox` holds it once, and
-  `ThreadWalks` the conversation walks three thread suites each built. Five more suites take that
-  SID, store, prefix and frontier from `AliceMailbox`, where they spelled them out, with the index
-  that holds the store alone and the one that holds none, which four and three of them each built,
+  `ThreadWalks` the conversation walks three thread suites each built. Six more suites take that
+  SID, store, prefix and frontier from `AliceMailbox`, where they spelled them out, five of them
+  with the index that holds the store alone and the one that holds none, which four and three of
+  them each built,
   and `ThreadWalks.Member` the thread member two of them wrote. The two thread suites' three pairs
   of parallel tests - a named store raises its list's code, the sentence names the stores, a capped
   list says how many more - keep their names and assert through `ThreadWalks`, each failure naming

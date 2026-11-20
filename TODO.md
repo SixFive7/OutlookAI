@@ -77,8 +77,8 @@
   mailer's tag checks, the drafting stream's two checks and the signature stream's tagged subject,
   added since, among them; a stream adding another folds it when it lands) and T05
   (the sweep and scan suites' one-mailbox profile, `AliceMailbox`, and the thread suites' walks,
-  `ThreadWalks`; six more suites - the thread, unindexed-store and folder-walk ones - still spell
-  that mailbox's SID, prefix and frontier under names of their own, beside stores of their own).
+  `ThreadWalks`; the six thread, unindexed-store and folder-walk suites take that mailbox's SID,
+  prefix and frontier from it too, under the names they give them beside stores of their own).
   PowerShell, into `Testbed/guest/ScriptHelpers.ps1` (decision 215 (a)), held there by
   check-powershell-51 check 4: P01's `Invoke-NativeCommand` for all 17 of its copies, P09's
   `Format-Seconds`, the build-VM runner's copy of which rounded 119.6 s to "1 m 60 s", and the
