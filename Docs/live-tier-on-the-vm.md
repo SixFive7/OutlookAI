@@ -5833,6 +5833,25 @@ through `Q149Editor.ReadLookOfPromoted`. The promotions that stay - the readers 
 hunt's, the windowless cells W6 and W7, and `LiveDraftTests.ReplyDraft_ReadThroughThePromotion_LooksAsItDoesReadDirectly`,
 which keeps the promotion exercised - say why beside them, and T1 `DraftReadPromotionTests` lists them.
 
+**The product's own promotion did not crash Outlook in 100 cold starts.** Run `20261120-161450-indexed-dd3f2c65a4c3`
+(`OutlookAI-Indexed`, `CP-24C-FROZEN-CLOCK`, at dd3f2c6, the checkpoint's add-in loaded) ran `-HuntVariant ColdStarts`
+as one leg. In 51 minutes it made 100 starts, each a new OUTLOOK.EXE with `-Embedding` and no window. The first stop
+ended the runner's windowed Outlook with a WM_CLOSE after the S7 counts (0 Inspectors, 0 items in the Outboxes); at
+every later one the Outlook before had ended by itself once its clients let go, and nothing was killed. In each start
+the product promoted its reply, that process's first draft (100 of 100), and made the forward after it through the
+direct route (100 of 100 not promoted): 200 drafts, every one deleted, none failed, and no crash and no dump, with the
+debugger on every one of the run's 102 OUTLOOK.EXE processes. Outlook answered in a median 2.0 s; the promoted reply
+took a median 20.9 s and the forward 0.6 s. None in 100 puts the rate under about 3 in 100 starts (95 %), which does
+not rule out, for one promotion, a risk as small as the loops' - one crash in 47 to 291 promoted drafts. What it does
+say is that the way the product promotes, once an Outlook and then on to the next draft, did not set the crash off in
+100.
+
+The guest's clock stood at its frozen date through all 100 starts and jumped 47.9 days (+4,138,140 s) to the real date
+during the last: after start 100 read it, at 17:11:21 local time - 53.8 minutes after the restore at 16:17:32 - and
+before the leg ended, at 17:13:13. That start was the slowest of the run: 34 s until Outlook answered, 38 s for its
+reply. No draft of the loop depends on the date: each is a reply or a forward of the one mail the leg sent itself,
+deleted as soon as it is made.
+
 **A frozen clock jumped in every hunt that ran past 35 minutes.** The guest's clock left its frozen instant for the
 real date in the middle of all seven: `OutlookAI-Unindexed` and `OutlookAI-Unindexed3` (both `CP-18B-FROZEN-CLOCK`)
 about 36 minutes into the suite, at the same guest time, and `OutlookAI-Indexed` and `OutlookAI-Indexed3`
