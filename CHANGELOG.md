@@ -2538,6 +2538,21 @@ its mailbox tests on, and change nothing you install.
   Items - beside the mail, and none of them could be opened. On the test machine they were 21 of the
   first 100 results.
 
+- ✅ **The live tests read a draft's layout without promoting its window, the step Outlook's crash needs.**
+  Re-opening the product's drafts and promoting their inspectors - parked off screen, activated,
+  hidden - is the step the mso40uiwin32client.dll crash on the test machines needs: a loop doing that
+  and nothing else crashed Outlook on its 121st draft (runbook section 4.15), and the typed-text
+  tests, the reply and forward layout checks and the HTML parity tests did it between the product's
+  drafts. Their two readers, `Q149Editor.ReadLookOf` and `LiveOutlookTestMailer.ReadDraftLook`, now
+  read the editor directly, the inspector never activated, as the product's direct route reads one
+  in a windowed Outlook. The promotions that stay say why beside them: the readers of Outlook's own
+  signature engine, which were measured through promoted windows; the crash hunt's; the windowless
+  cells that measure the promotion itself; and one new test,
+  `LiveDraftTests.ReplyDraft_ReadThroughThePromotion_LooksAsItDoesReadDirectly`, which reads one of
+  the product's replies both ways and wants the same paragraphs, so the promotion stays exercised.
+  T1 `DraftReadPromotionTests` holds the two readers to the direct read and every other promotion in
+  the live tests to that list. Decided by the coordinator on 2026-11-20.
+
 - ✅ **The live pane test reads the draft only once the pane says which signature it chose.**
   The pane puts a chosen signature into the draft, then embeds its pictures, and only then says
   "The AI chose the signature" or "Applied signature". `T2/LivePaneTests` waited for the

@@ -173,6 +173,59 @@ public sealed class LiveDraftTests
         _output.WriteLine("derived drafts: threading verified (ConversationIndex child-of), 0 marker artifacts remain");
     }
 
+    /// <summary>
+    /// THE ONE TEST OF THE PROMOTED READ (the coordinator's direction of 2026-11-20). Since that day every reader of a
+    /// draft's layout reads the editor directly, its inspector never activated (runbook 4.15): re-opening the product's
+    /// drafts and promoting their inspectors is the step the mso40uiwin32client.dll crash needs. The product still
+    /// promotes the first draft of every Outlook that has no window, so this keeps the promotion,
+    /// <c>ComposeSurface.PromoteForWordEditor</c>, exercised in a windowed one, once: one reply of the product's, read
+    /// directly and then through the promotion, and the two reads must see the same paragraphs, the agent's text above
+    /// the quoted header block in both. A derived draft made after it in the same Outlook may meet the crash.
+    /// </summary>
+    [Fact]
+    [Trait("Requires", "MailAccount")]
+    [Trait("Requires", "MultipleStores")]
+    [Trait("Requires", "Transport")]
+    public void ReplyDraft_ReadThroughThePromotion_LooksAsItDoesReadDirectly()
+    {
+        string hubStoreId = _fixture.GetStoreId(Hub);
+        string seedSubject = _fixture.TaggedSubject("promoted-read-seed");
+        string seedBody = "Seed body for the promoted read.\r\nUnique quote token: QP" + Marker + "\r\nEnd of seed.";
+        string agentText = "Promoted-read agent text " + Marker;
+        DateTime sentUtc = LiveOutlookTestMailer.SendSelfMail(Hub, seedSubject, seedBody, attachmentPath: null);
+        ComMailBrief seed = WaitForInboxArrival(seedSubject, sentUtc);
+
+        string? replyId = null;
+        try
+        {
+            DraftOutcome reply = Service.ReplyDraft(seed.EntryId, agentText, replyAll: false, display: false);
+            replyId = reply.EntryId;
+            IReadOnlyList<WordParagraphLook> direct = LiveOutlookTestMailer.ReadDraftLook(Hub, reply.EntryId, Marker);
+            IReadOnlyList<WordParagraphLook> promoted = LiveOutlookTestMailer.ReadDraftLookPromoted(Hub, reply.EntryId, Marker);
+            _output.WriteLine($"promoted read: {promoted.Count} paragraph(s), direct read: {direct.Count}");
+            QuotedDraftLayout.AssertTextAboveTheHeaderBlock(direct, agentText, signatureText: null, "reply, read directly", _output.WriteLine);
+            QuotedDraftLayout.AssertTextAboveTheHeaderBlock(promoted, agentText, signatureText: null, "reply, read through the promotion", _output.WriteLine);
+            Assert.Equal(direct, promoted);
+        }
+        finally
+        {
+            if (replyId != null)
+            {
+                CleanupDraft(Hub, replyId);
+            }
+
+            int deleted = LiveOutlookTestMailer.DeleteTaggedArtifactsUntilStableZero(Hub, Marker);
+            _output.WriteLine($"cleanup: taggedArtifactsDeleted={deleted} (stable zero)");
+        }
+
+        if (replyId != null)
+        {
+            AssertGone(replyId, hubStoreId);
+        }
+
+        Assert.Equal(0, LiveOutlookTestMailer.CountTaggedArtifacts(Hub, Marker));
+    }
+
     [Fact]
     [Trait("Requires", "MailAccount")]
     [Trait("Requires", "MultipleStores")]

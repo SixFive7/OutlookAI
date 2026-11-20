@@ -229,10 +229,11 @@ public sealed class LiveHuntDerivedDraftTests
 
             if (entryId != null && plan.PromotesAfter)
             {
-                // As the typed-text tests read every draft of the product's: re-opened, promoted, closed discarding.
+                // PROMOTED ON PURPOSE: re-opened, promoted, closed discarding, as the typed-text tests read every draft of
+                // the product's until 2026-11-20 - the step the crash needs, which this reproduces (runbook 4.15).
                 try
                 {
-                    (_, string? promoted) = Q149Editor.ReadLookOf(drafts, client, entryId, storeId, readLayout: false);
+                    (_, string? promoted) = Q149Editor.ReadLookOfPromoted(drafts, client, entryId, storeId, readLayout: false);
                     attempt.Set("promotedAfter", promoted == "layout not read (ablation)" ? "promoted" : promoted);
                 }
                 catch (Exception ex) when (ex is InvalidOperationException or TimeoutException || OutlookComSession.IsComCallFailure(ex) || LiveOutlookRestart.IsSessionGone(ex))
@@ -456,6 +457,8 @@ public sealed class LiveHuntDerivedDraftTests
                         return null;
                     }
 
+                    // PROMOTED ON PURPOSE: -HuntShowEach shows a window the product's way before each draft, which is what the
+                    // hunt measures (runbook 4.15).
                     inspector = (object)item.GetInspector;
                     document = ComposeSurface.PromoteForWordEditor(inspector, out string? promoteError);
                     return document == null ? (promoteError ?? "NoWordEditor") : null;

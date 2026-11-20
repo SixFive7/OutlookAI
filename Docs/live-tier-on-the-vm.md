@@ -5824,6 +5824,14 @@ that was not hunted: NoWindow was not run. So none of the ways the product is us
 hunts tried crashed it: the agent's drafts with display off (6,024) and on (943), and a person typing in a compose
 window while the agent drafted (2,431).
 
+**Since 2026-11-20 the live tests read a draft without promoting it** (the coordinator's direction):
+`Q149Editor.ReadLookOf` and `LiveOutlookTestMailer.ReadDraftLook` read the editor directly, the inspector never
+activated, as the product's direct route reads one in a windowed Outlook. So the legs above no longer take the step
+the crash needs, and the Legs variant hunts tests that do not; `ProductLoop -HuntPromoteAfter` takes it on purpose,
+through `Q149Editor.ReadLookOfPromoted`. The promotions that stay - the readers of Outlook's own signature engine, the
+hunt's, the windowless cells W6 and W7, and `LiveDraftTests.ReplyDraft_ReadThroughThePromotion_LooksAsItDoesReadDirectly`,
+which keeps the promotion exercised - say why beside them, and T1 `DraftReadPromotionTests` lists them.
+
 **A frozen clock jumped in every hunt that ran past 35 minutes.** The guest's clock left its frozen instant for the
 real date in the middle of all seven: `OutlookAI-Unindexed` and `OutlookAI-Unindexed3` (both `CP-18B-FROZEN-CLOCK`)
 about 36 minutes into the suite, at the same guest time, and `OutlookAI-Indexed` and `OutlookAI-Indexed3`
