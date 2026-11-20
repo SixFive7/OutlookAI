@@ -94,6 +94,29 @@ public sealed class HuntPlanTests
         Assert.Contains("must be 1 or 0", odd, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData("", false)]
+    [InlineData("0", false)]
+    [InlineData("1", true)]
+    public void TheTypedWindowsDocument_IsReleasedAfterItsClose_WhenAskedByOne(string? value, bool late)
+    {
+        HuntPlan? plan = HuntPlan.Parse("ProductLoop", "10", "typed", out _)!.WithReleaseAfterClose(value, out string? why);
+
+        Assert.NotNull(plan);
+        Assert.Null(why);
+        Assert.Equal(late, plan!.ReleasesAfterClose);
+    }
+
+    [Fact]
+    public void ReleaseAfterClose_IsRefusedWhereNoWindowIsTypedInto_OrForAnythingButOneOrZero()
+    {
+        Assert.Null(HuntPlan.Parse("ProductLoop", "10", "1", out _)!.WithReleaseAfterClose("1", out string? shown));
+        Assert.Contains("types into none", shown, StringComparison.Ordinal);
+        Assert.Null(HuntPlan.Parse("ProductLoop", "10", "typed", out _)!.WithReleaseAfterClose("yes", out string? odd));
+        Assert.Contains("must be 1 or 0", odd, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void TheCalendarStep_MovesTheMainWindowAndMakesNothing()
     {
@@ -181,6 +204,7 @@ public sealed class HuntPlanTests
         Assert.Contains("$HuntShowEachVariable = '" + HuntPlan.ShowEachVariable + "'", runner, StringComparison.Ordinal);
         Assert.Contains("$HuntAblateVariable = '" + HuntPlan.AblateVariable + "'", runner, StringComparison.Ordinal);
         Assert.Contains("$HuntPromoteAfterVariable = '" + HuntPlan.PromoteAfterVariable + "'", runner, StringComparison.Ordinal);
+        Assert.Contains("$HuntReleaseAfterCloseVariable = '" + HuntPlan.ReleaseAfterCloseVariable + "'", runner, StringComparison.Ordinal);
         Assert.Contains("FullyQualifiedName~" + typeof(LiveHuntDerivedDraftTests).FullName, runner, StringComparison.Ordinal);
     }
 

@@ -70,7 +70,8 @@ public sealed class LiveHuntDerivedDraftTests
             Environment.GetEnvironmentVariable(HuntPlan.VariantVariable),
             Environment.GetEnvironmentVariable(HuntPlan.LegMinutesVariable),
             Environment.GetEnvironmentVariable(HuntPlan.ShowEachVariable),
-            out string? why)?.WithPromoteAfter(Environment.GetEnvironmentVariable(HuntPlan.PromoteAfterVariable), out why);
+            out string? why)?.WithPromoteAfter(Environment.GetEnvironmentVariable(HuntPlan.PromoteAfterVariable), out why)
+            ?.WithReleaseAfterClose(Environment.GetEnvironmentVariable(HuntPlan.ReleaseAfterCloseVariable), out why);
         if (plan == null)
         {
             _output.WriteLine("NOT RUN: " + why + ".");
@@ -138,7 +139,8 @@ public sealed class LiveHuntDerivedDraftTests
             .Set("maker", plan.Maker.ToString())
             .Set("showsEach", plan.ShowsEach)
             .Set("typesEach", plan.TypesEach)
-            .Set("promotesAfter", plan.PromotesAfter);
+            .Set("promotesAfter", plan.PromotesAfter)
+            .Set("releasesAfterClose", plan.ReleasesAfterClose);
         if (plan.ShowsCalendar)
         {
             start.Set("moved", MoveMainWindowToTheCalendar(client));
@@ -184,7 +186,7 @@ public sealed class LiveHuntDerivedDraftTests
 
                 if (plan.ShowsEach)
                 {
-                    ShowAndClose(drafts, client, sourceEntryId, storeId, forward, i, attempt, plan.TypesEach);
+                    ShowAndClose(drafts, client, sourceEntryId, storeId, forward, i, attempt, plan.TypesEach, plan.ReleasesAfterClose);
                 }
 
                 entryId = plan.Maker switch
@@ -355,9 +357,11 @@ public sealed class LiveHuntDerivedDraftTests
     /// opened in an inspector and promoted the product's own way - parked off screen, activated, hidden
     /// (<see cref="ComposeSurface.PromoteForWordEditor(object, out string?)"/>), as the typed-text tests read every draft -
     /// then closed discarding and deleted. Activating it is what OutlookAI's own add-in puts its task pane on; closing it
-    /// is what the add-in takes the pane off at.
+    /// is what the add-in takes the pane off at. The window's Word document is released before the window is closed,
+    /// as <see cref="Q149Editor.ReadLookOf"/> releases it - or, with <paramref name="releaseAfterClose"/> on a typed
+    /// window, after it, as the typed-text tests release theirs (<see cref="HuntPlan.ReleasesAfterClose"/>).
     /// </summary>
-    private void ShowAndClose(Q149Run drafts, Q149OutlookClient client, string sourceEntryId, string storeId, bool forward, int i, Q149Attempt attempt, bool typed)
+    private void ShowAndClose(Q149Run drafts, Q149OutlookClient client, string sourceEntryId, string storeId, bool forward, int i, Q149Attempt attempt, bool typed, bool releaseAfterClose)
     {
         Stopwatch shown = Stopwatch.StartNew();
         (string entryId, _) = Q149Drafts.CreateDerivedWithoutInspector(drafts, client, sourceEntryId, storeId, forward, "hunt-shown-" + i.ToString(CultureInfo.InvariantCulture));
@@ -394,7 +398,11 @@ public sealed class LiveHuntDerivedDraftTests
                 }
                 finally
                 {
-                    Q149Com.Release(document);
+                    if (!releaseAfterClose)
+                    {
+                        Q149Com.Release(document);
+                    }
+
                     if (inspector != null)
                     {
                         try
@@ -404,6 +412,12 @@ public sealed class LiveHuntDerivedDraftTests
                         catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
                         {
                         }
+                    }
+
+                    if (releaseAfterClose)
+                    {
+                        // As the typed-text tests' TypeIntoTheComposeWindow: the document outlives the window it was typed in.
+                        Q149Com.Release(document);
                     }
 
                     Q149Com.Release(inspector);

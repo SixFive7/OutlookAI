@@ -314,7 +314,13 @@ its mailbox tests on, and change nothing you install.
   `-HuntTraceClr` the .NET runtime's own exception events are traced on the guest with Windows'
   logman and tracerpt, and their XML is fetched. With `-HuntPromoteAfter` each of the product's
   drafts is re-opened, promoted the product's own way and closed as soon as it is made, which is how
-  the typed-text tests read every draft of the product's. Every hunting run also records Office's build and
+  the typed-text tests read every draft of the product's. With `-HuntReleaseAfterClose` the typed
+  window keeps its Word document until the window is closed and lets go of it after, as the
+  typed-text tests' window and the product's own compose do; the loop otherwise let go of it first.
+  Three of the ablations still crashed the same way, so the crash needs neither the new mails, nor
+  the layout read, nor the test signature. PersonTyping made 2,431 of the product's replies and
+  forwards beside a compose window a line was typed into before each, and Outlook did not crash.
+  Every hunting run also records Office's build and
   the hunted module's file, and the summary shows both. `-HuntWithoutAddIn` turns OutlookAI's own add-in off
   for the run, LoadBehavior 0 before Outlook starts, and the restore after the run brings the
   checkpoint's value back. Every Outlook guest's checkpoint holds the add-in installed and loading,

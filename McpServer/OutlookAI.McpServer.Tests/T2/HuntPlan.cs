@@ -72,6 +72,15 @@ public sealed class HuntPlan
     /// </summary>
     public const string PromoteAfterVariable = "OUTLOOKAI_HUNT_PROMOTE_AFTER";
 
+    /// <summary>
+    /// The variable that, set to 1, has the window typed into before each draft (<see cref="ShowEachVariable"/> "typed")
+    /// keep its Word document until after it is closed, and release it then - as the typed-text tests release theirs
+    /// (<c>LiveQ149TypedTextTests.TypeIntoTheComposeWindow</c>), and as the product's own compose does
+    /// (<c>ReviseHeldDocument</c>). Unset, the loop releases the document first and closes the window after it, as the
+    /// product's promotion read does (<c>Q149Editor.ReadLookOf</c>).
+    /// </summary>
+    public const string ReleaseAfterCloseVariable = "OUTLOOKAI_HUNT_RELEASE_AFTER_CLOSE";
+
     /// <summary>The variable the hunt's suite script names the typed-text tests' ablation in (<see cref="HuntAblation"/>). Unset in every other run.</summary>
     public const string AblateVariable = "OUTLOOKAI_HUNT_ABLATE";
 
@@ -162,6 +171,35 @@ public sealed class HuntPlan
                 return this;
             default:
                 why = PromoteAfterVariable + " must be 1 or 0, not '" + value + "'";
+                return null;
+        }
+    }
+
+    /// <summary>Whether the typed window's Word document is released after the window is closed (<see cref="ReleaseAfterCloseVariable"/>).</summary>
+    public bool ReleasesAfterClose { get; private set; }
+
+    /// <summary>This plan with <see cref="ReleasesAfterClose"/> as <paramref name="value"/> names it: "1" yes, unset or "0" no; null with the reason otherwise, or for a plan that types into no window.</summary>
+    public HuntPlan? WithReleaseAfterClose(string? value, out string? why)
+    {
+        why = null;
+        switch (value)
+        {
+            case null:
+            case "":
+            case "0":
+                ReleasesAfterClose = false;
+                return this;
+            case "1":
+                if (!TypesEach)
+                {
+                    why = ReleaseAfterCloseVariable + " releases the Word document of the window typed into before each draft: " + Variant + " types into none";
+                    return null;
+                }
+
+                ReleasesAfterClose = true;
+                return this;
+            default:
+                why = ReleaseAfterCloseVariable + " must be 1 or 0, not '" + value + "'";
                 return null;
         }
     }

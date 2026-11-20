@@ -5595,6 +5595,12 @@ model makes and saves, opened in an inspector and promoted the product's own way
 hidden, as the typed-text tests read every draft - then closed discarding and deleted; with `-HuntTypeEach` as well,
 that window is displayed on screen and two lines are typed at Outlook's insertion point through Word's own typing, as
 the typed-text tests do, before it is closed discarding. Without either a loop shows no window at all.
+With `-HuntPromoteAfter` each of the product's drafts is re-opened by its EntryID as soon as it is made, promoted the
+product's own way and closed discarding, as the typed-text tests read every draft of theirs. With
+`-HuntReleaseAfterClose` the typed window keeps its Word document until the window is closed and releases it after,
+as the typed-text tests' window does (`TypeIntoTheComposeWindow`) and as the product's own compose does
+(`ReviseHeldDocument`); without it the loop releases the document first and closes the window after, as the
+product's promotion read does (`Q149Editor.ReadLookOf`).
 
 Every hunting run also writes Office's Click-to-Run build, channel and update setting and the hunted module's file -
 its path, size, time and SHA-256 - to its console as `HUNT-OFFICE` lines, which the summary reads back.
@@ -5686,6 +5692,27 @@ And `-HuntVariant PersonTyping` asks the users' question directly: does a person
 agent drafts set it off? A compose window - a new mail or a reply, by turns - stays open on screen, a line is typed into
 it before each of the product's replies and forwards, and it is closed discarding after five of them
 (`HuntPlan.DraftsPerOpenWindow`).
+
+**Three ablations, three crashes.** Each ran the legs above on `OutlookAI-Indexed` (`CP-24C-FROZEN-CLOCK`) at
+3ca4192, the add-in loaded, and each crashed on the same fault: an access violation writing 0x40008, at
+`mso40uiwin32client.dll+0x11DA7E` in the first two and `+0x11D8C7` in the third, which left the kernel's callback as
+0xC000041D. Counted as in the table of crashes above, up to the call that crashed:
+
+| `-HuntAblate` | Run | Round | The product's, the object model's | The call that crashed |
+| --- | --- | --- | --- | --- |
+| `layout` | `20261120-093139-indexed-3ca41927bf3c` | 5 | 60, 25 | the product's reply, right after the test's own typed reply |
+| `new` | `20261120-105752-indexed-3ca41927bf3c` | 2 | 25, 12 | the product's forward, right after the test's own typed forward |
+| `signature` | `20261120-111457-indexed-3ca41927bf3c` | 18 | 258, 104 | the product's second forward, after its first was re-opened and promoted |
+
+So the crash needs neither the new mails' windows, nor Word's layout read, nor the test signature. The first two
+failed before Outlook was given anything to save (0x800706BE), the third where a draft may already have been saved
+(0x800706BA). With them,
+nine hunts of the crashing tests crashed eight times in 1,248 of the product's derived drafts: one in about 160.
+
+**A person typing while the product drafts did not set it off.** Run `20261120-100036-indexed-3ca41927bf3c`
+(`OutlookAI-Indexed`, three legs of 15 minutes) made 2,431 of the product's replies and forwards, each after a line
+typed into the compose window open on screen - 487 windows, new mails and replies by turns, each closed after five
+drafts - and Outlook did not crash.
 
 **A frozen clock jumped in every hunt that ran past 35 minutes.** The guest's clock left its frozen instant for the
 real date in the middle of all seven: `OutlookAI-Unindexed` and `OutlookAI-Unindexed3` (both `CP-18B-FROZEN-CLOCK`)
