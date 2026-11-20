@@ -38,20 +38,23 @@ function Start-Helper([string] $Script) {
 
 # The command that opens the Signatures dialog. GetLabelMso('SignaturesStationeryDialog') reads
 # 'Signatures...' and enabled from the explorer (measured 2026-11-17 on the Exchange VM). The helper
-# attaches to the Outlook running in its session by creating Outlook's application object - Outlook runs
-# one instance, and its class hands back the running one - never by GetActiveObject: an Outlook that has
-# not yet lost the focus is not in the Running Object Table (MK_E_UNAVAILABLE, the Outlook guests
-# 2026-11-18). It refuses, exit 3, when no OUTLOOK.EXE runs in its session, so it never starts one.
+# attaches to the Outlook running in its session through the attach the scripts share, Connect-RunningOutlook
+# in ScriptHelpers.ps1: the Running Object Table, and the class factory once an OUTLOOK.EXE is seen in its
+# session, since an Outlook that has not yet lost the focus is not in the table (MK_E_UNAVAILABLE, the Outlook
+# guests 2026-11-18). It refuses, exit 3, when it cannot, so it never starts an Outlook.
 $OutlookSignaturesDialogHelper = @'
-$session = (Get-Process -Id $PID).SessionId
-if (@(Get-Process -Name OUTLOOK -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -eq $session }).Count -eq 0) { exit 3 }
-$app = New-Object -ComObject Outlook.Application
+$attach = Connect-RunningOutlook
+if ($null -eq $attach.App) { exit 3 }
+$app = $attach.App
 try { $app.ActiveExplorer().CommandBars.ExecuteMso('SignaturesStationeryDialog') } finally { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($app) }
 '@
 
-# Opens Outlook's Signatures and Stationery dialog by its own command; returns the helper process.
+# Opens Outlook's Signatures and Stationery dialog by its own command; returns the helper process. The helper is a
+# process of its own, so it is handed the shared attach as text: the definitions the caller dot-sourced from
+# ScriptHelpers.ps1, which it must have done first.
 function Start-SignaturesDialog {
-    return Start-Helper $OutlookSignaturesDialogHelper
+    $attach = "function Test-OutlookInThisSession {`n" + ${function:Test-OutlookInThisSession} + "`n}`nfunction Connect-RunningOutlook {`n" + ${function:Connect-RunningOutlook} + "`n}`n"
+    return Start-Helper ($attach + $OutlookSignaturesDialogHelper)
 }
 
 function Find-TopWindow([string] $Name, [int] $Seconds) {

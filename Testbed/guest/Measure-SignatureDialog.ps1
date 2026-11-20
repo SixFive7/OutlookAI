@@ -372,11 +372,10 @@ $GuestGuardWhy = 'It opens Outlook''s Signatures dialog and reads the signature 
 try { Assert-TestbedGuestIdentity -Why $GuestGuardWhy }
 catch { $reading['refused'] = "'$env:USERNAME' on '$env:COMPUTERNAME' is not a test guest (users: $($ExpectedUser -join ', '); computer prefix '$ExpectedComputerNamePrefix')" }
 if (-not $reading['refused']) {
-    # An OUTLOOK.EXE in this session, by its process: GetActiveObject cannot tell, as an Outlook that has not lost
-    # the focus is not in the Running Object Table (OutlookDialogUia.ps1).
-    $session = (Get-Process -Id $PID).SessionId
-    if (@(Get-Process -Name OUTLOOK -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -eq $session }).Count -eq 0) {
-        $reading['refused'] = "no OUTLOOK.EXE runs in this session ($session) - the runner starts it before the suite"
+    # An OUTLOOK.EXE in this session, by its process (Test-OutlookInThisSession, ScriptHelpers.ps1): GetActiveObject
+    # cannot tell, as an Outlook that has not lost the focus is not in the Running Object Table.
+    if (-not (Test-OutlookInThisSession)) {
+        $reading['refused'] = "no OUTLOOK.EXE runs in this session ($((Get-Process -Id $PID).SessionId)) - the runner starts it before the suite"
     }
 }
 if ($reading['refused']) {
